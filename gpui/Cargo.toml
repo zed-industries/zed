@@ -1,0 +1,21 @@
+[package]
+authors = ["Nathan Sobo <nathansobo@gmail.com>"]
+edition = "2018"
+name = "gpui"
+version = "0.1.0"
+
+[dependencies]
+pathfinder_color = "0.5"
+pathfinder_geometry = "0.5"
+smol = "1.2"
+tree-sitter = "0.17"
+
+[target.'cfg(target_os = "macos")'.dependencies]
+anyhow = "1"
+cocoa = "0.24"
+core-foundation = "0.9"
+core-text = "19.2"
+foreign-types = "0.5"
+log = "0.4"
+metal = "0.21"
+objc = "0.2"

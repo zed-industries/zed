@@ -1,0 +1,12 @@
+[package]
+authors = ["Nathan Sobo <nathansobo@gmail.com>"]
+edition = "2018"
+name = "zed"
+version = "0.1.0"
+
+[dependencies]
+dirs = "3.0"
+gpui = {path = "../gpui"}
+libc = "0.2"
+log = "0.4"
+simplelog = "0.9"
