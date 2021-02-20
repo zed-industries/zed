@@ -1,5 +1,4 @@
-use super::Event;
-use crate::{geometry::vector::vec2f, keymap::Keystroke};
+use crate::{geometry::vector::vec2f, keymap::Keystroke, platform::Event};
 use cocoa::appkit::{
     NSDeleteFunctionKey as DELETE_KEY, NSDownArrowFunctionKey as ARROW_DOWN_KEY,
     NSLeftArrowFunctionKey as ARROW_LEFT_KEY, NSPageDownFunctionKey as PAGE_DOWN_KEY,

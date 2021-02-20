@@ -5,10 +5,16 @@ name = "gpui"
 version = "0.1.0"
 
 [dependencies]
+async-task = {git = "https://github.com/zedit-io/async-task", rev = "341b57d6de98cdfd7b418567b8de2022ca993a6e"}
+ctor = "0.1"
+num_cpus = "1.13"
 pathfinder_color = "0.5"
 pathfinder_geometry = "0.5"
 smol = "1.2"
 tree-sitter = "0.17"
+
+[build-dependencies]
+bindgen = "0.57"
 
 [target.'cfg(target_os = "macos")'.dependencies]
 anyhow = "1"
