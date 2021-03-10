@@ -9,7 +9,7 @@ pub mod current {
 use crate::{executor, geometry::rect::RectF};
 use anyhow::Result;
 use async_task::Runnable;
-use event::Event;
+pub use event::Event;
 use std::{path::PathBuf, rc::Rc, sync::Arc};
 
 pub trait Runner {

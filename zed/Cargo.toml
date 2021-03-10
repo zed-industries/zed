@@ -4,9 +4,21 @@ edition = "2018"
 name = "zed"
 version = "0.1.0"
 
+[lib]
+name = "zed"
+path = "src/lib.rs"
+
+[[bin]]
+name = "zed"
+path = "src/main.rs"
+
 [dependencies]
+anyhow = "1.0.38"
+arrayvec = "0.5.2"
 dirs = "3.0"
 gpui = {path = "../gpui"}
+lazy_static = "1.4.0"
 libc = "0.2"
 log = "0.4"
+rand = "0.8.3"
 simplelog = "0.9"
