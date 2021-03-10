@@ -2,6 +2,7 @@ use std::{env, path::PathBuf};
 
 fn main() {
     generate_dispatch_bindings();
+    compile_context_predicate_parser();
 }
 
 fn generate_dispatch_bindings() {
@@ -20,4 +21,15 @@ fn generate_dispatch_bindings() {
     bindings
         .write_to_file(out_path.join("dispatch_sys.rs"))
         .expect("couldn't write bindings");
+}
+
+fn compile_context_predicate_parser() {
+    let dir = PathBuf::from("./grammars/context-predicate/src");
+    let parser_c = dir.join("parser.c");
+
+    println!("cargo:rerun-if-changed={}", &parser_c.to_str().unwrap());
+    cc::Build::new()
+        .include(&dir)
+        .file(parser_c)
+        .compile("tree_sitter_context_predicate");
 }

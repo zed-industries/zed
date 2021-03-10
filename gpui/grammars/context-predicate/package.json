@@ -1,0 +1,10 @@
+{
+  "name": "tree-sitter-context-predicate",
+  "main": "index.js",
+  "devDependencies": {
+    "tree-sitter-cli": "^0.18.3"
+  },
+  "dependencies": {
+    "nan": "^2.14.0"
+  }
+}

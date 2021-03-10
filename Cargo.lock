@@ -576,6 +576,7 @@ dependencies = [
  "anyhow",
  "async-task 4.0.3 (git+https://github.com/zedit-io/async-task?rev=341b57d6de98cdfd7b418567b8de2022ca993a6e)",
  "bindgen",
+ "cc",
  "cocoa",
  "core-foundation",
  "core-text",
