@@ -1,6 +1,6 @@
-mod editor;
+pub mod editor;
 mod operation_queue;
-mod settings;
+pub mod settings;
 mod sum_tree;
 #[cfg(test)]
 mod test;
@@ -8,5 +8,5 @@ mod time;
 mod timer;
 mod util;
 mod watch;
-mod workspace;
+pub mod workspace;
 mod worktree;

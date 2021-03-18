@@ -435,10 +435,10 @@ dependencies = [
 ]
 
 [[package]]
-name = "crossbeam-queue"
-version = "0.3.1"
+name = "crossbeam-channel"
+version = "0.5.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "0f6cb3c7f5b8e51bc3ebb73a2327ad4abdbd119dc13223f14f961d2f38486756"
+checksum = "dca26ee1f8d361640700bde38b2c37d8c22b3ce2d360e1fc1c74ea4b0aa7d775"
 dependencies = [
  "cfg-if 1.0.0",
  "crossbeam-utils 0.8.2",
@@ -808,7 +808,7 @@ name = "ignore"
 version = "0.4.11"
 source = "git+https://github.com/zed-industries/ripgrep?rev=1d152118f35b3e3590216709b86277062d79b8a0#1d152118f35b3e3590216709b86277062d79b8a0"
 dependencies = [
- "crossbeam-channel",
+ "crossbeam-channel 0.4.4",
  "crossbeam-utils 0.7.2",
  "globset",
  "lazy_static",
@@ -1647,7 +1647,7 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "arrayvec",
- "crossbeam-queue",
+ "crossbeam-channel 0.5.0",
  "dirs",
  "easy-parallel",
  "gpui",

@@ -5,7 +5,7 @@ use super::{
 };
 use crate::{editor::History, timer, util::post_inc};
 use anyhow::{anyhow, Result};
-use crossbeam_queue::SegQueue;
+use crossbeam_channel as channel;
 use easy_parallel::Parallel;
 use gpui::{AppContext, Entity, ModelContext, ModelHandle};
 use ignore::dir::{Ignore, IgnoreBuilder};
@@ -39,7 +39,7 @@ struct DirToScan {
     path: PathBuf,
     relative_path: PathBuf,
     ignore: Option<Ignore>,
-    dirs_to_scan: Arc<SegQueue<io::Result<DirToScan>>>,
+    dirs_to_scan: channel::Sender<io::Result<DirToScan>>,
 }
 
 impl Worktree {
@@ -61,10 +61,14 @@ impl Worktree {
 
             let tree = tree.clone();
             let (tx, rx) = smol::channel::bounded(1);
-            std::thread::spawn(move || {
-                let _ = smol::block_on(tx.send(tree.scan_dirs()));
-            });
-            let _ = ctx.spawn(async move { rx.recv().await.unwrap() }, Self::done_scanning);
+
+            ctx.background_executor()
+                .spawn(async move {
+                    tx.send(tree.scan_dirs()).await.unwrap();
+                })
+                .detach();
+
+            let _ = ctx.spawn_local(async move { rx.recv().await.unwrap() }, Self::done_scanning);
 
             let _ = ctx.spawn_stream_local(
                 timer::repeat(Duration::from_millis(100)).map(|_| ()),
@@ -95,19 +99,22 @@ impl Worktree {
         if metadata.file_type().is_dir() {
             let is_ignored = is_ignored || name == ".git";
             let id = self.push_dir(None, name, ino, is_symlink, is_ignored);
-            let queue = Arc::new(SegQueue::new());
+            let (tx, rx) = channel::unbounded();
 
-            queue.push(Ok(DirToScan {
+            let tx_ = tx.clone();
+            tx.send(Ok(DirToScan {
                 id,
                 path,
                 relative_path,
                 ignore: Some(ignore),
-                dirs_to_scan: queue.clone(),
-            }));
+                dirs_to_scan: tx_,
+            }))
+            .unwrap();
+            drop(tx);
 
             Parallel::<io::Result<()>>::new()
                 .each(0..16, |_| {
-                    while let Some(result) = queue.pop() {
+                    while let Ok(result) = rx.recv() {
                         self.scan_dir(result?)?;
                     }
                     Ok(())
@@ -150,7 +157,7 @@ impl Worktree {
                 new_children.push(id);
 
                 let dirs_to_scan = to_scan.dirs_to_scan.clone();
-                let _ = to_scan.dirs_to_scan.push(Ok(DirToScan {
+                let _ = to_scan.dirs_to_scan.send(Ok(DirToScan {
                     id,
                     path,
                     relative_path,

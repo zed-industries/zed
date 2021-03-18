@@ -1,7 +1,8 @@
 use crate::{
     elements::Element,
-    executor,
+    executor::{self},
     keymap::{self, Keystroke},
+    platform::{self, App as _},
     util::post_inc,
 };
 use anyhow::{anyhow, Result};
@@ -66,16 +67,22 @@ pub struct App(Rc<RefCell<MutableAppContext>>);
 
 impl App {
     pub fn test<T, F: Future<Output = T>>(f: impl FnOnce(App) -> F) -> T {
+        let platform = platform::current::app(); // TODO: Make a test platform app
         let foreground = Rc::new(executor::Foreground::test());
-        let app = Self(Rc::new(RefCell::new(
-            MutableAppContext::with_foreground_executor(foreground.clone()),
-        )));
+        let app = Self(Rc::new(RefCell::new(MutableAppContext::new(
+            foreground.clone(),
+            Arc::new(platform),
+        ))));
         app.0.borrow_mut().weak_self = Some(Rc::downgrade(&app.0));
         smol::block_on(foreground.run(f(app)))
     }
 
     pub fn new() -> Result<Self> {
-        let app = Self(Rc::new(RefCell::new(MutableAppContext::new()?)));
+        let platform = Arc::new(platform::current::app());
+        let foreground = Rc::new(executor::Foreground::platform(platform.dispatcher())?);
+        let app = Self(Rc::new(RefCell::new(MutableAppContext::new(
+            foreground, platform,
+        ))));
         app.0.borrow_mut().weak_self = Some(Rc::downgrade(&app.0));
         Ok(app)
     }
@@ -269,6 +276,7 @@ type ActionCallback =
 type GlobalActionCallback = dyn FnMut(&dyn Any, &mut MutableAppContext);
 
 pub struct MutableAppContext {
+    platform: Arc<dyn platform::App>,
     ctx: AppContext,
     actions: HashMap<TypeId, HashMap<String, Vec<Box<ActionCallback>>>>,
     global_actions: HashMap<String, Vec<Box<GlobalActionCallback>>>,
@@ -292,14 +300,9 @@ pub struct MutableAppContext {
 }
 
 impl MutableAppContext {
-    pub fn new() -> Result<Self> {
-        Ok(Self::with_foreground_executor(Rc::new(
-            executor::Foreground::platform(todo!())?,
-        )))
-    }
-
-    fn with_foreground_executor(foreground: Rc<executor::Foreground>) -> Self {
+    pub fn new(foreground: Rc<executor::Foreground>, platform: Arc<dyn platform::App>) -> Self {
         Self {
+            platform,
             ctx: AppContext {
                 models: HashMap::new(),
                 windows: HashMap::new(),
@@ -1441,8 +1444,8 @@ impl<'a, T: Entity> ModelContext<'a, T> {
         self.app
             .background
             .spawn(async move {
-                if let Err(_) = tx.send(future.await).await {
-                    log::error!("Error sending background task result to main thread",);
+                if let Err(e) = tx.send(future.await).await {
+                    log::error!("error sending background task result to main thread: {}", e);
                 }
             })
             .detach();
