@@ -2,7 +2,7 @@ use super::{
     buffer, movement, Anchor, Bias, Buffer, BufferElement, DisplayMap, DisplayPoint, Point,
     ToOffset, ToPoint,
 };
-use crate::{settings::Settings, watch};
+use crate::{settings::Settings, watch, workspace};
 use anyhow::Result;
 use easy_parallel::Parallel;
 use gpui::{
@@ -1161,38 +1161,50 @@ impl View for BufferView {
     }
 }
 
-// impl workspace::ItemView for BufferView {
-//     fn is_activate_event(event: &Self::Event) -> bool {
-//         match event {
-//             Event::Activate => true,
-//             _ => false,
-//         }
-//     }
+impl workspace::Item for Buffer {
+    type View = BufferView;
 
-//     fn title(&self, app: &AppContext) -> std::string::String {
-//         if let Some(path) = self.buffer.as_ref(app).path(app) {
-//             path.file_name()
-//                 .expect("buffer's path is always to a file")
-//                 .to_string_lossy()
-//                 .into()
-//         } else {
-//             "untitled".into()
-//         }
-//     }
+    fn build_view(
+        buffer: ModelHandle<Self>,
+        settings: watch::Receiver<Settings>,
+        ctx: &mut ViewContext<Self::View>,
+    ) -> Self::View {
+        BufferView::for_buffer(buffer, settings, ctx)
+    }
+}
 
-//     fn entry_id(&self, app: &AppContext) -> Option<(usize, usize)> {
-//         self.buffer.as_ref(app).entry_id()
-//     }
+impl workspace::ItemView for BufferView {
+    fn is_activate_event(event: &Self::Event) -> bool {
+        match event {
+            Event::Activate => true,
+            _ => false,
+        }
+    }
 
-//     fn clone_on_split(&self, ctx: &mut ViewContext<Self>) -> Option<Self>
-//     where
-//         Self: Sized,
-//     {
-//         let clone = BufferView::for_buffer(self.buffer.clone(), self.settings.clone(), ctx);
-//         *clone.scroll_position.lock() = *self.scroll_position.lock();
-//         Some(clone)
-//     }
-// }
+    fn title(&self, app: &AppContext) -> std::string::String {
+        if let Some(path) = self.buffer.as_ref(app).path(app) {
+            path.file_name()
+                .expect("buffer's path is always to a file")
+                .to_string_lossy()
+                .into()
+        } else {
+            "untitled".into()
+        }
+    }
+
+    fn entry_id(&self, app: &AppContext) -> Option<(usize, usize)> {
+        self.buffer.as_ref(app).entry_id()
+    }
+
+    fn clone_on_split(&self, ctx: &mut ViewContext<Self>) -> Option<Self>
+    where
+        Self: Sized,
+    {
+        let clone = BufferView::for_buffer(self.buffer.clone(), self.settings.clone(), ctx);
+        *clone.scroll_position.lock() = *self.scroll_position.lock();
+        Some(clone)
+    }
+}
 
 impl Selection {
     fn head(&self) -> &Anchor {

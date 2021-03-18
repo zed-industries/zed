@@ -8,4 +8,5 @@ mod time;
 mod timer;
 mod util;
 mod watch;
+mod workspace;
 mod worktree;
