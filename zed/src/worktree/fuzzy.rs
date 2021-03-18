@@ -68,54 +68,56 @@ pub fn match_paths(
     let segment_size = (path_count + cpus - 1) / cpus;
     let mut segment_results = (0..cpus).map(|_| BinaryHeap::new()).collect::<Vec<_>>();
 
-    Parallel::new().each(
-        segment_results.iter_mut().enumerate(),
-        |(segment_idx, results)| {
-            let segment_start = segment_idx * segment_size;
-            let segment_end = segment_start + segment_size;
+    Parallel::new()
+        .each(
+            segment_results.iter_mut().enumerate(),
+            |(segment_idx, results)| {
+                let segment_start = segment_idx * segment_size;
+                let segment_end = segment_start + segment_size;
 
-            let mut min_score = 0.0;
-            let mut last_positions = Vec::new();
-            last_positions.resize(query.len(), 0);
-            let mut match_positions = Vec::new();
-            match_positions.resize(query.len(), 0);
-            let mut score_matrix = Vec::new();
-            let mut best_position_matrix = Vec::new();
+                let mut min_score = 0.0;
+                let mut last_positions = Vec::new();
+                last_positions.resize(query.len(), 0);
+                let mut match_positions = Vec::new();
+                match_positions.resize(query.len(), 0);
+                let mut score_matrix = Vec::new();
+                let mut best_position_matrix = Vec::new();
 
-            let mut tree_start = 0;
-            for (tree_id, skipped_prefix_len, paths) in paths_by_tree_id {
-                let tree_end = tree_start + paths.len();
-                if tree_start < segment_end && segment_start < tree_end {
-                    let start = max(tree_start, segment_start) - tree_start;
-                    let end = min(tree_end, segment_end) - tree_start;
+                let mut tree_start = 0;
+                for (tree_id, skipped_prefix_len, paths) in paths_by_tree_id {
+                    let tree_end = tree_start + paths.len();
+                    if tree_start < segment_end && segment_start < tree_end {
+                        let start = max(tree_start, segment_start) - tree_start;
+                        let end = min(tree_end, segment_end) - tree_start;
 
-                    match_single_tree_paths(
-                        *tree_id,
-                        *skipped_prefix_len,
-                        paths,
-                        start,
-                        end,
-                        query,
-                        lowercase_query,
-                        query_chars,
-                        include_ignored,
-                        smart_case,
-                        results,
-                        max_results,
-                        &mut min_score,
-                        &mut match_positions,
-                        &mut last_positions,
-                        &mut score_matrix,
-                        &mut best_position_matrix,
-                    );
+                        match_single_tree_paths(
+                            *tree_id,
+                            *skipped_prefix_len,
+                            paths,
+                            start,
+                            end,
+                            query,
+                            lowercase_query,
+                            query_chars,
+                            include_ignored,
+                            smart_case,
+                            results,
+                            max_results,
+                            &mut min_score,
+                            &mut match_positions,
+                            &mut last_positions,
+                            &mut score_matrix,
+                            &mut best_position_matrix,
+                        );
+                    }
+                    if tree_end >= segment_end {
+                        break;
+                    }
+                    tree_start = tree_end;
                 }
-                if tree_end >= segment_end {
-                    break;
-                }
-                tree_start = tree_end;
-            }
-        },
-    );
+            },
+        )
+        .run();
 
     let mut results = segment_results
         .into_iter()

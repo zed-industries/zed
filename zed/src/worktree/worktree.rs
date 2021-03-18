@@ -5,7 +5,7 @@ use super::{
 };
 use crate::{editor::History, timer, util::post_inc};
 use anyhow::{anyhow, Result};
-use crossbeam_queue::ArrayQueue;
+use crossbeam_queue::SegQueue;
 use easy_parallel::Parallel;
 use gpui::{AppContext, Entity, ModelContext, ModelHandle};
 use ignore::dir::{Ignore, IgnoreBuilder};
@@ -39,7 +39,7 @@ struct DirToScan {
     path: PathBuf,
     relative_path: PathBuf,
     ignore: Option<Ignore>,
-    dirs_to_scan: Arc<ArrayQueue<io::Result<DirToScan>>>,
+    dirs_to_scan: Arc<SegQueue<io::Result<DirToScan>>>,
 }
 
 impl Worktree {
@@ -95,7 +95,7 @@ impl Worktree {
         if metadata.file_type().is_dir() {
             let is_ignored = is_ignored || name == ".git";
             let id = self.push_dir(None, name, ino, is_symlink, is_ignored);
-            let queue = Arc::new(ArrayQueue::new(1000));
+            let queue = Arc::new(SegQueue::new());
 
             queue.push(Ok(DirToScan {
                 id,

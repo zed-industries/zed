@@ -52,8 +52,8 @@ impl<T: Clone> Network<T> {
 
                     // Insert one or more duplicates of this message *after* the previous
                     // message delivered by this replica.
-                    for _ in 0..rng.gen_range(1, 4) {
-                        let insertion_index = rng.gen_range(min_index, inbox.len() + 1);
+                    for _ in 0..rng.gen_range(1..4) {
+                        let insertion_index = rng.gen_range(min_index..inbox.len() + 1);
                         inbox.insert(
                             insertion_index,
                             Envelope {
@@ -77,7 +77,7 @@ impl<T: Clone> Network<T> {
         R: Rng,
     {
         let inbox = self.inboxes.get_mut(&receiver).unwrap();
-        let count = rng.gen_range(0, inbox.len() + 1);
+        let count = rng.gen_range(0..inbox.len() + 1);
         inbox
             .drain(0..count)
             .map(|envelope| envelope.message)
