@@ -136,7 +136,7 @@ where
             SizeConstraint::new(vec2f(size.x(), 0.0), vec2f(size.x(), f32::INFINITY));
 
         let first_item = (self.build_items)(0..1, app).next();
-        if let Some(first_item) = first_item {
+        if let Some(mut first_item) = first_item {
             let mut item_size = first_item.layout(item_constraint, ctx, app);
             item_size.set_x(size.x());
             item_constraint.min = item_size;

@@ -1,6 +1,6 @@
 use super::{DisplayMap, DisplayPoint};
-use crate::app::AppContext;
 use anyhow::Result;
+use gpui::AppContext;
 use std::cmp;
 
 pub fn left(map: &DisplayMap, mut point: DisplayPoint, app: &AppContext) -> Result<DisplayPoint> {

@@ -7,15 +7,14 @@ pub use point::*;
 pub use text::*;
 
 use crate::{
-    app::{self as app, AppContext, ModelContext},
     operation_queue::{self, OperationQueue},
     sum_tree::{self, Cursor, FilterCursor, SeekBias, SumTree},
-    time,
+    time::{self, ReplicaId},
     util::RandomCharIter,
     worktree::FileHandle,
-    ReplicaId,
 };
 use anyhow::{anyhow, Result};
+use gpui::{AppContext, Entity, ModelContext};
 use lazy_static::lazy_static;
 use rand::prelude::*;
 use std::{
@@ -423,11 +422,11 @@ impl Buffer {
     }
 
     pub fn simulate_typing<T: Rng>(&mut self, rng: &mut T) {
-        let end = rng.gen_range(0, self.len() + 1);
-        let start = rng.gen_range(0, end + 1);
+        let end = rng.gen_range(0..self.len() + 1);
+        let start = rng.gen_range(0..end + 1);
         let mut range = start..end;
 
-        let new_text_len = rng.gen_range(0, 100);
+        let new_text_len = rng.gen_range(0..100);
         let new_text: String = RandomCharIter::new(&mut *rng).take(new_text_len).collect();
 
         for char in new_text.chars() {
@@ -452,11 +451,11 @@ impl Buffer {
             if last_end > self.len() {
                 break;
             }
-            let end = rng.gen_range(last_end, self.len() + 1);
-            let start = rng.gen_range(last_end, end + 1);
+            let end = rng.gen_range(last_end..self.len() + 1);
+            let start = rng.gen_range(last_end..end + 1);
             old_ranges.push(start..end);
         }
-        let new_text_len = rng.gen_range(0, 10);
+        let new_text_len = rng.gen_range(0..10);
         let new_text: String = RandomCharIter::new(&mut *rng).take(new_text_len).collect();
 
         let operations = self
@@ -1375,7 +1374,7 @@ pub enum Event {
     Edited(Vec<Edit>),
 }
 
-impl app::Entity for Buffer {
+impl Entity for Buffer {
     type Event = Event;
 }
 
@@ -1905,7 +1904,7 @@ mod tests {
 
     #[test]
     fn test_edit_events() {
-        use crate::app::App;
+        use gpui::App;
         use std::{cell::RefCell, rc::Rc};
 
         let mut app = App::new().unwrap();
@@ -1956,7 +1955,7 @@ mod tests {
             println!("{:?}", seed);
             let mut rng = &mut StdRng::seed_from_u64(seed);
 
-            let reference_string_len = rng.gen_range(0, 3);
+            let reference_string_len = rng.gen_range(0..3);
             let mut reference_string = RandomCharIter::new(&mut rng)
                 .take(reference_string_len)
                 .collect::<String>();
@@ -1991,8 +1990,8 @@ mod tests {
                 }
 
                 for _ in 0..5 {
-                    let end = rng.gen_range(0, buffer.len() + 1);
-                    let start = rng.gen_range(0, end + 1);
+                    let end = rng.gen_range(0..buffer.len() + 1);
+                    let start = rng.gen_range(0..end + 1);
 
                     let line_lengths = line_lengths_in_range(&buffer, start..end);
                     let (longest_column, longest_rows) = line_lengths.iter().next_back().unwrap();
@@ -2236,7 +2235,7 @@ mod tests {
 
             let mut ids = vec![FragmentId(Arc::from([0])), FragmentId(Arc::from([4]))];
             for _i in 0..100 {
-                let index = rng.gen_range(1, ids.len());
+                let index = rng.gen_range(1..ids.len());
 
                 let left = ids[index - 1].clone();
                 let right = ids[index].clone();
@@ -2429,7 +2428,7 @@ mod tests {
 
     #[test]
     fn test_random_concurrent_edits() {
-        use crate::tests::Network;
+        use crate::test::Network;
 
         const PEERS: usize = 3;
 
@@ -2437,7 +2436,7 @@ mod tests {
             println!("{:?}", seed);
             let mut rng = &mut StdRng::seed_from_u64(seed);
 
-            let base_text_len = rng.gen_range(0, 10);
+            let base_text_len = rng.gen_range(0..10);
             let base_text = RandomCharIter::new(&mut rng)
                 .take(base_text_len)
                 .collect::<String>();
@@ -2453,7 +2452,7 @@ mod tests {
 
             let mut mutation_count = 10;
             loop {
-                let replica_index = rng.gen_range(0, PEERS);
+                let replica_index = rng.gen_range(0..PEERS);
                 let replica_id = replica_ids[replica_index];
                 let buffer = &mut buffers[replica_index];
                 if mutation_count > 0 && rng.gen() {
@@ -2510,9 +2509,9 @@ mod tests {
             } else {
                 let mut ranges = Vec::new();
                 for _ in 0..5 {
-                    let start = rng.gen_range(0, self.len() + 1);
+                    let start = rng.gen_range(0..self.len() + 1);
                     let start_point = self.point_for_offset(start).unwrap();
-                    let end = rng.gen_range(0, self.len() + 1);
+                    let end = rng.gen_range(0..self.len() + 1);
                     let end_point = self.point_for_offset(end).unwrap();
                     ranges.push(start_point..end_point);
                 }

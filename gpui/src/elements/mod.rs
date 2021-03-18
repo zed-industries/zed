@@ -49,7 +49,10 @@ pub trait Element {
 
     fn dispatch_event(&self, event: &Event, ctx: &mut EventContext, app: &AppContext) -> bool;
 
-    fn boxed(self) -> Box<dyn Element> {
+    fn boxed(self) -> Box<dyn Element>
+    where
+        Self: 'static + Sized,
+    {
         Box::new(self)
     }
 }
@@ -60,7 +63,7 @@ pub trait ParentElement<'a>: Extend<Box<dyn Element>> + Sized {
     }
 
     fn add_child(&mut self, child: Box<dyn Element>) {
-        self.add_childen(Some(child));
+        self.add_children(Some(child));
     }
 
     fn with_children(mut self, children: impl IntoIterator<Item = Box<dyn Element>>) -> Self {

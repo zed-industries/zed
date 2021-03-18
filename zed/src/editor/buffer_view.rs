@@ -2,20 +2,16 @@ use super::{
     buffer, movement, Anchor, Bias, Buffer, BufferElement, DisplayMap, DisplayPoint, Point,
     ToOffset, ToPoint,
 };
-use crate::{
-    app::{self as app, App, AppContext, ModelHandle, ViewContext, WeakViewHandle},
-    fonts::FontCache,
-    keymap::Binding,
-    settings::Settings,
-    text_layout,
-    ui::elements::*,
-    watch, workspace,
-};
+use crate::{settings::Settings, watch};
 use anyhow::Result;
 use easy_parallel::Parallel;
-use font_kit::properties::Properties as FontProperties;
+use gpui::{
+    fonts::{FontCache, Properties as FontProperties},
+    keymap::Binding,
+    text_layout, App, AppContext, Element, Entity, ModelHandle, View, ViewContext, WeakViewHandle,
+};
+use gpui::{geometry::vector::Vector2F, TextLayoutCache};
 use parking_lot::Mutex;
-use pathfinder_geometry::vector::Vector2F;
 use smallvec::SmallVec;
 use smol::Timer;
 use std::{
@@ -26,7 +22,6 @@ use std::{
     sync::Arc,
     time::Duration,
 };
-use text_layout::LayoutCache;
 
 const CURSOR_BLINK_INTERVAL: Duration = Duration::from_millis(500);
 
@@ -88,17 +83,17 @@ pub enum SelectAction {
     End,
 }
 
-impl workspace::Item for Buffer {
-    type View = BufferView;
+// impl workspace::Item for Buffer {
+//     type View = BufferView;
 
-    fn build_view(
-        buffer: ModelHandle<Self>,
-        settings: watch::Receiver<Settings>,
-        ctx: &mut ViewContext<Self::View>,
-    ) -> Self::View {
-        BufferView::for_buffer(buffer, settings, ctx)
-    }
-}
+//     fn build_view(
+//         buffer: ModelHandle<Self>,
+//         settings: watch::Receiver<Settings>,
+//         ctx: &mut ViewContext<Self::View>,
+//     ) -> Self::View {
+//         BufferView::for_buffer(buffer, settings, ctx)
+//     }
+// }
 
 pub struct BufferView {
     handle: WeakViewHandle<Self>,
@@ -348,7 +343,7 @@ impl BufferView {
         if let Some(selection) = self.pending_selection.take() {
             let ix = self.selection_insertion_index(&selection.start, ctx.app());
             self.selections.insert(ix, selection);
-            self.merge_selections(ctx);
+            self.merge_selections(ctx.app());
             ctx.notify();
         } else {
             log::error!("end_selection dispatched with no pending selection");
@@ -377,7 +372,7 @@ impl BufferView {
         }
         selections.sort_unstable_by(|a, b| a.start.cmp(&b.start, buffer).unwrap());
         self.selections = selections;
-        self.merge_selections(ctx);
+        self.merge_selections(ctx.app());
         ctx.notify();
         Ok(())
     }
@@ -609,13 +604,13 @@ impl BufferView {
     }
 
     pub fn changed_selections(&mut self, ctx: &mut ViewContext<Self>) {
-        self.merge_selections(ctx);
+        self.merge_selections(ctx.app());
         self.pause_cursor_blinking(ctx);
         *self.autoscroll_requested.lock() = true;
         ctx.notify();
     }
 
-    fn merge_selections<A: app::ModelAsRef>(&mut self, ctx: &A) {
+    fn merge_selections(&mut self, ctx: &AppContext) {
         let buffer = self.buffer.as_ref(ctx);
         let mut i = 1;
         while i < self.selections.len() {
@@ -900,7 +895,7 @@ impl BufferView {
     pub fn max_line_number_width(
         &self,
         font_cache: &FontCache,
-        layout_cache: &LayoutCache,
+        layout_cache: &TextLayoutCache,
         app: &AppContext,
     ) -> Result<f32> {
         let settings = smol::block_on(self.settings.read());
@@ -926,7 +921,7 @@ impl BufferView {
         &self,
         viewport_height: f32,
         font_cache: &FontCache,
-        layout_cache: &LayoutCache,
+        layout_cache: &TextLayoutCache,
         app: &AppContext,
     ) -> Result<Vec<Arc<text_layout::Line>>> {
         let display_map = self.display_map.as_ref(app);
@@ -979,7 +974,7 @@ impl BufferView {
         &self,
         mut rows: Range<u32>,
         font_cache: &FontCache,
-        layout_cache: &LayoutCache,
+        layout_cache: &TextLayoutCache,
         app: &AppContext,
     ) -> Result<Vec<Arc<text_layout::Line>>> {
         let display_map = self.display_map.as_ref(app);
@@ -1000,13 +995,14 @@ impl BufferView {
         let mut layouts = Vec::new();
         layouts.resize_with(rows.len(), Default::default);
 
-        crossbeam::thread::scope(|s| {
-            for (ix, chunk) in layouts.chunks_mut(chunk_size as usize).enumerate() {
-                let font_cache = &font_cache;
-                let chunk_start = rows.start as usize + ix * chunk_size;
-                let chunk_end = cmp::min(chunk_start + chunk_size, rows.end as usize);
+        Parallel::new()
+            .each(
+                layouts.chunks_mut(chunk_size as usize).enumerate(),
+                |(ix, chunk)| {
+                    let font_cache = &font_cache;
+                    let chunk_start = rows.start as usize + ix * chunk_size;
+                    let chunk_end = cmp::min(chunk_start + chunk_size, rows.end as usize);
 
-                s.spawn(move |_| {
                     let mut row = chunk_start;
                     let mut line = String::new();
                     let mut line_len = 0;
@@ -1032,10 +1028,9 @@ impl BufferView {
                             line.push(char);
                         }
                     }
-                });
-            }
-        })
-        .unwrap();
+                },
+            )
+            .run();
 
         Ok(layouts)
     }
@@ -1044,7 +1039,7 @@ impl BufferView {
         &self,
         row: u32,
         font_cache: &FontCache,
-        layout_cache: &LayoutCache,
+        layout_cache: &TextLayoutCache,
         app: &AppContext,
     ) -> Result<Arc<text_layout::Line>> {
         let settings = smol::block_on(self.settings.read());
@@ -1140,13 +1135,13 @@ pub enum Event {
     Blurred,
 }
 
-impl app::Entity for BufferView {
+impl Entity for BufferView {
     type Event = Event;
 }
 
-impl app::View for BufferView {
-    fn render<'a>(&self, bump: &'a Bump, app: &AppContext) -> &'a mut dyn Element<'a> {
-        BufferElement::new(self.handle.upgrade(app).unwrap()).finish(bump)
+impl View for BufferView {
+    fn render<'a>(&self, app: &AppContext) -> Box<dyn Element> {
+        BufferElement::new(self.handle.upgrade(app).unwrap()).boxed()
     }
 
     fn ui_name() -> &'static str {
@@ -1166,38 +1161,38 @@ impl app::View for BufferView {
     }
 }
 
-impl workspace::ItemView for BufferView {
-    fn is_activate_event(event: &Self::Event) -> bool {
-        match event {
-            Event::Activate => true,
-            _ => false,
-        }
-    }
+// impl workspace::ItemView for BufferView {
+//     fn is_activate_event(event: &Self::Event) -> bool {
+//         match event {
+//             Event::Activate => true,
+//             _ => false,
+//         }
+//     }
 
-    fn title(&self, app: &AppContext) -> std::string::String {
-        if let Some(path) = self.buffer.as_ref(app).path(app) {
-            path.file_name()
-                .expect("buffer's path is always to a file")
-                .to_string_lossy()
-                .into()
-        } else {
-            "untitled".into()
-        }
-    }
+//     fn title(&self, app: &AppContext) -> std::string::String {
+//         if let Some(path) = self.buffer.as_ref(app).path(app) {
+//             path.file_name()
+//                 .expect("buffer's path is always to a file")
+//                 .to_string_lossy()
+//                 .into()
+//         } else {
+//             "untitled".into()
+//         }
+//     }
 
-    fn entry_id(&self, app: &AppContext) -> Option<(usize, usize)> {
-        self.buffer.as_ref(app).entry_id()
-    }
+//     fn entry_id(&self, app: &AppContext) -> Option<(usize, usize)> {
+//         self.buffer.as_ref(app).entry_id()
+//     }
 
-    fn clone_on_split(&self, ctx: &mut ViewContext<Self>) -> Option<Self>
-    where
-        Self: Sized,
-    {
-        let clone = BufferView::for_buffer(self.buffer.clone(), self.settings.clone(), ctx);
-        *clone.scroll_position.lock() = *self.scroll_position.lock();
-        Some(clone)
-    }
-}
+//     fn clone_on_split(&self, ctx: &mut ViewContext<Self>) -> Option<Self>
+//     where
+//         Self: Sized,
+//     {
+//         let clone = BufferView::for_buffer(self.buffer.clone(), self.settings.clone(), ctx);
+//         *clone.scroll_position.lock() = *self.scroll_position.lock();
+//         Some(clone)
+//     }
+// }
 
 impl Selection {
     fn head(&self) -> &Anchor {
@@ -1256,16 +1251,15 @@ impl Selection {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::buffer::Point;
-    use crate::test_utils::*;
+    use crate::{editor::Point, settings, test::sample_text};
     use anyhow::Error;
     use unindent::Unindent;
 
     #[test]
     fn test_selection_with_mouse() {
-        App::run(|mut app| async move {
+        App::test(|mut app| async move {
             let buffer = app.add_model(|_| Buffer::new(0, "aaaaaa\nbbbbbb\ncccccc\ndddddd\n"));
-            let settings = settings_rx(None);
+            let settings = settings::channel(&FontCache::new()).1;
             let (_, buffer_view) =
                 app.add_window(|ctx| BufferView::for_buffer(buffer, settings, ctx));
 
@@ -1362,16 +1356,15 @@ mod tests {
 
     #[test]
     fn test_layout_line_numbers() -> Result<()> {
-        use crate::fonts::FontCache;
-        use crate::text_layout::LayoutCache;
+        use gpui::{fonts::FontCache, text_layout::TextLayoutCache};
 
         let font_cache = FontCache::new();
-        let layout_cache = LayoutCache::new();
+        let layout_cache = TextLayoutCache::new();
 
         let mut app = App::new().unwrap();
         let buffer = app.add_model(|_| Buffer::new(0, sample_text(6, 6)));
 
-        let settings = settings_rx(Some(&font_cache));
+        let settings = settings::channel(&font_cache).unwrap().1;
         let (_, view) = app.add_window(|ctx| BufferView::for_buffer(buffer.clone(), settings, ctx));
 
         view.read(&app, |view, app| {
@@ -1385,8 +1378,6 @@ mod tests {
 
     #[test]
     fn test_fold() -> Result<()> {
-        init_logger();
-
         let mut app = App::new().unwrap();
         let buffer = app.add_model(|_| {
             Buffer::new(
@@ -1402,8 +1393,6 @@ mod tests {
                         fn b() {
                             2
                         }
-
-                        fn c() {
                             3
                         }
                     }
@@ -1411,7 +1400,7 @@ mod tests {
                 .unindent(),
             )
         });
-        let settings = settings_rx(None);
+        let settings = settings::channel(&FontCache::new()).unwrap().1;
         let (_, view) = app.add_window(|ctx| BufferView::for_buffer(buffer.clone(), settings, ctx));
 
         view.update(&mut app, |view, ctx| {
@@ -1481,7 +1470,7 @@ mod tests {
     fn test_move_cursor() -> Result<()> {
         let mut app = App::new().unwrap();
         let buffer = app.add_model(|_| Buffer::new(0, sample_text(6, 6)));
-        let settings = settings_rx(None);
+        let settings = settings::channel(&FontCache::new()).1;
         let (_, view) = app.add_window(|ctx| BufferView::for_buffer(buffer.clone(), settings, ctx));
 
         buffer.update(&mut app, |buffer, ctx| {

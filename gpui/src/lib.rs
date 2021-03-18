@@ -1,17 +1,21 @@
 mod app;
+pub use app::*;
+mod assets;
+pub use assets::*;
 pub mod elements;
-pub mod executor;
-mod fonts;
-pub mod keymap;
-pub mod platform;
+pub mod fonts;
+pub use fonts::FontCache;
 mod presenter;
 mod scene;
+pub use scene::Scene;
+pub mod text_layout;
+pub use text_layout::TextLayoutCache;
 mod util;
-
-pub use app::*;
 pub use elements::Element;
+pub mod executor;
+pub mod keymap;
+pub mod platform;
 pub use pathfinder_color as color;
 pub use pathfinder_geometry as geometry;
 pub use platform::Event;
 pub use presenter::*;
-use scene::Scene;

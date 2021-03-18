@@ -1,8 +1,10 @@
 use crate::{
     app::{AppContext, MutableAppContext, WindowInvalidation},
     elements::Element,
+    fonts::FontCache,
     platform::Event,
-    Scene,
+    text_layout::TextLayoutCache,
+    AssetCache, Scene,
 };
 use pathfinder_geometry::vector::{vec2f, Vector2F};
 use std::{any::Any, collections::HashMap, rc::Rc};
@@ -12,7 +14,7 @@ pub struct Presenter {
     rendered_views: HashMap<usize, Box<dyn Element>>,
     parents: HashMap<usize, usize>,
     font_cache: Rc<FontCache>,
-    text_layout_cache: LayoutCache,
+    text_layout_cache: TextLayoutCache,
     asset_cache: Rc<AssetCache>,
 }
 
@@ -28,7 +30,7 @@ impl Presenter {
             rendered_views: app.render_views(window_id).unwrap(),
             parents: HashMap::new(),
             font_cache,
-            text_layout_cache: LayoutCache::new(),
+            text_layout_cache: TextLayoutCache::new(),
             asset_cache,
         }
     }
@@ -82,7 +84,7 @@ impl Presenter {
         }
     }
 
-    fn paint(&mut self, size: Vector2F, scale_factor: f32, app: &AppContext) -> Scene {
+    fn paint(&mut self, _size: Vector2F, _scale_factor: f32, _app: &AppContext) -> Scene {
         // let mut canvas = Canvas::new(size * scale_factor).get_context_2d(self.font_context.clone());
         // canvas.scale(scale_factor);
 
@@ -135,7 +137,7 @@ pub struct LayoutContext<'a> {
     rendered_views: &'a mut HashMap<usize, Box<dyn Element>>,
     parents: &'a mut HashMap<usize, usize>,
     pub font_cache: &'a FontCache,
-    pub text_layout_cache: &'a LayoutCache,
+    pub text_layout_cache: &'a TextLayoutCache,
     pub asset_cache: &'a AssetCache,
     view_stack: Vec<usize>,
 }
@@ -157,7 +159,7 @@ impl<'a> LayoutContext<'a> {
 pub struct AfterLayoutContext<'a> {
     rendered_views: &'a mut HashMap<usize, Box<dyn Element>>,
     pub font_cache: &'a FontCache,
-    pub text_layout_cache: &'a LayoutCache,
+    pub text_layout_cache: &'a TextLayoutCache,
 }
 
 impl<'a> AfterLayoutContext<'a> {
@@ -173,7 +175,7 @@ pub struct PaintContext<'a> {
     rendered_views: &'a mut HashMap<usize, Box<dyn Element>>,
     // pub canvas: &'a mut CanvasRenderingContext2D,
     pub font_cache: &'a FontCache,
-    pub text_layout_cache: &'a LayoutCache,
+    pub text_layout_cache: &'a TextLayoutCache,
 }
 
 impl<'a> PaintContext<'a> {
@@ -189,7 +191,7 @@ pub struct EventContext<'a> {
     rendered_views: &'a HashMap<usize, Box<dyn Element>>,
     actions: Vec<(usize, &'static str, Box<dyn Any>)>,
     pub font_cache: &'a FontCache,
-    pub text_layout_cache: &'a LayoutCache,
+    pub text_layout_cache: &'a TextLayoutCache,
     view_stack: Vec<usize>,
 }
 

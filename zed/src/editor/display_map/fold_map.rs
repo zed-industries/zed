@@ -2,11 +2,11 @@ use super::{
     buffer, Anchor, AnchorRangeExt, Buffer, DisplayPoint, Edit, Point, TextSummary, ToOffset,
 };
 use crate::{
-    app::{AppContext, ModelHandle},
     sum_tree::{self, Cursor, SumTree},
     util::find_insertion_index,
 };
 use anyhow::{anyhow, Result};
+use gpui::{AppContext, ModelHandle};
 use std::{
     cmp::{self, Ordering},
     iter::Take,
@@ -455,8 +455,8 @@ impl<'a> Dimension<'a, TransformSummary> for usize {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::app::App;
-    use crate::test_utils::sample_text;
+    use crate::test::sample_text;
+    use gpui::App;
 
     #[test]
     fn test_basic_folds() -> Result<()> {
@@ -565,7 +565,7 @@ mod tests {
 
     #[test]
     fn test_random_folds() -> Result<()> {
-        use crate::buffer::ToPoint;
+        use crate::editor::ToPoint;
         use crate::util::RandomCharIter;
         use rand::prelude::*;
 
@@ -575,7 +575,7 @@ mod tests {
 
             let mut app = App::new()?;
             let buffer = app.add_model(|_| {
-                let len = rng.gen_range(0, 10);
+                let len = rng.gen_range(0..10);
                 let text = RandomCharIter::new(&mut rng).take(len).collect::<String>();
                 Buffer::new(0, text)
             });
@@ -584,11 +584,11 @@ mod tests {
             app.read(|app| {
                 let buffer = buffer.as_ref(app);
 
-                let fold_count = rng.gen_range(0, 10);
+                let fold_count = rng.gen_range(0..10);
                 let mut fold_ranges: Vec<Range<usize>> = Vec::new();
                 for _ in 0..fold_count {
-                    let end = rng.gen_range(0, buffer.len() + 1);
-                    let start = rng.gen_range(0, end + 1);
+                    let end = rng.gen_range(0..buffer.len() + 1);
+                    let start = rng.gen_range(0..end + 1);
                     fold_ranges.push(start..end);
                 }
 
@@ -612,7 +612,7 @@ mod tests {
 
             let edits = buffer.update(&mut app, |buffer, ctx| {
                 let start_version = buffer.version.clone();
-                let edit_count = rng.gen_range(1, 10);
+                let edit_count = rng.gen_range(1..10);
                 buffer.randomly_edit(&mut rng, edit_count, Some(ctx));
                 Ok::<_, anyhow::Error>(buffer.edits_since(start_version).collect::<Vec<_>>())
             })?;

@@ -5,7 +5,6 @@ use std::ops::{Add, AddAssign};
 use std::sync::Arc;
 
 pub type ReplicaId = u16;
-
 #[derive(Clone, Copy, Debug, Default, Eq, Hash, PartialEq, Ord, PartialOrd)]
 pub struct Local {
     pub replica_id: ReplicaId,

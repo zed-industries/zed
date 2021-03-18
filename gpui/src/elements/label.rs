@@ -2,6 +2,7 @@ use crate::{
     color::ColorU,
     fonts::{FamilyId, Properties},
     geometry::vector::{vec2f, Vector2F},
+    text_layout::Line,
     AfterLayoutContext, AppContext, Element, Event, EventContext, LayoutContext, MutableAppContext,
     PaintContext, SizeConstraint,
 };

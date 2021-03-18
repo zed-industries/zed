@@ -285,14 +285,3 @@ fn push_font(state: &mut FontCacheState, font: Font) -> FontId {
     state.fonts_by_name.insert(name, font_id);
     font_id
 }
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn test_render_emoji() {
-        let ctx = FontCache::new();
-        let _ = ctx.render_emoji(0, 16.0);
-    }
-}

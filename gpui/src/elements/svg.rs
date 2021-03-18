@@ -1,12 +1,7 @@
 use crate::{
-    geometry::{
-        rect::RectF,
-        vector::{vec2f, Vector2F},
-    },
-    AfterLayoutContext, AppContext, Element, Event, EventContext, LayoutContext, MutableAppContext,
-    PaintContext, SizeConstraint,
+    geometry::vector::Vector2F, AfterLayoutContext, AppContext, Element, Event, EventContext,
+    LayoutContext, MutableAppContext, PaintContext, SizeConstraint,
 };
-use std::rc::Rc;
 
 pub struct Svg {
     path: String,
@@ -65,10 +60,10 @@ impl Element for Svg {
     fn after_layout(&mut self, _: &mut AfterLayoutContext, _: &mut MutableAppContext) {}
 
     fn paint(&mut self, origin: Vector2F, ctx: &mut PaintContext, _: &AppContext) {
-        if let Some(tree) = self.tree.as_ref() {
-            ctx.canvas
-                .draw_svg(tree, RectF::new(origin, self.size.unwrap()));
-        }
+        // if let Some(tree) = self.tree.as_ref() {
+        //     ctx.canvas
+        //         .draw_svg(tree, RectF::new(origin, self.size.unwrap()));
+        // }
     }
 
     fn size(&self) -> Option<Vector2F> {
