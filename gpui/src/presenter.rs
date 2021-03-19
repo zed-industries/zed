@@ -99,7 +99,7 @@ impl Presenter {
         // }
 
         // canvas.into_canvas().into_scene()
-        todo!()
+        Scene {}
     }
 
     pub fn responder_chain(&self, app: &AppContext) -> Option<Vec<usize>> {

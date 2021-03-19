@@ -228,7 +228,7 @@ mod tests {
 
     #[test]
     fn test_open_entry() -> Result<(), Arc<anyhow::Error>> {
-        App::test(|mut app| async move {
+        App::test((), |mut app| async move {
             let dir = temp_tree(json!({
                 "a": {
                     "aa": "aa contents",

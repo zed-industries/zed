@@ -58,7 +58,7 @@ mod tests {
 
     #[test]
     fn test_open_paths_action() {
-        App::test(|mut app| async move {
+        App::test((), |mut app| async move {
             let settings = settings::channel(&FontCache::new()).unwrap().1;
 
             init(&mut app);

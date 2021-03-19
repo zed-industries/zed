@@ -68,9 +68,9 @@ pub trait UpdateView {
 pub struct App(Rc<RefCell<MutableAppContext>>);
 
 impl App {
-    pub fn test<T, F: Future<Output = T>>(
-        asset_source: impl AssetSource,
-        f: impl FnOnce(App) -> F,
+    pub fn test<T, A: AssetSource, F: Future<Output = T>, G: FnOnce(App) -> F>(
+        asset_source: A,
+        f: G,
     ) -> T {
         let platform = platform::current::app(); // TODO: Make a test platform app
         let foreground = Rc::new(executor::Foreground::test());
@@ -247,6 +247,14 @@ impl App {
 
     pub fn finish_pending_tasks(&self) -> impl Future<Output = ()> {
         self.0.borrow().finish_pending_tasks()
+    }
+
+    pub fn fonts(&self) -> Arc<FontCache> {
+        self.0.borrow().fonts.clone()
+    }
+
+    pub fn platform(&self) -> Arc<dyn platform::App> {
+        self.0.borrow().platform.clone()
     }
 }
 

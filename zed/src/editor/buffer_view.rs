@@ -1392,11 +1392,11 @@ mod tests {
 
     #[test]
     fn test_fold() -> Result<()> {
-        let mut app = App::new().unwrap();
-        let buffer = app.add_model(|_| {
-            Buffer::new(
-                0,
-                "
+        App::test((), |mut app| async move {
+            let buffer = app.add_model(|_| {
+                Buffer::new(
+                    0,
+                    "
                     impl Foo {
                         // Hello!
 
@@ -1411,18 +1411,19 @@ mod tests {
                         }
                     }
                 "
-                .unindent(),
-            )
-        });
-        let settings = settings::channel(&FontCache::new()).unwrap().1;
-        let (_, view) = app.add_window(|ctx| BufferView::for_buffer(buffer.clone(), settings, ctx));
+                    .unindent(),
+                )
+            });
+            let settings = settings::channel(&FontCache::new()).unwrap().1;
+            let (_, view) =
+                app.add_window(|ctx| BufferView::for_buffer(buffer.clone(), settings, ctx));
 
-        view.update(&mut app, |view, ctx| {
-            view.select_ranges(Some(DisplayPoint::new(8, 0)..DisplayPoint::new(12, 0)), ctx)?;
-            view.fold(&(), ctx);
-            assert_eq!(
-                view.text(ctx.app()),
-                "
+            view.update(&mut app, |view, ctx| {
+                view.select_ranges(Some(DisplayPoint::new(8, 0)..DisplayPoint::new(12, 0)), ctx)?;
+                view.fold(&(), ctx);
+                assert_eq!(
+                    view.text(ctx.app()),
+                    "
                     impl Foo {
                         // Hello!
 
@@ -1437,23 +1438,23 @@ mod tests {
                         }
                     }
                 "
-                .unindent(),
-            );
+                    .unindent(),
+                );
 
-            view.fold(&(), ctx);
-            assert_eq!(
-                view.text(ctx.app()),
-                "
+                view.fold(&(), ctx);
+                assert_eq!(
+                    view.text(ctx.app()),
+                    "
                     impl Foo {…
                     }
                 "
-                .unindent(),
-            );
+                    .unindent(),
+                );
 
-            view.unfold(&(), ctx);
-            assert_eq!(
-                view.text(ctx.app()),
-                "
+                view.unfold(&(), ctx);
+                assert_eq!(
+                    view.text(ctx.app()),
+                    "
                     impl Foo {
                         // Hello!
 
@@ -1468,51 +1469,54 @@ mod tests {
                         }
                     }
                 "
-                .unindent(),
-            );
+                    .unindent(),
+                );
 
-            view.unfold(&(), ctx);
-            assert_eq!(view.text(ctx.app()), buffer.as_ref(ctx).text());
+                view.unfold(&(), ctx);
+                assert_eq!(view.text(ctx.app()), buffer.as_ref(ctx).text());
 
-            Ok::<(), Error>(())
-        })?;
+                Ok::<(), Error>(())
+            })?;
 
-        Ok(())
+            Ok(())
+        })
     }
 
     #[test]
     fn test_move_cursor() -> Result<()> {
-        let mut app = App::new().unwrap();
-        let buffer = app.add_model(|_| Buffer::new(0, sample_text(6, 6)));
-        let settings = settings::channel(&FontCache::new()).unwrap().1;
-        let (_, view) = app.add_window(|ctx| BufferView::for_buffer(buffer.clone(), settings, ctx));
+        App::test((), |mut app| async move {
+            let buffer = app.add_model(|_| Buffer::new(0, sample_text(6, 6)));
+            let settings = settings::channel(&FontCache::new()).unwrap().1;
+            let (_, view) =
+                app.add_window(|ctx| BufferView::for_buffer(buffer.clone(), settings, ctx));
 
-        buffer.update(&mut app, |buffer, ctx| {
-            buffer.edit(
-                vec![
-                    Point::new(1, 0)..Point::new(1, 0),
-                    Point::new(1, 1)..Point::new(1, 1),
-                ],
-                "\t",
-                Some(ctx),
-            )
-        })?;
+            buffer.update(&mut app, |buffer, ctx| {
+                buffer.edit(
+                    vec![
+                        Point::new(1, 0)..Point::new(1, 0),
+                        Point::new(1, 1)..Point::new(1, 1),
+                    ],
+                    "\t",
+                    Some(ctx),
+                )
+            })?;
 
-        view.update(&mut app, |view, ctx| {
-            view.move_down(&(), ctx);
-            assert_eq!(
-                view.selections(ctx.app()),
-                &[DisplayPoint::new(1, 0)..DisplayPoint::new(1, 0)]
-            );
-            view.move_right(&(), ctx);
-            assert_eq!(
-                view.selections(ctx.app()),
-                &[DisplayPoint::new(1, 4)..DisplayPoint::new(1, 4)]
-            );
-            Ok::<(), Error>(())
-        })?;
+            view.update(&mut app, |view, ctx| {
+                view.move_down(&(), ctx);
+                assert_eq!(
+                    view.selections(ctx.app()),
+                    &[DisplayPoint::new(1, 0)..DisplayPoint::new(1, 0)]
+                );
+                view.move_right(&(), ctx);
+                assert_eq!(
+                    view.selections(ctx.app()),
+                    &[DisplayPoint::new(1, 4)..DisplayPoint::new(1, 4)]
+                );
+                Ok::<(), Error>(())
+            })?;
 
-        Ok(())
+            Ok(())
+        })
     }
 
     impl BufferView {
