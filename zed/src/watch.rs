@@ -38,14 +38,14 @@ impl<T> Receiver<T> {
 impl<T: 'static + Clone> Receiver<T> {
     pub fn notify_model_on_change<M: 'static + Entity>(&self, ctx: &mut ModelContext<M>) {
         let watch = self.clone();
-        let _ = ctx.spawn_local(async move { watch.updated().await }, |_, _, ctx| {
+        let _ = ctx.spawn(async move { watch.updated().await }, |_, _, ctx| {
             ctx.notify()
         });
     }
 
     pub fn notify_view_on_change<V: 'static + View>(&self, ctx: &mut ViewContext<V>) {
         let watch = self.clone();
-        let _ = ctx.spawn_local(async move { watch.updated().await }, |_, _, ctx| {
+        let _ = ctx.spawn(async move { watch.updated().await }, |_, _, ctx| {
             ctx.notify()
         });
     }

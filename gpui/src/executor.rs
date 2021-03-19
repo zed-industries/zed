@@ -1,6 +1,6 @@
-// #[cfg(not(test))]
 use anyhow::{anyhow, Result};
 use async_task::Runnable;
+use pin_project::pin_project;
 use smol::prelude::*;
 use smol::{channel, Executor};
 use std::rc::Rc;
@@ -17,9 +17,24 @@ pub enum Foreground {
     Test(smol::LocalExecutor<'static>),
 }
 
+#[pin_project(project = ForegroundTaskProject)]
 pub enum ForegroundTask<T> {
-    Platform(async_task::Task<T>),
-    Test(smol::Task<T>),
+    Platform(#[pin] async_task::Task<T>),
+    Test(#[pin] smol::Task<T>),
+}
+
+impl<T> Future for ForegroundTask<T> {
+    type Output = T;
+
+    fn poll(
+        self: std::pin::Pin<&mut Self>,
+        ctx: &mut std::task::Context<'_>,
+    ) -> std::task::Poll<Self::Output> {
+        match self.project() {
+            ForegroundTaskProject::Platform(task) => task.poll(ctx),
+            ForegroundTaskProject::Test(task) => task.poll(ctx),
+        }
+    }
 }
 
 pub struct Background {
@@ -27,6 +42,7 @@ pub struct Background {
     _stop: channel::Sender<()>,
 }
 
+#[must_use]
 pub type BackgroundTask<T> = smol::Task<T>;
 
 impl Foreground {
@@ -69,6 +85,7 @@ impl Foreground {
     }
 }
 
+#[must_use]
 impl<T> ForegroundTask<T> {
     pub fn detach(self) {
         match self {
