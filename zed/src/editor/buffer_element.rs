@@ -418,7 +418,7 @@ impl Element for BufferElement {
         let view = self.view.as_ref(app);
         view.clamp_scroll_left(
             layout
-                .scroll_max(view, ctx.font_cache, ctx.text_layout_cache, app.ctx())
+                .scroll_max(view, ctx.font_cache, ctx.text_layout_cache, app.downgrade())
                 .x(),
         );
 
@@ -426,10 +426,10 @@ impl Element for BufferElement {
             view.autoscroll_horizontally(
                 view.scroll_position().y() as u32,
                 layout.text_size.x(),
-                layout.scroll_width(view, ctx.font_cache, ctx.text_layout_cache, app.ctx()),
+                layout.scroll_width(view, ctx.font_cache, ctx.text_layout_cache, app.downgrade()),
                 view.em_width(ctx.font_cache),
                 &layout.line_layouts,
-                app.ctx(),
+                app.downgrade(),
             );
         }
     }

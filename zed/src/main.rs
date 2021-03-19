@@ -27,7 +27,7 @@ fn main() {
 
     let (settings_tx, settings_rx) = settings::channel(&font_cache).unwrap();
 
-    let mut app = gpui::App::new().unwrap();
+    let mut app = gpui::App::new(As).unwrap();
 
     platform::runner()
         .on_finish_launching(move || {

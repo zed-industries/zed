@@ -1907,46 +1907,46 @@ mod tests {
         use gpui::App;
         use std::{cell::RefCell, rc::Rc};
 
-        let mut app = App::new().unwrap();
+        let mut app = App::test((), |mut app| async move {
+            let buffer_1_events = Rc::new(RefCell::new(Vec::new()));
+            let buffer_2_events = Rc::new(RefCell::new(Vec::new()));
 
-        let buffer_1_events = Rc::new(RefCell::new(Vec::new()));
-        let buffer_2_events = Rc::new(RefCell::new(Vec::new()));
+            let buffer1 = app.add_model(|_| Buffer::new(0, "abcdef"));
+            let buffer2 = app.add_model(|_| Buffer::new(1, "abcdef"));
+            let ops = buffer1.update(&mut app, |buffer, ctx| {
+                let buffer_1_events = buffer_1_events.clone();
+                ctx.subscribe(&buffer1, move |_, event, _| {
+                    buffer_1_events.borrow_mut().push(event.clone())
+                });
+                let buffer_2_events = buffer_2_events.clone();
+                ctx.subscribe(&buffer2, move |_, event, _| {
+                    buffer_2_events.borrow_mut().push(event.clone())
+                });
 
-        let buffer1 = app.add_model(|_| Buffer::new(0, "abcdef"));
-        let buffer2 = app.add_model(|_| Buffer::new(1, "abcdef"));
-        let ops = buffer1.update(&mut app, |buffer, ctx| {
-            let buffer_1_events = buffer_1_events.clone();
-            ctx.subscribe(&buffer1, move |_, event, _| {
-                buffer_1_events.borrow_mut().push(event.clone())
+                buffer.edit(Some(2..4), "XYZ", Some(ctx)).unwrap()
             });
-            let buffer_2_events = buffer_2_events.clone();
-            ctx.subscribe(&buffer2, move |_, event, _| {
-                buffer_2_events.borrow_mut().push(event.clone())
+            buffer2.update(&mut app, |buffer, ctx| {
+                buffer.apply_ops(ops, Some(ctx)).unwrap();
             });
 
-            buffer.edit(Some(2..4), "XYZ", Some(ctx)).unwrap()
-        });
-        buffer2.update(&mut app, |buffer, ctx| {
-            buffer.apply_ops(ops, Some(ctx)).unwrap();
-        });
+            let buffer_1_events = buffer_1_events.borrow();
+            assert_eq!(
+                *buffer_1_events,
+                vec![Event::Edited(vec![Edit {
+                    old_range: 2..4,
+                    new_range: 2..5
+                }])]
+            );
 
-        let buffer_1_events = buffer_1_events.borrow();
-        assert_eq!(
-            *buffer_1_events,
-            vec![Event::Edited(vec![Edit {
-                old_range: 2..4,
-                new_range: 2..5
-            }])]
-        );
-
-        let buffer_2_events = buffer_2_events.borrow();
-        assert_eq!(
-            *buffer_2_events,
-            vec![Event::Edited(vec![Edit {
-                old_range: 2..4,
-                new_range: 2..5
-            }])]
-        );
+            let buffer_2_events = buffer_2_events.borrow();
+            assert_eq!(
+                *buffer_2_events,
+                vec![Event::Edited(vec![Edit {
+                    old_range: 2..4,
+                    new_range: 2..5
+                }])]
+            );
+        });
     }
 
     #[test]

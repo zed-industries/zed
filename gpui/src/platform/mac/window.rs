@@ -2,6 +2,7 @@ use crate::{
     executor,
     geometry::vector::Vector2F,
     platform::{self, Event},
+    Scene,
 };
 use anyhow::{anyhow, Result};
 use cocoa::{
@@ -20,6 +21,7 @@ use objc::{
     runtime::{Class, Object, Sel, BOOL, NO, YES},
     sel, sel_impl,
 };
+use pathfinder_geometry::vector::vec2f;
 use smol::Timer;
 use std::{
     cell::{Cell, RefCell},
@@ -105,7 +107,7 @@ pub struct Window(Rc<WindowState>);
 struct WindowState {
     native_window: id,
     event_callback: RefCell<Option<Box<dyn FnMut(Event) -> bool>>>,
-    resize_callback: RefCell<Option<Box<dyn FnMut(NSSize, f64)>>>,
+    resize_callback: RefCell<Option<Box<dyn FnMut(Vector2F, f32)>>>,
     synthetic_drag_counter: Cell<usize>,
     executor: Rc<executor::Foreground>,
 }
@@ -207,19 +209,11 @@ impl Window {
         }
     }
 
-    pub fn size(&self) -> NSSize {
-        self.0.size()
-    }
-
-    pub fn backing_scale_factor(&self) -> f64 {
-        self.0.backing_scale_factor()
-    }
-
     pub fn on_event<F: 'static + FnMut(Event) -> bool>(&mut self, callback: F) {
         *self.0.event_callback.borrow_mut() = Some(Box::new(callback));
     }
 
-    pub fn on_resize<F: 'static + FnMut(NSSize, f64)>(&mut self, callback: F) {
+    pub fn on_resize<F: 'static + FnMut(Vector2F, f32)>(&mut self, callback: F) {
         *self.0.resize_callback.borrow_mut() = Some(Box::new(callback));
     }
 }
@@ -233,18 +227,31 @@ impl Drop for Window {
     }
 }
 
-impl platform::Window for Window {}
-
-impl WindowState {
-    fn size(&self) -> NSSize {
-        let view_frame = unsafe { NSView::frame(self.native_window.contentView()) };
-        view_frame.size
+impl platform::Window for Window {
+    fn size(&self) -> Vector2F {
+        self.0.size()
     }
 
-    fn backing_scale_factor(&self) -> f64 {
+    fn scale_factor(&self) -> f32 {
+        self.0.scale_factor()
+    }
+
+    fn render_scene(&self, scene: Scene) {
+        log::info!("render scene");
+    }
+}
+
+impl WindowState {
+    fn size(&self) -> Vector2F {
+        let NSSize { width, height, .. } =
+            unsafe { NSView::frame(self.native_window.contentView()) }.size;
+        vec2f(width as f32, height as f32)
+    }
+
+    fn scale_factor(&self) -> f32 {
         unsafe {
             let screen: id = msg_send![self.native_window, screen];
-            NSScreen::backingScaleFactor(screen)
+            NSScreen::backingScaleFactor(screen) as f32
         }
     }
 
@@ -297,7 +304,7 @@ extern "C" fn dealloc_delegate(this: &Object, _: Sel) {
 extern "C" fn handle_view_event(this: &Object, _: Sel, native_event: id) {
     let window = unsafe { window_state(this) };
 
-    let event = unsafe { Event::from_native(native_event, Some(window.size().height as f32)) };
+    let event = unsafe { Event::from_native(native_event, Some(window.size().y())) };
 
     if let Some(event) = event {
         match event {
@@ -325,7 +332,7 @@ extern "C" fn send_event(this: &Object, _: Sel, native_event: id) {
 extern "C" fn window_did_resize(this: &Object, _: Sel, _: id) {
     let window = unsafe { window_state(this) };
     let size = window.size();
-    let scale_factor = window.backing_scale_factor();
+    let scale_factor = window.scale_factor();
     if let Some(callback) = window.resize_callback.borrow_mut().as_mut() {
         callback(size, scale_factor);
     }

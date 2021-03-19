@@ -1,3 +1,4 @@
+pub mod assets;
 pub mod editor;
 mod operation_queue;
 pub mod settings;
