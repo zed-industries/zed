@@ -7,7 +7,7 @@ pub mod fonts;
 pub use fonts::FontCache;
 mod presenter;
 mod scene;
-pub use scene::Scene;
+pub use scene::{Border, Scene};
 pub mod text_layout;
 pub use text_layout::TextLayoutCache;
 mod util;

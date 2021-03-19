@@ -25,7 +25,7 @@ impl Element for Empty {
         _: &mut LayoutContext,
         _: &AppContext,
     ) -> Vector2F {
-        self.size = Some(constraint.min);
+        self.size = Some(constraint.max);
         constraint.max
     }
 

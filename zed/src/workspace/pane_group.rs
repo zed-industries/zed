@@ -2,7 +2,7 @@ use anyhow::{anyhow, Result};
 use gpui::{
     color::{rgbu, ColorU},
     elements::*,
-    Axis, ChildView,
+    Axis, Border, ChildView,
 };
 
 #[derive(Clone, Debug, Eq, PartialEq)]

@@ -52,10 +52,23 @@ impl Presenter {
         scale_factor: f32,
         app: &mut MutableAppContext,
     ) -> Scene {
-        self.layout(window_size, app.downgrade());
-        self.after_layout(app);
-        let scene = self.paint(window_size, scale_factor, app.downgrade());
-        self.text_layout_cache.finish_frame();
+        let mut scene = Scene::new(scale_factor);
+
+        if let Some(root_view_id) = app.root_view_id(self.window_id) {
+            self.layout(window_size, app.downgrade());
+            self.after_layout(app);
+            let mut paint_ctx = PaintContext {
+                scene: &mut scene,
+                font_cache: &self.font_cache,
+                text_layout_cache: &self.text_layout_cache,
+                rendered_views: &mut self.rendered_views,
+            };
+            paint_ctx.paint(root_view_id, Vector2F::zero(), app.downgrade());
+            self.text_layout_cache.finish_frame();
+        } else {
+            log::error!("could not find root_view_id for window {}", self.window_id);
+        }
+
         scene
     }
 
@@ -82,24 +95,6 @@ impl Presenter {
             };
             ctx.after_layout(root_view_id, app);
         }
-    }
-
-    fn paint(&mut self, _size: Vector2F, _scale_factor: f32, _app: &AppContext) -> Scene {
-        // let mut canvas = Canvas::new(size * scale_factor).get_context_2d(self.font_context.clone());
-        // canvas.scale(scale_factor);
-
-        // if let Some(root_view_id) = app.root_view_id(self.window_id) {
-        //     let mut paint_ctx = PaintContext {
-        //         canvas: &mut canvas,
-        //         font_cache: &self.font_cache,
-        //         text_layout_cache: &self.text_layout_cache,
-        //         rendered_views: &mut self.rendered_views,
-        //     };
-        //     paint_ctx.paint(root_view_id, Vector2F::zero(), app);
-        // }
-
-        // canvas.into_canvas().into_scene()
-        Scene {}
     }
 
     pub fn responder_chain(&self, app: &AppContext) -> Option<Vec<usize>> {
@@ -173,7 +168,7 @@ impl<'a> AfterLayoutContext<'a> {
 
 pub struct PaintContext<'a> {
     rendered_views: &'a mut HashMap<usize, Box<dyn Element>>,
-    // pub canvas: &'a mut CanvasRenderingContext2D,
+    pub scene: &'a mut Scene,
     pub font_cache: &'a FontCache,
     pub text_layout_cache: &'a TextLayoutCache,
 }

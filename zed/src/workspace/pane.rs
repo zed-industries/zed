@@ -1,7 +1,7 @@
 use super::{ItemViewHandle, SplitDirection};
 use crate::{settings::Settings, watch};
 use gpui::{
-    color::ColorU, elements::*, keymap::Binding, App, AppContext, ChildView, Entity, View,
+    color::ColorU, elements::*, keymap::Binding, App, AppContext, Border, ChildView, Entity, View,
     ViewContext,
 };
 use std::cmp;

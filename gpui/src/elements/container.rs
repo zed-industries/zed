@@ -1,6 +1,9 @@
+use pathfinder_geometry::rect::RectF;
+
 use crate::{
     color::ColorU,
     geometry::vector::{vec2f, Vector2F},
+    scene::{Border, Quad},
     AfterLayoutContext, AppContext, Element, Event, EventContext, LayoutContext, MutableAppContext,
     PaintContext, SizeConstraint,
 };
@@ -141,110 +144,13 @@ impl Element for Container {
     }
 
     fn paint(&mut self, origin: Vector2F, ctx: &mut PaintContext, app: &AppContext) {
-        // self.origin = Some(origin);
-
-        // let canvas = &mut ctx.canvas;
-        // let size = self.size.unwrap() - self.margin_size()
-        //     + vec2f(self.overdraw.right, self.overdraw.bottom);
-        // let origin = origin + vec2f(self.margin.left, self.margin.top)
-        //     - vec2f(self.overdraw.left, self.overdraw.top);
-        // let rect = RectF::new(origin, size);
-
-        // let mut path = Path2D::new();
-        // if self.corner_radius > 0.0 {
-        //     path.move_to(rect.upper_right() - vec2f(self.corner_radius, 0.0));
-        //     path.arc_to(
-        //         rect.upper_right(),
-        //         rect.upper_right() + vec2f(0.0, self.corner_radius),
-        //         self.corner_radius,
-        //     );
-        //     path.line_to(rect.lower_right() - vec2f(0.0, self.corner_radius));
-        //     path.arc_to(
-        //         rect.lower_right(),
-        //         rect.lower_right() - vec2f(self.corner_radius, 0.0),
-        //         self.corner_radius,
-        //     );
-        //     path.line_to(rect.lower_left() + vec2f(self.corner_radius, 0.0));
-        //     path.arc_to(
-        //         rect.lower_left(),
-        //         rect.lower_left() - vec2f(0.0, self.corner_radius),
-        //         self.corner_radius,
-        //     );
-        //     path.line_to(origin + vec2f(0.0, self.corner_radius));
-        //     path.arc_to(
-        //         origin,
-        //         origin + vec2f(self.corner_radius, 0.0),
-        //         self.corner_radius,
-        //     );
-        //     path.close_path();
-        // } else {
-        //     path.rect(rect);
-        // }
-
-        // canvas.save();
-        // if let Some(shadow) = self.shadow.as_ref() {
-        //     canvas.set_shadow_offset(shadow.offset);
-        //     canvas.set_shadow_blur(shadow.blur);
-        //     canvas.set_shadow_color(shadow.color);
-        // }
-
-        // if let Some(background_color) = self.background_color {
-        //     canvas.set_fill_style(FillStyle::Color(background_color));
-        //     canvas.fill_path(path.clone(), FillRule::Winding);
-        // }
-
-        // canvas.set_line_width(self.border.width);
-        // canvas.set_stroke_style(FillStyle::Color(self.border.color));
-
-        // let border_rect = rect.contract(self.border.width / 2.0);
-
-        // // For now, we ignore the corner radius unless we draw a border on all sides.
-        // // This could be improved.
-        // if self.border.all_sides() {
-        //     let mut path = Path2D::new();
-        //     path.rect(border_rect);
-        //     canvas.stroke_path(path);
-        // } else {
-        //     canvas.set_line_cap(LineCap::Square);
-
-        //     if self.border.top {
-        //         let mut path = Path2D::new();
-        //         path.move_to(border_rect.origin());
-        //         path.line_to(border_rect.upper_right());
-        //         canvas.stroke_path(path);
-        //     }
-
-        //     if self.border.left {
-        //         let mut path = Path2D::new();
-        //         path.move_to(border_rect.origin());
-        //         path.line_to(border_rect.lower_left());
-        //         canvas.stroke_path(path);
-        //     }
-
-        //     if self.border.bottom {
-        //         let mut path = Path2D::new();
-        //         path.move_to(border_rect.lower_left());
-        //         path.line_to(border_rect.lower_right());
-        //         canvas.stroke_path(path);
-        //     }
-
-        //     if self.border.right {
-        //         let mut path = Path2D::new();
-        //         path.move_to(border_rect.upper_right());
-        //         path.line_to(border_rect.lower_right());
-        //         canvas.stroke_path(path);
-        //     }
-        // }
-        // canvas.restore();
-
-        // let mut child_origin = origin + vec2f(self.padding.left, self.padding.top);
-        // if self.border.left {
-        //     child_origin.set_x(child_origin.x() + self.border.width);
-        // }
-        // if self.border.top {
-        //     child_origin.set_y(child_origin.y() + self.border.width);
-        // }
-        // self.child.paint(child_origin, ctx, app);
+        ctx.scene.push_quad(Quad {
+            bounds: RectF::new(origin, self.size.unwrap()),
+            background: self.background_color,
+            border: self.border,
+            corder_radius: self.corner_radius,
+        });
+        self.child.paint(origin, ctx, app);
     }
 
     fn dispatch_event(&self, event: &Event, ctx: &mut EventContext, app: &AppContext) -> bool {
@@ -278,76 +184,6 @@ pub struct Overdraw {
     left: f32,
     bottom: f32,
     right: f32,
-}
-
-#[derive(Default)]
-pub struct Border {
-    width: f32,
-    color: ColorU,
-    pub top: bool,
-    pub left: bool,
-    pub bottom: bool,
-    pub right: bool,
-}
-
-impl Border {
-    pub fn new(width: f32, color: impl Into<ColorU>) -> Self {
-        Self {
-            width,
-            color: color.into(),
-            top: false,
-            left: false,
-            bottom: false,
-            right: false,
-        }
-    }
-
-    pub fn all(width: f32, color: impl Into<ColorU>) -> Self {
-        Self {
-            width,
-            color: color.into(),
-            top: true,
-            left: true,
-            bottom: true,
-            right: true,
-        }
-    }
-
-    pub fn top(width: f32, color: impl Into<ColorU>) -> Self {
-        let mut border = Self::new(width, color);
-        border.top = true;
-        border
-    }
-
-    pub fn left(width: f32, color: impl Into<ColorU>) -> Self {
-        let mut border = Self::new(width, color);
-        border.left = true;
-        border
-    }
-
-    pub fn bottom(width: f32, color: impl Into<ColorU>) -> Self {
-        let mut border = Self::new(width, color);
-        border.bottom = true;
-        border
-    }
-
-    pub fn right(width: f32, color: impl Into<ColorU>) -> Self {
-        let mut border = Self::new(width, color);
-        border.right = true;
-        border
-    }
-
-    pub fn with_sides(mut self, top: bool, left: bool, bottom: bool, right: bool) -> Self {
-        self.top = top;
-        self.left = left;
-        self.bottom = bottom;
-        self.right = right;
-        self
-    }
-
-    fn all_sides(&self) -> bool {
-        self.top && self.left && self.bottom && self.right
-    }
 }
 
 #[derive(Default)]

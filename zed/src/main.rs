@@ -2,7 +2,7 @@ use fs::OpenOptions;
 use gpui::platform::{current as platform, Runner as _};
 use log::LevelFilter;
 use simplelog::SimpleLogger;
-use std::{fs, mem, path::PathBuf};
+use std::{fs, path::PathBuf};
 use zed::{
     assets, editor, settings,
     workspace::{self, OpenParams},
