@@ -2,6 +2,7 @@ mod app;
 mod dispatcher;
 mod event;
 mod geometry;
+mod renderer;
 mod runner;
 mod window;
 
