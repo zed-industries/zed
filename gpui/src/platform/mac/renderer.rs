@@ -65,11 +65,11 @@ impl Renderer {
         });
 
         for layer in scene.layers() {
-            self.render_quads(layer, ctx);
+            self.render_quads(scene, layer, ctx);
         }
     }
 
-    fn render_quads(&mut self, layer: &Layer, ctx: &RenderContext) {
+    fn render_quads(&mut self, scene: &Scene, layer: &Layer, ctx: &RenderContext) {
         ctx.command_encoder
             .set_render_pipeline_state(&self.quad_pipeline_state);
         ctx.command_encoder.set_vertex_buffer(
@@ -96,15 +96,17 @@ impl Renderer {
         let buffer_contents = self.instances.contents() as *mut shaders::GPUIQuad;
         for quad_batch in layer.quads().chunks(batch_size) {
             for (ix, quad) in quad_batch.iter().enumerate() {
+                let bounds = quad.bounds * scene.scale_factor();
+                let shader_quad = shaders::GPUIQuad {
+                    origin: bounds.origin().to_float2(),
+                    size: bounds.size().to_float2(),
+                    background_color: quad
+                        .background
+                        .unwrap_or(ColorU::transparent_black())
+                        .to_uchar4(),
+                };
                 unsafe {
-                    *(buffer_contents.offset(ix as isize)) = shaders::GPUIQuad {
-                        origin: quad.bounds.origin().to_float2(),
-                        size: quad.bounds.size().to_float2(),
-                        background_color: quad
-                            .background
-                            .unwrap_or(ColorU::transparent_black())
-                            .to_uchar4(),
-                    };
+                    *(buffer_contents.offset(ix as isize)) = shader_quad;
                 }
             }
             self.instances.did_modify_range(NSRange {
