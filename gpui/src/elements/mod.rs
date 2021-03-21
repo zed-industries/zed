@@ -10,6 +10,7 @@ mod stack;
 mod svg;
 mod uniform_list;
 
+pub use crate::presenter::ChildView;
 pub use align::*;
 pub use constrained_box::*;
 pub use container::*;

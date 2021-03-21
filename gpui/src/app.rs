@@ -3,8 +3,9 @@ use crate::{
     executor::{self, ForegroundTask},
     keymap::{self, Keystroke},
     platform::{self, App as _, WindowOptions},
+    presenter::Presenter,
     util::post_inc,
-    AssetCache, AssetSource, FontCache, Presenter,
+    AssetCache, AssetSource, FontCache,
 };
 use anyhow::{anyhow, Result};
 use keymap::MatchResult;
@@ -1440,8 +1441,8 @@ impl<'a, T: Entity> ModelContext<'a, T> {
         self.app
     }
 
-    pub fn background_executor(&self) -> Arc<executor::Background> {
-        self.app.background.clone()
+    pub fn background_executor(&self) -> &Arc<executor::Background> {
+        &self.app.background
     }
 
     pub fn halt_stream(&mut self) {
@@ -1631,6 +1632,10 @@ impl<'a, T: View> ViewContext<'a, T> {
 
     pub fn app_mut(&mut self) -> &mut MutableAppContext {
         self.app
+    }
+
+    pub fn background_executor(&self) -> &Arc<executor::Background> {
+        &self.app.background
     }
 
     pub fn focus<S>(&mut self, handle: S)

@@ -1,5 +1,6 @@
 pub mod assets;
 pub mod editor;
+pub mod file_finder;
 mod operation_queue;
 pub mod settings;
 mod sum_tree;
