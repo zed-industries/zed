@@ -18,7 +18,7 @@ pub struct Quad {
     pub bounds: RectF,
     pub background: Option<ColorU>,
     pub border: Border,
-    pub corder_radius: f32,
+    pub corner_radius: f32,
 }
 
 #[derive(Clone, Copy, Default, Debug)]

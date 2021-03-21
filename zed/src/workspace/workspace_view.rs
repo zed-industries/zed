@@ -141,6 +141,7 @@ impl WorkspaceView {
             ctx.focus(&modal);
             self.modal = Some(modal.into());
         }
+        log::info!("toggle modal notify");
         ctx.notify();
     }
 

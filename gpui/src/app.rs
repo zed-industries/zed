@@ -11,6 +11,7 @@ use anyhow::{anyhow, Result};
 use keymap::MatchResult;
 use parking_lot::Mutex;
 use pathfinder_geometry::{rect::RectF, vector::vec2f};
+use platform::Event;
 use smol::{channel, prelude::*};
 use std::{
     any::{type_name, Any, TypeId},
@@ -639,10 +640,22 @@ impl MutableAppContext {
                 {
                     let mut app = self.upgrade();
                     let presenter = presenter.clone();
-                    window.on_event(Box::new(move |event, window| {
+                    window.on_event(Box::new(move |event| {
                         log::info!("event {:?}", event);
                         app.update(|ctx| {
-                            ctx.pending_flushes += 1;
+                            if let Event::KeyDown { keystroke, .. } = &event {
+                                if ctx
+                                    .dispatch_keystroke(
+                                        window_id,
+                                        presenter.borrow().dispatch_path(ctx.downgrade()),
+                                        keystroke,
+                                    )
+                                    .unwrap()
+                                {
+                                    return;
+                                }
+                            }
+
                             let actions = presenter
                                 .borrow_mut()
                                 .dispatch_event(event, ctx.downgrade());
@@ -654,7 +667,6 @@ impl MutableAppContext {
                                     action.arg.as_ref(),
                                 );
                             }
-                            ctx.flush_effects();
                         })
                     }));
                 }
@@ -675,6 +687,7 @@ impl MutableAppContext {
                 }
 
                 self.on_window_invalidated(window_id, move |invalidation, ctx| {
+                    log::info!("window invalidated");
                     let mut presenter = presenter.borrow_mut();
                     presenter.invalidate(invalidation, ctx.downgrade());
                     let scene = presenter.build_scene(window.size(), window.scale_factor(), ctx);

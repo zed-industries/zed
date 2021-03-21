@@ -97,6 +97,7 @@ impl Renderer {
         for quad_batch in layer.quads().chunks(batch_size) {
             for (ix, quad) in quad_batch.iter().enumerate() {
                 let bounds = quad.bounds * scene.scale_factor();
+                log::info!("render quad {:?}", quad);
                 let shader_quad = shaders::GPUIQuad {
                     origin: bounds.origin().to_float2(),
                     size: bounds.size().to_float2(),

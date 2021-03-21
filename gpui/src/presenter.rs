@@ -35,6 +35,17 @@ impl Presenter {
         }
     }
 
+    pub fn dispatch_path(&self, app: &AppContext) -> Vec<usize> {
+        let mut view_id = app.focused_view_id(self.window_id).unwrap();
+        let mut path = vec![view_id];
+        while let Some(parent_id) = self.parents.get(&view_id).copied() {
+            path.push(parent_id);
+            view_id = parent_id;
+        }
+        path.reverse();
+        path
+    }
+
     pub fn invalidate(&mut self, invalidation: WindowInvalidation, app: &AppContext) {
         for view_id in invalidation.updated {
             self.rendered_views

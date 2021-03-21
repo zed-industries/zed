@@ -148,7 +148,7 @@ impl Element for Container {
             bounds: RectF::new(origin, self.size.unwrap()),
             background: self.background_color,
             border: self.border,
-            corder_radius: self.corner_radius,
+            corner_radius: self.corner_radius,
         });
         self.child.paint(origin, ctx, app);
     }
