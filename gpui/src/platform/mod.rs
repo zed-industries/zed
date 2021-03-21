@@ -32,7 +32,7 @@ pub trait App {
         &self,
         options: WindowOptions,
         executor: Rc<executor::Foreground>,
-    ) -> Result<Rc<dyn Window>>;
+    ) -> Result<Box<dyn Window>>;
 }
 
 pub trait Dispatcher: Send + Sync {
@@ -40,10 +40,15 @@ pub trait Dispatcher: Send + Sync {
     fn run_on_main_thread(&self, task: Runnable);
 }
 
-pub trait Window {
+pub trait Window: WindowContext {
+    fn on_event(&mut self, callback: Box<dyn FnMut(Event, &mut dyn WindowContext)>);
+    fn on_resize(&mut self, callback: Box<dyn FnMut(&mut dyn WindowContext)>);
+}
+
+pub trait WindowContext {
     fn size(&self) -> Vector2F;
     fn scale_factor(&self) -> f32;
-    fn render_scene(&self, scene: Scene);
+    fn present_scene(&mut self, scene: Scene);
 }
 
 pub struct WindowOptions<'a> {

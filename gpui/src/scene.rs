@@ -6,12 +6,12 @@ pub struct Scene {
 }
 
 #[derive(Default)]
-struct Layer {
+pub struct Layer {
     clip_bounds: Option<RectF>,
     quads: Vec<Quad>,
 }
 
-#[derive(Default)]
+#[derive(Default, Debug)]
 pub struct Quad {
     pub bounds: RectF,
     pub background: Option<ColorU>,
@@ -19,7 +19,7 @@ pub struct Quad {
     pub corder_radius: f32,
 }
 
-#[derive(Clone, Copy, Default)]
+#[derive(Clone, Copy, Default, Debug)]
 pub struct Border {
     pub width: f32,
     pub color: Option<ColorU>,
@@ -38,12 +38,18 @@ impl Scene {
         }
     }
 
-    pub fn push_layer(&mut self, clip_bounds: Option<RectF>) {}
-
-    pub fn pop_layer(&mut self) {
-        assert!(self.active_layer_stack.len() > 1);
-        self.active_layer_stack.pop();
+    pub fn layers(&self) -> &[Layer] {
+        self.layers.as_slice()
     }
+
+    // pub fn push_layer(&mut self, clip_bounds: Option<RectF>) {
+
+    // }
+
+    // pub fn pop_layer(&mut self) {
+    //     assert!(self.active_layer_stack.len() > 1);
+    //     self.active_layer_stack.pop();
+    // }
 
     pub fn push_quad(&mut self, quad: Quad) {
         self.active_layer().push_quad(quad)
@@ -57,6 +63,10 @@ impl Scene {
 impl Layer {
     fn push_quad(&mut self, quad: Quad) {
         self.quads.push(quad);
+    }
+
+    pub fn quads(&self) -> &[Quad] {
+        self.quads.as_slice()
     }
 }
 

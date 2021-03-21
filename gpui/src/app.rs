@@ -13,7 +13,6 @@ use pathfinder_geometry::{rect::RectF, vector::vec2f};
 use smol::{channel, prelude::*};
 use std::{
     any::{type_name, Any, TypeId},
-    borrow,
     cell::RefCell,
     collections::{HashMap, HashSet, VecDeque},
     fmt::{self, Debug},
@@ -292,6 +291,7 @@ type ActionCallback =
 type GlobalActionCallback = dyn FnMut(&dyn Any, &mut MutableAppContext);
 
 pub struct MutableAppContext {
+    weak_self: Option<rc::Weak<RefCell<Self>>>,
     platform: Arc<dyn platform::App>,
     fonts: Arc<FontCache>,
     assets: Arc<AssetCache>,
@@ -302,7 +302,6 @@ pub struct MutableAppContext {
     next_entity_id: usize,
     next_window_id: usize,
     next_task_id: usize,
-    weak_self: Option<rc::Weak<RefCell<Self>>>,
     subscriptions: HashMap<usize, Vec<Subscription>>,
     observations: HashMap<usize, Vec<Observation>>,
     window_invalidations: HashMap<usize, WindowInvalidation>,
@@ -325,6 +324,7 @@ impl MutableAppContext {
         asset_source: impl AssetSource,
     ) -> Self {
         Self {
+            weak_self: None,
             platform,
             fonts: Arc::new(FontCache::new()),
             assets: Arc::new(AssetCache::new(asset_source)),
@@ -339,7 +339,6 @@ impl MutableAppContext {
             next_entity_id: 0,
             next_window_id: 0,
             next_task_id: 0,
-            weak_self: None,
             subscriptions: HashMap::new(),
             observations: HashMap::new(),
             window_invalidations: HashMap::new(),
@@ -353,6 +352,10 @@ impl MutableAppContext {
             pending_flushes: 0,
             flushing_effects: false,
         }
+    }
+
+    pub fn upgrade(&self) -> App {
+        App(self.weak_self.as_ref().unwrap().upgrade().unwrap())
     }
 
     pub fn downgrade(&self) -> &AppContext {
@@ -624,7 +627,7 @@ impl MutableAppContext {
             self.foreground.clone(),
         ) {
             Err(e) => log::error!("error opening window: {}", e),
-            Ok(window) => {
+            Ok(mut window) => {
                 let presenter = Rc::new(RefCell::new(Presenter::new(
                     window_id,
                     self.fonts.clone(),
@@ -632,11 +635,26 @@ impl MutableAppContext {
                     self,
                 )));
 
+                {
+                    let mut app = self.upgrade();
+                    let presenter = presenter.clone();
+                    window.on_resize(Box::new(move |window| {
+                        app.update(|ctx| {
+                            let scene = presenter.borrow_mut().build_scene(
+                                window.size(),
+                                window.scale_factor(),
+                                ctx,
+                            );
+                            window.present_scene(scene);
+                        })
+                    }));
+                }
+
                 self.on_window_invalidated(window_id, move |invalidation, ctx| {
                     let mut presenter = presenter.borrow_mut();
                     presenter.invalidate(invalidation, ctx.downgrade());
                     let scene = presenter.build_scene(window.size(), window.scale_factor(), ctx);
-                    window.render_scene(scene);
+                    window.present_scene(scene);
                 });
             }
         }
@@ -1909,7 +1927,7 @@ impl<T> Hash for ModelHandle<T> {
     }
 }
 
-impl<T> borrow::Borrow<usize> for ModelHandle<T> {
+impl<T> std::borrow::Borrow<usize> for ModelHandle<T> {
     fn borrow(&self) -> &usize {
         &self.model_id
     }

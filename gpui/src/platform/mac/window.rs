@@ -1,7 +1,8 @@
 use crate::{
     executor,
     geometry::vector::Vector2F,
-    platform::{self, Event},
+    platform::{self, Event, WindowContext},
+    util::post_inc,
     Scene,
 };
 use anyhow::{anyhow, Result};
@@ -27,7 +28,7 @@ use objc::{
 use pathfinder_geometry::vector::vec2f;
 use smol::Timer;
 use std::{
-    cell::{Cell, RefCell},
+    cell::RefCell,
     ffi::c_void,
     mem, ptr,
     rc::Rc,
@@ -111,16 +112,16 @@ unsafe fn build_classes() {
     };
 }
 
-pub struct Window(Rc<WindowState>);
+pub struct Window(Rc<RefCell<WindowState>>);
 
 struct WindowState {
     native_window: id,
-    event_callback: RefCell<Option<Box<dyn FnMut(Event) -> bool>>>,
-    resize_callback: RefCell<Option<Box<dyn FnMut(Vector2F, f32)>>>,
-    synthetic_drag_counter: Cell<usize>,
+    event_callback: Option<Box<dyn FnMut(Event, &mut dyn platform::WindowContext)>>,
+    resize_callback: Option<Box<dyn FnMut(&mut dyn platform::WindowContext)>>,
+    synthetic_drag_counter: usize,
     executor: Rc<executor::Foreground>,
-    scene_to_render: RefCell<Option<Scene>>,
-    renderer: RefCell<Renderer>,
+    scene_to_render: Option<Scene>,
+    renderer: Renderer,
     command_queue: metal::CommandQueue,
     device: metal::Device,
     layer: id,
@@ -181,18 +182,18 @@ impl Window {
                 return Err(anyhow!("view return nil from initializer"));
             }
 
-            let window = Self(Rc::new(WindowState {
+            let window = Self(Rc::new(RefCell::new(WindowState {
                 native_window,
-                event_callback: RefCell::new(None),
-                resize_callback: RefCell::new(None),
-                synthetic_drag_counter: Cell::new(0),
+                event_callback: None,
+                resize_callback: None,
+                synthetic_drag_counter: 0,
                 executor,
                 scene_to_render: Default::default(),
-                renderer: RefCell::new(Renderer::new(&device, PIXEL_FORMAT)?),
+                renderer: Renderer::new(&device, PIXEL_FORMAT)?,
                 command_queue: device.new_command_queue(),
                 device,
                 layer,
-            }));
+            })));
 
             (*native_window).set_ivar(
                 WINDOW_STATE_IVAR,
@@ -236,46 +237,44 @@ impl Window {
 
     pub fn zoom(&self) {
         unsafe {
-            self.0.native_window.performZoom_(nil);
+            self.0.as_ref().borrow().native_window.performZoom_(nil);
         }
-    }
-
-    pub fn on_event<F: 'static + FnMut(Event) -> bool>(&mut self, callback: F) {
-        *self.0.event_callback.borrow_mut() = Some(Box::new(callback));
-    }
-
-    pub fn on_resize<F: 'static + FnMut(Vector2F, f32)>(&mut self, callback: F) {
-        *self.0.resize_callback.borrow_mut() = Some(Box::new(callback));
     }
 }
 
 impl Drop for Window {
     fn drop(&mut self) {
         unsafe {
-            self.0.native_window.close();
-            let _: () = msg_send![self.0.native_window.delegate(), release];
+            self.0.as_ref().borrow().native_window.close();
         }
     }
 }
 
 impl platform::Window for Window {
-    fn size(&self) -> Vector2F {
-        self.0.size()
+    fn on_event(&mut self, callback: Box<dyn FnMut(Event, &mut dyn platform::WindowContext)>) {
+        self.0.as_ref().borrow_mut().event_callback = Some(callback);
     }
 
-    fn scale_factor(&self) -> f32 {
-        self.0.scale_factor()
-    }
-
-    fn render_scene(&self, scene: Scene) {
-        *self.0.scene_to_render.borrow_mut() = Some(scene);
-        unsafe {
-            let _: () = msg_send![self.0.native_window.contentView(), setNeedsDisplay: YES];
-        }
+    fn on_resize(&mut self, callback: Box<dyn FnMut(&mut dyn platform::WindowContext)>) {
+        self.0.as_ref().borrow_mut().resize_callback = Some(callback);
     }
 }
 
-impl WindowState {
+impl platform::WindowContext for Window {
+    fn size(&self) -> Vector2F {
+        self.0.as_ref().borrow().size()
+    }
+
+    fn scale_factor(&self) -> f32 {
+        self.0.as_ref().borrow().scale_factor()
+    }
+
+    fn present_scene(&mut self, scene: Scene) {
+        self.0.as_ref().borrow_mut().present_scene(scene);
+    }
+}
+
+impl platform::WindowContext for WindowState {
     fn size(&self) -> Vector2F {
         let NSSize { width, height, .. } =
             unsafe { NSView::frame(self.native_window.contentView()) }.size;
@@ -289,16 +288,17 @@ impl WindowState {
         }
     }
 
-    fn next_synthetic_drag_id(&self) -> usize {
-        let next_id = self.synthetic_drag_counter.get() + 1;
-        self.synthetic_drag_counter.set(next_id);
-        next_id
+    fn present_scene(&mut self, scene: Scene) {
+        self.scene_to_render = Some(scene);
+        unsafe {
+            let _: () = msg_send![self.native_window.contentView(), setNeedsDisplay: YES];
+        }
     }
 }
 
-unsafe fn window_state(object: &Object) -> Rc<WindowState> {
+unsafe fn get_window_state(object: &Object) -> Rc<RefCell<WindowState>> {
     let raw: *mut c_void = *object.get_ivar(WINDOW_STATE_IVAR);
-    let rc1 = Rc::from_raw(raw as *mut WindowState);
+    let rc1 = Rc::from_raw(raw as *mut RefCell<WindowState>);
     let rc2 = rc1.clone();
     mem::forget(rc1);
     rc2
@@ -328,23 +328,25 @@ extern "C" fn dealloc_view(this: &Object, _: Sel) {
 }
 
 extern "C" fn handle_view_event(this: &Object, _: Sel, native_event: id) {
-    let window = unsafe { window_state(this) };
+    let window_state = unsafe { get_window_state(this) };
+    let mut window_state_borrow = window_state.as_ref().borrow_mut();
 
-    let event = unsafe { Event::from_native(native_event, Some(window.size().y())) };
+    let event = unsafe { Event::from_native(native_event, Some(window_state_borrow.size().y())) };
 
     if let Some(event) = event {
         match event {
-            Event::LeftMouseDragged { position } => schedule_synthetic_drag(&window, position),
+            Event::LeftMouseDragged { position } => {
+                schedule_synthetic_drag(&&window_state, position)
+            }
             Event::LeftMouseUp { .. } => {
-                window.next_synthetic_drag_id();
+                post_inc(&mut window_state_borrow.synthetic_drag_counter);
             }
             _ => {}
         }
 
-        if let Some(callback) = window.event_callback.borrow_mut().as_mut() {
-            if callback(event) {
-                return;
-            }
+        if let Some(mut callback) = window_state_borrow.event_callback.take() {
+            callback(event, &mut *window_state_borrow);
+            window_state_borrow.event_callback = Some(callback);
         }
     }
 }
@@ -356,55 +358,62 @@ extern "C" fn send_event(this: &Object, _: Sel, native_event: id) {
 }
 
 extern "C" fn make_backing_layer(this: &Object, _: Sel) -> id {
-    let window = unsafe { window_state(this) };
-    window.layer
+    let window_state = unsafe { get_window_state(this) };
+    let window_state = window_state.as_ref().borrow();
+    window_state.layer
 }
 
 extern "C" fn view_did_change_backing_properties(this: &Object, _: Sel) {
-    let window;
+    let window_state = unsafe { get_window_state(this) };
+    let mut window_state = window_state.as_ref().borrow_mut();
+
     unsafe {
-        window = window_state(this);
-        let _: () = msg_send![window.layer, setContentsScale: window.scale_factor() as f64];
+        let _: () =
+            msg_send![window_state.layer, setContentsScale: window_state.scale_factor() as f64];
     }
 
-    if let Some(callback) = window.resize_callback.borrow_mut().as_mut() {
-        let size = window.size();
-        let scale_factor = window.scale_factor();
-        callback(size, scale_factor);
+    if let Some(mut callback) = window_state.resize_callback.take() {
+        callback(&mut *window_state);
+        window_state.resize_callback = Some(callback);
     };
 }
 
 extern "C" fn set_frame_size(this: &Object, _: Sel, size: NSSize) {
-    let window;
-    unsafe {
-        window = window_state(this);
-        if window.size() == vec2f(size.width as f32, size.height as f32) {
-            return;
-        }
+    let window_state = unsafe { get_window_state(this) };
+    let mut window_state = window_state.as_ref().borrow_mut();
 
-        let _: () = msg_send![super(this, class!(NSView)), setFrameSize: size];
-
-        let scale_factor = window.scale_factor() as f64;
-        let drawable_size: NSSize = NSSize {
-            width: size.width * scale_factor,
-            height: size.height * scale_factor,
-        };
-        let _: () = msg_send![window.layer, setDrawableSize: drawable_size];
+    if window_state.size() == vec2f(size.width as f32, size.height as f32) {
+        return;
     }
 
-    if let Some(callback) = window.resize_callback.borrow_mut().as_mut() {
-        let size = window.size();
-        let scale_factor = window.scale_factor();
-        callback(size, scale_factor);
+    unsafe {
+        let _: () = msg_send![super(this, class!(NSView)), setFrameSize: size];
+    }
+
+    let scale_factor = window_state.scale_factor() as f64;
+    let drawable_size: NSSize = NSSize {
+        width: size.width * scale_factor,
+        height: size.height * scale_factor,
+    };
+
+    unsafe {
+        let _: () = msg_send![window_state.layer, setDrawableSize: drawable_size];
+    }
+
+    if let Some(mut callback) = window_state.resize_callback.take() {
+        callback(&mut *window_state);
+        window_state.resize_callback = Some(callback);
     };
 }
 
 extern "C" fn display_layer(this: &Object, _: Sel, _: id) {
+    log::info!("display layer");
     unsafe {
-        let window = window_state(this);
+        let window_state = get_window_state(this);
+        let mut window_state = window_state.as_ref().borrow_mut();
 
-        if let Some(scene) = window.scene_to_render.borrow_mut().take() {
-            let drawable: &metal::MetalDrawableRef = msg_send![window.layer, nextDrawable];
+        if let Some(scene) = window_state.scene_to_render.take() {
+            let drawable: &metal::MetalDrawableRef = msg_send![window_state.layer, nextDrawable];
 
             let render_pass_descriptor = metal::RenderPassDescriptor::new();
             let color_attachment = render_pass_descriptor
@@ -416,14 +425,19 @@ extern "C" fn display_layer(this: &Object, _: Sel, _: id) {
             color_attachment.set_store_action(MTLStoreAction::Store);
             color_attachment.set_clear_color(MTLClearColor::new(0., 0., 0., 1.));
 
-            let command_buffer = window.command_queue.new_command_buffer();
+            let command_queue = window_state.command_queue.clone();
+            let command_buffer = command_queue.new_command_buffer();
             let command_encoder = command_buffer.new_render_command_encoder(render_pass_descriptor);
 
-            window.renderer.borrow_mut().render(
+            let size = window_state.size();
+            let scale_factor = window_state.scale_factor();
+            let device = window_state.device.clone();
+
+            window_state.renderer.render(
                 &scene,
-                RenderContext {
-                    drawable_size: window.size() * window.scale_factor(),
-                    device: &window.device,
+                &RenderContext {
+                    drawable_size: size * scale_factor,
+                    device: &device,
                     command_encoder,
                 },
             );
@@ -432,23 +446,33 @@ extern "C" fn display_layer(this: &Object, _: Sel, _: id) {
             command_buffer.commit();
             command_buffer.wait_until_completed();
             drawable.present();
+
+            log::info!("present");
         };
     }
 }
 
-fn schedule_synthetic_drag(window_state: &Rc<WindowState>, position: Vector2F) {
-    let drag_id = window_state.next_synthetic_drag_id();
+fn schedule_synthetic_drag(window_state: &Rc<RefCell<WindowState>>, position: Vector2F) {
     let weak_window_state = Rc::downgrade(window_state);
+    let mut window_state = window_state.as_ref().borrow_mut();
+
+    let drag_id = post_inc(&mut window_state.synthetic_drag_counter);
     let instant = Instant::now() + Duration::from_millis(16);
+
     window_state
         .executor
         .spawn(async move {
             Timer::at(instant).await;
             if let Some(window_state) = weak_window_state.upgrade() {
-                if window_state.synthetic_drag_counter.get() == drag_id {
-                    if let Some(callback) = window_state.event_callback.borrow_mut().as_mut() {
+                let mut window_state_borrow = window_state.as_ref().borrow_mut();
+                if window_state_borrow.synthetic_drag_counter == drag_id {
+                    if let Some(mut callback) = window_state_borrow.event_callback.take() {
                         schedule_synthetic_drag(&window_state, position);
-                        callback(Event::LeftMouseDragged { position });
+                        callback(
+                            Event::LeftMouseDragged { position },
+                            &mut *window_state_borrow,
+                        );
+                        window_state_borrow.event_callback = Some(callback);
                     }
                 }
             }

@@ -3,6 +3,10 @@
 
 using namespace metal;
 
+float4 coloru_to_colorf(uchar4 coloru) {
+    return float4(coloru) / float4(0xff, 0xff, 0xff, 0xff);
+}
+
 struct QuadFragmentInput {
     float4 position [[position]];
     GPUIQuad quad;
@@ -17,14 +21,15 @@ vertex QuadFragmentInput quad_vertex(
 ) {
     float2 unit_vertex = unit_vertices[unit_vertex_id];
     GPUIQuad quad = quads[quad_id];
-    float4 position = float4((unit_vertex * quad.size + quad.origin) / (uniforms->viewport_size / 2.0), 0.0, 1.0);
+    float2 position = (unit_vertex * quad.size + quad.origin) / (uniforms->viewport_size / 2.0);
+    float4 device_position = float4(position * float2(2.0, -2.0) + float2(-1.0, 1.0), 0.0, 1.0);
 
     return QuadFragmentInput {
-        position,
+        device_position,
         quad,
     };
 }
 
 fragment float4 quad_fragment(QuadFragmentInput input [[stage_in]]) {
-    return input.quad.background_color;
+    return coloru_to_colorf(input.quad.background_color);
 }

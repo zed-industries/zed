@@ -33,7 +33,7 @@ impl platform::App for App {
         &self,
         options: platform::WindowOptions,
         executor: Rc<executor::Foreground>,
-    ) -> Result<Rc<dyn platform::Window>> {
-        Ok(Rc::new(Window::open(options, executor)?))
+    ) -> Result<Box<dyn platform::Window>> {
+        Ok(Box::new(Window::open(options, executor)?))
     }
 }

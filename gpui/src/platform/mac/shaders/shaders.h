@@ -9,7 +9,7 @@ typedef enum {
 typedef struct {
     vector_float2 origin;
     vector_float2 size;
-    vector_float4 background_color;
+    vector_uchar4 background_color;
 } GPUIQuad;
 
 typedef struct {
