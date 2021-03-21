@@ -109,11 +109,7 @@ impl Presenter {
         })
     }
 
-    pub fn dispatch_event(
-        &self,
-        event: Event,
-        app: &AppContext,
-    ) -> Vec<(usize, &'static str, Box<dyn Any>)> {
+    pub fn dispatch_event(&self, event: Event, app: &AppContext) -> Vec<ActionToDispatch> {
         let mut event_ctx = EventContext {
             rendered_views: &self.rendered_views,
             actions: Vec::new(),
@@ -126,6 +122,12 @@ impl Presenter {
         }
         event_ctx.actions
     }
+}
+
+pub struct ActionToDispatch {
+    pub path: Vec<usize>,
+    pub name: &'static str,
+    pub arg: Box<dyn Any>,
 }
 
 pub struct LayoutContext<'a> {
@@ -184,7 +186,7 @@ impl<'a> PaintContext<'a> {
 
 pub struct EventContext<'a> {
     rendered_views: &'a HashMap<usize, Box<dyn Element>>,
-    actions: Vec<(usize, &'static str, Box<dyn Any>)>,
+    actions: Vec<ActionToDispatch>,
     pub font_cache: &'a FontCache,
     pub text_layout_cache: &'a TextLayoutCache,
     view_stack: Vec<usize>,
@@ -208,8 +210,11 @@ impl<'a> EventContext<'a> {
     }
 
     pub fn dispatch_action<A: 'static + Any>(&mut self, name: &'static str, arg: A) {
-        self.actions
-            .push((*self.view_stack.last().unwrap(), name, Box::new(arg)));
+        self.actions.push(ActionToDispatch {
+            path: self.view_stack.clone(),
+            name,
+            arg: Box::new(arg),
+        });
     }
 }
 

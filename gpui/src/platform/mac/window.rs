@@ -31,8 +31,8 @@ use std::{
     cell::RefCell,
     ffi::c_void,
     mem, ptr,
-    rc::Rc,
-    time::{Duration, Instant},
+    rc::{Rc, Weak},
+    time::Duration,
 };
 
 use super::{geometry::RectFExt, renderer::Renderer};
@@ -330,24 +330,33 @@ extern "C" fn dealloc_view(this: &Object, _: Sel) {
 
 extern "C" fn handle_view_event(this: &Object, _: Sel, native_event: id) {
     let window_state = unsafe { get_window_state(this) };
-    let mut window_state_borrow = window_state.as_ref().borrow_mut();
+    let weak_window_state = Rc::downgrade(&window_state);
+    let mut window_state = window_state.as_ref().borrow_mut();
 
-    let event = unsafe { Event::from_native(native_event, Some(window_state_borrow.size().y())) };
+    let event = unsafe { Event::from_native(native_event, Some(window_state.size().y())) };
 
     if let Some(event) = event {
         match event {
             Event::LeftMouseDragged { position } => {
-                schedule_synthetic_drag(&&window_state, position)
+                window_state.synthetic_drag_counter += 1;
+                window_state
+                    .executor
+                    .spawn(synthetic_drag(
+                        weak_window_state,
+                        window_state.synthetic_drag_counter,
+                        position,
+                    ))
+                    .detach();
             }
             Event::LeftMouseUp { .. } => {
-                post_inc(&mut window_state_borrow.synthetic_drag_counter);
+                window_state.synthetic_drag_counter += 1;
             }
             _ => {}
         }
 
-        if let Some(mut callback) = window_state_borrow.event_callback.take() {
-            callback(event, &mut *window_state_borrow);
-            window_state_borrow.event_callback = Some(callback);
+        if let Some(mut callback) = window_state.event_callback.take() {
+            callback(event, &mut *window_state);
+            window_state.event_callback = Some(callback);
         }
     }
 }
@@ -450,30 +459,23 @@ extern "C" fn display_layer(this: &Object, _: Sel, _: id) {
     }
 }
 
-fn schedule_synthetic_drag(window_state: &Rc<RefCell<WindowState>>, position: Vector2F) {
-    let weak_window_state = Rc::downgrade(window_state);
-    let mut window_state = window_state.as_ref().borrow_mut();
-
-    let drag_id = post_inc(&mut window_state.synthetic_drag_counter);
-    let instant = Instant::now() + Duration::from_millis(16);
-
-    window_state
-        .executor
-        .spawn(async move {
-            Timer::at(instant).await;
-            if let Some(window_state) = weak_window_state.upgrade() {
-                let mut window_state_borrow = window_state.as_ref().borrow_mut();
-                if window_state_borrow.synthetic_drag_counter == drag_id {
-                    if let Some(mut callback) = window_state_borrow.event_callback.take() {
-                        schedule_synthetic_drag(&window_state, position);
-                        callback(
-                            Event::LeftMouseDragged { position },
-                            &mut *window_state_borrow,
-                        );
-                        window_state_borrow.event_callback = Some(callback);
-                    }
+async fn synthetic_drag(
+    window_state: Weak<RefCell<WindowState>>,
+    drag_id: usize,
+    position: Vector2F,
+) {
+    loop {
+        Timer::after(Duration::from_millis(16)).await;
+        if let Some(window_state) = window_state.upgrade() {
+            let mut window_state = window_state.borrow_mut();
+            if window_state.synthetic_drag_counter == drag_id {
+                if let Some(mut callback) = window_state.event_callback.take() {
+                    callback(Event::LeftMouseDragged { position }, &mut *window_state);
+                    window_state.event_callback = Some(callback);
                 }
+            } else {
+                break;
             }
-        })
-        .detach();
+        }
+    }
 }

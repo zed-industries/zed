@@ -17,6 +17,7 @@ pub enum Foreground {
     Test(smol::LocalExecutor<'static>),
 }
 
+#[must_use]
 #[pin_project(project = ForegroundTaskProject)]
 pub enum ForegroundTask<T> {
     Platform(#[pin] async_task::Task<T>),

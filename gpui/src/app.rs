@@ -467,14 +467,14 @@ impl MutableAppContext {
     pub fn dispatch_action(
         &mut self,
         window_id: usize,
-        responder_chain: &[usize],
+        path: &[usize],
         name: &str,
         arg: &dyn Any,
     ) -> bool {
         self.pending_flushes += 1;
         let mut halted_dispatch = false;
 
-        for view_id in responder_chain.iter().rev() {
+        for view_id in path.iter().rev() {
             if let Some(mut view) = self
                 .ctx
                 .windows
@@ -634,6 +634,29 @@ impl MutableAppContext {
                     self.assets.clone(),
                     self,
                 )));
+
+                {
+                    let mut app = self.upgrade();
+                    let presenter = presenter.clone();
+                    window.on_event(Box::new(move |event, window| {
+                        log::info!("event {:?}", event);
+                        app.update(|ctx| {
+                            ctx.pending_flushes += 1;
+                            let actions = presenter
+                                .borrow_mut()
+                                .dispatch_event(event, ctx.downgrade());
+                            for action in actions {
+                                ctx.dispatch_action(
+                                    window_id,
+                                    &action.path,
+                                    action.name,
+                                    action.arg.as_ref(),
+                                );
+                            }
+                            ctx.flush_effects();
+                        })
+                    }));
+                }
 
                 {
                     let mut app = self.upgrade();
