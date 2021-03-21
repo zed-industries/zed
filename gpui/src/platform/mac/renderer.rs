@@ -96,7 +96,6 @@ impl Renderer {
         let buffer_contents = self.instances.contents() as *mut shaders::GPUIQuad;
         for quad_batch in layer.quads().chunks(batch_size) {
             for (ix, quad) in quad_batch.iter().enumerate() {
-                log::info!("render {} {:?}", ix, quad);
                 unsafe {
                     *(buffer_contents.offset(ix as isize)) = shaders::GPUIQuad {
                         origin: quad.bounds.origin().to_float2(),

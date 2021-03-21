@@ -90,11 +90,12 @@ unsafe fn build_classes() {
             handle_view_event as extern "C" fn(&Object, Sel, id),
         );
 
-        decl.add_protocol(Protocol::get("CALayerDelegate").unwrap());
         decl.add_method(
             sel!(makeBackingLayer),
             make_backing_layer as extern "C" fn(&Object, Sel) -> id,
         );
+
+        decl.add_protocol(Protocol::get("CALayerDelegate").unwrap());
         decl.add_method(
             sel!(viewDidChangeBackingProperties),
             view_did_change_backing_properties as extern "C" fn(&Object, Sel),
@@ -407,7 +408,6 @@ extern "C" fn set_frame_size(this: &Object, _: Sel, size: NSSize) {
 }
 
 extern "C" fn display_layer(this: &Object, _: Sel, _: id) {
-    log::info!("display layer");
     unsafe {
         let window_state = get_window_state(this);
         let mut window_state = window_state.as_ref().borrow_mut();
@@ -446,8 +446,6 @@ extern "C" fn display_layer(this: &Object, _: Sel, _: id) {
             command_buffer.commit();
             command_buffer.wait_until_completed();
             drawable.present();
-
-            log::info!("present");
         };
     }
 }
