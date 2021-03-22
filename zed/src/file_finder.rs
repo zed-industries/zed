@@ -69,8 +69,7 @@ impl View for FileFinder {
                 .with_margin_top(12.0)
                 .with_uniform_padding(6.0)
                 .with_corner_radius(6.0)
-                .with_background_color(ColorU::new(0xff, 0xf2, 0xf2, 0xff))
-                // .with_background_color(ColorU::new(0xf2, 0xf2, 0xf2, 0xff))
+                .with_background_color(ColorU::new(0xf2, 0xf2, 0xf2, 0xff))
                 .with_shadow(
                     vec2f(0.0, 4.0),
                     12.0,
