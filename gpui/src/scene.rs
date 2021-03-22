@@ -11,6 +11,7 @@ pub struct Scene {
 pub struct Layer {
     clip_bounds: Option<RectF>,
     quads: Vec<Quad>,
+    shadows: Vec<Shadow>,
 }
 
 #[derive(Default, Debug)]
@@ -19,6 +20,13 @@ pub struct Quad {
     pub background: Option<ColorU>,
     pub border: Border,
     pub corner_radius: f32,
+}
+
+pub struct Shadow {
+    pub bounds: RectF,
+    pub corner_radius: f32,
+    pub sigma: f32,
+    pub color: ColorU,
 }
 
 #[derive(Clone, Copy, Default, Debug)]
@@ -61,6 +69,10 @@ impl Scene {
         self.active_layer().push_quad(quad)
     }
 
+    pub fn push_shadow(&mut self, shadow: Shadow) {
+        self.active_layer().push_shadow(shadow)
+    }
+
     fn active_layer(&mut self) -> &mut Layer {
         &mut self.layers[*self.active_layer_stack.last().unwrap()]
     }
@@ -73,6 +85,14 @@ impl Layer {
 
     pub fn quads(&self) -> &[Quad] {
         self.quads.as_slice()
+    }
+
+    fn push_shadow(&mut self, shadow: Shadow) {
+        self.shadows.push(shadow);
+    }
+
+    pub fn shadows(&self) -> &[Shadow] {
+        self.shadows.as_slice()
     }
 }
 

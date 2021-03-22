@@ -3,7 +3,7 @@ use pathfinder_geometry::rect::RectF;
 use crate::{
     color::ColorU,
     geometry::vector::{vec2f, Vector2F},
-    scene::{Border, Quad},
+    scene::{self, Border, Quad},
     AfterLayoutContext, Element, ElementBox, Event, EventContext, LayoutContext, PaintContext,
     SizeConstraint,
 };
@@ -150,6 +150,14 @@ impl Element for Container {
         _: &mut Self::LayoutState,
         ctx: &mut PaintContext,
     ) -> Self::PaintState {
+        if let Some(shadow) = self.shadow.as_ref() {
+            ctx.scene.push_shadow(scene::Shadow {
+                bounds: bounds + shadow.offset,
+                corner_radius: self.corner_radius,
+                sigma: shadow.blur,
+                color: shadow.color,
+            });
+        }
         ctx.scene.push_quad(Quad {
             bounds,
             background: self.background_color,

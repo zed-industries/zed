@@ -14,7 +14,8 @@ const INSTANCE_BUFFER_SIZE: u64 = 1024 * 1024;
 
 pub struct Renderer {
     quad_pipeline_state: metal::RenderPipelineState,
-    quad_vertices: metal::Buffer,
+    shadow_pipeline_state: metal::RenderPipelineState,
+    unit_vertices: metal::Buffer,
     instances: metal::Buffer,
 }
 
@@ -24,7 +25,7 @@ impl Renderer {
             .new_library_with_data(SHADERS_METALLIB)
             .map_err(|message| anyhow!("error building metal library: {}", message))?;
 
-        let quad_vertices = [
+        let unit_vertices = [
             (0., 0.).to_float2(),
             (1., 0.).to_float2(),
             (0., 1.).to_float2(),
@@ -32,9 +33,9 @@ impl Renderer {
             (1., 0.).to_float2(),
             (1., 1.).to_float2(),
         ];
-        let quad_vertices = device.new_buffer_with_data(
-            quad_vertices.as_ptr() as *const c_void,
-            (quad_vertices.len() * mem::size_of::<shaders::vector_float2>()) as u64,
+        let unit_vertices = device.new_buffer_with_data(
+            unit_vertices.as_ptr() as *const c_void,
+            (unit_vertices.len() * mem::size_of::<shaders::vector_float2>()) as u64,
             MTLResourceOptions::StorageModeManaged,
         );
         let instances =
@@ -49,7 +50,15 @@ impl Renderer {
                 "quad_fragment",
                 pixel_format,
             )?,
-            quad_vertices,
+            shadow_pipeline_state: build_pipeline_state(
+                device,
+                &library,
+                "shadow",
+                "shadow_vertex",
+                "shadow_fragment",
+                pixel_format,
+            )?,
+            unit_vertices,
             instances,
         })
     }
@@ -65,7 +74,61 @@ impl Renderer {
         });
 
         for layer in scene.layers() {
+            self.render_shadows(scene, layer, ctx);
             self.render_quads(scene, layer, ctx);
+        }
+    }
+
+    fn render_shadows(&mut self, scene: &Scene, layer: &Layer, ctx: &RenderContext) {
+        ctx.command_encoder
+            .set_render_pipeline_state(&self.shadow_pipeline_state);
+        ctx.command_encoder.set_vertex_buffer(
+            shaders::GPUIShadowInputIndex_GPUIShadowInputIndexVertices as u64,
+            Some(&self.unit_vertices),
+            0,
+        );
+        ctx.command_encoder.set_vertex_buffer(
+            shaders::GPUIShadowInputIndex_GPUIShadowInputIndexShadows as u64,
+            Some(&self.instances),
+            0,
+        );
+        ctx.command_encoder.set_vertex_bytes(
+            shaders::GPUIShadowInputIndex_GPUIShadowInputIndexUniforms as u64,
+            mem::size_of::<shaders::GPUIUniforms>() as u64,
+            [shaders::GPUIUniforms {
+                viewport_size: ctx.drawable_size.to_float2(),
+            }]
+            .as_ptr() as *const c_void,
+        );
+
+        let batch_size = self.instances.length() as usize / mem::size_of::<shaders::GPUIShadow>();
+
+        let buffer_contents = self.instances.contents() as *mut shaders::GPUIShadow;
+        for shadow_batch in layer.shadows().chunks(batch_size) {
+            for (ix, shadow) in shadow_batch.iter().enumerate() {
+                let shape_bounds = shadow.bounds * scene.scale_factor();
+                let shader_shadow = shaders::GPUIShadow {
+                    origin: shape_bounds.origin().to_float2(),
+                    size: shape_bounds.size().to_float2(),
+                    corner_radius: shadow.corner_radius,
+                    sigma: shadow.sigma,
+                    color: shadow.color.to_uchar4(),
+                };
+                unsafe {
+                    *(buffer_contents.offset(ix as isize)) = shader_shadow;
+                }
+            }
+            self.instances.did_modify_range(NSRange {
+                location: 0,
+                length: (shadow_batch.len() * mem::size_of::<shaders::GPUIShadow>()) as u64,
+            });
+
+            ctx.command_encoder.draw_primitives_instanced(
+                metal::MTLPrimitiveType::Triangle,
+                0,
+                6,
+                shadow_batch.len() as u64,
+            );
         }
     }
 
@@ -74,7 +137,7 @@ impl Renderer {
             .set_render_pipeline_state(&self.quad_pipeline_state);
         ctx.command_encoder.set_vertex_buffer(
             shaders::GPUIQuadInputIndex_GPUIQuadInputIndexVertices as u64,
-            Some(&self.quad_vertices),
+            Some(&self.unit_vertices),
             0,
         );
         ctx.command_encoder.set_vertex_buffer(
@@ -84,8 +147,8 @@ impl Renderer {
         );
         ctx.command_encoder.set_vertex_bytes(
             shaders::GPUIQuadInputIndex_GPUIQuadInputIndexUniforms as u64,
-            mem::size_of::<shaders::GPUIQuadUniforms>() as u64,
-            [shaders::GPUIQuadUniforms {
+            mem::size_of::<shaders::GPUIUniforms>() as u64,
+            [shaders::GPUIUniforms {
                 viewport_size: ctx.drawable_size.to_float2(),
             }]
             .as_ptr() as *const c_void,

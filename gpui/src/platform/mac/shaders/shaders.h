@@ -1,5 +1,9 @@
 #include <simd/simd.h>
 
+typedef struct {
+    vector_float2 viewport_size;
+} GPUIUniforms;
+
 typedef enum {
     GPUIQuadInputIndexVertices = 0,
     GPUIQuadInputIndexQuads = 1,
@@ -18,6 +22,16 @@ typedef struct {
     float corner_radius;
 } GPUIQuad;
 
+typedef enum {
+    GPUIShadowInputIndexVertices = 0,
+    GPUIShadowInputIndexShadows = 1,
+    GPUIShadowInputIndexUniforms = 2,
+} GPUIShadowInputIndex;
+
 typedef struct {
-    vector_float2 viewport_size;
-} GPUIQuadUniforms;
+    vector_float2 origin;
+    vector_float2 size;
+    float corner_radius;
+    float sigma;
+    vector_uchar4 color;
+} GPUIShadow;

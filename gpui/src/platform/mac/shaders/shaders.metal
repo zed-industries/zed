@@ -7,6 +7,31 @@ float4 coloru_to_colorf(uchar4 coloru) {
     return float4(coloru) / float4(0xff, 0xff, 0xff, 0xff);
 }
 
+float4 to_device_position(float2 pixel_position, float2 viewport_size) {
+    return float4(pixel_position / viewport_size * float2(2.0, -2.0) + float2(-1.0, 1.0), 0.0, 1.0);
+}
+
+// A standard gaussian function, used for weighting samples
+float gaussian(float x, float sigma) {
+    return exp(-(x * x) / (2.0 * sigma * sigma)) / (sqrt(2.0 * M_PI_F) * sigma);
+}
+
+// This approximates the error function, needed for the gaussian integral
+float2 erf(float2 x) {
+    float2 s = sign(x);
+    float2 a = abs(x);
+    x = 1.0 + (0.278393 + (0.230389 + 0.078108 * (a * a)) * a) * a;
+    x *= x;
+    return s - s / (x * x);
+}
+
+float blur_along_x(float x, float y, float sigma, float corner, float2 halfSize) {
+    float delta = min(halfSize.y - corner - abs(y), 0.0);
+    float curved = halfSize.x - corner + sqrt(max(0.0, corner * corner - delta * delta));
+    float2 integral = 0.5 + 0.5 * erf((x + float2(-curved, curved)) * (sqrt(0.5) / sigma));
+    return integral.y - integral.x;
+}
+
 struct QuadFragmentInput {
     float4 position [[position]];
     GPUIQuad quad;
@@ -17,12 +42,12 @@ vertex QuadFragmentInput quad_vertex(
     uint quad_id [[instance_id]],
     constant float2 *unit_vertices [[buffer(GPUIQuadInputIndexVertices)]],
     constant GPUIQuad *quads [[buffer(GPUIQuadInputIndexQuads)]],
-    constant GPUIQuadUniforms *uniforms [[buffer(GPUIQuadInputIndexUniforms)]]
+    constant GPUIUniforms *uniforms [[buffer(GPUIQuadInputIndexUniforms)]]
 ) {
     float2 unit_vertex = unit_vertices[unit_vertex_id];
     GPUIQuad quad = quads[quad_id];
     float2 position = unit_vertex * quad.size + quad.origin;
-    float4 device_position = float4(position / uniforms->viewport_size * float2(2.0, -2.0) + float2(-1.0, 1.0), 0.0, 1.0);
+    float4 device_position = to_device_position(position, uniforms->viewport_size);
 
     return QuadFragmentInput {
         device_position,
@@ -32,7 +57,7 @@ vertex QuadFragmentInput quad_vertex(
 
 fragment float4 quad_fragment(
     QuadFragmentInput input [[stage_in]],
-    constant GPUIQuadUniforms *uniforms [[buffer(GPUIQuadInputIndexUniforms)]]
+    constant GPUIUniforms *uniforms [[buffer(GPUIQuadInputIndexUniforms)]]
 ) {
     float2 half_size = input.quad.size / 2.;
     float2 center = input.quad.origin + half_size;
@@ -56,4 +81,57 @@ fragment float4 quad_fragment(
     );
     float4 coverage = float4(1.0, 1.0, 1.0, saturate(0.5 - distance));
     return coverage * color;
+}
+
+struct ShadowFragmentInput {
+    float4 position [[position]];
+    GPUIShadow shadow;
+};
+
+vertex ShadowFragmentInput shadow_vertex(
+    uint unit_vertex_id [[vertex_id]],
+    uint shadow_id [[instance_id]],
+    constant float2 *unit_vertices [[buffer(GPUIShadowInputIndexVertices)]],
+    constant GPUIShadow *shadows [[buffer(GPUIShadowInputIndexShadows)]],
+    constant GPUIUniforms *uniforms [[buffer(GPUIShadowInputIndexUniforms)]]
+) {
+    float2 unit_vertex = unit_vertices[unit_vertex_id];
+    GPUIShadow shadow = shadows[shadow_id];
+
+    float margin = 3. * shadow.sigma;
+    float2 position = unit_vertex * (shadow.size + 2.0 * margin) + shadow.origin - margin;
+    float4 device_position = to_device_position(position, uniforms->viewport_size);
+
+    return ShadowFragmentInput {
+        device_position,
+        shadow,
+    };
+}
+
+fragment float4 shadow_fragment(
+    ShadowFragmentInput input [[stage_in]],
+    constant GPUIUniforms *uniforms [[buffer(GPUIShadowInputIndexUniforms)]]
+) {
+    float sigma = input.shadow.sigma;
+    float corner_radius = input.shadow.corner_radius;
+    float2 half_size = input.shadow.size / 2.;
+    float2 center = input.shadow.origin + half_size;
+    float2 point = input.position.xy - center;
+
+    // The signal is only non-zero in a limited range, so don't waste samples
+    float low = point.y - half_size.y;
+    float high = point.y + half_size.y;
+    float start = clamp(-3. * sigma, low, high);
+    float end = clamp(3. * sigma, low, high);
+
+    // Accumulate samples (we can get away with surprisingly few samples)
+    float step = (end - start) / 4.;
+    float y = start + step * 0.5;
+    float alpha = 0.0;
+    for (int i = 0; i < 4; i++) {
+        alpha += blur_along_x(point.x, point.y - y, sigma, corner_radius, half_size) * gaussian(y, sigma) * step;
+        y += step;
+    }
+
+    return float4(1., 1., 1., alpha) * coloru_to_colorf(input.shadow.color);
 }
