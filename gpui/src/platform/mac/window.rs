@@ -292,7 +292,6 @@ impl platform::WindowContext for WindowState {
     }
 
     fn present_scene(&mut self, scene: Scene) {
-        log::info!("present scene");
         self.scene_to_render = Some(scene);
         unsafe {
             let _: () = msg_send![self.native_window.contentView(), setNeedsDisplay: YES];
@@ -421,7 +420,6 @@ extern "C" fn set_frame_size(this: &Object, _: Sel, size: NSSize) {
 }
 
 extern "C" fn display_layer(this: &Object, _: Sel, _: id) {
-    log::info!("display layer");
     unsafe {
         let window_state = get_window_state(this);
         let mut window_state = window_state.as_ref().borrow_mut();

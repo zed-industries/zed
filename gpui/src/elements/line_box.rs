@@ -1,45 +1,42 @@
-use super::{AppContext, Element, MutableAppContext};
 use crate::{
     fonts::{FamilyId, FontId, Properties},
     geometry::vector::{vec2f, Vector2F},
-    AfterLayoutContext, Event, EventContext, LayoutContext, PaintContext, SizeConstraint,
+    AfterLayoutContext, Element, ElementBox, Event, EventContext, LayoutContext, PaintContext,
+    SizeConstraint,
 };
 
 pub struct LineBox {
-    child: Box<dyn Element>,
+    child: ElementBox,
     family_id: FamilyId,
     font_size: f32,
     font_properties: Properties,
-    font_id: Option<FontId>,
-    size: Option<Vector2F>,
 }
 
 impl LineBox {
-    pub fn new(family_id: FamilyId, font_size: f32, child: Box<dyn Element>) -> Self {
+    pub fn new(family_id: FamilyId, font_size: f32, child: ElementBox) -> Self {
         Self {
             child,
             family_id,
             font_size,
             font_properties: Properties::default(),
-            font_id: None,
-            size: None,
         }
     }
 }
 
 impl Element for LineBox {
+    type LayoutState = Option<FontId>;
+    type PaintState = ();
+
     fn layout(
         &mut self,
         constraint: SizeConstraint,
         ctx: &mut LayoutContext,
-        app: &AppContext,
-    ) -> Vector2F {
+    ) -> (Vector2F, Self::LayoutState) {
         match ctx
             .font_cache
             .select_font(self.family_id, &self.font_properties)
         {
             Ok(font_id) => {
-                self.font_id = Some(font_id);
                 let line_height = ctx.font_cache.bounding_box(font_id, self.font_size).y();
                 let child_max = vec2f(
                     constraint.max.x(),
@@ -49,36 +46,47 @@ impl Element for LineBox {
                 let child_size = self.child.layout(
                     SizeConstraint::new(constraint.min.min(child_max), child_max),
                     ctx,
-                    app,
                 );
                 let size = vec2f(child_size.x(), line_height);
-                self.size = Some(size);
-                size
+                (size, Some(font_id))
             }
             Err(error) => {
-                log::error!("can't layout LineBox: {}", error);
-                self.size = Some(constraint.min);
-                constraint.min
+                log::error!("can't find font for LineBox: {}", error);
+                (constraint.min, None)
             }
         }
     }
 
-    fn after_layout(&mut self, ctx: &mut AfterLayoutContext, app: &mut MutableAppContext) {
-        self.child.after_layout(ctx, app);
+    fn after_layout(
+        &mut self,
+        _: Vector2F,
+        _: &mut Self::LayoutState,
+        ctx: &mut AfterLayoutContext,
+    ) {
+        self.child.after_layout(ctx);
     }
 
-    fn paint(&mut self, origin: Vector2F, ctx: &mut PaintContext, app: &AppContext) {
-        if let Some(font_id) = self.font_id {
-            let descent = ctx.font_cache.descent(font_id, self.font_size);
-            self.child.paint(origin + vec2f(0.0, -descent), ctx, app);
+    fn paint(
+        &mut self,
+        bounds: pathfinder_geometry::rect::RectF,
+        font_id: &mut Option<FontId>,
+        ctx: &mut PaintContext,
+    ) -> Self::PaintState {
+        if let Some(font_id) = font_id {
+            let descent = ctx.font_cache.descent(*font_id, self.font_size);
+            self.child
+                .paint(bounds.origin() + vec2f(0.0, -descent), ctx);
         }
     }
 
-    fn size(&self) -> Option<Vector2F> {
-        self.size
-    }
-
-    fn dispatch_event(&self, event: &Event, ctx: &mut EventContext, app: &AppContext) -> bool {
-        self.child.dispatch_event(event, ctx, app)
+    fn dispatch_event(
+        &mut self,
+        event: &Event,
+        _: pathfinder_geometry::rect::RectF,
+        _: &mut Self::LayoutState,
+        _: &mut Self::PaintState,
+        ctx: &mut EventContext,
+    ) -> bool {
+        self.child.dispatch_event(event, ctx)
     }
 }

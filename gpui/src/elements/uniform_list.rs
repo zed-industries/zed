@@ -1,21 +1,19 @@
 use super::{
-    try_rect, AfterLayoutContext, AppContext, Element, Event, EventContext, LayoutContext,
-    MutableAppContext, PaintContext, SizeConstraint,
+    AfterLayoutContext, AppContext, Element, Event, EventContext, LayoutContext, PaintContext,
+    SizeConstraint,
 };
-use crate::geometry::{
-    rect::RectF,
-    vector::{vec2f, Vector2F},
+use crate::{
+    geometry::{
+        rect::RectF,
+        vector::{vec2f, Vector2F},
+    },
+    ElementBox,
 };
 use parking_lot::Mutex;
 use std::{cmp, ops::Range, sync::Arc};
 
 #[derive(Clone)]
 pub struct UniformListState(Arc<Mutex<StateInner>>);
-
-struct StateInner {
-    scroll_top: f32,
-    scroll_to: Option<usize>,
-}
 
 impl UniformListState {
     pub fn new() -> Self {
@@ -28,34 +26,41 @@ impl UniformListState {
     pub fn scroll_to(&self, item_ix: usize) {
         self.0.lock().scroll_to = Some(item_ix);
     }
+
+    pub fn scroll_top(&self) -> f32 {
+        self.0.lock().scroll_top
+    }
+}
+
+struct StateInner {
+    scroll_top: f32,
+    scroll_to: Option<usize>,
+}
+
+pub struct LayoutState {
+    scroll_max: f32,
+    item_height: f32,
+    items: Vec<ElementBox>,
 }
 
 pub struct UniformList<F>
 where
-    F: Fn(Range<usize>, &mut Vec<Box<dyn Element>>, &AppContext),
+    F: Fn(Range<usize>, &mut Vec<ElementBox>, &AppContext),
 {
     state: UniformListState,
     item_count: usize,
     append_items: F,
-    scroll_max: Option<f32>,
-    items: Vec<Box<dyn Element>>,
-    origin: Option<Vector2F>,
-    size: Option<Vector2F>,
 }
 
 impl<F> UniformList<F>
 where
-    F: Fn(Range<usize>, &mut Vec<Box<dyn Element>>, &AppContext),
+    F: Fn(Range<usize>, &mut Vec<ElementBox>, &AppContext),
 {
     pub fn new(state: UniformListState, item_count: usize, build_items: F) -> Self {
         Self {
             state,
             item_count,
             append_items: build_items,
-            scroll_max: None,
-            items: Default::default(),
-            origin: None,
-            size: None,
         }
     }
 
@@ -64,8 +69,8 @@ where
         position: Vector2F,
         delta: Vector2F,
         precise: bool,
+        scroll_max: f32,
         ctx: &mut EventContext,
-        _: &AppContext,
     ) -> bool {
         if !self.rect().unwrap().contains_point(position) {
             return false;
@@ -76,18 +81,15 @@ where
         }
 
         let mut state = self.state.0.lock();
-        state.scroll_top = (state.scroll_top - delta.y())
-            .max(0.0)
-            .min(self.scroll_max.unwrap());
+        state.scroll_top = (state.scroll_top - delta.y()).max(0.0).min(scroll_max);
         ctx.dispatch_action("uniform_list:scroll", state.scroll_top);
 
         true
     }
 
-    fn autoscroll(&mut self, list_height: f32, item_height: f32) {
+    fn autoscroll(&mut self, scroll_max: f32, list_height: f32, item_height: f32) {
         let mut state = self.state.0.lock();
 
-        let scroll_max = self.item_count as f32 * item_height - list_height;
         if state.scroll_top > scroll_max {
             state.scroll_top = scroll_max;
         }
@@ -109,20 +111,23 @@ where
     }
 
     fn rect(&self) -> Option<RectF> {
-        try_rect(self.origin, self.size)
+        todo!()
+        // try_rect(self.origin, self.size)
     }
 }
 
 impl<F> Element for UniformList<F>
 where
-    F: Fn(Range<usize>, &mut Vec<Box<dyn Element>>, &AppContext),
+    F: Fn(Range<usize>, &mut Vec<ElementBox>, &AppContext),
 {
+    type LayoutState = LayoutState;
+    type PaintState = ();
+
     fn layout(
         &mut self,
         constraint: SizeConstraint,
         ctx: &mut LayoutContext,
-        app: &AppContext,
-    ) -> Vector2F {
+    ) -> (Vector2F, Self::LayoutState) {
         if constraint.max.y().is_infinite() {
             unimplemented!(
                 "UniformList does not support being rendered with an unconstrained height"
@@ -131,79 +136,91 @@ where
         let mut size = constraint.max;
         let mut item_constraint =
             SizeConstraint::new(vec2f(size.x(), 0.0), vec2f(size.x(), f32::INFINITY));
+        let mut item_height = 0.;
+        let mut scroll_max = 0.;
 
-        self.items.clear();
-        (self.append_items)(0..1, &mut self.items, app);
-        if let Some(first_item) = self.items.first_mut() {
-            let mut item_size = first_item.layout(item_constraint, ctx, app);
+        let mut items = Vec::new();
+        (self.append_items)(0..1, &mut items, ctx.app);
+        if let Some(first_item) = items.first_mut() {
+            let mut item_size = first_item.layout(item_constraint, ctx);
             item_size.set_x(size.x());
             item_constraint.min = item_size;
             item_constraint.max = item_size;
+            item_height = item_size.y();
 
-            let scroll_height = self.item_count as f32 * item_size.y();
+            let scroll_height = self.item_count as f32 * item_height;
             if scroll_height < size.y() {
                 size.set_y(size.y().min(scroll_height).max(constraint.min.y()));
             }
 
-            self.autoscroll(size.y(), item_size.y());
+            scroll_max = item_height * self.item_count as f32 - size.y();
+            self.autoscroll(scroll_max, size.y(), item_height);
 
-            let start = cmp::min(
-                (self.scroll_top() / item_size.y()) as usize,
-                self.item_count,
-            );
+            items.clear();
+            let start = cmp::min((self.scroll_top() / item_height) as usize, self.item_count);
             let end = cmp::min(
                 self.item_count,
-                start + (size.y() / item_size.y()).ceil() as usize + 1,
+                start + (size.y() / item_height).ceil() as usize + 1,
             );
-            self.items.clear();
-            (self.append_items)(start..end, &mut self.items, app);
-
-            self.scroll_max = Some(item_size.y() * self.item_count as f32 - size.y());
-
-            for item in &mut self.items {
-                item.layout(item_constraint, ctx, app);
+            (self.append_items)(start..end, &mut items, ctx.app);
+            for item in &mut items {
+                item.layout(item_constraint, ctx);
             }
         }
 
-        self.size = Some(size);
-        size
+        (
+            size,
+            LayoutState {
+                item_height,
+                scroll_max,
+                items,
+            },
+        )
     }
 
-    fn after_layout(&mut self, ctx: &mut AfterLayoutContext, app: &mut MutableAppContext) {
-        for item in &mut self.items {
-            item.after_layout(ctx, app);
+    fn after_layout(
+        &mut self,
+        _: Vector2F,
+        layout: &mut Self::LayoutState,
+        ctx: &mut AfterLayoutContext,
+    ) {
+        for item in &mut layout.items {
+            item.after_layout(ctx);
         }
     }
 
-    fn paint(&mut self, origin: Vector2F, ctx: &mut PaintContext, app: &AppContext) {
-        // self.origin = Some(origin);
+    fn paint(
+        &mut self,
+        bounds: RectF,
+        layout: &mut Self::LayoutState,
+        ctx: &mut PaintContext,
+    ) -> Self::PaintState {
+        // ctx.canvas.save();
+        // let mut clip_path = Path2D::new();
+        // clip_path.rect(RectF::new(origin, self.size.unwrap()));
+        // ctx.canvas.clip_path(clip_path, FillRule::Winding);
 
-        // if let Some(item) = self.items.first() {
-        //     ctx.canvas.save();
-        //     let mut clip_path = Path2D::new();
-        //     clip_path.rect(RectF::new(origin, self.size.unwrap()));
-        //     ctx.canvas.clip_path(clip_path, FillRule::Winding);
+        let mut item_origin =
+            bounds.origin() - vec2f(0.0, self.state.scroll_top() % layout.item_height);
 
-        //     let item_height = item.size().unwrap().y();
-        //     let mut item_origin = origin - vec2f(0.0, self.state.0.lock().scroll_top % item_height);
-        //     for item in &mut self.items {
-        //         item.paint(item_origin, ctx, app);
-        //         item_origin += vec2f(0.0, item_height);
-        //     }
-        //     ctx.canvas.restore();
-        // }
+        for item in &mut layout.items {
+            item.paint(item_origin, ctx);
+            item_origin += vec2f(0.0, layout.item_height);
+        }
+        // ctx.canvas.restore();
     }
 
-    fn size(&self) -> Option<Vector2F> {
-        self.size
-    }
-
-    fn dispatch_event(&self, event: &Event, ctx: &mut EventContext, app: &AppContext) -> bool {
+    fn dispatch_event(
+        &mut self,
+        event: &Event,
+        _: RectF,
+        layout: &mut Self::LayoutState,
+        _: &mut Self::PaintState,
+        ctx: &mut EventContext,
+    ) -> bool {
         let mut handled = false;
-        for item in &self.items {
-            if item.dispatch_event(event, ctx, app) {
-                handled = true;
-            }
+        for item in &mut layout.items {
+            handled = item.dispatch_event(event, ctx) || handled;
         }
 
         match event {
@@ -212,7 +229,7 @@ where
                 delta,
                 precise,
             } => {
-                if self.scroll(*position, *delta, *precise, ctx, app) {
+                if self.scroll(*position, *delta, *precise, layout.scroll_max, ctx) {
                     handled = true;
                 }
             }

@@ -11,7 +11,7 @@ pub use scene::{Border, Scene};
 pub mod text_layout;
 pub use text_layout::TextLayoutCache;
 mod util;
-pub use elements::Element;
+pub use elements::{Element, ElementBox};
 pub mod executor;
 pub mod keymap;
 pub mod platform;

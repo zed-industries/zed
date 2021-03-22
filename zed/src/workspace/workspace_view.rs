@@ -141,7 +141,6 @@ impl WorkspaceView {
             ctx.focus(&modal);
             self.modal = Some(modal.into());
         }
-        log::info!("toggle modal notify");
         ctx.notify();
     }
 
@@ -304,7 +303,7 @@ impl View for WorkspaceView {
         "Workspace"
     }
 
-    fn render(&self, _: &AppContext) -> Box<dyn Element> {
+    fn render(&self, _: &AppContext) -> ElementBox {
         Container::new(
             // self.center.render(bump)
             Stack::new()

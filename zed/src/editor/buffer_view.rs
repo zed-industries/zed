@@ -8,7 +8,8 @@ use easy_parallel::Parallel;
 use gpui::{
     fonts::{FontCache, Properties as FontProperties},
     keymap::Binding,
-    text_layout, App, AppContext, Element, Entity, ModelHandle, View, ViewContext, WeakViewHandle,
+    text_layout, App, AppContext, Element, ElementBox, Entity, ModelHandle, View, ViewContext,
+    WeakViewHandle,
 };
 use gpui::{geometry::vector::Vector2F, TextLayoutCache};
 use parking_lot::Mutex;
@@ -892,6 +893,7 @@ impl BufferView {
         font_cache.scale_metric(bounds.width(), font_id, settings.buffer_font_size)
     }
 
+    // TODO: Can we make this not return a result?
     pub fn max_line_number_width(
         &self,
         font_cache: &FontCache,
@@ -1140,7 +1142,7 @@ impl Entity for BufferView {
 }
 
 impl View for BufferView {
-    fn render<'a>(&self, app: &AppContext) -> Box<dyn Element> {
+    fn render<'a>(&self, app: &AppContext) -> ElementBox {
         BufferElement::new(self.handle.upgrade(app).unwrap()).boxed()
     }
 

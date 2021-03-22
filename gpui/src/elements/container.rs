@@ -4,8 +4,8 @@ use crate::{
     color::ColorU,
     geometry::vector::{vec2f, Vector2F},
     scene::{Border, Quad},
-    AfterLayoutContext, AppContext, Element, Event, EventContext, LayoutContext, MutableAppContext,
-    PaintContext, SizeConstraint,
+    AfterLayoutContext, Element, ElementBox, Event, EventContext, LayoutContext, PaintContext,
+    SizeConstraint,
 };
 
 pub struct Container {
@@ -16,13 +16,11 @@ pub struct Container {
     border: Border,
     corner_radius: f32,
     shadow: Option<Shadow>,
-    child: Box<dyn Element>,
-    size: Option<Vector2F>,
-    origin: Option<Vector2F>,
+    child: ElementBox,
 }
 
 impl Container {
-    pub fn new(child: Box<dyn Element>) -> Self {
+    pub fn new(child: ElementBox) -> Self {
         Self {
             margin: Margin::default(),
             padding: Padding::default(),
@@ -32,8 +30,6 @@ impl Container {
             corner_radius: 0.0,
             shadow: None,
             child,
-            size: None,
-            origin: None,
         }
     }
 
@@ -122,43 +118,56 @@ impl Container {
 }
 
 impl Element for Container {
+    type LayoutState = ();
+    type PaintState = ();
+
     fn layout(
         &mut self,
         constraint: SizeConstraint,
         ctx: &mut LayoutContext,
-        app: &AppContext,
-    ) -> Vector2F {
+    ) -> (Vector2F, Self::LayoutState) {
         let size_buffer = self.margin_size() + self.padding_size() + self.border_size();
         let child_constraint = SizeConstraint {
             min: (constraint.min - size_buffer).max(Vector2F::zero()),
             max: (constraint.max - size_buffer).max(Vector2F::zero()),
         };
-        let child_size = self.child.layout(child_constraint, ctx, app);
-        let size = child_size + size_buffer;
-        self.size = Some(size);
-        size
+        let child_size = self.child.layout(child_constraint, ctx);
+        (child_size + size_buffer, ())
     }
 
-    fn after_layout(&mut self, ctx: &mut AfterLayoutContext, app: &mut MutableAppContext) {
-        self.child.after_layout(ctx, app);
+    fn after_layout(
+        &mut self,
+        _: Vector2F,
+        _: &mut Self::LayoutState,
+        ctx: &mut AfterLayoutContext,
+    ) {
+        self.child.after_layout(ctx);
     }
 
-    fn paint(&mut self, origin: Vector2F, ctx: &mut PaintContext, app: &AppContext) {
+    fn paint(
+        &mut self,
+        bounds: RectF,
+        _: &mut Self::LayoutState,
+        ctx: &mut PaintContext,
+    ) -> Self::PaintState {
         ctx.scene.push_quad(Quad {
-            bounds: RectF::new(origin, self.size.unwrap()),
+            bounds,
             background: self.background_color,
             border: self.border,
             corner_radius: self.corner_radius,
         });
-        self.child.paint(origin, ctx, app);
+        self.child.paint(bounds.origin(), ctx);
     }
 
-    fn dispatch_event(&self, event: &Event, ctx: &mut EventContext, app: &AppContext) -> bool {
-        self.child.dispatch_event(event, ctx, app)
-    }
-
-    fn size(&self) -> Option<Vector2F> {
-        self.size
+    fn dispatch_event(
+        &mut self,
+        event: &Event,
+        _: RectF,
+        _: &mut Self::LayoutState,
+        _: &mut Self::PaintState,
+        ctx: &mut EventContext,
+    ) -> bool {
+        self.child.dispatch_event(event, ctx)
     }
 }
 

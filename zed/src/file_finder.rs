@@ -57,7 +57,7 @@ impl View for FileFinder {
         "FileFinder"
     }
 
-    fn render(&self, _: &AppContext) -> Box<dyn Element> {
+    fn render(&self, _: &AppContext) -> ElementBox {
         Align::new(
             ConstrainedBox::new(
                 Container::new(
@@ -98,7 +98,7 @@ impl View for FileFinder {
 }
 
 impl FileFinder {
-    fn render_matches(&self) -> Box<dyn Element> {
+    fn render_matches(&self) -> ElementBox {
         if self.matches.is_empty() {
             let settings = smol::block_on(self.settings.read());
             return Container::new(
@@ -140,7 +140,7 @@ impl FileFinder {
         path_match: &PathMatch,
         index: usize,
         app: &AppContext,
-    ) -> Option<Box<dyn Element>> {
+    ) -> Option<ElementBox> {
         let tree_id = path_match.tree_id;
         let entry_id = path_match.entry_id;
 
@@ -227,7 +227,7 @@ impl FileFinder {
             }
 
             EventHandler::new(container.boxed())
-                .on_mouse_down(move |ctx, _| {
+                .on_mouse_down(move |ctx| {
                     ctx.dispatch_action("file_finder:select", (tree_id, entry_id));
                     true
                 })

@@ -1,5 +1,5 @@
 use crate::{
-    elements::Element,
+    elements::ElementBox,
     executor::{self, ForegroundTask},
     keymap::{self, Keystroke},
     platform::{self, App as _, WindowOptions},
@@ -30,7 +30,7 @@ pub trait Entity: 'static + Send + Sync {
 
 pub trait View: Entity {
     fn ui_name() -> &'static str;
-    fn render<'a>(&self, app: &AppContext) -> Box<dyn Element>;
+    fn render<'a>(&self, app: &AppContext) -> ElementBox;
     fn on_focus(&mut self, _ctx: &mut ViewContext<Self>) {}
     fn on_blur(&mut self, _ctx: &mut ViewContext<Self>) {}
     fn keymap_context(&self, _: &AppContext) -> keymap::Context {
@@ -458,11 +458,11 @@ impl MutableAppContext {
         self.ctx.focused_view_id(window_id)
     }
 
-    pub fn render_view(&self, window_id: usize, view_id: usize) -> Result<Box<dyn Element>> {
+    pub fn render_view(&self, window_id: usize, view_id: usize) -> Result<ElementBox> {
         self.ctx.render_view(window_id, view_id)
     }
 
-    pub fn render_views(&self, window_id: usize) -> Result<HashMap<usize, Box<dyn Element>>> {
+    pub fn render_views(&self, window_id: usize) -> Result<HashMap<usize, ElementBox>> {
         self.ctx.render_views(window_id)
     }
 
@@ -545,13 +545,6 @@ impl MutableAppContext {
         responder_chain: Vec<usize>,
         keystroke: &Keystroke,
     ) -> Result<bool> {
-        log::info!(
-            "dispatch_keystroke {} {:?} {:?}",
-            window_id,
-            responder_chain,
-            keystroke
-        );
-
         let mut context_chain = Vec::new();
         let mut context = keymap::Context::default();
         for view_id in &responder_chain {
@@ -641,7 +634,6 @@ impl MutableAppContext {
                     let mut app = self.upgrade();
                     let presenter = presenter.clone();
                     window.on_event(Box::new(move |event| {
-                        log::info!("event {:?}", event);
                         app.update(|ctx| {
                             if let Event::KeyDown { keystroke, .. } = &event {
                                 if ctx
@@ -687,7 +679,6 @@ impl MutableAppContext {
                 }
 
                 self.on_window_invalidated(window_id, move |invalidation, ctx| {
-                    log::info!("window invalidated");
                     let mut presenter = presenter.borrow_mut();
                     presenter.invalidate(invalidation, ctx.downgrade());
                     let scene = presenter.build_scene(window.size(), window.scale_factor(), ctx);
@@ -1285,7 +1276,7 @@ impl AppContext {
             .and_then(|window| window.focused_view)
     }
 
-    pub fn render_view(&self, window_id: usize, view_id: usize) -> Result<Box<dyn Element>> {
+    pub fn render_view(&self, window_id: usize, view_id: usize) -> Result<ElementBox> {
         self.windows
             .get(&window_id)
             .and_then(|w| w.views.get(&view_id))
@@ -1293,14 +1284,14 @@ impl AppContext {
             .ok_or(anyhow!("view not found"))
     }
 
-    pub fn render_views(&self, window_id: usize) -> Result<HashMap<usize, Box<dyn Element>>> {
+    pub fn render_views(&self, window_id: usize) -> Result<HashMap<usize, ElementBox>> {
         self.windows
             .get(&window_id)
             .map(|w| {
                 w.views
                     .iter()
                     .map(|(id, view)| (*id, view.render(self)))
-                    .collect::<HashMap<_, Box<dyn Element>>>()
+                    .collect::<HashMap<_, ElementBox>>()
             })
             .ok_or(anyhow!("window not found"))
     }
@@ -1388,7 +1379,7 @@ pub trait AnyView: Send + Sync {
     fn as_any(&self) -> &dyn Any;
     fn as_any_mut(&mut self) -> &mut dyn Any;
     fn ui_name(&self) -> &'static str;
-    fn render<'a>(&self, app: &AppContext) -> Box<dyn Element>;
+    fn render<'a>(&self, app: &AppContext) -> ElementBox;
     fn on_focus(&mut self, app: &mut MutableAppContext, window_id: usize, view_id: usize);
     fn on_blur(&mut self, app: &mut MutableAppContext, window_id: usize, view_id: usize);
     fn keymap_context(&self, app: &AppContext) -> keymap::Context;
@@ -1410,7 +1401,7 @@ where
         T::ui_name()
     }
 
-    fn render<'a>(&self, app: &AppContext) -> Box<dyn Element> {
+    fn render<'a>(&self, app: &AppContext) -> ElementBox {
         View::render(self, app)
     }
 
@@ -2556,7 +2547,7 @@ mod tests {
         }
 
         impl super::View for View {
-            fn render<'a>(&self, _: &AppContext) -> Box<dyn Element> {
+            fn render<'a>(&self, _: &AppContext) -> ElementBox {
                 Empty::new().boxed()
             }
 
@@ -2628,7 +2619,7 @@ mod tests {
         }
 
         impl super::View for View {
-            fn render<'a>(&self, _: &AppContext) -> Box<dyn Element> {
+            fn render<'a>(&self, _: &AppContext) -> ElementBox {
                 Empty::new().boxed()
             }
 
@@ -2684,7 +2675,7 @@ mod tests {
         }
 
         impl super::View for View {
-            fn render<'a>(&self, _: &AppContext) -> Box<dyn Element> {
+            fn render<'a>(&self, _: &AppContext) -> ElementBox {
                 Empty::new().boxed()
             }
 
@@ -2738,7 +2729,7 @@ mod tests {
         }
 
         impl super::View for View {
-            fn render<'a>(&self, _: &AppContext) -> Box<dyn Element> {
+            fn render<'a>(&self, _: &AppContext) -> ElementBox {
                 Empty::new().boxed()
             }
 
@@ -2784,7 +2775,7 @@ mod tests {
         }
 
         impl super::View for View {
-            fn render<'a>(&self, _: &AppContext) -> Box<dyn Element> {
+            fn render<'a>(&self, _: &AppContext) -> ElementBox {
                 Empty::new().boxed()
             }
 
@@ -2835,7 +2826,7 @@ mod tests {
         }
 
         impl super::View for View {
-            fn render<'a>(&self, _: &AppContext) -> Box<dyn Element> {
+            fn render<'a>(&self, _: &AppContext) -> ElementBox {
                 Empty::new().boxed()
             }
 
@@ -2897,7 +2888,7 @@ mod tests {
         }
 
         impl super::View for View {
-            fn render<'a>(&self, _: &AppContext) -> Box<dyn Element> {
+            fn render<'a>(&self, _: &AppContext) -> ElementBox {
                 Empty::new().boxed()
             }
 
@@ -2939,7 +2930,7 @@ mod tests {
         }
 
         impl super::View for View {
-            fn render<'a>(&self, _: &AppContext) -> Box<dyn Element> {
+            fn render<'a>(&self, _: &AppContext) -> ElementBox {
                 Empty::new().boxed()
             }
 
@@ -2981,7 +2972,7 @@ mod tests {
         }
 
         impl View for ViewA {
-            fn render<'a>(&self, _: &AppContext) -> Box<dyn Element> {
+            fn render<'a>(&self, _: &AppContext) -> ElementBox {
                 Empty::new().boxed()
             }
 
@@ -2999,7 +2990,7 @@ mod tests {
         }
 
         impl View for ViewB {
-            fn render<'a>(&self, _: &AppContext) -> Box<dyn Element> {
+            fn render<'a>(&self, _: &AppContext) -> ElementBox {
                 Empty::new().boxed()
             }
 
@@ -3104,7 +3095,7 @@ mod tests {
         }
 
         impl super::View for View {
-            fn render<'a>(&self, _: &AppContext) -> Box<dyn Element> {
+            fn render<'a>(&self, _: &AppContext) -> ElementBox {
                 Empty::new().boxed()
             }
 
@@ -3174,7 +3165,7 @@ mod tests {
     //     }
 
     //     impl super::View for View {
-    //         fn render<'a>(&self, _: &AppContext) -> Box<dyn Element> {
+    //         fn render<'a>(&self, _: &AppContext) -> ElementBox {
     //             Empty::new().boxed()
     //         }
 
@@ -3253,7 +3244,7 @@ mod tests {
         }
 
         impl super::View for View {
-            fn render<'a>(&self, _: &AppContext) -> Box<dyn Element> {
+            fn render<'a>(&self, _: &AppContext) -> ElementBox {
                 Empty::new().boxed()
             }
 

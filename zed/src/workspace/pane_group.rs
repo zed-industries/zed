@@ -48,7 +48,7 @@ impl PaneGroup {
         }
     }
 
-    pub fn render<'a>(&self) -> Box<dyn Element> {
+    pub fn render<'a>(&self) -> ElementBox {
         self.root.render()
     }
 }
@@ -77,7 +77,7 @@ impl Member {
         Member::Axis(PaneAxis { axis, members })
     }
 
-    pub fn render<'a>(&self) -> Box<dyn Element> {
+    pub fn render<'a>(&self) -> ElementBox {
         match self {
             Member::Pane(view_id) => ChildView::new(*view_id).boxed(),
             Member::Axis(axis) => axis.render(),
@@ -168,7 +168,7 @@ impl PaneAxis {
         }
     }
 
-    fn render<'a>(&self) -> Box<dyn Element> {
+    fn render<'a>(&self) -> ElementBox {
         let last_member_ix = self.members.len() - 1;
         Flex::new(self.axis)
             .with_children(self.members.iter().enumerate().map(|(ix, member)| {

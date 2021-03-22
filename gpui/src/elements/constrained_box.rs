@@ -1,16 +1,16 @@
 use crate::{
-    AfterLayoutContext, AppContext, Element, Event, EventContext, LayoutContext, MutableAppContext,
-    PaintContext, SizeConstraint,
+    AfterLayoutContext, Element, ElementBox, Event, EventContext, LayoutContext, PaintContext,
+    SizeConstraint,
 };
 use pathfinder_geometry::vector::Vector2F;
 
 pub struct ConstrainedBox {
-    child: Box<dyn Element>,
+    child: ElementBox,
     constraint: SizeConstraint,
 }
 
 impl ConstrainedBox {
-    pub fn new(child: Box<dyn Element>) -> Self {
+    pub fn new(child: ElementBox) -> Self {
         Self {
             child,
             constraint: SizeConstraint {
@@ -38,30 +38,46 @@ impl ConstrainedBox {
 }
 
 impl Element for ConstrainedBox {
+    type LayoutState = ();
+    type PaintState = ();
+
     fn layout(
         &mut self,
         mut constraint: SizeConstraint,
         ctx: &mut LayoutContext,
-        app: &AppContext,
-    ) -> Vector2F {
+    ) -> (Vector2F, Self::LayoutState) {
         constraint.min = constraint.min.max(self.constraint.min);
         constraint.max = constraint.max.min(self.constraint.max);
-        self.child.layout(constraint, ctx, app)
+        let size = self.child.layout(constraint, ctx);
+        (size, ())
     }
 
-    fn after_layout(&mut self, ctx: &mut AfterLayoutContext, app: &mut MutableAppContext) {
-        self.child.after_layout(ctx, app);
+    fn after_layout(
+        &mut self,
+        _: Vector2F,
+        _: &mut Self::LayoutState,
+        ctx: &mut AfterLayoutContext,
+    ) {
+        self.child.after_layout(ctx);
     }
 
-    fn paint(&mut self, origin: Vector2F, ctx: &mut PaintContext, app: &AppContext) {
-        self.child.paint(origin, ctx, app);
+    fn paint(
+        &mut self,
+        bounds: pathfinder_geometry::rect::RectF,
+        _: &mut Self::LayoutState,
+        ctx: &mut PaintContext,
+    ) -> Self::PaintState {
+        self.child.paint(bounds.origin(), ctx);
     }
 
-    fn dispatch_event(&self, event: &Event, ctx: &mut EventContext, app: &AppContext) -> bool {
-        self.child.dispatch_event(event, ctx, app)
-    }
-
-    fn size(&self) -> Option<Vector2F> {
-        self.child.size()
+    fn dispatch_event(
+        &mut self,
+        event: &Event,
+        _: pathfinder_geometry::rect::RectF,
+        _: &mut Self::LayoutState,
+        _: &mut Self::PaintState,
+        ctx: &mut EventContext,
+    ) -> bool {
+        self.child.dispatch_event(event, ctx)
     }
 }

@@ -1,15 +1,14 @@
+use std::any::Any;
+
 use crate::{
-    AfterLayoutContext, AppContext, Axis, Element, Event, EventContext, LayoutContext,
-    MutableAppContext, PaintContext, SizeConstraint, Vector2FExt,
+    AfterLayoutContext, Axis, Element, ElementBox, Event, EventContext, LayoutContext,
+    PaintContext, SizeConstraint, Vector2FExt,
 };
 use pathfinder_geometry::vector::{vec2f, Vector2F};
-use std::any::Any;
 
 pub struct Flex {
     axis: Axis,
-    children: Vec<Box<dyn Element>>,
-    size: Option<Vector2F>,
-    origin: Option<Vector2F>,
+    children: Vec<ElementBox>,
 }
 
 impl Flex {
@@ -17,8 +16,6 @@ impl Flex {
         Self {
             axis,
             children: Default::default(),
-            size: None,
-            origin: None,
         }
     }
 
@@ -30,39 +27,41 @@ impl Flex {
         Self::new(Axis::Vertical)
     }
 
-    fn child_flex<'b>(child: &dyn Element) -> Option<f32> {
+    fn child_flex<'b>(child: &ElementBox) -> Option<f32> {
         child
-            .parent_data()
+            .metadata()
             .and_then(|d| d.downcast_ref::<FlexParentData>())
             .map(|data| data.flex)
     }
 }
 
-impl Extend<Box<dyn Element>> for Flex {
-    fn extend<T: IntoIterator<Item = Box<dyn Element>>>(&mut self, children: T) {
+impl Extend<ElementBox> for Flex {
+    fn extend<T: IntoIterator<Item = ElementBox>>(&mut self, children: T) {
         self.children.extend(children);
     }
 }
 
 impl Element for Flex {
+    type LayoutState = ();
+    type PaintState = ();
+
     fn layout(
         &mut self,
         constraint: SizeConstraint,
         ctx: &mut LayoutContext,
-        app: &AppContext,
-    ) -> Vector2F {
+    ) -> (Vector2F, Self::LayoutState) {
         let mut total_flex = 0.0;
         let mut fixed_space = 0.0;
 
         let cross_axis = self.axis.invert();
         let mut cross_axis_max: f32 = 0.0;
         for child in &mut self.children {
-            if let Some(flex) = Self::child_flex(child.as_ref()) {
+            if let Some(flex) = Self::child_flex(&child) {
                 total_flex += flex;
             } else {
                 let child_constraint =
                     SizeConstraint::strict_along(cross_axis, constraint.max_along(cross_axis));
-                let size = child.layout(child_constraint, ctx, app);
+                let size = child.layout(child_constraint, ctx);
                 fixed_space += size.along(self.axis);
                 cross_axis_max = cross_axis_max.max(size.along(cross_axis));
             }
@@ -77,7 +76,7 @@ impl Element for Flex {
             let mut remaining_flex = total_flex;
             for child in &mut self.children {
                 let space_per_flex = remaining_space / remaining_flex;
-                if let Some(flex) = Self::child_flex(child.as_ref()) {
+                if let Some(flex) = Self::child_flex(&child) {
                     let child_max = space_per_flex * flex;
                     let child_constraint = match self.axis {
                         Axis::Horizontal => SizeConstraint::new(
@@ -89,7 +88,7 @@ impl Element for Flex {
                             vec2f(constraint.max.x(), child_max),
                         ),
                     };
-                    let child_size = child.layout(child_constraint, ctx, app);
+                    let child_size = child.layout(child_constraint, ctx);
                     remaining_space -= child_size.along(self.axis);
                     remaining_flex -= flex;
                     cross_axis_max = cross_axis_max.max(child_size.along(cross_axis));
@@ -110,44 +109,54 @@ impl Element for Flex {
         if constraint.min.x().is_finite() {
             size.set_x(size.x().max(constraint.min.x()));
         }
+
         if constraint.min.y().is_finite() {
             size.set_y(size.y().max(constraint.min.y()));
         }
 
-        self.size = Some(size);
-        size
+        (size, ())
     }
 
-    fn after_layout(&mut self, ctx: &mut AfterLayoutContext, app: &mut MutableAppContext) {
+    fn after_layout(
+        &mut self,
+        _: Vector2F,
+        _: &mut Self::LayoutState,
+        ctx: &mut AfterLayoutContext,
+    ) {
         for child in &mut self.children {
-            child.after_layout(ctx, app);
+            child.after_layout(ctx);
         }
     }
 
-    fn paint(&mut self, mut origin: Vector2F, ctx: &mut PaintContext, app: &AppContext) {
-        self.origin = Some(origin);
-
+    fn paint(
+        &mut self,
+        bounds: pathfinder_geometry::rect::RectF,
+        _: &mut Self::LayoutState,
+        ctx: &mut PaintContext,
+    ) -> Self::PaintState {
+        let mut child_origin = bounds.origin();
         for child in &mut self.children {
-            child.paint(origin, ctx, app);
+            child.paint(child_origin, ctx);
             match self.axis {
-                Axis::Horizontal => origin += vec2f(child.size().unwrap().x(), 0.0),
-                Axis::Vertical => origin += vec2f(0.0, child.size().unwrap().y()),
+                Axis::Horizontal => child_origin += vec2f(child.size().x(), 0.0),
+                Axis::Vertical => child_origin += vec2f(0.0, child.size().y()),
             }
         }
     }
 
-    fn dispatch_event(&self, event: &Event, ctx: &mut EventContext, app: &AppContext) -> bool {
+    fn dispatch_event(
+        &mut self,
+        event: &Event,
+        _: pathfinder_geometry::rect::RectF,
+        _: &mut Self::LayoutState,
+        _: &mut Self::PaintState,
+        ctx: &mut EventContext,
+    ) -> bool {
         let mut handled = false;
-        for child in &self.children {
-            if child.dispatch_event(event, ctx, app) {
-                handled = true;
-            }
+        for child in &mut self.children {
+            handled = child.dispatch_event(event, ctx) || handled;
         }
         handled
-    }
-
-    fn size(&self) -> Option<Vector2F> {
-        self.size
     }
 }
 
@@ -156,46 +165,62 @@ struct FlexParentData {
 }
 
 pub struct Expanded {
-    parent_data: FlexParentData,
-    child: Box<dyn Element>,
+    metadata: FlexParentData,
+    child: ElementBox,
 }
 
 impl Expanded {
-    pub fn new(flex: f32, child: Box<dyn Element>) -> Self {
+    pub fn new(flex: f32, child: ElementBox) -> Self {
         Expanded {
-            parent_data: FlexParentData { flex },
+            metadata: FlexParentData { flex },
             child,
         }
     }
 }
 
 impl Element for Expanded {
+    type LayoutState = ();
+    type PaintState = ();
+
     fn layout(
         &mut self,
         constraint: SizeConstraint,
         ctx: &mut LayoutContext,
-        app: &AppContext,
-    ) -> Vector2F {
-        self.child.layout(constraint, ctx, app)
+    ) -> (Vector2F, Self::LayoutState) {
+        let size = self.child.layout(constraint, ctx);
+        (size, ())
     }
 
-    fn after_layout(&mut self, ctx: &mut AfterLayoutContext, app: &mut MutableAppContext) {
-        self.child.after_layout(ctx, app);
+    fn after_layout(
+        &mut self,
+        _: Vector2F,
+        _: &mut Self::LayoutState,
+        ctx: &mut AfterLayoutContext,
+    ) {
+        self.child.after_layout(ctx);
     }
 
-    fn paint(&mut self, origin: Vector2F, ctx: &mut PaintContext, app: &AppContext) {
-        self.child.paint(origin, ctx, app);
+    fn paint(
+        &mut self,
+        bounds: pathfinder_geometry::rect::RectF,
+        _: &mut Self::LayoutState,
+        ctx: &mut PaintContext,
+    ) -> Self::PaintState {
+        self.child.paint(bounds.origin(), ctx)
     }
 
-    fn dispatch_event(&self, event: &Event, ctx: &mut EventContext, app: &AppContext) -> bool {
-        self.child.dispatch_event(event, ctx, app)
+    fn dispatch_event(
+        &mut self,
+        event: &Event,
+        _: pathfinder_geometry::rect::RectF,
+        _: &mut Self::LayoutState,
+        _: &mut Self::PaintState,
+        ctx: &mut EventContext,
+    ) -> bool {
+        self.child.dispatch_event(event, ctx)
     }
 
-    fn size(&self) -> Option<Vector2F> {
-        self.child.size()
-    }
-
-    fn parent_data(&self) -> Option<&dyn Any> {
-        Some(&self.parent_data)
+    fn metadata(&self) -> Option<&dyn Any> {
+        Some(&self.metadata)
     }
 }

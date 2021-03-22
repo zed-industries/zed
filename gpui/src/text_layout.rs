@@ -2,7 +2,7 @@ use crate::{
     color::ColorU,
     fonts::{FontCache, FontId, GlyphId},
     geometry::rect::RectF,
-    scene::Scene,
+    PaintContext,
 };
 use core_foundation::{
     attributed_string::CFMutableAttributedString,
@@ -188,11 +188,9 @@ impl Line {
 
     pub fn paint(
         &self,
-        _origin: Vector2F,
-        _viewport_rect: RectF,
+        _bounds: RectF,
         _colors: &[(Range<usize>, ColorU)],
-        _scene: Scene,
-        _font_cache: &FontCache,
+        _ctx: &mut PaintContext,
     ) {
         // canvas.set_font_size(self.font_size);
         // let mut colors = colors.iter().peekable();

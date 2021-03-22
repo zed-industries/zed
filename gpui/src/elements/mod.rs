@@ -6,6 +6,7 @@ mod event_handler;
 mod flex;
 mod label;
 mod line_box;
+mod new;
 mod stack;
 mod svg;
 mod uniform_list;
@@ -19,66 +20,33 @@ pub use event_handler::*;
 pub use flex::*;
 pub use label::*;
 pub use line_box::*;
+pub use new::*;
 pub use stack::*;
 pub use svg::*;
 pub use uniform_list::*;
 
 use crate::{
-    AfterLayoutContext, AppContext, Event, EventContext, LayoutContext, MutableAppContext,
-    PaintContext, SizeConstraint,
+    AfterLayoutContext, AppContext, Event, EventContext, LayoutContext, PaintContext,
+    SizeConstraint,
 };
-use pathfinder_geometry::{rect::RectF, vector::Vector2F};
-use std::any::Any;
 
-pub trait Element {
-    fn layout(
-        &mut self,
-        constraint: SizeConstraint,
-        ctx: &mut LayoutContext,
-        app: &AppContext,
-    ) -> Vector2F;
-
-    fn after_layout(&mut self, _: &mut AfterLayoutContext, _: &mut MutableAppContext) {}
-
-    fn paint(&mut self, origin: Vector2F, ctx: &mut PaintContext, app: &AppContext);
-
-    fn size(&self) -> Option<Vector2F>;
-
-    fn parent_data(&self) -> Option<&dyn Any> {
-        None
-    }
-
-    fn dispatch_event(&self, event: &Event, ctx: &mut EventContext, app: &AppContext) -> bool;
-
-    fn boxed(self) -> Box<dyn Element>
-    where
-        Self: 'static + Sized,
-    {
-        Box::new(self)
-    }
-}
-
-pub trait ParentElement<'a>: Extend<Box<dyn Element>> + Sized {
-    fn add_children(&mut self, children: impl IntoIterator<Item = Box<dyn Element>>) {
+pub trait ParentElement<'a>: Extend<ElementBox> + Sized {
+    fn add_children(&mut self, children: impl IntoIterator<Item = ElementBox>) {
         self.extend(children);
     }
 
-    fn add_child(&mut self, child: Box<dyn Element>) {
+    fn add_child(&mut self, child: ElementBox) {
         self.add_children(Some(child));
     }
 
-    fn with_children(mut self, children: impl IntoIterator<Item = Box<dyn Element>>) -> Self {
+    fn with_children(mut self, children: impl IntoIterator<Item = ElementBox>) -> Self {
         self.add_children(children);
         self
     }
 
-    fn with_child(self, child: Box<dyn Element>) -> Self {
+    fn with_child(self, child: ElementBox) -> Self {
         self.with_children(Some(child))
     }
 }
 
-impl<'a, T> ParentElement<'a> for T where T: Extend<Box<dyn Element>> {}
-
-pub fn try_rect(origin: Option<Vector2F>, size: Option<Vector2F>) -> Option<RectF> {
-    origin.and_then(|origin| size.map(|size| RectF::new(origin, size)))
-}
+impl<'a, T> ParentElement<'a> for T where T: Extend<ElementBox> {}

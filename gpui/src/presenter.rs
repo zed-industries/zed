@@ -4,14 +4,14 @@ use crate::{
     fonts::FontCache,
     platform::Event,
     text_layout::TextLayoutCache,
-    AssetCache, Scene,
+    AssetCache, ElementBox, Scene,
 };
 use pathfinder_geometry::vector::{vec2f, Vector2F};
 use std::{any::Any, collections::HashMap, sync::Arc};
 
 pub struct Presenter {
     window_id: usize,
-    rendered_views: HashMap<usize, Box<dyn Element>>,
+    rendered_views: HashMap<usize, ElementBox>,
     parents: HashMap<usize, usize>,
     font_cache: Arc<FontCache>,
     text_layout_cache: TextLayoutCache,
@@ -68,13 +68,14 @@ impl Presenter {
         if let Some(root_view_id) = app.root_view_id(self.window_id) {
             self.layout(window_size, app.downgrade());
             self.after_layout(app);
-            let mut paint_ctx = PaintContext {
+            let mut ctx = PaintContext {
                 scene: &mut scene,
                 font_cache: &self.font_cache,
                 text_layout_cache: &self.text_layout_cache,
                 rendered_views: &mut self.rendered_views,
+                app: app.downgrade(),
             };
-            paint_ctx.paint(root_view_id, Vector2F::zero(), app.downgrade());
+            ctx.paint(root_view_id, Vector2F::zero());
             self.text_layout_cache.finish_frame();
         } else {
             log::error!("could not find root_view_id for window {}", self.window_id);
@@ -92,8 +93,9 @@ impl Presenter {
                 text_layout_cache: &self.text_layout_cache,
                 asset_cache: &self.asset_cache,
                 view_stack: Vec::new(),
+                app,
             };
-            layout_ctx.layout(root_view_id, SizeConstraint::strict(size), app);
+            layout_ctx.layout(root_view_id, SizeConstraint::strict(size));
         }
     }
 
@@ -103,35 +105,27 @@ impl Presenter {
                 rendered_views: &mut self.rendered_views,
                 font_cache: &self.font_cache,
                 text_layout_cache: &self.text_layout_cache,
+                app,
             };
-            ctx.after_layout(root_view_id, app);
+            ctx.after_layout(root_view_id);
         }
     }
 
-    pub fn responder_chain(&self, app: &AppContext) -> Option<Vec<usize>> {
-        app.focused_view_id(self.window_id).map(|mut view_id| {
-            let mut chain = vec![view_id];
-            while let Some(parent_id) = self.parents.get(&view_id) {
-                view_id = *parent_id;
-                chain.push(view_id);
-            }
-            chain.reverse();
-            chain
-        })
-    }
-
-    pub fn dispatch_event(&self, event: Event, app: &AppContext) -> Vec<ActionToDispatch> {
-        let mut event_ctx = EventContext {
-            rendered_views: &self.rendered_views,
-            actions: Vec::new(),
-            font_cache: &self.font_cache,
-            text_layout_cache: &self.text_layout_cache,
-            view_stack: Vec::new(),
-        };
+    pub fn dispatch_event(&mut self, event: Event, app: &AppContext) -> Vec<ActionToDispatch> {
         if let Some(root_view_id) = app.root_view_id(self.window_id) {
-            event_ctx.dispatch_event_on_view(root_view_id, &event, app);
+            let mut ctx = EventContext {
+                rendered_views: &mut self.rendered_views,
+                actions: Vec::new(),
+                font_cache: &self.font_cache,
+                text_layout_cache: &self.text_layout_cache,
+                view_stack: Vec::new(),
+                app,
+            };
+            ctx.dispatch_event(root_view_id, &event);
+            ctx.actions
+        } else {
+            Vec::new()
         }
-        event_ctx.actions
     }
 }
 
@@ -142,22 +136,23 @@ pub struct ActionToDispatch {
 }
 
 pub struct LayoutContext<'a> {
-    rendered_views: &'a mut HashMap<usize, Box<dyn Element>>,
+    rendered_views: &'a mut HashMap<usize, ElementBox>,
     parents: &'a mut HashMap<usize, usize>,
     pub font_cache: &'a FontCache,
     pub text_layout_cache: &'a TextLayoutCache,
     pub asset_cache: &'a AssetCache,
+    pub app: &'a AppContext,
     view_stack: Vec<usize>,
 }
 
 impl<'a> LayoutContext<'a> {
-    fn layout(&mut self, view_id: usize, constraint: SizeConstraint, app: &AppContext) -> Vector2F {
+    fn layout(&mut self, view_id: usize, constraint: SizeConstraint) -> Vector2F {
         if let Some(parent_id) = self.view_stack.last() {
             self.parents.insert(view_id, *parent_id);
         }
         self.view_stack.push(view_id);
         let mut rendered_view = self.rendered_views.remove(&view_id).unwrap();
-        let size = rendered_view.layout(constraint, self, app);
+        let size = rendered_view.layout(constraint, self);
         self.rendered_views.insert(view_id, rendered_view);
         self.view_stack.pop();
         size
@@ -165,55 +160,54 @@ impl<'a> LayoutContext<'a> {
 }
 
 pub struct AfterLayoutContext<'a> {
-    rendered_views: &'a mut HashMap<usize, Box<dyn Element>>,
+    rendered_views: &'a mut HashMap<usize, ElementBox>,
     pub font_cache: &'a FontCache,
     pub text_layout_cache: &'a TextLayoutCache,
+    pub app: &'a mut MutableAppContext,
 }
 
 impl<'a> AfterLayoutContext<'a> {
-    fn after_layout(&mut self, view_id: usize, app: &mut MutableAppContext) {
+    fn after_layout(&mut self, view_id: usize) {
         if let Some(mut view) = self.rendered_views.remove(&view_id) {
-            view.after_layout(self, app);
+            view.after_layout(self);
             self.rendered_views.insert(view_id, view);
         }
     }
 }
 
 pub struct PaintContext<'a> {
-    rendered_views: &'a mut HashMap<usize, Box<dyn Element>>,
+    rendered_views: &'a mut HashMap<usize, ElementBox>,
     pub scene: &'a mut Scene,
     pub font_cache: &'a FontCache,
     pub text_layout_cache: &'a TextLayoutCache,
+    pub app: &'a AppContext,
 }
 
 impl<'a> PaintContext<'a> {
-    fn paint(&mut self, view_id: usize, origin: Vector2F, app: &AppContext) {
+    fn paint(&mut self, view_id: usize, origin: Vector2F) {
         if let Some(mut tree) = self.rendered_views.remove(&view_id) {
-            tree.paint(origin, self, app);
+            tree.paint(origin, self);
             self.rendered_views.insert(view_id, tree);
         }
     }
 }
 
 pub struct EventContext<'a> {
-    rendered_views: &'a HashMap<usize, Box<dyn Element>>,
+    rendered_views: &'a mut HashMap<usize, ElementBox>,
     actions: Vec<ActionToDispatch>,
     pub font_cache: &'a FontCache,
     pub text_layout_cache: &'a TextLayoutCache,
+    pub app: &'a AppContext,
     view_stack: Vec<usize>,
 }
 
 impl<'a> EventContext<'a> {
-    pub fn dispatch_event_on_view(
-        &mut self,
-        view_id: usize,
-        event: &Event,
-        app: &AppContext,
-    ) -> bool {
-        if let Some(element) = self.rendered_views.get(&view_id) {
+    fn dispatch_event(&mut self, view_id: usize, event: &Event) -> bool {
+        if let Some(mut element) = self.rendered_views.remove(&view_id) {
             self.view_stack.push(view_id);
-            let result = element.dispatch_event(event, self, app);
+            let result = element.dispatch_event(event, self);
             self.view_stack.pop();
+            self.rendered_views.insert(view_id, element);
             result
         } else {
             false
@@ -298,47 +292,54 @@ impl SizeConstraint {
 
 pub struct ChildView {
     view_id: usize,
-    size: Option<Vector2F>,
-    origin: Option<Vector2F>,
 }
 
 impl ChildView {
     pub fn new(view_id: usize) -> Self {
-        Self {
-            view_id,
-            size: None,
-            origin: None,
-        }
+        Self { view_id }
     }
 }
 
 impl Element for ChildView {
+    type LayoutState = ();
+    type PaintState = ();
+
     fn layout(
         &mut self,
         constraint: SizeConstraint,
         ctx: &mut LayoutContext,
-        app: &AppContext,
-    ) -> Vector2F {
-        let size = ctx.layout(self.view_id, constraint, app);
-        self.size = Some(size);
-        size
+    ) -> (Vector2F, Self::LayoutState) {
+        let size = ctx.layout(self.view_id, constraint);
+        (size, ())
     }
 
-    fn after_layout(&mut self, ctx: &mut AfterLayoutContext, app: &mut MutableAppContext) {
-        ctx.after_layout(self.view_id, app);
+    fn after_layout(
+        &mut self,
+        _: Vector2F,
+        _: &mut Self::LayoutState,
+        ctx: &mut AfterLayoutContext,
+    ) {
+        ctx.after_layout(self.view_id);
     }
 
-    fn paint(&mut self, origin: Vector2F, ctx: &mut PaintContext, app: &AppContext) {
-        self.origin = Some(origin);
-        ctx.paint(self.view_id, origin, app);
+    fn paint(
+        &mut self,
+        bounds: pathfinder_geometry::rect::RectF,
+        _: &mut Self::LayoutState,
+        ctx: &mut PaintContext,
+    ) -> Self::PaintState {
+        ctx.paint(self.view_id, bounds.origin());
     }
 
-    fn dispatch_event(&self, event: &Event, ctx: &mut EventContext, app: &AppContext) -> bool {
-        ctx.dispatch_event_on_view(self.view_id, event, app)
-    }
-
-    fn size(&self) -> Option<Vector2F> {
-        self.size
+    fn dispatch_event(
+        &mut self,
+        event: &Event,
+        _: pathfinder_geometry::rect::RectF,
+        _: &mut Self::LayoutState,
+        _: &mut Self::PaintState,
+        ctx: &mut EventContext,
+    ) -> bool {
+        ctx.dispatch_event(self.view_id, event)
     }
 }
 

@@ -1,31 +1,27 @@
 use crate::{
-    geometry::vector::Vector2F, AfterLayoutContext, AppContext, Element, Event, EventContext,
-    LayoutContext, MutableAppContext, PaintContext, SizeConstraint,
+    geometry::vector::Vector2F, AfterLayoutContext, Element, Event, EventContext, LayoutContext,
+    PaintContext, SizeConstraint,
 };
 
 pub struct Svg {
     path: String,
-    // tree: Option<Rc<usvg::Tree>>,
-    size: Option<Vector2F>,
 }
 
 impl Svg {
     pub fn new(path: String) -> Self {
-        Self {
-            path,
-            // tree: None,
-            size: None,
-        }
+        Self { path }
     }
 }
 
 impl Element for Svg {
+    type LayoutState = ();
+    type PaintState = ();
+
     fn layout(
         &mut self,
-        constraint: SizeConstraint,
-        ctx: &mut LayoutContext,
-        _: &AppContext,
-    ) -> Vector2F {
+        _: SizeConstraint,
+        _: &mut LayoutContext,
+    ) -> (Vector2F, Self::LayoutState) {
         // let size;
         // match ctx.asset_cache.svg(&self.path) {
         //     Ok(tree) => {
@@ -52,25 +48,30 @@ impl Element for Svg {
         //     }
         // };
 
-        // self.size = Some(size);
         // size
+
         todo!()
     }
 
-    fn after_layout(&mut self, _: &mut AfterLayoutContext, _: &mut MutableAppContext) {}
-
-    fn paint(&mut self, origin: Vector2F, ctx: &mut PaintContext, _: &AppContext) {
-        // if let Some(tree) = self.tree.as_ref() {
-        //     ctx.canvas
-        //         .draw_svg(tree, RectF::new(origin, self.size.unwrap()));
-        // }
+    fn after_layout(&mut self, _: Vector2F, _: &mut Self::LayoutState, _: &mut AfterLayoutContext) {
     }
 
-    fn size(&self) -> Option<Vector2F> {
-        self.size
+    fn paint(
+        &mut self,
+        _: pathfinder_geometry::rect::RectF,
+        _: &mut Self::LayoutState,
+        _: &mut PaintContext,
+    ) -> Self::PaintState {
     }
 
-    fn dispatch_event(&self, _: &Event, _: &mut EventContext, _: &AppContext) -> bool {
+    fn dispatch_event(
+        &mut self,
+        _: &Event,
+        _: pathfinder_geometry::rect::RectF,
+        _: &mut Self::LayoutState,
+        _: &mut Self::PaintState,
+        _: &mut EventContext,
+    ) -> bool {
         false
     }
 }

@@ -15,31 +15,25 @@ use std::{
 
 pub struct BufferElement {
     view: ViewHandle<BufferView>,
-    layout: Option<LayoutState>,
-    paint: Option<PaintState>,
 }
 
 impl BufferElement {
     pub fn new(view: ViewHandle<BufferView>) -> Self {
-        Self {
-            view,
-            layout: None,
-            paint: None,
-        }
+        Self { view }
     }
 
     fn mouse_down(
         &self,
         position: Vector2F,
         cmd: bool,
+        layout: &mut LayoutState,
+        paint: &mut PaintState,
         ctx: &mut EventContext,
-        app: &AppContext,
     ) -> bool {
-        let layout = self.layout.as_ref().unwrap();
-        let paint = self.paint.as_ref().unwrap();
-        if paint.text_rect.contains_point(position) {
-            let view = self.view.as_ref(app);
-            let position = paint.point_for_position(view, layout, position, ctx.font_cache, app);
+        if paint.text_bounds.contains_point(position) {
+            let view = self.view.as_ref(ctx.app);
+            let position =
+                paint.point_for_position(view, layout, position, ctx.font_cache, ctx.app);
             ctx.dispatch_action("buffer:select", SelectAction::Begin { position, add: cmd });
             true
         } else {
@@ -47,8 +41,8 @@ impl BufferElement {
         }
     }
 
-    fn mouse_up(&self, _position: Vector2F, ctx: &mut EventContext, app: &AppContext) -> bool {
-        if self.view.as_ref(app).is_selecting() {
+    fn mouse_up(&self, _position: Vector2F, ctx: &mut EventContext) -> bool {
+        if self.view.as_ref(ctx.app).is_selecting() {
             ctx.dispatch_action("buffer:select", SelectAction::End);
             true
         } else {
@@ -56,13 +50,17 @@ impl BufferElement {
         }
     }
 
-    fn mouse_dragged(&self, position: Vector2F, ctx: &mut EventContext, app: &AppContext) -> bool {
-        let view = self.view.as_ref(app);
-        let layout = self.layout.as_ref().unwrap();
-        let paint = self.paint.as_ref().unwrap();
+    fn mouse_dragged(
+        &self,
+        position: Vector2F,
+        layout: &mut LayoutState,
+        paint: &mut PaintState,
+        ctx: &mut EventContext,
+    ) -> bool {
+        let view = self.view.as_ref(ctx.app);
 
         if view.is_selecting() {
-            let rect = self.paint.as_ref().unwrap().text_rect;
+            let rect = paint.text_bounds;
             let mut scroll_delta = Vector2F::zero();
 
             let vertical_margin = view.line_height(ctx.font_cache).min(rect.height() / 3.0);
@@ -92,15 +90,16 @@ impl BufferElement {
             ctx.dispatch_action(
                 "buffer:select",
                 SelectAction::Update {
-                    position: paint.point_for_position(view, layout, position, ctx.font_cache, app),
+                    position: paint.point_for_position(
+                        view,
+                        layout,
+                        position,
+                        ctx.font_cache,
+                        ctx.app,
+                    ),
                     scroll_position: (view.scroll_position() + scroll_delta).clamp(
                         Vector2F::zero(),
-                        self.layout.as_ref().unwrap().scroll_max(
-                            view,
-                            ctx.font_cache,
-                            ctx.text_layout_cache,
-                            app,
-                        ),
+                        layout.scroll_max(view, ctx.font_cache, ctx.text_layout_cache, ctx.app),
                     ),
                 },
             );
@@ -110,8 +109,8 @@ impl BufferElement {
         }
     }
 
-    fn key_down(&self, chars: &str, ctx: &mut EventContext, app: &AppContext) -> bool {
-        if self.view.is_focused(app) {
+    fn key_down(&self, chars: &str, ctx: &mut EventContext) -> bool {
+        if self.view.is_focused(ctx.app) {
             if chars.is_empty() {
                 false
             } else {
@@ -132,12 +131,11 @@ impl BufferElement {
         position: Vector2F,
         delta: Vector2F,
         precise: bool,
+        layout: &mut LayoutState,
+        paint: &mut PaintState,
         ctx: &mut EventContext,
-        app: &AppContext,
     ) -> bool {
-        let paint = self.paint.as_ref().unwrap();
-
-        if !paint.rect.contains_point(position) {
+        if !paint.bounds.contains_point(position) {
             return false;
         }
 
@@ -145,7 +143,7 @@ impl BufferElement {
             todo!("still need to handle non-precise scroll events from a mouse wheel");
         }
 
-        let view = self.view.as_ref(app);
+        let view = self.view.as_ref(ctx.app);
         let font_cache = &ctx.font_cache;
         let layout_cache = &ctx.text_layout_cache;
         let max_glyph_width = view.em_width(font_cache);
@@ -155,10 +153,7 @@ impl BufferElement {
         let y = (view.scroll_position().y() * line_height - delta.y()) / line_height;
         let scroll_position = vec2f(x, y).clamp(
             Vector2F::zero(),
-            self.layout
-                .as_ref()
-                .unwrap()
-                .scroll_max(view, font_cache, layout_cache, app),
+            layout.scroll_max(view, font_cache, layout_cache, ctx.app),
         );
 
         ctx.dispatch_action("buffer:scroll", scroll_position);
@@ -166,7 +161,7 @@ impl BufferElement {
         true
     }
 
-    fn paint_gutter(&mut self, rect: RectF, ctx: &mut PaintContext, app: &AppContext) {
+    fn paint_gutter(&mut self, rect: RectF, ctx: &mut PaintContext) {
         // if let Some(layout) = self.layout.as_ref() {
         //     let view = self.view.as_ref(app);
         //     let scene = &mut ctx.scene;
@@ -202,7 +197,7 @@ impl BufferElement {
         // }
     }
 
-    fn paint_text(&mut self, rect: RectF, ctx: &mut PaintContext, app: &AppContext) {
+    fn paint_text(&mut self, rect: RectF, ctx: &mut PaintContext) {
         // if let Some(layout) = self.layout.as_ref() {
         //     let scene = &mut ctx.scene;
         //     let font_cache = &ctx.font_cache;
@@ -323,12 +318,15 @@ impl BufferElement {
 }
 
 impl Element for BufferElement {
+    type LayoutState = Option<LayoutState>;
+    type PaintState = Option<PaintState>;
+
     fn layout(
         &mut self,
         constraint: SizeConstraint,
         ctx: &mut LayoutContext,
-        app: &AppContext,
-    ) -> Vector2F {
+    ) -> (Vector2F, Self::LayoutState) {
+        let app = ctx.app;
         let mut size = constraint.max;
         if size.y().is_infinite() {
             let view = self.view.as_ref(app);
@@ -350,7 +348,7 @@ impl Element for BufferElement {
             match view.max_line_number_width(ctx.font_cache, ctx.text_layout_cache, app) {
                 Err(error) => {
                     log::error!("error computing max line number width: {}", error);
-                    return size;
+                    return (size, None);
                 }
                 Ok(width) => gutter_width = width + gutter_padding * 2.0,
             }
@@ -368,7 +366,7 @@ impl Element for BufferElement {
             match view.layout_line_numbers(size.y(), ctx.font_cache, ctx.text_layout_cache, app) {
                 Err(error) => {
                     log::error!("error laying out line numbers: {}", error);
-                    return size;
+                    return (size, None);
                 }
                 Ok(layouts) => layouts,
             }
@@ -385,7 +383,7 @@ impl Element for BufferElement {
             match view.layout_lines(start_row..end_row, font_cache, layout_cache, app) {
                 Err(error) => {
                     log::error!("error laying out lines: {}", error);
-                    return size;
+                    return (size, None);
                 }
                 Ok(layouts) => {
                     for line in &layouts {
@@ -398,84 +396,108 @@ impl Element for BufferElement {
                 }
             };
 
-        self.layout = Some(LayoutState {
+        (
             size,
-            gutter_size,
-            gutter_padding,
-            text_size,
-            line_layouts,
-            line_number_layouts,
-            max_visible_line_width,
-            autoscroll_horizontally,
-        });
-
-        size
+            Some(LayoutState {
+                size,
+                gutter_size,
+                gutter_padding,
+                text_size,
+                line_layouts,
+                line_number_layouts,
+                max_visible_line_width,
+                autoscroll_horizontally,
+            }),
+        )
     }
 
-    fn after_layout(&mut self, ctx: &mut AfterLayoutContext, app: &mut MutableAppContext) {
-        let layout = self.layout.as_ref().unwrap();
+    fn after_layout(
+        &mut self,
+        _: Vector2F,
+        layout: &mut Option<LayoutState>,
+        ctx: &mut AfterLayoutContext,
+    ) {
+        if let Some(layout) = layout {
+            let app = ctx.app.downgrade();
 
-        let view = self.view.as_ref(app);
-        view.clamp_scroll_left(
-            layout
-                .scroll_max(view, ctx.font_cache, ctx.text_layout_cache, app.downgrade())
-                .x(),
-        );
-
-        if layout.autoscroll_horizontally {
-            view.autoscroll_horizontally(
-                view.scroll_position().y() as u32,
-                layout.text_size.x(),
-                layout.scroll_width(view, ctx.font_cache, ctx.text_layout_cache, app.downgrade()),
-                view.em_width(ctx.font_cache),
-                &layout.line_layouts,
-                app.downgrade(),
+            let view = self.view.as_ref(app);
+            view.clamp_scroll_left(
+                layout
+                    .scroll_max(view, ctx.font_cache, ctx.text_layout_cache, app)
+                    .x(),
             );
+
+            if layout.autoscroll_horizontally {
+                view.autoscroll_horizontally(
+                    view.scroll_position().y() as u32,
+                    layout.text_size.x(),
+                    layout.scroll_width(view, ctx.font_cache, ctx.text_layout_cache, app),
+                    view.em_width(ctx.font_cache),
+                    &layout.line_layouts,
+                    app,
+                );
+            }
         }
     }
 
-    fn paint(&mut self, origin: Vector2F, ctx: &mut PaintContext, app: &AppContext) {
-        let rect;
-        let gutter_rect;
-        let text_rect;
-        {
-            let layout = self.layout.as_ref().unwrap();
-            rect = RectF::new(origin, layout.size);
-            gutter_rect = RectF::new(origin, layout.gutter_size);
-            text_rect = RectF::new(
-                origin + vec2f(layout.gutter_size.x(), 0.0),
+    fn paint(
+        &mut self,
+        bounds: RectF,
+        layout: &mut Self::LayoutState,
+        ctx: &mut PaintContext,
+    ) -> Self::PaintState {
+        if let Some(layout) = layout {
+            let gutter_bounds = RectF::new(bounds.origin(), layout.gutter_size);
+            let text_bounds = RectF::new(
+                bounds.origin() + vec2f(layout.gutter_size.x(), 0.0),
                 layout.text_size,
             );
-        }
 
-        if self.view.as_ref(app).is_gutter_visible() {
-            self.paint_gutter(gutter_rect, ctx, app);
-        }
-        self.paint_text(text_rect, ctx, app);
+            if self.view.as_ref(ctx.app).is_gutter_visible() {
+                self.paint_gutter(gutter_bounds, ctx);
+            }
+            self.paint_text(text_bounds, ctx);
 
-        self.paint = Some(PaintState { rect, text_rect });
-    }
-
-    fn dispatch_event(&self, event: &Event, ctx: &mut EventContext, app: &AppContext) -> bool {
-        match event {
-            Event::LeftMouseDown { position, cmd } => self.mouse_down(*position, *cmd, ctx, app),
-            Event::LeftMouseUp { position } => self.mouse_up(*position, ctx, app),
-            Event::LeftMouseDragged { position } => self.mouse_dragged(*position, ctx, app),
-            Event::ScrollWheel {
-                position,
-                delta,
-                precise,
-            } => self.scroll(*position, *delta, *precise, ctx, app),
-            Event::KeyDown { chars, .. } => self.key_down(chars, ctx, app),
+            Some(PaintState {
+                bounds,
+                text_bounds,
+            })
+        } else {
+            None
         }
     }
 
-    fn size(&self) -> Option<Vector2F> {
-        self.layout.as_ref().map(|layout| layout.size)
+    fn dispatch_event(
+        &mut self,
+        event: &Event,
+        _: RectF,
+        layout: &mut Self::LayoutState,
+        paint: &mut Self::PaintState,
+        ctx: &mut EventContext,
+    ) -> bool {
+        if let (Some(layout), Some(paint)) = (layout, paint) {
+            match event {
+                Event::LeftMouseDown { position, cmd } => {
+                    self.mouse_down(*position, *cmd, layout, paint, ctx)
+                }
+                Event::LeftMouseUp { position } => self.mouse_up(*position, ctx),
+                Event::LeftMouseDragged { position } => {
+                    self.mouse_dragged(*position, layout, paint, ctx)
+                }
+                Event::ScrollWheel {
+                    position,
+                    delta,
+                    precise,
+                } => self.scroll(*position, *delta, *precise, layout, paint, ctx),
+                Event::KeyDown { chars, .. } => self.key_down(chars, ctx),
+            }
+        } else {
+            false
+        }
     }
 }
 
-struct LayoutState {
+pub struct LayoutState {
     size: Vector2F,
     gutter_size: Vector2F,
     gutter_padding: f32,
@@ -518,9 +540,9 @@ impl LayoutState {
     }
 }
 
-struct PaintState {
-    rect: RectF,
-    text_rect: RectF,
+pub struct PaintState {
+    bounds: RectF,
+    text_bounds: RectF,
 }
 
 impl PaintState {
@@ -533,7 +555,7 @@ impl PaintState {
         app: &AppContext,
     ) -> DisplayPoint {
         let scroll_position = view.scroll_position();
-        let position = position - self.text_rect.origin();
+        let position = position - self.text_bounds.origin();
         let y = position.y().max(0.0).min(layout.size.y());
         let row = ((y / view.line_height(font_cache)) + scroll_position.y()) as u32;
         let row = cmp::min(row, view.max_point(app).row());

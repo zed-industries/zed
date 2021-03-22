@@ -3,8 +3,7 @@ use crate::{
     fonts::{FamilyId, Properties},
     geometry::vector::{vec2f, Vector2F},
     text_layout::Line,
-    AfterLayoutContext, AppContext, Element, Event, EventContext, LayoutContext, MutableAppContext,
-    PaintContext, SizeConstraint,
+    AfterLayoutContext, Element, Event, EventContext, LayoutContext, PaintContext, SizeConstraint,
 };
 use std::{ops::Range, sync::Arc};
 
@@ -14,9 +13,11 @@ pub struct Label {
     font_properties: Properties,
     font_size: f32,
     highlights: Option<Highlights>,
-    layout_line: Option<Arc<Line>>,
-    colors: Option<Vec<(Range<usize>, ColorU)>>,
-    size: Option<Vector2F>,
+}
+
+pub struct LayoutState {
+    line: Arc<Line>,
+    colors: Vec<(Range<usize>, ColorU)>,
 }
 
 pub struct Highlights {
@@ -33,9 +34,6 @@ impl Label {
             font_properties: Properties::new(),
             font_size,
             highlights: None,
-            layout_line: None,
-            colors: None,
-            size: None,
         }
     }
 
@@ -55,12 +53,14 @@ impl Label {
 }
 
 impl Element for Label {
+    type LayoutState = LayoutState;
+    type PaintState = ();
+
     fn layout(
         &mut self,
         constraint: SizeConstraint,
         ctx: &mut LayoutContext,
-        _: &AppContext,
-    ) -> Vector2F {
+    ) -> (Vector2F, Self::LayoutState) {
         let font_id = ctx
             .font_cache
             .select_font(self.family_id, &self.font_properties)
@@ -109,9 +109,7 @@ impl Element for Label {
             colors = vec![(0..text_len, ColorU::black())];
         }
 
-        self.colors = Some(colors);
-
-        let layout_line = ctx.text_layout_cache.layout_str(
+        let line = ctx.text_layout_cache.layout_str(
             self.text.as_str(),
             self.font_size,
             styles.as_slice(),
@@ -119,37 +117,33 @@ impl Element for Label {
         );
 
         let size = vec2f(
-            layout_line
-                .width
-                .max(constraint.min.x())
-                .min(constraint.max.x()),
+            line.width.max(constraint.min.x()).min(constraint.max.x()),
             ctx.font_cache.line_height(font_id, self.font_size).ceil(),
         );
 
-        self.layout_line = Some(layout_line);
-        self.size = Some(size);
-
-        size
+        (size, LayoutState { line, colors })
     }
 
-    fn after_layout(&mut self, _: &mut AfterLayoutContext, _: &mut MutableAppContext) {}
-
-    fn paint(&mut self, origin: Vector2F, ctx: &mut PaintContext, _: &AppContext) {
-        // ctx.canvas.set_fill_style(FillStyle::Color(ColorU::black()));
-        // self.layout_line.as_ref().unwrap().paint(
-        //     origin,
-        //     RectF::new(origin, self.size.unwrap()),
-        //     self.colors.as_ref().unwrap(),
-        //     ctx.canvas,
-        //     ctx.font_cache,
-        // );
+    fn after_layout(&mut self, _: Vector2F, _: &mut Self::LayoutState, _: &mut AfterLayoutContext) {
     }
 
-    fn size(&self) -> Option<Vector2F> {
-        self.size
+    fn paint(
+        &mut self,
+        bounds: pathfinder_geometry::rect::RectF,
+        layout: &mut Self::LayoutState,
+        ctx: &mut PaintContext,
+    ) -> Self::PaintState {
+        layout.line.paint(bounds, layout.colors.as_slice(), ctx)
     }
 
-    fn dispatch_event(&self, _: &Event, _: &mut EventContext, _: &AppContext) -> bool {
+    fn dispatch_event(
+        &mut self,
+        _: &Event,
+        _: pathfinder_geometry::rect::RectF,
+        _: &mut Self::LayoutState,
+        _: &mut Self::PaintState,
+        _: &mut EventContext,
+    ) -> bool {
         false
     }
 }

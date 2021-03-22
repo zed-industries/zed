@@ -173,7 +173,7 @@ impl Pane {
         ctx.emit(Event::Split(direction));
     }
 
-    fn render_tabs<'a>(&self, app: &AppContext) -> Box<dyn Element> {
+    fn render_tabs<'a>(&self, app: &AppContext) -> ElementBox {
         let settings = smol::block_on(self.settings.read());
         let border_color = ColorU::new(0xdb, 0xdb, 0xdc, 0xff);
 
@@ -209,7 +209,7 @@ impl Pane {
                     1.0,
                     ConstrainedBox::new(
                         EventHandler::new(container.boxed())
-                            .on_mouse_down(move |ctx, _| {
+                            .on_mouse_down(move |ctx| {
                                 ctx.dispatch_action("pane:activate_item", ix);
                                 true
                             })
@@ -253,7 +253,7 @@ impl View for Pane {
         "Pane"
     }
 
-    fn render<'a>(&self, app: &AppContext) -> Box<dyn Element> {
+    fn render<'a>(&self, app: &AppContext) -> ElementBox {
         if let Some(active_item) = self.active_item() {
             Flex::column()
                 .with_child(self.render_tabs(app))
