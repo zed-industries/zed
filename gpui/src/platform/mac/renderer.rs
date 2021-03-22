@@ -97,11 +97,21 @@ impl Renderer {
         for quad_batch in layer.quads().chunks(batch_size) {
             for (ix, quad) in quad_batch.iter().enumerate() {
                 let bounds = quad.bounds * scene.scale_factor();
+                let border_width = quad.border.width * scene.scale_factor();
                 let shader_quad = shaders::GPUIQuad {
                     origin: bounds.origin().to_float2(),
                     size: bounds.size().to_float2(),
                     background_color: quad
                         .background
+                        .unwrap_or(ColorU::transparent_black())
+                        .to_uchar4(),
+                    border_top: border_width * (quad.border.top as usize as f32),
+                    border_right: border_width * (quad.border.right as usize as f32),
+                    border_bottom: border_width * (quad.border.bottom as usize as f32),
+                    border_left: border_width * (quad.border.left as usize as f32),
+                    border_color: quad
+                        .border
+                        .color
                         .unwrap_or(ColorU::transparent_black())
                         .to_uchar4(),
                     corner_radius: quad.corner_radius * scene.scale_factor(),

@@ -36,9 +36,24 @@ fragment float4 quad_fragment(
 ) {
     float2 half_size = input.quad.size / 2.;
     float2 center = input.quad.origin + half_size;
-    float2 edge_to_point = abs(input.position.xy - center) - half_size + input.quad.corner_radius;
-    float distance = length(max(0.0, edge_to_point)) + min(0.0, max(edge_to_point.x, edge_to_point.y)) - input.quad.corner_radius;
+    float2 center_to_point = input.position.xy - center;
+    float2 edge_to_point = abs(center_to_point) - half_size;
+    float2 rounded_edge_to_point = abs(center_to_point) - half_size + input.quad.corner_radius;
+    float distance = length(max(0.0, rounded_edge_to_point)) + min(0.0, max(rounded_edge_to_point.x, rounded_edge_to_point.y)) - input.quad.corner_radius;
 
+    float border_width = 0.0;
+    if (edge_to_point.x > edge_to_point.y) {
+        border_width = center_to_point.x <= 0.0 ? input.quad.border_left : input.quad.border_right;
+    } else {
+        border_width = center_to_point.y <= 0.0 ? input.quad.border_top : input.quad.border_bottom;
+    }
+
+    float inset_distance = distance + border_width;
+    float4 color = mix(
+        coloru_to_colorf(input.quad.border_color),
+        coloru_to_colorf(input.quad.background_color),
+        saturate(0.5 - inset_distance)
+    );
     float4 coverage = float4(1.0, 1.0, 1.0, saturate(0.5 - distance));
-    return coverage * coloru_to_colorf(input.quad.background_color);
+    return coverage * color;
 }
