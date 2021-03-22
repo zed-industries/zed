@@ -49,7 +49,9 @@ impl Element for Stack {
         ctx: &mut PaintContext,
     ) -> Self::PaintState {
         for child in &mut self.children {
+            ctx.scene.push_layer();
             child.paint(bounds.origin(), ctx);
+            ctx.scene.pop_layer();
         }
     }
 

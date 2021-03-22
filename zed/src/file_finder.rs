@@ -70,11 +70,7 @@ impl View for FileFinder {
                 .with_uniform_padding(6.0)
                 .with_corner_radius(6.0)
                 .with_background_color(ColorU::new(0xf2, 0xf2, 0xf2, 0xff))
-                .with_shadow(
-                    vec2f(0.0, 4.0),
-                    12.0,
-                    ColorF::new(0.0, 0.0, 0.0, 0.25).to_u8(),
-                )
+                .with_shadow(vec2f(0., 4.), 12., ColorF::new(0.0, 0.0, 0.0, 0.25).to_u8())
                 .boxed(),
             )
             .with_max_width(600.0)

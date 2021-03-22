@@ -56,14 +56,16 @@ impl Scene {
         self.layers.as_slice()
     }
 
-    // pub fn push_layer(&mut self, clip_bounds: Option<RectF>) {
+    pub fn push_layer(&mut self) {
+        let ix = self.layers.len();
+        self.layers.push(Layer::default());
+        self.active_layer_stack.push(ix);
+    }
 
-    // }
-
-    // pub fn pop_layer(&mut self) {
-    //     assert!(self.active_layer_stack.len() > 1);
-    //     self.active_layer_stack.pop();
-    // }
+    pub fn pop_layer(&mut self) {
+        assert!(self.active_layer_stack.len() > 1);
+        self.active_layer_stack.pop();
+    }
 
     pub fn push_quad(&mut self, quad: Quad) {
         self.active_layer().push_quad(quad)
