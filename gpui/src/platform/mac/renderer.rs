@@ -104,6 +104,7 @@ impl Renderer {
                         .background
                         .unwrap_or(ColorU::transparent_black())
                         .to_uchar4(),
+                    corner_radius: quad.corner_radius * scene.scale_factor(),
                 };
                 unsafe {
                     *(buffer_contents.offset(ix as isize)) = shader_quad;
@@ -143,11 +144,15 @@ fn build_pipeline_state(
     descriptor.set_label(label);
     descriptor.set_vertex_function(Some(vertex_fn.as_ref()));
     descriptor.set_fragment_function(Some(fragment_fn.as_ref()));
-    descriptor
-        .color_attachments()
-        .object_at(0)
-        .unwrap()
-        .set_pixel_format(pixel_format);
+    let color_attachment = descriptor.color_attachments().object_at(0).unwrap();
+    color_attachment.set_pixel_format(pixel_format);
+    color_attachment.set_blending_enabled(true);
+    color_attachment.set_rgb_blend_operation(metal::MTLBlendOperation::Add);
+    color_attachment.set_alpha_blend_operation(metal::MTLBlendOperation::Add);
+    color_attachment.set_source_rgb_blend_factor(metal::MTLBlendFactor::SourceAlpha);
+    color_attachment.set_source_alpha_blend_factor(metal::MTLBlendFactor::SourceAlpha);
+    color_attachment.set_destination_rgb_blend_factor(metal::MTLBlendFactor::OneMinusSourceAlpha);
+    color_attachment.set_destination_alpha_blend_factor(metal::MTLBlendFactor::OneMinusSourceAlpha);
 
     device
         .new_render_pipeline_state(&descriptor)
