@@ -169,7 +169,9 @@ impl Element for Container {
             border: self.border,
             corner_radius: self.corner_radius,
         });
-        self.child.paint(bounds.origin(), ctx);
+
+        let child_origin = quad_bounds.origin() + vec2f(self.padding.left, self.padding.top);
+        self.child.paint(child_origin, ctx);
     }
 
     fn dispatch_event(
