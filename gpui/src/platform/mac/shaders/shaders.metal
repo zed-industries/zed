@@ -73,12 +73,18 @@ fragment float4 quad_fragment(
         border_width = center_to_point.y <= 0.0 ? input.quad.border_top : input.quad.border_bottom;
     }
 
-    float inset_distance = distance + border_width;
-    float4 color = mix(
-        coloru_to_colorf(input.quad.border_color),
-        coloru_to_colorf(input.quad.background_color),
-        saturate(0.5 - inset_distance)
-    );
+    float4 color;
+    if (border_width == 0.) {
+        color = coloru_to_colorf(input.quad.background_color);
+    } else {
+        float inset_distance = distance + border_width;
+        color = mix(
+            coloru_to_colorf(input.quad.border_color),
+            coloru_to_colorf(input.quad.background_color),
+            saturate(0.5 - inset_distance)
+        );
+    }
+
     float4 coverage = float4(1.0, 1.0, 1.0, saturate(0.5 - distance));
     return coverage * color;
 }
