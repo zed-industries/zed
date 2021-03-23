@@ -130,7 +130,7 @@ impl Renderer {
             let shader_shadow = shaders::GPUIShadow {
                 origin: shape_bounds.origin().to_float2(),
                 size: shape_bounds.size().to_float2(),
-                corner_radius: shadow.corner_radius,
+                corner_radius: shadow.corner_radius * scene.scale_factor(),
                 sigma: shadow.sigma,
                 color: shadow.color.to_uchar4(),
             };
