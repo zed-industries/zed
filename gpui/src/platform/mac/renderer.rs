@@ -10,7 +10,7 @@ use shaders::ToFloat2 as _;
 
 const SHADERS_METALLIB: &'static [u8] =
     include_bytes!(concat!(env!("OUT_DIR"), "/shaders.metallib"));
-const INSTANCE_BUFFER_SIZE: u64 = 1024 * 1024;
+const INSTANCE_BUFFER_SIZE: usize = 1024 * 1024; // This is an arbitrary decision. There's probably a more optimal value.
 
 pub struct Renderer {
     quad_pipeline_state: metal::RenderPipelineState,
@@ -38,8 +38,10 @@ impl Renderer {
             (unit_vertices.len() * mem::size_of::<shaders::vector_float2>()) as u64,
             MTLResourceOptions::StorageModeManaged,
         );
-        let instances =
-            device.new_buffer(INSTANCE_BUFFER_SIZE, MTLResourceOptions::StorageModeManaged);
+        let instances = device.new_buffer(
+            INSTANCE_BUFFER_SIZE as u64,
+            MTLResourceOptions::StorageModeManaged,
+        );
 
         Ok(Self {
             quad_pipeline_state: build_pipeline_state(
@@ -73,13 +75,31 @@ impl Renderer {
             zfar: 1.0,
         });
 
+        let mut offset = 0;
         for layer in scene.layers() {
-            self.render_shadows(scene, layer, ctx);
-            self.render_quads(scene, layer, ctx);
+            self.render_shadows(scene, layer, &mut offset, ctx);
+            self.render_quads(scene, layer, &mut offset, ctx);
         }
     }
 
-    fn render_shadows(&mut self, scene: &Scene, layer: &Layer, ctx: &RenderContext) {
+    fn render_shadows(
+        &mut self,
+        scene: &Scene,
+        layer: &Layer,
+        offset: &mut usize,
+        ctx: &RenderContext,
+    ) {
+        if layer.shadows().is_empty() {
+            return;
+        }
+
+        align_offset(offset);
+        let next_offset = *offset + layer.shadows().len() * mem::size_of::<shaders::GPUIShadow>();
+        assert!(
+            next_offset <= INSTANCE_BUFFER_SIZE,
+            "instance buffer exhausted"
+        );
+
         ctx.command_encoder
             .set_render_pipeline_state(&self.shadow_pipeline_state);
         ctx.command_encoder.set_vertex_buffer(
@@ -90,7 +110,7 @@ impl Renderer {
         ctx.command_encoder.set_vertex_buffer(
             shaders::GPUIShadowInputIndex_GPUIShadowInputIndexShadows as u64,
             Some(&self.instances),
-            0,
+            *offset as u64,
         );
         ctx.command_encoder.set_vertex_bytes(
             shaders::GPUIShadowInputIndex_GPUIShadowInputIndexUniforms as u64,
@@ -101,38 +121,55 @@ impl Renderer {
             .as_ptr() as *const c_void,
         );
 
-        let batch_size = self.instances.length() as usize / mem::size_of::<shaders::GPUIShadow>();
-
-        let buffer_contents = self.instances.contents() as *mut shaders::GPUIShadow;
-        for shadow_batch in layer.shadows().chunks(batch_size) {
-            for (ix, shadow) in shadow_batch.iter().enumerate() {
-                let shape_bounds = shadow.bounds * scene.scale_factor();
-                let shader_shadow = shaders::GPUIShadow {
-                    origin: shape_bounds.origin().to_float2(),
-                    size: shape_bounds.size().to_float2(),
-                    corner_radius: shadow.corner_radius,
-                    sigma: shadow.sigma,
-                    color: shadow.color.to_uchar4(),
-                };
-                unsafe {
-                    *(buffer_contents.offset(ix as isize)) = shader_shadow;
-                }
+        let buffer_contents = unsafe {
+            (self.instances.contents() as *mut u8).offset(*offset as isize)
+                as *mut shaders::GPUIShadow
+        };
+        for (ix, shadow) in layer.shadows().iter().enumerate() {
+            let shape_bounds = shadow.bounds * scene.scale_factor();
+            let shader_shadow = shaders::GPUIShadow {
+                origin: shape_bounds.origin().to_float2(),
+                size: shape_bounds.size().to_float2(),
+                corner_radius: shadow.corner_radius,
+                sigma: shadow.sigma,
+                color: shadow.color.to_uchar4(),
+            };
+            unsafe {
+                *(buffer_contents.offset(ix as isize)) = shader_shadow;
             }
-            self.instances.did_modify_range(NSRange {
-                location: 0,
-                length: (shadow_batch.len() * mem::size_of::<shaders::GPUIShadow>()) as u64,
-            });
-
-            ctx.command_encoder.draw_primitives_instanced(
-                metal::MTLPrimitiveType::Triangle,
-                0,
-                6,
-                shadow_batch.len() as u64,
-            );
         }
+
+        self.instances.did_modify_range(NSRange {
+            location: *offset as u64,
+            length: (next_offset - *offset) as u64,
+        });
+        *offset = next_offset;
+
+        ctx.command_encoder.draw_primitives_instanced(
+            metal::MTLPrimitiveType::Triangle,
+            0,
+            6,
+            layer.shadows().len() as u64,
+        );
     }
 
-    fn render_quads(&mut self, scene: &Scene, layer: &Layer, ctx: &RenderContext) {
+    fn render_quads(
+        &mut self,
+        scene: &Scene,
+        layer: &Layer,
+        offset: &mut usize,
+        ctx: &RenderContext,
+    ) {
+        if layer.quads().is_empty() {
+            return;
+        }
+        align_offset(offset);
+        let next_offset = *offset + layer.quads().len() * mem::size_of::<shaders::GPUIQuad>();
+        assert!(
+            next_offset <= INSTANCE_BUFFER_SIZE,
+            "instance buffer exhausted"
+        );
+
         ctx.command_encoder
             .set_render_pipeline_state(&self.quad_pipeline_state);
         ctx.command_encoder.set_vertex_buffer(
@@ -143,7 +180,7 @@ impl Renderer {
         ctx.command_encoder.set_vertex_buffer(
             shaders::GPUIQuadInputIndex_GPUIQuadInputIndexQuads as u64,
             Some(&self.instances),
-            0,
+            *offset as u64,
         );
         ctx.command_encoder.set_vertex_bytes(
             shaders::GPUIQuadInputIndex_GPUIQuadInputIndexUniforms as u64,
@@ -154,47 +191,55 @@ impl Renderer {
             .as_ptr() as *const c_void,
         );
 
-        let batch_size = self.instances.length() as usize / mem::size_of::<shaders::GPUIQuad>();
-
-        let buffer_contents = self.instances.contents() as *mut shaders::GPUIQuad;
-        for quad_batch in layer.quads().chunks(batch_size) {
-            for (ix, quad) in quad_batch.iter().enumerate() {
-                let bounds = quad.bounds * scene.scale_factor();
-                let border_width = quad.border.width * scene.scale_factor();
-                let shader_quad = shaders::GPUIQuad {
-                    origin: bounds.origin().to_float2(),
-                    size: bounds.size().to_float2(),
-                    background_color: quad
-                        .background
-                        .unwrap_or(ColorU::transparent_black())
-                        .to_uchar4(),
-                    border_top: border_width * (quad.border.top as usize as f32),
-                    border_right: border_width * (quad.border.right as usize as f32),
-                    border_bottom: border_width * (quad.border.bottom as usize as f32),
-                    border_left: border_width * (quad.border.left as usize as f32),
-                    border_color: quad
-                        .border
-                        .color
-                        .unwrap_or(ColorU::transparent_black())
-                        .to_uchar4(),
-                    corner_radius: quad.corner_radius * scene.scale_factor(),
-                };
-                unsafe {
-                    *(buffer_contents.offset(ix as isize)) = shader_quad;
-                }
+        let buffer_contents = unsafe {
+            (self.instances.contents() as *mut u8).offset(*offset as isize)
+                as *mut shaders::GPUIQuad
+        };
+        for (ix, quad) in layer.quads().iter().enumerate() {
+            let bounds = quad.bounds * scene.scale_factor();
+            let border_width = quad.border.width * scene.scale_factor();
+            let shader_quad = shaders::GPUIQuad {
+                origin: bounds.origin().to_float2(),
+                size: bounds.size().to_float2(),
+                background_color: quad
+                    .background
+                    .unwrap_or(ColorU::transparent_black())
+                    .to_uchar4(),
+                border_top: border_width * (quad.border.top as usize as f32),
+                border_right: border_width * (quad.border.right as usize as f32),
+                border_bottom: border_width * (quad.border.bottom as usize as f32),
+                border_left: border_width * (quad.border.left as usize as f32),
+                border_color: quad
+                    .border
+                    .color
+                    .unwrap_or(ColorU::transparent_black())
+                    .to_uchar4(),
+                corner_radius: quad.corner_radius * scene.scale_factor(),
+            };
+            unsafe {
+                *(buffer_contents.offset(ix as isize)) = shader_quad;
             }
-            self.instances.did_modify_range(NSRange {
-                location: 0,
-                length: (quad_batch.len() * mem::size_of::<shaders::GPUIQuad>()) as u64,
-            });
-
-            ctx.command_encoder.draw_primitives_instanced(
-                metal::MTLPrimitiveType::Triangle,
-                0,
-                6,
-                quad_batch.len() as u64,
-            );
         }
+
+        self.instances.did_modify_range(NSRange {
+            location: *offset as u64,
+            length: (next_offset - *offset) as u64,
+        });
+        *offset = next_offset;
+
+        ctx.command_encoder.draw_primitives_instanced(
+            metal::MTLPrimitiveType::Triangle,
+            0,
+            6,
+            layer.quads().len() as u64,
+        );
+    }
+}
+
+fn align_offset(offset: &mut usize) {
+    let r = *offset % 256;
+    if r > 0 {
+        *offset += 256 - r; // Align to a multiple of 256 to make Metal happy
     }
 }
 

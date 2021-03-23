@@ -7,7 +7,7 @@ pub struct Scene {
     active_layer_stack: Vec<usize>,
 }
 
-#[derive(Default)]
+#[derive(Default, Debug)]
 pub struct Layer {
     clip_bounds: Option<RectF>,
     quads: Vec<Quad>,
@@ -22,6 +22,7 @@ pub struct Quad {
     pub corner_radius: f32,
 }
 
+#[derive(Debug)]
 pub struct Shadow {
     pub bounds: RectF,
     pub corner_radius: f32,
