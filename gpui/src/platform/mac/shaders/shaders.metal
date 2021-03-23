@@ -56,8 +56,7 @@ vertex QuadFragmentInput quad_vertex(
 }
 
 fragment float4 quad_fragment(
-    QuadFragmentInput input [[stage_in]],
-    constant GPUIUniforms *uniforms [[buffer(GPUIQuadInputIndexUniforms)]]
+    QuadFragmentInput input [[stage_in]]
 ) {
     float2 half_size = input.quad.size / 2.;
     float2 center = input.quad.origin + half_size;
@@ -115,8 +114,7 @@ vertex ShadowFragmentInput shadow_vertex(
 }
 
 fragment float4 shadow_fragment(
-    ShadowFragmentInput input [[stage_in]],
-    constant GPUIUniforms *uniforms [[buffer(GPUIShadowInputIndexUniforms)]]
+    ShadowFragmentInput input [[stage_in]]
 ) {
     float sigma = input.shadow.sigma;
     float corner_radius = input.shadow.corner_radius;
@@ -140,4 +138,40 @@ fragment float4 shadow_fragment(
     }
 
     return float4(1., 1., 1., alpha) * coloru_to_colorf(input.shadow.color);
+}
+
+struct SpriteFragmentInput {
+    float4 position [[position]];
+    float2 atlas_position;
+    float4 color [[flat]];
+};
+
+vertex SpriteFragmentInput sprite_vertex(
+    uint unit_vertex_id [[vertex_id]],
+    uint sprite_id [[instance_id]],
+    constant float2 *unit_vertices [[buffer(GPUISpriteVertexInputIndexVertices)]],
+    constant GPUISprite *sprites [[buffer(GPUISpriteVertexInputIndexSprites)]],
+    constant GPUIUniforms *uniforms [[buffer(GPUISpriteVertexInputIndexUniforms)]]
+) {
+    float2 unit_vertex = unit_vertices[unit_vertex_id];
+    GPUISprite sprite = sprites[sprite_id];
+    float2 position = unit_vertex * sprite.size + sprite.origin;
+    float2 atlas_position = unit_vertex * sprite.size + sprite.atlas_origin;
+    float4 device_position = to_device_position(position, uniforms->viewport_size);
+
+    return SpriteFragmentInput {
+        device_position,
+        atlas_position,
+        coloru_to_colorf(sprite.color),
+    };
+}
+
+fragment float4 sprite_fragment(
+    SpriteFragmentInput input [[stage_in]],
+    texture2d<float> atlas [[ texture(GPUISpriteFragmentInputIndexAtlas) ]]
+) {
+    constexpr sampler atlas_sampler(mag_filter::linear, min_filter::linear);
+    float4 color = input.color;
+    color.a *= atlas.sample(atlas_sampler, input.atlas_position).r;
+    return color;
 }

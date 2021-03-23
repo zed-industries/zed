@@ -9,7 +9,7 @@ pub mod current {
 use crate::{
     executor,
     geometry::{rect::RectF, vector::Vector2F},
-    Scene,
+    FontCache, Scene,
 };
 use anyhow::Result;
 use async_task::Runnable;
@@ -32,6 +32,7 @@ pub trait App {
         &self,
         options: WindowOptions,
         executor: Rc<executor::Foreground>,
+        font_cache: Arc<FontCache>,
     ) -> Result<Box<dyn Window>>;
 }
 

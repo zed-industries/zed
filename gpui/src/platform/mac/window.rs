@@ -2,7 +2,7 @@ use crate::{
     executor,
     geometry::vector::Vector2F,
     platform::{self, Event, WindowContext},
-    Scene,
+    FontCache, Scene,
 };
 use anyhow::{anyhow, Result};
 use cocoa::{
@@ -31,6 +31,7 @@ use std::{
     ffi::c_void,
     mem, ptr,
     rc::{Rc, Weak},
+    sync::Arc,
     time::Duration,
 };
 
@@ -140,6 +141,7 @@ impl Window {
     pub fn open(
         options: platform::WindowOptions,
         executor: Rc<executor::Foreground>,
+        font_cache: Arc<FontCache>,
     ) -> Result<Self> {
         const PIXEL_FORMAT: metal::MTLPixelFormat = metal::MTLPixelFormat::BGRA8Unorm;
 
@@ -192,7 +194,7 @@ impl Window {
                 synthetic_drag_counter: 0,
                 executor,
                 scene_to_render: Default::default(),
-                renderer: Renderer::new(device, PIXEL_FORMAT)?,
+                renderer: Renderer::new(device.clone(), PIXEL_FORMAT, font_cache)?,
                 command_queue: device.new_command_queue(),
                 device,
                 layer,

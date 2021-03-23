@@ -620,6 +620,7 @@ impl MutableAppContext {
                 title: "Zed".into(),
             },
             self.foreground.clone(),
+            self.fonts.clone(),
         ) {
             Err(e) => log::error!("error opening window: {}", e),
             Ok(mut window) => {

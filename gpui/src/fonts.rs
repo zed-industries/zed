@@ -1,5 +1,10 @@
-use crate::geometry::vector::{vec2f, Vector2F};
+use crate::geometry::{
+    rect::RectI,
+    vector::{vec2f, Vector2F, Vector2I},
+};
 use anyhow::{anyhow, Result};
+use cocoa::appkit::CGPoint;
+use core_graphics::{base::CGGlyph, color_space::CGColorSpace, context::CGContext};
 use parking_lot::{RwLock, RwLockUpgradableReadGuard};
 
 pub use font_kit::properties::{Properties, Weight};
@@ -8,6 +13,9 @@ use font_kit::{
 };
 use ordered_float::OrderedFloat;
 use std::{collections::HashMap, sync::Arc};
+
+#[allow(non_upper_case_globals)]
+const kCGImageAlphaOnly: u32 = 7;
 
 pub type GlyphId = u32;
 
@@ -179,47 +187,43 @@ impl FontCache {
         self.scale_metric(self.metric(font_id, |m| m.descent), font_id, font_size)
     }
 
-    // pub fn render_emoji(&self, glyph_id: GlyphId, font_size: f32) -> Result<Pattern> {
-    //     let key = (glyph_id, OrderedFloat(font_size));
+    pub fn render_glyph(
+        &self,
+        font_id: FontId,
+        font_size: f32,
+        glyph_id: GlyphId,
+        scale_factor: f32,
+    ) -> Option<(Vector2I, Vec<u8>)> {
+        let native_font = self.native_font(font_id, font_size);
+        let glyph_id = glyph_id as CGGlyph;
+        let glyph_bounds =
+            native_font.get_bounding_rects_for_glyphs(Default::default(), &[glyph_id]);
+        let position = CGPoint::new(-glyph_bounds.origin.x, -glyph_bounds.origin.y);
+        let width = (glyph_bounds.size.width * scale_factor as f64).ceil() as usize;
+        let height = (glyph_bounds.size.height * scale_factor as f64).ceil() as usize;
 
-    //     {
-    //         if let Some(image) = self.0.read().emoji_images.get(&key) {
-    //             return Ok(image.clone());
-    //         }
-    //     }
+        if width == 0 || height == 0 {
+            None
+        } else {
+            let mut ctx = CGContext::create_bitmap_context(
+                None,
+                width,
+                height,
+                8,
+                width,
+                &CGColorSpace::create_device_gray(),
+                kCGImageAlphaOnly,
+            );
+            ctx.scale(scale_factor as f64, scale_factor as f64);
+            native_font.draw_glyphs(&[glyph_id], &[position], ctx.clone());
+            ctx.flush();
 
-    //     let font_id = self.emoji_font_id()?;
-    //     let bounding_box = self.bounding_box(font_id, font_size);
-    //     let width = (4.0 * bounding_box.x()) as usize;
-    //     let height = (4.0 * bounding_box.y()) as usize;
-    //     let mut ctx = CGContext::create_bitmap_context(
-    //         None,
-    //         width,
-    //         height,
-    //         8,
-    //         width * 4,
-    //         &CGColorSpace::create_device_rgb(),
-    //         kCGImageAlphaPremultipliedLast | kCGBitmapByteOrderDefault,
-    //     );
-    //     ctx.scale(4.0, 4.0);
-
-    //     let native_font = self.native_font(font_id, font_size);
-    //     let glyph = glyph_id.0 as CGGlyph;
-    //     let glyph_bounds = native_font.get_bounding_rects_for_glyphs(Default::default(), &[glyph]);
-    //     let position = CGPoint::new(glyph_bounds.origin.x, -glyph_bounds.origin.y);
-
-    //     native_font.draw_glyphs(&[glyph], &[position], ctx.clone());
-
-    //     ctx.flush();
-
-    //     let image = Pattern::from_image(Image::new(
-    //         vec2i(ctx.width() as i32, ctx.height() as i32),
-    //         Arc::new(u8_slice_to_color_slice(&ctx.data()).into()),
-    //     ));
-    //     self.0.write().emoji_images.insert(key, image.clone());
-
-    //     Ok(image)
-    // }
+            Some((
+                Vector2I::new(width as i32, height as i32),
+                Vec::from(ctx.data()),
+            ))
+        }
+    }
 
     fn emoji_font_id(&self) -> Result<FontId> {
         let state = self.0.upgradable_read();
@@ -284,4 +288,32 @@ fn push_font(state: &mut FontCacheState, font: Font) -> FontId {
     state.font_names.push(name.clone());
     state.fonts_by_name.insert(name, font_id);
     font_id
+}
+
+#[cfg(test)]
+mod tests {
+    use std::{fs::File, io::BufWriter, path::Path};
+
+    use super::*;
+
+    #[test]
+    fn test_render_glyph() {
+        let cache = FontCache::new();
+        let family_id = cache.load_family(&["Fira Code"]).unwrap();
+        let font_id = cache.select_font(family_id, &Default::default()).unwrap();
+        let glyph_id = cache.font(font_id).glyph_for_char('m').unwrap();
+        let (size, bytes) = cache.render_glyph(font_id, 16.0, glyph_id, 1.).unwrap();
+
+        let path = Path::new(r"/Users/as-cii/Desktop/image.png");
+        let file = File::create(path).unwrap();
+        let ref mut w = BufWriter::new(file);
+
+        let mut encoder = png::Encoder::new(w, size.x() as u32, size.y() as u32);
+        encoder.set_color(png::ColorType::Grayscale);
+        encoder.set_depth(png::BitDepth::Eight);
+        let mut writer = encoder.write_header().unwrap();
+
+        writer.write_image_data(&bytes).unwrap(); // Save
+        dbg!(size, bytes);
+    }
 }

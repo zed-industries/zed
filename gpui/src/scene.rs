@@ -38,7 +38,7 @@ pub struct Shadow {
 pub struct Glyph {
     pub font_id: FontId,
     pub font_size: f32,
-    pub glyph_id: GlyphId,
+    pub id: GlyphId,
     pub origin: Vector2F,
     pub color: ColorU,
 }

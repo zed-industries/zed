@@ -3,17 +3,16 @@ use crate::{
     color::ColorU,
     geometry::vector::{vec2i, Vector2I},
     scene::Layer,
-    Scene,
+    FontCache, Scene,
 };
 use anyhow::{anyhow, Result};
 use metal::{MTLResourceOptions, NSRange};
-use shaders::{ToFloat2 as _, ToUchar4 as _, ToUint2 as _};
-use std::{collections::HashMap, ffi::c_void, mem};
+use shaders::{ToFloat2 as _, ToUchar4 as _};
+use std::{collections::HashMap, ffi::c_void, mem, sync::Arc};
 
 const SHADERS_METALLIB: &'static [u8] =
     include_bytes!(concat!(env!("OUT_DIR"), "/shaders.metallib"));
 const INSTANCE_BUFFER_SIZE: usize = 1024 * 1024; // This is an arbitrary decision. There's probably a more optimal value.
-const ATLAS_SIZE: Vector2I = vec2i(1024, 768);
 
 pub struct Renderer {
     sprite_cache: SpriteCache,
@@ -25,7 +24,11 @@ pub struct Renderer {
 }
 
 impl Renderer {
-    pub fn new(device: metal::Device, pixel_format: metal::MTLPixelFormat) -> Result<Self> {
+    pub fn new(
+        device: metal::Device,
+        pixel_format: metal::MTLPixelFormat,
+        font_cache: Arc<FontCache>,
+    ) -> Result<Self> {
         let library = device
             .new_library_with_data(SHADERS_METALLIB)
             .map_err(|message| anyhow!("error building metal library: {}", message))?;
@@ -48,8 +51,9 @@ impl Renderer {
             MTLResourceOptions::StorageModeManaged,
         );
 
+        let atlas_size: Vector2I = vec2i(1024, 768);
         Ok(Self {
-            sprite_cache: SpriteCache::new(device, ATLAS_SIZE),
+            sprite_cache: SpriteCache::new(device.clone(), atlas_size, font_cache),
             quad_pipeline_state: build_pipeline_state(
                 &device,
                 &library,
@@ -261,43 +265,35 @@ impl Renderer {
             return;
         }
 
-        align_offset(offset);
-        let next_offset = *offset + layer.glyphs().len() * mem::size_of::<shaders::GPUISprite>();
-        assert!(
-            next_offset <= INSTANCE_BUFFER_SIZE,
-            "instance buffer exhausted"
-        );
-
-        let mut sprites = HashMap::new();
+        let mut sprites_by_atlas = HashMap::new();
         for glyph in layer.glyphs() {
-            let (atlas, bounds) =
-                self.sprite_cache
-                    .render_glyph(glyph.font_id, glyph.font_size, glyph.glyph_id);
-            sprites
-                .entry(atlas)
-                .or_insert_with(Vec::new)
-                .push(shaders::GPUISprite {
-                    origin: glyph.origin.to_float2(),
-                    size: bounds.size().to_uint2(),
-                    atlas_origin: bounds.origin().to_uint2(),
-                    color: glyph.color.to_uchar4(),
-                });
+            if let Some((atlas, bounds)) = self.sprite_cache.render_glyph(
+                glyph.font_id,
+                glyph.font_size,
+                glyph.id,
+                scene.scale_factor(),
+            ) {
+                sprites_by_atlas
+                    .entry(atlas)
+                    .or_insert_with(Vec::new)
+                    .push(shaders::GPUISprite {
+                        origin: (glyph.origin * scene.scale_factor()).to_float2(),
+                        size: (bounds.size().to_f32() * scene.scale_factor()).to_float2(),
+                        atlas_origin: bounds.origin().to_float2(),
+                        color: glyph.color.to_uchar4(),
+                    });
+            }
         }
 
         ctx.command_encoder
             .set_render_pipeline_state(&self.sprite_pipeline_state);
         ctx.command_encoder.set_vertex_buffer(
-            shaders::GPUISpriteInputIndex_GPUISpriteInputIndexVertices as u64,
+            shaders::GPUISpriteVertexInputIndex_GPUISpriteVertexInputIndexVertices as u64,
             Some(&self.unit_vertices),
             0,
         );
-        ctx.command_encoder.set_vertex_buffer(
-            shaders::GPUISpriteInputIndex_GPUISpriteInputIndexSprites as u64,
-            Some(&self.instances),
-            *offset as u64,
-        );
         ctx.command_encoder.set_vertex_bytes(
-            shaders::GPUISpriteInputIndex_GPUISpriteInputIndexUniforms as u64,
+            shaders::GPUISpriteVertexInputIndex_GPUISpriteVertexInputIndexUniforms as u64,
             mem::size_of::<shaders::GPUIUniforms>() as u64,
             [shaders::GPUIUniforms {
                 viewport_size: ctx.drawable_size.to_float2(),
@@ -310,8 +306,41 @@ impl Renderer {
                 as *mut shaders::GPUISprite
         };
 
-        for glyph in layer.glyphs() {
-            let sprite = self.sprite_cache.rasterize_glyph();
+        for (atlas_id, sprites) in sprites_by_atlas {
+            align_offset(offset);
+            let next_offset = *offset + sprites.len() * mem::size_of::<shaders::GPUISprite>();
+            assert!(
+                next_offset <= INSTANCE_BUFFER_SIZE,
+                "instance buffer exhausted"
+            );
+
+            ctx.command_encoder.set_vertex_buffer(
+                shaders::GPUISpriteVertexInputIndex_GPUISpriteVertexInputIndexSprites as u64,
+                Some(&self.instances),
+                *offset as u64,
+            );
+
+            let texture = self.sprite_cache.atlas_texture(atlas_id).unwrap();
+            ctx.command_encoder.set_fragment_texture(
+                shaders::GPUISpriteFragmentInputIndex_GPUISpriteFragmentInputIndexAtlas as u64,
+                Some(texture),
+            );
+
+            unsafe {
+                std::ptr::copy_nonoverlapping(sprites.as_ptr(), buffer_contents, sprites.len());
+            }
+            self.instances.did_modify_range(NSRange {
+                location: *offset as u64,
+                length: (next_offset - *offset) as u64,
+            });
+            *offset = next_offset;
+
+            ctx.command_encoder.draw_primitives_instanced(
+                metal::MTLPrimitiveType::Triangle,
+                0,
+                6,
+                sprites.len() as u64,
+            );
         }
     }
 }
@@ -377,10 +406,6 @@ mod shaders {
         fn to_uchar4(&self) -> vector_uchar4;
     }
 
-    pub trait ToUint2 {
-        fn to_uint2(&self) -> vector_uint2;
-    }
-
     impl ToFloat2 for (f32, f32) {
         fn to_float2(&self) -> vector_float2 {
             unsafe {
@@ -403,6 +428,15 @@ mod shaders {
         }
     }
 
+    impl ToFloat2 for Vector2I {
+        fn to_float2(&self) -> vector_float2 {
+            let mut output = self.y() as vector_float2;
+            output <<= 32;
+            output |= self.x() as vector_float2;
+            output
+        }
+    }
+
     impl ToUchar4 for ColorU {
         fn to_uchar4(&self) -> vector_uchar4 {
             let mut vec = self.a as vector_uchar4;
@@ -413,15 +447,6 @@ mod shaders {
             vec <<= 8;
             vec |= self.r as vector_uchar4;
             vec
-        }
-    }
-
-    impl ToUint2 for Vector2I {
-        fn to_uint2(&self) -> vector_uint2 {
-            let mut output = self.y() as vector_uint2;
-            output <<= 32;
-            output |= self.x() as vector_uint2;
-            output
         }
     }
 }

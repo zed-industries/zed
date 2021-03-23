@@ -228,7 +228,7 @@ impl Line {
                 ctx.scene.push_glyph(scene::Glyph {
                     font_id: run.font_id,
                     font_size: self.font_size,
-                    glyph_id: glyph.id,
+                    id: glyph.id,
                     origin: glyph_origin,
                     color,
                 });

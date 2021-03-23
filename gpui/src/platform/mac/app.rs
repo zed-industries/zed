@@ -1,5 +1,5 @@
 use super::{BoolExt as _, Dispatcher, Window};
-use crate::{executor, platform};
+use crate::{executor, platform, FontCache};
 use anyhow::Result;
 use cocoa::base::id;
 use objc::{class, msg_send, sel, sel_impl};
@@ -33,7 +33,8 @@ impl platform::App for App {
         &self,
         options: platform::WindowOptions,
         executor: Rc<executor::Foreground>,
+        font_cache: Arc<FontCache>,
     ) -> Result<Box<dyn platform::Window>> {
-        Ok(Box::new(Window::open(options, executor)?))
+        Ok(Box::new(Window::open(options, executor, font_cache)?))
     }
 }
