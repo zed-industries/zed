@@ -4,6 +4,7 @@ mod event;
 mod geometry;
 mod renderer;
 mod runner;
+mod sprite_cache;
 mod window;
 
 use crate::platform;

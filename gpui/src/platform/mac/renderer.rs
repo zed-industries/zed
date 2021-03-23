@@ -1,4 +1,4 @@
-use std::{ffi::c_void, mem};
+use std::{collections::HashMap, ffi::c_void, mem};
 
 use self::shaders::ToUchar4;
 
@@ -15,8 +15,10 @@ const INSTANCE_BUFFER_SIZE: usize = 1024 * 1024; // This is an arbitrary decisio
 pub struct Renderer {
     quad_pipeline_state: metal::RenderPipelineState,
     shadow_pipeline_state: metal::RenderPipelineState,
+    sprite_pipeline_state: metal::RenderPipelineState,
     unit_vertices: metal::Buffer,
     instances: metal::Buffer,
+    sprite_cache: SpriteCache,
 }
 
 impl Renderer {
@@ -60,6 +62,14 @@ impl Renderer {
                 "shadow_fragment",
                 pixel_format,
             )?,
+            sprite_pipeline_state: build_pipeline_state(
+                device,
+                &library,
+                "sprite",
+                "sprite_vertex",
+                "sprite_fragment",
+                pixel_format,
+            )?,
             unit_vertices,
             instances,
         })
@@ -79,6 +89,7 @@ impl Renderer {
         for layer in scene.layers() {
             self.render_shadows(scene, layer, &mut offset, ctx);
             self.render_quads(scene, layer, &mut offset, ctx);
+            self.render_sprites(scene, layer, &mut offset, ctx);
         }
     }
 
@@ -233,6 +244,71 @@ impl Renderer {
             6,
             layer.quads().len() as u64,
         );
+    }
+
+    fn render_sprites(
+        &mut self,
+        scene: &Scene,
+        layer: &Layer,
+        offset: &mut usize,
+        ctx: &RenderContext,
+    ) {
+        if layer.glyphs().is_empty() {
+            return;
+        }
+
+        align_offset(offset);
+        let next_offset = *offset + layer.glyphs().len() * mem::size_of::<shaders::GPUISprite>();
+        assert!(
+            next_offset <= INSTANCE_BUFFER_SIZE,
+            "instance buffer exhausted"
+        );
+
+        let mut sprites = HashMap::new();
+        for glyph in layer.glyphs() {
+            let (atlas, bounds) =
+                self.sprite_cache
+                    .rasterize_glyph(glyph.font_id, glyph.font_size, glyph.glyph_id);
+            sprites
+                .entry(atlas)
+                .or_insert_with(Vec::new)
+                .push(shaders::GPUISprite {
+                    origin: glyph.origin.to_float2(),
+                    size: bounds.size().to_float2(),
+                    atlas_origin: bounds.origin().to_float2(),
+                    color: glyph.color.to_uchar4(),
+                });
+        }
+
+        ctx.command_encoder
+            .set_render_pipeline_state(&self.sprite_pipeline_state);
+        ctx.command_encoder.set_vertex_buffer(
+            shaders::GPUISpriteInputIndex_GPUISpriteInputIndexVertices as u64,
+            Some(&self.unit_vertices),
+            0,
+        );
+        ctx.command_encoder.set_vertex_buffer(
+            shaders::GPUISpriteInputIndex_GPUISpriteInputIndexSprites as u64,
+            Some(&self.instances),
+            *offset as u64,
+        );
+        ctx.command_encoder.set_vertex_bytes(
+            shaders::GPUISpriteInputIndex_GPUISpriteInputIndexUniforms as u64,
+            mem::size_of::<shaders::GPUIUniforms>() as u64,
+            [shaders::GPUIUniforms {
+                viewport_size: ctx.drawable_size.to_float2(),
+            }]
+            .as_ptr() as *const c_void,
+        );
+
+        let buffer_contents = unsafe {
+            (self.instances.contents() as *mut u8).offset(*offset as isize)
+                as *mut shaders::GPUISprite
+        };
+
+        for glyph in layer.glyphs() {
+            let sprite = self.sprite_cache.rasterize_glyph();
+        }
     }
 }
 

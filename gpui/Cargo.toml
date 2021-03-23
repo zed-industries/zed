@@ -7,6 +7,7 @@ version = "0.1.0"
 [dependencies]
 async-task = {git = "https://github.com/zedit-io/async-task", rev = "341b57d6de98cdfd7b418567b8de2022ca993a6e"}
 ctor = "0.1"
+etagere = "0.2"
 num_cpus = "1.13"
 ordered-float = "2.1.1"
 parking_lot = "0.11.1"

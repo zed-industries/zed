@@ -89,6 +89,8 @@ fn generate_shader_bindings() {
         .whitelist_type("GPUIQuad")
         .whitelist_type("GPUIShadowInputIndex")
         .whitelist_type("GPUIShadow")
+        .whitelist_type("GPUISpriteInputIndex")
+        .whitelist_type("GPUISprite")
         .parse_callbacks(Box::new(bindgen::CargoCallbacks))
         .generate()
         .expect("unable to generate bindings");

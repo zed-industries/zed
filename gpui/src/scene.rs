@@ -1,6 +1,9 @@
-use core::f32;
+use crate::{
+    color::ColorU,
+    fonts::{FontId, GlyphId},
+    geometry::{rect::RectF, vector::Vector2F},
+};
 
-use crate::{color::ColorU, geometry::rect::RectF};
 pub struct Scene {
     scale_factor: f32,
     layers: Vec<Layer>,
@@ -12,6 +15,7 @@ pub struct Layer {
     clip_bounds: Option<RectF>,
     quads: Vec<Quad>,
     shadows: Vec<Shadow>,
+    glyphs: Vec<Glyph>,
 }
 
 #[derive(Default, Debug)]
@@ -27,6 +31,15 @@ pub struct Shadow {
     pub bounds: RectF,
     pub corner_radius: f32,
     pub sigma: f32,
+    pub color: ColorU,
+}
+
+#[derive(Debug)]
+pub struct Glyph {
+    pub font_id: FontId,
+    pub font_size: f32,
+    pub glyph_id: GlyphId,
+    pub origin: Vector2F,
     pub color: ColorU,
 }
 
@@ -76,6 +89,10 @@ impl Scene {
         self.active_layer().push_shadow(shadow)
     }
 
+    pub fn push_glyph(&mut self, glyph: Glyph) {
+        self.active_layer().push_glyph(glyph)
+    }
+
     fn active_layer(&mut self) -> &mut Layer {
         &mut self.layers[*self.active_layer_stack.last().unwrap()]
     }
@@ -96,6 +113,14 @@ impl Layer {
 
     pub fn shadows(&self) -> &[Shadow] {
         self.shadows.as_slice()
+    }
+
+    fn push_glyph(&mut self, glyph: Glyph) {
+        self.glyphs.push(glyph);
+    }
+
+    pub fn glyphs(&self) -> &[Glyph] {
+        self.glyphs.as_slice()
     }
 }
 

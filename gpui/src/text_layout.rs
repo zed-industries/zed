@@ -2,7 +2,7 @@ use crate::{
     color::ColorU,
     fonts::{FontCache, FontId, GlyphId},
     geometry::rect::RectF,
-    PaintContext,
+    scene, PaintContext,
 };
 use core_foundation::{
     attributed_string::CFMutableAttributedString,
@@ -186,71 +186,54 @@ impl Line {
         }
     }
 
-    pub fn paint(
-        &self,
-        _bounds: RectF,
-        _colors: &[(Range<usize>, ColorU)],
-        _ctx: &mut PaintContext,
-    ) {
-        // canvas.set_font_size(self.font_size);
-        // let mut colors = colors.iter().peekable();
+    pub fn paint(&self, bounds: RectF, colors: &[(Range<usize>, ColorU)], ctx: &mut PaintContext) {
+        let mut colors = colors.iter().peekable();
+        let mut color = ColorU::black();
 
-        // for run in &self.runs {
-        //     let bounding_box = font_cache.bounding_box(run.font_id, self.font_size);
-        //     let ascent = font_cache.scale_metric(
-        //         font_cache.metric(run.font_id, |m| m.ascent),
-        //         run.font_id,
-        //         self.font_size,
-        //     );
-        //     let descent = font_cache.scale_metric(
-        //         font_cache.metric(run.font_id, |m| m.descent),
-        //         run.font_id,
-        //         self.font_size,
-        //     );
+        for run in &self.runs {
+            let bounding_box = ctx.font_cache.bounding_box(run.font_id, self.font_size);
+            let ascent = ctx.font_cache.scale_metric(
+                ctx.font_cache.metric(run.font_id, |m| m.ascent),
+                run.font_id,
+                self.font_size,
+            );
+            let descent = ctx.font_cache.scale_metric(
+                ctx.font_cache.metric(run.font_id, |m| m.descent),
+                run.font_id,
+                self.font_size,
+            );
 
-        //     let max_glyph_width = bounding_box.x();
-        //     let font = font_cache.font(run.font_id);
-        //     let font_name = font_cache.font_name(run.font_id);
-        //     let is_emoji = font_cache.is_emoji(run.font_id);
-        //     for glyph in &run.glyphs {
-        //         let glyph_origin = origin + glyph.position - vec2f(0.0, descent);
+            let max_glyph_width = bounding_box.x();
+            let font = ctx.font_cache.font(run.font_id);
+            let font_name = ctx.font_cache.font_name(run.font_id);
+            let is_emoji = ctx.font_cache.is_emoji(run.font_id);
+            for glyph in &run.glyphs {
+                let glyph_origin = bounds.origin() + glyph.position;
+                if glyph_origin.x() + max_glyph_width < bounds.origin().x() {
+                    continue;
+                }
+                if glyph_origin.x() > bounds.upper_right().x() {
+                    break;
+                }
 
-        //         if glyph_origin.x() + max_glyph_width < viewport_rect.origin().x() {
-        //             continue;
-        //         }
+                while let Some((range, next_color)) = colors.peek() {
+                    if glyph.index >= range.end {
+                        colors.next();
+                    } else {
+                        color = *next_color;
+                        break;
+                    }
+                }
 
-        //         if glyph_origin.x() > viewport_rect.upper_right().x() {
-        //             break;
-        //         }
-
-        //         while let Some((range, color)) = colors.peek() {
-        //             if glyph.index >= range.end {
-        //                 colors.next();
-        //             } else {
-        //                 if glyph.index == range.start {
-        //                     canvas.set_fill_style(FillStyle::Color(*color));
-        //                 }
-        //                 break;
-        //             }
-        //         }
-
-        //         if is_emoji {
-        //             match font_cache.render_emoji(glyph.id, self.font_size) {
-        //                 Ok(image) => {
-        //                     canvas.draw_image(image, RectF::new(glyph_origin, bounding_box));
-        //                 }
-        //                 Err(error) => log::error!("rasterizing emoji: {}", error),
-        //             }
-        //         } else {
-        //             canvas.fill_glyph(
-        //                 &font,
-        //                 &font_name,
-        //                 glyph.id,
-        //                 glyph_origin + vec2f(0.0, ascent),
-        //             );
-        //         }
-        //     }
-        // }
+                ctx.scene.push_glyph(scene::Glyph {
+                    font_id: run.font_id,
+                    font_size: self.font_size,
+                    glyph_id: glyph.id,
+                    origin: glyph_origin,
+                    color,
+                });
+            }
+        }
     }
 }
 

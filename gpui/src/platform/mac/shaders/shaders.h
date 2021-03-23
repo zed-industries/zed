@@ -35,3 +35,16 @@ typedef struct {
     float sigma;
     vector_uchar4 color;
 } GPUIShadow;
+
+typedef enum {
+    GPUISpriteInputIndexVertices = 0,
+    GPUISpriteInputIndexSprites = 1,
+    GPUISpriteInputIndexUniforms = 2,
+} GPUISpriteInputIndex;
+
+typedef struct {
+    vector_float2 origin;
+    vector_float2 size;
+    vector_float2 atlas_origin;
+    vector_uchar4 color;
+} GPUISprite;
