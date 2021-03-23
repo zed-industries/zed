@@ -44,7 +44,7 @@ typedef enum {
 
 typedef struct {
     vector_float2 origin;
-    vector_float2 size;
-    vector_float2 atlas_origin;
+    vector_uint2 size;
+    vector_uint2 atlas_origin;
     vector_uchar4 color;
 } GPUISprite;

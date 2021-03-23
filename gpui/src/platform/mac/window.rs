@@ -192,7 +192,7 @@ impl Window {
                 synthetic_drag_counter: 0,
                 executor,
                 scene_to_render: Default::default(),
-                renderer: Renderer::new(&device, PIXEL_FORMAT)?,
+                renderer: Renderer::new(device, PIXEL_FORMAT)?,
                 command_queue: device.new_command_queue(),
                 device,
                 layer,

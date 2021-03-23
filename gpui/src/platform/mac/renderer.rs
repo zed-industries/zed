@@ -1,28 +1,31 @@
-use std::{collections::HashMap, ffi::c_void, mem};
-
-use self::shaders::ToUchar4;
-
-use super::window::RenderContext;
-use crate::{color::ColorU, scene::Layer, Scene};
+use super::{sprite_cache::SpriteCache, window::RenderContext};
+use crate::{
+    color::ColorU,
+    geometry::vector::{vec2i, Vector2I},
+    scene::Layer,
+    Scene,
+};
 use anyhow::{anyhow, Result};
 use metal::{MTLResourceOptions, NSRange};
-use shaders::ToFloat2 as _;
+use shaders::{ToFloat2 as _, ToUchar4 as _, ToUint2 as _};
+use std::{collections::HashMap, ffi::c_void, mem};
 
 const SHADERS_METALLIB: &'static [u8] =
     include_bytes!(concat!(env!("OUT_DIR"), "/shaders.metallib"));
 const INSTANCE_BUFFER_SIZE: usize = 1024 * 1024; // This is an arbitrary decision. There's probably a more optimal value.
+const ATLAS_SIZE: Vector2I = vec2i(1024, 768);
 
 pub struct Renderer {
+    sprite_cache: SpriteCache,
     quad_pipeline_state: metal::RenderPipelineState,
     shadow_pipeline_state: metal::RenderPipelineState,
     sprite_pipeline_state: metal::RenderPipelineState,
     unit_vertices: metal::Buffer,
     instances: metal::Buffer,
-    sprite_cache: SpriteCache,
 }
 
 impl Renderer {
-    pub fn new(device: &metal::DeviceRef, pixel_format: metal::MTLPixelFormat) -> Result<Self> {
+    pub fn new(device: metal::Device, pixel_format: metal::MTLPixelFormat) -> Result<Self> {
         let library = device
             .new_library_with_data(SHADERS_METALLIB)
             .map_err(|message| anyhow!("error building metal library: {}", message))?;
@@ -46,8 +49,9 @@ impl Renderer {
         );
 
         Ok(Self {
+            sprite_cache: SpriteCache::new(device, ATLAS_SIZE),
             quad_pipeline_state: build_pipeline_state(
-                device,
+                &device,
                 &library,
                 "quad",
                 "quad_vertex",
@@ -55,7 +59,7 @@ impl Renderer {
                 pixel_format,
             )?,
             shadow_pipeline_state: build_pipeline_state(
-                device,
+                &device,
                 &library,
                 "shadow",
                 "shadow_vertex",
@@ -63,7 +67,7 @@ impl Renderer {
                 pixel_format,
             )?,
             sprite_pipeline_state: build_pipeline_state(
-                device,
+                &device,
                 &library,
                 "sprite",
                 "sprite_vertex",
@@ -268,14 +272,14 @@ impl Renderer {
         for glyph in layer.glyphs() {
             let (atlas, bounds) =
                 self.sprite_cache
-                    .rasterize_glyph(glyph.font_id, glyph.font_size, glyph.glyph_id);
+                    .render_glyph(glyph.font_id, glyph.font_size, glyph.glyph_id);
             sprites
                 .entry(atlas)
                 .or_insert_with(Vec::new)
                 .push(shaders::GPUISprite {
                     origin: glyph.origin.to_float2(),
-                    size: bounds.size().to_float2(),
-                    atlas_origin: bounds.origin().to_float2(),
+                    size: bounds.size().to_uint2(),
+                    atlas_origin: bounds.origin().to_uint2(),
                     color: glyph.color.to_uchar4(),
                 });
         }
@@ -358,6 +362,8 @@ mod shaders {
     #![allow(non_camel_case_types)]
     #![allow(non_snake_case)]
 
+    use pathfinder_geometry::vector::Vector2I;
+
     use crate::{color::ColorU, geometry::vector::Vector2F};
     use std::mem;
 
@@ -369,6 +375,10 @@ mod shaders {
 
     pub trait ToUchar4 {
         fn to_uchar4(&self) -> vector_uchar4;
+    }
+
+    pub trait ToUint2 {
+        fn to_uint2(&self) -> vector_uint2;
     }
 
     impl ToFloat2 for (f32, f32) {
@@ -403,6 +413,15 @@ mod shaders {
             vec <<= 8;
             vec |= self.r as vector_uchar4;
             vec
+        }
+    }
+
+    impl ToUint2 for Vector2I {
+        fn to_uint2(&self) -> vector_uint2 {
+            let mut output = self.y() as vector_uint2;
+            output <<= 32;
+            output |= self.x() as vector_uint2;
+            output
         }
     }
 }
