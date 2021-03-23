@@ -107,8 +107,8 @@ impl Atlas {
         let region = metal::MTLRegion::new_2d(
             bounds.min.x as u64,
             bounds.min.y as u64,
-            bounds.width() as u64,
-            bounds.height() as u64,
+            size.x() as u64,
+            size.y() as u64,
         );
         self.texture
             .replace_region(region, 0, mask.as_ptr() as *const _, size.x() as u64);
