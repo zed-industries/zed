@@ -8,26 +8,26 @@ float4 coloru_to_colorf(uchar4 coloru) {
 }
 
 float4 to_device_position(float2 pixel_position, float2 viewport_size) {
-    return float4(pixel_position / viewport_size * float2(2.0, -2.0) + float2(-1.0, 1.0), 0.0, 1.0);
+    return float4(pixel_position / viewport_size * float2(2., -2.) + float2(-1., 1.), 0., 1.);
 }
 
 // A standard gaussian function, used for weighting samples
 float gaussian(float x, float sigma) {
-    return exp(-(x * x) / (2.0 * sigma * sigma)) / (sqrt(2.0 * M_PI_F) * sigma);
+    return exp(-(x * x) / (2. * sigma * sigma)) / (sqrt(2. * M_PI_F) * sigma);
 }
 
 // This approximates the error function, needed for the gaussian integral
 float2 erf(float2 x) {
     float2 s = sign(x);
     float2 a = abs(x);
-    x = 1.0 + (0.278393 + (0.230389 + 0.078108 * (a * a)) * a) * a;
+    x = 1. + (0.278393 + (0.230389 + 0.078108 * (a * a)) * a) * a;
     x *= x;
     return s - s / (x * x);
 }
 
 float blur_along_x(float x, float y, float sigma, float corner, float2 halfSize) {
-    float delta = min(halfSize.y - corner - abs(y), 0.0);
-    float curved = halfSize.x - corner + sqrt(max(0.0, corner * corner - delta * delta));
+    float delta = min(halfSize.y - corner - abs(y), 0.);
+    float curved = halfSize.x - corner + sqrt(max(0., corner * corner - delta * delta));
     float2 integral = 0.5 + 0.5 * erf((x + float2(-curved, curved)) * (sqrt(0.5) / sigma));
     return integral.y - integral.x;
 }
@@ -64,13 +64,13 @@ fragment float4 quad_fragment(
     float2 center_to_point = input.position.xy - center;
     float2 edge_to_point = abs(center_to_point) - half_size;
     float2 rounded_edge_to_point = abs(center_to_point) - half_size + input.quad.corner_radius;
-    float distance = length(max(0.0, rounded_edge_to_point)) + min(0.0, max(rounded_edge_to_point.x, rounded_edge_to_point.y)) - input.quad.corner_radius;
+    float distance = length(max(0., rounded_edge_to_point)) + min(0., max(rounded_edge_to_point.x, rounded_edge_to_point.y)) - input.quad.corner_radius;
 
-    float border_width = 0.0;
+    float border_width = 0.;
     if (edge_to_point.x > edge_to_point.y) {
-        border_width = center_to_point.x <= 0.0 ? input.quad.border_left : input.quad.border_right;
+        border_width = center_to_point.x <= 0. ? input.quad.border_left : input.quad.border_right;
     } else {
-        border_width = center_to_point.y <= 0.0 ? input.quad.border_top : input.quad.border_bottom;
+        border_width = center_to_point.y <= 0. ? input.quad.border_top : input.quad.border_bottom;
     }
 
     float4 color;
@@ -85,7 +85,7 @@ fragment float4 quad_fragment(
         );
     }
 
-    float4 coverage = float4(1.0, 1.0, 1.0, saturate(0.5 - distance));
+    float4 coverage = float4(1., 1., 1., saturate(0.5 - distance));
     return coverage * color;
 }
 
@@ -105,7 +105,7 @@ vertex ShadowFragmentInput shadow_vertex(
     GPUIShadow shadow = shadows[shadow_id];
 
     float margin = 3. * shadow.sigma;
-    float2 position = unit_vertex * (shadow.size + 2.0 * margin) + shadow.origin - margin;
+    float2 position = unit_vertex * (shadow.size + 2. * margin) + shadow.origin - margin;
     float4 device_position = to_device_position(position, uniforms->viewport_size);
 
     return ShadowFragmentInput {
@@ -133,7 +133,7 @@ fragment float4 shadow_fragment(
     // Accumulate samples (we can get away with surprisingly few samples)
     float step = (end - start) / 4.;
     float y = start + step * 0.5;
-    float alpha = 0.0;
+    float alpha = 0.;
     for (int i = 0; i < 4; i++) {
         alpha += blur_along_x(point.x, point.y - y, sigma, corner_radius, half_size) * gaussian(y, sigma) * step;
         y += step;
