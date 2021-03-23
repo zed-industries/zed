@@ -69,7 +69,7 @@ impl View for FileFinder {
                 .with_margin_top(12.0)
                 .with_uniform_padding(6.0)
                 .with_corner_radius(6.0)
-                .with_background_color(ColorU::new(0xf2, 0xf2, 0xf2, 0xff))
+                .with_background_color(ColorU::from_u32(0xf2f2f2ff))
                 .with_shadow(vec2f(0., 4.), 12., ColorF::new(0.0, 0.0, 0.0, 0.25).to_u8())
                 .boxed(),
             )
@@ -124,8 +124,8 @@ impl FileFinder {
         );
 
         Container::new(list.boxed())
-            .with_background_color(ColorU::new(0xf7, 0xf7, 0xf7, 0xff))
-            .with_border(Border::all(1.0, ColorU::new(0xdb, 0xdb, 0xdc, 0xff)))
+            .with_background_color(ColorU::from_u32(0xf7f7f7ff))
+            .with_border(Border::all(1.0, ColorU::from_u32(0xdbdbdcff)))
             .with_margin_top(6.0)
             .boxed()
     }
@@ -165,7 +165,7 @@ impl FileFinder {
             }));
 
             let settings = smol::block_on(self.settings.read());
-            let highlight_color = ColorU::new(0x30, 0x4e, 0xe2, 0xff);
+            let highlight_color = ColorU::from_u32(0x304ee2ff);
             let bold = *Properties::new().weight(Weight::BOLD);
 
             let mut container = Container::new(
@@ -214,11 +214,11 @@ impl FileFinder {
 
             if index == self.selected || index < self.matches.len() - 1 {
                 container =
-                    container.with_border(Border::bottom(1.0, ColorU::new(0xdb, 0xdb, 0xdc, 0xff)));
+                    container.with_border(Border::bottom(1.0, ColorU::from_u32(0xdbdbdcff)));
             }
 
             if index == self.selected {
-                container = container.with_background_color(ColorU::new(0xdb, 0xdb, 0xdc, 0xff));
+                container = container.with_background_color(ColorU::from_u32(0xdbdbdcff));
             }
 
             EventHandler::new(container.boxed())

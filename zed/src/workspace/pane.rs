@@ -175,7 +175,7 @@ impl Pane {
 
     fn render_tabs<'a>(&self, app: &AppContext) -> ElementBox {
         let settings = smol::block_on(self.settings.read());
-        let border_color = ColorU::new(0xdb, 0xdb, 0xdc, 0xff);
+        let border_color = ColorU::from_u32(0xdbdbdcff);
 
         let mut row = Flex::row();
         let last_item_ix = self.items.len() - 1;
@@ -201,7 +201,7 @@ impl Pane {
                     .with_background_color(ColorU::white())
                     .with_overdraw_bottom(1.5);
             } else {
-                container = container.with_background_color(ColorU::new(0xea, 0xea, 0xeb, 0xff));
+                container = container.with_background_color(ColorU::from_u32(0xeaeaebff));
             }
 
             row.add_child(
