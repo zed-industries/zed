@@ -150,16 +150,21 @@ impl Element for Container {
         _: &mut Self::LayoutState,
         ctx: &mut PaintContext,
     ) -> Self::PaintState {
+        let quad_bounds = RectF::from_points(
+            bounds.origin() + vec2f(self.margin.left, self.margin.top),
+            bounds.lower_right() - vec2f(self.margin.right, self.margin.bottom),
+        );
+
         if let Some(shadow) = self.shadow.as_ref() {
             ctx.scene.push_shadow(scene::Shadow {
-                bounds: bounds + shadow.offset,
+                bounds: quad_bounds + shadow.offset,
                 corner_radius: self.corner_radius,
                 sigma: shadow.blur,
                 color: shadow.color,
             });
         }
         ctx.scene.push_quad(Quad {
-            bounds,
+            bounds: quad_bounds,
             background: self.background_color,
             border: self.border,
             corner_radius: self.corner_radius,
