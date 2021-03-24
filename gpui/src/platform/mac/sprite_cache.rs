@@ -105,7 +105,7 @@ impl Atlas {
     fn try_insert(&mut self, size: Vector2I, mask: &[u8]) -> Option<RectI> {
         let allocation = self
             .allocator
-            .allocate(etagere::size2(size.x(), size.y()))?;
+            .allocate(etagere::size2(size.x() + 1, size.y() + 1))?;
 
         let bounds = allocation.rectangle;
         let region = metal::MTLRegion::new_2d(
