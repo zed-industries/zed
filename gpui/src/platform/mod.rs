@@ -8,13 +8,19 @@ pub mod current {
 
 use crate::{
     executor,
-    geometry::{rect::RectF, vector::Vector2F},
-    FontCache, Scene,
+    fonts::{FontId, GlyphId},
+    geometry::{
+        rect::{RectF, RectI},
+        vector::Vector2F,
+    },
+    text_layout::Line,
+    Scene,
 };
 use anyhow::Result;
 use async_task::Runnable;
 pub use event::Event;
-use std::{path::PathBuf, rc::Rc, sync::Arc};
+use font_kit::{metrics::Metrics as FontMetrics, properties::Properties as FontProperties};
+use std::{ops::Range, path::PathBuf, rc::Rc, sync::Arc};
 
 pub trait Runner {
     fn on_finish_launching<F: 'static + FnOnce()>(self, callback: F) -> Self where;
@@ -32,8 +38,8 @@ pub trait App {
         &self,
         options: WindowOptions,
         executor: Rc<executor::Foreground>,
-        font_cache: Arc<FontCache>,
     ) -> Result<Box<dyn Window>>;
+    fn fonts(&self) -> Arc<dyn FontSystem>;
 }
 
 pub trait Dispatcher: Send + Sync {
@@ -55,4 +61,24 @@ pub trait WindowContext {
 pub struct WindowOptions<'a> {
     pub bounds: RectF,
     pub title: Option<&'a str>,
+}
+
+pub trait FontSystem: Send + Sync {
+    fn load_family(&self, name: &str) -> anyhow::Result<Vec<FontId>>;
+    fn select_font(
+        &self,
+        font_ids: &[FontId],
+        properties: &FontProperties,
+    ) -> anyhow::Result<FontId>;
+    fn font_metrics(&self, font_id: FontId) -> FontMetrics;
+    fn typographic_bounds(&self, font_id: FontId, glyph_id: GlyphId) -> anyhow::Result<RectF>;
+    fn glyph_for_char(&self, font_id: FontId, ch: char) -> Option<GlyphId>;
+    fn rasterize_glyph(
+        &self,
+        font_id: FontId,
+        font_size: f32,
+        glyph_id: GlyphId,
+        scale_factor: f32,
+    ) -> Option<(RectI, Vec<u8>)>;
+    fn layout_str(&self, text: &str, font_size: f32, runs: &[(Range<usize>, FontId)]) -> Line;
 }

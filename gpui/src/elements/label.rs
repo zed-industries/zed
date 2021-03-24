@@ -109,12 +109,9 @@ impl Element for Label {
             colors = vec![(0..text_len, ColorU::black())];
         }
 
-        let line = ctx.text_layout_cache.layout_str(
-            self.text.as_str(),
-            self.font_size,
-            styles.as_slice(),
-            ctx.font_cache,
-        );
+        let line =
+            ctx.text_layout_cache
+                .layout_str(self.text.as_str(), self.font_size, styles.as_slice());
 
         let size = vec2f(
             line.width.max(constraint.min.x()).min(constraint.max.x()),

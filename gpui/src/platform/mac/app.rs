@@ -1,5 +1,5 @@
-use super::{BoolExt as _, Dispatcher, Window};
-use crate::{executor, platform, FontCache};
+use super::{BoolExt as _, Dispatcher, FontSystem, Window};
+use crate::{executor, platform};
 use anyhow::Result;
 use cocoa::base::id;
 use objc::{class, msg_send, sel, sel_impl};
@@ -7,12 +7,14 @@ use std::{rc::Rc, sync::Arc};
 
 pub struct App {
     dispatcher: Arc<Dispatcher>,
+    fonts: Arc<FontSystem>,
 }
 
 impl App {
     pub fn new() -> Self {
         Self {
             dispatcher: Arc::new(Dispatcher),
+            fonts: Arc::new(FontSystem::new()),
         }
     }
 }
@@ -33,8 +35,11 @@ impl platform::App for App {
         &self,
         options: platform::WindowOptions,
         executor: Rc<executor::Foreground>,
-        font_cache: Arc<FontCache>,
     ) -> Result<Box<dyn platform::Window>> {
-        Ok(Box::new(Window::open(options, executor, font_cache)?))
+        Ok(Box::new(Window::open(options, executor, self.fonts())?))
+    }
+
+    fn fonts(&self) -> Arc<dyn platform::FontSystem> {
+        self.fonts.clone()
     }
 }

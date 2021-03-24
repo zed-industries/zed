@@ -339,7 +339,7 @@ mod tests {
                 },
             }));
 
-            let settings = settings::channel(&FontCache::new()).unwrap().1;
+            let settings = settings::channel(&app.font_cache()).unwrap().1;
             let workspace = app.add_model(|ctx| Workspace::new(vec![dir.path().into()], ctx));
             app.finish_pending_tasks().await; // Open and populate worktree.
             let entries = workspace.file_entries(&app);
@@ -409,7 +409,7 @@ mod tests {
                 },
             }));
 
-            let settings = settings::channel(&FontCache::new()).unwrap().1;
+            let settings = settings::channel(&app.font_cache()).unwrap().1;
             let workspace = app.add_model(|ctx| Workspace::new(vec![dir.path().into()], ctx));
             app.finish_pending_tasks().await; // Open and populate worktree.
             let entries = workspace.file_entries(&app);

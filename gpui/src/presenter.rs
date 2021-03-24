@@ -2,7 +2,7 @@ use crate::{
     app::{AppContext, MutableAppContext, WindowInvalidation},
     elements::Element,
     fonts::FontCache,
-    platform::Event,
+    platform::{self, Event},
     text_layout::TextLayoutCache,
     AssetCache, ElementBox, Scene,
 };
@@ -22,6 +22,7 @@ impl Presenter {
     pub fn new(
         window_id: usize,
         font_cache: Arc<FontCache>,
+        fonts: Arc<dyn platform::FontSystem>,
         asset_cache: Arc<AssetCache>,
         app: &MutableAppContext,
     ) -> Self {
@@ -30,7 +31,7 @@ impl Presenter {
             rendered_views: app.render_views(window_id).unwrap(),
             parents: HashMap::new(),
             font_cache,
-            text_layout_cache: TextLayoutCache::new(),
+            text_layout_cache: TextLayoutCache::new(fonts),
             asset_cache,
         }
     }

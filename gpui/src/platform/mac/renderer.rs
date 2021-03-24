@@ -2,8 +2,9 @@ use super::{sprite_cache::SpriteCache, window::RenderContext};
 use crate::{
     color::ColorU,
     geometry::vector::{vec2i, Vector2I},
+    platform,
     scene::Layer,
-    FontCache, Scene,
+    Scene,
 };
 use anyhow::{anyhow, Result};
 use metal::{MTLResourceOptions, NSRange};
@@ -27,7 +28,7 @@ impl Renderer {
     pub fn new(
         device: metal::Device,
         pixel_format: metal::MTLPixelFormat,
-        font_cache: Arc<FontCache>,
+        fonts: Arc<dyn platform::FontSystem>,
     ) -> Result<Self> {
         let library = device
             .new_library_with_data(SHADERS_METALLIB)
@@ -53,7 +54,7 @@ impl Renderer {
 
         let atlas_size: Vector2I = vec2i(1024, 768);
         Ok(Self {
-            sprite_cache: SpriteCache::new(device.clone(), atlas_size, font_cache),
+            sprite_cache: SpriteCache::new(device.clone(), atlas_size, fonts),
             quad_pipeline_state: build_pipeline_state(
                 &device,
                 &library,

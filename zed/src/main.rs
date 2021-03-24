@@ -12,7 +12,7 @@ fn main() {
     init_logger();
 
     let app = gpui::App::new(assets::Assets).unwrap();
-    let (_, settings_rx) = settings::channel(&app.fonts()).unwrap();
+    let (_, settings_rx) = settings::channel(&app.font_cache()).unwrap();
 
     {
         let mut app = app.clone();

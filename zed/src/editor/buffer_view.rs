@@ -887,10 +887,7 @@ impl BufferView {
     pub fn em_width(&self, font_cache: &FontCache) -> f32 {
         let settings = smol::block_on(self.settings.read());
         let font_id = font_cache.default_font(settings.buffer_font_family);
-        let font = font_cache.font(font_id);
-        let glyph_id = font.glyph_for_char('m').unwrap();
-        let bounds = font.typographic_bounds(glyph_id).unwrap();
-        font_cache.scale_metric(bounds.width(), font_id, settings.buffer_font_size)
+        font_cache.em_width(font_id, settings.buffer_font_size)
     }
 
     // TODO: Can we make this not return a result?
@@ -914,7 +911,6 @@ impl BufferView {
                 "1".repeat(digit_count).as_str(),
                 font_size,
                 &[(0..digit_count, font_id)],
-                font_cache,
             )
             .width)
     }
@@ -959,7 +955,6 @@ impl BufferView {
                             &line_number,
                             font_size,
                             &[(0..line_number.len(), font_id)],
-                            font_cache,
                         );
                     }
                     Ok(())
@@ -1017,7 +1012,6 @@ impl BufferView {
                                 &line,
                                 font_size,
                                 &[(0..line_len, font_id)],
-                                font_cache,
                             );
                             line.clear();
                             line_len = 0;
@@ -1054,7 +1048,6 @@ impl BufferView {
             &line,
             settings.buffer_font_size,
             &[(0..self.line_len(row, app)? as usize, font_id)],
-            font_cache,
         ))
     }
 
@@ -1273,7 +1266,7 @@ mod tests {
     fn test_selection_with_mouse() {
         App::test((), |mut app| async move {
             let buffer = app.add_model(|_| Buffer::new(0, "aaaaaa\nbbbbbb\ncccccc\ndddddd\n"));
-            let settings = settings::channel(&FontCache::new()).unwrap().1;
+            let settings = settings::channel(&app.font_cache()).unwrap().1;
             let (_, buffer_view) =
                 app.add_window(|ctx| BufferView::for_buffer(buffer, settings, ctx));
 
@@ -1372,10 +1365,10 @@ mod tests {
     fn test_layout_line_numbers() -> Result<()> {
         use gpui::{fonts::FontCache, text_layout::TextLayoutCache};
 
-        let font_cache = FontCache::new();
-        let layout_cache = TextLayoutCache::new();
-
         App::test((), |mut app| async move {
+            let font_cache = FontCache::new(app.platform().fonts());
+            let layout_cache = TextLayoutCache::new(app.platform().fonts());
+
             let buffer = app.add_model(|_| Buffer::new(0, sample_text(6, 6)));
 
             let settings = settings::channel(&font_cache).unwrap().1;
@@ -1416,7 +1409,7 @@ mod tests {
                     .unindent(),
                 )
             });
-            let settings = settings::channel(&FontCache::new()).unwrap().1;
+            let settings = settings::channel(&app.font_cache()).unwrap().1;
             let (_, view) =
                 app.add_window(|ctx| BufferView::for_buffer(buffer.clone(), settings, ctx));
 
@@ -1488,7 +1481,7 @@ mod tests {
     fn test_move_cursor() -> Result<()> {
         App::test((), |mut app| async move {
             let buffer = app.add_model(|_| Buffer::new(0, sample_text(6, 6)));
-            let settings = settings::channel(&FontCache::new()).unwrap().1;
+            let settings = settings::channel(&app.font_cache()).unwrap().1;
             let (_, view) =
                 app.add_window(|ctx| BufferView::for_buffer(buffer.clone(), settings, ctx));
 

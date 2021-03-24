@@ -1,16 +1,15 @@
-use std::{collections::HashMap, sync::Arc};
-
 use crate::{
     fonts::{FontId, GlyphId},
     geometry::{
         rect::RectI,
         vector::{vec2i, Vector2I},
     },
-    FontCache,
+    platform,
 };
 use etagere::BucketedAtlasAllocator;
 use metal::{MTLPixelFormat, TextureDescriptor};
 use ordered_float::OrderedFloat;
+use std::{collections::HashMap, sync::Arc};
 
 #[derive(Hash, Eq, PartialEq)]
 struct GlyphDescriptor {
@@ -30,18 +29,22 @@ pub struct GlyphSprite {
 pub struct SpriteCache {
     device: metal::Device,
     atlas_size: Vector2I,
-    font_cache: Arc<FontCache>,
+    fonts: Arc<dyn platform::FontSystem>,
     atlasses: Vec<Atlas>,
     glyphs: HashMap<GlyphDescriptor, Option<GlyphSprite>>,
 }
 
 impl SpriteCache {
-    pub fn new(device: metal::Device, size: Vector2I, font_cache: Arc<FontCache>) -> Self {
+    pub fn new(
+        device: metal::Device,
+        size: Vector2I,
+        fonts: Arc<dyn platform::FontSystem>,
+    ) -> Self {
         let atlasses = vec![Atlas::new(&device, size)];
         Self {
             device,
             atlas_size: size,
-            font_cache,
+            fonts,
             atlasses,
             glyphs: Default::default(),
         }
@@ -58,7 +61,7 @@ impl SpriteCache {
         glyph_id: GlyphId,
         scale_factor: f32,
     ) -> Option<GlyphSprite> {
-        let font_cache = &self.font_cache;
+        let fonts = &self.fonts;
         let atlasses = &mut self.atlasses;
         let atlas_size = self.atlas_size;
         let device = &self.device;
@@ -70,7 +73,7 @@ impl SpriteCache {
             })
             .or_insert_with(|| {
                 let (glyph_bounds, mask) =
-                    font_cache.render_glyph(font_id, font_size, glyph_id, scale_factor)?;
+                    fonts.rasterize_glyph(font_id, font_size, glyph_id, scale_factor)?;
                 assert!(glyph_bounds.width() < atlas_size.x());
                 assert!(glyph_bounds.height() < atlas_size.y());
 

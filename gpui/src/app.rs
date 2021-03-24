@@ -250,8 +250,8 @@ impl App {
         self.0.borrow().finish_pending_tasks()
     }
 
-    pub fn fonts(&self) -> Arc<FontCache> {
-        self.0.borrow().fonts.clone()
+    pub fn font_cache(&self) -> Arc<FontCache> {
+        self.0.borrow().font_cache.clone()
     }
 
     pub fn platform(&self) -> Arc<dyn platform::App> {
@@ -295,7 +295,7 @@ type GlobalActionCallback = dyn FnMut(&dyn Any, &mut MutableAppContext);
 pub struct MutableAppContext {
     weak_self: Option<rc::Weak<RefCell<Self>>>,
     platform: Arc<dyn platform::App>,
-    fonts: Arc<FontCache>,
+    font_cache: Arc<FontCache>,
     assets: Arc<AssetCache>,
     ctx: AppContext,
     actions: HashMap<TypeId, HashMap<String, Vec<Box<ActionCallback>>>>,
@@ -325,10 +325,11 @@ impl MutableAppContext {
         platform: Arc<dyn platform::App>,
         asset_source: impl AssetSource,
     ) -> Self {
+        let fonts = platform.fonts();
         Self {
             weak_self: None,
             platform,
-            fonts: Arc::new(FontCache::new()),
+            font_cache: Arc::new(FontCache::new(fonts)),
             assets: Arc::new(AssetCache::new(asset_source)),
             ctx: AppContext {
                 models: HashMap::new(),
@@ -620,13 +621,13 @@ impl MutableAppContext {
                 title: "Zed".into(),
             },
             self.foreground.clone(),
-            self.fonts.clone(),
         ) {
             Err(e) => log::error!("error opening window: {}", e),
             Ok(mut window) => {
                 let presenter = Rc::new(RefCell::new(Presenter::new(
                     window_id,
-                    self.fonts.clone(),
+                    self.font_cache.clone(),
+                    self.platform.fonts(),
                     self.assets.clone(),
                     self,
                 )));

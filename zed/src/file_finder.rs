@@ -409,7 +409,7 @@ mod tests {
             super::init(&mut app);
             editor::init(&mut app);
 
-            let settings = settings::channel(&app.fonts()).unwrap().1;
+            let settings = settings::channel(&app.font_cache()).unwrap().1;
             let workspace = app.add_model(|ctx| Workspace::new(vec![tmp_dir.path().into()], ctx));
             let (window_id, workspace_view) =
                 app.add_window(|ctx| WorkspaceView::new(workspace.clone(), settings, ctx));

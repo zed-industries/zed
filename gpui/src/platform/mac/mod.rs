@@ -1,6 +1,7 @@
 mod app;
 mod dispatcher;
 mod event;
+mod fonts;
 mod geometry;
 mod renderer;
 mod runner;
@@ -11,6 +12,7 @@ use crate::platform;
 pub use app::App;
 use cocoa::base::{BOOL, NO, YES};
 pub use dispatcher::Dispatcher;
+pub use fonts::FontSystem;
 pub use runner::Runner;
 use window::Window;
 
