@@ -3,7 +3,7 @@ use crate::{
     geometry::{
         rect::{RectF, RectI},
         transform2d::Transform2F,
-        vector::vec2f,
+        vector::{vec2f, vec2i},
     },
     platform,
     text_layout::{Glyph, Line, Run},
@@ -18,9 +18,7 @@ use core_foundation::{
 use core_graphics::{
     base::CGGlyph, color_space::CGColorSpace, context::CGContext, geometry::CGAffineTransform,
 };
-use core_text::{
-    font_descriptor::kCTFontSizeAttribute, line::CTLine, string_attributes::kCTFontAttributeName,
-};
+use core_text::{line::CTLine, string_attributes::kCTFontAttributeName};
 use font_kit::{
     canvas::RasterizationOptions, hinting::HintingOptions, metrics::Metrics,
     properties::Properties, source::SystemSource,
@@ -73,11 +71,12 @@ impl platform::FontSystem for FontSystem {
         font_id: FontId,
         font_size: f32,
         glyph_id: GlyphId,
+        horizontal_shift: f32,
         scale_factor: f32,
     ) -> Option<(RectI, Vec<u8>)> {
         self.0
             .read()
-            .rasterize_glyph(font_id, font_size, glyph_id, scale_factor)
+            .rasterize_glyph(font_id, font_size, glyph_id, horizontal_shift, scale_factor)
     }
 
     fn layout_str(
@@ -127,6 +126,7 @@ impl FontSystemState {
         font_id: FontId,
         font_size: f32,
         glyph_id: GlyphId,
+        horizontal_shift: f32,
         scale_factor: f32,
     ) -> Option<(RectI, Vec<u8>)> {
         let font = &self.fonts[font_id.0];
@@ -144,6 +144,8 @@ impl FontSystemState {
         if bounds.width() == 0 || bounds.height() == 0 {
             None
         } else {
+            // Make room for subpixel variants.
+            let bounds = RectI::new(bounds.origin(), bounds.size() + vec2i(1, 0));
             let mut pixels = vec![0; bounds.width() as usize * bounds.height() as usize];
             let ctx = CGContext::create_bitmap_context(
                 Some(pixels.as_mut_ptr() as *mut _),
@@ -170,7 +172,13 @@ impl FontSystemState {
 
             ctx.set_font(&font.native_font().copy_to_CGFont());
             ctx.set_font_size(font_size as CGFloat);
-            ctx.show_glyphs_at_positions(&[glyph_id as CGGlyph], &[CGPoint::new(0.0, 0.0)]);
+            ctx.show_glyphs_at_positions(
+                &[glyph_id as CGGlyph],
+                &[CGPoint::new(
+                    (horizontal_shift / scale_factor) as CGFloat,
+                    0.0,
+                )],
+            );
 
             Some((bounds, pixels))
         }
@@ -335,4 +343,32 @@ mod tests {
         );
         Ok(())
     }
+
+    // #[test]
+    // fn test_render_glyph() {
+    //     use std::{fs::File, io::BufWriter, path::Path};
+
+    //     let fonts = FontSystem::new();
+    //     let font_ids = fonts.load_family("Fira Code").unwrap();
+    //     let font_id = fonts.select_font(&font_ids, &Default::default()).unwrap();
+    //     let glyph_id = fonts.glyph_for_char(font_id, 'G').unwrap();
+
+    //     for i in 0..2 {
+    //         let variant = 0.5 * i as f32;
+    //         let (bounds, bytes) = fonts
+    //             .rasterize_glyph(font_id, 16.0, glyph_id, variant, 2.)
+    //             .unwrap();
+
+    //         let name = format!("/Users/as-cii/Desktop/twog-{}.png", i);
+    //         let path = Path::new(&name);
+    //         let file = File::create(path).unwrap();
+    //         let ref mut w = BufWriter::new(file);
+
+    //         let mut encoder = png::Encoder::new(w, bounds.width() as u32, bounds.height() as u32);
+    //         encoder.set_color(png::ColorType::Grayscale);
+    //         encoder.set_depth(png::BitDepth::Eight);
+    //         let mut writer = encoder.write_header().unwrap();
+    //         writer.write_image_data(&bytes).unwrap();
+    //     }
+    // }
 }

@@ -2,7 +2,7 @@ use crate::{
     fonts::{FontId, GlyphId},
     geometry::{
         rect::RectI,
-        vector::{vec2i, Vector2I},
+        vector::{vec2i, Vector2F, Vector2I},
     },
     platform,
 };
@@ -16,13 +16,14 @@ struct GlyphDescriptor {
     font_id: FontId,
     font_size: OrderedFloat<f32>,
     glyph_id: GlyphId,
+    subpixel_variant: u8,
 }
 
 #[derive(Clone)]
 pub struct GlyphSprite {
     pub atlas_id: usize,
     pub atlas_origin: Vector2I,
-    pub offset: Vector2I,
+    pub offset: Vector2F,
     pub size: Vector2I,
 }
 
@@ -59,21 +60,34 @@ impl SpriteCache {
         font_id: FontId,
         font_size: f32,
         glyph_id: GlyphId,
+        target_x: f32,
         scale_factor: f32,
     ) -> Option<GlyphSprite> {
+        const SUBPIXEL_VARIANTS: u8 = 4;
+
+        let target_x = target_x * scale_factor;
         let fonts = &self.fonts;
         let atlasses = &mut self.atlasses;
         let atlas_size = self.atlas_size;
         let device = &self.device;
+        let subpixel_variant =
+            (target_x.fract() * SUBPIXEL_VARIANTS as f32).round() as u8 % SUBPIXEL_VARIANTS;
         self.glyphs
             .entry(GlyphDescriptor {
                 font_id,
                 font_size: OrderedFloat(font_size),
                 glyph_id,
+                subpixel_variant,
             })
             .or_insert_with(|| {
-                let (glyph_bounds, mask) =
-                    fonts.rasterize_glyph(font_id, font_size, glyph_id, scale_factor)?;
+                let horizontal_shift = subpixel_variant as f32 / SUBPIXEL_VARIANTS as f32;
+                let (glyph_bounds, mask) = fonts.rasterize_glyph(
+                    font_id,
+                    font_size,
+                    glyph_id,
+                    horizontal_shift,
+                    scale_factor,
+                )?;
                 assert!(glyph_bounds.width() < atlas_size.x());
                 assert!(glyph_bounds.height() < atlas_size.y());
 
@@ -88,10 +102,12 @@ impl SpriteCache {
                         bounds
                     });
 
+                let mut offset = glyph_bounds.origin().to_f32();
+                offset.set_x(offset.x() - target_x.fract());
                 Some(GlyphSprite {
                     atlas_id: atlasses.len() - 1,
                     atlas_origin: atlas_bounds.origin(),
-                    offset: glyph_bounds.origin(),
+                    offset,
                     size: glyph_bounds.size(),
                 })
             })

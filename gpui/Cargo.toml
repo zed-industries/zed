@@ -14,7 +14,6 @@ parking_lot = "0.11.1"
 pathfinder_color = "0.5"
 pathfinder_geometry = "0.5"
 pin-project = "1.0.5"
-png = "0.16"
 rand = "0.8.3"
 replace_with = "0.1.7"
 smallvec = "1.6.1"
@@ -24,6 +23,9 @@ tree-sitter = "0.17"
 [build-dependencies]
 bindgen = "0.57"
 cc = "1.0.67"
+
+[dev-dependencies]
+png = "0.16"
 
 [target.'cfg(target_os = "macos")'.dependencies]
 anyhow = "1"

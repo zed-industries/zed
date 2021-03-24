@@ -78,6 +78,7 @@ pub trait FontSystem: Send + Sync {
         font_id: FontId,
         font_size: f32,
         glyph_id: GlyphId,
+        horizontal_shift: f32,
         scale_factor: f32,
     ) -> Option<(RectI, Vec<u8>)>;
     fn layout_str(&self, text: &str, font_size: f32, runs: &[(Range<usize>, FontId)]) -> Line;

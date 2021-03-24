@@ -158,29 +158,3 @@ impl FontCache {
         metric * font_size / self.metric(font_id, |m| m.units_per_em as f32)
     }
 }
-
-// #[cfg(test)]
-// mod tests {
-//     use std::{fs::File, io::BufWriter, path::Path};
-
-//     use super::*;
-
-//     #[test]
-//     fn test_render_glyph() {
-//         let cache = FontCache::new();
-//         let family_id = cache.load_family(&["Fira Code"]).unwrap();
-//         let font_id = cache.select_font(family_id, &Default::default()).unwrap();
-//         let glyph_id = cache.font(font_id).glyph_for_char('G').unwrap();
-//         let (bounds, bytes) = cache.render_glyph(font_id, 16.0, glyph_id, 1.).unwrap();
-
-//         let path = Path::new(r"/Users/as-cii/Desktop/image.png");
-//         let file = File::create(path).unwrap();
-//         let ref mut w = BufWriter::new(file);
-
-//         let mut encoder = png::Encoder::new(w, bounds.width() as u32, bounds.height() as u32);
-//         encoder.set_color(png::ColorType::Grayscale);
-//         encoder.set_depth(png::BitDepth::Eight);
-//         let mut writer = encoder.write_header().unwrap();
-//         writer.write_image_data(&bytes).unwrap();
-//     }
-// }
