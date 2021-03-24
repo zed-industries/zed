@@ -151,13 +151,14 @@ vertex SpriteFragmentInput sprite_vertex(
     uint sprite_id [[instance_id]],
     constant float2 *unit_vertices [[buffer(GPUISpriteVertexInputIndexVertices)]],
     constant GPUISprite *sprites [[buffer(GPUISpriteVertexInputIndexSprites)]],
-    constant GPUIUniforms *uniforms [[buffer(GPUISpriteVertexInputIndexUniforms)]]
+    constant float2 *viewport_size [[buffer(GPUISpriteVertexInputIndexViewportSize)]],
+    constant float2 *atlas_size [[buffer(GPUISpriteVertexInputIndexAtlasSize)]]
 ) {
     float2 unit_vertex = unit_vertices[unit_vertex_id];
     GPUISprite sprite = sprites[sprite_id];
     float2 position = unit_vertex * sprite.size + sprite.origin;
-    float2 atlas_position = unit_vertex * sprite.size + sprite.atlas_origin;
-    float4 device_position = to_device_position(position, uniforms->viewport_size);
+    float4 device_position = to_device_position(position, *viewport_size);
+    float2 atlas_position = (unit_vertex * sprite.size + sprite.atlas_origin) / *atlas_size;
 
     return SpriteFragmentInput {
         device_position,
@@ -172,6 +173,7 @@ fragment float4 sprite_fragment(
 ) {
     constexpr sampler atlas_sampler(mag_filter::linear, min_filter::linear);
     float4 color = input.color;
-    color.a *= atlas.sample(atlas_sampler, input.atlas_position).r;
+    float4 mask = atlas.sample(atlas_sampler, input.atlas_position);
+    color.a *= mask.a;
     return color;
 }

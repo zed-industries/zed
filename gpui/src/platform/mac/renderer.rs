@@ -278,7 +278,7 @@ impl Renderer {
                     .or_insert_with(Vec::new)
                     .push(shaders::GPUISprite {
                         origin: (glyph.origin * scene.scale_factor()).to_float2(),
-                        size: (bounds.size().to_f32() * scene.scale_factor()).to_float2(),
+                        size: bounds.size().to_float2(),
                         atlas_origin: bounds.origin().to_float2(),
                         color: glyph.color.to_uchar4(),
                     });
@@ -293,18 +293,15 @@ impl Renderer {
             0,
         );
         ctx.command_encoder.set_vertex_bytes(
-            shaders::GPUISpriteVertexInputIndex_GPUISpriteVertexInputIndexUniforms as u64,
-            mem::size_of::<shaders::GPUIUniforms>() as u64,
-            [shaders::GPUIUniforms {
-                viewport_size: ctx.drawable_size.to_float2(),
-            }]
-            .as_ptr() as *const c_void,
+            shaders::GPUISpriteVertexInputIndex_GPUISpriteVertexInputIndexViewportSize as u64,
+            mem::size_of::<shaders::vector_float2>() as u64,
+            [ctx.drawable_size.to_float2()].as_ptr() as *const c_void,
         );
-
-        let buffer_contents = unsafe {
-            (self.instances.contents() as *mut u8).offset(*offset as isize)
-                as *mut shaders::GPUISprite
-        };
+        ctx.command_encoder.set_vertex_bytes(
+            shaders::GPUISpriteVertexInputIndex_GPUISpriteVertexInputIndexAtlasSize as u64,
+            mem::size_of::<shaders::vector_float2>() as u64,
+            [self.sprite_cache.atlas_size().to_float2()].as_ptr() as *const c_void,
+        );
 
         for (atlas_id, sprites) in sprites_by_atlas {
             align_offset(offset);
@@ -327,6 +324,9 @@ impl Renderer {
             );
 
             unsafe {
+                let buffer_contents = (self.instances.contents() as *mut u8)
+                    .offset(*offset as isize)
+                    as *mut shaders::GPUISprite;
                 std::ptr::copy_nonoverlapping(sprites.as_ptr(), buffer_contents, sprites.len());
             }
             self.instances.did_modify_range(NSRange {
@@ -430,10 +430,7 @@ mod shaders {
 
     impl ToFloat2 for Vector2I {
         fn to_float2(&self) -> vector_float2 {
-            let mut output = self.y() as vector_float2;
-            output <<= 32;
-            output |= self.x() as vector_float2;
-            output
+            self.to_f32().to_float2()
         }
     }
 

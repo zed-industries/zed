@@ -39,6 +39,10 @@ impl SpriteCache {
         }
     }
 
+    pub fn atlas_size(&self) -> Vector2I {
+        self.atlas_size
+    }
+
     pub fn render_glyph(
         &mut self,
         font_id: FontId,
@@ -64,12 +68,12 @@ impl SpriteCache {
 
                 let atlas = atlasses.last_mut().unwrap();
                 if let Some(bounds) = atlas.try_insert(size, &mask) {
-                    Some((atlasses.len() - 1, bounds))
+                    Some((atlasses.len() - 1, RectI::new(bounds.origin(), size)))
                 } else {
                     let mut atlas = Atlas::new(device, atlas_size);
                     let bounds = atlas.try_insert(size, &mask).unwrap();
                     atlasses.push(atlas);
-                    Some((atlasses.len() - 1, bounds))
+                    Some((atlasses.len() - 1, RectI::new(bounds.origin(), size)))
                 }
             })
             .clone()

@@ -51,7 +51,16 @@ fn compile_metal_shaders() {
     println!("cargo:rerun-if-changed={}", shader_path);
 
     let output = Command::new("xcrun")
-        .args(&["-sdk", "macosx", "metal", "-c", shader_path, "-o"])
+        .args(&[
+            "-sdk",
+            "macosx",
+            "metal",
+            "-gline-tables-only",
+            "-MO",
+            "-c",
+            shader_path,
+            "-o",
+        ])
         .arg(&air_output_path)
         .output()
         .unwrap();

@@ -39,7 +39,8 @@ typedef struct {
 typedef enum {
     GPUISpriteVertexInputIndexVertices = 0,
     GPUISpriteVertexInputIndexSprites = 1,
-    GPUISpriteVertexInputIndexUniforms = 2,
+    GPUISpriteVertexInputIndexViewportSize = 2,
+    GPUISpriteVertexInputIndexAtlasSize = 3,
 } GPUISpriteVertexInputIndex;
 
 typedef enum {
