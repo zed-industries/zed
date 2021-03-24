@@ -272,7 +272,7 @@ impl Renderer {
                 glyph.font_id,
                 glyph.font_size,
                 glyph.id,
-                glyph.origin.x(),
+                glyph.origin,
                 scene.scale_factor(),
             ) {
                 sprites_by_atlas

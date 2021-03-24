@@ -3,7 +3,7 @@ use crate::{
     geometry::{
         rect::{RectF, RectI},
         transform2d::Transform2F,
-        vector::{vec2f, vec2i},
+        vector::{vec2f, vec2i, Vector2F},
     },
     platform,
     text_layout::{Glyph, Line, Run},
@@ -71,12 +71,12 @@ impl platform::FontSystem for FontSystem {
         font_id: FontId,
         font_size: f32,
         glyph_id: GlyphId,
-        horizontal_shift: f32,
+        subpixel_shift: Vector2F,
         scale_factor: f32,
     ) -> Option<(RectI, Vec<u8>)> {
         self.0
             .read()
-            .rasterize_glyph(font_id, font_size, glyph_id, horizontal_shift, scale_factor)
+            .rasterize_glyph(font_id, font_size, glyph_id, subpixel_shift, scale_factor)
     }
 
     fn layout_str(
@@ -126,7 +126,7 @@ impl FontSystemState {
         font_id: FontId,
         font_size: f32,
         glyph_id: GlyphId,
-        horizontal_shift: f32,
+        subpixel_shift: Vector2F,
         scale_factor: f32,
     ) -> Option<(RectI, Vec<u8>)> {
         let font = &self.fonts[font_id.0];
@@ -145,7 +145,7 @@ impl FontSystemState {
             None
         } else {
             // Make room for subpixel variants.
-            let bounds = RectI::new(bounds.origin(), bounds.size() + vec2i(1, 0));
+            let bounds = RectI::new(bounds.origin(), bounds.size() + vec2i(1, 1));
             let mut pixels = vec![0; bounds.width() as usize * bounds.height() as usize];
             let ctx = CGContext::create_bitmap_context(
                 Some(pixels.as_mut_ptr() as *mut _),
@@ -175,8 +175,8 @@ impl FontSystemState {
             ctx.show_glyphs_at_positions(
                 &[glyph_id as CGGlyph],
                 &[CGPoint::new(
-                    (horizontal_shift / scale_factor) as CGFloat,
-                    0.0,
+                    (subpixel_shift.x() / scale_factor) as CGFloat,
+                    (subpixel_shift.y() / scale_factor) as CGFloat,
                 )],
             );
 
