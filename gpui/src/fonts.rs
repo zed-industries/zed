@@ -1,17 +1,20 @@
 use crate::geometry::{
     rect::RectI,
-    vector::{vec2f, Vector2F, Vector2I},
+    transform2d::Transform2F,
+    vector::{vec2f, Vector2F},
 };
 use anyhow::{anyhow, Result};
-use cocoa::appkit::CGPoint;
-use core_graphics::{base::CGGlyph, color_space::CGColorSpace, context::CGContext};
-use parking_lot::{RwLock, RwLockUpgradableReadGuard};
-
+use cocoa::appkit::{CGFloat, CGPoint};
+use core_graphics::{
+    base::CGGlyph, color_space::CGColorSpace, context::CGContext, geometry::CGAffineTransform,
+};
 pub use font_kit::properties::{Properties, Weight};
 use font_kit::{
-    font::Font, loaders::core_text::NativeFont, metrics::Metrics, source::SystemSource,
+    canvas::RasterizationOptions, font::Font, hinting::HintingOptions,
+    loaders::core_text::NativeFont, metrics::Metrics, source::SystemSource,
 };
 use ordered_float::OrderedFloat;
+use parking_lot::{RwLock, RwLockUpgradableReadGuard};
 use std::{collections::HashMap, sync::Arc};
 
 #[allow(non_upper_case_globals)]
@@ -193,35 +196,51 @@ impl FontCache {
         font_size: f32,
         glyph_id: GlyphId,
         scale_factor: f32,
-    ) -> Option<(Vector2I, Vec<u8>)> {
-        let native_font = self.native_font(font_id, font_size);
-        let glyph_id = glyph_id as CGGlyph;
-        let glyph_bounds =
-            native_font.get_bounding_rects_for_glyphs(Default::default(), &[glyph_id]);
-        let position = CGPoint::new(-glyph_bounds.origin.x, -glyph_bounds.origin.y);
-        let width = (glyph_bounds.size.width * scale_factor as f64).ceil() as usize;
-        let height = (glyph_bounds.size.height * scale_factor as f64).ceil() as usize;
+    ) -> Option<(RectI, Vec<u8>)> {
+        let font = self.font(font_id);
+        let scale = Transform2F::from_scale(scale_factor);
+        let bounds = font
+            .raster_bounds(
+                glyph_id,
+                font_size,
+                scale,
+                HintingOptions::None,
+                RasterizationOptions::GrayscaleAa,
+            )
+            .ok()?;
 
-        if width == 0 || height == 0 {
+        if bounds.width() == 0 || bounds.height() == 0 {
             None
         } else {
-            let mut ctx = CGContext::create_bitmap_context(
-                None,
-                width,
-                height,
+            let mut pixels = vec![0; bounds.width() as usize * bounds.height() as usize];
+            let ctx = CGContext::create_bitmap_context(
+                Some(pixels.as_mut_ptr() as *mut _),
+                bounds.width() as usize,
+                bounds.height() as usize,
                 8,
-                width,
+                bounds.width() as usize,
                 &CGColorSpace::create_device_gray(),
                 kCGImageAlphaOnly,
             );
-            ctx.scale(scale_factor as f64, scale_factor as f64);
-            native_font.draw_glyphs(&[glyph_id], &[position], ctx.clone());
-            ctx.flush();
 
-            Some((
-                Vector2I::new(width as i32, height as i32),
-                Vec::from(ctx.data()),
-            ))
+            // Move the origin to bottom left and account for scaling, this
+            // makes drawing text consistent with the font-kit's raster_bounds.
+            ctx.translate(0.0, bounds.height() as CGFloat);
+            let transform = scale.translate(-bounds.origin().to_f32());
+            ctx.set_text_matrix(&CGAffineTransform {
+                a: transform.matrix.m11() as CGFloat,
+                b: -transform.matrix.m21() as CGFloat,
+                c: -transform.matrix.m12() as CGFloat,
+                d: transform.matrix.m22() as CGFloat,
+                tx: transform.vector.x() as CGFloat,
+                ty: -transform.vector.y() as CGFloat,
+            });
+
+            ctx.set_font(&font.native_font().copy_to_CGFont());
+            ctx.set_font_size(font_size as CGFloat);
+            ctx.show_glyphs_at_positions(&[glyph_id as CGGlyph], &[CGPoint::new(0.0, 0.0)]);
+
+            Some((bounds, pixels))
         }
     }
 
@@ -290,30 +309,28 @@ fn push_font(state: &mut FontCacheState, font: Font) -> FontId {
     font_id
 }
 
-#[cfg(test)]
-mod tests {
-    use std::{fs::File, io::BufWriter, path::Path};
+// #[cfg(test)]
+// mod tests {
+//     use std::{fs::File, io::BufWriter, path::Path};
 
-    use super::*;
+//     use super::*;
 
-    #[test]
-    fn test_render_glyph() {
-        let cache = FontCache::new();
-        let family_id = cache.load_family(&["Fira Code"]).unwrap();
-        let font_id = cache.select_font(family_id, &Default::default()).unwrap();
-        let glyph_id = cache.font(font_id).glyph_for_char('m').unwrap();
-        let (size, bytes) = cache.render_glyph(font_id, 16.0, glyph_id, 1.).unwrap();
+//     #[test]
+//     fn test_render_glyph() {
+//         let cache = FontCache::new();
+//         let family_id = cache.load_family(&["Fira Code"]).unwrap();
+//         let font_id = cache.select_font(family_id, &Default::default()).unwrap();
+//         let glyph_id = cache.font(font_id).glyph_for_char('G').unwrap();
+//         let (bounds, bytes) = cache.render_glyph(font_id, 16.0, glyph_id, 1.).unwrap();
 
-        let path = Path::new(r"/Users/as-cii/Desktop/image.png");
-        let file = File::create(path).unwrap();
-        let ref mut w = BufWriter::new(file);
+//         let path = Path::new(r"/Users/as-cii/Desktop/image.png");
+//         let file = File::create(path).unwrap();
+//         let ref mut w = BufWriter::new(file);
 
-        let mut encoder = png::Encoder::new(w, size.x() as u32, size.y() as u32);
-        encoder.set_color(png::ColorType::Grayscale);
-        encoder.set_depth(png::BitDepth::Eight);
-        let mut writer = encoder.write_header().unwrap();
-
-        writer.write_image_data(&bytes).unwrap(); // Save
-        dbg!(size, bytes);
-    }
-}
+//         let mut encoder = png::Encoder::new(w, bounds.width() as u32, bounds.height() as u32);
+//         encoder.set_color(png::ColorType::Grayscale);
+//         encoder.set_depth(png::BitDepth::Eight);
+//         let mut writer = encoder.write_header().unwrap();
+//         writer.write_image_data(&bytes).unwrap();
+//     }
+// }

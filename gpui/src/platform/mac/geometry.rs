@@ -1,5 +1,6 @@
 use cocoa::foundation::{NSPoint, NSRect, NSSize};
 use pathfinder_geometry::{rect::RectF, vector::Vector2F};
+
 pub trait Vector2FExt {
     fn to_ns_point(&self) -> NSPoint;
     fn to_ns_size(&self) -> NSSize;

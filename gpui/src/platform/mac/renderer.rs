@@ -267,19 +267,20 @@ impl Renderer {
 
         let mut sprites_by_atlas = HashMap::new();
         for glyph in layer.glyphs() {
-            if let Some((atlas, bounds)) = self.sprite_cache.render_glyph(
+            if let Some(sprite) = self.sprite_cache.render_glyph(
                 glyph.font_id,
                 glyph.font_size,
                 glyph.id,
                 scene.scale_factor(),
             ) {
                 sprites_by_atlas
-                    .entry(atlas)
+                    .entry(sprite.atlas_id)
                     .or_insert_with(Vec::new)
                     .push(shaders::GPUISprite {
-                        origin: (glyph.origin * scene.scale_factor()).to_float2(),
-                        size: bounds.size().to_float2(),
-                        atlas_origin: bounds.origin().to_float2(),
+                        origin: (glyph.origin * scene.scale_factor() + sprite.offset.to_f32())
+                            .to_float2(),
+                        size: sprite.size.to_float2(),
+                        atlas_origin: sprite.atlas_origin.to_float2(),
                         color: glyph.color.to_uchar4(),
                     });
             }

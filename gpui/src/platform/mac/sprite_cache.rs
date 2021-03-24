@@ -19,12 +19,20 @@ struct GlyphDescriptor {
     glyph_id: GlyphId,
 }
 
+#[derive(Clone)]
+pub struct GlyphSprite {
+    pub atlas_id: usize,
+    pub atlas_origin: Vector2I,
+    pub offset: Vector2I,
+    pub size: Vector2I,
+}
+
 pub struct SpriteCache {
     device: metal::Device,
     atlas_size: Vector2I,
     font_cache: Arc<FontCache>,
     atlasses: Vec<Atlas>,
-    glyphs: HashMap<GlyphDescriptor, Option<(usize, RectI)>>,
+    glyphs: HashMap<GlyphDescriptor, Option<GlyphSprite>>,
 }
 
 impl SpriteCache {
@@ -49,7 +57,7 @@ impl SpriteCache {
         font_size: f32,
         glyph_id: GlyphId,
         scale_factor: f32,
-    ) -> Option<(usize, RectI)> {
+    ) -> Option<GlyphSprite> {
         let font_cache = &self.font_cache;
         let atlasses = &mut self.atlasses;
         let atlas_size = self.atlas_size;
@@ -61,20 +69,28 @@ impl SpriteCache {
                 glyph_id,
             })
             .or_insert_with(|| {
-                let (size, mask) =
+                let (glyph_bounds, mask) =
                     font_cache.render_glyph(font_id, font_size, glyph_id, scale_factor)?;
-                assert!(size.x() < atlas_size.x());
-                assert!(size.y() < atlas_size.y());
+                assert!(glyph_bounds.width() < atlas_size.x());
+                assert!(glyph_bounds.height() < atlas_size.y());
 
-                let atlas = atlasses.last_mut().unwrap();
-                if let Some(bounds) = atlas.try_insert(size, &mask) {
-                    Some((atlasses.len() - 1, RectI::new(bounds.origin(), size)))
-                } else {
-                    let mut atlas = Atlas::new(device, atlas_size);
-                    let bounds = atlas.try_insert(size, &mask).unwrap();
-                    atlasses.push(atlas);
-                    Some((atlasses.len() - 1, RectI::new(bounds.origin(), size)))
-                }
+                let atlas_bounds = atlasses
+                    .last_mut()
+                    .unwrap()
+                    .try_insert(glyph_bounds.size(), &mask)
+                    .unwrap_or_else(|| {
+                        let mut atlas = Atlas::new(device, atlas_size);
+                        let bounds = atlas.try_insert(glyph_bounds.size(), &mask).unwrap();
+                        atlasses.push(atlas);
+                        bounds
+                    });
+
+                Some(GlyphSprite {
+                    atlas_id: atlasses.len() - 1,
+                    atlas_origin: atlas_bounds.origin(),
+                    offset: glyph_bounds.origin(),
+                    size: glyph_bounds.size(),
+                })
             })
             .clone()
     }
