@@ -112,7 +112,6 @@ impl SpriteCache {
                 // Snap sprite to pixel grid.
                 let offset = glyph_bounds.origin().to_f32()
                     - vec2f(target_position.x().fract(), target_position.y().fract());
-
                 Some(GlyphSprite {
                     atlas_id: atlasses.len() - 1,
                     atlas_origin: atlas_bounds.origin(),

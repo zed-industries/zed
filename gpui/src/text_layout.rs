@@ -1,12 +1,14 @@
 use crate::{
     color::ColorU,
     fonts::{FontId, GlyphId},
-    geometry::rect::RectF,
+    geometry::{
+        rect::RectF,
+        vector::{vec2f, Vector2F},
+    },
     platform, scene, PaintContext,
 };
 use ordered_float::OrderedFloat;
 use parking_lot::{Mutex, RwLock, RwLockUpgradableReadGuard};
-use pathfinder_geometry::vector::Vector2F;
 use smallvec::SmallVec;
 use std::{
     borrow::Borrow,
@@ -185,9 +187,10 @@ impl Line {
 
         for run in &self.runs {
             let bounding_box = ctx.font_cache.bounding_box(run.font_id, self.font_size);
+            let descent = ctx.font_cache.descent(run.font_id, self.font_size);
             let max_glyph_width = bounding_box.x();
             for glyph in &run.glyphs {
-                let glyph_origin = bounds.origin() + glyph.position;
+                let glyph_origin = bounds.origin() + glyph.position - vec2f(0.0, descent);
                 if glyph_origin.x() + max_glyph_width < bounds.origin().x() {
                     continue;
                 }
@@ -208,7 +211,7 @@ impl Line {
                     font_id: run.font_id,
                     font_size: self.font_size,
                     id: glyph.id,
-                    origin: glyph_origin,
+                    origin: glyph_origin + vec2f(0., bounding_box.y() / 2.),
                     color,
                 });
             }
