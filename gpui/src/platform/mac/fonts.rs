@@ -350,10 +350,11 @@ mod tests {
     //     let font_id = fonts.select_font(&font_ids, &Default::default()).unwrap();
     //     let glyph_id = fonts.glyph_for_char(font_id, 'G').unwrap();
 
-    //     for i in 0..2 {
-    //         let variant = 0.5 * i as f32;
+    //     const VARIANTS: usize = 1;
+    //     for i in 0..VARIANTS {
+    //         let variant = i as f32 / VARIANTS as f32;
     //         let (bounds, bytes) = fonts
-    //             .rasterize_glyph(font_id, 16.0, glyph_id, variant, 2.)
+    //             .rasterize_glyph(font_id, 16.0, glyph_id, vec2f(variant, variant), 2.)
     //             .unwrap();
 
     //         let name = format!("/Users/as-cii/Desktop/twog-{}.png", i);
