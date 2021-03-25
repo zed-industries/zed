@@ -15,7 +15,7 @@ impl Settings {
     pub fn new(font_cache: &FontCache) -> Result<Self> {
         Ok(Self {
             buffer_font_family: font_cache.load_family(&["Fira Code", "Monaco"])?,
-            buffer_font_size: 16.0,
+            buffer_font_size: 14.0,
             tab_size: 4,
             ui_font_family: font_cache.load_family(&["SF Pro Display"])?,
             ui_font_size: 12.0,

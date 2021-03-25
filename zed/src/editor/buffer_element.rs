@@ -1,13 +1,15 @@
 use super::{BufferView, DisplayPoint, SelectAction};
 use gpui::{
+    color::ColorU,
     geometry::{
         rect::RectF,
         vector::{vec2f, Vector2F},
     },
     text_layout::{self, TextLayoutCache},
-    AfterLayoutContext, AppContext, Element, Event, EventContext, FontCache, LayoutContext,
-    MutableAppContext, PaintContext, Scene, SizeConstraint, ViewHandle,
+    AfterLayoutContext, AppContext, Border, Element, Event, EventContext, FontCache, LayoutContext,
+    MutableAppContext, PaintContext, Quad, Scene, SizeConstraint, ViewHandle,
 };
+use smallvec::SmallVec;
 use std::{
     cmp::{self},
     sync::Arc,
@@ -161,159 +163,140 @@ impl BufferElement {
         true
     }
 
-    fn paint_gutter(&mut self, rect: RectF, ctx: &mut PaintContext) {
-        // if let Some(layout) = self.layout.as_ref() {
-        //     let view = self.view.as_ref(app);
-        //     let scene = &mut ctx.scene;
-        //     let font_cache = &ctx.font_cache;
-        //     let line_height = view.line_height(font_cache);
-        //     let scroll_top = view.scroll_position().y() * line_height;
+    fn paint_gutter(&mut self, rect: RectF, layout: &LayoutState, ctx: &mut PaintContext) {
+        let view = self.view.as_ref(ctx.app);
+        let line_height = view.line_height(ctx.font_cache);
+        let scroll_top = view.scroll_position().y() * line_height;
 
-        //     scene.save();
-        //     scene.translate(rect.origin());
-        //     scene.set_fill_style(FillStyle::Color(ColorU::white()));
+        ctx.scene.push_layer();
+        ctx.scene.push_quad(Quad {
+            bounds: rect,
+            background: Some(ColorU::white()),
+            border: Border::new(0., ColorU::transparent_black()),
+            corner_radius: 0.,
+        });
 
-        //     let rect = RectF::new(Vector2F::zero(), rect.size());
-        //     let mut rect_path = Path2D::new();
-        //     rect_path.rect(rect);
-        //     scene.clip_path(rect_path, FillRule::EvenOdd);
-        //     scene.fill_rect(rect);
+        for (ix, line) in layout.line_number_layouts.iter().enumerate() {
+            let line_origin = rect.origin()
+                + vec2f(
+                    rect.width() - line.width - layout.gutter_padding,
+                    ix as f32 * line_height - (scroll_top % line_height),
+                );
+            line.paint(
+                RectF::new(line_origin, vec2f(line_height, line.width)),
+                &[(0..line.len, ColorU::black())],
+                ctx,
+            );
+        }
 
-        //     for (ix, line) in layout.line_number_layouts.iter().enumerate() {
-        //         let line_origin = vec2f(
-        //             rect.width() - line.width - layout.gutter_padding,
-        //             ix as f32 * line_height - (scroll_top % line_height),
-        //         );
-        //         line.paint(
-        //             line_origin,
-        //             rect,
-        //             &[(0..line.len, ColorU::black())],
-        //             scene,
-        //             font_cache,
-        //         );
-        //     }
-
-        //     scene.restore();
-        // }
+        ctx.scene.pop_layer();
     }
 
-    fn paint_text(&mut self, rect: RectF, ctx: &mut PaintContext) {
-        // if let Some(layout) = self.layout.as_ref() {
-        //     let scene = &mut ctx.scene;
-        //     let font_cache = &ctx.font_cache;
+    fn paint_text(&mut self, bounds: RectF, layout: &LayoutState, ctx: &mut PaintContext) {
+        let view = self.view.as_ref(ctx.app);
+        let line_height = view.line_height(ctx.font_cache);
+        let descent = view.font_descent(ctx.font_cache);
+        let start_row = view.scroll_position().y() as u32;
+        let scroll_top = view.scroll_position().y() * line_height;
+        let end_row = ((scroll_top + bounds.height()) / line_height).ceil() as u32 + 1; // Add 1 to ensure selections bleed off screen
+        let max_glyph_width = view.em_width(ctx.font_cache);
+        let scroll_left = view.scroll_position().x() * max_glyph_width;
 
-        //     scene.save();
-        //     scene.translate(rect.origin());
-        //     scene.set_fill_style(FillStyle::Color(ColorU::white()));
-        //     let rect = RectF::new(Vector2F::zero(), rect.size());
-        //     let mut rect_path = Path2D::new();
-        //     rect_path.rect(rect);
-        //     scene.clip_path(rect_path, FillRule::EvenOdd);
-        //     scene.fill_rect(rect);
+        ctx.scene.push_layer();
+        ctx.scene.push_quad(Quad {
+            bounds,
+            background: Some(ColorU::white()),
+            border: Border::new(0., ColorU::transparent_black()),
+            corner_radius: 0.,
+        });
 
-        //     let view = self.view.as_ref(app);
-        //     let line_height = view.line_height(font_cache);
-        //     let descent = view.font_descent(font_cache);
-        //     let start_row = view.scroll_position().y() as u32;
-        //     let scroll_top = view.scroll_position().y() * line_height;
-        //     let end_row = ((scroll_top + rect.height()) / line_height).ceil() as u32 + 1; // Add 1 to ensure selections bleed off screen
-        //     let max_glyph_width = view.em_width(font_cache);
-        //     let scroll_left = view.scroll_position().x() * max_glyph_width;
+        // Draw selections
+        // let corner_radius = 2.5;
+        let mut cursors = SmallVec::<[Cursor; 32]>::new();
 
-        //     // Draw selections
-        //     scene.save();
-        //     let corner_radius = 2.5;
-        //     let mut cursors = SmallVec::<[Cursor; 32]>::new();
+        for selection in view.selections_in_range(
+            DisplayPoint::new(start_row, 0)..DisplayPoint::new(end_row, 0),
+            ctx.app,
+        ) {
+            // if selection.start != selection.end {
+            //     let range_start = cmp::min(selection.start, selection.end);
+            //     let range_end = cmp::max(selection.start, selection.end);
+            //     let row_range = if range_end.column() == 0 {
+            //         cmp::max(range_start.row(), start_row)..cmp::min(range_end.row(), end_row)
+            //     } else {
+            //         cmp::max(range_start.row(), start_row)..cmp::min(range_end.row() + 1, end_row)
+            //     };
 
-        //     for selection in view.selections_in_range(
-        //         DisplayPoint::new(start_row, 0)..DisplayPoint::new(end_row, 0),
-        //         app,
-        //     ) {
-        //         if selection.start != selection.end {
-        //             let range_start = cmp::min(selection.start, selection.end);
-        //             let range_end = cmp::max(selection.start, selection.end);
-        //             let row_range = if range_end.column() == 0 {
-        //                 cmp::max(range_start.row(), start_row)..cmp::min(range_end.row(), end_row)
-        //             } else {
-        //                 cmp::max(range_start.row(), start_row)
-        //                     ..cmp::min(range_end.row() + 1, end_row)
-        //             };
+            //     let selection = Selection {
+            //         line_height,
+            //         start_y: row_range.start as f32 * line_height - scroll_top,
+            //         lines: row_range
+            //             .into_iter()
+            //             .map(|row| {
+            //                 let line_layout = &layout.line_layouts[(row - start_row) as usize];
+            //                 SelectionLine {
+            //                     start_x: if row == range_start.row() {
+            //                         line_layout.x_for_index(range_start.column() as usize)
+            //                             - scroll_left
+            //                             - descent
+            //                     } else {
+            //                         -scroll_left
+            //                     },
+            //                     end_x: if row == range_end.row() {
+            //                         line_layout.x_for_index(range_end.column() as usize)
+            //                             - scroll_left
+            //                             - descent
+            //                     } else {
+            //                         line_layout.width + corner_radius * 2.0 - scroll_left - descent
+            //                     },
+            //                 }
+            //             })
+            //             .collect(),
+            //     };
 
-        //             let selection = Selection {
-        //                 line_height,
-        //                 start_y: row_range.start as f32 * line_height - scroll_top,
-        //                 lines: row_range
-        //                     .into_iter()
-        //                     .map(|row| {
-        //                         let line_layout = &layout.line_layouts[(row - start_row) as usize];
-        //                         SelectionLine {
-        //                             start_x: if row == range_start.row() {
-        //                                 line_layout.x_for_index(range_start.column() as usize)
-        //                                     - scroll_left
-        //                                     - descent
-        //                             } else {
-        //                                 -scroll_left
-        //                             },
-        //                             end_x: if row == range_end.row() {
-        //                                 line_layout.x_for_index(range_end.column() as usize)
-        //                                     - scroll_left
-        //                                     - descent
-        //                             } else {
-        //                                 line_layout.width + corner_radius * 2.0
-        //                                     - scroll_left
-        //                                     - descent
-        //                             },
-        //                         }
-        //                     })
-        //                     .collect(),
-        //             };
+            //     selection.paint(scene);
+            // }
 
-        //             selection.paint(scene);
-        //         }
+            if view.cursors_visible() {
+                let cursor_position = selection.end;
+                if (start_row..end_row).contains(&cursor_position.row()) {
+                    let cursor_row_layout =
+                        &layout.line_layouts[(selection.end.row() - start_row) as usize];
+                    let x = cursor_row_layout.x_for_index(selection.end.column() as usize)
+                        - scroll_left
+                        - descent;
+                    let y = selection.end.row() as f32 * line_height - scroll_top;
+                    cursors.push(Cursor {
+                        origin: bounds.origin() + vec2f(x, y),
+                        line_height,
+                    });
+                }
+            }
+        }
 
-        //         if view.cursors_visible() {
-        //             let cursor_position = selection.end;
-        //             if (start_row..end_row).contains(&cursor_position.row()) {
-        //                 let cursor_row_layout =
-        //                     &layout.line_layouts[(selection.end.row() - start_row) as usize];
-        //                 cursors.push(Cursor {
-        //                     x: cursor_row_layout.x_for_index(selection.end.column() as usize)
-        //                         - scroll_left
-        //                         - descent,
-        //                     y: selection.end.row() as f32 * line_height - scroll_top,
-        //                     line_height,
-        //                 });
-        //             }
-        //         }
-        //     }
-        //     scene.restore();
+        // Draw glyphs
+        for (ix, line) in layout.line_layouts.iter().enumerate() {
+            let row = start_row + ix as u32;
+            let line_origin = bounds.origin()
+                + vec2f(
+                    -scroll_left - descent,
+                    row as f32 * line_height - scroll_top,
+                );
 
-        //     // Draw glyphs
+            line.paint(
+                RectF::new(line_origin, vec2f(line.width, line_height)),
+                &[(0..line.len, ColorU::black())],
+                ctx,
+            );
+        }
 
-        //     scene.set_fill_style(FillStyle::Color(ColorU::black()));
+        ctx.scene.push_layer();
+        for cursor in cursors {
+            cursor.paint(ctx);
+        }
+        ctx.scene.pop_layer();
 
-        //     for (ix, line) in layout.line_layouts.iter().enumerate() {
-        //         let row = start_row + ix as u32;
-        //         let line_origin = vec2f(
-        //             -scroll_left - descent,
-        //             row as f32 * line_height - scroll_top,
-        //         );
-
-        //         line.paint(
-        //             line_origin,
-        //             rect,
-        //             &[(0..line.len, ColorU::black())],
-        //             scene,
-        //             font_cache,
-        //         );
-        //     }
-
-        //     for cursor in cursors {
-        //         cursor.paint(scene);
-        //     }
-
-        //     scene.restore()
-        // }
+        ctx.scene.pop_layer();
     }
 }
 
@@ -454,9 +437,9 @@ impl Element for BufferElement {
             );
 
             if self.view.as_ref(ctx.app).is_gutter_visible() {
-                self.paint_gutter(gutter_bounds, ctx);
+                self.paint_gutter(gutter_bounds, layout, ctx);
             }
-            self.paint_text(text_bounds, ctx);
+            self.paint_text(text_bounds, layout, ctx);
 
             Some(PaintState {
                 bounds,
@@ -575,18 +558,18 @@ impl PaintState {
 }
 
 struct Cursor {
-    x: f32,
-    y: f32,
+    origin: Vector2F,
     line_height: f32,
 }
 
 impl Cursor {
-    fn paint(&self, scene: &mut Scene) {
-        // scene.set_fill_style(FillStyle::Color(ColorU::black()));
-        // scene.fill_rect(RectF::new(
-        //     vec2f(self.x, self.y),
-        //     vec2f(2.0, self.line_height),
-        // ));
+    fn paint(&self, ctx: &mut PaintContext) {
+        ctx.scene.push_quad(Quad {
+            bounds: RectF::new(self.origin, vec2f(2.0, self.line_height)),
+            background: Some(ColorU::black()),
+            border: Border::new(0., ColorU::black()),
+            corner_radius: 0.,
+        });
     }
 }
 
