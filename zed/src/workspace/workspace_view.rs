@@ -325,7 +325,7 @@ mod tests {
     use super::{pane, Workspace, WorkspaceView};
     use crate::{settings, test::temp_tree, workspace::WorkspaceHandle as _};
     use anyhow::Result;
-    use gpui::{App, FontCache};
+    use gpui::App;
     use serde_json::json;
 
     #[test]

@@ -1907,7 +1907,7 @@ mod tests {
         use gpui::App;
         use std::{cell::RefCell, rc::Rc};
 
-        let mut app = App::test((), |mut app| async move {
+        App::test((), |mut app| async move {
             let buffer_1_events = Rc::new(RefCell::new(Vec::new()));
             let buffer_2_events = Rc::new(RefCell::new(Vec::new()));
 

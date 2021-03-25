@@ -53,7 +53,7 @@ fn open_paths(params: &OpenParams, app: &mut MutableAppContext) {
 mod tests {
     use super::*;
     use crate::{settings, test::*};
-    use gpui::{App, FontCache};
+    use gpui::App;
     use serde_json::json;
 
     #[test]

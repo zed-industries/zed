@@ -996,7 +996,6 @@ impl BufferView {
             .each(
                 layouts.chunks_mut(chunk_size as usize).enumerate(),
                 |(ix, chunk)| {
-                    let font_cache = &font_cache;
                     let chunk_start = rows.start as usize + ix * chunk_size;
                     let chunk_end = cmp::min(chunk_start + chunk_size, rows.end as usize);
 
@@ -1363,11 +1362,9 @@ mod tests {
 
     #[test]
     fn test_layout_line_numbers() -> Result<()> {
-        use gpui::{fonts::FontCache, text_layout::TextLayoutCache};
-
         App::test((), |mut app| async move {
-            let font_cache = FontCache::new(app.platform().fonts());
             let layout_cache = TextLayoutCache::new(app.platform().fonts());
+            let font_cache = app.font_cache();
 
             let buffer = app.add_model(|_| Buffer::new(0, sample_text(6, 6)));
 

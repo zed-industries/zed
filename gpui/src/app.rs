@@ -5,7 +5,7 @@ use crate::{
     platform::{self, App as _, WindowOptions},
     presenter::Presenter,
     util::post_inc,
-    AssetCache, AssetSource, FontCache,
+    AssetCache, AssetSource, FontCache, TextLayoutCache,
 };
 use anyhow::{anyhow, Result};
 use keymap::MatchResult;
@@ -624,10 +624,11 @@ impl MutableAppContext {
         ) {
             Err(e) => log::error!("error opening window: {}", e),
             Ok(mut window) => {
+                let text_layout_cache = TextLayoutCache::new(self.platform.fonts());
                 let presenter = Rc::new(RefCell::new(Presenter::new(
                     window_id,
                     self.font_cache.clone(),
-                    self.platform.fonts(),
+                    text_layout_cache,
                     self.assets.clone(),
                     self,
                 )));

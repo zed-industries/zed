@@ -1,24 +1,16 @@
 use crate::{
     color::ColorU,
-    fonts::{FontCache, FontId, GlyphId},
+    fonts::{FontId, GlyphId},
     geometry::rect::RectF,
     platform, scene, PaintContext,
 };
-use core_foundation::{
-    attributed_string::CFMutableAttributedString,
-    base::{CFRange, TCFType},
-    string::CFString,
-};
-use core_text::{font::CTFont, line::CTLine, string_attributes::kCTFontAttributeName};
 use ordered_float::OrderedFloat;
 use parking_lot::{Mutex, RwLock, RwLockUpgradableReadGuard};
-use pathfinder_geometry::vector::{vec2f, Vector2F};
+use pathfinder_geometry::vector::Vector2F;
 use smallvec::SmallVec;
 use std::{
     borrow::Borrow,
-    char,
     collections::HashMap,
-    convert::TryFrom,
     hash::{Hash, Hasher},
     ops::Range,
     sync::Arc,
