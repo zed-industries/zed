@@ -8,7 +8,7 @@ pub mod current {
 
 use crate::{
     executor,
-    fonts::{FontId, GlyphId},
+    fonts::{FontId, GlyphId, Metrics as FontMetrics, Properties as FontProperties},
     geometry::{
         rect::{RectF, RectI},
         vector::Vector2F,
@@ -19,7 +19,6 @@ use crate::{
 use anyhow::Result;
 use async_task::Runnable;
 pub use event::Event;
-use font_kit::{metrics::Metrics as FontMetrics, properties::Properties as FontProperties};
 use std::{ops::Range, path::PathBuf, rc::Rc, sync::Arc};
 
 pub trait Runner {

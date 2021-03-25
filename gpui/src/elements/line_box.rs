@@ -1,5 +1,6 @@
 use crate::{
-    fonts::{FamilyId, FontId, Properties},
+    font_cache::FamilyId,
+    fonts::{FontId, Properties},
     geometry::vector::{vec2f, Vector2F},
     AfterLayoutContext, Element, ElementBox, Event, EventContext, LayoutContext, PaintContext,
     SizeConstraint,

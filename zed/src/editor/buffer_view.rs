@@ -6,10 +6,8 @@ use crate::{settings::Settings, watch, workspace};
 use anyhow::Result;
 use easy_parallel::Parallel;
 use gpui::{
-    fonts::{FontCache, Properties as FontProperties},
-    keymap::Binding,
-    text_layout, App, AppContext, Element, ElementBox, Entity, ModelHandle, View, ViewContext,
-    WeakViewHandle,
+    fonts::Properties as FontProperties, keymap::Binding, text_layout, App, AppContext, Element,
+    ElementBox, Entity, FontCache, ModelHandle, View, ViewContext, WeakViewHandle,
 };
 use gpui::{geometry::vector::Vector2F, TextLayoutCache};
 use parking_lot::Mutex;

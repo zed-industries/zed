@@ -1,6 +1,7 @@
 use crate::{
     color::ColorU,
-    fonts::{FamilyId, Properties},
+    font_cache::FamilyId,
+    fonts::Properties,
     geometry::vector::{vec2f, Vector2F},
     text_layout::Line,
     AfterLayoutContext, Element, Event, EventContext, LayoutContext, PaintContext, SizeConstraint,

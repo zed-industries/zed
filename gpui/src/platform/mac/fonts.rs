@@ -1,5 +1,5 @@
 use crate::{
-    fonts::{FontId, GlyphId},
+    fonts::{FontId, GlyphId, Metrics, Properties},
     geometry::{
         rect::{RectF, RectI},
         transform2d::Transform2F,
@@ -19,10 +19,7 @@ use core_graphics::{
     base::CGGlyph, color_space::CGColorSpace, context::CGContext, geometry::CGAffineTransform,
 };
 use core_text::{line::CTLine, string_attributes::kCTFontAttributeName};
-use font_kit::{
-    canvas::RasterizationOptions, hinting::HintingOptions, metrics::Metrics,
-    properties::Properties, source::SystemSource,
-};
+use font_kit::{canvas::RasterizationOptions, hinting::HintingOptions, source::SystemSource};
 use parking_lot::RwLock;
 use std::{char, convert::TryFrom};
 

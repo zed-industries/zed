@@ -1,6 +1,6 @@
 use crate::watch;
 use anyhow::Result;
-use gpui::fonts::{FamilyId, FontCache};
+use gpui::font_cache::{FamilyId, FontCache};
 
 #[derive(Clone)]
 pub struct Settings {
