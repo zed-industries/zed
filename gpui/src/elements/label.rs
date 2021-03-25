@@ -2,7 +2,10 @@ use crate::{
     color::ColorU,
     font_cache::FamilyId,
     fonts::Properties,
-    geometry::vector::{vec2f, Vector2F},
+    geometry::{
+        rect::RectF,
+        vector::{vec2f, Vector2F},
+    },
     text_layout::Line,
     AfterLayoutContext, Element, Event, EventContext, LayoutContext, PaintContext, SizeConstraint,
 };
@@ -127,7 +130,7 @@ impl Element for Label {
 
     fn paint(
         &mut self,
-        bounds: pathfinder_geometry::rect::RectF,
+        bounds: RectF,
         layout: &mut Self::LayoutState,
         ctx: &mut PaintContext,
     ) -> Self::PaintState {
@@ -137,7 +140,7 @@ impl Element for Label {
     fn dispatch_event(
         &mut self,
         _: &Event,
-        _: pathfinder_geometry::rect::RectF,
+        _: RectF,
         _: &mut Self::LayoutState,
         _: &mut Self::PaintState,
         _: &mut EventContext,
