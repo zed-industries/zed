@@ -1058,13 +1058,14 @@ impl BufferView {
         ctx.notify();
 
         let epoch = self.next_blink_epoch();
-        let _ = ctx.spawn(
+        ctx.spawn(
             async move {
                 Timer::after(CURSOR_BLINK_INTERVAL).await;
                 epoch
             },
             Self::resume_cursor_blinking,
-        );
+        )
+        .detach();
     }
 
     fn resume_cursor_blinking(&mut self, epoch: usize, ctx: &mut ViewContext<Self>) {
@@ -1080,13 +1081,14 @@ impl BufferView {
             ctx.notify();
 
             let epoch = self.next_blink_epoch();
-            let _ = ctx.spawn(
+            ctx.spawn(
                 async move {
                     Timer::after(CURSOR_BLINK_INTERVAL).await;
                     epoch
                 },
                 Self::blink_cursors,
-            );
+            )
+            .detach();
         }
     }
 
