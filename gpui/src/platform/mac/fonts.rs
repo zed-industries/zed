@@ -342,7 +342,7 @@ mod tests {
     }
 
     // #[test]
-    // fn test_render_glyph() {
+    // fn test_rasterize_glyph() {
     //     use std::{fs::File, io::BufWriter, path::Path};
 
     //     let fonts = FontSystem::new();
