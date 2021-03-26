@@ -87,6 +87,9 @@ impl<T: Element> AnyElement for Lifecycle<T> {
             | Lifecycle::PostLayout { mut element, .. }
             | Lifecycle::PostPaint { mut element, .. } => {
                 let (size, layout) = element.layout(constraint, ctx);
+                debug_assert!(size.x().is_finite());
+                debug_assert!(size.y().is_finite());
+
                 result = Some(size);
                 Lifecycle::PostLayout {
                     element,

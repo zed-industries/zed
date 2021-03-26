@@ -1,7 +1,10 @@
+use crate::geometry::{
+    rect::RectF,
+    vector::{vec2f, Vector2F},
+};
 use crate::{
     AfterLayoutContext, Element, Event, EventContext, LayoutContext, PaintContext, SizeConstraint,
 };
-use pathfinder_geometry::{rect::RectF, vector::Vector2F};
 
 pub struct Empty;
 
@@ -20,7 +23,18 @@ impl Element for Empty {
         constraint: SizeConstraint,
         _: &mut LayoutContext,
     ) -> (Vector2F, Self::LayoutState) {
-        (constraint.max, ())
+        let x = if constraint.max.x().is_finite() {
+            constraint.max.x()
+        } else {
+            constraint.min.x()
+        };
+        let y = if constraint.max.y().is_finite() {
+            constraint.max.y()
+        } else {
+            constraint.min.y()
+        };
+
+        (vec2f(x, y), ())
     }
 
     fn after_layout(&mut self, _: Vector2F, _: &mut Self::LayoutState, _: &mut AfterLayoutContext) {
