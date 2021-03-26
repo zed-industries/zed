@@ -183,7 +183,7 @@ impl BufferElement {
                     ix as f32 * line_height - (scroll_top % line_height),
                 );
             line.paint(
-                RectF::new(line_origin, vec2f(line_height, line.width)),
+                RectF::new(line_origin, vec2f(line.width, line_height)),
                 &[(0..line.len, ColorU::black())],
                 ctx,
             );
