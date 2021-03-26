@@ -176,7 +176,7 @@ impl WorkspaceView {
             Err(error) => error!("{}", error),
             Ok(item) => {
                 let settings = self.settings.clone();
-                let _ = ctx.spawn(item, move |me, item, ctx| {
+                ctx.spawn(item, move |me, item, ctx| {
                     me.loading_entries.remove(&entry);
                     match item {
                         Ok(item) => {
@@ -187,7 +187,8 @@ impl WorkspaceView {
                             error!("{}", error);
                         }
                     }
-                });
+                })
+                .detach();
             }
         }
     }

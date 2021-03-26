@@ -161,29 +161,32 @@ impl Workspace {
 
         let (mut tx, rx) = watch::channel(None);
         self.items.insert(entry, OpenedItem::Loading(rx));
-        let _ = ctx.spawn(
+        ctx.spawn(
             buffer,
             move |me, buffer: anyhow::Result<Buffer>, ctx| match buffer {
                 Ok(buffer) => {
                     let handle = Box::new(ctx.add_model(|_| buffer)) as Box<dyn ItemHandle>;
                     me.items.insert(entry, OpenedItem::Loaded(handle.clone()));
-                    let _ = ctx.spawn(
+                    ctx.spawn(
                         async move {
                             tx.update(|value| *value = Some(Ok(handle))).await;
                         },
                         |_, _, _| {},
-                    );
+                    )
+                    .detach();
                 }
                 Err(error) => {
-                    let _ = ctx.spawn(
+                    ctx.spawn(
                         async move {
                             tx.update(|value| *value = Some(Err(Arc::new(error)))).await;
                         },
                         |_, _, _| {},
-                    );
+                    )
+                    .detach();
                 }
             },
-        );
+        )
+        .detach();
 
         self.open_entry(entry, ctx)
     }
