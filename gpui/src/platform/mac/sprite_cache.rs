@@ -23,7 +23,7 @@ struct GlyphDescriptor {
 pub struct GlyphSprite {
     pub atlas_id: usize,
     pub atlas_origin: Vector2I,
-    pub offset: Vector2F,
+    pub offset: Vector2I,
     pub size: Vector2I,
 }
 
@@ -109,13 +109,10 @@ impl SpriteCache {
                         bounds
                     });
 
-                // Snap sprite to pixel grid.
-                let offset = glyph_bounds.origin().to_f32()
-                    - vec2f(target_position.x().fract(), target_position.y().fract());
                 Some(GlyphSprite {
                     atlas_id: atlasses.len() - 1,
                     atlas_origin: atlas_bounds.origin(),
-                    offset,
+                    offset: glyph_bounds.origin(),
                     size: glyph_bounds.size(),
                 })
             })

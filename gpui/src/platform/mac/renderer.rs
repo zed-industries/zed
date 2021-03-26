@@ -293,11 +293,13 @@ impl Renderer {
                 glyph.origin,
                 scene.scale_factor(),
             ) {
+                // Snap sprite to pixel grid.
+                let origin = (glyph.origin * scene.scale_factor()).floor() + sprite.offset.to_f32();
                 sprites_by_atlas
                     .entry(sprite.atlas_id)
                     .or_insert_with(Vec::new)
                     .push(shaders::GPUISprite {
-                        origin: (glyph.origin * scene.scale_factor() + sprite.offset).to_float2(),
+                        origin: origin.to_float2(),
                         size: sprite.size.to_float2(),
                         atlas_origin: sprite.atlas_origin.to_float2(),
                         color: glyph.color.to_uchar4(),
