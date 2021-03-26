@@ -168,7 +168,7 @@ impl BufferElement {
         let line_height = view.line_height(ctx.font_cache);
         let scroll_top = view.scroll_position().y() * line_height;
 
-        ctx.scene.push_layer();
+        ctx.scene.push_layer(Some(rect));
         ctx.scene.push_quad(Quad {
             bounds: rect,
             background: Some(ColorU::white()),
@@ -202,7 +202,7 @@ impl BufferElement {
         let max_glyph_width = view.em_width(ctx.font_cache);
         let scroll_left = view.scroll_position().x() * max_glyph_width;
 
-        ctx.scene.push_layer();
+        ctx.scene.push_layer(Some(bounds));
         ctx.scene.push_quad(Quad {
             bounds,
             background: Some(ColorU::white()),
@@ -290,7 +290,7 @@ impl BufferElement {
             );
         }
 
-        ctx.scene.push_layer();
+        ctx.scene.push_layer(Some(bounds));
         for cursor in cursors {
             cursor.paint(ctx);
         }

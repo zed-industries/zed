@@ -195,10 +195,7 @@ where
         layout: &mut Self::LayoutState,
         ctx: &mut PaintContext,
     ) -> Self::PaintState {
-        // ctx.canvas.save();
-        // let mut clip_path = Path2D::new();
-        // clip_path.rect(RectF::new(origin, self.size.unwrap()));
-        // ctx.canvas.clip_path(clip_path, FillRule::Winding);
+        ctx.scene.push_layer(Some(bounds));
 
         let mut item_origin =
             bounds.origin() - vec2f(0.0, self.state.scroll_top() % layout.item_height);
@@ -207,7 +204,8 @@ where
             item.paint(item_origin, ctx);
             item_origin += vec2f(0.0, layout.item_height);
         }
-        // ctx.canvas.restore();
+
+        ctx.scene.pop_layer();
     }
 
     fn dispatch_event(

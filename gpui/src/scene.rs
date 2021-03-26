@@ -57,7 +57,7 @@ impl Scene {
     pub fn new(scale_factor: f32) -> Self {
         Scene {
             scale_factor,
-            layers: vec![Layer::default()],
+            layers: vec![Layer::new(None)],
             active_layer_stack: vec![0],
         }
     }
@@ -70,9 +70,9 @@ impl Scene {
         self.layers.as_slice()
     }
 
-    pub fn push_layer(&mut self) {
+    pub fn push_layer(&mut self, clip_bounds: Option<RectF>) {
         let ix = self.layers.len();
-        self.layers.push(Layer::default());
+        self.layers.push(Layer::new(clip_bounds));
         self.active_layer_stack.push(ix);
     }
 
@@ -99,6 +99,19 @@ impl Scene {
 }
 
 impl Layer {
+    pub fn new(clip_bounds: Option<RectF>) -> Self {
+        Self {
+            clip_bounds,
+            quads: Vec::new(),
+            shadows: Vec::new(),
+            glyphs: Vec::new(),
+        }
+    }
+
+    pub fn clip_bounds(&self) -> Option<RectF> {
+        self.clip_bounds
+    }
+
     fn push_quad(&mut self, quad: Quad) {
         self.quads.push(quad);
     }

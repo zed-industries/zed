@@ -1,12 +1,16 @@
 use super::{sprite_cache::SpriteCache, window::RenderContext};
 use crate::{
     color::ColorU,
-    geometry::vector::{vec2i, Vector2I},
+    geometry::{
+        rect::RectF,
+        vector::{vec2f, vec2i, Vector2I},
+    },
     platform,
     scene::Layer,
     Scene,
 };
 use anyhow::{anyhow, Result};
+use cocoa::foundation::NSUInteger;
 use metal::{MTLResourceOptions, NSRange};
 use shaders::{ToFloat2 as _, ToUchar4 as _};
 use std::{collections::HashMap, ffi::c_void, mem, sync::Arc};
@@ -96,10 +100,24 @@ impl Renderer {
 
         let mut offset = 0;
         for layer in scene.layers() {
+            self.clip(scene, layer, ctx);
             self.render_shadows(scene, layer, &mut offset, ctx);
             self.render_quads(scene, layer, &mut offset, ctx);
             self.render_sprites(scene, layer, &mut offset, ctx);
         }
+    }
+
+    fn clip(&mut self, scene: &Scene, layer: &Layer, ctx: &RenderContext) {
+        let clip_bounds = layer.clip_bounds().unwrap_or(RectF::new(
+            vec2f(0., 0.),
+            ctx.drawable_size / scene.scale_factor(),
+        )) * scene.scale_factor();
+        ctx.command_encoder.set_scissor_rect(metal::MTLScissorRect {
+            x: clip_bounds.origin_x() as NSUInteger,
+            y: clip_bounds.origin_y() as NSUInteger,
+            width: clip_bounds.width() as NSUInteger,
+            height: clip_bounds.height() as NSUInteger,
+        });
     }
 
     fn render_shadows(

@@ -1,6 +1,7 @@
 use crate::{
-    geometry::vector::Vector2F, AfterLayoutContext, Element, ElementBox, Event, EventContext,
-    LayoutContext, PaintContext, SizeConstraint,
+    geometry::{rect::RectF, vector::Vector2F},
+    AfterLayoutContext, Element, ElementBox, Event, EventContext, LayoutContext, PaintContext,
+    SizeConstraint,
 };
 
 pub struct Stack {
@@ -44,12 +45,12 @@ impl Element for Stack {
 
     fn paint(
         &mut self,
-        bounds: pathfinder_geometry::rect::RectF,
+        bounds: RectF,
         _: &mut Self::LayoutState,
         ctx: &mut PaintContext,
     ) -> Self::PaintState {
         for child in &mut self.children {
-            ctx.scene.push_layer();
+            ctx.scene.push_layer(None);
             child.paint(bounds.origin(), ctx);
             ctx.scene.pop_layer();
         }
@@ -58,7 +59,7 @@ impl Element for Stack {
     fn dispatch_event(
         &mut self,
         event: &Event,
-        _: pathfinder_geometry::rect::RectF,
+        _: RectF,
         _: &mut Self::LayoutState,
         _: &mut Self::PaintState,
         ctx: &mut EventContext,
