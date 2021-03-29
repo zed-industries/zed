@@ -6,6 +6,7 @@ pub mod elements;
 pub mod font_cache;
 pub use font_cache::FontCache;
 pub mod fonts;
+pub mod geometry;
 mod presenter;
 mod scene;
 pub use scene::{Border, Quad, Scene};
@@ -17,7 +18,6 @@ pub mod executor;
 pub mod keymap;
 pub mod platform;
 pub use pathfinder_color as color;
-pub use pathfinder_geometry as geometry;
 pub use platform::Event;
 pub use presenter::{
     AfterLayoutContext, Axis, EventContext, LayoutContext, PaintContext, SizeConstraint,
