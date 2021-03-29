@@ -31,6 +31,7 @@ pub struct Renderer {
     sprite_pipeline_state: metal::RenderPipelineState,
     unit_vertices: metal::Buffer,
     instances: metal::Buffer,
+    paths_texture: metal::Texture,
 }
 
 impl Renderer {
@@ -60,6 +61,13 @@ impl Renderer {
             INSTANCE_BUFFER_SIZE as u64,
             MTLResourceOptions::StorageModeManaged,
         );
+
+        let paths_texture_size = vec2f(2048., 2048.);
+        let descriptor = metal::TextureDescriptor::new();
+        descriptor.set_pixel_format(metal::MTLPixelFormat::A8Unorm);
+        descriptor.set_width(paths_texture_size.x() as u64);
+        descriptor.set_height(paths_texture_size.y() as u64);
+        let paths_texture = device.new_texture(&descriptor);
 
         let atlas_size: Vector2I = vec2i(1024, 768);
         Ok(Self {
@@ -301,6 +309,15 @@ impl Renderer {
             6,
             layer.quads().len() as u64,
         );
+    }
+
+    fn render_paths(
+        &mut self,
+        scene: &Scene,
+        layer: &Layer,
+        offset: &mut usize,
+        ctx: &RenderContext,
+    ) {
     }
 
     fn render_sprites(
