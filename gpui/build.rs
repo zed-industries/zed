@@ -93,14 +93,7 @@ fn compile_metal_shaders() {
 fn generate_shader_bindings() {
     let bindings = bindgen::Builder::default()
         .header(SHADER_HEADER_PATH)
-        .whitelist_type("GPUIUniforms")
-        .whitelist_type("GPUIQuadInputIndex")
-        .whitelist_type("GPUIQuad")
-        .whitelist_type("GPUIShadowInputIndex")
-        .whitelist_type("GPUIShadow")
-        .whitelist_type("GPUISpriteVertexInputIndex")
-        .whitelist_type("GPUISpriteFragmentInputIndex")
-        .whitelist_type("GPUISprite")
+        .whitelist_type("GPUI.*")
         .parse_callbacks(Box::new(bindgen::CargoCallbacks))
         .generate()
         .expect("unable to generate bindings");
