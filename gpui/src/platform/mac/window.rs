@@ -16,7 +16,6 @@ use cocoa::{
 };
 use ctor::ctor;
 use foreign_types::ForeignType as _;
-use metal::{MTLClearColor, MTLLoadAction, MTLStoreAction};
 use objc::{
     class,
     declare::ClassDecl,
@@ -129,12 +128,6 @@ struct WindowState {
     command_queue: metal::CommandQueue,
     device: metal::Device,
     layer: id,
-}
-
-pub struct RenderContext<'a> {
-    pub drawable_size: Vector2F,
-    pub device: &'a metal::Device,
-    pub command_encoder: &'a metal::RenderCommandEncoderRef,
 }
 
 impl Window {
@@ -428,20 +421,8 @@ extern "C" fn display_layer(this: &Object, _: Sel, _: id) {
 
         if let Some(scene) = window_state.scene_to_render.take() {
             let drawable: &metal::MetalDrawableRef = msg_send![window_state.layer, nextDrawable];
-
-            let render_pass_descriptor = metal::RenderPassDescriptor::new();
-            let color_attachment = render_pass_descriptor
-                .color_attachments()
-                .object_at(0)
-                .unwrap();
-            color_attachment.set_texture(Some(drawable.texture()));
-            color_attachment.set_load_action(MTLLoadAction::Clear);
-            color_attachment.set_store_action(MTLStoreAction::Store);
-            color_attachment.set_clear_color(MTLClearColor::new(0., 0., 0., 1.));
-
             let command_queue = window_state.command_queue.clone();
             let command_buffer = command_queue.new_command_buffer();
-            let command_encoder = command_buffer.new_render_command_encoder(render_pass_descriptor);
 
             let size = window_state.size();
             let scale_factor = window_state.scale_factor();
@@ -449,14 +430,12 @@ extern "C" fn display_layer(this: &Object, _: Sel, _: id) {
 
             window_state.renderer.render(
                 &scene,
-                &RenderContext {
-                    drawable_size: size * scale_factor,
-                    device: &device,
-                    command_encoder,
-                },
+                size * scale_factor,
+                &device,
+                command_buffer,
+                drawable.texture(),
             );
 
-            command_encoder.end_encoding();
             command_buffer.commit();
             command_buffer.wait_until_completed();
             drawable.present();

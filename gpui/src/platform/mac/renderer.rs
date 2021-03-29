@@ -1,9 +1,9 @@
-use super::{sprite_cache::SpriteCache, window::RenderContext};
+use super::sprite_cache::SpriteCache;
 use crate::{
     color::ColorU,
     geometry::{
         rect::RectF,
-        vector::{vec2f, vec2i, Vector2I},
+        vector::{vec2f, vec2i, Vector2F, Vector2I},
     },
     platform,
     scene::Layer,
@@ -18,6 +18,11 @@ use std::{collections::HashMap, ffi::c_void, mem, sync::Arc};
 const SHADERS_METALLIB: &'static [u8] =
     include_bytes!(concat!(env!("OUT_DIR"), "/shaders.metallib"));
 const INSTANCE_BUFFER_SIZE: usize = 1024 * 1024; // This is an arbitrary decision. There's probably a more optimal value.
+
+struct RenderContext<'a> {
+    drawable_size: Vector2F,
+    command_encoder: &'a metal::RenderCommandEncoderRef,
+}
 
 pub struct Renderer {
     sprite_cache: SpriteCache,
@@ -85,26 +90,51 @@ impl Renderer {
             )?,
             unit_vertices,
             instances,
+            paths_texture,
         })
     }
 
-    pub fn render(&mut self, scene: &Scene, ctx: &RenderContext) {
-        ctx.command_encoder.set_viewport(metal::MTLViewport {
+    pub fn render(
+        &mut self,
+        scene: &Scene,
+        drawable_size: Vector2F,
+        device: &metal::DeviceRef,
+        command_buffer: &metal::CommandBufferRef,
+        output: &metal::TextureRef,
+    ) {
+        let render_pass_descriptor = metal::RenderPassDescriptor::new();
+        let color_attachment = render_pass_descriptor
+            .color_attachments()
+            .object_at(0)
+            .unwrap();
+        color_attachment.set_texture(Some(output));
+        color_attachment.set_load_action(metal::MTLLoadAction::Clear);
+        color_attachment.set_store_action(metal::MTLStoreAction::Store);
+        color_attachment.set_clear_color(metal::MTLClearColor::new(0., 0., 0., 1.));
+        let command_encoder = command_buffer.new_render_command_encoder(render_pass_descriptor);
+
+        command_encoder.set_viewport(metal::MTLViewport {
             originX: 0.0,
             originY: 0.0,
-            width: ctx.drawable_size.x() as f64,
-            height: ctx.drawable_size.y() as f64,
+            width: drawable_size.x() as f64,
+            height: drawable_size.y() as f64,
             znear: 0.0,
             zfar: 1.0,
         });
 
+        let ctx = RenderContext {
+            drawable_size,
+            command_encoder,
+        };
         let mut offset = 0;
         for layer in scene.layers() {
-            self.clip(scene, layer, ctx);
-            self.render_shadows(scene, layer, &mut offset, ctx);
-            self.render_quads(scene, layer, &mut offset, ctx);
-            self.render_sprites(scene, layer, &mut offset, ctx);
+            self.clip(scene, layer, &ctx);
+            self.render_shadows(scene, layer, &mut offset, &ctx);
+            self.render_quads(scene, layer, &mut offset, &ctx);
+            self.render_sprites(scene, layer, &mut offset, &ctx);
         }
+
+        command_encoder.end_encoding();
     }
 
     fn clip(&mut self, scene: &Scene, layer: &Layer, ctx: &RenderContext) {
