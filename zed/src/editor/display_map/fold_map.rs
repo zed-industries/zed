@@ -320,6 +320,16 @@ impl FoldMap {
         }
 
         new_transforms.push_tree(cursor.suffix());
+        if new_transforms.is_empty() {
+            let text_summary = buffer.text_summary();
+            new_transforms.push(Transform {
+                summary: TransformSummary {
+                    display: text_summary.clone(),
+                    buffer: text_summary,
+                },
+                display_text: None,
+            });
+        }
 
         drop(cursor);
         self.transforms = new_transforms;
@@ -571,8 +581,19 @@ mod tests {
         use crate::editor::ToPoint;
         use crate::util::RandomCharIter;
         use rand::prelude::*;
+        use std::env;
 
-        for seed in 0..100 {
+        let iterations = env::var("ITERATIONS")
+            .map(|i| i.parse().expect("invalid `ITERATIONS` variable"))
+            .unwrap_or(100);
+        let seed_range = if let Ok(seed) = env::var("SEED") {
+            let seed = seed.parse().expect("invalid `SEED` variable");
+            seed..seed + 1
+        } else {
+            0..iterations
+        };
+
+        for seed in seed_range {
             println!("{:?}", seed);
             let mut rng = StdRng::seed_from_u64(seed);
 
@@ -625,10 +646,28 @@ mod tests {
 
                     let buffer = map.buffer.as_ref(app);
                     let mut expected_text = buffer.text();
+                    let mut expected_buffer_rows = Vec::new();
+                    let mut next_row = buffer.max_point().row;
                     for fold_range in map.merged_fold_ranges(app).into_iter().rev() {
+                        let fold_start = buffer.point_for_offset(fold_range.start).unwrap();
+                        let fold_end = buffer.point_for_offset(fold_range.end).unwrap();
+                        expected_buffer_rows.extend((fold_end.row + 1..=next_row).rev());
+                        next_row = fold_start.row;
+
                         expected_text.replace_range(fold_range.start..fold_range.end, "…");
                     }
+                    expected_buffer_rows.extend((0..=next_row).rev());
+                    expected_buffer_rows.reverse();
+
                     assert_eq!(map.text(app), expected_text);
+
+                    for (idx, buffer_row) in expected_buffer_rows.iter().enumerate() {
+                        let display_row = map.to_display_point(Point::new(*buffer_row, 0)).row();
+                        assert_eq!(
+                            map.buffer_rows(display_row).unwrap().collect::<Vec<_>>(),
+                            expected_buffer_rows[idx..],
+                        );
+                    }
 
                     Ok::<(), anyhow::Error>(())
                 })?;

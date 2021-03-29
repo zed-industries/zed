@@ -102,7 +102,6 @@ impl<T: Item> SumTree<T> {
         }
     }
 
-    #[cfg(test)]
     pub fn is_empty(&self) -> bool {
         match self.0.as_ref() {
             Node::Internal { .. } => false,
