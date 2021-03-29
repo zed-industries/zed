@@ -22,6 +22,7 @@ const INSTANCE_BUFFER_SIZE: usize = 1024 * 1024; // This is an arbitrary decisio
 struct RenderContext<'a> {
     drawable_size: Vector2F,
     command_encoder: &'a metal::RenderCommandEncoderRef,
+    command_buffer: &'a metal::CommandBufferRef,
 }
 
 pub struct Renderer {
@@ -29,9 +30,10 @@ pub struct Renderer {
     quad_pipeline_state: metal::RenderPipelineState,
     shadow_pipeline_state: metal::RenderPipelineState,
     sprite_pipeline_state: metal::RenderPipelineState,
+    path_winding_pipeline_state: metal::RenderPipelineState,
     unit_vertices: metal::Buffer,
     instances: metal::Buffer,
-    paths_texture: metal::Texture,
+    path_winding_texture: metal::Texture,
 }
 
 impl Renderer {
@@ -64,10 +66,12 @@ impl Renderer {
 
         let paths_texture_size = vec2f(2048., 2048.);
         let descriptor = metal::TextureDescriptor::new();
-        descriptor.set_pixel_format(metal::MTLPixelFormat::A8Unorm);
+        descriptor.set_pixel_format(metal::MTLPixelFormat::Stencil8);
         descriptor.set_width(paths_texture_size.x() as u64);
         descriptor.set_height(paths_texture_size.y() as u64);
-        let paths_texture = device.new_texture(&descriptor);
+        descriptor.set_usage(metal::MTLTextureUsage::RenderTarget);
+        descriptor.set_storage_mode(metal::MTLStorageMode::Private);
+        let path_winding_texture = device.new_texture(&descriptor);
 
         let atlas_size: Vector2I = vec2i(1024, 768);
         Ok(Self {
@@ -96,9 +100,17 @@ impl Renderer {
                 "sprite_fragment",
                 pixel_format,
             )?,
+            path_winding_pipeline_state: build_stencil_pipeline_state(
+                &device,
+                &library,
+                "path_winding",
+                "path_winding_vertex",
+                "path_winding_fragment",
+                path_winding_texture.pixel_format(),
+            )?,
             unit_vertices,
             instances,
-            paths_texture,
+            path_winding_texture,
         })
     }
 
@@ -133,12 +145,15 @@ impl Renderer {
         let ctx = RenderContext {
             drawable_size,
             command_encoder,
+            command_buffer,
         };
+
         let mut offset = 0;
         for layer in scene.layers() {
             self.clip(scene, layer, &ctx);
             self.render_shadows(scene, layer, &mut offset, &ctx);
             self.render_quads(scene, layer, &mut offset, &ctx);
+            self.render_paths(scene, layer, &mut offset, &ctx);
             self.render_sprites(scene, layer, &mut offset, &ctx);
         }
 
@@ -318,6 +333,66 @@ impl Renderer {
         offset: &mut usize,
         ctx: &RenderContext,
     ) {
+        for (color, paths) in layer.paths_by_color() {
+            let winding_render_pass_descriptor = metal::RenderPassDescriptor::new();
+            let stencil_attachment = winding_render_pass_descriptor.stencil_attachment().unwrap();
+            stencil_attachment.set_texture(Some(&self.path_winding_texture));
+            stencil_attachment.set_load_action(metal::MTLLoadAction::Clear);
+            stencil_attachment.set_store_action(metal::MTLStoreAction::Store);
+            let winding_command_encoder = ctx
+                .command_buffer
+                .new_render_command_encoder(winding_render_pass_descriptor);
+
+            align_offset(offset);
+            let vertex_count = paths.iter().map(|p| p.vertices.len()).sum::<usize>();
+            let next_offset = *offset + vertex_count * mem::size_of::<shaders::GPUIPathVertex>();
+            assert!(
+                next_offset <= INSTANCE_BUFFER_SIZE,
+                "instance buffer exhausted"
+            );
+
+            winding_command_encoder.set_render_pipeline_state(&self.path_winding_pipeline_state);
+            winding_command_encoder.set_vertex_buffer(
+                shaders::GPUIPathWindingVertexInputIndex_GPUIPathWindingVertexInputIndexVertices
+                    as u64,
+                Some(&self.instances),
+                *offset as u64,
+            );
+            winding_command_encoder.set_vertex_bytes(
+                shaders::GPUIPathWindingVertexInputIndex_GPUIPathWindingVertexInputIndexViewportSize
+                    as u64,
+                mem::size_of::<shaders::vector_float2>() as u64,
+                [ctx.drawable_size.to_float2()].as_ptr() as *const c_void,
+            );
+
+            let buffer_contents = unsafe {
+                (self.instances.contents() as *mut u8).offset(*offset as isize)
+                    as *mut shaders::GPUIPathVertex
+            };
+
+            for (ix, vertex) in paths.iter().flat_map(|p| &p.vertices).enumerate() {
+                let shader_vertex = shaders::GPUIPathVertex {
+                    xy_position: vertex.xy_position.to_float2(),
+                    st_position: vertex.st_position.to_float2(),
+                };
+                unsafe {
+                    *(buffer_contents.offset(ix as isize)) = shader_vertex;
+                }
+            }
+
+            self.instances.did_modify_range(NSRange {
+                location: *offset as u64,
+                length: (next_offset - *offset) as u64,
+            });
+            *offset = next_offset;
+
+            winding_command_encoder.draw_primitives(
+                metal::MTLPrimitiveType::Triangle,
+                0,
+                vertex_count as u64,
+            );
+            winding_command_encoder.end_encoding();
+        }
     }
 
     fn render_sprites(
@@ -449,6 +524,32 @@ fn build_pipeline_state(
     color_attachment.set_source_alpha_blend_factor(metal::MTLBlendFactor::SourceAlpha);
     color_attachment.set_destination_rgb_blend_factor(metal::MTLBlendFactor::OneMinusSourceAlpha);
     color_attachment.set_destination_alpha_blend_factor(metal::MTLBlendFactor::OneMinusSourceAlpha);
+
+    device
+        .new_render_pipeline_state(&descriptor)
+        .map_err(|message| anyhow!("could not create render pipeline state: {}", message))
+}
+
+fn build_stencil_pipeline_state(
+    device: &metal::DeviceRef,
+    library: &metal::LibraryRef,
+    label: &str,
+    vertex_fn_name: &str,
+    fragment_fn_name: &str,
+    pixel_format: metal::MTLPixelFormat,
+) -> Result<metal::RenderPipelineState> {
+    let vertex_fn = library
+        .get_function(vertex_fn_name, None)
+        .map_err(|message| anyhow!("error locating vertex function: {}", message))?;
+    let fragment_fn = library
+        .get_function(fragment_fn_name, None)
+        .map_err(|message| anyhow!("error locating fragment function: {}", message))?;
+
+    let descriptor = metal::RenderPipelineDescriptor::new();
+    descriptor.set_label(label);
+    descriptor.set_vertex_function(Some(vertex_fn.as_ref()));
+    descriptor.set_fragment_function(Some(fragment_fn.as_ref()));
+    descriptor.set_stencil_attachment_pixel_format(pixel_format);
 
     device
         .new_render_pipeline_state(&descriptor)

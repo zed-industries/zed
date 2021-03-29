@@ -4,6 +4,7 @@ use gpui::{
     geometry::{
         rect::RectF,
         vector::{vec2f, Vector2F},
+        PathBuilder,
     },
     text_layout::{self, TextLayoutCache},
     AfterLayoutContext, AppContext, Border, Element, Event, EventContext, FontCache, LayoutContext,
@@ -211,51 +212,51 @@ impl BufferElement {
         });
 
         // Draw selections
-        // let corner_radius = 2.5;
+        let corner_radius = 2.5;
         let mut cursors = SmallVec::<[Cursor; 32]>::new();
 
         for selection in view.selections_in_range(
             DisplayPoint::new(start_row, 0)..DisplayPoint::new(end_row, 0),
             ctx.app,
         ) {
-            // if selection.start != selection.end {
-            //     let range_start = cmp::min(selection.start, selection.end);
-            //     let range_end = cmp::max(selection.start, selection.end);
-            //     let row_range = if range_end.column() == 0 {
-            //         cmp::max(range_start.row(), start_row)..cmp::min(range_end.row(), end_row)
-            //     } else {
-            //         cmp::max(range_start.row(), start_row)..cmp::min(range_end.row() + 1, end_row)
-            //     };
+            if selection.start != selection.end {
+                let range_start = cmp::min(selection.start, selection.end);
+                let range_end = cmp::max(selection.start, selection.end);
+                let row_range = if range_end.column() == 0 {
+                    cmp::max(range_start.row(), start_row)..cmp::min(range_end.row(), end_row)
+                } else {
+                    cmp::max(range_start.row(), start_row)..cmp::min(range_end.row() + 1, end_row)
+                };
 
-            //     let selection = Selection {
-            //         line_height,
-            //         start_y: row_range.start as f32 * line_height - scroll_top,
-            //         lines: row_range
-            //             .into_iter()
-            //             .map(|row| {
-            //                 let line_layout = &layout.line_layouts[(row - start_row) as usize];
-            //                 SelectionLine {
-            //                     start_x: if row == range_start.row() {
-            //                         line_layout.x_for_index(range_start.column() as usize)
-            //                             - scroll_left
-            //                             - descent
-            //                     } else {
-            //                         -scroll_left
-            //                     },
-            //                     end_x: if row == range_end.row() {
-            //                         line_layout.x_for_index(range_end.column() as usize)
-            //                             - scroll_left
-            //                             - descent
-            //                     } else {
-            //                         line_layout.width + corner_radius * 2.0 - scroll_left - descent
-            //                     },
-            //                 }
-            //             })
-            //             .collect(),
-            //     };
+                let selection = Selection {
+                    line_height,
+                    start_y: row_range.start as f32 * line_height - scroll_top,
+                    lines: row_range
+                        .into_iter()
+                        .map(|row| {
+                            let line_layout = &layout.line_layouts[(row - start_row) as usize];
+                            SelectionLine {
+                                start_x: if row == range_start.row() {
+                                    line_layout.x_for_index(range_start.column() as usize)
+                                        - scroll_left
+                                        - descent
+                                } else {
+                                    -scroll_left
+                                },
+                                end_x: if row == range_end.row() {
+                                    line_layout.x_for_index(range_end.column() as usize)
+                                        - scroll_left
+                                        - descent
+                                } else {
+                                    line_layout.width + corner_radius * 2.0 - scroll_left - descent
+                                },
+                            }
+                        })
+                        .collect(),
+                };
 
-            //     selection.paint(scene);
-            // }
+                selection.paint(ctx.scene);
+            }
 
             if view.cursors_visible() {
                 let cursor_position = selection.end;
@@ -597,20 +598,47 @@ impl Selection {
     }
 
     fn paint_lines(&self, start_y: f32, lines: &[SelectionLine], scene: &mut Scene) {
-        // use Direction::*;
+        if lines.is_empty() {
+            return;
+        }
 
-        // if lines.is_empty() {
-        //     return;
-        // }
+        let mut path = PathBuilder::new();
+        let corner_radius = 0.08 * self.line_height;
 
-        // let mut path = Path2D::new();
-        // let corner_radius = 0.08 * self.line_height;
+        let first_line = lines.first().unwrap();
+        path.reset(vec2f(first_line.end_x - corner_radius, start_y));
+        path.curve_to(
+            vec2f(first_line.end_x, start_y + corner_radius),
+            vec2f(first_line.end_x, start_y),
+        );
+        path.line_to(vec2f(
+            first_line.end_x,
+            start_y + self.line_height - corner_radius,
+        ));
+        path.curve_to(
+            vec2f(first_line.end_x - corner_radius, start_y + self.line_height),
+            vec2f(first_line.end_x, start_y + self.line_height),
+        );
+        path.line_to(vec2f(
+            first_line.start_x + corner_radius,
+            start_y + self.line_height,
+        ));
+        path.curve_to(
+            vec2f(
+                first_line.start_x,
+                start_y + self.line_height - corner_radius,
+            ),
+            vec2f(first_line.start_x, start_y + self.line_height),
+        );
+        path.line_to(vec2f(first_line.start_x, start_y + corner_radius));
+        path.curve_to(
+            vec2f(first_line.start_x + corner_radius, start_y),
+            vec2f(first_line.start_x, start_y),
+        );
+        path.line_to(vec2f(first_line.end_x - corner_radius, start_y));
 
-        // let first_line = lines.first().unwrap();
-        // let last_line = lines.last().unwrap();
+        scene.push_path(ColorU::from_u32(0xff0000ff), path.build());
 
-        // let corner = vec2f(first_line.end_x, start_y);
-        // path.move_to(corner - vec2f(corner_radius, 0.0));
         // rounded_corner(&mut path, corner, corner_radius, Right, Down);
 
         // let mut iter = lines.iter().enumerate().peekable();

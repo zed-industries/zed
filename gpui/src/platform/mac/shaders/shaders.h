@@ -53,3 +53,13 @@ typedef struct {
     vector_float2 atlas_origin;
     vector_uchar4 color;
 } GPUISprite;
+
+typedef enum {
+    GPUIPathWindingVertexInputIndexVertices = 0,
+    GPUIPathWindingVertexInputIndexViewportSize = 1,
+} GPUIPathWindingVertexInputIndex;
+
+typedef struct {
+    vector_float2 xy_position;
+    vector_float2 st_position;
+} GPUIPathVertex;

@@ -201,3 +201,31 @@ fragment float4 sprite_fragment(
     color.a *= mask.a;
     return color;
 }
+
+struct PathWindingFragmentInput {
+    float4 position [[position]];
+    float2 st_position;
+};
+
+vertex PathWindingFragmentInput path_winding_vertex(
+    uint vertex_id [[vertex_id]],
+    constant GPUIPathVertex *vertices [[buffer(GPUIPathWindingVertexInputIndexVertices)]],
+    constant float2 *viewport_size [[buffer(GPUIPathWindingVertexInputIndexViewportSize)]]
+) {
+    GPUIPathVertex v = vertices[vertex_id];
+    float4 device_position = to_device_position(v.xy_position, *viewport_size);
+    return PathWindingFragmentInput {
+        device_position,
+        v.st_position,
+    };
+}
+
+fragment float4 path_winding_fragment(
+    PathWindingFragmentInput input [[stage_in]]
+) {
+    if (input.st_position.x * input.st_position.x - input.st_position.y > 0.0) {
+        return float4(0.0);
+    } else {
+        return float4(float3(0.0), 1.0 / 255.0);
+    }
+}
