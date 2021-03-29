@@ -34,7 +34,15 @@ float blur_along_x(float x, float y, float sigma, float corner, float2 halfSize)
 
 struct QuadFragmentInput {
     float4 position [[position]];
-    GPUIQuad quad;
+    vector_float2 origin;
+    vector_float2 size;
+    vector_uchar4 background_color;
+    float border_top;
+    float border_right;
+    float border_bottom;
+    float border_left;
+    vector_uchar4 border_color;
+    float corner_radius;
 };
 
 vertex QuadFragmentInput quad_vertex(
@@ -51,35 +59,43 @@ vertex QuadFragmentInput quad_vertex(
 
     return QuadFragmentInput {
         device_position,
-        quad,
+        quad.origin,
+        quad.size,
+        quad.background_color,
+        quad.border_top,
+        quad.border_right,
+        quad.border_bottom,
+        quad.border_left,
+        quad.border_color,
+        quad.corner_radius,
     };
 }
 
 fragment float4 quad_fragment(
     QuadFragmentInput input [[stage_in]]
 ) {
-    float2 half_size = input.quad.size / 2.;
-    float2 center = input.quad.origin + half_size;
+    float2 half_size = input.size / 2.;
+    float2 center = input.origin + half_size;
     float2 center_to_point = input.position.xy - center;
     float2 edge_to_point = abs(center_to_point) - half_size;
-    float2 rounded_edge_to_point = abs(center_to_point) - half_size + input.quad.corner_radius;
-    float distance = length(max(0., rounded_edge_to_point)) + min(0., max(rounded_edge_to_point.x, rounded_edge_to_point.y)) - input.quad.corner_radius;
+    float2 rounded_edge_to_point = abs(center_to_point) - half_size + input.corner_radius;
+    float distance = length(max(0., rounded_edge_to_point)) + min(0., max(rounded_edge_to_point.x, rounded_edge_to_point.y)) - input.corner_radius;
 
     float border_width = 0.;
     if (edge_to_point.x > edge_to_point.y) {
-        border_width = center_to_point.x <= 0. ? input.quad.border_left : input.quad.border_right;
+        border_width = center_to_point.x <= 0. ? input.border_left : input.border_right;
     } else {
-        border_width = center_to_point.y <= 0. ? input.quad.border_top : input.quad.border_bottom;
+        border_width = center_to_point.y <= 0. ? input.border_top : input.border_bottom;
     }
 
     float4 color;
     if (border_width == 0.) {
-        color = coloru_to_colorf(input.quad.background_color);
+        color = coloru_to_colorf(input.background_color);
     } else {
         float inset_distance = distance + border_width;
         color = mix(
-            coloru_to_colorf(input.quad.border_color),
-            coloru_to_colorf(input.quad.background_color),
+            coloru_to_colorf(input.border_color),
+            coloru_to_colorf(input.background_color),
             saturate(0.5 - inset_distance)
         );
     }
@@ -90,7 +106,11 @@ fragment float4 quad_fragment(
 
 struct ShadowFragmentInput {
     float4 position [[position]];
-    GPUIShadow shadow;
+    vector_float2 origin;
+    vector_float2 size;
+    float corner_radius;
+    float sigma;
+    vector_uchar4 color;
 };
 
 vertex ShadowFragmentInput shadow_vertex(
@@ -109,17 +129,21 @@ vertex ShadowFragmentInput shadow_vertex(
 
     return ShadowFragmentInput {
         device_position,
-        shadow,
+        shadow.origin,
+        shadow.size,
+        shadow.corner_radius,
+        shadow.sigma,
+        shadow.color,
     };
 }
 
 fragment float4 shadow_fragment(
     ShadowFragmentInput input [[stage_in]]
 ) {
-    float sigma = input.shadow.sigma;
-    float corner_radius = input.shadow.corner_radius;
-    float2 half_size = input.shadow.size / 2.;
-    float2 center = input.shadow.origin + half_size;
+    float sigma = input.sigma;
+    float corner_radius = input.corner_radius;
+    float2 half_size = input.size / 2.;
+    float2 center = input.origin + half_size;
     float2 point = input.position.xy - center;
 
     // The signal is only non-zero in a limited range, so don't waste samples
@@ -137,7 +161,7 @@ fragment float4 shadow_fragment(
         y += step;
     }
 
-    return float4(1., 1., 1., alpha) * coloru_to_colorf(input.shadow.color);
+    return float4(1., 1., 1., alpha) * coloru_to_colorf(input.color);
 }
 
 struct SpriteFragmentInput {
