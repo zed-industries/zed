@@ -450,11 +450,12 @@ async fn synthetic_drag(
     loop {
         Timer::after(Duration::from_millis(16)).await;
         if let Some(window_state) = window_state.upgrade() {
-            let mut window_state = window_state.borrow_mut();
-            if window_state.synthetic_drag_counter == drag_id {
-                if let Some(mut callback) = window_state.event_callback.take() {
+            let mut window_state_borrow = window_state.borrow_mut();
+            if window_state_borrow.synthetic_drag_counter == drag_id {
+                if let Some(mut callback) = window_state_borrow.event_callback.take() {
+                    drop(window_state_borrow);
                     callback(Event::LeftMouseDragged { position });
-                    window_state.event_callback = Some(callback);
+                    window_state.borrow_mut().event_callback = Some(callback);
                 }
             } else {
                 break;
