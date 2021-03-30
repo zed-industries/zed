@@ -230,25 +230,29 @@ impl BufferElement {
 
                 let selection = Selection {
                     line_height,
-                    start_y: row_range.start as f32 * line_height - scroll_top,
+                    start_y: bounds.origin_y() + row_range.start as f32 * line_height - scroll_top,
                     lines: row_range
                         .into_iter()
                         .map(|row| {
                             let line_layout = &layout.line_layouts[(row - start_row) as usize];
                             SelectionLine {
                                 start_x: if row == range_start.row() {
-                                    line_layout.x_for_index(range_start.column() as usize)
+                                    bounds.origin_x()
+                                        + line_layout.x_for_index(range_start.column() as usize)
                                         - scroll_left
                                         - descent
                                 } else {
                                     -scroll_left
                                 },
                                 end_x: if row == range_end.row() {
-                                    line_layout.x_for_index(range_end.column() as usize)
+                                    bounds.origin_x()
+                                        + line_layout.x_for_index(range_end.column() as usize)
                                         - scroll_left
                                         - descent
                                 } else {
-                                    line_layout.width + corner_radius * 2.0 - scroll_left - descent
+                                    bounds.origin_x() + line_layout.width + corner_radius * 2.0
+                                        - scroll_left
+                                        - descent
                                 },
                             }
                         })

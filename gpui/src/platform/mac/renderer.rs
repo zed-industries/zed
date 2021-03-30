@@ -65,12 +65,12 @@ impl Renderer {
             MTLResourceOptions::StorageModeManaged,
         );
 
-        let path_stencil_pixel_format = metal::MTLPixelFormat::Stencil8;
         let path_stencil_descriptor = metal::TextureDescriptor::new();
-        path_stencil_descriptor.set_width(2048);
-        path_stencil_descriptor.set_height(2048);
-        path_stencil_descriptor.set_pixel_format(path_stencil_pixel_format);
-        path_stencil_descriptor.set_usage(metal::MTLTextureUsage::RenderTarget);
+        path_stencil_descriptor.set_width(1024);
+        path_stencil_descriptor.set_height(768);
+        path_stencil_descriptor.set_pixel_format(pixel_format);
+        path_stencil_descriptor
+            .set_usage(metal::MTLTextureUsage::RenderTarget | metal::MTLTextureUsage::ShaderRead);
         path_stencil_descriptor.set_storage_mode(metal::MTLStorageMode::Private);
 
         let sprite_cache = SpriteCache::new(device.clone(), vec2i(1024, 768), fonts);
@@ -105,7 +105,7 @@ impl Renderer {
             "path_winding",
             "path_winding_vertex",
             "path_winding_fragment",
-            path_stencil_pixel_format,
+            pixel_format,
         )?;
         Ok(Self {
             device,
@@ -128,15 +128,21 @@ impl Renderer {
         output: &metal::TextureRef,
     ) {
         let mut offset = 0;
-        self.render_path_stencils(scene, &mut offset, drawable_size, command_buffer);
-        self.render_layers(scene, &mut offset, drawable_size, command_buffer, output);
+        let stencils = self.render_path_stencils(scene, &mut offset, command_buffer);
+        self.render_layers(
+            scene,
+            stencils,
+            &mut offset,
+            drawable_size,
+            command_buffer,
+            output,
+        );
     }
 
     fn render_path_stencils(
         &mut self,
         scene: &Scene,
         offset: &mut usize,
-        drawable_size: Vector2F,
         command_buffer: &metal::CommandBufferRef,
     ) -> Vec<PathSprite> {
         let mut stencils = Vec::new();
@@ -145,16 +151,20 @@ impl Renderer {
         for (layer_id, layer) in scene.layers().iter().enumerate() {
             for path in layer.paths() {
                 // Push a PathStencil struct for use later when sampling from the atlas as we draw the content of the layers
-                let size = path.bounds.size().ceil().to_i32();
-                let (atlas_id, atlas_origin) = self.path_stencils.allocate(size).unwrap();
+                let origin = path.bounds.origin() * scene.scale_factor();
+                let size = (path.bounds.size() * scene.scale_factor()).ceil();
+                let (atlas_id, atlas_origin) =
+                    self.path_stencils.allocate(size.ceil().to_i32()).unwrap();
+                let atlas_origin = atlas_origin.to_f32();
                 stencils.push(PathSprite {
                     layer_id,
                     atlas_id,
                     sprite: shaders::GPUISprite {
-                        origin: path.bounds.origin().to_float2(),
+                        origin: origin.to_float2(),
                         size: size.to_float2(),
                         atlas_origin: atlas_origin.to_float2(),
                         color: path.color.to_uchar4(),
+                        compute_winding: 1,
                     },
                 });
 
@@ -172,11 +182,10 @@ impl Renderer {
 
                 // Populate the vertices by translating them to their appropriate location in the atlas.
                 for vertex in &path.vertices {
-                    let xy_position = (vertex.xy_position - path.bounds.origin())
-                        * scene.scale_factor()
-                        + atlas_origin.to_f32();
+                    let xy_position =
+                        (vertex.xy_position - path.bounds.origin()) * scene.scale_factor();
                     vertices.push(shaders::GPUIPathVertex {
-                        xy_position: xy_position.to_float2(),
+                        xy_position: (atlas_origin + xy_position).to_float2(),
                         st_position: vertex.st_position.to_float2(),
                     });
                 }
@@ -205,25 +214,32 @@ impl Renderer {
         );
 
         let render_pass_descriptor = metal::RenderPassDescriptor::new();
-
-        let stencil_attachment = render_pass_descriptor.stencil_attachment().unwrap();
+        let color_attachment = render_pass_descriptor
+            .color_attachments()
+            .object_at(0)
+            .unwrap();
         let stencil_texture = self.path_stencils.texture(atlas_id).unwrap();
-        stencil_attachment.set_texture(Some(stencil_texture));
-        stencil_attachment.set_load_action(metal::MTLLoadAction::Clear);
-        stencil_attachment.set_store_action(metal::MTLStoreAction::Store);
+        color_attachment.set_texture(Some(stencil_texture));
+        color_attachment.set_load_action(metal::MTLLoadAction::Clear);
+        color_attachment.set_store_action(metal::MTLStoreAction::Store);
+        color_attachment.set_clear_color(metal::MTLClearColor::new(0., 0., 0., 1.));
+        // let stencil_attachment = render_pass_descriptor.stencil_attachment().unwrap();
+        // let stencil_texture = self.path_stencils.texture(atlas_id).unwrap();
+        // stencil_attachment.set_texture(Some(stencil_texture));
+        // stencil_attachment.set_load_action(metal::MTLLoadAction::Clear);
+        // stencil_attachment.set_store_action(metal::MTLStoreAction::Store);
 
-        let stencil_descriptor = metal::DepthStencilDescriptor::new();
-        let front_face_stencil = stencil_descriptor.front_face_stencil().unwrap();
-        front_face_stencil.set_depth_stencil_pass_operation(metal::MTLStencilOperation::Invert);
-        front_face_stencil.set_depth_failure_operation(metal::MTLStencilOperation::Keep);
-        front_face_stencil.set_stencil_compare_function(metal::MTLCompareFunction::Always);
-        front_face_stencil.set_read_mask(0x1);
-        front_face_stencil.set_write_mask(0x1);
-        let depth_stencil_state = self.device.new_depth_stencil_state(&stencil_descriptor);
+        // let stencil_descriptor = metal::DepthStencilDescriptor::new();
+        // let front_face_stencil = stencil_descriptor.front_face_stencil().unwrap();
+        // front_face_stencil.set_depth_stencil_pass_operation(metal::MTLStencilOperation::Invert);
+        // front_face_stencil.set_depth_failure_operation(metal::MTLStencilOperation::Keep);
+        // front_face_stencil.set_stencil_compare_function(metal::MTLCompareFunction::Always);
+        // front_face_stencil.set_read_mask(0x1);
+        // front_face_stencil.set_write_mask(0x1);
+        // let depth_stencil_state = self.device.new_depth_stencil_state(&stencil_descriptor);
 
         let winding_command_encoder =
             command_buffer.new_render_command_encoder(render_pass_descriptor);
-        winding_command_encoder.set_depth_stencil_state(&depth_stencil_state);
         winding_command_encoder.set_render_pipeline_state(&self.path_stencil_pipeline_state);
         winding_command_encoder.set_vertex_buffer(
             shaders::GPUIPathWindingVertexInputIndex_GPUIPathWindingVertexInputIndexVertices as u64,
@@ -264,6 +280,7 @@ impl Renderer {
     fn render_layers(
         &mut self,
         scene: &Scene,
+        path_sprites: Vec<PathSprite>,
         offset: &mut usize,
         drawable_size: Vector2F,
         command_buffer: &metal::CommandBufferRef,
@@ -289,11 +306,20 @@ impl Renderer {
             zfar: 1.0,
         });
 
-        for layer in scene.layers() {
+        for (layer_id, layer) in scene.layers().iter().enumerate() {
             self.clip(scene, layer, drawable_size, command_encoder);
             self.render_shadows(scene, layer, offset, drawable_size, command_encoder);
             self.render_quads(scene, layer, offset, drawable_size, command_encoder);
-            self.render_sprites(scene, layer, offset, drawable_size, command_encoder);
+            // TODO: Pass sprites relevant to this layer in a more efficient manner.
+            self.render_path_sprites(
+                scene,
+                layer,
+                path_sprites.iter().filter(|s| s.layer_id == layer_id),
+                offset,
+                drawable_size,
+                command_encoder,
+            );
+            self.render_glyph_sprites(scene, layer, offset, drawable_size, command_encoder);
         }
 
         command_encoder.end_encoding();
@@ -471,7 +497,7 @@ impl Renderer {
         );
     }
 
-    fn render_sprites(
+    fn render_glyph_sprites(
         &mut self,
         scene: &Scene,
         layer: &Layer,
@@ -502,6 +528,7 @@ impl Renderer {
                         size: sprite.size.to_float2(),
                         atlas_origin: sprite.atlas_origin.to_float2(),
                         color: glyph.color.to_uchar4(),
+                        compute_winding: 0,
                     });
             }
         }
@@ -538,6 +565,87 @@ impl Renderer {
             );
 
             let texture = self.sprite_cache.atlas_texture(atlas_id).unwrap();
+            command_encoder.set_fragment_texture(
+                shaders::GPUISpriteFragmentInputIndex_GPUISpriteFragmentInputIndexAtlas as u64,
+                Some(texture),
+            );
+
+            unsafe {
+                let buffer_contents = (self.instances.contents() as *mut u8)
+                    .offset(*offset as isize)
+                    as *mut shaders::GPUISprite;
+                std::ptr::copy_nonoverlapping(sprites.as_ptr(), buffer_contents, sprites.len());
+            }
+            self.instances.did_modify_range(NSRange {
+                location: *offset as u64,
+                length: (next_offset - *offset) as u64,
+            });
+            *offset = next_offset;
+
+            command_encoder.draw_primitives_instanced(
+                metal::MTLPrimitiveType::Triangle,
+                0,
+                6,
+                sprites.len() as u64,
+            );
+        }
+    }
+
+    fn render_path_sprites<'a>(
+        &mut self,
+        scene: &Scene,
+        layer: &Layer,
+        sprites: impl Iterator<Item = &'a PathSprite>,
+        offset: &mut usize,
+        drawable_size: Vector2F,
+        command_encoder: &metal::RenderCommandEncoderRef,
+    ) {
+        let mut sprites = sprites.peekable();
+        if sprites.peek().is_none() {
+            return;
+        }
+
+        let mut sprites_by_atlas = HashMap::new();
+        for sprite in sprites {
+            sprites_by_atlas
+                .entry(sprite.atlas_id)
+                .or_insert_with(Vec::new)
+                .push(sprite.sprite);
+        }
+
+        command_encoder.set_render_pipeline_state(&self.sprite_pipeline_state);
+        command_encoder.set_vertex_buffer(
+            shaders::GPUISpriteVertexInputIndex_GPUISpriteVertexInputIndexVertices as u64,
+            Some(&self.unit_vertices),
+            0,
+        );
+        command_encoder.set_vertex_bytes(
+            shaders::GPUISpriteVertexInputIndex_GPUISpriteVertexInputIndexViewportSize as u64,
+            mem::size_of::<shaders::vector_float2>() as u64,
+            [drawable_size.to_float2()].as_ptr() as *const c_void,
+        );
+
+        for (atlas_id, sprites) in sprites_by_atlas {
+            align_offset(offset);
+            let next_offset = *offset + sprites.len() * mem::size_of::<shaders::GPUISprite>();
+            assert!(
+                next_offset <= INSTANCE_BUFFER_SIZE,
+                "instance buffer exhausted"
+            );
+
+            command_encoder.set_vertex_buffer(
+                shaders::GPUISpriteVertexInputIndex_GPUISpriteVertexInputIndexSprites as u64,
+                Some(&self.instances),
+                *offset as u64,
+            );
+
+            let texture = self.path_stencils.texture(atlas_id).unwrap();
+            command_encoder.set_vertex_bytes(
+                shaders::GPUISpriteVertexInputIndex_GPUISpriteVertexInputIndexAtlasSize as u64,
+                mem::size_of::<shaders::vector_float2>() as u64,
+                [vec2i(texture.width() as i32, texture.height() as i32).to_float2()].as_ptr()
+                    as *const c_void,
+            );
             command_encoder.set_fragment_texture(
                 shaders::GPUISpriteFragmentInputIndex_GPUISpriteFragmentInputIndexAtlas as u64,
                 Some(texture),
@@ -625,12 +733,46 @@ fn build_stencil_pipeline_state(
     descriptor.set_label(label);
     descriptor.set_vertex_function(Some(vertex_fn.as_ref()));
     descriptor.set_fragment_function(Some(fragment_fn.as_ref()));
-    descriptor.set_stencil_attachment_pixel_format(pixel_format);
+    let color_attachment = descriptor.color_attachments().object_at(0).unwrap();
+    color_attachment.set_pixel_format(pixel_format);
+    color_attachment.set_blending_enabled(true);
+    color_attachment.set_rgb_blend_operation(metal::MTLBlendOperation::Add);
+    color_attachment.set_alpha_blend_operation(metal::MTLBlendOperation::Add);
+    color_attachment.set_source_rgb_blend_factor(metal::MTLBlendFactor::One);
+    color_attachment.set_source_alpha_blend_factor(metal::MTLBlendFactor::One);
+    color_attachment.set_destination_rgb_blend_factor(metal::MTLBlendFactor::One);
+    color_attachment.set_destination_alpha_blend_factor(metal::MTLBlendFactor::One);
 
     device
         .new_render_pipeline_state(&descriptor)
         .map_err(|message| anyhow!("could not create render pipeline state: {}", message))
 }
+
+// fn build_stencil_pipeline_state(
+//     device: &metal::DeviceRef,
+//     library: &metal::LibraryRef,
+//     label: &str,
+//     vertex_fn_name: &str,
+//     fragment_fn_name: &str,
+//     pixel_format: metal::MTLPixelFormat,
+// ) -> Result<metal::RenderPipelineState> {
+//     let vertex_fn = library
+//         .get_function(vertex_fn_name, None)
+//         .map_err(|message| anyhow!("error locating vertex function: {}", message))?;
+//     let fragment_fn = library
+//         .get_function(fragment_fn_name, None)
+//         .map_err(|message| anyhow!("error locating fragment function: {}", message))?;
+
+//     let descriptor = metal::RenderPipelineDescriptor::new();
+//     descriptor.set_label(label);
+//     descriptor.set_vertex_function(Some(vertex_fn.as_ref()));
+//     descriptor.set_fragment_function(Some(fragment_fn.as_ref()));
+//     descriptor.set_stencil_attachment_pixel_format(pixel_format);
+
+//     device
+//         .new_render_pipeline_state(&descriptor)
+//         .map_err(|message| anyhow!("could not create render pipeline state: {}", message))
+// }
 
 mod shaders {
     #![allow(non_upper_case_globals)]

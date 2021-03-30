@@ -168,6 +168,7 @@ struct SpriteFragmentInput {
     float4 position [[position]];
     float2 atlas_position;
     float4 color [[flat]];
+    uchar compute_winding [[flat]];
 };
 
 vertex SpriteFragmentInput sprite_vertex(
@@ -188,6 +189,7 @@ vertex SpriteFragmentInput sprite_vertex(
         device_position,
         atlas_position,
         coloru_to_colorf(sprite.color),
+        sprite.compute_winding
     };
 }
 
@@ -197,8 +199,14 @@ fragment float4 sprite_fragment(
 ) {
     constexpr sampler atlas_sampler(mag_filter::linear, min_filter::linear);
     float4 color = input.color;
-    float4 mask = atlas.sample(atlas_sampler, input.atlas_position);
-    color.a *= mask.a;
+    float4 sample = atlas.sample(atlas_sampler, input.atlas_position);
+    float mask;
+    if (input.compute_winding) {
+        mask = fmod(sample.r * 255., 2.);
+    } else {
+        mask = sample.a;
+    }
+    color.a *= mask;
     return color;
 }
 
@@ -223,9 +231,14 @@ vertex PathWindingFragmentInput path_winding_vertex(
 fragment float4 path_winding_fragment(
     PathWindingFragmentInput input [[stage_in]]
 ) {
-    if (input.st_position.x * input.st_position.x - input.st_position.y > 0.) {
-        return float4(0.);
-    } else {
-        return float4(1.);
-    }
+    float2 dx = dfdx(input.st_position);
+    float2 dy = dfdy(input.st_position);
+    float2 gradient = float2(
+        (2. * input.st_position.x) * dx.x - dx.y,
+        (2. * input.st_position.x) * dy.x - dy.y
+    );
+    float f = (input.st_position.x * input.st_position.x) - input.st_position.y;
+    float distance = f / length(gradient);
+    float alpha = saturate(0.5 - distance) / 255.;
+    return float4(alpha, 0., 0., 1.);
 }
