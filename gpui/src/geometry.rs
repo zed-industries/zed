@@ -1,6 +1,7 @@
-pub use pathfinder_geometry::*;
-
 use super::scene::{Path, PathVertex};
+use crate::color::ColorU;
+pub use pathfinder_geometry::*;
+use rect::RectF;
 use vector::{vec2f, Vector2F};
 
 pub struct PathBuilder {
@@ -8,6 +9,7 @@ pub struct PathBuilder {
     start: Vector2F,
     current: Vector2F,
     contour_count: usize,
+    bounds: RectF,
 }
 
 enum PathVertexKind {
@@ -22,6 +24,7 @@ impl PathBuilder {
             start: vec2f(0., 0.),
             current: vec2f(0., 0.),
             contour_count: 0,
+            bounds: RectF::default(),
         }
     }
 
@@ -51,13 +54,20 @@ impl PathBuilder {
         self.current = point;
     }
 
-    pub fn build(self) -> Path {
+    pub fn build(self, color: ColorU) -> Path {
         Path {
+            bounds: self.bounds,
+            color,
             vertices: self.vertices,
         }
     }
 
     fn push_triangle(&mut self, a: Vector2F, b: Vector2F, c: Vector2F, kind: PathVertexKind) {
+        if self.vertices.is_empty() {
+            self.bounds = RectF::new(a, Vector2F::zero());
+        }
+        self.bounds = self.bounds.union_point(a).union_point(b).union_point(c);
+
         match kind {
             PathVertexKind::Solid => {
                 self.vertices.push(PathVertex {

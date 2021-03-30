@@ -1,4 +1,5 @@
 mod app;
+mod atlas;
 mod dispatcher;
 mod event;
 mod fonts;

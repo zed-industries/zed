@@ -16,7 +16,7 @@ pub struct Layer {
     quads: Vec<Quad>,
     shadows: Vec<Shadow>,
     glyphs: Vec<Glyph>,
-    paths: Vec<(ColorU, Vec<Path>)>,
+    paths: Vec<Path>,
 }
 
 #[derive(Default, Debug)]
@@ -56,6 +56,8 @@ pub struct Border {
 
 #[derive(Debug)]
 pub struct Path {
+    pub bounds: RectF,
+    pub color: ColorU,
     pub vertices: Vec<PathVertex>,
 }
 
@@ -105,8 +107,8 @@ impl Scene {
         self.active_layer().push_glyph(glyph)
     }
 
-    pub fn push_path(&mut self, color: ColorU, path: Path) {
-        self.active_layer().push_path(color, path);
+    pub fn push_path(&mut self, path: Path) {
+        self.active_layer().push_path(path);
     }
 
     fn active_layer(&mut self) -> &mut Layer {
@@ -153,14 +155,11 @@ impl Layer {
         self.glyphs.as_slice()
     }
 
-    fn push_path(&mut self, color: ColorU, path: Path) {
-        match self.paths.binary_search_by_key(&color, |(c, path)| *c) {
-            Err(i) => self.paths.insert(i, (color, vec![path])),
-            Ok(i) => self.paths[i].1.push(path),
-        }
+    fn push_path(&mut self, path: Path) {
+        self.paths.push(path);
     }
 
-    pub fn paths_by_color(&self) -> &[(ColorU, Vec<Path>)] {
+    pub fn paths(&self) -> &[Path] {
         self.paths.as_slice()
     }
 }

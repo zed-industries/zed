@@ -1,4 +1,4 @@
-use super::sprite_cache::SpriteCache;
+use super::{atlas::AtlasAllocator, sprite_cache::SpriteCache};
 use crate::{
     color::ColorU,
     geometry::{
@@ -11,7 +11,7 @@ use crate::{
 };
 use anyhow::{anyhow, Result};
 use cocoa::foundation::NSUInteger;
-use metal::{MTLResourceOptions, NSRange};
+use metal::{MTLPixelFormat, MTLResourceOptions, NSRange};
 use shaders::{ToFloat2 as _, ToUchar4 as _};
 use std::{collections::HashMap, ffi::c_void, mem, sync::Arc};
 
@@ -19,26 +19,29 @@ const SHADERS_METALLIB: &'static [u8] =
     include_bytes!(concat!(env!("OUT_DIR"), "/shaders.metallib"));
 const INSTANCE_BUFFER_SIZE: usize = 1024 * 1024; // This is an arbitrary decision. There's probably a more optimal value.
 
-struct RenderContext<'a> {
-    drawable_size: Vector2F,
-    command_encoder: &'a metal::RenderCommandEncoderRef,
-    command_buffer: &'a metal::CommandBufferRef,
-}
-
 pub struct Renderer {
+    device: metal::Device,
+    command_buffer: metal::CommandBuffer,
     sprite_cache: SpriteCache,
+    path_stencils: AtlasAllocator,
     quad_pipeline_state: metal::RenderPipelineState,
     shadow_pipeline_state: metal::RenderPipelineState,
     sprite_pipeline_state: metal::RenderPipelineState,
-    path_winding_pipeline_state: metal::RenderPipelineState,
+    path_stencil_pipeline_state: metal::RenderPipelineState,
     unit_vertices: metal::Buffer,
     instances: metal::Buffer,
-    path_winding_texture: metal::Texture,
+}
+
+struct PathStencil {
+    layer_id: usize,
+    atlas_id: usize,
+    sprite: shaders::GPUISprite,
 }
 
 impl Renderer {
     pub fn new(
         device: metal::Device,
+        command_buffer: metal::CommandBuffer,
         pixel_format: metal::MTLPixelFormat,
         fonts: Arc<dyn platform::FontSystem>,
     ) -> Result<Self> {
@@ -64,18 +67,19 @@ impl Renderer {
             MTLResourceOptions::StorageModeManaged,
         );
 
-        let paths_texture_size = vec2f(2048., 2048.);
-        let descriptor = metal::TextureDescriptor::new();
-        descriptor.set_pixel_format(metal::MTLPixelFormat::Stencil8);
-        descriptor.set_width(paths_texture_size.x() as u64);
-        descriptor.set_height(paths_texture_size.y() as u64);
-        descriptor.set_usage(metal::MTLTextureUsage::RenderTarget);
-        descriptor.set_storage_mode(metal::MTLStorageMode::Private);
-        let path_winding_texture = device.new_texture(&descriptor);
+        let path_stencil_pixel_format = metal::MTLPixelFormat::Stencil8;
+        let path_stencil_descriptor = metal::TextureDescriptor::new();
+        path_stencil_descriptor.set_width(2048);
+        path_stencil_descriptor.set_height(2048);
+        path_stencil_descriptor.set_pixel_format(path_stencil_pixel_format);
+        path_stencil_descriptor.set_usage(metal::MTLTextureUsage::RenderTarget);
+        path_stencil_descriptor.set_storage_mode(metal::MTLStorageMode::Private);
 
-        let atlas_size: Vector2I = vec2i(1024, 768);
         Ok(Self {
-            sprite_cache: SpriteCache::new(device.clone(), atlas_size, fonts),
+            device,
+            command_buffer,
+            sprite_cache: SpriteCache::new(device.clone(), vec2i(1024, 768), fonts),
+            path_stencils: AtlasAllocator::new(device.clone(), path_stencil_descriptor),
             quad_pipeline_state: build_pipeline_state(
                 &device,
                 &library,
@@ -100,26 +104,152 @@ impl Renderer {
                 "sprite_fragment",
                 pixel_format,
             )?,
-            path_winding_pipeline_state: build_stencil_pipeline_state(
+            path_stencil_pipeline_state: build_stencil_pipeline_state(
                 &device,
                 &library,
                 "path_winding",
                 "path_winding_vertex",
                 "path_winding_fragment",
-                path_winding_texture.pixel_format(),
+                path_stencil_pixel_format,
             )?,
             unit_vertices,
             instances,
-            path_winding_texture,
         })
     }
 
-    pub fn render(
+    pub fn render(&mut self, scene: &Scene, drawable_size: Vector2F, output: &metal::TextureRef) {
+        let mut offset = 0;
+        self.render_path_stencils(scene, &mut offset, drawable_size);
+        self.render_layers(scene, &mut offset, drawable_size, output);
+    }
+
+    fn render_path_stencils(
         &mut self,
         scene: &Scene,
+        offset: &mut usize,
         drawable_size: Vector2F,
-        device: &metal::DeviceRef,
-        command_buffer: &metal::CommandBufferRef,
+    ) -> Vec<PathStencil> {
+        let mut stencils = Vec::new();
+        let mut vertices = Vec::<shaders::GPUIPathVertex>::new();
+        let mut current_atlas_id = None;
+        for (layer_id, layer) in scene.layers().iter().enumerate() {
+            for path in layer.paths() {
+                // Push a PathStencil struct for use later when sampling from the atlas as we draw the content of the layers
+                let size = path.bounds.size().ceil().to_i32();
+                let (atlas_id, atlas_origin) = self.path_stencils.allocate(size).unwrap();
+                stencils.push(PathStencil {
+                    layer_id,
+                    atlas_id,
+                    sprite: shaders::GPUISprite {
+                        origin: path.bounds.origin().to_float2(),
+                        size: size.to_float2(),
+                        atlas_origin: atlas_origin.to_float2(),
+                        color: path.color.to_uchar4(),
+                    },
+                });
+
+                if current_atlas_id.map_or(false, |current_atlas_id| atlas_id != current_atlas_id) {
+                    self.render_path_stencils_for_atlas(
+                        scene,
+                        offset,
+                        drawable_size,
+                        vertices.as_slice(),
+                        self.path_stencils.texture(atlas_id).unwrap(),
+                    );
+                    vertices.clear();
+                }
+
+                current_atlas_id = Some(atlas_id);
+
+                // Populate the vertices by translating them to their appropriate location in the atlas.
+                for vertex in &path.vertices {
+                    vertices.push(todo!());
+                }
+            }
+        }
+
+        if let Some(atlas_id) = current_atlas_id {
+            self.render_path_stencils_for_atlas(
+                scene,
+                offset,
+                drawable_size,
+                vertices.as_slice(),
+                self.path_stencils.texture(atlas_id).unwrap(),
+            );
+        }
+
+        stencils
+    }
+
+    fn render_path_stencils_for_atlas(
+        &mut self,
+        scene: &Scene,
+        offset: &mut usize,
+        drawable_size: Vector2F,
+        vertices: &[shaders::GPUIPathVertex],
+        texture: &metal::TextureRef,
+    ) {
+        // let render_pass_descriptor = metal::RenderPassDescriptor::new();
+        // let stencil_attachment = render_pass_descriptor.stencil_attachment().unwrap();
+        // stencil_attachment.set_texture(Some(&self.path_winding_texture));
+        // stencil_attachment.set_load_action(metal::MTLLoadAction::Clear);
+        // stencil_attachment.set_store_action(metal::MTLStoreAction::Store);
+        // let winding_command_encoder = self
+        //     .command_buffer
+        //     .new_render_command_encoder(render_pass_descriptor);
+
+        // Dubious shit that may be valuable:
+
+        // for path in scene.paths() {
+        //     winding_command_encoder.set_render_pipeline_state(&self.path_stencil_pipeline_state);
+        //     winding_command_encoder.set_vertex_buffer(
+        //         shaders::GPUIPathWindingVertexInputIndex_GPUIPathWindingVertexInputIndexVertices
+        //             as u64,
+        //         Some(&self.instances),
+        //         *offset as u64,
+        //     );
+        //     winding_command_encoder.set_vertex_bytes(
+        //         shaders::GPUIPathWindingVertexInputIndex_GPUIPathWindingVertexInputIndexViewportSize
+        //             as u64,
+        //         mem::size_of::<shaders::vector_float2>() as u64,
+        //         [drawable_size.to_float2()].as_ptr() as *const c_void,
+        //     );
+
+        //     let buffer_contents = unsafe {
+        //         (self.instances.contents() as *mut u8).offset(*offset as isize)
+        //             as *mut shaders::GPUIPathVertex
+        //     };
+
+        //     for (ix, vertex) in paths.iter().flat_map(|p| &p.vertices).enumerate() {
+        //         let shader_vertex = shaders::GPUIPathVertex {
+        //             xy_position: vertex.xy_position.to_float2(),
+        //             st_position: vertex.st_position.to_float2(),
+        //         };
+        //         unsafe {
+        //             *(buffer_contents.offset(ix as isize)) = shader_vertex;
+        //         }
+        //     }
+
+        //     self.instances.did_modify_range(NSRange {
+        //         location: *offset as u64,
+        //         length: (next_offset - *offset) as u64,
+        //     });
+        //     *offset = next_offset;
+
+        //     winding_command_encoder.draw_primitives(
+        //         metal::MTLPrimitiveType::Triangle,
+        //         0,
+        //         vertex_count as u64,
+        //     );
+        //     winding_command_encoder.end_encoding();
+        // }
+    }
+
+    fn render_layers(
+        &mut self,
+        scene: &Scene,
+        offset: &mut usize,
+        drawable_size: Vector2F,
         output: &metal::TextureRef,
     ) {
         let render_pass_descriptor = metal::RenderPassDescriptor::new();
@@ -131,7 +261,9 @@ impl Renderer {
         color_attachment.set_load_action(metal::MTLLoadAction::Clear);
         color_attachment.set_store_action(metal::MTLStoreAction::Store);
         color_attachment.set_clear_color(metal::MTLClearColor::new(0., 0., 0., 1.));
-        let command_encoder = command_buffer.new_render_command_encoder(render_pass_descriptor);
+        let command_encoder = self
+            .command_buffer
+            .new_render_command_encoder(render_pass_descriptor);
 
         command_encoder.set_viewport(metal::MTLViewport {
             originX: 0.0,
@@ -142,30 +274,28 @@ impl Renderer {
             zfar: 1.0,
         });
 
-        let ctx = RenderContext {
-            drawable_size,
-            command_encoder,
-            command_buffer,
-        };
-
-        let mut offset = 0;
         for layer in scene.layers() {
-            self.clip(scene, layer, &ctx);
-            self.render_shadows(scene, layer, &mut offset, &ctx);
-            self.render_quads(scene, layer, &mut offset, &ctx);
-            self.render_paths(scene, layer, &mut offset, &ctx);
-            self.render_sprites(scene, layer, &mut offset, &ctx);
+            self.clip(scene, layer, drawable_size, command_encoder);
+            self.render_shadows(scene, layer, &mut offset, drawable_size, command_encoder);
+            self.render_quads(scene, layer, &mut offset, drawable_size, command_encoder);
+            self.render_sprites(scene, layer, &mut offset, drawable_size, command_encoder);
         }
 
         command_encoder.end_encoding();
     }
 
-    fn clip(&mut self, scene: &Scene, layer: &Layer, ctx: &RenderContext) {
+    fn clip(
+        &mut self,
+        scene: &Scene,
+        layer: &Layer,
+        drawable_size: Vector2F,
+        command_encoder: &metal::RenderCommandEncoderRef,
+    ) {
         let clip_bounds = layer.clip_bounds().unwrap_or(RectF::new(
             vec2f(0., 0.),
-            ctx.drawable_size / scene.scale_factor(),
+            drawable_size / scene.scale_factor(),
         )) * scene.scale_factor();
-        ctx.command_encoder.set_scissor_rect(metal::MTLScissorRect {
+        command_encoder.set_scissor_rect(metal::MTLScissorRect {
             x: clip_bounds.origin_x() as NSUInteger,
             y: clip_bounds.origin_y() as NSUInteger,
             width: clip_bounds.width() as NSUInteger,
@@ -178,7 +308,8 @@ impl Renderer {
         scene: &Scene,
         layer: &Layer,
         offset: &mut usize,
-        ctx: &RenderContext,
+        drawable_size: Vector2F,
+        command_encoder: &metal::RenderCommandEncoderRef,
     ) {
         if layer.shadows().is_empty() {
             return;
@@ -191,23 +322,22 @@ impl Renderer {
             "instance buffer exhausted"
         );
 
-        ctx.command_encoder
-            .set_render_pipeline_state(&self.shadow_pipeline_state);
-        ctx.command_encoder.set_vertex_buffer(
+        command_encoder.set_render_pipeline_state(&self.shadow_pipeline_state);
+        command_encoder.set_vertex_buffer(
             shaders::GPUIShadowInputIndex_GPUIShadowInputIndexVertices as u64,
             Some(&self.unit_vertices),
             0,
         );
-        ctx.command_encoder.set_vertex_buffer(
+        command_encoder.set_vertex_buffer(
             shaders::GPUIShadowInputIndex_GPUIShadowInputIndexShadows as u64,
             Some(&self.instances),
             *offset as u64,
         );
-        ctx.command_encoder.set_vertex_bytes(
+        command_encoder.set_vertex_bytes(
             shaders::GPUIShadowInputIndex_GPUIShadowInputIndexUniforms as u64,
             mem::size_of::<shaders::GPUIUniforms>() as u64,
             [shaders::GPUIUniforms {
-                viewport_size: ctx.drawable_size.to_float2(),
+                viewport_size: drawable_size.to_float2(),
             }]
             .as_ptr() as *const c_void,
         );
@@ -236,7 +366,7 @@ impl Renderer {
         });
         *offset = next_offset;
 
-        ctx.command_encoder.draw_primitives_instanced(
+        command_encoder.draw_primitives_instanced(
             metal::MTLPrimitiveType::Triangle,
             0,
             6,
@@ -249,7 +379,8 @@ impl Renderer {
         scene: &Scene,
         layer: &Layer,
         offset: &mut usize,
-        ctx: &RenderContext,
+        drawable_size: Vector2F,
+        command_encoder: &metal::RenderCommandEncoderRef,
     ) {
         if layer.quads().is_empty() {
             return;
@@ -261,23 +392,22 @@ impl Renderer {
             "instance buffer exhausted"
         );
 
-        ctx.command_encoder
-            .set_render_pipeline_state(&self.quad_pipeline_state);
-        ctx.command_encoder.set_vertex_buffer(
+        command_encoder.set_render_pipeline_state(&self.quad_pipeline_state);
+        command_encoder.set_vertex_buffer(
             shaders::GPUIQuadInputIndex_GPUIQuadInputIndexVertices as u64,
             Some(&self.unit_vertices),
             0,
         );
-        ctx.command_encoder.set_vertex_buffer(
+        command_encoder.set_vertex_buffer(
             shaders::GPUIQuadInputIndex_GPUIQuadInputIndexQuads as u64,
             Some(&self.instances),
             *offset as u64,
         );
-        ctx.command_encoder.set_vertex_bytes(
+        command_encoder.set_vertex_bytes(
             shaders::GPUIQuadInputIndex_GPUIQuadInputIndexUniforms as u64,
             mem::size_of::<shaders::GPUIUniforms>() as u64,
             [shaders::GPUIUniforms {
-                viewport_size: ctx.drawable_size.to_float2(),
+                viewport_size: drawable_size.to_float2(),
             }]
             .as_ptr() as *const c_void,
         );
@@ -318,7 +448,7 @@ impl Renderer {
         });
         *offset = next_offset;
 
-        ctx.command_encoder.draw_primitives_instanced(
+        command_encoder.draw_primitives_instanced(
             metal::MTLPrimitiveType::Triangle,
             0,
             6,
@@ -326,81 +456,13 @@ impl Renderer {
         );
     }
 
-    fn render_paths(
-        &mut self,
-        scene: &Scene,
-        layer: &Layer,
-        offset: &mut usize,
-        ctx: &RenderContext,
-    ) {
-        for (color, paths) in layer.paths_by_color() {
-            let winding_render_pass_descriptor = metal::RenderPassDescriptor::new();
-            let stencil_attachment = winding_render_pass_descriptor.stencil_attachment().unwrap();
-            stencil_attachment.set_texture(Some(&self.path_winding_texture));
-            stencil_attachment.set_load_action(metal::MTLLoadAction::Clear);
-            stencil_attachment.set_store_action(metal::MTLStoreAction::Store);
-            let winding_command_encoder = ctx
-                .command_buffer
-                .new_render_command_encoder(winding_render_pass_descriptor);
-
-            align_offset(offset);
-            let vertex_count = paths.iter().map(|p| p.vertices.len()).sum::<usize>();
-            let next_offset = *offset + vertex_count * mem::size_of::<shaders::GPUIPathVertex>();
-            assert!(
-                next_offset <= INSTANCE_BUFFER_SIZE,
-                "instance buffer exhausted"
-            );
-
-            winding_command_encoder.set_render_pipeline_state(&self.path_winding_pipeline_state);
-            winding_command_encoder.set_vertex_buffer(
-                shaders::GPUIPathWindingVertexInputIndex_GPUIPathWindingVertexInputIndexVertices
-                    as u64,
-                Some(&self.instances),
-                *offset as u64,
-            );
-            winding_command_encoder.set_vertex_bytes(
-                shaders::GPUIPathWindingVertexInputIndex_GPUIPathWindingVertexInputIndexViewportSize
-                    as u64,
-                mem::size_of::<shaders::vector_float2>() as u64,
-                [ctx.drawable_size.to_float2()].as_ptr() as *const c_void,
-            );
-
-            let buffer_contents = unsafe {
-                (self.instances.contents() as *mut u8).offset(*offset as isize)
-                    as *mut shaders::GPUIPathVertex
-            };
-
-            for (ix, vertex) in paths.iter().flat_map(|p| &p.vertices).enumerate() {
-                let shader_vertex = shaders::GPUIPathVertex {
-                    xy_position: vertex.xy_position.to_float2(),
-                    st_position: vertex.st_position.to_float2(),
-                };
-                unsafe {
-                    *(buffer_contents.offset(ix as isize)) = shader_vertex;
-                }
-            }
-
-            self.instances.did_modify_range(NSRange {
-                location: *offset as u64,
-                length: (next_offset - *offset) as u64,
-            });
-            *offset = next_offset;
-
-            winding_command_encoder.draw_primitives(
-                metal::MTLPrimitiveType::Triangle,
-                0,
-                vertex_count as u64,
-            );
-            winding_command_encoder.end_encoding();
-        }
-    }
-
     fn render_sprites(
         &mut self,
         scene: &Scene,
         layer: &Layer,
         offset: &mut usize,
-        ctx: &RenderContext,
+        drawable_size: Vector2F,
+        command_encoder: &metal::RenderCommandEncoderRef,
     ) {
         if layer.glyphs().is_empty() {
             return;
@@ -429,19 +491,18 @@ impl Renderer {
             }
         }
 
-        ctx.command_encoder
-            .set_render_pipeline_state(&self.sprite_pipeline_state);
-        ctx.command_encoder.set_vertex_buffer(
+        command_encoder.set_render_pipeline_state(&self.sprite_pipeline_state);
+        command_encoder.set_vertex_buffer(
             shaders::GPUISpriteVertexInputIndex_GPUISpriteVertexInputIndexVertices as u64,
             Some(&self.unit_vertices),
             0,
         );
-        ctx.command_encoder.set_vertex_bytes(
+        command_encoder.set_vertex_bytes(
             shaders::GPUISpriteVertexInputIndex_GPUISpriteVertexInputIndexViewportSize as u64,
             mem::size_of::<shaders::vector_float2>() as u64,
-            [ctx.drawable_size.to_float2()].as_ptr() as *const c_void,
+            [drawable_size.to_float2()].as_ptr() as *const c_void,
         );
-        ctx.command_encoder.set_vertex_bytes(
+        command_encoder.set_vertex_bytes(
             shaders::GPUISpriteVertexInputIndex_GPUISpriteVertexInputIndexAtlasSize as u64,
             mem::size_of::<shaders::vector_float2>() as u64,
             [self.sprite_cache.atlas_size().to_float2()].as_ptr() as *const c_void,
@@ -455,14 +516,14 @@ impl Renderer {
                 "instance buffer exhausted"
             );
 
-            ctx.command_encoder.set_vertex_buffer(
+            command_encoder.set_vertex_buffer(
                 shaders::GPUISpriteVertexInputIndex_GPUISpriteVertexInputIndexSprites as u64,
                 Some(&self.instances),
                 *offset as u64,
             );
 
             let texture = self.sprite_cache.atlas_texture(atlas_id).unwrap();
-            ctx.command_encoder.set_fragment_texture(
+            command_encoder.set_fragment_texture(
                 shaders::GPUISpriteFragmentInputIndex_GPUISpriteFragmentInputIndexAtlas as u64,
                 Some(texture),
             );
@@ -479,7 +540,7 @@ impl Renderer {
             });
             *offset = next_offset;
 
-            ctx.command_encoder.draw_primitives_instanced(
+            command_encoder.draw_primitives_instanced(
                 metal::MTLPrimitiveType::Triangle,
                 0,
                 6,
