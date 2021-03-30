@@ -431,7 +431,6 @@ extern "C" fn display_layer(this: &Object, _: Sel, _: id) {
             window_state.renderer.render(
                 &scene,
                 size * scale_factor,
-                &device,
                 command_buffer,
                 drawable.texture(),
             );

@@ -637,7 +637,7 @@ impl Selection {
         );
         path.line_to(vec2f(first_line.end_x - corner_radius, start_y));
 
-        scene.push_path(ColorU::from_u32(0xff0000ff), path.build());
+        scene.push_path(path.build(ColorU::from_u32(0xff0000ff)));
 
         // rounded_corner(&mut path, corner, corner_radius, Right, Down);
 

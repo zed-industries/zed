@@ -13,17 +13,18 @@ pub struct AtlasAllocator {
 
 impl AtlasAllocator {
     pub fn new(device: Device, texture_descriptor: TextureDescriptor) -> Self {
-        let me = Self {
+        let mut me = Self {
             device,
             texture_descriptor,
             atlasses: Vec::new(),
             free_atlasses: Vec::new(),
         };
-        me.atlasses.push(me.new_atlas());
+        let atlas = me.new_atlas();
+        me.atlasses.push(atlas);
         me
     }
 
-    fn atlas_size(&self) -> Vector2I {
+    pub fn atlas_size(&self) -> Vector2I {
         vec2i(
             self.texture_descriptor.width() as i32,
             self.texture_descriptor.height() as i32,
@@ -60,6 +61,10 @@ impl AtlasAllocator {
             atlas.clear();
         }
         self.free_atlasses.extend(self.atlasses.drain(1..));
+    }
+
+    pub fn texture(&self, atlas_id: usize) -> Option<&metal::TextureRef> {
+        self.atlasses.get(atlas_id).map(|a| a.texture.as_ref())
     }
 
     fn new_atlas(&mut self) -> Atlas {

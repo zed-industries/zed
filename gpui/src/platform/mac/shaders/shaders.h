@@ -56,7 +56,7 @@ typedef struct {
 
 typedef enum {
     GPUIPathWindingVertexInputIndexVertices = 0,
-    GPUIPathWindingVertexInputIndexViewportSize = 1,
+    GPUIPathWindingVertexInputIndexAtlasSize = 1,
 } GPUIPathWindingVertexInputIndex;
 
 typedef struct {

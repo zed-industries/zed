@@ -210,10 +210,10 @@ struct PathWindingFragmentInput {
 vertex PathWindingFragmentInput path_winding_vertex(
     uint vertex_id [[vertex_id]],
     constant GPUIPathVertex *vertices [[buffer(GPUIPathWindingVertexInputIndexVertices)]],
-    constant float2 *viewport_size [[buffer(GPUIPathWindingVertexInputIndexViewportSize)]]
+    constant float2 *atlas_size [[buffer(GPUIPathWindingVertexInputIndexAtlasSize)]]
 ) {
     GPUIPathVertex v = vertices[vertex_id];
-    float4 device_position = to_device_position(v.xy_position, *viewport_size);
+    float4 device_position = to_device_position(v.xy_position, *atlas_size);
     return PathWindingFragmentInput {
         device_position,
         v.st_position,
@@ -223,9 +223,9 @@ vertex PathWindingFragmentInput path_winding_vertex(
 fragment float4 path_winding_fragment(
     PathWindingFragmentInput input [[stage_in]]
 ) {
-    if (input.st_position.x * input.st_position.x - input.st_position.y > 0.0) {
-        return float4(0.0);
+    if (input.st_position.x * input.st_position.x - input.st_position.y > 0.) {
+        return float4(0.);
     } else {
-        return float4(float3(0.0), 1.0 / 255.0);
+        return float4(1.);
     }
 }
