@@ -603,7 +603,7 @@ impl Selection {
         }
 
         let mut path = PathBuilder::new();
-        let corner_radius = 0.25 * self.line_height;
+        let corner_radius = 0.15 * self.line_height;
         let first_line = lines.first().unwrap();
         let last_line = lines.last().unwrap();
 
