@@ -193,7 +193,7 @@ vertex SpriteFragmentInput sprite_vertex(
     };
 }
 
-#define MAX_WINDINGS 128.
+#define MAX_WINDINGS 32.
 
 fragment float4 sprite_fragment(
     SpriteFragmentInput input [[stage_in]],
