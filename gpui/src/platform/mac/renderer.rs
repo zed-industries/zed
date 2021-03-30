@@ -32,7 +32,7 @@ pub struct Renderer {
     instances: metal::Buffer,
 }
 
-struct PathStencil {
+struct PathSprite {
     layer_id: usize,
     atlas_id: usize,
     sprite: shaders::GPUISprite,
@@ -128,7 +128,7 @@ impl Renderer {
         scene: &Scene,
         offset: &mut usize,
         drawable_size: Vector2F,
-    ) -> Vec<PathStencil> {
+    ) -> Vec<PathSprite> {
         let mut stencils = Vec::new();
         let mut vertices = Vec::<shaders::GPUIPathVertex>::new();
         let mut current_atlas_id = None;
@@ -137,7 +137,7 @@ impl Renderer {
                 // Push a PathStencil struct for use later when sampling from the atlas as we draw the content of the layers
                 let size = path.bounds.size().ceil().to_i32();
                 let (atlas_id, atlas_origin) = self.path_stencils.allocate(size).unwrap();
-                stencils.push(PathStencil {
+                stencils.push(PathSprite {
                     layer_id,
                     atlas_id,
                     sprite: shaders::GPUISprite {
