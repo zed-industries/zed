@@ -1,6 +1,6 @@
 use super::{BufferView, DisplayPoint, SelectAction};
 use gpui::{
-    color::ColorU,
+    color::{ColorF, ColorU},
     geometry::{
         rect::RectF,
         vector::{vec2f, Vector2F},
@@ -11,6 +11,7 @@ use gpui::{
     MutableAppContext, PaintContext, Quad, Scene, SizeConstraint, ViewHandle,
 };
 use smallvec::SmallVec;
+use std::cmp::Ordering;
 use std::{
     cmp::{self},
     sync::Arc,
@@ -215,6 +216,8 @@ impl BufferElement {
         let corner_radius = 2.5;
         let mut cursors = SmallVec::<[Cursor; 32]>::new();
 
+        let content_origin = bounds.origin() + vec2f(-descent, 0.0);
+
         for selection in view.selections_in_range(
             DisplayPoint::new(start_row, 0)..DisplayPoint::new(end_row, 0),
             ctx.app,
@@ -230,29 +233,26 @@ impl BufferElement {
 
                 let selection = Selection {
                     line_height,
-                    start_y: bounds.origin_y() + row_range.start as f32 * line_height - scroll_top,
+                    start_y: content_origin.y() + row_range.start as f32 * line_height - scroll_top,
                     lines: row_range
                         .into_iter()
                         .map(|row| {
                             let line_layout = &layout.line_layouts[(row - start_row) as usize];
                             SelectionLine {
                                 start_x: if row == range_start.row() {
-                                    bounds.origin_x()
+                                    content_origin.x()
                                         + line_layout.x_for_index(range_start.column() as usize)
                                         - scroll_left
-                                        - descent
                                 } else {
-                                    -scroll_left
+                                    content_origin.x() - scroll_left
                                 },
                                 end_x: if row == range_end.row() {
-                                    bounds.origin_x()
+                                    content_origin.x()
                                         + line_layout.x_for_index(range_end.column() as usize)
                                         - scroll_left
-                                        - descent
                                 } else {
-                                    bounds.origin_x() + line_layout.width + corner_radius * 2.0
+                                    content_origin.x() + line_layout.width + corner_radius * 2.0
                                         - scroll_left
-                                        - descent
                                 },
                             }
                         })
@@ -268,11 +268,10 @@ impl BufferElement {
                     let cursor_row_layout =
                         &layout.line_layouts[(selection.end.row() - start_row) as usize];
                     let x = cursor_row_layout.x_for_index(selection.end.column() as usize)
-                        - scroll_left
-                        - descent;
+                        - scroll_left;
                     let y = selection.end.row() as f32 * line_height - scroll_top;
                     cursors.push(Cursor {
-                        origin: bounds.origin() + vec2f(x, y),
+                        origin: content_origin + vec2f(x, y),
                         line_height,
                     });
                 }
@@ -282,11 +281,8 @@ impl BufferElement {
         // Draw glyphs
         for (ix, line) in layout.line_layouts.iter().enumerate() {
             let row = start_row + ix as u32;
-            let line_origin = bounds.origin()
-                + vec2f(
-                    -scroll_left - descent,
-                    row as f32 * line_height - scroll_top,
-                );
+            let line_origin =
+                content_origin + vec2f(-scroll_left, row as f32 * line_height - scroll_top);
 
             line.paint(
                 RectF::new(line_origin, vec2f(line.width, line_height)),
@@ -607,96 +603,65 @@ impl Selection {
         }
 
         let mut path = PathBuilder::new();
-        let corner_radius = 0.08 * self.line_height;
-
+        let corner_radius = 0.25 * self.line_height;
         let first_line = lines.first().unwrap();
-        path.reset(vec2f(first_line.end_x - corner_radius, start_y));
-        path.curve_to(
-            vec2f(first_line.end_x, start_y + corner_radius),
-            vec2f(first_line.end_x, start_y),
-        );
-        path.line_to(vec2f(
-            first_line.end_x,
-            start_y + self.line_height - corner_radius,
-        ));
-        path.curve_to(
-            vec2f(first_line.end_x - corner_radius, start_y + self.line_height),
-            vec2f(first_line.end_x, start_y + self.line_height),
-        );
-        path.line_to(vec2f(
-            first_line.start_x + corner_radius,
-            start_y + self.line_height,
-        ));
-        path.curve_to(
-            vec2f(
-                first_line.start_x,
-                start_y + self.line_height - corner_radius,
-            ),
-            vec2f(first_line.start_x, start_y + self.line_height),
-        );
-        path.line_to(vec2f(first_line.start_x, start_y + corner_radius));
-        path.curve_to(
-            vec2f(first_line.start_x + corner_radius, start_y),
-            vec2f(first_line.start_x, start_y),
-        );
-        path.line_to(vec2f(first_line.end_x - corner_radius, start_y));
+        let last_line = lines.last().unwrap();
+        let corner = vec2f(first_line.end_x, start_y);
+        let radius_x = vec2f(corner_radius, 0.);
+        let radius_y = vec2f(0., corner_radius);
 
-        scene.push_path(path.build(ColorU::from_u32(0xff0000ff)));
+        path.reset(corner - radius_x);
+        path.curve_to(corner + radius_y, corner);
 
-        // rounded_corner(&mut path, corner, corner_radius, Right, Down);
+        let mut iter = lines.iter().enumerate().peekable();
+        while let Some((ix, line)) = iter.next() {
+            let corner = vec2f(line.end_x, start_y + (ix + 1) as f32 * self.line_height);
 
-        // let mut iter = lines.iter().enumerate().peekable();
-        // while let Some((ix, line)) = iter.next() {
-        //     let corner = vec2f(line.end_x, start_y + (ix + 1) as f32 * self.line_height);
+            if let Some((_, next_line)) = iter.peek() {
+                let next_corner = vec2f(next_line.end_x, corner.y());
 
-        //     if let Some((_, next_line)) = iter.peek() {
-        //         let next_corner = vec2f(next_line.end_x, corner.y());
+                match next_corner.x().partial_cmp(&corner.x()).unwrap() {
+                    Ordering::Equal => {
+                        path.line_to(corner);
+                    }
+                    Ordering::Less => {
+                        path.line_to(corner - radius_y);
+                        path.curve_to(corner - radius_x, corner);
+                        path.line_to(next_corner + radius_x);
+                        path.curve_to(next_corner + radius_y, next_corner);
+                    }
+                    Ordering::Greater => {
+                        path.line_to(corner - radius_y);
+                        path.curve_to(corner + radius_x, corner);
+                        path.line_to(next_corner - radius_x);
+                        path.curve_to(next_corner + radius_y, next_corner);
+                    }
+                }
+            } else {
+                path.line_to(corner - radius_y);
+                path.curve_to(corner - radius_x, corner);
 
-        //         match next_corner.x().partial_cmp(&corner.x()).unwrap() {
-        //             Ordering::Equal => {
-        //                 path.line_to(corner);
-        //             }
-        //             Ordering::Less => {
-        //                 path.line_to(corner - vec2f(0.0, corner_radius));
-        //                 rounded_corner(&mut path, corner, corner_radius, Down, Left);
-        //                 path.line_to(next_corner + vec2f(corner_radius, 0.0));
-        //                 rounded_corner(&mut path, next_corner, corner_radius, Left, Down);
-        //             }
-        //             Ordering::Greater => {
-        //                 path.line_to(corner - vec2f(0.0, corner_radius));
-        //                 rounded_corner(&mut path, corner, corner_radius, Down, Right);
-        //                 path.line_to(next_corner - vec2f(corner_radius, 0.0));
-        //                 rounded_corner(&mut path, next_corner, corner_radius, Right, Down);
-        //             }
-        //         }
-        //     } else {
-        //         path.line_to(corner - vec2f(0.0, corner_radius));
-        //         rounded_corner(&mut path, corner, corner_radius, Down, Left);
+                let corner = vec2f(line.start_x, corner.y());
+                path.line_to(corner + radius_x);
+                path.curve_to(corner - radius_y, corner);
+            }
+        }
 
-        //         let corner = vec2f(line.start_x, corner.y());
-        //         path.line_to(corner + vec2f(corner_radius, 0.0));
-        //         rounded_corner(&mut path, corner, corner_radius, Left, Up);
-        //     }
-        // }
+        if first_line.start_x > last_line.start_x {
+            let corner = vec2f(last_line.start_x, start_y + self.line_height);
+            path.line_to(corner + radius_y);
+            path.curve_to(corner + radius_x, corner);
+            let corner = vec2f(first_line.start_x, corner.y());
+            path.line_to(corner - radius_x);
+            path.curve_to(corner - radius_y, corner);
+        }
 
-        // if first_line.start_x > last_line.start_x {
-        //     let corner = vec2f(last_line.start_x, start_y + self.line_height);
-        //     path.line_to(corner + vec2f(0.0, corner_radius));
-        //     rounded_corner(&mut path, corner, corner_radius, Up, Right);
-        //     let corner = vec2f(first_line.start_x, corner.y());
-        //     path.line_to(corner - vec2f(corner_radius, 0.0));
-        //     rounded_corner(&mut path, corner, corner_radius, Right, Up);
-        // }
+        let corner = vec2f(first_line.start_x, start_y);
+        path.line_to(corner + radius_y);
+        path.curve_to(corner + radius_x, corner);
+        path.line_to(vec2f(first_line.end_x, start_y) - radius_x);
 
-        // let corner = vec2f(first_line.start_x, start_y);
-        // path.line_to(corner + vec2f(0.0, corner_radius));
-        // rounded_corner(&mut path, corner, corner_radius, Up, Right);
-        // path.close_path();
-
-        // scene.set_fill_style(FillStyle::Color(
-        //     ColorF::new(0.639, 0.839, 1.0, 1.0).to_u8(),
-        // ));
-        // scene.fill_path(path, FillRule::Winding);
+        scene.push_path(path.build(ColorF::new(0.639, 0.839, 1.0, 1.0).to_u8()));
     }
 }
 
