@@ -7,8 +7,8 @@ use objc::{msg_send, sel, sel_impl};
 pub struct AtlasAllocator {
     device: Device,
     texture_descriptor: TextureDescriptor,
-    atlasses: Vec<Atlas>,
-    free_atlasses: Vec<Atlas>,
+    atlases: Vec<Atlas>,
+    free_atlases: Vec<Atlas>,
 }
 
 impl AtlasAllocator {
@@ -16,11 +16,11 @@ impl AtlasAllocator {
         let mut me = Self {
             device,
             texture_descriptor,
-            atlasses: Vec::new(),
-            free_atlasses: Vec::new(),
+            atlases: Vec::new(),
+            free_atlases: Vec::new(),
         };
         let atlas = me.new_atlas(Vector2I::zero());
-        me.atlasses.push(atlas);
+        me.atlases.push(atlas);
         me
     }
 
@@ -33,36 +33,36 @@ impl AtlasAllocator {
 
     pub fn allocate(&mut self, requested_size: Vector2I) -> anyhow::Result<(usize, Vector2I)> {
         let origin = self
-            .atlasses
+            .atlases
             .last_mut()
             .unwrap()
             .allocate(requested_size)
             .unwrap_or_else(|| {
                 let mut atlas = self.new_atlas(requested_size);
                 let origin = atlas.allocate(requested_size).unwrap();
-                self.atlasses.push(atlas);
+                self.atlases.push(atlas);
                 origin
             });
 
-        Ok((self.atlasses.len() - 1, origin))
+        Ok((self.atlases.len() - 1, origin))
     }
 
     pub fn clear(&mut self) {
-        for atlas in &mut self.atlasses {
+        for atlas in &mut self.atlases {
             atlas.clear();
         }
-        self.free_atlasses.extend(self.atlasses.drain(1..));
+        self.free_atlases.extend(self.atlases.drain(1..));
     }
 
     pub fn texture(&self, atlas_id: usize) -> Option<&metal::TextureRef> {
-        self.atlasses.get(atlas_id).map(|a| a.texture.as_ref())
+        self.atlases.get(atlas_id).map(|a| a.texture.as_ref())
     }
 
     fn new_atlas(&mut self, required_size: Vector2I) -> Atlas {
-        if let Some(i) = self.free_atlasses.iter().rposition(|atlas| {
+        if let Some(i) = self.free_atlases.iter().rposition(|atlas| {
             atlas.size().x() >= required_size.x() && atlas.size().y() >= required_size.y()
         }) {
-            self.free_atlasses.remove(i)
+            self.free_atlases.remove(i)
         } else {
             let size = self.default_atlas_size().max(required_size);
             let texture = if size.x() as u64 > self.texture_descriptor.width()

@@ -31,7 +31,7 @@ pub struct SpriteCache {
     device: metal::Device,
     atlas_size: Vector2I,
     fonts: Arc<dyn platform::FontSystem>,
-    atlasses: Vec<Atlas>,
+    atlases: Vec<Atlas>,
     glyphs: HashMap<GlyphDescriptor, Option<GlyphSprite>>,
 }
 
@@ -41,12 +41,12 @@ impl SpriteCache {
         size: Vector2I,
         fonts: Arc<dyn platform::FontSystem>,
     ) -> Self {
-        let atlasses = vec![Atlas::new(&device, size)];
+        let atlases = vec![Atlas::new(&device, size)];
         Self {
             device,
             atlas_size: size,
             fonts,
-            atlasses,
+            atlases,
             glyphs: Default::default(),
         }
     }
@@ -67,7 +67,7 @@ impl SpriteCache {
 
         let target_position = target_position * scale_factor;
         let fonts = &self.fonts;
-        let atlasses = &mut self.atlasses;
+        let atlases = &mut self.atlases;
         let atlas_size = self.atlas_size;
         let device = &self.device;
         let subpixel_variant = (
@@ -98,19 +98,19 @@ impl SpriteCache {
                 assert!(glyph_bounds.width() < atlas_size.x());
                 assert!(glyph_bounds.height() < atlas_size.y());
 
-                let atlas_bounds = atlasses
+                let atlas_bounds = atlases
                     .last_mut()
                     .unwrap()
                     .try_insert(glyph_bounds.size(), &mask)
                     .unwrap_or_else(|| {
                         let mut atlas = Atlas::new(device, atlas_size);
                         let bounds = atlas.try_insert(glyph_bounds.size(), &mask).unwrap();
-                        atlasses.push(atlas);
+                        atlases.push(atlas);
                         bounds
                     });
 
                 Some(GlyphSprite {
-                    atlas_id: atlasses.len() - 1,
+                    atlas_id: atlases.len() - 1,
                     atlas_origin: atlas_bounds.origin(),
                     offset: glyph_bounds.origin(),
                     size: glyph_bounds.size(),
@@ -120,7 +120,7 @@ impl SpriteCache {
     }
 
     pub fn atlas_texture(&self, atlas_id: usize) -> Option<&metal::TextureRef> {
-        self.atlasses.get(atlas_id).map(|a| a.texture.as_ref())
+        self.atlases.get(atlas_id).map(|a| a.texture.as_ref())
     }
 }
 

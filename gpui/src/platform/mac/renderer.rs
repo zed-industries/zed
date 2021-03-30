@@ -22,7 +22,7 @@ const INSTANCE_BUFFER_SIZE: usize = 1024 * 1024; // This is an arbitrary decisio
 pub struct Renderer {
     device: metal::Device,
     sprite_cache: SpriteCache,
-    path_atlasses: AtlasAllocator,
+    path_atlases: AtlasAllocator,
     quad_pipeline_state: metal::RenderPipelineState,
     shadow_pipeline_state: metal::RenderPipelineState,
     sprite_pipeline_state: metal::RenderPipelineState,
@@ -66,7 +66,7 @@ impl Renderer {
         );
 
         let sprite_cache = SpriteCache::new(device.clone(), vec2i(1024, 768), fonts);
-        let path_atlasses = build_path_atlas_allocator(pixel_format, &device);
+        let path_atlases = build_path_atlas_allocator(pixel_format, &device);
         let quad_pipeline_state = build_pipeline_state(
             &device,
             &library,
@@ -102,7 +102,7 @@ impl Renderer {
         Ok(Self {
             device,
             sprite_cache,
-            path_atlasses,
+            path_atlases: path_atlases,
             quad_pipeline_state,
             shadow_pipeline_state,
             sprite_pipeline_state,
@@ -137,6 +137,7 @@ impl Renderer {
         offset: &mut usize,
         command_buffer: &metal::CommandBufferRef,
     ) -> Vec<PathSprite> {
+        self.path_atlases.clear();
         let mut stencils = Vec::new();
         let mut vertices = Vec::<shaders::GPUIPathVertex>::new();
         let mut current_atlas_id = None;
@@ -146,7 +147,7 @@ impl Renderer {
                 let origin = path.bounds.origin() * scene.scale_factor();
                 let size = (path.bounds.size() * scene.scale_factor()).ceil();
                 let (atlas_id, atlas_origin) =
-                    self.path_atlasses.allocate(size.ceil().to_i32()).unwrap();
+                    self.path_atlases.allocate(size.ceil().to_i32()).unwrap();
                 let atlas_origin = atlas_origin.to_f32();
                 stencils.push(PathSprite {
                     layer_id,
@@ -210,7 +211,7 @@ impl Renderer {
             .color_attachments()
             .object_at(0)
             .unwrap();
-        let texture = self.path_atlasses.texture(atlas_id).unwrap();
+        let texture = self.path_atlases.texture(atlas_id).unwrap();
         color_attachment.set_texture(Some(texture));
         color_attachment.set_load_action(metal::MTLLoadAction::Clear);
         color_attachment.set_store_action(metal::MTLStoreAction::Store);
@@ -618,7 +619,7 @@ impl Renderer {
                 *offset as u64,
             );
 
-            let texture = self.path_atlasses.texture(atlas_id).unwrap();
+            let texture = self.path_atlases.texture(atlas_id).unwrap();
             command_encoder.set_vertex_bytes(
                 shaders::GPUISpriteVertexInputIndex_GPUISpriteVertexInputIndexAtlasSize as u64,
                 mem::size_of::<shaders::vector_float2>() as u64,
@@ -663,8 +664,8 @@ fn build_path_atlas_allocator(
     path_stencil_descriptor
         .set_usage(metal::MTLTextureUsage::RenderTarget | metal::MTLTextureUsage::ShaderRead);
     path_stencil_descriptor.set_storage_mode(metal::MTLStorageMode::Private);
-    let path_atlasses = AtlasAllocator::new(device.clone(), path_stencil_descriptor);
-    path_atlasses
+    let path_atlases = AtlasAllocator::new(device.clone(), path_stencil_descriptor);
+    path_atlases
 }
 
 fn align_offset(offset: &mut usize) {
