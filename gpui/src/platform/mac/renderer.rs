@@ -160,7 +160,7 @@ impl Renderer {
                     layer_id,
                     atlas_id,
                     sprite: shaders::GPUISprite {
-                        origin: origin.to_float2(),
+                        origin: origin.floor().to_float2(),
                         size: size.to_float2(),
                         atlas_origin: atlas_origin.to_float2(),
                         color: path.color.to_uchar4(),
