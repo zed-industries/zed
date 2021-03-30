@@ -606,60 +606,76 @@ impl Selection {
         let corner_radius = 0.25 * self.line_height;
         let first_line = lines.first().unwrap();
         let last_line = lines.last().unwrap();
-        let corner = vec2f(first_line.end_x, start_y);
-        let radius_x = vec2f(corner_radius, 0.);
-        let radius_y = vec2f(0., corner_radius);
 
-        path.reset(corner - radius_x);
-        path.curve_to(corner + radius_y, corner);
+        let first_top_left = vec2f(first_line.start_x, start_y);
+        let first_top_right = vec2f(first_line.end_x, start_y);
+
+        let curve_height = vec2f(0., corner_radius);
+        let curve_width = |start_x: f32, end_x: f32| {
+            let max = (end_x - start_x) / 2.;
+            let width = if max < corner_radius {
+                max
+            } else {
+                corner_radius
+            };
+
+            vec2f(width, 0.)
+        };
+
+        let top_curve_width = curve_width(first_line.start_x, first_line.end_x);
+        path.reset(first_top_right - top_curve_width);
+        path.curve_to(first_top_right + curve_height, first_top_right);
 
         let mut iter = lines.iter().enumerate().peekable();
         while let Some((ix, line)) = iter.next() {
-            let corner = vec2f(line.end_x, start_y + (ix + 1) as f32 * self.line_height);
+            let bottom_right = vec2f(line.end_x, start_y + (ix + 1) as f32 * self.line_height);
 
             if let Some((_, next_line)) = iter.peek() {
-                let next_corner = vec2f(next_line.end_x, corner.y());
+                let next_top_right = vec2f(next_line.end_x, bottom_right.y());
 
-                match next_corner.x().partial_cmp(&corner.x()).unwrap() {
+                match next_top_right.x().partial_cmp(&bottom_right.x()).unwrap() {
                     Ordering::Equal => {
-                        path.line_to(corner);
+                        path.line_to(bottom_right);
                     }
                     Ordering::Less => {
-                        path.line_to(corner - radius_y);
-                        path.curve_to(corner - radius_x, corner);
-                        path.line_to(next_corner + radius_x);
-                        path.curve_to(next_corner + radius_y, next_corner);
+                        let curve_width = curve_width(next_top_right.x(), bottom_right.x());
+                        path.line_to(bottom_right - curve_height);
+                        path.curve_to(bottom_right - curve_width, bottom_right);
+                        path.line_to(next_top_right + curve_width);
+                        path.curve_to(next_top_right + curve_height, next_top_right);
                     }
                     Ordering::Greater => {
-                        path.line_to(corner - radius_y);
-                        path.curve_to(corner + radius_x, corner);
-                        path.line_to(next_corner - radius_x);
-                        path.curve_to(next_corner + radius_y, next_corner);
+                        let curve_width = curve_width(bottom_right.x(), next_top_right.x());
+                        path.line_to(bottom_right - curve_height);
+                        path.curve_to(bottom_right + curve_width, bottom_right);
+                        path.line_to(next_top_right - curve_width);
+                        path.curve_to(next_top_right + curve_height, next_top_right);
                     }
                 }
             } else {
-                path.line_to(corner - radius_y);
-                path.curve_to(corner - radius_x, corner);
+                let curve_width = curve_width(line.start_x, line.end_x);
+                path.line_to(bottom_right - curve_height);
+                path.curve_to(bottom_right - curve_width, bottom_right);
 
-                let corner = vec2f(line.start_x, corner.y());
-                path.line_to(corner + radius_x);
-                path.curve_to(corner - radius_y, corner);
+                let bottom_left = vec2f(line.start_x, bottom_right.y());
+                path.line_to(bottom_left + curve_width);
+                path.curve_to(bottom_left - curve_height, bottom_left);
             }
         }
 
         if first_line.start_x > last_line.start_x {
-            let corner = vec2f(last_line.start_x, start_y + self.line_height);
-            path.line_to(corner + radius_y);
-            path.curve_to(corner + radius_x, corner);
-            let corner = vec2f(first_line.start_x, corner.y());
-            path.line_to(corner - radius_x);
-            path.curve_to(corner - radius_y, corner);
+            let curve_width = curve_width(last_line.start_x, first_line.start_x);
+            let second_top_left = vec2f(last_line.start_x, start_y + self.line_height);
+            path.line_to(second_top_left + curve_height);
+            path.curve_to(second_top_left + curve_width, second_top_left);
+            let first_bottom_left = vec2f(first_line.start_x, second_top_left.y());
+            path.line_to(first_bottom_left - curve_width);
+            path.curve_to(first_bottom_left - curve_height, first_bottom_left);
         }
 
-        let corner = vec2f(first_line.start_x, start_y);
-        path.line_to(corner + radius_y);
-        path.curve_to(corner + radius_x, corner);
-        path.line_to(vec2f(first_line.end_x, start_y) - radius_x);
+        path.line_to(first_top_left + curve_height);
+        path.curve_to(first_top_left + top_curve_width, first_top_left);
+        path.line_to(first_top_right - top_curve_width);
 
         scene.push_path(path.build(ColorF::new(0.639, 0.839, 1.0, 1.0).to_u8()));
     }
