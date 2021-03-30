@@ -66,8 +66,8 @@ impl Renderer {
         );
 
         let path_stencil_descriptor = metal::TextureDescriptor::new();
-        path_stencil_descriptor.set_width(1024);
-        path_stencil_descriptor.set_height(768);
+        path_stencil_descriptor.set_width(64);
+        path_stencil_descriptor.set_height(64);
         path_stencil_descriptor.set_pixel_format(pixel_format);
         path_stencil_descriptor
             .set_usage(metal::MTLTextureUsage::RenderTarget | metal::MTLTextureUsage::ShaderRead);
@@ -250,7 +250,7 @@ impl Renderer {
             shaders::GPUIPathWindingVertexInputIndex_GPUIPathWindingVertexInputIndexAtlasSize
                 as u64,
             mem::size_of::<shaders::vector_float2>() as u64,
-            [self.path_stencils.atlas_size().to_float2()].as_ptr() as *const c_void,
+            [self.path_stencils.default_atlas_size().to_float2()].as_ptr() as *const c_void,
         );
 
         let buffer_contents = unsafe {

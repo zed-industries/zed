@@ -1,8 +1,8 @@
-use crate::geometry::vector::vec2i;
-use crate::geometry::vector::Vector2I;
-use anyhow::anyhow;
+use crate::geometry::vector::{vec2i, Vector2I};
 use etagere::BucketedAtlasAllocator;
+use foreign_types::ForeignType;
 use metal::{self, Device, TextureDescriptor};
+use objc::{msg_send, sel, sel_impl};
 
 pub struct AtlasAllocator {
     device: Device,
@@ -19,12 +19,12 @@ impl AtlasAllocator {
             atlasses: Vec::new(),
             free_atlasses: Vec::new(),
         };
-        let atlas = me.new_atlas();
+        let atlas = me.new_atlas(Vector2I::zero());
         me.atlasses.push(atlas);
         me
     }
 
-    pub fn atlas_size(&self) -> Vector2I {
+    pub fn default_atlas_size(&self) -> Vector2I {
         vec2i(
             self.texture_descriptor.width() as i32,
             self.texture_descriptor.height() as i32,
@@ -32,22 +32,13 @@ impl AtlasAllocator {
     }
 
     pub fn allocate(&mut self, requested_size: Vector2I) -> anyhow::Result<(usize, Vector2I)> {
-        let atlas_size = self.atlas_size();
-        if requested_size.x() > atlas_size.x() || requested_size.y() > atlas_size.y() {
-            return Err(anyhow!(
-                "requested size {:?} too large for atlas {:?}",
-                requested_size,
-                atlas_size
-            ));
-        }
-
         let origin = self
             .atlasses
             .last_mut()
             .unwrap()
             .allocate(requested_size)
             .unwrap_or_else(|| {
-                let mut atlas = self.new_atlas();
+                let mut atlas = self.new_atlas(requested_size);
                 let origin = atlas.allocate(requested_size).unwrap();
                 self.atlasses.push(atlas);
                 origin
@@ -67,13 +58,29 @@ impl AtlasAllocator {
         self.atlasses.get(atlas_id).map(|a| a.texture.as_ref())
     }
 
-    fn new_atlas(&mut self) -> Atlas {
-        self.free_atlasses.pop().unwrap_or_else(|| {
-            Atlas::new(
-                self.atlas_size(),
-                self.device.new_texture(&self.texture_descriptor),
-            )
-        })
+    fn new_atlas(&mut self, required_size: Vector2I) -> Atlas {
+        if let Some(i) = self.free_atlasses.iter().rposition(|atlas| {
+            atlas.size().x() >= required_size.x() && atlas.size().y() >= required_size.y()
+        }) {
+            self.free_atlasses.remove(i)
+        } else {
+            let size = self.default_atlas_size().max(required_size);
+            let texture = if size.x() as u64 > self.texture_descriptor.width()
+                || size.y() as u64 > self.texture_descriptor.height()
+            {
+                let descriptor = unsafe {
+                    let descriptor_ptr: *mut metal::MTLTextureDescriptor =
+                        msg_send![self.texture_descriptor, copy];
+                    metal::TextureDescriptor::from_ptr(descriptor_ptr)
+                };
+                descriptor.set_width(size.x() as u64);
+                descriptor.set_height(size.y() as u64);
+                self.device.new_texture(&descriptor)
+            } else {
+                self.device.new_texture(&self.texture_descriptor)
+            };
+            Atlas::new(size, texture)
+        }
     }
 }
 
@@ -88,6 +95,11 @@ impl Atlas {
             allocator: BucketedAtlasAllocator::new(etagere::Size::new(size.x(), size.y())),
             texture,
         }
+    }
+
+    fn size(&self) -> Vector2I {
+        let size = self.allocator.size();
+        vec2i(size.width, size.height)
     }
 
     fn allocate(&mut self, size: Vector2I) -> Option<Vector2I> {
