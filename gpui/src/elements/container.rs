@@ -11,7 +11,6 @@ use crate::{
 pub struct Container {
     margin: Margin,
     padding: Padding,
-    overdraw: Overdraw,
     background_color: Option<ColorU>,
     border: Border,
     corner_radius: f32,
@@ -24,7 +23,6 @@ impl Container {
         Self {
             margin: Margin::default(),
             padding: Padding::default(),
-            overdraw: Overdraw::default(),
             background_color: None,
             border: Border::default(),
             corner_radius: 0.0,
@@ -65,11 +63,6 @@ impl Container {
 
     pub fn with_border(mut self, border: Border) -> Self {
         self.border = border;
-        self
-    }
-
-    pub fn with_overdraw_bottom(mut self, overdraw: f32) -> Self {
-        self.overdraw.bottom = overdraw;
         self
     }
 
@@ -201,14 +194,6 @@ pub struct Margin {
 
 #[derive(Default)]
 pub struct Padding {
-    top: f32,
-    left: f32,
-    bottom: f32,
-    right: f32,
-}
-
-#[derive(Default)]
-pub struct Overdraw {
     top: f32,
     left: f32,
     bottom: f32,
