@@ -164,14 +164,16 @@ impl Renderer {
                     },
                 });
 
-                if current_atlas_id.map_or(false, |current_atlas_id| atlas_id != current_atlas_id) {
-                    self.render_path_stencils_for_atlas(
-                        offset,
-                        &vertices,
-                        atlas_id,
-                        command_buffer,
-                    );
-                    vertices.clear();
+                if let Some(current_atlas_id) = current_atlas_id {
+                    if atlas_id != current_atlas_id {
+                        self.render_path_stencils_for_atlas(
+                            offset,
+                            &vertices,
+                            current_atlas_id,
+                            command_buffer,
+                        );
+                        vertices.clear();
+                    }
                 }
 
                 current_atlas_id = Some(atlas_id);
