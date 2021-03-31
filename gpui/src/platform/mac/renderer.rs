@@ -310,10 +310,11 @@ impl Renderer {
         drawable_size: Vector2F,
         command_encoder: &metal::RenderCommandEncoderRef,
     ) {
-        let clip_bounds = layer.clip_bounds().unwrap_or(RectF::new(
+        let clip_bounds = (layer.clip_bounds().unwrap_or(RectF::new(
             vec2f(0., 0.),
             drawable_size / scene.scale_factor(),
-        )) * scene.scale_factor();
+        )) * scene.scale_factor())
+        .round();
         command_encoder.set_scissor_rect(metal::MTLScissorRect {
             x: clip_bounds.origin_x() as NSUInteger,
             y: clip_bounds.origin_y() as NSUInteger,
