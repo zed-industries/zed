@@ -1076,6 +1076,7 @@ impl BufferView {
     }
 
     fn blink_cursors(&mut self, epoch: usize, ctx: &mut ViewContext<Self>) {
+        return;
         if epoch == self.blink_epoch && self.focused && !self.blinking_paused {
             self.cursors_visible = !self.cursors_visible;
             ctx.notify();

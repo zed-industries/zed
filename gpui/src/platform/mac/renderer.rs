@@ -3,7 +3,7 @@ use crate::{
     color::ColorU,
     geometry::{
         rect::RectF,
-        vector::{vec2f, vec2i, Vector2F, Vector2I},
+        vector::{vec2f, vec2i, Vector2F},
     },
     platform,
     scene::Layer,
@@ -13,7 +13,7 @@ use anyhow::{anyhow, Result};
 use cocoa::foundation::NSUInteger;
 use metal::{MTLPixelFormat, MTLResourceOptions, NSRange};
 use shaders::{ToFloat2 as _, ToUchar4 as _};
-use std::{collections::HashMap, ffi::c_void, mem, sync::Arc};
+use std::{collections::HashMap, ffi::c_void, iter::Peekable, mem, sync::Arc};
 
 const SHADERS_METALLIB: &'static [u8] =
     include_bytes!(concat!(env!("OUT_DIR"), "/shaders.metallib"));
@@ -34,7 +34,7 @@ pub struct Renderer {
 struct PathSprite {
     layer_id: usize,
     atlas_id: usize,
-    sprite: shaders::GPUISprite,
+    shader_data: shaders::GPUISprite,
 }
 
 impl Renderer {
@@ -152,7 +152,7 @@ impl Renderer {
                 stencils.push(PathSprite {
                     layer_id,
                     atlas_id,
-                    sprite: shaders::GPUISprite {
+                    shader_data: shaders::GPUISprite {
                         origin: origin.floor().to_float2(),
                         size: size.to_float2(),
                         atlas_origin: atlas_origin.to_float2(),
@@ -286,15 +286,15 @@ impl Renderer {
             zfar: 1.0,
         });
 
+        let mut path_sprites = path_sprites.into_iter().peekable();
+
         for (layer_id, layer) in scene.layers().iter().enumerate() {
             self.clip(scene, layer, drawable_size, command_encoder);
             self.render_shadows(scene, layer, offset, drawable_size, command_encoder);
             self.render_quads(scene, layer, offset, drawable_size, command_encoder);
-            // TODO: Pass sprites relevant to this layer in a more efficient manner.
             self.render_path_sprites(
-                scene,
-                layer,
-                path_sprites.iter().filter(|s| s.layer_id == layer_id),
+                layer_id,
+                &mut path_sprites,
                 offset,
                 drawable_size,
                 command_encoder,
@@ -573,26 +573,12 @@ impl Renderer {
 
     fn render_path_sprites<'a>(
         &mut self,
-        scene: &Scene,
-        layer: &Layer,
-        sprites: impl Iterator<Item = &'a PathSprite>,
+        layer_id: usize,
+        sprites: &mut Peekable<impl Iterator<Item = PathSprite>>,
         offset: &mut usize,
         drawable_size: Vector2F,
         command_encoder: &metal::RenderCommandEncoderRef,
     ) {
-        let mut sprites = sprites.peekable();
-        if sprites.peek().is_none() {
-            return;
-        }
-
-        let mut sprites_by_atlas = HashMap::new();
-        for sprite in sprites {
-            sprites_by_atlas
-                .entry(sprite.atlas_id)
-                .or_insert_with(Vec::new)
-                .push(sprite.sprite);
-        }
-
         command_encoder.set_render_pipeline_state(&self.sprite_pipeline_state);
         command_encoder.set_vertex_buffer(
             shaders::GPUISpriteVertexInputIndex_GPUISpriteVertexInputIndexVertices as u64,
@@ -605,51 +591,94 @@ impl Renderer {
             [drawable_size.to_float2()].as_ptr() as *const c_void,
         );
 
-        for (atlas_id, sprites) in sprites_by_atlas {
-            align_offset(offset);
-            let next_offset = *offset + sprites.len() * mem::size_of::<shaders::GPUISprite>();
-            assert!(
-                next_offset <= INSTANCE_BUFFER_SIZE,
-                "instance buffer exhausted"
-            );
+        let mut atlas_id = None;
+        let mut atlas_sprite_count = 0;
+        align_offset(offset);
 
-            command_encoder.set_vertex_buffer(
-                shaders::GPUISpriteVertexInputIndex_GPUISpriteVertexInputIndexSprites as u64,
-                Some(&self.instances),
-                *offset as u64,
-            );
+        while let Some(sprite) = sprites.peek() {
+            if sprite.layer_id != layer_id {
+                break;
+            }
 
-            let texture = self.path_atlases.texture(atlas_id).unwrap();
-            command_encoder.set_vertex_bytes(
-                shaders::GPUISpriteVertexInputIndex_GPUISpriteVertexInputIndexAtlasSize as u64,
-                mem::size_of::<shaders::vector_float2>() as u64,
-                [vec2i(texture.width() as i32, texture.height() as i32).to_float2()].as_ptr()
-                    as *const c_void,
-            );
-            command_encoder.set_fragment_texture(
-                shaders::GPUISpriteFragmentInputIndex_GPUISpriteFragmentInputIndexAtlas as u64,
-                Some(texture),
-            );
+            let sprite = sprites.next().unwrap();
+            if let Some(atlas_id) = atlas_id.as_mut() {
+                if sprite.atlas_id != *atlas_id {
+                    self.render_path_sprites_for_atlas(
+                        offset,
+                        *atlas_id,
+                        atlas_sprite_count,
+                        command_encoder,
+                    );
+
+                    *atlas_id = sprite.atlas_id;
+                    atlas_sprite_count = 0;
+                    align_offset(offset);
+                }
+            } else {
+                atlas_id = Some(sprite.atlas_id);
+            }
 
             unsafe {
                 let buffer_contents = (self.instances.contents() as *mut u8)
                     .offset(*offset as isize)
                     as *mut shaders::GPUISprite;
-                std::ptr::copy_nonoverlapping(sprites.as_ptr(), buffer_contents, sprites.len());
+                *buffer_contents.offset(atlas_sprite_count as isize) = sprite.shader_data;
             }
-            self.instances.did_modify_range(NSRange {
-                location: *offset as u64,
-                length: (next_offset - *offset) as u64,
-            });
-            *offset = next_offset;
 
-            command_encoder.draw_primitives_instanced(
-                metal::MTLPrimitiveType::Triangle,
-                0,
-                6,
-                sprites.len() as u64,
+            atlas_sprite_count += 1;
+        }
+
+        if let Some(atlas_id) = atlas_id {
+            self.render_path_sprites_for_atlas(
+                offset,
+                atlas_id,
+                atlas_sprite_count,
+                command_encoder,
             );
         }
+    }
+
+    fn render_path_sprites_for_atlas<'a>(
+        &mut self,
+        offset: &mut usize,
+        atlas_id: usize,
+        sprite_count: usize,
+        command_encoder: &metal::RenderCommandEncoderRef,
+    ) {
+        let next_offset = *offset + sprite_count * mem::size_of::<shaders::GPUISprite>();
+        assert!(
+            next_offset <= INSTANCE_BUFFER_SIZE,
+            "instance buffer exhausted"
+        );
+        command_encoder.set_vertex_buffer(
+            shaders::GPUISpriteVertexInputIndex_GPUISpriteVertexInputIndexSprites as u64,
+            Some(&self.instances),
+            *offset as u64,
+        );
+        let texture = self.path_atlases.texture(atlas_id).unwrap();
+        command_encoder.set_fragment_texture(
+            shaders::GPUISpriteFragmentInputIndex_GPUISpriteFragmentInputIndexAtlas as u64,
+            Some(texture),
+        );
+        command_encoder.set_vertex_bytes(
+            shaders::GPUISpriteVertexInputIndex_GPUISpriteVertexInputIndexAtlasSize as u64,
+            mem::size_of::<shaders::vector_float2>() as u64,
+            [vec2i(texture.width() as i32, texture.height() as i32).to_float2()].as_ptr()
+                as *const c_void,
+        );
+
+        self.instances.did_modify_range(NSRange {
+            location: *offset as u64,
+            length: (next_offset - *offset) as u64,
+        });
+        *offset = next_offset;
+
+        command_encoder.draw_primitives_instanced(
+            metal::MTLPrimitiveType::Triangle,
+            0,
+            6,
+            sprite_count as u64,
+        );
     }
 }
 
