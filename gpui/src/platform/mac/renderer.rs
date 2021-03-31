@@ -91,7 +91,7 @@ impl Renderer {
             "sprite_fragment",
             pixel_format,
         )?;
-        let path_stencil_pipeline_state = build_stencil_pipeline_state(
+        let path_stencil_pipeline_state = build_path_atlas_pipeline_state(
             &device,
             &library,
             "path_winding",
@@ -129,6 +129,10 @@ impl Renderer {
             command_buffer,
             output,
         );
+        self.instances.did_modify_range(NSRange {
+            location: 0,
+            length: offset as NSUInteger,
+        });
     }
 
     fn render_path_stencils(
@@ -243,18 +247,13 @@ impl Renderer {
             }
         }
 
-        self.instances.did_modify_range(NSRange {
-            location: *offset as u64,
-            length: (next_offset - *offset) as u64,
-        });
-        *offset = next_offset;
-
         winding_command_encoder.draw_primitives(
             metal::MTLPrimitiveType::Triangle,
             0,
             vertices.len() as u64,
         );
         winding_command_encoder.end_encoding();
+        *offset = next_offset;
     }
 
     fn render_layers(
@@ -381,18 +380,13 @@ impl Renderer {
             }
         }
 
-        self.instances.did_modify_range(NSRange {
-            location: *offset as u64,
-            length: (next_offset - *offset) as u64,
-        });
-        *offset = next_offset;
-
         command_encoder.draw_primitives_instanced(
             metal::MTLPrimitiveType::Triangle,
             0,
             6,
             layer.shadows().len() as u64,
         );
+        *offset = next_offset;
     }
 
     fn render_quads(
@@ -463,18 +457,13 @@ impl Renderer {
             }
         }
 
-        self.instances.did_modify_range(NSRange {
-            location: *offset as u64,
-            length: (next_offset - *offset) as u64,
-        });
-        *offset = next_offset;
-
         command_encoder.draw_primitives_instanced(
             metal::MTLPrimitiveType::Triangle,
             0,
             6,
             layer.quads().len() as u64,
         );
+        *offset = next_offset;
     }
 
     fn render_glyph_sprites(
@@ -556,11 +545,6 @@ impl Renderer {
                     as *mut shaders::GPUISprite;
                 std::ptr::copy_nonoverlapping(sprites.as_ptr(), buffer_contents, sprites.len());
             }
-            self.instances.did_modify_range(NSRange {
-                location: *offset as u64,
-                length: (next_offset - *offset) as u64,
-            });
-            *offset = next_offset;
 
             command_encoder.draw_primitives_instanced(
                 metal::MTLPrimitiveType::Triangle,
@@ -568,6 +552,7 @@ impl Renderer {
                 6,
                 sprites.len() as u64,
             );
+            *offset = next_offset;
         }
     }
 
@@ -667,18 +652,13 @@ impl Renderer {
                 as *const c_void,
         );
 
-        self.instances.did_modify_range(NSRange {
-            location: *offset as u64,
-            length: (next_offset - *offset) as u64,
-        });
-        *offset = next_offset;
-
         command_encoder.draw_primitives_instanced(
             metal::MTLPrimitiveType::Triangle,
             0,
             6,
             sprite_count as u64,
         );
+        *offset = next_offset;
     }
 }
 
@@ -738,7 +718,7 @@ fn build_pipeline_state(
         .map_err(|message| anyhow!("could not create render pipeline state: {}", message))
 }
 
-fn build_stencil_pipeline_state(
+fn build_path_atlas_pipeline_state(
     device: &metal::DeviceRef,
     library: &metal::LibraryRef,
     label: &str,
@@ -771,32 +751,6 @@ fn build_stencil_pipeline_state(
         .new_render_pipeline_state(&descriptor)
         .map_err(|message| anyhow!("could not create render pipeline state: {}", message))
 }
-
-// fn build_stencil_pipeline_state(
-//     device: &metal::DeviceRef,
-//     library: &metal::LibraryRef,
-//     label: &str,
-//     vertex_fn_name: &str,
-//     fragment_fn_name: &str,
-//     pixel_format: metal::MTLPixelFormat,
-// ) -> Result<metal::RenderPipelineState> {
-//     let vertex_fn = library
-//         .get_function(vertex_fn_name, None)
-//         .map_err(|message| anyhow!("error locating vertex function: {}", message))?;
-//     let fragment_fn = library
-//         .get_function(fragment_fn_name, None)
-//         .map_err(|message| anyhow!("error locating fragment function: {}", message))?;
-
-//     let descriptor = metal::RenderPipelineDescriptor::new();
-//     descriptor.set_label(label);
-//     descriptor.set_vertex_function(Some(vertex_fn.as_ref()));
-//     descriptor.set_fragment_function(Some(fragment_fn.as_ref()));
-//     descriptor.set_stencil_attachment_pixel_format(pixel_format);
-
-//     device
-//         .new_render_pipeline_state(&descriptor)
-//         .map_err(|message| anyhow!("could not create render pipeline state: {}", message))
-// }
 
 mod shaders {
     #![allow(non_upper_case_globals)]
