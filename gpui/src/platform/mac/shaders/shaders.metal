@@ -204,10 +204,7 @@ fragment float4 sprite_fragment(
     float4 sample = atlas.sample(atlas_sampler, input.atlas_position);
     float mask;
     if (input.compute_winding) {
-        mask = fmod(sample.r * MAX_WINDINGS, 2.);
-        if (mask > 1) {
-            mask = 2. - mask;
-        }
+        mask = 1. - abs(1. - fmod(sample.r * MAX_WINDINGS, 2.));
     } else {
         mask = sample.a;
     }
