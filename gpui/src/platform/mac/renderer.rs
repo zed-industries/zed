@@ -13,7 +13,7 @@ use anyhow::{anyhow, Result};
 use cocoa::foundation::NSUInteger;
 use metal::{MTLPixelFormat, MTLResourceOptions, NSRange};
 use shaders::{ToFloat2 as _, ToUchar4 as _};
-use std::{collections::HashMap, ffi::c_void, iter::Peekable, mem, sync::Arc};
+use std::{collections::HashMap, ffi::c_void, iter::Peekable, mem, sync::Arc, vec};
 
 const SHADERS_METALLIB: &'static [u8] =
     include_bytes!(concat!(env!("OUT_DIR"), "/shaders.metallib"));
@@ -574,7 +574,7 @@ impl Renderer {
     fn render_path_sprites<'a>(
         &mut self,
         layer_id: usize,
-        sprites: &mut Peekable<impl Iterator<Item = PathSprite>>,
+        sprites: &mut Peekable<vec::IntoIter<PathSprite>>,
         offset: &mut usize,
         drawable_size: Vector2F,
         command_encoder: &metal::RenderCommandEncoderRef,
