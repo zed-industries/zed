@@ -173,7 +173,7 @@ impl Pane {
         ctx.emit(Event::Split(direction));
     }
 
-    fn render_tabs<'a>(&self, app: &AppContext) -> ElementBox {
+    fn render_tabs(&self, app: &AppContext) -> ElementBox {
         let settings = smol::block_on(self.settings.read());
         let border_color = ColorU::from_u32(0xdbdbdcff);
 

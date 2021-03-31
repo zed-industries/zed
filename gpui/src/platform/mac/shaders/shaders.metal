@@ -81,11 +81,17 @@ fragment float4 quad_fragment(
     float2 rounded_edge_to_point = abs(center_to_point) - half_size + input.corner_radius;
     float distance = length(max(0., rounded_edge_to_point)) + min(0., max(rounded_edge_to_point.x, rounded_edge_to_point.y)) - input.corner_radius;
 
-    float border_width = 0.;
-    if (edge_to_point.x > edge_to_point.y) {
-        border_width = center_to_point.x <= 0. ? input.border_left : input.border_right;
+    float vertical_border = center_to_point.x <= 0. ? input.border_left : input.border_right;
+    float horizontal_border = center_to_point.y <= 0. ? input.border_top : input.border_bottom;
+    float2 inset_size = half_size - input.corner_radius - float2(vertical_border, horizontal_border);
+    float2 point_to_inset_corner = abs(center_to_point) - inset_size;
+    float border_width;
+    if (point_to_inset_corner.x < 0. && point_to_inset_corner.y < 0.) {
+        border_width = 0.;
+    } else if (point_to_inset_corner.y > point_to_inset_corner.x) {
+        border_width = horizontal_border;
     } else {
-        border_width = center_to_point.y <= 0. ? input.border_top : input.border_bottom;
+        border_width = vertical_border;
     }
 
     float4 color;
