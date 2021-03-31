@@ -434,8 +434,8 @@ impl Renderer {
             let bounds = quad.bounds * scene.scale_factor();
             let border_width = quad.border.width * scene.scale_factor();
             let shader_quad = shaders::GPUIQuad {
-                origin: bounds.origin().to_float2(),
-                size: bounds.size().to_float2(),
+                origin: bounds.origin().round().to_float2(),
+                size: bounds.size().round().to_float2(),
                 background_color: quad
                     .background
                     .unwrap_or(ColorU::transparent_black())
