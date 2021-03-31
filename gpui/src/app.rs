@@ -73,7 +73,7 @@ impl App {
         asset_source: A,
         f: G,
     ) -> T {
-        let platform = platform::current::app(); // TODO: Make a test platform app
+        let platform = platform::test::app();
         let foreground = Rc::new(executor::Foreground::test());
         let app = Self(Rc::new(RefCell::new(MutableAppContext::new(
             foreground.clone(),
