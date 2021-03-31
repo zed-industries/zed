@@ -102,7 +102,7 @@ impl Renderer {
         Ok(Self {
             device,
             sprite_cache,
-            path_atlases: path_atlases,
+            path_atlases,
             quad_pipeline_state,
             shadow_pipeline_state,
             sprite_pipeline_state,
@@ -150,8 +150,7 @@ impl Renderer {
                 // Push a PathStencil struct for use later when sampling from the atlas as we draw the content of the layers
                 let origin = path.bounds.origin() * scene.scale_factor();
                 let size = (path.bounds.size() * scene.scale_factor()).ceil();
-                let (atlas_id, atlas_origin) =
-                    self.path_atlases.allocate(size.ceil().to_i32()).unwrap();
+                let (atlas_id, atlas_origin) = self.path_atlases.allocate(size.to_i32()).unwrap();
                 let atlas_origin = atlas_origin.to_f32();
                 stencils.push(PathSprite {
                     layer_id,
@@ -556,7 +555,7 @@ impl Renderer {
         }
     }
 
-    fn render_path_sprites<'a>(
+    fn render_path_sprites(
         &mut self,
         layer_id: usize,
         sprites: &mut Peekable<vec::IntoIter<PathSprite>>,
@@ -623,7 +622,7 @@ impl Renderer {
         }
     }
 
-    fn render_path_sprites_for_atlas<'a>(
+    fn render_path_sprites_for_atlas(
         &mut self,
         offset: &mut usize,
         atlas_id: usize,
