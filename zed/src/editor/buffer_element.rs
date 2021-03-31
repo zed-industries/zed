@@ -133,7 +133,7 @@ impl BufferElement {
     fn scroll(
         &self,
         position: Vector2F,
-        delta: Vector2F,
+        mut delta: Vector2F,
         precise: bool,
         layout: &mut LayoutState,
         paint: &mut PaintState,
@@ -143,15 +143,14 @@ impl BufferElement {
             return false;
         }
 
-        if !precise {
-            todo!("still need to handle non-precise scroll events from a mouse wheel");
-        }
-
         let view = self.view.as_ref(ctx.app);
         let font_cache = &ctx.font_cache;
         let layout_cache = &ctx.text_layout_cache;
         let max_glyph_width = view.em_width(font_cache);
         let line_height = view.line_height(font_cache);
+        if !precise {
+            delta *= vec2f(max_glyph_width, line_height);
+        }
 
         let x = (view.scroll_position().x() * max_glyph_width - delta.x()) / max_glyph_width;
         let y = (view.scroll_position().y() * line_height - delta.y()) / line_height;
