@@ -187,19 +187,20 @@ impl Pane {
             border.right = ix == last_item_ix;
             border.bottom = ix != self.active_item;
 
+            let padding = 6.;
             let mut container = Container::new(
                 Align::new(
                     Label::new(title, settings.ui_font_family, settings.ui_font_size).boxed(),
                 )
                 .boxed(),
             )
-            .with_uniform_padding(6.0)
+            .with_uniform_padding(padding)
             .with_border(border);
 
             if ix == self.active_item {
                 container = container
                     .with_background_color(ColorU::white())
-                    .with_overdraw_bottom(1.5);
+                    .with_padding_bottom(padding + border.width);
             } else {
                 container = container.with_background_color(ColorU::from_u32(0xeaeaebff));
             }

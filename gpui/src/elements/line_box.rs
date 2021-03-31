@@ -38,7 +38,11 @@ impl Element for LineBox {
             .select_font(self.family_id, &self.font_properties)
         {
             Ok(font_id) => {
-                let line_height = ctx.font_cache.bounding_box(font_id, self.font_size).y();
+                let line_height = ctx
+                    .font_cache
+                    .bounding_box(font_id, self.font_size)
+                    .y()
+                    .ceil();
                 let child_max = vec2f(
                     constraint.max.x(),
                     ctx.font_cache.ascent(font_id, self.font_size)

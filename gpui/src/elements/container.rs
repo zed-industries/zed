@@ -53,6 +53,11 @@ impl Container {
         self
     }
 
+    pub fn with_padding_bottom(mut self, padding: f32) -> Self {
+        self.padding.bottom = padding;
+        self
+    }
+
     pub fn with_background_color(mut self, color: impl Into<ColorU>) -> Self {
         self.background_color = Some(color.into());
         self
