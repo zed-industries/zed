@@ -56,9 +56,9 @@ typedef struct {
 } GPUISprite;
 
 typedef enum {
-    GPUIPathWindingVertexInputIndexVertices = 0,
-    GPUIPathWindingVertexInputIndexAtlasSize = 1,
-} GPUIPathWindingVertexInputIndex;
+    GPUIPathAtlasVertexInputIndexVertices = 0,
+    GPUIPathAtlasVertexInputIndexAtlasSize = 1,
+} GPUIPathAtlasVertexInputIndex;
 
 typedef struct {
     vector_float2 xy_position;

@@ -20,13 +20,12 @@ const SHADERS_METALLIB: &'static [u8] =
 const INSTANCE_BUFFER_SIZE: usize = 1024 * 1024; // This is an arbitrary decision. There's probably a more optimal value.
 
 pub struct Renderer {
-    device: metal::Device,
     sprite_cache: SpriteCache,
     path_atlases: AtlasAllocator,
     quad_pipeline_state: metal::RenderPipelineState,
     shadow_pipeline_state: metal::RenderPipelineState,
     sprite_pipeline_state: metal::RenderPipelineState,
-    path_stencil_pipeline_state: metal::RenderPipelineState,
+    path_atlas_pipeline_state: metal::RenderPipelineState,
     unit_vertices: metal::Buffer,
     instances: metal::Buffer,
 }
@@ -91,22 +90,21 @@ impl Renderer {
             "sprite_fragment",
             pixel_format,
         )?;
-        let path_stencil_pipeline_state = build_path_atlas_pipeline_state(
+        let path_atlas_pipeline_state = build_path_atlas_pipeline_state(
             &device,
             &library,
-            "path_winding",
-            "path_winding_vertex",
-            "path_winding_fragment",
+            "path_atlas",
+            "path_atlas_vertex",
+            "path_atlas_fragment",
             pixel_format,
         )?;
         Ok(Self {
-            device,
             sprite_cache,
             path_atlases,
             quad_pipeline_state,
             shadow_pipeline_state,
             sprite_pipeline_state,
-            path_stencil_pipeline_state,
+            path_atlas_pipeline_state,
             unit_vertices,
             instances,
         })
@@ -120,10 +118,10 @@ impl Renderer {
         output: &metal::TextureRef,
     ) {
         let mut offset = 0;
-        let stencils = self.render_path_stencils(scene, &mut offset, command_buffer);
+        let path_sprites = self.render_path_atlases(scene, &mut offset, command_buffer);
         self.render_layers(
             scene,
-            stencils,
+            path_sprites,
             &mut offset,
             drawable_size,
             command_buffer,
@@ -135,24 +133,23 @@ impl Renderer {
         });
     }
 
-    fn render_path_stencils(
+    fn render_path_atlases(
         &mut self,
         scene: &Scene,
         offset: &mut usize,
         command_buffer: &metal::CommandBufferRef,
     ) -> Vec<PathSprite> {
         self.path_atlases.clear();
-        let mut stencils = Vec::new();
+        let mut sprites = Vec::new();
         let mut vertices = Vec::<shaders::GPUIPathVertex>::new();
         let mut current_atlas_id = None;
         for (layer_id, layer) in scene.layers().iter().enumerate() {
             for path in layer.paths() {
-                // Push a PathStencil struct for use later when sampling from the atlas as we draw the content of the layers
                 let origin = path.bounds.origin() * scene.scale_factor();
                 let size = (path.bounds.size() * scene.scale_factor()).ceil();
                 let (atlas_id, atlas_origin) = self.path_atlases.allocate(size.to_i32()).unwrap();
                 let atlas_origin = atlas_origin.to_f32();
-                stencils.push(PathSprite {
+                sprites.push(PathSprite {
                     layer_id,
                     atlas_id,
                     shader_data: shaders::GPUISprite {
@@ -166,7 +163,7 @@ impl Renderer {
 
                 if let Some(current_atlas_id) = current_atlas_id {
                     if atlas_id != current_atlas_id {
-                        self.render_path_stencils_for_atlas(
+                        self.render_paths_to_atlas(
                             offset,
                             &vertices,
                             current_atlas_id,
@@ -178,7 +175,6 @@ impl Renderer {
 
                 current_atlas_id = Some(atlas_id);
 
-                // Populate the vertices by translating them to their appropriate location in the atlas.
                 for vertex in &path.vertices {
                     let xy_position =
                         (vertex.xy_position - path.bounds.origin()) * scene.scale_factor();
@@ -191,13 +187,13 @@ impl Renderer {
         }
 
         if let Some(atlas_id) = current_atlas_id {
-            self.render_path_stencils_for_atlas(offset, &vertices, atlas_id, command_buffer);
+            self.render_paths_to_atlas(offset, &vertices, atlas_id, command_buffer);
         }
 
-        stencils
+        sprites
     }
 
-    fn render_path_stencils_for_atlas(
+    fn render_paths_to_atlas(
         &mut self,
         offset: &mut usize,
         vertices: &[shaders::GPUIPathVertex],
@@ -222,17 +218,16 @@ impl Renderer {
         color_attachment.set_store_action(metal::MTLStoreAction::Store);
         color_attachment.set_clear_color(metal::MTLClearColor::new(0., 0., 0., 1.));
 
-        let winding_command_encoder =
+        let path_atlas_command_encoder =
             command_buffer.new_render_command_encoder(render_pass_descriptor);
-        winding_command_encoder.set_render_pipeline_state(&self.path_stencil_pipeline_state);
-        winding_command_encoder.set_vertex_buffer(
-            shaders::GPUIPathWindingVertexInputIndex_GPUIPathWindingVertexInputIndexVertices as u64,
+        path_atlas_command_encoder.set_render_pipeline_state(&self.path_atlas_pipeline_state);
+        path_atlas_command_encoder.set_vertex_buffer(
+            shaders::GPUIPathAtlasVertexInputIndex_GPUIPathAtlasVertexInputIndexVertices as u64,
             Some(&self.instances),
             *offset as u64,
         );
-        winding_command_encoder.set_vertex_bytes(
-            shaders::GPUIPathWindingVertexInputIndex_GPUIPathWindingVertexInputIndexAtlasSize
-                as u64,
+        path_atlas_command_encoder.set_vertex_bytes(
+            shaders::GPUIPathAtlasVertexInputIndex_GPUIPathAtlasVertexInputIndexAtlasSize as u64,
             mem::size_of::<shaders::vector_float2>() as u64,
             [vec2i(texture.width() as i32, texture.height() as i32).to_float2()].as_ptr()
                 as *const c_void,
@@ -248,12 +243,12 @@ impl Renderer {
             }
         }
 
-        winding_command_encoder.draw_primitives(
+        path_atlas_command_encoder.draw_primitives(
             metal::MTLPrimitiveType::Triangle,
             0,
             vertices.len() as u64,
         );
-        winding_command_encoder.end_encoding();
+        path_atlas_command_encoder.end_encoding();
         *offset = next_offset;
     }
 
@@ -668,14 +663,14 @@ fn build_path_atlas_allocator(
     pixel_format: MTLPixelFormat,
     device: &metal::Device,
 ) -> AtlasAllocator {
-    let path_stencil_descriptor = metal::TextureDescriptor::new();
-    path_stencil_descriptor.set_width(2048);
-    path_stencil_descriptor.set_height(2048);
-    path_stencil_descriptor.set_pixel_format(pixel_format);
-    path_stencil_descriptor
+    let texture_descriptor = metal::TextureDescriptor::new();
+    texture_descriptor.set_width(2048);
+    texture_descriptor.set_height(2048);
+    texture_descriptor.set_pixel_format(pixel_format);
+    texture_descriptor
         .set_usage(metal::MTLTextureUsage::RenderTarget | metal::MTLTextureUsage::ShaderRead);
-    path_stencil_descriptor.set_storage_mode(metal::MTLStorageMode::Private);
-    let path_atlases = AtlasAllocator::new(device.clone(), path_stencil_descriptor);
+    texture_descriptor.set_storage_mode(metal::MTLStorageMode::Private);
+    let path_atlases = AtlasAllocator::new(device.clone(), texture_descriptor);
     path_atlases
 }
 

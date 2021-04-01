@@ -218,26 +218,26 @@ fragment float4 sprite_fragment(
     return color;
 }
 
-struct PathWindingFragmentInput {
+struct PathAtlasFragmentInput {
     float4 position [[position]];
     float2 st_position;
 };
 
-vertex PathWindingFragmentInput path_winding_vertex(
+vertex PathAtlasFragmentInput path_atlas_vertex(
     uint vertex_id [[vertex_id]],
-    constant GPUIPathVertex *vertices [[buffer(GPUIPathWindingVertexInputIndexVertices)]],
-    constant float2 *atlas_size [[buffer(GPUIPathWindingVertexInputIndexAtlasSize)]]
+    constant GPUIPathVertex *vertices [[buffer(GPUIPathAtlasVertexInputIndexVertices)]],
+    constant float2 *atlas_size [[buffer(GPUIPathAtlasVertexInputIndexAtlasSize)]]
 ) {
     GPUIPathVertex v = vertices[vertex_id];
     float4 device_position = to_device_position(v.xy_position, *atlas_size);
-    return PathWindingFragmentInput {
+    return PathAtlasFragmentInput {
         device_position,
         v.st_position,
     };
 }
 
-fragment float4 path_winding_fragment(
-    PathWindingFragmentInput input [[stage_in]]
+fragment float4 path_atlas_fragment(
+    PathAtlasFragmentInput input [[stage_in]]
 ) {
     float2 dx = dfdx(input.st_position);
     float2 dy = dfdy(input.st_position);
