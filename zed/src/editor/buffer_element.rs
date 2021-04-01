@@ -184,7 +184,8 @@ impl BufferElement {
                     ix as f32 * line_height - (scroll_top % line_height),
                 );
             line.paint(
-                RectF::new(line_origin, vec2f(line.width, line_height)),
+                line_origin,
+                RectF::new(vec2f(0., 0.), vec2f(line.width, line_height)),
                 &[(0..line.len, ColorU::black())],
                 ctx,
             );
@@ -280,11 +281,9 @@ impl BufferElement {
         // Draw glyphs
         for (ix, line) in layout.line_layouts.iter().enumerate() {
             let row = start_row + ix as u32;
-            let line_origin =
-                content_origin + vec2f(-scroll_left, row as f32 * line_height - scroll_top);
-
             line.paint(
-                RectF::new(line_origin, vec2f(line.width, line_height)),
+                content_origin + vec2f(-scroll_left, row as f32 * line_height - scroll_top),
+                RectF::new(vec2f(scroll_left, 0.), vec2f(bounds.width(), line_height)),
                 &[(0..line.len, ColorU::black())],
                 ctx,
             );

@@ -134,7 +134,12 @@ impl Element for Label {
         layout: &mut Self::LayoutState,
         ctx: &mut PaintContext,
     ) -> Self::PaintState {
-        layout.line.paint(bounds, layout.colors.as_slice(), ctx)
+        layout.line.paint(
+            bounds.origin(),
+            RectF::new(vec2f(0., 0.), bounds.size()),
+            layout.colors.as_slice(),
+            ctx,
+        )
     }
 
     fn dispatch_event(

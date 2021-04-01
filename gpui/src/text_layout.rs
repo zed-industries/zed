@@ -181,7 +181,13 @@ impl Line {
         }
     }
 
-    pub fn paint(&self, bounds: RectF, colors: &[(Range<usize>, ColorU)], ctx: &mut PaintContext) {
+    pub fn paint(
+        &self,
+        origin: Vector2F,
+        bounds: RectF,
+        colors: &[(Range<usize>, ColorU)],
+        ctx: &mut PaintContext,
+    ) {
         let mut colors = colors.iter().peekable();
         let mut color = ColorU::black();
 
@@ -190,7 +196,7 @@ impl Line {
             let descent = ctx.font_cache.descent(run.font_id, self.font_size);
             let max_glyph_width = bounding_box.x();
             for glyph in &run.glyphs {
-                let glyph_origin = bounds.origin() + glyph.position - vec2f(0.0, descent);
+                let glyph_origin = glyph.position - vec2f(0.0, descent);
                 if glyph_origin.x() + max_glyph_width < bounds.origin().x() {
                     continue;
                 }
@@ -211,7 +217,7 @@ impl Line {
                     font_id: run.font_id,
                     font_size: self.font_size,
                     id: glyph.id,
-                    origin: glyph_origin + vec2f(0., bounding_box.y() / 2.),
+                    origin: origin + glyph_origin + vec2f(0., bounding_box.y() / 2.),
                     color,
                 });
             }
