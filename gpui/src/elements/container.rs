@@ -168,7 +168,9 @@ impl Element for Container {
             corner_radius: self.corner_radius,
         });
 
-        let child_origin = quad_bounds.origin() + vec2f(self.padding.left, self.padding.top);
+        let child_origin = quad_bounds.origin()
+            + vec2f(self.padding.left, self.padding.top)
+            + vec2f(self.border.left_width(), self.border.top_width());
         self.child.paint(child_origin, ctx);
     }
 
