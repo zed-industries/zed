@@ -10,7 +10,7 @@ We will organize our efforts around the following major milestones. We'll create
 
 ### Minimal text editor
 
-[Tracking issue][https://github.com/zed-industries/zed/issues/2]
+[Tracking issue](https://github.com/zed-industries/zed/issues/2)
 
 Ship a minimal text editor to investors and other insiders. It should be extremely fast and stable, but all it can do is open, edit, and save text files, making it potentially useful for basic editing but not for real coding.
 
@@ -18,7 +18,7 @@ Establish basic infrastructure for building the app bundle and uploading an arti
 
 ### Minimal code editor for internal use
 
-[Tracking issue][https://github.com/zed-industries/zed/issues/6]
+[Tracking issue](https://github.com/zed-industries/zed/issues/6)
 
 Turn the minimal text editor into a minimal *code* editor. We define "minimal" as the features that the Zed team needs to use Zed to build Zed without net loss in developer productivity. This includes productivity-critical features such as:
 
