@@ -24,6 +24,7 @@ pub fn app() -> impl platform::App {
 pub fn runner() -> impl platform::Runner {
     Runner::new()
 }
+
 trait BoolExt {
     fn to_objc(self) -> BOOL;
 }

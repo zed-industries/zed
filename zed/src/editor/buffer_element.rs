@@ -8,7 +8,7 @@ use gpui::{
     },
     text_layout::{self, TextLayoutCache},
     AfterLayoutContext, AppContext, Border, Element, Event, EventContext, FontCache, LayoutContext,
-    MutableAppContext, PaintContext, Quad, Scene, SizeConstraint, ViewHandle,
+    PaintContext, Quad, Scene, SizeConstraint, ViewHandle,
 };
 use smallvec::SmallVec;
 use std::cmp::Ordering;

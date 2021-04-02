@@ -4,7 +4,6 @@ use super::{
 };
 use crate::{settings::Settings, watch, workspace};
 use anyhow::Result;
-use easy_parallel::Parallel;
 use gpui::{
     fonts::Properties as FontProperties, keymap::Binding, text_layout, App, AppContext, Element,
     ElementBox, Entity, FontCache, ModelHandle, View, ViewContext, WeakViewHandle,

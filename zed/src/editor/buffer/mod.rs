@@ -1650,10 +1650,6 @@ impl Fragment {
         self.text = self.insertion.text.slice(self.start_offset()..offset);
     }
 
-    fn as_str(&self) -> &str {
-        self.text.as_str()
-    }
-
     fn visible_len(&self) -> usize {
         if self.is_visible() {
             self.len()

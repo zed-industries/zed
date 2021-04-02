@@ -60,10 +60,8 @@ impl Worktree {
             tree.0.write().scanning = true;
 
             let tree = tree.clone();
-            let (tx, rx) = smol::channel::bounded(1);
-
             let task = ctx.background_executor().spawn(async move {
-                let _ = tx.send(tree.scan_dirs()?).await;
+                tree.scan_dirs()?;
                 Ok(())
             });
 

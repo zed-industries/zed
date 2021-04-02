@@ -221,10 +221,6 @@ impl Border {
         self
     }
 
-    fn all_sides(&self) -> bool {
-        self.top && self.left && self.bottom && self.right
-    }
-
     pub fn top_width(&self) -> f32 {
         if self.top {
             self.width

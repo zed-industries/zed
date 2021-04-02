@@ -7,9 +7,7 @@ use crate::{
     worktree::{Worktree, WorktreeHandle as _},
 };
 use anyhow::anyhow;
-use gpui::{
-    App, AppContext, Entity, Handle, ModelContext, ModelHandle, MutableAppContext, ViewContext,
-};
+use gpui::{AppContext, Entity, Handle, ModelContext, ModelHandle, MutableAppContext, ViewContext};
 use smol::prelude::*;
 use std::{
     collections::{HashMap, HashSet},
@@ -202,12 +200,12 @@ impl Entity for Workspace {
 
 #[cfg(test)]
 pub trait WorkspaceHandle {
-    fn file_entries(&self, app: &App) -> Vec<(usize, usize)>;
+    fn file_entries(&self, app: &gpui::App) -> Vec<(usize, usize)>;
 }
 
 #[cfg(test)]
 impl WorkspaceHandle for ModelHandle<Workspace> {
-    fn file_entries(&self, app: &App) -> Vec<(usize, usize)> {
+    fn file_entries(&self, app: &gpui::App) -> Vec<(usize, usize)> {
         self.read(&app, |w, app| {
             w.worktrees()
                 .iter()

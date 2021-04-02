@@ -1,11 +1,6 @@
 use rand::prelude::*;
 use std::cmp::Ordering;
 
-pub fn pre_inc(value: &mut usize) -> usize {
-    *value += 1;
-    *value
-}
-
 pub fn post_inc(value: &mut usize) -> usize {
     let prev = *value;
     *value += 1;

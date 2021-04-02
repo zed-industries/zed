@@ -126,7 +126,6 @@ struct WindowState {
     scene_to_render: Option<Scene>,
     renderer: Renderer,
     command_queue: metal::CommandQueue,
-    device: metal::Device,
     layer: id,
 }
 
@@ -189,7 +188,6 @@ impl Window {
                 scene_to_render: Default::default(),
                 renderer: Renderer::new(device.clone(), PIXEL_FORMAT, fonts)?,
                 command_queue: device.new_command_queue(),
-                device,
                 layer,
             })));
 
@@ -426,7 +424,6 @@ extern "C" fn display_layer(this: &Object, _: Sel, _: id) {
 
             let size = window_state.size();
             let scale_factor = window_state.scale_factor();
-            let device = window_state.device.clone();
 
             window_state.renderer.render(
                 &scene,

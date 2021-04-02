@@ -28,11 +28,6 @@ impl<T: Operation> OperationQueue<T> {
         OperationQueue(SumTree::new())
     }
 
-    #[cfg(test)]
-    pub fn is_empty(&self) -> bool {
-        self.0.is_empty()
-    }
-
     pub fn len(&self) -> usize {
         self.0.summary().len
     }
