@@ -8,6 +8,7 @@ version = "0.1.0"
 async-task = "4.0.3"
 ctor = "0.1"
 etagere = "0.2"
+log = "0.4"
 num_cpus = "1.13"
 ordered-float = "2.1.1"
 parking_lot = "0.11.1"
@@ -25,6 +26,7 @@ cc = "1.0.67"
 
 [dev-dependencies]
 png = "0.16"
+simplelog = "0.9"
 
 [target.'cfg(target_os = "macos")'.dependencies]
 anyhow = "1"

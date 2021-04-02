@@ -1,6 +1,8 @@
 mod app;
 pub use app::*;
 mod assets;
+#[cfg(test)]
+mod test;
 pub use assets::*;
 pub mod elements;
 pub mod font_cache;
