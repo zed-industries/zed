@@ -933,34 +933,18 @@ impl BufferView {
             start_row + (viewport_height / self.line_height(font_cache)).ceil() as usize,
         );
         let line_count = end_row - start_row + 1;
-        let cpus = num_cpus::get();
-        let chunk_size = (line_count + cpus - 1) / cpus;
 
-        let mut layouts = Vec::new();
-        layouts.resize_with(line_count, Default::default);
-
-        Parallel::<Result<()>>::new()
-            .each(
-                layouts.chunks_mut(chunk_size).enumerate(),
-                |(i, layouts)| {
-                    let mut line_number = String::new();
-                    let start = start_row + i * chunk_size;
-                    let line_numbers = display_map.buffer_rows(start as u32)?.take(layouts.len());
-                    for (j, buffer_row) in line_numbers.enumerate() {
-                        line_number.clear();
-                        write!(&mut line_number, "{}", buffer_row + 1).unwrap();
-                        layouts[j] = layout_cache.layout_str(
-                            &line_number,
-                            font_size,
-                            &[(0..line_number.len(), font_id)],
-                        );
-                    }
-                    Ok(())
-                },
-            )
-            .run()
-            .into_iter()
-            .collect::<Result<()>>()?;
+        let mut layouts = Vec::with_capacity(line_count);
+        let mut line_number = String::new();
+        for buffer_row in display_map.buffer_rows(start_row as u32)?.take(line_count) {
+            line_number.clear();
+            write!(&mut line_number, "{}", buffer_row + 1).unwrap();
+            layouts.push(layout_cache.layout_str(
+                &line_number,
+                font_size,
+                &[(0..line_number.len(), font_id)],
+            ));
+        }
 
         Ok(layouts)
     }
@@ -984,46 +968,27 @@ impl BufferView {
             font_cache.select_font(settings.buffer_font_family, &FontProperties::new())?;
         let font_size = settings.buffer_font_size;
 
-        let cpus = num_cpus::get();
-        let chunk_size = (rows.len() + cpus - 1) / cpus;
-
-        let mut layouts = Vec::new();
-        layouts.resize_with(rows.len(), Default::default);
-
-        Parallel::new()
-            .each(
-                layouts.chunks_mut(chunk_size as usize).enumerate(),
-                |(ix, chunk)| {
-                    let chunk_start = rows.start as usize + ix * chunk_size;
-                    let chunk_end = cmp::min(chunk_start + chunk_size, rows.end as usize);
-
-                    let mut row = chunk_start;
-                    let mut line = String::new();
-                    let mut line_len = 0;
-                    let chars = display_map
-                        .chars_at(DisplayPoint::new(chunk_start as u32, 0), app)
-                        .unwrap();
-                    for char in chars.chain(Some('\n')) {
-                        if char == '\n' {
-                            chunk[(row - chunk_start) as usize] = layout_cache.layout_str(
-                                &line,
-                                font_size,
-                                &[(0..line_len, font_id)],
-                            );
-                            line.clear();
-                            line_len = 0;
-                            row += 1;
-                            if row == chunk_end {
-                                break;
-                            }
-                        } else {
-                            line_len += 1;
-                            line.push(char);
-                        }
-                    }
-                },
-            )
-            .run();
+        let mut layouts = Vec::with_capacity(rows.len());
+        let mut line = String::new();
+        let mut line_len = 0;
+        let mut row = rows.start;
+        let chars = display_map
+            .chars_at(DisplayPoint::new(rows.start, 0), app)
+            .unwrap();
+        for char in chars.chain(Some('\n')) {
+            if char == '\n' {
+                layouts.push(layout_cache.layout_str(&line, font_size, &[(0..line_len, font_id)]));
+                line.clear();
+                line_len = 0;
+                row += 1;
+                if row == rows.end {
+                    break;
+                }
+            } else {
+                line_len += 1;
+                line.push(char);
+            }
+        }
 
         Ok(layouts)
     }
