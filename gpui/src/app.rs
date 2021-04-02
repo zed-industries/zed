@@ -1159,6 +1159,8 @@ impl MutableAppContext {
 
     pub fn finish_pending_tasks(&self) -> impl Future<Output = ()> {
         let mut pending_tasks = self.future_handlers.keys().cloned().collect::<HashSet<_>>();
+        pending_tasks.extend(self.stream_handlers.keys());
+
         let task_done = self.task_done.1.clone();
 
         async move {
@@ -3267,22 +3269,33 @@ mod tests {
             let (_, view) = app.add_window(|_| View);
 
             model.update(&mut app, |_, ctx| {
-                let _ = ctx.spawn(async {}, |_, _, _| {});
-                let _ = ctx.spawn(async {}, |_, _, _| {});
-                let _ =
-                    ctx.spawn_stream(smol::stream::iter(vec![1, 2, 3]), |_, _, _| {}, |_, _| {});
+                ctx.spawn(async {}, |_, _, _| {}).detach();
+                ctx.spawn(async {}, |_, _, _| {}).detach();
             });
 
             view.update(&mut app, |_, ctx| {
-                let _ = ctx.spawn(async {}, |_, _, _| {});
-                let _ = ctx.spawn(async {}, |_, _, _| {});
-                let _ =
-                    ctx.spawn_stream(smol::stream::iter(vec![1, 2, 3]), |_, _, _| {}, |_, _| {});
+                ctx.spawn(async {}, |_, _, _| {}).detach();
+                ctx.spawn(async {}, |_, _, _| {}).detach();
             });
 
             assert!(!app.0.borrow().future_handlers.is_empty());
             app.finish_pending_tasks().await;
             assert!(app.0.borrow().future_handlers.is_empty());
+            app.finish_pending_tasks().await; // Don't block if there are no tasks
+
+            model.update(&mut app, |_, ctx| {
+                ctx.spawn_stream(smol::stream::iter(vec![1, 2, 3]), |_, _, _| {}, |_, _| {})
+                    .detach();
+            });
+
+            view.update(&mut app, |_, ctx| {
+                ctx.spawn_stream(smol::stream::iter(vec![1, 2, 3]), |_, _, _| {}, |_, _| {})
+                    .detach();
+            });
+
+            assert!(!app.0.borrow().stream_handlers.is_empty());
+            app.finish_pending_tasks().await;
+            assert!(app.0.borrow().stream_handlers.is_empty());
             app.finish_pending_tasks().await; // Don't block if there are no tasks
         });
     }
