@@ -2,7 +2,7 @@ use crate::{
     app::{AppContext, MutableAppContext, WindowInvalidation},
     elements::Element,
     font_cache::FontCache,
-    platform::{self, Event},
+    platform::Event,
     text_layout::TextLayoutCache,
     AssetCache, ElementBox, Scene,
 };

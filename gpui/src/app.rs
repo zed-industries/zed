@@ -8,11 +8,12 @@ use crate::{
     AssetCache, AssetSource, FontCache, TextLayoutCache,
 };
 use anyhow::{anyhow, Result};
+use async_std::sync::Condvar;
 use keymap::MatchResult;
 use parking_lot::Mutex;
 use pathfinder_geometry::{rect::RectF, vector::vec2f};
 use platform::Event;
-use smol::{channel, prelude::*};
+use smol::prelude::*;
 use std::{
     any::{type_name, Any, TypeId},
     cell::RefCell,
@@ -313,7 +314,7 @@ pub struct MutableAppContext {
     background: Arc<executor::Background>,
     future_handlers: Rc<RefCell<HashMap<usize, FutureHandler>>>,
     stream_handlers: Rc<RefCell<HashMap<usize, StreamHandler>>>,
-    task_done: (channel::Sender<usize>, channel::Receiver<usize>),
+    task_done: Arc<Condvar>,
     pending_effects: VecDeque<Effect>,
     pending_flushes: usize,
     flushing_effects: bool,
@@ -350,7 +351,7 @@ impl MutableAppContext {
             background: Arc::new(executor::Background::new()),
             future_handlers: Default::default(),
             stream_handlers: Default::default(),
-            task_done: channel::unbounded(),
+            task_done: Default::default(),
             pending_effects: VecDeque::new(),
             pending_flushes: 0,
             flushing_effects: false,
@@ -983,8 +984,7 @@ impl MutableAppContext {
             task_id,
             task,
             TaskHandlerMap::Future(self.future_handlers.clone()),
-            self.task_done.0.clone(),
-            self.background.clone(),
+            self.task_done.clone(),
         )
     }
 
@@ -1022,8 +1022,7 @@ impl MutableAppContext {
             task_id,
             task,
             TaskHandlerMap::Stream(self.stream_handlers.clone()),
-            self.task_done.0.clone(),
-            self.background.clone(),
+            self.task_done.clone(),
         )
     }
 
@@ -1067,7 +1066,7 @@ impl MutableAppContext {
         };
 
         self.flush_effects();
-        self.task_done(task_id);
+        self.task_done.notify_all();
         result
     }
 
@@ -1166,17 +1165,8 @@ impl MutableAppContext {
         };
 
         self.flush_effects();
-        self.task_done(task_id);
+        self.task_done.notify_all();
         result
-    }
-
-    fn task_done(&self, task_id: usize) {
-        let task_done = self.task_done.0.clone();
-        self.foreground
-            .spawn(async move {
-                let _ = task_done.send(task_id).await;
-            })
-            .detach()
     }
 
     pub fn finish_pending_tasks(&self) -> impl Future<Output = ()> {
@@ -1188,15 +1178,27 @@ impl MutableAppContext {
             .collect::<HashSet<_>>();
         pending_tasks.extend(self.stream_handlers.borrow().keys());
 
-        let task_done = self.task_done.1.clone();
+        let task_done = self.task_done.clone();
+        let future_handlers = self.future_handlers.clone();
+        let stream_handlers = self.stream_handlers.clone();
 
         async move {
-            while !pending_tasks.is_empty() {
-                if let Ok(task_id) = task_done.recv().await {
-                    pending_tasks.remove(&task_id);
-                } else {
-                    break;
+            // A Condvar expects the condition to be protected by a Mutex, but in this case we know
+            // that this logic will always run on the main thread.
+            let mutex = async_std::sync::Mutex::new(());
+            loop {
+                {
+                    let future_handlers = future_handlers.borrow();
+                    let stream_handlers = stream_handlers.borrow();
+                    pending_tasks.retain(|task_id| {
+                        future_handlers.contains_key(task_id)
+                            || stream_handlers.contains_key(task_id)
+                    });
+                    if pending_tasks.is_empty() {
+                        break;
+                    }
                 }
+                task_done.wait(mutex.lock().await).await;
             }
         }
     }
@@ -2357,8 +2359,7 @@ pub struct Task<T> {
     id: usize,
     task: Option<executor::Task<T>>,
     handler_map: TaskHandlerMap,
-    background: Arc<executor::Background>,
-    task_done: channel::Sender<usize>,
+    task_done: Arc<Condvar>,
 }
 
 enum TaskHandlerMap {
@@ -2372,15 +2373,13 @@ impl<T> Task<T> {
         id: usize,
         task: executor::Task<T>,
         handler_map: TaskHandlerMap,
-        task_done: channel::Sender<usize>,
-        background: Arc<executor::Background>,
+        task_done: Arc<Condvar>,
     ) -> Self {
         Self {
             id,
             task: Some(task),
             handler_map,
             task_done,
-            background,
         }
     }
 
@@ -2420,13 +2419,7 @@ impl<T> Drop for Task<T> {
                 map.borrow_mut().remove(&self.id);
             }
         }
-        let task_done = self.task_done.clone();
-        let task_id = self.id;
-        self.background
-            .spawn(async move {
-                let _ = task_done.send(task_id).await;
-            })
-            .detach()
+        self.task_done.notify_all();
     }
 }
 
