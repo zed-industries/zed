@@ -1,6 +1,6 @@
 use anyhow::{anyhow, Result};
 use async_task::Runnable;
-use pin_project::pin_project;
+pub use async_task::Task;
 use smol::prelude::*;
 use smol::{channel, Executor};
 use std::rc::Rc;
@@ -15,27 +15,6 @@ pub enum Foreground {
         _not_send_or_sync: PhantomData<Rc<()>>,
     },
     Test(smol::LocalExecutor<'static>),
-}
-
-#[must_use]
-#[pin_project(project = ForegroundTaskProject)]
-pub enum ForegroundTask<T> {
-    Platform(#[pin] async_task::Task<T>),
-    Test(#[pin] smol::Task<T>),
-}
-
-impl<T> Future for ForegroundTask<T> {
-    type Output = T;
-
-    fn poll(
-        self: std::pin::Pin<&mut Self>,
-        ctx: &mut std::task::Context<'_>,
-    ) -> std::task::Poll<Self::Output> {
-        match self.project() {
-            ForegroundTaskProject::Platform(task) => task.poll(ctx),
-            ForegroundTaskProject::Test(task) => task.poll(ctx),
-        }
-    }
 }
 
 pub struct Background {
@@ -62,19 +41,16 @@ impl Foreground {
         Self::Test(smol::LocalExecutor::new())
     }
 
-    pub fn spawn<T: 'static>(
-        &self,
-        future: impl Future<Output = T> + 'static,
-    ) -> ForegroundTask<T> {
+    pub fn spawn<T: 'static>(&self, future: impl Future<Output = T> + 'static) -> Task<T> {
         match self {
             Self::Platform { dispatcher, .. } => {
                 let dispatcher = dispatcher.clone();
                 let schedule = move |runnable: Runnable| dispatcher.run_on_main_thread(runnable);
                 let (runnable, task) = async_task::spawn_local(future, schedule);
                 runnable.schedule();
-                ForegroundTask::Platform(task)
+                task
             }
-            Self::Test(executor) => ForegroundTask::Test(executor.spawn(future)),
+            Self::Test(executor) => executor.spawn(future),
         }
     }
 
@@ -82,23 +58,6 @@ impl Foreground {
         match self {
             Self::Platform { .. } => panic!("you can't call run on a platform foreground executor"),
             Self::Test(executor) => executor.run(future).await,
-        }
-    }
-}
-
-#[must_use]
-impl<T> ForegroundTask<T> {
-    pub fn detach(self) {
-        match self {
-            Self::Platform(task) => task.detach(),
-            Self::Test(task) => task.detach(),
-        }
-    }
-
-    pub async fn cancel(self) -> Option<T> {
-        match self {
-            Self::Platform(task) => task.cancel().await,
-            Self::Test(task) => task.cancel().await,
         }
     }
 }

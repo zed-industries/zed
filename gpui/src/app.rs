@@ -1,6 +1,6 @@
 use crate::{
     elements::ElementBox,
-    executor::{self, ForegroundTask},
+    executor::{self, Task},
     keymap::{self, Keystroke},
     platform::{self, App as _, WindowOptions},
     presenter::Presenter,
@@ -963,7 +963,7 @@ impl MutableAppContext {
         self.flush_effects();
     }
 
-    fn spawn<F, T>(&mut self, future: F) -> (usize, ForegroundTask<Option<T>>)
+    fn spawn<F, T>(&mut self, future: F) -> (usize, Task<Option<T>>)
     where
         F: 'static + Future,
         T: 'static,
@@ -979,7 +979,7 @@ impl MutableAppContext {
         (task_id, task)
     }
 
-    fn spawn_stream<F, T>(&mut self, mut stream: F) -> (usize, ForegroundTask<Option<T>>)
+    fn spawn_stream<F, T>(&mut self, mut stream: F) -> (usize, Task<Option<T>>)
     where
         F: 'static + Stream + Unpin,
         T: 'static,
@@ -1525,7 +1525,7 @@ impl<'a, T: Entity> ModelContext<'a, T> {
             });
     }
 
-    pub fn spawn<S, F, U>(&mut self, future: S, callback: F) -> ForegroundTask<Option<U>>
+    pub fn spawn<S, F, U>(&mut self, future: S, callback: F) -> Task<Option<U>>
     where
         S: 'static + Future,
         F: 'static + FnOnce(&mut T, S::Output, &mut ModelContext<T>) -> U,
@@ -1557,7 +1557,7 @@ impl<'a, T: Entity> ModelContext<'a, T> {
         stream: S,
         mut item_callback: F,
         done_callback: G,
-    ) -> ForegroundTask<Option<U>>
+    ) -> Task<Option<U>>
     where
         S: 'static + Stream + Unpin,
         F: 'static + FnMut(&mut T, S::Item, &mut ModelContext<T>),
@@ -1785,7 +1785,7 @@ impl<'a, T: View> ViewContext<'a, T> {
         self.halt_stream = true;
     }
 
-    pub fn spawn<S, F, U>(&mut self, future: S, callback: F) -> ForegroundTask<Option<U>>
+    pub fn spawn<S, F, U>(&mut self, future: S, callback: F) -> Task<Option<U>>
     where
         S: 'static + Future,
         F: 'static + FnOnce(&mut T, S::Output, &mut ViewContext<T>) -> U,
@@ -1818,7 +1818,7 @@ impl<'a, T: View> ViewContext<'a, T> {
         stream: S,
         mut item_callback: F,
         done_callback: G,
-    ) -> ForegroundTask<Option<U>>
+    ) -> Task<Option<U>>
     where
         S: 'static + Stream + Unpin,
         F: 'static + FnMut(&mut T, S::Item, &mut ViewContext<T>),

@@ -59,7 +59,7 @@ version = "1.4.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "eb877970c7b440ead138f6321a3b5395d6061183af779340b65e20c0fede9146"
 dependencies = [
- "async-task 4.0.3 (registry+https://github.com/rust-lang/crates.io-index)",
+ "async-task",
  "concurrent-queue",
  "fastrand",
  "futures-lite",
@@ -138,13 +138,7 @@ dependencies = [
 [[package]]
 name = "async-task"
 version = "4.0.3"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "e91831deabf0d6d7ec49552e489aed63b7456a7a3c46cff62adad428110b0af0"
-
-[[package]]
-name = "async-task"
-version = "4.0.3"
-source = "git+https://github.com/zedit-io/async-task?rev=341b57d6de98cdfd7b418567b8de2022ca993a6e#341b57d6de98cdfd7b418567b8de2022ca993a6e"
+source = "git+https://github.com/zed-industries/async-task?rev=341b57d6de98cdfd7b418567b8de2022ca993a6e#341b57d6de98cdfd7b418567b8de2022ca993a6e"
 
 [[package]]
 name = "atomic-waker"
@@ -228,7 +222,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c5e170dbede1f740736619b776d7251cb1b9095c435c34d8ca9f57fcd2f335e9"
 dependencies = [
  "async-channel",
- "async-task 4.0.3 (registry+https://github.com/rust-lang/crates.io-index)",
+ "async-task",
  "atomic-waker",
  "fastrand",
  "futures-lite",
@@ -781,7 +775,7 @@ name = "gpui"
 version = "0.1.0"
 dependencies = [
  "anyhow",
- "async-task 4.0.3 (git+https://github.com/zedit-io/async-task?rev=341b57d6de98cdfd7b418567b8de2022ca993a6e)",
+ "async-task",
  "bindgen",
  "cc",
  "cocoa",
@@ -800,7 +794,6 @@ dependencies = [
  "parking_lot",
  "pathfinder_color",
  "pathfinder_geometry",
- "pin-project",
  "png",
  "rand 0.8.3",
  "replace_with",
@@ -1105,26 +1098,6 @@ name = "peeking_take_while"
 version = "0.1.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "19b17cddbe7ec3f8bc800887bab5e717348c95ea2ca0b1bf0837fb964dc67099"
-
-[[package]]
-name = "pin-project"
-version = "1.0.5"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "96fa8ebb90271c4477f144354485b8068bd8f6b78b428b01ba892ca26caf0b63"
-dependencies = [
- "pin-project-internal",
-]
-
-[[package]]
-name = "pin-project-internal"
-version = "1.0.5"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "758669ae3558c6f74bd2a18b41f7ac0b5a195aea6639d6a9b5e5d1ad5ba24c0b"
-dependencies = [
- "proc-macro2",
- "quote",
- "syn",
-]
 
 [[package]]
 name = "pin-project-lite"
