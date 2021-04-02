@@ -156,7 +156,9 @@ impl Layer {
     }
 
     fn push_path(&mut self, path: Path) {
-        self.paths.push(path);
+        if !path.bounds.is_empty() {
+            self.paths.push(path);
+        }
     }
 
     pub fn paths(&self) -> &[Path] {

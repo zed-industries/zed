@@ -218,21 +218,33 @@ fragment float4 sprite_fragment(
     return color;
 }
 
+struct PathAtlasVertexOutput {
+    float4 position [[position]];
+    float2 st_position;
+    float clip_rect_distance [[clip_distance]] [4];
+};
+
 struct PathAtlasFragmentInput {
     float4 position [[position]];
     float2 st_position;
 };
 
-vertex PathAtlasFragmentInput path_atlas_vertex(
+vertex PathAtlasVertexOutput path_atlas_vertex(
     uint vertex_id [[vertex_id]],
     constant GPUIPathVertex *vertices [[buffer(GPUIPathAtlasVertexInputIndexVertices)]],
     constant float2 *atlas_size [[buffer(GPUIPathAtlasVertexInputIndexAtlasSize)]]
 ) {
     GPUIPathVertex v = vertices[vertex_id];
     float4 device_position = to_device_position(v.xy_position, *atlas_size);
-    return PathAtlasFragmentInput {
+    return PathAtlasVertexOutput {
         device_position,
         v.st_position,
+        {
+            v.xy_position.x - v.clip_rect_origin.x,
+            v.clip_rect_origin.x + v.clip_rect_size.x - v.xy_position.x,
+            v.xy_position.y - v.clip_rect_origin.y,
+            v.clip_rect_origin.y + v.clip_rect_size.y - v.xy_position.y
+        }
     };
 }
 

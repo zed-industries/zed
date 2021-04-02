@@ -63,4 +63,6 @@ typedef enum {
 typedef struct {
     vector_float2 xy_position;
     vector_float2 st_position;
+    vector_float2 clip_rect_origin;
+    vector_float2 clip_rect_size;
 } GPUIPathVertex;

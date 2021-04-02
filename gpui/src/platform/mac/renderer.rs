@@ -181,6 +181,8 @@ impl Renderer {
                     vertices.push(shaders::GPUIPathVertex {
                         xy_position: (atlas_origin + xy_position).to_float2(),
                         st_position: vertex.st_position.to_float2(),
+                        clip_rect_origin: atlas_origin.to_float2(),
+                        clip_rect_size: size.to_float2(),
                     });
                 }
             }

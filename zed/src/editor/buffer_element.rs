@@ -259,7 +259,7 @@ impl BufferElement {
                         .collect(),
                 };
 
-                selection.paint(ctx.scene);
+                selection.paint(bounds, ctx.scene);
             }
 
             if view.cursors_visible() {
@@ -586,16 +586,21 @@ struct SelectionLine {
 }
 
 impl Selection {
-    fn paint(&self, scene: &mut Scene) {
+    fn paint(&self, bounds: RectF, scene: &mut Scene) {
         if self.lines.len() >= 2 && self.lines[0].start_x > self.lines[1].end_x {
-            self.paint_lines(self.start_y, &self.lines[0..1], scene);
-            self.paint_lines(self.start_y + self.line_height, &self.lines[1..], scene);
+            self.paint_lines(self.start_y, &self.lines[0..1], bounds, scene);
+            self.paint_lines(
+                self.start_y + self.line_height,
+                &self.lines[1..],
+                bounds,
+                scene,
+            );
         } else {
-            self.paint_lines(self.start_y, &self.lines, scene);
+            self.paint_lines(self.start_y, &self.lines, bounds, scene);
         }
     }
 
-    fn paint_lines(&self, start_y: f32, lines: &[SelectionLine], scene: &mut Scene) {
+    fn paint_lines(&self, start_y: f32, lines: &[SelectionLine], bounds: RectF, scene: &mut Scene) {
         if lines.is_empty() {
             return;
         }
@@ -675,7 +680,7 @@ impl Selection {
         path.curve_to(first_top_left + top_curve_width, first_top_left);
         path.line_to(first_top_right - top_curve_width);
 
-        scene.push_path(path.build(ColorF::new(0.639, 0.839, 1.0, 1.0).to_u8()));
+        scene.push_path(path.build(ColorF::new(0.639, 0.839, 1.0, 1.0).to_u8(), Some(bounds)));
     }
 }
 

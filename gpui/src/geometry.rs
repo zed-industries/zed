@@ -54,7 +54,13 @@ impl PathBuilder {
         self.current = point;
     }
 
-    pub fn build(self, color: ColorU) -> Path {
+    pub fn build(mut self, color: ColorU, clip_bounds: Option<RectF>) -> Path {
+        if let Some(clip_bounds) = clip_bounds {
+            self.bounds = self
+                .bounds
+                .intersection(clip_bounds)
+                .unwrap_or(RectF::default());
+        }
         Path {
             bounds: self.bounds,
             color,
