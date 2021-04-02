@@ -91,9 +91,11 @@ impl FontSystemState {
         let mut font_ids = Vec::new();
         for font in self.source.select_family_by_name(name)?.fonts() {
             let font = font.load()?;
+            eprintln!("load font {:?}", font);
             font_ids.push(FontId(self.fonts.len()));
             self.fonts.push(font);
         }
+        eprintln!("font ids: {:?}", font_ids);
         Ok(font_ids)
     }
 
