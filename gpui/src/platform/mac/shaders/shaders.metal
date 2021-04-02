@@ -77,7 +77,6 @@ fragment float4 quad_fragment(
     float2 half_size = input.size / 2.;
     float2 center = input.origin + half_size;
     float2 center_to_point = input.position.xy - center;
-    float2 edge_to_point = abs(center_to_point) - half_size;
     float2 rounded_edge_to_point = abs(center_to_point) - half_size + input.corner_radius;
     float distance = length(max(0., rounded_edge_to_point)) + min(0., max(rounded_edge_to_point.x, rounded_edge_to_point.y)) - input.corner_radius;
 
