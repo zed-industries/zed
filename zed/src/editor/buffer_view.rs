@@ -353,9 +353,9 @@ impl BufferView {
     }
 
     #[cfg(test)]
-    fn select_ranges<T>(&mut self, ranges: T, ctx: &mut ViewContext<Self>) -> Result<()>
+    fn select_ranges<'a, T>(&mut self, ranges: T, ctx: &mut ViewContext<Self>) -> Result<()>
     where
-        T: IntoIterator<Item = Range<DisplayPoint>>,
+        T: IntoIterator<Item = &'a Range<DisplayPoint>>,
     {
         let buffer = self.buffer.as_ref(ctx);
         let map = self.display_map.as_ref(ctx);
@@ -426,7 +426,23 @@ impl BufferView {
     }
 
     pub fn backspace(&mut self, _: &(), ctx: &mut ViewContext<Self>) {
-        self.select_left(&(), ctx);
+        let buffer = self.buffer.as_ref(ctx);
+        let map = self.display_map.as_ref(ctx);
+        for selection in &mut self.selections {
+            if selection.range(buffer).is_empty() {
+                let head = selection.head().to_display_point(map, ctx.app()).unwrap();
+                let cursor = map
+                    .anchor_before(
+                        movement::left(map, head, ctx.app()).unwrap(),
+                        Bias::Left,
+                        ctx.app(),
+                    )
+                    .unwrap();
+                selection.set_head(&buffer, cursor);
+                selection.goal_column = None;
+            }
+        }
+        self.changed_selections(ctx);
         self.insert(&String::new(), ctx);
     }
 
@@ -1377,7 +1393,7 @@ mod tests {
                 app.add_window(|ctx| BufferView::for_buffer(buffer.clone(), settings, ctx));
 
             view.update(&mut app, |view, ctx| {
-                view.select_ranges(Some(DisplayPoint::new(8, 0)..DisplayPoint::new(12, 0)), ctx)?;
+                view.select_ranges(&[DisplayPoint::new(8, 0)..DisplayPoint::new(12, 0)], ctx)?;
                 view.fold(&(), ctx);
                 assert_eq!(
                     view.text(ctx.app()),
@@ -1471,6 +1487,41 @@ mod tests {
                     &[DisplayPoint::new(1, 4)..DisplayPoint::new(1, 4)]
                 );
                 Ok::<(), Error>(())
+            })?;
+
+            Ok(())
+        })
+    }
+
+    #[test]
+    fn test_backspace() -> Result<()> {
+        App::test((), |mut app| async move {
+            let buffer = app.add_model(|_| {
+                Buffer::new(0, "one two three\nfour five six\nseven eight nine\nten\n")
+            });
+            let settings = settings::channel(&app.font_cache()).unwrap().1;
+            let (_, view) =
+                app.add_window(|ctx| BufferView::for_buffer(buffer.clone(), settings, ctx));
+
+            view.update(&mut app, |view, ctx| -> Result<()> {
+                view.select_ranges(
+                    &[
+                        // an empty selection - the preceding character is deleted
+                        DisplayPoint::new(0, 2)..DisplayPoint::new(0, 2),
+                        // one character selected - it is deleted
+                        DisplayPoint::new(1, 3)..DisplayPoint::new(1, 4),
+                        // a line suffix selected - it is deleted
+                        DisplayPoint::new(2, 6)..DisplayPoint::new(3, 0),
+                    ],
+                    ctx,
+                )?;
+                view.backspace(&(), ctx);
+                Ok(())
+            })?;
+
+            buffer.read(&mut app, |buffer, _| -> Result<()> {
+                assert_eq!(buffer.text(), "oe two three\nfou five six\nseven ten\n");
+                Ok(())
             })?;
 
             Ok(())
