@@ -54,6 +54,7 @@ impl<T: Item> SumTree<T> {
         tree
     }
 
+    #[allow(unused)]
     pub fn items(&self) -> Vec<T> {
         let mut cursor = self.cursor::<(), ()>();
         cursor.descend_to_first_item(self, |_| true);
@@ -320,6 +321,7 @@ impl<T: Item> SumTree<T> {
 }
 
 impl<T: KeyedItem> SumTree<T> {
+    #[allow(unused)]
     pub fn insert(&mut self, item: T) {
         *self = {
             let mut cursor = self.cursor::<T::Key, ()>();
@@ -363,7 +365,6 @@ impl<T: KeyedItem> SumTree<T> {
                     Edit::Insert(item) => {
                         buffered_items.push(item.clone());
                     }
-                    Edit::Remove(_) => {}
                 }
             }
 
@@ -445,13 +446,12 @@ impl<T: Item> Node<T> {
 #[derive(Debug)]
 pub enum Edit<T: KeyedItem> {
     Insert(T),
-    Remove(T),
 }
 
 impl<T: KeyedItem> Edit<T> {
     fn key(&self) -> T::Key {
         match self {
-            Edit::Insert(item) | Edit::Remove(item) => item.key(),
+            Edit::Insert(item) => item.key(),
         }
     }
 }

@@ -133,6 +133,7 @@ where
         None
     }
 
+    #[allow(unused)]
     pub fn prev(&mut self) {
         assert!(self.did_seek, "Must seek before calling this method");
 
@@ -385,6 +386,7 @@ where
         self.seek_internal::<()>(pos, bias, &mut SeekAggregate::None)
     }
 
+    #[allow(unused)]
     pub fn seek_forward(&mut self, pos: &S, bias: SeekBias) -> bool {
         self.seek_internal::<()>(pos, bias, &mut SeekAggregate::None)
     }
