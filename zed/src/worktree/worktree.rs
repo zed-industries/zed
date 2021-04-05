@@ -3,18 +3,23 @@ use super::{
     char_bag::CharBag,
     fuzzy::{self, PathEntry},
 };
-use crate::{editor::History, timer, util::post_inc};
+use crate::{
+    editor::{History, Snapshot},
+    timer,
+    util::post_inc,
+};
 use anyhow::{anyhow, Result};
 use crossbeam_channel as channel;
 use easy_parallel::Parallel;
-use gpui::{AppContext, Entity, ModelContext, ModelHandle};
+use gpui::{executor::BackgroundTask, AppContext, Entity, ModelContext, ModelHandle};
 use ignore::dir::{Ignore, IgnoreBuilder};
 use parking_lot::RwLock;
 use smol::prelude::*;
 use std::{
     collections::HashMap,
     ffi::{OsStr, OsString},
-    fmt, fs, io,
+    fmt, fs,
+    io::{self, Write},
     os::unix::fs::MetadataExt,
     path::Path,
     path::PathBuf,
@@ -346,6 +351,25 @@ impl Worktree {
         }
     }
 
+    pub fn save<'a>(
+        &self,
+        entry_id: usize,
+        content: Snapshot,
+        ctx: &AppContext,
+    ) -> BackgroundTask<Result<()>> {
+        let path = self.abs_entry_path(entry_id);
+        ctx.background_executor().spawn(async move {
+            let buffer_size = content.text_summary().bytes.min(10 * 1024);
+            let file = std::fs::File::create(&path?)?;
+            let mut writer = std::io::BufWriter::with_capacity(buffer_size, file);
+            for chunk in content.fragments() {
+                writer.write(chunk.as_bytes())?;
+            }
+            writer.flush()?;
+            Ok(())
+        })
+    }
+
     fn scanning(&mut self, _: (), ctx: &mut ModelContext<Self>) {
         if self.0.read().scanning {
             ctx.notify();
@@ -442,6 +466,11 @@ impl FileHandle {
 
     pub fn load_history(&self, app: &AppContext) -> impl Future<Output = Result<History>> {
         self.worktree.as_ref(app).load_history(self.entry_id)
+    }
+
+    pub fn save<'a>(&self, content: Snapshot, ctx: &AppContext) -> BackgroundTask<Result<()>> {
+        let worktree = self.worktree.as_ref(ctx);
+        worktree.save(self.entry_id, content, ctx)
     }
 
     pub fn entry_id(&self) -> (usize, usize) {
@@ -611,6 +640,7 @@ pub fn match_paths(
 #[cfg(test)]
 mod test {
     use super::*;
+    use crate::editor::Buffer;
     use crate::test::*;
     use anyhow::Result;
     use gpui::App;
@@ -657,6 +687,37 @@ mod test {
                 );
             });
             Ok(())
+        })
+    }
+
+    #[test]
+    fn test_save_file() {
+        App::test((), |mut app| async move {
+            let dir = temp_tree(json!({
+                "file1": "the old contents",
+            }));
+
+            let tree = app.add_model(|ctx| Worktree::new(1, dir.path(), Some(ctx)));
+            app.finish_pending_tasks().await;
+
+            let file_id = tree.read(&app, |tree, _| {
+                let entry = tree.files().next().unwrap();
+                assert_eq!(entry.path.file_name().unwrap(), "file1");
+                entry.entry_id
+            });
+
+            let buffer = Buffer::new(1, "a line of text.\n".repeat(10 * 1024));
+
+            tree.update(&mut app, |tree, ctx| {
+                smol::block_on(tree.save(file_id, buffer.snapshot(), ctx.app())).unwrap()
+            });
+
+            let history = tree
+                .read(&app, |tree, _| tree.load_history(file_id))
+                .await
+                .unwrap();
+
+            assert_eq!(history.base_text, buffer.text());
         })
     }
 }

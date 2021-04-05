@@ -14,7 +14,7 @@ use crate::{
     worktree::FileHandle,
 };
 use anyhow::{anyhow, Result};
-use gpui::{AppContext, Entity, ModelContext};
+use gpui::{executor::BackgroundTask, AppContext, Entity, ModelContext};
 use lazy_static::lazy_static;
 use rand::prelude::*;
 use std::{
@@ -46,6 +46,10 @@ pub struct Buffer {
     lamport_clock: time::Lamport,
 }
 
+pub struct Snapshot {
+    fragments: SumTree<Fragment>,
+}
+
 #[derive(Clone)]
 pub struct History {
     pub base_text: String,
@@ -59,9 +63,15 @@ pub struct Selection {
 }
 
 #[derive(Clone)]
-pub struct Chars<'a> {
+pub struct CharIter<'a> {
     fragments_cursor: Cursor<'a, Fragment, usize, usize>,
     fragment_chars: str::Chars<'a>,
+}
+
+#[derive(Clone)]
+pub struct FragmentIter<'a> {
+    cursor: Cursor<'a, Fragment, usize, usize>,
+    started: bool,
 }
 
 struct Edits<'a, F: Fn(&FragmentSummary) -> bool> {
@@ -225,6 +235,21 @@ impl Buffer {
         self.file.as_ref().map(|file| file.entry_id())
     }
 
+    pub fn snapshot(&self) -> Snapshot {
+        Snapshot {
+            fragments: self.fragments.clone(),
+        }
+    }
+
+    pub fn save(&self, ctx: &mut ModelContext<Self>) -> Option<BackgroundTask<Result<()>>> {
+        if let Some(file) = &self.file {
+            let snapshot = self.snapshot();
+            Some(file.save(snapshot, ctx.app()))
+        } else {
+            None
+        }
+    }
+
     pub fn is_modified(&self) -> bool {
         self.version != time::Global::new()
     }
@@ -325,25 +350,13 @@ impl Buffer {
         Ok(self.chars_at(start)?.take(end - start).collect())
     }
 
-    pub fn chars(&self) -> Chars {
+    pub fn chars(&self) -> CharIter {
         self.chars_at(0).unwrap()
     }
 
-    pub fn chars_at<T: ToOffset>(&self, position: T) -> Result<Chars> {
+    pub fn chars_at<T: ToOffset>(&self, position: T) -> Result<CharIter> {
         let offset = position.to_offset(self)?;
-
-        let mut fragments_cursor = self.fragments.cursor::<usize, usize>();
-        fragments_cursor.seek(&offset, SeekBias::Right);
-
-        let fragment_chars = fragments_cursor.item().map_or("".chars(), |fragment| {
-            let offset_in_fragment = offset - fragments_cursor.start();
-            fragment.text[offset_in_fragment..].chars()
-        });
-
-        Ok(Chars {
-            fragments_cursor,
-            fragment_chars,
-        })
+        Ok(CharIter::new(&self.fragments, offset))
     }
 
     pub fn selections_changed_since(&self, since: SelectionsVersion) -> bool {
@@ -1369,6 +1382,16 @@ impl Clone for Buffer {
     }
 }
 
+impl Snapshot {
+    pub fn fragments<'a>(&'a self) -> FragmentIter<'a> {
+        FragmentIter::new(&self.fragments)
+    }
+
+    pub fn text_summary(&self) -> TextSummary {
+        self.fragments.summary().text_summary
+    }
+}
+
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum Event {
     Edited(Vec<Edit>),
@@ -1384,7 +1407,22 @@ impl<'a> sum_tree::Dimension<'a, FragmentSummary> for Point {
     }
 }
 
-impl<'a> Iterator for Chars<'a> {
+impl<'a> CharIter<'a> {
+    fn new(fragments: &'a SumTree<Fragment>, offset: usize) -> Self {
+        let mut fragments_cursor = fragments.cursor::<usize, usize>();
+        fragments_cursor.seek(&offset, SeekBias::Right);
+        let fragment_chars = fragments_cursor.item().map_or("".chars(), |fragment| {
+            let offset_in_fragment = offset - fragments_cursor.start();
+            fragment.text[offset_in_fragment..].chars()
+        });
+        Self {
+            fragments_cursor,
+            fragment_chars,
+        }
+    }
+}
+
+impl<'a> Iterator for CharIter<'a> {
     type Item = char;
 
     fn next(&mut self) -> Option<Self::Item> {
@@ -1401,6 +1439,38 @@ impl<'a> Iterator for Chars<'a> {
                 } else {
                     return None;
                 }
+            }
+        }
+    }
+}
+
+impl<'a> FragmentIter<'a> {
+    fn new(fragments: &'a SumTree<Fragment>) -> Self {
+        let mut cursor = fragments.cursor::<usize, usize>();
+        cursor.seek(&0, SeekBias::Right);
+        Self {
+            cursor,
+            started: false,
+        }
+    }
+}
+
+impl<'a> Iterator for FragmentIter<'a> {
+    type Item = &'a str;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        loop {
+            if self.started {
+                self.cursor.next();
+            } else {
+                self.started = true;
+            }
+            if let Some(fragment) = self.cursor.item() {
+                if fragment.is_visible() {
+                    return Some(fragment.text.as_str());
+                }
+            } else {
+                return None;
             }
         }
     }

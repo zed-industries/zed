@@ -5,8 +5,9 @@ use super::{
 use crate::{settings::Settings, watch, workspace};
 use anyhow::Result;
 use gpui::{
-    fonts::Properties as FontProperties, keymap::Binding, text_layout, App, AppContext, Element,
-    ElementBox, Entity, FontCache, ModelHandle, View, ViewContext, WeakViewHandle,
+    executor::BackgroundTask, fonts::Properties as FontProperties, keymap::Binding, text_layout,
+    App, AppContext, Element, ElementBox, Entity, FontCache, ModelHandle, MutableAppContext, View,
+    ViewContext, WeakViewHandle,
 };
 use gpui::{geometry::vector::Vector2F, TextLayoutCache};
 use parking_lot::Mutex;
@@ -1177,6 +1178,10 @@ impl workspace::ItemView for BufferView {
         let clone = BufferView::for_buffer(self.buffer.clone(), self.settings.clone(), ctx);
         *clone.scroll_position.lock() = *self.scroll_position.lock();
         Some(clone)
+    }
+
+    fn save(&self, ctx: &mut MutableAppContext) -> Option<BackgroundTask<Result<()>>> {
+        self.buffer.update(ctx, |buffer, ctx| buffer.save(ctx))
     }
 }
 

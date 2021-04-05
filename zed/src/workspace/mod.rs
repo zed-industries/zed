@@ -15,6 +15,7 @@ use std::path::PathBuf;
 pub fn init(app: &mut App) {
     app.add_global_action("workspace:open_paths", open_paths);
     pane::init(app);
+    workspace_view::init(app);
 }
 
 pub struct OpenParams {

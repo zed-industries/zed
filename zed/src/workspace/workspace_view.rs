@@ -1,11 +1,16 @@
 use super::{pane, Pane, PaneGroup, SplitDirection, Workspace};
 use crate::{settings::Settings, watch};
 use gpui::{
-    color::rgbu, elements::*, AnyViewHandle, AppContext, Entity, ModelHandle, MutableAppContext,
-    View, ViewContext, ViewHandle,
+    color::rgbu, elements::*, executor::BackgroundTask, keymap::Binding, AnyViewHandle, App,
+    AppContext, Entity, ModelHandle, MutableAppContext, View, ViewContext, ViewHandle,
 };
 use log::{error, info};
 use std::{collections::HashSet, path::PathBuf};
+
+pub fn init(app: &mut App) {
+    app.add_action("workspace:save", WorkspaceView::save_active_item);
+    app.add_bindings(vec![Binding::new("cmd-s", "workspace:save", None)]);
+}
 
 pub trait ItemView: View {
     fn is_activate_event(event: &Self::Event) -> bool;
@@ -15,6 +20,9 @@ pub trait ItemView: View {
     where
         Self: Sized,
     {
+        None
+    }
+    fn save(&self, _: &mut MutableAppContext) -> Option<BackgroundTask<anyhow::Result<()>>> {
         None
     }
 }
@@ -27,6 +35,7 @@ pub trait ItemViewHandle: Send + Sync {
     fn set_parent_pane(&self, pane: &ViewHandle<Pane>, app: &mut MutableAppContext);
     fn id(&self) -> usize;
     fn to_any(&self) -> AnyViewHandle;
+    fn save(&self, ctx: &mut MutableAppContext) -> Option<BackgroundTask<anyhow::Result<()>>>;
 }
 
 impl<T: ItemView> ItemViewHandle for ViewHandle<T> {
@@ -60,6 +69,10 @@ impl<T: ItemView> ItemViewHandle for ViewHandle<T> {
                 }
             })
         })
+    }
+
+    fn save(&self, ctx: &mut MutableAppContext) -> Option<BackgroundTask<anyhow::Result<()>>> {
+        self.update(ctx, |item, ctx| item.save(ctx.app_mut()))
     }
 
     fn id(&self) -> usize {
@@ -204,6 +217,22 @@ impl WorkspaceView {
         } else {
             error!("No worktree found while opening example entry");
         }
+    }
+
+    pub fn save_active_item(&mut self, _: &(), ctx: &mut ViewContext<Self>) {
+        self.active_pane.update(ctx, |pane, ctx| {
+            if let Some(item) = pane.active_item() {
+                if let Some(task) = item.save(ctx.app_mut()) {
+                    ctx.spawn(task, |_, result, _| {
+                        if let Err(e) = result {
+                            // TODO - present this error to the user
+                            error!("failed to save item: {:?}, ", e);
+                        }
+                    })
+                    .detach();
+                }
+            }
+        });
     }
 
     fn workspace_updated(&mut self, _: ModelHandle<Workspace>, ctx: &mut ViewContext<Self>) {

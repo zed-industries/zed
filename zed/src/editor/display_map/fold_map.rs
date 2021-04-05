@@ -403,7 +403,7 @@ pub struct Chars<'a> {
     cursor: Cursor<'a, Transform, DisplayOffset, TransformSummary>,
     offset: usize,
     buffer: &'a Buffer,
-    buffer_chars: Option<Take<buffer::Chars<'a>>>,
+    buffer_chars: Option<Take<buffer::CharIter<'a>>>,
 }
 
 impl<'a> Iterator for Chars<'a> {
