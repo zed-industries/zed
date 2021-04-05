@@ -608,51 +608,55 @@ pub fn match_paths(
     )
 }
 
-// #[cfg(test)]
-// mod test {
-//     use super::*;
-//     use crate::test_utils::*;
-//     use anyhow::Result;
-//     use std::os::unix;
-//
-//     // #[test]
-//     // fn test_populate_and_search() -> Result<()> {
-//     //     let dir = build_tempdir(json!({
-//     //         "root": {
-//     //             "apple": "",
-//     //             "banana": {
-//     //                 "carrot": {
-//     //                     "date": "",
-//     //                     "endive": "",
-//     //                 }
-//     //             },
-//     //             "fennel": {
-//     //                 "grape": "",
-//     //             }
-//     //         }
-//     //     }));
-//     //
-//     //     let root_link_path = dir.path().join("root_link");
-//     //     unix::fs::symlink(&dir.path().join("root"), &root_link_path)?;
-//     //
-//     //     let tree = Worktree::new(1, root_link_path, None);
-//     //     let (tx, _) = channel::unbounded();
-//     //     tree.populate(&tx)?;
-//     //     assert_eq!(tree.file_count(), 4);
-//     //
-//     //     let results = match_paths(&[tree.clone()], "bna", false, false, 10)
-//     //         .iter()
-//     //         .map(|result| tree.entry_path(result.entry_id))
-//     //         .collect::<Result<Vec<PathBuf>, _>>()?;
-//     //
-//     //     assert_eq!(
-//     //         results,
-//     //         vec![
-//     //             PathBuf::from("root_link/banana/carrot/date"),
-//     //             PathBuf::from("root_link/banana/carrot/endive"),
-//     //         ]
-//     //     );
-//     //
-//     //     Ok(())
-//     // }
-// }
+#[cfg(test)]
+mod test {
+    use super::*;
+    use crate::test::*;
+    use anyhow::Result;
+    use gpui::App;
+    use serde_json::json;
+    use std::os::unix;
+
+    #[test]
+    fn test_populate_and_search() -> Result<()> {
+        App::test((), |mut app| async move {
+            let dir = temp_tree(json!({
+                "root": {
+                    "apple": "",
+                    "banana": {
+                        "carrot": {
+                            "date": "",
+                            "endive": "",
+                        }
+                    },
+                    "fennel": {
+                        "grape": "",
+                    }
+                }
+            }));
+
+            let root_link_path = dir.path().join("root_link");
+            unix::fs::symlink(&dir.path().join("root"), &root_link_path)?;
+
+            let tree = app.add_model(|ctx| Worktree::new(1, root_link_path, Some(ctx)));
+            app.finish_pending_tasks().await;
+
+            tree.read(&app, |tree, _| {
+                assert_eq!(tree.file_count(), 4);
+                let results = match_paths(&[tree.clone()], "bna", false, false, 10)
+                    .iter()
+                    .map(|result| tree.entry_path(result.entry_id))
+                    .collect::<Result<Vec<PathBuf>, _>>()
+                    .unwrap();
+                assert_eq!(
+                    results,
+                    vec![
+                        PathBuf::from("root_link/banana/carrot/date"),
+                        PathBuf::from("root_link/banana/carrot/endive"),
+                    ]
+                );
+            });
+            Ok(())
+        })
+    }
+}
