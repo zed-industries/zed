@@ -311,7 +311,6 @@ pub struct MutableAppContext {
     invalidation_callbacks:
         HashMap<usize, Box<dyn FnMut(WindowInvalidation, &mut MutableAppContext)>>,
     foreground: Rc<executor::Foreground>,
-    background: Arc<executor::Background>,
     future_handlers: Rc<RefCell<HashMap<usize, FutureHandler>>>,
     stream_handlers: Rc<RefCell<HashMap<usize, StreamHandler>>>,
     task_done: Arc<Condvar>,
@@ -336,6 +335,7 @@ impl MutableAppContext {
                 models: HashMap::new(),
                 windows: HashMap::new(),
                 ref_counts: Arc::new(Mutex::new(RefCounts::default())),
+                background: Arc::new(executor::Background::new()),
             },
             actions: HashMap::new(),
             global_actions: HashMap::new(),
@@ -348,7 +348,6 @@ impl MutableAppContext {
             window_invalidations: HashMap::new(),
             invalidation_callbacks: HashMap::new(),
             foreground,
-            background: Arc::new(executor::Background::new()),
             future_handlers: Default::default(),
             stream_handlers: Default::default(),
             task_done: Default::default(),
@@ -366,8 +365,12 @@ impl MutableAppContext {
         &self.ctx
     }
 
-    pub fn foreground_executor(&self) -> Rc<executor::Foreground> {
-        self.foreground.clone()
+    pub fn foreground_executor(&self) -> &Rc<executor::Foreground> {
+        &self.foreground
+    }
+
+    pub fn background_executor(&self) -> &Arc<executor::Background> {
+        &self.ctx.background
     }
 
     pub fn on_window_invalidated<F: 'static + FnMut(WindowInvalidation, &mut MutableAppContext)>(
@@ -1294,6 +1297,7 @@ impl UpdateView for MutableAppContext {
 pub struct AppContext {
     models: HashMap<usize, Box<dyn AnyModel>>,
     windows: HashMap<usize, Window>,
+    background: Arc<executor::Background>,
     ref_counts: Arc<Mutex<RefCounts>>,
 }
 
@@ -1328,6 +1332,10 @@ impl AppContext {
                     .collect::<HashMap<_, ElementBox>>()
             })
             .ok_or(anyhow!("window not found"))
+    }
+
+    pub fn background_executor(&self) -> &Arc<executor::Background> {
+        &self.background
     }
 }
 
@@ -1480,7 +1488,7 @@ impl<'a, T: Entity> ModelContext<'a, T> {
     }
 
     pub fn background_executor(&self) -> &Arc<executor::Background> {
-        &self.app.background
+        &self.app.ctx.background
     }
 
     pub fn halt_stream(&mut self) {
@@ -1673,7 +1681,7 @@ impl<'a, T: View> ViewContext<'a, T> {
     }
 
     pub fn background_executor(&self) -> &Arc<executor::Background> {
-        &self.app.background
+        &self.app.ctx.background
     }
 
     pub fn focus<S>(&mut self, handle: S)
