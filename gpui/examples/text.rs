@@ -31,7 +31,7 @@ impl gpui::View for TextView {
         "View"
     }
 
-    fn render<'a>(&self, app: &gpui::AppContext) -> gpui::ElementBox {
+    fn render<'a>(&self, _: &gpui::AppContext) -> gpui::ElementBox {
         TextElement.boxed()
     }
 }
