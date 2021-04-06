@@ -967,7 +967,7 @@ impl MutableAppContext {
         self.flush_effects();
     }
 
-    fn spawn<F, T>(&mut self, future: F) -> EntityTask<Option<T>>
+    fn spawn<F, T>(&mut self, future: F) -> EntityTask<T>
     where
         F: 'static + Future,
         T: 'static,
@@ -978,9 +978,10 @@ impl MutableAppContext {
             let app = app.clone();
             self.foreground.spawn(async move {
                 let output = future.await;
-                app.borrow_mut()
+                *app.borrow_mut()
                     .handle_future_output(task_id, Box::new(output))
-                    .map(|result| *result.downcast::<T>().unwrap())
+                    .downcast::<T>()
+                    .unwrap()
             })
         };
         EntityTask::new(
@@ -991,35 +992,33 @@ impl MutableAppContext {
         )
     }
 
-    fn spawn_stream<F, T>(&mut self, mut stream: F) -> EntityTask<Option<T>>
+    fn spawn_stream<F, T>(&mut self, mut stream: F) -> EntityTask<T>
     where
         F: 'static + Stream + Unpin,
         T: 'static,
     {
         let task_id = post_inc(&mut self.next_task_id);
         let app = self.weak_self.as_ref().unwrap().upgrade().unwrap();
-        let task = {
-            let app = app.clone();
-            self.foreground.spawn(async move {
-                loop {
-                    match stream.next().await {
-                        Some(item) => {
-                            let mut app = app.borrow_mut();
-                            if app.handle_stream_item(task_id, Box::new(item)) {
-                                break;
-                            }
-                        }
-                        None => {
+        let task = self.foreground.spawn(async move {
+            loop {
+                match stream.next().await {
+                    Some(item) => {
+                        let mut app = app.borrow_mut();
+                        if app.handle_stream_item(task_id, Box::new(item)) {
                             break;
                         }
                     }
+                    None => {
+                        break;
+                    }
                 }
+            }
 
-                app.borrow_mut()
-                    .stream_completed(task_id)
-                    .map(|result| *result.downcast::<T>().unwrap())
-            })
-        };
+            *app.borrow_mut()
+                .stream_completed(task_id)
+                .downcast::<T>()
+                .unwrap()
+        });
 
         EntityTask::new(
             task_id,
@@ -1029,45 +1028,10 @@ impl MutableAppContext {
         )
     }
 
-    fn handle_future_output(
-        &mut self,
-        task_id: usize,
-        output: Box<dyn Any>,
-    ) -> Option<Box<dyn Any>> {
+    fn handle_future_output(&mut self, task_id: usize, output: Box<dyn Any>) -> Box<dyn Any> {
         self.pending_flushes += 1;
         let future_callback = self.future_handlers.borrow_mut().remove(&task_id).unwrap();
-
-        let mut result = None;
-
-        match future_callback {
-            FutureHandler::Model { model_id, callback } => {
-                if let Some(mut model) = self.ctx.models.remove(&model_id) {
-                    result = Some(callback(model.as_any_mut(), output, self, model_id));
-                    self.ctx.models.insert(model_id, model);
-                }
-            }
-            FutureHandler::View {
-                window_id,
-                view_id,
-                callback,
-            } => {
-                if let Some(mut view) = self
-                    .ctx
-                    .windows
-                    .get_mut(&window_id)
-                    .and_then(|w| w.views.remove(&view_id))
-                {
-                    result = Some(callback(view.as_mut(), output, self, window_id, view_id));
-                    self.ctx
-                        .windows
-                        .get_mut(&window_id)
-                        .unwrap()
-                        .views
-                        .insert(view_id, view);
-                }
-            }
-        };
-
+        let result = future_callback(output, self);
         self.flush_effects();
         self.task_done.notify_all();
         result
@@ -1077,95 +1041,18 @@ impl MutableAppContext {
         self.pending_flushes += 1;
 
         let mut handler = self.stream_handlers.borrow_mut().remove(&task_id).unwrap();
-        let halt = match &mut handler {
-            StreamHandler::Model {
-                model_id,
-                item_callback,
-                ..
-            } => {
-                if let Some(mut model) = self.ctx.models.remove(&model_id) {
-                    let halt = item_callback(model.as_any_mut(), output, self, *model_id);
-                    self.ctx.models.insert(*model_id, model);
-                    self.stream_handlers.borrow_mut().insert(task_id, handler);
-                    halt
-                } else {
-                    true
-                }
-            }
-            StreamHandler::View {
-                window_id,
-                view_id,
-                item_callback,
-                ..
-            } => {
-                if let Some(mut view) = self
-                    .ctx
-                    .windows
-                    .get_mut(&window_id)
-                    .and_then(|w| w.views.remove(&view_id))
-                {
-                    let halt = item_callback(view.as_mut(), output, self, *window_id, *view_id);
-                    self.ctx
-                        .windows
-                        .get_mut(&window_id)
-                        .unwrap()
-                        .views
-                        .insert(*view_id, view);
-                    self.stream_handlers.borrow_mut().insert(task_id, handler);
-                    halt
-                } else {
-                    true
-                }
-            }
-        };
+        let halt = (handler.item_callback)(output, self);
+        self.stream_handlers.borrow_mut().insert(task_id, handler);
 
         self.flush_effects();
         halt
     }
 
-    fn stream_completed(&mut self, task_id: usize) -> Option<Box<dyn Any>> {
+    fn stream_completed(&mut self, task_id: usize) -> Box<dyn Any> {
         self.pending_flushes += 1;
 
-        let stream_handler = self.stream_handlers.borrow_mut().remove(&task_id).unwrap();
-        let result = match stream_handler {
-            StreamHandler::Model {
-                model_id,
-                done_callback,
-                ..
-            } => {
-                if let Some(mut model) = self.ctx.models.remove(&model_id) {
-                    let result = done_callback(model.as_any_mut(), self, model_id);
-                    self.ctx.models.insert(model_id, model);
-                    Some(result)
-                } else {
-                    None
-                }
-            }
-            StreamHandler::View {
-                window_id,
-                view_id,
-                done_callback,
-                ..
-            } => {
-                if let Some(mut view) = self
-                    .ctx
-                    .windows
-                    .get_mut(&window_id)
-                    .and_then(|w| w.views.remove(&view_id))
-                {
-                    let result = done_callback(view.as_mut(), self, window_id, view_id);
-                    self.ctx
-                        .windows
-                        .get_mut(&window_id)
-                        .unwrap()
-                        .views
-                        .insert(view_id, view);
-                    Some(result)
-                } else {
-                    None
-                }
-            }
-        };
+        let handler = self.stream_handlers.borrow_mut().remove(&task_id).unwrap();
+        let result = (handler.done_callback)(self);
 
         self.flush_effects();
         self.task_done.notify_all();
@@ -1562,28 +1449,25 @@ impl<'a, T: Entity> ModelContext<'a, T> {
             });
     }
 
-    pub fn spawn<S, F, U>(&mut self, future: S, callback: F) -> EntityTask<Option<U>>
+    fn handle(&self) -> ModelHandle<T> {
+        ModelHandle::new(self.model_id, &self.app.ctx.ref_counts)
+    }
+
+    pub fn spawn<S, F, U>(&mut self, future: S, callback: F) -> EntityTask<U>
     where
         S: 'static + Future,
         F: 'static + FnOnce(&mut T, S::Output, &mut ModelContext<T>) -> U,
         U: 'static,
     {
+        let handle = self.handle();
         let task = self.app.spawn::<S, U>(future);
 
         self.app.future_handlers.borrow_mut().insert(
             task.id,
-            FutureHandler::Model {
-                model_id: self.model_id,
-                callback: Box::new(move |model, output, app, model_id| {
-                    let model = model.downcast_mut().unwrap();
-                    let output = *output.downcast().unwrap();
-                    Box::new(callback(
-                        model,
-                        output,
-                        &mut ModelContext::new(app, model_id),
-                    ))
-                }),
-            },
+            Box::new(move |output, ctx| {
+                let output = *output.downcast().unwrap();
+                handle.update(ctx, |model, ctx| Box::new(callback(model, output, ctx)))
+            }),
         );
 
         task
@@ -1594,32 +1478,32 @@ impl<'a, T: Entity> ModelContext<'a, T> {
         stream: S,
         mut item_callback: F,
         done_callback: G,
-    ) -> EntityTask<Option<U>>
+    ) -> EntityTask<U>
     where
         S: 'static + Stream + Unpin,
         F: 'static + FnMut(&mut T, S::Item, &mut ModelContext<T>),
         G: 'static + FnOnce(&mut T, &mut ModelContext<T>) -> U,
         U: 'static + Any,
     {
+        let handle = self.handle();
         let task = self.app.spawn_stream(stream);
+
         self.app.stream_handlers.borrow_mut().insert(
             task.id,
-            StreamHandler::Model {
-                model_id: self.model_id,
-                item_callback: Box::new(move |model, output, app, model_id| {
-                    let model = model.downcast_mut().unwrap();
-                    let output = *output.downcast().unwrap();
-                    let mut ctx = ModelContext::new(app, model_id);
-                    item_callback(model, output, &mut ctx);
-                    ctx.halt_stream
+            StreamHandler {
+                item_callback: {
+                    let handle = handle.clone();
+                    Box::new(move |output, app| {
+                        let output = *output.downcast().unwrap();
+                        handle.update(app, |model, ctx| {
+                            item_callback(model, output, ctx);
+                            ctx.halt_stream
+                        })
+                    })
+                },
+                done_callback: Box::new(move |app| {
+                    handle.update(app, |model, ctx| Box::new(done_callback(model, ctx)))
                 }),
-                done_callback: Box::new(
-                    move |model: &mut dyn Any, app: &mut MutableAppContext, model_id| {
-                        let model = model.downcast_mut().unwrap();
-                        let mut ctx = ModelContext::new(app, model_id);
-                        Box::new(done_callback(model, &mut ctx))
-                    },
-                ),
             },
         );
 
@@ -1664,8 +1548,8 @@ impl<'a, T: View> ViewContext<'a, T> {
         }
     }
 
-    pub fn handle(&self) -> WeakViewHandle<T> {
-        WeakViewHandle::new(self.window_id, self.view_id)
+    pub fn handle(&self) -> ViewHandle<T> {
+        ViewHandle::new(self.window_id, self.view_id, &self.app.ctx.ref_counts)
     }
 
     pub fn window_id(&self) -> usize {
@@ -1822,29 +1706,21 @@ impl<'a, T: View> ViewContext<'a, T> {
         self.halt_stream = true;
     }
 
-    pub fn spawn<S, F, U>(&mut self, future: S, callback: F) -> EntityTask<Option<U>>
+    pub fn spawn<S, F, U>(&mut self, future: S, callback: F) -> EntityTask<U>
     where
         S: 'static + Future,
         F: 'static + FnOnce(&mut T, S::Output, &mut ViewContext<T>) -> U,
         U: 'static,
     {
+        let handle = self.handle();
         let task = self.app.spawn(future);
 
         self.app.future_handlers.borrow_mut().insert(
             task.id,
-            FutureHandler::View {
-                window_id: self.window_id,
-                view_id: self.view_id,
-                callback: Box::new(move |view, output, app, window_id, view_id| {
-                    let view = view.as_any_mut().downcast_mut().unwrap();
-                    let output = *output.downcast().unwrap();
-                    Box::new(callback(
-                        view,
-                        output,
-                        &mut ViewContext::new(app, window_id, view_id),
-                    ))
-                }),
-            },
+            Box::new(move |output, app| {
+                let output = *output.downcast().unwrap();
+                handle.update(app, |view, ctx| Box::new(callback(view, output, ctx)))
+            }),
         );
 
         task
@@ -1855,30 +1731,30 @@ impl<'a, T: View> ViewContext<'a, T> {
         stream: S,
         mut item_callback: F,
         done_callback: G,
-    ) -> EntityTask<Option<U>>
+    ) -> EntityTask<U>
     where
         S: 'static + Stream + Unpin,
         F: 'static + FnMut(&mut T, S::Item, &mut ViewContext<T>),
         G: 'static + FnOnce(&mut T, &mut ViewContext<T>) -> U,
         U: 'static + Any,
     {
+        let handle = self.handle();
         let task = self.app.spawn_stream(stream);
         self.app.stream_handlers.borrow_mut().insert(
             task.id,
-            StreamHandler::View {
-                window_id: self.window_id,
-                view_id: self.view_id,
-                item_callback: Box::new(move |view, output, app, window_id, view_id| {
-                    let view = view.as_any_mut().downcast_mut().unwrap();
-                    let output = *output.downcast().unwrap();
-                    let mut ctx = ViewContext::new(app, window_id, view_id);
-                    item_callback(view, output, &mut ctx);
-                    ctx.halt_stream
-                }),
-                done_callback: Box::new(move |view, app, window_id, view_id| {
-                    let view = view.as_any_mut().downcast_mut().unwrap();
-                    let mut ctx = ViewContext::new(app, window_id, view_id);
-                    Box::new(done_callback(view, &mut ctx))
+            StreamHandler {
+                item_callback: {
+                    let handle = handle.clone();
+                    Box::new(move |output, app| {
+                        let output = *output.downcast().unwrap();
+                        handle.update(app, |view, ctx| {
+                            item_callback(view, output, ctx);
+                            ctx.halt_stream
+                        })
+                    })
+                },
+                done_callback: Box::new(move |app| {
+                    handle.update(app, |view, ctx| Box::new(done_callback(view, ctx)))
                 }),
             },
         );
@@ -2076,7 +1952,7 @@ impl<T: View> ViewHandle<T> {
         }
     }
 
-    fn downgrade(&self) -> WeakViewHandle<T> {
+    pub fn downgrade(&self) -> WeakViewHandle<T> {
         WeakViewHandle::new(self.window_id, self.view_id)
     }
 
@@ -2322,44 +2198,11 @@ enum Observation {
     },
 }
 
-enum FutureHandler {
-    Model {
-        model_id: usize,
-        callback: Box<
-            dyn FnOnce(&mut dyn Any, Box<dyn Any>, &mut MutableAppContext, usize) -> Box<dyn Any>,
-        >,
-    },
-    View {
-        window_id: usize,
-        view_id: usize,
-        callback: Box<
-            dyn FnOnce(
-                &mut dyn AnyView,
-                Box<dyn Any>,
-                &mut MutableAppContext,
-                usize,
-                usize,
-            ) -> Box<dyn Any>,
-        >,
-    },
-}
+type FutureHandler = Box<dyn FnOnce(Box<dyn Any>, &mut MutableAppContext) -> Box<dyn Any>>;
 
-enum StreamHandler {
-    Model {
-        model_id: usize,
-        item_callback:
-            Box<dyn FnMut(&mut dyn Any, Box<dyn Any>, &mut MutableAppContext, usize) -> bool>,
-        done_callback: Box<dyn FnOnce(&mut dyn Any, &mut MutableAppContext, usize) -> Box<dyn Any>>,
-    },
-    View {
-        window_id: usize,
-        view_id: usize,
-        item_callback: Box<
-            dyn FnMut(&mut dyn AnyView, Box<dyn Any>, &mut MutableAppContext, usize, usize) -> bool,
-        >,
-        done_callback:
-            Box<dyn FnOnce(&mut dyn AnyView, &mut MutableAppContext, usize, usize) -> Box<dyn Any>>,
-    },
+struct StreamHandler {
+    item_callback: Box<dyn FnMut(Box<dyn Any>, &mut MutableAppContext) -> bool>,
+    done_callback: Box<dyn FnOnce(&mut MutableAppContext) -> Box<dyn Any>>,
 }
 
 #[must_use]

@@ -275,7 +275,7 @@ impl FileFinder {
         settings.notify_view_on_change(ctx);
 
         Self {
-            handle: ctx.handle(),
+            handle: ctx.handle().downgrade(),
             settings,
             workspace,
             query_buffer,

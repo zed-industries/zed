@@ -138,7 +138,7 @@ impl BufferView {
 
         let buffer_ref = buffer.as_ref(ctx);
         Self {
-            handle: ctx.handle(),
+            handle: ctx.handle().downgrade(),
             buffer,
             display_map,
             selections: vec![Selection {
