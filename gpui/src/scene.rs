@@ -10,12 +10,13 @@ pub struct Scene {
     active_layer_stack: Vec<usize>,
 }
 
-#[derive(Default, Debug)]
+#[derive(Default)]
 pub struct Layer {
     clip_bounds: Option<RectF>,
     quads: Vec<Quad>,
     shadows: Vec<Shadow>,
     glyphs: Vec<Glyph>,
+    icons: Vec<Icon>,
     paths: Vec<Path>,
 }
 
@@ -41,6 +42,13 @@ pub struct Glyph {
     pub font_size: f32,
     pub id: GlyphId,
     pub origin: Vector2F,
+    pub color: ColorU,
+}
+
+pub struct Icon {
+    pub bounds: RectF,
+    pub svg: usvg::Tree,
+    pub path: String,
     pub color: ColorU,
 }
 
@@ -107,6 +115,10 @@ impl Scene {
         self.active_layer().push_glyph(glyph)
     }
 
+    pub fn push_icon(&mut self, icon: Icon) {
+        self.active_layer().push_icon(icon)
+    }
+
     pub fn push_path(&mut self, path: Path) {
         self.active_layer().push_path(path);
     }
@@ -123,6 +135,7 @@ impl Layer {
             quads: Vec::new(),
             shadows: Vec::new(),
             glyphs: Vec::new(),
+            icons: Vec::new(),
             paths: Vec::new(),
         }
     }
@@ -153,6 +166,14 @@ impl Layer {
 
     pub fn glyphs(&self) -> &[Glyph] {
         self.glyphs.as_slice()
+    }
+
+    pub fn push_icon(&mut self, icon: Icon) {
+        self.icons.push(icon);
+    }
+
+    pub fn icons(&self) -> &[Icon] {
+        self.icons.as_slice()
     }
 
     fn push_path(&mut self, path: Path) {

@@ -296,7 +296,7 @@ impl Renderer {
                 drawable_size,
                 command_encoder,
             );
-            self.render_glyph_sprites(scene, layer, offset, drawable_size, command_encoder);
+            self.render_sprites(scene, layer, offset, drawable_size, command_encoder);
         }
 
         command_encoder.end_encoding();
@@ -465,7 +465,7 @@ impl Renderer {
         *offset = next_offset;
     }
 
-    fn render_glyph_sprites(
+    fn render_sprites(
         &mut self,
         scene: &Scene,
         layer: &Layer,
@@ -473,11 +473,12 @@ impl Renderer {
         drawable_size: Vector2F,
         command_encoder: &metal::RenderCommandEncoderRef,
     ) {
-        if layer.glyphs().is_empty() {
+        if layer.glyphs().is_empty() && layer.icons().is_empty() {
             return;
         }
 
         let mut sprites_by_atlas = HashMap::new();
+
         for glyph in layer.glyphs() {
             if let Some(sprite) = self.sprite_cache.render_glyph(
                 glyph.font_id,
@@ -499,6 +500,28 @@ impl Renderer {
                         compute_winding: 0,
                     });
             }
+        }
+
+        for icon in layer.icons() {
+            let sprite = self.sprite_cache.render_icon(
+                icon.bounds.size(),
+                icon.path.clone(),
+                icon.svg.clone(),
+                scene.scale_factor(),
+            );
+
+            // Snap sprite to pixel grid.
+            let origin = (icon.bounds.origin() * scene.scale_factor()).floor();
+            sprites_by_atlas
+                .entry(sprite.atlas_id)
+                .or_insert_with(Vec::new)
+                .push(shaders::GPUISprite {
+                    origin: origin.to_float2(),
+                    size: sprite.size.to_float2(),
+                    atlas_origin: sprite.atlas_origin.to_float2(),
+                    color: icon.color.to_uchar4(),
+                    compute_winding: 0,
+                });
         }
 
         command_encoder.set_render_pipeline_state(&self.sprite_pipeline_state);

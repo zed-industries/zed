@@ -27,12 +27,27 @@ pub struct GlyphSprite {
     pub size: Vector2I,
 }
 
+#[derive(Hash, Eq, PartialEq)]
+struct IconDescriptor {
+    path: String,
+    width: i32,
+    height: i32,
+}
+
+#[derive(Clone)]
+pub struct IconSprite {
+    pub atlas_id: usize,
+    pub atlas_origin: Vector2I,
+    pub size: Vector2I,
+}
+
 pub struct SpriteCache {
     device: metal::Device,
     atlas_size: Vector2I,
     fonts: Arc<dyn platform::FontSystem>,
     atlases: Vec<Atlas>,
     glyphs: HashMap<GlyphDescriptor, Option<GlyphSprite>>,
+    icons: HashMap<IconDescriptor, IconSprite>,
 }
 
 impl SpriteCache {
@@ -48,6 +63,7 @@ impl SpriteCache {
             fonts,
             atlases,
             glyphs: Default::default(),
+            icons: Default::default(),
         }
     }
 
@@ -115,6 +131,54 @@ impl SpriteCache {
                     offset: glyph_bounds.origin(),
                     size: glyph_bounds.size(),
                 })
+            })
+            .clone()
+    }
+
+    pub fn render_icon(
+        &mut self,
+        size: Vector2F,
+        path: String,
+        svg: usvg::Tree,
+        scale_factor: f32,
+    ) -> IconSprite {
+        let atlases = &mut self.atlases;
+        let atlas_size = self.atlas_size;
+        let device = &self.device;
+        let size = (size * scale_factor).round().to_i32();
+        assert!(size.x() < atlas_size.x());
+        assert!(size.y() < atlas_size.y());
+        self.icons
+            .entry(IconDescriptor {
+                path,
+                width: size.x(),
+                height: size.y(),
+            })
+            .or_insert_with(|| {
+                let mut pixmap = tiny_skia::Pixmap::new(size.x() as u32, size.y() as u32).unwrap();
+                resvg::render(&svg, usvg::FitTo::Width(size.x() as u32), pixmap.as_mut());
+                let mask = pixmap
+                    .pixels()
+                    .iter()
+                    .map(|a| a.alpha())
+                    .collect::<Vec<_>>();
+
+                let atlas_bounds = atlases
+                    .last_mut()
+                    .unwrap()
+                    .try_insert(size, &mask)
+                    .unwrap_or_else(|| {
+                        let mut atlas = Atlas::new(device, atlas_size);
+                        let bounds = atlas.try_insert(size, &mask).unwrap();
+                        atlases.push(atlas);
+                        bounds
+                    });
+
+                IconSprite {
+                    atlas_id: atlases.len() - 1,
+                    atlas_origin: atlas_bounds.origin(),
+                    size,
+                }
             })
             .clone()
     }
