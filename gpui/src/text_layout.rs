@@ -136,6 +136,8 @@ impl<'a> CacheKey for CacheKeyRef<'a> {
 #[derive(Default, Debug)]
 pub struct Line {
     pub width: f32,
+    pub ascent: f32,
+    pub descent: f32,
     pub runs: Vec<Run>,
     pub len: usize,
     pub font_size: f32,
@@ -191,12 +193,15 @@ impl Line {
         let mut colors = colors.iter().peekable();
         let mut color = ColorU::black();
 
+        let padding_top = (bounds.height() - self.ascent - self.descent) / 2.;
+        let baseline_origin = vec2f(0., padding_top + self.ascent);
+
         for run in &self.runs {
-            let bounding_box = ctx.font_cache.bounding_box(run.font_id, self.font_size);
-            let descent = ctx.font_cache.descent(run.font_id, self.font_size);
-            let max_glyph_width = bounding_box.x();
+            let max_glyph_width = ctx.font_cache.bounding_box(run.font_id, self.font_size).x();
+
             for glyph in &run.glyphs {
-                let glyph_origin = glyph.position - vec2f(0.0, descent);
+                let glyph_origin = baseline_origin + glyph.position;
+
                 if glyph_origin.x() + max_glyph_width < bounds.origin().x() {
                     continue;
                 }
@@ -217,7 +222,7 @@ impl Line {
                     font_id: run.font_id,
                     font_size: self.font_size,
                     id: glyph.id,
-                    origin: origin + glyph_origin + vec2f(0., bounding_box.y() / 2.),
+                    origin: origin + glyph_origin,
                     color,
                 });
             }

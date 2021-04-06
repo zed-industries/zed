@@ -893,9 +893,7 @@ impl BufferView {
     pub fn line_height(&self, font_cache: &FontCache) -> f32 {
         let settings = smol::block_on(self.settings.read());
         let font_id = font_cache.default_font(settings.buffer_font_family);
-        font_cache
-            .bounding_box(font_id, settings.buffer_font_size)
-            .y()
+        font_cache.line_height(font_id, settings.buffer_font_size)
     }
 
     pub fn em_width(&self, font_cache: &FontCache) -> f32 {

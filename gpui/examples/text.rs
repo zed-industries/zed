@@ -2,7 +2,7 @@ use gpui::{
     color::ColorU,
     fonts::{Properties, Weight},
     platform::{current as platform, Runner},
-    Border, Element as _, Quad,
+    Element as _, Quad,
 };
 use log::LevelFilter;
 use simplelog::SimpleLogger;

@@ -132,8 +132,8 @@ impl FontCache {
     }
 
     pub fn line_height(&self, font_id: FontId, font_size: f32) -> f32 {
-        let bounding_box = self.metric(font_id, |m| m.bounding_box);
-        self.scale_metric(bounding_box.height(), font_id, font_size)
+        let height = self.metric(font_id, |m| m.bounding_box.height());
+        self.scale_metric(height, font_id, font_size)
     }
 
     pub fn cap_height(&self, font_id: FontId, font_size: f32) -> f32 {

@@ -228,8 +228,6 @@ impl FontSystemState {
 
         let line = CTLine::new_with_attributed_string(string.as_concrete_TypeRef());
 
-        let width = line.get_typographic_bounds().width as f32;
-
         let mut utf16_chars = text.encode_utf16();
         let mut char_ix = 0;
         let mut prev_utf16_ix = 0;
@@ -268,8 +266,11 @@ impl FontSystemState {
             runs.push(Run { font_id, glyphs })
         }
 
+        let typographic_bounds = line.get_typographic_bounds();
         Line {
-            width,
+            width: typographic_bounds.width as f32,
+            ascent: typographic_bounds.ascent as f32,
+            descent: typographic_bounds.descent as f32,
             runs,
             font_size,
             len: char_ix + 1,
