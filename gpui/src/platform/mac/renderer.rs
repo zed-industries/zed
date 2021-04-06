@@ -65,7 +65,7 @@ impl Renderer {
         );
 
         let sprite_cache = SpriteCache::new(device.clone(), vec2i(1024, 768), fonts);
-        let path_atlases = build_path_atlas_allocator(pixel_format, &device);
+        let path_atlases = build_path_atlas_allocator(MTLPixelFormat::R8Unorm, &device);
         let quad_pipeline_state = build_pipeline_state(
             &device,
             &library,
@@ -96,7 +96,7 @@ impl Renderer {
             "path_atlas",
             "path_atlas_vertex",
             "path_atlas_fragment",
-            pixel_format,
+            MTLPixelFormat::R8Unorm,
         )?;
         Ok(Self {
             sprite_cache,
