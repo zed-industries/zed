@@ -36,6 +36,7 @@ pub struct Buffer {
     fragments: SumTree<Fragment>,
     insertion_splits: HashMap<time::Local, SumTree<InsertionSplit>>,
     pub version: time::Global,
+    persisted_version: time::Global,
     last_edit: time::Local,
     selections: HashMap<SelectionSetId, Vec<Selection>>,
     pub selections_last_update: SelectionsVersion,
@@ -216,6 +217,7 @@ impl Buffer {
             fragments,
             insertion_splits,
             version: time::Global::new(),
+            persisted_version: time::Global::new(),
             last_edit: time::Local::default(),
             selections: HashMap::default(),
             selections_last_update: 0,
@@ -241,21 +243,28 @@ impl Buffer {
         }
     }
 
-    pub fn save(&self, ctx: &mut ModelContext<Self>) -> Option<Task<Result<()>>> {
+    pub fn save(&mut self, ctx: &mut ModelContext<Self>) -> Option<Task<Result<()>>> {
         if let Some(file) = &self.file {
             let snapshot = self.snapshot();
 
-            // TODO - don't emit this until the save has finished
-            ctx.emit(Event::Saved);
+            let result = file.save(snapshot, ctx.app());
 
-            Some(file.save(snapshot, ctx.app()))
+            // TODO - don't do this until the save has finished
+            self.did_save(ctx);
+
+            Some(result)
         } else {
             None
         }
     }
 
+    fn did_save(&mut self, ctx: &mut ModelContext<Buffer>) {
+        self.persisted_version = self.fragments.summary().max_version;
+        ctx.emit(Event::Saved);
+    }
+
     pub fn is_modified(&self) -> bool {
-        self.version != time::Global::new()
+        self.fragments.summary().max_version > self.persisted_version
     }
 
     pub fn text_summary(&self) -> TextSummary {
@@ -1374,6 +1383,7 @@ impl Clone for Buffer {
             fragments: self.fragments.clone(),
             insertion_splits: self.insertion_splits.clone(),
             version: self.version.clone(),
+            persisted_version: self.persisted_version.clone(),
             last_edit: self.last_edit.clone(),
             selections: self.selections.clone(),
             selections_last_update: self.selections_last_update.clone(),
@@ -1953,6 +1963,7 @@ impl ToPoint for usize {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use gpui::App;
     use std::collections::BTreeMap;
 
     #[test]
@@ -1975,7 +1986,6 @@ mod tests {
 
     #[test]
     fn test_edit_events() {
-        use gpui::App;
         use std::{cell::RefCell, rc::Rc};
 
         App::test((), |mut app| async move {
@@ -2489,11 +2499,34 @@ mod tests {
 
     #[test]
     fn test_is_modified() -> Result<()> {
-        let mut buffer = Buffer::new(0, "abc");
-        assert!(!buffer.is_modified());
-        buffer.edit(vec![1..2], "", None)?;
-        assert!(buffer.is_modified());
+        App::test((), |mut app| async move {
+            let model = app.add_model(|_| Buffer::new(0, "abc"));
+            model.update(&mut app, |buffer, ctx| {
+                // initially, buffer isn't modified.
+                assert!(!buffer.is_modified());
 
+                // after editing, buffer is modified.
+                buffer.edit(vec![1..2], "", None).unwrap();
+                assert!(buffer.text() == "ac");
+                assert!(buffer.is_modified());
+
+                // after saving, buffer is not modified.
+                buffer.did_save(ctx);
+                assert!(!buffer.is_modified());
+
+                // after editing again, buffer is modified.
+                buffer.edit(vec![1..1], "B", None).unwrap();
+                buffer.edit(vec![2..2], "D", None).unwrap();
+                assert!(buffer.text() == "aBDc");
+                assert!(buffer.is_modified());
+
+                // TODO - currently, after restoring the buffer to its
+                // saved state, it is still considered modified.
+                buffer.edit(vec![1..3], "", None).unwrap();
+                assert!(buffer.text() == "ac");
+                assert!(buffer.is_modified());
+            });
+        });
         Ok(())
     }
 
