@@ -126,6 +126,7 @@ impl DisplayMap {
     fn handle_buffer_event(&mut self, event: &buffer::Event, ctx: &mut ModelContext<Self>) {
         match event {
             buffer::Event::Edited(edits) => self.fold_map.apply_edits(edits, ctx.app()).unwrap(),
+            _ => {}
         }
     }
 }

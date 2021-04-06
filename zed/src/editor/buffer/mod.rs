@@ -244,6 +244,10 @@ impl Buffer {
     pub fn save(&self, ctx: &mut ModelContext<Self>) -> Option<Task<Result<()>>> {
         if let Some(file) = &self.file {
             let snapshot = self.snapshot();
+
+            // TODO - don't emit this until the save has finished
+            ctx.emit(Event::Saved);
+
             Some(file.save(snapshot, ctx.app()))
         } else {
             None
@@ -1395,6 +1399,7 @@ impl Snapshot {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum Event {
     Edited(Vec<Edit>),
+    Saved,
 }
 
 impl Entity for Buffer {

@@ -2,12 +2,15 @@ use super::{
     buffer, movement, Anchor, Bias, Buffer, BufferElement, DisplayMap, DisplayPoint, Point,
     ToOffset, ToPoint,
 };
-use crate::{settings::Settings, watch, workspace};
+use crate::{
+    settings::Settings,
+    watch,
+    workspace::{self, ItemEventEffect},
+};
 use anyhow::Result;
 use gpui::{
     fonts::Properties as FontProperties, keymap::Binding, text_layout, App, AppContext, Element,
-    ElementBox, Entity, FontCache, ModelHandle, MutableAppContext, Task, View, ViewContext,
-    WeakViewHandle,
+    ElementBox, Entity, FontCache, ModelHandle, Task, View, ViewContext, WeakViewHandle,
 };
 use gpui::{geometry::vector::Vector2F, TextLayoutCache};
 use parking_lot::Mutex;
@@ -1091,6 +1094,7 @@ impl BufferView {
     ) {
         match event {
             buffer::Event::Edited(_) => ctx.emit(Event::Edited),
+            buffer::Event::Saved => ctx.emit(Event::Saved),
         }
     }
 }
@@ -1106,6 +1110,7 @@ pub enum Event {
     Activate,
     Edited,
     Blurred,
+    Saved,
 }
 
 impl Entity for BufferView {
@@ -1147,10 +1152,11 @@ impl workspace::Item for Buffer {
 }
 
 impl workspace::ItemView for BufferView {
-    fn is_activate_event(event: &Self::Event) -> bool {
+    fn event_effect(event: &Self::Event) -> ItemEventEffect {
         match event {
-            Event::Activate => true,
-            _ => false,
+            Event::Activate => ItemEventEffect::Activate,
+            Event::Edited => ItemEventEffect::ChangeTab,
+            _ => ItemEventEffect::None,
         }
     }
 
@@ -1178,7 +1184,7 @@ impl workspace::ItemView for BufferView {
         Some(clone)
     }
 
-    fn save(&self, ctx: &mut MutableAppContext) -> Option<Task<Result<()>>> {
+    fn save(&self, ctx: &mut ViewContext<Self>) -> Option<Task<Result<()>>> {
         self.buffer.update(ctx, |buffer, ctx| buffer.save(ctx))
     }
 

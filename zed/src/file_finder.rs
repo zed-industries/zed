@@ -309,7 +309,7 @@ impl FileFinder {
                 }
             }
             Blurred => ctx.emit(Event::Dismissed),
-            Activate => {}
+            _ => {}
         }
     }
 

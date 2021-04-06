@@ -12,8 +12,14 @@ pub fn init(app: &mut App) {
     app.add_bindings(vec![Binding::new("cmd-s", "workspace:save", None)]);
 }
 
+pub enum ItemEventEffect {
+    None,
+    ChangeTab,
+    Activate,
+}
+
 pub trait ItemView: View {
-    fn is_activate_event(event: &Self::Event) -> bool;
+    fn event_effect(event: &Self::Event) -> ItemEventEffect;
     fn title(&self, app: &AppContext) -> String;
     fn entry_id(&self, app: &AppContext) -> Option<(usize, usize)>;
     fn clone_on_split(&self, _: &mut ViewContext<Self>) -> Option<Self>
@@ -25,7 +31,7 @@ pub trait ItemView: View {
     fn is_modified(&self, _: &AppContext) -> bool {
         false
     }
-    fn save(&self, _: &mut MutableAppContext) -> Option<Task<anyhow::Result<()>>> {
+    fn save(&self, _: &mut ViewContext<Self>) -> Option<Task<anyhow::Result<()>>> {
         None
     }
 }
@@ -65,18 +71,22 @@ impl<T: ItemView> ItemViewHandle for ViewHandle<T> {
     fn set_parent_pane(&self, pane: &ViewHandle<Pane>, app: &mut MutableAppContext) {
         pane.update(app, |_, ctx| {
             ctx.subscribe_to_view(self, |pane, item, event, ctx| {
-                if T::is_activate_event(event) {
-                    if let Some(ix) = pane.item_index(&item) {
-                        pane.activate_item(ix, ctx);
-                        pane.activate(ctx);
+                match T::event_effect(event) {
+                    ItemEventEffect::Activate => {
+                        if let Some(ix) = pane.item_index(&item) {
+                            pane.activate_item(ix, ctx);
+                            pane.activate(ctx);
+                        }
                     }
+                    ItemEventEffect::ChangeTab => ctx.notify(),
+                    _ => {}
                 }
             })
         })
     }
 
     fn save(&self, ctx: &mut MutableAppContext) -> Option<Task<anyhow::Result<()>>> {
-        self.update(ctx, |item, ctx| item.save(ctx.app_mut()))
+        self.update(ctx, |item, ctx| item.save(ctx))
     }
 
     fn is_modified(&self, ctx: &AppContext) -> bool {
