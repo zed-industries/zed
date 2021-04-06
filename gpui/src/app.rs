@@ -380,6 +380,7 @@ impl MutableAppContext {
     ) {
         self.invalidation_callbacks
             .insert(window_id, Box::new(callback));
+        self.update_windows();
     }
 
     pub fn add_action<S, V, T, F>(&mut self, name: S, mut handler: F)
@@ -612,13 +613,19 @@ impl MutableAppContext {
         T: View,
         F: FnOnce(&mut ViewContext<T>) -> T,
     {
+        self.pending_flushes += 1;
         let window_id = post_inc(&mut self.next_window_id);
         self.ctx.windows.insert(window_id, Window::default());
-
+        self.open_platform_window(window_id);
         let root_handle = self.add_view(window_id, build_root_view);
         self.ctx.windows.get_mut(&window_id).unwrap().root_view = Some(root_handle.clone().into());
         self.focus(window_id, root_handle.id());
+        self.flush_effects();
 
+        (window_id, root_handle)
+    }
+
+    fn open_platform_window(&mut self, window_id: usize) {
         match self.platform.open_window(
             WindowOptions {
                 bounds: RectF::new(vec2f(0., 0.), vec2f(1024., 768.)),
@@ -693,8 +700,6 @@ impl MutableAppContext {
                 });
             }
         }
-
-        (window_id, root_handle)
     }
 
     pub fn add_view<T, F>(&mut self, window_id: usize, build_view: F) -> ViewHandle<T>
