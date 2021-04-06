@@ -145,7 +145,7 @@ impl FontCache {
     }
 
     pub fn descent(&self, font_id: FontId, font_size: f32) -> f32 {
-        self.scale_metric(self.metric(font_id, |m| m.descent), font_id, font_size)
+        self.scale_metric(self.metric(font_id, |m| -m.descent), font_id, font_size)
     }
 
     pub fn scale_metric(&self, metric: f32, font_id: FontId, font_size: f32) -> f32 {

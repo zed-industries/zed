@@ -1,6 +1,6 @@
 use crate::{
     font_cache::FamilyId,
-    fonts::{FontId, Properties},
+    fonts::Properties,
     geometry::vector::{vec2f, Vector2F},
     AfterLayoutContext, Element, ElementBox, Event, EventContext, LayoutContext, PaintContext,
     SizeConstraint,
@@ -25,7 +25,7 @@ impl LineBox {
 }
 
 impl Element for LineBox {
-    type LayoutState = Option<FontId>;
+    type LayoutState = f32;
     type PaintState = ();
 
     fn layout(
@@ -38,26 +38,20 @@ impl Element for LineBox {
             .select_font(self.family_id, &self.font_properties)
         {
             Ok(font_id) => {
-                let line_height = ctx
-                    .font_cache
-                    .bounding_box(font_id, self.font_size)
-                    .y()
-                    .ceil();
-                let child_max = vec2f(
-                    constraint.max.x(),
-                    ctx.font_cache.ascent(font_id, self.font_size)
-                        - ctx.font_cache.descent(font_id, self.font_size),
-                );
+                let line_height = ctx.font_cache.line_height(font_id, self.font_size);
+                let character_height = ctx.font_cache.ascent(font_id, self.font_size)
+                    + ctx.font_cache.descent(font_id, self.font_size);
+                let child_max = vec2f(constraint.max.x(), character_height);
                 let child_size = self.child.layout(
                     SizeConstraint::new(constraint.min.min(child_max), child_max),
                     ctx,
                 );
                 let size = vec2f(child_size.x(), line_height);
-                (size, Some(font_id))
+                (size, (line_height - character_height) / 2.)
             }
             Err(error) => {
                 log::error!("can't find font for LineBox: {}", error);
-                (constraint.min, None)
+                (constraint.min, 0.0)
             }
         }
     }
@@ -74,14 +68,11 @@ impl Element for LineBox {
     fn paint(
         &mut self,
         bounds: pathfinder_geometry::rect::RectF,
-        font_id: &mut Option<FontId>,
+        padding_top: &mut f32,
         ctx: &mut PaintContext,
     ) -> Self::PaintState {
-        if let Some(font_id) = font_id {
-            let descent = ctx.font_cache.descent(*font_id, self.font_size);
-            self.child
-                .paint(bounds.origin() + vec2f(0.0, -descent), ctx);
-        }
+        self.child
+            .paint(bounds.origin() + vec2f(0., *padding_top), ctx);
     }
 
     fn dispatch_event(

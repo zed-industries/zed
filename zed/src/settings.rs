@@ -17,7 +17,7 @@ impl Settings {
             buffer_font_family: font_cache.load_family(&["Fira Code", "Monaco"])?,
             buffer_font_size: 14.0,
             tab_size: 4,
-            ui_font_family: font_cache.load_family(&["SF Pro Display", "Helvetica"])?,
+            ui_font_family: font_cache.load_family(&["SF Pro", "Helvetica"])?,
             ui_font_size: 12.0,
         })
     }
