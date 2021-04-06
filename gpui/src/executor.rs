@@ -22,9 +22,6 @@ pub struct Background {
     _stop: channel::Sender<()>,
 }
 
-#[must_use]
-pub type BackgroundTask<T> = smol::Task<T>;
-
 impl Foreground {
     pub fn platform(dispatcher: Arc<dyn platform::Dispatcher>) -> Result<Self> {
         if dispatcher.is_main_thread() {
@@ -82,7 +79,7 @@ impl Background {
         }
     }
 
-    pub fn spawn<T>(&self, future: impl Send + Future<Output = T> + 'static) -> BackgroundTask<T>
+    pub fn spawn<T>(&self, future: impl Send + Future<Output = T> + 'static) -> Task<T>
     where
         T: 'static + Send,
     {

@@ -14,7 +14,7 @@ use crate::{
     worktree::FileHandle,
 };
 use anyhow::{anyhow, Result};
-use gpui::{executor::BackgroundTask, AppContext, Entity, ModelContext};
+use gpui::{AppContext, Entity, ModelContext, Task};
 use lazy_static::lazy_static;
 use rand::prelude::*;
 use std::{
@@ -241,7 +241,7 @@ impl Buffer {
         }
     }
 
-    pub fn save(&self, ctx: &mut ModelContext<Self>) -> Option<BackgroundTask<Result<()>>> {
+    pub fn save(&self, ctx: &mut ModelContext<Self>) -> Option<Task<Result<()>>> {
         if let Some(file) = &self.file {
             let snapshot = self.snapshot();
             Some(file.save(snapshot, ctx.app()))

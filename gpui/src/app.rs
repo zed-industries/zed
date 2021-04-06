@@ -967,7 +967,7 @@ impl MutableAppContext {
         self.flush_effects();
     }
 
-    fn spawn<F, T>(&mut self, future: F) -> Task<Option<T>>
+    fn spawn<F, T>(&mut self, future: F) -> EntityTask<Option<T>>
     where
         F: 'static + Future,
         T: 'static,
@@ -983,7 +983,7 @@ impl MutableAppContext {
                     .map(|result| *result.downcast::<T>().unwrap())
             })
         };
-        Task::new(
+        EntityTask::new(
             task_id,
             task,
             TaskHandlerMap::Future(self.future_handlers.clone()),
@@ -991,7 +991,7 @@ impl MutableAppContext {
         )
     }
 
-    fn spawn_stream<F, T>(&mut self, mut stream: F) -> Task<Option<T>>
+    fn spawn_stream<F, T>(&mut self, mut stream: F) -> EntityTask<Option<T>>
     where
         F: 'static + Stream + Unpin,
         T: 'static,
@@ -1021,7 +1021,7 @@ impl MutableAppContext {
             })
         };
 
-        Task::new(
+        EntityTask::new(
             task_id,
             task,
             TaskHandlerMap::Stream(self.stream_handlers.clone()),
@@ -1562,7 +1562,7 @@ impl<'a, T: Entity> ModelContext<'a, T> {
             });
     }
 
-    pub fn spawn<S, F, U>(&mut self, future: S, callback: F) -> Task<Option<U>>
+    pub fn spawn<S, F, U>(&mut self, future: S, callback: F) -> EntityTask<Option<U>>
     where
         S: 'static + Future,
         F: 'static + FnOnce(&mut T, S::Output, &mut ModelContext<T>) -> U,
@@ -1594,7 +1594,7 @@ impl<'a, T: Entity> ModelContext<'a, T> {
         stream: S,
         mut item_callback: F,
         done_callback: G,
-    ) -> Task<Option<U>>
+    ) -> EntityTask<Option<U>>
     where
         S: 'static + Stream + Unpin,
         F: 'static + FnMut(&mut T, S::Item, &mut ModelContext<T>),
@@ -1822,7 +1822,7 @@ impl<'a, T: View> ViewContext<'a, T> {
         self.halt_stream = true;
     }
 
-    pub fn spawn<S, F, U>(&mut self, future: S, callback: F) -> Task<Option<U>>
+    pub fn spawn<S, F, U>(&mut self, future: S, callback: F) -> EntityTask<Option<U>>
     where
         S: 'static + Future,
         F: 'static + FnOnce(&mut T, S::Output, &mut ViewContext<T>) -> U,
@@ -1855,7 +1855,7 @@ impl<'a, T: View> ViewContext<'a, T> {
         stream: S,
         mut item_callback: F,
         done_callback: G,
-    ) -> Task<Option<U>>
+    ) -> EntityTask<Option<U>>
     where
         S: 'static + Stream + Unpin,
         F: 'static + FnMut(&mut T, S::Item, &mut ViewContext<T>),
@@ -2363,7 +2363,7 @@ enum StreamHandler {
 }
 
 #[must_use]
-pub struct Task<T> {
+pub struct EntityTask<T> {
     id: usize,
     task: Option<executor::Task<T>>,
     handler_map: TaskHandlerMap,
@@ -2376,7 +2376,7 @@ enum TaskHandlerMap {
     Stream(Rc<RefCell<HashMap<usize, StreamHandler>>>),
 }
 
-impl<T> Task<T> {
+impl<T> EntityTask<T> {
     fn new(
         id: usize,
         task: executor::Task<T>,
@@ -2402,7 +2402,7 @@ impl<T> Task<T> {
     }
 }
 
-impl<T> Future for Task<T> {
+impl<T> Future for EntityTask<T> {
     type Output = T;
 
     fn poll(
@@ -2414,7 +2414,7 @@ impl<T> Future for Task<T> {
     }
 }
 
-impl<T> Drop for Task<T> {
+impl<T> Drop for EntityTask<T> {
     fn drop(self: &mut Self) {
         match &self.handler_map {
             TaskHandlerMap::Detached => {

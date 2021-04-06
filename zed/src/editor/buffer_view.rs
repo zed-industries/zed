@@ -5,9 +5,9 @@ use super::{
 use crate::{settings::Settings, watch, workspace};
 use anyhow::Result;
 use gpui::{
-    executor::BackgroundTask, fonts::Properties as FontProperties, keymap::Binding, text_layout,
-    App, AppContext, Element, ElementBox, Entity, FontCache, ModelHandle, MutableAppContext, View,
-    ViewContext, WeakViewHandle,
+    fonts::Properties as FontProperties, keymap::Binding, text_layout, App, AppContext, Element,
+    ElementBox, Entity, FontCache, ModelHandle, MutableAppContext, Task, View, ViewContext,
+    WeakViewHandle,
 };
 use gpui::{geometry::vector::Vector2F, TextLayoutCache};
 use parking_lot::Mutex;
@@ -1180,7 +1180,7 @@ impl workspace::ItemView for BufferView {
         Some(clone)
     }
 
-    fn save(&self, ctx: &mut MutableAppContext) -> Option<BackgroundTask<Result<()>>> {
+    fn save(&self, ctx: &mut MutableAppContext) -> Option<Task<Result<()>>> {
         self.buffer.update(ctx, |buffer, ctx| buffer.save(ctx))
     }
 }

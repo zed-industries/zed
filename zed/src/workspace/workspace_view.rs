@@ -1,8 +1,8 @@
 use super::{pane, Pane, PaneGroup, SplitDirection, Workspace};
 use crate::{settings::Settings, watch};
 use gpui::{
-    color::rgbu, elements::*, executor::BackgroundTask, keymap::Binding, AnyViewHandle, App,
-    AppContext, Entity, ModelHandle, MutableAppContext, View, ViewContext, ViewHandle,
+    color::rgbu, elements::*, keymap::Binding, AnyViewHandle, App, AppContext, Entity, ModelHandle,
+    MutableAppContext, Task, View, ViewContext, ViewHandle,
 };
 use log::{error, info};
 use std::{collections::HashSet, path::PathBuf};
@@ -22,7 +22,7 @@ pub trait ItemView: View {
     {
         None
     }
-    fn save(&self, _: &mut MutableAppContext) -> Option<BackgroundTask<anyhow::Result<()>>> {
+    fn save(&self, _: &mut MutableAppContext) -> Option<Task<anyhow::Result<()>>> {
         None
     }
 }
@@ -35,7 +35,7 @@ pub trait ItemViewHandle: Send + Sync {
     fn set_parent_pane(&self, pane: &ViewHandle<Pane>, app: &mut MutableAppContext);
     fn id(&self) -> usize;
     fn to_any(&self) -> AnyViewHandle;
-    fn save(&self, ctx: &mut MutableAppContext) -> Option<BackgroundTask<anyhow::Result<()>>>;
+    fn save(&self, ctx: &mut MutableAppContext) -> Option<Task<anyhow::Result<()>>>;
 }
 
 impl<T: ItemView> ItemViewHandle for ViewHandle<T> {
@@ -71,7 +71,7 @@ impl<T: ItemView> ItemViewHandle for ViewHandle<T> {
         })
     }
 
-    fn save(&self, ctx: &mut MutableAppContext) -> Option<BackgroundTask<anyhow::Result<()>>> {
+    fn save(&self, ctx: &mut MutableAppContext) -> Option<Task<anyhow::Result<()>>> {
         self.update(ctx, |item, ctx| item.save(ctx.app_mut()))
     }
 

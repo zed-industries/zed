@@ -11,7 +11,7 @@ use crate::{
 use anyhow::{anyhow, Result};
 use crossbeam_channel as channel;
 use easy_parallel::Parallel;
-use gpui::{executor::BackgroundTask, AppContext, Entity, ModelContext, ModelHandle};
+use gpui::{AppContext, Entity, ModelContext, ModelHandle, Task};
 use ignore::dir::{Ignore, IgnoreBuilder};
 use parking_lot::RwLock;
 use smol::prelude::*;
@@ -356,7 +356,7 @@ impl Worktree {
         entry_id: usize,
         content: Snapshot,
         ctx: &AppContext,
-    ) -> BackgroundTask<Result<()>> {
+    ) -> Task<Result<()>> {
         let path = self.abs_entry_path(entry_id);
         ctx.background_executor().spawn(async move {
             let buffer_size = content.text_summary().bytes.min(10 * 1024);
@@ -468,7 +468,7 @@ impl FileHandle {
         self.worktree.as_ref(app).load_history(self.entry_id)
     }
 
-    pub fn save<'a>(&self, content: Snapshot, ctx: &AppContext) -> BackgroundTask<Result<()>> {
+    pub fn save<'a>(&self, content: Snapshot, ctx: &AppContext) -> Task<Result<()>> {
         let worktree = self.worktree.as_ref(ctx);
         worktree.save(self.entry_id, content, ctx)
     }

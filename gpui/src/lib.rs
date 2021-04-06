@@ -17,6 +17,7 @@ pub use text_layout::TextLayoutCache;
 mod util;
 pub use elements::{Element, ElementBox};
 pub mod executor;
+pub use executor::Task;
 pub mod keymap;
 pub mod platform;
 pub use pathfinder_color as color;
