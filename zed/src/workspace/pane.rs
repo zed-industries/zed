@@ -1,7 +1,11 @@
 use super::{ItemViewHandle, SplitDirection};
 use crate::{settings::Settings, watch};
 use gpui::{
-    color::ColorU, elements::*, keymap::Binding, App, AppContext, Border, Entity, View, ViewContext,
+    color::{ColorF, ColorU},
+    elements::*,
+    geometry::{rect::RectF, vector::vec2f},
+    keymap::Binding,
+    App, AppContext, Border, Entity, Quad, View, ViewContext,
 };
 use std::cmp;
 
@@ -190,7 +194,32 @@ impl Pane {
             let padding = 6.;
             let mut container = Container::new(
                 Align::new(
-                    Label::new(title, settings.ui_font_family, settings.ui_font_size).boxed(),
+                    Flex::row()
+                        .with_child(
+                            Expanded::new(
+                                1.0,
+                                Label::new(title, settings.ui_font_family, settings.ui_font_size)
+                                    .boxed(),
+                            )
+                            .boxed(),
+                        )
+                        .with_child(
+                            Expanded::new(
+                                1.0,
+                                LineBox::new(
+                                    settings.ui_font_family,
+                                    settings.ui_font_size,
+                                    ConstrainedBox::new(Self::render_modified_icon(
+                                        item.is_modified(app),
+                                    ))
+                                    .with_max_width(12.)
+                                    .boxed(),
+                                )
+                                .boxed(),
+                            )
+                            .boxed(),
+                        )
+                        .boxed(),
                 )
                 .boxed(),
             )
@@ -242,6 +271,26 @@ impl Pane {
         );
 
         row.boxed()
+    }
+
+    fn render_modified_icon(is_modified: bool) -> ElementBox {
+        Canvas::new(move |bounds, ctx| {
+            if is_modified {
+                let padding = if bounds.height() < bounds.width() {
+                    vec2f(bounds.width() - bounds.height(), 0.0)
+                } else {
+                    vec2f(0.0, bounds.height() - bounds.width())
+                };
+                let square = RectF::new(bounds.origin() + padding / 2., bounds.size() - padding);
+                ctx.scene.push_quad(Quad {
+                    bounds: square,
+                    background: Some(ColorF::new(0.639, 0.839, 1.0, 1.0).to_u8()),
+                    border: Default::default(),
+                    corner_radius: square.width() / 2.,
+                });
+            }
+        })
+        .boxed()
     }
 }
 

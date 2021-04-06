@@ -1,4 +1,5 @@
 mod align;
+mod canvas;
 mod constrained_box;
 mod container;
 mod empty;
@@ -13,6 +14,7 @@ mod uniform_list;
 
 pub use crate::presenter::ChildView;
 pub use align::*;
+pub use canvas::*;
 pub use constrained_box::*;
 pub use container::*;
 pub use empty::*;

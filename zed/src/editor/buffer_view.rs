@@ -1181,6 +1181,10 @@ impl workspace::ItemView for BufferView {
     fn save(&self, ctx: &mut MutableAppContext) -> Option<Task<Result<()>>> {
         self.buffer.update(ctx, |buffer, ctx| buffer.save(ctx))
     }
+
+    fn is_modified(&self, ctx: &AppContext) -> bool {
+        self.buffer.as_ref(ctx).is_modified()
+    }
 }
 
 impl Selection {

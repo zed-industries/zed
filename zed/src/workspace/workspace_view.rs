@@ -22,6 +22,9 @@ pub trait ItemView: View {
     {
         None
     }
+    fn is_modified(&self, _: &AppContext) -> bool {
+        false
+    }
     fn save(&self, _: &mut MutableAppContext) -> Option<Task<anyhow::Result<()>>> {
         None
     }
@@ -35,6 +38,7 @@ pub trait ItemViewHandle: Send + Sync {
     fn set_parent_pane(&self, pane: &ViewHandle<Pane>, app: &mut MutableAppContext);
     fn id(&self) -> usize;
     fn to_any(&self) -> AnyViewHandle;
+    fn is_modified(&self, ctx: &AppContext) -> bool;
     fn save(&self, ctx: &mut MutableAppContext) -> Option<Task<anyhow::Result<()>>>;
 }
 
@@ -73,6 +77,10 @@ impl<T: ItemView> ItemViewHandle for ViewHandle<T> {
 
     fn save(&self, ctx: &mut MutableAppContext) -> Option<Task<anyhow::Result<()>>> {
         self.update(ctx, |item, ctx| item.save(ctx.app_mut()))
+    }
+
+    fn is_modified(&self, ctx: &AppContext) -> bool {
+        self.as_ref(ctx).is_modified(ctx)
     }
 
     fn id(&self) -> usize {
