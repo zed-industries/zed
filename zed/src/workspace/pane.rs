@@ -196,16 +196,11 @@ impl Pane {
                 Align::new(
                     Flex::row()
                         .with_child(
-                            Expanded::new(
-                                1.0,
-                                Label::new(title, settings.ui_font_family, settings.ui_font_size)
-                                    .boxed(),
-                            )
-                            .boxed(),
+                            Label::new(title, settings.ui_font_family, settings.ui_font_size)
+                                .boxed(),
                         )
                         .with_child(
-                            Expanded::new(
-                                1.0,
+                            Container::new(
                                 LineBox::new(
                                     settings.ui_font_family,
                                     settings.ui_font_size,
@@ -217,6 +212,7 @@ impl Pane {
                                 )
                                 .boxed(),
                             )
+                            .with_margin_left(20.)
                             .boxed(),
                         )
                         .boxed(),
