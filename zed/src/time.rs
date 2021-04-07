@@ -5,10 +5,12 @@ use std::ops::{Add, AddAssign};
 use std::sync::Arc;
 
 pub type ReplicaId = u16;
+pub type Seq = u64;
+
 #[derive(Clone, Copy, Debug, Default, Eq, Hash, PartialEq, Ord, PartialOrd)]
 pub struct Local {
     pub replica_id: ReplicaId,
-    pub value: u64,
+    pub value: Seq,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -16,7 +18,7 @@ pub struct Global(Arc<HashMap<ReplicaId, u64>>);
 
 #[derive(Clone, Copy, Debug, Default, Eq, Hash, Ord, PartialEq, PartialOrd)]
 pub struct Lamport {
-    pub value: u64,
+    pub value: Seq,
     pub replica_id: ReplicaId,
 }
 
@@ -62,7 +64,7 @@ impl Global {
         Global(Arc::new(HashMap::new()))
     }
 
-    pub fn get(&self, replica_id: ReplicaId) -> u64 {
+    pub fn get(&self, replica_id: ReplicaId) -> Seq {
         *self.0.get(&replica_id).unwrap_or(&0)
     }
 
