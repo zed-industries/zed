@@ -1,5 +1,7 @@
 # Zed
 
+[![CI](https://github.com/zed-industries/zed/actions/workflows/ci.yml/badge.svg)](https://github.com/zed-industries/zed/actions/workflows/ci.yml)
+
 Welcome to Zed, a lightning-fast, collaborative code editor that makes your dreams come true.
 
 Everything is under construction, including this README, but in the meantime, here is a high-level roadmap:
