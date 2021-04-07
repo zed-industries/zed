@@ -36,7 +36,7 @@ Once we're using Zed every day, our next goal is to *collaborate* in Zed every d
 
 The "minimal" milestones were about getting Zed to a point where the Zed team could use Zed productively to build Zed. What features are required for someone outside the company to use Zed to productively work on another project that is also written in Rust?
 
-This includes infrastructure like auto-updates, error reporting, and metrics collection. It also includes some amount of polish to make the tool more discoverable for someone that didn't write it, such as a UI for updating settings and key bindings.
+This includes infrastructure like auto-updates, error reporting, and metrics collection. It also includes some amount of polish to make the tool more discoverable for someone that didn't write it, such as a UI for updating settings and key bindings. We may also need to enhance the server to support user authentication and related concerns.
 
 The initial target audience is like us. A small team working in Rust that's potentially interested in collaborating. As the alpha proceeds, we can work with teams of different sizes.
 
