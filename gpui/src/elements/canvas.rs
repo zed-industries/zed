@@ -1,5 +1,9 @@
 use super::Element;
-use crate::PaintContext;
+use crate::{
+    json::{self, json},
+    DebugContext, PaintContext,
+};
+use json::ToJson;
 use pathfinder_geometry::{
     rect::RectF,
     vector::{vec2f, Vector2F},
@@ -69,5 +73,15 @@ where
         _: &mut crate::EventContext,
     ) -> bool {
         false
+    }
+
+    fn debug(
+        &self,
+        bounds: RectF,
+        _: &Self::LayoutState,
+        _: &Self::PaintState,
+        _: &DebugContext,
+    ) -> json::Value {
+        json!({"type": "Canvas", "bounds": bounds.to_json()})
     }
 }

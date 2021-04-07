@@ -1,11 +1,13 @@
+use serde_json::json;
+
 use crate::{
     color::ColorU,
     geometry::{
         rect::RectF,
         vector::{vec2f, Vector2F},
     },
-    scene, AfterLayoutContext, Element, Event, EventContext, LayoutContext, PaintContext,
-    SizeConstraint,
+    scene, AfterLayoutContext, DebugContext, Element, Event, EventContext, LayoutContext,
+    PaintContext, SizeConstraint,
 };
 
 pub struct Svg {
@@ -86,7 +88,24 @@ impl Element for Svg {
     ) -> bool {
         false
     }
+
+    fn debug(
+        &self,
+        bounds: RectF,
+        _: &Self::LayoutState,
+        _: &Self::PaintState,
+        _: &DebugContext,
+    ) -> serde_json::Value {
+        json!({
+            "type": "Svg",
+            "bounds": bounds.to_json(),
+            "path": self.path,
+            "color": self.color.to_json(),
+        })
+    }
 }
+
+use crate::json::ToJson;
 
 fn from_usvg_rect(rect: usvg::Rect) -> RectF {
     RectF::new(

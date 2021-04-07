@@ -1,6 +1,7 @@
 use crate::{
     geometry::{rect::RectF, vector::Vector2F},
-    AfterLayoutContext, Event, EventContext, LayoutContext, PaintContext, SizeConstraint,
+    json, AfterLayoutContext, DebugContext, Event, EventContext, LayoutContext, PaintContext,
+    SizeConstraint,
 };
 use core::panic;
 use replace_with::replace_with_or_abort;
@@ -11,6 +12,7 @@ trait AnyElement {
     fn after_layout(&mut self, _: &mut AfterLayoutContext) {}
     fn paint(&mut self, origin: Vector2F, ctx: &mut PaintContext);
     fn dispatch_event(&mut self, event: &Event, ctx: &mut EventContext) -> bool;
+    fn debug(&self, ctx: &DebugContext) -> serde_json::Value;
 
     fn size(&self) -> Vector2F;
     fn metadata(&self) -> Option<&dyn Any>;
@@ -52,6 +54,14 @@ pub trait Element {
     fn metadata(&self) -> Option<&dyn Any> {
         None
     }
+
+    fn debug(
+        &self,
+        bounds: RectF,
+        layout: &Self::LayoutState,
+        paint: &Self::PaintState,
+        ctx: &DebugContext,
+    ) -> serde_json::Value;
 
     fn boxed(self) -> ElementBox
     where
@@ -165,6 +175,18 @@ impl<T: Element> AnyElement for Lifecycle<T> {
             | Lifecycle::PostPaint { element, .. } => element.metadata(),
         }
     }
+
+    fn debug(&self, ctx: &DebugContext) -> serde_json::Value {
+        match self {
+            Lifecycle::PostPaint {
+                element,
+                bounds,
+                layout,
+                paint,
+            } => element.debug(*bounds, layout, paint, ctx),
+            _ => panic!("invalid element lifecycle state"),
+        }
+    }
 }
 
 impl ElementBox {
@@ -190,5 +212,9 @@ impl ElementBox {
 
     pub fn metadata(&self) -> Option<&dyn Any> {
         self.0.metadata()
+    }
+
+    pub fn debug(&self, ctx: &DebugContext) -> json::Value {
+        self.0.debug(ctx)
     }
 }

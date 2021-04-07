@@ -2,11 +2,13 @@ use crate::{
     app::{AppContext, MutableAppContext, WindowInvalidation},
     elements::Element,
     font_cache::FontCache,
+    json::ToJson,
     platform::Event,
     text_layout::TextLayoutCache,
     AssetCache, ElementBox, Scene,
 };
 use pathfinder_geometry::vector::{vec2f, Vector2F};
+use serde_json::json;
 use std::{any::Any, collections::HashMap, sync::Arc};
 
 pub struct Presenter {
@@ -224,6 +226,12 @@ impl<'a> EventContext<'a> {
     }
 }
 
+pub struct DebugContext<'a> {
+    rendered_views: &'a mut HashMap<usize, ElementBox>,
+    pub font_cache: &'a FontCache,
+    pub app: &'a AppContext,
+}
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum Axis {
     Horizontal,
@@ -235,6 +243,15 @@ impl Axis {
         match self {
             Self::Horizontal => Self::Vertical,
             Self::Vertical => Self::Horizontal,
+        }
+    }
+}
+
+impl ToJson for Axis {
+    fn to_json(&self) -> serde_json::Value {
+        match self {
+            Axis::Horizontal => json!("horizontal"),
+            Axis::Vertical => json!("vertical"),
         }
     }
 }
@@ -291,6 +308,15 @@ impl SizeConstraint {
     }
 }
 
+impl ToJson for SizeConstraint {
+    fn to_json(&self) -> serde_json::Value {
+        json!({
+            "min": self.min.to_json(),
+            "max": self.max.to_json(),
+        })
+    }
+}
+
 pub struct ChildView {
     view_id: usize,
 }
@@ -341,6 +367,25 @@ impl Element for ChildView {
         ctx: &mut EventContext,
     ) -> bool {
         ctx.dispatch_event(self.view_id, event)
+    }
+
+    fn debug(
+        &self,
+        bounds: pathfinder_geometry::rect::RectF,
+        _: &Self::LayoutState,
+        _: &Self::PaintState,
+        ctx: &DebugContext,
+    ) -> serde_json::Value {
+        json!({
+            "type": "ChildView",
+            "view_id": self.view_id,
+            "bounds": bounds.to_json(),
+            "child": if let Some(view) = ctx.rendered_views.get(&self.view_id) {
+                view.debug(ctx)
+            } else {
+                json!(null)
+            }
+        })
     }
 }
 

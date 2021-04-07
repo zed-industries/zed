@@ -1,6 +1,10 @@
-use crate::geometry::{
-    rect::RectF,
-    vector::{vec2f, Vector2F},
+use crate::{
+    geometry::{
+        rect::RectF,
+        vector::{vec2f, Vector2F},
+    },
+    json::{json, ToJson},
+    DebugContext,
 };
 use crate::{
     AfterLayoutContext, Element, Event, EventContext, LayoutContext, PaintContext, SizeConstraint,
@@ -57,5 +61,18 @@ impl Element for Empty {
         _: &mut EventContext,
     ) -> bool {
         false
+    }
+
+    fn debug(
+        &self,
+        bounds: RectF,
+        _: &Self::LayoutState,
+        _: &Self::PaintState,
+        _: &DebugContext,
+    ) -> serde_json::Value {
+        json!({
+            "type": "Empty",
+            "bounds": bounds.to_json(),
+        })
     }
 }

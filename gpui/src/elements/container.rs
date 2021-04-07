@@ -1,8 +1,10 @@
 use pathfinder_geometry::rect::RectF;
+use serde_json::json;
 
 use crate::{
     color::ColorU,
     geometry::vector::{vec2f, Vector2F},
+    json::ToJson,
     scene::{self, Border, Quad},
     AfterLayoutContext, Element, ElementBox, Event, EventContext, LayoutContext, PaintContext,
     SizeConstraint,
@@ -189,6 +191,28 @@ impl Element for Container {
     ) -> bool {
         self.child.dispatch_event(event, ctx)
     }
+
+    fn debug(
+        &self,
+        bounds: RectF,
+        _: &Self::LayoutState,
+        _: &Self::PaintState,
+        ctx: &crate::DebugContext,
+    ) -> serde_json::Value {
+        json!({
+            "type": "Container",
+            "details": {
+                "margin": self.margin.to_json(),
+                "padding": self.padding.to_json(),
+                "background_color": self.background_color.to_json(),
+                "border": self.border.to_json(),
+                "corner_radius": self.corner_radius,
+                "shadow": self.shadow.to_json(),
+            },
+            "bounds": bounds.to_json(),
+            "child": self.child.debug(ctx),
+        })
+    }
 }
 
 #[derive(Default)]
@@ -199,6 +223,25 @@ pub struct Margin {
     right: f32,
 }
 
+impl ToJson for Margin {
+    fn to_json(&self) -> serde_json::Value {
+        let mut value = json!({});
+        if self.top > 0. {
+            value["top"] = json!(self.top);
+        }
+        if self.right > 0. {
+            value["right"] = json!(self.right);
+        }
+        if self.bottom > 0. {
+            value["bottom"] = json!(self.bottom);
+        }
+        if self.left > 0. {
+            value["left"] = json!(self.left);
+        }
+        value
+    }
+}
+
 #[derive(Default)]
 pub struct Padding {
     top: f32,
@@ -207,9 +250,38 @@ pub struct Padding {
     right: f32,
 }
 
+impl ToJson for Padding {
+    fn to_json(&self) -> serde_json::Value {
+        let mut value = json!({});
+        if self.top > 0. {
+            value["top"] = json!(self.top);
+        }
+        if self.right > 0. {
+            value["right"] = json!(self.right);
+        }
+        if self.bottom > 0. {
+            value["bottom"] = json!(self.bottom);
+        }
+        if self.left > 0. {
+            value["left"] = json!(self.left);
+        }
+        value
+    }
+}
+
 #[derive(Default)]
 pub struct Shadow {
     offset: Vector2F,
     blur: f32,
     color: ColorU,
+}
+
+impl ToJson for Shadow {
+    fn to_json(&self) -> serde_json::Value {
+        json!({
+            "offset": self.offset.to_json(),
+            "blur": self.blur,
+            "color": self.color.to_json()
+        })
+    }
 }

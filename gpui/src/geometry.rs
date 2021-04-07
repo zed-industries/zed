@@ -1,7 +1,8 @@
 use super::scene::{Path, PathVertex};
-use crate::color::ColorU;
+use crate::{color::ColorU, json::ToJson};
 pub use pathfinder_geometry::*;
 use rect::RectF;
+use serde_json::json;
 use vector::{vec2f, Vector2F};
 
 pub struct PathBuilder {
@@ -104,5 +105,17 @@ impl PathBuilder {
                 });
             }
         }
+    }
+}
+
+impl ToJson for Vector2F {
+    fn to_json(&self) -> serde_json::Value {
+        json!([self.x(), self.y()])
+    }
+}
+
+impl ToJson for RectF {
+    fn to_json(&self) -> serde_json::Value {
+        json!({"origin": self.origin().to_json(), "size": self.size().to_json()})
     }
 }
