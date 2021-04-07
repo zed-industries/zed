@@ -3,6 +3,7 @@ mod point;
 mod text;
 
 pub use anchor::*;
+use futures_core::future::LocalBoxFuture;
 pub use point::*;
 pub use text::*;
 
@@ -14,7 +15,7 @@ use crate::{
     worktree::FileHandle,
 };
 use anyhow::{anyhow, Result};
-use gpui::{AppContext, Entity, ModelContext, Task};
+use gpui::{AppContext, Entity, ModelContext};
 use lazy_static::lazy_static;
 use rand::prelude::*;
 use std::{
@@ -36,6 +37,7 @@ pub struct Buffer {
     fragments: SumTree<Fragment>,
     insertion_splits: HashMap<time::Local, SumTree<InsertionSplit>>,
     pub version: time::Global,
+    saved_version: time::Global,
     last_edit: time::Local,
     selections: HashMap<SelectionSetId, Vec<Selection>>,
     pub selections_last_update: SelectionsVersion,
@@ -216,6 +218,7 @@ impl Buffer {
             fragments,
             insertion_splits,
             version: time::Global::new(),
+            saved_version: time::Global::new(),
             last_edit: time::Local::default(),
             selections: HashMap::default(),
             selections_last_update: 0,
@@ -241,17 +244,34 @@ impl Buffer {
         }
     }
 
-    pub fn save(&self, ctx: &mut ModelContext<Self>) -> Option<Task<Result<()>>> {
+    pub fn save(&mut self, ctx: &mut ModelContext<Self>) -> LocalBoxFuture<'static, Result<()>> {
         if let Some(file) = &self.file {
             let snapshot = self.snapshot();
-            Some(file.save(snapshot, ctx.app()))
+            let version = self.version.clone();
+            let save_task = file.save(snapshot, ctx.app());
+            let task = ctx.spawn(save_task, |me, save_result, ctx| {
+                if save_result.is_ok() {
+                    me.did_save(version, ctx);
+                }
+                save_result
+            });
+            Box::pin(task)
         } else {
-            None
+            Box::pin(async { Ok(()) })
         }
     }
 
-    pub fn is_modified(&self) -> bool {
-        self.version != time::Global::new()
+    fn did_save(&mut self, version: time::Global, ctx: &mut ModelContext<Buffer>) {
+        self.saved_version = version;
+        ctx.emit(Event::Saved);
+    }
+
+    pub fn is_dirty(&self) -> bool {
+        self.version > self.saved_version
+    }
+
+    pub fn version(&self) -> time::Global {
+        self.version.clone()
     }
 
     pub fn text_summary(&self) -> TextSummary {
@@ -398,6 +418,7 @@ impl Buffer {
             None
         };
 
+        let was_dirty = self.is_dirty();
         let old_version = self.version.clone();
         let old_ranges = old_ranges
             .into_iter()
@@ -416,7 +437,7 @@ impl Buffer {
                 ctx.notify();
                 let changes = self.edits_since(old_version).collect::<Vec<_>>();
                 if !changes.is_empty() {
-                    ctx.emit(Event::Edited(changes))
+                    self.did_edit(changes, was_dirty, ctx);
                 }
             }
 
@@ -432,6 +453,13 @@ impl Buffer {
         }
 
         Ok(ops)
+    }
+
+    fn did_edit(&self, changes: Vec<Edit>, was_dirty: bool, ctx: &mut ModelContext<Self>) {
+        ctx.emit(Event::Edited(changes));
+        if !was_dirty {
+            ctx.emit(Event::Dirtied);
+        }
     }
 
     pub fn simulate_typing<T: Rng>(&mut self, rng: &mut T) {
@@ -619,6 +647,7 @@ impl Buffer {
         ops: I,
         ctx: Option<&mut ModelContext<Self>>,
     ) -> Result<()> {
+        let was_dirty = self.is_dirty();
         let old_version = self.version.clone();
 
         let mut deferred_ops = Vec::new();
@@ -637,7 +666,7 @@ impl Buffer {
             ctx.notify();
             let changes = self.edits_since(old_version).collect::<Vec<_>>();
             if !changes.is_empty() {
-                ctx.emit(Event::Edited(changes));
+                self.did_edit(changes, was_dirty, ctx);
             }
         }
 
@@ -1370,6 +1399,7 @@ impl Clone for Buffer {
             fragments: self.fragments.clone(),
             insertion_splits: self.insertion_splits.clone(),
             version: self.version.clone(),
+            saved_version: self.saved_version.clone(),
             last_edit: self.last_edit.clone(),
             selections: self.selections.clone(),
             selections_last_update: self.selections_last_update.clone(),
@@ -1395,6 +1425,8 @@ impl Snapshot {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum Event {
     Edited(Vec<Edit>),
+    Dirtied,
+    Saved,
 }
 
 impl Entity for Buffer {
@@ -1948,7 +1980,9 @@ impl ToPoint for usize {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use gpui::App;
     use std::collections::BTreeMap;
+    use std::{cell::RefCell, rc::Rc};
 
     #[test]
     fn test_edit() -> Result<()> {
@@ -1970,9 +2004,6 @@ mod tests {
 
     #[test]
     fn test_edit_events() {
-        use gpui::App;
-        use std::{cell::RefCell, rc::Rc};
-
         App::test((), |mut app| async move {
             let buffer_1_events = Rc::new(RefCell::new(Vec::new()));
             let buffer_2_events = Rc::new(RefCell::new(Vec::new()));
@@ -1998,19 +2029,25 @@ mod tests {
             let buffer_1_events = buffer_1_events.borrow();
             assert_eq!(
                 *buffer_1_events,
-                vec![Event::Edited(vec![Edit {
-                    old_range: 2..4,
-                    new_range: 2..5
-                }])]
+                vec![
+                    Event::Edited(vec![Edit {
+                        old_range: 2..4,
+                        new_range: 2..5
+                    },]),
+                    Event::Dirtied
+                ]
             );
 
             let buffer_2_events = buffer_2_events.borrow();
             assert_eq!(
                 *buffer_2_events,
-                vec![Event::Edited(vec![Edit {
-                    old_range: 2..4,
-                    new_range: 2..5
-                }])]
+                vec![
+                    Event::Edited(vec![Edit {
+                        old_range: 2..4,
+                        new_range: 2..5
+                    },]),
+                    Event::Dirtied
+                ]
             );
         });
     }
@@ -2484,11 +2521,89 @@ mod tests {
 
     #[test]
     fn test_is_modified() -> Result<()> {
-        let mut buffer = Buffer::new(0, "abc");
-        assert!(!buffer.is_modified());
-        buffer.edit(vec![1..2], "", None)?;
-        assert!(buffer.is_modified());
+        App::test((), |mut app| async move {
+            let model = app.add_model(|_| Buffer::new(0, "abc"));
+            let events = Rc::new(RefCell::new(Vec::new()));
 
+            // initially, the buffer isn't dirty.
+            model.update(&mut app, |buffer, ctx| {
+                ctx.subscribe(&model, {
+                    let events = events.clone();
+                    move |_, event, _| events.borrow_mut().push(event.clone())
+                });
+
+                assert!(!buffer.is_dirty());
+                assert!(events.borrow().is_empty());
+
+                buffer.edit(vec![1..2], "", Some(ctx)).unwrap();
+            });
+
+            // after the first edit, the buffer is dirty, and emits a dirtied event.
+            model.update(&mut app, |buffer, ctx| {
+                assert!(buffer.text() == "ac");
+                assert!(buffer.is_dirty());
+                assert_eq!(
+                    *events.borrow(),
+                    &[
+                        Event::Edited(vec![Edit {
+                            old_range: 1..2,
+                            new_range: 1..1
+                        }]),
+                        Event::Dirtied
+                    ]
+                );
+                events.borrow_mut().clear();
+
+                buffer.did_save(buffer.version(), ctx);
+            });
+
+            // after saving, the buffer is not dirty, and emits a saved event.
+            model.update(&mut app, |buffer, ctx| {
+                assert!(!buffer.is_dirty());
+                assert_eq!(*events.borrow(), &[Event::Saved]);
+                events.borrow_mut().clear();
+
+                buffer.edit(vec![1..1], "B", Some(ctx)).unwrap();
+                buffer.edit(vec![2..2], "D", Some(ctx)).unwrap();
+            });
+
+            // after editing again, the buffer is dirty, and emits another dirty event.
+            model.update(&mut app, |buffer, ctx| {
+                assert!(buffer.text() == "aBDc");
+                assert!(buffer.is_dirty());
+                assert_eq!(
+                    *events.borrow(),
+                    &[
+                        Event::Edited(vec![Edit {
+                            old_range: 1..1,
+                            new_range: 1..2
+                        }]),
+                        Event::Dirtied,
+                        Event::Edited(vec![Edit {
+                            old_range: 2..2,
+                            new_range: 2..3
+                        }]),
+                    ],
+                );
+                events.borrow_mut().clear();
+
+                // TODO - currently, after restoring the buffer to its
+                // previously-saved state, the is still considered dirty.
+                buffer.edit(vec![1..3], "", Some(ctx)).unwrap();
+                assert!(buffer.text() == "ac");
+                assert!(buffer.is_dirty());
+            });
+
+            model.update(&mut app, |_, _| {
+                assert_eq!(
+                    *events.borrow(),
+                    &[Event::Edited(vec![Edit {
+                        old_range: 1..3,
+                        new_range: 1..1
+                    },])]
+                );
+            });
+        });
         Ok(())
     }
 

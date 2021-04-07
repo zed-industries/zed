@@ -36,6 +36,11 @@ impl Container {
         self
     }
 
+    pub fn with_margin_left(mut self, margin: f32) -> Self {
+        self.margin.left = margin;
+        self
+    }
+
     pub fn with_uniform_padding(mut self, padding: f32) -> Self {
         self.padding = Padding {
             top: padding,

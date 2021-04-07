@@ -2241,6 +2241,7 @@ dependencies = [
  "crossbeam-channel 0.5.0",
  "dirs",
  "easy-parallel",
+ "futures-core",
  "gpui",
  "ignore",
  "lazy_static",

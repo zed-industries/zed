@@ -4,10 +4,10 @@ use super::{
 };
 use crate::{settings::Settings, watch, workspace};
 use anyhow::Result;
+use futures_core::future::LocalBoxFuture;
 use gpui::{
     fonts::Properties as FontProperties, keymap::Binding, text_layout, App, AppContext, Element,
-    ElementBox, Entity, FontCache, ModelHandle, MutableAppContext, Task, View, ViewContext,
-    WeakViewHandle,
+    ElementBox, Entity, FontCache, ModelHandle, View, ViewContext, WeakViewHandle,
 };
 use gpui::{geometry::vector::Vector2F, TextLayoutCache};
 use parking_lot::Mutex;
@@ -81,18 +81,6 @@ pub enum SelectAction {
     },
     End,
 }
-
-// impl workspace::Item for Buffer {
-//     type View = BufferView;
-
-//     fn build_view(
-//         buffer: ModelHandle<Self>,
-//         settings: watch::Receiver<Settings>,
-//         ctx: &mut ViewContext<Self::View>,
-//     ) -> Self::View {
-//         BufferView::for_buffer(buffer, settings, ctx)
-//     }
-// }
 
 pub struct BufferView {
     handle: WeakViewHandle<Self>,
@@ -1091,6 +1079,8 @@ impl BufferView {
     ) {
         match event {
             buffer::Event::Edited(_) => ctx.emit(Event::Edited),
+            buffer::Event::Dirtied => ctx.emit(Event::Dirtied),
+            buffer::Event::Saved => ctx.emit(Event::Saved),
         }
     }
 }
@@ -1106,6 +1096,8 @@ pub enum Event {
     Activate,
     Edited,
     Blurred,
+    Dirtied,
+    Saved,
 }
 
 impl Entity for BufferView {
@@ -1147,11 +1139,12 @@ impl workspace::Item for Buffer {
 }
 
 impl workspace::ItemView for BufferView {
-    fn is_activate_event(event: &Self::Event) -> bool {
-        match event {
-            Event::Activate => true,
-            _ => false,
-        }
+    fn should_activate_item_on_event(event: &Self::Event) -> bool {
+        matches!(event, Event::Activate)
+    }
+
+    fn should_update_tab_on_event(event: &Self::Event) -> bool {
+        matches!(event, Event::Saved | Event::Dirtied)
     }
 
     fn title(&self, app: &AppContext) -> std::string::String {
@@ -1178,8 +1171,12 @@ impl workspace::ItemView for BufferView {
         Some(clone)
     }
 
-    fn save(&self, ctx: &mut MutableAppContext) -> Option<Task<Result<()>>> {
+    fn save(&self, ctx: &mut ViewContext<Self>) -> LocalBoxFuture<'static, Result<()>> {
         self.buffer.update(ctx, |buffer, ctx| buffer.save(ctx))
+    }
+
+    fn is_dirty(&self, ctx: &AppContext) -> bool {
+        self.buffer.as_ref(ctx).is_dirty()
     }
 }
 
