@@ -13,13 +13,13 @@ pub fn init(app: &mut App) {
     app.add_bindings(vec![Binding::new("cmd-s", "workspace:save", None)]);
 }
 
-pub enum WorkspaceEvent {
+pub enum ItemViewEvent {
     TabStateChanged,
-    Activate,
+    Activated,
 }
 
 pub trait ItemView: View {
-    fn to_workspace_event(event: &Self::Event) -> Option<WorkspaceEvent>;
+    fn to_workspace_event(event: &Self::Event) -> Option<ItemViewEvent>;
     fn title(&self, app: &AppContext) -> String;
     fn entry_id(&self, app: &AppContext) -> Option<(usize, usize)>;
     fn clone_on_split(&self, _: &mut ViewContext<Self>) -> Option<Self>
@@ -28,7 +28,7 @@ pub trait ItemView: View {
     {
         None
     }
-    fn is_modified(&self, _: &AppContext) -> bool {
+    fn is_dirty(&self, _: &AppContext) -> bool {
         false
     }
     fn save(&self, _: &mut ViewContext<Self>) -> LocalBoxFuture<'static, anyhow::Result<()>> {
@@ -44,7 +44,7 @@ pub trait ItemViewHandle: Send + Sync {
     fn set_parent_pane(&self, pane: &ViewHandle<Pane>, app: &mut MutableAppContext);
     fn id(&self) -> usize;
     fn to_any(&self) -> AnyViewHandle;
-    fn is_modified(&self, ctx: &AppContext) -> bool;
+    fn is_dirty(&self, ctx: &AppContext) -> bool;
     fn save(&self, ctx: &mut MutableAppContext) -> LocalBoxFuture<'static, anyhow::Result<()>>;
 }
 
@@ -72,13 +72,13 @@ impl<T: ItemView> ItemViewHandle for ViewHandle<T> {
         pane.update(app, |_, ctx| {
             ctx.subscribe_to_view(self, |pane, item, event, ctx| {
                 match T::to_workspace_event(event) {
-                    Some(WorkspaceEvent::Activate) => {
+                    Some(ItemViewEvent::Activated) => {
                         if let Some(ix) = pane.item_index(&item) {
                             pane.activate_item(ix, ctx);
                             pane.activate(ctx);
                         }
                     }
-                    Some(WorkspaceEvent::TabStateChanged) => ctx.notify(),
+                    Some(ItemViewEvent::TabStateChanged) => ctx.notify(),
                     _ => {}
                 }
             })
@@ -89,8 +89,8 @@ impl<T: ItemView> ItemViewHandle for ViewHandle<T> {
         self.update(ctx, |item, ctx| item.save(ctx))
     }
 
-    fn is_modified(&self, ctx: &AppContext) -> bool {
-        self.as_ref(ctx).is_modified(ctx)
+    fn is_dirty(&self, ctx: &AppContext) -> bool {
+        self.as_ref(ctx).is_dirty(ctx)
     }
 
     fn id(&self) -> usize {

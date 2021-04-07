@@ -266,8 +266,12 @@ impl Buffer {
         ctx.emit(Event::Saved);
     }
 
-    pub fn is_modified(&self) -> bool {
-        self.fragments.summary().max_version > self.persisted_version
+    pub fn is_dirty(&self) -> bool {
+        self.version > self.persisted_version
+    }
+
+    pub fn version(&self) -> time::Global {
+        self.version.clone()
     }
 
     pub fn text_summary(&self) -> TextSummary {
@@ -414,6 +418,7 @@ impl Buffer {
             None
         };
 
+        let was_dirty = self.is_dirty();
         let old_version = self.version.clone();
         let old_ranges = old_ranges
             .into_iter()
@@ -432,7 +437,7 @@ impl Buffer {
                 ctx.notify();
                 let changes = self.edits_since(old_version).collect::<Vec<_>>();
                 if !changes.is_empty() {
-                    self.did_edit(changes, ctx);
+                    self.did_edit(changes, was_dirty, ctx);
                 }
             }
 
@@ -450,8 +455,11 @@ impl Buffer {
         Ok(ops)
     }
 
-    fn did_edit(&self, changes: Vec<Edit>, ctx: &mut ModelContext<Self>) {
-        ctx.emit(Event::Edited(changes))
+    fn did_edit(&self, changes: Vec<Edit>, was_dirty: bool, ctx: &mut ModelContext<Self>) {
+        ctx.emit(Event::Edited(changes));
+        if !was_dirty {
+            ctx.emit(Event::Dirtied);
+        }
     }
 
     pub fn simulate_typing<T: Rng>(&mut self, rng: &mut T) {
@@ -639,6 +647,7 @@ impl Buffer {
         ops: I,
         ctx: Option<&mut ModelContext<Self>>,
     ) -> Result<()> {
+        let was_dirty = self.is_dirty();
         let old_version = self.version.clone();
 
         let mut deferred_ops = Vec::new();
@@ -657,7 +666,7 @@ impl Buffer {
             ctx.notify();
             let changes = self.edits_since(old_version).collect::<Vec<_>>();
             if !changes.is_empty() {
-                ctx.emit(Event::Edited(changes));
+                self.did_edit(changes, was_dirty, ctx);
             }
         }
 
@@ -1416,6 +1425,7 @@ impl Snapshot {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum Event {
     Edited(Vec<Edit>),
+    Dirtied,
     Saved,
 }
 
@@ -2510,28 +2520,28 @@ mod tests {
             let model = app.add_model(|_| Buffer::new(0, "abc"));
             model.update(&mut app, |buffer, ctx| {
                 // initially, buffer isn't modified.
-                assert!(!buffer.is_modified());
+                assert!(!buffer.is_dirty());
 
                 // after editing, buffer is modified.
                 buffer.edit(vec![1..2], "", None).unwrap();
                 assert!(buffer.text() == "ac");
-                assert!(buffer.is_modified());
+                assert!(buffer.is_dirty());
 
                 // after saving, buffer is not modified.
-                buffer.did_save(ctx);
-                assert!(!buffer.is_modified());
+                buffer.did_save(buffer.version(), ctx);
+                assert!(!buffer.is_dirty());
 
                 // after editing again, buffer is modified.
                 buffer.edit(vec![1..1], "B", None).unwrap();
                 buffer.edit(vec![2..2], "D", None).unwrap();
                 assert!(buffer.text() == "aBDc");
-                assert!(buffer.is_modified());
+                assert!(buffer.is_dirty());
 
                 // TODO - currently, after restoring the buffer to its
                 // saved state, it is still considered modified.
                 buffer.edit(vec![1..3], "", None).unwrap();
                 assert!(buffer.text() == "ac");
-                assert!(buffer.is_modified());
+                assert!(buffer.is_dirty());
             });
         });
         Ok(())

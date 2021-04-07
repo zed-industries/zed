@@ -5,7 +5,7 @@ use super::{
 use crate::{
     settings::Settings,
     watch,
-    workspace::{self, WorkspaceEvent},
+    workspace::{self, ItemViewEvent},
 };
 use anyhow::Result;
 use futures_core::future::LocalBoxFuture;
@@ -1095,6 +1095,7 @@ impl BufferView {
     ) {
         match event {
             buffer::Event::Edited(_) => ctx.emit(Event::Edited),
+            buffer::Event::Dirtied => ctx.emit(Event::Dirtied),
             buffer::Event::Saved => ctx.emit(Event::Saved),
         }
     }
@@ -1111,6 +1112,7 @@ pub enum Event {
     Activate,
     Edited,
     Blurred,
+    Dirtied,
     Saved,
 }
 
@@ -1153,10 +1155,10 @@ impl workspace::Item for Buffer {
 }
 
 impl workspace::ItemView for BufferView {
-    fn to_workspace_event(event: &Self::Event) -> Option<WorkspaceEvent> {
+    fn to_workspace_event(event: &Self::Event) -> Option<ItemViewEvent> {
         match event {
-            Event::Activate => Some(WorkspaceEvent::Activate),
-            Event::Saved => Some(WorkspaceEvent::TabStateChanged),
+            Event::Activate => Some(ItemViewEvent::Activated),
+            Event::Dirtied | Event::Saved => Some(ItemViewEvent::TabStateChanged),
             _ => None,
         }
     }
@@ -1189,8 +1191,8 @@ impl workspace::ItemView for BufferView {
         self.buffer.update(ctx, |buffer, ctx| buffer.save(ctx))
     }
 
-    fn is_modified(&self, ctx: &AppContext) -> bool {
-        self.buffer.as_ref(ctx).is_modified()
+    fn is_dirty(&self, ctx: &AppContext) -> bool {
+        self.buffer.as_ref(ctx).is_dirty()
     }
 }
 

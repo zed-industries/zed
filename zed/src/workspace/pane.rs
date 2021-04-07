@@ -210,7 +210,7 @@ impl Pane {
                                     settings.ui_font_family,
                                     settings.ui_font_size,
                                     ConstrainedBox::new(Self::render_modified_icon(
-                                        item.is_modified(app),
+                                        item.is_dirty(app),
                                     ))
                                     .with_max_width(12.)
                                     .boxed(),
