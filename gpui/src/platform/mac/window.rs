@@ -230,12 +230,6 @@ impl Window {
             Ok(window)
         }
     }
-
-    pub fn zoom(&self) {
-        unsafe {
-            self.0.as_ref().borrow().native_window.performZoom_(nil);
-        }
-    }
 }
 
 impl Drop for Window {
