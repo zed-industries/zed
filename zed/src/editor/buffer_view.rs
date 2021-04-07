@@ -5,12 +5,13 @@ use super::{
 use crate::{
     settings::Settings,
     watch,
-    workspace::{self, ItemEventEffect},
+    workspace::{self, WorkspaceEvent},
 };
 use anyhow::Result;
+use futures_core::future::LocalBoxFuture;
 use gpui::{
     fonts::Properties as FontProperties, keymap::Binding, text_layout, App, AppContext, Element,
-    ElementBox, Entity, FontCache, ModelHandle, Task, View, ViewContext, WeakViewHandle,
+    ElementBox, Entity, FontCache, ModelHandle, View, ViewContext, WeakViewHandle,
 };
 use gpui::{geometry::vector::Vector2F, TextLayoutCache};
 use parking_lot::Mutex;
@@ -1152,11 +1153,11 @@ impl workspace::Item for Buffer {
 }
 
 impl workspace::ItemView for BufferView {
-    fn event_effect(event: &Self::Event) -> ItemEventEffect {
+    fn to_workspace_event(event: &Self::Event) -> Option<WorkspaceEvent> {
         match event {
-            Event::Activate => ItemEventEffect::Activate,
-            Event::Edited => ItemEventEffect::ChangeTab,
-            _ => ItemEventEffect::None,
+            Event::Activate => Some(WorkspaceEvent::Activate),
+            Event::Saved => Some(WorkspaceEvent::TabStateChanged),
+            _ => None,
         }
     }
 
@@ -1184,7 +1185,7 @@ impl workspace::ItemView for BufferView {
         Some(clone)
     }
 
-    fn save(&self, ctx: &mut ViewContext<Self>) -> Option<Task<Result<()>>> {
+    fn save(&self, ctx: &mut ViewContext<Self>) -> LocalBoxFuture<'static, Result<()>> {
         self.buffer.update(ctx, |buffer, ctx| buffer.save(ctx))
     }
 

@@ -1,8 +1,9 @@
 use super::{pane, Pane, PaneGroup, SplitDirection, Workspace};
 use crate::{settings::Settings, watch};
+use futures_core::future::LocalBoxFuture;
 use gpui::{
     color::rgbu, elements::*, keymap::Binding, AnyViewHandle, App, AppContext, Entity, ModelHandle,
-    MutableAppContext, Task, View, ViewContext, ViewHandle,
+    MutableAppContext, View, ViewContext, ViewHandle,
 };
 use log::{error, info};
 use std::{collections::HashSet, path::PathBuf};
@@ -12,14 +13,13 @@ pub fn init(app: &mut App) {
     app.add_bindings(vec![Binding::new("cmd-s", "workspace:save", None)]);
 }
 
-pub enum ItemEventEffect {
-    None,
-    ChangeTab,
+pub enum WorkspaceEvent {
+    TabStateChanged,
     Activate,
 }
 
 pub trait ItemView: View {
-    fn event_effect(event: &Self::Event) -> ItemEventEffect;
+    fn to_workspace_event(event: &Self::Event) -> Option<WorkspaceEvent>;
     fn title(&self, app: &AppContext) -> String;
     fn entry_id(&self, app: &AppContext) -> Option<(usize, usize)>;
     fn clone_on_split(&self, _: &mut ViewContext<Self>) -> Option<Self>
@@ -31,8 +31,8 @@ pub trait ItemView: View {
     fn is_modified(&self, _: &AppContext) -> bool {
         false
     }
-    fn save(&self, _: &mut ViewContext<Self>) -> Option<Task<anyhow::Result<()>>> {
-        None
+    fn save(&self, _: &mut ViewContext<Self>) -> LocalBoxFuture<'static, anyhow::Result<()>> {
+        Box::pin(async { Ok(()) })
     }
 }
 
@@ -45,7 +45,7 @@ pub trait ItemViewHandle: Send + Sync {
     fn id(&self) -> usize;
     fn to_any(&self) -> AnyViewHandle;
     fn is_modified(&self, ctx: &AppContext) -> bool;
-    fn save(&self, ctx: &mut MutableAppContext) -> Option<Task<anyhow::Result<()>>>;
+    fn save(&self, ctx: &mut MutableAppContext) -> LocalBoxFuture<'static, anyhow::Result<()>>;
 }
 
 impl<T: ItemView> ItemViewHandle for ViewHandle<T> {
@@ -71,21 +71,21 @@ impl<T: ItemView> ItemViewHandle for ViewHandle<T> {
     fn set_parent_pane(&self, pane: &ViewHandle<Pane>, app: &mut MutableAppContext) {
         pane.update(app, |_, ctx| {
             ctx.subscribe_to_view(self, |pane, item, event, ctx| {
-                match T::event_effect(event) {
-                    ItemEventEffect::Activate => {
+                match T::to_workspace_event(event) {
+                    Some(WorkspaceEvent::Activate) => {
                         if let Some(ix) = pane.item_index(&item) {
                             pane.activate_item(ix, ctx);
                             pane.activate(ctx);
                         }
                     }
-                    ItemEventEffect::ChangeTab => ctx.notify(),
+                    Some(WorkspaceEvent::TabStateChanged) => ctx.notify(),
                     _ => {}
                 }
             })
         })
     }
 
-    fn save(&self, ctx: &mut MutableAppContext) -> Option<Task<anyhow::Result<()>>> {
+    fn save(&self, ctx: &mut MutableAppContext) -> LocalBoxFuture<'static, anyhow::Result<()>> {
         self.update(ctx, |item, ctx| item.save(ctx))
     }
 
@@ -240,15 +240,14 @@ impl WorkspaceView {
     pub fn save_active_item(&mut self, _: &(), ctx: &mut ViewContext<Self>) {
         self.active_pane.update(ctx, |pane, ctx| {
             if let Some(item) = pane.active_item() {
-                if let Some(task) = item.save(ctx.app_mut()) {
-                    ctx.spawn(task, |_, result, _| {
-                        if let Err(e) = result {
-                            // TODO - present this error to the user
-                            error!("failed to save item: {:?}, ", e);
-                        }
-                    })
-                    .detach();
-                }
+                let task = item.save(ctx.app_mut());
+                ctx.spawn(task, |_, result, _| {
+                    if let Err(e) = result {
+                        // TODO - present this error to the user
+                        error!("failed to save item: {:?}, ", e);
+                    }
+                })
+                .detach()
             }
         });
     }

@@ -3,6 +3,7 @@ mod point;
 mod text;
 
 pub use anchor::*;
+use futures_core::future::LocalBoxFuture;
 pub use point::*;
 pub use text::*;
 
@@ -14,7 +15,7 @@ use crate::{
     worktree::FileHandle,
 };
 use anyhow::{anyhow, Result};
-use gpui::{AppContext, Entity, ModelContext, Task};
+use gpui::{AppContext, Entity, ModelContext};
 use lazy_static::lazy_static;
 use rand::prelude::*;
 use std::{
@@ -243,23 +244,25 @@ impl Buffer {
         }
     }
 
-    pub fn save(&mut self, ctx: &mut ModelContext<Self>) -> Option<Task<Result<()>>> {
+    pub fn save(&mut self, ctx: &mut ModelContext<Self>) -> LocalBoxFuture<'static, Result<()>> {
         if let Some(file) = &self.file {
             let snapshot = self.snapshot();
-
-            let result = file.save(snapshot, ctx.app());
-
-            // TODO - don't do this until the save has finished
-            self.did_save(ctx);
-
-            Some(result)
+            let version = self.version.clone();
+            let save_task = file.save(snapshot, ctx.app());
+            let task = ctx.spawn(save_task, |me, save_result, ctx| {
+                if save_result.is_ok() {
+                    me.did_save(version, ctx);
+                }
+                save_result
+            });
+            Box::pin(task)
         } else {
-            None
+            Box::pin(async { Ok(()) })
         }
     }
 
-    fn did_save(&mut self, ctx: &mut ModelContext<Buffer>) {
-        self.persisted_version = self.fragments.summary().max_version;
+    fn did_save(&mut self, version: time::Global, ctx: &mut ModelContext<Buffer>) {
+        self.persisted_version = version;
         ctx.emit(Event::Saved);
     }
 
@@ -429,7 +432,7 @@ impl Buffer {
                 ctx.notify();
                 let changes = self.edits_since(old_version).collect::<Vec<_>>();
                 if !changes.is_empty() {
-                    ctx.emit(Event::Edited(changes))
+                    self.did_edit(changes, ctx);
                 }
             }
 
@@ -445,6 +448,10 @@ impl Buffer {
         }
 
         Ok(ops)
+    }
+
+    fn did_edit(&self, changes: Vec<Edit>, ctx: &mut ModelContext<Self>) {
+        ctx.emit(Event::Edited(changes))
     }
 
     pub fn simulate_typing<T: Rng>(&mut self, rng: &mut T) {
