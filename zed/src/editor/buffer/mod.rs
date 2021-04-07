@@ -37,7 +37,7 @@ pub struct Buffer {
     fragments: SumTree<Fragment>,
     insertion_splits: HashMap<time::Local, SumTree<InsertionSplit>>,
     pub version: time::Global,
-    persisted_version: time::Global,
+    saved_version: time::Global,
     last_edit: time::Local,
     selections: HashMap<SelectionSetId, Vec<Selection>>,
     pub selections_last_update: SelectionsVersion,
@@ -218,7 +218,7 @@ impl Buffer {
             fragments,
             insertion_splits,
             version: time::Global::new(),
-            persisted_version: time::Global::new(),
+            saved_version: time::Global::new(),
             last_edit: time::Local::default(),
             selections: HashMap::default(),
             selections_last_update: 0,
@@ -262,12 +262,12 @@ impl Buffer {
     }
 
     fn did_save(&mut self, version: time::Global, ctx: &mut ModelContext<Buffer>) {
-        self.persisted_version = version;
+        self.saved_version = version;
         ctx.emit(Event::Saved);
     }
 
     pub fn is_dirty(&self) -> bool {
-        self.version > self.persisted_version
+        self.version > self.saved_version
     }
 
     pub fn version(&self) -> time::Global {
@@ -1399,7 +1399,7 @@ impl Clone for Buffer {
             fragments: self.fragments.clone(),
             insertion_splits: self.insertion_splits.clone(),
             version: self.version.clone(),
-            persisted_version: self.persisted_version.clone(),
+            saved_version: self.saved_version.clone(),
             last_edit: self.last_edit.clone(),
             selections: self.selections.clone(),
             selections_last_update: self.selections_last_update.clone(),
