@@ -13,13 +13,7 @@ pub fn init(app: &mut App) {
     app.add_bindings(vec![Binding::new("cmd-s", "workspace:save", None)]);
 }
 
-pub enum ItemViewEvent {
-    TabStateChanged,
-    Activated,
-}
-
 pub trait ItemView: View {
-    fn to_workspace_event(event: &Self::Event) -> Option<ItemViewEvent>;
     fn title(&self, app: &AppContext) -> String;
     fn entry_id(&self, app: &AppContext) -> Option<(usize, usize)>;
     fn clone_on_split(&self, _: &mut ViewContext<Self>) -> Option<Self>
@@ -33,6 +27,12 @@ pub trait ItemView: View {
     }
     fn save(&self, _: &mut ViewContext<Self>) -> LocalBoxFuture<'static, anyhow::Result<()>> {
         Box::pin(async { Ok(()) })
+    }
+    fn should_activate_item_on_event(_: &Self::Event) -> bool {
+        false
+    }
+    fn should_update_tab_on_event(_: &Self::Event) -> bool {
+        false
     }
 }
 
@@ -71,15 +71,14 @@ impl<T: ItemView> ItemViewHandle for ViewHandle<T> {
     fn set_parent_pane(&self, pane: &ViewHandle<Pane>, app: &mut MutableAppContext) {
         pane.update(app, |_, ctx| {
             ctx.subscribe_to_view(self, |pane, item, event, ctx| {
-                match T::to_workspace_event(event) {
-                    Some(ItemViewEvent::Activated) => {
-                        if let Some(ix) = pane.item_index(&item) {
-                            pane.activate_item(ix, ctx);
-                            pane.activate(ctx);
-                        }
+                if T::should_activate_item_on_event(event) {
+                    if let Some(ix) = pane.item_index(&item) {
+                        pane.activate_item(ix, ctx);
+                        pane.activate(ctx);
                     }
-                    Some(ItemViewEvent::TabStateChanged) => ctx.notify(),
-                    _ => {}
+                }
+                if T::should_update_tab_on_event(event) {
+                    ctx.notify()
                 }
             })
         })

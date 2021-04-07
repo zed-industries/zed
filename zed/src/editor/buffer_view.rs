@@ -2,11 +2,7 @@ use super::{
     buffer, movement, Anchor, Bias, Buffer, BufferElement, DisplayMap, DisplayPoint, Point,
     ToOffset, ToPoint,
 };
-use crate::{
-    settings::Settings,
-    watch,
-    workspace::{self, ItemViewEvent},
-};
+use crate::{settings::Settings, watch, workspace};
 use anyhow::Result;
 use futures_core::future::LocalBoxFuture;
 use gpui::{
@@ -85,18 +81,6 @@ pub enum SelectAction {
     },
     End,
 }
-
-// impl workspace::Item for Buffer {
-//     type View = BufferView;
-
-//     fn build_view(
-//         buffer: ModelHandle<Self>,
-//         settings: watch::Receiver<Settings>,
-//         ctx: &mut ViewContext<Self::View>,
-//     ) -> Self::View {
-//         BufferView::for_buffer(buffer, settings, ctx)
-//     }
-// }
 
 pub struct BufferView {
     handle: WeakViewHandle<Self>,
@@ -1155,12 +1139,12 @@ impl workspace::Item for Buffer {
 }
 
 impl workspace::ItemView for BufferView {
-    fn to_workspace_event(event: &Self::Event) -> Option<ItemViewEvent> {
-        match event {
-            Event::Activate => Some(ItemViewEvent::Activated),
-            Event::Dirtied | Event::Saved => Some(ItemViewEvent::TabStateChanged),
-            _ => None,
-        }
+    fn should_activate_item_on_event(event: &Self::Event) -> bool {
+        matches!(event, Event::Activate)
+    }
+
+    fn should_update_tab_on_event(event: &Self::Event) -> bool {
+        matches!(event, Event::Saved | Event::Dirtied)
     }
 
     fn title(&self, app: &AppContext) -> std::string::String {
