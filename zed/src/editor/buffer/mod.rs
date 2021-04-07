@@ -1982,6 +1982,7 @@ mod tests {
     use super::*;
     use gpui::App;
     use std::collections::BTreeMap;
+    use std::{cell::RefCell, rc::Rc};
 
     #[test]
     fn test_edit() -> Result<()> {
@@ -2003,8 +2004,6 @@ mod tests {
 
     #[test]
     fn test_edit_events() {
-        use std::{cell::RefCell, rc::Rc};
-
         App::test((), |mut app| async move {
             let buffer_1_events = Rc::new(RefCell::new(Vec::new()));
             let buffer_2_events = Rc::new(RefCell::new(Vec::new()));
@@ -2524,30 +2523,85 @@ mod tests {
     fn test_is_modified() -> Result<()> {
         App::test((), |mut app| async move {
             let model = app.add_model(|_| Buffer::new(0, "abc"));
-            model.update(&mut app, |buffer, ctx| {
-                // initially, buffer isn't modified.
-                assert!(!buffer.is_dirty());
+            let events = Rc::new(RefCell::new(Vec::new()));
 
-                // after editing, buffer is modified.
-                buffer.edit(vec![1..2], "", None).unwrap();
+            // initially, the buffer isn't dirty.
+            model.update(&mut app, |buffer, ctx| {
+                ctx.subscribe(&model, {
+                    let events = events.clone();
+                    move |_, event, _| events.borrow_mut().push(event.clone())
+                });
+
+                assert!(!buffer.is_dirty());
+                assert!(events.borrow().is_empty());
+
+                buffer.edit(vec![1..2], "", Some(ctx)).unwrap();
+            });
+
+            // after the first edit, the buffer is dirty, and emits a dirtied event.
+            model.update(&mut app, |buffer, ctx| {
                 assert!(buffer.text() == "ac");
                 assert!(buffer.is_dirty());
+                assert_eq!(
+                    *events.borrow(),
+                    &[
+                        Event::Edited(vec![Edit {
+                            old_range: 1..2,
+                            new_range: 1..1
+                        }]),
+                        Event::Dirtied
+                    ]
+                );
+                events.borrow_mut().clear();
 
-                // after saving, buffer is not modified.
                 buffer.did_save(buffer.version(), ctx);
-                assert!(!buffer.is_dirty());
+            });
 
-                // after editing again, buffer is modified.
-                buffer.edit(vec![1..1], "B", None).unwrap();
-                buffer.edit(vec![2..2], "D", None).unwrap();
+            // after saving, the buffer is not dirty, and emits a saved event.
+            model.update(&mut app, |buffer, ctx| {
+                assert!(!buffer.is_dirty());
+                assert_eq!(*events.borrow(), &[Event::Saved]);
+                events.borrow_mut().clear();
+
+                buffer.edit(vec![1..1], "B", Some(ctx)).unwrap();
+                buffer.edit(vec![2..2], "D", Some(ctx)).unwrap();
+            });
+
+            // after editing again, the buffer is dirty, and emits another dirty event.
+            model.update(&mut app, |buffer, ctx| {
                 assert!(buffer.text() == "aBDc");
                 assert!(buffer.is_dirty());
+                assert_eq!(
+                    *events.borrow(),
+                    &[
+                        Event::Edited(vec![Edit {
+                            old_range: 1..1,
+                            new_range: 1..2
+                        }]),
+                        Event::Dirtied,
+                        Event::Edited(vec![Edit {
+                            old_range: 2..2,
+                            new_range: 2..3
+                        }]),
+                    ],
+                );
+                events.borrow_mut().clear();
 
                 // TODO - currently, after restoring the buffer to its
-                // saved state, it is still considered modified.
-                buffer.edit(vec![1..3], "", None).unwrap();
+                // previously-saved state, the is still considered dirty.
+                buffer.edit(vec![1..3], "", Some(ctx)).unwrap();
                 assert!(buffer.text() == "ac");
                 assert!(buffer.is_dirty());
+            });
+
+            model.update(&mut app, |_, _| {
+                assert_eq!(
+                    *events.borrow(),
+                    &[Event::Edited(vec![Edit {
+                        old_range: 1..3,
+                        new_range: 1..1
+                    },])]
+                );
             });
         });
         Ok(())
