@@ -2030,19 +2030,25 @@ mod tests {
             let buffer_1_events = buffer_1_events.borrow();
             assert_eq!(
                 *buffer_1_events,
-                vec![Event::Edited(vec![Edit {
-                    old_range: 2..4,
-                    new_range: 2..5
-                }])]
+                vec![
+                    Event::Edited(vec![Edit {
+                        old_range: 2..4,
+                        new_range: 2..5
+                    },]),
+                    Event::Dirtied
+                ]
             );
 
             let buffer_2_events = buffer_2_events.borrow();
             assert_eq!(
                 *buffer_2_events,
-                vec![Event::Edited(vec![Edit {
-                    old_range: 2..4,
-                    new_range: 2..5
-                }])]
+                vec![
+                    Event::Edited(vec![Edit {
+                        old_range: 2..4,
+                        new_range: 2..5
+                    },]),
+                    Event::Dirtied
+                ]
             );
         });
     }
