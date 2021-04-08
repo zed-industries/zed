@@ -5,6 +5,7 @@ mod text;
 pub use anchor::*;
 use futures_core::future::LocalBoxFuture;
 pub use point::*;
+use seahash::SeaHasher;
 pub use text::*;
 
 use crate::{
@@ -20,7 +21,7 @@ use lazy_static::lazy_static;
 use rand::prelude::*;
 use std::{
     cmp::{self, Ordering},
-    collections::{HashMap, HashSet},
+    hash::BuildHasher,
     iter::{self, Iterator},
     mem,
     ops::{AddAssign, Range},
@@ -33,6 +34,29 @@ pub type SelectionSetId = time::Lamport;
 pub type SelectionsVersion = usize;
 
 #[derive(Clone, Default)]
+struct DeterministicState;
+
+impl BuildHasher for DeterministicState {
+    type Hasher = SeaHasher;
+
+    fn build_hasher(&self) -> Self::Hasher {
+        SeaHasher::new()
+    }
+}
+
+#[cfg(test)]
+type HashMap<K, V> = std::collections::HashMap<K, V, DeterministicState>;
+
+#[cfg(test)]
+type HashSet<T> = std::collections::HashSet<T, DeterministicState>;
+
+#[cfg(not(test))]
+type HashMap<K, V> = std::collections::HashMap<K, V>;
+
+#[cfg(not(test))]
+type HashSet<T> = std::collections::HashSet<T>;
+
+#[derive(Clone, Default)]
 struct UndoMap(HashMap<time::Local, Vec<UndoOperation>>);
 
 impl UndoMap {
@@ -40,14 +64,14 @@ impl UndoMap {
         self.0.entry(undo.edit_id).or_default().push(undo);
     }
 
-    fn is_undone(&self, op_id: time::Local) -> bool {
-        self.undo_count(op_id) % 2 == 1
+    fn is_undone(&self, edit_id: time::Local) -> bool {
+        self.undo_count(edit_id) % 2 == 1
     }
 
-    fn was_undone(&self, op_id: time::Local, version: &time::Global) -> bool {
+    fn was_undone(&self, edit_id: time::Local, version: &time::Global) -> bool {
         let undo_count = self
             .0
-            .get(&op_id)
+            .get(&edit_id)
             .unwrap_or(&Vec::new())
             .iter()
             .filter(|undo| version.observed(undo.id))
@@ -57,9 +81,9 @@ impl UndoMap {
         undo_count % 2 == 1
     }
 
-    fn undo_count(&self, op_id: time::Local) -> u32 {
+    fn undo_count(&self, edit_id: time::Local) -> u32 {
         self.0
-            .get(&op_id)
+            .get(&edit_id)
             .unwrap_or(&Vec::new())
             .iter()
             .map(|undo| undo.count)
@@ -76,7 +100,7 @@ pub struct Buffer {
     pub version: time::Global,
     saved_version: time::Global,
     last_edit: time::Local,
-    undos: UndoMap,
+    undo_map: UndoMap,
     selections: HashMap<SelectionSetId, Vec<Selection>>,
     pub selections_last_update: SelectionsVersion,
     deferred_ops: OperationQueue<Operation>,
@@ -225,7 +249,7 @@ impl Buffer {
     }
 
     fn build(replica_id: ReplicaId, file: Option<FileHandle>, base_text: String) -> Self {
-        let mut insertion_splits = HashMap::new();
+        let mut insertion_splits = HashMap::default();
         let mut fragments = SumTree::new();
 
         let base_insertion = Insertion {
@@ -247,7 +271,7 @@ impl Buffer {
             id: FragmentId::min_value().clone(),
             insertion: base_insertion.clone(),
             text: base_insertion.text.slice(0..0),
-            deletions: HashSet::new(),
+            deletions: HashSet::default(),
             visible: true,
         });
 
@@ -266,7 +290,7 @@ impl Buffer {
                 id: base_fragment_id,
                 text: base_insertion.text.clone(),
                 insertion: base_insertion,
-                deletions: HashSet::new(),
+                deletions: HashSet::default(),
                 visible: true,
             });
         }
@@ -275,15 +299,15 @@ impl Buffer {
             file,
             fragments,
             insertion_splits,
-            edit_ops: HashMap::new(),
+            edit_ops: HashMap::default(),
             version: time::Global::new(),
             saved_version: time::Global::new(),
             last_edit: time::Local::default(),
-            undos: Default::default(),
+            undo_map: Default::default(),
             selections: HashMap::default(),
             selections_last_update: 0,
             deferred_ops: OperationQueue::new(),
-            deferred_replicas: HashSet::new(),
+            deferred_replicas: HashSet::default(),
             replica_id,
             local_clock: time::Local::new(replica_id),
             lamport_clock: time::Lamport::new(replica_id),
@@ -451,7 +475,7 @@ impl Buffer {
 
         Edits {
             cursor,
-            undos: &self.undos,
+            undos: &self.undo_map,
             since,
             delta: 0,
         }
@@ -911,7 +935,7 @@ impl Buffer {
         let undo = UndoOperation {
             id: self.local_clock.tick(),
             edit_id,
-            count: self.undos.undo_count(edit_id) + 1,
+            count: self.undo_map.undo_count(edit_id) + 1,
         };
         self.apply_undo(undo)?;
         self.version.observe(undo.id);
@@ -931,15 +955,26 @@ impl Buffer {
     }
 
     fn apply_undo(&mut self, undo: UndoOperation) -> Result<()> {
+        // let mut new_fragments = SumTree::new();
+
+        // self.undos.insert(undo);
+        // let edit = &self.edit_ops[&undo.edit_id];
+        // let start_fragment_id = self.resolve_fragment_id(edit.start_id, edit.start_offset)?;
+        // let end_fragment_id = self.resolve_fragment_id(edit.end_id, edit.end_offset)?;
+        // let mut cursor = self.fragments.cursor::<FragmentIdRef, ()>();
+
+        // for fragment in cursor {}
+        // self.fragments = new_fragments;
+
         let mut new_fragments;
 
-        self.undos.insert(undo);
+        self.undo_map.insert(undo);
         let edit = &self.edit_ops[&undo.edit_id];
         let start_fragment_id = self.resolve_fragment_id(edit.start_id, edit.start_offset)?;
         let end_fragment_id = self.resolve_fragment_id(edit.end_id, edit.end_offset)?;
         let mut cursor = self.fragments.cursor::<FragmentIdRef, ()>();
 
-        if start_fragment_id == end_fragment_id {
+        if edit.start_id == edit.end_id && edit.start_offset == edit.end_offset {
             let splits = &self.insertion_splits[&undo.edit_id];
             let mut insertion_splits = splits.cursor::<(), ()>().map(|s| &s.fragment_id).peekable();
 
@@ -948,7 +983,7 @@ impl Buffer {
 
             loop {
                 let mut fragment = cursor.item().unwrap().clone();
-                fragment.visible = fragment.is_visible(&self.undos);
+                fragment.visible = fragment.is_visible(&self.undo_map);
                 new_fragments.push(fragment);
                 cursor.next();
                 if let Some(split_id) = insertion_splits.next() {
@@ -968,7 +1003,7 @@ impl Buffer {
                     if edit.version_in_range.observed(fragment.insertion.id)
                         || fragment.insertion.id == undo.edit_id
                     {
-                        fragment.visible = fragment.is_visible(&self.undos);
+                        fragment.visible = fragment.is_visible(&self.undo_map);
                     }
                     new_fragments.push(fragment);
                     cursor.next();
@@ -1559,7 +1594,7 @@ impl Clone for Buffer {
             version: self.version.clone(),
             saved_version: self.saved_version.clone(),
             last_edit: self.last_edit.clone(),
-            undos: self.undos.clone(),
+            undo_map: self.undo_map.clone(),
             selections: self.selections.clone(),
             selections_last_update: self.selections_last_update.clone(),
             deferred_ops: self.deferred_ops.clone(),
@@ -1891,7 +1926,7 @@ impl Fragment {
             id,
             text: insertion.text.clone(),
             insertion,
-            deletions: HashSet::new(),
+            deletions: HashSet::default(),
             visible: true,
         }
     }
@@ -2810,9 +2845,9 @@ mod tests {
     fn test_random_concurrent_edits() {
         use crate::test::Network;
 
-        const PEERS: usize = 3;
+        const PEERS: usize = 2;
 
-        for seed in 0..50 {
+        for seed in 0..1000 {
             println!("{:?}", seed);
             let mut rng = &mut StdRng::seed_from_u64(seed);
 
@@ -2830,19 +2865,29 @@ mod tests {
                 network.add_peer(i as u16);
             }
 
-            let mut mutation_count = 10;
+            let mut mutation_count = 3;
             loop {
                 let replica_index = rng.gen_range(0..PEERS);
                 let replica_id = replica_ids[replica_index];
                 let buffer = &mut buffers[replica_index];
-                if mutation_count > 0 && rng.gen() {
-                    let (_, _, ops) = buffer.randomly_mutate(&mut rng, None);
-                    network.broadcast(replica_id, ops, &mut rng);
-                    mutation_count -= 1;
-                } else if network.has_unreceived(replica_id) {
-                    buffer
-                        .apply_ops(network.receive(replica_id, &mut rng), None)
-                        .unwrap();
+
+                match rng.gen_range(0..=100) {
+                    0..=50 if mutation_count != 0 => {
+                        let (_, _, ops) = buffer.randomly_mutate(&mut rng, None);
+                        network.broadcast(replica_id, ops, &mut rng);
+                        mutation_count -= 1;
+                    }
+                    51..=70 if mutation_count != 0 => {
+                        let ops = buffer.randomly_undo_redo(&mut rng, None);
+                        network.broadcast(replica_id, ops, &mut rng);
+                        mutation_count -= 1;
+                    }
+                    71..=100 if network.has_unreceived(replica_id) => {
+                        buffer
+                            .apply_ops(network.receive(replica_id, &mut rng), None)
+                            .unwrap();
+                    }
+                    _ => {}
                 }
 
                 if mutation_count == 0 && network.is_idle() {
@@ -2868,13 +2913,14 @@ mod tests {
         pub fn randomly_mutate<T>(
             &mut self,
             rng: &mut T,
-            ctx: Option<&mut ModelContext<Self>>,
+            mut ctx: Option<&mut ModelContext<Self>>,
         ) -> (Vec<Range<usize>>, String, Vec<Operation>)
         where
             T: Rng,
         {
             // Randomly edit
-            let (old_ranges, new_text, mut operations) = self.randomly_edit(rng, 5, ctx);
+            let (old_ranges, new_text, mut operations) =
+                self.randomly_edit(rng, 5, ctx.as_deref_mut());
 
             // Randomly add, remove or mutate selection sets.
             let replica_selection_sets = &self
@@ -2907,6 +2953,20 @@ mod tests {
 
             (old_ranges, new_text, operations)
         }
+
+        pub fn randomly_undo_redo(
+            &mut self,
+            rng: &mut impl Rng,
+            mut ctx: Option<&mut ModelContext<Self>>,
+        ) -> Vec<Operation> {
+            let mut ops = Vec::new();
+            for _ in 0..rng.gen_range(0..5) {
+                if let Some(edit_id) = self.edit_ops.keys().choose(rng).copied() {
+                    ops.push(self.undo_or_redo(edit_id, ctx.as_deref_mut()).unwrap());
+                }
+            }
+            ops
+        }
     }
 
     impl Operation {
@@ -2924,11 +2984,11 @@ mod tests {
         for (row, line) in buffer.text()[range].lines().enumerate() {
             lengths
                 .entry(line.len() as u32)
-                .or_insert(HashSet::new())
+                .or_insert(HashSet::default())
                 .insert(row as u32);
         }
         if lengths.is_empty() {
-            let mut rows = HashSet::new();
+            let mut rows = HashSet::default();
             rows.insert(0);
             lengths.insert(0, rows);
         }
