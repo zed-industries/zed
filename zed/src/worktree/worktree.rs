@@ -105,13 +105,13 @@ impl Worktree {
             let id = self.push_dir(None, name, ino, is_symlink, is_ignored);
             let (tx, rx) = channel::unbounded();
 
-            let tx_ = tx.clone();
             tx.send(Ok(DirToScan {
                 id,
                 path,
                 relative_path,
                 ignore: Some(ignore),
                 dirs_to_scan: tx_,
+                dirs_to_scan: tx.clone(),
             }))
             .unwrap();
             drop(tx);
