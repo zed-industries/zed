@@ -162,7 +162,7 @@ impl<'a> From<&'a str> for Text {
 
 impl Debug for Text {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.debug_tuple("Text").field(&self.text).finish()
+        f.debug_tuple("Text").field(&self.as_str()).finish()
     }
 }
 
