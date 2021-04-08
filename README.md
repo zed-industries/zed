@@ -4,7 +4,11 @@
 
 Welcome to Zed, a lightning-fast, collaborative code editor that makes your dreams come true.
 
-Everything is under construction, including this README, but in the meantime, here is a high-level roadmap:
+## Development tips
+
+### Dump element JSON
+
+If you trigger `cmd-shift-i`, Zed will copy a JSON representation of the current window contents to the clipboard. You can paste this in a tool like [DJSON](https://chrome.google.com/webstore/detail/djson-json-viewer-formatt/chaeijjekipecdajnijdldjjipaegdjc?hl=en) to navigate the state of on-screen elements in a structured way.
 
 ## Roadmap
 
