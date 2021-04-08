@@ -205,7 +205,6 @@ impl crate::platform::Runner for Runner {
             let app: id = msg_send![APP_CLASS, sharedApplication];
             let app_delegate: id = msg_send![APP_DELEGATE_CLASS, new];
 
-            app.setActivationPolicy_(NSApplicationActivationPolicyRegular);
             (*app).set_ivar(RUNNER_IVAR, self_ptr as *mut c_void);
             (*app_delegate).set_ivar(RUNNER_IVAR, self_ptr as *mut c_void);
             app.setDelegate_(app_delegate);
@@ -241,9 +240,14 @@ extern "C" fn send_event(this: &mut Object, _sel: Sel, native_event: id) {
 }
 
 extern "C" fn did_finish_launching(this: &mut Object, _: Sel, _: id) {
-    let runner = unsafe { get_runner(this) };
-    if let Some(callback) = runner.finish_launching_callback.take() {
-        callback();
+    unsafe {
+        let app: id = msg_send![APP_CLASS, sharedApplication];
+        app.setActivationPolicy_(NSApplicationActivationPolicyRegular);
+
+        let runner = get_runner(this);
+        if let Some(callback) = runner.finish_launching_callback.take() {
+            callback();
+        }
     }
 }
 
