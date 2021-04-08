@@ -1,8 +1,7 @@
 use super::{BoolExt as _, Dispatcher, FontSystem, Window};
 use crate::{executor, platform};
 use anyhow::Result;
-use cocoa::base::id;
-use objc::{class, msg_send, sel, sel_impl};
+use cocoa::{appkit::NSApplication, base::nil};
 use std::{rc::Rc, sync::Arc};
 
 pub struct App {
@@ -26,8 +25,8 @@ impl platform::App for App {
 
     fn activate(&self, ignoring_other_apps: bool) {
         unsafe {
-            let app: id = msg_send![class!(NSApplication), sharedApplication];
-            let _: () = msg_send![app, activateIgnoringOtherApps: ignoring_other_apps.to_objc()];
+            let app = NSApplication::sharedApplication(nil);
+            app.activateIgnoringOtherApps_(ignoring_other_apps.to_objc());
         }
     }
 

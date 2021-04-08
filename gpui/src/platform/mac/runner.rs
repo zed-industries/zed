@@ -1,7 +1,10 @@
 use crate::platform::Event;
 use cocoa::{
-    appkit::NSApplicationActivationPolicy::NSApplicationActivationPolicyRegular,
-    base::{id, nil},
+    appkit::{
+        NSApplication, NSApplicationActivationPolicy::NSApplicationActivationPolicyRegular, NSMenu,
+        NSMenuItem, NSWindow,
+    },
+    base::{id, nil, selector},
     foundation::{NSArray, NSAutoreleasePool, NSString},
 };
 use ctor::ctor;
@@ -106,16 +109,16 @@ impl crate::platform::Runner for Runner {
 
             let pool = NSAutoreleasePool::new(nil);
             let app: id = msg_send![APP_CLASS, sharedApplication];
-            let _: () = msg_send![
-                app,
-                setActivationPolicy: NSApplicationActivationPolicyRegular
-            ];
-            (*app).set_ivar(RUNNER_IVAR, self_ptr as *mut c_void);
             let app_delegate: id = msg_send![APP_DELEGATE_CLASS, new];
+
+            app.setActivationPolicy_(NSApplicationActivationPolicyRegular);
+            (*app).set_ivar(RUNNER_IVAR, self_ptr as *mut c_void);
             (*app_delegate).set_ivar(RUNNER_IVAR, self_ptr as *mut c_void);
-            let _: () = msg_send![app, setDelegate: app_delegate];
-            let _: () = msg_send![app, run];
-            let _: () = msg_send![pool, drain];
+            app.setMainMenu_(create_menu_bar());
+            app.setDelegate_(app_delegate);
+            app.run();
+            pool.drain();
+
             // The Runner is done running when we get here, so we can reinstantiate the Box and drop it.
             Box::from_raw(self_ptr);
         }
@@ -185,4 +188,34 @@ extern "C" fn open_files(this: &mut Object, _: Sel, _: id, paths: id) {
     if let Some(callback) = runner.open_files_callback.as_mut() {
         callback(paths);
     }
+}
+
+unsafe fn create_menu_bar() -> id {
+    let menu_bar = NSMenu::new(nil).autorelease();
+
+    // App menu
+    let app_menu_item = NSMenuItem::alloc(nil)
+        .initWithTitle_action_keyEquivalent_(
+            ns_string("Application"),
+            Sel::from_ptr(ptr::null()),
+            ns_string(""),
+        )
+        .autorelease();
+    let quit_item = NSMenuItem::alloc(nil)
+        .initWithTitle_action_keyEquivalent_(
+            ns_string("Quit"),
+            selector("terminate:"),
+            ns_string("q\0"),
+        )
+        .autorelease();
+    let app_menu = NSMenu::new(nil).autorelease();
+    app_menu.addItem_(quit_item);
+    app_menu_item.setSubmenu_(app_menu);
+    menu_bar.addItem_(app_menu_item);
+
+    menu_bar
+}
+
+unsafe fn ns_string(string: &str) -> id {
+    NSString::alloc(nil).init_str(string).autorelease()
 }
