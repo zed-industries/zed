@@ -33,6 +33,7 @@ pub struct Worktree(Arc<RwLock<WorktreeState>>);
 struct WorktreeState {
     id: usize,
     path: PathBuf,
+    root_ino: Option<usize>,
     entries: HashMap<usize, Entry>,
     file_paths: Vec<PathEntry>,
     histories: HashMap<usize, History>,
@@ -55,6 +56,7 @@ impl Worktree {
         let tree = Self(Arc::new(RwLock::new(WorktreeState {
             id,
             path: path.into(),
+            root_ino: None,
             entries: HashMap::new(),
             file_paths: Vec::new(),
             histories: HashMap::new(),
@@ -100,6 +102,7 @@ impl Worktree {
         }
         let is_ignored = ignore.matched(&path, metadata.is_dir()).is_ignore();
 
+        self.0.write().root_ino = Some(0);
         if metadata.file_type().is_dir() {
             let is_ignored = is_ignored || name == ".git";
             let id = self.insert_dir(None, name, ino, is_symlink, is_ignored);
@@ -409,6 +412,13 @@ impl Entity for Worktree {
     type Event = ();
 }
 
+impl WorktreeState {
+    fn root_entry(&self) -> Option<&Entry> {
+        self.root_ino
+            .and_then(|root_ino| self.entries.get(&root_ino))
+    }
+}
+
 pub trait WorktreeHandle {
     fn file(&self, entry_id: usize, app: &AppContext) -> Result<FileHandle>;
 }
@@ -504,7 +514,7 @@ impl Iterator for Iter {
         if !self.started {
             self.started = true;
 
-            return if let Some(entry) = state.entries.get(&0).cloned() {
+            return if let Some(entry) = state.root_entry().cloned() {
                 self.stack.push(IterStackEntry {
                     entry_id: 0,
                     child_idx: 0,
@@ -620,7 +630,7 @@ pub fn match_paths(
             .iter()
             .map(|tree| {
                 let skip_prefix = if trees.len() == 1 {
-                    if let Some(Entry::Dir { name, .. }) = tree.entries.get(&0) {
+                    if let Some(Entry::Dir { name, .. }) = tree.root_entry() {
                         let name = name.to_string_lossy();
                         if name == "/" {
                             1
