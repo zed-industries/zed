@@ -2,15 +2,19 @@ use super::{pane, Pane, PaneGroup, SplitDirection, Workspace};
 use crate::{settings::Settings, watch};
 use futures_core::future::LocalBoxFuture;
 use gpui::{
-    color::rgbu, elements::*, keymap::Binding, AnyViewHandle, App, AppContext, Entity, ModelHandle,
-    MutableAppContext, View, ViewContext, ViewHandle,
+    color::rgbu, elements::*, json::to_string_pretty, keymap::Binding, AnyViewHandle, App,
+    AppContext, Entity, ModelHandle, MutableAppContext, View, ViewContext, ViewHandle,
 };
 use log::{error, info};
 use std::{collections::HashSet, path::PathBuf};
 
 pub fn init(app: &mut App) {
     app.add_action("workspace:save", WorkspaceView::save_active_item);
-    app.add_bindings(vec![Binding::new("cmd-s", "workspace:save", None)]);
+    app.add_action("workspace:debug_elements", WorkspaceView::debug_elements);
+    app.add_bindings(vec![
+        Binding::new("cmd-s", "workspace:save", None),
+        Binding::new("cmd-alt-i", "workspace:debug_elements", None),
+    ]);
 }
 
 pub trait ItemView: View {
@@ -249,6 +253,17 @@ impl WorkspaceView {
                 .detach()
             }
         });
+    }
+
+    pub fn debug_elements(&mut self, _: &(), ctx: &mut ViewContext<Self>) {
+        match to_string_pretty(&ctx.debug_elements()) {
+            Ok(json) => {
+                log::info!("{}", json);
+            }
+            Err(error) => {
+                log::error!("error debugging elements: {}", error);
+            }
+        };
     }
 
     fn workspace_updated(&mut self, _: ModelHandle<Workspace>, ctx: &mut ViewContext<Self>) {

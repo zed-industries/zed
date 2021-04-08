@@ -2,7 +2,7 @@ use crate::{
     app::{AppContext, MutableAppContext, WindowInvalidation},
     elements::Element,
     font_cache::FontCache,
-    json::ToJson,
+    json::{self, ToJson},
     platform::Event,
     text_layout::TextLayoutCache,
     AssetCache, ElementBox, Scene,
@@ -130,6 +130,18 @@ impl Presenter {
             Vec::new()
         }
     }
+
+    pub fn debug_elements(&self, ctx: &AppContext) -> Option<json::Value> {
+        ctx.root_view_id(self.window_id)
+            .and_then(|root_view_id| self.rendered_views.get(&root_view_id))
+            .map(|root_element| {
+                root_element.debug(&DebugContext {
+                    rendered_views: &self.rendered_views,
+                    font_cache: &self.font_cache,
+                    app: ctx,
+                })
+            })
+    }
 }
 
 pub struct ActionToDispatch {
@@ -227,7 +239,7 @@ impl<'a> EventContext<'a> {
 }
 
 pub struct DebugContext<'a> {
-    rendered_views: &'a mut HashMap<usize, ElementBox>,
+    rendered_views: &'a HashMap<usize, ElementBox>,
     pub font_cache: &'a FontCache,
     pub app: &'a AppContext,
 }

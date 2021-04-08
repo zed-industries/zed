@@ -310,6 +310,7 @@ pub struct MutableAppContext {
     window_invalidations: HashMap<usize, WindowInvalidation>,
     invalidation_callbacks:
         HashMap<usize, Box<dyn FnMut(WindowInvalidation, &mut MutableAppContext)>>,
+    debug_elements_callbacks: HashMap<usize, Box<dyn Fn(&AppContext) -> crate::json::Value>>,
     foreground: Rc<executor::Foreground>,
     future_handlers: Rc<RefCell<HashMap<usize, FutureHandler>>>,
     stream_handlers: Rc<RefCell<HashMap<usize, StreamHandler>>>,
@@ -347,6 +348,7 @@ impl MutableAppContext {
             observations: HashMap::new(),
             window_invalidations: HashMap::new(),
             invalidation_callbacks: HashMap::new(),
+            debug_elements_callbacks: HashMap::new(),
             foreground,
             future_handlers: Default::default(),
             stream_handlers: Default::default(),
@@ -373,14 +375,27 @@ impl MutableAppContext {
         &self.ctx.background
     }
 
-    pub fn on_window_invalidated<F: 'static + FnMut(WindowInvalidation, &mut MutableAppContext)>(
-        &mut self,
-        window_id: usize,
-        callback: F,
-    ) {
+    pub fn on_window_invalidated<F>(&mut self, window_id: usize, callback: F)
+    where
+        F: 'static + FnMut(WindowInvalidation, &mut MutableAppContext),
+    {
         self.invalidation_callbacks
             .insert(window_id, Box::new(callback));
         self.update_windows();
+    }
+
+    pub fn on_debug_elements<F>(&mut self, window_id: usize, callback: F)
+    where
+        F: 'static + Fn(&AppContext) -> crate::json::Value,
+    {
+        self.debug_elements_callbacks
+            .insert(window_id, Box::new(callback));
+    }
+
+    pub fn debug_elements(&self, window_id: usize) -> Option<crate::json::Value> {
+        self.debug_elements_callbacks
+            .get(&window_id)
+            .map(|debug_elements| debug_elements(&self.ctx))
     }
 
     pub fn add_action<S, V, T, F>(&mut self, name: S, mut handler: F)
@@ -692,11 +707,19 @@ impl MutableAppContext {
                     }));
                 }
 
-                self.on_window_invalidated(window_id, move |invalidation, ctx| {
-                    let mut presenter = presenter.borrow_mut();
-                    presenter.invalidate(invalidation, ctx.downgrade());
-                    let scene = presenter.build_scene(window.size(), window.scale_factor(), ctx);
-                    window.present_scene(scene);
+                {
+                    let presenter = presenter.clone();
+                    self.on_window_invalidated(window_id, move |invalidation, ctx| {
+                        let mut presenter = presenter.borrow_mut();
+                        presenter.invalidate(invalidation, ctx.downgrade());
+                        let scene =
+                            presenter.build_scene(window.size(), window.scale_factor(), ctx);
+                        window.present_scene(scene);
+                    });
+                }
+
+                self.on_debug_elements(window_id, move |ctx| {
+                    presenter.borrow().debug_elements(ctx).unwrap()
                 });
             }
         }
@@ -1571,6 +1594,10 @@ impl<'a, T: View> ViewContext<'a, T> {
 
     pub fn background_executor(&self) -> &Arc<executor::Background> {
         &self.app.ctx.background
+    }
+
+    pub fn debug_elements(&self) -> crate::json::Value {
+        self.app.debug_elements(self.window_id).unwrap()
     }
 
     pub fn focus<S>(&mut self, handle: S)
