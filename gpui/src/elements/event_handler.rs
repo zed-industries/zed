@@ -1,6 +1,9 @@
+use pathfinder_geometry::rect::RectF;
+use serde_json::json;
+
 use crate::{
-    geometry::vector::Vector2F, AfterLayoutContext, Element, ElementBox, Event, EventContext,
-    LayoutContext, PaintContext, SizeConstraint,
+    geometry::vector::Vector2F, AfterLayoutContext, DebugContext, Element, ElementBox, Event,
+    EventContext, LayoutContext, PaintContext, SizeConstraint,
 };
 
 pub struct EventHandler {
@@ -49,7 +52,7 @@ impl Element for EventHandler {
 
     fn paint(
         &mut self,
-        bounds: pathfinder_geometry::rect::RectF,
+        bounds: RectF,
         _: &mut Self::LayoutState,
         ctx: &mut PaintContext,
     ) -> Self::PaintState {
@@ -59,7 +62,7 @@ impl Element for EventHandler {
     fn dispatch_event(
         &mut self,
         event: &Event,
-        bounds: pathfinder_geometry::rect::RectF,
+        bounds: RectF,
         _: &mut Self::LayoutState,
         _: &mut Self::PaintState,
         ctx: &mut EventContext,
@@ -79,5 +82,18 @@ impl Element for EventHandler {
                 _ => false,
             }
         }
+    }
+
+    fn debug(
+        &self,
+        _: RectF,
+        _: &Self::LayoutState,
+        _: &Self::PaintState,
+        ctx: &DebugContext,
+    ) -> serde_json::Value {
+        json!({
+            "type": "EventHandler",
+            "child": self.child.debug(ctx),
+        })
     }
 }

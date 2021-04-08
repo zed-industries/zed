@@ -40,6 +40,7 @@ pub trait App {
         executor: Rc<executor::Foreground>,
     ) -> Result<Box<dyn Window>>;
     fn fonts(&self) -> Arc<dyn FontSystem>;
+    fn copy(&self, text: &str);
 }
 
 pub trait Dispatcher: Send + Sync {

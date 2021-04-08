@@ -6,10 +6,12 @@ use gpui::{
         vector::{vec2f, Vector2F},
         PathBuilder,
     },
+    json::{self, ToJson},
     text_layout::{self, TextLayoutCache},
     AfterLayoutContext, AppContext, Border, Element, Event, EventContext, FontCache, LayoutContext,
     PaintContext, Quad, Scene, SizeConstraint, ViewHandle,
 };
+use json::json;
 use smallvec::SmallVec;
 use std::cmp::Ordering;
 use std::{
@@ -476,6 +478,19 @@ impl Element for BufferElement {
         } else {
             false
         }
+    }
+
+    fn debug(
+        &self,
+        bounds: RectF,
+        _: &Self::LayoutState,
+        _: &Self::PaintState,
+        _: &gpui::DebugContext,
+    ) -> json::Value {
+        json!({
+            "type": "BufferElement",
+            "bounds": bounds.to_json()
+        })
     }
 }
 

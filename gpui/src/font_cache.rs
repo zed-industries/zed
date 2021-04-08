@@ -36,6 +36,15 @@ impl FontCache {
         }))
     }
 
+    pub fn family_name(&self, family_id: FamilyId) -> Result<String> {
+        self.0
+            .read()
+            .families
+            .get(family_id.0)
+            .ok_or_else(|| anyhow!("invalid family id"))
+            .map(|family| family.name.clone())
+    }
+
     pub fn load_family(&self, names: &[&str]) -> Result<FamilyId> {
         for name in names {
             let state = self.0.upgradable_read();
