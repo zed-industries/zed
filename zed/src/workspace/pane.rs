@@ -105,15 +105,12 @@ impl Pane {
         self.items.get(self.active_item).cloned()
     }
 
-    pub fn activate_entry(
-        &mut self,
-        entry_id: (usize, usize),
-        ctx: &mut ViewContext<Self>,
-    ) -> bool {
-        if let Some(index) = self.items.iter().position(|item| {
-            item.entry_id(ctx.as_ref())
-                .map_or(false, |id| id == entry_id)
-        }) {
+    pub fn activate_entry(&mut self, entry_id: (usize, u64), ctx: &mut ViewContext<Self>) -> bool {
+        if let Some(index) = self
+            .items
+            .iter()
+            .position(|item| item.entry_id(ctx.as_ref()).map_or(false, |id| id == entry_id))
+        {
             self.activate_item(index, ctx);
             true
         } else {

@@ -1225,7 +1225,7 @@ impl workspace::ItemView for BufferView {
         }
     }
 
-    fn entry_id(&self, app: &AppContext) -> Option<(usize, usize)> {
+    fn entry_id(&self, app: &AppContext) -> Option<(usize, u64)> {
         self.buffer.read(app).entry_id()
     }
 

@@ -76,7 +76,7 @@ enum OpenedItem {
 pub struct Workspace {
     replica_id: ReplicaId,
     worktrees: HashSet<ModelHandle<Worktree>>,
-    items: HashMap<(usize, usize), OpenedItem>,
+    items: HashMap<(usize, u64), OpenedItem>,
 }
 
 impl Workspace {
@@ -125,7 +125,7 @@ impl Workspace {
 
     pub fn open_entry(
         &mut self,
-        entry: (usize, usize),
+        entry: (usize, u64),
         ctx: &mut ModelContext<'_, Self>,
     ) -> anyhow::Result<Pin<Box<dyn Future<Output = OpenResult> + Send>>> {
         if let Some(item) = self.items.get(&entry).cloned() {
@@ -200,12 +200,12 @@ impl Entity for Workspace {
 
 #[cfg(test)]
 pub trait WorkspaceHandle {
-    fn file_entries(&self, app: &AppContext) -> Vec<(usize, usize)>;
+    fn file_entries(&self, app: &AppContext) -> Vec<(usize, u64)>;
 }
 
 #[cfg(test)]
 impl WorkspaceHandle for ModelHandle<Workspace> {
-    fn file_entries(&self, app: &AppContext) -> Vec<(usize, usize)> {
+    fn file_entries(&self, app: &AppContext) -> Vec<(usize, u64)> {
         self.read(app)
             .worktrees()
             .iter()

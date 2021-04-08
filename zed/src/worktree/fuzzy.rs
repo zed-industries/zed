@@ -12,7 +12,7 @@ const ADDITIONAL_DISTANCE_PENALTY: f64 = 0.05;
 const MIN_DISTANCE_PENALTY: f64 = 0.2;
 
 pub struct PathEntry {
-    pub entry_id: usize,
+    pub ino: u64,
     pub path_chars: CharBag,
     pub path: Vec<char>,
     pub lowercase_path: Vec<char>,
@@ -24,7 +24,7 @@ pub struct PathMatch {
     pub score: f64,
     pub positions: Vec<usize>,
     pub tree_id: usize,
-    pub entry_id: usize,
+    pub entry_id: u64,
     pub skipped_prefix_len: usize,
 }
 
@@ -191,7 +191,7 @@ fn match_single_tree_paths(
         if score > 0.0 {
             results.push(Reverse(PathMatch {
                 tree_id,
-                entry_id: path_entry.entry_id,
+                entry_id: path_entry.ino,
                 score,
                 positions: match_positions.clone(),
                 skipped_prefix_len,
@@ -453,7 +453,7 @@ mod tests {
             let path_chars = CharBag::from(&lowercase_path[..]);
             let path = path.chars().collect();
             path_entries.push(PathEntry {
-                entry_id: i,
+                ino: i as u64,
                 path_chars,
                 path,
                 lowercase_path,
@@ -490,7 +490,12 @@ mod tests {
         results
             .into_iter()
             .rev()
-            .map(|result| (paths[result.0.entry_id].clone(), result.0.positions))
+            .map(|result| {
+                (
+                    paths[result.0.entry_id as usize].clone(),
+                    result.0.positions,
+                )
+            })
             .collect()
     }
 }

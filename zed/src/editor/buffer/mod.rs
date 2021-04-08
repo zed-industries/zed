@@ -433,7 +433,7 @@ impl Buffer {
         self.file.as_ref().map(|file| file.path(app))
     }
 
-    pub fn entry_id(&self) -> Option<(usize, usize)> {
+    pub fn entry_id(&self) -> Option<(usize, u64)> {
         self.file.as_ref().map(|file| file.entry_id())
     }
 

@@ -19,7 +19,7 @@ pub fn init(app: &mut MutableAppContext) {
 
 pub trait ItemView: View {
     fn title(&self, app: &AppContext) -> String;
-    fn entry_id(&self, app: &AppContext) -> Option<(usize, usize)>;
+    fn entry_id(&self, app: &AppContext) -> Option<(usize, u64)>;
     fn clone_on_split(&self, _: &mut ViewContext<Self>) -> Option<Self>
     where
         Self: Sized,
@@ -42,7 +42,7 @@ pub trait ItemView: View {
 
 pub trait ItemViewHandle: Send + Sync {
     fn title(&self, app: &AppContext) -> String;
-    fn entry_id(&self, app: &AppContext) -> Option<(usize, usize)>;
+    fn entry_id(&self, app: &AppContext) -> Option<(usize, u64)>;
     fn boxed_clone(&self) -> Box<dyn ItemViewHandle>;
     fn clone_on_split(&self, app: &mut MutableAppContext) -> Option<Box<dyn ItemViewHandle>>;
     fn set_parent_pane(&self, pane: &ViewHandle<Pane>, app: &mut MutableAppContext);
@@ -57,7 +57,7 @@ impl<T: ItemView> ItemViewHandle for ViewHandle<T> {
         self.read(app).title(app)
     }
 
-    fn entry_id(&self, app: &AppContext) -> Option<(usize, usize)> {
+    fn entry_id(&self, app: &AppContext) -> Option<(usize, u64)> {
         self.read(app).entry_id(app)
     }
 
@@ -124,7 +124,7 @@ pub struct WorkspaceView {
     center: PaneGroup,
     panes: Vec<ViewHandle<Pane>>,
     active_pane: ViewHandle<Pane>,
-    loading_entries: HashSet<(usize, usize)>,
+    loading_entries: HashSet<(usize, u64)>,
 }
 
 impl WorkspaceView {
@@ -189,7 +189,7 @@ impl WorkspaceView {
         }
     }
 
-    pub fn open_entry(&mut self, entry: (usize, usize), ctx: &mut ViewContext<Self>) {
+    pub fn open_entry(&mut self, entry: (usize, u64), ctx: &mut ViewContext<Self>) {
         if self.loading_entries.contains(&entry) {
             return;
         }

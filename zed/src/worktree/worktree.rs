@@ -33,15 +33,15 @@ pub struct Worktree(Arc<RwLock<WorktreeState>>);
 struct WorktreeState {
     id: usize,
     path: PathBuf,
-    root_ino: Option<usize>,
-    entries: HashMap<usize, Entry>,
+    root_ino: Option<u64>,
+    entries: HashMap<u64, Entry>,
     file_paths: Vec<PathEntry>,
-    histories: HashMap<usize, History>,
+    histories: HashMap<u64, History>,
     scanning: bool,
 }
 
 struct DirToScan {
-    id: usize,
+    ino: u64,
     path: PathBuf,
     relative_path: PathBuf,
     ignore: Option<Ignore>,
@@ -102,14 +102,13 @@ impl Worktree {
         }
         let is_ignored = ignore.matched(&path, metadata.is_dir()).is_ignore();
 
-        self.0.write().root_ino = Some(0);
         if metadata.file_type().is_dir() {
             let is_ignored = is_ignored || name == ".git";
-            let id = self.insert_dir(None, name, ino, is_symlink, is_ignored);
+            self.insert_dir(None, name, ino, is_symlink, is_ignored);
             let (tx, rx) = channel::unbounded();
 
             tx.send(Ok(DirToScan {
-                id,
+                ino,
                 path,
                 relative_path,
                 ignore: Some(ignore),
@@ -131,6 +130,7 @@ impl Worktree {
         } else {
             self.insert_file(None, name, ino, is_symlink, is_ignored, relative_path);
         }
+        self.0.write().root_ino = Some(ino);
 
         Ok(())
     }
@@ -159,12 +159,12 @@ impl Worktree {
                     }
                 }
 
-                let id = self.insert_dir(Some(to_scan.id), name, ino, is_symlink, is_ignored);
-                new_children.push(id);
+                self.insert_dir(Some(to_scan.ino), name, ino, is_symlink, is_ignored);
+                new_children.push(ino);
 
                 let dirs_to_scan = to_scan.dirs_to_scan.clone();
                 let _ = to_scan.dirs_to_scan.send(Ok(DirToScan {
-                    id,
+                    ino,
                     path,
                     relative_path,
                     ignore,
@@ -175,18 +175,19 @@ impl Worktree {
                     i.matched(to_scan.path.join(&name), false).is_ignore()
                 });
 
-                new_children.push(self.insert_file(
-                    Some(to_scan.id),
+                self.insert_file(
+                    Some(to_scan.ino),
                     name,
                     ino,
                     is_symlink,
                     is_ignored,
                     relative_path,
-                ));
+                );
+                new_children.push(ino);
             };
         }
 
-        if let Some(Entry::Dir { children, .. }) = &mut self.0.write().entries.get_mut(&to_scan.id)
+        if let Some(Entry::Dir { children, .. }) = &mut self.0.write().entries.get_mut(&to_scan.ino)
         {
             *children = new_children.clone();
         }
@@ -196,16 +197,15 @@ impl Worktree {
 
     fn insert_dir(
         &self,
-        parent: Option<usize>,
+        parent: Option<u64>,
         name: OsString,
         ino: u64,
         is_symlink: bool,
         is_ignored: bool,
-    ) -> usize {
+    ) {
         let entries = &mut self.0.write().entries;
-        let dir_id = entries.len();
         entries.insert(
-            dir_id,
+            ino,
             Entry::Dir {
                 parent,
                 name,
@@ -215,27 +215,25 @@ impl Worktree {
                 children: Vec::new(),
             },
         );
-        dir_id
     }
 
     fn insert_file(
         &self,
-        parent: Option<usize>,
+        parent: Option<u64>,
         name: OsString,
         ino: u64,
         is_symlink: bool,
         is_ignored: bool,
         path: PathBuf,
-    ) -> usize {
+    ) {
         let path = path.to_string_lossy();
         let lowercase_path = path.to_lowercase().chars().collect::<Vec<_>>();
         let path = path.chars().collect::<Vec<_>>();
         let path_chars = CharBag::from(&path[..]);
 
         let mut state = self.0.write();
-        let entry_id = state.entries.len();
         state.entries.insert(
-            entry_id,
+            ino,
             Entry::File {
                 parent,
                 name,
@@ -245,25 +243,23 @@ impl Worktree {
             },
         );
         state.file_paths.push(PathEntry {
-            entry_id,
+            ino,
             path_chars,
             path,
             lowercase_path,
             is_ignored,
         });
-        entry_id
     }
 
-    pub fn entry_path(&self, mut entry_id: usize) -> Result<PathBuf> {
+    pub fn entry_path(&self, mut entry_id: u64) -> Result<PathBuf> {
         let state = self.0.read();
-
-        if entry_id >= state.entries.len() {
-            return Err(anyhow!("Entry does not exist in tree"));
-        }
 
         let mut entries = Vec::new();
         loop {
-            let entry = &state.entries[&entry_id];
+            let entry = state
+                .entries
+                .get(&entry_id)
+                .ok_or_else(|| anyhow!("entry does not exist in worktree"))?;
             entries.push(entry);
             if let Some(parent_id) = entry.parent() {
                 entry_id = parent_id;
@@ -279,13 +275,13 @@ impl Worktree {
         Ok(path)
     }
 
-    pub fn abs_entry_path(&self, entry_id: usize) -> Result<PathBuf> {
+    pub fn abs_entry_path(&self, entry_id: u64) -> Result<PathBuf> {
         let mut path = self.0.read().path.clone();
         path.pop();
         Ok(path.join(self.entry_path(entry_id)?))
     }
 
-    fn fmt_entry(&self, f: &mut fmt::Formatter<'_>, entry_id: usize, indent: usize) -> fmt::Result {
+    fn fmt_entry(&self, f: &mut fmt::Formatter<'_>, entry_id: u64, indent: usize) -> fmt::Result {
         match &self.0.read().entries[&entry_id] {
             Entry::Dir { name, children, .. } => {
                 write!(
@@ -333,6 +329,10 @@ impl Worktree {
         }
     }
 
+    pub fn has_entry(&self, entry_id: u64) -> bool {
+        self.0.read().entries.contains_key(&entry_id)
+    }
+
     pub fn entry_count(&self) -> usize {
         self.0.read().entries.len()
     }
@@ -341,7 +341,7 @@ impl Worktree {
         self.0.read().file_paths.len()
     }
 
-    pub fn load_history(&self, entry_id: usize) -> impl Future<Output = Result<History>> {
+    pub fn load_history(&self, entry_id: u64) -> impl Future<Output = Result<History>> {
         let tree = self.clone();
 
         async move {
@@ -360,12 +360,7 @@ impl Worktree {
         }
     }
 
-    pub fn save<'a>(
-        &self,
-        entry_id: usize,
-        content: Snapshot,
-        ctx: &AppContext,
-    ) -> Task<Result<()>> {
+    pub fn save<'a>(&self, entry_id: u64, content: Snapshot, ctx: &AppContext) -> Task<Result<()>> {
         let path = self.abs_entry_path(entry_id);
         ctx.background_executor().spawn(async move {
             let buffer_size = content.text_summary().bytes.min(10 * 1024);
@@ -420,34 +415,34 @@ impl WorktreeState {
 }
 
 pub trait WorktreeHandle {
-    fn file(&self, entry_id: usize, app: &AppContext) -> Result<FileHandle>;
+    fn file(&self, entry_id: u64, app: &AppContext) -> Result<FileHandle>;
 }
 
 impl WorktreeHandle for ModelHandle<Worktree> {
-    fn file(&self, entry_id: usize, app: &AppContext) -> Result<FileHandle> {
-        if entry_id >= self.read(app).entry_count() {
-            return Err(anyhow!("Entry does not exist in tree"));
+    fn file(&self, entry_id: u64, app: &AppContext) -> Result<FileHandle> {
+        if self.read(app).has_entry(entry_id) {
+            Err(anyhow!("entry does not exist in tree"))
+        } else {
+            Ok(FileHandle {
+                worktree: self.clone(),
+                entry_id,
+            })
         }
-
-        Ok(FileHandle {
-            worktree: self.clone(),
-            entry_id,
-        })
     }
 }
 
 #[derive(Clone, Debug)]
 pub enum Entry {
     Dir {
-        parent: Option<usize>,
+        parent: Option<u64>,
         name: OsString,
         ino: u64,
         is_symlink: bool,
         is_ignored: bool,
-        children: Vec<usize>,
+        children: Vec<u64>,
     },
     File {
-        parent: Option<usize>,
+        parent: Option<u64>,
         name: OsString,
         ino: u64,
         is_symlink: bool,
@@ -456,9 +451,15 @@ pub enum Entry {
 }
 
 impl Entry {
-    fn parent(&self) -> Option<usize> {
+    fn parent(&self) -> Option<u64> {
         match self {
             Entry::Dir { parent, .. } | Entry::File { parent, .. } => *parent,
+        }
+    }
+
+    fn ino(&self) -> u64 {
+        match self {
+            Entry::Dir { ino, .. } | Entry::File { ino, .. } => *ino,
         }
     }
 
@@ -472,7 +473,7 @@ impl Entry {
 #[derive(Clone)]
 pub struct FileHandle {
     worktree: ModelHandle<Worktree>,
-    entry_id: usize,
+    entry_id: u64,
 }
 
 impl FileHandle {
@@ -489,13 +490,13 @@ impl FileHandle {
         worktree.save(self.entry_id, content, ctx)
     }
 
-    pub fn entry_id(&self) -> (usize, usize) {
+    pub fn entry_id(&self) -> (usize, u64) {
         (self.worktree.id(), self.entry_id)
     }
 }
 
 struct IterStackEntry {
-    entry_id: usize,
+    entry_id: u64,
     child_idx: usize,
 }
 
@@ -516,18 +517,21 @@ impl Iterator for Iter {
 
             return if let Some(entry) = state.root_entry().cloned() {
                 self.stack.push(IterStackEntry {
-                    entry_id: 0,
+                    entry_id: entry.ino(),
                     child_idx: 0,
                 });
 
-                Some(Traversal::Push { entry_id: 0, entry })
+                Some(Traversal::Push {
+                    entry_id: entry.ino(),
+                    entry,
+                })
             } else {
                 None
             };
         }
 
         while let Some(parent) = self.stack.last_mut() {
-            if let Entry::Dir { children, .. } = &state.entries[&parent.entry_id] {
+            if let Some(Entry::Dir { children, .. }) = &state.entries.get(&parent.entry_id) {
                 if parent.child_idx < children.len() {
                     let child_id = children[post_inc(&mut parent.child_idx)];
 
@@ -558,7 +562,7 @@ impl Iterator for Iter {
 
 #[derive(Debug)]
 pub enum Traversal {
-    Push { entry_id: usize, entry: Entry },
+    Push { entry_id: u64, entry: Entry },
     Pop,
 }
 
@@ -568,7 +572,7 @@ pub struct FilesIter {
 }
 
 pub struct FilesIterItem {
-    pub entry_id: usize,
+    pub entry_id: u64,
     pub path: PathBuf,
 }
 
