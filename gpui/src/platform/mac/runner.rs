@@ -213,6 +213,27 @@ unsafe fn create_menu_bar() -> id {
     app_menu_item.setSubmenu_(app_menu);
     menu_bar.addItem_(app_menu_item);
 
+    // File menu
+    let file_menu_item = NSMenuItem::alloc(nil)
+        .initWithTitle_action_keyEquivalent_(
+            ns_string("File"),
+            Sel::from_ptr(ptr::null()),
+            ns_string(""),
+        )
+        .autorelease();
+    let open_item = NSMenuItem::alloc(nil)
+        .initWithTitle_action_keyEquivalent_(
+            ns_string("Open"),
+            selector("openDocument:"),
+            ns_string("o\0"),
+        )
+        .autorelease();
+    let file_menu = NSMenu::new(nil).autorelease();
+    file_menu.setTitle_(ns_string("File"));
+    file_menu.addItem_(open_item);
+    file_menu_item.setSubmenu_(file_menu);
+    menu_bar.addItem_(file_menu_item);
+
     menu_bar
 }
 
