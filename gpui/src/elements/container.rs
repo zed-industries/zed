@@ -201,6 +201,7 @@ impl Element for Container {
     ) -> serde_json::Value {
         json!({
             "type": "Container",
+            "bounds": bounds.to_json(),
             "details": {
                 "margin": self.margin.to_json(),
                 "padding": self.padding.to_json(),
@@ -209,7 +210,6 @@ impl Element for Container {
                 "corner_radius": self.corner_radius,
                 "shadow": self.shadow.to_json(),
             },
-            "bounds": bounds.to_json(),
             "child": self.child.debug(ctx),
         })
     }

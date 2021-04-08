@@ -258,7 +258,11 @@ impl WorkspaceView {
     pub fn debug_elements(&mut self, _: &(), ctx: &mut ViewContext<Self>) {
         match to_string_pretty(&ctx.debug_elements()) {
             Ok(json) => {
-                log::info!("{}", json);
+                ctx.app_mut().copy(&json);
+                log::info!(
+                    "copied {:.1} KiB of element debug JSON to the clipboard",
+                    json.len() as f32 / 1024.
+                );
             }
             Err(error) => {
                 log::error!("error debugging elements: {}", error);
@@ -373,7 +377,7 @@ impl View for WorkspaceView {
                 .boxed(),
         )
         .with_background_color(rgbu(0xea, 0xea, 0xeb))
-        .boxed()
+        .named("workspace")
     }
 
     fn on_focus(&mut self, ctx: &mut ViewContext<Self>) {

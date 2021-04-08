@@ -1120,6 +1120,10 @@ impl MutableAppContext {
             }
         }
     }
+
+    pub fn copy(&self, text: &str) {
+        self.platform.copy(text);
+    }
 }
 
 impl ModelAsRef for MutableAppContext {

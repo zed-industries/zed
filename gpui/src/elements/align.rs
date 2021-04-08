@@ -91,8 +91,8 @@ impl Element for Align {
     ) -> json::Value {
         json!({
             "type": "Align",
-            "alignment": self.alignment.to_json(),
             "bounds": bounds.to_json(),
+            "alignment": self.alignment.to_json(),
             "child": self.child.debug(ctx),
         })
     }

@@ -1,9 +1,13 @@
 use super::{BoolExt as _, Dispatcher, FontSystem, Window};
 use crate::{executor, platform};
 use anyhow::Result;
-use cocoa::base::id;
+use cocoa::{
+    appkit::{NSPasteboard, NSPasteboardTypeString},
+    base::{id, nil},
+    foundation::NSData,
+};
 use objc::{class, msg_send, sel, sel_impl};
-use std::{rc::Rc, sync::Arc};
+use std::{ffi::c_void, rc::Rc, sync::Arc};
 
 pub struct App {
     dispatcher: Arc<Dispatcher>,
@@ -41,5 +45,18 @@ impl platform::App for App {
 
     fn fonts(&self) -> Arc<dyn platform::FontSystem> {
         self.fonts.clone()
+    }
+
+    fn copy(&self, text: &str) {
+        unsafe {
+            let data = NSData::dataWithBytes_length_(
+                nil,
+                text.as_ptr() as *const c_void,
+                text.len() as u64,
+            );
+            let pasteboard = NSPasteboard::generalPasteboard(nil);
+            pasteboard.clearContents();
+            pasteboard.setData_forType(data, NSPasteboardTypeString);
+        }
     }
 }

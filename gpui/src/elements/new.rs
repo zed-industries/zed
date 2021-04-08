@@ -5,7 +5,7 @@ use crate::{
 };
 use core::panic;
 use replace_with::replace_with_or_abort;
-use std::any::Any;
+use std::{any::Any, borrow::Cow};
 
 trait AnyElement {
     fn layout(&mut self, constraint: SizeConstraint, ctx: &mut LayoutContext) -> Vector2F;
@@ -67,7 +67,20 @@ pub trait Element {
     where
         Self: 'static + Sized,
     {
-        ElementBox(Box::new(Lifecycle::Init { element: self }))
+        ElementBox {
+            name: None,
+            element: Box::new(Lifecycle::Init { element: self }),
+        }
+    }
+
+    fn named(self, name: impl Into<Cow<'static, str>>) -> ElementBox
+    where
+        Self: 'static + Sized,
+    {
+        ElementBox {
+            name: Some(name.into()),
+            element: Box::new(Lifecycle::Init { element: self }),
+        }
     }
 }
 
@@ -87,7 +100,10 @@ pub enum Lifecycle<T: Element> {
         paint: T::PaintState,
     },
 }
-pub struct ElementBox(Box<dyn AnyElement>);
+pub struct ElementBox {
+    name: Option<Cow<'static, str>>,
+    element: Box<dyn AnyElement>,
+}
 
 impl<T: Element> AnyElement for Lifecycle<T> {
     fn layout(&mut self, constraint: SizeConstraint, ctx: &mut LayoutContext) -> Vector2F {
@@ -191,30 +207,41 @@ impl<T: Element> AnyElement for Lifecycle<T> {
 
 impl ElementBox {
     pub fn layout(&mut self, constraint: SizeConstraint, ctx: &mut LayoutContext) -> Vector2F {
-        self.0.layout(constraint, ctx)
+        self.element.layout(constraint, ctx)
     }
 
     pub fn after_layout(&mut self, ctx: &mut AfterLayoutContext) {
-        self.0.after_layout(ctx);
+        self.element.after_layout(ctx);
     }
 
     pub fn paint(&mut self, origin: Vector2F, ctx: &mut PaintContext) {
-        self.0.paint(origin, ctx);
+        self.element.paint(origin, ctx);
     }
 
     pub fn dispatch_event(&mut self, event: &Event, ctx: &mut EventContext) -> bool {
-        self.0.dispatch_event(event, ctx)
+        self.element.dispatch_event(event, ctx)
     }
 
     pub fn size(&self) -> Vector2F {
-        self.0.size()
+        self.element.size()
     }
 
     pub fn metadata(&self) -> Option<&dyn Any> {
-        self.0.metadata()
+        self.element.metadata()
     }
 
     pub fn debug(&self, ctx: &DebugContext) -> json::Value {
-        self.0.debug(ctx)
+        let mut value = self.element.debug(ctx);
+
+        if let Some(name) = &self.name {
+            if let json::Value::Object(map) = &mut value {
+                let mut new_map: crate::json::Map<String, serde_json::Value> = Default::default();
+                new_map.insert("name".into(), json::Value::String(name.to_string()));
+                new_map.append(map);
+                return json::Value::Object(new_map);
+            }
+        }
+
+        value
     }
 }

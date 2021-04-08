@@ -78,7 +78,7 @@ impl View for FileFinder {
             .boxed(),
         )
         .top_center()
-        .boxed()
+        .named("file finder")
     }
 
     fn on_focus(&mut self, ctx: &mut ViewContext<Self>) {
@@ -105,7 +105,7 @@ impl FileFinder {
                 .boxed(),
             )
             .with_margin_top(6.0)
-            .boxed();
+            .named("empty matches");
         }
 
         let handle = self.handle.clone();
@@ -127,7 +127,7 @@ impl FileFinder {
             .with_background_color(ColorU::from_u32(0xf7f7f7ff))
             .with_border(Border::all(1.0, ColorU::from_u32(0xdbdbdcff)))
             .with_margin_top(6.0)
-            .boxed()
+            .named("matches")
     }
 
     fn render_match(
@@ -226,7 +226,7 @@ impl FileFinder {
                     ctx.dispatch_action("file_finder:select", (tree_id, entry_id));
                     true
                 })
-                .boxed()
+                .named("match")
         })
     }
 

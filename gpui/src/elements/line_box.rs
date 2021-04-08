@@ -99,7 +99,7 @@ impl Element for LineBox {
     ) -> serde_json::Value {
         json!({
             "bounds": bounds.to_json(),
-            "family_id": ctx.font_cache.family_name(self.family_id).unwrap(),
+            "font_family": ctx.font_cache.family_name(self.family_id).unwrap(),
             "font_size": self.font_size,
             "font_properties": self.font_properties.to_json(),
             "child": self.child.debug(ctx),

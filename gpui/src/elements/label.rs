@@ -166,11 +166,11 @@ impl Element for Label {
     ) -> Value {
         json!({
             "type": "Label",
-            "font_size": self.font_size,
             "bounds": bounds.to_json(),
-            "text": &self.text,
-            "family_id": ctx.font_cache.family_name(self.family_id).unwrap(),
+            "font_family": ctx.font_cache.family_name(self.family_id).unwrap(),
+            "font_size": self.font_size,
             "font_properties": self.font_properties.to_json(),
+            "text": &self.text,
             "highlights": self.highlights.to_json(),
         })
     }

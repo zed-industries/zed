@@ -173,8 +173,8 @@ impl Element for Flex {
     ) -> json::Value {
         json!({
             "type": "Flex",
-            "axis": self.axis.to_json(),
             "bounds": bounds.to_json(),
+            "axis": self.axis.to_json(),
             "children": self.children.iter().map(|child| child.debug(ctx)).collect::<Vec<json::Value>>()
         })
     }
