@@ -1,11 +1,11 @@
-use crate::platform::Event;
+use crate::{keymap::Keystroke, platform::Event, Menu, MenuItem};
 use cocoa::{
     appkit::{
-        NSApplication, NSApplicationActivationPolicy::NSApplicationActivationPolicyRegular, NSMenu,
-        NSMenuItem, NSWindow,
+        NSApplication, NSApplicationActivationPolicy::NSApplicationActivationPolicyRegular,
+        NSEventModifierFlags, NSMenu, NSMenuItem, NSWindow,
     },
     base::{id, nil, selector},
-    foundation::{NSArray, NSAutoreleasePool, NSString},
+    foundation::{NSArray, NSAutoreleasePool, NSInteger, NSString},
 };
 use ctor::ctor;
 use objc::{
@@ -54,6 +54,10 @@ unsafe fn build_classes() {
             did_resign_active as extern "C" fn(&mut Object, Sel, id),
         );
         decl.add_method(
+            sel!(handleGPUIMenuItem:),
+            handle_menu_item as extern "C" fn(&mut Object, Sel, id),
+        );
+        decl.add_method(
             sel!(application:openFiles:),
             open_files as extern "C" fn(&mut Object, Sel, id, id),
         );
@@ -68,17 +72,99 @@ pub struct Runner {
     resign_active_callback: Option<Box<dyn FnMut()>>,
     event_callback: Option<Box<dyn FnMut(Event) -> bool>>,
     open_files_callback: Option<Box<dyn FnMut(Vec<PathBuf>)>>,
+    menu_command_callback: Option<Box<dyn FnMut(&str)>>,
+    menu_item_actions: Vec<String>,
 }
 
 impl Runner {
     pub fn new() -> Self {
         Default::default()
     }
+
+    unsafe fn create_menu_bar(&mut self, menus: &[Menu]) -> id {
+        let menu_bar = NSMenu::new(nil).autorelease();
+        self.menu_item_actions.clear();
+
+        for menu_config in menus {
+            let menu_bar_item = NSMenuItem::new(nil).autorelease();
+            let menu = NSMenu::new(nil).autorelease();
+
+            menu.setTitle_(ns_string(menu_config.name));
+
+            for item_config in menu_config.items {
+                let item;
+
+                match item_config {
+                    MenuItem::Separator => {
+                        item = NSMenuItem::separatorItem(nil);
+                    }
+                    MenuItem::Action {
+                        name,
+                        keystroke,
+                        action,
+                    } => {
+                        if let Some(keystroke) = keystroke {
+                            let keystroke = Keystroke::parse(keystroke).unwrap_or_else(|err| {
+                                panic!(
+                                    "Invalid keystroke for menu item {}:{} - {:?}",
+                                    menu_config.name, name, err
+                                )
+                            });
+
+                            let mut mask = NSEventModifierFlags::empty();
+                            for (modifier, flag) in &[
+                                (keystroke.cmd, NSEventModifierFlags::NSCommandKeyMask),
+                                (keystroke.ctrl, NSEventModifierFlags::NSControlKeyMask),
+                                (keystroke.alt, NSEventModifierFlags::NSAlternateKeyMask),
+                            ] {
+                                if *modifier {
+                                    mask |= *flag;
+                                }
+                            }
+
+                            item = NSMenuItem::alloc(nil)
+                                .initWithTitle_action_keyEquivalent_(
+                                    ns_string(name),
+                                    selector("handleGPUIMenuItem:"),
+                                    ns_string(&keystroke.key),
+                                )
+                                .autorelease();
+                            item.setKeyEquivalentModifierMask_(mask);
+                        } else {
+                            item = NSMenuItem::alloc(nil)
+                                .initWithTitle_action_keyEquivalent_(
+                                    ns_string(name),
+                                    selector("handleGPUIMenuItem:"),
+                                    ns_string(""),
+                                )
+                                .autorelease();
+                        }
+
+                        let tag = self.menu_item_actions.len() as NSInteger;
+                        let _: () = msg_send![item, setTag: tag];
+                        self.menu_item_actions.push(action.to_string());
+                    }
+                }
+
+                menu.addItem_(item);
+            }
+
+            menu_bar_item.setSubmenu_(menu);
+            menu_bar.addItem_(menu_bar_item);
+        }
+
+        menu_bar
+    }
 }
 
 impl crate::platform::Runner for Runner {
     fn on_finish_launching<F: 'static + FnOnce()>(mut self, callback: F) -> Self {
         self.finish_launching_callback = Some(Box::new(callback));
+        self
+    }
+
+    fn on_menu_command<F: 'static + FnMut(&str)>(mut self, callback: F) -> Self {
+        self.menu_command_callback = Some(Box::new(callback));
         self
     }
 
@@ -103,6 +189,14 @@ impl crate::platform::Runner for Runner {
         self
     }
 
+    fn set_menus(mut self, menus: &[Menu]) -> Self {
+        unsafe {
+            let app: id = msg_send![APP_CLASS, sharedApplication];
+            app.setMainMenu_(self.create_menu_bar(menus));
+        }
+        self
+    }
+
     fn run(self) {
         unsafe {
             let self_ptr = Box::into_raw(Box::new(self));
@@ -114,7 +208,6 @@ impl crate::platform::Runner for Runner {
             app.setActivationPolicy_(NSApplicationActivationPolicyRegular);
             (*app).set_ivar(RUNNER_IVAR, self_ptr as *mut c_void);
             (*app_delegate).set_ivar(RUNNER_IVAR, self_ptr as *mut c_void);
-            app.setMainMenu_(create_menu_bar());
             app.setDelegate_(app_delegate);
             app.run();
             pool.drain();
@@ -190,51 +283,17 @@ extern "C" fn open_files(this: &mut Object, _: Sel, _: id, paths: id) {
     }
 }
 
-unsafe fn create_menu_bar() -> id {
-    let menu_bar = NSMenu::new(nil).autorelease();
-
-    // App menu
-    let app_menu_item = NSMenuItem::alloc(nil)
-        .initWithTitle_action_keyEquivalent_(
-            ns_string("Application"),
-            Sel::from_ptr(ptr::null()),
-            ns_string(""),
-        )
-        .autorelease();
-    let quit_item = NSMenuItem::alloc(nil)
-        .initWithTitle_action_keyEquivalent_(
-            ns_string("Quit"),
-            selector("terminate:"),
-            ns_string("q\0"),
-        )
-        .autorelease();
-    let app_menu = NSMenu::new(nil).autorelease();
-    app_menu.addItem_(quit_item);
-    app_menu_item.setSubmenu_(app_menu);
-    menu_bar.addItem_(app_menu_item);
-
-    // File menu
-    let file_menu_item = NSMenuItem::alloc(nil)
-        .initWithTitle_action_keyEquivalent_(
-            ns_string("File"),
-            Sel::from_ptr(ptr::null()),
-            ns_string(""),
-        )
-        .autorelease();
-    let open_item = NSMenuItem::alloc(nil)
-        .initWithTitle_action_keyEquivalent_(
-            ns_string("Open"),
-            selector("openDocument:"),
-            ns_string("o\0"),
-        )
-        .autorelease();
-    let file_menu = NSMenu::new(nil).autorelease();
-    file_menu.setTitle_(ns_string("File"));
-    file_menu.addItem_(open_item);
-    file_menu_item.setSubmenu_(file_menu);
-    menu_bar.addItem_(file_menu_item);
-
-    menu_bar
+extern "C" fn handle_menu_item(this: &mut Object, _: Sel, item: id) {
+    unsafe {
+        let runner = get_runner(this);
+        if let Some(callback) = runner.menu_command_callback.as_mut() {
+            let tag: NSInteger = msg_send![item, tag];
+            let index = tag as usize;
+            if let Some(action) = runner.menu_item_actions.get(index) {
+                callback(&action);
+            }
+        }
+    }
 }
 
 unsafe fn ns_string(string: &str) -> id {

@@ -14,6 +14,7 @@ use std::path::PathBuf;
 
 pub fn init(app: &mut App) {
     app.add_global_action("workspace:open_paths", open_paths);
+    app.add_global_action("app:quit", quit);
     pane::init(app);
     workspace_view::init(app);
 }
@@ -48,6 +49,10 @@ fn open_paths(params: &OpenParams, app: &mut MutableAppContext) {
     // Add a new workspace if necessary
     let workspace = app.add_model(|ctx| Workspace::new(params.paths.clone(), ctx));
     app.add_window(|ctx| WorkspaceView::new(workspace, params.settings.clone(), ctx));
+}
+
+fn quit(_: &(), app: &mut MutableAppContext) {
+    app.platform().quit();
 }
 
 #[cfg(test)]

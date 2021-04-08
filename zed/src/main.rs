@@ -4,7 +4,7 @@ use log::LevelFilter;
 use simplelog::SimpleLogger;
 use std::{fs, path::PathBuf};
 use zed::{
-    assets, editor, file_finder, settings,
+    assets, editor, file_finder, menus, settings,
     workspace::{self, OpenParams},
 };
 
@@ -14,10 +14,18 @@ fn main() {
     let app = gpui::App::new(assets::Assets).unwrap();
     let (_, settings_rx) = settings::channel(&app.font_cache()).unwrap();
 
-    {
-        let mut app = app.clone();
-        platform::runner()
-            .on_finish_launching(move || {
+    platform::runner()
+        .set_menus(menus::MENUS)
+        .on_menu_command({
+            let app = app.clone();
+            move |command| {
+                log::info!("menu command: {}", command);
+                app.dispatch_global_action(command, ())
+            }
+        })
+        .on_finish_launching({
+            let mut app = app.clone();
+            move || {
                 workspace::init(&mut app);
                 editor::init(&mut app);
                 file_finder::init(&mut app);
@@ -36,9 +44,9 @@ fn main() {
                         },
                     );
                 }
-            })
-            .run();
-    }
+            }
+        })
+        .run();
 }
 
 fn init_logger() {

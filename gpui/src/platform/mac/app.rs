@@ -2,6 +2,7 @@ use super::{BoolExt as _, Dispatcher, FontSystem, Window};
 use crate::{executor, platform};
 use anyhow::Result;
 use cocoa::{appkit::NSApplication, base::nil};
+use objc::{msg_send, sel, sel_impl};
 use std::{rc::Rc, sync::Arc};
 
 pub struct App {
@@ -40,5 +41,12 @@ impl platform::App for App {
 
     fn fonts(&self) -> Arc<dyn platform::FontSystem> {
         self.fonts.clone()
+    }
+
+    fn quit(&self) {
+        unsafe {
+            let app = NSApplication::sharedApplication(nil);
+            let _: () = msg_send![app, terminate: nil];
+        }
     }
 }

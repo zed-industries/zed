@@ -46,6 +46,8 @@ impl super::App for App {
     fn fonts(&self) -> std::sync::Arc<dyn super::FontSystem> {
         self.fonts.clone()
     }
+
+    fn quit(&self) {}
 }
 
 impl Window {
