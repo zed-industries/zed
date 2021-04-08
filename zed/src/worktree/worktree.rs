@@ -33,7 +33,7 @@ pub struct Worktree(Arc<RwLock<WorktreeState>>);
 struct WorktreeState {
     id: usize,
     path: PathBuf,
-    entries: Vec<Entry>,
+    entries: HashMap<usize, Entry>,
     file_paths: Vec<PathEntry>,
     histories: HashMap<usize, History>,
     scanning: bool,
@@ -55,7 +55,7 @@ impl Worktree {
         let tree = Self(Arc::new(RwLock::new(WorktreeState {
             id,
             path: path.into(),
-            entries: Vec::new(),
+            entries: HashMap::new(),
             file_paths: Vec::new(),
             histories: HashMap::new(),
             scanning: ctx.is_some(),
@@ -102,7 +102,7 @@ impl Worktree {
 
         if metadata.file_type().is_dir() {
             let is_ignored = is_ignored || name == ".git";
-            let id = self.push_dir(None, name, ino, is_symlink, is_ignored);
+            let id = self.insert_dir(None, name, ino, is_symlink, is_ignored);
             let (tx, rx) = channel::unbounded();
 
             tx.send(Ok(DirToScan {
@@ -110,7 +110,6 @@ impl Worktree {
                 path,
                 relative_path,
                 ignore: Some(ignore),
-                dirs_to_scan: tx_,
                 dirs_to_scan: tx.clone(),
             }))
             .unwrap();
@@ -127,7 +126,7 @@ impl Worktree {
                 .into_iter()
                 .collect::<io::Result<()>>()?;
         } else {
-            self.push_file(None, name, ino, is_symlink, is_ignored, relative_path);
+            self.insert_file(None, name, ino, is_symlink, is_ignored, relative_path);
         }
 
         Ok(())
@@ -157,7 +156,7 @@ impl Worktree {
                     }
                 }
 
-                let id = self.push_dir(Some(to_scan.id), name, ino, is_symlink, is_ignored);
+                let id = self.insert_dir(Some(to_scan.id), name, ino, is_symlink, is_ignored);
                 new_children.push(id);
 
                 let dirs_to_scan = to_scan.dirs_to_scan.clone();
@@ -173,7 +172,7 @@ impl Worktree {
                     i.matched(to_scan.path.join(&name), false).is_ignore()
                 });
 
-                new_children.push(self.push_file(
+                new_children.push(self.insert_file(
                     Some(to_scan.id),
                     name,
                     ino,
@@ -184,14 +183,15 @@ impl Worktree {
             };
         }
 
-        if let Entry::Dir { children, .. } = &mut self.0.write().entries[to_scan.id] {
+        if let Some(Entry::Dir { children, .. }) = &mut self.0.write().entries.get_mut(&to_scan.id)
+        {
             *children = new_children.clone();
         }
 
         Ok(())
     }
 
-    fn push_dir(
+    fn insert_dir(
         &self,
         parent: Option<usize>,
         name: OsString,
@@ -201,18 +201,21 @@ impl Worktree {
     ) -> usize {
         let entries = &mut self.0.write().entries;
         let dir_id = entries.len();
-        entries.push(Entry::Dir {
-            parent,
-            name,
-            ino,
-            is_symlink,
-            is_ignored,
-            children: Vec::new(),
-        });
+        entries.insert(
+            dir_id,
+            Entry::Dir {
+                parent,
+                name,
+                ino,
+                is_symlink,
+                is_ignored,
+                children: Vec::new(),
+            },
+        );
         dir_id
     }
 
-    fn push_file(
+    fn insert_file(
         &self,
         parent: Option<usize>,
         name: OsString,
@@ -228,13 +231,16 @@ impl Worktree {
 
         let mut state = self.0.write();
         let entry_id = state.entries.len();
-        state.entries.push(Entry::File {
-            parent,
-            name,
-            ino,
-            is_symlink,
-            is_ignored,
-        });
+        state.entries.insert(
+            entry_id,
+            Entry::File {
+                parent,
+                name,
+                ino,
+                is_symlink,
+                is_ignored,
+            },
+        );
         state.file_paths.push(PathEntry {
             entry_id,
             path_chars,
@@ -254,7 +260,7 @@ impl Worktree {
 
         let mut entries = Vec::new();
         loop {
-            let entry = &state.entries[entry_id];
+            let entry = &state.entries[&entry_id];
             entries.push(entry);
             if let Some(parent_id) = entry.parent() {
                 entry_id = parent_id;
@@ -277,7 +283,7 @@ impl Worktree {
     }
 
     fn fmt_entry(&self, f: &mut fmt::Formatter<'_>, entry_id: usize, indent: usize) -> fmt::Result {
-        match &self.0.read().entries[entry_id] {
+        match &self.0.read().entries[&entry_id] {
             Entry::Dir { name, children, .. } => {
                 write!(
                     f,
@@ -498,7 +504,7 @@ impl Iterator for Iter {
         if !self.started {
             self.started = true;
 
-            return if let Some(entry) = state.entries.first().cloned() {
+            return if let Some(entry) = state.entries.get(&0).cloned() {
                 self.stack.push(IterStackEntry {
                     entry_id: 0,
                     child_idx: 0,
@@ -511,7 +517,7 @@ impl Iterator for Iter {
         }
 
         while let Some(parent) = self.stack.last_mut() {
-            if let Entry::Dir { children, .. } = &state.entries[parent.entry_id] {
+            if let Entry::Dir { children, .. } = &state.entries[&parent.entry_id] {
                 if parent.child_idx < children.len() {
                     let child_id = children[post_inc(&mut parent.child_idx)];
 
@@ -522,7 +528,7 @@ impl Iterator for Iter {
 
                     return Some(Traversal::Push {
                         entry_id: child_id,
-                        entry: state.entries[child_id].clone(),
+                        entry: state.entries[&child_id].clone(),
                     });
                 } else {
                     self.stack.pop();
@@ -614,7 +620,7 @@ pub fn match_paths(
             .iter()
             .map(|tree| {
                 let skip_prefix = if trees.len() == 1 {
-                    if let Some(Entry::Dir { name, .. }) = tree.entries.get(0) {
+                    if let Some(Entry::Dir { name, .. }) = tree.entries.get(&0) {
                         let name = name.to_string_lossy();
                         if name == "/" {
                             1
