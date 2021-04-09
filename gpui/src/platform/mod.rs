@@ -41,6 +41,7 @@ pub trait App {
         options: WindowOptions,
         executor: Rc<executor::Foreground>,
     ) -> Result<Box<dyn Window>>;
+    fn prompt_for_paths(&self, options: PathPromptOptions) -> Option<Vec<PathBuf>>;
     fn fonts(&self) -> Arc<dyn FontSystem>;
     fn quit(&self);
 }
@@ -64,6 +65,12 @@ pub trait WindowContext {
 pub struct WindowOptions<'a> {
     pub bounds: RectF,
     pub title: Option<&'a str>,
+}
+
+pub struct PathPromptOptions {
+    pub files: bool,
+    pub directories: bool,
+    pub multiple: bool,
 }
 
 pub trait FontSystem: Send + Sync {

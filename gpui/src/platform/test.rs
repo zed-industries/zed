@@ -48,6 +48,10 @@ impl super::App for App {
     }
 
     fn quit(&self) {}
+
+    fn prompt_for_paths(&self, _: super::PathPromptOptions) -> Option<Vec<std::path::PathBuf>> {
+        None
+    }
 }
 
 impl Window {

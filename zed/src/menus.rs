@@ -6,7 +6,7 @@ pub const MENUS: &'static [Menu] = &[
         name: "Zed",
         items: &[
             MenuItem::Action {
-                name: "About Zed...",
+                name: "About Zed…",
                 keystroke: None,
                 action: "app:about-zed",
             },
@@ -20,6 +20,14 @@ pub const MENUS: &'static [Menu] = &[
     },
     Menu {
         name: "File",
+        items: &[MenuItem::Action {
+            name: "Open…",
+            keystroke: Some("cmd-o"),
+            action: "app:open",
+        }],
+    },
+    Menu {
+        name: "Edit",
         items: &[
             MenuItem::Action {
                 name: "Undo",
