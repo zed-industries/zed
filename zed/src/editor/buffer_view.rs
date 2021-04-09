@@ -28,6 +28,8 @@ pub fn init(app: &mut App) {
     app.add_bindings(vec![
         Binding::new("backspace", "buffer:backspace", Some("BufferView")),
         Binding::new("enter", "buffer:newline", Some("BufferView")),
+        Binding::new("cmd-z", "buffer:undo", Some("BufferView")),
+        Binding::new("cmd-shift-Z", "buffer:redo", Some("BufferView")),
         Binding::new("up", "buffer:move_up", Some("BufferView")),
         Binding::new("down", "buffer:move_down", Some("BufferView")),
         Binding::new("left", "buffer:move_left", Some("BufferView")),
@@ -52,6 +54,8 @@ pub fn init(app: &mut App) {
     app.add_action("buffer:insert", BufferView::insert);
     app.add_action("buffer:newline", BufferView::newline);
     app.add_action("buffer:backspace", BufferView::backspace);
+    app.add_action("buffer:undo", BufferView::undo);
+    app.add_action("buffer:redo", BufferView::redo);
     app.add_action("buffer:move_up", BufferView::move_up);
     app.add_action("buffer:move_down", BufferView::move_down);
     app.add_action("buffer:move_left", BufferView::move_left);
@@ -433,6 +437,16 @@ impl BufferView {
         }
         self.changed_selections(ctx);
         self.insert(&String::new(), ctx);
+    }
+
+    pub fn undo(&mut self, _: &(), ctx: &mut ViewContext<Self>) {
+        self.buffer
+            .update(ctx, |buffer, ctx| buffer.undo(Some(ctx)));
+    }
+
+    pub fn redo(&mut self, _: &(), ctx: &mut ViewContext<Self>) {
+        self.buffer
+            .update(ctx, |buffer, ctx| buffer.redo(Some(ctx)));
     }
 
     pub fn move_left(&mut self, _: &(), ctx: &mut ViewContext<Self>) {

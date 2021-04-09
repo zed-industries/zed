@@ -28,7 +28,10 @@ use std::{
     path::PathBuf,
     str,
     sync::Arc,
+    time::{Duration, Instant},
 };
+
+const UNDO_GROUP_INTERVAL: Duration = Duration::from_millis(300);
 
 pub type SelectionSetId = time::Lamport;
 pub type SelectionsVersion = usize;
@@ -65,6 +68,7 @@ pub struct Buffer {
     saved_version: time::Global,
     last_edit: time::Local,
     undo_map: UndoMap,
+    undo_history: UndoHistory,
     selections: HashMap<SelectionSetId, Vec<Selection>>,
     pub selections_last_update: SelectionsVersion,
     deferred_ops: OperationQueue<Operation>,
@@ -123,6 +127,67 @@ impl UndoMap {
             .map(|undo| undo.count)
             .max()
             .unwrap_or(0)
+    }
+}
+
+#[derive(Clone)]
+struct EditGroup {
+    edits: Vec<time::Local>,
+    last_edit_at: Instant,
+}
+
+#[derive(Clone)]
+struct UndoHistory {
+    group_interval: Duration,
+    undo_stack: Vec<EditGroup>,
+    redo_stack: Vec<EditGroup>,
+}
+
+impl UndoHistory {
+    fn new(group_interval: Duration) -> Self {
+        Self {
+            group_interval,
+            undo_stack: Vec::new(),
+            redo_stack: Vec::new(),
+        }
+    }
+
+    fn push(&mut self, edit_id: time::Local, now: Instant) {
+        self.redo_stack.clear();
+        if let Some(edit_group) = self.undo_stack.last_mut() {
+            if now - edit_group.last_edit_at <= self.group_interval {
+                edit_group.edits.push(edit_id);
+                edit_group.last_edit_at = now;
+            } else {
+                self.undo_stack.push(EditGroup {
+                    edits: vec![edit_id],
+                    last_edit_at: now,
+                });
+            }
+        } else {
+            self.undo_stack.push(EditGroup {
+                edits: vec![edit_id],
+                last_edit_at: now,
+            });
+        }
+    }
+
+    fn pop_undo(&mut self) -> Option<&EditGroup> {
+        if let Some(edit_group) = self.undo_stack.pop() {
+            self.redo_stack.push(edit_group);
+            self.redo_stack.last()
+        } else {
+            None
+        }
+    }
+
+    fn pop_redo(&mut self) -> Option<&EditGroup> {
+        if let Some(edit_group) = self.redo_stack.pop() {
+            self.undo_stack.push(edit_group);
+            self.undo_stack.last()
+        } else {
+            None
+        }
     }
 }
 
@@ -307,6 +372,7 @@ impl Buffer {
             saved_version: time::Global::new(),
             last_edit: time::Local::default(),
             undo_map: Default::default(),
+            undo_history: UndoHistory::new(UNDO_GROUP_INTERVAL),
             selections: HashMap::default(),
             selections_last_update: 0,
             deferred_ops: OperationQueue::new(),
@@ -499,6 +565,21 @@ impl Buffer {
         S: ToOffset,
         T: Into<Text>,
     {
+        self.edit_at(old_ranges, new_text, Instant::now(), ctx)
+    }
+
+    fn edit_at<I, S, T>(
+        &mut self,
+        old_ranges: I,
+        new_text: T,
+        now: Instant,
+        ctx: Option<&mut ModelContext<Self>>,
+    ) -> Result<Vec<Operation>>
+    where
+        I: IntoIterator<Item = Range<S>>,
+        S: ToOffset,
+        T: Into<Text>,
+    {
         let new_text = new_text.into();
         let new_text = if new_text.len() > 0 {
             Some(new_text)
@@ -523,6 +604,7 @@ impl Buffer {
         for op in &ops {
             if let Operation::Edit { edit, .. } = op {
                 self.edit_ops.insert(edit.id, edit.clone());
+                self.undo_history.push(edit.id, now);
             }
         }
 
@@ -929,6 +1011,50 @@ impl Buffer {
         self.local_clock.observe(local_timestamp);
         self.lamport_clock.observe(lamport_timestamp);
         Ok(())
+    }
+
+    pub fn undo(&mut self, ctx: Option<&mut ModelContext<Self>>) -> Vec<Operation> {
+        let was_dirty = self.is_dirty();
+        let old_version = self.version.clone();
+
+        let mut ops = Vec::new();
+        if let Some(edit_group) = self.undo_history.pop_undo() {
+            for edit_id in edit_group.edits.clone() {
+                ops.push(self.undo_or_redo(edit_id).unwrap());
+            }
+        }
+
+        if let Some(ctx) = ctx {
+            ctx.notify();
+            let changes = self.edits_since(old_version).collect::<Vec<_>>();
+            if !changes.is_empty() {
+                self.did_edit(changes, was_dirty, ctx);
+            }
+        }
+
+        ops
+    }
+
+    pub fn redo(&mut self, ctx: Option<&mut ModelContext<Self>>) -> Vec<Operation> {
+        let was_dirty = self.is_dirty();
+        let old_version = self.version.clone();
+
+        let mut ops = Vec::new();
+        if let Some(edit_group) = self.undo_history.pop_redo() {
+            for edit_id in edit_group.edits.clone() {
+                ops.push(self.undo_or_redo(edit_id).unwrap());
+            }
+        }
+
+        if let Some(ctx) = ctx {
+            ctx.notify();
+            let changes = self.edits_since(old_version).collect::<Vec<_>>();
+            if !changes.is_empty() {
+                self.did_edit(changes, was_dirty, ctx);
+            }
+        }
+
+        ops
     }
 
     fn undo_or_redo(&mut self, edit_id: time::Local) -> Result<Operation> {
@@ -1580,6 +1706,7 @@ impl Clone for Buffer {
             saved_version: self.saved_version.clone(),
             last_edit: self.last_edit.clone(),
             undo_map: self.undo_map.clone(),
+            undo_history: self.undo_history.clone(),
             selections: self.selections.clone(),
             selections_last_update: self.selections_last_update.clone(),
             deferred_ops: self.deferred_ops.clone(),
