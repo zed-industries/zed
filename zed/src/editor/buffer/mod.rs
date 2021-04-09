@@ -177,7 +177,7 @@ struct Fragment {
     insertion: Insertion,
     text: Text,
     deletions: HashSet<time::Local>,
-    undos: HashSet<time::Local>,
+    max_undos: time::Global,
     visible: bool,
 }
 
@@ -272,8 +272,8 @@ impl Buffer {
             id: FragmentId::min_value().clone(),
             insertion: base_insertion.clone(),
             text: base_insertion.text.slice(0..0),
-            deletions: HashSet::default(),
-            undos: HashSet::default(),
+            deletions: Default::default(),
+            max_undos: Default::default(),
             visible: true,
         });
 
@@ -292,8 +292,8 @@ impl Buffer {
                 id: base_fragment_id,
                 text: base_insertion.text.clone(),
                 insertion: base_insertion,
-                deletions: HashSet::default(),
-                undos: HashSet::default(),
+                deletions: Default::default(),
+                max_undos: Default::default(),
                 visible: true,
             });
         }
@@ -979,7 +979,7 @@ impl Buffer {
             loop {
                 let mut fragment = cursor.item().unwrap().clone();
                 fragment.visible = fragment.is_visible(&self.undo_map);
-                fragment.undos.insert(undo.id);
+                fragment.max_undos.observe(undo.id);
                 new_fragments.push(fragment);
                 cursor.next();
                 if let Some(split_id) = insertion_splits.next() {
@@ -1000,7 +1000,7 @@ impl Buffer {
                         || fragment.insertion.id == undo.edit_id
                     {
                         fragment.visible = fragment.is_visible(&self.undo_map);
-                        fragment.undos.insert(undo.id);
+                        fragment.max_undos.observe(undo.id);
                     }
                     new_fragments.push(fragment);
                     cursor.next();
@@ -1925,8 +1925,8 @@ impl Fragment {
             id,
             text: insertion.text.clone(),
             insertion,
-            deletions: HashSet::default(),
-            undos: HashSet::default(),
+            deletions: Default::default(),
+            max_undos: Default::default(),
             visible: true,
         }
     }
@@ -1989,9 +1989,7 @@ impl sum_tree::Item for Fragment {
         for deletion in &self.deletions {
             max_version.observe(*deletion);
         }
-        for undo in &self.undos {
-            max_version.observe(*undo);
-        }
+        max_version.observe_all(&self.max_undos);
 
         if self.visible {
             FragmentSummary {
