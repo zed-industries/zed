@@ -2280,6 +2280,11 @@ mod tests {
                 }
                 assert_eq!(buffer.text(), reference_string);
 
+                if rng.gen_bool(0.25) {
+                    buffer.randomly_undo_redo(rng, None);
+                    reference_string = buffer.text();
+                }
+
                 {
                     let line_lengths = line_lengths_in_range(&buffer, 0..buffer.len());
 
@@ -2961,7 +2966,7 @@ mod tests {
             mut ctx: Option<&mut ModelContext<Self>>,
         ) -> Vec<Operation> {
             let mut ops = Vec::new();
-            for _ in 0..rng.gen_range(0..5) {
+            for _ in 0..rng.gen_range(1..5) {
                 if let Some(edit_id) = self.edit_ops.keys().choose(rng).copied() {
                     ops.push(self.undo_or_redo(edit_id, ctx.as_deref_mut()).unwrap());
                 }
