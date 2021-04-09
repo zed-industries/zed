@@ -4,19 +4,20 @@ use std::mem;
 use std::ops::{Add, AddAssign};
 use std::sync::Arc;
 
+use lazy_static::lazy_static;
+
 pub type ReplicaId = u16;
+pub type Seq = u64;
+
 #[derive(Clone, Copy, Debug, Default, Eq, Hash, PartialEq, Ord, PartialOrd)]
 pub struct Local {
     pub replica_id: ReplicaId,
-    pub value: u64,
+    pub value: Seq,
 }
-
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct Global(Arc<HashMap<ReplicaId, u64>>);
 
 #[derive(Clone, Copy, Debug, Default, Eq, Hash, Ord, PartialEq, PartialOrd)]
 pub struct Lamport {
-    pub value: u64,
+    pub value: Seq,
     pub replica_id: ReplicaId,
 }
 
@@ -57,12 +58,25 @@ impl<'a> AddAssign<&'a Local> for Local {
     }
 }
 
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct Global(Arc<HashMap<ReplicaId, u64>>);
+
+lazy_static! {
+    static ref DEFAULT_GLOBAL: Global = Global(Arc::new(HashMap::new()));
+}
+
+impl Default for Global {
+    fn default() -> Self {
+        DEFAULT_GLOBAL.clone()
+    }
+}
+
 impl Global {
     pub fn new() -> Self {
-        Global(Arc::new(HashMap::new()))
+        Self::default()
     }
 
-    pub fn get(&self, replica_id: ReplicaId) -> u64 {
+    pub fn get(&self, replica_id: ReplicaId) -> Seq {
         *self.0.get(&replica_id).unwrap_or(&0)
     }
 

@@ -44,6 +44,7 @@ pub trait App {
     fn prompt_for_paths(&self, options: PathPromptOptions) -> Option<Vec<PathBuf>>;
     fn fonts(&self) -> Arc<dyn FontSystem>;
     fn quit(&self);
+    fn copy(&self, text: &str);
 }
 
 pub trait Dispatcher: Send + Sync {

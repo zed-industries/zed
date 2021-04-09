@@ -2,12 +2,12 @@ use super::{BoolExt as _, Dispatcher, FontSystem, Window};
 use crate::{executor, platform};
 use anyhow::Result;
 use cocoa::{
-    appkit::{NSApplication, NSOpenPanel, NSModalResponse},
+    appkit::{NSApplication, NSModalResponse, NSOpenPanel, NSPasteboard, NSPasteboardTypeString},
     base::nil,
-    foundation::{NSArray, NSString, NSURL},
+    foundation::{NSArray, NSData, NSString, NSURL},
 };
 use objc::{msg_send, sel, sel_impl};
-use std::{path::PathBuf, rc::Rc, sync::Arc};
+use std::{ffi::c_void, path::PathBuf, rc::Rc, sync::Arc};
 
 pub struct App {
     dispatcher: Arc<Dispatcher>,
@@ -82,6 +82,19 @@ impl platform::App for App {
         unsafe {
             let app = NSApplication::sharedApplication(nil);
             let _: () = msg_send![app, terminate: nil];
+        }
+    }
+
+    fn copy(&self, text: &str) {
+        unsafe {
+            let data = NSData::dataWithBytes_length_(
+                nil,
+                text.as_ptr() as *const c_void,
+                text.len() as u64,
+            );
+            let pasteboard = NSPasteboard::generalPasteboard(nil);
+            pasteboard.clearContents();
+            pasteboard.setData_forType(data, NSPasteboardTypeString);
         }
     }
 }

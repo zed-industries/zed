@@ -244,7 +244,7 @@ impl Pane {
                     .with_max_width(264.0)
                     .boxed(),
                 )
-                .boxed(),
+                .named("tab"),
             );
         }
 
@@ -263,10 +263,10 @@ impl Pane {
                 .with_border(Border::bottom(1.0, border_color))
                 .boxed(),
             )
-            .boxed(),
+            .named("filler"),
         );
 
-        row.boxed()
+        row.named("tabs")
     }
 
     fn render_modified_icon(is_modified: bool) -> ElementBox {
@@ -304,9 +304,9 @@ impl View for Pane {
             Flex::column()
                 .with_child(self.render_tabs(app))
                 .with_child(Expanded::new(1.0, ChildView::new(active_item.id()).boxed()).boxed())
-                .boxed()
+                .named("pane")
         } else {
-            Empty::new().boxed()
+            Empty::new().named("pane")
         }
     }
 

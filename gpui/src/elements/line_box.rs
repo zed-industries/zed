@@ -1,9 +1,13 @@
 use crate::{
     font_cache::FamilyId,
     fonts::Properties,
-    geometry::vector::{vec2f, Vector2F},
-    AfterLayoutContext, Element, ElementBox, Event, EventContext, LayoutContext, PaintContext,
-    SizeConstraint,
+    geometry::{
+        rect::RectF,
+        vector::{vec2f, Vector2F},
+    },
+    json::{json, ToJson},
+    AfterLayoutContext, DebugContext, Element, ElementBox, Event, EventContext, LayoutContext,
+    PaintContext, SizeConstraint,
 };
 
 pub struct LineBox {
@@ -84,5 +88,21 @@ impl Element for LineBox {
         ctx: &mut EventContext,
     ) -> bool {
         self.child.dispatch_event(event, ctx)
+    }
+
+    fn debug(
+        &self,
+        bounds: RectF,
+        _: &Self::LayoutState,
+        _: &Self::PaintState,
+        ctx: &DebugContext,
+    ) -> serde_json::Value {
+        json!({
+            "bounds": bounds.to_json(),
+            "font_family": ctx.font_cache.family_name(self.family_id).unwrap(),
+            "font_size": self.font_size,
+            "font_properties": self.font_properties.to_json(),
+            "child": self.child.debug(ctx),
+        })
     }
 }

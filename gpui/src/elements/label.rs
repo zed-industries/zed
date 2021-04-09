@@ -1,3 +1,5 @@
+use serde_json::json;
+
 use crate::{
     color::ColorU,
     font_cache::FamilyId,
@@ -6,8 +8,10 @@ use crate::{
         rect::RectF,
         vector::{vec2f, Vector2F},
     },
+    json::{ToJson, Value},
     text_layout::Line,
-    AfterLayoutContext, Element, Event, EventContext, LayoutContext, PaintContext, SizeConstraint,
+    AfterLayoutContext, DebugContext, Element, Event, EventContext, LayoutContext, PaintContext,
+    SizeConstraint,
 };
 use std::{ops::Range, sync::Arc};
 
@@ -151,5 +155,33 @@ impl Element for Label {
         _: &mut EventContext,
     ) -> bool {
         false
+    }
+
+    fn debug(
+        &self,
+        bounds: RectF,
+        _: &Self::LayoutState,
+        _: &Self::PaintState,
+        ctx: &DebugContext,
+    ) -> Value {
+        json!({
+            "type": "Label",
+            "bounds": bounds.to_json(),
+            "font_family": ctx.font_cache.family_name(self.family_id).unwrap(),
+            "font_size": self.font_size,
+            "font_properties": self.font_properties.to_json(),
+            "text": &self.text,
+            "highlights": self.highlights.to_json(),
+        })
+    }
+}
+
+impl ToJson for Highlights {
+    fn to_json(&self) -> Value {
+        json!({
+            "color": self.color.to_json(),
+            "indices": self.indices,
+            "font_properties": self.font_properties.to_json(),
+        })
     }
 }

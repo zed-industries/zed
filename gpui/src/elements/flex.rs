@@ -1,10 +1,15 @@
 use std::any::Any;
 
 use crate::{
-    AfterLayoutContext, Axis, Element, ElementBox, Event, EventContext, LayoutContext,
-    PaintContext, SizeConstraint, Vector2FExt,
+    json::{self, ToJson, Value},
+    AfterLayoutContext, Axis, DebugContext, Element, ElementBox, Event, EventContext,
+    LayoutContext, PaintContext, SizeConstraint, Vector2FExt,
 };
-use pathfinder_geometry::vector::{vec2f, Vector2F};
+use pathfinder_geometry::{
+    rect::RectF,
+    vector::{vec2f, Vector2F},
+};
+use serde_json::json;
 
 pub struct Flex {
     axis: Axis,
@@ -130,7 +135,7 @@ impl Element for Flex {
 
     fn paint(
         &mut self,
-        bounds: pathfinder_geometry::rect::RectF,
+        bounds: RectF,
         _: &mut Self::LayoutState,
         ctx: &mut PaintContext,
     ) -> Self::PaintState {
@@ -147,7 +152,7 @@ impl Element for Flex {
     fn dispatch_event(
         &mut self,
         event: &Event,
-        _: pathfinder_geometry::rect::RectF,
+        _: RectF,
         _: &mut Self::LayoutState,
         _: &mut Self::PaintState,
         ctx: &mut EventContext,
@@ -157,6 +162,21 @@ impl Element for Flex {
             handled = child.dispatch_event(event, ctx) || handled;
         }
         handled
+    }
+
+    fn debug(
+        &self,
+        bounds: RectF,
+        _: &Self::LayoutState,
+        _: &Self::PaintState,
+        ctx: &DebugContext,
+    ) -> json::Value {
+        json!({
+            "type": "Flex",
+            "bounds": bounds.to_json(),
+            "axis": self.axis.to_json(),
+            "children": self.children.iter().map(|child| child.debug(ctx)).collect::<Vec<json::Value>>()
+        })
     }
 }
 
@@ -202,7 +222,7 @@ impl Element for Expanded {
 
     fn paint(
         &mut self,
-        bounds: pathfinder_geometry::rect::RectF,
+        bounds: RectF,
         _: &mut Self::LayoutState,
         ctx: &mut PaintContext,
     ) -> Self::PaintState {
@@ -212,7 +232,7 @@ impl Element for Expanded {
     fn dispatch_event(
         &mut self,
         event: &Event,
-        _: pathfinder_geometry::rect::RectF,
+        _: RectF,
         _: &mut Self::LayoutState,
         _: &mut Self::PaintState,
         ctx: &mut EventContext,
@@ -222,5 +242,19 @@ impl Element for Expanded {
 
     fn metadata(&self) -> Option<&dyn Any> {
         Some(&self.metadata)
+    }
+
+    fn debug(
+        &self,
+        _: RectF,
+        _: &Self::LayoutState,
+        _: &Self::PaintState,
+        ctx: &DebugContext,
+    ) -> Value {
+        json!({
+            "type": "Expanded",
+            "flex": self.metadata.flex,
+            "child": self.child.debug(ctx)
+        })
     }
 }

@@ -18,11 +18,12 @@ mod util;
 pub use elements::{Element, ElementBox};
 pub mod executor;
 pub use executor::Task;
+pub mod color;
+pub mod json;
 pub mod keymap;
 pub mod platform;
-pub use pathfinder_color as color;
 pub use platform::Event;
 pub use presenter::{
-    AfterLayoutContext, Axis, EventContext, LayoutContext, PaintContext, SizeConstraint,
-    Vector2FExt,
+    AfterLayoutContext, Axis, DebugContext, EventContext, LayoutContext, PaintContext,
+    SizeConstraint, Vector2FExt,
 };

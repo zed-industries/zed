@@ -52,6 +52,8 @@ impl super::App for App {
     fn prompt_for_paths(&self, _: super::PathPromptOptions) -> Option<Vec<std::path::PathBuf>> {
         None
     }
+
+    fn copy(&self, _: &str) {}
 }
 
 impl Window {

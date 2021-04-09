@@ -1,8 +1,10 @@
 use crate::{
-    AfterLayoutContext, Element, ElementBox, Event, EventContext, LayoutContext, PaintContext,
-    SizeConstraint,
+    json, AfterLayoutContext, DebugContext, Element, ElementBox, Event, EventContext,
+    LayoutContext, PaintContext, SizeConstraint,
 };
+use json::ToJson;
 use pathfinder_geometry::vector::{vec2f, Vector2F};
+use serde_json::json;
 
 pub struct Align {
     child: ElementBox,
@@ -78,5 +80,20 @@ impl Element for Align {
         ctx: &mut EventContext,
     ) -> bool {
         self.child.dispatch_event(event, ctx)
+    }
+
+    fn debug(
+        &self,
+        bounds: pathfinder_geometry::rect::RectF,
+        _: &Self::LayoutState,
+        _: &Self::PaintState,
+        ctx: &DebugContext,
+    ) -> json::Value {
+        json!({
+            "type": "Align",
+            "bounds": bounds.to_json(),
+            "alignment": self.alignment.to_json(),
+            "child": self.child.debug(ctx),
+        })
     }
 }

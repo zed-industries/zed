@@ -7,8 +7,10 @@ use crate::{
         rect::RectF,
         vector::{vec2f, Vector2F},
     },
+    json::{self, json},
     ElementBox,
 };
+use json::ToJson;
 use parking_lot::Mutex;
 use std::{cmp, ops::Range, sync::Arc};
 
@@ -235,5 +237,22 @@ where
         }
 
         handled
+    }
+
+    fn debug(
+        &self,
+        bounds: RectF,
+        layout: &Self::LayoutState,
+        _: &Self::PaintState,
+        ctx: &crate::DebugContext,
+    ) -> json::Value {
+        json!({
+            "type": "UniformList",
+            "bounds": bounds.to_json(),
+            "scroll_max": layout.scroll_max,
+            "item_height": layout.item_height,
+            "items": layout.items.iter().map(|item| item.debug(ctx)).collect::<Vec<json::Value>>()
+
+        })
     }
 }

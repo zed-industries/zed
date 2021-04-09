@@ -1,8 +1,11 @@
+use json::ToJson;
+use serde_json::json;
+
 use crate::{
-    AfterLayoutContext, Element, ElementBox, Event, EventContext, LayoutContext, PaintContext,
-    SizeConstraint,
+    geometry::{rect::RectF, vector::Vector2F},
+    json, AfterLayoutContext, DebugContext, Element, ElementBox, Event, EventContext,
+    LayoutContext, PaintContext, SizeConstraint,
 };
-use pathfinder_geometry::vector::Vector2F;
 
 pub struct ConstrainedBox {
     child: ElementBox,
@@ -63,7 +66,7 @@ impl Element for ConstrainedBox {
 
     fn paint(
         &mut self,
-        bounds: pathfinder_geometry::rect::RectF,
+        bounds: RectF,
         _: &mut Self::LayoutState,
         ctx: &mut PaintContext,
     ) -> Self::PaintState {
@@ -73,11 +76,21 @@ impl Element for ConstrainedBox {
     fn dispatch_event(
         &mut self,
         event: &Event,
-        _: pathfinder_geometry::rect::RectF,
+        _: RectF,
         _: &mut Self::LayoutState,
         _: &mut Self::PaintState,
         ctx: &mut EventContext,
     ) -> bool {
         self.child.dispatch_event(event, ctx)
+    }
+
+    fn debug(
+        &self,
+        _: RectF,
+        _: &Self::LayoutState,
+        _: &Self::PaintState,
+        ctx: &DebugContext,
+    ) -> json::Value {
+        json!({"type": "ConstrainedBox", "constraint": self.constraint.to_json(), "child": self.child.debug(ctx)})
     }
 }

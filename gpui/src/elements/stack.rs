@@ -1,7 +1,8 @@
 use crate::{
     geometry::{rect::RectF, vector::Vector2F},
-    AfterLayoutContext, Element, ElementBox, Event, EventContext, LayoutContext, PaintContext,
-    SizeConstraint,
+    json::{self, json, ToJson},
+    AfterLayoutContext, DebugContext, Element, ElementBox, Event, EventContext, LayoutContext,
+    PaintContext, SizeConstraint,
 };
 
 pub struct Stack {
@@ -70,6 +71,20 @@ impl Element for Stack {
             }
         }
         false
+    }
+
+    fn debug(
+        &self,
+        bounds: RectF,
+        _: &Self::LayoutState,
+        _: &Self::PaintState,
+        ctx: &DebugContext,
+    ) -> json::Value {
+        json!({
+            "type": "Stack",
+            "bounds": bounds.to_json(),
+            "children": self.children.iter().map(|child| child.debug(ctx)).collect::<Vec<json::Value>>()
+        })
     }
 }
 

@@ -2,9 +2,10 @@ use gpui::{
     color::ColorU,
     fonts::{Properties, Weight},
     platform::{current as platform, Runner},
-    Element as _, Quad,
+    DebugContext, Element as _, Quad,
 };
 use log::LevelFilter;
+use pathfinder_geometry::rect::RectF;
 use simplelog::SimpleLogger;
 
 fn main() {
@@ -59,7 +60,7 @@ impl gpui::Element for TextElement {
 
     fn paint(
         &mut self,
-        bounds: pathfinder_geometry::rect::RectF,
+        bounds: RectF,
         _: &mut Self::LayoutState,
         ctx: &mut gpui::PaintContext,
     ) -> Self::PaintState {
@@ -109,11 +110,21 @@ impl gpui::Element for TextElement {
     fn dispatch_event(
         &mut self,
         _: &gpui::Event,
-        _: pathfinder_geometry::rect::RectF,
+        _: RectF,
         _: &mut Self::LayoutState,
         _: &mut Self::PaintState,
         _: &mut gpui::EventContext,
     ) -> bool {
         false
+    }
+
+    fn debug(
+        &self,
+        _: RectF,
+        _: &Self::LayoutState,
+        _: &Self::PaintState,
+        _: &DebugContext,
+    ) -> gpui::json::Value {
+        todo!()
     }
 }

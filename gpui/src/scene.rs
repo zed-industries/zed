@@ -1,7 +1,10 @@
+use serde_json::json;
+
 use crate::{
     color::ColorU,
     fonts::{FontId, GlyphId},
     geometry::{rect::RectF, vector::Vector2F},
+    json::ToJson,
 };
 
 pub struct Scene {
@@ -256,5 +259,24 @@ impl Border {
         } else {
             0.0
         }
+    }
+}
+
+impl ToJson for Border {
+    fn to_json(&self) -> serde_json::Value {
+        let mut value = json!({});
+        if self.top {
+            value["top"] = json!(self.width);
+        }
+        if self.right {
+            value["right"] = json!(self.width);
+        }
+        if self.bottom {
+            value["bottom"] = json!(self.width);
+        }
+        if self.left {
+            value["left"] = json!(self.width);
+        }
+        value
     }
 }
