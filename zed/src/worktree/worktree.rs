@@ -345,7 +345,7 @@ impl Worktree {
             let mut file = smol::fs::File::open(&path).await?;
             let mut base_text = String::new();
             file.read_to_string(&mut base_text).await?;
-            let history = History { base_text };
+            let history = History::new(Arc::from(base_text));
             tree.0.write().histories.insert(entry_id, history.clone());
             Ok(history)
         }
@@ -717,7 +717,7 @@ mod test {
                 .await
                 .unwrap();
 
-            assert_eq!(history.base_text, buffer.text());
+            assert_eq!(history.base_text.as_ref(), buffer.text());
         })
     }
 }

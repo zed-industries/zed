@@ -63,12 +63,11 @@ pub struct Buffer {
     file: Option<FileHandle>,
     fragments: SumTree<Fragment>,
     insertion_splits: HashMap<time::Local, SumTree<InsertionSplit>>,
-    edit_ops: HashMap<time::Local, EditOperation>,
     pub version: time::Global,
     saved_version: time::Global,
     last_edit: time::Local,
     undo_map: UndoMap,
-    undo_history: UndoHistory,
+    history: History,
     selections: HashMap<SelectionSetId, Vec<Selection>>,
     pub selections_last_update: SelectionsVersion,
     deferred_ops: OperationQueue<Operation>,
@@ -83,8 +82,71 @@ pub struct Snapshot {
 }
 
 #[derive(Clone)]
+struct EditGroup {
+    edits: Vec<time::Local>,
+    last_edit_at: Instant,
+}
+
+#[derive(Clone)]
 pub struct History {
-    pub base_text: String,
+    pub base_text: Arc<str>,
+    ops: HashMap<time::Local, EditOperation>,
+    undo_stack: Vec<EditGroup>,
+    redo_stack: Vec<EditGroup>,
+    group_interval: Duration,
+}
+
+impl History {
+    pub fn new(base_text: Arc<str>) -> Self {
+        Self {
+            base_text,
+            ops: Default::default(),
+            undo_stack: Vec::new(),
+            redo_stack: Vec::new(),
+            group_interval: UNDO_GROUP_INTERVAL,
+        }
+    }
+
+    fn push(&mut self, op: EditOperation) {
+        self.ops.insert(op.id, op);
+    }
+
+    fn push_undo(&mut self, edit_id: time::Local, now: Instant) {
+        if let Some(edit_group) = self.undo_stack.last_mut() {
+            if now - edit_group.last_edit_at <= self.group_interval {
+                edit_group.edits.push(edit_id);
+                edit_group.last_edit_at = now;
+            } else {
+                self.undo_stack.push(EditGroup {
+                    edits: vec![edit_id],
+                    last_edit_at: now,
+                });
+            }
+        } else {
+            self.undo_stack.push(EditGroup {
+                edits: vec![edit_id],
+                last_edit_at: now,
+            });
+        }
+    }
+
+    fn pop_undo(&mut self) -> Option<&EditGroup> {
+        if let Some(edit_group) = self.undo_stack.pop() {
+            self.redo_stack.push(edit_group);
+            self.redo_stack.last()
+        } else {
+            None
+        }
+    }
+
+    fn pop_redo(&mut self) -> Option<&EditGroup> {
+        if let Some(edit_group) = self.redo_stack.pop() {
+            self.undo_stack.push(edit_group);
+            self.undo_stack.last()
+        } else {
+            None
+        }
+    }
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -127,66 +189,6 @@ impl UndoMap {
             .map(|undo| undo.count)
             .max()
             .unwrap_or(0)
-    }
-}
-
-#[derive(Clone)]
-struct EditGroup {
-    edits: Vec<time::Local>,
-    last_edit_at: Instant,
-}
-
-#[derive(Clone)]
-struct UndoHistory {
-    group_interval: Duration,
-    undo_stack: Vec<EditGroup>,
-    redo_stack: Vec<EditGroup>,
-}
-
-impl UndoHistory {
-    fn new(group_interval: Duration) -> Self {
-        Self {
-            group_interval,
-            undo_stack: Vec::new(),
-            redo_stack: Vec::new(),
-        }
-    }
-
-    fn push(&mut self, edit_id: time::Local, now: Instant) {
-        if let Some(edit_group) = self.undo_stack.last_mut() {
-            if now - edit_group.last_edit_at <= self.group_interval {
-                edit_group.edits.push(edit_id);
-                edit_group.last_edit_at = now;
-            } else {
-                self.undo_stack.push(EditGroup {
-                    edits: vec![edit_id],
-                    last_edit_at: now,
-                });
-            }
-        } else {
-            self.undo_stack.push(EditGroup {
-                edits: vec![edit_id],
-                last_edit_at: now,
-            });
-        }
-    }
-
-    fn pop_undo(&mut self) -> Option<&EditGroup> {
-        if let Some(edit_group) = self.undo_stack.pop() {
-            self.redo_stack.push(edit_group);
-            self.redo_stack.last()
-        } else {
-            None
-        }
-    }
-
-    fn pop_redo(&mut self) -> Option<&EditGroup> {
-        if let Some(edit_group) = self.redo_stack.pop() {
-            self.undo_stack.push(edit_group);
-            self.undo_stack.last()
-        } else {
-            None
-        }
     }
 }
 
@@ -305,15 +307,15 @@ pub struct UndoOperation {
 }
 
 impl Buffer {
-    pub fn new<T: Into<String>>(replica_id: ReplicaId, base_text: T) -> Self {
-        Self::build(replica_id, None, base_text.into())
+    pub fn new<T: Into<Arc<str>>>(replica_id: ReplicaId, base_text: T) -> Self {
+        Self::build(replica_id, None, History::new(base_text.into()))
     }
 
     pub fn from_history(replica_id: ReplicaId, file: FileHandle, history: History) -> Self {
-        Self::build(replica_id, Some(file), history.base_text)
+        Self::build(replica_id, Some(file), history)
     }
 
-    fn build(replica_id: ReplicaId, file: Option<FileHandle>, base_text: String) -> Self {
+    fn build(replica_id: ReplicaId, file: Option<FileHandle>, history: History) -> Self {
         let mut insertion_splits = HashMap::default();
         let mut fragments = SumTree::new();
 
@@ -321,7 +323,7 @@ impl Buffer {
             id: time::Local::default(),
             parent_id: time::Local::default(),
             offset_in_parent: 0,
-            text: base_text.into(),
+            text: history.base_text.clone().into(),
             lamport_timestamp: time::Lamport::default(),
         };
 
@@ -366,12 +368,11 @@ impl Buffer {
             file,
             fragments,
             insertion_splits,
-            edit_ops: HashMap::default(),
             version: time::Global::new(),
             saved_version: time::Global::new(),
             last_edit: time::Local::default(),
             undo_map: Default::default(),
-            undo_history: UndoHistory::new(UNDO_GROUP_INTERVAL),
+            history,
             selections: HashMap::default(),
             selections_last_update: 0,
             deferred_ops: OperationQueue::new(),
@@ -602,8 +603,8 @@ impl Buffer {
 
         for op in &ops {
             if let Operation::Edit { edit, .. } = op {
-                self.edit_ops.insert(edit.id, edit.clone());
-                self.undo_history.push(edit.id, now);
+                self.history.push(edit.clone());
+                self.history.push_undo(edit.id, now);
             }
         }
 
@@ -864,7 +865,7 @@ impl Buffer {
                         lamport_timestamp,
                     )?;
                     self.version.observe(edit.id);
-                    self.edit_ops.insert(edit.id, edit);
+                    self.history.push(edit);
                 }
             }
             Operation::Undo {
@@ -1017,7 +1018,7 @@ impl Buffer {
         let old_version = self.version.clone();
 
         let mut ops = Vec::new();
-        if let Some(edit_group) = self.undo_history.pop_undo() {
+        if let Some(edit_group) = self.history.pop_undo() {
             for edit_id in edit_group.edits.clone() {
                 ops.push(self.undo_or_redo(edit_id).unwrap());
             }
@@ -1039,7 +1040,7 @@ impl Buffer {
         let old_version = self.version.clone();
 
         let mut ops = Vec::new();
-        if let Some(edit_group) = self.undo_history.pop_redo() {
+        if let Some(edit_group) = self.history.pop_redo() {
             for edit_id in edit_group.edits.clone() {
                 ops.push(self.undo_or_redo(edit_id).unwrap());
             }
@@ -1075,7 +1076,7 @@ impl Buffer {
         let mut new_fragments;
 
         self.undo_map.insert(undo);
-        let edit = &self.edit_ops[&undo.edit_id];
+        let edit = &self.history.ops[&undo.edit_id];
         let start_fragment_id = self.resolve_fragment_id(edit.start_id, edit.start_offset)?;
         let end_fragment_id = self.resolve_fragment_id(edit.end_id, edit.end_offset)?;
         let mut cursor = self.fragments.cursor::<FragmentIdRef, ()>();
@@ -1700,12 +1701,11 @@ impl Clone for Buffer {
             file: self.file.clone(),
             fragments: self.fragments.clone(),
             insertion_splits: self.insertion_splits.clone(),
-            edit_ops: self.edit_ops.clone(),
             version: self.version.clone(),
             saved_version: self.saved_version.clone(),
             last_edit: self.last_edit.clone(),
             undo_map: self.undo_map.clone(),
-            undo_history: self.undo_history.clone(),
+            history: self.history.clone(),
             selections: self.selections.clone(),
             selections_last_update: self.selections_last_update.clone(),
             deferred_ops: self.deferred_ops.clone(),
@@ -3076,7 +3076,7 @@ mod tests {
         pub fn randomly_undo_redo(&mut self, rng: &mut impl Rng) -> Vec<Operation> {
             let mut ops = Vec::new();
             for _ in 0..rng.gen_range(1..5) {
-                if let Some(edit_id) = self.edit_ops.keys().choose(rng).copied() {
+                if let Some(edit_id) = self.history.ops.keys().choose(rng).copied() {
                     ops.push(self.undo_or_redo(edit_id).unwrap());
                 }
             }

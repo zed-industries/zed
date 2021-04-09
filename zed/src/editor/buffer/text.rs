@@ -117,6 +117,18 @@ pub struct Text {
 
 impl From<String> for Text {
     fn from(text: String) -> Self {
+        Self::from(Arc::from(text))
+    }
+}
+
+impl<'a> From<&'a str> for Text {
+    fn from(text: &'a str) -> Self {
+        Self::from(Arc::from(text))
+    }
+}
+
+impl From<Arc<str>> for Text {
+    fn from(text: Arc<str>) -> Self {
         let mut runs = Vec::new();
 
         let mut chars_len = 0;
@@ -147,16 +159,10 @@ impl From<String> for Text {
         let mut tree = SumTree::new();
         tree.extend(runs);
         Text {
-            text: text.into(),
+            text,
             runs: tree,
             range: 0..chars_len,
         }
-    }
-}
-
-impl<'a> From<&'a str> for Text {
-    fn from(text: &'a str) -> Self {
-        Self::from(String::from(text))
     }
 }
 
