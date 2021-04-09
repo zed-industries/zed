@@ -931,13 +931,7 @@ impl Buffer {
         Ok(())
     }
 
-    fn undo_or_redo(
-        &mut self,
-        edit_id: time::Local,
-        ctx: Option<&mut ModelContext<Self>>,
-    ) -> Result<Operation> {
-        let was_dirty = self.is_dirty();
-        let old_version = self.version.clone();
+    fn undo_or_redo(&mut self, edit_id: time::Local) -> Result<Operation> {
         let undo = UndoOperation {
             id: self.local_clock.tick(),
             edit_id,
@@ -945,14 +939,6 @@ impl Buffer {
         };
         self.apply_undo(undo)?;
         self.version.observe(undo.id);
-
-        if let Some(ctx) = ctx {
-            ctx.notify();
-            let changes = self.edits_since(old_version).collect::<Vec<_>>();
-            if !changes.is_empty() {
-                self.did_edit(changes, was_dirty, ctx);
-            }
-        }
 
         Ok(Operation::Undo {
             undo,
@@ -2281,7 +2267,7 @@ mod tests {
                 assert_eq!(buffer.text(), reference_string);
 
                 if rng.gen_bool(0.25) {
-                    buffer.randomly_undo_redo(rng, None);
+                    buffer.randomly_undo_redo(rng);
                     reference_string = buffer.text();
                 }
 
@@ -2817,32 +2803,33 @@ mod tests {
 
     #[test]
     fn test_undo_redo() -> Result<()> {
-        let mut buffer = Buffer::new(0, "");
+        let mut buffer = Buffer::new(0, "1234");
 
-        let edit1 = buffer.edit(vec![0..0], "abx", None)?;
-        let edit2 = buffer.edit(vec![2..3], "yzef", None)?;
-        let edit3 = buffer.edit(vec![2..4], "cd", None)?;
+        let edit1 = buffer.edit(vec![1..1], "abx", None)?;
+        let edit2 = buffer.edit(vec![3..4], "yzef", None)?;
+        let edit3 = buffer.edit(vec![3..5], "cd", None)?;
+        assert_eq!(buffer.text(), "1abcdef234");
 
-        buffer.undo_or_redo(edit1[0].edit_id().unwrap(), None)?;
-        assert_eq!(buffer.text(), "cdef");
-        buffer.undo_or_redo(edit1[0].edit_id().unwrap(), None)?;
-        assert_eq!(buffer.text(), "abcdef");
+        buffer.undo_or_redo(edit1[0].edit_id().unwrap())?;
+        assert_eq!(buffer.text(), "1cdef234");
+        buffer.undo_or_redo(edit1[0].edit_id().unwrap())?;
+        assert_eq!(buffer.text(), "1abcdef234");
 
-        buffer.undo_or_redo(edit2[0].edit_id().unwrap(), None)?;
-        assert_eq!(buffer.text(), "abcdx");
-        buffer.undo_or_redo(edit3[0].edit_id().unwrap(), None)?;
-        assert_eq!(buffer.text(), "abx");
-        buffer.undo_or_redo(edit2[0].edit_id().unwrap(), None)?;
-        assert_eq!(buffer.text(), "abyzef");
-        buffer.undo_or_redo(edit3[0].edit_id().unwrap(), None)?;
-        assert_eq!(buffer.text(), "abcdef");
+        buffer.undo_or_redo(edit2[0].edit_id().unwrap())?;
+        assert_eq!(buffer.text(), "1abcdx234");
+        buffer.undo_or_redo(edit3[0].edit_id().unwrap())?;
+        assert_eq!(buffer.text(), "1abx234");
+        buffer.undo_or_redo(edit2[0].edit_id().unwrap())?;
+        assert_eq!(buffer.text(), "1abyzef234");
+        buffer.undo_or_redo(edit3[0].edit_id().unwrap())?;
+        assert_eq!(buffer.text(), "1abcdef234");
 
-        buffer.undo_or_redo(edit3[0].edit_id().unwrap(), None)?;
-        assert_eq!(buffer.text(), "abyzef");
-        buffer.undo_or_redo(edit1[0].edit_id().unwrap(), None)?;
-        assert_eq!(buffer.text(), "yzef");
-        buffer.undo_or_redo(edit2[0].edit_id().unwrap(), None)?;
-        assert_eq!(buffer.text(), "");
+        buffer.undo_or_redo(edit3[0].edit_id().unwrap())?;
+        assert_eq!(buffer.text(), "1abyzef234");
+        buffer.undo_or_redo(edit1[0].edit_id().unwrap())?;
+        assert_eq!(buffer.text(), "1yzef234");
+        buffer.undo_or_redo(edit2[0].edit_id().unwrap())?;
+        assert_eq!(buffer.text(), "1234");
 
         Ok(())
     }
@@ -2884,7 +2871,7 @@ mod tests {
                         mutation_count -= 1;
                     }
                     51..=70 if mutation_count != 0 => {
-                        let ops = buffer.randomly_undo_redo(&mut rng, None);
+                        let ops = buffer.randomly_undo_redo(&mut rng);
                         network.broadcast(replica_id, ops, &mut rng);
                         mutation_count -= 1;
                     }
@@ -2960,15 +2947,11 @@ mod tests {
             (old_ranges, new_text, operations)
         }
 
-        pub fn randomly_undo_redo(
-            &mut self,
-            rng: &mut impl Rng,
-            mut ctx: Option<&mut ModelContext<Self>>,
-        ) -> Vec<Operation> {
+        pub fn randomly_undo_redo(&mut self, rng: &mut impl Rng) -> Vec<Operation> {
             let mut ops = Vec::new();
             for _ in 0..rng.gen_range(1..5) {
                 if let Some(edit_id) = self.edit_ops.keys().choose(rng).copied() {
-                    ops.push(self.undo_or_redo(edit_id, ctx.as_deref_mut()).unwrap());
+                    ops.push(self.undo_or_redo(edit_id).unwrap());
                 }
             }
             ops
