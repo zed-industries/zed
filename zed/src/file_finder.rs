@@ -11,8 +11,8 @@ use gpui::{
     fonts::{Properties, Weight},
     geometry::vector::vec2f,
     keymap::{self, Binding},
-    App, AppContext, Axis, Border, Entity, ModelHandle, View, ViewContext, ViewHandle,
-    WeakViewHandle,
+    App, AppContext, Axis, Border, Entity, ModelHandle, MutableAppContext, View, ViewContext,
+    ViewHandle, WeakViewHandle,
 };
 use std::cmp;
 
@@ -28,7 +28,7 @@ pub struct FileFinder {
     list_state: UniformListState,
 }
 
-pub fn init(app: &mut App) {
+pub fn init(app: &mut MutableAppContext) {
     app.add_action("file_finder:toggle", FileFinder::toggle);
     app.add_action("file_finder:confirm", FileFinder::confirm);
     app.add_action("file_finder:select", FileFinder::select);

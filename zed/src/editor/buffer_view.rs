@@ -7,7 +7,8 @@ use anyhow::Result;
 use futures_core::future::LocalBoxFuture;
 use gpui::{
     fonts::Properties as FontProperties, keymap::Binding, text_layout, App, AppContext, Element,
-    ElementBox, Entity, FontCache, ModelHandle, View, ViewContext, WeakViewHandle,
+    ElementBox, Entity, FontCache, ModelHandle, MutableAppContext, View, ViewContext,
+    WeakViewHandle,
 };
 use gpui::{geometry::vector::Vector2F, TextLayoutCache};
 use parking_lot::Mutex;
@@ -24,7 +25,7 @@ use std::{
 
 const CURSOR_BLINK_INTERVAL: Duration = Duration::from_millis(500);
 
-pub fn init(app: &mut App) {
+pub fn init(app: &mut MutableAppContext) {
     app.add_bindings(vec![
         Binding::new("backspace", "buffer:backspace", Some("BufferView")),
         Binding::new("enter", "buffer:newline", Some("BufferView")),

@@ -21,6 +21,7 @@ use std::{
     fmt::{self, Debug},
     hash::{Hash, Hasher},
     marker::PhantomData,
+    path::PathBuf,
     rc::{self, Rc},
     sync::{Arc, Weak},
 };
@@ -83,20 +84,44 @@ pub enum MenuItem<'a> {
 #[derive(Clone)]
 pub struct App(Rc<RefCell<MutableAppContext>>);
 
+pub trait TestClosure<'a, T> {
+    type Result: 'a + Future<Output = T>;
+    fn run_test(self, ctx: &'a mut MutableAppContext) -> Self::Result;
+}
+
+impl<'a, F, R, T> TestClosure<'a, T> for F
+where
+    F: FnOnce(&mut MutableAppContext) -> R,
+    R: 'a + Future<Output = T>,
+{
+    type Result = R;
+
+    fn run_test(self, ctx: &'a mut MutableAppContext) -> Self::Result {
+        (self)(ctx)
+    }
+}
+
 impl App {
-    pub fn test<T, A: AssetSource, F: Future<Output = T>, G: FnOnce(App) -> F>(
+    pub fn test<
+        T,
+        A: AssetSource,
+        // F: 'static + ,
+        // G: for<'a> FnOnce(&'a mut MutableAppContext) -> impl Future<Output = T>,
+        G: for<'a> TestClosure<'a, T>,
+    >(
         asset_source: A,
         f: G,
     ) -> T {
         let platform = platform::test::platform();
         let foreground = Rc::new(executor::Foreground::test());
-        let app = Self(Rc::new(RefCell::new(MutableAppContext::new(
+        let ctx = Rc::new(RefCell::new(MutableAppContext::new(
             foreground.clone(),
             Arc::new(platform),
             asset_source,
-        ))));
-        app.0.borrow_mut().weak_self = Some(Rc::downgrade(&app.0));
-        smol::block_on(foreground.run(f(app)))
+        )));
+        ctx.borrow_mut().weak_self = Some(Rc::downgrade(&ctx));
+        let mut ctx = ctx.borrow_mut();
+        smol::block_on(foreground.run(f.run_test(&mut *ctx)))
     }
 
     pub fn new(asset_source: impl AssetSource) -> Result<Self> {
@@ -109,6 +134,80 @@ impl App {
         ))));
         app.0.borrow_mut().weak_self = Some(Rc::downgrade(&app.0));
         Ok(app)
+    }
+
+    pub fn on_become_active<F>(self, mut callback: F) -> Self
+    where
+        F: 'static + FnMut(&mut MutableAppContext),
+    {
+        let ctx = self.0.clone();
+        self.0
+            .borrow()
+            .platform
+            .on_become_active(Box::new(move || callback(&mut *ctx.borrow_mut())));
+        self
+    }
+
+    pub fn on_resign_active<F>(self, mut callback: F) -> Self
+    where
+        F: 'static + FnMut(&mut MutableAppContext),
+    {
+        let ctx = self.0.clone();
+        self.0
+            .borrow()
+            .platform
+            .on_resign_active(Box::new(move || callback(&mut *ctx.borrow_mut())));
+        self
+    }
+
+    pub fn on_event<F>(self, mut callback: F) -> Self
+    where
+        F: 'static + FnMut(Event, &mut MutableAppContext) -> bool,
+    {
+        let ctx = self.0.clone();
+        self.0.borrow().platform.on_event(Box::new(move |event| {
+            callback(event, &mut *ctx.borrow_mut())
+        }));
+        self
+    }
+
+    pub fn on_menu_command<F>(self, mut callback: F) -> Self
+    where
+        F: 'static + FnMut(&str, &mut MutableAppContext),
+    {
+        let ctx = self.0.clone();
+        self.0
+            .borrow()
+            .platform
+            .on_menu_command(Box::new(move |command| {
+                callback(command, &mut *ctx.borrow_mut())
+            }));
+        self
+    }
+
+    pub fn on_open_files<F>(self, mut callback: F) -> Self
+    where
+        F: 'static + FnMut(Vec<PathBuf>, &mut MutableAppContext),
+    {
+        let ctx = self.0.clone();
+        self.0
+            .borrow()
+            .platform
+            .on_open_files(Box::new(move |paths| {
+                callback(paths, &mut *ctx.borrow_mut())
+            }));
+        self
+    }
+
+    pub fn run<F>(self, callback: F)
+    where
+        F: 'static + FnOnce(&mut MutableAppContext),
+    {
+        let ctx = self.0.clone();
+        self.0
+            .borrow()
+            .platform
+            .run(Box::new(move || callback(&mut *ctx.borrow_mut())));
     }
 
     pub fn on_window_invalidated<F: 'static + FnMut(WindowInvalidation, &mut MutableAppContext)>(
@@ -153,12 +252,6 @@ impl App {
             name,
             Box::new(arg).as_ref(),
         );
-    }
-
-    pub fn dispatch_global_action<T: 'static + Any>(&self, name: &str, arg: T) {
-        self.0
-            .borrow_mut()
-            .dispatch_global_action(name, Box::new(arg).as_ref());
     }
 
     pub fn add_bindings<T: IntoIterator<Item = keymap::Binding>>(&self, bindings: T) {
@@ -556,14 +649,18 @@ impl MutableAppContext {
         }
 
         if !halted_dispatch {
-            self.dispatch_global_action(name, arg);
+            self.dispatch_global_action_with_dyn_arg(name, arg);
         }
 
         self.flush_effects();
         halted_dispatch
     }
 
-    fn dispatch_global_action(&mut self, name: &str, arg: &dyn Any) {
+    pub fn dispatch_global_action<T: 'static + Any>(&mut self, name: &str, arg: T) {
+        self.dispatch_global_action_with_dyn_arg(name, Box::new(arg).as_ref());
+    }
+
+    fn dispatch_global_action_with_dyn_arg(&mut self, name: &str, arg: &dyn Any) {
         if let Some((name, mut handlers)) = self.global_actions.remove_entry(name) {
             self.pending_flushes += 1;
             for handler in handlers.iter_mut().rev() {
@@ -574,7 +671,7 @@ impl MutableAppContext {
         }
     }
 
-    fn add_bindings<T: IntoIterator<Item = keymap::Binding>>(&mut self, bindings: T) {
+    pub fn add_bindings<T: IntoIterator<Item = keymap::Binding>>(&mut self, bindings: T) {
         self.keystroke_matcher.add_bindings(bindings);
     }
 
@@ -1887,13 +1984,6 @@ impl<T: Entity> ModelHandle<T> {
         app.model(self)
     }
 
-    pub fn read<'a, S, F>(&self, app: &'a App, read: F) -> S
-    where
-        F: FnOnce(&T, &AppContext) -> S,
-    {
-        app.read_model(self, read)
-    }
-
     pub fn update<A, F, S>(&self, app: &mut A, update: F) -> S
     where
         A: UpdateModel,
@@ -2362,9 +2452,7 @@ mod tests {
             }
         }
 
-        App::test((), |mut app| async move {
-            let app = &mut app;
-
+        App::test((), |app: &mut MutableAppContext| async move {
             let handle_1 = app.add_model(|ctx| Model::new(None, ctx));
             let handle_2 = app.add_model(|ctx| Model::new(Some(handle_1.clone()), ctx));
             assert_eq!(app.0.borrow().ctx.models.len(), 2);
@@ -2375,19 +2463,15 @@ mod tests {
                 ctx.notify();
                 ctx.emit(2);
             });
-            handle_1.read(app, |model, _| {
-                assert_eq!(model.events, vec!["updated".to_string()]);
-            });
-            handle_2.read(app, |model, _| {
-                assert_eq!(
-                    model.events,
-                    vec![
-                        "observed event 1".to_string(),
-                        "notified".to_string(),
-                        "observed event 2".to_string(),
-                    ]
-                );
-            });
+            assert_eq!(handle_1.as_ref(app).events, vec!["updated".to_string()]);
+            assert_eq!(
+                handle_2.as_ref(app).events,
+                vec![
+                    "observed event 1".to_string(),
+                    "notified".to_string(),
+                    "observed event 2".to_string(),
+                ]
+            );
 
             handle_2.update(app, |model, _| {
                 drop(handle_1);

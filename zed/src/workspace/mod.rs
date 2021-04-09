@@ -12,7 +12,7 @@ use crate::{settings::Settings, watch};
 use gpui::{App, MutableAppContext};
 use std::path::PathBuf;
 
-pub fn init(app: &mut App) {
+pub fn init(app: &mut MutableAppContext) {
     app.add_global_action("workspace:open_paths", open_paths);
     app.add_global_action("app:quit", quit);
     pane::init(app);

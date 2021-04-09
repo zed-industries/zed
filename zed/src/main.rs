@@ -13,55 +13,47 @@ fn main() {
 
     let app = gpui::App::new(assets::Assets).unwrap();
     let (_, settings_rx) = settings::channel(&app.font_cache()).unwrap();
-
-    platform::runner()
-        .set_menus(menus::MENUS)
-        .on_menu_command({
-            let app = app.clone();
-            let settings_rx = settings_rx.clone();
-            move |command| match command {
-                "app:open" => {
-                    if let Some(paths) = app.platform().prompt_for_paths(PathPromptOptions {
-                        files: true,
-                        directories: true,
-                        multiple: true,
-                    }) {
-                        app.dispatch_global_action(
-                            "workspace:open_paths",
-                            OpenParams {
-                                paths,
-                                settings: settings_rx.clone(),
-                            },
-                        );
-                    }
-                }
-                _ => app.dispatch_global_action(command, ()),
-            }
-        })
-        .on_finish_launching({
-            let mut app = app.clone();
-            move || {
-                workspace::init(&mut app);
-                editor::init(&mut app);
-                file_finder::init(&mut app);
-
-                if stdout_is_a_pty() {
-                    app.platform().activate(true);
-                }
-
-                let paths = collect_path_args();
-                if !paths.is_empty() {
-                    app.dispatch_global_action(
+    app.on_menu_command({
+        let settings_rx = settings_rx.clone();
+        move |command, ctx| match command {
+            "app:open" => {
+                if let Some(paths) = ctx.platform().prompt_for_paths(PathPromptOptions {
+                    files: true,
+                    directories: true,
+                    multiple: true,
+                }) {
+                    ctx.dispatch_global_action(
                         "workspace:open_paths",
                         OpenParams {
                             paths,
-                            settings: settings_rx,
+                            settings: settings_rx.clone(),
                         },
                     );
                 }
             }
-        })
-        .run();
+            _ => ctx.dispatch_global_action(command, ()),
+        }
+    })
+    .run(move |ctx| {
+        workspace::init(ctx);
+        editor::init(ctx);
+        file_finder::init(ctx);
+
+        if stdout_is_a_pty() {
+            ctx.platform().activate(true);
+        }
+
+        let paths = collect_path_args();
+        if !paths.is_empty() {
+            ctx.dispatch_global_action(
+                "workspace:open_paths",
+                OpenParams {
+                    paths,
+                    settings: settings_rx,
+                },
+            );
+        }
+    });
 }
 
 fn init_logger() {

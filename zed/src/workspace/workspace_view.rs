@@ -8,7 +8,7 @@ use gpui::{
 use log::{error, info};
 use std::{collections::HashSet, path::PathBuf};
 
-pub fn init(app: &mut App) {
+pub fn init(app: &mut MutableAppContext) {
     app.add_action("workspace:save", WorkspaceView::save_active_item);
     app.add_action("workspace:debug_elements", WorkspaceView::debug_elements);
     app.add_bindings(vec![
