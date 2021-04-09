@@ -153,7 +153,6 @@ impl UndoHistory {
     }
 
     fn push(&mut self, edit_id: time::Local, now: Instant) {
-        self.redo_stack.clear();
         if let Some(edit_group) = self.undo_stack.last_mut() {
             if now - edit_group.last_edit_at <= self.group_interval {
                 edit_group.edits.push(edit_id);
