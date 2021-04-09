@@ -77,7 +77,7 @@ where
         }
     }
 
-    fn item_summary(&self) -> Option<&'a T::Summary> {
+    pub fn item_summary(&self) -> Option<&'a T::Summary> {
         assert!(self.did_seek, "Must seek before calling this method");
         if let Some(entry) = self.stack.last() {
             match *entry.tree.0 {
