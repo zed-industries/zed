@@ -1,11 +1,13 @@
 mod anchor;
 mod point;
+mod selection;
 mod text;
 
 pub use anchor::*;
 use futures_core::future::LocalBoxFuture;
 pub use point::*;
 use seahash::SeaHasher;
+pub use selection::*;
 pub use text::*;
 
 use crate::{
@@ -23,7 +25,6 @@ use std::{
     cmp::{self, Ordering},
     hash::BuildHasher,
     iter::{self, Iterator},
-    mem,
     ops::{AddAssign, Range},
     path::PathBuf,
     str,
@@ -32,9 +33,6 @@ use std::{
 };
 
 const UNDO_GROUP_INTERVAL: Duration = Duration::from_millis(300);
-
-pub type SelectionSetId = time::Lamport;
-pub type SelectionsVersion = usize;
 
 #[derive(Clone, Default)]
 struct DeterministicState;
@@ -147,13 +145,6 @@ impl History {
             None
         }
     }
-}
-
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct Selection {
-    pub start: Anchor,
-    pub end: Anchor,
-    pub reversed: bool,
 }
 
 #[derive(Clone, Default, Debug)]
@@ -679,44 +670,45 @@ impl Buffer {
         (old_ranges, new_text, operations)
     }
 
-    pub fn add_selection_set<I>(&mut self, ranges: I) -> Result<(SelectionSetId, Operation)>
-    where
-        I: IntoIterator<Item = Range<Point>>,
-    {
-        let selections = self.selections_from_ranges(ranges)?;
+    pub fn add_selection_set(
+        &mut self,
+        selections: Vec<Selection>,
+        ctx: Option<&mut ModelContext<Self>>,
+    ) -> (SelectionSetId, Operation) {
         let lamport_timestamp = self.lamport_clock.tick();
         self.selections
             .insert(lamport_timestamp, selections.clone());
         self.selections_last_update += 1;
 
-        Ok((
+        if let Some(ctx) = ctx {
+            ctx.notify();
+        }
+
+        (
             lamport_timestamp,
             Operation::UpdateSelections {
                 set_id: lamport_timestamp,
                 selections: Some(selections),
                 lamport_timestamp,
             },
-        ))
+        )
     }
 
-    pub fn replace_selection_set<I>(
+    pub fn update_selection_set(
         &mut self,
         set_id: SelectionSetId,
-        ranges: I,
-    ) -> Result<Operation>
-    where
-        I: IntoIterator<Item = Range<Point>>,
-    {
-        self.selections
-            .remove(&set_id)
-            .ok_or_else(|| anyhow!("invalid selection set id {:?}", set_id))?;
-
-        let mut selections = self.selections_from_ranges(ranges)?;
+        mut selections: Vec<Selection>,
+        ctx: Option<&mut ModelContext<Self>>,
+    ) -> Result<Operation> {
         self.merge_selections(&mut selections);
         self.selections.insert(set_id, selections.clone());
 
         let lamport_timestamp = self.lamport_clock.tick();
         self.selections_last_update += 1;
+
+        if let Some(ctx) = ctx {
+            ctx.notify();
+        }
 
         Ok(Operation::UpdateSelections {
             set_id,
@@ -725,12 +717,21 @@ impl Buffer {
         })
     }
 
-    pub fn remove_selection_set(&mut self, set_id: SelectionSetId) -> Result<Operation> {
+    pub fn remove_selection_set(
+        &mut self,
+        set_id: SelectionSetId,
+        ctx: Option<&mut ModelContext<Self>>,
+    ) -> Result<Operation> {
         self.selections
             .remove(&set_id)
             .ok_or_else(|| anyhow!("invalid selection set id {:?}", set_id))?;
         let lamport_timestamp = self.lamport_clock.tick();
         self.selections_last_update += 1;
+
+        if let Some(ctx) = ctx {
+            ctx.notify();
+        }
+
         Ok(Operation::UpdateSelections {
             set_id,
             selections: None,
@@ -738,15 +739,18 @@ impl Buffer {
         })
     }
 
+    pub fn selections(&self, set_id: SelectionSetId) -> Result<&[Selection]> {
+        self.selections
+            .get(&set_id)
+            .map(|s| s.as_slice())
+            .ok_or_else(|| anyhow!("invalid selection set id {:?}", set_id))
+    }
+
     pub fn selection_ranges<'a>(
         &'a self,
         set_id: SelectionSetId,
     ) -> Result<impl Iterator<Item = Range<Point>> + 'a> {
-        let selections = self
-            .selections
-            .get(&set_id)
-            .ok_or_else(|| anyhow!("invalid selection set id {:?}", set_id))?;
-        Ok(selections.iter().map(move |selection| {
+        Ok(self.selections(set_id)?.iter().map(move |selection| {
             let start = selection.start.to_point(self).unwrap();
             let end = selection.end.to_point(self).unwrap();
             if selection.reversed {
@@ -770,49 +774,25 @@ impl Buffer {
     }
 
     fn merge_selections(&mut self, selections: &mut Vec<Selection>) {
-        let mut new_selections = Vec::with_capacity(selections.len());
-        {
-            let mut old_selections = selections.drain(..);
-            if let Some(mut prev_selection) = old_selections.next() {
-                for selection in old_selections {
-                    if prev_selection.end.cmp(&selection.start, self).unwrap() >= Ordering::Equal {
-                        if selection.end.cmp(&prev_selection.end, self).unwrap() > Ordering::Equal {
-                            prev_selection.end = selection.end;
-                        }
-                    } else {
-                        new_selections.push(mem::replace(&mut prev_selection, selection));
-                    }
+        let mut i = 1;
+        while i < selections.len() {
+            if selections[i - 1]
+                .end
+                .cmp(&selections[i].start, self)
+                .unwrap()
+                >= Ordering::Equal
+            {
+                let removed = selections.remove(i);
+                if removed.start.cmp(&selections[i - 1].start, self).unwrap() < Ordering::Equal {
+                    selections[i - 1].start = removed.start;
                 }
-                new_selections.push(prev_selection);
-            }
-        }
-        *selections = new_selections;
-    }
-
-    fn selections_from_ranges<I>(&self, ranges: I) -> Result<Vec<Selection>>
-    where
-        I: IntoIterator<Item = Range<Point>>,
-    {
-        let mut ranges = ranges.into_iter().collect::<Vec<_>>();
-        ranges.sort_unstable_by_key(|range| range.start);
-
-        let mut selections = Vec::with_capacity(ranges.len());
-        for range in ranges {
-            if range.start > range.end {
-                selections.push(Selection {
-                    start: self.anchor_before(range.end)?,
-                    end: self.anchor_before(range.start)?,
-                    reversed: true,
-                });
+                if removed.end.cmp(&selections[i - 1].end, self).unwrap() > Ordering::Equal {
+                    selections[i - 1].end = removed.end;
+                }
             } else {
-                selections.push(Selection {
-                    start: self.anchor_after(range.start)?,
-                    end: self.anchor_before(range.end)?,
-                    reversed: false,
-                });
+                i += 1;
             }
         }
-        Ok(selections)
     }
 
     pub fn apply_ops<I: IntoIterator<Item = Operation>>(
@@ -1927,48 +1907,6 @@ impl<'a, F: Fn(&FragmentSummary) -> bool> Iterator for Edits<'a, F> {
 //     collector.into_inner().changes
 // }
 
-impl Selection {
-    pub fn head(&self) -> &Anchor {
-        if self.reversed {
-            &self.start
-        } else {
-            &self.end
-        }
-    }
-
-    pub fn set_head<S>(&mut self, buffer: &Buffer, cursor: Anchor) {
-        if cursor.cmp(self.tail(), buffer).unwrap() < Ordering::Equal {
-            if !self.reversed {
-                mem::swap(&mut self.start, &mut self.end);
-                self.reversed = true;
-            }
-            self.start = cursor;
-        } else {
-            if self.reversed {
-                mem::swap(&mut self.start, &mut self.end);
-                self.reversed = false;
-            }
-            self.end = cursor;
-        }
-    }
-
-    pub fn tail(&self) -> &Anchor {
-        if self.reversed {
-            &self.end
-        } else {
-            &self.start
-        }
-    }
-
-    pub fn is_empty(&self, buffer: &Buffer) -> bool {
-        self.start.to_offset(buffer).unwrap() == self.end.to_offset(buffer).unwrap()
-    }
-
-    pub fn anchor_range(&self) -> Range<Anchor> {
-        self.start.clone()..self.end.clone()
-    }
-}
-
 #[derive(Ord, PartialOrd, Eq, PartialEq, Clone, Debug)]
 struct FragmentId(Arc<[u16]>);
 
@@ -3049,7 +2987,7 @@ mod tests {
                 .collect::<Vec<_>>();
             let set_id = replica_selection_sets.choose(rng);
             if set_id.is_some() && rng.gen_bool(1.0 / 6.0) {
-                let op = self.remove_selection_set(*set_id.unwrap()).unwrap();
+                let op = self.remove_selection_set(*set_id.unwrap(), None).unwrap();
                 operations.push(op);
             } else {
                 let mut ranges = Vec::new();
@@ -3060,11 +2998,12 @@ mod tests {
                     let end_point = self.point_for_offset(end).unwrap();
                     ranges.push(start_point..end_point);
                 }
+                let new_selections = self.selections_from_ranges(ranges).unwrap();
 
                 let op = if set_id.is_none() || rng.gen_bool(1.0 / 5.0) {
-                    self.add_selection_set(ranges).unwrap().1
+                    self.add_selection_set(new_selections, None).1
                 } else {
-                    self.replace_selection_set(*set_id.unwrap(), ranges)
+                    self.update_selection_set(*set_id.unwrap(), new_selections, None)
                         .unwrap()
                 };
                 operations.push(op);
@@ -3081,6 +3020,34 @@ mod tests {
                 }
             }
             ops
+        }
+
+        fn selections_from_ranges<I>(&self, ranges: I) -> Result<Vec<Selection>>
+        where
+            I: IntoIterator<Item = Range<Point>>,
+        {
+            let mut ranges = ranges.into_iter().collect::<Vec<_>>();
+            ranges.sort_unstable_by_key(|range| range.start);
+
+            let mut selections = Vec::with_capacity(ranges.len());
+            for range in ranges {
+                if range.start > range.end {
+                    selections.push(Selection {
+                        start: self.anchor_before(range.end)?,
+                        end: self.anchor_before(range.start)?,
+                        reversed: true,
+                        goal_column: None,
+                    });
+                } else {
+                    selections.push(Selection {
+                        start: self.anchor_after(range.start)?,
+                        end: self.anchor_before(range.end)?,
+                        reversed: false,
+                        goal_column: None,
+                    });
+                }
+            }
+            Ok(selections)
         }
     }
 
