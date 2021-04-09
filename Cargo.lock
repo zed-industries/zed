@@ -399,7 +399,7 @@ dependencies = [
 [[package]]
 name = "cocoa"
 version = "0.24.0"
-source = "git+https://github.com/zed-industries/core-foundation-rs?rev=52b7bc0a7026dbbe0da66f5e8de6ce1031476d5b#52b7bc0a7026dbbe0da66f5e8de6ce1031476d5b"
+source = "git+https://github.com/servo/core-foundation-rs?rev=e9a65bb15d591ec22649e03659db8095d4f2dd60#e9a65bb15d591ec22649e03659db8095d4f2dd60"
 dependencies = [
  "bitflags",
  "block",
@@ -414,7 +414,7 @@ dependencies = [
 [[package]]
 name = "cocoa-foundation"
 version = "0.1.0"
-source = "git+https://github.com/zed-industries/core-foundation-rs?rev=52b7bc0a7026dbbe0da66f5e8de6ce1031476d5b#52b7bc0a7026dbbe0da66f5e8de6ce1031476d5b"
+source = "git+https://github.com/servo/core-foundation-rs?rev=e9a65bb15d591ec22649e03659db8095d4f2dd60#e9a65bb15d591ec22649e03659db8095d4f2dd60"
 dependencies = [
  "bitflags",
  "block",
@@ -443,7 +443,7 @@ checksum = "245097e9a4535ee1e3e3931fcfcd55a796a44c643e8596ff6566d68f09b87bbc"
 [[package]]
 name = "core-foundation"
 version = "0.9.1"
-source = "git+https://github.com/zed-industries/core-foundation-rs?rev=52b7bc0a7026dbbe0da66f5e8de6ce1031476d5b#52b7bc0a7026dbbe0da66f5e8de6ce1031476d5b"
+source = "git+https://github.com/servo/core-foundation-rs?rev=e9a65bb15d591ec22649e03659db8095d4f2dd60#e9a65bb15d591ec22649e03659db8095d4f2dd60"
 dependencies = [
  "core-foundation-sys",
  "libc",
@@ -452,12 +452,12 @@ dependencies = [
 [[package]]
 name = "core-foundation-sys"
 version = "0.8.2"
-source = "git+https://github.com/zed-industries/core-foundation-rs?rev=52b7bc0a7026dbbe0da66f5e8de6ce1031476d5b#52b7bc0a7026dbbe0da66f5e8de6ce1031476d5b"
+source = "git+https://github.com/servo/core-foundation-rs?rev=e9a65bb15d591ec22649e03659db8095d4f2dd60#e9a65bb15d591ec22649e03659db8095d4f2dd60"
 
 [[package]]
 name = "core-graphics"
 version = "0.22.2"
-source = "git+https://github.com/zed-industries/core-foundation-rs?rev=52b7bc0a7026dbbe0da66f5e8de6ce1031476d5b#52b7bc0a7026dbbe0da66f5e8de6ce1031476d5b"
+source = "git+https://github.com/servo/core-foundation-rs?rev=e9a65bb15d591ec22649e03659db8095d4f2dd60#e9a65bb15d591ec22649e03659db8095d4f2dd60"
 dependencies = [
  "bitflags",
  "core-foundation",
@@ -469,7 +469,7 @@ dependencies = [
 [[package]]
 name = "core-graphics-types"
 version = "0.1.1"
-source = "git+https://github.com/zed-industries/core-foundation-rs?rev=52b7bc0a7026dbbe0da66f5e8de6ce1031476d5b#52b7bc0a7026dbbe0da66f5e8de6ce1031476d5b"
+source = "git+https://github.com/servo/core-foundation-rs?rev=e9a65bb15d591ec22649e03659db8095d4f2dd60#e9a65bb15d591ec22649e03659db8095d4f2dd60"
 dependencies = [
  "bitflags",
  "core-foundation",

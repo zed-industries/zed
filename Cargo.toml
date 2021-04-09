@@ -4,8 +4,8 @@ members = ["zed", "gpui"]
 [patch.crates-io]
 async-task = {git = "https://github.com/zed-industries/async-task", rev = "341b57d6de98cdfd7b418567b8de2022ca993a6e"}
 
-# TODO - Remove when this is merged: https://github.com/servo/core-foundation-rs/pull/454
-cocoa = {git = "https://github.com/zed-industries/core-foundation-rs", rev = "52b7bc0a7026dbbe0da66f5e8de6ce1031476d5b"}
-cocoa-foundation = {git = "https://github.com/zed-industries/core-foundation-rs", rev = "52b7bc0a7026dbbe0da66f5e8de6ce1031476d5b"}
-core-foundation = {git = "https://github.com/zed-industries/core-foundation-rs", rev = "52b7bc0a7026dbbe0da66f5e8de6ce1031476d5b"}
-core-graphics = {git = "https://github.com/zed-industries/core-foundation-rs", rev = "52b7bc0a7026dbbe0da66f5e8de6ce1031476d5b"}
+# TODO - Remove when a version is released with this PR: https://github.com/servo/core-foundation-rs/pull/454
+cocoa = {git = "https://github.com/servo/core-foundation-rs", rev = "e9a65bb15d591ec22649e03659db8095d4f2dd60"}
+cocoa-foundation = {git = "https://github.com/servo/core-foundation-rs", rev = "e9a65bb15d591ec22649e03659db8095d4f2dd60"}
+core-foundation = {git = "https://github.com/servo/core-foundation-rs", rev = "e9a65bb15d591ec22649e03659db8095d4f2dd60"}
+core-graphics = {git = "https://github.com/servo/core-foundation-rs", rev = "e9a65bb15d591ec22649e03659db8095d4f2dd60"}
