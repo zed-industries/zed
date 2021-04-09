@@ -1,7 +1,6 @@
 use gpui::{
     color::ColorU,
     fonts::{Properties, Weight},
-    platform::{current as platform, Runner},
     DebugContext, Element as _, Quad,
 };
 use log::LevelFilter;
@@ -11,13 +10,12 @@ use simplelog::SimpleLogger;
 fn main() {
     SimpleLogger::init(LevelFilter::Info, Default::default()).expect("could not initialize logger");
 
-    let mut app = gpui::App::new(()).unwrap();
-    platform::runner()
-        .on_finish_launching(move || {
-            app.platform().activate(true);
-            app.add_window(|_| TextView);
-        })
-        .run();
+    let app = gpui::App::new(()).unwrap();
+    app.on_finish_launching(|app| {
+        app.platform().activate(true);
+        app.add_window(|_| TextView);
+    })
+    .run();
 }
 
 struct TextView;

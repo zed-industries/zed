@@ -5,7 +5,7 @@ use gpui::{
     elements::*,
     geometry::{rect::RectF, vector::vec2f},
     keymap::Binding,
-    App, AppContext, Border, Entity, MutableAppContext, Quad, View, ViewContext,
+    AppContext, Border, Entity, MutableAppContext, Quad, View, ViewContext,
 };
 use std::cmp;
 

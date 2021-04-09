@@ -39,9 +39,7 @@ impl super::Platform for Platform {
 
     fn on_open_files(&self, _: Box<dyn FnMut(Vec<std::path::PathBuf>)>) {}
 
-    fn run(&self, _on_finish_launching: Box<dyn FnOnce() -> ()>) {
-        unimplemented!()
-    }
+    fn on_finish_launching(&self, _: Box<dyn FnOnce() -> ()>) {}
 
     fn dispatcher(&self) -> Arc<dyn super::Dispatcher> {
         self.dispatcher.clone()
@@ -61,8 +59,7 @@ impl super::Platform for Platform {
         Ok(Box::new(Window::new(options.bounds.size())))
     }
 
-    fn set_menus(&self, _menus: &[crate::Menu]) {
-    }
+    fn set_menus(&self, _menus: &[crate::Menu]) {}
 
     fn quit(&self) {}
 

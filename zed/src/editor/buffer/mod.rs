@@ -2193,13 +2193,13 @@ mod tests {
 
     #[test]
     fn test_edit_events() {
-        App::test((), |mut app| async move {
+        App::test((), |app| {
             let buffer_1_events = Rc::new(RefCell::new(Vec::new()));
             let buffer_2_events = Rc::new(RefCell::new(Vec::new()));
 
             let buffer1 = app.add_model(|_| Buffer::new(0, "abcdef"));
             let buffer2 = app.add_model(|_| Buffer::new(1, "abcdef"));
-            let ops = buffer1.update(&mut app, |buffer, ctx| {
+            let ops = buffer1.update(app, |buffer, ctx| {
                 let buffer_1_events = buffer_1_events.clone();
                 ctx.subscribe(&buffer1, move |_, event, _| {
                     buffer_1_events.borrow_mut().push(event.clone())
@@ -2211,7 +2211,7 @@ mod tests {
 
                 buffer.edit(Some(2..4), "XYZ", Some(ctx)).unwrap()
             });
-            buffer2.update(&mut app, |buffer, ctx| {
+            buffer2.update(app, |buffer, ctx| {
                 buffer.apply_ops(ops, Some(ctx)).unwrap();
             });
 
@@ -2715,12 +2715,12 @@ mod tests {
 
     #[test]
     fn test_is_modified() -> Result<()> {
-        App::test((), |mut app| async move {
+        App::test((), |app| {
             let model = app.add_model(|_| Buffer::new(0, "abc"));
             let events = Rc::new(RefCell::new(Vec::new()));
 
             // initially, the buffer isn't dirty.
-            model.update(&mut app, |buffer, ctx| {
+            model.update(app, |buffer, ctx| {
                 ctx.subscribe(&model, {
                     let events = events.clone();
                     move |_, event, _| events.borrow_mut().push(event.clone())
@@ -2733,7 +2733,7 @@ mod tests {
             });
 
             // after the first edit, the buffer is dirty, and emits a dirtied event.
-            model.update(&mut app, |buffer, ctx| {
+            model.update(app, |buffer, ctx| {
                 assert!(buffer.text() == "ac");
                 assert!(buffer.is_dirty());
                 assert_eq!(
@@ -2752,7 +2752,7 @@ mod tests {
             });
 
             // after saving, the buffer is not dirty, and emits a saved event.
-            model.update(&mut app, |buffer, ctx| {
+            model.update(app, |buffer, ctx| {
                 assert!(!buffer.is_dirty());
                 assert_eq!(*events.borrow(), &[Event::Saved]);
                 events.borrow_mut().clear();
@@ -2762,7 +2762,7 @@ mod tests {
             });
 
             // after editing again, the buffer is dirty, and emits another dirty event.
-            model.update(&mut app, |buffer, ctx| {
+            model.update(app, |buffer, ctx| {
                 assert!(buffer.text() == "aBDc");
                 assert!(buffer.is_dirty());
                 assert_eq!(
@@ -2788,7 +2788,7 @@ mod tests {
                 assert!(buffer.is_dirty());
             });
 
-            model.update(&mut app, |_, _| {
+            model.update(app, |_, _| {
                 assert_eq!(
                     *events.borrow(),
                     &[Event::Edited(vec![Edit {

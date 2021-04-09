@@ -11,7 +11,7 @@ use gpui::{
     fonts::{Properties, Weight},
     geometry::vector::vec2f,
     keymap::{self, Binding},
-    App, AppContext, Axis, Border, Entity, ModelHandle, MutableAppContext, View, ViewContext,
+    AppContext, Axis, Border, Entity, ModelHandle, MutableAppContext, View, ViewContext,
     ViewHandle, WeakViewHandle,
 };
 use std::cmp;
@@ -394,20 +394,23 @@ mod tests {
         editor, settings,
         workspace::{Workspace, WorkspaceView},
     };
-    use anyhow::Result;
     use gpui::App;
     use smol::fs;
     use tempdir::TempDir;
 
     #[test]
-    fn test_matching_paths() -> Result<()> {
-        App::test((), |mut app| async move {
-            let tmp_dir = TempDir::new("example")?;
-            fs::create_dir(tmp_dir.path().join("a")).await?;
-            fs::write(tmp_dir.path().join("a/banana"), "banana").await?;
-            fs::write(tmp_dir.path().join("a/bandana"), "bandana").await?;
-            super::init(&mut app);
-            editor::init(&mut app);
+    fn test_matching_paths() {
+        App::test_async((), |app| async move {
+            let tmp_dir = TempDir::new("example").unwrap();
+            fs::create_dir(tmp_dir.path().join("a")).await.unwrap();
+            fs::write(tmp_dir.path().join("a/banana"), "banana")
+                .await
+                .unwrap();
+            fs::write(tmp_dir.path().join("a/bandana"), "bandana")
+                .await
+                .unwrap();
+            super::init(app);
+            editor::init(app);
 
             let settings = settings::channel(&app.font_cache()).unwrap().1;
             let workspace = app.add_model(|ctx| Workspace::new(vec![tmp_dir.path().into()], ctx));
@@ -420,16 +423,15 @@ mod tests {
                 "file_finder:toggle".into(),
                 (),
             );
-            let (finder, query_buffer) = workspace_view.read(&app, |view, ctx| {
-                let finder = view
-                    .modal()
-                    .cloned()
-                    .unwrap()
-                    .downcast::<FileFinder>()
-                    .unwrap();
-                let query_buffer = finder.as_ref(ctx).query_buffer.clone();
-                (finder, query_buffer)
-            });
+
+            let finder = workspace_view
+                .as_ref(app)
+                .modal()
+                .cloned()
+                .unwrap()
+                .downcast::<FileFinder>()
+                .unwrap();
+            let query_buffer = finder.as_ref(app).query_buffer.clone();
 
             let chain = vec![finder.id(), query_buffer.id()];
             app.dispatch_action(window_id, chain.clone(), "buffer:insert", "b".to_string());
@@ -452,7 +454,7 @@ mod tests {
             //     (),
             // );
             // app.finish_pending_tasks().await; // Load Buffer and open BufferView.
-            // let active_pane = workspace_view.read(&app, |view, _| view.active_pane().clone());
+            // let active_pane = workspace_view.as_ref(app).active_pane().clone();
             // assert_eq!(
             //     active_pane.state(&app),
             //     pane::State {
@@ -462,7 +464,6 @@ mod tests {
             //         }]
             //     }
             // );
-            Ok(())
-        })
+        });
     }
 }

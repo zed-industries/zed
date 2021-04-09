@@ -5,7 +5,6 @@ mod fonts;
 mod geometry;
 mod platform;
 mod renderer;
-mod runner;
 mod sprite_cache;
 mod window;
 
@@ -13,15 +12,15 @@ use cocoa::base::{BOOL, NO, YES};
 pub use dispatcher::Dispatcher;
 pub use fonts::FontSystem;
 use platform::MacPlatform;
-pub use runner::Runner;
+use std::sync::Arc;
 use window::Window;
 
-pub fn app() -> impl super::Platform {
+pub fn platform() -> Arc<dyn super::Platform> {
     MacPlatform::new()
 }
 
-pub fn runner() -> impl super::Runner {
-    Runner::new()
+pub fn run() {
+    MacPlatform::run();
 }
 
 trait BoolExt {

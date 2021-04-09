@@ -648,8 +648,8 @@ mod test {
     use std::os::unix;
 
     #[test]
-    fn test_populate_and_search() -> Result<()> {
-        App::test((), |mut app| async move {
+    fn test_populate_and_search() {
+        App::test_async((), |app| async move {
             let dir = temp_tree(json!({
                 "root": {
                     "apple": "",
@@ -666,33 +666,31 @@ mod test {
             }));
 
             let root_link_path = dir.path().join("root_link");
-            unix::fs::symlink(&dir.path().join("root"), &root_link_path)?;
+            unix::fs::symlink(&dir.path().join("root"), &root_link_path).unwrap();
 
             let tree = app.add_model(|ctx| Worktree::new(1, root_link_path, Some(ctx)));
             app.finish_pending_tasks().await;
 
-            tree.read(&app, |tree, _| {
-                assert_eq!(tree.file_count(), 4);
-                let results = match_paths(&[tree.clone()], "bna", false, false, 10)
-                    .iter()
-                    .map(|result| tree.entry_path(result.entry_id))
-                    .collect::<Result<Vec<PathBuf>, _>>()
-                    .unwrap();
-                assert_eq!(
-                    results,
-                    vec![
-                        PathBuf::from("root_link/banana/carrot/date"),
-                        PathBuf::from("root_link/banana/carrot/endive"),
-                    ]
-                );
-            });
-            Ok(())
-        })
+            let tree = tree.as_ref(app);
+            assert_eq!(tree.file_count(), 4);
+            let results = match_paths(&[tree.clone()], "bna", false, false, 10)
+                .iter()
+                .map(|result| tree.entry_path(result.entry_id))
+                .collect::<Result<Vec<PathBuf>, _>>()
+                .unwrap();
+            assert_eq!(
+                results,
+                vec![
+                    PathBuf::from("root_link/banana/carrot/date"),
+                    PathBuf::from("root_link/banana/carrot/endive"),
+                ]
+            );
+        });
     }
 
     #[test]
     fn test_save_file() {
-        App::test((), |mut app| async move {
+        App::test_async((), |app| async move {
             let dir = temp_tree(json!({
                 "file1": "the old contents",
             }));
@@ -700,24 +698,18 @@ mod test {
             let tree = app.add_model(|ctx| Worktree::new(1, dir.path(), Some(ctx)));
             app.finish_pending_tasks().await;
 
-            let file_id = tree.read(&app, |tree, _| {
-                let entry = tree.files().next().unwrap();
-                assert_eq!(entry.path.file_name().unwrap(), "file1");
-                entry.entry_id
-            });
+            let entry = tree.as_ref(app).files().next().unwrap();
+            assert_eq!(entry.path.file_name().unwrap(), "file1");
+            let file_id = entry.entry_id;
 
             let buffer = Buffer::new(1, "a line of text.\n".repeat(10 * 1024));
 
-            tree.update(&mut app, |tree, ctx| {
+            tree.update(app, |tree, ctx| {
                 smol::block_on(tree.save(file_id, buffer.snapshot(), ctx.app())).unwrap()
             });
 
-            let history = tree
-                .read(&app, |tree, _| tree.load_history(file_id))
-                .await
-                .unwrap();
-
+            let history = tree.as_ref(app).load_history(file_id).await.unwrap();
             assert_eq!(history.base_text, buffer.text());
-        })
+        });
     }
 }
