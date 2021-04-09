@@ -1,27 +1,26 @@
-mod app;
 mod atlas;
 mod dispatcher;
 mod event;
 mod fonts;
 mod geometry;
+mod platform;
 mod renderer;
 mod runner;
 mod sprite_cache;
 mod window;
 
-use crate::platform;
-pub use app::App;
 use cocoa::base::{BOOL, NO, YES};
 pub use dispatcher::Dispatcher;
 pub use fonts::FontSystem;
+use platform::MacPlatform;
 pub use runner::Runner;
 use window::Window;
 
-pub fn app() -> impl platform::App {
-    App::new()
+pub fn app() -> impl super::Platform {
+    MacPlatform::new()
 }
 
-pub fn runner() -> impl platform::Runner {
+pub fn runner() -> impl super::Runner {
     Runner::new()
 }
 

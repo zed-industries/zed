@@ -2,7 +2,7 @@ use crate::{
     elements::ElementBox,
     executor,
     keymap::{self, Keystroke},
-    platform::{self, App as _, WindowOptions},
+    platform::{self, Platform as _, WindowOptions},
     presenter::Presenter,
     util::post_inc,
     AssetCache, AssetSource, FontCache, TextLayoutCache,
@@ -88,7 +88,7 @@ impl App {
         asset_source: A,
         f: G,
     ) -> T {
-        let platform = platform::test::app();
+        let platform = platform::test::platform();
         let foreground = Rc::new(executor::Foreground::test());
         let app = Self(Rc::new(RefCell::new(MutableAppContext::new(
             foreground.clone(),
@@ -269,7 +269,7 @@ impl App {
         self.0.borrow().font_cache.clone()
     }
 
-    pub fn platform(&self) -> Arc<dyn platform::App> {
+    pub fn platform(&self) -> Arc<dyn platform::Platform> {
         self.0.borrow().platform.clone()
     }
 }
@@ -309,7 +309,7 @@ type GlobalActionCallback = dyn FnMut(&dyn Any, &mut MutableAppContext);
 
 pub struct MutableAppContext {
     weak_self: Option<rc::Weak<RefCell<Self>>>,
-    platform: Arc<dyn platform::App>,
+    platform: Arc<dyn platform::Platform>,
     font_cache: Arc<FontCache>,
     assets: Arc<AssetCache>,
     ctx: AppContext,
@@ -337,7 +337,7 @@ pub struct MutableAppContext {
 impl MutableAppContext {
     pub fn new(
         foreground: Rc<executor::Foreground>,
-        platform: Arc<dyn platform::App>,
+        platform: Arc<dyn platform::Platform>,
         asset_source: impl AssetSource,
     ) -> Self {
         let fonts = platform.fonts();
@@ -381,7 +381,7 @@ impl MutableAppContext {
         &self.ctx
     }
 
-    pub fn platform(&self) -> Arc<dyn platform::App> {
+    pub fn platform(&self) -> Arc<dyn platform::Platform> {
         self.platform.clone()
     }
 
