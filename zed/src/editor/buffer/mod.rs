@@ -56,6 +56,40 @@ type HashMap<K, V> = std::collections::HashMap<K, V>;
 #[cfg(not(test))]
 type HashSet<T> = std::collections::HashSet<T>;
 
+pub struct Buffer {
+    file: Option<FileHandle>,
+    fragments: SumTree<Fragment>,
+    insertion_splits: HashMap<time::Local, SumTree<InsertionSplit>>,
+    edit_ops: HashMap<time::Local, EditOperation>,
+    pub version: time::Global,
+    saved_version: time::Global,
+    last_edit: time::Local,
+    undo_map: UndoMap,
+    selections: HashMap<SelectionSetId, Vec<Selection>>,
+    pub selections_last_update: SelectionsVersion,
+    deferred_ops: OperationQueue<Operation>,
+    deferred_replicas: HashSet<ReplicaId>,
+    replica_id: ReplicaId,
+    local_clock: time::Local,
+    lamport_clock: time::Lamport,
+}
+
+pub struct Snapshot {
+    fragments: SumTree<Fragment>,
+}
+
+#[derive(Clone)]
+pub struct History {
+    pub base_text: String,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct Selection {
+    pub start: Anchor,
+    pub end: Anchor,
+    pub reversed: bool,
+}
+
 #[derive(Clone, Default, Debug)]
 struct UndoMap(HashMap<time::Local, Vec<UndoOperation>>);
 
@@ -90,40 +124,6 @@ impl UndoMap {
             .max()
             .unwrap_or(0)
     }
-}
-
-pub struct Buffer {
-    file: Option<FileHandle>,
-    fragments: SumTree<Fragment>,
-    insertion_splits: HashMap<time::Local, SumTree<InsertionSplit>>,
-    edit_ops: HashMap<time::Local, EditOperation>,
-    pub version: time::Global,
-    saved_version: time::Global,
-    last_edit: time::Local,
-    undo_map: UndoMap,
-    selections: HashMap<SelectionSetId, Vec<Selection>>,
-    pub selections_last_update: SelectionsVersion,
-    deferred_ops: OperationQueue<Operation>,
-    deferred_replicas: HashSet<ReplicaId>,
-    replica_id: ReplicaId,
-    local_clock: time::Local,
-    lamport_clock: time::Lamport,
-}
-
-pub struct Snapshot {
-    fragments: SumTree<Fragment>,
-}
-
-#[derive(Clone)]
-pub struct History {
-    pub base_text: String,
-}
-
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct Selection {
-    pub start: Anchor,
-    pub end: Anchor,
-    pub reversed: bool,
 }
 
 #[derive(Clone)]
