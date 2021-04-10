@@ -29,7 +29,7 @@ use std::{
     sync::Arc,
 };
 
-const MAC_PLATFORM_IVAR: &'static str = "runner";
+const MAC_PLATFORM_IVAR: &'static str = "platform";
 static mut APP_CLASS: *const Class = ptr::null();
 static mut APP_DELEGATE_CLASS: *const Class = ptr::null();
 
@@ -90,35 +90,12 @@ struct Callbacks {
 }
 
 impl MacPlatform {
-    pub fn new() -> Arc<dyn platform::Platform> {
-        let result = Arc::new(Self {
+    pub fn new() -> Self {
+        Self {
             dispatcher: Arc::new(Dispatcher),
             fonts: Arc::new(FontSystem::new()),
             callbacks: Default::default(),
             menu_item_actions: Default::default(),
-        });
-
-        unsafe {
-            let app: id = msg_send![APP_CLASS, sharedApplication];
-            let app_delegate: id = msg_send![APP_DELEGATE_CLASS, new];
-            let self_ptr = result.as_ref() as *const Self as *const c_void;
-            app.setDelegate_(app_delegate);
-            (*app).set_ivar(MAC_PLATFORM_IVAR, self_ptr);
-            (*app_delegate).set_ivar(MAC_PLATFORM_IVAR, self_ptr);
-        }
-
-        result
-    }
-
-    pub fn run() {
-        unsafe {
-            let pool = NSAutoreleasePool::new(nil);
-            let app: id = msg_send![APP_CLASS, sharedApplication];
-
-            app.run();
-            pool.drain();
-            (*app).set_ivar(MAC_PLATFORM_IVAR, null_mut::<c_void>());
-            (*app.delegate()).set_ivar(MAC_PLATFORM_IVAR, null_mut::<c_void>());
         }
     }
 
@@ -220,8 +197,25 @@ impl platform::Platform for MacPlatform {
         self.callbacks.borrow_mut().open_files = Some(callback);
     }
 
-    fn on_finish_launching(&self, callback: Box<dyn FnOnce() -> ()>) {
-        self.callbacks.borrow_mut().finish_launching = Some(callback);
+    fn run(&self, on_finish_launching: Box<dyn FnOnce() -> ()>) {
+        self.callbacks.borrow_mut().finish_launching = Some(on_finish_launching);
+
+        unsafe {
+            let app: id = msg_send![APP_CLASS, sharedApplication];
+            let app_delegate: id = msg_send![APP_DELEGATE_CLASS, new];
+            app.setDelegate_(app_delegate);
+
+            let self_ptr = self as *const Self as *const c_void;
+            (*app).set_ivar(MAC_PLATFORM_IVAR, self_ptr);
+            (*app_delegate).set_ivar(MAC_PLATFORM_IVAR, self_ptr);
+
+            let pool = NSAutoreleasePool::new(nil);
+            app.run();
+            pool.drain();
+
+            (*app).set_ivar(MAC_PLATFORM_IVAR, null_mut::<c_void>());
+            (*app.delegate()).set_ivar(MAC_PLATFORM_IVAR, null_mut::<c_void>());
+        }
     }
 
     fn dispatcher(&self) -> Arc<dyn platform::Dispatcher> {

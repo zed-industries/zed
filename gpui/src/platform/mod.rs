@@ -28,7 +28,7 @@ pub trait Platform {
     fn on_resign_active(&self, callback: Box<dyn FnMut()>);
     fn on_event(&self, callback: Box<dyn FnMut(Event) -> bool>);
     fn on_open_files(&self, callback: Box<dyn FnMut(Vec<PathBuf>)>);
-    fn on_finish_launching(&self, callback: Box<dyn FnOnce() -> ()>);
+    fn run(&self, on_finish_launching: Box<dyn FnOnce() -> ()>);
 
     fn dispatcher(&self) -> Arc<dyn Dispatcher>;
     fn fonts(&self) -> Arc<dyn FontSystem>;

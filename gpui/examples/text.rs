@@ -10,12 +10,10 @@ use simplelog::SimpleLogger;
 fn main() {
     SimpleLogger::init(LevelFilter::Info, Default::default()).expect("could not initialize logger");
 
-    let app = gpui::App::new(()).unwrap();
-    app.on_finish_launching(|app| {
-        app.platform().activate(true);
-        app.add_window(|_| TextView);
-    })
-    .run();
+    gpui::App::new(()).unwrap().run(|ctx| {
+        ctx.platform().activate(true);
+        ctx.add_window(|_| TextView);
+    });
 }
 
 struct TextView;

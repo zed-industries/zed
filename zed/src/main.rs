@@ -35,7 +35,7 @@ fn main() {
             _ => ctx.dispatch_global_action(command, ()),
         }
     })
-    .on_finish_launching(move |ctx| {
+    .run(move |ctx| {
         workspace::init(ctx);
         editor::init(ctx);
         file_finder::init(ctx);
@@ -54,8 +54,7 @@ fn main() {
                 },
             );
         }
-    })
-    .run();
+    });
 }
 
 fn init_logger() {

@@ -39,7 +39,9 @@ impl super::Platform for Platform {
 
     fn on_open_files(&self, _: Box<dyn FnMut(Vec<std::path::PathBuf>)>) {}
 
-    fn on_finish_launching(&self, _: Box<dyn FnOnce() -> ()>) {}
+    fn run(&self, _on_finish_launching: Box<dyn FnOnce() -> ()>) {
+        unimplemented!()
+    }
 
     fn dispatcher(&self) -> Arc<dyn super::Dispatcher> {
         self.dispatcher.clone()

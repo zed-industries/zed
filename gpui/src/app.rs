@@ -92,8 +92,8 @@ impl App {
         let platform = platform::test::platform();
         let foreground = Rc::new(executor::Foreground::test());
         let ctx = Rc::new(RefCell::new(MutableAppContext::new(
-            foreground.clone(),
-            Arc::new(platform),
+            foreground,
+            Rc::new(platform),
             asset_source,
         )));
         ctx.borrow_mut().weak_self = Some(Rc::downgrade(&ctx));
@@ -110,7 +110,7 @@ impl App {
         let foreground = Rc::new(executor::Foreground::test());
         let ctx = Rc::new(RefCell::new(MutableAppContext::new(
             foreground.clone(),
-            Arc::new(platform),
+            Rc::new(platform),
             asset_source,
         )));
         let mut ctx_ref = ctx.borrow_mut();
@@ -200,24 +200,19 @@ impl App {
         self
     }
 
-    pub fn on_finish_launching<F>(self, callback: F) -> Self
-    where
-        F: 'static + FnOnce(&mut MutableAppContext),
-    {
-        let ctx = self.0.clone();
-        self.0
-            .borrow()
-            .platform
-            .on_finish_launching(Box::new(move || callback(&mut *ctx.borrow_mut())));
-        self
-    }
-
     pub fn set_menus(&self, menus: &[Menu]) {
         self.0.borrow().platform.set_menus(menus);
     }
 
-    pub fn run(self) {
-        platform::current::run();
+    pub fn run<F>(self, on_finish_launching: F)
+    where
+        F: 'static + FnOnce(&mut MutableAppContext),
+    {
+        let platform = self.platform();
+        platform.run(Box::new(move || {
+            let mut ctx = self.0.borrow_mut();
+            on_finish_launching(&mut *ctx);
+        }))
     }
 
     pub fn on_window_invalidated<F: 'static + FnMut(WindowInvalidation, &mut MutableAppContext)>(
@@ -354,7 +349,7 @@ impl App {
         self.0.borrow().font_cache.clone()
     }
 
-    pub fn platform(&self) -> Arc<dyn platform::Platform> {
+    pub fn platform(&self) -> Rc<dyn platform::Platform> {
         self.0.borrow().platform.clone()
     }
 }
@@ -394,7 +389,7 @@ type GlobalActionCallback = dyn FnMut(&dyn Any, &mut MutableAppContext);
 
 pub struct MutableAppContext {
     weak_self: Option<rc::Weak<RefCell<Self>>>,
-    platform: Arc<dyn platform::Platform>,
+    platform: Rc<dyn platform::Platform>,
     font_cache: Arc<FontCache>,
     assets: Arc<AssetCache>,
     ctx: AppContext,
@@ -422,7 +417,7 @@ pub struct MutableAppContext {
 impl MutableAppContext {
     pub fn new(
         foreground: Rc<executor::Foreground>,
-        platform: Arc<dyn platform::Platform>,
+        platform: Rc<dyn platform::Platform>,
         asset_source: impl AssetSource,
     ) -> Self {
         let fonts = platform.fonts();
@@ -466,7 +461,7 @@ impl MutableAppContext {
         &self.ctx
     }
 
-    pub fn platform(&self) -> Arc<dyn platform::Platform> {
+    pub fn platform(&self) -> Rc<dyn platform::Platform> {
         self.platform.clone()
     }
 

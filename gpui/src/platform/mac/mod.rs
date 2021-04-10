@@ -12,15 +12,11 @@ use cocoa::base::{BOOL, NO, YES};
 pub use dispatcher::Dispatcher;
 pub use fonts::FontSystem;
 use platform::MacPlatform;
-use std::sync::Arc;
+use std::rc::Rc;
 use window::Window;
 
-pub fn platform() -> Arc<dyn super::Platform> {
-    MacPlatform::new()
-}
-
-pub fn run() {
-    MacPlatform::run();
+pub fn platform() -> Rc<dyn super::Platform> {
+    Rc::new(MacPlatform::new())
 }
 
 trait BoolExt {
