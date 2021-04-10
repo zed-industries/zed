@@ -515,13 +515,11 @@ mod tests {
                 );
 
                 ctx.dispatch_action(window_id, vec![pane_2.id()], "pane:close_active_item", ());
-            });
 
-            app.read(|ctx| {
                 let w = workspace_view.read(ctx);
                 assert_eq!(w.panes.len(), 1);
                 assert_eq!(w.active_pane(), &pane_1);
-            })
+            });
         });
     }
 }

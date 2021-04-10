@@ -313,8 +313,11 @@ impl TestAppContext {
 
     pub fn update<T, F: FnOnce(&mut MutableAppContext) -> T>(&mut self, callback: F) -> T {
         let mut state = self.0.borrow_mut();
-        state.pending_flushes += 1;
+        // Don't increment pending flushes in order to effects to be flushed before the callback
+        // completes, which is helpful in tests.
         let result = callback(&mut *state);
+        // Flush effects after the callback just in case there are any. This can happen in edge
+        // cases such as the closure dropping handles.
         state.flush_effects();
         result
     }
@@ -895,7 +898,7 @@ impl MutableAppContext {
     }
 
     fn flush_effects(&mut self) {
-        self.pending_flushes -= 1;
+        self.pending_flushes = self.pending_flushes.saturating_sub(1);
 
         if !self.flushing_effects && self.pending_flushes == 0 {
             self.flushing_effects = true;
