@@ -402,7 +402,7 @@ impl Element for BufferElement {
         ctx: &mut AfterLayoutContext,
     ) {
         if let Some(layout) = layout {
-            let app = ctx.app.downgrade();
+            let app = ctx.app.as_ref();
 
             let view = self.view.read(app);
             view.clamp_scroll_left(

@@ -308,7 +308,7 @@ impl TestAppContext {
     }
 
     pub fn read<T, F: FnOnce(&AppContext) -> T>(&self, callback: F) -> T {
-        callback(self.0.borrow().downgrade())
+        callback(self.0.borrow().as_ref())
     }
 
     pub fn update<T, F: FnOnce(&mut MutableAppContext) -> T>(&mut self, callback: F) -> T {
@@ -436,10 +436,6 @@ impl MutableAppContext {
 
     pub fn upgrade(&self) -> App {
         App(self.weak_self.as_ref().unwrap().upgrade().unwrap())
-    }
-
-    pub fn downgrade(&self) -> &AppContext {
-        &self.ctx
     }
 
     pub fn platform(&self) -> Rc<dyn platform::Platform> {
@@ -679,7 +675,7 @@ impl MutableAppContext {
                 .get(&window_id)
                 .and_then(|w| w.views.get(view_id))
             {
-                context.extend(view.keymap_context(self.downgrade()));
+                context.extend(view.keymap_context(self.as_ref()));
                 context_chain.push(context.clone());
             } else {
                 return Err(anyhow!(
@@ -772,7 +768,7 @@ impl MutableAppContext {
                                 if ctx
                                     .dispatch_keystroke(
                                         window_id,
-                                        presenter.borrow().dispatch_path(ctx.downgrade()),
+                                        presenter.borrow().dispatch_path(ctx.as_ref()),
                                         keystroke,
                                     )
                                     .unwrap()
@@ -781,9 +777,8 @@ impl MutableAppContext {
                                 }
                             }
 
-                            let actions = presenter
-                                .borrow_mut()
-                                .dispatch_event(event, ctx.downgrade());
+                            let actions =
+                                presenter.borrow_mut().dispatch_event(event, ctx.as_ref());
                             for action in actions {
                                 ctx.dispatch_action_any(
                                     window_id,
@@ -815,7 +810,7 @@ impl MutableAppContext {
                     let presenter = presenter.clone();
                     self.on_window_invalidated(window_id, move |invalidation, ctx| {
                         let mut presenter = presenter.borrow_mut();
-                        presenter.invalidate(invalidation, ctx.downgrade());
+                        presenter.invalidate(invalidation, ctx.as_ref());
                         let scene =
                             presenter.build_scene(window.size(), window.scale_factor(), ctx);
                         window.present_scene(scene);
@@ -1771,7 +1766,7 @@ impl<'a, T: View> ViewContext<'a, T> {
                 window_id: self.window_id,
                 view_id: self.view_id,
                 callback: Box::new(move |view, payload, app, window_id, view_id| {
-                    if let Some(emitter_handle) = emitter_handle.upgrade(app.downgrade()) {
+                    if let Some(emitter_handle) = emitter_handle.upgrade(app.as_ref()) {
                         let model = view.downcast_mut().expect("downcast is type safe");
                         let payload = payload.downcast_ref().expect("downcast is type safe");
                         let mut ctx = ViewContext::new(app, window_id, view_id);
@@ -1797,7 +1792,7 @@ impl<'a, T: View> ViewContext<'a, T> {
                 window_id: self.window_id,
                 view_id: self.view_id,
                 callback: Box::new(move |view, payload, app, window_id, view_id| {
-                    if let Some(emitter_handle) = emitter_handle.upgrade(app.downgrade()) {
+                    if let Some(emitter_handle) = emitter_handle.upgrade(app.as_ref()) {
                         let model = view.downcast_mut().expect("downcast is type safe");
                         let payload = payload.downcast_ref().expect("downcast is type safe");
                         let mut ctx = ViewContext::new(app, window_id, view_id);
