@@ -109,9 +109,9 @@ mod tests {
                 .unwrap();
             assert_eq!(
                 workspace_view_1
-                    .as_ref(app)
+                    .read(app)
                     .workspace
-                    .as_ref(app)
+                    .read(app)
                     .worktrees()
                     .len(),
                 2

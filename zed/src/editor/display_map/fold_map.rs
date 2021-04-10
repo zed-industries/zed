@@ -22,7 +22,7 @@ pub struct FoldMap {
 
 impl FoldMap {
     pub fn new(buffer: ModelHandle<Buffer>, app: &AppContext) -> Self {
-        let text_summary = buffer.as_ref(app).text_summary();
+        let text_summary = buffer.read(app).text_summary();
         Self {
             buffer,
             folds: Vec::new(),
@@ -72,7 +72,7 @@ impl FoldMap {
         let offset = self.to_display_offset(point, app)?;
         let mut cursor = self.transforms.cursor();
         cursor.seek(&offset, SeekBias::Right);
-        let buffer = self.buffer.as_ref(app);
+        let buffer = self.buffer.read(app);
         Ok(Chars {
             cursor,
             offset: offset.0,
@@ -95,7 +95,7 @@ impl FoldMap {
         app: &AppContext,
     ) -> Result<()> {
         let mut edits = Vec::new();
-        let buffer = self.buffer.as_ref(app);
+        let buffer = self.buffer.read(app);
         for range in ranges.into_iter() {
             let start = range.start.to_offset(buffer)?;
             let end = range.end.to_offset(buffer)?;
@@ -124,7 +124,7 @@ impl FoldMap {
         ranges: impl IntoIterator<Item = Range<T>>,
         app: &AppContext,
     ) -> Result<()> {
-        let buffer = self.buffer.as_ref(app);
+        let buffer = self.buffer.read(app);
 
         let mut edits = Vec::new();
         for range in ranges.into_iter() {
@@ -184,7 +184,7 @@ impl FoldMap {
                 .ok_or_else(|| anyhow!("display point {:?} is out of range", point))?;
             assert!(transform.display_text.is_none());
             let end_buffer_offset =
-                (cursor.start().buffer.lines + overshoot).to_offset(self.buffer.as_ref(app))?;
+                (cursor.start().buffer.lines + overshoot).to_offset(self.buffer.read(app))?;
             offset += end_buffer_offset - cursor.start().buffer.chars;
         }
         Ok(DisplayOffset(offset))
@@ -208,7 +208,7 @@ impl FoldMap {
     }
 
     pub fn apply_edits(&mut self, edits: &[Edit], app: &AppContext) -> Result<()> {
-        let buffer = self.buffer.as_ref(app);
+        let buffer = self.buffer.read(app);
         let mut edits = edits.iter().cloned().peekable();
 
         let mut new_transforms = SumTree::new();
@@ -597,7 +597,7 @@ mod tests {
                 let mut map = FoldMap::new(buffer.clone(), app.as_ref());
 
                 {
-                    let buffer = buffer.as_ref(app);
+                    let buffer = buffer.read(app);
 
                     let fold_count = rng.gen_range(0..10);
                     let mut fold_ranges: Vec<Range<usize>> = Vec::new();
@@ -632,7 +632,7 @@ mod tests {
 
                 map.apply_edits(&edits, app.as_ref()).unwrap();
 
-                let buffer = map.buffer.as_ref(app);
+                let buffer = map.buffer.read(app);
                 let mut expected_text = buffer.text();
                 let mut expected_buffer_rows = Vec::new();
                 let mut next_row = buffer.max_point().row;
@@ -694,7 +694,7 @@ mod tests {
         }
 
         fn merged_fold_ranges(&self, app: &AppContext) -> Vec<Range<usize>> {
-            let buffer = self.buffer.as_ref(app);
+            let buffer = self.buffer.read(app);
             let mut fold_ranges = self
                 .folds
                 .iter()

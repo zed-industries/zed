@@ -409,7 +409,7 @@ pub trait WorktreeHandle {
 
 impl WorktreeHandle for ModelHandle<Worktree> {
     fn file(&self, entry_id: usize, app: &AppContext) -> Result<FileHandle> {
-        if entry_id >= self.as_ref(app).entry_count() {
+        if entry_id >= self.read(app).entry_count() {
             return Err(anyhow!("Entry does not exist in tree"));
         }
 
@@ -461,15 +461,15 @@ pub struct FileHandle {
 
 impl FileHandle {
     pub fn path(&self, app: &AppContext) -> PathBuf {
-        self.worktree.as_ref(app).entry_path(self.entry_id).unwrap()
+        self.worktree.read(app).entry_path(self.entry_id).unwrap()
     }
 
     pub fn load_history(&self, app: &AppContext) -> impl Future<Output = Result<History>> {
-        self.worktree.as_ref(app).load_history(self.entry_id)
+        self.worktree.read(app).load_history(self.entry_id)
     }
 
     pub fn save<'a>(&self, content: Snapshot, ctx: &AppContext) -> Task<Result<()>> {
-        let worktree = self.worktree.as_ref(ctx);
+        let worktree = self.worktree.read(ctx);
         worktree.save(self.entry_id, content, ctx)
     }
 
@@ -649,7 +649,7 @@ mod test {
 
     #[test]
     fn test_populate_and_search() {
-        App::test_async((), |app| async move {
+        App::test_async((), |mut app| async move {
             let dir = temp_tree(json!({
                 "root": {
                     "apple": "",
@@ -671,26 +671,28 @@ mod test {
             let tree = app.add_model(|ctx| Worktree::new(1, root_link_path, Some(ctx)));
             app.finish_pending_tasks().await;
 
-            let tree = tree.as_ref(app);
-            assert_eq!(tree.file_count(), 4);
-            let results = match_paths(&[tree.clone()], "bna", false, false, 10)
-                .iter()
-                .map(|result| tree.entry_path(result.entry_id))
-                .collect::<Result<Vec<PathBuf>, _>>()
-                .unwrap();
-            assert_eq!(
-                results,
-                vec![
-                    PathBuf::from("root_link/banana/carrot/date"),
-                    PathBuf::from("root_link/banana/carrot/endive"),
-                ]
-            );
+            app.read(|ctx| {
+                let tree = tree.read(ctx);
+                assert_eq!(tree.file_count(), 4);
+                let results = match_paths(&[tree.clone()], "bna", false, false, 10)
+                    .iter()
+                    .map(|result| tree.entry_path(result.entry_id))
+                    .collect::<Result<Vec<PathBuf>, _>>()
+                    .unwrap();
+                assert_eq!(
+                    results,
+                    vec![
+                        PathBuf::from("root_link/banana/carrot/date"),
+                        PathBuf::from("root_link/banana/carrot/endive"),
+                    ]
+                );
+            })
         });
     }
 
     #[test]
     fn test_save_file() {
-        App::test_async((), |app| async move {
+        App::test_async((), |mut app| async move {
             let dir = temp_tree(json!({
                 "file1": "the old contents",
             }));
@@ -698,17 +700,23 @@ mod test {
             let tree = app.add_model(|ctx| Worktree::new(1, dir.path(), Some(ctx)));
             app.finish_pending_tasks().await;
 
-            let entry = tree.as_ref(app).files().next().unwrap();
-            assert_eq!(entry.path.file_name().unwrap(), "file1");
-            let file_id = entry.entry_id;
-
             let buffer = Buffer::new(1, "a line of text.\n".repeat(10 * 1024));
 
-            tree.update(app, |tree, ctx| {
+            let entry = app.read(|ctx| {
+                let entry = tree.read(ctx).files().next().unwrap();
+                assert_eq!(entry.path.file_name().unwrap(), "file1");
+                entry
+            });
+            let file_id = entry.entry_id;
+
+            tree.update(&mut app, |tree, ctx| {
                 smol::block_on(tree.save(file_id, buffer.snapshot(), ctx.app())).unwrap()
             });
 
-            let history = tree.as_ref(app).load_history(file_id).await.unwrap();
+            let history = app
+                .read(|ctx| tree.read(ctx).load_history(file_id))
+                .await
+                .unwrap();
             assert_eq!(history.base_text, buffer.text());
         });
     }

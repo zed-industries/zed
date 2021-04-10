@@ -54,11 +54,11 @@ pub trait ItemViewHandle: Send + Sync {
 
 impl<T: ItemView> ItemViewHandle for ViewHandle<T> {
     fn title(&self, app: &AppContext) -> String {
-        self.as_ref(app).title(app)
+        self.read(app).title(app)
     }
 
     fn entry_id(&self, app: &AppContext) -> Option<(usize, usize)> {
-        self.as_ref(app).entry_id(app)
+        self.read(app).entry_id(app)
     }
 
     fn boxed_clone(&self) -> Box<dyn ItemViewHandle> {
@@ -93,7 +93,7 @@ impl<T: ItemView> ItemViewHandle for ViewHandle<T> {
     }
 
     fn is_dirty(&self, ctx: &AppContext) -> bool {
-        self.as_ref(ctx).is_dirty(ctx)
+        self.read(ctx).is_dirty(ctx)
     }
 
     fn id(&self) -> usize {
@@ -154,7 +154,7 @@ impl WorkspaceView {
     }
 
     pub fn contains_paths(&self, paths: &[PathBuf], app: &AppContext) -> bool {
-        self.workspace.as_ref(app).contains_paths(paths, app)
+        self.workspace.read(app).contains_paths(paths, app)
     }
 
     pub fn open_paths(&self, paths: &[PathBuf], app: &mut MutableAppContext) {
@@ -228,8 +228,8 @@ impl WorkspaceView {
     }
 
     pub fn open_example_entry(&mut self, ctx: &mut ViewContext<Self>) {
-        if let Some(tree) = self.workspace.as_ref(ctx).worktrees().iter().next() {
-            if let Some(file) = tree.as_ref(ctx).files().next() {
+        if let Some(tree) = self.workspace.read(ctx).worktrees().iter().next() {
+            if let Some(file) = tree.read(ctx).files().next() {
                 info!("open_entry ({}, {})", tree.id(), file.entry_id);
                 self.open_entry((tree.id(), file.entry_id), ctx);
             } else {
@@ -322,7 +322,7 @@ impl WorkspaceView {
     ) -> ViewHandle<Pane> {
         let new_pane = self.add_pane(ctx);
         self.activate_pane(new_pane.clone(), ctx);
-        if let Some(item) = pane.as_ref(ctx).active_item() {
+        if let Some(item) = pane.read(ctx).active_item() {
             if let Some(clone) = item.clone_on_split(ctx.app_mut()) {
                 self.add_item(clone, ctx);
             }
@@ -394,7 +394,7 @@ mod tests {
 
     #[test]
     fn test_open_entry() {
-        App::test_async((), |app| async move {
+        App::test_async((), |mut app| async move {
             let dir = temp_tree(json!({
                 "a": {
                     "aa": "aa contents",
@@ -406,70 +406,78 @@ mod tests {
             let settings = settings::channel(&app.font_cache()).unwrap().1;
             let workspace = app.add_model(|ctx| Workspace::new(vec![dir.path().into()], ctx));
             app.finish_pending_tasks().await; // Open and populate worktree.
-            let entries = workspace.file_entries(app);
+            let entries = app.read(|ctx| workspace.file_entries(ctx));
 
             let (_, workspace_view) =
                 app.add_window(|ctx| WorkspaceView::new(workspace.clone(), settings, ctx));
 
             // Open the first entry
-            workspace_view.update(app, |w, ctx| w.open_entry(entries[0], ctx));
+            workspace_view.update(&mut app, |w, ctx| w.open_entry(entries[0], ctx));
             app.finish_pending_tasks().await;
 
-            assert_eq!(
-                workspace_view
-                    .as_ref(app)
-                    .active_pane()
-                    .as_ref(app)
-                    .items()
-                    .len(),
-                1
-            );
+            app.read(|ctx| {
+                assert_eq!(
+                    workspace_view
+                        .read(ctx)
+                        .active_pane()
+                        .read(ctx)
+                        .items()
+                        .len(),
+                    1
+                )
+            });
 
             // Open the second entry
-            workspace_view.update(app, |w, ctx| w.open_entry(entries[1], ctx));
+            workspace_view.update(&mut app, |w, ctx| w.open_entry(entries[1], ctx));
             app.finish_pending_tasks().await;
 
-            let active_pane = workspace_view.as_ref(app).active_pane().as_ref(app);
-            assert_eq!(active_pane.items().len(), 2);
-            assert_eq!(
-                active_pane.active_item().unwrap().entry_id(app.as_ref()),
-                Some(entries[1])
-            );
+            app.read(|ctx| {
+                let active_pane = workspace_view.read(ctx).active_pane().read(ctx);
+                assert_eq!(active_pane.items().len(), 2);
+                assert_eq!(
+                    active_pane.active_item().unwrap().entry_id(ctx),
+                    Some(entries[1])
+                );
+            });
 
             // Open the first entry again
-            workspace_view.update(app, |w, ctx| w.open_entry(entries[0], ctx));
+            workspace_view.update(&mut app, |w, ctx| w.open_entry(entries[0], ctx));
             app.finish_pending_tasks().await;
 
-            let active_pane = workspace_view.as_ref(app).active_pane().as_ref(app);
-            assert_eq!(active_pane.items().len(), 2);
-            assert_eq!(
-                active_pane.active_item().unwrap().entry_id(app.as_ref()),
-                Some(entries[0])
-            );
+            app.read(|ctx| {
+                let active_pane = workspace_view.read(ctx).active_pane().read(ctx);
+                assert_eq!(active_pane.items().len(), 2);
+                assert_eq!(
+                    active_pane.active_item().unwrap().entry_id(ctx),
+                    Some(entries[0])
+                );
+            });
 
             // Open the third entry twice concurrently
-            workspace_view.update(app, |w, ctx| {
+            workspace_view.update(&mut app, |w, ctx| {
                 w.open_entry(entries[2], ctx);
                 w.open_entry(entries[2], ctx);
             });
             app.finish_pending_tasks().await;
 
-            assert_eq!(
-                workspace_view
-                    .as_ref(app)
-                    .active_pane()
-                    .as_ref(app)
-                    .items()
-                    .len(),
-                3
-            );
+            app.read(|ctx| {
+                assert_eq!(
+                    workspace_view
+                        .read(ctx)
+                        .active_pane()
+                        .read(ctx)
+                        .items()
+                        .len(),
+                    3
+                );
+            });
         });
     }
 
     #[test]
     fn test_pane_actions() {
-        App::test_async((), |app| async move {
-            pane::init(app);
+        App::test_async((), |mut app| async move {
+            app.update(|ctx| pane::init(ctx));
 
             let dir = temp_tree(json!({
                 "a": {
@@ -479,37 +487,41 @@ mod tests {
                 },
             }));
 
-            let settings = settings::channel(app.font_cache()).unwrap().1;
+            let settings = settings::channel(&app.font_cache()).unwrap().1;
             let workspace = app.add_model(|ctx| Workspace::new(vec![dir.path().into()], ctx));
             app.finish_pending_tasks().await; // Open and populate worktree.
-            let entries = workspace.file_entries(app);
+            let entries = app.read(|ctx| workspace.file_entries(ctx));
 
             let (window_id, workspace_view) =
                 app.add_window(|ctx| WorkspaceView::new(workspace.clone(), settings, ctx));
 
-            workspace_view.update(app, |w, ctx| w.open_entry(entries[0], ctx));
+            workspace_view.update(&mut app, |w, ctx| w.open_entry(entries[0], ctx));
             app.finish_pending_tasks().await;
 
-            let pane_1 = workspace_view.as_ref(app).active_pane().clone();
+            let pane_1 = app.read(|ctx| workspace_view.read(ctx).active_pane().clone());
 
             app.dispatch_action(window_id, vec![pane_1.id()], "pane:split_right", ());
-            let pane_2 = workspace_view.as_ref(app).active_pane().clone();
-            assert_ne!(pane_1, pane_2);
+            app.update(|ctx| {
+                let pane_2 = workspace_view.read(ctx).active_pane().clone();
+                assert_ne!(pane_1, pane_2);
 
-            assert_eq!(
-                pane_2
-                    .as_ref(app)
-                    .active_item()
-                    .unwrap()
-                    .entry_id(app.downgrade()),
-                Some(entries[0])
-            );
+                assert_eq!(
+                    pane_2
+                        .read(ctx)
+                        .active_item()
+                        .unwrap()
+                        .entry_id(ctx.as_ref()),
+                    Some(entries[0])
+                );
 
-            app.dispatch_action(window_id, vec![pane_2.id()], "pane:close_active_item", ());
+                ctx.dispatch_action(window_id, vec![pane_2.id()], "pane:close_active_item", ());
+            });
 
-            let w = workspace_view.as_ref(app);
-            assert_eq!(w.panes.len(), 1);
-            assert_eq!(w.active_pane(), &pane_1);
+            app.read(|ctx| {
+                let w = workspace_view.read(ctx);
+                assert_eq!(w.panes.len(), 1);
+                assert_eq!(w.active_pane(), &pane_1);
+            })
         });
     }
 }

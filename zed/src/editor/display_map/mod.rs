@@ -108,7 +108,7 @@ impl DisplayMap {
         app: &AppContext,
     ) -> Result<Anchor> {
         self.buffer
-            .as_ref(app)
+            .read(app)
             .anchor_before(point.to_buffer_point(self, bias, app)?)
     }
 
@@ -119,7 +119,7 @@ impl DisplayMap {
         app: &AppContext,
     ) -> Result<Anchor> {
         self.buffer
-            .as_ref(app)
+            .read(app)
             .anchor_after(point.to_buffer_point(self, bias, app)?)
     }
 
@@ -206,7 +206,7 @@ impl Point {
 
 impl Anchor {
     pub fn to_display_point(&self, map: &DisplayMap, app: &AppContext) -> Result<DisplayPoint> {
-        self.to_point(map.buffer.as_ref(app))?
+        self.to_point(map.buffer.read(app))?
             .to_display_point(map, app)
     }
 }
@@ -314,7 +314,7 @@ mod tests {
                 })
                 .unwrap();
 
-            let map = map.as_ref(app);
+            let map = map.read(app);
             assert_eq!(
                 map.chars_at(DisplayPoint::new(1, 0), app.as_ref())
                     .unwrap()
@@ -368,7 +368,7 @@ mod tests {
             let buffer = app.add_model(|_| Buffer::new(0, "aaa\n\t\tbbb"));
             let map = app.add_model(|ctx| DisplayMap::new(buffer.clone(), 4, ctx));
             assert_eq!(
-                map.as_ref(app).max_point(app.as_ref()),
+                map.read(app).max_point(app.as_ref()),
                 DisplayPoint::new(1, 11)
             )
         });

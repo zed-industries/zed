@@ -101,7 +101,7 @@ impl Workspace {
     pub fn contains_path(&self, path: &Path, app: &AppContext) -> bool {
         self.worktrees
             .iter()
-            .any(|worktree| worktree.as_ref(app).contains_path(path))
+            .any(|worktree| worktree.read(app).contains_path(path))
     }
 
     pub fn open_paths(&mut self, paths: &[PathBuf], ctx: &mut ModelContext<Self>) {
@@ -112,7 +112,7 @@ impl Workspace {
 
     pub fn open_path<'a>(&'a mut self, path: PathBuf, ctx: &mut ModelContext<Self>) {
         for tree in self.worktrees.iter() {
-            if tree.as_ref(ctx).contains_path(&path) {
+            if tree.read(ctx).contains_path(&path) {
                 return;
             }
         }
@@ -200,18 +200,18 @@ impl Entity for Workspace {
 
 #[cfg(test)]
 pub trait WorkspaceHandle {
-    fn file_entries(&self, app: &mut MutableAppContext) -> Vec<(usize, usize)>;
+    fn file_entries(&self, app: &AppContext) -> Vec<(usize, usize)>;
 }
 
 #[cfg(test)]
 impl WorkspaceHandle for ModelHandle<Workspace> {
-    fn file_entries(&self, app: &mut MutableAppContext) -> Vec<(usize, usize)> {
-        self.as_ref(app)
+    fn file_entries(&self, app: &AppContext) -> Vec<(usize, usize)> {
+        self.read(app)
             .worktrees()
             .iter()
             .flat_map(|tree| {
                 let tree_id = tree.id();
-                tree.as_ref(app)
+                tree.read(app)
                     .files()
                     .map(move |file| (tree_id, file.entry_id))
             })
@@ -228,7 +228,7 @@ mod tests {
 
     #[test]
     fn test_open_entry() {
-        App::test_async((), |app| async move {
+        App::test_async((), |mut app| async move {
             let dir = temp_tree(json!({
                 "a": {
                     "aa": "aa contents",
@@ -240,12 +240,12 @@ mod tests {
             app.finish_pending_tasks().await; // Open and populate worktree.
 
             // Get the first file entry.
-            let tree = workspace.as_ref(app).worktrees.iter().next().unwrap();
-            let entry_id = tree.as_ref(app).files().next().unwrap().entry_id;
+            let tree = app.read(|ctx| workspace.read(ctx).worktrees.iter().next().unwrap().clone());
+            let entry_id = app.read(|ctx| tree.read(ctx).files().next().unwrap().entry_id);
             let entry = (tree.id(), entry_id);
 
             // Open the same entry twice before it finishes loading.
-            let (future_1, future_2) = workspace.update(app, |w, app| {
+            let (future_1, future_2) = workspace.update(&mut app, |w, app| {
                 (
                     w.open_entry(entry, app).unwrap(),
                     w.open_entry(entry, app).unwrap(),
@@ -258,7 +258,7 @@ mod tests {
 
             // Open the same entry again now that it has loaded
             let handle_3 = workspace
-                .update(app, |w, app| w.open_entry(entry, app).unwrap())
+                .update(&mut app, |w, app| w.open_entry(entry, app).unwrap())
                 .await
                 .unwrap();
 

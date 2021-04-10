@@ -114,7 +114,7 @@ impl FileFinder {
             self.matches.len(),
             move |mut range, items, app| {
                 let finder = handle.upgrade(app).unwrap();
-                let finder = finder.as_ref(app);
+                let finder = finder.read(app);
                 let start = range.start;
                 range.end = cmp::min(range.end, finder.matches.len());
                 items.extend(finder.matches[range].iter().enumerate().filter_map(
@@ -287,7 +287,7 @@ impl FileFinder {
     }
 
     fn workspace_updated(&mut self, _: ModelHandle<Workspace>, ctx: &mut ViewContext<Self>) {
-        self.spawn_search(self.query_buffer.as_ref(ctx).text(ctx.app()), ctx);
+        self.spawn_search(self.query_buffer.read(ctx).text(ctx.app()), ctx);
     }
 
     fn on_query_buffer_event(
@@ -299,7 +299,7 @@ impl FileFinder {
         use buffer_view::Event::*;
         match event {
             Edited => {
-                let query = self.query_buffer.as_ref(ctx).text(ctx.app());
+                let query = self.query_buffer.read(ctx).text(ctx.app());
                 if query.is_empty() {
                     self.latest_search_id = util::post_inc(&mut self.search_count);
                     self.matches.clear();
@@ -371,18 +371,18 @@ impl FileFinder {
 
     fn worktree<'a>(&'a self, tree_id: usize, app: &'a AppContext) -> Option<&'a Worktree> {
         self.workspace
-            .as_ref(app)
+            .read(app)
             .worktrees()
             .get(&tree_id)
-            .map(|worktree| worktree.as_ref(app))
+            .map(|worktree| worktree.read(app))
     }
 
     fn worktrees(&self, app: &AppContext) -> Vec<Worktree> {
         self.workspace
-            .as_ref(app)
+            .read(app)
             .worktrees()
             .iter()
-            .map(|worktree| worktree.as_ref(app).clone())
+            .map(|worktree| worktree.read(app).clone())
             .collect()
     }
 }
@@ -400,7 +400,7 @@ mod tests {
 
     #[test]
     fn test_matching_paths() {
-        App::test_async((), |app| async move {
+        App::test_async((), |mut app| async move {
             let tmp_dir = TempDir::new("example").unwrap();
             fs::create_dir(tmp_dir.path().join("a")).await.unwrap();
             fs::write(tmp_dir.path().join("a/banana"), "banana")
@@ -409,8 +409,10 @@ mod tests {
             fs::write(tmp_dir.path().join("a/bandana"), "bandana")
                 .await
                 .unwrap();
-            super::init(app);
-            editor::init(app);
+            app.update(|ctx| {
+                super::init(ctx);
+                editor::init(ctx);
+            });
 
             let settings = settings::channel(&app.font_cache()).unwrap().1;
             let workspace = app.add_model(|ctx| Workspace::new(vec![tmp_dir.path().into()], ctx));
@@ -424,14 +426,16 @@ mod tests {
                 (),
             );
 
-            let finder = workspace_view
-                .as_ref(app)
-                .modal()
-                .cloned()
-                .unwrap()
-                .downcast::<FileFinder>()
-                .unwrap();
-            let query_buffer = finder.as_ref(app).query_buffer.clone();
+            let finder = app.read(|ctx| {
+                workspace_view
+                    .read(ctx)
+                    .modal()
+                    .cloned()
+                    .unwrap()
+                    .downcast::<FileFinder>()
+                    .unwrap()
+            });
+            let query_buffer = app.read(|ctx| finder.read(ctx).query_buffer.clone());
 
             let chain = vec![finder.id(), query_buffer.id()];
             app.dispatch_action(window_id, chain.clone(), "buffer:insert", "b".to_string());

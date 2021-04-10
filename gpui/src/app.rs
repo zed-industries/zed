@@ -45,8 +45,8 @@ pub trait View: Entity {
     }
 }
 
-pub trait ModelAsRef {
-    fn model<T: Entity>(&self, handle: &ModelHandle<T>) -> &T;
+pub trait ReadModel {
+    fn read_model<T: Entity>(&self, handle: &ModelHandle<T>) -> &T;
 }
 
 pub trait UpdateModel {
@@ -56,8 +56,8 @@ pub trait UpdateModel {
         F: FnOnce(&mut T, &mut ModelContext<T>) -> S;
 }
 
-pub trait ViewAsRef {
-    fn view<T: View>(&self, handle: &ViewHandle<T>) -> &T;
+pub trait ReadView {
+    fn read_view<T: View>(&self, handle: &ViewHandle<T>) -> &T;
 }
 
 pub trait UpdateView {
@@ -84,6 +84,9 @@ pub enum MenuItem<'a> {
 #[derive(Clone)]
 pub struct App(Rc<RefCell<MutableAppContext>>);
 
+#[derive(Clone)]
+pub struct TestAppContext(Rc<RefCell<MutableAppContext>>);
+
 impl App {
     pub fn test<T, A: AssetSource, F: FnOnce(&mut MutableAppContext) -> T>(
         asset_source: A,
@@ -101,27 +104,21 @@ impl App {
         f(&mut *ctx)
     }
 
-    pub fn test_async<'a, T, F, A: AssetSource, Fn>(asset_source: A, f: Fn) -> T
+    pub fn test_async<T, F, A: AssetSource, Fn>(asset_source: A, f: Fn) -> T
     where
-        Fn: FnOnce(&'a mut MutableAppContext) -> F,
-        F: Future<Output = T> + 'a,
+        Fn: FnOnce(TestAppContext) -> F,
+        F: Future<Output = T>,
     {
         let platform = platform::test::platform();
         let foreground = Rc::new(executor::Foreground::test());
-        let ctx = Rc::new(RefCell::new(MutableAppContext::new(
+        let ctx = TestAppContext(Rc::new(RefCell::new(MutableAppContext::new(
             foreground.clone(),
             Rc::new(platform),
             asset_source,
-        )));
-        let mut ctx_ref = ctx.borrow_mut();
-        ctx_ref.weak_self = Some(Rc::downgrade(&ctx));
-        let ctx = &mut *ctx_ref;
+        ))));
+        ctx.0.borrow_mut().weak_self = Some(Rc::downgrade(&ctx.0));
 
-        // TODO - is there a better way of getting this to compile?
-        let ctx = unsafe { std::mem::transmute(ctx) };
         let future = f(ctx);
-
-        drop(ctx_ref);
         smol::block_on(foreground.run(future))
     }
 
@@ -208,42 +205,27 @@ impl App {
     where
         F: 'static + FnOnce(&mut MutableAppContext),
     {
-        let platform = self.platform();
+        let platform = self.0.borrow().platform.clone();
         platform.run(Box::new(move || {
             let mut ctx = self.0.borrow_mut();
             on_finish_launching(&mut *ctx);
         }))
     }
 
-    pub fn on_window_invalidated<F: 'static + FnMut(WindowInvalidation, &mut MutableAppContext)>(
-        &self,
-        window_id: usize,
-        callback: F,
-    ) {
-        self.0
-            .borrow_mut()
-            .on_window_invalidated(window_id, callback);
+    pub fn font_cache(&self) -> Arc<FontCache> {
+        self.0.borrow().font_cache.clone()
     }
 
-    pub fn add_action<S, V, T, F>(&self, name: S, handler: F)
-    where
-        S: Into<String>,
-        V: View,
-        T: Any,
-        F: 'static + FnMut(&mut V, &T, &mut ViewContext<V>),
-    {
-        self.0.borrow_mut().add_action(name, handler);
+    fn update<T, F: FnOnce(&mut MutableAppContext) -> T>(&mut self, callback: F) -> T {
+        let mut state = self.0.borrow_mut();
+        state.pending_flushes += 1;
+        let result = callback(&mut *state);
+        state.flush_effects();
+        result
     }
+}
 
-    pub fn add_global_action<S, T, F>(&self, name: S, handler: F)
-    where
-        S: Into<String>,
-        T: 'static + Any,
-        F: 'static + FnMut(&T, &mut MutableAppContext),
-    {
-        self.0.borrow_mut().add_global_action(name, handler);
-    }
-
+impl TestAppContext {
     pub fn dispatch_action<T: 'static + Any>(
         &self,
         window_id: usize,
@@ -257,10 +239,6 @@ impl App {
             name,
             Box::new(arg).as_ref(),
         );
-    }
-
-    pub fn add_bindings<T: IntoIterator<Item = keymap::Binding>>(&self, bindings: T) {
-        self.0.borrow_mut().add_bindings(bindings);
     }
 
     pub fn dispatch_keystroke(
@@ -329,7 +307,7 @@ impl App {
         handle
     }
 
-    pub fn read<T, F: FnOnce(&AppContext) -> T>(&mut self, callback: F) -> T {
+    pub fn read<T, F: FnOnce(&AppContext) -> T>(&self, callback: F) -> T {
         callback(self.0.borrow().downgrade())
     }
 
@@ -354,7 +332,7 @@ impl App {
     }
 }
 
-impl UpdateModel for App {
+impl UpdateModel for TestAppContext {
     fn update_model<T, F, S>(&mut self, handle: &ModelHandle<T>, update: F) -> S
     where
         T: Entity,
@@ -368,7 +346,7 @@ impl UpdateModel for App {
     }
 }
 
-impl UpdateView for App {
+impl UpdateView for TestAppContext {
     fn update_view<T, F, S>(&mut self, handle: &ViewHandle<T>, update: F) -> S
     where
         T: View,
@@ -1249,8 +1227,8 @@ impl MutableAppContext {
     }
 }
 
-impl ModelAsRef for MutableAppContext {
-    fn model<T: Entity>(&self, handle: &ModelHandle<T>) -> &T {
+impl ReadModel for MutableAppContext {
+    fn read_model<T: Entity>(&self, handle: &ModelHandle<T>) -> &T {
         if let Some(model) = self.ctx.models.get(&handle.model_id) {
             model
                 .as_any()
@@ -1287,8 +1265,8 @@ impl UpdateModel for MutableAppContext {
     }
 }
 
-impl ViewAsRef for MutableAppContext {
-    fn view<T: View>(&self, handle: &ViewHandle<T>) -> &T {
+impl ReadView for MutableAppContext {
+    fn read_view<T: View>(&self, handle: &ViewHandle<T>) -> &T {
         if let Some(window) = self.ctx.windows.get(&handle.window_id) {
             if let Some(view) = window.views.get(&handle.view_id) {
                 view.as_any().downcast_ref().expect("Downcast is type safe")
@@ -1387,8 +1365,8 @@ impl AppContext {
     }
 }
 
-impl ModelAsRef for AppContext {
-    fn model<T: Entity>(&self, handle: &ModelHandle<T>) -> &T {
+impl ReadModel for AppContext {
+    fn read_model<T: Entity>(&self, handle: &ModelHandle<T>) -> &T {
         if let Some(model) = self.models.get(&handle.model_id) {
             model
                 .as_any()
@@ -1400,8 +1378,8 @@ impl ModelAsRef for AppContext {
     }
 }
 
-impl ViewAsRef for AppContext {
-    fn view<T: View>(&self, handle: &ViewHandle<T>) -> &T {
+impl ReadView for AppContext {
+    fn read_view<T: View>(&self, handle: &ViewHandle<T>) -> &T {
         if let Some(window) = self.windows.get(&handle.window_id) {
             if let Some(view) = window.views.get(&handle.view_id) {
                 view.as_any()
@@ -1672,9 +1650,9 @@ impl<'a, T: Entity> ModelContext<'a, T> {
     }
 }
 
-impl<M> ModelAsRef for ModelContext<'_, M> {
-    fn model<T: Entity>(&self, handle: &ModelHandle<T>) -> &T {
-        self.app.model(handle)
+impl<M> ReadModel for ModelContext<'_, M> {
+    fn read_model<T: Entity>(&self, handle: &ModelHandle<T>) -> &T {
+        self.app.read_model(handle)
     }
 }
 
@@ -1927,9 +1905,9 @@ impl<'a, T: View> ViewContext<'a, T> {
     }
 }
 
-impl<V> ModelAsRef for ViewContext<'_, V> {
-    fn model<T: Entity>(&self, handle: &ModelHandle<T>) -> &T {
-        self.app.model(handle)
+impl<V> ReadModel for ViewContext<'_, V> {
+    fn read_model<T: Entity>(&self, handle: &ModelHandle<T>) -> &T {
+        self.app.read_model(handle)
     }
 }
 
@@ -1943,9 +1921,9 @@ impl<V: View> UpdateModel for ViewContext<'_, V> {
     }
 }
 
-impl<V: View> ViewAsRef for ViewContext<'_, V> {
-    fn view<T: View>(&self, handle: &ViewHandle<T>) -> &T {
-        self.app.view(handle)
+impl<V: View> ReadView for ViewContext<'_, V> {
+    fn read_view<T: View>(&self, handle: &ViewHandle<T>) -> &T {
+        self.app.read_view(handle)
     }
 }
 
@@ -1994,8 +1972,8 @@ impl<T: Entity> ModelHandle<T> {
         self.model_id
     }
 
-    pub fn as_ref<'a, A: ModelAsRef>(&self, app: &'a A) -> &'a T {
-        app.model(self)
+    pub fn read<'a, A: ReadModel>(&self, app: &'a A) -> &'a T {
+        app.read_model(self)
     }
 
     pub fn update<A, F, S>(&self, app: &mut A, update: F) -> S
@@ -2122,8 +2100,8 @@ impl<T: View> ViewHandle<T> {
         self.view_id
     }
 
-    pub fn as_ref<'a, A: ViewAsRef>(&self, app: &'a A) -> &'a T {
-        app.view(self)
+    pub fn read<'a, A: ReadView>(&self, app: &'a A) -> &'a T {
+        app.read_view(self)
     }
 
     pub fn update<A, F, S>(&self, app: &mut A, update: F) -> S
@@ -2470,9 +2448,9 @@ mod tests {
                 ctx.notify();
                 ctx.emit(2);
             });
-            assert_eq!(handle_1.as_ref(app).events, vec!["updated".to_string()]);
+            assert_eq!(handle_1.read(app).events, vec!["updated".to_string()]);
             assert_eq!(
-                handle_2.as_ref(app).events,
+                handle_2.read(app).events,
                 vec![
                     "observed event 1".to_string(),
                     "notified".to_string(),
@@ -2518,10 +2496,10 @@ mod tests {
             });
 
             handle_2.update(app, |_, c| c.emit(7));
-            assert_eq!(handle_1.as_ref(app).events, vec![7]);
+            assert_eq!(handle_1.read(app).events, vec![7]);
 
             handle_2.update(app, |_, c| c.emit(5));
-            assert_eq!(handle_1.as_ref(app).events, vec![7, 10, 5]);
+            assert_eq!(handle_1.read(app).events, vec![7, 10, 5]);
         })
     }
 
@@ -2544,9 +2522,9 @@ mod tests {
 
             handle_1.update(app, |_, c| {
                 c.observe(&handle_2, move |model, observed, c| {
-                    model.events.push(observed.as_ref(c).count);
+                    model.events.push(observed.read(c).count);
                     c.observe(&handle_2b, |model, observed, c| {
-                        model.events.push(observed.as_ref(c).count * 2);
+                        model.events.push(observed.read(c).count * 2);
                     });
                 });
             });
@@ -2555,13 +2533,13 @@ mod tests {
                 model.count = 7;
                 c.notify()
             });
-            assert_eq!(handle_1.as_ref(app).events, vec![7]);
+            assert_eq!(handle_1.read(app).events, vec![7]);
 
             handle_2.update(app, |model, c| {
                 model.count = 5;
                 c.notify()
             });
-            assert_eq!(handle_1.as_ref(app).events, vec![7, 10, 5])
+            assert_eq!(handle_1.read(app).events, vec![7, 10, 5])
         })
     }
 
@@ -2576,25 +2554,25 @@ mod tests {
             type Event = ();
         }
 
-        App::test_async((), |app| async move {
+        App::test_async((), |mut app| async move {
             let handle = app.add_model(|_| Model::default());
             handle
-                .update(app, |_, c| {
+                .update(&mut app, |_, c| {
                     c.spawn(async { 7 }, |model, output, _| {
                         model.count = output;
                     })
                 })
                 .await;
-            assert_eq!(handle.as_ref(app).count, 7);
+            app.read(|ctx| assert_eq!(handle.read(ctx).count, 7));
 
             handle
-                .update(app, |_, c| {
+                .update(&mut app, |_, c| {
                     c.spawn(async { 14 }, |model, output, _| {
                         model.count = output;
                     })
                 })
                 .await;
-            assert_eq!(handle.as_ref(app).count, 14);
+            app.read(|ctx| assert_eq!(handle.read(ctx).count, 14));
         });
     }
 
@@ -2609,10 +2587,10 @@ mod tests {
             type Event = ();
         }
 
-        App::test_async((), |app| async move {
+        App::test_async((), |mut app| async move {
             let handle = app.add_model(|_| Model::default());
             handle
-                .update(app, |_, c| {
+                .update(&mut app, |_, c| {
                     c.spawn_stream(
                         smol::stream::iter(vec![1, 2, 3]),
                         |model, output, _| {
@@ -2624,7 +2602,7 @@ mod tests {
                     )
                 })
                 .await;
-            assert_eq!(handle.as_ref(app).events, [Some(1), Some(2), Some(3), None])
+            app.read(|ctx| assert_eq!(handle.read(ctx).events, [Some(1), Some(2), Some(3), None]));
         })
     }
 
@@ -2674,9 +2652,9 @@ mod tests {
                 ctx.emit(1);
                 ctx.emit(2);
             });
-            assert_eq!(handle_1.as_ref(app).events, vec!["updated".to_string()]);
+            assert_eq!(handle_1.read(app).events, vec!["updated".to_string()]);
             assert_eq!(
-                handle_2.as_ref(app).events,
+                handle_2.read(app).events,
                 vec![
                     "observed event 1".to_string(),
                     "observed event 2".to_string(),
@@ -2742,13 +2720,13 @@ mod tests {
             });
 
             handle_2.update(app, |_, c| c.emit(7));
-            assert_eq!(handle_1.as_ref(app).events, vec![7]);
+            assert_eq!(handle_1.read(app).events, vec![7]);
 
             handle_2.update(app, |_, c| c.emit(5));
-            assert_eq!(handle_1.as_ref(app).events, vec![7, 10, 5]);
+            assert_eq!(handle_1.read(app).events, vec![7, 10, 5]);
 
             handle_3.update(app, |_, c| c.emit(9));
-            assert_eq!(handle_1.as_ref(app).events, vec![7, 10, 5, 9]);
+            assert_eq!(handle_1.read(app).events, vec![7, 10, 5, 9]);
         })
     }
 
@@ -2837,7 +2815,7 @@ mod tests {
 
             view.update(app, |_, c| {
                 c.observe(&model, |me, observed, c| {
-                    me.events.push(observed.as_ref(c).count)
+                    me.events.push(observed.read(c).count)
                 });
             });
 
@@ -2845,7 +2823,7 @@ mod tests {
                 model.count = 11;
                 c.notify();
             });
-            assert_eq!(view.as_ref(app).events, vec![11]);
+            assert_eq!(view.read(app).events, vec![11]);
         })
     }
 
@@ -2942,7 +2920,7 @@ mod tests {
             });
 
             assert_eq!(
-                view_1.as_ref(app).events,
+                view_1.read(app).events,
                 [
                     "self focused".to_string(),
                     "self blurred".to_string(),
@@ -2975,24 +2953,24 @@ mod tests {
             }
         }
 
-        App::test_async((), |app| async move {
-            let (_, handle) = app.add_window(|_| View::default());
+        App::test_async((), |mut app| async move {
+            let handle = app.add_window(|_| View::default()).1;
             handle
-                .update(app, |_, c| {
+                .update(&mut app, |_, c| {
                     c.spawn(async { 7 }, |me, output, _| {
                         me.count = output;
                     })
                 })
                 .await;
-            assert_eq!(handle.as_ref(app).count, 7);
+            app.read(|ctx| assert_eq!(handle.read(ctx).count, 7));
             handle
-                .update(app, |_, c| {
+                .update(&mut app, |_, c| {
                     c.spawn(async { 14 }, |me, output, _| {
                         me.count = output;
                     })
                 })
                 .await;
-            assert_eq!(handle.as_ref(app).count, 14);
+            app.read(|ctx| assert_eq!(handle.read(ctx).count, 14));
         });
     }
 
@@ -3017,10 +2995,10 @@ mod tests {
             }
         }
 
-        App::test_async((), |app| async move {
+        App::test_async((), |mut app| async move {
             let (_, handle) = app.add_window(|_| View::default());
             handle
-                .update(app, |_, c| {
+                .update(&mut app, |_, c| {
                     c.spawn_stream(
                         smol::stream::iter(vec![1_usize, 2, 3]),
                         |me, output, _| {
@@ -3033,7 +3011,7 @@ mod tests {
                 })
                 .await;
 
-            assert_eq!(handle.as_ref(app).events, [Some(1), Some(2), Some(3), None])
+            app.read(|ctx| assert_eq!(handle.read(ctx).events, [Some(1), Some(2), Some(3), None]))
         });
     }
 
@@ -3335,49 +3313,49 @@ mod tests {
             type Event = ();
         }
 
-        App::test_async((), |app| async move {
+        App::test_async((), |mut app| async move {
             let model = app.add_model(|_| Model);
             let (_, view) = app.add_window(|_| View);
 
-            model.update(app, |_, ctx| {
+            model.update(&mut app, |_, ctx| {
                 ctx.spawn(async {}, |_, _, _| {}).detach();
                 // Cancel this task
                 drop(ctx.spawn(async {}, |_, _, _| {}));
             });
 
-            view.update(app, |_, ctx| {
+            view.update(&mut app, |_, ctx| {
                 ctx.spawn(async {}, |_, _, _| {}).detach();
                 // Cancel this task
                 drop(ctx.spawn(async {}, |_, _, _| {}));
             });
 
-            assert!(!app.future_handlers.borrow().is_empty());
+            assert!(!app.0.borrow().future_handlers.borrow().is_empty());
             app.finish_pending_tasks().await;
-            assert!(app.future_handlers.borrow().is_empty());
+            assert!(app.0.borrow().future_handlers.borrow().is_empty());
             app.finish_pending_tasks().await; // Don't block if there are no tasks
 
-            model.update(app, |_, ctx| {
+            model.update(&mut app, |_, ctx| {
                 ctx.spawn_stream(smol::stream::iter(vec![1, 2, 3]), |_, _, _| {}, |_, _| {})
                     .detach();
                 // Cancel this task
                 drop(ctx.spawn_stream(smol::stream::iter(vec![1, 2, 3]), |_, _, _| {}, |_, _| {}));
             });
 
-            view.update(app, |_, ctx| {
+            view.update(&mut app, |_, ctx| {
                 ctx.spawn_stream(smol::stream::iter(vec![1, 2, 3]), |_, _, _| {}, |_, _| {})
                     .detach();
                 // Cancel this task
                 drop(ctx.spawn_stream(smol::stream::iter(vec![1, 2, 3]), |_, _, _| {}, |_, _| {}));
             });
 
-            assert!(!app.stream_handlers.borrow().is_empty());
+            assert!(!app.0.borrow().stream_handlers.borrow().is_empty());
             app.finish_pending_tasks().await;
-            assert!(app.stream_handlers.borrow().is_empty());
+            assert!(app.0.borrow().stream_handlers.borrow().is_empty());
             app.finish_pending_tasks().await; // Don't block if there are no tasks
 
             // Tasks are considered finished when we drop handles
             let mut tasks = Vec::new();
-            model.update(app, |_, ctx| {
+            model.update(&mut app, |_, ctx| {
                 tasks.push(Box::new(ctx.spawn(async {}, |_, _, _| {})));
                 tasks.push(Box::new(ctx.spawn_stream(
                     smol::stream::iter(vec![1, 2, 3]),
@@ -3386,7 +3364,7 @@ mod tests {
                 )));
             });
 
-            view.update(app, |_, ctx| {
+            view.update(&mut app, |_, ctx| {
                 tasks.push(Box::new(ctx.spawn(async {}, |_, _, _| {})));
                 tasks.push(Box::new(ctx.spawn_stream(
                     smol::stream::iter(vec![1, 2, 3]),
@@ -3395,12 +3373,12 @@ mod tests {
                 )));
             });
 
-            assert!(!app.stream_handlers.borrow().is_empty());
+            assert!(!app.0.borrow().stream_handlers.borrow().is_empty());
 
             let finish_pending_tasks = app.finish_pending_tasks();
             drop(tasks);
             finish_pending_tasks.await;
-            assert!(app.stream_handlers.borrow().is_empty());
+            assert!(app.0.borrow().stream_handlers.borrow().is_empty());
             app.finish_pending_tasks().await; // Don't block if there are no tasks
         });
     }
