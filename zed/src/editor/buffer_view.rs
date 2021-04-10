@@ -127,7 +127,7 @@ impl BufferView {
         });
         ctx.observe(&display_map, Self::on_display_map_changed);
 
-        let (selection_set_id, ops) = buffer.update(ctx, |buffer, ctx| {
+        let (selection_set_id, op) = buffer.update(ctx, |buffer, ctx| {
             buffer.add_selection_set(
                 vec![Selection {
                     start: buffer.anchor_before(0).unwrap(),
@@ -719,7 +719,7 @@ impl BufferView {
             .unwrap()
     }
 
-    fn update_selections<'a>(&self, selections: Vec<Selection>, ctx: &mut ViewContext<Self>) {
+    fn update_selections(&self, selections: Vec<Selection>, ctx: &mut ViewContext<Self>) {
         let op = self.buffer.update(ctx, |buffer, ctx| {
             buffer
                 .update_selection_set(self.selection_set_id, selections, Some(ctx))
