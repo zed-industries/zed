@@ -17,8 +17,6 @@ pub struct Window {
     resize_handlers: Vec<Box<dyn FnMut(&mut dyn super::WindowContext)>>,
 }
 
-pub struct WindowContext {}
-
 impl Platform {
     fn new() -> Self {
         Self {

@@ -21,8 +21,8 @@ pub use executor::Task;
 pub mod color;
 pub mod json;
 pub mod keymap;
-pub mod platform;
-pub use platform::Event;
+mod platform;
+pub use platform::{Event, PathPromptOptions};
 pub use presenter::{
     AfterLayoutContext, Axis, DebugContext, EventContext, LayoutContext, PaintContext,
     SizeConstraint, Vector2FExt,

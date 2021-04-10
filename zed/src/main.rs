@@ -1,5 +1,5 @@
 use fs::OpenOptions;
-use gpui::platform::PathPromptOptions;
+use gpui::PathPromptOptions;
 use log::LevelFilter;
 use simplelog::SimpleLogger;
 use std::{fs, path::PathBuf};
