@@ -66,7 +66,8 @@ pub struct Buffer {
     last_edit: time::Local,
     undo_map: UndoMap,
     history: History,
-    selections: HashMap<SelectionSetId, Vec<Selection>>,
+    pending_transaction: Option<PendingTransaction>,
+    selections: HashMap<SelectionSetId, Arc<[Selection]>>,
     pub selections_last_update: SelectionsVersion,
     deferred_ops: OperationQueue<Operation>,
     deferred_replicas: HashSet<ReplicaId>,
@@ -80,8 +81,22 @@ pub struct Snapshot {
 }
 
 #[derive(Clone)]
-struct EditGroup {
+struct SelectionSetSnapshot {
+    set_id: SelectionSetId,
+    before_transaction: Arc<[Selection]>,
+    after_transaction: Arc<[Selection]>,
+}
+
+#[derive(Clone)]
+struct PendingTransaction {
+    start: time::Global,
+    buffer_was_dirty: bool,
+}
+
+#[derive(Clone)]
+struct Transaction {
     edits: Vec<time::Local>,
+    selections: Option<SelectionSetSnapshot>,
     last_edit_at: Instant,
 }
 
@@ -89,8 +104,9 @@ struct EditGroup {
 pub struct History {
     pub base_text: Arc<str>,
     ops: HashMap<time::Local, EditOperation>,
-    undo_stack: Vec<EditGroup>,
-    redo_stack: Vec<EditGroup>,
+    undo_stack: Vec<Transaction>,
+    redo_stack: Vec<Transaction>,
+    transaction_depth: usize,
     group_interval: Duration,
 }
 
@@ -101,6 +117,7 @@ impl History {
             ops: Default::default(),
             undo_stack: Vec::new(),
             redo_stack: Vec::new(),
+            transaction_depth: 0,
             group_interval: UNDO_GROUP_INTERVAL,
         }
     }
@@ -109,37 +126,85 @@ impl History {
         self.ops.insert(op.id, op);
     }
 
-    fn push_undo(&mut self, edit_id: time::Local, now: Instant) {
-        if let Some(edit_group) = self.undo_stack.last_mut() {
-            if now - edit_group.last_edit_at <= self.group_interval {
-                edit_group.edits.push(edit_id);
-                edit_group.last_edit_at = now;
+    fn start_transaction(
+        &mut self,
+        selections: Option<(SelectionSetId, Arc<[Selection]>)>,
+        now: Instant,
+    ) -> bool {
+        self.transaction_depth += 1;
+        if self.transaction_depth == 1 {
+            if let Some(transaction) = self.undo_stack.last_mut() {
+                if now - transaction.last_edit_at <= self.group_interval {
+                    transaction.last_edit_at = now;
+                } else {
+                    self.undo_stack.push(Transaction {
+                        edits: Vec::new(),
+                        selections: selections.map(|(set_id, selections)| SelectionSetSnapshot {
+                            set_id,
+                            before_transaction: selections.clone(),
+                            after_transaction: selections,
+                        }),
+                        last_edit_at: now,
+                    });
+                }
             } else {
-                self.undo_stack.push(EditGroup {
-                    edits: vec![edit_id],
+                self.undo_stack.push(Transaction {
+                    edits: Vec::new(),
+                    selections: selections.map(|(set_id, selections)| SelectionSetSnapshot {
+                        set_id,
+                        before_transaction: selections.clone(),
+                        after_transaction: selections,
+                    }),
                     last_edit_at: now,
                 });
             }
+            true
         } else {
-            self.undo_stack.push(EditGroup {
-                edits: vec![edit_id],
-                last_edit_at: now,
-            });
+            false
         }
     }
 
-    fn pop_undo(&mut self) -> Option<&EditGroup> {
-        if let Some(edit_group) = self.undo_stack.pop() {
-            self.redo_stack.push(edit_group);
+    fn end_transaction(
+        &mut self,
+        selections: Option<(SelectionSetId, Arc<[Selection]>)>,
+        now: Instant,
+    ) -> bool {
+        assert_ne!(self.transaction_depth, 0);
+        self.transaction_depth -= 1;
+        if self.transaction_depth == 0 {
+            let transaction = self.undo_stack.last_mut().unwrap();
+            if let Some((set_id, selections)) = selections {
+                if let Some(transaction_selections) = &mut transaction.selections {
+                    assert_eq!(set_id, transaction_selections.set_id);
+                    transaction_selections.after_transaction = selections;
+                }
+            }
+            transaction.last_edit_at = now;
+            true
+        } else {
+            false
+        }
+    }
+
+    fn push_undo(&mut self, edit_id: time::Local) {
+        assert_ne!(self.transaction_depth, 0);
+        self.undo_stack.last_mut().unwrap().edits.push(edit_id);
+    }
+
+    fn pop_undo(&mut self) -> Option<&Transaction> {
+        assert_eq!(self.transaction_depth, 0);
+        if let Some(transaction) = self.undo_stack.pop() {
+            self.redo_stack.push(transaction);
             self.redo_stack.last()
         } else {
             None
         }
     }
 
-    fn pop_redo(&mut self) -> Option<&EditGroup> {
-        if let Some(edit_group) = self.redo_stack.pop() {
-            self.undo_stack.push(edit_group);
+    fn pop_redo(&mut self) -> Option<&Transaction> {
+        assert_eq!(self.transaction_depth, 0);
+        if let Some(transaction) = self.redo_stack.pop() {
+            self.undo_stack.push(transaction);
             self.undo_stack.last()
         } else {
             None
@@ -274,7 +339,7 @@ pub enum Operation {
     },
     UpdateSelections {
         set_id: SelectionSetId,
-        selections: Option<Vec<Selection>>,
+        selections: Option<Arc<[Selection]>>,
         lamport_timestamp: time::Lamport,
     },
 }
@@ -364,6 +429,7 @@ impl Buffer {
             last_edit: time::Local::default(),
             undo_map: Default::default(),
             history,
+            pending_transaction: None,
             selections: HashMap::default(),
             selections_last_update: 0,
             deferred_ops: OperationQueue::new(),
@@ -545,6 +611,68 @@ impl Buffer {
         self.deferred_ops.len()
     }
 
+    pub fn start_transaction(&mut self, set_id: Option<SelectionSetId>) -> Result<()> {
+        self.start_transaction_at(set_id, Instant::now())
+    }
+
+    fn start_transaction_at(&mut self, set_id: Option<SelectionSetId>, now: Instant) -> Result<()> {
+        let selections = if let Some(set_id) = set_id {
+            let selections = self
+                .selections
+                .get(&set_id)
+                .ok_or_else(|| anyhow!("invalid selection set {:?}", set_id))?;
+            Some((set_id, selections.clone()))
+        } else {
+            None
+        };
+        if self.history.start_transaction(selections, now) {
+            self.pending_transaction = Some(PendingTransaction {
+                start: self.version.clone(),
+                buffer_was_dirty: self.is_dirty(),
+            });
+        }
+        Ok(())
+    }
+
+    pub fn end_transaction(
+        &mut self,
+        set_id: Option<SelectionSetId>,
+        ctx: Option<&mut ModelContext<Self>>,
+    ) -> Result<()> {
+        self.end_transaction_at(set_id, Instant::now(), ctx)
+    }
+
+    fn end_transaction_at(
+        &mut self,
+        set_id: Option<SelectionSetId>,
+        now: Instant,
+        ctx: Option<&mut ModelContext<Self>>,
+    ) -> Result<()> {
+        let selections = if let Some(set_id) = set_id {
+            let selections = self
+                .selections
+                .get(&set_id)
+                .ok_or_else(|| anyhow!("invalid selection set {:?}", set_id))?;
+            Some((set_id, selections.clone()))
+        } else {
+            None
+        };
+
+        if self.history.end_transaction(selections, now) {
+            if let Some(ctx) = ctx {
+                ctx.notify();
+
+                let transaction = self.pending_transaction.take().unwrap();
+                let changes = self.edits_since(transaction.start).collect::<Vec<_>>();
+                if !changes.is_empty() {
+                    self.did_edit(changes, transaction.buffer_was_dirty, ctx);
+                }
+            }
+        }
+
+        Ok(())
+    }
+
     pub fn edit<I, S, T>(
         &mut self,
         old_ranges: I,
@@ -571,6 +699,8 @@ impl Buffer {
         S: ToOffset,
         T: Into<Text>,
     {
+        self.start_transaction_at(None, now)?;
+
         let new_text = new_text.into();
         let new_text = if new_text.len() > 0 {
             Some(new_text)
@@ -578,8 +708,6 @@ impl Buffer {
             None
         };
 
-        let was_dirty = self.is_dirty();
-        let old_version = self.version.clone();
         let old_ranges = old_ranges
             .into_iter()
             .map(|range| Ok(range.start.to_offset(self)?..range.end.to_offset(self)?))
@@ -595,19 +723,11 @@ impl Buffer {
         for op in &ops {
             if let Operation::Edit { edit, .. } = op {
                 self.history.push(edit.clone());
-                self.history.push_undo(edit.id, now);
+                self.history.push_undo(edit.id);
             }
         }
 
         if let Some(op) = ops.last() {
-            if let Some(ctx) = ctx {
-                ctx.notify();
-                let changes = self.edits_since(old_version).collect::<Vec<_>>();
-                if !changes.is_empty() {
-                    self.did_edit(changes, was_dirty, ctx);
-                }
-            }
-
             if let Operation::Edit { edit, .. } = op {
                 self.last_edit = edit.id;
                 self.version.observe(edit.id);
@@ -615,6 +735,8 @@ impl Buffer {
                 unreachable!()
             }
         }
+
+        self.end_transaction_at(None, now, ctx)?;
 
         Ok(ops)
     }
@@ -675,9 +797,10 @@ impl Buffer {
         selections: Vec<Selection>,
         ctx: Option<&mut ModelContext<Self>>,
     ) -> (SelectionSetId, Operation) {
+        let selections = Arc::from(selections);
         let lamport_timestamp = self.lamport_clock.tick();
         self.selections
-            .insert(lamport_timestamp, selections.clone());
+            .insert(lamport_timestamp, Arc::clone(&selections));
         self.selections_last_update += 1;
 
         if let Some(ctx) = ctx {
@@ -701,7 +824,8 @@ impl Buffer {
         ctx: Option<&mut ModelContext<Self>>,
     ) -> Result<Operation> {
         self.merge_selections(&mut selections);
-        self.selections.insert(set_id, selections.clone());
+        let selections = Arc::from(selections);
+        self.selections.insert(set_id, Arc::clone(&selections));
 
         let lamport_timestamp = self.lamport_clock.tick();
         self.selections_last_update += 1;
@@ -742,7 +866,7 @@ impl Buffer {
     pub fn selections(&self, set_id: SelectionSetId) -> Result<&[Selection]> {
         self.selections
             .get(&set_id)
-            .map(|s| s.as_slice())
+            .map(|s| s.as_ref())
             .ok_or_else(|| anyhow!("invalid selection set id {:?}", set_id))
     }
 
@@ -761,8 +885,10 @@ impl Buffer {
         }))
     }
 
-    pub fn all_selections(&self) -> impl Iterator<Item = (&SelectionSetId, &Vec<Selection>)> {
-        self.selections.iter()
+    pub fn all_selections(&self) -> impl Iterator<Item = (&SelectionSetId, &[Selection])> {
+        self.selections
+            .iter()
+            .map(|(set_id, selections)| (set_id, selections.as_ref()))
     }
 
     pub fn all_selection_ranges<'a>(
@@ -998,9 +1124,16 @@ impl Buffer {
         let old_version = self.version.clone();
 
         let mut ops = Vec::new();
-        if let Some(edit_group) = self.history.pop_undo() {
-            for edit_id in edit_group.edits.clone() {
+        if let Some(transaction) = self.history.pop_undo() {
+            let transaction_selections = transaction.selections.clone();
+            for edit_id in transaction.edits.clone() {
                 ops.push(self.undo_or_redo(edit_id).unwrap());
+            }
+
+            if let Some(transaction_selections) = transaction_selections {
+                if let Some(selections) = self.selections.get_mut(&transaction_selections.set_id) {
+                    *selections = transaction_selections.before_transaction;
+                }
             }
         }
 
@@ -1020,9 +1153,16 @@ impl Buffer {
         let old_version = self.version.clone();
 
         let mut ops = Vec::new();
-        if let Some(edit_group) = self.history.pop_redo() {
-            for edit_id in edit_group.edits.clone() {
+        if let Some(transaction) = self.history.pop_redo() {
+            let transaction_selections = transaction.selections.clone();
+            for edit_id in transaction.edits.clone() {
                 ops.push(self.undo_or_redo(edit_id).unwrap());
+            }
+
+            if let Some(transaction_selections) = transaction_selections {
+                if let Some(selections) = self.selections.get_mut(&transaction_selections.set_id) {
+                    *selections = transaction_selections.after_transaction;
+                }
             }
         }
 
@@ -1686,6 +1826,7 @@ impl Clone for Buffer {
             last_edit: self.last_edit.clone(),
             undo_map: self.undo_map.clone(),
             history: self.history.clone(),
+            pending_transaction: self.pending_transaction.clone(),
             selections: self.selections.clone(),
             selections_last_update: self.selections_last_update.clone(),
             deferred_ops: self.deferred_ops.clone(),

@@ -379,6 +379,7 @@ impl BufferView {
             }
         }
 
+        self.start_transaction(ctx);
         let mut new_selections = Vec::new();
         self.buffer.update(ctx, |buffer, ctx| {
             if let Err(error) = buffer.edit(offset_ranges.iter().cloned(), text.as_str(), Some(ctx))
@@ -408,8 +409,7 @@ impl BufferView {
         });
 
         self.update_selections(new_selections, ctx);
-        self.pause_cursor_blinking(ctx);
-        *self.autoscroll_requested.lock() = true;
+        self.end_transaction(ctx);
     }
 
     fn newline(&mut self, _: &(), ctx: &mut ViewContext<Self>) {
@@ -421,6 +421,7 @@ impl BufferView {
     }
 
     pub fn backspace(&mut self, _: &(), ctx: &mut ViewContext<Self>) {
+        self.start_transaction(ctx);
         let mut selections = self.selections(ctx.app()).to_vec();
         {
             let buffer = self.buffer.as_ref(ctx);
@@ -444,6 +445,7 @@ impl BufferView {
         self.update_selections(selections, ctx);
         self.changed_selections(ctx);
         self.insert(&String::new(), ctx);
+        self.end_transaction(ctx);
     }
 
     pub fn undo(&mut self, _: &(), ctx: &mut ViewContext<Self>) {
@@ -723,6 +725,22 @@ impl BufferView {
         let op = self.buffer.update(ctx, |buffer, ctx| {
             buffer
                 .update_selection_set(self.selection_set_id, selections, Some(ctx))
+                .unwrap()
+        });
+    }
+
+    fn start_transaction(&self, ctx: &mut ViewContext<Self>) {
+        self.buffer.update(ctx, |buffer, _| {
+            buffer
+                .start_transaction(Some(self.selection_set_id))
+                .unwrap()
+        });
+    }
+
+    fn end_transaction(&self, ctx: &mut ViewContext<Self>) {
+        self.buffer.update(ctx, |buffer, ctx| {
+            buffer
+                .end_transaction(Some(self.selection_set_id), Some(ctx))
                 .unwrap()
         });
     }
