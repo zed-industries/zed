@@ -134,8 +134,19 @@ impl App {
 
         let ctx = app.0.clone();
         platform.on_menu_command(Box::new(move |command, arg| {
-            ctx.borrow_mut()
-                .dispatch_global_action_with_dyn_arg(command, arg.unwrap_or(&()));
+            let mut ctx = ctx.borrow_mut();
+            if let Some(key_window_id) = ctx.platform.key_window_id() {
+                if let Some((presenter, _)) =
+                    ctx.presenters_and_platform_windows.get(&key_window_id)
+                {
+                    let presenter = presenter.clone();
+                    let path = presenter.borrow().dispatch_path(ctx.as_ref());
+                    if ctx.dispatch_action_any(key_window_id, &path, command, arg.unwrap_or(&())) {
+                        return;
+                    }
+                }
+            }
+            ctx.dispatch_global_action_any(command, arg.unwrap_or(&()));
         }));
 
         app.0.borrow_mut().weak_self = Some(Rc::downgrade(&app.0));
@@ -373,8 +384,8 @@ pub struct MutableAppContext {
     subscriptions: HashMap<usize, Vec<Subscription>>,
     observations: HashMap<usize, Vec<Observation>>,
     window_invalidations: HashMap<usize, WindowInvalidation>,
-    invalidation_callbacks:
-        HashMap<usize, Box<dyn FnMut(WindowInvalidation, &mut MutableAppContext)>>,
+    presenters_and_platform_windows:
+        HashMap<usize, (Rc<RefCell<Presenter>>, Box<dyn platform::Window>)>,
     debug_elements_callbacks: HashMap<usize, Box<dyn Fn(&AppContext) -> crate::json::Value>>,
     foreground: Rc<executor::Foreground>,
     future_handlers: Rc<RefCell<HashMap<usize, FutureHandler>>>,
@@ -412,7 +423,7 @@ impl MutableAppContext {
             subscriptions: HashMap::new(),
             observations: HashMap::new(),
             window_invalidations: HashMap::new(),
-            invalidation_callbacks: HashMap::new(),
+            presenters_and_platform_windows: HashMap::new(),
             debug_elements_callbacks: HashMap::new(),
             foreground,
             future_handlers: Default::default(),
@@ -442,15 +453,6 @@ impl MutableAppContext {
 
     pub fn background_executor(&self) -> &Arc<executor::Background> {
         &self.ctx.background
-    }
-
-    pub fn on_window_invalidated<F>(&mut self, window_id: usize, callback: F)
-    where
-        F: 'static + FnMut(WindowInvalidation, &mut MutableAppContext),
-    {
-        self.invalidation_callbacks
-            .insert(window_id, Box::new(callback));
-        self.update_windows();
     }
 
     pub fn on_debug_elements<F>(&mut self, window_id: usize, callback: F)
@@ -628,7 +630,7 @@ impl MutableAppContext {
         }
 
         if !halted_dispatch {
-            self.dispatch_global_action_with_dyn_arg(name, arg);
+            self.dispatch_global_action_any(name, arg);
         }
 
         self.flush_effects();
@@ -636,10 +638,10 @@ impl MutableAppContext {
     }
 
     pub fn dispatch_global_action<T: 'static + Any>(&mut self, name: &str, arg: T) {
-        self.dispatch_global_action_with_dyn_arg(name, Box::new(arg).as_ref());
+        self.dispatch_global_action_any(name, Box::new(arg).as_ref());
     }
 
-    fn dispatch_global_action_with_dyn_arg(&mut self, name: &str, arg: &dyn Any) {
+    fn dispatch_global_action_any(&mut self, name: &str, arg: &dyn Any) {
         if let Some((name, mut handlers)) = self.global_actions.remove_entry(name) {
             self.pending_flushes += 1;
             for handler in handlers.iter_mut().rev() {
@@ -798,15 +800,8 @@ impl MutableAppContext {
             }));
         }
 
-        {
-            let presenter = presenter.clone();
-            self.on_window_invalidated(window_id, move |invalidation, ctx| {
-                let mut presenter = presenter.borrow_mut();
-                presenter.invalidate(invalidation, ctx.as_ref());
-                let scene = presenter.build_scene(window.size(), window.scale_factor(), ctx);
-                window.present_scene(scene);
-            });
-        }
+        self.presenters_and_platform_windows
+            .insert(window_id, (presenter.clone(), window));
 
         self.on_debug_elements(window_id, move |ctx| {
             presenter.borrow().debug_elements(ctx).unwrap()
@@ -911,9 +906,17 @@ impl MutableAppContext {
         std::mem::swap(&mut invalidations, &mut self.window_invalidations);
 
         for (window_id, invalidation) in invalidations {
-            if let Some(mut callback) = self.invalidation_callbacks.remove(&window_id) {
-                callback(invalidation, self);
-                self.invalidation_callbacks.insert(window_id, callback);
+            if let Some((presenter, mut window)) =
+                self.presenters_and_platform_windows.remove(&window_id)
+            {
+                {
+                    let mut presenter = presenter.borrow_mut();
+                    presenter.invalidate(invalidation, self.as_ref());
+                    let scene = presenter.build_scene(window.size(), window.scale_factor(), self);
+                    window.present_scene(scene);
+                }
+                self.presenters_and_platform_windows
+                    .insert(window_id, (presenter, window));
             }
         }
     }
