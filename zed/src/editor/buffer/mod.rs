@@ -2290,6 +2290,7 @@ impl ToPoint for usize {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use cmp::Ordering;
     use gpui::App;
     use std::collections::BTreeMap;
     use std::{cell::RefCell, rc::Rc};

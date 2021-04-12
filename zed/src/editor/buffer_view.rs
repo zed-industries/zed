@@ -722,6 +722,7 @@ impl BufferView {
     }
 
     fn update_selections(&self, mut selections: Vec<Selection>, ctx: &mut ViewContext<Self>) {
+        // Merge overlapping selections.
         let buffer = self.buffer.as_ref(ctx);
         let mut i = 1;
         while i < selections.len() {
