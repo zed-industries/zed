@@ -721,7 +721,28 @@ impl BufferView {
             .unwrap()
     }
 
-    fn update_selections(&self, selections: Vec<Selection>, ctx: &mut ViewContext<Self>) {
+    fn update_selections(&self, mut selections: Vec<Selection>, ctx: &mut ViewContext<Self>) {
+        let buffer = self.buffer.as_ref(ctx);
+        let mut i = 1;
+        while i < selections.len() {
+            if selections[i - 1]
+                .end
+                .cmp(&selections[i].start, buffer)
+                .unwrap()
+                >= Ordering::Equal
+            {
+                let removed = selections.remove(i);
+                if removed.start.cmp(&selections[i - 1].start, buffer).unwrap() < Ordering::Equal {
+                    selections[i - 1].start = removed.start;
+                }
+                if removed.end.cmp(&selections[i - 1].end, buffer).unwrap() > Ordering::Equal {
+                    selections[i - 1].end = removed.end;
+                }
+            } else {
+                i += 1;
+            }
+        }
+
         let op = self.buffer.update(ctx, |buffer, ctx| {
             buffer
                 .update_selection_set(self.selection_set_id, selections, Some(ctx))

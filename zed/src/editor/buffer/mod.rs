@@ -22,7 +22,7 @@ use gpui::{AppContext, Entity, ModelContext};
 use lazy_static::lazy_static;
 use rand::prelude::*;
 use std::{
-    cmp::{self, Ordering},
+    cmp,
     hash::BuildHasher,
     iter::{self, Iterator},
     ops::{AddAssign, Range},
@@ -767,10 +767,10 @@ impl Buffer {
 
     pub fn add_selection_set(
         &mut self,
-        selections: Vec<Selection>,
+        selections: impl Into<Arc<[Selection]>>,
         ctx: Option<&mut ModelContext<Self>>,
     ) -> (SelectionSetId, Operation) {
-        let selections = Arc::from(selections);
+        let selections = selections.into();
         let lamport_timestamp = self.lamport_clock.tick();
         self.selections
             .insert(lamport_timestamp, Arc::clone(&selections));
@@ -793,12 +793,11 @@ impl Buffer {
     pub fn update_selection_set(
         &mut self,
         set_id: SelectionSetId,
-        mut selections: Vec<Selection>,
+        selections: impl Into<Arc<[Selection]>>,
         ctx: Option<&mut ModelContext<Self>>,
     ) -> Result<Operation> {
-        self.merge_selections(&mut selections);
-        let selections = Arc::from(selections);
-        self.selections.insert(set_id, Arc::clone(&selections));
+        let selections = selections.into();
+        self.selections.insert(set_id, selections.clone());
 
         let lamport_timestamp = self.lamport_clock.tick();
         self.selections_last_update += 1;
@@ -841,28 +840,6 @@ impl Buffer {
             .get(&set_id)
             .map(|s| s.as_ref())
             .ok_or_else(|| anyhow!("invalid selection set id {:?}", set_id))
-    }
-
-    fn merge_selections(&mut self, selections: &mut Vec<Selection>) {
-        let mut i = 1;
-        while i < selections.len() {
-            if selections[i - 1]
-                .end
-                .cmp(&selections[i].start, self)
-                .unwrap()
-                >= Ordering::Equal
-            {
-                let removed = selections.remove(i);
-                if removed.start.cmp(&selections[i - 1].start, self).unwrap() < Ordering::Equal {
-                    selections[i - 1].start = removed.start;
-                }
-                if removed.end.cmp(&selections[i - 1].end, self).unwrap() > Ordering::Equal {
-                    selections[i - 1].end = removed.end;
-                }
-            } else {
-                i += 1;
-            }
-        }
     }
 
     pub fn apply_ops<I: IntoIterator<Item = Operation>>(
@@ -1063,21 +1040,19 @@ impl Buffer {
         Ok(())
     }
 
-    pub fn undo(&mut self, ctx: Option<&mut ModelContext<Self>>) -> Vec<Operation> {
+    pub fn undo(&mut self, mut ctx: Option<&mut ModelContext<Self>>) -> Vec<Operation> {
         let was_dirty = self.is_dirty();
         let old_version = self.version.clone();
 
         let mut ops = Vec::new();
         if let Some(transaction) = self.history.pop_undo() {
-            let transaction_selections = transaction.selections_before.clone();
+            let selections = transaction.selections_before.clone();
             for edit_id in transaction.edits.clone() {
                 ops.push(self.undo_or_redo(edit_id).unwrap());
             }
 
-            if let Some((set_id, transaction_selections)) = transaction_selections {
-                if let Some(selections) = self.selections.get_mut(&set_id) {
-                    *selections = transaction_selections;
-                }
+            if let Some((set_id, selections)) = selections {
+                let _ = self.update_selection_set(set_id, selections, ctx.as_deref_mut());
             }
         }
 
@@ -1092,21 +1067,19 @@ impl Buffer {
         ops
     }
 
-    pub fn redo(&mut self, ctx: Option<&mut ModelContext<Self>>) -> Vec<Operation> {
+    pub fn redo(&mut self, mut ctx: Option<&mut ModelContext<Self>>) -> Vec<Operation> {
         let was_dirty = self.is_dirty();
         let old_version = self.version.clone();
 
         let mut ops = Vec::new();
         if let Some(transaction) = self.history.pop_redo() {
-            let transaction_selections = transaction.selections_after.clone();
+            let selections = transaction.selections_after.clone();
             for edit_id in transaction.edits.clone() {
                 ops.push(self.undo_or_redo(edit_id).unwrap());
             }
 
-            if let Some((set_id, transaction_selections)) = transaction_selections {
-                if let Some(selections) = self.selections.get_mut(&set_id) {
-                    *selections = transaction_selections;
-                }
+            if let Some((set_id, selections)) = selections {
+                let _ = self.update_selection_set(set_id, selections, ctx.as_deref_mut());
             }
         }
 
