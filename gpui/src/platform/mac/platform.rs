@@ -1,6 +1,5 @@
 use super::{BoolExt as _, Dispatcher, FontSystem, Window};
 use crate::{executor, keymap::Keystroke, platform, Event, Menu, MenuItem};
-use anyhow::Result;
 use cocoa::{
     appkit::{
         NSApplication, NSApplicationActivationPolicy::NSApplicationActivationPolicyRegular,
@@ -237,8 +236,8 @@ impl platform::Platform for MacPlatform {
         id: usize,
         options: platform::WindowOptions,
         executor: Rc<executor::Foreground>,
-    ) -> Result<Box<dyn platform::Window>> {
-        Ok(Box::new(Window::open(id, options, executor, self.fonts())?))
+    ) -> Box<dyn platform::Window> {
+        Box::new(Window::open(id, options, executor, self.fonts()))
     }
 
     fn key_window_id(&self) -> Option<usize> {

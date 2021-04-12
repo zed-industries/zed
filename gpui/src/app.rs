@@ -735,88 +735,82 @@ impl MutableAppContext {
     }
 
     fn open_platform_window(&mut self, window_id: usize) {
-        match self.platform.open_window(
+        let mut window = self.platform.open_window(
             window_id,
             WindowOptions {
                 bounds: RectF::new(vec2f(0., 0.), vec2f(1024., 768.)),
                 title: "Zed".into(),
             },
             self.foreground.clone(),
-        ) {
-            Err(e) => log::error!("error opening window: {}", e),
-            Ok(mut window) => {
-                let text_layout_cache = TextLayoutCache::new(self.platform.fonts());
-                let presenter = Rc::new(RefCell::new(Presenter::new(
-                    window_id,
-                    self.font_cache.clone(),
-                    text_layout_cache,
-                    self.assets.clone(),
-                    self,
-                )));
+        );
+        let text_layout_cache = TextLayoutCache::new(self.platform.fonts());
+        let presenter = Rc::new(RefCell::new(Presenter::new(
+            window_id,
+            self.font_cache.clone(),
+            text_layout_cache,
+            self.assets.clone(),
+            self,
+        )));
 
-                {
-                    let mut app = self.upgrade();
-                    let presenter = presenter.clone();
-                    window.on_event(Box::new(move |event| {
-                        app.update(|ctx| {
-                            if let Event::KeyDown { keystroke, .. } = &event {
-                                if ctx
-                                    .dispatch_keystroke(
-                                        window_id,
-                                        presenter.borrow().dispatch_path(ctx.as_ref()),
-                                        keystroke,
-                                    )
-                                    .unwrap()
-                                {
-                                    return;
-                                }
-                            }
+        {
+            let mut app = self.upgrade();
+            let presenter = presenter.clone();
+            window.on_event(Box::new(move |event| {
+                app.update(|ctx| {
+                    if let Event::KeyDown { keystroke, .. } = &event {
+                        if ctx
+                            .dispatch_keystroke(
+                                window_id,
+                                presenter.borrow().dispatch_path(ctx.as_ref()),
+                                keystroke,
+                            )
+                            .unwrap()
+                        {
+                            return;
+                        }
+                    }
 
-                            let actions =
-                                presenter.borrow_mut().dispatch_event(event, ctx.as_ref());
-                            for action in actions {
-                                ctx.dispatch_action_any(
-                                    window_id,
-                                    &action.path,
-                                    action.name,
-                                    action.arg.as_ref(),
-                                );
-                            }
-                        })
-                    }));
-                }
-
-                {
-                    let mut app = self.upgrade();
-                    let presenter = presenter.clone();
-                    window.on_resize(Box::new(move |window| {
-                        app.update(|ctx| {
-                            let scene = presenter.borrow_mut().build_scene(
-                                window.size(),
-                                window.scale_factor(),
-                                ctx,
-                            );
-                            window.present_scene(scene);
-                        })
-                    }));
-                }
-
-                {
-                    let presenter = presenter.clone();
-                    self.on_window_invalidated(window_id, move |invalidation, ctx| {
-                        let mut presenter = presenter.borrow_mut();
-                        presenter.invalidate(invalidation, ctx.as_ref());
-                        let scene =
-                            presenter.build_scene(window.size(), window.scale_factor(), ctx);
-                        window.present_scene(scene);
-                    });
-                }
-
-                self.on_debug_elements(window_id, move |ctx| {
-                    presenter.borrow().debug_elements(ctx).unwrap()
-                });
-            }
+                    let actions = presenter.borrow_mut().dispatch_event(event, ctx.as_ref());
+                    for action in actions {
+                        ctx.dispatch_action_any(
+                            window_id,
+                            &action.path,
+                            action.name,
+                            action.arg.as_ref(),
+                        );
+                    }
+                })
+            }));
         }
+
+        {
+            let mut app = self.upgrade();
+            let presenter = presenter.clone();
+            window.on_resize(Box::new(move |window| {
+                app.update(|ctx| {
+                    let scene = presenter.borrow_mut().build_scene(
+                        window.size(),
+                        window.scale_factor(),
+                        ctx,
+                    );
+                    window.present_scene(scene);
+                })
+            }));
+        }
+
+        {
+            let presenter = presenter.clone();
+            self.on_window_invalidated(window_id, move |invalidation, ctx| {
+                let mut presenter = presenter.borrow_mut();
+                presenter.invalidate(invalidation, ctx.as_ref());
+                let scene = presenter.build_scene(window.size(), window.scale_factor(), ctx);
+                window.present_scene(scene);
+            });
+        }
+
+        self.on_debug_elements(window_id, move |ctx| {
+            presenter.borrow().debug_elements(ctx).unwrap()
+        });
     }
 
     pub fn add_view<T, F>(&mut self, window_id: usize, build_view: F) -> ViewHandle<T>

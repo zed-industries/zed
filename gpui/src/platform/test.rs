@@ -56,8 +56,8 @@ impl super::Platform for Platform {
         _: usize,
         options: super::WindowOptions,
         _executor: Rc<super::executor::Foreground>,
-    ) -> anyhow::Result<Box<dyn super::Window>> {
-        Ok(Box::new(Window::new(options.bounds.size())))
+    ) -> Box<dyn super::Window> {
+        Box::new(Window::new(options.bounds.size()))
     }
 
     fn key_window_id(&self) -> Option<usize> {

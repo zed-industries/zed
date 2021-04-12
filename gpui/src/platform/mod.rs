@@ -17,7 +17,6 @@ use crate::{
     text_layout::Line,
     Menu, Scene,
 };
-use anyhow::Result;
 use async_task::Runnable;
 pub use event::Event;
 use std::{any::Any, ops::Range, path::PathBuf, rc::Rc, sync::Arc};
@@ -39,7 +38,7 @@ pub trait Platform {
         id: usize,
         options: WindowOptions,
         executor: Rc<executor::Foreground>,
-    ) -> Result<Box<dyn Window>>;
+    ) -> Box<dyn Window>;
     fn key_window_id(&self) -> Option<usize>;
     fn prompt_for_paths(&self, options: PathPromptOptions) -> Option<Vec<PathBuf>>;
     fn quit(&self);
