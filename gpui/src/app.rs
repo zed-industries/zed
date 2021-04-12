@@ -191,10 +191,6 @@ impl App {
         self
     }
 
-    pub fn set_menus(&self, menus: Vec<Menu>) {
-        self.0.borrow().platform.set_menus(menus);
-    }
-
     pub fn run<F>(self, on_finish_launching: F)
     where
         F: 'static + FnOnce(&mut MutableAppContext),
@@ -565,6 +561,10 @@ impl MutableAppContext {
         let result = callback();
         self.flush_effects();
         result
+    }
+
+    pub fn set_menus(&self, menus: Vec<Menu>) {
+        self.platform.set_menus(menus);
     }
 
     pub fn dispatch_action<T: 'static + Any>(

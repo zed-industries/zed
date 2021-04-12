@@ -12,8 +12,8 @@ fn main() {
 
     let app = gpui::App::new(assets::Assets).unwrap();
     let (_, settings_rx) = settings::channel(&app.font_cache()).unwrap();
-    app.set_menus(menus::menus(settings_rx.clone()));
     app.run(move |ctx| {
+        ctx.set_menus(menus::menus(settings_rx.clone()));
         workspace::init(ctx);
         editor::init(ctx);
         file_finder::init(ctx);
