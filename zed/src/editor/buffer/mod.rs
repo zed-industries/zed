@@ -672,22 +672,7 @@ impl Buffer {
         S: ToOffset,
         T: Into<Text>,
     {
-        self.edit_at(old_ranges, new_text, Instant::now(), ctx)
-    }
-
-    fn edit_at<I, S, T>(
-        &mut self,
-        old_ranges: I,
-        new_text: T,
-        now: Instant,
-        ctx: Option<&mut ModelContext<Self>>,
-    ) -> Result<Vec<Operation>>
-    where
-        I: IntoIterator<Item = Range<S>>,
-        S: ToOffset,
-        T: Into<Text>,
-    {
-        self.start_transaction_at(None, now)?;
+        self.start_transaction_at(None, Instant::now())?;
 
         let new_text = new_text.into();
         let new_text = if new_text.len() > 0 {
@@ -724,7 +709,7 @@ impl Buffer {
             }
         }
 
-        self.end_transaction_at(None, now, ctx)?;
+        self.end_transaction_at(None, Instant::now(), ctx)?;
 
         Ok(ops)
     }
@@ -3012,7 +2997,7 @@ mod tests {
 
         buffer.start_transaction_at(Some(set_id), now)?;
         buffer.update_selection_set(set_id, buffer.selections_from_ranges(vec![1..3])?, None)?;
-        buffer.edit_at(vec![4..5], "e", now, None)?;
+        buffer.edit(vec![4..5], "e", None)?;
         buffer.end_transaction_at(Some(set_id), now, None)?;
         assert_eq!(buffer.text(), "12cde6");
         assert_eq!(buffer.selection_ranges(set_id)?, vec![1..3]);
@@ -3020,7 +3005,7 @@ mod tests {
         now += UNDO_GROUP_INTERVAL + Duration::from_millis(1);
         buffer.start_transaction_at(Some(set_id), now)?;
         buffer.update_selection_set(set_id, buffer.selections_from_ranges(vec![2..2])?, None)?;
-        buffer.edit_at(vec![0..1], "a", now, None)?;
+        buffer.edit(vec![0..1], "a", None)?;
         buffer.end_transaction_at(Some(set_id), now, None)?;
         assert_eq!(buffer.text(), "a2cde6");
         assert_eq!(buffer.selection_ranges(set_id)?, vec![2..2]);
