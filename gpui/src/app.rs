@@ -128,9 +128,16 @@ impl App {
         let foreground = Rc::new(executor::Foreground::platform(platform.dispatcher())?);
         let app = Self(Rc::new(RefCell::new(MutableAppContext::new(
             foreground,
-            platform,
+            platform.clone(),
             asset_source,
         ))));
+
+        let ctx = app.0.clone();
+        platform.on_menu_command(Box::new(move |command, arg| {
+            ctx.borrow_mut()
+                .dispatch_global_action_with_dyn_arg(command, arg.unwrap_or(&()));
+        }));
+
         app.0.borrow_mut().weak_self = Some(Rc::downgrade(&app.0));
         Ok(app)
     }
@@ -167,20 +174,6 @@ impl App {
         self.0.borrow().platform.on_event(Box::new(move |event| {
             callback(event, &mut *ctx.borrow_mut())
         }));
-        self
-    }
-
-    pub fn on_menu_command<F>(self, mut callback: F) -> Self
-    where
-        F: 'static + FnMut(&str, Option<&(dyn Any + 'static)>, &mut MutableAppContext),
-    {
-        let ctx = self.0.clone();
-        self.0
-            .borrow()
-            .platform
-            .on_menu_command(Box::new(move |command, arg| {
-                callback(command, arg, &mut *ctx.borrow_mut())
-            }));
         self
     }
 
@@ -646,7 +639,7 @@ impl MutableAppContext {
         self.dispatch_global_action_with_dyn_arg(name, Box::new(arg).as_ref());
     }
 
-    pub fn dispatch_global_action_with_dyn_arg(&mut self, name: &str, arg: &dyn Any) {
+    fn dispatch_global_action_with_dyn_arg(&mut self, name: &str, arg: &dyn Any) {
         if let Some((name, mut handlers)) = self.global_actions.remove_entry(name) {
             self.pending_flushes += 1;
             for handler in handlers.iter_mut().rev() {

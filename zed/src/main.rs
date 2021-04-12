@@ -1,12 +1,9 @@
 use fs::OpenOptions;
-use gpui::PathPromptOptions;
 use log::LevelFilter;
 use simplelog::SimpleLogger;
 use std::{fs, path::PathBuf};
 use zed::{
-    assets, editor, file_finder, menus,
-    settings::{self, Settings},
-    watch::Receiver,
+    assets, editor, file_finder, menus, settings,
     workspace::{self, OpenParams},
 };
 
@@ -16,11 +13,7 @@ fn main() {
     let app = gpui::App::new(assets::Assets).unwrap();
     let (_, settings_rx) = settings::channel(&app.font_cache()).unwrap();
     app.set_menus(menus::menus(settings_rx.clone()));
-    app.on_menu_command(move |command, arg, ctx| {
-        eprintln!("command: {:?} {:?}", command, arg);
-        ctx.dispatch_global_action_with_dyn_arg(command, arg.unwrap_or(&()))
-    })
-    .run(move |ctx| {
+    app.run(move |ctx| {
         workspace::init(ctx);
         editor::init(ctx);
         file_finder::init(ctx);
