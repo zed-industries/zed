@@ -27,7 +27,7 @@ pub fn menus(settings: Receiver<Settings>) -> Vec<Menu<'static>> {
             items: vec![MenuItem::Action {
                 name: "Open…",
                 keystroke: Some("cmd-o"),
-                action: "app:open",
+                action: "workspace:open",
                 arg: Some(Box::new(settings)),
             }],
         },

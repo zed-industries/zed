@@ -16,27 +16,9 @@ fn main() {
     let app = gpui::App::new(assets::Assets).unwrap();
     let (_, settings_rx) = settings::channel(&app.font_cache()).unwrap();
     app.set_menus(menus::menus(settings_rx.clone()));
-    app.on_menu_command(move |command, arg, ctx| match command {
-        "app:open" => {
-            if let Some(paths) = ctx.platform().prompt_for_paths(PathPromptOptions {
-                files: true,
-                directories: true,
-                multiple: true,
-            }) {
-                ctx.dispatch_global_action(
-                    "workspace:open_paths",
-                    OpenParams {
-                        paths,
-                        settings: arg
-                            .unwrap()
-                            .downcast_ref::<Receiver<Settings>>()
-                            .unwrap()
-                            .clone(),
-                    },
-                );
-            }
-        }
-        _ => ctx.dispatch_global_action(command, ()),
+    app.on_menu_command(move |command, arg, ctx| {
+        eprintln!("command: {:?} {:?}", command, arg);
+        ctx.dispatch_global_action_with_dyn_arg(command, arg.unwrap_or(&()))
     })
     .run(move |ctx| {
         workspace::init(ctx);

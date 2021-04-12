@@ -8,11 +8,15 @@ pub use pane_group::*;
 pub use workspace::*;
 pub use workspace_view::*;
 
-use crate::{settings::Settings, watch};
-use gpui::MutableAppContext;
+use crate::{
+    settings::Settings,
+    watch::{self, Receiver},
+};
+use gpui::{MutableAppContext, PathPromptOptions};
 use std::path::PathBuf;
 
 pub fn init(app: &mut MutableAppContext) {
+    app.add_global_action("workspace:open", open);
     app.add_global_action("workspace:open_paths", open_paths);
     app.add_global_action("app:quit", quit);
     pane::init(app);
@@ -22,6 +26,22 @@ pub fn init(app: &mut MutableAppContext) {
 pub struct OpenParams {
     pub paths: Vec<PathBuf>,
     pub settings: watch::Receiver<Settings>,
+}
+
+fn open(settings: &Receiver<Settings>, ctx: &mut MutableAppContext) {
+    if let Some(paths) = ctx.platform().prompt_for_paths(PathPromptOptions {
+        files: true,
+        directories: true,
+        multiple: true,
+    }) {
+        ctx.dispatch_global_action(
+            "workspace:open_paths",
+            OpenParams {
+                paths,
+                settings: settings.clone(),
+            },
+        );
+    }
 }
 
 fn open_paths(params: &OpenParams, app: &mut MutableAppContext) {

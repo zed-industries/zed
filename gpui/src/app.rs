@@ -77,7 +77,7 @@ pub enum MenuItem<'a> {
         name: &'a str,
         keystroke: Option<&'a str>,
         action: &'a str,
-        arg: Option<Box<dyn Any>>,
+        arg: Option<Box<dyn Any + 'static>>,
     },
     Separator,
 }
@@ -172,7 +172,7 @@ impl App {
 
     pub fn on_menu_command<F>(self, mut callback: F) -> Self
     where
-        F: 'static + FnMut(&str, Option<&dyn Any>, &mut MutableAppContext),
+        F: 'static + FnMut(&str, Option<&(dyn Any + 'static)>, &mut MutableAppContext),
     {
         let ctx = self.0.clone();
         self.0
@@ -646,7 +646,7 @@ impl MutableAppContext {
         self.dispatch_global_action_with_dyn_arg(name, Box::new(arg).as_ref());
     }
 
-    fn dispatch_global_action_with_dyn_arg(&mut self, name: &str, arg: &dyn Any) {
+    pub fn dispatch_global_action_with_dyn_arg(&mut self, name: &str, arg: &dyn Any) {
         if let Some((name, mut handlers)) = self.global_actions.remove_entry(name) {
             self.pending_flushes += 1;
             for handler in handlers.iter_mut().rev() {
