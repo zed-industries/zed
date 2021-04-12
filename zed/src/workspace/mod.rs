@@ -9,11 +9,12 @@ pub use workspace::*;
 pub use workspace_view::*;
 
 use crate::{settings::Settings, watch};
-use gpui::{App, MutableAppContext};
+use gpui::MutableAppContext;
 use std::path::PathBuf;
 
-pub fn init(app: &mut App) {
+pub fn init(app: &mut MutableAppContext) {
     app.add_global_action("workspace:open_paths", open_paths);
+    app.add_global_action("app:quit", quit);
     pane::init(app);
     workspace_view::init(app);
 }
@@ -50,6 +51,10 @@ fn open_paths(params: &OpenParams, app: &mut MutableAppContext) {
     app.add_window(|ctx| WorkspaceView::new(workspace, params.settings.clone(), ctx));
 }
 
+fn quit(_: &(), app: &mut MutableAppContext) {
+    app.platform().quit();
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -59,10 +64,10 @@ mod tests {
 
     #[test]
     fn test_open_paths_action() {
-        App::test((), |mut app| async move {
+        App::test((), |app| {
             let settings = settings::channel(&app.font_cache()).unwrap().1;
 
-            init(&mut app);
+            init(app);
 
             let dir = temp_tree(json!({
                 "a": {
@@ -89,7 +94,7 @@ mod tests {
                     settings: settings.clone(),
                 },
             );
-            assert_eq!(app.window_ids().len(), 1);
+            assert_eq!(app.window_ids().count(), 1);
 
             app.dispatch_global_action(
                 "workspace:open_paths",
@@ -98,11 +103,19 @@ mod tests {
                     settings: settings.clone(),
                 },
             );
-            assert_eq!(app.window_ids().len(), 1);
-            let workspace_view_1 = app.root_view::<WorkspaceView>(app.window_ids()[0]).unwrap();
-            workspace_view_1.read(&app, |view, app| {
-                assert_eq!(view.workspace.as_ref(app).worktrees().len(), 2);
-            });
+            assert_eq!(app.window_ids().count(), 1);
+            let workspace_view_1 = app
+                .root_view::<WorkspaceView>(app.window_ids().next().unwrap())
+                .unwrap();
+            assert_eq!(
+                workspace_view_1
+                    .read(app)
+                    .workspace
+                    .read(app)
+                    .worktrees()
+                    .len(),
+                2
+            );
 
             app.dispatch_global_action(
                 "workspace:open_paths",
@@ -114,7 +127,7 @@ mod tests {
                     settings: settings.clone(),
                 },
             );
-            assert_eq!(app.window_ids().len(), 2);
+            assert_eq!(app.window_ids().count(), 2);
         });
     }
 }

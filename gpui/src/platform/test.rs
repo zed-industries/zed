@@ -2,7 +2,7 @@ use pathfinder_geometry::vector::Vector2F;
 use std::rc::Rc;
 use std::sync::Arc;
 
-struct App {
+struct Platform {
     dispatcher: Arc<dyn super::Dispatcher>,
     fonts: Arc<dyn super::FontSystem>,
 }
@@ -17,9 +17,7 @@ pub struct Window {
     resize_handlers: Vec<Box<dyn FnMut(&mut dyn super::WindowContext)>>,
 }
 
-pub struct WindowContext {}
-
-impl App {
+impl Platform {
     fn new() -> Self {
         Self {
             dispatcher: Arc::new(Dispatcher),
@@ -28,9 +26,27 @@ impl App {
     }
 }
 
-impl super::App for App {
+impl super::Platform for Platform {
+    fn on_menu_command(&self, _: Box<dyn FnMut(&str)>) {}
+
+    fn on_become_active(&self, _: Box<dyn FnMut()>) {}
+
+    fn on_resign_active(&self, _: Box<dyn FnMut()>) {}
+
+    fn on_event(&self, _: Box<dyn FnMut(crate::Event) -> bool>) {}
+
+    fn on_open_files(&self, _: Box<dyn FnMut(Vec<std::path::PathBuf>)>) {}
+
+    fn run(&self, _on_finish_launching: Box<dyn FnOnce() -> ()>) {
+        unimplemented!()
+    }
+
     fn dispatcher(&self) -> Arc<dyn super::Dispatcher> {
         self.dispatcher.clone()
+    }
+
+    fn fonts(&self) -> std::sync::Arc<dyn super::FontSystem> {
+        self.fonts.clone()
     }
 
     fn activate(&self, _ignoring_other_apps: bool) {}
@@ -43,8 +59,12 @@ impl super::App for App {
         Ok(Box::new(Window::new(options.bounds.size())))
     }
 
-    fn fonts(&self) -> std::sync::Arc<dyn super::FontSystem> {
-        self.fonts.clone()
+    fn set_menus(&self, _menus: &[crate::Menu]) {}
+
+    fn quit(&self) {}
+
+    fn prompt_for_paths(&self, _: super::PathPromptOptions) -> Option<Vec<std::path::PathBuf>> {
+        None
     }
 
     fn copy(&self, _: &str) {}
@@ -96,6 +116,6 @@ impl super::Window for Window {
     }
 }
 
-pub fn app() -> impl super::App {
-    App::new()
+pub fn platform() -> impl super::Platform {
+    Platform::new()
 }

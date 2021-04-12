@@ -399,8 +399,7 @@ dependencies = [
 [[package]]
 name = "cocoa"
 version = "0.24.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "6f63902e9223530efb4e26ccd0cf55ec30d592d3b42e21a28defc42a9586e832"
+source = "git+https://github.com/servo/core-foundation-rs?rev=e9a65bb15d591ec22649e03659db8095d4f2dd60#e9a65bb15d591ec22649e03659db8095d4f2dd60"
 dependencies = [
  "bitflags",
  "block",
@@ -415,8 +414,7 @@ dependencies = [
 [[package]]
 name = "cocoa-foundation"
 version = "0.1.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "7ade49b65d560ca58c403a479bb396592b155c0185eada742ee323d1d68d6318"
+source = "git+https://github.com/servo/core-foundation-rs?rev=e9a65bb15d591ec22649e03659db8095d4f2dd60#e9a65bb15d591ec22649e03659db8095d4f2dd60"
 dependencies = [
  "bitflags",
  "block",
@@ -445,8 +443,7 @@ checksum = "245097e9a4535ee1e3e3931fcfcd55a796a44c643e8596ff6566d68f09b87bbc"
 [[package]]
 name = "core-foundation"
 version = "0.9.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "0a89e2ae426ea83155dccf10c0fa6b1463ef6d5fcb44cee0b224a408fa640a62"
+source = "git+https://github.com/servo/core-foundation-rs?rev=e9a65bb15d591ec22649e03659db8095d4f2dd60#e9a65bb15d591ec22649e03659db8095d4f2dd60"
 dependencies = [
  "core-foundation-sys",
  "libc",
@@ -455,14 +452,12 @@ dependencies = [
 [[package]]
 name = "core-foundation-sys"
 version = "0.8.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "ea221b5284a47e40033bf9b66f35f984ec0ea2931eb03505246cd27a963f981b"
+source = "git+https://github.com/servo/core-foundation-rs?rev=e9a65bb15d591ec22649e03659db8095d4f2dd60#e9a65bb15d591ec22649e03659db8095d4f2dd60"
 
 [[package]]
 name = "core-graphics"
 version = "0.22.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "269f35f69b542b80e736a20a89a05215c0ce80c2c03c514abb2e318b78379d86"
+source = "git+https://github.com/servo/core-foundation-rs?rev=e9a65bb15d591ec22649e03659db8095d4f2dd60#e9a65bb15d591ec22649e03659db8095d4f2dd60"
 dependencies = [
  "bitflags",
  "core-foundation",
@@ -474,8 +469,7 @@ dependencies = [
 [[package]]
 name = "core-graphics-types"
 version = "0.1.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "3a68b68b3446082644c91ac778bf50cd4104bfb002b5a6a7c44cca5a2c70788b"
+source = "git+https://github.com/servo/core-foundation-rs?rev=e9a65bb15d591ec22649e03659db8095d4f2dd60#e9a65bb15d591ec22649e03659db8095d4f2dd60"
 dependencies = [
  "bitflags",
  "core-foundation",

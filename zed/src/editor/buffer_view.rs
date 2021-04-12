@@ -6,8 +6,9 @@ use crate::{settings::Settings, watch, workspace};
 use anyhow::Result;
 use futures_core::future::LocalBoxFuture;
 use gpui::{
-    fonts::Properties as FontProperties, keymap::Binding, text_layout, App, AppContext, Element,
-    ElementBox, Entity, FontCache, ModelHandle, View, ViewContext, WeakViewHandle,
+    fonts::Properties as FontProperties, keymap::Binding, text_layout, AppContext, Element,
+    ElementBox, Entity, FontCache, ModelHandle, MutableAppContext, View, ViewContext,
+    WeakViewHandle,
 };
 use gpui::{geometry::vector::Vector2F, TextLayoutCache};
 use parking_lot::Mutex;
@@ -23,7 +24,7 @@ use std::{
 
 const CURSOR_BLINK_INTERVAL: Duration = Duration::from_millis(500);
 
-pub fn init(app: &mut App) {
+pub fn init(app: &mut MutableAppContext) {
     app.add_bindings(vec![
         Binding::new("backspace", "buffer:backspace", Some("BufferView")),
         Binding::new("enter", "buffer:newline", Some("BufferView")),
@@ -195,7 +196,7 @@ impl BufferView {
             return false;
         }
 
-        let map = self.display_map.as_ref(app);
+        let map = self.display_map.read(app);
         let visible_lines = viewport_height / line_height;
         let first_cursor_top = self
             .selections(app)
@@ -245,7 +246,7 @@ impl BufferView {
         layouts: &[Arc<text_layout::Line>],
         app: &AppContext,
     ) {
-        let map = self.display_map.as_ref(app);
+        let map = self.display_map.read(app);
 
         let mut target_left = std::f32::INFINITY;
         let mut target_right = 0.0_f32;
@@ -294,7 +295,7 @@ impl BufferView {
             ctx.emit(Event::Activate);
         }
 
-        let display_map = self.display_map.as_ref(ctx);
+        let display_map = self.display_map.read(ctx);
         let cursor = display_map
             .anchor_before(position, Bias::Left, ctx.app())
             .unwrap();
@@ -319,8 +320,8 @@ impl BufferView {
         scroll_position: Vector2F,
         ctx: &mut ViewContext<Self>,
     ) {
-        let buffer = self.buffer.as_ref(ctx);
-        let map = self.display_map.as_ref(ctx);
+        let buffer = self.buffer.read(ctx);
+        let map = self.display_map.read(ctx);
         let cursor = map.anchor_before(position, Bias::Left, ctx.app()).unwrap();
         if let Some(selection) = self.pending_selection.as_mut() {
             selection.set_head(buffer, cursor);
@@ -354,7 +355,7 @@ impl BufferView {
     where
         T: IntoIterator<Item = &'a Range<DisplayPoint>>,
     {
-        let map = self.display_map.as_ref(ctx);
+        let map = self.display_map.read(ctx);
         let mut selections = Vec::new();
         for range in ranges {
             selections.push(Selection {
@@ -371,7 +372,7 @@ impl BufferView {
     fn insert(&mut self, text: &String, ctx: &mut ViewContext<Self>) {
         let mut offset_ranges = SmallVec::<[Range<usize>; 32]>::new();
         {
-            let buffer = self.buffer.as_ref(ctx);
+            let buffer = self.buffer.read(ctx);
             for selection in self.selections(ctx.app()) {
                 let start = selection.start.to_offset(buffer).unwrap();
                 let end = selection.end.to_offset(buffer).unwrap();
@@ -424,8 +425,8 @@ impl BufferView {
         self.start_transaction(ctx);
         let mut selections = self.selections(ctx.app()).to_vec();
         {
-            let buffer = self.buffer.as_ref(ctx);
-            let map = self.display_map.as_ref(ctx);
+            let buffer = self.buffer.read(ctx);
+            let map = self.display_map.read(ctx);
             for selection in &mut selections {
                 if selection.range(buffer).is_empty() {
                     let head = selection.head().to_display_point(map, ctx.app()).unwrap();
@@ -459,10 +460,10 @@ impl BufferView {
     }
 
     pub fn move_left(&mut self, _: &(), ctx: &mut ViewContext<Self>) {
-        let mut selections = self.selections(ctx.app()).to_vec();
+        let app = ctx.app();
+        let mut selections = self.selections(app).to_vec();
         {
-            let app = ctx.app();
-            let map = self.display_map.as_ref(app);
+            let map = self.display_map.read(app);
             for selection in &mut selections {
                 let start = selection.start.to_display_point(map, app).unwrap();
                 let end = selection.end.to_display_point(map, app).unwrap();
@@ -487,8 +488,8 @@ impl BufferView {
     pub fn select_left(&mut self, _: &(), ctx: &mut ViewContext<Self>) {
         let mut selections = self.selections(ctx.app()).to_vec();
         {
-            let buffer = self.buffer.as_ref(ctx);
-            let map = self.display_map.as_ref(ctx);
+            let buffer = self.buffer.read(ctx);
+            let map = self.display_map.read(ctx);
             for selection in &mut selections {
                 let head = selection.head().to_display_point(map, ctx.app()).unwrap();
                 let cursor = map
@@ -510,7 +511,7 @@ impl BufferView {
         let mut selections = self.selections(ctx.app()).to_vec();
         {
             let app = ctx.app();
-            let map = self.display_map.as_ref(app);
+            let map = self.display_map.read(app);
             for selection in &mut selections {
                 let start = selection.start.to_display_point(map, app).unwrap();
                 let end = selection.end.to_display_point(map, app).unwrap();
@@ -536,8 +537,8 @@ impl BufferView {
         let mut selections = self.selections(ctx.app()).to_vec();
         {
             let app = ctx.app();
-            let buffer = self.buffer.as_ref(app);
-            let map = self.display_map.as_ref(app);
+            let buffer = self.buffer.read(app);
+            let map = self.display_map.read(app);
             for selection in &mut selections {
                 let head = selection.head().to_display_point(map, ctx.app()).unwrap();
                 let cursor = map
@@ -558,7 +559,7 @@ impl BufferView {
             let mut selections = self.selections(ctx.app()).to_vec();
             {
                 let app = ctx.app();
-                let map = self.display_map.as_ref(app);
+                let map = self.display_map.read(app);
                 for selection in &mut selections {
                     let start = selection.start.to_display_point(map, app).unwrap();
                     let end = selection.end.to_display_point(map, app).unwrap();
@@ -587,8 +588,8 @@ impl BufferView {
             let mut selections = self.selections(ctx.app()).to_vec();
             {
                 let app = ctx.app();
-                let buffer = self.buffer.as_ref(app);
-                let map = self.display_map.as_ref(app);
+                let buffer = self.buffer.read(app);
+                let map = self.display_map.read(app);
                 for selection in &mut selections {
                     let head = selection.head().to_display_point(map, app).unwrap();
                     let (head, goal_column) =
@@ -609,7 +610,7 @@ impl BufferView {
             let mut selections = self.selections(ctx.app()).to_vec();
             {
                 let app = ctx.app();
-                let map = self.display_map.as_ref(app);
+                let map = self.display_map.read(app);
                 for selection in &mut selections {
                     let start = selection.start.to_display_point(map, app).unwrap();
                     let end = selection.end.to_display_point(map, app).unwrap();
@@ -638,8 +639,8 @@ impl BufferView {
             let mut selections = self.selections(ctx.app()).to_vec();
             {
                 let app = ctx.app();
-                let buffer = self.buffer.as_ref(app);
-                let map = self.display_map.as_ref(app);
+                let buffer = self.buffer.read(app);
+                let map = self.display_map.read(app);
                 for selection in &mut selections {
                     let head = selection.head().to_display_point(map, app).unwrap();
                     let (head, goal_column) =
@@ -663,14 +664,14 @@ impl BufferView {
         self.selections(app)
             .first()
             .unwrap()
-            .display_range(self.display_map.as_ref(app), app)
+            .display_range(self.display_map.read(app), app)
     }
 
     pub fn last_selection(&self, app: &AppContext) -> Range<DisplayPoint> {
         self.selections(app)
             .last()
             .unwrap()
-            .display_range(self.display_map.as_ref(app), app)
+            .display_range(self.display_map.read(app), app)
     }
 
     pub fn selections_in_range<'a>(
@@ -678,7 +679,7 @@ impl BufferView {
         range: Range<DisplayPoint>,
         app: &'a AppContext,
     ) -> impl 'a + Iterator<Item = Range<DisplayPoint>> {
-        let map = self.display_map.as_ref(app);
+        let map = self.display_map.read(app);
 
         let start = map.anchor_before(range.start, Bias::Left, app).unwrap();
         let start_index = self.selection_insertion_index(&start, app);
@@ -698,7 +699,7 @@ impl BufferView {
     }
 
     fn selection_insertion_index(&self, start: &Anchor, app: &AppContext) -> usize {
-        let buffer = self.buffer.as_ref(app);
+        let buffer = self.buffer.read(app);
         let selections = self.selections(app);
         match selections.binary_search_by(|probe| probe.start.cmp(&start, buffer).unwrap()) {
             Ok(index) => index,
@@ -716,14 +717,14 @@ impl BufferView {
 
     fn selections<'a>(&self, app: &'a AppContext) -> &'a [Selection] {
         self.buffer
-            .as_ref(app)
+            .read(app)
             .selections(self.selection_set_id)
             .unwrap()
     }
 
     fn update_selections(&self, mut selections: Vec<Selection>, ctx: &mut ViewContext<Self>) {
         // Merge overlapping selections.
-        let buffer = self.buffer.as_ref(ctx);
+        let buffer = self.buffer.read(ctx);
         let mut i = 1;
         while i < selections.len() {
             if selections[i - 1]
@@ -781,7 +782,7 @@ impl BufferView {
         let mut fold_ranges = Vec::new();
 
         let app = ctx.app();
-        let map = self.display_map.as_ref(app);
+        let map = self.display_map.read(app);
         for selection in self.selections(app) {
             let (start, end) = selection.display_range(map, app).sorted();
             let buffer_start_row = start.to_buffer_point(map, Bias::Left, app).unwrap().row;
@@ -811,8 +812,8 @@ impl BufferView {
         use super::RangeExt;
 
         let app = ctx.app();
-        let map = self.display_map.as_ref(app);
-        let buffer = self.buffer.as_ref(app);
+        let map = self.display_map.read(app);
+        let buffer = self.buffer.read(app);
         let ranges = self
             .selections(app)
             .iter()
@@ -857,7 +858,7 @@ impl BufferView {
         let mut is_blank = true;
         for c in self
             .display_map
-            .as_ref(app)
+            .read(app)
             .chars_at(DisplayPoint::new(display_row, 0), app)?
         {
             if c == ' ' {
@@ -871,7 +872,7 @@ impl BufferView {
     }
 
     fn foldable_range_for_line(&self, start_row: u32, app: &AppContext) -> Result<Range<Point>> {
-        let map = self.display_map.as_ref(app);
+        let map = self.display_map.read(app);
         let max_point = self.max_point(app);
 
         let (start_indent, _) = self.line_indent(start_row, app)?;
@@ -892,7 +893,7 @@ impl BufferView {
 
     pub fn fold_selected_ranges(&mut self, _: &(), ctx: &mut ViewContext<Self>) {
         self.display_map.update(ctx, |map, ctx| {
-            let buffer = self.buffer.as_ref(ctx);
+            let buffer = self.buffer.read(ctx);
             let ranges = self
                 .selections(ctx.app())
                 .iter()
@@ -903,23 +904,23 @@ impl BufferView {
     }
 
     pub fn line(&self, display_row: u32, app: &AppContext) -> Result<String> {
-        self.display_map.as_ref(app).line(display_row, app)
+        self.display_map.read(app).line(display_row, app)
     }
 
     pub fn line_len(&self, display_row: u32, app: &AppContext) -> Result<u32> {
-        self.display_map.as_ref(app).line_len(display_row, app)
+        self.display_map.read(app).line_len(display_row, app)
     }
 
     pub fn rightmost_point(&self, app: &AppContext) -> DisplayPoint {
-        self.display_map.as_ref(app).rightmost_point()
+        self.display_map.read(app).rightmost_point()
     }
 
     pub fn max_point(&self, app: &AppContext) -> DisplayPoint {
-        self.display_map.as_ref(app).max_point(app)
+        self.display_map.read(app).max_point(app)
     }
 
     pub fn text(&self, app: &AppContext) -> String {
-        self.display_map.as_ref(app).text(app)
+        self.display_map.read(app).text(app)
     }
 
     pub fn font_size(&self) -> f32 {
@@ -963,7 +964,7 @@ impl BufferView {
         let font_size = settings.buffer_font_size;
         let font_id =
             font_cache.select_font(settings.buffer_font_family, &FontProperties::new())?;
-        let digit_count = ((self.buffer.as_ref(app).max_point().row + 1) as f32)
+        let digit_count = ((self.buffer.read(app).max_point().row + 1) as f32)
             .log10()
             .floor() as usize
             + 1;
@@ -984,7 +985,7 @@ impl BufferView {
         layout_cache: &TextLayoutCache,
         app: &AppContext,
     ) -> Result<Vec<Arc<text_layout::Line>>> {
-        let display_map = self.display_map.as_ref(app);
+        let display_map = self.display_map.read(app);
 
         let settings = smol::block_on(self.settings.read());
         let font_size = settings.buffer_font_size;
@@ -1020,7 +1021,7 @@ impl BufferView {
         layout_cache: &TextLayoutCache,
         app: &AppContext,
     ) -> Result<Vec<Arc<text_layout::Line>>> {
-        let display_map = self.display_map.as_ref(app);
+        let display_map = self.display_map.read(app);
 
         rows.end = cmp::min(rows.end, display_map.max_point(app).row() + 1);
         if rows.start >= rows.end {
@@ -1203,7 +1204,7 @@ impl workspace::ItemView for BufferView {
     }
 
     fn title(&self, app: &AppContext) -> std::string::String {
-        if let Some(path) = self.buffer.as_ref(app).path(app) {
+        if let Some(path) = self.buffer.read(app).path(app) {
             path.file_name()
                 .expect("buffer's path is always to a file")
                 .to_string_lossy()
@@ -1214,7 +1215,7 @@ impl workspace::ItemView for BufferView {
     }
 
     fn entry_id(&self, app: &AppContext) -> Option<(usize, usize)> {
-        self.buffer.as_ref(app).entry_id()
+        self.buffer.read(app).entry_id()
     }
 
     fn clone_on_split(&self, ctx: &mut ViewContext<Self>) -> Option<Self>
@@ -1231,7 +1232,7 @@ impl workspace::ItemView for BufferView {
     }
 
     fn is_dirty(&self, ctx: &AppContext) -> bool {
-        self.buffer.as_ref(ctx).is_dirty()
+        self.buffer.read(ctx).is_dirty()
     }
 }
 
@@ -1240,112 +1241,125 @@ mod tests {
     use super::*;
     use crate::{editor::Point, settings, test::sample_text};
     use anyhow::Error;
+    use gpui::App;
     use unindent::Unindent;
 
     #[test]
     fn test_selection_with_mouse() {
-        App::test((), |mut app| async move {
+        App::test((), |app| {
             let buffer = app.add_model(|_| Buffer::new(0, "aaaaaa\nbbbbbb\ncccccc\ndddddd\n"));
             let settings = settings::channel(&app.font_cache()).unwrap().1;
             let (_, buffer_view) =
                 app.add_window(|ctx| BufferView::for_buffer(buffer, settings, ctx));
 
-            buffer_view.update(&mut app, |view, ctx| {
+            buffer_view.update(app, |view, ctx| {
                 view.begin_selection(DisplayPoint::new(2, 2), false, ctx);
             });
 
-            buffer_view.read(&app, |view, app| {
-                let selections = view
-                    .selections_in_range(DisplayPoint::zero()..view.max_point(app), app)
-                    .collect::<Vec<_>>();
-                assert_eq!(
-                    selections,
-                    [DisplayPoint::new(2, 2)..DisplayPoint::new(2, 2)]
-                );
-            });
+            let view = buffer_view.read(app);
+            let selections = view
+                .selections_in_range(
+                    DisplayPoint::zero()..view.max_point(app.as_ref()),
+                    app.as_ref(),
+                )
+                .collect::<Vec<_>>();
+            assert_eq!(
+                selections,
+                [DisplayPoint::new(2, 2)..DisplayPoint::new(2, 2)]
+            );
 
-            buffer_view.update(&mut app, |view, ctx| {
+            buffer_view.update(app, |view, ctx| {
                 view.update_selection(DisplayPoint::new(3, 3), Vector2F::zero(), ctx);
             });
 
-            buffer_view.read(&app, |view, app| {
-                let selections = view
-                    .selections_in_range(DisplayPoint::zero()..view.max_point(app), app)
-                    .collect::<Vec<_>>();
-                assert_eq!(
-                    selections,
-                    [DisplayPoint::new(2, 2)..DisplayPoint::new(3, 3)]
-                );
-            });
+            let view = buffer_view.read(app);
+            let selections = view
+                .selections_in_range(
+                    DisplayPoint::zero()..view.max_point(app.as_ref()),
+                    app.as_ref(),
+                )
+                .collect::<Vec<_>>();
+            assert_eq!(
+                selections,
+                [DisplayPoint::new(2, 2)..DisplayPoint::new(3, 3)]
+            );
 
-            buffer_view.update(&mut app, |view, ctx| {
+            buffer_view.update(app, |view, ctx| {
                 view.update_selection(DisplayPoint::new(1, 1), Vector2F::zero(), ctx);
             });
 
-            buffer_view.read(&app, |view, app| {
-                let selections = view
-                    .selections_in_range(DisplayPoint::zero()..view.max_point(app), app)
-                    .collect::<Vec<_>>();
-                assert_eq!(
-                    selections,
-                    [DisplayPoint::new(2, 2)..DisplayPoint::new(1, 1)]
-                );
-            });
+            let view = buffer_view.read(app);
+            let selections = view
+                .selections_in_range(
+                    DisplayPoint::zero()..view.max_point(app.as_ref()),
+                    app.as_ref(),
+                )
+                .collect::<Vec<_>>();
+            assert_eq!(
+                selections,
+                [DisplayPoint::new(2, 2)..DisplayPoint::new(1, 1)]
+            );
 
-            buffer_view.update(&mut app, |view, ctx| {
+            buffer_view.update(app, |view, ctx| {
                 view.end_selection(ctx);
                 view.update_selection(DisplayPoint::new(3, 3), Vector2F::zero(), ctx);
             });
 
-            buffer_view.read(&app, |view, app| {
-                let selections = view
-                    .selections_in_range(DisplayPoint::zero()..view.max_point(app), app)
-                    .collect::<Vec<_>>();
-                assert_eq!(
-                    selections,
-                    [DisplayPoint::new(2, 2)..DisplayPoint::new(1, 1)]
-                );
-            });
+            let view = buffer_view.read(app);
+            let selections = view
+                .selections_in_range(
+                    DisplayPoint::zero()..view.max_point(app.as_ref()),
+                    app.as_ref(),
+                )
+                .collect::<Vec<_>>();
+            assert_eq!(
+                selections,
+                [DisplayPoint::new(2, 2)..DisplayPoint::new(1, 1)]
+            );
 
-            buffer_view.update(&mut app, |view, ctx| {
+            buffer_view.update(app, |view, ctx| {
                 view.begin_selection(DisplayPoint::new(3, 3), true, ctx);
                 view.update_selection(DisplayPoint::new(0, 0), Vector2F::zero(), ctx);
             });
 
-            buffer_view.read(&app, |view, app| {
-                let selections = view
-                    .selections_in_range(DisplayPoint::zero()..view.max_point(app), app)
-                    .collect::<Vec<_>>();
-                assert_eq!(
-                    selections,
-                    [
-                        DisplayPoint::new(2, 2)..DisplayPoint::new(1, 1),
-                        DisplayPoint::new(3, 3)..DisplayPoint::new(0, 0)
-                    ]
-                );
-            });
+            let view = buffer_view.read(app);
+            let selections = view
+                .selections_in_range(
+                    DisplayPoint::zero()..view.max_point(app.as_ref()),
+                    app.as_ref(),
+                )
+                .collect::<Vec<_>>();
+            assert_eq!(
+                selections,
+                [
+                    DisplayPoint::new(2, 2)..DisplayPoint::new(1, 1),
+                    DisplayPoint::new(3, 3)..DisplayPoint::new(0, 0)
+                ]
+            );
 
-            buffer_view.update(&mut app, |view, ctx| {
+            buffer_view.update(app, |view, ctx| {
                 view.end_selection(ctx);
             });
 
-            buffer_view.read(&app, |view, app| {
-                let selections = view
-                    .selections_in_range(DisplayPoint::zero()..view.max_point(app), app)
-                    .collect::<Vec<_>>();
-                assert_eq!(
-                    selections,
-                    [DisplayPoint::new(3, 3)..DisplayPoint::new(0, 0)]
-                );
-            });
+            let view = buffer_view.read(app);
+            let selections = view
+                .selections_in_range(
+                    DisplayPoint::zero()..view.max_point(app.as_ref()),
+                    app.as_ref(),
+                )
+                .collect::<Vec<_>>();
+            assert_eq!(
+                selections,
+                [DisplayPoint::new(3, 3)..DisplayPoint::new(0, 0)]
+            );
         });
     }
 
     #[test]
-    fn test_layout_line_numbers() -> Result<()> {
-        App::test((), |mut app| async move {
+    fn test_layout_line_numbers() {
+        App::test((), |app| {
             let layout_cache = TextLayoutCache::new(app.platform().fonts());
-            let font_cache = app.font_cache();
+            let font_cache = app.font_cache().clone();
 
             let buffer = app.add_model(|_| Buffer::new(0, sample_text(6, 6)));
 
@@ -1353,19 +1367,17 @@ mod tests {
             let (_, view) =
                 app.add_window(|ctx| BufferView::for_buffer(buffer.clone(), settings, ctx));
 
-            view.read(&app, |view, app| {
-                let layouts = view.layout_line_numbers(1000.0, &font_cache, &layout_cache, app)?;
-                assert_eq!(layouts.len(), 6);
-                Result::<()>::Ok(())
-            })?;
-
-            Ok(())
+            let layouts = view
+                .read(app)
+                .layout_line_numbers(1000.0, &font_cache, &layout_cache, app.as_ref())
+                .unwrap();
+            assert_eq!(layouts.len(), 6);
         })
     }
 
     #[test]
-    fn test_fold() -> Result<()> {
-        App::test((), |mut app| async move {
+    fn test_fold() {
+        App::test((), |app| {
             let buffer = app.add_model(|_| {
                 Buffer::new(
                     0,
@@ -1393,8 +1405,9 @@ mod tests {
             let (_, view) =
                 app.add_window(|ctx| BufferView::for_buffer(buffer.clone(), settings, ctx));
 
-            view.update(&mut app, |view, ctx| {
-                view.select_ranges(&[DisplayPoint::new(8, 0)..DisplayPoint::new(12, 0)], ctx)?;
+            view.update(app, |view, ctx| {
+                view.select_ranges(&[DisplayPoint::new(8, 0)..DisplayPoint::new(12, 0)], ctx)
+                    .unwrap();
                 view.fold(&(), ctx);
                 assert_eq!(
                     view.text(ctx.app()),
@@ -1448,24 +1461,20 @@ mod tests {
                 );
 
                 view.unfold(&(), ctx);
-                assert_eq!(view.text(ctx.app()), buffer.as_ref(ctx).text());
-
-                Ok::<(), Error>(())
-            })?;
-
-            Ok(())
-        })
+                assert_eq!(view.text(ctx.app()), buffer.read(ctx).text());
+            });
+        });
     }
 
     #[test]
     fn test_move_cursor() -> Result<()> {
-        App::test((), |mut app| async move {
+        App::test((), |app| {
             let buffer = app.add_model(|_| Buffer::new(0, sample_text(6, 6)));
             let settings = settings::channel(&app.font_cache()).unwrap().1;
             let (_, view) =
                 app.add_window(|ctx| BufferView::for_buffer(buffer.clone(), settings, ctx));
 
-            buffer.update(&mut app, |buffer, ctx| {
+            buffer.update(app, |buffer, ctx| {
                 buffer.edit(
                     vec![
                         Point::new(1, 0)..Point::new(1, 0),
@@ -1476,7 +1485,7 @@ mod tests {
                 )
             })?;
 
-            view.update(&mut app, |view, ctx| {
+            view.update(app, |view, ctx| {
                 view.move_down(&(), ctx);
                 assert_eq!(
                     view.selection_ranges(ctx.app()),
@@ -1495,8 +1504,8 @@ mod tests {
     }
 
     #[test]
-    fn test_backspace() -> Result<()> {
-        App::test((), |mut app| async move {
+    fn test_backspace() {
+        App::test((), |app| {
             let buffer = app.add_model(|_| {
                 Buffer::new(0, "one two three\nfour five six\nseven eight nine\nten\n")
             });
@@ -1504,7 +1513,7 @@ mod tests {
             let (_, view) =
                 app.add_window(|ctx| BufferView::for_buffer(buffer.clone(), settings, ctx));
 
-            view.update(&mut app, |view, ctx| -> Result<()> {
+            view.update(app, |view, ctx| {
                 view.select_ranges(
                     &[
                         // an empty selection - the preceding character is deleted
@@ -1515,17 +1524,15 @@ mod tests {
                         DisplayPoint::new(2, 6)..DisplayPoint::new(3, 0),
                     ],
                     ctx,
-                )?;
+                )
+                .unwrap();
                 view.backspace(&(), ctx);
-                Ok(())
-            })?;
+            });
 
-            buffer.read(&mut app, |buffer, _| -> Result<()> {
-                assert_eq!(buffer.text(), "oe two three\nfou five six\nseven ten\n");
-                Ok(())
-            })?;
-
-            Ok(())
+            assert_eq!(
+                buffer.read(app).text(),
+                "oe two three\nfou five six\nseven ten\n"
+            );
         })
     }
 

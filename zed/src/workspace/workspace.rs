@@ -101,7 +101,7 @@ impl Workspace {
     pub fn contains_path(&self, path: &Path, app: &AppContext) -> bool {
         self.worktrees
             .iter()
-            .any(|worktree| worktree.as_ref(app).contains_path(path))
+            .any(|worktree| worktree.read(app).contains_path(path))
     }
 
     pub fn open_paths(&mut self, paths: &[PathBuf], ctx: &mut ModelContext<Self>) {
@@ -112,7 +112,7 @@ impl Workspace {
 
     pub fn open_path<'a>(&'a mut self, path: PathBuf, ctx: &mut ModelContext<Self>) {
         for tree in self.worktrees.iter() {
-            if tree.as_ref(ctx).contains_path(&path) {
+            if tree.read(ctx).contains_path(&path) {
                 return;
             }
         }
@@ -200,23 +200,22 @@ impl Entity for Workspace {
 
 #[cfg(test)]
 pub trait WorkspaceHandle {
-    fn file_entries(&self, app: &gpui::App) -> Vec<(usize, usize)>;
+    fn file_entries(&self, app: &AppContext) -> Vec<(usize, usize)>;
 }
 
 #[cfg(test)]
 impl WorkspaceHandle for ModelHandle<Workspace> {
-    fn file_entries(&self, app: &gpui::App) -> Vec<(usize, usize)> {
-        self.read(&app, |w, app| {
-            w.worktrees()
-                .iter()
-                .flat_map(|tree| {
-                    let tree_id = tree.id();
-                    tree.as_ref(app)
-                        .files()
-                        .map(move |file| (tree_id, file.entry_id))
-                })
-                .collect::<Vec<_>>()
-        })
+    fn file_entries(&self, app: &AppContext) -> Vec<(usize, usize)> {
+        self.read(app)
+            .worktrees()
+            .iter()
+            .flat_map(|tree| {
+                let tree_id = tree.id();
+                tree.read(app)
+                    .files()
+                    .map(move |file| (tree_id, file.entry_id))
+            })
+            .collect::<Vec<_>>()
     }
 }
 
@@ -228,8 +227,8 @@ mod tests {
     use serde_json::json;
 
     #[test]
-    fn test_open_entry() -> Result<(), Arc<anyhow::Error>> {
-        App::test((), |mut app| async move {
+    fn test_open_entry() {
+        App::test_async((), |mut app| async move {
             let dir = temp_tree(json!({
                 "a": {
                     "aa": "aa contents",
@@ -241,11 +240,9 @@ mod tests {
             app.finish_pending_tasks().await; // Open and populate worktree.
 
             // Get the first file entry.
-            let entry = workspace.read(&app, |w, app| {
-                let tree = w.worktrees.iter().next().unwrap();
-                let entry_id = tree.as_ref(app).files().next().unwrap().entry_id;
-                (tree.id(), entry_id)
-            });
+            let tree = app.read(|ctx| workspace.read(ctx).worktrees.iter().next().unwrap().clone());
+            let entry_id = app.read(|ctx| tree.read(ctx).files().next().unwrap().entry_id);
+            let entry = (tree.id(), entry_id);
 
             // Open the same entry twice before it finishes loading.
             let (future_1, future_2) = workspace.update(&mut app, |w, app| {
@@ -255,18 +252,17 @@ mod tests {
                 )
             });
 
-            let handle_1 = future_1.await?;
-            let handle_2 = future_2.await?;
+            let handle_1 = future_1.await.unwrap();
+            let handle_2 = future_2.await.unwrap();
             assert_eq!(handle_1.id(), handle_2.id());
 
             // Open the same entry again now that it has loaded
             let handle_3 = workspace
                 .update(&mut app, |w, app| w.open_entry(entry, app).unwrap())
-                .await?;
+                .await
+                .unwrap();
 
             assert_eq!(handle_3.id(), handle_1.id());
-
-            Ok(())
         })
     }
 }

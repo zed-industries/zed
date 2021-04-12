@@ -5,11 +5,11 @@ use gpui::{
     elements::*,
     geometry::{rect::RectF, vector::vec2f},
     keymap::Binding,
-    App, AppContext, Border, Entity, Quad, View, ViewContext,
+    AppContext, Border, Entity, MutableAppContext, Quad, View, ViewContext,
 };
 use std::cmp;
 
-pub fn init(app: &mut App) {
+pub fn init(app: &mut MutableAppContext) {
     app.add_action(
         "pane:activate_item",
         |pane: &mut Pane, index: &usize, ctx| {
