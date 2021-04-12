@@ -2316,12 +2316,14 @@ mod tests {
     #[test]
     fn test_edit_events() {
         App::test((), |app| {
+            let mut now = Instant::now();
             let buffer_1_events = Rc::new(RefCell::new(Vec::new()));
             let buffer_2_events = Rc::new(RefCell::new(Vec::new()));
 
             let buffer1 = app.add_model(|_| Buffer::new(0, "abcdef"));
             let buffer2 = app.add_model(|_| Buffer::new(1, "abcdef"));
-            let ops = buffer1.update(app, |buffer, ctx| {
+            let mut buffer_ops = Vec::new();
+            buffer1.update(app, |buffer, ctx| {
                 let buffer_1_events = buffer_1_events.clone();
                 ctx.subscribe(&buffer1, move |_, event, _| {
                     buffer_1_events.borrow_mut().push(event.clone())
@@ -2331,10 +2333,33 @@ mod tests {
                     buffer_2_events.borrow_mut().push(event.clone())
                 });
 
-                buffer.edit(Some(2..4), "XYZ", Some(ctx)).unwrap()
+                // An edit emits an edited event, followed by a dirtied event,
+                // since the buffer was previously in a clean state.
+                let ops = buffer.edit(Some(2..4), "XYZ", Some(ctx)).unwrap();
+                buffer_ops.extend_from_slice(&ops);
+
+                // An empty transaction does not emit any events.
+                buffer.start_transaction(None).unwrap();
+                buffer.end_transaction(None, Some(ctx)).unwrap();
+
+                // A transaction containing two edits emits one edited event.
+                now += Duration::from_secs(1);
+                buffer.start_transaction_at(None, now).unwrap();
+                let ops = buffer.edit(Some(5..5), "u", Some(ctx)).unwrap();
+                buffer_ops.extend_from_slice(&ops);
+                let ops = buffer.edit(Some(6..6), "w", Some(ctx)).unwrap();
+                buffer_ops.extend_from_slice(&ops);
+                buffer.end_transaction_at(None, now, Some(ctx)).unwrap();
+
+                // Undoing a transaction emits one edited event.
+                let ops = buffer.undo(Some(ctx));
+                buffer_ops.extend_from_slice(&ops);
             });
+
+            // Incorporating a set of remote ops emits a single edited event,
+            // followed by a dirtied event.
             buffer2.update(app, |buffer, ctx| {
-                buffer.apply_ops(ops, Some(ctx)).unwrap();
+                buffer.apply_ops(buffer_ops, Some(ctx)).unwrap();
             });
 
             let buffer_1_events = buffer_1_events.borrow();
@@ -2344,8 +2369,16 @@ mod tests {
                     Event::Edited(vec![Edit {
                         old_range: 2..4,
                         new_range: 2..5
-                    },]),
-                    Event::Dirtied
+                    }]),
+                    Event::Dirtied,
+                    Event::Edited(vec![Edit {
+                        old_range: 5..5,
+                        new_range: 5..7
+                    }]),
+                    Event::Edited(vec![Edit {
+                        old_range: 5..7,
+                        new_range: 5..5
+                    }]),
                 ]
             );
 
@@ -2980,9 +3013,10 @@ mod tests {
         buffer.start_transaction_at(Some(set_id), now)?;
         buffer.update_selection_set(set_id, buffer.selections_from_ranges(vec![2..2])?, None)?;
         buffer.edit(vec![0..1], "a", None)?;
+        buffer.edit(vec![1..1], "b", None)?;
         buffer.end_transaction_at(Some(set_id), now, None)?;
-        assert_eq!(buffer.text(), "a2cde6");
-        assert_eq!(buffer.selection_ranges(set_id)?, vec![2..2]);
+        assert_eq!(buffer.text(), "ab2cde6");
+        assert_eq!(buffer.selection_ranges(set_id)?, vec![3..3]);
 
         // Last transaction happened past the group interval, undo it on its
         // own.
@@ -3003,8 +3037,8 @@ mod tests {
 
         // Redo the last transaction on its own.
         buffer.redo(None);
-        assert_eq!(buffer.text(), "a2cde6");
-        assert_eq!(buffer.selection_ranges(set_id)?, vec![2..2]);
+        assert_eq!(buffer.text(), "ab2cde6");
+        assert_eq!(buffer.selection_ranges(set_id)?, vec![3..3]);
 
         Ok(())
     }
