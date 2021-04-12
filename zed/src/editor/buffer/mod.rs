@@ -858,35 +858,6 @@ impl Buffer {
             .ok_or_else(|| anyhow!("invalid selection set id {:?}", set_id))
     }
 
-    pub fn selection_ranges<'a>(
-        &'a self,
-        set_id: SelectionSetId,
-    ) -> Result<impl Iterator<Item = Range<Point>> + 'a> {
-        Ok(self.selections(set_id)?.iter().map(move |selection| {
-            let start = selection.start.to_point(self).unwrap();
-            let end = selection.end.to_point(self).unwrap();
-            if selection.reversed {
-                end..start
-            } else {
-                start..end
-            }
-        }))
-    }
-
-    pub fn all_selections(&self) -> impl Iterator<Item = (&SelectionSetId, &[Selection])> {
-        self.selections
-            .iter()
-            .map(|(set_id, selections)| (set_id, selections.as_ref()))
-    }
-
-    pub fn all_selection_ranges<'a>(
-        &'a self,
-    ) -> impl 'a + Iterator<Item = (SelectionSetId, Vec<Range<Point>>)> {
-        self.selections
-            .keys()
-            .map(move |set_id| (*set_id, self.selection_ranges(*set_id).unwrap().collect()))
-    }
-
     fn merge_selections(&mut self, selections: &mut Vec<Selection>) {
         let mut i = 1;
         while i < selections.len() {
@@ -3027,6 +2998,59 @@ mod tests {
     }
 
     #[test]
+    fn test_history() -> Result<()> {
+        let mut now = Instant::now();
+        let mut buffer = Buffer::new(0, "123456");
+
+        let (set_id, _) =
+            buffer.add_selection_set(buffer.selections_from_ranges(vec![4..4])?, None);
+        buffer.start_transaction_at(Some(set_id), now)?;
+        buffer.edit(vec![2..4], "cd", None)?;
+        buffer.end_transaction_at(Some(set_id), now, None)?;
+        assert_eq!(buffer.text(), "12cd56");
+        assert_eq!(buffer.selection_ranges(set_id)?, vec![4..4]);
+
+        buffer.start_transaction_at(Some(set_id), now)?;
+        buffer.update_selection_set(set_id, buffer.selections_from_ranges(vec![1..3])?, None)?;
+        buffer.edit_at(vec![4..5], "e", now, None)?;
+        buffer.end_transaction_at(Some(set_id), now, None)?;
+        assert_eq!(buffer.text(), "12cde6");
+        assert_eq!(buffer.selection_ranges(set_id)?, vec![1..3]);
+
+        now += UNDO_GROUP_INTERVAL + Duration::from_millis(1);
+        buffer.start_transaction_at(Some(set_id), now)?;
+        buffer.update_selection_set(set_id, buffer.selections_from_ranges(vec![2..2])?, None)?;
+        buffer.edit_at(vec![0..1], "a", now, None)?;
+        buffer.end_transaction_at(Some(set_id), now, None)?;
+        assert_eq!(buffer.text(), "a2cde6");
+        assert_eq!(buffer.selection_ranges(set_id)?, vec![2..2]);
+
+        // Last transaction happened past the group interval, undo it on its
+        // own.
+        buffer.undo(None);
+        assert_eq!(buffer.text(), "12cde6");
+        assert_eq!(buffer.selection_ranges(set_id)?, vec![1..3]);
+
+        // First two transactions happened within the group interval, undo them
+        // together.
+        buffer.undo(None);
+        assert_eq!(buffer.text(), "123456");
+        assert_eq!(buffer.selection_ranges(set_id)?, vec![4..4]);
+
+        // Redo the first two transactions together.
+        buffer.redo(None);
+        assert_eq!(buffer.text(), "12cde6");
+        assert_eq!(buffer.selection_ranges(set_id)?, vec![1..3]);
+
+        // Redo the last transaction on its own.
+        buffer.redo(None);
+        assert_eq!(buffer.text(), "a2cde6");
+        assert_eq!(buffer.selection_ranges(set_id)?, vec![2..2]);
+
+        Ok(())
+    }
+
+    #[test]
     fn test_random_concurrent_edits() {
         use crate::test::Network;
 
@@ -3121,10 +3145,8 @@ mod tests {
                 let mut ranges = Vec::new();
                 for _ in 0..5 {
                     let start = rng.gen_range(0..self.len() + 1);
-                    let start_point = self.point_for_offset(start).unwrap();
                     let end = rng.gen_range(0..self.len() + 1);
-                    let end_point = self.point_for_offset(end).unwrap();
-                    ranges.push(start_point..end_point);
+                    ranges.push(start..end);
                 }
                 let new_selections = self.selections_from_ranges(ranges).unwrap();
 
@@ -3152,7 +3174,7 @@ mod tests {
 
         fn selections_from_ranges<I>(&self, ranges: I) -> Result<Vec<Selection>>
         where
-            I: IntoIterator<Item = Range<Point>>,
+            I: IntoIterator<Item = Range<usize>>,
         {
             let mut ranges = ranges.into_iter().collect::<Vec<_>>();
             ranges.sort_unstable_by_key(|range| range.start);
@@ -3176,6 +3198,36 @@ mod tests {
                 }
             }
             Ok(selections)
+        }
+
+        pub fn selection_ranges<'a>(&'a self, set_id: SelectionSetId) -> Result<Vec<Range<usize>>> {
+            Ok(self
+                .selections(set_id)?
+                .iter()
+                .map(move |selection| {
+                    let start = selection.start.to_offset(self).unwrap();
+                    let end = selection.end.to_offset(self).unwrap();
+                    if selection.reversed {
+                        end..start
+                    } else {
+                        start..end
+                    }
+                })
+                .collect())
+        }
+
+        pub fn all_selections(&self) -> impl Iterator<Item = (&SelectionSetId, &[Selection])> {
+            self.selections
+                .iter()
+                .map(|(set_id, selections)| (set_id, selections.as_ref()))
+        }
+
+        pub fn all_selection_ranges<'a>(
+            &'a self,
+        ) -> impl 'a + Iterator<Item = (SelectionSetId, Vec<Range<usize>>)> {
+            self.selections
+                .keys()
+                .map(move |set_id| (*set_id, self.selection_ranges(*set_id).unwrap()))
         }
     }
 
