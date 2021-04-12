@@ -9,7 +9,6 @@ use crate::{
     scene::Layer,
     Scene,
 };
-use anyhow::{anyhow, Result};
 use cocoa::foundation::NSUInteger;
 use metal::{MTLPixelFormat, MTLResourceOptions, NSRange};
 use shaders::{ToFloat2 as _, ToUchar4 as _};
@@ -41,10 +40,10 @@ impl Renderer {
         device: metal::Device,
         pixel_format: metal::MTLPixelFormat,
         fonts: Arc<dyn platform::FontSystem>,
-    ) -> Result<Self> {
+    ) -> Self {
         let library = device
             .new_library_with_data(SHADERS_METALLIB)
-            .map_err(|message| anyhow!("error building metal library: {}", message))?;
+            .expect("error building metal library");
 
         let unit_vertices = [
             (0., 0.).to_float2(),
@@ -73,7 +72,7 @@ impl Renderer {
             "quad_vertex",
             "quad_fragment",
             pixel_format,
-        )?;
+        );
         let shadow_pipeline_state = build_pipeline_state(
             &device,
             &library,
@@ -81,7 +80,7 @@ impl Renderer {
             "shadow_vertex",
             "shadow_fragment",
             pixel_format,
-        )?;
+        );
         let sprite_pipeline_state = build_pipeline_state(
             &device,
             &library,
@@ -89,7 +88,7 @@ impl Renderer {
             "sprite_vertex",
             "sprite_fragment",
             pixel_format,
-        )?;
+        );
         let path_atlas_pipeline_state = build_path_atlas_pipeline_state(
             &device,
             &library,
@@ -97,8 +96,8 @@ impl Renderer {
             "path_atlas_vertex",
             "path_atlas_fragment",
             MTLPixelFormat::R8Unorm,
-        )?;
-        Ok(Self {
+        );
+        Self {
             sprite_cache,
             path_atlases,
             quad_pipeline_state,
@@ -107,7 +106,7 @@ impl Renderer {
             path_atlas_pipeline_state,
             unit_vertices,
             instances,
-        })
+        }
     }
 
     pub fn render(
@@ -713,13 +712,13 @@ fn build_pipeline_state(
     vertex_fn_name: &str,
     fragment_fn_name: &str,
     pixel_format: metal::MTLPixelFormat,
-) -> Result<metal::RenderPipelineState> {
+) -> metal::RenderPipelineState {
     let vertex_fn = library
         .get_function(vertex_fn_name, None)
-        .map_err(|message| anyhow!("error locating vertex function: {}", message))?;
+        .expect("error locating vertex function");
     let fragment_fn = library
         .get_function(fragment_fn_name, None)
-        .map_err(|message| anyhow!("error locating fragment function: {}", message))?;
+        .expect("error locating fragment function");
 
     let descriptor = metal::RenderPipelineDescriptor::new();
     descriptor.set_label(label);
@@ -737,7 +736,7 @@ fn build_pipeline_state(
 
     device
         .new_render_pipeline_state(&descriptor)
-        .map_err(|message| anyhow!("could not create render pipeline state: {}", message))
+        .expect("could not create render pipeline state")
 }
 
 fn build_path_atlas_pipeline_state(
@@ -747,13 +746,13 @@ fn build_path_atlas_pipeline_state(
     vertex_fn_name: &str,
     fragment_fn_name: &str,
     pixel_format: metal::MTLPixelFormat,
-) -> Result<metal::RenderPipelineState> {
+) -> metal::RenderPipelineState {
     let vertex_fn = library
         .get_function(vertex_fn_name, None)
-        .map_err(|message| anyhow!("error locating vertex function: {}", message))?;
+        .expect("error locating vertex function");
     let fragment_fn = library
         .get_function(fragment_fn_name, None)
-        .map_err(|message| anyhow!("error locating fragment function: {}", message))?;
+        .expect("error locating fragment function");
 
     let descriptor = metal::RenderPipelineDescriptor::new();
     descriptor.set_label(label);
@@ -771,7 +770,7 @@ fn build_path_atlas_pipeline_state(
 
     device
         .new_render_pipeline_state(&descriptor)
-        .map_err(|message| anyhow!("could not create render pipeline state: {}", message))
+        .expect("could not create render pipeline state")
 }
 
 mod shaders {

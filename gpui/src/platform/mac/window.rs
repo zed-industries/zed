@@ -4,11 +4,10 @@ use crate::{
     platform::{self, Event, WindowContext},
     Scene,
 };
-use anyhow::{anyhow, Result};
 use cocoa::{
     appkit::{
-        NSBackingStoreBuffered, NSScreen, NSView, NSViewHeightSizable, NSViewWidthSizable,
-        NSWindow, NSWindowStyleMask,
+        NSApplication, NSBackingStoreBuffered, NSScreen, NSView, NSViewHeightSizable,
+        NSViewWidthSizable, NSWindow, NSWindowStyleMask,
     },
     base::{id, nil},
     foundation::{NSAutoreleasePool, NSInteger, NSSize, NSString},
@@ -118,6 +117,7 @@ unsafe fn build_classes() {
 pub struct Window(Rc<RefCell<WindowState>>);
 
 struct WindowState {
+    id: usize,
     native_window: id,
     event_callback: Option<Box<dyn FnMut(Event)>>,
     resize_callback: Option<Box<dyn FnMut(&mut dyn platform::WindowContext)>>,
@@ -131,10 +131,11 @@ struct WindowState {
 
 impl Window {
     pub fn open(
+        id: usize,
         options: platform::WindowOptions,
         executor: Rc<executor::Foreground>,
         fonts: Arc<dyn platform::FontSystem>,
-    ) -> Result<Self> {
+    ) -> Self {
         const PIXEL_FORMAT: metal::MTLPixelFormat = metal::MTLPixelFormat::BGRA8Unorm;
 
         unsafe {
@@ -153,13 +154,10 @@ impl Window {
                 NSBackingStoreBuffered,
                 NO,
             );
+            assert!(!native_window.is_null());
 
-            if native_window == nil {
-                return Err(anyhow!("window returned nil from initializer"));
-            }
-
-            let device = metal::Device::system_default()
-                .ok_or_else(|| anyhow!("could not find default metal device"))?;
+            let device =
+                metal::Device::system_default().expect("could not find default metal device");
 
             let layer: id = msg_send![class!(CAMetalLayer), layer];
             let _: () = msg_send![layer, setDevice: device.as_ptr()];
@@ -175,18 +173,17 @@ impl Window {
 
             let native_view: id = msg_send![VIEW_CLASS, alloc];
             let native_view = NSView::init(native_view);
-            if native_view == nil {
-                return Err(anyhow!("view return nil from initializer"));
-            }
+            assert!(!native_view.is_null());
 
             let window = Self(Rc::new(RefCell::new(WindowState {
+                id,
                 native_window,
                 event_callback: None,
                 resize_callback: None,
                 synthetic_drag_counter: 0,
                 executor,
                 scene_to_render: Default::default(),
-                renderer: Renderer::new(device.clone(), PIXEL_FORMAT, fonts)?,
+                renderer: Renderer::new(device.clone(), PIXEL_FORMAT, fonts),
                 command_queue: device.new_command_queue(),
                 layer,
             })));
@@ -227,7 +224,20 @@ impl Window {
 
             pool.drain();
 
-            Ok(window)
+            window
+        }
+    }
+
+    pub fn key_window_id() -> Option<usize> {
+        unsafe {
+            let app = NSApplication::sharedApplication(nil);
+            let key_window: id = msg_send![app, keyWindow];
+            if key_window.is_null() {
+                None
+            } else {
+                let id = get_window_state(&*key_window).borrow().id;
+                Some(id)
+            }
         }
     }
 }

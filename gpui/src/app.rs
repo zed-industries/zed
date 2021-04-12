@@ -69,7 +69,7 @@ pub trait UpdateView {
 
 pub struct Menu<'a> {
     pub name: &'a str,
-    pub items: &'a [MenuItem<'a>],
+    pub items: Vec<MenuItem<'a>>,
 }
 
 pub enum MenuItem<'a> {
@@ -77,6 +77,7 @@ pub enum MenuItem<'a> {
         name: &'a str,
         keystroke: Option<&'a str>,
         action: &'a str,
+        arg: Option<Box<dyn Any + 'static>>,
     },
     Separator,
 }
@@ -127,9 +128,27 @@ impl App {
         let foreground = Rc::new(executor::Foreground::platform(platform.dispatcher())?);
         let app = Self(Rc::new(RefCell::new(MutableAppContext::new(
             foreground,
-            platform,
+            platform.clone(),
             asset_source,
         ))));
+
+        let ctx = app.0.clone();
+        platform.on_menu_command(Box::new(move |command, arg| {
+            let mut ctx = ctx.borrow_mut();
+            if let Some(key_window_id) = ctx.platform.key_window_id() {
+                if let Some((presenter, _)) =
+                    ctx.presenters_and_platform_windows.get(&key_window_id)
+                {
+                    let presenter = presenter.clone();
+                    let path = presenter.borrow().dispatch_path(ctx.as_ref());
+                    if ctx.dispatch_action_any(key_window_id, &path, command, arg.unwrap_or(&())) {
+                        return;
+                    }
+                }
+            }
+            ctx.dispatch_global_action_any(command, arg.unwrap_or(&()));
+        }));
+
         app.0.borrow_mut().weak_self = Some(Rc::downgrade(&app.0));
         Ok(app)
     }
@@ -169,20 +188,6 @@ impl App {
         self
     }
 
-    pub fn on_menu_command<F>(self, mut callback: F) -> Self
-    where
-        F: 'static + FnMut(&str, &mut MutableAppContext),
-    {
-        let ctx = self.0.clone();
-        self.0
-            .borrow()
-            .platform
-            .on_menu_command(Box::new(move |command| {
-                callback(command, &mut *ctx.borrow_mut())
-            }));
-        self
-    }
-
     pub fn on_open_files<F>(self, mut callback: F) -> Self
     where
         F: 'static + FnMut(Vec<PathBuf>, &mut MutableAppContext),
@@ -195,10 +200,6 @@ impl App {
                 callback(paths, &mut *ctx.borrow_mut())
             }));
         self
-    }
-
-    pub fn set_menus(&self, menus: &[Menu]) {
-        self.0.borrow().platform.set_menus(menus);
     }
 
     pub fn run<F>(self, on_finish_launching: F)
@@ -383,8 +384,8 @@ pub struct MutableAppContext {
     subscriptions: HashMap<usize, Vec<Subscription>>,
     observations: HashMap<usize, Vec<Observation>>,
     window_invalidations: HashMap<usize, WindowInvalidation>,
-    invalidation_callbacks:
-        HashMap<usize, Box<dyn FnMut(WindowInvalidation, &mut MutableAppContext)>>,
+    presenters_and_platform_windows:
+        HashMap<usize, (Rc<RefCell<Presenter>>, Box<dyn platform::Window>)>,
     debug_elements_callbacks: HashMap<usize, Box<dyn Fn(&AppContext) -> crate::json::Value>>,
     foreground: Rc<executor::Foreground>,
     future_handlers: Rc<RefCell<HashMap<usize, FutureHandler>>>,
@@ -422,7 +423,7 @@ impl MutableAppContext {
             subscriptions: HashMap::new(),
             observations: HashMap::new(),
             window_invalidations: HashMap::new(),
-            invalidation_callbacks: HashMap::new(),
+            presenters_and_platform_windows: HashMap::new(),
             debug_elements_callbacks: HashMap::new(),
             foreground,
             future_handlers: Default::default(),
@@ -452,15 +453,6 @@ impl MutableAppContext {
 
     pub fn background_executor(&self) -> &Arc<executor::Background> {
         &self.ctx.background
-    }
-
-    pub fn on_window_invalidated<F>(&mut self, window_id: usize, callback: F)
-    where
-        F: 'static + FnMut(WindowInvalidation, &mut MutableAppContext),
-    {
-        self.invalidation_callbacks
-            .insert(window_id, Box::new(callback));
-        self.update_windows();
     }
 
     pub fn on_debug_elements<F>(&mut self, window_id: usize, callback: F)
@@ -573,6 +565,10 @@ impl MutableAppContext {
         result
     }
 
+    pub fn set_menus(&self, menus: Vec<Menu>) {
+        self.platform.set_menus(menus);
+    }
+
     pub fn dispatch_action<T: 'static + Any>(
         &mut self,
         window_id: usize,
@@ -634,7 +630,7 @@ impl MutableAppContext {
         }
 
         if !halted_dispatch {
-            self.dispatch_global_action_with_dyn_arg(name, arg);
+            self.dispatch_global_action_any(name, arg);
         }
 
         self.flush_effects();
@@ -642,10 +638,10 @@ impl MutableAppContext {
     }
 
     pub fn dispatch_global_action<T: 'static + Any>(&mut self, name: &str, arg: T) {
-        self.dispatch_global_action_with_dyn_arg(name, Box::new(arg).as_ref());
+        self.dispatch_global_action_any(name, Box::new(arg).as_ref());
     }
 
-    fn dispatch_global_action_with_dyn_arg(&mut self, name: &str, arg: &dyn Any) {
+    fn dispatch_global_action_any(&mut self, name: &str, arg: &dyn Any) {
         if let Some((name, mut handlers)) = self.global_actions.remove_entry(name) {
             self.pending_flushes += 1;
             for handler in handlers.iter_mut().rev() {
@@ -741,87 +737,75 @@ impl MutableAppContext {
     }
 
     fn open_platform_window(&mut self, window_id: usize) {
-        match self.platform.open_window(
+        let mut window = self.platform.open_window(
+            window_id,
             WindowOptions {
                 bounds: RectF::new(vec2f(0., 0.), vec2f(1024., 768.)),
                 title: "Zed".into(),
             },
             self.foreground.clone(),
-        ) {
-            Err(e) => log::error!("error opening window: {}", e),
-            Ok(mut window) => {
-                let text_layout_cache = TextLayoutCache::new(self.platform.fonts());
-                let presenter = Rc::new(RefCell::new(Presenter::new(
-                    window_id,
-                    self.font_cache.clone(),
-                    text_layout_cache,
-                    self.assets.clone(),
-                    self,
-                )));
+        );
+        let text_layout_cache = TextLayoutCache::new(self.platform.fonts());
+        let presenter = Rc::new(RefCell::new(Presenter::new(
+            window_id,
+            self.font_cache.clone(),
+            text_layout_cache,
+            self.assets.clone(),
+            self,
+        )));
 
-                {
-                    let mut app = self.upgrade();
-                    let presenter = presenter.clone();
-                    window.on_event(Box::new(move |event| {
-                        app.update(|ctx| {
-                            if let Event::KeyDown { keystroke, .. } = &event {
-                                if ctx
-                                    .dispatch_keystroke(
-                                        window_id,
-                                        presenter.borrow().dispatch_path(ctx.as_ref()),
-                                        keystroke,
-                                    )
-                                    .unwrap()
-                                {
-                                    return;
-                                }
-                            }
+        {
+            let mut app = self.upgrade();
+            let presenter = presenter.clone();
+            window.on_event(Box::new(move |event| {
+                app.update(|ctx| {
+                    if let Event::KeyDown { keystroke, .. } = &event {
+                        if ctx
+                            .dispatch_keystroke(
+                                window_id,
+                                presenter.borrow().dispatch_path(ctx.as_ref()),
+                                keystroke,
+                            )
+                            .unwrap()
+                        {
+                            return;
+                        }
+                    }
 
-                            let actions =
-                                presenter.borrow_mut().dispatch_event(event, ctx.as_ref());
-                            for action in actions {
-                                ctx.dispatch_action_any(
-                                    window_id,
-                                    &action.path,
-                                    action.name,
-                                    action.arg.as_ref(),
-                                );
-                            }
-                        })
-                    }));
-                }
-
-                {
-                    let mut app = self.upgrade();
-                    let presenter = presenter.clone();
-                    window.on_resize(Box::new(move |window| {
-                        app.update(|ctx| {
-                            let scene = presenter.borrow_mut().build_scene(
-                                window.size(),
-                                window.scale_factor(),
-                                ctx,
-                            );
-                            window.present_scene(scene);
-                        })
-                    }));
-                }
-
-                {
-                    let presenter = presenter.clone();
-                    self.on_window_invalidated(window_id, move |invalidation, ctx| {
-                        let mut presenter = presenter.borrow_mut();
-                        presenter.invalidate(invalidation, ctx.as_ref());
-                        let scene =
-                            presenter.build_scene(window.size(), window.scale_factor(), ctx);
-                        window.present_scene(scene);
-                    });
-                }
-
-                self.on_debug_elements(window_id, move |ctx| {
-                    presenter.borrow().debug_elements(ctx).unwrap()
-                });
-            }
+                    let actions = presenter.borrow_mut().dispatch_event(event, ctx.as_ref());
+                    for action in actions {
+                        ctx.dispatch_action_any(
+                            window_id,
+                            &action.path,
+                            action.name,
+                            action.arg.as_ref(),
+                        );
+                    }
+                })
+            }));
         }
+
+        {
+            let mut app = self.upgrade();
+            let presenter = presenter.clone();
+            window.on_resize(Box::new(move |window| {
+                app.update(|ctx| {
+                    let scene = presenter.borrow_mut().build_scene(
+                        window.size(),
+                        window.scale_factor(),
+                        ctx,
+                    );
+                    window.present_scene(scene);
+                })
+            }));
+        }
+
+        self.presenters_and_platform_windows
+            .insert(window_id, (presenter.clone(), window));
+
+        self.on_debug_elements(window_id, move |ctx| {
+            presenter.borrow().debug_elements(ctx).unwrap()
+        });
     }
 
     pub fn add_view<T, F>(&mut self, window_id: usize, build_view: F) -> ViewHandle<T>
@@ -922,9 +906,17 @@ impl MutableAppContext {
         std::mem::swap(&mut invalidations, &mut self.window_invalidations);
 
         for (window_id, invalidation) in invalidations {
-            if let Some(mut callback) = self.invalidation_callbacks.remove(&window_id) {
-                callback(invalidation, self);
-                self.invalidation_callbacks.insert(window_id, callback);
+            if let Some((presenter, mut window)) =
+                self.presenters_and_platform_windows.remove(&window_id)
+            {
+                {
+                    let mut presenter = presenter.borrow_mut();
+                    presenter.invalidate(invalidation, self.as_ref());
+                    let scene = presenter.build_scene(window.size(), window.scale_factor(), self);
+                    window.present_scene(scene);
+                }
+                self.presenters_and_platform_windows
+                    .insert(window_id, (presenter, window));
             }
         }
     }

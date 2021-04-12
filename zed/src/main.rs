@@ -1,5 +1,4 @@
 use fs::OpenOptions;
-use gpui::PathPromptOptions;
 use log::LevelFilter;
 use simplelog::SimpleLogger;
 use std::{fs, path::PathBuf};
@@ -13,29 +12,8 @@ fn main() {
 
     let app = gpui::App::new(assets::Assets).unwrap();
     let (_, settings_rx) = settings::channel(&app.font_cache()).unwrap();
-    app.set_menus(menus::MENUS);
-    app.on_menu_command({
-        let settings_rx = settings_rx.clone();
-        move |command, ctx| match command {
-            "app:open" => {
-                if let Some(paths) = ctx.platform().prompt_for_paths(PathPromptOptions {
-                    files: true,
-                    directories: true,
-                    multiple: true,
-                }) {
-                    ctx.dispatch_global_action(
-                        "workspace:open_paths",
-                        OpenParams {
-                            paths,
-                            settings: settings_rx.clone(),
-                        },
-                    );
-                }
-            }
-            _ => ctx.dispatch_global_action(command, ()),
-        }
-    })
-    .run(move |ctx| {
+    app.run(move |ctx| {
+        ctx.set_menus(menus::menus(settings_rx.clone()));
         workspace::init(ctx);
         editor::init(ctx);
         file_finder::init(ctx);
