@@ -69,7 +69,7 @@ pub trait UpdateView {
 
 pub struct Menu<'a> {
     pub name: &'a str,
-    pub items: &'a [MenuItem<'a>],
+    pub items: Vec<MenuItem<'a>>,
 }
 
 pub enum MenuItem<'a> {
@@ -77,6 +77,7 @@ pub enum MenuItem<'a> {
         name: &'a str,
         keystroke: Option<&'a str>,
         action: &'a str,
+        arg: Option<Box<dyn Any>>,
     },
     Separator,
 }
@@ -171,14 +172,14 @@ impl App {
 
     pub fn on_menu_command<F>(self, mut callback: F) -> Self
     where
-        F: 'static + FnMut(&str, &mut MutableAppContext),
+        F: 'static + FnMut(&str, Option<&dyn Any>, &mut MutableAppContext),
     {
         let ctx = self.0.clone();
         self.0
             .borrow()
             .platform
-            .on_menu_command(Box::new(move |command| {
-                callback(command, &mut *ctx.borrow_mut())
+            .on_menu_command(Box::new(move |command, arg| {
+                callback(command, arg, &mut *ctx.borrow_mut())
             }));
         self
     }
@@ -197,7 +198,7 @@ impl App {
         self
     }
 
-    pub fn set_menus(&self, menus: &[Menu]) {
+    pub fn set_menus(&self, menus: Vec<Menu>) {
         self.0.borrow().platform.set_menus(menus);
     }
 
@@ -742,6 +743,7 @@ impl MutableAppContext {
 
     fn open_platform_window(&mut self, window_id: usize) {
         match self.platform.open_window(
+            window_id,
             WindowOptions {
                 bounds: RectF::new(vec2f(0., 0.), vec2f(1024., 768.)),
                 title: "Zed".into(),

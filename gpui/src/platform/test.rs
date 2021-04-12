@@ -1,6 +1,6 @@
 use pathfinder_geometry::vector::Vector2F;
-use std::rc::Rc;
 use std::sync::Arc;
+use std::{any::Any, rc::Rc};
 
 struct Platform {
     dispatcher: Arc<dyn super::Dispatcher>,
@@ -27,7 +27,7 @@ impl Platform {
 }
 
 impl super::Platform for Platform {
-    fn on_menu_command(&self, _: Box<dyn FnMut(&str)>) {}
+    fn on_menu_command(&self, _: Box<dyn FnMut(&str, Option<&dyn Any>)>) {}
 
     fn on_become_active(&self, _: Box<dyn FnMut()>) {}
 
@@ -53,13 +53,18 @@ impl super::Platform for Platform {
 
     fn open_window(
         &self,
+        _: usize,
         options: super::WindowOptions,
         _executor: Rc<super::executor::Foreground>,
     ) -> anyhow::Result<Box<dyn super::Window>> {
         Ok(Box::new(Window::new(options.bounds.size())))
     }
 
-    fn set_menus(&self, _menus: &[crate::Menu]) {}
+    fn key_window_id(&self) -> Option<usize> {
+        None
+    }
+
+    fn set_menus(&self, _menus: Vec<crate::Menu>) {}
 
     fn quit(&self) {}
 

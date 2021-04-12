@@ -20,10 +20,10 @@ use crate::{
 use anyhow::Result;
 use async_task::Runnable;
 pub use event::Event;
-use std::{ops::Range, path::PathBuf, rc::Rc, sync::Arc};
+use std::{any::Any, ops::Range, path::PathBuf, rc::Rc, sync::Arc};
 
 pub trait Platform {
-    fn on_menu_command(&self, callback: Box<dyn FnMut(&str)>);
+    fn on_menu_command(&self, callback: Box<dyn FnMut(&str, Option<&dyn Any>)>);
     fn on_become_active(&self, callback: Box<dyn FnMut()>);
     fn on_resign_active(&self, callback: Box<dyn FnMut()>);
     fn on_event(&self, callback: Box<dyn FnMut(Event) -> bool>);
@@ -36,13 +36,15 @@ pub trait Platform {
     fn activate(&self, ignoring_other_apps: bool);
     fn open_window(
         &self,
+        id: usize,
         options: WindowOptions,
         executor: Rc<executor::Foreground>,
     ) -> Result<Box<dyn Window>>;
+    fn key_window_id(&self) -> Option<usize>;
     fn prompt_for_paths(&self, options: PathPromptOptions) -> Option<Vec<PathBuf>>;
     fn quit(&self);
     fn copy(&self, text: &str);
-    fn set_menus(&self, menus: &[Menu]);
+    fn set_menus(&self, menus: Vec<Menu>);
 }
 
 pub trait Dispatcher: Send + Sync {

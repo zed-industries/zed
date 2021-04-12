@@ -7,8 +7,8 @@ use crate::{
 use anyhow::{anyhow, Result};
 use cocoa::{
     appkit::{
-        NSBackingStoreBuffered, NSScreen, NSView, NSViewHeightSizable, NSViewWidthSizable,
-        NSWindow, NSWindowStyleMask,
+        NSApplication, NSBackingStoreBuffered, NSScreen, NSView, NSViewHeightSizable,
+        NSViewWidthSizable, NSWindow, NSWindowStyleMask,
     },
     base::{id, nil},
     foundation::{NSAutoreleasePool, NSInteger, NSSize, NSString},
@@ -118,6 +118,7 @@ unsafe fn build_classes() {
 pub struct Window(Rc<RefCell<WindowState>>);
 
 struct WindowState {
+    id: usize,
     native_window: id,
     event_callback: Option<Box<dyn FnMut(Event)>>,
     resize_callback: Option<Box<dyn FnMut(&mut dyn platform::WindowContext)>>,
@@ -131,6 +132,7 @@ struct WindowState {
 
 impl Window {
     pub fn open(
+        id: usize,
         options: platform::WindowOptions,
         executor: Rc<executor::Foreground>,
         fonts: Arc<dyn platform::FontSystem>,
@@ -180,6 +182,7 @@ impl Window {
             }
 
             let window = Self(Rc::new(RefCell::new(WindowState {
+                id,
                 native_window,
                 event_callback: None,
                 resize_callback: None,
@@ -228,6 +231,19 @@ impl Window {
             pool.drain();
 
             Ok(window)
+        }
+    }
+
+    pub fn key_window_id() -> Option<usize> {
+        unsafe {
+            let app = NSApplication::sharedApplication(nil);
+            let key_window: id = msg_send![app, keyWindow];
+            if key_window.is_null() {
+                None
+            } else {
+                let id = get_window_state(&*key_window).borrow().id;
+                Some(id)
+            }
         }
     }
 }

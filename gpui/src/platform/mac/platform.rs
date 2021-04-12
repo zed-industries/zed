@@ -20,6 +20,7 @@ use objc::{
 };
 use ptr::null_mut;
 use std::{
+    any::Any,
     cell::RefCell,
     ffi::{c_void, CStr},
     os::raw::c_char,
@@ -76,7 +77,7 @@ pub struct MacPlatform {
     dispatcher: Arc<Dispatcher>,
     fonts: Arc<FontSystem>,
     callbacks: RefCell<Callbacks>,
-    menu_item_actions: RefCell<Vec<String>>,
+    menu_item_actions: RefCell<Vec<(String, Option<Box<dyn Any>>)>>,
 }
 
 #[derive(Default)]
@@ -84,7 +85,7 @@ struct Callbacks {
     become_active: Option<Box<dyn FnMut()>>,
     resign_active: Option<Box<dyn FnMut()>>,
     event: Option<Box<dyn FnMut(crate::Event) -> bool>>,
-    menu_command: Option<Box<dyn FnMut(&str)>>,
+    menu_command: Option<Box<dyn FnMut(&str, Option<&dyn Any>)>>,
     open_files: Option<Box<dyn FnMut(Vec<PathBuf>)>>,
     finish_launching: Option<Box<dyn FnOnce() -> ()>>,
 }
@@ -99,7 +100,7 @@ impl MacPlatform {
         }
     }
 
-    unsafe fn create_menu_bar(&self, menus: &[Menu]) -> id {
+    unsafe fn create_menu_bar(&self, menus: Vec<Menu>) -> id {
         let menu_bar = NSMenu::new(nil).autorelease();
         let mut menu_item_actions = self.menu_item_actions.borrow_mut();
         menu_item_actions.clear();
@@ -107,8 +108,9 @@ impl MacPlatform {
         for menu_config in menus {
             let menu_bar_item = NSMenuItem::new(nil).autorelease();
             let menu = NSMenu::new(nil).autorelease();
+            let menu_name = menu_config.name;
 
-            menu.setTitle_(ns_string(menu_config.name));
+            menu.setTitle_(ns_string(menu_name));
 
             for item_config in menu_config.items {
                 let item;
@@ -121,12 +123,13 @@ impl MacPlatform {
                         name,
                         keystroke,
                         action,
+                        arg,
                     } => {
                         if let Some(keystroke) = keystroke {
                             let keystroke = Keystroke::parse(keystroke).unwrap_or_else(|err| {
                                 panic!(
                                     "Invalid keystroke for menu item {}:{} - {:?}",
-                                    menu_config.name, name, err
+                                    menu_name, name, err
                                 )
                             });
 
@@ -161,7 +164,7 @@ impl MacPlatform {
 
                         let tag = menu_item_actions.len() as NSInteger;
                         let _: () = msg_send![item, setTag: tag];
-                        menu_item_actions.push(action.to_string());
+                        menu_item_actions.push((action.to_string(), arg));
                     }
                 }
 
@@ -189,7 +192,7 @@ impl platform::Platform for MacPlatform {
         self.callbacks.borrow_mut().event = Some(callback);
     }
 
-    fn on_menu_command(&self, callback: Box<dyn FnMut(&str)>) {
+    fn on_menu_command(&self, callback: Box<dyn FnMut(&str, Option<&dyn Any>)>) {
         self.callbacks.borrow_mut().menu_command = Some(callback);
     }
 
@@ -231,10 +234,15 @@ impl platform::Platform for MacPlatform {
 
     fn open_window(
         &self,
+        id: usize,
         options: platform::WindowOptions,
         executor: Rc<executor::Foreground>,
     ) -> Result<Box<dyn platform::Window>> {
-        Ok(Box::new(Window::open(options, executor, self.fonts())?))
+        Ok(Box::new(Window::open(id, options, executor, self.fonts())?))
+    }
+
+    fn key_window_id(&self) -> Option<usize> {
+        Window::key_window_id()
     }
 
     fn prompt_for_paths(
@@ -292,7 +300,7 @@ impl platform::Platform for MacPlatform {
         }
     }
 
-    fn set_menus(&self, menus: &[Menu]) {
+    fn set_menus(&self, menus: Vec<Menu>) {
         unsafe {
             let app: id = msg_send![APP_CLASS, sharedApplication];
             app.setMainMenu_(self.create_menu_bar(menus));
@@ -375,8 +383,8 @@ extern "C" fn handle_menu_item(this: &mut Object, _: Sel, item: id) {
         if let Some(callback) = platform.callbacks.borrow_mut().menu_command.as_mut() {
             let tag: NSInteger = msg_send![item, tag];
             let index = tag as usize;
-            if let Some(action) = platform.menu_item_actions.borrow().get(index) {
-                callback(&action);
+            if let Some((action, arg)) = platform.menu_item_actions.borrow().get(index) {
+                callback(action, arg.as_ref().map(Box::as_ref));
             }
         }
     }

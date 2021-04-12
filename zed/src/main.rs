@@ -4,7 +4,9 @@ use log::LevelFilter;
 use simplelog::SimpleLogger;
 use std::{fs, path::PathBuf};
 use zed::{
-    assets, editor, file_finder, menus, settings,
+    assets, editor, file_finder, menus,
+    settings::{self, Settings},
+    watch::Receiver,
     workspace::{self, OpenParams},
 };
 
@@ -13,27 +15,28 @@ fn main() {
 
     let app = gpui::App::new(assets::Assets).unwrap();
     let (_, settings_rx) = settings::channel(&app.font_cache()).unwrap();
-    app.set_menus(menus::MENUS);
-    app.on_menu_command({
-        let settings_rx = settings_rx.clone();
-        move |command, ctx| match command {
-            "app:open" => {
-                if let Some(paths) = ctx.platform().prompt_for_paths(PathPromptOptions {
-                    files: true,
-                    directories: true,
-                    multiple: true,
-                }) {
-                    ctx.dispatch_global_action(
-                        "workspace:open_paths",
-                        OpenParams {
-                            paths,
-                            settings: settings_rx.clone(),
-                        },
-                    );
-                }
+    app.set_menus(menus::menus(settings_rx.clone()));
+    app.on_menu_command(move |command, arg, ctx| match command {
+        "app:open" => {
+            if let Some(paths) = ctx.platform().prompt_for_paths(PathPromptOptions {
+                files: true,
+                directories: true,
+                multiple: true,
+            }) {
+                ctx.dispatch_global_action(
+                    "workspace:open_paths",
+                    OpenParams {
+                        paths,
+                        settings: arg
+                            .unwrap()
+                            .downcast_ref::<Receiver<Settings>>()
+                            .unwrap()
+                            .clone(),
+                    },
+                );
             }
-            _ => ctx.dispatch_global_action(command, ()),
         }
+        _ => ctx.dispatch_global_action(command, ()),
     })
     .run(move |ctx| {
         workspace::init(ctx);

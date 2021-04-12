@@ -10,6 +10,6 @@ mod test;
 mod time;
 mod timer;
 mod util;
-mod watch;
+pub mod watch;
 pub mod workspace;
 mod worktree;
