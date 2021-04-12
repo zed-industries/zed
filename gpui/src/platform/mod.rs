@@ -22,19 +22,17 @@ use async_task::Runnable;
 pub use event::Event;
 use std::{ops::Range, path::PathBuf, rc::Rc, sync::Arc};
 
-pub trait Runner {
-    fn on_finish_launching<F: 'static + FnOnce()>(self, callback: F) -> Self;
-    fn on_menu_command<F: 'static + FnMut(&str)>(self, callback: F) -> Self;
-    fn on_become_active<F: 'static + FnMut()>(self, callback: F) -> Self;
-    fn on_resign_active<F: 'static + FnMut()>(self, callback: F) -> Self;
-    fn on_event<F: 'static + FnMut(Event) -> bool>(self, callback: F) -> Self;
-    fn on_open_files<F: 'static + FnMut(Vec<PathBuf>)>(self, callback: F) -> Self;
-    fn set_menus(self, menus: &[Menu]) -> Self;
-    fn run(self);
-}
+pub trait Platform {
+    fn on_menu_command(&self, callback: Box<dyn FnMut(&str)>);
+    fn on_become_active(&self, callback: Box<dyn FnMut()>);
+    fn on_resign_active(&self, callback: Box<dyn FnMut()>);
+    fn on_event(&self, callback: Box<dyn FnMut(Event) -> bool>);
+    fn on_open_files(&self, callback: Box<dyn FnMut(Vec<PathBuf>)>);
+    fn run(&self, on_finish_launching: Box<dyn FnOnce() -> ()>);
 
-pub trait App {
     fn dispatcher(&self) -> Arc<dyn Dispatcher>;
+    fn fonts(&self) -> Arc<dyn FontSystem>;
+
     fn activate(&self, ignoring_other_apps: bool);
     fn open_window(
         &self,
@@ -42,9 +40,9 @@ pub trait App {
         executor: Rc<executor::Foreground>,
     ) -> Result<Box<dyn Window>>;
     fn prompt_for_paths(&self, options: PathPromptOptions) -> Option<Vec<PathBuf>>;
-    fn fonts(&self) -> Arc<dyn FontSystem>;
     fn quit(&self);
     fn copy(&self, text: &str);
+    fn set_menus(&self, menus: &[Menu]);
 }
 
 pub trait Dispatcher: Send + Sync {

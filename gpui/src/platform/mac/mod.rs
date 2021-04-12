@@ -1,28 +1,22 @@
-mod app;
 mod atlas;
 mod dispatcher;
 mod event;
 mod fonts;
 mod geometry;
+mod platform;
 mod renderer;
-mod runner;
 mod sprite_cache;
 mod window;
 
-use crate::platform;
-pub use app::App;
 use cocoa::base::{BOOL, NO, YES};
 pub use dispatcher::Dispatcher;
 pub use fonts::FontSystem;
-pub use runner::Runner;
+use platform::MacPlatform;
+use std::rc::Rc;
 use window::Window;
 
-pub fn app() -> impl platform::App {
-    App::new()
-}
-
-pub fn runner() -> impl platform::Runner {
-    Runner::new()
+pub fn platform() -> Rc<dyn super::Platform> {
+    Rc::new(MacPlatform::new())
 }
 
 trait BoolExt {

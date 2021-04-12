@@ -2,7 +2,7 @@ use crate::{
     elements::ElementBox,
     executor,
     keymap::{self, Keystroke},
-    platform::{self, App as _, WindowOptions},
+    platform::{self, WindowOptions},
     presenter::Presenter,
     util::post_inc,
     AssetCache, AssetSource, FontCache, TextLayoutCache,
@@ -21,6 +21,7 @@ use std::{
     fmt::{self, Debug},
     hash::{Hash, Hasher},
     marker::PhantomData,
+    path::PathBuf,
     rc::{self, Rc},
     sync::{Arc, Weak},
 };
@@ -44,8 +45,8 @@ pub trait View: Entity {
     }
 }
 
-pub trait ModelAsRef {
-    fn model<T: Entity>(&self, handle: &ModelHandle<T>) -> &T;
+pub trait ReadModel {
+    fn read_model<T: Entity>(&self, handle: &ModelHandle<T>) -> &T;
 }
 
 pub trait UpdateModel {
@@ -55,8 +56,8 @@ pub trait UpdateModel {
         F: FnOnce(&mut T, &mut ModelContext<T>) -> S;
 }
 
-pub trait ViewAsRef {
-    fn view<T: View>(&self, handle: &ViewHandle<T>) -> &T;
+pub trait ReadView {
+    fn read_view<T: View>(&self, handle: &ViewHandle<T>) -> &T;
 }
 
 pub trait UpdateView {
@@ -83,24 +84,46 @@ pub enum MenuItem<'a> {
 #[derive(Clone)]
 pub struct App(Rc<RefCell<MutableAppContext>>);
 
+#[derive(Clone)]
+pub struct TestAppContext(Rc<RefCell<MutableAppContext>>);
+
 impl App {
-    pub fn test<T, A: AssetSource, F: Future<Output = T>, G: FnOnce(App) -> F>(
+    pub fn test<T, A: AssetSource, F: FnOnce(&mut MutableAppContext) -> T>(
         asset_source: A,
-        f: G,
+        f: F,
     ) -> T {
-        let platform = platform::test::app();
+        let platform = platform::test::platform();
         let foreground = Rc::new(executor::Foreground::test());
-        let app = Self(Rc::new(RefCell::new(MutableAppContext::new(
+        let ctx = Rc::new(RefCell::new(MutableAppContext::new(
+            foreground,
+            Rc::new(platform),
+            asset_source,
+        )));
+        ctx.borrow_mut().weak_self = Some(Rc::downgrade(&ctx));
+        let mut ctx = ctx.borrow_mut();
+        f(&mut *ctx)
+    }
+
+    pub fn test_async<T, F, A: AssetSource, Fn>(asset_source: A, f: Fn) -> T
+    where
+        Fn: FnOnce(TestAppContext) -> F,
+        F: Future<Output = T>,
+    {
+        let platform = platform::test::platform();
+        let foreground = Rc::new(executor::Foreground::test());
+        let ctx = TestAppContext(Rc::new(RefCell::new(MutableAppContext::new(
             foreground.clone(),
-            Arc::new(platform),
+            Rc::new(platform),
             asset_source,
         ))));
-        app.0.borrow_mut().weak_self = Some(Rc::downgrade(&app.0));
-        smol::block_on(foreground.run(f(app)))
+        ctx.0.borrow_mut().weak_self = Some(Rc::downgrade(&ctx.0));
+
+        let future = f(ctx);
+        smol::block_on(foreground.run(future))
     }
 
     pub fn new(asset_source: impl AssetSource) -> Result<Self> {
-        let platform = Arc::new(platform::current::app());
+        let platform = platform::current::platform();
         let foreground = Rc::new(executor::Foreground::platform(platform.dispatcher())?);
         let app = Self(Rc::new(RefCell::new(MutableAppContext::new(
             foreground,
@@ -111,35 +134,98 @@ impl App {
         Ok(app)
     }
 
-    pub fn on_window_invalidated<F: 'static + FnMut(WindowInvalidation, &mut MutableAppContext)>(
-        &self,
-        window_id: usize,
-        callback: F,
-    ) {
+    pub fn on_become_active<F>(self, mut callback: F) -> Self
+    where
+        F: 'static + FnMut(&mut MutableAppContext),
+    {
+        let ctx = self.0.clone();
         self.0
-            .borrow_mut()
-            .on_window_invalidated(window_id, callback);
+            .borrow()
+            .platform
+            .on_become_active(Box::new(move || callback(&mut *ctx.borrow_mut())));
+        self
     }
 
-    pub fn add_action<S, V, T, F>(&self, name: S, handler: F)
+    pub fn on_resign_active<F>(self, mut callback: F) -> Self
     where
-        S: Into<String>,
-        V: View,
-        T: Any,
-        F: 'static + FnMut(&mut V, &T, &mut ViewContext<V>),
+        F: 'static + FnMut(&mut MutableAppContext),
     {
-        self.0.borrow_mut().add_action(name, handler);
+        let ctx = self.0.clone();
+        self.0
+            .borrow()
+            .platform
+            .on_resign_active(Box::new(move || callback(&mut *ctx.borrow_mut())));
+        self
     }
 
-    pub fn add_global_action<S, T, F>(&self, name: S, handler: F)
+    pub fn on_event<F>(self, mut callback: F) -> Self
     where
-        S: Into<String>,
-        T: 'static + Any,
-        F: 'static + FnMut(&T, &mut MutableAppContext),
+        F: 'static + FnMut(Event, &mut MutableAppContext) -> bool,
     {
-        self.0.borrow_mut().add_global_action(name, handler);
+        let ctx = self.0.clone();
+        self.0.borrow().platform.on_event(Box::new(move |event| {
+            callback(event, &mut *ctx.borrow_mut())
+        }));
+        self
     }
 
+    pub fn on_menu_command<F>(self, mut callback: F) -> Self
+    where
+        F: 'static + FnMut(&str, &mut MutableAppContext),
+    {
+        let ctx = self.0.clone();
+        self.0
+            .borrow()
+            .platform
+            .on_menu_command(Box::new(move |command| {
+                callback(command, &mut *ctx.borrow_mut())
+            }));
+        self
+    }
+
+    pub fn on_open_files<F>(self, mut callback: F) -> Self
+    where
+        F: 'static + FnMut(Vec<PathBuf>, &mut MutableAppContext),
+    {
+        let ctx = self.0.clone();
+        self.0
+            .borrow()
+            .platform
+            .on_open_files(Box::new(move |paths| {
+                callback(paths, &mut *ctx.borrow_mut())
+            }));
+        self
+    }
+
+    pub fn set_menus(&self, menus: &[Menu]) {
+        self.0.borrow().platform.set_menus(menus);
+    }
+
+    pub fn run<F>(self, on_finish_launching: F)
+    where
+        F: 'static + FnOnce(&mut MutableAppContext),
+    {
+        let platform = self.0.borrow().platform.clone();
+        platform.run(Box::new(move || {
+            let mut ctx = self.0.borrow_mut();
+            on_finish_launching(&mut *ctx);
+        }))
+    }
+
+    pub fn font_cache(&self) -> Arc<FontCache> {
+        self.0.borrow().font_cache.clone()
+    }
+
+    fn update<T, F: FnOnce(&mut MutableAppContext) -> T>(&mut self, callback: F) -> T {
+        let mut state = self.0.borrow_mut();
+        state.pending_flushes += 1;
+        let result = callback(&mut *state);
+        state.flush_effects();
+        result
+    }
+}
+
+impl TestAppContext {
     pub fn dispatch_action<T: 'static + Any>(
         &self,
         window_id: usize,
@@ -147,22 +233,12 @@ impl App {
         name: &str,
         arg: T,
     ) {
-        self.0.borrow_mut().dispatch_action(
+        self.0.borrow_mut().dispatch_action_any(
             window_id,
             &responder_chain,
             name,
             Box::new(arg).as_ref(),
         );
-    }
-
-    pub fn dispatch_global_action<T: 'static + Any>(&self, name: &str, arg: T) {
-        self.0
-            .borrow_mut()
-            .dispatch_global_action(name, Box::new(arg).as_ref());
-    }
-
-    pub fn add_bindings<T: IntoIterator<Item = keymap::Binding>>(&self, bindings: T) {
-        self.0.borrow_mut().add_bindings(bindings);
     }
 
     pub fn dispatch_keystroke(
@@ -185,15 +261,6 @@ impl App {
         let handle = state.add_model(build_model);
         state.flush_effects();
         handle
-    }
-
-    fn read_model<T, F, S>(&self, handle: &ModelHandle<T>, read: F) -> S
-    where
-        T: Entity,
-        F: FnOnce(&T, &AppContext) -> S,
-    {
-        let state = self.0.borrow();
-        read(state.model(handle), &state.ctx)
     }
 
     pub fn add_window<T, F>(&mut self, build_root_view: F) -> (usize, ViewHandle<T>)
@@ -240,25 +307,19 @@ impl App {
         handle
     }
 
-    pub fn read<T, F: FnOnce(&AppContext) -> T>(&mut self, callback: F) -> T {
-        callback(self.0.borrow().downgrade())
+    pub fn read<T, F: FnOnce(&AppContext) -> T>(&self, callback: F) -> T {
+        callback(self.0.borrow().as_ref())
     }
 
     pub fn update<T, F: FnOnce(&mut MutableAppContext) -> T>(&mut self, callback: F) -> T {
         let mut state = self.0.borrow_mut();
-        state.pending_flushes += 1;
+        // Don't increment pending flushes in order to effects to be flushed before the callback
+        // completes, which is helpful in tests.
         let result = callback(&mut *state);
+        // Flush effects after the callback just in case there are any. This can happen in edge
+        // cases such as the closure dropping handles.
         state.flush_effects();
         result
-    }
-
-    fn read_view<T, F, S>(&self, handle: &ViewHandle<T>, read: F) -> S
-    where
-        T: View,
-        F: FnOnce(&T, &AppContext) -> S,
-    {
-        let state = self.0.borrow();
-        read(state.view(handle), state.downgrade())
     }
 
     pub fn finish_pending_tasks(&self) -> impl Future<Output = ()> {
@@ -269,12 +330,12 @@ impl App {
         self.0.borrow().font_cache.clone()
     }
 
-    pub fn platform(&self) -> Arc<dyn platform::App> {
+    pub fn platform(&self) -> Rc<dyn platform::Platform> {
         self.0.borrow().platform.clone()
     }
 }
 
-impl UpdateModel for App {
+impl UpdateModel for TestAppContext {
     fn update_model<T, F, S>(&mut self, handle: &ModelHandle<T>, update: F) -> S
     where
         T: Entity,
@@ -288,7 +349,7 @@ impl UpdateModel for App {
     }
 }
 
-impl UpdateView for App {
+impl UpdateView for TestAppContext {
     fn update_view<T, F, S>(&mut self, handle: &ViewHandle<T>, update: F) -> S
     where
         T: View,
@@ -309,7 +370,7 @@ type GlobalActionCallback = dyn FnMut(&dyn Any, &mut MutableAppContext);
 
 pub struct MutableAppContext {
     weak_self: Option<rc::Weak<RefCell<Self>>>,
-    platform: Arc<dyn platform::App>,
+    platform: Rc<dyn platform::Platform>,
     font_cache: Arc<FontCache>,
     assets: Arc<AssetCache>,
     ctx: AppContext,
@@ -337,7 +398,7 @@ pub struct MutableAppContext {
 impl MutableAppContext {
     pub fn new(
         foreground: Rc<executor::Foreground>,
-        platform: Arc<dyn platform::App>,
+        platform: Rc<dyn platform::Platform>,
         asset_source: impl AssetSource,
     ) -> Self {
         let fonts = platform.fonts();
@@ -377,12 +438,12 @@ impl MutableAppContext {
         App(self.weak_self.as_ref().unwrap().upgrade().unwrap())
     }
 
-    pub fn downgrade(&self) -> &AppContext {
-        &self.ctx
+    pub fn platform(&self) -> Rc<dyn platform::Platform> {
+        self.platform.clone()
     }
 
-    pub fn platform(&self) -> Arc<dyn platform::App> {
-        self.platform.clone()
+    pub fn font_cache(&self) -> &Arc<FontCache> {
+        &self.font_cache
     }
 
     pub fn foreground_executor(&self) -> &Rc<executor::Foreground> {
@@ -505,7 +566,24 @@ impl MutableAppContext {
         self.ctx.render_views(window_id)
     }
 
-    pub fn dispatch_action(
+    pub fn update<T, F: FnOnce() -> T>(&mut self, callback: F) -> T {
+        self.pending_flushes += 1;
+        let result = callback();
+        self.flush_effects();
+        result
+    }
+
+    pub fn dispatch_action<T: 'static + Any>(
+        &mut self,
+        window_id: usize,
+        responder_chain: Vec<usize>,
+        name: &str,
+        arg: T,
+    ) {
+        self.dispatch_action_any(window_id, &responder_chain, name, Box::new(arg).as_ref());
+    }
+
+    fn dispatch_action_any(
         &mut self,
         window_id: usize,
         path: &[usize],
@@ -556,14 +634,18 @@ impl MutableAppContext {
         }
 
         if !halted_dispatch {
-            self.dispatch_global_action(name, arg);
+            self.dispatch_global_action_with_dyn_arg(name, arg);
         }
 
         self.flush_effects();
         halted_dispatch
     }
 
-    fn dispatch_global_action(&mut self, name: &str, arg: &dyn Any) {
+    pub fn dispatch_global_action<T: 'static + Any>(&mut self, name: &str, arg: T) {
+        self.dispatch_global_action_with_dyn_arg(name, Box::new(arg).as_ref());
+    }
+
+    fn dispatch_global_action_with_dyn_arg(&mut self, name: &str, arg: &dyn Any) {
         if let Some((name, mut handlers)) = self.global_actions.remove_entry(name) {
             self.pending_flushes += 1;
             for handler in handlers.iter_mut().rev() {
@@ -574,7 +656,7 @@ impl MutableAppContext {
         }
     }
 
-    fn add_bindings<T: IntoIterator<Item = keymap::Binding>>(&mut self, bindings: T) {
+    pub fn add_bindings<T: IntoIterator<Item = keymap::Binding>>(&mut self, bindings: T) {
         self.keystroke_matcher.add_bindings(bindings);
     }
 
@@ -593,7 +675,7 @@ impl MutableAppContext {
                 .get(&window_id)
                 .and_then(|w| w.views.get(view_id))
             {
-                context.extend(view.keymap_context(self.downgrade()));
+                context.extend(view.keymap_context(self.as_ref()));
                 context_chain.push(context.clone());
             } else {
                 return Err(anyhow!(
@@ -612,7 +694,7 @@ impl MutableAppContext {
                 MatchResult::None => {}
                 MatchResult::Pending => pending = true,
                 MatchResult::Action { name, arg } => {
-                    if self.dispatch_action(
+                    if self.dispatch_action_any(
                         window_id,
                         &responder_chain[0..=i],
                         &name,
@@ -686,7 +768,7 @@ impl MutableAppContext {
                                 if ctx
                                     .dispatch_keystroke(
                                         window_id,
-                                        presenter.borrow().dispatch_path(ctx.downgrade()),
+                                        presenter.borrow().dispatch_path(ctx.as_ref()),
                                         keystroke,
                                     )
                                     .unwrap()
@@ -695,11 +777,10 @@ impl MutableAppContext {
                                 }
                             }
 
-                            let actions = presenter
-                                .borrow_mut()
-                                .dispatch_event(event, ctx.downgrade());
+                            let actions =
+                                presenter.borrow_mut().dispatch_event(event, ctx.as_ref());
                             for action in actions {
-                                ctx.dispatch_action(
+                                ctx.dispatch_action_any(
                                     window_id,
                                     &action.path,
                                     action.name,
@@ -729,7 +810,7 @@ impl MutableAppContext {
                     let presenter = presenter.clone();
                     self.on_window_invalidated(window_id, move |invalidation, ctx| {
                         let mut presenter = presenter.borrow_mut();
-                        presenter.invalidate(invalidation, ctx.downgrade());
+                        presenter.invalidate(invalidation, ctx.as_ref());
                         let scene =
                             presenter.build_scene(window.size(), window.scale_factor(), ctx);
                         window.present_scene(scene);
@@ -812,7 +893,7 @@ impl MutableAppContext {
     }
 
     fn flush_effects(&mut self) {
-        self.pending_flushes -= 1;
+        self.pending_flushes = self.pending_flushes.saturating_sub(1);
 
         if !self.flushing_effects && self.pending_flushes == 0 {
             self.flushing_effects = true;
@@ -1144,8 +1225,8 @@ impl MutableAppContext {
     }
 }
 
-impl ModelAsRef for MutableAppContext {
-    fn model<T: Entity>(&self, handle: &ModelHandle<T>) -> &T {
+impl ReadModel for MutableAppContext {
+    fn read_model<T: Entity>(&self, handle: &ModelHandle<T>) -> &T {
         if let Some(model) = self.ctx.models.get(&handle.model_id) {
             model
                 .as_any()
@@ -1182,8 +1263,8 @@ impl UpdateModel for MutableAppContext {
     }
 }
 
-impl ViewAsRef for MutableAppContext {
-    fn view<T: View>(&self, handle: &ViewHandle<T>) -> &T {
+impl ReadView for MutableAppContext {
+    fn read_view<T: View>(&self, handle: &ViewHandle<T>) -> &T {
         if let Some(window) = self.ctx.windows.get(&handle.window_id) {
             if let Some(view) = window.views.get(&handle.view_id) {
                 view.as_any().downcast_ref().expect("Downcast is type safe")
@@ -1228,6 +1309,12 @@ impl UpdateView for MutableAppContext {
             .insert(handle.view_id, view);
         self.flush_effects();
         result
+    }
+}
+
+impl AsRef<AppContext> for MutableAppContext {
+    fn as_ref(&self) -> &AppContext {
+        &self.ctx
     }
 }
 
@@ -1276,8 +1363,8 @@ impl AppContext {
     }
 }
 
-impl ModelAsRef for AppContext {
-    fn model<T: Entity>(&self, handle: &ModelHandle<T>) -> &T {
+impl ReadModel for AppContext {
+    fn read_model<T: Entity>(&self, handle: &ModelHandle<T>) -> &T {
         if let Some(model) = self.models.get(&handle.model_id) {
             model
                 .as_any()
@@ -1289,8 +1376,8 @@ impl ModelAsRef for AppContext {
     }
 }
 
-impl ViewAsRef for AppContext {
-    fn view<T: View>(&self, handle: &ViewHandle<T>) -> &T {
+impl ReadView for AppContext {
+    fn read_view<T: View>(&self, handle: &ViewHandle<T>) -> &T {
         if let Some(window) = self.windows.get(&handle.window_id) {
             if let Some(view) = window.views.get(&handle.view_id) {
                 view.as_any()
@@ -1561,9 +1648,9 @@ impl<'a, T: Entity> ModelContext<'a, T> {
     }
 }
 
-impl<M> ModelAsRef for ModelContext<'_, M> {
-    fn model<T: Entity>(&self, handle: &ModelHandle<T>) -> &T {
-        self.app.model(handle)
+impl<M> ReadModel for ModelContext<'_, M> {
+    fn read_model<T: Entity>(&self, handle: &ModelHandle<T>) -> &T {
+        self.app.read_model(handle)
     }
 }
 
@@ -1679,7 +1766,7 @@ impl<'a, T: View> ViewContext<'a, T> {
                 window_id: self.window_id,
                 view_id: self.view_id,
                 callback: Box::new(move |view, payload, app, window_id, view_id| {
-                    if let Some(emitter_handle) = emitter_handle.upgrade(app.downgrade()) {
+                    if let Some(emitter_handle) = emitter_handle.upgrade(app.as_ref()) {
                         let model = view.downcast_mut().expect("downcast is type safe");
                         let payload = payload.downcast_ref().expect("downcast is type safe");
                         let mut ctx = ViewContext::new(app, window_id, view_id);
@@ -1705,7 +1792,7 @@ impl<'a, T: View> ViewContext<'a, T> {
                 window_id: self.window_id,
                 view_id: self.view_id,
                 callback: Box::new(move |view, payload, app, window_id, view_id| {
-                    if let Some(emitter_handle) = emitter_handle.upgrade(app.downgrade()) {
+                    if let Some(emitter_handle) = emitter_handle.upgrade(app.as_ref()) {
                         let model = view.downcast_mut().expect("downcast is type safe");
                         let payload = payload.downcast_ref().expect("downcast is type safe");
                         let mut ctx = ViewContext::new(app, window_id, view_id);
@@ -1816,9 +1903,9 @@ impl<'a, T: View> ViewContext<'a, T> {
     }
 }
 
-impl<V> ModelAsRef for ViewContext<'_, V> {
-    fn model<T: Entity>(&self, handle: &ModelHandle<T>) -> &T {
-        self.app.model(handle)
+impl<V> ReadModel for ViewContext<'_, V> {
+    fn read_model<T: Entity>(&self, handle: &ModelHandle<T>) -> &T {
+        self.app.read_model(handle)
     }
 }
 
@@ -1832,9 +1919,9 @@ impl<V: View> UpdateModel for ViewContext<'_, V> {
     }
 }
 
-impl<V: View> ViewAsRef for ViewContext<'_, V> {
-    fn view<T: View>(&self, handle: &ViewHandle<T>) -> &T {
-        self.app.view(handle)
+impl<V: View> ReadView for ViewContext<'_, V> {
+    fn read_view<T: View>(&self, handle: &ViewHandle<T>) -> &T {
+        self.app.read_view(handle)
     }
 }
 
@@ -1883,15 +1970,8 @@ impl<T: Entity> ModelHandle<T> {
         self.model_id
     }
 
-    pub fn as_ref<'a, A: ModelAsRef>(&self, app: &'a A) -> &'a T {
-        app.model(self)
-    }
-
-    pub fn read<'a, S, F>(&self, app: &'a App, read: F) -> S
-    where
-        F: FnOnce(&T, &AppContext) -> S,
-    {
-        app.read_model(self, read)
+    pub fn read<'a, A: ReadModel>(&self, app: &'a A) -> &'a T {
+        app.read_model(self)
     }
 
     pub fn update<A, F, S>(&self, app: &mut A, update: F) -> S
@@ -2018,15 +2098,8 @@ impl<T: View> ViewHandle<T> {
         self.view_id
     }
 
-    pub fn as_ref<'a, A: ViewAsRef>(&self, app: &'a A) -> &'a T {
-        app.view(self)
-    }
-
-    pub fn read<'a, F, S>(&self, app: &'a App, read: F) -> S
-    where
-        F: FnOnce(&T, &AppContext) -> S,
-    {
-        app.read_view(self, read)
+    pub fn read<'a, A: ReadView>(&self, app: &'a A) -> &'a T {
+        app.read_view(self)
     }
 
     pub fn update<A, F, S>(&self, app: &mut A, update: F) -> S
@@ -2362,12 +2435,10 @@ mod tests {
             }
         }
 
-        App::test((), |mut app| async move {
-            let app = &mut app;
-
+        App::test((), |app| {
             let handle_1 = app.add_model(|ctx| Model::new(None, ctx));
             let handle_2 = app.add_model(|ctx| Model::new(Some(handle_1.clone()), ctx));
-            assert_eq!(app.0.borrow().ctx.models.len(), 2);
+            assert_eq!(app.ctx.models.len(), 2);
 
             handle_1.update(app, |model, ctx| {
                 model.events.push("updated".into());
@@ -2375,30 +2446,25 @@ mod tests {
                 ctx.notify();
                 ctx.emit(2);
             });
-            handle_1.read(app, |model, _| {
-                assert_eq!(model.events, vec!["updated".to_string()]);
-            });
-            handle_2.read(app, |model, _| {
-                assert_eq!(
-                    model.events,
-                    vec![
-                        "observed event 1".to_string(),
-                        "notified".to_string(),
-                        "observed event 2".to_string(),
-                    ]
-                );
-            });
+            assert_eq!(handle_1.read(app).events, vec!["updated".to_string()]);
+            assert_eq!(
+                handle_2.read(app).events,
+                vec![
+                    "observed event 1".to_string(),
+                    "notified".to_string(),
+                    "observed event 2".to_string(),
+                ]
+            );
 
             handle_2.update(app, |model, _| {
                 drop(handle_1);
                 model.other.take();
             });
 
-            let app_state = app.0.borrow();
-            assert_eq!(app_state.ctx.models.len(), 1);
-            assert!(app_state.subscriptions.is_empty());
-            assert!(app_state.observations.is_empty());
-        })
+            assert_eq!(app.ctx.models.len(), 1);
+            assert!(app.subscriptions.is_empty());
+            assert!(app.observations.is_empty());
+        });
     }
 
     #[test]
@@ -2412,8 +2478,7 @@ mod tests {
             type Event = usize;
         }
 
-        App::test((), |mut app| async move {
-            let app = &mut app;
+        App::test((), |app| {
             let handle_1 = app.add_model(|_| Model::default());
             let handle_2 = app.add_model(|_| Model::default());
             let handle_2b = handle_2.clone();
@@ -2429,10 +2494,10 @@ mod tests {
             });
 
             handle_2.update(app, |_, c| c.emit(7));
-            handle_1.read(app, |model, _| assert_eq!(model.events, vec![7]));
+            assert_eq!(handle_1.read(app).events, vec![7]);
 
             handle_2.update(app, |_, c| c.emit(5));
-            handle_1.read(app, |model, _| assert_eq!(model.events, vec![7, 10, 5]));
+            assert_eq!(handle_1.read(app).events, vec![7, 10, 5]);
         })
     }
 
@@ -2448,17 +2513,16 @@ mod tests {
             type Event = ();
         }
 
-        App::test((), |mut app| async move {
-            let app = &mut app;
+        App::test((), |app| {
             let handle_1 = app.add_model(|_| Model::default());
             let handle_2 = app.add_model(|_| Model::default());
             let handle_2b = handle_2.clone();
 
             handle_1.update(app, |_, c| {
                 c.observe(&handle_2, move |model, observed, c| {
-                    model.events.push(observed.as_ref(c).count);
+                    model.events.push(observed.read(c).count);
                     c.observe(&handle_2b, |model, observed, c| {
-                        model.events.push(observed.as_ref(c).count * 2);
+                        model.events.push(observed.read(c).count * 2);
                     });
                 });
             });
@@ -2467,13 +2531,13 @@ mod tests {
                 model.count = 7;
                 c.notify()
             });
-            handle_1.read(app, |model, _| assert_eq!(model.events, vec![7]));
+            assert_eq!(handle_1.read(app).events, vec![7]);
 
             handle_2.update(app, |model, c| {
                 model.count = 5;
                 c.notify()
             });
-            handle_1.read(app, |model, _| assert_eq!(model.events, vec![7, 10, 5]))
+            assert_eq!(handle_1.read(app).events, vec![7, 10, 5])
         })
     }
 
@@ -2488,7 +2552,7 @@ mod tests {
             type Event = ();
         }
 
-        App::test((), |mut app| async move {
+        App::test_async((), |mut app| async move {
             let handle = app.add_model(|_| Model::default());
             handle
                 .update(&mut app, |_, c| {
@@ -2497,7 +2561,7 @@ mod tests {
                     })
                 })
                 .await;
-            handle.read(&app, |model, _| assert_eq!(model.count, 7));
+            app.read(|ctx| assert_eq!(handle.read(ctx).count, 7));
 
             handle
                 .update(&mut app, |_, c| {
@@ -2506,7 +2570,7 @@ mod tests {
                     })
                 })
                 .await;
-            handle.read(&app, |model, _| assert_eq!(model.count, 14));
+            app.read(|ctx| assert_eq!(handle.read(ctx).count, 14));
         });
     }
 
@@ -2521,7 +2585,7 @@ mod tests {
             type Event = ();
         }
 
-        App::test((), |mut app| async move {
+        App::test_async((), |mut app| async move {
             let handle = app.add_model(|_| Model::default());
             handle
                 .update(&mut app, |_, c| {
@@ -2536,10 +2600,7 @@ mod tests {
                     )
                 })
                 .await;
-
-            handle.read(&app, |model, _| {
-                assert_eq!(model.events, [Some(1), Some(2), Some(3), None])
-            });
+            app.read(|ctx| assert_eq!(handle.read(ctx).events, [Some(1), Some(2), Some(3), None]));
         })
     }
 
@@ -2578,40 +2639,34 @@ mod tests {
             }
         }
 
-        App::test((), |mut app| async move {
-            let app = &mut app;
+        App::test((), |app| {
             let (window_id, _) = app.add_window(|ctx| View::new(None, ctx));
             let handle_1 = app.add_view(window_id, |ctx| View::new(None, ctx));
             let handle_2 = app.add_view(window_id, |ctx| View::new(Some(handle_1.clone()), ctx));
-            assert_eq!(app.0.borrow().ctx.windows[&window_id].views.len(), 3);
+            assert_eq!(app.ctx.windows[&window_id].views.len(), 3);
 
             handle_1.update(app, |view, ctx| {
                 view.events.push("updated".into());
                 ctx.emit(1);
                 ctx.emit(2);
             });
-            handle_1.read(app, |view, _| {
-                assert_eq!(view.events, vec!["updated".to_string()]);
-            });
-            handle_2.read(app, |view, _| {
-                assert_eq!(
-                    view.events,
-                    vec![
-                        "observed event 1".to_string(),
-                        "observed event 2".to_string(),
-                    ]
-                );
-            });
+            assert_eq!(handle_1.read(app).events, vec!["updated".to_string()]);
+            assert_eq!(
+                handle_2.read(app).events,
+                vec![
+                    "observed event 1".to_string(),
+                    "observed event 2".to_string(),
+                ]
+            );
 
             handle_2.update(app, |view, _| {
                 drop(handle_1);
                 view.other.take();
             });
 
-            let app_state = app.0.borrow();
-            assert_eq!(app_state.ctx.windows[&window_id].views.len(), 2);
-            assert!(app_state.subscriptions.is_empty());
-            assert!(app_state.observations.is_empty());
+            assert_eq!(app.ctx.windows[&window_id].views.len(), 2);
+            assert!(app.subscriptions.is_empty());
+            assert!(app.observations.is_empty());
         })
     }
 
@@ -2642,8 +2697,7 @@ mod tests {
             type Event = usize;
         }
 
-        App::test((), |mut app| async move {
-            let app = &mut app;
+        App::test((), |app| {
             let (window_id, handle_1) = app.add_window(|_| View::default());
             let handle_2 = app.add_view(window_id, |_| View::default());
             let handle_2b = handle_2.clone();
@@ -2664,13 +2718,13 @@ mod tests {
             });
 
             handle_2.update(app, |_, c| c.emit(7));
-            handle_1.read(app, |view, _| assert_eq!(view.events, vec![7]));
+            assert_eq!(handle_1.read(app).events, vec![7]);
 
             handle_2.update(app, |_, c| c.emit(5));
-            handle_1.read(app, |view, _| assert_eq!(view.events, vec![7, 10, 5]));
+            assert_eq!(handle_1.read(app).events, vec![7, 10, 5]);
 
             handle_3.update(app, |_, c| c.emit(9));
-            handle_1.read(app, |view, _| assert_eq!(view.events, vec![7, 10, 5, 9]));
+            assert_eq!(handle_1.read(app).events, vec![7, 10, 5, 9]);
         })
     }
 
@@ -2698,9 +2752,7 @@ mod tests {
             type Event = ();
         }
 
-        App::test((), |mut app| async move {
-            let app = &mut app;
-
+        App::test((), |app| {
             let (window_id, _) = app.add_window(|_| View);
             let observing_view = app.add_view(window_id, |_| View);
             let emitting_view = app.add_view(window_id, |_| View);
@@ -2715,7 +2767,7 @@ mod tests {
                 ctx.subscribe(&observed_model, |_, _, _| {});
             });
 
-            app.update(|_| {
+            app.update(|| {
                 drop(observing_view);
                 drop(observing_model);
             });
@@ -2755,14 +2807,13 @@ mod tests {
             type Event = ();
         }
 
-        App::test((), |mut app| async move {
-            let app = &mut app;
+        App::test((), |app| {
             let (_, view) = app.add_window(|_| View::default());
             let model = app.add_model(|_| Model::default());
 
             view.update(app, |_, c| {
                 c.observe(&model, |me, observed, c| {
-                    me.events.push(observed.as_ref(c).count)
+                    me.events.push(observed.read(c).count)
                 });
             });
 
@@ -2770,7 +2821,7 @@ mod tests {
                 model.count = 11;
                 c.notify();
             });
-            view.read(app, |view, _| assert_eq!(view.events, vec![11]));
+            assert_eq!(view.read(app).events, vec![11]);
         })
     }
 
@@ -2798,9 +2849,7 @@ mod tests {
             type Event = ();
         }
 
-        App::test((), |mut app| async move {
-            let app = &mut app;
-
+        App::test((), |app| {
             let (window_id, _) = app.add_window(|_| View);
             let observing_view = app.add_view(window_id, |_| View);
             let observing_model = app.add_model(|_| Model);
@@ -2813,7 +2862,7 @@ mod tests {
                 ctx.observe(&observed_model, |_, _, _| {});
             });
 
-            app.update(|_| {
+            app.update(|| {
                 drop(observing_view);
                 drop(observing_model);
             });
@@ -2853,8 +2902,7 @@ mod tests {
             }
         }
 
-        App::test((), |mut app| async move {
-            let app = &mut app;
+        App::test((), |app| {
             let (window_id, view_1) = app.add_window(|_| View::default());
             let view_2 = app.add_view(window_id, |_| View::default());
 
@@ -2869,18 +2917,16 @@ mod tests {
                 ctx.focus(&view_1);
             });
 
-            view_1.read(app, |view_1, _| {
-                assert_eq!(
-                    view_1.events,
-                    [
-                        "self focused".to_string(),
-                        "self blurred".to_string(),
-                        "view 2 focused".to_string(),
-                        "self focused".to_string(),
-                        "view 2 blurred".to_string(),
-                    ],
-                );
-            });
+            assert_eq!(
+                view_1.read(app).events,
+                [
+                    "self focused".to_string(),
+                    "self blurred".to_string(),
+                    "view 2 focused".to_string(),
+                    "self focused".to_string(),
+                    "view 2 blurred".to_string(),
+                ],
+            );
         })
     }
 
@@ -2905,8 +2951,8 @@ mod tests {
             }
         }
 
-        App::test((), |mut app| async move {
-            let (_, handle) = app.add_window(|_| View::default());
+        App::test_async((), |mut app| async move {
+            let handle = app.add_window(|_| View::default()).1;
             handle
                 .update(&mut app, |_, c| {
                     c.spawn(async { 7 }, |me, output, _| {
@@ -2914,7 +2960,7 @@ mod tests {
                     })
                 })
                 .await;
-            handle.read(&app, |view, _| assert_eq!(view.count, 7));
+            app.read(|ctx| assert_eq!(handle.read(ctx).count, 7));
             handle
                 .update(&mut app, |_, c| {
                     c.spawn(async { 14 }, |me, output, _| {
@@ -2922,7 +2968,7 @@ mod tests {
                     })
                 })
                 .await;
-            handle.read(&app, |view, _| assert_eq!(view.count, 14));
+            app.read(|ctx| assert_eq!(handle.read(ctx).count, 14));
         });
     }
 
@@ -2947,7 +2993,7 @@ mod tests {
             }
         }
 
-        App::test((), |mut app| async move {
+        App::test_async((), |mut app| async move {
             let (_, handle) = app.add_window(|_| View::default());
             handle
                 .update(&mut app, |_, c| {
@@ -2963,9 +3009,7 @@ mod tests {
                 })
                 .await;
 
-            handle.read(&app, |view, _| {
-                assert_eq!(view.events, [Some(1), Some(2), Some(3), None])
-            });
+            app.read(|ctx| assert_eq!(handle.read(ctx).events, [Some(1), Some(2), Some(3), None]))
         });
     }
 
@@ -3011,7 +3055,7 @@ mod tests {
             foo: String,
         }
 
-        App::test((), |mut app| async move {
+        App::test((), |app| {
             let actions = Rc::new(RefCell::new(Vec::new()));
 
             let actions_clone = actions.clone();
@@ -3085,7 +3129,7 @@ mod tests {
     }
 
     #[test]
-    fn test_dispatch_keystroke() -> Result<()> {
+    fn test_dispatch_keystroke() {
         use std::cell::Cell;
 
         #[derive(Clone)]
@@ -3125,7 +3169,7 @@ mod tests {
             }
         }
 
-        App::test((), |mut app| async move {
+        App::test((), |app| {
             let mut view_1 = View::new(1);
             let mut view_2 = View::new(2);
             let mut view_3 = View::new(3);
@@ -3154,12 +3198,12 @@ mod tests {
             app.dispatch_keystroke(
                 window_id,
                 vec![view_1.id(), view_2.id(), view_3.id()],
-                &Keystroke::parse("a")?,
-            )?;
+                &Keystroke::parse("a").unwrap(),
+            )
+            .unwrap();
 
             assert!(handled_action.get());
-            Ok(())
-        })
+        });
     }
 
     // #[test]
@@ -3182,7 +3226,7 @@ mod tests {
     //         }
     //     }
 
-    //     App::test(|mut app| async move {
+    //     App::test(|app| async move {
     //         let (window_id, _) = app.add_window(|_| View { count: 3 });
     //         let view_1 = app.add_view(window_id, |_| View { count: 1 });
     //         let view_2 = app.add_view(window_id, |_| View { count: 2 });
@@ -3209,7 +3253,7 @@ mod tests {
     //         });
 
     //         let view_2_id = view_2.id();
-    //         view_1.update(&mut app, |view, ctx| {
+    //         view_1.update(app, |view, ctx| {
     //             view.count = 7;
     //             ctx.notify();
     //             drop(view_2);
@@ -3220,7 +3264,7 @@ mod tests {
     //         assert!(invalidation.updated.contains(&view_1.id()));
     //         assert_eq!(invalidation.removed, vec![view_2_id]);
 
-    //         let view_3 = view_1.update(&mut app, |_, ctx| ctx.add_view(|_| View { count: 8 }));
+    //         let view_3 = view_1.update(app, |_, ctx| ctx.add_view(|_| View { count: 8 }));
 
     //         let invalidation = window_invalidations.borrow_mut().drain(..).next().unwrap();
     //         assert_eq!(invalidation.updated.len(), 1);
@@ -3228,7 +3272,7 @@ mod tests {
     //         assert!(invalidation.removed.is_empty());
 
     //         view_3
-    //             .update(&mut app, |_, ctx| {
+    //             .update(app, |_, ctx| {
     //                 ctx.spawn_local(async { 9 }, |me, output, ctx| {
     //                     me.count = output;
     //                     ctx.notify();
@@ -3267,7 +3311,7 @@ mod tests {
             type Event = ();
         }
 
-        App::test((), |mut app| async move {
+        App::test_async((), |mut app| async move {
             let model = app.add_model(|_| Model);
             let (_, view) = app.add_window(|_| View);
 

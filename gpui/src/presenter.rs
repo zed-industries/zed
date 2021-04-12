@@ -69,14 +69,14 @@ impl Presenter {
         let mut scene = Scene::new(scale_factor);
 
         if let Some(root_view_id) = app.root_view_id(self.window_id) {
-            self.layout(window_size, app.downgrade());
+            self.layout(window_size, app.as_ref());
             self.after_layout(app);
             let mut ctx = PaintContext {
                 scene: &mut scene,
                 font_cache: &self.font_cache,
                 text_layout_cache: &self.text_layout_cache,
                 rendered_views: &mut self.rendered_views,
-                app: app.downgrade(),
+                app: app.as_ref(),
             };
             ctx.paint(root_view_id, Vector2F::zero());
             self.text_layout_cache.finish_frame();
