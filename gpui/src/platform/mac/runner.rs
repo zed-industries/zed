@@ -1,8 +1,11 @@
-use crate::platform::Event;
+use crate::{keymap::Keystroke, platform::Event, Menu, MenuItem};
 use cocoa::{
-    appkit::NSApplicationActivationPolicy::NSApplicationActivationPolicyRegular,
-    base::{id, nil},
-    foundation::{NSArray, NSAutoreleasePool, NSString},
+    appkit::{
+        NSApplication, NSApplicationActivationPolicy::NSApplicationActivationPolicyRegular,
+        NSEventModifierFlags, NSMenu, NSMenuItem, NSWindow,
+    },
+    base::{id, nil, selector},
+    foundation::{NSArray, NSAutoreleasePool, NSInteger, NSString},
 };
 use ctor::ctor;
 use objc::{
@@ -51,6 +54,10 @@ unsafe fn build_classes() {
             did_resign_active as extern "C" fn(&mut Object, Sel, id),
         );
         decl.add_method(
+            sel!(handleGPUIMenuItem:),
+            handle_menu_item as extern "C" fn(&mut Object, Sel, id),
+        );
+        decl.add_method(
             sel!(application:openFiles:),
             open_files as extern "C" fn(&mut Object, Sel, id, id),
         );
@@ -65,17 +72,99 @@ pub struct Runner {
     resign_active_callback: Option<Box<dyn FnMut()>>,
     event_callback: Option<Box<dyn FnMut(Event) -> bool>>,
     open_files_callback: Option<Box<dyn FnMut(Vec<PathBuf>)>>,
+    menu_command_callback: Option<Box<dyn FnMut(&str)>>,
+    menu_item_actions: Vec<String>,
 }
 
 impl Runner {
     pub fn new() -> Self {
         Default::default()
     }
+
+    unsafe fn create_menu_bar(&mut self, menus: &[Menu]) -> id {
+        let menu_bar = NSMenu::new(nil).autorelease();
+        self.menu_item_actions.clear();
+
+        for menu_config in menus {
+            let menu_bar_item = NSMenuItem::new(nil).autorelease();
+            let menu = NSMenu::new(nil).autorelease();
+
+            menu.setTitle_(ns_string(menu_config.name));
+
+            for item_config in menu_config.items {
+                let item;
+
+                match item_config {
+                    MenuItem::Separator => {
+                        item = NSMenuItem::separatorItem(nil);
+                    }
+                    MenuItem::Action {
+                        name,
+                        keystroke,
+                        action,
+                    } => {
+                        if let Some(keystroke) = keystroke {
+                            let keystroke = Keystroke::parse(keystroke).unwrap_or_else(|err| {
+                                panic!(
+                                    "Invalid keystroke for menu item {}:{} - {:?}",
+                                    menu_config.name, name, err
+                                )
+                            });
+
+                            let mut mask = NSEventModifierFlags::empty();
+                            for (modifier, flag) in &[
+                                (keystroke.cmd, NSEventModifierFlags::NSCommandKeyMask),
+                                (keystroke.ctrl, NSEventModifierFlags::NSControlKeyMask),
+                                (keystroke.alt, NSEventModifierFlags::NSAlternateKeyMask),
+                            ] {
+                                if *modifier {
+                                    mask |= *flag;
+                                }
+                            }
+
+                            item = NSMenuItem::alloc(nil)
+                                .initWithTitle_action_keyEquivalent_(
+                                    ns_string(name),
+                                    selector("handleGPUIMenuItem:"),
+                                    ns_string(&keystroke.key),
+                                )
+                                .autorelease();
+                            item.setKeyEquivalentModifierMask_(mask);
+                        } else {
+                            item = NSMenuItem::alloc(nil)
+                                .initWithTitle_action_keyEquivalent_(
+                                    ns_string(name),
+                                    selector("handleGPUIMenuItem:"),
+                                    ns_string(""),
+                                )
+                                .autorelease();
+                        }
+
+                        let tag = self.menu_item_actions.len() as NSInteger;
+                        let _: () = msg_send![item, setTag: tag];
+                        self.menu_item_actions.push(action.to_string());
+                    }
+                }
+
+                menu.addItem_(item);
+            }
+
+            menu_bar_item.setSubmenu_(menu);
+            menu_bar.addItem_(menu_bar_item);
+        }
+
+        menu_bar
+    }
 }
 
 impl crate::platform::Runner for Runner {
     fn on_finish_launching<F: 'static + FnOnce()>(mut self, callback: F) -> Self {
         self.finish_launching_callback = Some(Box::new(callback));
+        self
+    }
+
+    fn on_menu_command<F: 'static + FnMut(&str)>(mut self, callback: F) -> Self {
+        self.menu_command_callback = Some(Box::new(callback));
         self
     }
 
@@ -100,22 +189,28 @@ impl crate::platform::Runner for Runner {
         self
     }
 
+    fn set_menus(mut self, menus: &[Menu]) -> Self {
+        unsafe {
+            let app: id = msg_send![APP_CLASS, sharedApplication];
+            app.setMainMenu_(self.create_menu_bar(menus));
+        }
+        self
+    }
+
     fn run(self) {
         unsafe {
             let self_ptr = Box::into_raw(Box::new(self));
 
             let pool = NSAutoreleasePool::new(nil);
             let app: id = msg_send![APP_CLASS, sharedApplication];
-            let _: () = msg_send![
-                app,
-                setActivationPolicy: NSApplicationActivationPolicyRegular
-            ];
-            (*app).set_ivar(RUNNER_IVAR, self_ptr as *mut c_void);
             let app_delegate: id = msg_send![APP_DELEGATE_CLASS, new];
+
+            (*app).set_ivar(RUNNER_IVAR, self_ptr as *mut c_void);
             (*app_delegate).set_ivar(RUNNER_IVAR, self_ptr as *mut c_void);
-            let _: () = msg_send![app, setDelegate: app_delegate];
-            let _: () = msg_send![app, run];
-            let _: () = msg_send![pool, drain];
+            app.setDelegate_(app_delegate);
+            app.run();
+            pool.drain();
+
             // The Runner is done running when we get here, so we can reinstantiate the Box and drop it.
             Box::from_raw(self_ptr);
         }
@@ -145,9 +240,14 @@ extern "C" fn send_event(this: &mut Object, _sel: Sel, native_event: id) {
 }
 
 extern "C" fn did_finish_launching(this: &mut Object, _: Sel, _: id) {
-    let runner = unsafe { get_runner(this) };
-    if let Some(callback) = runner.finish_launching_callback.take() {
-        callback();
+    unsafe {
+        let app: id = msg_send![APP_CLASS, sharedApplication];
+        app.setActivationPolicy_(NSApplicationActivationPolicyRegular);
+
+        let runner = get_runner(this);
+        if let Some(callback) = runner.finish_launching_callback.take() {
+            callback();
+        }
     }
 }
 
@@ -185,4 +285,21 @@ extern "C" fn open_files(this: &mut Object, _: Sel, _: id, paths: id) {
     if let Some(callback) = runner.open_files_callback.as_mut() {
         callback(paths);
     }
+}
+
+extern "C" fn handle_menu_item(this: &mut Object, _: Sel, item: id) {
+    unsafe {
+        let runner = get_runner(this);
+        if let Some(callback) = runner.menu_command_callback.as_mut() {
+            let tag: NSInteger = msg_send![item, tag];
+            let index = tag as usize;
+            if let Some(action) = runner.menu_item_actions.get(index) {
+                callback(&action);
+            }
+        }
+    }
+}
+
+unsafe fn ns_string(string: &str) -> id {
+    NSString::alloc(nil).init_str(string).autorelease()
 }

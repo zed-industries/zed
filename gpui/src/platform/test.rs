@@ -47,6 +47,12 @@ impl super::App for App {
         self.fonts.clone()
     }
 
+    fn quit(&self) {}
+
+    fn prompt_for_paths(&self, _: super::PathPromptOptions) -> Option<Vec<std::path::PathBuf>> {
+        None
+    }
+
     fn copy(&self, _: &str) {}
 }
 

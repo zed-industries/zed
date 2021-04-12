@@ -66,6 +66,20 @@ pub trait UpdateView {
         F: FnOnce(&mut T, &mut ViewContext<T>) -> S;
 }
 
+pub struct Menu<'a> {
+    pub name: &'a str,
+    pub items: &'a [MenuItem<'a>],
+}
+
+pub enum MenuItem<'a> {
+    Action {
+        name: &'a str,
+        keystroke: Option<&'a str>,
+        action: &'a str,
+    },
+    Separator,
+}
+
 #[derive(Clone)]
 pub struct App(Rc<RefCell<MutableAppContext>>);
 
@@ -365,6 +379,10 @@ impl MutableAppContext {
 
     pub fn downgrade(&self) -> &AppContext {
         &self.ctx
+    }
+
+    pub fn platform(&self) -> Arc<dyn platform::App> {
+        self.platform.clone()
     }
 
     pub fn foreground_executor(&self) -> &Rc<executor::Foreground> {

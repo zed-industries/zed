@@ -15,7 +15,7 @@ use crate::{
         vector::Vector2F,
     },
     text_layout::Line,
-    Scene,
+    Menu, Scene,
 };
 use anyhow::Result;
 use async_task::Runnable;
@@ -23,11 +23,13 @@ pub use event::Event;
 use std::{ops::Range, path::PathBuf, rc::Rc, sync::Arc};
 
 pub trait Runner {
-    fn on_finish_launching<F: 'static + FnOnce()>(self, callback: F) -> Self where;
+    fn on_finish_launching<F: 'static + FnOnce()>(self, callback: F) -> Self;
+    fn on_menu_command<F: 'static + FnMut(&str)>(self, callback: F) -> Self;
     fn on_become_active<F: 'static + FnMut()>(self, callback: F) -> Self;
     fn on_resign_active<F: 'static + FnMut()>(self, callback: F) -> Self;
     fn on_event<F: 'static + FnMut(Event) -> bool>(self, callback: F) -> Self;
     fn on_open_files<F: 'static + FnMut(Vec<PathBuf>)>(self, callback: F) -> Self;
+    fn set_menus(self, menus: &[Menu]) -> Self;
     fn run(self);
 }
 
@@ -39,7 +41,9 @@ pub trait App {
         options: WindowOptions,
         executor: Rc<executor::Foreground>,
     ) -> Result<Box<dyn Window>>;
+    fn prompt_for_paths(&self, options: PathPromptOptions) -> Option<Vec<PathBuf>>;
     fn fonts(&self) -> Arc<dyn FontSystem>;
+    fn quit(&self);
     fn copy(&self, text: &str);
 }
 
@@ -62,6 +66,12 @@ pub trait WindowContext {
 pub struct WindowOptions<'a> {
     pub bounds: RectF,
     pub title: Option<&'a str>,
+}
+
+pub struct PathPromptOptions {
+    pub files: bool,
+    pub directories: bool,
+    pub multiple: bool,
 }
 
 pub trait FontSystem: Send + Sync {
