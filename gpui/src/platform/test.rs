@@ -1,12 +1,11 @@
-use pathfinder_geometry::vector::Vector2F;
-use std::sync::Arc;
-use std::{any::Any, rc::Rc};
-
 use crate::ClipboardItem;
+use pathfinder_geometry::vector::Vector2F;
+use std::{any::Any, cell::RefCell, rc::Rc, sync::Arc};
 
 struct Platform {
     dispatcher: Arc<dyn super::Dispatcher>,
     fonts: Arc<dyn super::FontSystem>,
+    current_clipboard_item: RefCell<Option<ClipboardItem>>,
 }
 
 struct Dispatcher;
@@ -24,6 +23,7 @@ impl Platform {
         Self {
             dispatcher: Arc::new(Dispatcher),
             fonts: Arc::new(super::current::FontSystem::new()),
+            current_clipboard_item: RefCell::new(None),
         }
     }
 }
@@ -74,10 +74,12 @@ impl super::Platform for Platform {
         None
     }
 
-    fn write_to_clipboard(&self, _: ClipboardItem) {}
+    fn write_to_clipboard(&self, item: ClipboardItem) {
+        *self.current_clipboard_item.borrow_mut() = Some(item);
+    }
 
     fn read_from_clipboard(&self) -> Option<ClipboardItem> {
-        None
+        self.current_clipboard_item.borrow().clone()
     }
 }
 

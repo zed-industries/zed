@@ -359,6 +359,25 @@ impl BufferView {
     #[cfg(test)]
     fn select_ranges<'a, T>(&mut self, ranges: T, ctx: &mut ViewContext<Self>) -> Result<()>
     where
+        T: IntoIterator<Item = &'a Range<usize>>,
+    {
+        let buffer = self.buffer.read(ctx);
+        let mut selections = Vec::new();
+        for range in ranges {
+            selections.push(Selection {
+                start: buffer.anchor_after(range.start)?,
+                end: buffer.anchor_before(range.end)?,
+                reversed: false,
+                goal_column: None,
+            });
+        }
+        self.update_selections(selections, ctx);
+        Ok(())
+    }
+
+    #[cfg(test)]
+    fn select_display_ranges<'a, T>(&mut self, ranges: T, ctx: &mut ViewContext<Self>) -> Result<()>
+    where
         T: IntoIterator<Item = &'a Range<DisplayPoint>>,
     {
         let map = self.display_map.read(ctx);
@@ -459,6 +478,7 @@ impl BufferView {
         self.start_transaction(ctx);
         let mut text = String::new();
         let mut selections = self.selections(ctx.app()).to_vec();
+        let mut selection_lengths = Vec::with_capacity(selections.len());
         {
             let buffer = self.buffer.read(ctx);
             let max_point = buffer.max_point();
@@ -471,7 +491,9 @@ impl BufferView {
                     selection.start = buffer.anchor_before(start).unwrap();
                     selection.end = buffer.anchor_after(end).unwrap();
                 }
+                let prev_len = text.len();
                 text.extend(buffer.text_for_range(start..end).unwrap());
+                selection_lengths.push(text.len() - prev_len);
             }
         }
         self.update_selections(selections, ctx);
@@ -479,28 +501,71 @@ impl BufferView {
         self.insert(&String::new(), ctx);
         self.end_transaction(ctx);
 
-        ctx.app_mut().write_to_clipboard(ClipboardItem::new(text));
+        ctx.app_mut()
+            .write_to_clipboard(ClipboardItem::new(text).with_metadata(selection_lengths));
     }
 
     pub fn copy(&mut self, _: &(), ctx: &mut ViewContext<Self>) {
         let buffer = self.buffer.read(ctx);
         let max_point = buffer.max_point();
         let mut text = String::new();
-        for selection in self.selections(ctx.app()) {
+        let selections = self.selections(ctx.app());
+        let mut selection_lengths = Vec::with_capacity(selections.len());
+        for selection in selections {
             let mut start = selection.start.to_point(buffer).expect("invalid start");
             let mut end = selection.end.to_point(buffer).expect("invalid end");
             if start == end {
                 start = Point::new(start.row, 0);
                 end = cmp::min(max_point, Point::new(start.row + 1, 0));
             }
+            let prev_len = text.len();
             text.extend(buffer.text_for_range(start..end).unwrap());
+            selection_lengths.push(text.len() - prev_len);
         }
 
-        ctx.app_mut().write_to_clipboard(ClipboardItem::new(text));
+        ctx.app_mut()
+            .write_to_clipboard(ClipboardItem::new(text).with_metadata(selection_lengths));
     }
 
     pub fn paste(&mut self, _: &(), ctx: &mut ViewContext<Self>) {
         if let Some(item) = ctx.app_mut().read_from_clipboard() {
+            let clipboard_text = item.text();
+            if let Some(clipboard_slice_lengths) = item.metadata::<Vec<usize>>() {
+                // If there are the same number of selections as there were at the
+                // time that this clipboard data written, then paste one slice of the
+                // clipboard text into each of the current selections.
+                let selections = self.selections(ctx.app()).to_vec();
+                if clipboard_slice_lengths.len() == selections.len() {
+                    self.start_transaction(ctx);
+                    let mut new_selections = Vec::with_capacity(selections.len());
+                    let mut clipboard_offset = 0;
+                    for (i, selection) in selections.iter().enumerate() {
+                        let clipboard_length = clipboard_slice_lengths[i];
+                        let clipboard_slice = &clipboard_text
+                            [clipboard_offset..(clipboard_offset + clipboard_length)];
+                        clipboard_offset = clipboard_offset + clipboard_length;
+
+                        self.buffer.update(ctx, |buffer, ctx| {
+                            let char_count = clipboard_slice.chars().count();
+                            let start = selection.start.to_offset(buffer).unwrap();
+                            let end = selection.end.to_offset(buffer).unwrap();
+                            buffer
+                                .edit(Some(start..end), clipboard_slice, Some(ctx))
+                                .unwrap();
+                            let anchor = buffer.anchor_before(start + char_count).unwrap();
+                            new_selections.push(Selection {
+                                start: anchor.clone(),
+                                end: anchor,
+                                reversed: false,
+                                goal_column: None,
+                            });
+                        });
+                    }
+                    self.update_selections(new_selections, ctx);
+                    self.end_transaction(ctx);
+                    return;
+                }
+            }
             self.insert(item.text(), ctx);
         }
     }
@@ -1462,8 +1527,11 @@ mod tests {
                 app.add_window(|ctx| BufferView::for_buffer(buffer.clone(), settings, ctx));
 
             view.update(app, |view, ctx| {
-                view.select_ranges(&[DisplayPoint::new(8, 0)..DisplayPoint::new(12, 0)], ctx)
-                    .unwrap();
+                view.select_display_ranges(
+                    &[DisplayPoint::new(8, 0)..DisplayPoint::new(12, 0)],
+                    ctx,
+                )
+                .unwrap();
                 view.fold(&(), ctx);
                 assert_eq!(
                     view.text(ctx.app()),
@@ -1570,7 +1638,7 @@ mod tests {
                 app.add_window(|ctx| BufferView::for_buffer(buffer.clone(), settings, ctx));
 
             view.update(app, |view, ctx| {
-                view.select_ranges(
+                view.select_display_ranges(
                     &[
                         // an empty selection - the preceding character is deleted
                         DisplayPoint::new(0, 2)..DisplayPoint::new(0, 2),
@@ -1590,6 +1658,58 @@ mod tests {
                 "oe two three\nfou five six\nseven ten\n"
             );
         })
+    }
+
+    #[test]
+    fn test_clipboard() {
+        App::test((), |app| {
+            let buffer = app.add_model(|_| Buffer::new(0, "one two three four five six "));
+            let settings = settings::channel(&app.font_cache()).unwrap().1;
+            let view = app
+                .add_window(|ctx| BufferView::for_buffer(buffer.clone(), settings, ctx))
+                .1;
+
+            // Cut with three selections. Clipboard text is divided into three slices.
+            view.update(app, |view, ctx| {
+                view.select_ranges(&[0..4, 8..14, 19..24], ctx).unwrap();
+                view.cut(&(), ctx);
+            });
+            assert_eq!(view.read(app).text(app.as_ref()), "two four six ");
+
+            // Paste with three cursors. Each cursor pastes one slice of the clipboard text.
+            view.update(app, |view, ctx| {
+                view.select_ranges(&[4..4, 9..9, 13..13], ctx).unwrap();
+                view.paste(&(), ctx);
+            });
+            assert_eq!(
+                view.read(app).text(app.as_ref()),
+                "two one four three six five "
+            );
+            let ranges = view
+                .read(app)
+                .selections(app.as_ref())
+                .iter()
+                .map(|selection| {
+                    selection.start.to_offset(buffer.read(app)).unwrap()
+                        ..selection.end.to_offset(buffer.read(app)).unwrap()
+                })
+                .collect::<Vec<_>>();
+            assert_eq!(ranges, &[8..8, 19..19, 28..28]);
+
+            // Paste again but with only two cursors. Since the number of cursors doesn't
+            // match the number of slices in the clipboard, the entire clipboard text
+            // is pasted at each cursor.
+            view.update(app, |view, ctx| {
+                view.select_ranges(&[0..0, 28..28], ctx).unwrap();
+                view.insert(&"( ".to_string(), ctx);
+                view.paste(&(), ctx);
+                view.insert(&") ".to_string(), ctx);
+            });
+            assert_eq!(
+                view.read(app).text(app.as_ref()),
+                "( one three five ) two one four three six five ( one three five ) "
+            );
+        });
     }
 
     impl BufferView {
