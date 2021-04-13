@@ -5,7 +5,7 @@ use super::{
 };
 use crate::{
     editor::{History, Snapshot},
-    timer,
+    throttle::throttled,
     util::post_inc,
 };
 use anyhow::{anyhow, Result};
@@ -14,6 +14,7 @@ use easy_parallel::Parallel;
 use gpui::{scoped_pool, AppContext, Entity, ModelContext, ModelHandle, Task};
 use ignore::dir::{Ignore, IgnoreBuilder};
 use parking_lot::RwLock;
+use postage::watch;
 use smol::prelude::*;
 use std::{
     collections::HashMap,
@@ -37,7 +38,13 @@ struct WorktreeState {
     entries: HashMap<u64, Entry>,
     file_paths: Vec<PathEntry>,
     histories: HashMap<u64, History>,
-    scanning: bool,
+    scan_state: watch::Sender<ScanState>,
+}
+
+#[derive(Clone)]
+enum ScanState {
+    Scanning,
+    Idle,
 }
 
 struct DirToScan {
@@ -53,6 +60,8 @@ impl Worktree {
     where
         T: Into<PathBuf>,
     {
+        let scan_state = watch::channel_with(ScanState::Scanning);
+
         let tree = Self(Arc::new(RwLock::new(WorktreeState {
             id,
             path: path.into(),
@@ -60,27 +69,31 @@ impl Worktree {
             entries: HashMap::new(),
             file_paths: Vec::new(),
             histories: HashMap::new(),
-            scanning: true,
+            scan_state: scan_state.0,
         })));
 
-        let done_scanning = {
+        {
             let tree = tree.clone();
-            ctx.background_executor().spawn(async move {
-                tree.scan_dirs()?;
-                Ok(())
-            })
-        };
-
-        ctx.spawn(done_scanning, Self::done_scanning).detach();
+            std::thread::spawn(move || {
+                if let Err(error) = tree.scan_dirs() {
+                    log::error!("error scanning worktree: {}", error);
+                }
+                tree.set_scan_state(ScanState::Idle);
+            });
+        }
 
         ctx.spawn_stream(
-            timer::repeat(Duration::from_millis(100)).map(|_| ()),
-            Self::scanning,
+            throttled(Duration::from_millis(100), scan_state.1),
+            Self::observe_scan_state,
             |_, _| {},
         )
         .detach();
 
         tree
+    }
+
+    fn set_scan_state(&self, state: ScanState) {
+        *self.0.write().scan_state.borrow_mut() = state;
     }
 
     fn scan_dirs(&self) -> io::Result<()> {
@@ -201,7 +214,8 @@ impl Worktree {
         is_symlink: bool,
         is_ignored: bool,
     ) {
-        let entries = &mut self.0.write().entries;
+        let mut state = self.0.write();
+        let entries = &mut state.entries;
         entries.insert(
             ino,
             Entry::Dir {
@@ -213,6 +227,7 @@ impl Worktree {
                 children: Vec::new(),
             },
         );
+        *state.scan_state.borrow_mut() = ScanState::Scanning;
     }
 
     fn insert_file(
@@ -247,6 +262,7 @@ impl Worktree {
             lowercase_path,
             is_ignored,
         });
+        *state.scan_state.borrow_mut() = ScanState::Scanning;
     }
 
     pub fn entry_path(&self, mut entry_id: u64) -> Result<PathBuf> {
@@ -394,22 +410,9 @@ impl Worktree {
         })
     }
 
-    fn scanning(&mut self, _: (), ctx: &mut ModelContext<Self>) {
-        if self.0.read().scanning {
-            ctx.notify();
-        } else {
-            ctx.halt_stream();
-        }
-    }
-
-    fn done_scanning(&mut self, result: io::Result<()>, ctx: &mut ModelContext<Self>) {
-        log::info!("done scanning");
-        self.0.write().scanning = false;
-        if let Err(error) = result {
-            log::error!("error populating worktree: {}", error);
-        } else {
-            ctx.notify();
-        }
+    fn observe_scan_state(&mut self, _: ScanState, ctx: &mut ModelContext<Self>) {
+        // log::info!("observe {:?}", std::time::Instant::now());
+        ctx.notify()
     }
 }
 
