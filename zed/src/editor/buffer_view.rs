@@ -1,6 +1,6 @@
 use super::{
     buffer, movement, Anchor, Bias, Buffer, BufferElement, DisplayMap, DisplayPoint, Point,
-    Selection, SelectionSetId, ToOffset,
+    Selection, SelectionSetId, ToOffset, ToPoint,
 };
 use crate::{settings::Settings, watch, workspace};
 use anyhow::Result;
@@ -28,6 +28,9 @@ pub fn init(app: &mut MutableAppContext) {
     app.add_bindings(vec![
         Binding::new("backspace", "buffer:backspace", Some("BufferView")),
         Binding::new("enter", "buffer:newline", Some("BufferView")),
+        Binding::new("cmd-x", "buffer:cut", Some("BufferView")),
+        Binding::new("cmd-c", "buffer:copy", Some("BufferView")),
+        Binding::new("cmd-v", "buffer:paste", Some("BufferView")),
         Binding::new("cmd-z", "buffer:undo", Some("BufferView")),
         Binding::new("cmd-shift-Z", "buffer:redo", Some("BufferView")),
         Binding::new("up", "buffer:move_up", Some("BufferView")),
@@ -54,6 +57,9 @@ pub fn init(app: &mut MutableAppContext) {
     app.add_action("buffer:insert", BufferView::insert);
     app.add_action("buffer:newline", BufferView::newline);
     app.add_action("buffer:backspace", BufferView::backspace);
+    app.add_action("buffer:cut", BufferView::cut);
+    app.add_action("buffer:copy", BufferView::copy);
+    app.add_action("buffer:paste", BufferView::paste);
     app.add_action("buffer:undo", BufferView::undo);
     app.add_action("buffer:redo", BufferView::redo);
     app.add_action("buffer:move_up", BufferView::move_up);
@@ -447,6 +453,56 @@ impl BufferView {
         self.changed_selections(ctx);
         self.insert(&String::new(), ctx);
         self.end_transaction(ctx);
+    }
+
+    pub fn cut(&mut self, _: &(), ctx: &mut ViewContext<Self>) {
+        self.start_transaction(ctx);
+        let mut text = String::new();
+        let mut selections = self.selections(ctx.app()).to_vec();
+        {
+            let buffer = self.buffer.read(ctx);
+            let max_point = buffer.max_point();
+            for selection in &mut selections {
+                let mut start = selection.start.to_point(buffer).expect("invalid start");
+                let mut end = selection.end.to_point(buffer).expect("invalid end");
+                if start == end {
+                    start = Point::new(start.row, 0);
+                    end = cmp::min(max_point, Point::new(start.row + 1, 0));
+                    selection.start = buffer.anchor_before(start).unwrap();
+                    selection.end = buffer.anchor_after(end).unwrap();
+                }
+                text.extend(buffer.text_for_range(start..end).unwrap());
+            }
+        }
+        self.update_selections(selections, ctx);
+        self.changed_selections(ctx);
+        self.insert(&String::new(), ctx);
+        self.end_transaction(ctx);
+
+        ctx.app_mut().copy(&text);
+    }
+
+    pub fn copy(&mut self, _: &(), ctx: &mut ViewContext<Self>) {
+        let buffer = self.buffer.read(ctx);
+        let max_point = buffer.max_point();
+        let mut text = String::new();
+        for selection in self.selections(ctx.app()) {
+            let mut start = selection.start.to_point(buffer).expect("invalid start");
+            let mut end = selection.end.to_point(buffer).expect("invalid end");
+            if start == end {
+                start = Point::new(start.row, 0);
+                end = cmp::min(max_point, Point::new(start.row + 1, 0));
+            }
+            text.extend(buffer.text_for_range(start..end).unwrap());
+        }
+
+        ctx.app_mut().copy(&text);
+    }
+
+    pub fn paste(&mut self, _: &(), ctx: &mut ViewContext<Self>) {
+        if let Some(text) = ctx.app_mut().paste() {
+            self.insert(&text, ctx);
+        }
     }
 
     pub fn undo(&mut self, _: &(), ctx: &mut ViewContext<Self>) {

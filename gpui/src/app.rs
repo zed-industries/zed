@@ -1215,6 +1215,10 @@ impl MutableAppContext {
     pub fn copy(&self, text: &str) {
         self.platform.copy(text);
     }
+
+    pub fn paste(&self) -> Option<String> {
+        self.platform.paste()
+    }
 }
 
 impl ReadModel for MutableAppContext {

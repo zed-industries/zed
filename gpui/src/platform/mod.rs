@@ -43,6 +43,7 @@ pub trait Platform {
     fn prompt_for_paths(&self, options: PathPromptOptions) -> Option<Vec<PathBuf>>;
     fn quit(&self);
     fn copy(&self, text: &str);
+    fn paste(&self) -> Option<String>;
     fn set_menus(&self, menus: Vec<Menu>);
 }
 

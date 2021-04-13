@@ -73,6 +73,10 @@ impl super::Platform for Platform {
     }
 
     fn copy(&self, _: &str) {}
+
+    fn paste(&self) -> Option<String> {
+        None
+    }
 }
 
 impl Window {

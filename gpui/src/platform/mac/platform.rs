@@ -26,6 +26,7 @@ use std::{
     path::PathBuf,
     ptr,
     rc::Rc,
+    slice,
     sync::Arc,
 };
 
@@ -296,6 +297,19 @@ impl platform::Platform for MacPlatform {
             let pasteboard = NSPasteboard::generalPasteboard(nil);
             pasteboard.clearContents();
             pasteboard.setData_forType(data, NSPasteboardTypeString);
+        }
+    }
+
+    fn paste(&self) -> Option<String> {
+        unsafe {
+            let pasteboard = NSPasteboard::generalPasteboard(nil);
+            let data = pasteboard.dataForType(NSPasteboardTypeString);
+            if data == nil {
+                None
+            } else {
+                let bytes = slice::from_raw_parts(data.bytes() as *mut u8, data.length() as usize);
+                Some(String::from_utf8_unchecked(bytes.to_vec()))
+            }
         }
     }
 
