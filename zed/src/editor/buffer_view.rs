@@ -6,8 +6,8 @@ use crate::{settings::Settings, watch, workspace};
 use anyhow::Result;
 use futures_core::future::LocalBoxFuture;
 use gpui::{
-    fonts::Properties as FontProperties, keymap::Binding, text_layout, AppContext, Element,
-    ElementBox, Entity, FontCache, ModelHandle, MutableAppContext, View, ViewContext,
+    fonts::Properties as FontProperties, keymap::Binding, text_layout, AppContext, ClipboardItem,
+    Element, ElementBox, Entity, FontCache, ModelHandle, MutableAppContext, View, ViewContext,
     WeakViewHandle,
 };
 use gpui::{geometry::vector::Vector2F, TextLayoutCache};
@@ -479,7 +479,7 @@ impl BufferView {
         self.insert(&String::new(), ctx);
         self.end_transaction(ctx);
 
-        ctx.app_mut().copy(&text);
+        ctx.app_mut().write_to_clipboard(ClipboardItem::new(text));
     }
 
     pub fn copy(&mut self, _: &(), ctx: &mut ViewContext<Self>) {
@@ -496,12 +496,12 @@ impl BufferView {
             text.extend(buffer.text_for_range(start..end).unwrap());
         }
 
-        ctx.app_mut().copy(&text);
+        ctx.app_mut().write_to_clipboard(ClipboardItem::new(text));
     }
 
     pub fn paste(&mut self, _: &(), ctx: &mut ViewContext<Self>) {
-        if let Some(text) = ctx.app_mut().paste() {
-            self.insert(&text, ctx);
+        if let Some(item) = ctx.app_mut().read_from_clipboard() {
+            self.insert(item.text(), ctx);
         }
     }
 

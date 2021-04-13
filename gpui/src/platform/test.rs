@@ -2,6 +2,8 @@ use pathfinder_geometry::vector::Vector2F;
 use std::sync::Arc;
 use std::{any::Any, rc::Rc};
 
+use crate::ClipboardItem;
+
 struct Platform {
     dispatcher: Arc<dyn super::Dispatcher>,
     fonts: Arc<dyn super::FontSystem>,
@@ -72,9 +74,9 @@ impl super::Platform for Platform {
         None
     }
 
-    fn copy(&self, _: &str) {}
+    fn write_to_clipboard(&self, _: ClipboardItem) {}
 
-    fn paste(&self) -> Option<String> {
+    fn read_from_clipboard(&self) -> Option<ClipboardItem> {
         None
     }
 }
