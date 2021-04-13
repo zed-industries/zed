@@ -49,7 +49,7 @@ struct DirToScan {
 }
 
 impl Worktree {
-    pub fn new<T>(id: usize, path: T, ctx: Option<&mut ModelContext<Self>>) -> Self
+    pub fn new<T>(id: usize, path: T, ctx: &mut ModelContext<Self>) -> Self
     where
         T: Into<PathBuf>,
     {
@@ -60,27 +60,25 @@ impl Worktree {
             entries: HashMap::new(),
             file_paths: Vec::new(),
             histories: HashMap::new(),
-            scanning: ctx.is_some(),
+            scanning: true,
         })));
 
-        if let Some(ctx) = ctx {
-            tree.0.write().scanning = true;
-
+        let done_scanning = {
             let tree = tree.clone();
-            let task = ctx.background_executor().spawn(async move {
+            ctx.background_executor().spawn(async move {
                 tree.scan_dirs()?;
                 Ok(())
-            });
+            })
+        };
 
-            ctx.spawn(task, Self::done_scanning).detach();
+        ctx.spawn(done_scanning, Self::done_scanning).detach();
 
-            ctx.spawn_stream(
-                timer::repeat(Duration::from_millis(100)).map(|_| ()),
-                Self::scanning,
-                |_, _| {},
-            )
-            .detach();
-        }
+        ctx.spawn_stream(
+            timer::repeat(Duration::from_millis(100)).map(|_| ()),
+            Self::scanning,
+            |_, _| {},
+        )
+        .detach();
 
         tree
     }
@@ -690,7 +688,7 @@ mod test {
             let root_link_path = dir.path().join("root_link");
             unix::fs::symlink(&dir.path().join("root"), &root_link_path).unwrap();
 
-            let tree = app.add_model(|ctx| Worktree::new(1, root_link_path, Some(ctx)));
+            let tree = app.add_model(|ctx| Worktree::new(1, root_link_path, ctx));
             app.finish_pending_tasks().await;
 
             app.read(|ctx| {
@@ -719,7 +717,7 @@ mod test {
                 "file1": "the old contents",
             }));
 
-            let tree = app.add_model(|ctx| Worktree::new(1, dir.path(), Some(ctx)));
+            let tree = app.add_model(|ctx| Worktree::new(1, dir.path(), ctx));
             app.finish_pending_tasks().await;
 
             let buffer = Buffer::new(1, "a line of text.\n".repeat(10 * 1024));

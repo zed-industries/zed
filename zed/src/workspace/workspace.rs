@@ -117,7 +117,7 @@ impl Workspace {
             }
         }
 
-        let worktree = ctx.add_model(|ctx| Worktree::new(ctx.model_id(), path, Some(ctx)));
+        let worktree = ctx.add_model(|ctx| Worktree::new(ctx.model_id(), path, ctx));
         ctx.observe(&worktree, Self::on_worktree_updated);
         self.worktrees.insert(worktree);
         ctx.notify();
