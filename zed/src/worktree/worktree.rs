@@ -279,6 +279,28 @@ impl Worktree {
         Ok(path.join(self.entry_path(entry_id)?))
     }
 
+    #[cfg(test)]
+    fn entry_for_path(&self, path: impl AsRef<Path>) -> Option<u64> {
+        let path = path.as_ref();
+        let state = self.0.read();
+        state.root_ino.and_then(|mut ino| {
+            'components: for component in path {
+                if let Entry::Dir { children, .. } = &state.entries[&ino] {
+                    for child in children {
+                        if state.entries[child].name() == component {
+                            ino = *child;
+                            continue 'components;
+                        }
+                    }
+                    return None;
+                } else {
+                    return None;
+                }
+            }
+            Some(ino)
+        })
+    }
+
     fn fmt_entry(&self, f: &mut fmt::Formatter<'_>, entry_id: u64, indent: usize) -> fmt::Result {
         match &self.0.read().entries[&entry_id] {
             Entry::Dir { name, children, .. } => {
@@ -738,6 +760,42 @@ mod test {
                 .await
                 .unwrap();
             assert_eq!(history.base_text.as_ref(), buffer.text());
+        });
+    }
+
+    #[test]
+    fn test_rescan() {
+        App::test_async((), |mut app| async move {
+            let dir = temp_tree(json!({
+                "dir1": {
+                    "file": "contents"
+                },
+                "dir2": {
+                }
+            }));
+
+            let tree = app.add_model(|ctx| Worktree::new(1, dir.path(), ctx));
+            app.finish_pending_tasks().await;
+
+            let file_entry = app.read(|ctx| tree.read(ctx).entry_for_path("dir1/file").unwrap());
+
+            app.read(|ctx| {
+                let tree = tree.read(ctx);
+                assert_eq!(
+                    tree.abs_entry_path(file_entry).unwrap(),
+                    tree.path().join("dir1/file")
+                );
+            });
+
+            std::fs::rename(dir.path().join("dir1/file"), dir.path().join("dir2/file")).unwrap();
+
+            assert_condition(1, 300, || {
+                app.read(|ctx| {
+                    let tree = tree.read(ctx);
+                    tree.abs_entry_path(file_entry).unwrap() == tree.path().join("dir2/file")
+                })
+            })
+            .await
         });
     }
 }
