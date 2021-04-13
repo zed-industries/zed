@@ -9,7 +9,7 @@ name = "zed"
 path = "src/lib.rs"
 
 [[bin]]
-name = "zed"
+name = "Zed"
 path = "src/main.rs"
 
 [dependencies]
