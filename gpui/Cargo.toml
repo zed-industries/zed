@@ -37,6 +37,7 @@ simplelog = "0.9"
 
 [target.'cfg(target_os = "macos")'.dependencies]
 anyhow = "1"
+block = "0.1"
 cocoa = "0.24"
 core-foundation = "0.9"
 core-graphics = "0.22.2"

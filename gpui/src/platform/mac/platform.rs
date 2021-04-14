@@ -1,5 +1,6 @@
 use super::{BoolExt as _, Dispatcher, FontSystem, Window};
 use crate::{executor, keymap::Keystroke, platform, ClipboardItem, Event, Menu, MenuItem};
+use block::ConcreteBlock;
 use cocoa::{
     appkit::{
         NSApplication, NSApplicationActivationPolicy::NSApplicationActivationPolicyRegular,
@@ -20,7 +21,7 @@ use objc::{
 use ptr::null_mut;
 use std::{
     any::Any,
-    cell::RefCell,
+    cell::{Cell, RefCell},
     convert::TryInto,
     ffi::{c_void, CStr},
     os::raw::c_char,
@@ -267,31 +268,40 @@ impl platform::Platform for MacPlatform {
     fn prompt_for_paths(
         &self,
         options: platform::PathPromptOptions,
-    ) -> Option<Vec<std::path::PathBuf>> {
+        done_fn: Box<dyn FnOnce(Option<Vec<std::path::PathBuf>>)>,
+    ) {
         unsafe {
             let panel = NSOpenPanel::openPanel(nil);
             panel.setCanChooseDirectories_(options.directories.to_objc());
             panel.setCanChooseFiles_(options.files.to_objc());
             panel.setAllowsMultipleSelection_(options.multiple.to_objc());
             panel.setResolvesAliases_(false.to_objc());
-            let response = panel.runModal();
-            if response == NSModalResponse::NSModalResponseOk {
-                let mut result = Vec::new();
-                let urls = panel.URLs();
-                for i in 0..urls.count() {
-                    let url = urls.objectAtIndex(i);
-                    let string = url.absoluteString();
-                    let string = std::ffi::CStr::from_ptr(string.UTF8String())
-                        .to_string_lossy()
-                        .to_string();
-                    if let Some(path) = string.strip_prefix("file://") {
-                        result.push(PathBuf::from(path));
+            let done_fn = Cell::new(Some(done_fn));
+            let block = ConcreteBlock::new(move |response: NSModalResponse| {
+                let result = if response == NSModalResponse::NSModalResponseOk {
+                    let mut result = Vec::new();
+                    let urls = panel.URLs();
+                    for i in 0..urls.count() {
+                        let url = urls.objectAtIndex(i);
+                        let string = url.absoluteString();
+                        let string = std::ffi::CStr::from_ptr(string.UTF8String())
+                            .to_string_lossy()
+                            .to_string();
+                        if let Some(path) = string.strip_prefix("file://") {
+                            result.push(PathBuf::from(path));
+                        }
                     }
+                    Some(result)
+                } else {
+                    None
+                };
+
+                if let Some(done_fn) = done_fn.take() {
+                    (done_fn)(result);
                 }
-                Some(result)
-            } else {
-                None
-            }
+            });
+            let block = block.copy();
+            let _: () = msg_send![panel, beginWithCompletionHandler: block];
         }
     }
 

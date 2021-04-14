@@ -29,19 +29,19 @@ pub struct OpenParams {
 }
 
 fn open(settings: &Receiver<Settings>, ctx: &mut MutableAppContext) {
-    if let Some(paths) = ctx.platform().prompt_for_paths(PathPromptOptions {
-        files: true,
-        directories: true,
-        multiple: true,
-    }) {
-        ctx.dispatch_global_action(
-            "workspace:open_paths",
-            OpenParams {
-                paths,
-                settings: settings.clone(),
-            },
-        );
-    }
+    let settings = settings.clone();
+    ctx.prompt_for_paths(
+        PathPromptOptions {
+            files: true,
+            directories: true,
+            multiple: true,
+        },
+        move |paths, ctx| {
+            if let Some(paths) = paths {
+                ctx.dispatch_global_action("workspace:open_paths", OpenParams { paths, settings });
+            }
+        },
+    );
 }
 
 fn open_paths(params: &OpenParams, app: &mut MutableAppContext) {
