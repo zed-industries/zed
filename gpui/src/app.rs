@@ -141,12 +141,13 @@ impl App {
                 {
                     let presenter = presenter.clone();
                     let path = presenter.borrow().dispatch_path(ctx.as_ref());
-                    if ctx.dispatch_action_any(key_window_id, &path, command, arg.unwrap_or(&())) {
-                        return;
-                    }
+                    ctx.dispatch_action_any(key_window_id, &path, command, arg.unwrap_or(&()));
+                } else {
+                    ctx.dispatch_global_action_any(command, arg.unwrap_or(&()));
                 }
+            } else {
+                ctx.dispatch_global_action_any(command, arg.unwrap_or(&()));
             }
-            ctx.dispatch_global_action_any(command, arg.unwrap_or(&()));
         }));
 
         app.0.borrow_mut().weak_self = Some(Rc::downgrade(&app.0));
