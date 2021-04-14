@@ -2286,6 +2286,7 @@ dependencies = [
  "rand 0.8.3",
  "rust-embed",
  "seahash",
+ "serde",
  "serde_json",
  "simplelog",
  "smallvec",
