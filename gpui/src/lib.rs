@@ -29,3 +29,4 @@ pub use presenter::{
     AfterLayoutContext, Axis, DebugContext, EventContext, LayoutContext, PaintContext,
     SizeConstraint, Vector2FExt,
 };
+pub use scoped_pool;
