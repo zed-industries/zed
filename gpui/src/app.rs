@@ -5,7 +5,7 @@ use crate::{
     platform::{self, WindowOptions},
     presenter::Presenter,
     util::post_inc,
-    AssetCache, AssetSource, FontCache, TextLayoutCache,
+    AssetCache, AssetSource, ClipboardItem, FontCache, TextLayoutCache,
 };
 use anyhow::{anyhow, Result};
 use async_std::sync::Condvar;
@@ -1212,8 +1212,12 @@ impl MutableAppContext {
         }
     }
 
-    pub fn copy(&self, text: &str) {
-        self.platform.copy(text);
+    pub fn write_to_clipboard(&self, item: ClipboardItem) {
+        self.platform.write_to_clipboard(item);
+    }
+
+    pub fn read_from_clipboard(&self) -> Option<ClipboardItem> {
+        self.platform.read_from_clipboard()
     }
 }
 

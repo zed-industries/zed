@@ -3,7 +3,7 @@ use crate::{settings::Settings, watch};
 use futures_core::future::LocalBoxFuture;
 use gpui::{
     color::rgbu, elements::*, json::to_string_pretty, keymap::Binding, AnyViewHandle, AppContext,
-    Entity, ModelHandle, MutableAppContext, View, ViewContext, ViewHandle,
+    ClipboardItem, Entity, ModelHandle, MutableAppContext, View, ViewContext, ViewHandle,
 };
 use log::{error, info};
 use std::{collections::HashSet, path::PathBuf};
@@ -258,10 +258,11 @@ impl WorkspaceView {
     pub fn debug_elements(&mut self, _: &(), ctx: &mut ViewContext<Self>) {
         match to_string_pretty(&ctx.debug_elements()) {
             Ok(json) => {
-                ctx.as_mut().copy(&json);
+                let kib = json.len() as f32 / 1024.;
+                ctx.as_mut().write_to_clipboard(ClipboardItem::new(json));
                 log::info!(
                     "copied {:.1} KiB of element debug JSON to the clipboard",
-                    json.len() as f32 / 1024.
+                    kib
                 );
             }
             Err(error) => {
