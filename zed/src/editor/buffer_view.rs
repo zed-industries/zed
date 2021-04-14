@@ -18,6 +18,7 @@ use smol::Timer;
 use std::{
     cmp::{self, Ordering},
     fmt::Write,
+    iter::FromIterator,
     ops::Range,
     sync::Arc,
     time::Duration,
@@ -499,10 +500,13 @@ impl BufferView {
                     selection.start = buffer.anchor_before(start).unwrap();
                     selection.end = buffer.anchor_after(end).unwrap();
                 }
-                let prev_len = text.len();
-                text.extend(buffer.text_for_range(start..end).unwrap());
+                let mut len = 0;
+                for ch in buffer.text_for_range(start..end).unwrap() {
+                    text.push(ch);
+                    len += 1;
+                }
                 clipboard_selections.push(ClipboardSelection {
-                    len: text.len() - prev_len,
+                    len,
                     is_entire_line,
                 });
             }
@@ -521,7 +525,7 @@ impl BufferView {
         let max_point = buffer.max_point();
         let mut text = String::new();
         let selections = self.selections(ctx.app());
-        let mut selection_lengths = Vec::with_capacity(selections.len());
+        let mut clipboard_selections = Vec::with_capacity(selections.len());
         for selection in selections {
             let mut start = selection.start.to_point(buffer).expect("invalid start");
             let mut end = selection.end.to_point(buffer).expect("invalid end");
@@ -530,84 +534,107 @@ impl BufferView {
                 start = Point::new(start.row, 0);
                 end = cmp::min(max_point, Point::new(start.row + 1, 0));
             }
-            let prev_len = text.len();
-            text.extend(buffer.text_for_range(start..end).unwrap());
-            selection_lengths.push(ClipboardSelection {
-                len: text.len() - prev_len,
+            let mut len = 0;
+            for ch in buffer.text_for_range(start..end).unwrap() {
+                text.push(ch);
+                len += 1;
+            }
+            clipboard_selections.push(ClipboardSelection {
+                len,
                 is_entire_line,
             });
         }
 
         ctx.app_mut()
-            .write_to_clipboard(ClipboardItem::new(text).with_metadata(selection_lengths));
+            .write_to_clipboard(ClipboardItem::new(text).with_metadata(clipboard_selections));
     }
 
     pub fn paste(&mut self, _: &(), ctx: &mut ViewContext<Self>) {
         if let Some(item) = ctx.app_mut().read_from_clipboard() {
             let clipboard_text = item.text();
             if let Some(clipboard_selections) = item.metadata::<Vec<ClipboardSelection>>() {
-                // If there are the same number of selections as there were at the
-                // time that this clipboard data was written, then paste one slice of the
-                // clipboard text into each of the current selections.
-                let selections = self.selections(ctx.app()).to_vec();
-                if clipboard_selections.len() == selections.len() {
-                    self.start_transaction(ctx);
-                    let mut new_selections = Vec::with_capacity(selections.len());
-                    let mut clipboard_offset = 0;
-                    for (i, selection) in selections.iter().enumerate() {
-                        let clipboard_selection = &clipboard_selections[i];
-                        let clipboard_slice = &clipboard_text
-                            [clipboard_offset..(clipboard_offset + clipboard_selection.len)];
-                        clipboard_offset = clipboard_offset + clipboard_selection.len;
-
-                        self.buffer.update(ctx, |buffer, ctx| {
-                            let selection_start = selection.start.to_point(buffer).unwrap();
-                            let selection_end = selection.end.to_point(buffer).unwrap();
-                            let char_count = clipboard_slice.chars().count();
-                            let max_point = buffer.max_point();
-
-                            // If the corresponding selection was empty when this slice of the
-                            // clipboard text was written, then the entire line containing the
-                            // selection was copied. If this selection is also currently empty,
-                            // then paste the line before the current line of the buffer.
-                            let anchor;
-                            if selection_start == selection_end
-                                && clipboard_selection.is_entire_line
-                            {
-                                let start_point = Point::new(selection_start.row, 0);
-                                let start = start_point.to_offset(buffer).unwrap();
-                                let new_position = cmp::min(
-                                    max_point,
-                                    Point::new(start_point.row + 1, selection_start.column),
-                                );
-                                buffer
-                                    .edit(Some(start..start), clipboard_slice, Some(ctx))
-                                    .unwrap();
-                                anchor = buffer.anchor_before(new_position).unwrap();
-                            } else {
-                                let start = selection.start.to_offset(buffer).unwrap();
-                                let end = selection.end.to_offset(buffer).unwrap();
-                                buffer
-                                    .edit(Some(start..end), clipboard_slice, Some(ctx))
-                                    .unwrap();
-                                anchor = buffer.anchor_before(start + char_count).unwrap();
-                            }
-
-                            new_selections.push(Selection {
-                                start: anchor.clone(),
-                                end: anchor,
-                                reversed: false,
-                                goal_column: None,
-                            });
-                        });
-                    }
-                    self.update_selections(new_selections, ctx);
-                    self.end_transaction(ctx);
-                    return;
+                let selections_len = self.selections(ctx.app()).len();
+                if clipboard_selections.len() == selections_len {
+                    // If there are the same number of selections as there were at the time that
+                    // this clipboard data was written, then paste one slice of the clipboard text
+                    // into each of the current selections.
+                    self.multiline_paste(clipboard_text.chars(), clipboard_selections.iter(), ctx);
+                } else if clipboard_selections.len() == 1 && clipboard_selections[0].is_entire_line
+                {
+                    // If there was only one selection in the clipboard but it spanned the whole
+                    // line, then paste it over and over into each of the current selections so that
+                    // we can position it before the selections that are empty.
+                    self.multiline_paste(
+                        clipboard_text.chars().cycle(),
+                        clipboard_selections.iter().cycle(),
+                        ctx,
+                    );
+                } else {
+                    self.insert(clipboard_text, ctx);
                 }
+            } else {
+                self.insert(clipboard_text, ctx);
             }
-            self.insert(item.text(), ctx);
         }
+    }
+
+    fn multiline_paste<'a>(
+        &mut self,
+        mut clipboard_text: impl Iterator<Item = char>,
+        clipboard_selections: impl Iterator<Item = &'a ClipboardSelection>,
+        ctx: &mut ViewContext<Self>,
+    ) {
+        self.start_transaction(ctx);
+        let selections = self.selections(ctx.app()).to_vec();
+        let mut new_selections = Vec::with_capacity(selections.len());
+        let mut clipboard_offset = 0;
+        for (selection, clipboard_selection) in selections.iter().zip(clipboard_selections) {
+            let clipboard_slice =
+                String::from_iter(clipboard_text.by_ref().take(clipboard_selection.len));
+            clipboard_offset = clipboard_offset + clipboard_selection.len;
+
+            self.buffer.update(ctx, |buffer, ctx| {
+                let selection_start = selection.start.to_point(buffer).unwrap();
+                let selection_end = selection.end.to_point(buffer).unwrap();
+                let max_point = buffer.max_point();
+
+                // If the corresponding selection was empty when this slice of the
+                // clipboard text was written, then the entire line containing the
+                // selection was copied. If this selection is also currently empty,
+                // then paste the line before the current line of the buffer.
+                let anchor;
+                if selection_start == selection_end && clipboard_selection.is_entire_line {
+                    let start_point = Point::new(selection_start.row, 0);
+                    let start = start_point.to_offset(buffer).unwrap();
+                    let new_position = cmp::min(
+                        max_point,
+                        Point::new(start_point.row + 1, selection_start.column),
+                    );
+                    buffer
+                        .edit(Some(start..start), clipboard_slice, Some(ctx))
+                        .unwrap();
+                    anchor = buffer.anchor_before(new_position).unwrap();
+                } else {
+                    let start = selection.start.to_offset(buffer).unwrap();
+                    let end = selection.end.to_offset(buffer).unwrap();
+                    buffer
+                        .edit(Some(start..end), clipboard_slice, Some(ctx))
+                        .unwrap();
+                    anchor = buffer
+                        .anchor_before(start + clipboard_selection.len)
+                        .unwrap();
+                }
+
+                new_selections.push(Selection {
+                    start: anchor.clone(),
+                    end: anchor,
+                    reversed: false,
+                    goal_column: None,
+                });
+            });
+        }
+        self.update_selections(new_selections, ctx);
+        self.end_transaction(ctx);
     }
 
     pub fn undo(&mut self, _: &(), ctx: &mut ViewContext<Self>) {
