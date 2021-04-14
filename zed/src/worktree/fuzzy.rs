@@ -1,4 +1,4 @@
-use easy_parallel::Parallel;
+use gpui::scoped_pool;
 
 use super::char_bag::CharBag;
 
@@ -54,6 +54,7 @@ pub fn match_paths(
     include_ignored: bool,
     smart_case: bool,
     max_results: usize,
+    pool: scoped_pool::Pool,
 ) -> Vec<PathMatch> {
     let lowercase_query = query.to_lowercase().chars().collect::<Vec<_>>();
     let query = query.chars().collect::<Vec<_>>();
@@ -68,10 +69,9 @@ pub fn match_paths(
     let segment_size = (path_count + cpus - 1) / cpus;
     let mut segment_results = (0..cpus).map(|_| BinaryHeap::new()).collect::<Vec<_>>();
 
-    Parallel::new()
-        .each(
-            segment_results.iter_mut().enumerate(),
-            |(segment_idx, results)| {
+    pool.scoped(|scope| {
+        for (segment_idx, results) in segment_results.iter_mut().enumerate() {
+            scope.execute(move || {
                 let segment_start = segment_idx * segment_size;
                 let segment_end = segment_start + segment_size;
 
@@ -115,9 +115,9 @@ pub fn match_paths(
                     }
                     tree_start = tree_end;
                 }
-            },
-        )
-        .run();
+            })
+        }
+    });
 
     let mut results = segment_results
         .into_iter()
