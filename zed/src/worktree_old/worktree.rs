@@ -74,7 +74,7 @@ impl Worktree {
 
         {
             let tree = tree.clone();
-            ctx.as_ref().scoped_pool().spawn(move || {
+            ctx.as_ref().thread_pool().spawn(move || {
                 if let Err(error) = tree.scan_dirs() {
                     log::error!("error scanning worktree: {}", error);
                 }
@@ -725,7 +725,7 @@ mod test {
                     false,
                     false,
                     10,
-                    ctx.scoped_pool().clone(),
+                    ctx.thread_pool().clone(),
                 )
                 .iter()
                 .map(|result| tree.entry_path(result.entry_id))

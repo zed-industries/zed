@@ -375,6 +375,12 @@ impl<T: KeyedItem> SumTree<T> {
     }
 }
 
+impl<T: Item> Default for SumTree<T> {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 #[derive(Clone, Debug)]
 pub enum Node<T: Item> {
     Internal {

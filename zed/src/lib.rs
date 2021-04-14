@@ -13,4 +13,5 @@ mod timer;
 mod util;
 pub mod watch;
 pub mod workspace;
+mod worktree;
 mod worktree_old;

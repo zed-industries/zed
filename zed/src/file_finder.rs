@@ -347,7 +347,7 @@ impl FileFinder {
     fn spawn_search(&mut self, query: String, ctx: &mut ViewContext<Self>) {
         let worktrees = self.worktrees(ctx.as_ref());
         let search_id = util::post_inc(&mut self.search_count);
-        let pool = ctx.as_ref().scoped_pool().clone();
+        let pool = ctx.as_ref().thread_pool().clone();
         let task = ctx.background_executor().spawn(async move {
             let matches = match_paths(worktrees.as_slice(), &query, false, false, 100, pool);
             (search_id, matches)
