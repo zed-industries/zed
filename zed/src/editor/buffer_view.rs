@@ -1752,16 +1752,14 @@ mod tests {
                 view.read(app).text(app.as_ref()),
                 "two one four three six five "
             );
-            let ranges = view
-                .read(app)
-                .selections(app.as_ref())
-                .iter()
-                .map(|selection| {
-                    selection.start.to_offset(buffer.read(app)).unwrap()
-                        ..selection.end.to_offset(buffer.read(app)).unwrap()
-                })
-                .collect::<Vec<_>>();
-            assert_eq!(ranges, &[8..8, 19..19, 28..28]);
+            assert_eq!(
+                view.read(app).selection_ranges(app.as_ref()),
+                &[
+                    DisplayPoint::new(0, 8)..DisplayPoint::new(0, 8),
+                    DisplayPoint::new(0, 19)..DisplayPoint::new(0, 19),
+                    DisplayPoint::new(0, 28)..DisplayPoint::new(0, 28)
+                ]
+            );
 
             // Paste again but with only two cursors. Since the number of cursors doesn't
             // match the number of slices in the clipboard, the entire clipboard text
@@ -1775,6 +1773,97 @@ mod tests {
             assert_eq!(
                 view.read(app).text(app.as_ref()),
                 "( one three five ) two one four three six five ( one three five ) "
+            );
+
+            view.update(app, |view, ctx| {
+                view.select_ranges(&[0..0], ctx).unwrap();
+                view.insert(&"123\n4567\n89\n".to_string(), ctx);
+            });
+            assert_eq!(
+                view.read(app).text(app.as_ref()),
+                "123\n4567\n89\n( one three five ) two one four three six five ( one three five ) "
+            );
+
+            // Cut with three selections, one of which is full-line.
+            view.update(app, |view, ctx| {
+                view.select_display_ranges(
+                    &[
+                        DisplayPoint::new(0, 1)..DisplayPoint::new(0, 2),
+                        DisplayPoint::new(1, 1)..DisplayPoint::new(1, 1),
+                        DisplayPoint::new(2, 0)..DisplayPoint::new(2, 1),
+                    ],
+                    ctx,
+                )
+                .unwrap();
+                view.cut(&(), ctx);
+            });
+            assert_eq!(
+                view.read(app).text(app.as_ref()),
+                "13\n9\n( one three five ) two one four three six five ( one three five ) "
+            );
+
+            // Paste with three selections, noticing how the copied selection that was full-line
+            // gets inserted before the second cursor.
+            view.update(app, |view, ctx| {
+                view.select_display_ranges(
+                    &[
+                        DisplayPoint::new(0, 1)..DisplayPoint::new(0, 1),
+                        DisplayPoint::new(1, 1)..DisplayPoint::new(1, 1),
+                        DisplayPoint::new(2, 2)..DisplayPoint::new(2, 3),
+                    ],
+                    ctx,
+                )
+                .unwrap();
+                view.paste(&(), ctx);
+            });
+            assert_eq!(
+                view.read(app).text(app.as_ref()),
+                "123\n4567\n9\n( 8ne three five ) two one four three six five ( one three five ) "
+            );
+            assert_eq!(
+                view.read(app).selection_ranges(app.as_ref()),
+                &[
+                    DisplayPoint::new(0, 2)..DisplayPoint::new(0, 2),
+                    DisplayPoint::new(2, 1)..DisplayPoint::new(2, 1),
+                    DisplayPoint::new(3, 3)..DisplayPoint::new(3, 3),
+                ]
+            );
+
+            // Copy with a single cursor only, which writes the whole line into the clipboard.
+            view.update(app, |view, ctx| {
+                view.select_display_ranges(
+                    &[DisplayPoint::new(0, 1)..DisplayPoint::new(0, 1)],
+                    ctx,
+                )
+                .unwrap();
+                view.copy(&(), ctx);
+            });
+
+            // Paste with three selections, noticing how the copied full-line selection is inserted
+            // before the empty selections but replaces the selection that is non-empty.
+            view.update(app, |view, ctx| {
+                view.select_display_ranges(
+                    &[
+                        DisplayPoint::new(0, 1)..DisplayPoint::new(0, 1),
+                        DisplayPoint::new(1, 0)..DisplayPoint::new(1, 2),
+                        DisplayPoint::new(2, 1)..DisplayPoint::new(2, 1),
+                    ],
+                    ctx,
+                )
+                .unwrap();
+                view.paste(&(), ctx);
+            });
+            assert_eq!(
+                view.read(app).text(app.as_ref()),
+                "123\n123\n123\n67\n123\n9\n( 8ne three five ) two one four three six five ( one three five ) "
+            );
+            assert_eq!(
+                view.read(app).selection_ranges(app.as_ref()),
+                &[
+                    DisplayPoint::new(1, 1)..DisplayPoint::new(1, 1),
+                    DisplayPoint::new(3, 0)..DisplayPoint::new(3, 0),
+                    DisplayPoint::new(5, 1)..DisplayPoint::new(5, 1),
+                ]
             );
         });
     }
