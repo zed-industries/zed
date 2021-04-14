@@ -447,7 +447,7 @@ impl Buffer {
         if let Some(file) = &self.file {
             let snapshot = self.snapshot();
             let version = self.version.clone();
-            let save_task = file.save(snapshot, ctx.app());
+            let save_task = file.save(snapshot, ctx.as_ref());
             let task = ctx.spawn(save_task, |me, save_result, ctx| {
                 if save_result.is_ok() {
                     me.did_save(version, ctx);

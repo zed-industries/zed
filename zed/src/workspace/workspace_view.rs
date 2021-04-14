@@ -214,7 +214,7 @@ impl WorkspaceView {
                     me.loading_entries.remove(&entry);
                     match item {
                         Ok(item) => {
-                            let item_view = item.add_view(ctx.window_id(), settings, ctx.app_mut());
+                            let item_view = item.add_view(ctx.window_id(), settings, ctx.as_mut());
                             me.add_item(item_view, ctx);
                         }
                         Err(error) => {
@@ -243,7 +243,7 @@ impl WorkspaceView {
     pub fn save_active_item(&mut self, _: &(), ctx: &mut ViewContext<Self>) {
         self.active_pane.update(ctx, |pane, ctx| {
             if let Some(item) = pane.active_item() {
-                let task = item.save(ctx.app_mut());
+                let task = item.save(ctx.as_mut());
                 ctx.spawn(task, |_, result, _| {
                     if let Err(e) = result {
                         // TODO - present this error to the user
@@ -258,7 +258,7 @@ impl WorkspaceView {
     pub fn debug_elements(&mut self, _: &(), ctx: &mut ViewContext<Self>) {
         match to_string_pretty(&ctx.debug_elements()) {
             Ok(json) => {
-                ctx.app_mut().copy(&json);
+                ctx.as_mut().copy(&json);
                 log::info!(
                     "copied {:.1} KiB of element debug JSON to the clipboard",
                     json.len() as f32 / 1024.
@@ -323,7 +323,7 @@ impl WorkspaceView {
         let new_pane = self.add_pane(ctx);
         self.activate_pane(new_pane.clone(), ctx);
         if let Some(item) = pane.read(ctx).active_item() {
-            if let Some(clone) = item.clone_on_split(ctx.app_mut()) {
+            if let Some(clone) = item.clone_on_split(ctx.as_mut()) {
                 self.add_item(clone, ctx);
             }
         }
@@ -351,7 +351,7 @@ impl WorkspaceView {
 
     fn add_item(&self, item: Box<dyn ItemViewHandle>, ctx: &mut ViewContext<Self>) {
         let active_pane = self.active_pane();
-        item.set_parent_pane(&active_pane, ctx.app_mut());
+        item.set_parent_pane(&active_pane, ctx.as_mut());
         active_pane.update(ctx, |pane, ctx| {
             let item_idx = pane.add_item(item, ctx);
             pane.activate_item(item_idx, ctx);

@@ -29,7 +29,7 @@ impl DisplayMap {
 
         DisplayMap {
             buffer: buffer.clone(),
-            fold_map: FoldMap::new(buffer, ctx.app()),
+            fold_map: FoldMap::new(buffer, ctx.as_ref()),
             tab_size,
         }
     }
@@ -39,7 +39,7 @@ impl DisplayMap {
         ranges: impl IntoIterator<Item = Range<T>>,
         ctx: &mut ModelContext<Self>,
     ) -> Result<()> {
-        self.fold_map.fold(ranges, ctx.app())?;
+        self.fold_map.fold(ranges, ctx.as_ref())?;
         ctx.notify();
         Ok(())
     }
@@ -49,7 +49,7 @@ impl DisplayMap {
         ranges: impl IntoIterator<Item = Range<T>>,
         ctx: &mut ModelContext<Self>,
     ) -> Result<()> {
-        self.fold_map.unfold(ranges, ctx.app())?;
+        self.fold_map.unfold(ranges, ctx.as_ref())?;
         ctx.notify();
         Ok(())
     }
@@ -125,7 +125,7 @@ impl DisplayMap {
 
     fn handle_buffer_event(&mut self, event: &buffer::Event, ctx: &mut ModelContext<Self>) {
         match event {
-            buffer::Event::Edited(edits) => self.fold_map.apply_edits(edits, ctx.app()).unwrap(),
+            buffer::Event::Edited(edits) => self.fold_map.apply_edits(edits, ctx.as_ref()).unwrap(),
             _ => {}
         }
     }

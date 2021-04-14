@@ -710,7 +710,7 @@ mod test {
             let file_id = entry.entry_id;
 
             tree.update(&mut app, |tree, ctx| {
-                smol::block_on(tree.save(file_id, buffer.snapshot(), ctx.app())).unwrap()
+                smol::block_on(tree.save(file_id, buffer.snapshot(), ctx.as_ref())).unwrap()
             });
 
             let history = app

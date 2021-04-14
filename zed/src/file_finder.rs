@@ -287,7 +287,7 @@ impl FileFinder {
     }
 
     fn workspace_updated(&mut self, _: ModelHandle<Workspace>, ctx: &mut ViewContext<Self>) {
-        self.spawn_search(self.query_buffer.read(ctx).text(ctx.app()), ctx);
+        self.spawn_search(self.query_buffer.read(ctx).text(ctx.as_ref()), ctx);
     }
 
     fn on_query_buffer_event(
@@ -299,7 +299,7 @@ impl FileFinder {
         use buffer_view::Event::*;
         match event {
             Edited => {
-                let query = self.query_buffer.read(ctx).text(ctx.app());
+                let query = self.query_buffer.read(ctx).text(ctx.as_ref());
                 if query.is_empty() {
                     self.latest_search_id = util::post_inc(&mut self.search_count);
                     self.matches.clear();
@@ -345,7 +345,7 @@ impl FileFinder {
     }
 
     fn spawn_search(&mut self, query: String, ctx: &mut ViewContext<Self>) {
-        let worktrees = self.worktrees(ctx.app());
+        let worktrees = self.worktrees(ctx.as_ref());
         let search_id = util::post_inc(&mut self.search_count);
         let task = ctx.background_executor().spawn(async move {
             let matches = match_paths(worktrees.as_slice(), &query, false, false, 100);

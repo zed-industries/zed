@@ -153,8 +153,8 @@ impl Workspace {
             .ok_or(anyhow!("worktree {} does not exist", entry.0,))?;
 
         let replica_id = self.replica_id;
-        let file = worktree.file(entry.1, ctx.app())?;
-        let history = file.load_history(ctx.app());
+        let file = worktree.file(entry.1, ctx.as_ref())?;
+        let history = file.load_history(ctx.as_ref());
         let buffer = async move { Ok(Buffer::from_history(replica_id, file, history.await?)) };
 
         let (mut tx, rx) = watch::channel(None);

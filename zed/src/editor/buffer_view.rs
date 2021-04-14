@@ -297,7 +297,7 @@ impl BufferView {
 
         let display_map = self.display_map.read(ctx);
         let cursor = display_map
-            .anchor_before(position, Bias::Left, ctx.app())
+            .anchor_before(position, Bias::Left, ctx.as_ref())
             .unwrap();
         let selection = Selection {
             start: cursor.clone(),
@@ -322,7 +322,9 @@ impl BufferView {
     ) {
         let buffer = self.buffer.read(ctx);
         let map = self.display_map.read(ctx);
-        let cursor = map.anchor_before(position, Bias::Left, ctx.app()).unwrap();
+        let cursor = map
+            .anchor_before(position, Bias::Left, ctx.as_ref())
+            .unwrap();
         if let Some(selection) = self.pending_selection.as_mut() {
             selection.set_head(buffer, cursor);
         } else {
@@ -337,8 +339,8 @@ impl BufferView {
 
     fn end_selection(&mut self, ctx: &mut ViewContext<Self>) {
         if let Some(selection) = self.pending_selection.take() {
-            let ix = self.selection_insertion_index(&selection.start, ctx.app());
-            let mut selections = self.selections(ctx.app()).to_vec();
+            let ix = self.selection_insertion_index(&selection.start, ctx.as_ref());
+            let mut selections = self.selections(ctx.as_ref()).to_vec();
             selections.insert(ix, selection);
             self.update_selections(selections, ctx);
         } else {
@@ -359,8 +361,8 @@ impl BufferView {
         let mut selections = Vec::new();
         for range in ranges {
             selections.push(Selection {
-                start: map.anchor_after(range.start, Bias::Left, ctx.app())?,
-                end: map.anchor_before(range.end, Bias::Left, ctx.app())?,
+                start: map.anchor_after(range.start, Bias::Left, ctx.as_ref())?,
+                end: map.anchor_before(range.end, Bias::Left, ctx.as_ref())?,
                 reversed: false,
                 goal_column: None,
             });
@@ -373,7 +375,7 @@ impl BufferView {
         let mut offset_ranges = SmallVec::<[Range<usize>; 32]>::new();
         {
             let buffer = self.buffer.read(ctx);
-            for selection in self.selections(ctx.app()) {
+            for selection in self.selections(ctx.as_ref()) {
                 let start = selection.start.to_offset(buffer).unwrap();
                 let end = selection.end.to_offset(buffer).unwrap();
                 offset_ranges.push(start..end);
@@ -423,18 +425,21 @@ impl BufferView {
 
     pub fn backspace(&mut self, _: &(), ctx: &mut ViewContext<Self>) {
         self.start_transaction(ctx);
-        let mut selections = self.selections(ctx.app()).to_vec();
+        let mut selections = self.selections(ctx.as_ref()).to_vec();
         {
             let buffer = self.buffer.read(ctx);
             let map = self.display_map.read(ctx);
             for selection in &mut selections {
                 if selection.range(buffer).is_empty() {
-                    let head = selection.head().to_display_point(map, ctx.app()).unwrap();
+                    let head = selection
+                        .head()
+                        .to_display_point(map, ctx.as_ref())
+                        .unwrap();
                     let cursor = map
                         .anchor_before(
-                            movement::left(map, head, ctx.app()).unwrap(),
+                            movement::left(map, head, ctx.as_ref()).unwrap(),
                             Bias::Left,
-                            ctx.app(),
+                            ctx.as_ref(),
                         )
                         .unwrap();
                     selection.set_head(&buffer, cursor);
@@ -460,7 +465,7 @@ impl BufferView {
     }
 
     pub fn move_left(&mut self, _: &(), ctx: &mut ViewContext<Self>) {
-        let app = ctx.app();
+        let app = ctx.as_ref();
         let mut selections = self.selections(app).to_vec();
         {
             let map = self.display_map.read(app);
@@ -486,17 +491,20 @@ impl BufferView {
     }
 
     pub fn select_left(&mut self, _: &(), ctx: &mut ViewContext<Self>) {
-        let mut selections = self.selections(ctx.app()).to_vec();
+        let mut selections = self.selections(ctx.as_ref()).to_vec();
         {
             let buffer = self.buffer.read(ctx);
             let map = self.display_map.read(ctx);
             for selection in &mut selections {
-                let head = selection.head().to_display_point(map, ctx.app()).unwrap();
+                let head = selection
+                    .head()
+                    .to_display_point(map, ctx.as_ref())
+                    .unwrap();
                 let cursor = map
                     .anchor_before(
-                        movement::left(map, head, ctx.app()).unwrap(),
+                        movement::left(map, head, ctx.as_ref()).unwrap(),
                         Bias::Left,
-                        ctx.app(),
+                        ctx.as_ref(),
                     )
                     .unwrap();
                 selection.set_head(&buffer, cursor);
@@ -508,9 +516,9 @@ impl BufferView {
     }
 
     pub fn move_right(&mut self, _: &(), ctx: &mut ViewContext<Self>) {
-        let mut selections = self.selections(ctx.app()).to_vec();
+        let mut selections = self.selections(ctx.as_ref()).to_vec();
         {
-            let app = ctx.app();
+            let app = ctx.as_ref();
             let map = self.display_map.read(app);
             for selection in &mut selections {
                 let start = selection.start.to_display_point(map, app).unwrap();
@@ -534,13 +542,16 @@ impl BufferView {
     }
 
     pub fn select_right(&mut self, _: &(), ctx: &mut ViewContext<Self>) {
-        let mut selections = self.selections(ctx.app()).to_vec();
+        let mut selections = self.selections(ctx.as_ref()).to_vec();
         {
-            let app = ctx.app();
+            let app = ctx.as_ref();
             let buffer = self.buffer.read(app);
             let map = self.display_map.read(app);
             for selection in &mut selections {
-                let head = selection.head().to_display_point(map, ctx.app()).unwrap();
+                let head = selection
+                    .head()
+                    .to_display_point(map, ctx.as_ref())
+                    .unwrap();
                 let cursor = map
                     .anchor_before(movement::right(map, head, app).unwrap(), Bias::Right, app)
                     .unwrap();
@@ -556,9 +567,9 @@ impl BufferView {
         if self.single_line {
             ctx.propagate_action();
         } else {
-            let mut selections = self.selections(ctx.app()).to_vec();
+            let mut selections = self.selections(ctx.as_ref()).to_vec();
             {
-                let app = ctx.app();
+                let app = ctx.as_ref();
                 let map = self.display_map.read(app);
                 for selection in &mut selections {
                     let start = selection.start.to_display_point(map, app).unwrap();
@@ -585,9 +596,9 @@ impl BufferView {
         if self.single_line {
             ctx.propagate_action();
         } else {
-            let mut selections = self.selections(ctx.app()).to_vec();
+            let mut selections = self.selections(ctx.as_ref()).to_vec();
             {
-                let app = ctx.app();
+                let app = ctx.as_ref();
                 let buffer = self.buffer.read(app);
                 let map = self.display_map.read(app);
                 for selection in &mut selections {
@@ -607,9 +618,9 @@ impl BufferView {
         if self.single_line {
             ctx.propagate_action();
         } else {
-            let mut selections = self.selections(ctx.app()).to_vec();
+            let mut selections = self.selections(ctx.as_ref()).to_vec();
             {
-                let app = ctx.app();
+                let app = ctx.as_ref();
                 let map = self.display_map.read(app);
                 for selection in &mut selections {
                     let start = selection.start.to_display_point(map, app).unwrap();
@@ -636,9 +647,9 @@ impl BufferView {
         if self.single_line {
             ctx.propagate_action();
         } else {
-            let mut selections = self.selections(ctx.app()).to_vec();
+            let mut selections = self.selections(ctx.as_ref()).to_vec();
             {
-                let app = ctx.app();
+                let app = ctx.as_ref();
                 let buffer = self.buffer.read(app);
                 let map = self.display_map.read(app);
                 for selection in &mut selections {
@@ -781,7 +792,7 @@ impl BufferView {
 
         let mut fold_ranges = Vec::new();
 
-        let app = ctx.app();
+        let app = ctx.as_ref();
         let map = self.display_map.read(app);
         for selection in self.selections(app) {
             let (start, end) = selection.display_range(map, app).sorted();
@@ -811,7 +822,7 @@ impl BufferView {
     pub fn unfold(&mut self, _: &(), ctx: &mut ViewContext<Self>) {
         use super::RangeExt;
 
-        let app = ctx.app();
+        let app = ctx.as_ref();
         let map = self.display_map.read(app);
         let buffer = self.buffer.read(app);
         let ranges = self
@@ -895,7 +906,7 @@ impl BufferView {
         self.display_map.update(ctx, |map, ctx| {
             let buffer = self.buffer.read(ctx);
             let ranges = self
-                .selections(ctx.app())
+                .selections(ctx.as_ref())
                 .iter()
                 .map(|s| s.range(buffer))
                 .collect::<Vec<_>>();
@@ -1410,7 +1421,7 @@ mod tests {
                     .unwrap();
                 view.fold(&(), ctx);
                 assert_eq!(
-                    view.text(ctx.app()),
+                    view.text(ctx.as_ref()),
                     "
                     impl Foo {
                         // Hello!
@@ -1431,7 +1442,7 @@ mod tests {
 
                 view.fold(&(), ctx);
                 assert_eq!(
-                    view.text(ctx.app()),
+                    view.text(ctx.as_ref()),
                     "
                     impl Foo {…
                     }
@@ -1441,7 +1452,7 @@ mod tests {
 
                 view.unfold(&(), ctx);
                 assert_eq!(
-                    view.text(ctx.app()),
+                    view.text(ctx.as_ref()),
                     "
                     impl Foo {
                         // Hello!
@@ -1461,7 +1472,7 @@ mod tests {
                 );
 
                 view.unfold(&(), ctx);
-                assert_eq!(view.text(ctx.app()), buffer.read(ctx).text());
+                assert_eq!(view.text(ctx.as_ref()), buffer.read(ctx).text());
             });
         });
     }
@@ -1488,12 +1499,12 @@ mod tests {
             view.update(app, |view, ctx| {
                 view.move_down(&(), ctx);
                 assert_eq!(
-                    view.selection_ranges(ctx.app()),
+                    view.selection_ranges(ctx.as_ref()),
                     &[DisplayPoint::new(1, 0)..DisplayPoint::new(1, 0)]
                 );
                 view.move_right(&(), ctx);
                 assert_eq!(
-                    view.selection_ranges(ctx.app()),
+                    view.selection_ranges(ctx.as_ref()),
                     &[DisplayPoint::new(1, 4)..DisplayPoint::new(1, 4)]
                 );
                 Ok::<(), Error>(())
