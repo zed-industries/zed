@@ -2264,6 +2264,12 @@ impl ToOffset for Anchor {
     }
 }
 
+impl<'a> ToOffset for &'a Anchor {
+    fn to_offset(&self, buffer: &Buffer) -> Result<usize> {
+        Ok(buffer.summary_for_anchor(self)?.chars)
+    }
+}
+
 pub trait ToPoint {
     fn to_point(&self, buffer: &Buffer) -> Result<Point>;
 }
