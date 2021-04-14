@@ -562,8 +562,8 @@ impl BufferView {
                 } else if clipboard_selections.len() == 1 && clipboard_selections[0].is_entire_line
                 {
                     // If there was only one selection in the clipboard but it spanned the whole
-                    // line, then paste it over and over into each of the current selections so that
-                    // we can position it before the selections that are empty.
+                    // line, then paste it into each of the current selections so that we can
+                    // position it before those selections that are empty.
                     self.multiline_paste(
                         clipboard_text.chars().cycle(),
                         clipboard_selections.iter().cycle(),
