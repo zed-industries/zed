@@ -70,8 +70,11 @@ impl super::Platform for Platform {
 
     fn quit(&self) {}
 
-    fn prompt_for_paths(&self, _: super::PathPromptOptions) -> Option<Vec<std::path::PathBuf>> {
-        None
+    fn prompt_for_paths(
+        &self,
+        _: super::PathPromptOptions,
+        _: Box<dyn FnOnce(Option<Vec<std::path::PathBuf>>)>,
+    ) {
     }
 
     fn write_to_clipboard(&self, item: ClipboardItem) {

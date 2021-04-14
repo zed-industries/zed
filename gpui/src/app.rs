@@ -5,7 +5,7 @@ use crate::{
     platform::{self, WindowOptions},
     presenter::Presenter,
     util::post_inc,
-    AssetCache, AssetSource, ClipboardItem, FontCache, TextLayoutCache,
+    AssetCache, AssetSource, ClipboardItem, FontCache, PathPromptOptions, TextLayoutCache,
 };
 use anyhow::{anyhow, Result};
 use async_std::sync::Condvar;
@@ -568,6 +568,22 @@ impl MutableAppContext {
 
     pub fn set_menus(&self, menus: Vec<Menu>) {
         self.platform.set_menus(menus);
+    }
+
+    pub fn prompt_for_paths<F>(&self, options: PathPromptOptions, done_fn: F)
+    where
+        F: 'static + FnOnce(Option<Vec<PathBuf>>, &mut MutableAppContext),
+    {
+        let app = self.weak_self.as_ref().unwrap().upgrade().unwrap();
+        let foreground = self.foreground.clone();
+        self.platform().prompt_for_paths(
+            options,
+            Box::new(move |paths| {
+                foreground
+                    .spawn(async move { (done_fn)(paths, &mut *app.borrow_mut()) })
+                    .detach();
+            }),
+        );
     }
 
     pub fn dispatch_action<T: 'static + Any>(

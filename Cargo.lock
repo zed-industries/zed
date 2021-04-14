@@ -903,6 +903,7 @@ dependencies = [
  "async-std",
  "async-task",
  "bindgen",
+ "block",
  "cc",
  "cocoa",
  "core-foundation",
