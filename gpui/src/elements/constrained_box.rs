@@ -91,6 +91,6 @@ impl Element for ConstrainedBox {
         _: &Self::PaintState,
         ctx: &DebugContext,
     ) -> json::Value {
-        json!({"type": "ConstrainedBox", "constraint": self.constraint.to_json(), "child": self.child.debug(ctx)})
+        json!({"type": "ConstrainedBox", "set_constraint": self.constraint.to_json(), "child": self.child.debug(ctx)})
     }
 }

@@ -4,6 +4,7 @@ use crate::{
     SizeConstraint,
 };
 use core::panic;
+use json::ToJson;
 use replace_with::replace_with_or_abort;
 use std::{any::Any, borrow::Cow};
 
@@ -90,11 +91,13 @@ pub enum Lifecycle<T: Element> {
     },
     PostLayout {
         element: T,
+        constraint: SizeConstraint,
         size: Vector2F,
         layout: T::LayoutState,
     },
     PostPaint {
         element: T,
+        constraint: SizeConstraint,
         bounds: RectF,
         layout: T::LayoutState,
         paint: T::PaintState,
@@ -119,6 +122,7 @@ impl<T: Element> AnyElement for Lifecycle<T> {
                 result = Some(size);
                 Lifecycle::PostLayout {
                     element,
+                    constraint,
                     size,
                     layout,
                 }
@@ -132,6 +136,7 @@ impl<T: Element> AnyElement for Lifecycle<T> {
             element,
             size,
             layout,
+            ..
         } = self
         {
             element.after_layout(*size, layout, ctx);
@@ -144,6 +149,7 @@ impl<T: Element> AnyElement for Lifecycle<T> {
         replace_with_or_abort(self, |me| {
             if let Lifecycle::PostLayout {
                 mut element,
+                constraint,
                 size,
                 mut layout,
             } = me
@@ -152,6 +158,7 @@ impl<T: Element> AnyElement for Lifecycle<T> {
                 let paint = element.paint(bounds, &mut layout, ctx);
                 Lifecycle::PostPaint {
                     element,
+                    constraint,
                     bounds,
                     layout,
                     paint,
@@ -168,6 +175,7 @@ impl<T: Element> AnyElement for Lifecycle<T> {
             bounds,
             layout,
             paint,
+            ..
         } = self
         {
             element.dispatch_event(event, *bounds, layout, paint, ctx)
@@ -196,10 +204,25 @@ impl<T: Element> AnyElement for Lifecycle<T> {
         match self {
             Lifecycle::PostPaint {
                 element,
+                constraint,
                 bounds,
                 layout,
                 paint,
-            } => element.debug(*bounds, layout, paint, ctx),
+            } => {
+                let mut value = element.debug(*bounds, layout, paint, ctx);
+                if let json::Value::Object(map) = &mut value {
+                    let mut new_map: crate::json::Map<String, serde_json::Value> =
+                        Default::default();
+                    if let Some(typ) = map.remove("type") {
+                        new_map.insert("type".into(), typ);
+                    }
+                    new_map.insert("constraint".into(), constraint.to_json());
+                    new_map.append(map);
+                    json::Value::Object(new_map)
+                } else {
+                    value
+                }
+            }
             _ => panic!("invalid element lifecycle state"),
         }
     }
