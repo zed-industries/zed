@@ -1,4 +1,4 @@
-use std::any::Any;
+use std::{any::Any, f32::INFINITY};
 
 use crate::{
     json::{self, ToJson, Value},
@@ -88,9 +88,13 @@ impl Element for Flex {
             let mut remaining_space = constraint.max_along(self.axis) - fixed_space;
             let mut remaining_flex = total_flex;
             for child in &mut self.children {
-                let space_per_flex = remaining_space / remaining_flex;
                 if let Some(flex) = Self::child_flex(&child) {
-                    let child_max = space_per_flex * flex;
+                    let child_max = if remaining_flex == 0.0 {
+                        remaining_space
+                    } else {
+                        let space_per_flex = remaining_space / remaining_flex;
+                        space_per_flex * flex
+                    };
                     let child_constraint = match self.axis {
                         Axis::Horizontal => SizeConstraint::new(
                             vec2f(0.0, constraint.min.y()),

@@ -3,7 +3,7 @@ use crate::{
     LayoutContext, PaintContext, SizeConstraint,
 };
 use json::ToJson;
-use pathfinder_geometry::vector::{vec2f, Vector2F};
+use pathfinder_geometry::vector::Vector2F;
 use serde_json::json;
 
 pub struct Align {
@@ -19,8 +19,13 @@ impl Align {
         }
     }
 
-    pub fn top_center(mut self) -> Self {
-        self.alignment = vec2f(0.0, -1.0);
+    pub fn top(mut self) -> Self {
+        self.alignment.set_y(-1.0);
+        self
+    }
+
+    pub fn right(mut self) -> Self {
+        self.alignment.set_x(1.0);
         self
     }
 }
