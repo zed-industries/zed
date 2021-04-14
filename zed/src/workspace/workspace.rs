@@ -4,7 +4,7 @@ use crate::{
     settings::Settings,
     time::ReplicaId,
     watch,
-    worktree::{Worktree, WorktreeHandle as _},
+    worktree_old::{Worktree, WorktreeHandle as _},
 };
 use anyhow::anyhow;
 use gpui::{AppContext, Entity, Handle, ModelContext, ModelHandle, MutableAppContext, ViewContext};

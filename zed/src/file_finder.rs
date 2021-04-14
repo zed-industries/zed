@@ -3,7 +3,7 @@ use crate::{
     settings::Settings,
     util, watch,
     workspace::{Workspace, WorkspaceView},
-    worktree::{match_paths, PathMatch, Worktree},
+    worktree_old::{match_paths, PathMatch, Worktree},
 };
 use gpui::{
     color::{ColorF, ColorU},
