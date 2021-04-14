@@ -51,8 +51,8 @@ fn open_paths(params: &OpenParams, app: &mut MutableAppContext) {
     for window_id in app.window_ids().collect::<Vec<_>>() {
         if let Some(handle) = app.root_view::<WorkspaceView>(window_id) {
             if handle.update(app, |view, ctx| {
-                if view.contains_paths(&params.paths, ctx.app()) {
-                    view.open_paths(&params.paths, ctx.app_mut());
+                if view.contains_paths(&params.paths, ctx.as_ref()) {
+                    view.open_paths(&params.paths, ctx.as_mut());
                     log::info!("open paths on existing workspace");
                     true
                 } else {

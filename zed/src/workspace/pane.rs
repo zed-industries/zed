@@ -110,11 +110,10 @@ impl Pane {
         entry_id: (usize, usize),
         ctx: &mut ViewContext<Self>,
     ) -> bool {
-        if let Some(index) = self
-            .items
-            .iter()
-            .position(|item| item.entry_id(ctx.app()).map_or(false, |id| id == entry_id))
-        {
+        if let Some(index) = self.items.iter().position(|item| {
+            item.entry_id(ctx.as_ref())
+                .map_or(false, |id| id == entry_id)
+        }) {
             self.activate_item(index, ctx);
             true
         } else {

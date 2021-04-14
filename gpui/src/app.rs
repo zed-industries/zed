@@ -1499,14 +1499,6 @@ impl<'a, T: Entity> ModelContext<'a, T> {
         }
     }
 
-    pub fn app(&self) -> &AppContext {
-        &self.app.ctx
-    }
-
-    pub fn app_mut(&mut self) -> &mut MutableAppContext {
-        self.app
-    }
-
     pub fn background_executor(&self) -> &Arc<executor::Background> {
         &self.app.ctx.background
     }
@@ -1644,6 +1636,18 @@ impl<'a, T: Entity> ModelContext<'a, T> {
     }
 }
 
+impl<M> AsRef<AppContext> for ModelContext<'_, M> {
+    fn as_ref(&self) -> &AppContext {
+        &self.app.ctx
+    }
+}
+
+impl<M> AsMut<MutableAppContext> for ModelContext<'_, M> {
+    fn as_mut(&mut self) -> &mut MutableAppContext {
+        self.app
+    }
+}
+
 impl<M> ReadModel for ModelContext<'_, M> {
     fn read_model<T: Entity>(&self, handle: &ModelHandle<T>) -> &T {
         self.app.read_model(handle)
@@ -1687,14 +1691,6 @@ impl<'a, T: View> ViewContext<'a, T> {
 
     pub fn window_id(&self) -> usize {
         self.window_id
-    }
-
-    pub fn app(&self) -> &AppContext {
-        &self.app.ctx
-    }
-
-    pub fn app_mut(&mut self) -> &mut MutableAppContext {
-        self.app
     }
 
     pub fn background_executor(&self) -> &Arc<executor::Background> {
@@ -1896,6 +1892,18 @@ impl<'a, T: View> ViewContext<'a, T> {
             },
         );
         task
+    }
+}
+
+impl<M> AsRef<AppContext> for ViewContext<'_, M> {
+    fn as_ref(&self) -> &AppContext {
+        &self.app.ctx
+    }
+}
+
+impl<M> AsMut<MutableAppContext> for ViewContext<'_, M> {
+    fn as_mut(&mut self) -> &mut MutableAppContext {
+        self.app
     }
 }
 
