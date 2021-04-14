@@ -414,6 +414,7 @@ impl MutableAppContext {
                 windows: HashMap::new(),
                 ref_counts: Arc::new(Mutex::new(RefCounts::default())),
                 background: Arc::new(executor::Background::new()),
+                scoped_pool: scoped_pool::Pool::new(num_cpus::get()),
             },
             actions: HashMap::new(),
             global_actions: HashMap::new(),
@@ -1336,6 +1337,7 @@ pub struct AppContext {
     windows: HashMap<usize, Window>,
     background: Arc<executor::Background>,
     ref_counts: Arc<Mutex<RefCounts>>,
+    scoped_pool: scoped_pool::Pool,
 }
 
 impl AppContext {
@@ -1373,6 +1375,10 @@ impl AppContext {
 
     pub fn background_executor(&self) -> &Arc<executor::Background> {
         &self.background
+    }
+
+    pub fn scoped_pool(&self) -> &scoped_pool::Pool {
+        &self.scoped_pool
     }
 }
 

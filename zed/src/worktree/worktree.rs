@@ -11,7 +11,7 @@ use crate::{
 use anyhow::{anyhow, Result};
 use crossbeam_channel as channel;
 use easy_parallel::Parallel;
-use gpui::{AppContext, Entity, ModelContext, ModelHandle, Task};
+use gpui::{scoped_pool, AppContext, Entity, ModelContext, ModelHandle, Task};
 use ignore::dir::{Ignore, IgnoreBuilder};
 use parking_lot::RwLock;
 use smol::prelude::*;
@@ -606,6 +606,7 @@ pub fn match_paths(
     include_ignored: bool,
     smart_case: bool,
     max_results: usize,
+    pool: scoped_pool::Pool,
 ) -> Vec<PathMatch> {
     let tree_states = trees.iter().map(|tree| tree.0.read()).collect::<Vec<_>>();
     fuzzy::match_paths(
@@ -634,6 +635,7 @@ pub fn match_paths(
         include_ignored,
         smart_case,
         max_results,
+        pool,
     )
 }
 
@@ -674,7 +676,7 @@ mod test {
             app.read(|ctx| {
                 let tree = tree.read(ctx);
                 assert_eq!(tree.file_count(), 4);
-                let results = match_paths(&[tree.clone()], "bna", false, false, 10)
+                let results = match_paths(&[tree.clone()], "bna", false, false, 10, ctx.scoped_pool().clone())
                     .iter()
                     .map(|result| tree.entry_path(result.entry_id))
                     .collect::<Result<Vec<PathBuf>, _>>()
