@@ -64,8 +64,16 @@ impl Element for Flex {
             if let Some(flex) = Self::child_flex(&child) {
                 total_flex += flex;
             } else {
-                let child_constraint =
-                    SizeConstraint::strict_along(cross_axis, constraint.max_along(cross_axis));
+                let child_constraint = match self.axis {
+                    Axis::Horizontal => SizeConstraint::new(
+                        vec2f(0.0, constraint.min.y()),
+                        vec2f(INFINITY, constraint.max.y()),
+                    ),
+                    Axis::Vertical => SizeConstraint::new(
+                        vec2f(constraint.min.x(), 0.0),
+                        vec2f(constraint.max.x(), INFINITY),
+                    ),
+                };
                 let size = child.layout(child_constraint, ctx);
                 fixed_space += size.along(self.axis);
                 cross_axis_max = cross_axis_max.max(size.along(cross_axis));
@@ -85,11 +93,11 @@ impl Element for Flex {
                     let child_max = space_per_flex * flex;
                     let child_constraint = match self.axis {
                         Axis::Horizontal => SizeConstraint::new(
-                            vec2f(0.0, constraint.max.y()),
+                            vec2f(0.0, constraint.min.y()),
                             vec2f(child_max, constraint.max.y()),
                         ),
                         Axis::Vertical => SizeConstraint::new(
-                            vec2f(constraint.max.x(), 0.0),
+                            vec2f(constraint.min.x(), 0.0),
                             vec2f(constraint.max.x(), child_max),
                         ),
                     };
