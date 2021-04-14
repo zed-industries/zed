@@ -444,12 +444,12 @@ pub trait WorktreeHandle {
 impl WorktreeHandle for ModelHandle<Worktree> {
     fn file(&self, entry_id: u64, app: &AppContext) -> Result<FileHandle> {
         if self.read(app).has_entry(entry_id) {
-            Err(anyhow!("entry does not exist in tree"))
-        } else {
             Ok(FileHandle {
                 worktree: self.clone(),
                 entry_id,
             })
+        } else {
+            Err(anyhow!("entry does not exist in tree"))
         }
     }
 }
@@ -719,11 +719,18 @@ mod test {
             app.read(|ctx| {
                 let tree = tree.read(ctx);
                 assert_eq!(tree.file_count(), 4);
-                let results = match_paths(&[tree.clone()], "bna", false, false, 10, ctx.scoped_pool().clone())
-                    .iter()
-                    .map(|result| tree.entry_path(result.entry_id))
-                    .collect::<Result<Vec<PathBuf>, _>>()
-                    .unwrap();
+                let results = match_paths(
+                    &[tree.clone()],
+                    "bna",
+                    false,
+                    false,
+                    10,
+                    ctx.scoped_pool().clone(),
+                )
+                .iter()
+                .map(|result| tree.entry_path(result.entry_id))
+                .collect::<Result<Vec<PathBuf>, _>>()
+                .unwrap();
                 assert_eq!(
                     results,
                     vec![

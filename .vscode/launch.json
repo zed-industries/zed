@@ -7,15 +7,15 @@
         {
             "type": "lldb",
             "request": "launch",
-            "name": "Debug executable 'zed'",
+            "name": "Debug executable 'Zed'",
             "cargo": {
                 "args": [
                     "build",
-                    "--bin=zed",
+                    "--bin=Zed",
                     "--package=zed"
                 ],
                 "filter": {
-                    "name": "zed",
+                    "name": "Zed",
                     "kind": "bin"
                 }
             },
