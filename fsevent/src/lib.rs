@@ -63,7 +63,9 @@ impl EventStream {
                 cf_paths,
                 fs::kFSEventStreamEventIdSinceNow,
                 latency.as_secs_f64(),
-                fs::kFSEventStreamCreateFlagFileEvents | fs::kFSEventStreamCreateFlagNoDefer,
+                fs::kFSEventStreamCreateFlagFileEvents
+                    | fs::kFSEventStreamCreateFlagNoDefer
+                    | fs::kFSEventStreamCreateFlagWatchRoot,
             );
             cf::CFRelease(cf_paths);
 
@@ -263,4 +265,8 @@ fn test_observe() {
     let event = events.last().unwrap();
     assert_eq!(event.path, path.join("a"));
     assert!(event.flags.contains(StreamFlags::ITEM_REMOVED));
+
+    let dir2 = TempDir::new("test_observe2").unwrap();
+    fs::rename(path, dir2.path().join("something")).unwrap();
+    let events = rx.recv_timeout(Duration::from_millis(500)).unwrap();
 }
