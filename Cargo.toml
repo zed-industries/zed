@@ -1,5 +1,5 @@
 [workspace]
-members = ["zed", "gpui"]
+members = ["zed", "gpui", "fsevent"]
 
 [patch.crates-io]
 async-task = {git = "https://github.com/zed-industries/async-task", rev = "341b57d6de98cdfd7b418567b8de2022ca993a6e"}

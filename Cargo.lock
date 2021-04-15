@@ -813,6 +813,24 @@ dependencies = [
 ]
 
 [[package]]
+name = "fsevent"
+version = "2.0.2"
+dependencies = [
+ "bitflags",
+ "fsevent-sys",
+ "tempdir",
+]
+
+[[package]]
+name = "fsevent-sys"
+version = "3.0.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "77a29c77f1ca394c3e73a9a5d24cfcabb734682d9634fc398f2204a63c994120"
+dependencies = [
+ "libc",
+]
+
+[[package]]
 name = "fuchsia-cprng"
 version = "0.1.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2433,6 +2451,7 @@ dependencies = [
  "crossbeam-channel 0.5.0",
  "dirs",
  "easy-parallel",
+ "fsevent",
  "futures-core",
  "gpui",
  "ignore",
