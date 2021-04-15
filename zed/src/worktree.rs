@@ -1,17 +1,22 @@
 mod char_bag;
 mod fuzzy;
 
-use crate::sum_tree::{self, Edit, SumTree};
+use crate::{
+    editor::Snapshot,
+    sum_tree::{self, Edit, SumTree},
+};
 use anyhow::{anyhow, Result};
 pub use fuzzy::match_paths;
 use fuzzy::PathEntry;
-use gpui::{scoped_pool, Entity, ModelContext};
+use gpui::{scoped_pool, AppContext, Entity, ModelContext, Task};
 use ignore::dir::{Ignore, IgnoreBuilder};
 use parking_lot::Mutex;
 use smol::{channel::Sender, Timer};
+use std::future::Future;
 use std::{
     ffi::OsStr,
-    fmt, fs, io,
+    fmt, fs,
+    io::{self, Read, Write},
     ops::AddAssign,
     os::unix::fs::MetadataExt,
     path::{Path, PathBuf},
@@ -27,6 +32,11 @@ enum ScanState {
     Idle,
     Scanning,
     Err(io::Error),
+}
+
+pub struct FilesIterItem {
+    pub ino: u64,
+    pub path: PathBuf,
 }
 
 pub struct Worktree {
@@ -97,6 +107,19 @@ impl Worktree {
         }
     }
 
+    fn files<'a>(&'a self) -> impl Iterator<Item = FilesIterItem> + 'a {
+        self.entries.cursor::<(), ()>().filter_map(|e| {
+            if let Entry::File { path, ino, .. } = e {
+                Some(FilesIterItem {
+                    ino: *ino,
+                    path: PathBuf::from(path.path.iter().collect::<String>()),
+                })
+            } else {
+                None
+            }
+        })
+    }
+
     fn root_entry(&self) -> Option<&Entry> {
         self.root_ino().and_then(|ino| self.entries.get(&ino))
     }
@@ -106,7 +129,10 @@ impl Worktree {
     }
 
     fn abs_entry_path(&self, ino: u64) -> Result<PathBuf> {
-        Ok(self.path.join(self.entry_path(ino)?))
+        let mut result = self.path.to_path_buf();
+        result.pop();
+        result.push(self.entry_path(ino)?);
+        Ok(result)
     }
 
     fn entry_path(&self, ino: u64) -> Result<PathBuf> {
@@ -126,6 +152,31 @@ impl Worktree {
             path.push(component);
         }
         Ok(path)
+    }
+
+    pub fn load_file(&self, ino: u64, ctx: &AppContext) -> impl Future<Output = Result<String>> {
+        let path = self.abs_entry_path(ino);
+        ctx.background_executor().spawn(async move {
+            let mut file = std::fs::File::open(&path?)?;
+            let mut base_text = String::new();
+            file.read_to_string(&mut base_text)?;
+            Ok(base_text)
+        })
+    }
+
+    pub fn save<'a>(&self, ino: u64, content: Snapshot, ctx: &AppContext) -> Task<Result<()>> {
+        let path = self.abs_entry_path(ino);
+        eprintln!("save to path: {:?}", path);
+        ctx.background_executor().spawn(async move {
+            let buffer_size = content.text_summary().bytes.min(10 * 1024);
+            let file = std::fs::File::create(&path?)?;
+            let mut writer = std::io::BufWriter::with_capacity(buffer_size, file);
+            for chunk in content.fragments() {
+                writer.write(chunk.as_bytes())?;
+            }
+            writer.flush()?;
+            Ok(())
+        })
     }
 
     fn fmt_entry(&self, f: &mut fmt::Formatter<'_>, ino: u64, indent: usize) -> fmt::Result {
@@ -548,6 +599,37 @@ mod tests {
                     ]
                 );
             })
+        });
+    }
+
+    #[test]
+    fn test_save_file() {
+        App::test_async((), |mut app| async move {
+            let dir = temp_tree(json!({
+                "file1": "the old contents",
+            }));
+
+            let tree = app.add_model(|ctx| Worktree::new(dir.path(), ctx));
+            assert_condition(1, 300, || app.read(|ctx| tree.read(ctx).file_count() == 1)).await;
+
+            let buffer = Buffer::new(1, "a line of text.\n".repeat(10 * 1024));
+
+            let entry = app.read(|ctx| {
+                let entry = tree.read(ctx).files().next().unwrap();
+                assert_eq!(entry.path.file_name().unwrap(), "file1");
+                entry
+            });
+            let file_ino = entry.ino;
+
+            tree.update(&mut app, |tree, ctx| {
+                smol::block_on(tree.save(file_ino, buffer.snapshot(), ctx.as_ref())).unwrap()
+            });
+
+            let loaded_text = app
+                .read(|ctx| tree.read(ctx).load_file(file_ino, ctx))
+                .await
+                .unwrap();
+            assert_eq!(loaded_text, buffer.text());
         });
     }
 }
