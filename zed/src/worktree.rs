@@ -1,20 +1,26 @@
 use crate::sum_tree::{self, Edit, SumTree};
-use gpui::{Entity, ModelContext};
+use gpui::{scoped_pool, Entity, ModelContext};
 use ignore::dir::{Ignore, IgnoreBuilder};
 use parking_lot::Mutex;
-use smol::channel::Sender;
+use smol::{channel::Sender, Timer};
 use std::{
     ffi::{OsStr, OsString},
-    fs, io,
+    fmt, fs, io,
     ops::AddAssign,
     os::unix::fs::MetadataExt,
     path::{Path, PathBuf},
-    sync::Arc,
+    sync::{
+        atomic::{self, AtomicU64},
+        Arc,
+    },
+    time::{Duration, Instant},
 };
 
+#[derive(Debug)]
 enum ScanState {
     Idle,
     Scanning,
+    Err(io::Error),
 }
 
 pub struct Worktree {
@@ -22,31 +28,107 @@ pub struct Worktree {
     entries: SumTree<Entry>,
     scanner: BackgroundScanner,
     scan_state: ScanState,
+    will_poll_entries: bool,
 }
 
 impl Worktree {
     fn new(path: impl Into<Arc<Path>>, ctx: &mut ModelContext<Self>) -> Self {
         let path = path.into();
         let scan_state = smol::channel::unbounded();
-        let scanner = BackgroundScanner::new(path.clone(), scan_state.0);
+        let scanner = BackgroundScanner::new(path.clone(), scan_state.0, ctx.thread_pool().clone());
         let tree = Self {
             path,
             entries: Default::default(),
             scanner,
             scan_state: ScanState::Idle,
+            will_poll_entries: false,
         };
 
-        {
-            let scanner = tree.scanner.clone();
-            std::thread::spawn(move || scanner.run());
-        }
+        let scanner = tree.scanner.clone();
+        std::thread::spawn(move || scanner.run());
+
+        ctx.spawn_stream(scan_state.1, Self::observe_scan_state, |_, _| {})
+            .detach();
 
         tree
+    }
+
+    fn observe_scan_state(&mut self, scan_state: ScanState, ctx: &mut ModelContext<Self>) {
+        self.scan_state = scan_state;
+        self.poll_entries(ctx);
+        ctx.notify();
+    }
+
+    fn poll_entries(&mut self, ctx: &mut ModelContext<Self>) {
+        self.entries = self.scanner.snapshot();
+        if self.is_scanning() && !self.will_poll_entries {
+            self.will_poll_entries = true;
+            ctx.spawn(Timer::after(Duration::from_millis(100)), |this, _, ctx| {
+                this.will_poll_entries = false;
+                this.poll_entries(ctx);
+            })
+            .detach();
+        }
+    }
+
+    fn is_scanning(&self) -> bool {
+        if let ScanState::Scanning = self.scan_state {
+            true
+        } else {
+            false
+        }
+    }
+
+    fn is_empty(&self) -> bool {
+        self.root_ino() == 0
+    }
+
+    fn root_ino(&self) -> u64 {
+        self.scanner.root_ino.load(atomic::Ordering::SeqCst)
+    }
+
+    fn file_count(&self) -> usize {
+        self.entries.summary().file_count
+    }
+
+    fn fmt_entry(&self, f: &mut fmt::Formatter<'_>, ino: u64, indent: usize) -> fmt::Result {
+        match self.entries.get(&ino).unwrap() {
+            Entry::Dir { name, children, .. } => {
+                write!(
+                    f,
+                    "{}{}/ ({})\n",
+                    " ".repeat(indent),
+                    name.to_string_lossy(),
+                    ino
+                )?;
+                for child_id in children.iter() {
+                    self.fmt_entry(f, *child_id, indent + 2)?;
+                }
+                Ok(())
+            }
+            Entry::File { name, .. } => write!(
+                f,
+                "{}{} ({})\n",
+                " ".repeat(indent),
+                name.to_string_lossy(),
+                ino
+            ),
+        }
     }
 }
 
 impl Entity for Worktree {
     type Event = ();
+}
+
+impl fmt::Debug for Worktree {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        if self.is_empty() {
+            write!(f, "Empty tree\n")
+        } else {
+            self.fmt_entry(f, self.root_ino(), 0)
+        }
+    }
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -123,17 +205,25 @@ impl<'a> sum_tree::Dimension<'a, EntrySummary> for u64 {
 #[derive(Clone)]
 struct BackgroundScanner {
     path: Arc<Path>,
+    root_ino: Arc<AtomicU64>,
     entries: Arc<Mutex<SumTree<Entry>>>,
     notify: Sender<ScanState>,
+    thread_pool: scoped_pool::Pool,
 }
 
 impl BackgroundScanner {
-    fn new(path: Arc<Path>, notify: Sender<ScanState>) -> Self {
+    fn new(path: Arc<Path>, notify: Sender<ScanState>, thread_pool: scoped_pool::Pool) -> Self {
         Self {
             path,
+            root_ino: Arc::new(AtomicU64::new(0)),
             entries: Default::default(),
             notify,
+            thread_pool,
         }
+    }
+
+    fn snapshot(&self) -> SumTree<Entry> {
+        self.entries.lock().clone()
     }
 
     fn run(&self) {
@@ -141,7 +231,11 @@ impl BackgroundScanner {
             return;
         }
 
-        self.scan_dirs();
+        if let Err(err) = self.scan_dirs() {
+            if smol::block_on(self.notify.send(ScanState::Err(err))).is_err() {
+                return;
+            }
+        }
 
         if smol::block_on(self.notify.send(ScanState::Idle)).is_err() {
             return;
@@ -151,10 +245,11 @@ impl BackgroundScanner {
     }
 
     fn scan_dirs(&self) -> io::Result<()> {
+        println!("Scanning dirs ;)");
         let metadata = fs::metadata(&self.path)?;
         let ino = metadata.ino();
         let is_symlink = fs::symlink_metadata(&self.path)?.file_type().is_symlink();
-        let name = self.path.file_name().unwrap_or(OsStr::new("/")).into();
+        let name = Arc::from(self.path.file_name().unwrap_or(OsStr::new("/")));
         let relative_path = PathBuf::from(&name);
 
         let mut ignore = IgnoreBuilder::new()
@@ -167,9 +262,8 @@ impl BackgroundScanner {
         let is_ignored = ignore.matched(&self.path, metadata.is_dir()).is_ignore();
 
         if metadata.file_type().is_dir() {
-            let is_ignored = is_ignored || name == ".git";
-
-            self.insert_entries(Some(Entry::Dir {
+            let is_ignored = is_ignored || name.as_ref() == ".git";
+            let dir_entry = Entry::Dir {
                 parent: None,
                 name,
                 ino,
@@ -177,106 +271,131 @@ impl BackgroundScanner {
                 is_ignored,
                 children: Arc::from([]),
                 pending: true,
-            }));
+            };
+            self.insert_entries(Some(dir_entry.clone()));
 
             let (tx, rx) = crossbeam_channel::unbounded();
 
             tx.send(Ok(ScanJob {
                 ino,
-                path: path.into(),
+                path: self.path.clone(),
                 relative_path,
+                dir_entry,
                 ignore: Some(ignore),
                 scan_queue: tx.clone(),
             }))
             .unwrap();
             drop(tx);
 
-            Parallel::<io::Result<()>>::new()
-                .each(0..16, |_| {
-                    while let Ok(result) = rx.recv() {
-                        self.scan_dir(result?)?;
-                    }
-                    Ok(())
-                })
-                .run()
-                .into_iter()
-                .collect::<io::Result<()>>()?;
+            let mut results = Vec::new();
+            results.resize_with(16, || Ok(()));
+            self.thread_pool.scoped(|pool| {
+                for result in &mut results {
+                    pool.execute(|| {
+                        let result = result;
+                        while let Ok(job) = rx.recv() {
+                            if let Err(err) = job.and_then(|job| self.scan_dir(job)) {
+                                *result = Err(err);
+                                break;
+                            }
+                        }
+                    });
+                }
+            });
+            results.into_iter().collect::<io::Result<()>>()?;
         } else {
-            self.insert_file(None, name, ino, is_symlink, is_ignored, relative_path);
+            self.insert_entries(Some(Entry::File {
+                parent: None,
+                name,
+                ino,
+                is_symlink,
+                is_ignored,
+            }));
         }
-        self.0.write().root_ino = Some(ino);
+
+        self.root_ino.store(ino, atomic::Ordering::SeqCst);
 
         Ok(())
     }
 
-    fn scan_dir(&self, to_scan: ScanJob) -> io::Result<()> {
-        let mut new_children = Vec::new();
+    fn scan_dir(&self, job: ScanJob) -> io::Result<()> {
+        let scan_queue = job.scan_queue;
+        let mut dir_entry = job.dir_entry;
 
-        for child_entry in fs::read_dir(&to_scan.path)? {
+        let mut new_children = Vec::new();
+        let mut new_entries = Vec::new();
+        let mut new_jobs = Vec::new();
+
+        for child_entry in fs::read_dir(&job.path)? {
             let child_entry = child_entry?;
-            let name = child_entry.file_name();
-            let relative_path = to_scan.relative_path.join(&name);
+            let name: Arc<OsStr> = child_entry.file_name().into();
+            let relative_path = job.relative_path.join(name.as_ref());
             let metadata = child_entry.metadata()?;
             let ino = metadata.ino();
             let is_symlink = metadata.file_type().is_symlink();
+            let path = job.path.join(name.as_ref());
 
+            new_children.push(ino);
             if metadata.is_dir() {
-                let path = to_scan.path.join(&name);
                 let mut is_ignored = true;
                 let mut ignore = None;
 
-                if let Some(parent_ignore) = to_scan.ignore.as_ref() {
+                if let Some(parent_ignore) = job.ignore.as_ref() {
                     let child_ignore = parent_ignore.add_child(&path).unwrap();
-                    is_ignored = child_ignore.matched(&path, true).is_ignore() || name == ".git";
+                    is_ignored =
+                        child_ignore.matched(&path, true).is_ignore() || name.as_ref() == ".git";
                     if !is_ignored {
                         ignore = Some(child_ignore);
                     }
                 }
 
-                self.insert_entries(
-                    Some(Entry::Dir {
-                        parent: (),
-                        name: (),
-                        ino: (),
-                        is_symlink: (),
-                        is_ignored: (),
-                        children: (),
-                        pending: (),
-                    })
-                    .into_iter(),
-                );
-
-                self.insert_dir(Some(to_scan.ino), name, ino, is_symlink, is_ignored);
-                new_children.push(ino);
-
-                let dirs_to_scan = to_scan.scan_queue.clone();
-                let _ = to_scan.scan_queue.send(Ok(ScanJob {
-                    ino,
-                    path,
-                    relative_path,
-                    ignore,
-                    scan_queue: dirs_to_scan,
-                }));
-            } else {
-                let is_ignored = to_scan.ignore.as_ref().map_or(true, |i| {
-                    i.matched(to_scan.path.join(&name), false).is_ignore()
-                });
-
-                self.insert_file(
-                    Some(to_scan.ino),
+                let dir_entry = Entry::Dir {
+                    parent: Some(job.ino),
                     name,
                     ino,
                     is_symlink,
                     is_ignored,
+                    children: Arc::from([]),
+                    pending: true,
+                };
+                new_entries.push(dir_entry.clone());
+                new_jobs.push(ScanJob {
+                    ino,
+                    path: Arc::from(path),
                     relative_path,
-                );
-                new_children.push(ino);
+                    dir_entry,
+                    ignore,
+                    scan_queue: scan_queue.clone(),
+                });
+            } else {
+                let is_ignored = job
+                    .ignore
+                    .as_ref()
+                    .map_or(true, |i| i.matched(path, false).is_ignore());
+                new_entries.push(Entry::File {
+                    parent: Some(job.ino),
+                    name,
+                    ino,
+                    is_symlink,
+                    is_ignored,
+                });
             };
         }
 
-        if let Some(Entry::Dir { children, .. }) = &mut self.0.write().entries.get_mut(&to_scan.ino)
+        if let Entry::Dir {
+            children, pending, ..
+        } = &mut dir_entry
         {
-            *children = new_children.clone();
+            *children = Arc::from(new_children);
+            *pending = false;
+        } else {
+            unreachable!()
+        }
+        new_entries.push(dir_entry);
+
+        self.insert_entries(new_entries);
+        for new_job in new_jobs {
+            let _ = scan_queue.send(Ok(new_job));
         }
 
         Ok(())
@@ -293,6 +412,7 @@ struct ScanJob {
     ino: u64,
     path: Arc<Path>,
     relative_path: PathBuf,
+    dir_entry: Entry,
     ignore: Option<Ignore>,
     scan_queue: crossbeam_channel::Sender<io::Result<ScanJob>>,
 }
@@ -307,5 +427,65 @@ impl UnwrapIgnoreTuple for (Ignore, Option<ignore::Error>) {
             log::error!("error loading gitignore data: {}", error);
         }
         self.0
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::editor::Buffer;
+    use crate::test::*;
+    use anyhow::Result;
+    use gpui::App;
+    use serde_json::json;
+    use std::os::unix;
+
+    #[test]
+    fn test_populate_and_search() {
+        App::test_async((), |mut app| async move {
+            let dir = temp_tree(json!({
+                "root": {
+                    "apple": "",
+                    "banana": {
+                        "carrot": {
+                            "date": "",
+                            "endive": "",
+                        }
+                    },
+                    "fennel": {
+                        "grape": "",
+                    }
+                }
+            }));
+
+            let root_link_path = dir.path().join("root_link");
+            unix::fs::symlink(&dir.path().join("root"), &root_link_path).unwrap();
+
+            let tree = app.add_model(|ctx| Worktree::new(root_link_path, ctx));
+            assert_condition(1, 300, || app.read(|ctx| tree.read(ctx).file_count() == 4)).await;
+            // app.read(|ctx| {
+            //     let tree = tree.read(ctx);
+            //     assert_eq!(tree.file_count(), 4);
+            //     let results = match_paths(
+            //         &[tree.clone()],
+            //         "bna",
+            //         false,
+            //         false,
+            //         10,
+            //         ctx.thread_pool().clone(),
+            //     )
+            //     .iter()
+            //     .map(|result| tree.entry_path(result.entry_id))
+            //     .collect::<Result<Vec<PathBuf>, _>>()
+            //     .unwrap();
+            //     assert_eq!(
+            //         results,
+            //         vec![
+            //             PathBuf::from("root_link/banana/carrot/date"),
+            //             PathBuf::from("root_link/banana/carrot/endive"),
+            //         ]
+            //     );
+            // })
+        });
     }
 }

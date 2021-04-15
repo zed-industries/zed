@@ -373,6 +373,15 @@ impl<T: KeyedItem> SumTree<T> {
             new_tree
         };
     }
+
+    pub fn get(&self, key: &T::Key) -> Option<&T> {
+        let mut cursor = self.cursor::<T::Key, ()>();
+        if cursor.seek(key, SeekBias::Left) {
+            cursor.item()
+        } else {
+            None
+        }
+    }
 }
 
 impl<T: Item> Default for SumTree<T> {
