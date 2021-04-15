@@ -15,7 +15,7 @@ env:
 jobs:
   tests:
     name: Tests
-    runs-on: macos-latest
+    runs-on: self-hosted
     steps:
       - name: Checkout repo
         uses: actions/checkout@v2
