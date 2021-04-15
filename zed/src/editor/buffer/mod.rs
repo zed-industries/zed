@@ -563,10 +563,13 @@ impl Buffer {
         self.chars().collect()
     }
 
-    pub fn text_for_range<T: ToOffset>(&self, range: Range<T>) -> Result<String> {
+    pub fn text_for_range<'a, T: ToOffset>(
+        &'a self,
+        range: Range<T>,
+    ) -> Result<impl 'a + Iterator<Item = char>> {
         let start = range.start.to_offset(self)?;
         let end = range.end.to_offset(self)?;
-        Ok(self.chars_at(start)?.take(end - start).collect())
+        Ok(self.chars_at(start)?.take(end - start))
     }
 
     pub fn chars(&self) -> CharIter {
@@ -2261,6 +2264,12 @@ impl ToOffset for Anchor {
     }
 }
 
+impl<'a> ToOffset for &'a Anchor {
+    fn to_offset(&self, buffer: &Buffer) -> Result<usize> {
+        Ok(buffer.summary_for_anchor(self)?.chars)
+    }
+}
+
 pub trait ToPoint {
     fn to_point(&self, buffer: &Buffer) -> Result<Point>;
 }
@@ -2470,13 +2479,9 @@ mod tests {
                     let old_len = old_range.end - old_range.start;
                     let new_len = new_range.end - new_range.start;
                     let old_start = (old_range.start as isize + delta) as usize;
-
+                    let new_text: String = buffer.text_for_range(new_range).unwrap().collect();
                     old_buffer
-                        .edit(
-                            Some(old_start..old_start + old_len),
-                            buffer.text_for_range(new_range).unwrap(),
-                            None,
-                        )
+                        .edit(Some(old_start..old_start + old_len), new_text, None)
                         .unwrap();
 
                     delta += new_len as isize - old_len as isize;

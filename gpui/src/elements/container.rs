@@ -43,6 +43,18 @@ impl Container {
         self
     }
 
+    pub fn with_horizontal_padding(mut self, padding: f32) -> Self {
+        self.padding.left = padding;
+        self.padding.right = padding;
+        self
+    }
+
+    pub fn with_vertical_padding(mut self, padding: f32) -> Self {
+        self.padding.top = padding;
+        self.padding.bottom = padding;
+        self
+    }
+
     pub fn with_uniform_padding(mut self, padding: f32) -> Self {
         self.padding = Padding {
             top: padding,

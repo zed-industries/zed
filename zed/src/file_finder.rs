@@ -77,7 +77,7 @@ impl View for FileFinder {
             .with_max_height(400.0)
             .boxed(),
         )
-        .top_center()
+        .top()
         .named("file finder")
     }
 

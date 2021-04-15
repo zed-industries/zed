@@ -7,6 +7,8 @@ pub use assets::*;
 pub mod elements;
 pub mod font_cache;
 pub use font_cache::FontCache;
+mod clipboard;
+pub use clipboard::ClipboardItem;
 pub mod fonts;
 pub mod geometry;
 mod presenter;

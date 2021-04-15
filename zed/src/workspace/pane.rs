@@ -189,33 +189,28 @@ impl Pane {
 
             let padding = 6.;
             let mut container = Container::new(
-                Align::new(
-                    Flex::row()
-                        .with_child(
+                Stack::new()
+                    .with_child(
+                        Align::new(
                             Label::new(title, settings.ui_font_family, settings.ui_font_size)
                                 .boxed(),
                         )
-                        .with_child(
-                            Container::new(
-                                LineBox::new(
-                                    settings.ui_font_family,
-                                    settings.ui_font_size,
-                                    ConstrainedBox::new(Self::render_modified_icon(
-                                        item.is_dirty(app),
-                                    ))
-                                    .with_max_width(12.)
-                                    .boxed(),
-                                )
+                        .boxed(),
+                    )
+                    .with_child(
+                        LineBox::new(
+                            settings.ui_font_family,
+                            settings.ui_font_size,
+                            Align::new(Self::render_modified_icon(item.is_dirty(app)))
+                                .right()
                                 .boxed(),
-                            )
-                            .with_margin_left(20.)
-                            .boxed(),
                         )
                         .boxed(),
-                )
-                .boxed(),
+                    )
+                    .boxed(),
             )
-            .with_uniform_padding(padding)
+            .with_vertical_padding(padding)
+            .with_horizontal_padding(10.)
             .with_border(border);
 
             if ix == self.active_item {
@@ -237,6 +232,7 @@ impl Pane {
                             })
                             .boxed(),
                     )
+                    .with_min_width(80.0)
                     .with_max_width(264.0)
                     .boxed(),
                 )
@@ -244,9 +240,29 @@ impl Pane {
             );
         }
 
+        // Ensure there's always a minimum amount of space after the last tab,
+        // so that the tab's border doesn't abut the window's border.
+        row.add_child(
+            ConstrainedBox::new(
+                Container::new(
+                    LineBox::new(
+                        settings.ui_font_family,
+                        settings.ui_font_size,
+                        Empty::new().boxed(),
+                    )
+                    .boxed(),
+                )
+                .with_uniform_padding(6.0)
+                .with_border(Border::bottom(1.0, border_color))
+                .boxed(),
+            )
+            .with_min_width(20.)
+            .named("fixed-filler"),
+        );
+
         row.add_child(
             Expanded::new(
-                1.0,
+                0.0,
                 Container::new(
                     LineBox::new(
                         settings.ui_font_family,
@@ -266,23 +282,24 @@ impl Pane {
     }
 
     fn render_modified_icon(is_modified: bool) -> ElementBox {
-        Canvas::new(move |bounds, ctx| {
-            if is_modified {
-                let padding = if bounds.height() < bounds.width() {
-                    vec2f(bounds.width() - bounds.height(), 0.0)
-                } else {
-                    vec2f(0.0, bounds.height() - bounds.width())
-                };
-                let square = RectF::new(bounds.origin() + padding / 2., bounds.size() - padding);
-                ctx.scene.push_quad(Quad {
-                    bounds: square,
-                    background: Some(ColorF::new(0.639, 0.839, 1.0, 1.0).to_u8()),
-                    border: Default::default(),
-                    corner_radius: square.width() / 2.,
-                });
-            }
-        })
-        .boxed()
+        let diameter = 8.;
+        ConstrainedBox::new(
+            Canvas::new(move |bounds, ctx| {
+                if is_modified {
+                    let square = RectF::new(bounds.origin(), vec2f(diameter, diameter));
+                    ctx.scene.push_quad(Quad {
+                        bounds: square,
+                        background: Some(ColorF::new(0.639, 0.839, 1.0, 1.0).to_u8()),
+                        border: Default::default(),
+                        corner_radius: diameter / 2.,
+                    });
+                }
+            })
+            .boxed(),
+        )
+        .with_width(diameter)
+        .with_height(diameter)
+        .named("tab-right-icon")
     }
 }
 

@@ -15,7 +15,7 @@ use crate::{
         vector::Vector2F,
     },
     text_layout::Line,
-    Menu, Scene,
+    ClipboardItem, Menu, Scene,
 };
 use async_task::Runnable;
 pub use event::Event;
@@ -40,9 +40,14 @@ pub trait Platform {
         executor: Rc<executor::Foreground>,
     ) -> Box<dyn Window>;
     fn key_window_id(&self) -> Option<usize>;
-    fn prompt_for_paths(&self, options: PathPromptOptions) -> Option<Vec<PathBuf>>;
+    fn prompt_for_paths(
+        &self,
+        options: PathPromptOptions,
+        done_fn: Box<dyn FnOnce(Option<Vec<std::path::PathBuf>>)>,
+    );
     fn quit(&self);
-    fn copy(&self, text: &str);
+    fn write_to_clipboard(&self, item: ClipboardItem);
+    fn read_from_clipboard(&self) -> Option<ClipboardItem>;
     fn set_menus(&self, menus: Vec<Menu>);
 }
 

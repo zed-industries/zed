@@ -1,22 +1,24 @@
 use super::{
     buffer, movement, Anchor, Bias, Buffer, BufferElement, DisplayMap, DisplayPoint, Point,
-    Selection, SelectionSetId, ToOffset,
+    Selection, SelectionSetId, ToOffset, ToPoint,
 };
 use crate::{settings::Settings, watch, workspace};
 use anyhow::Result;
 use futures_core::future::LocalBoxFuture;
 use gpui::{
-    fonts::Properties as FontProperties, keymap::Binding, text_layout, AppContext, Element,
-    ElementBox, Entity, FontCache, ModelHandle, MutableAppContext, View, ViewContext,
+    fonts::Properties as FontProperties, keymap::Binding, text_layout, AppContext, ClipboardItem,
+    Element, ElementBox, Entity, FontCache, ModelHandle, MutableAppContext, View, ViewContext,
     WeakViewHandle,
 };
 use gpui::{geometry::vector::Vector2F, TextLayoutCache};
 use parking_lot::Mutex;
+use serde::{Deserialize, Serialize};
 use smallvec::SmallVec;
 use smol::Timer;
 use std::{
     cmp::{self, Ordering},
     fmt::Write,
+    iter::FromIterator,
     ops::Range,
     sync::Arc,
     time::Duration,
@@ -28,6 +30,9 @@ pub fn init(app: &mut MutableAppContext) {
     app.add_bindings(vec![
         Binding::new("backspace", "buffer:backspace", Some("BufferView")),
         Binding::new("enter", "buffer:newline", Some("BufferView")),
+        Binding::new("cmd-x", "buffer:cut", Some("BufferView")),
+        Binding::new("cmd-c", "buffer:copy", Some("BufferView")),
+        Binding::new("cmd-v", "buffer:paste", Some("BufferView")),
         Binding::new("cmd-z", "buffer:undo", Some("BufferView")),
         Binding::new("cmd-shift-Z", "buffer:redo", Some("BufferView")),
         Binding::new("up", "buffer:move_up", Some("BufferView")),
@@ -54,6 +59,9 @@ pub fn init(app: &mut MutableAppContext) {
     app.add_action("buffer:insert", BufferView::insert);
     app.add_action("buffer:newline", BufferView::newline);
     app.add_action("buffer:backspace", BufferView::backspace);
+    app.add_action("buffer:cut", BufferView::cut);
+    app.add_action("buffer:copy", BufferView::copy);
+    app.add_action("buffer:paste", BufferView::paste);
     app.add_action("buffer:undo", BufferView::undo);
     app.add_action("buffer:redo", BufferView::redo);
     app.add_action("buffer:move_up", BufferView::move_up);
@@ -100,6 +108,12 @@ pub struct BufferView {
     blink_epoch: usize,
     blinking_paused: bool,
     single_line: bool,
+}
+
+#[derive(Serialize, Deserialize)]
+struct ClipboardSelection {
+    len: usize,
+    is_entire_line: bool,
 }
 
 impl BufferView {
@@ -355,13 +369,32 @@ impl BufferView {
     #[cfg(test)]
     fn select_ranges<'a, T>(&mut self, ranges: T, ctx: &mut ViewContext<Self>) -> Result<()>
     where
+        T: IntoIterator<Item = &'a Range<usize>>,
+    {
+        let buffer = self.buffer.read(ctx);
+        let mut selections = Vec::new();
+        for range in ranges {
+            selections.push(Selection {
+                start: buffer.anchor_before(range.start)?,
+                end: buffer.anchor_before(range.end)?,
+                reversed: false,
+                goal_column: None,
+            });
+        }
+        self.update_selections(selections, ctx);
+        Ok(())
+    }
+
+    #[cfg(test)]
+    fn select_display_ranges<'a, T>(&mut self, ranges: T, ctx: &mut ViewContext<Self>) -> Result<()>
+    where
         T: IntoIterator<Item = &'a Range<DisplayPoint>>,
     {
         let map = self.display_map.read(ctx);
         let mut selections = Vec::new();
         for range in ranges {
             selections.push(Selection {
-                start: map.anchor_after(range.start, Bias::Left, ctx.as_ref())?,
+                start: map.anchor_before(range.start, Bias::Left, ctx.as_ref())?,
                 end: map.anchor_before(range.end, Bias::Left, ctx.as_ref())?,
                 reversed: false,
                 goal_column: None,
@@ -452,6 +485,133 @@ impl BufferView {
         self.changed_selections(ctx);
         self.insert(&String::new(), ctx);
         self.end_transaction(ctx);
+    }
+
+    pub fn cut(&mut self, _: &(), ctx: &mut ViewContext<Self>) {
+        self.start_transaction(ctx);
+        let mut text = String::new();
+        let mut selections = self.selections(ctx.as_ref()).to_vec();
+        let mut clipboard_selections = Vec::with_capacity(selections.len());
+        {
+            let buffer = self.buffer.read(ctx);
+            let max_point = buffer.max_point();
+            for selection in &mut selections {
+                let mut start = selection.start.to_point(buffer).expect("invalid start");
+                let mut end = selection.end.to_point(buffer).expect("invalid end");
+                let is_entire_line = start == end;
+                if is_entire_line {
+                    start = Point::new(start.row, 0);
+                    end = cmp::min(max_point, Point::new(start.row + 1, 0));
+                    selection.start = buffer.anchor_before(start).unwrap();
+                    selection.end = buffer.anchor_before(end).unwrap();
+                }
+                let mut len = 0;
+                for ch in buffer.text_for_range(start..end).unwrap() {
+                    text.push(ch);
+                    len += 1;
+                }
+                clipboard_selections.push(ClipboardSelection {
+                    len,
+                    is_entire_line,
+                });
+            }
+        }
+        self.update_selections(selections, ctx);
+        self.changed_selections(ctx);
+        self.insert(&String::new(), ctx);
+        self.end_transaction(ctx);
+
+        ctx.as_mut()
+            .write_to_clipboard(ClipboardItem::new(text).with_metadata(clipboard_selections));
+    }
+
+    pub fn copy(&mut self, _: &(), ctx: &mut ViewContext<Self>) {
+        let buffer = self.buffer.read(ctx);
+        let max_point = buffer.max_point();
+        let mut text = String::new();
+        let selections = self.selections(ctx.as_ref());
+        let mut clipboard_selections = Vec::with_capacity(selections.len());
+        for selection in selections {
+            let mut start = selection.start.to_point(buffer).expect("invalid start");
+            let mut end = selection.end.to_point(buffer).expect("invalid end");
+            let is_entire_line = start == end;
+            if is_entire_line {
+                start = Point::new(start.row, 0);
+                end = cmp::min(max_point, Point::new(start.row + 1, 0));
+            }
+            let mut len = 0;
+            for ch in buffer.text_for_range(start..end).unwrap() {
+                text.push(ch);
+                len += 1;
+            }
+            clipboard_selections.push(ClipboardSelection {
+                len,
+                is_entire_line,
+            });
+        }
+
+        ctx.as_mut()
+            .write_to_clipboard(ClipboardItem::new(text).with_metadata(clipboard_selections));
+    }
+
+    pub fn paste(&mut self, _: &(), ctx: &mut ViewContext<Self>) {
+        if let Some(item) = ctx.as_mut().read_from_clipboard() {
+            let clipboard_text = item.text();
+            if let Some(mut clipboard_selections) = item.metadata::<Vec<ClipboardSelection>>() {
+                let selections = self.selections(ctx.as_ref()).to_vec();
+                if clipboard_selections.len() != selections.len() {
+                    let merged_selection = ClipboardSelection {
+                        len: clipboard_selections.iter().map(|s| s.len).sum(),
+                        is_entire_line: clipboard_selections.iter().all(|s| s.is_entire_line),
+                    };
+                    clipboard_selections.clear();
+                    clipboard_selections.push(merged_selection);
+                }
+
+                self.start_transaction(ctx);
+                let mut new_selections = Vec::with_capacity(selections.len());
+                let mut clipboard_chars = clipboard_text.chars().cycle();
+                for (selection, clipboard_selection) in
+                    selections.iter().zip(clipboard_selections.iter().cycle())
+                {
+                    let to_insert =
+                        String::from_iter(clipboard_chars.by_ref().take(clipboard_selection.len));
+
+                    self.buffer.update(ctx, |buffer, ctx| {
+                        let selection_start = selection.start.to_point(buffer).unwrap();
+                        let selection_end = selection.end.to_point(buffer).unwrap();
+
+                        // If the corresponding selection was empty when this slice of the
+                        // clipboard text was written, then the entire line containing the
+                        // selection was copied. If this selection is also currently empty,
+                        // then paste the line before the current line of the buffer.
+                        let new_selection_start = selection.end.bias_right(buffer).unwrap();
+                        if selection_start == selection_end && clipboard_selection.is_entire_line {
+                            let line_start = Point::new(selection_start.row, 0);
+                            buffer
+                                .edit(Some(line_start..line_start), to_insert, Some(ctx))
+                                .unwrap();
+                        } else {
+                            buffer
+                                .edit(Some(&selection.start..&selection.end), to_insert, Some(ctx))
+                                .unwrap();
+                        };
+
+                        let new_selection_start = new_selection_start.bias_left(buffer).unwrap();
+                        new_selections.push(Selection {
+                            start: new_selection_start.clone(),
+                            end: new_selection_start,
+                            reversed: false,
+                            goal_column: None,
+                        });
+                    });
+                }
+                self.update_selections(new_selections, ctx);
+                self.end_transaction(ctx);
+            } else {
+                self.insert(clipboard_text, ctx);
+            }
+        }
     }
 
     pub fn undo(&mut self, _: &(), ctx: &mut ViewContext<Self>) {
@@ -1417,8 +1577,11 @@ mod tests {
                 app.add_window(|ctx| BufferView::for_buffer(buffer.clone(), settings, ctx));
 
             view.update(app, |view, ctx| {
-                view.select_ranges(&[DisplayPoint::new(8, 0)..DisplayPoint::new(12, 0)], ctx)
-                    .unwrap();
+                view.select_display_ranges(
+                    &[DisplayPoint::new(8, 0)..DisplayPoint::new(12, 0)],
+                    ctx,
+                )
+                .unwrap();
                 view.fold(&(), ctx);
                 assert_eq!(
                     view.text(ctx.as_ref()),
@@ -1525,7 +1688,7 @@ mod tests {
                 app.add_window(|ctx| BufferView::for_buffer(buffer.clone(), settings, ctx));
 
             view.update(app, |view, ctx| {
-                view.select_ranges(
+                view.select_display_ranges(
                     &[
                         // an empty selection - the preceding character is deleted
                         DisplayPoint::new(0, 2)..DisplayPoint::new(0, 2),
@@ -1545,6 +1708,147 @@ mod tests {
                 "oe two three\nfou five six\nseven ten\n"
             );
         })
+    }
+
+    #[test]
+    fn test_clipboard() {
+        App::test((), |app| {
+            let buffer = app.add_model(|_| Buffer::new(0, "one two three four five six "));
+            let settings = settings::channel(&app.font_cache()).unwrap().1;
+            let view = app
+                .add_window(|ctx| BufferView::for_buffer(buffer.clone(), settings, ctx))
+                .1;
+
+            // Cut with three selections. Clipboard text is divided into three slices.
+            view.update(app, |view, ctx| {
+                view.select_ranges(&[0..4, 8..14, 19..24], ctx).unwrap();
+                view.cut(&(), ctx);
+            });
+            assert_eq!(view.read(app).text(app.as_ref()), "two four six ");
+
+            // Paste with three cursors. Each cursor pastes one slice of the clipboard text.
+            view.update(app, |view, ctx| {
+                view.select_ranges(&[4..4, 9..9, 13..13], ctx).unwrap();
+                view.paste(&(), ctx);
+            });
+            assert_eq!(
+                view.read(app).text(app.as_ref()),
+                "two one four three six five "
+            );
+            assert_eq!(
+                view.read(app).selection_ranges(app.as_ref()),
+                &[
+                    DisplayPoint::new(0, 8)..DisplayPoint::new(0, 8),
+                    DisplayPoint::new(0, 19)..DisplayPoint::new(0, 19),
+                    DisplayPoint::new(0, 28)..DisplayPoint::new(0, 28)
+                ]
+            );
+
+            // Paste again but with only two cursors. Since the number of cursors doesn't
+            // match the number of slices in the clipboard, the entire clipboard text
+            // is pasted at each cursor.
+            view.update(app, |view, ctx| {
+                view.select_ranges(&[0..0, 28..28], ctx).unwrap();
+                view.insert(&"( ".to_string(), ctx);
+                view.paste(&(), ctx);
+                view.insert(&") ".to_string(), ctx);
+            });
+            assert_eq!(
+                view.read(app).text(app.as_ref()),
+                "( one three five ) two one four three six five ( one three five ) "
+            );
+
+            view.update(app, |view, ctx| {
+                view.select_ranges(&[0..0], ctx).unwrap();
+                view.insert(&"123\n4567\n89\n".to_string(), ctx);
+            });
+            assert_eq!(
+                view.read(app).text(app.as_ref()),
+                "123\n4567\n89\n( one three five ) two one four three six five ( one three five ) "
+            );
+
+            // Cut with three selections, one of which is full-line.
+            view.update(app, |view, ctx| {
+                view.select_display_ranges(
+                    &[
+                        DisplayPoint::new(0, 1)..DisplayPoint::new(0, 2),
+                        DisplayPoint::new(1, 1)..DisplayPoint::new(1, 1),
+                        DisplayPoint::new(2, 0)..DisplayPoint::new(2, 1),
+                    ],
+                    ctx,
+                )
+                .unwrap();
+                view.cut(&(), ctx);
+            });
+            assert_eq!(
+                view.read(app).text(app.as_ref()),
+                "13\n9\n( one three five ) two one four three six five ( one three five ) "
+            );
+
+            // Paste with three selections, noticing how the copied selection that was full-line
+            // gets inserted before the second cursor.
+            view.update(app, |view, ctx| {
+                view.select_display_ranges(
+                    &[
+                        DisplayPoint::new(0, 1)..DisplayPoint::new(0, 1),
+                        DisplayPoint::new(1, 1)..DisplayPoint::new(1, 1),
+                        DisplayPoint::new(2, 2)..DisplayPoint::new(2, 3),
+                    ],
+                    ctx,
+                )
+                .unwrap();
+                view.paste(&(), ctx);
+            });
+            assert_eq!(
+                view.read(app).text(app.as_ref()),
+                "123\n4567\n9\n( 8ne three five ) two one four three six five ( one three five ) "
+            );
+            assert_eq!(
+                view.read(app).selection_ranges(app.as_ref()),
+                &[
+                    DisplayPoint::new(0, 2)..DisplayPoint::new(0, 2),
+                    DisplayPoint::new(2, 1)..DisplayPoint::new(2, 1),
+                    DisplayPoint::new(3, 3)..DisplayPoint::new(3, 3),
+                ]
+            );
+
+            // Copy with a single cursor only, which writes the whole line into the clipboard.
+            view.update(app, |view, ctx| {
+                view.select_display_ranges(
+                    &[DisplayPoint::new(0, 1)..DisplayPoint::new(0, 1)],
+                    ctx,
+                )
+                .unwrap();
+                view.copy(&(), ctx);
+            });
+
+            // Paste with three selections, noticing how the copied full-line selection is inserted
+            // before the empty selections but replaces the selection that is non-empty.
+            view.update(app, |view, ctx| {
+                view.select_display_ranges(
+                    &[
+                        DisplayPoint::new(0, 1)..DisplayPoint::new(0, 1),
+                        DisplayPoint::new(1, 0)..DisplayPoint::new(1, 2),
+                        DisplayPoint::new(2, 1)..DisplayPoint::new(2, 1),
+                    ],
+                    ctx,
+                )
+                .unwrap();
+                view.paste(&(), ctx);
+            });
+            assert_eq!(
+                view.read(app).text(app.as_ref()),
+                "123\n123\n123\n67\n123\n9\n( 8ne three five ) two one four three six five ( one three five ) "
+            );
+            assert_eq!(
+                view.read(app).selection_ranges(app.as_ref()),
+                &[
+                    DisplayPoint::new(1, 1)..DisplayPoint::new(1, 1),
+                    DisplayPoint::new(3, 0)..DisplayPoint::new(3, 0),
+                    DisplayPoint::new(5, 1)..DisplayPoint::new(5, 1),
+                ]
+            );
+        });
     }
 
     impl BufferView {

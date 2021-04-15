@@ -1,5 +1,6 @@
 use super::{BoolExt as _, Dispatcher, FontSystem, Window};
-use crate::{executor, keymap::Keystroke, platform, Event, Menu, MenuItem};
+use crate::{executor, keymap::Keystroke, platform, ClipboardItem, Event, Menu, MenuItem};
+use block::ConcreteBlock;
 use cocoa::{
     appkit::{
         NSApplication, NSApplicationActivationPolicy::NSApplicationActivationPolicyRegular,
@@ -20,12 +21,14 @@ use objc::{
 use ptr::null_mut;
 use std::{
     any::Any,
-    cell::RefCell,
+    cell::{Cell, RefCell},
+    convert::TryInto,
     ffi::{c_void, CStr},
     os::raw::c_char,
     path::PathBuf,
     ptr,
     rc::Rc,
+    slice, str,
     sync::Arc,
 };
 
@@ -77,6 +80,9 @@ pub struct MacPlatform {
     fonts: Arc<FontSystem>,
     callbacks: RefCell<Callbacks>,
     menu_item_actions: RefCell<Vec<(String, Option<Box<dyn Any>>)>>,
+    pasteboard: id,
+    text_hash_pasteboard_type: id,
+    metadata_pasteboard_type: id,
 }
 
 #[derive(Default)]
@@ -96,6 +102,9 @@ impl MacPlatform {
             fonts: Arc::new(FontSystem::new()),
             callbacks: Default::default(),
             menu_item_actions: Default::default(),
+            pasteboard: unsafe { NSPasteboard::generalPasteboard(nil) },
+            text_hash_pasteboard_type: unsafe { ns_string("zed-text-hash") },
+            metadata_pasteboard_type: unsafe { ns_string("zed-metadata") },
         }
     }
 
@@ -176,6 +185,18 @@ impl MacPlatform {
 
         menu_bar
     }
+
+    unsafe fn read_from_pasteboard(&self, kind: id) -> Option<&[u8]> {
+        let data = self.pasteboard.dataForType(kind);
+        if data == nil {
+            None
+        } else {
+            Some(slice::from_raw_parts(
+                data.bytes() as *mut u8,
+                data.length() as usize,
+            ))
+        }
+    }
 }
 
 impl platform::Platform for MacPlatform {
@@ -247,31 +268,40 @@ impl platform::Platform for MacPlatform {
     fn prompt_for_paths(
         &self,
         options: platform::PathPromptOptions,
-    ) -> Option<Vec<std::path::PathBuf>> {
+        done_fn: Box<dyn FnOnce(Option<Vec<std::path::PathBuf>>)>,
+    ) {
         unsafe {
             let panel = NSOpenPanel::openPanel(nil);
             panel.setCanChooseDirectories_(options.directories.to_objc());
             panel.setCanChooseFiles_(options.files.to_objc());
             panel.setAllowsMultipleSelection_(options.multiple.to_objc());
             panel.setResolvesAliases_(false.to_objc());
-            let response = panel.runModal();
-            if response == NSModalResponse::NSModalResponseOk {
-                let mut result = Vec::new();
-                let urls = panel.URLs();
-                for i in 0..urls.count() {
-                    let url = urls.objectAtIndex(i);
-                    let string = url.absoluteString();
-                    let string = std::ffi::CStr::from_ptr(string.UTF8String())
-                        .to_string_lossy()
-                        .to_string();
-                    if let Some(path) = string.strip_prefix("file://") {
-                        result.push(PathBuf::from(path));
+            let done_fn = Cell::new(Some(done_fn));
+            let block = ConcreteBlock::new(move |response: NSModalResponse| {
+                let result = if response == NSModalResponse::NSModalResponseOk {
+                    let mut result = Vec::new();
+                    let urls = panel.URLs();
+                    for i in 0..urls.count() {
+                        let url = urls.objectAtIndex(i);
+                        let string = url.absoluteString();
+                        let string = std::ffi::CStr::from_ptr(string.UTF8String())
+                            .to_string_lossy()
+                            .to_string();
+                        if let Some(path) = string.strip_prefix("file://") {
+                            result.push(PathBuf::from(path));
+                        }
                     }
+                    Some(result)
+                } else {
+                    None
+                };
+
+                if let Some(done_fn) = done_fn.take() {
+                    (done_fn)(result);
                 }
-                Some(result)
-            } else {
-                None
-            }
+            });
+            let block = block.copy();
+            let _: () = msg_send![panel, beginWithCompletionHandler: block];
         }
     }
 
@@ -286,16 +316,72 @@ impl platform::Platform for MacPlatform {
         }
     }
 
-    fn copy(&self, text: &str) {
+    fn write_to_clipboard(&self, item: ClipboardItem) {
         unsafe {
-            let data = NSData::dataWithBytes_length_(
+            self.pasteboard.clearContents();
+
+            let text_bytes = NSData::dataWithBytes_length_(
                 nil,
-                text.as_ptr() as *const c_void,
-                text.len() as u64,
+                item.text.as_ptr() as *const c_void,
+                item.text.len() as u64,
             );
-            let pasteboard = NSPasteboard::generalPasteboard(nil);
-            pasteboard.clearContents();
-            pasteboard.setData_forType(data, NSPasteboardTypeString);
+            self.pasteboard
+                .setData_forType(text_bytes, NSPasteboardTypeString);
+
+            if let Some(metadata) = item.metadata.as_ref() {
+                let hash_bytes = ClipboardItem::text_hash(&item.text).to_be_bytes();
+                let hash_bytes = NSData::dataWithBytes_length_(
+                    nil,
+                    hash_bytes.as_ptr() as *const c_void,
+                    hash_bytes.len() as u64,
+                );
+                self.pasteboard
+                    .setData_forType(hash_bytes, self.text_hash_pasteboard_type);
+
+                let metadata_bytes = NSData::dataWithBytes_length_(
+                    nil,
+                    metadata.as_ptr() as *const c_void,
+                    metadata.len() as u64,
+                );
+                self.pasteboard
+                    .setData_forType(metadata_bytes, self.metadata_pasteboard_type);
+            }
+        }
+    }
+
+    fn read_from_clipboard(&self) -> Option<ClipboardItem> {
+        unsafe {
+            if let Some(text_bytes) = self.read_from_pasteboard(NSPasteboardTypeString) {
+                let text = String::from_utf8_lossy(&text_bytes).to_string();
+                let hash_bytes = self
+                    .read_from_pasteboard(self.text_hash_pasteboard_type)
+                    .and_then(|bytes| bytes.try_into().ok())
+                    .map(u64::from_be_bytes);
+                let metadata_bytes = self
+                    .read_from_pasteboard(self.metadata_pasteboard_type)
+                    .and_then(|bytes| String::from_utf8(bytes.to_vec()).ok());
+
+                if let Some((hash, metadata)) = hash_bytes.zip(metadata_bytes) {
+                    if hash == ClipboardItem::text_hash(&text) {
+                        Some(ClipboardItem {
+                            text,
+                            metadata: Some(metadata),
+                        })
+                    } else {
+                        Some(ClipboardItem {
+                            text,
+                            metadata: None,
+                        })
+                    }
+                } else {
+                    Some(ClipboardItem {
+                        text,
+                        metadata: None,
+                    })
+                }
+            } else {
+                None
+            }
         }
     }
 
@@ -391,4 +477,47 @@ extern "C" fn handle_menu_item(this: &mut Object, _: Sel, item: id) {
 
 unsafe fn ns_string(string: &str) -> id {
     NSString::alloc(nil).init_str(string).autorelease()
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::platform::Platform;
+
+    use super::*;
+
+    #[test]
+    fn test_clipboard() {
+        let platform = build_platform();
+        assert_eq!(platform.read_from_clipboard(), None);
+
+        let item = ClipboardItem::new("1".to_string());
+        platform.write_to_clipboard(item.clone());
+        assert_eq!(platform.read_from_clipboard(), Some(item));
+
+        let item = ClipboardItem::new("2".to_string()).with_metadata(vec![3, 4]);
+        platform.write_to_clipboard(item.clone());
+        assert_eq!(platform.read_from_clipboard(), Some(item));
+
+        let text_from_other_app = "text from other app";
+        unsafe {
+            let bytes = NSData::dataWithBytes_length_(
+                nil,
+                text_from_other_app.as_ptr() as *const c_void,
+                text_from_other_app.len() as u64,
+            );
+            platform
+                .pasteboard
+                .setData_forType(bytes, NSPasteboardTypeString);
+        }
+        assert_eq!(
+            platform.read_from_clipboard(),
+            Some(ClipboardItem::new(text_from_other_app.to_string()))
+        );
+    }
+
+    fn build_platform() -> MacPlatform {
+        let mut platform = MacPlatform::new();
+        platform.pasteboard = unsafe { NSPasteboard::pasteboardWithUniqueName(nil) };
+        platform
+    }
 }

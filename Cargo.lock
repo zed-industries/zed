@@ -968,6 +968,7 @@ dependencies = [
  "async-std",
  "async-task",
  "bindgen",
+ "block",
  "cc",
  "cocoa",
  "core-foundation",
@@ -990,6 +991,7 @@ dependencies = [
  "replace_with",
  "resvg",
  "scoped-pool",
+ "seahash",
  "serde",
  "serde_json",
  "simplelog",
@@ -1837,6 +1839,20 @@ name = "serde"
 version = "1.0.125"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "558dc50e1a5a5fa7112ca2ce4effcb321b0300c0d4ccf0776a9f60cd89031171"
+dependencies = [
+ "serde_derive",
+]
+
+[[package]]
+name = "serde_derive"
+version = "1.0.125"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "b093b7a2bb58203b5da3056c05b4ec1fed827dcfdb37347a8841695263b3d06d"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "syn",
+]
 
 [[package]]
 name = "serde_json"
@@ -2429,6 +2445,7 @@ dependencies = [
  "rand 0.8.3",
  "rust-embed",
  "seahash",
+ "serde",
  "serde_json",
  "simplelog",
  "smallvec",

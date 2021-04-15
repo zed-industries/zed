@@ -23,6 +23,11 @@ impl ConstrainedBox {
         }
     }
 
+    pub fn with_min_width(mut self, min_width: f32) -> Self {
+        self.constraint.min.set_x(min_width);
+        self
+    }
+
     pub fn with_max_width(mut self, max_width: f32) -> Self {
         self.constraint.max.set_x(max_width);
         self
@@ -30,6 +35,12 @@ impl ConstrainedBox {
 
     pub fn with_max_height(mut self, max_height: f32) -> Self {
         self.constraint.max.set_y(max_height);
+        self
+    }
+
+    pub fn with_width(mut self, width: f32) -> Self {
+        self.constraint.min.set_x(width);
+        self.constraint.max.set_x(width);
         self
     }
 
@@ -51,6 +62,7 @@ impl Element for ConstrainedBox {
     ) -> (Vector2F, Self::LayoutState) {
         constraint.min = constraint.min.max(self.constraint.min);
         constraint.max = constraint.max.min(self.constraint.max);
+        constraint.max = constraint.max.max(constraint.min);
         let size = self.child.layout(constraint, ctx);
         (size, ())
     }
@@ -91,6 +103,6 @@ impl Element for ConstrainedBox {
         _: &Self::PaintState,
         ctx: &DebugContext,
     ) -> json::Value {
-        json!({"type": "ConstrainedBox", "constraint": self.constraint.to_json(), "child": self.child.debug(ctx)})
+        json!({"type": "ConstrainedBox", "set_constraint": self.constraint.to_json(), "child": self.child.debug(ctx)})
     }
 }

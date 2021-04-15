@@ -5,7 +5,7 @@ use crate::{
     platform::{self, WindowOptions},
     presenter::Presenter,
     util::post_inc,
-    AssetCache, AssetSource, FontCache, TextLayoutCache,
+    AssetCache, AssetSource, ClipboardItem, FontCache, PathPromptOptions, TextLayoutCache,
 };
 use anyhow::{anyhow, Result};
 use async_std::sync::Condvar;
@@ -141,12 +141,13 @@ impl App {
                 {
                     let presenter = presenter.clone();
                     let path = presenter.borrow().dispatch_path(ctx.as_ref());
-                    if ctx.dispatch_action_any(key_window_id, &path, command, arg.unwrap_or(&())) {
-                        return;
-                    }
+                    ctx.dispatch_action_any(key_window_id, &path, command, arg.unwrap_or(&()));
+                } else {
+                    ctx.dispatch_global_action_any(command, arg.unwrap_or(&()));
                 }
+            } else {
+                ctx.dispatch_global_action_any(command, arg.unwrap_or(&()));
             }
-            ctx.dispatch_global_action_any(command, arg.unwrap_or(&()));
         }));
 
         app.0.borrow_mut().weak_self = Some(Rc::downgrade(&app.0));
@@ -568,6 +569,22 @@ impl MutableAppContext {
 
     pub fn set_menus(&self, menus: Vec<Menu>) {
         self.platform.set_menus(menus);
+    }
+
+    pub fn prompt_for_paths<F>(&self, options: PathPromptOptions, done_fn: F)
+    where
+        F: 'static + FnOnce(Option<Vec<PathBuf>>, &mut MutableAppContext),
+    {
+        let app = self.weak_self.as_ref().unwrap().upgrade().unwrap();
+        let foreground = self.foreground.clone();
+        self.platform().prompt_for_paths(
+            options,
+            Box::new(move |paths| {
+                foreground
+                    .spawn(async move { (done_fn)(paths, &mut *app.borrow_mut()) })
+                    .detach();
+            }),
+        );
     }
 
     pub fn dispatch_action<T: 'static + Any>(
@@ -1213,8 +1230,12 @@ impl MutableAppContext {
         }
     }
 
-    pub fn copy(&self, text: &str) {
-        self.platform.copy(text);
+    pub fn write_to_clipboard(&self, item: ClipboardItem) {
+        self.platform.write_to_clipboard(item);
+    }
+
+    pub fn read_from_clipboard(&self) -> Option<ClipboardItem> {
+        self.platform.read_from_clipboard()
     }
 }
 
