@@ -1,10 +1,16 @@
+mod char_bag;
+mod fuzzy;
+
 use crate::sum_tree::{self, Edit, SumTree};
+use anyhow::{anyhow, Result};
+pub use fuzzy::match_paths;
+use fuzzy::PathEntry;
 use gpui::{scoped_pool, Entity, ModelContext};
 use ignore::dir::{Ignore, IgnoreBuilder};
 use parking_lot::Mutex;
 use smol::{channel::Sender, Timer};
 use std::{
-    ffi::{OsStr, OsString},
+    ffi::OsStr,
     fmt, fs, io,
     ops::AddAssign,
     os::unix::fs::MetadataExt,
@@ -13,7 +19,7 @@ use std::{
         atomic::{self, AtomicU64},
         Arc,
     },
-    time::{Duration, Instant},
+    time::Duration,
 };
 
 #[derive(Debug)]
@@ -24,24 +30,26 @@ enum ScanState {
 }
 
 pub struct Worktree {
+    id: usize,
     path: Arc<Path>,
     entries: SumTree<Entry>,
     scanner: BackgroundScanner,
     scan_state: ScanState,
-    will_poll_entries: bool,
+    poll_scheduled: bool,
 }
 
 impl Worktree {
     fn new(path: impl Into<Arc<Path>>, ctx: &mut ModelContext<Self>) -> Self {
         let path = path.into();
         let scan_state = smol::channel::unbounded();
-        let scanner = BackgroundScanner::new(path.clone(), scan_state.0, ctx.thread_pool().clone());
+        let scanner = BackgroundScanner::new(path.clone(), scan_state.0);
         let tree = Self {
+            id: ctx.model_id(),
             path,
             entries: Default::default(),
             scanner,
             scan_state: ScanState::Idle,
-            will_poll_entries: false,
+            poll_scheduled: false,
         };
 
         let scanner = tree.scanner.clone();
@@ -56,18 +64,19 @@ impl Worktree {
     fn observe_scan_state(&mut self, scan_state: ScanState, ctx: &mut ModelContext<Self>) {
         self.scan_state = scan_state;
         self.poll_entries(ctx);
-        ctx.notify();
     }
 
     fn poll_entries(&mut self, ctx: &mut ModelContext<Self>) {
         self.entries = self.scanner.snapshot();
-        if self.is_scanning() && !self.will_poll_entries {
-            self.will_poll_entries = true;
+        ctx.notify();
+
+        if self.is_scanning() && !self.poll_scheduled {
             ctx.spawn(Timer::after(Duration::from_millis(100)), |this, _, ctx| {
-                this.will_poll_entries = false;
+                this.poll_scheduled = false;
                 this.poll_entries(ctx);
             })
             .detach();
+            self.poll_scheduled = true;
         }
     }
 
@@ -79,16 +88,44 @@ impl Worktree {
         }
     }
 
-    fn is_empty(&self) -> bool {
-        self.root_ino() == 0
+    fn root_ino(&self) -> Option<u64> {
+        let ino = self.scanner.root_ino.load(atomic::Ordering::SeqCst);
+        if ino == 0 {
+            None
+        } else {
+            Some(ino)
+        }
     }
 
-    fn root_ino(&self) -> u64 {
-        self.scanner.root_ino.load(atomic::Ordering::SeqCst)
+    fn root_entry(&self) -> Option<&Entry> {
+        self.root_ino().and_then(|ino| self.entries.get(&ino))
     }
 
     fn file_count(&self) -> usize {
         self.entries.summary().file_count
+    }
+
+    fn abs_entry_path(&self, ino: u64) -> Result<PathBuf> {
+        Ok(self.path.join(self.entry_path(ino)?))
+    }
+
+    fn entry_path(&self, ino: u64) -> Result<PathBuf> {
+        let mut components = Vec::new();
+        let mut entry = self
+            .entries
+            .get(&ino)
+            .ok_or_else(|| anyhow!("entry does not exist in worktree"))?;
+        components.push(entry.name());
+        while let Some(parent) = entry.parent() {
+            entry = self.entries.get(&parent).unwrap();
+            components.push(entry.name());
+        }
+
+        let mut path = PathBuf::new();
+        for component in components.into_iter().rev() {
+            path.push(component);
+        }
+        Ok(path)
     }
 
     fn fmt_entry(&self, f: &mut fmt::Formatter<'_>, ino: u64, indent: usize) -> fmt::Result {
@@ -123,15 +160,15 @@ impl Entity for Worktree {
 
 impl fmt::Debug for Worktree {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        if self.is_empty() {
-            write!(f, "Empty tree\n")
+        if let Some(root_ino) = self.root_ino() {
+            self.fmt_entry(f, root_ino, 0)
         } else {
-            self.fmt_entry(f, self.root_ino(), 0)
+            write!(f, "Empty tree\n")
         }
     }
 }
 
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug)]
 pub enum Entry {
     Dir {
         parent: Option<u64>,
@@ -145,6 +182,7 @@ pub enum Entry {
     File {
         parent: Option<u64>,
         name: Arc<OsStr>,
+        path: PathEntry,
         ino: u64,
         is_symlink: bool,
         is_ignored: bool,
@@ -156,6 +194,20 @@ impl Entry {
         match self {
             Entry::Dir { ino, .. } => *ino,
             Entry::File { ino, .. } => *ino,
+        }
+    }
+
+    fn parent(&self) -> Option<u64> {
+        match self {
+            Entry::Dir { parent, .. } => *parent,
+            Entry::File { parent, .. } => *parent,
+        }
+    }
+
+    fn name(&self) -> &OsStr {
+        match self {
+            Entry::Dir { name, .. } => name,
+            Entry::File { name, .. } => name,
         }
     }
 }
@@ -202,6 +254,15 @@ impl<'a> sum_tree::Dimension<'a, EntrySummary> for u64 {
     }
 }
 
+#[derive(Copy, Clone, Default, Debug, Eq, PartialEq, Ord, PartialOrd)]
+struct FileCount(usize);
+
+impl<'a> sum_tree::Dimension<'a, EntrySummary> for FileCount {
+    fn add_summary(&mut self, summary: &'a EntrySummary) {
+        self.0 += summary.file_count;
+    }
+}
+
 #[derive(Clone)]
 struct BackgroundScanner {
     path: Arc<Path>,
@@ -212,13 +273,13 @@ struct BackgroundScanner {
 }
 
 impl BackgroundScanner {
-    fn new(path: Arc<Path>, notify: Sender<ScanState>, thread_pool: scoped_pool::Pool) -> Self {
+    fn new(path: Arc<Path>, notify: Sender<ScanState>) -> Self {
         Self {
             path,
             root_ino: Arc::new(AtomicU64::new(0)),
             entries: Default::default(),
             notify,
-            thread_pool,
+            thread_pool: scoped_pool::Pool::new(16),
         }
     }
 
@@ -245,7 +306,6 @@ impl BackgroundScanner {
     }
 
     fn scan_dirs(&self) -> io::Result<()> {
-        println!("Scanning dirs ;)");
         let metadata = fs::metadata(&self.path)?;
         let ino = metadata.ino();
         let is_symlink = fs::symlink_metadata(&self.path)?.file_type().is_symlink();
@@ -273,6 +333,7 @@ impl BackgroundScanner {
                 pending: true,
             };
             self.insert_entries(Some(dir_entry.clone()));
+            self.root_ino.store(ino, atomic::Ordering::SeqCst);
 
             let (tx, rx) = crossbeam_channel::unbounded();
 
@@ -288,7 +349,7 @@ impl BackgroundScanner {
             drop(tx);
 
             let mut results = Vec::new();
-            results.resize_with(16, || Ok(()));
+            results.resize_with(self.thread_pool.workers(), || Ok(()));
             self.thread_pool.scoped(|pool| {
                 for result in &mut results {
                     pool.execute(|| {
@@ -307,13 +368,13 @@ impl BackgroundScanner {
             self.insert_entries(Some(Entry::File {
                 parent: None,
                 name,
+                path: PathEntry::new(ino, &relative_path, is_ignored),
                 ino,
                 is_symlink,
                 is_ignored,
             }));
+            self.root_ino.store(ino, atomic::Ordering::SeqCst);
         }
-
-        self.root_ino.store(ino, atomic::Ordering::SeqCst);
 
         Ok(())
     }
@@ -371,10 +432,11 @@ impl BackgroundScanner {
                 let is_ignored = job
                     .ignore
                     .as_ref()
-                    .map_or(true, |i| i.matched(path, false).is_ignore());
+                    .map_or(true, |i| i.matched(&path, false).is_ignore());
                 new_entries.push(Entry::File {
                     parent: Some(job.ino),
                     name,
+                    path: PathEntry::new(ino, &relative_path, is_ignored),
                     ino,
                     is_symlink,
                     is_ignored,
@@ -395,7 +457,7 @@ impl BackgroundScanner {
 
         self.insert_entries(new_entries);
         for new_job in new_jobs {
-            let _ = scan_queue.send(Ok(new_job));
+            scan_queue.send(Ok(new_job)).unwrap();
         }
 
         Ok(())
@@ -463,29 +525,29 @@ mod tests {
 
             let tree = app.add_model(|ctx| Worktree::new(root_link_path, ctx));
             assert_condition(1, 300, || app.read(|ctx| tree.read(ctx).file_count() == 4)).await;
-            // app.read(|ctx| {
-            //     let tree = tree.read(ctx);
-            //     assert_eq!(tree.file_count(), 4);
-            //     let results = match_paths(
-            //         &[tree.clone()],
-            //         "bna",
-            //         false,
-            //         false,
-            //         10,
-            //         ctx.thread_pool().clone(),
-            //     )
-            //     .iter()
-            //     .map(|result| tree.entry_path(result.entry_id))
-            //     .collect::<Result<Vec<PathBuf>, _>>()
-            //     .unwrap();
-            //     assert_eq!(
-            //         results,
-            //         vec![
-            //             PathBuf::from("root_link/banana/carrot/date"),
-            //             PathBuf::from("root_link/banana/carrot/endive"),
-            //         ]
-            //     );
-            // })
+            app.read(|ctx| {
+                let tree = tree.read(ctx);
+                let results = match_paths(
+                    Some(tree).into_iter(),
+                    "bna",
+                    false,
+                    false,
+                    false,
+                    10,
+                    ctx.thread_pool().clone(),
+                )
+                .iter()
+                .map(|result| tree.entry_path(result.entry_id))
+                .collect::<Result<Vec<PathBuf>, _>>()
+                .unwrap();
+                assert_eq!(
+                    results,
+                    vec![
+                        PathBuf::from("root_link/banana/carrot/date"),
+                        PathBuf::from("root_link/banana/carrot/endive"),
+                    ]
+                );
+            })
         });
     }
 }

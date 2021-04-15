@@ -10,7 +10,7 @@ const TREE_BASE: usize = 2;
 #[cfg(not(test))]
 const TREE_BASE: usize = 6;
 
-pub trait Item: Clone + Eq + fmt::Debug {
+pub trait Item: Clone + fmt::Debug {
     type Summary: for<'a> AddAssign<&'a Self::Summary> + Default + Clone + fmt::Debug;
 
     fn summary(&self) -> Self::Summary;
