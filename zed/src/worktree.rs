@@ -715,10 +715,10 @@ impl BackgroundScanner {
         }
         drop(scan_queue_tx);
 
-        let mut inodes = Vec::new();
-        inodes.resize_with(self.thread_pool.workers(), || Ok(Vec::new()));
+        let mut scanned_inodes = Vec::new();
+        scanned_inodes.resize_with(self.thread_pool.workers(), || Ok(Vec::new()));
         self.thread_pool.scoped(|pool| {
-            for worker_inodes in &mut inodes {
+            for worker_inodes in &mut scanned_inodes {
                 pool.execute(|| {
                     let worker_inodes = worker_inodes;
                     while let Ok(job) = scan_queue_rx.recv() {
@@ -733,7 +733,7 @@ impl BackgroundScanner {
             }
         });
 
-        for worker_inodes in inodes {
+        for worker_inodes in scanned_inodes {
             for inode in worker_inodes? {
                 removed.remove(&inode);
             }
