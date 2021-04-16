@@ -332,11 +332,12 @@ impl<T: KeyedItem> SumTree<T> {
         };
     }
 
-    pub fn edit(&mut self, edits: &mut [Edit<T>]) {
+    pub fn edit(&mut self, edits: &mut [Edit<T>]) -> Vec<T> {
         if edits.is_empty() {
-            return;
+            return Vec::new();
         }
 
+        let mut replaced = Vec::new();
         edits.sort_unstable_by_key(|item| item.key());
 
         *self = {
@@ -358,13 +359,19 @@ impl<T: KeyedItem> SumTree<T> {
                     new_tree.push_tree(slice);
                     old_item = cursor.item();
                 }
-                if old_item.map_or(false, |old_item| old_item.key() == new_key) {
-                    cursor.next();
+
+                if let Some(old_item) = old_item {
+                    if old_item.key() == new_key {
+                        replaced.push(old_item.clone());
+                        cursor.next();
+                    }
                 }
+
                 match edit {
                     Edit::Insert(item) => {
                         buffered_items.push(item.clone());
                     }
+                    Edit::Remove(_) => {}
                 }
             }
 
@@ -372,6 +379,8 @@ impl<T: KeyedItem> SumTree<T> {
             new_tree.push_tree(cursor.suffix());
             new_tree
         };
+
+        replaced
     }
 
     pub fn get(&self, key: &T::Key) -> Option<&T> {
@@ -461,12 +470,14 @@ impl<T: Item> Node<T> {
 #[derive(Debug)]
 pub enum Edit<T: KeyedItem> {
     Insert(T),
+    Remove(T::Key),
 }
 
 impl<T: KeyedItem> Edit<T> {
     fn key(&self) -> T::Key {
         match self {
             Edit::Insert(item) => item.key(),
+            Edit::Remove(key) => key.clone(),
         }
     }
 }

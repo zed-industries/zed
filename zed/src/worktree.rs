@@ -12,7 +12,10 @@ use gpui::{scoped_pool, AppContext, Entity, ModelContext, ModelHandle, Task};
 use ignore::dir::{Ignore, IgnoreBuilder};
 use parking_lot::Mutex;
 use smol::{channel::Sender, Timer};
-use std::future::Future;
+use std::{
+    collections::{HashMap, HashSet},
+    future::Future,
+};
 use std::{
     ffi::OsStr,
     fmt, fs,
@@ -59,11 +62,12 @@ pub struct FileHandle {
 
 impl Worktree {
     pub fn new(path: impl Into<Arc<Path>>, ctx: &mut ModelContext<Self>) -> Self {
+        let id = ctx.model_id();
         let path = path.into();
         let scan_state = smol::channel::unbounded();
-        let scanner = BackgroundScanner::new(path.clone(), scan_state.0);
+        let scanner = BackgroundScanner::new(id, path.clone(), scan_state.0);
         let tree = Self {
-            id: ctx.model_id(),
+            id,
             path,
             entries: Default::default(),
             scanner,
@@ -107,19 +111,10 @@ impl Worktree {
         }
     }
 
-    fn root_inode(&self) -> Option<u64> {
-        let ino = self.scanner.root_ino.load(atomic::Ordering::SeqCst);
-        if ino == 0 {
-            None
-        } else {
-            Some(ino)
-        }
-    }
-
     pub fn snapshot(&self) -> Snapshot {
         Snapshot {
             id: self.id,
-            root_inode: self.root_inode(),
+            root_inode: self.scanner.root_inode(),
             entries: self.entries.clone(),
         }
     }
@@ -164,26 +159,6 @@ impl Worktree {
             path.push(component);
         }
         Ok(path)
-    }
-
-    #[cfg(test)]
-    fn inode_for_path(&self, path: impl AsRef<Path>) -> Option<u64> {
-        let path = path.as_ref();
-        self.root_inode().and_then(|mut inode| {
-            'components: for path_component in path {
-                if let Some(Entry::Dir { children, .. }) = &self.entries.get(&inode) {
-                    for child in children.as_ref() {
-                        if self.entries.get(child).map(|entry| entry.name()) == Some(path_component)
-                        {
-                            inode = *child;
-                            continue 'components;
-                        }
-                    }
-                }
-                return None;
-            }
-            Some(inode)
-        })
     }
 
     pub fn load_history(
@@ -263,7 +238,7 @@ impl Entity for Worktree {
 
 impl fmt::Debug for Worktree {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        if let Some(root_ino) = self.root_inode() {
+        if let Some(root_ino) = self.scanner.root_inode() {
             self.fmt_entry(f, root_ino, 0)
         } else {
             write!(f, "Empty tree\n")
@@ -278,6 +253,25 @@ impl Snapshot {
 
     pub fn root_entry(&self) -> Option<&Entry> {
         self.root_inode.and_then(|inode| self.entries.get(&inode))
+    }
+
+    fn inode_for_path(&self, path: impl AsRef<Path>) -> Option<u64> {
+        let path = path.as_ref();
+        self.root_inode.and_then(|mut inode| {
+            'components: for path_component in path {
+                if let Some(Entry::Dir { children, .. }) = &self.entries.get(&inode) {
+                    for child in children.as_ref() {
+                        if self.entries.get(child).map(|entry| entry.name()) == Some(path_component)
+                        {
+                            inode = *child;
+                            continue 'components;
+                        }
+                    }
+                }
+                return None;
+            }
+            Some(inode)
+        })
     }
 }
 
@@ -400,6 +394,7 @@ impl<'a> sum_tree::Dimension<'a, EntrySummary> for FileCount {
 
 #[derive(Clone)]
 struct BackgroundScanner {
+    id: usize,
     path: Arc<Path>,
     root_ino: Arc<AtomicU64>,
     entries: Arc<Mutex<SumTree<Entry>>>,
@@ -408,8 +403,9 @@ struct BackgroundScanner {
 }
 
 impl BackgroundScanner {
-    fn new(path: Arc<Path>, notify: Sender<ScanState>) -> Self {
+    fn new(id: usize, path: Arc<Path>, notify: Sender<ScanState>) -> Self {
         Self {
+            id,
             path,
             root_ino: Arc::new(AtomicU64::new(0)),
             entries: Default::default(),
@@ -418,17 +414,32 @@ impl BackgroundScanner {
         }
     }
 
+    fn root_inode(&self) -> Option<u64> {
+        let ino = self.root_ino.load(atomic::Ordering::SeqCst);
+        if ino == 0 {
+            None
+        } else {
+            Some(ino)
+        }
+    }
+
     fn snapshot(&self) -> SumTree<Entry> {
         self.entries.lock().clone()
     }
 
     fn run(&self) {
+        let scanner = self.clone();
         let event_stream = fsevent::EventStream::new(
             &[self.path.as_ref()],
             Duration::from_millis(100),
             |events| {
-                eprintln!("events: {:?}", events);
-                true
+                if let Err(err) = scanner.process_events(events) {
+                    dbg!(err);
+                    // TODO: handle errors
+                    false
+                } else {
+                    true
+                }
             },
         );
 
@@ -499,7 +510,7 @@ impl BackgroundScanner {
                     pool.execute(|| {
                         let result = result;
                         while let Ok(job) = rx.recv() {
-                            if let Err(err) = job.and_then(|job| self.scan_dir(job)) {
+                            if let Err(err) = job.and_then(|job| self.scan_dir(job, None)) {
                                 *result = Err(err);
                                 break;
                             }
@@ -523,7 +534,7 @@ impl BackgroundScanner {
         Ok(())
     }
 
-    fn scan_dir(&self, job: ScanJob) -> io::Result<()> {
+    fn scan_dir(&self, job: ScanJob, mut children: Option<&mut Vec<u64>>) -> io::Result<()> {
         let scan_queue = job.scan_queue;
         let mut dir_entry = job.dir_entry;
 
@@ -541,6 +552,9 @@ impl BackgroundScanner {
             let path = job.path.join(name.as_ref());
 
             new_children.push(ino);
+            if let Some(children) = children.as_mut() {
+                children.push(ino);
+            }
             if metadata.is_dir() {
                 let mut is_ignored = true;
                 let mut ignore = None;
@@ -607,10 +621,193 @@ impl BackgroundScanner {
         Ok(())
     }
 
+    fn process_events(&self, events: &[fsevent::Event]) -> Result<bool> {
+        if self.notify.receiver_count() == 0 {
+            return Ok(false);
+        }
+
+        // TODO: should we canonicalize this at the start?
+        let root_path = self.path.canonicalize()?;
+        let snapshot = Snapshot {
+            id: self.id,
+            entries: self.entries.lock().clone(),
+            root_inode: self.root_inode(),
+        };
+        let mut removed = HashSet::new();
+        let mut paths = events.into_iter().map(|e| &*e.path).collect::<Vec<_>>();
+        paths.sort_unstable();
+
+        let mut paths = paths.into_iter().peekable();
+        while let Some(path) = paths.next() {
+            let relative_path = path.strip_prefix(&root_path)?.to_path_buf();
+
+            // Don't scan descendants of this path.
+            while paths.peek().map_or(false, |p| p.starts_with(path)) {
+                paths.next();
+            }
+
+            let mut stack = Vec::new();
+            stack.extend(snapshot.inode_for_path(&relative_path));
+            while let Some(inode) = stack.pop() {
+                removed.insert(inode);
+                if let Some(Entry::Dir { children, .. }) = snapshot.entries.get(&inode) {
+                    stack.extend(children.iter().copied())
+                }
+            }
+
+            match fs::metadata(path) {
+                Ok(metadata) => {
+                    let inode = metadata.ino();
+                    let is_symlink = fs::symlink_metadata(path)?.file_type().is_symlink();
+                    let name: Arc<OsStr> = Arc::from(path.file_name().unwrap_or(OsStr::new("/")));
+                    let mut ignore = IgnoreBuilder::new().build().add_parents(path).unwrap();
+                    if metadata.is_dir() {
+                        ignore = ignore.add_child(path).unwrap();
+                    }
+                    let is_ignored = ignore.matched(path, metadata.is_dir()).is_ignore();
+                    let parent = if path == root_path {
+                        None
+                    } else {
+                        Some(fs::metadata(path.parent().unwrap())?.ino())
+                    };
+
+                    removed.remove(&inode);
+                    if metadata.file_type().is_dir() {
+                        let is_ignored = is_ignored || name.as_ref() == ".git";
+                        let dir_entry = Entry::Dir {
+                            parent,
+                            name,
+                            inode,
+                            is_symlink,
+                            is_ignored,
+                            children: Arc::from([]),
+                            pending: true,
+                        };
+                        self.insert_entries(Some(dir_entry.clone()));
+
+                        let (tx, rx) = crossbeam_channel::unbounded();
+
+                        tx.send(Ok(ScanJob {
+                            ino: inode,
+                            path: Arc::from(path),
+                            relative_path,
+                            dir_entry,
+                            ignore: Some(ignore),
+                            scan_queue: tx.clone(),
+                        }))
+                        .unwrap();
+                        drop(tx);
+
+                        let mut inodes = Vec::new();
+                        inodes.resize_with(self.thread_pool.workers(), || Ok(Vec::new()));
+                        self.thread_pool.scoped(|pool| {
+                            for worker_inodes in &mut inodes {
+                                pool.execute(|| {
+                                    let worker_inodes = worker_inodes;
+                                    while let Ok(job) = rx.recv() {
+                                        if let Err(err) = job.and_then(|job| {
+                                            self.scan_dir(
+                                                job,
+                                                Some(worker_inodes.as_mut().unwrap()),
+                                            )
+                                        }) {
+                                            *worker_inodes = Err(err);
+                                            break;
+                                        }
+                                    }
+                                });
+                            }
+                        });
+
+                        for worker_inodes in inodes {
+                            for inode in worker_inodes? {
+                                removed.remove(&inode);
+                            }
+                        }
+                    } else {
+                        self.insert_entries(Some(Entry::File {
+                            parent,
+                            name,
+                            path: PathEntry::new(inode, &relative_path, is_ignored),
+                            inode,
+                            is_symlink,
+                            is_ignored,
+                        }));
+                    }
+                }
+                Err(err) => {
+                    if err.kind() != io::ErrorKind::NotFound {
+                        return Err(anyhow::Error::new(err));
+                    }
+                }
+            }
+        }
+
+        self.remove_entries(removed);
+
+        Ok(self.notify.receiver_count() != 0)
+    }
+
     fn insert_entries(&self, entries: impl IntoIterator<Item = Entry>) {
-        self.entries
-            .lock()
-            .edit(&mut entries.into_iter().map(Edit::Insert).collect::<Vec<_>>());
+        let mut edits = Vec::new();
+        let mut new_parents = HashMap::new();
+        for entry in entries {
+            new_parents.insert(entry.ino(), entry.parent());
+            edits.push(Edit::Insert(entry));
+        }
+
+        let mut entries = self.entries.lock();
+        let prev_entries = entries.edit(&mut edits);
+        Self::remove_stale_children(&mut *entries, prev_entries, new_parents);
+    }
+
+    fn remove_entries(&self, inodes: impl IntoIterator<Item = u64>) {
+        let mut entries = self.entries.lock();
+        let prev_entries =
+            entries.edit(&mut inodes.into_iter().map(Edit::Remove).collect::<Vec<_>>());
+        Self::remove_stale_children(&mut *entries, prev_entries, HashMap::new());
+    }
+
+    fn remove_stale_children(
+        tree: &mut SumTree<Entry>,
+        prev_entries: Vec<Entry>,
+        new_parents: HashMap<u64, Option<u64>>,
+    ) {
+        let mut new_parent_entries = HashMap::new();
+
+        for prev_entry in prev_entries {
+            let new_parent = new_parents.get(&prev_entry.ino()).copied().flatten();
+            if new_parent != prev_entry.parent() {
+                if let Some(prev_parent) = prev_entry.parent() {
+                    let (_, new_children) =
+                        new_parent_entries.entry(prev_parent).or_insert_with(|| {
+                            let prev_parent_entry = tree.get(&prev_parent).unwrap();
+                            if let Entry::Dir { children, .. } = prev_parent_entry {
+                                (prev_parent_entry.clone(), children.to_vec())
+                            } else {
+                                unreachable!()
+                            }
+                        });
+
+                    if let Some(ix) = new_children.iter().position(|ino| *ino == prev_entry.ino()) {
+                        new_children.swap_remove(ix);
+                    }
+                }
+            }
+        }
+
+        let mut parent_edits = new_parent_entries
+            .into_iter()
+            .map(|(_, (mut parent_entry, new_children))| {
+                if let Entry::Dir { children, .. } = &mut parent_entry {
+                    *children = Arc::from(new_children);
+                } else {
+                    unreachable!()
+                }
+                Edit::Insert(parent_entry)
+            })
+            .collect::<Vec<_>>();
+        tree.edit(&mut parent_edits);
     }
 }
 
@@ -763,7 +960,12 @@ mod tests {
             let tree = app.add_model(|ctx| Worktree::new(dir.path(), ctx));
             assert_condition(1, 300, || app.read(|ctx| tree.read(ctx).file_count() == 1)).await;
 
-            let file_entry = app.read(|ctx| tree.read(ctx).inode_for_path("dir1/file").unwrap());
+            let file_entry = app.read(|ctx| {
+                tree.read(ctx)
+                    .snapshot()
+                    .inode_for_path("dir1/file")
+                    .unwrap()
+            });
             app.read(|ctx| {
                 let tree = tree.read(ctx);
                 assert_eq!(
