@@ -620,7 +620,7 @@ impl BackgroundScanner {
         Ok(())
     }
 
-    fn process_events(&self, events: &[fsevent::Event]) -> Result<bool> {
+    fn process_events(&self, mut events: Vec<fsevent::Event>) -> Result<bool> {
         if self.notify.receiver_count() == 0 {
             return Ok(false);
         }
@@ -633,45 +633,40 @@ impl BackgroundScanner {
             root_inode: self.root_inode(),
         };
         let mut removed = HashSet::new();
-        let mut paths = events.into_iter().map(|e| &*e.path).collect::<Vec<_>>();
-        paths.sort_unstable();
+        let mut observed = HashSet::new();
 
         let (scan_queue_tx, scan_queue_rx) = crossbeam_channel::unbounded();
-        let mut paths = paths.into_iter().peekable();
+
+        events.sort_unstable_by(|a, b| a.path.cmp(&b.path));
+        let mut paths = events.into_iter().map(|e| e.path).peekable();
         while let Some(path) = paths.next() {
             let relative_path = path.strip_prefix(&root_path)?.to_path_buf();
-
-            // Don't scan descendants of this path.
-            while paths.peek().map_or(false, |p| p.starts_with(path)) {
-                paths.next();
-            }
-
-            let mut stack = Vec::new();
-            stack.extend(snapshot.inode_for_path(&relative_path));
-            while let Some(inode) = stack.pop() {
-                removed.insert(inode);
-                if let Some(Entry::Dir { children, .. }) = snapshot.entries.get(&inode) {
-                    stack.extend(children.iter().copied())
-                }
-            }
-
-            match fs::metadata(path) {
+            match fs::metadata(&path) {
                 Ok(metadata) => {
                     let inode = metadata.ino();
-                    let is_symlink = fs::symlink_metadata(path)?.file_type().is_symlink();
+                    let is_symlink = fs::symlink_metadata(&path)?.file_type().is_symlink();
                     let name: Arc<OsStr> = Arc::from(path.file_name().unwrap_or(OsStr::new("/")));
-                    let mut ignore = IgnoreBuilder::new().build().add_parents(path).unwrap();
+                    let mut ignore = IgnoreBuilder::new().build().add_parents(&path).unwrap();
                     if metadata.is_dir() {
-                        ignore = ignore.add_child(path).unwrap();
+                        ignore = ignore.add_child(&path).unwrap();
                     }
-                    let is_ignored = ignore.matched(path, metadata.is_dir()).is_ignore();
+                    let is_ignored = ignore.matched(&path, metadata.is_dir()).is_ignore();
                     let parent = if path == root_path {
                         None
                     } else {
                         Some(fs::metadata(path.parent().unwrap())?.ino())
                     };
 
-                    removed.remove(&inode);
+                    let prev_entry = snapshot.entries.get(&inode);
+                    // If we haven't seen this inode yet, we are going to recursively scan it, so
+                    // ignore event involving a descendant.
+                    if prev_entry.is_none() {
+                        while paths.peek().map_or(false, |p| p.starts_with(&path)) {
+                            paths.next();
+                        }
+                    }
+
+                    observed.insert(inode);
                     if metadata.file_type().is_dir() {
                         let is_ignored = is_ignored || name.as_ref() == ".git";
                         let dir_entry = Entry::Dir {
@@ -707,7 +702,18 @@ impl BackgroundScanner {
                     }
                 }
                 Err(err) => {
-                    if err.kind() != io::ErrorKind::NotFound {
+                    if err.kind() == io::ErrorKind::NotFound {
+                        // Fill removed with the inodes of all descendants of this path.
+                        let mut stack = Vec::new();
+                        stack.extend(snapshot.inode_for_path(&relative_path));
+                        while let Some(inode) = stack.pop() {
+                            removed.insert(inode);
+                            if let Some(Entry::Dir { children, .. }) = snapshot.entries.get(&inode)
+                            {
+                                stack.extend(children.iter().copied())
+                            }
+                        }
+                    } else {
                         return Err(anyhow::Error::new(err));
                     }
                 }
@@ -735,10 +741,10 @@ impl BackgroundScanner {
 
         for worker_inodes in scanned_inodes {
             for inode in worker_inodes? {
-                removed.remove(&inode);
+                remove_counts.remove(&inode);
             }
         }
-        self.remove_entries(removed);
+        self.remove_entries(remove_counts);
 
         Ok(self.notify.receiver_count() != 0)
     }
@@ -943,9 +949,20 @@ mod tests {
     #[test]
     fn test_rescan() {
         App::test_async((), |mut app| async move {
+            let dir2 = temp_tree(json!({
+                "dir1": {
+                    "dir3": {
+                        "file": "contents",
+                    }
+                },
+                "dir2": {
+                }
+            }));
             let dir = temp_tree(json!({
                 "dir1": {
-                    "file": "contents"
+                    "dir3": {
+                        "file": "contents",
+                    }
                 },
                 "dir2": {
                 }
@@ -954,41 +971,38 @@ mod tests {
             let tree = app.add_model(|ctx| Worktree::new(dir.path(), ctx));
             assert_condition(1, 300, || app.read(|ctx| tree.read(ctx).file_count() == 1)).await;
 
-            let file_inode = app.read(|ctx| {
+            let dir_inode = app.read(|ctx| {
                 tree.read(ctx)
                     .snapshot()
-                    .inode_for_path("dir1/file")
+                    .inode_for_path("dir1/dir3")
                     .unwrap()
             });
             app.read(|ctx| {
                 let tree = tree.read(ctx);
                 assert_eq!(
-                    tree.path_for_inode(file_inode, false)
+                    tree.path_for_inode(dir_inode, false)
                         .unwrap()
                         .to_str()
                         .unwrap(),
-                    "dir1/file"
+                    "dir1/dir3"
                 );
             });
 
-            std::fs::rename(dir.path().join("dir1/file"), dir.path().join("dir2/file")).unwrap();
+            std::fs::rename(dir2.path(), dir.path().join("foo")).unwrap();
             assert_condition(1, 300, || {
                 app.read(|ctx| {
                     let tree = tree.read(ctx);
-                    tree.path_for_inode(file_inode, false)
+                    tree.path_for_inode(dir_inode, false)
                         .unwrap()
                         .to_str()
                         .unwrap()
-                        == "dir2/file"
+                        == "dir2/dir3"
                 })
             })
             .await;
             app.read(|ctx| {
                 let tree = tree.read(ctx);
-                assert_eq!(
-                    tree.snapshot().inode_for_path("dir2/file"),
-                    Some(file_inode)
-                );
+                assert_eq!(tree.snapshot().inode_for_path("dir2/dir3"), Some(dir_inode));
             });
         });
     }

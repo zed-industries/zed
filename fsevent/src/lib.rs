@@ -27,7 +27,7 @@ unsafe impl<F> Send for EventStream<F> {}
 
 impl<F> EventStream<F>
 where
-    F: FnMut(&[Event]) -> bool,
+    F: FnMut(Vec<Event>) -> bool,
 {
     pub fn new(paths: &[&Path], latency: Duration, callback: F) -> Self {
         unsafe {
@@ -128,7 +128,7 @@ where
                 }
             }
 
-            if !callback(&events) {
+            if !callback(events) {
                 fs::FSEventStreamStop(stream_ref);
                 cf::CFRunLoopStop(cf::CFRunLoopGetCurrent());
             }
