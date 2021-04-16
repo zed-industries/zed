@@ -166,6 +166,7 @@ impl Worktree {
         Ok(path)
     }
 
+    #[cfg(test)]
     fn inode_for_path(&self, path: impl AsRef<Path>) -> Option<u64> {
         let path = path.as_ref();
         self.root_inode().and_then(|mut inode| {
