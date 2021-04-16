@@ -9,7 +9,6 @@ mod sum_tree;
 mod test;
 mod throttle;
 mod time;
-mod timer;
 mod util;
 pub mod watch;
 pub mod workspace;
