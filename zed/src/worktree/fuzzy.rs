@@ -2,7 +2,7 @@ use gpui::scoped_pool;
 
 use crate::sum_tree::SeekBias;
 
-use super::{char_bag::CharBag, Entry, FileCount, Worktree};
+use super::{char_bag::CharBag, Entry, FileCount, Snapshot, Worktree};
 
 use std::{
     cmp::{max, min, Ordering, Reverse},
@@ -71,7 +71,7 @@ impl Ord for PathMatch {
 }
 
 pub fn match_paths<'a, T>(
-    trees: T,
+    snapshots: T,
     query: &str,
     include_root_name: bool,
     include_ignored: bool,
@@ -80,7 +80,7 @@ pub fn match_paths<'a, T>(
     pool: scoped_pool::Pool,
 ) -> Vec<PathMatch>
 where
-    T: Clone + Send + Iterator<Item = &'a Worktree>,
+    T: Clone + Send + Iterator<Item = &'a Snapshot>,
 {
     let lowercase_query = query.to_lowercase().chars().collect::<Vec<_>>();
     let query = query.chars().collect::<Vec<_>>();
@@ -89,13 +89,13 @@ where
     let query_chars = CharBag::from(&lowercase_query[..]);
 
     let cpus = num_cpus::get();
-    let path_count: usize = trees.clone().map(Worktree::file_count).sum();
+    let path_count: usize = snapshots.clone().map(Snapshot::file_count).sum();
     let segment_size = (path_count + cpus - 1) / cpus;
     let mut segment_results = (0..cpus).map(|_| BinaryHeap::new()).collect::<Vec<_>>();
 
     pool.scoped(|scope| {
         for (segment_idx, results) in segment_results.iter_mut().enumerate() {
-            let trees = trees.clone();
+            let trees = snapshots.clone();
             scope.execute(move || {
                 let segment_start = segment_idx * segment_size;
                 let segment_end = segment_start + segment_size;
@@ -109,12 +109,12 @@ where
                 let mut best_position_matrix = Vec::new();
 
                 let mut tree_start = 0;
-                for tree in trees {
-                    let tree_end = tree_start + tree.file_count();
+                for snapshot in trees {
+                    let tree_end = tree_start + snapshot.file_count();
                     if tree_start < segment_end && segment_start < tree_end {
                         let start = max(tree_start, segment_start) - tree_start;
                         let end = min(tree_end, segment_end) - tree_start;
-                        let mut cursor = tree.entries.cursor::<_, ()>();
+                        let mut cursor = snapshot.entries.cursor::<_, ()>();
                         cursor.seek(&FileCount(start), SeekBias::Right);
                         let path_entries = cursor
                             .filter_map(|e| {
@@ -128,7 +128,7 @@ where
 
                         let skipped_prefix_len = if include_root_name {
                             0
-                        } else if let Some(Entry::Dir { name, .. }) = tree.root_entry() {
+                        } else if let Some(Entry::Dir { name, .. }) = snapshot.root_entry() {
                             let name = name.to_string_lossy();
                             if name == "/" {
                                 1
@@ -140,7 +140,7 @@ where
                         };
 
                         match_single_tree_paths(
-                            tree.id,
+                            snapshot.id,
                             skipped_prefix_len,
                             path_entries,
                             query,

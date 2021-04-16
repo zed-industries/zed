@@ -2,7 +2,7 @@ mod char_bag;
 mod fuzzy;
 
 use crate::{
-    editor::Snapshot,
+    editor::Snapshot as BufferSnapshot,
     sum_tree::{self, Edit, SumTree},
 };
 use anyhow::{anyhow, Result};
@@ -50,6 +50,12 @@ pub struct Worktree {
     poll_scheduled: bool,
 }
 
+pub struct Snapshot {
+    id: usize,
+    root_inode: Option<u64>,
+    entries: SumTree<Entry>,
+}
+
 #[derive(Clone)]
 pub struct FileHandle {
     worktree: ModelHandle<Worktree>,
@@ -57,7 +63,7 @@ pub struct FileHandle {
 }
 
 impl Worktree {
-    fn new(path: impl Into<Arc<Path>>, ctx: &mut ModelContext<Self>) -> Self {
+    pub fn new(path: impl Into<Arc<Path>>, ctx: &mut ModelContext<Self>) -> Self {
         let path = path.into();
         let scan_state = smol::channel::unbounded();
         let scanner = BackgroundScanner::new(path.clone(), scan_state.0);
@@ -77,6 +83,14 @@ impl Worktree {
             .detach();
 
         tree
+    }
+
+    pub fn snapshot(&self) -> Snapshot {
+        Snapshot {
+            id: self.id,
+            root_inode: self.root_inode(),
+            entries: self.entries.clone(),
+        }
     }
 
     fn observe_scan_state(&mut self, scan_state: ScanState, ctx: &mut ModelContext<Self>) {
@@ -195,7 +209,12 @@ impl Worktree {
         })
     }
 
-    pub fn save<'a>(&self, ino: u64, content: Snapshot, ctx: &AppContext) -> Task<Result<()>> {
+    pub fn save<'a>(
+        &self,
+        ino: u64,
+        content: BufferSnapshot,
+        ctx: &AppContext,
+    ) -> Task<Result<()>> {
         let path = self.abs_path_for_inode(ino);
         eprintln!("save to path: {:?}", path);
         ctx.background_executor().spawn(async move {
@@ -250,6 +269,16 @@ impl fmt::Debug for Worktree {
     }
 }
 
+impl Snapshot {
+    pub fn file_count(&self) -> usize {
+        self.entries.summary().file_count
+    }
+
+    pub fn root_entry(&self) -> Option<&Entry> {
+        self.root_inode.and_then(|inode| self.entries.get(&inode))
+    }
+}
+
 impl FileHandle {
     pub fn path(&self, ctx: &AppContext) -> PathBuf {
         self.worktree
@@ -262,7 +291,7 @@ impl FileHandle {
         self.worktree.read(ctx).load_file(self.inode, ctx)
     }
 
-    pub fn save<'a>(&self, content: Snapshot, ctx: &AppContext) -> Task<Result<()>> {
+    pub fn save<'a>(&self, content: BufferSnapshot, ctx: &AppContext) -> Task<Result<()>> {
         let worktree = self.worktree.read(ctx);
         worktree.save(self.inode, content, ctx)
     }
@@ -397,6 +426,7 @@ impl BackgroundScanner {
             Duration::from_millis(100),
             |events| {
                 eprintln!("events: {:?}", events);
+                true
             },
         );
 
@@ -640,7 +670,7 @@ mod tests {
             app.read(|ctx| {
                 let tree = tree.read(ctx);
                 let results = match_paths(
-                    Some(tree).into_iter(),
+                    Some(tree.snapshot()).iter(),
                     "bna",
                     false,
                     false,
