@@ -428,16 +428,16 @@ impl BackgroundScanner {
     }
 
     fn run(&self) {
-        let scanner = self.clone();
         let event_stream = fsevent::EventStream::new(
             &[self.path.as_ref()],
             Duration::from_millis(100),
             |events| {
-                if let Err(err) = scanner.process_events(events) {
-                    // TODO: handle errors
-                    false
-                } else {
-                    true
+                match self.process_events(events) {
+                    Ok(alive) => alive,
+                    Err(err) => {
+                        // TODO: handle errors
+                        false
+                    }
                 }
             },
         );
@@ -954,7 +954,7 @@ mod tests {
             let tree = app.add_model(|ctx| Worktree::new(dir.path(), ctx));
             assert_condition(1, 300, || app.read(|ctx| tree.read(ctx).file_count() == 1)).await;
 
-            let file_entry = app.read(|ctx| {
+            let file_inode = app.read(|ctx| {
                 tree.read(ctx)
                     .snapshot()
                     .inode_for_path("dir1/file")
@@ -963,7 +963,7 @@ mod tests {
             app.read(|ctx| {
                 let tree = tree.read(ctx);
                 assert_eq!(
-                    tree.path_for_inode(file_entry, false)
+                    tree.path_for_inode(file_inode, false)
                         .unwrap()
                         .to_str()
                         .unwrap(),
@@ -975,14 +975,21 @@ mod tests {
             assert_condition(1, 300, || {
                 app.read(|ctx| {
                     let tree = tree.read(ctx);
-                    tree.path_for_inode(file_entry, false)
+                    tree.path_for_inode(file_inode, false)
                         .unwrap()
                         .to_str()
                         .unwrap()
                         == "dir2/file"
                 })
             })
-            .await
+            .await;
+            app.read(|ctx| {
+                let tree = tree.read(ctx);
+                assert_eq!(
+                    tree.snapshot().inode_for_path("dir2/file"),
+                    Some(file_inode)
+                );
+            });
         });
     }
 }
