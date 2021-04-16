@@ -4,7 +4,7 @@ use crate::{
     settings::Settings,
     time::ReplicaId,
     watch,
-    worktree_old::{Worktree, WorktreeHandle as _},
+    worktree::{Worktree, WorktreeHandle as _},
 };
 use anyhow::anyhow;
 use gpui::{AppContext, Entity, Handle, ModelContext, ModelHandle, MutableAppContext, ViewContext};
@@ -117,7 +117,7 @@ impl Workspace {
             }
         }
 
-        let worktree = ctx.add_model(|ctx| Worktree::new(ctx.model_id(), path, ctx));
+        let worktree = ctx.add_model(|ctx| Worktree::new(path, ctx));
         ctx.observe(&worktree, Self::on_worktree_updated);
         self.worktrees.insert(worktree);
         ctx.notify();
@@ -211,9 +211,7 @@ impl WorkspaceHandle for ModelHandle<Workspace> {
             .iter()
             .flat_map(|tree| {
                 let tree_id = tree.id();
-                tree.read(app)
-                    .files()
-                    .map(move |file| (tree_id, file.entry_id))
+                tree.read(app).files().map(move |inode| (tree_id, inode))
             })
             .collect::<Vec<_>>()
     }
@@ -241,8 +239,8 @@ mod tests {
 
             // Get the first file entry.
             let tree = app.read(|ctx| workspace.read(ctx).worktrees.iter().next().unwrap().clone());
-            let entry_id = app.read(|ctx| tree.read(ctx).files().next().unwrap().entry_id);
-            let entry = (tree.id(), entry_id);
+            let file_inode = app.read(|ctx| tree.read(ctx).files().next().unwrap());
+            let entry = (tree.id(), file_inode);
 
             // Open the same entry twice before it finishes loading.
             let (future_1, future_2) = workspace.update(&mut app, |w, app| {

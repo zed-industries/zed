@@ -3,7 +3,7 @@ use crate::{
     settings::Settings,
     util, watch,
     workspace::{Workspace, WorkspaceView},
-    worktree_old::{match_paths, PathMatch, Worktree},
+    worktree::{match_paths, PathMatch, Worktree},
 };
 use gpui::{
     color::{ColorF, ColorU},
@@ -140,19 +140,16 @@ impl FileFinder {
         let entry_id = path_match.entry_id;
 
         self.worktree(tree_id, app).map(|tree| {
-            let path = tree.entry_path(entry_id).unwrap();
+            let path = tree
+                .path_for_inode(entry_id, path_match.include_root)
+                .unwrap();
             let file_name = path
                 .file_name()
                 .unwrap_or_default()
                 .to_string_lossy()
                 .to_string();
 
-            let mut path = path.to_string_lossy().to_string();
-            if path_match.skipped_prefix_len > 0 {
-                let mut i = 0;
-                path.retain(|_| util::post_inc(&mut i) >= path_match.skipped_prefix_len)
-            }
-
+            let path = path.to_string_lossy().to_string();
             let path_positions = path_match.positions.clone();
             let file_name_start = path.chars().count() - file_name.chars().count();
             let mut file_name_positions = Vec::new();
@@ -345,11 +342,25 @@ impl FileFinder {
     }
 
     fn spawn_search(&mut self, query: String, ctx: &mut ViewContext<Self>) {
-        let worktrees = self.worktrees(ctx.as_ref());
+        let snapshots = self
+            .workspace
+            .read(ctx)
+            .worktrees()
+            .iter()
+            .map(|tree| tree.read(ctx).snapshot())
+            .collect::<Vec<_>>();
         let search_id = util::post_inc(&mut self.search_count);
         let pool = ctx.as_ref().thread_pool().clone();
         let task = ctx.background_executor().spawn(async move {
-            let matches = match_paths(worktrees.as_slice(), &query, false, false, 100, pool);
+            let matches = match_paths(
+                snapshots.iter(),
+                &query,
+                snapshots.len() > 1,
+                false,
+                false,
+                100,
+                pool,
+            );
             (search_id, matches)
         });
 
@@ -376,15 +387,6 @@ impl FileFinder {
             .worktrees()
             .get(&tree_id)
             .map(|worktree| worktree.read(app))
-    }
-
-    fn worktrees(&self, app: &AppContext) -> Vec<Worktree> {
-        self.workspace
-            .read(app)
-            .worktrees()
-            .iter()
-            .map(|worktree| worktree.read(app).clone())
-            .collect()
     }
 }
 

@@ -5,7 +5,7 @@ use gpui::{
     color::rgbu, elements::*, json::to_string_pretty, keymap::Binding, AnyViewHandle, AppContext,
     ClipboardItem, Entity, ModelHandle, MutableAppContext, View, ViewContext, ViewHandle,
 };
-use log::{error, info};
+use log::error;
 use std::{collections::HashSet, path::PathBuf};
 
 pub fn init(app: &mut MutableAppContext) {
@@ -224,19 +224,6 @@ impl WorkspaceView {
                 })
                 .detach();
             }
-        }
-    }
-
-    pub fn open_example_entry(&mut self, ctx: &mut ViewContext<Self>) {
-        if let Some(tree) = self.workspace.read(ctx).worktrees().iter().next() {
-            if let Some(file) = tree.read(ctx).files().next() {
-                info!("open_entry ({}, {})", tree.id(), file.entry_id);
-                self.open_entry((tree.id(), file.entry_id), ctx);
-            } else {
-                error!("No example file found for worktree {}", tree.id());
-            }
-        } else {
-            error!("No worktree found while opening example entry");
         }
     }
 

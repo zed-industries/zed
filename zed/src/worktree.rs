@@ -2,7 +2,7 @@ mod char_bag;
 mod fuzzy;
 
 use crate::{
-    editor::Snapshot as BufferSnapshot,
+    editor::{History, Snapshot as BufferSnapshot},
     sum_tree::{self, Edit, SumTree},
 };
 use anyhow::{anyhow, Result};
@@ -34,11 +34,6 @@ enum ScanState {
     Idle,
     Scanning,
     Err(io::Error),
-}
-
-pub struct FilesIterItem {
-    pub ino: u64,
-    pub path: PathBuf,
 }
 
 pub struct Worktree {
@@ -85,14 +80,6 @@ impl Worktree {
         tree
     }
 
-    pub fn snapshot(&self) -> Snapshot {
-        Snapshot {
-            id: self.id,
-            root_inode: self.root_inode(),
-            entries: self.entries.clone(),
-        }
-    }
-
     fn observe_scan_state(&mut self, scan_state: ScanState, ctx: &mut ModelContext<Self>) {
         self.scan_state = scan_state;
         self.poll_entries(ctx);
@@ -129,28 +116,27 @@ impl Worktree {
         }
     }
 
-    fn files<'a>(&'a self) -> impl Iterator<Item = FilesIterItem> + 'a {
-        self.entries.cursor::<(), ()>().filter_map(|e| {
-            if let Entry::File { path, ino, .. } = e {
-                Some(FilesIterItem {
-                    ino: *ino,
-                    path: PathBuf::from(path.path.iter().collect::<String>()),
-                })
-            } else {
-                None
-            }
-        })
+    pub fn snapshot(&self) -> Snapshot {
+        Snapshot {
+            id: self.id,
+            root_inode: self.root_inode(),
+            entries: self.entries.clone(),
+        }
     }
 
-    fn root_entry(&self) -> Option<&Entry> {
-        self.root_inode().and_then(|ino| self.entries.get(&ino))
+    pub fn contains_path(&self, path: &Path) -> bool {
+        path.starts_with(&self.path)
     }
 
-    fn file_count(&self) -> usize {
+    pub fn has_inode(&self, inode: u64) -> bool {
+        self.entries.get(&inode).is_some()
+    }
+
+    pub fn file_count(&self) -> usize {
         self.entries.summary().file_count
     }
 
-    fn abs_path_for_inode(&self, ino: u64) -> Result<PathBuf> {
+    pub fn abs_path_for_inode(&self, ino: u64) -> Result<PathBuf> {
         let mut result = self.path.to_path_buf();
         result.push(self.path_for_inode(ino, false)?);
         Ok(result)
@@ -199,13 +185,17 @@ impl Worktree {
         })
     }
 
-    pub fn load_file(&self, ino: u64, ctx: &AppContext) -> impl Future<Output = Result<String>> {
+    pub fn load_history(
+        &self,
+        ino: u64,
+        ctx: &AppContext,
+    ) -> impl Future<Output = Result<History>> {
         let path = self.abs_path_for_inode(ino);
         ctx.background_executor().spawn(async move {
             let mut file = std::fs::File::open(&path?)?;
             let mut base_text = String::new();
             file.read_to_string(&mut base_text)?;
-            Ok(base_text)
+            Ok(History::new(Arc::from(base_text)))
         })
     }
 
@@ -253,6 +243,17 @@ impl Worktree {
             ),
         }
     }
+
+    #[cfg(test)]
+    pub fn files<'a>(&'a self) -> impl Iterator<Item = u64> + 'a {
+        self.entries.cursor::<(), ()>().filter_map(|entry| {
+            if let Entry::File { inode, .. } = entry {
+                Some(*inode)
+            } else {
+                None
+            }
+        })
+    }
 }
 
 impl Entity for Worktree {
@@ -287,8 +288,8 @@ impl FileHandle {
             .unwrap()
     }
 
-    pub fn load(&self, ctx: &AppContext) -> impl Future<Output = Result<String>> {
-        self.worktree.read(ctx).load_file(self.inode, ctx)
+    pub fn load_history(&self, ctx: &AppContext) -> impl Future<Output = Result<History>> {
+        self.worktree.read(ctx).load_history(self.inode, ctx)
     }
 
     pub fn save<'a>(&self, content: BufferSnapshot, ctx: &AppContext) -> Task<Result<()>> {
@@ -306,7 +307,7 @@ pub enum Entry {
     Dir {
         parent: Option<u64>,
         name: Arc<OsStr>,
-        ino: u64,
+        inode: u64,
         is_symlink: bool,
         is_ignored: bool,
         children: Arc<[u64]>,
@@ -316,7 +317,7 @@ pub enum Entry {
         parent: Option<u64>,
         name: Arc<OsStr>,
         path: PathEntry,
-        ino: u64,
+        inode: u64,
         is_symlink: bool,
         is_ignored: bool,
     },
@@ -325,8 +326,8 @@ pub enum Entry {
 impl Entry {
     fn ino(&self) -> u64 {
         match self {
-            Entry::Dir { ino, .. } => *ino,
-            Entry::File { ino, .. } => *ino,
+            Entry::Dir { inode: ino, .. } => *ino,
+            Entry::File { inode: ino, .. } => *ino,
         }
     }
 
@@ -468,7 +469,7 @@ impl BackgroundScanner {
             let dir_entry = Entry::Dir {
                 parent: None,
                 name,
-                ino,
+                inode: ino,
                 is_symlink,
                 is_ignored,
                 children: Arc::from([]),
@@ -511,7 +512,7 @@ impl BackgroundScanner {
                 parent: None,
                 name,
                 path: PathEntry::new(ino, &relative_path, is_ignored),
-                ino,
+                inode: ino,
                 is_symlink,
                 is_ignored,
             }));
@@ -555,7 +556,7 @@ impl BackgroundScanner {
                 let dir_entry = Entry::Dir {
                     parent: Some(job.ino),
                     name,
-                    ino,
+                    inode: ino,
                     is_symlink,
                     is_ignored,
                     children: Arc::from([]),
@@ -579,7 +580,7 @@ impl BackgroundScanner {
                     parent: Some(job.ino),
                     name,
                     path: PathEntry::new(ino, &relative_path, is_ignored),
-                    ino,
+                    inode: ino,
                     is_symlink,
                     is_ignored,
                 });
@@ -619,6 +620,23 @@ struct ScanJob {
     dir_entry: Entry,
     ignore: Option<Ignore>,
     scan_queue: crossbeam_channel::Sender<io::Result<ScanJob>>,
+}
+
+pub trait WorktreeHandle {
+    fn file(&self, entry_id: u64, app: &AppContext) -> Result<FileHandle>;
+}
+
+impl WorktreeHandle for ModelHandle<Worktree> {
+    fn file(&self, inode: u64, app: &AppContext) -> Result<FileHandle> {
+        if self.read(app).has_inode(inode) {
+            Ok(FileHandle {
+                worktree: self.clone(),
+                inode,
+            })
+        } else {
+            Err(anyhow!("entry does not exist in tree"))
+        }
+    }
 }
 
 trait UnwrapIgnoreTuple {
@@ -705,22 +723,28 @@ mod tests {
 
             let buffer = Buffer::new(1, "a line of text.\n".repeat(10 * 1024));
 
-            let entry = app.read(|ctx| {
-                let entry = tree.read(ctx).files().next().unwrap();
-                assert_eq!(entry.path.file_name().unwrap(), "file1");
-                entry
+            let file_inode = app.read(|ctx| {
+                let tree = tree.read(ctx);
+                let inode = tree.files().next().unwrap();
+                assert_eq!(
+                    tree.path_for_inode(inode, false)
+                        .unwrap()
+                        .file_name()
+                        .unwrap(),
+                    "file1"
+                );
+                inode
             });
-            let file_ino = entry.ino;
 
             tree.update(&mut app, |tree, ctx| {
-                smol::block_on(tree.save(file_ino, buffer.snapshot(), ctx.as_ref())).unwrap()
+                smol::block_on(tree.save(file_inode, buffer.snapshot(), ctx.as_ref())).unwrap()
             });
 
-            let loaded_text = app
-                .read(|ctx| tree.read(ctx).load_file(file_ino, ctx))
+            let loaded_history = app
+                .read(|ctx| tree.read(ctx).load_history(file_inode, ctx))
                 .await
                 .unwrap();
-            assert_eq!(loaded_text, buffer.text());
+            assert_eq!(loaded_history.base_text.as_ref(), buffer.text());
         });
     }
 

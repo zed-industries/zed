@@ -2,7 +2,7 @@ use gpui::scoped_pool;
 
 use crate::sum_tree::SeekBias;
 
-use super::{char_bag::CharBag, Entry, FileCount, Snapshot, Worktree};
+use super::{char_bag::CharBag, Entry, FileCount, Snapshot};
 
 use std::{
     cmp::{max, min, Ordering, Reverse},
@@ -47,7 +47,7 @@ pub struct PathMatch {
     pub positions: Vec<usize>,
     pub tree_id: usize,
     pub entry_id: u64,
-    pub skipped_prefix_len: usize,
+    pub include_root: bool,
 }
 
 impl PartialEq for PathMatch {
@@ -237,7 +237,7 @@ fn match_single_tree_paths<'a>(
                 entry_id: path_entry.ino,
                 score,
                 positions: match_positions.clone(),
-                skipped_prefix_len,
+                include_root: skipped_prefix_len == 0,
             }));
             if results.len() == max_results {
                 *min_score = results.peek().unwrap().0.score;

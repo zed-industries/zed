@@ -15,7 +15,7 @@ use crate::{
     sum_tree::{self, Cursor, FilterCursor, SeekBias, SumTree},
     time::{self, ReplicaId},
     util::RandomCharIter,
-    worktree_old::FileHandle,
+    worktree::FileHandle,
 };
 use anyhow::{anyhow, Result};
 use gpui::{AppContext, Entity, ModelContext};
