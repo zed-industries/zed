@@ -7,7 +7,6 @@ pub mod settings;
 mod sum_tree;
 #[cfg(test)]
 mod test;
-mod throttle;
 mod time;
 mod util;
 pub mod watch;
