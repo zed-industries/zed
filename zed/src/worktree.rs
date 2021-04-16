@@ -8,7 +8,7 @@ use crate::{
 use anyhow::{anyhow, Result};
 pub use fuzzy::match_paths;
 use fuzzy::PathEntry;
-use gpui::{scoped_pool, AppContext, Entity, ModelContext, Task};
+use gpui::{scoped_pool, AppContext, Entity, ModelContext, ModelHandle, Task};
 use ignore::dir::{Ignore, IgnoreBuilder};
 use parking_lot::Mutex;
 use smol::{channel::Sender, Timer};
@@ -26,6 +26,8 @@ use std::{
     },
     time::Duration,
 };
+
+pub use fuzzy::PathMatch;
 
 #[derive(Debug)]
 enum ScanState {
@@ -46,6 +48,12 @@ pub struct Worktree {
     scanner: BackgroundScanner,
     scan_state: ScanState,
     poll_scheduled: bool,
+}
+
+#[derive(Clone)]
+pub struct FileHandle {
+    worktree: ModelHandle<Worktree>,
+    inode: u64,
 }
 
 impl Worktree {
@@ -98,7 +106,7 @@ impl Worktree {
         }
     }
 
-    fn root_ino(&self) -> Option<u64> {
+    fn root_inode(&self) -> Option<u64> {
         let ino = self.scanner.root_ino.load(atomic::Ordering::SeqCst);
         if ino == 0 {
             None
@@ -121,21 +129,20 @@ impl Worktree {
     }
 
     fn root_entry(&self) -> Option<&Entry> {
-        self.root_ino().and_then(|ino| self.entries.get(&ino))
+        self.root_inode().and_then(|ino| self.entries.get(&ino))
     }
 
     fn file_count(&self) -> usize {
         self.entries.summary().file_count
     }
 
-    fn abs_entry_path(&self, ino: u64) -> Result<PathBuf> {
+    fn abs_path_for_inode(&self, ino: u64) -> Result<PathBuf> {
         let mut result = self.path.to_path_buf();
-        result.pop();
-        result.push(self.entry_path(ino)?);
+        result.push(self.path_for_inode(ino, false)?);
         Ok(result)
     }
 
-    fn entry_path(&self, ino: u64) -> Result<PathBuf> {
+    pub fn path_for_inode(&self, ino: u64, include_root: bool) -> Result<PathBuf> {
         let mut components = Vec::new();
         let mut entry = self
             .entries
@@ -147,15 +154,39 @@ impl Worktree {
             components.push(entry.name());
         }
 
+        let mut components = components.into_iter().rev();
+        if !include_root {
+            components.next();
+        }
+
         let mut path = PathBuf::new();
-        for component in components.into_iter().rev() {
+        for component in components {
             path.push(component);
         }
         Ok(path)
     }
 
+    fn inode_for_path(&self, path: impl AsRef<Path>) -> Option<u64> {
+        let path = path.as_ref();
+        self.root_inode().and_then(|mut inode| {
+            'components: for path_component in path {
+                if let Some(Entry::Dir { children, .. }) = &self.entries.get(&inode) {
+                    for child in children.as_ref() {
+                        if self.entries.get(child).map(|entry| entry.name()) == Some(path_component)
+                        {
+                            inode = *child;
+                            continue 'components;
+                        }
+                    }
+                }
+                return None;
+            }
+            Some(inode)
+        })
+    }
+
     pub fn load_file(&self, ino: u64, ctx: &AppContext) -> impl Future<Output = Result<String>> {
-        let path = self.abs_entry_path(ino);
+        let path = self.abs_path_for_inode(ino);
         ctx.background_executor().spawn(async move {
             let mut file = std::fs::File::open(&path?)?;
             let mut base_text = String::new();
@@ -165,7 +196,7 @@ impl Worktree {
     }
 
     pub fn save<'a>(&self, ino: u64, content: Snapshot, ctx: &AppContext) -> Task<Result<()>> {
-        let path = self.abs_entry_path(ino);
+        let path = self.abs_path_for_inode(ino);
         eprintln!("save to path: {:?}", path);
         ctx.background_executor().spawn(async move {
             let buffer_size = content.text_summary().bytes.min(10 * 1024);
@@ -211,11 +242,33 @@ impl Entity for Worktree {
 
 impl fmt::Debug for Worktree {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        if let Some(root_ino) = self.root_ino() {
+        if let Some(root_ino) = self.root_inode() {
             self.fmt_entry(f, root_ino, 0)
         } else {
             write!(f, "Empty tree\n")
         }
+    }
+}
+
+impl FileHandle {
+    pub fn path(&self, ctx: &AppContext) -> PathBuf {
+        self.worktree
+            .read(ctx)
+            .path_for_inode(self.inode, false)
+            .unwrap()
+    }
+
+    pub fn load(&self, ctx: &AppContext) -> impl Future<Output = Result<String>> {
+        self.worktree.read(ctx).load_file(self.inode, ctx)
+    }
+
+    pub fn save<'a>(&self, content: Snapshot, ctx: &AppContext) -> Task<Result<()>> {
+        let worktree = self.worktree.read(ctx);
+        worktree.save(self.inode, content, ctx)
+    }
+
+    pub fn entry_id(&self) -> (usize, u64) {
+        (self.worktree.id(), self.inode)
     }
 }
 
@@ -339,6 +392,14 @@ impl BackgroundScanner {
     }
 
     fn run(&self) {
+        let event_stream = fsevent::EventStream::new(
+            &[self.path.as_ref()],
+            Duration::from_millis(100),
+            |events| {
+                eprintln!("events: {:?}", events);
+            },
+        );
+
         if smol::block_on(self.notify.send(ScanState::Scanning)).is_err() {
             return;
         }
@@ -353,7 +414,7 @@ impl BackgroundScanner {
             return;
         }
 
-        // TODO: Update when dir changes
+        event_stream.run();
     }
 
     fn scan_dirs(&self) -> io::Result<()> {
@@ -588,7 +649,7 @@ mod tests {
                     ctx.thread_pool().clone(),
                 )
                 .iter()
-                .map(|result| tree.entry_path(result.entry_id))
+                .map(|result| tree.path_for_inode(result.entry_id, true))
                 .collect::<Result<Vec<PathBuf>, _>>()
                 .unwrap();
                 assert_eq!(
@@ -630,6 +691,47 @@ mod tests {
                 .await
                 .unwrap();
             assert_eq!(loaded_text, buffer.text());
+        });
+    }
+
+    #[test]
+    fn test_rescan() {
+        App::test_async((), |mut app| async move {
+            let dir = temp_tree(json!({
+                "dir1": {
+                    "file": "contents"
+                },
+                "dir2": {
+                }
+            }));
+
+            let tree = app.add_model(|ctx| Worktree::new(dir.path(), ctx));
+            assert_condition(1, 300, || app.read(|ctx| tree.read(ctx).file_count() == 1)).await;
+
+            let file_entry = app.read(|ctx| tree.read(ctx).inode_for_path("dir1/file").unwrap());
+            app.read(|ctx| {
+                let tree = tree.read(ctx);
+                assert_eq!(
+                    tree.path_for_inode(file_entry, false)
+                        .unwrap()
+                        .to_str()
+                        .unwrap(),
+                    "dir1/file"
+                );
+            });
+
+            std::fs::rename(dir.path().join("dir1/file"), dir.path().join("dir2/file")).unwrap();
+            assert_condition(1, 300, || {
+                app.read(|ctx| {
+                    let tree = tree.read(ctx);
+                    tree.path_for_inode(file_entry, false)
+                        .unwrap()
+                        .to_str()
+                        .unwrap()
+                        == "dir2/file"
+                })
+            })
+            .await
         });
     }
 }
