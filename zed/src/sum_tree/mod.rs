@@ -332,7 +332,7 @@ impl<T: KeyedItem> SumTree<T> {
         };
     }
 
-    pub fn edit(&mut self, edits: &mut [Edit<T>]) -> Vec<T> {
+    pub fn edit(&mut self, mut edits: Vec<Edit<T>>) -> Vec<T> {
         if edits.is_empty() {
             return Vec::new();
         }
@@ -369,7 +369,7 @@ impl<T: KeyedItem> SumTree<T> {
 
                 match edit {
                     Edit::Insert(item) => {
-                        buffered_items.push(item.clone());
+                        buffered_items.push(item);
                     }
                     Edit::Remove(_) => {}
                 }

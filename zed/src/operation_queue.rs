@@ -35,11 +35,7 @@ impl<T: Operation> OperationQueue<T> {
     pub fn insert(&mut self, mut ops: Vec<T>) {
         ops.sort_by_key(|op| op.timestamp());
         ops.dedup_by_key(|op| op.timestamp());
-        let mut edits = ops
-            .into_iter()
-            .map(|op| Edit::Insert(op))
-            .collect::<Vec<_>>();
-        self.0.edit(&mut edits);
+        self.0.edit(ops.into_iter().map(Edit::Insert).collect());
     }
 
     pub fn drain(&mut self) -> Self {

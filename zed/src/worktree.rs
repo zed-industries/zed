@@ -752,14 +752,13 @@ impl BackgroundScanner {
         }
 
         let mut entries = self.entries.lock();
-        let prev_entries = entries.edit(&mut edits);
+        let prev_entries = entries.edit(edits);
         Self::remove_stale_children(&mut *entries, prev_entries, new_parents);
     }
 
     fn remove_entries(&self, inodes: impl IntoIterator<Item = u64>) {
         let mut entries = self.entries.lock();
-        let prev_entries =
-            entries.edit(&mut inodes.into_iter().map(Edit::Remove).collect::<Vec<_>>());
+        let prev_entries = entries.edit(inodes.into_iter().map(Edit::Remove).collect());
         Self::remove_stale_children(&mut *entries, prev_entries, HashMap::new());
     }
 
@@ -791,7 +790,7 @@ impl BackgroundScanner {
             }
         }
 
-        let mut parent_edits = new_parent_entries
+        let parent_edits = new_parent_entries
             .into_iter()
             .map(|(_, (mut parent_entry, new_children))| {
                 if let Entry::Dir { children, .. } = &mut parent_entry {
@@ -802,7 +801,7 @@ impl BackgroundScanner {
                 Edit::Insert(parent_entry)
             })
             .collect::<Vec<_>>();
-        tree.edit(&mut parent_edits);
+        tree.edit(parent_edits);
     }
 }
 
