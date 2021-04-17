@@ -277,6 +277,7 @@ impl Snapshot {
     fn reparent_entry(
         &mut self,
         child_inode: u64,
+        new_filename: Option<&OsStr>,
         old_parent_inode: Option<u64>,
         new_parent_inode: Option<u64>,
     ) {
@@ -315,6 +316,9 @@ impl Snapshot {
         // Update the child entry's parent.
         let mut child_entry = child_entry.expect("cannot reparent non-existent entry");
         child_entry.set_parent(new_parent_inode);
+        if let Some(new_filename) = new_filename {
+            child_entry.set_name(new_filename);
+        }
         insertions.push(Edit::Insert(child_entry));
 
         // Remove the child entry from it's old parent's children.
@@ -395,9 +399,13 @@ pub enum Entry {
 impl Entry {
     fn ino(&self) -> u64 {
         match self {
-            Entry::Dir { inode: ino, .. } => *ino,
-            Entry::File { inode: ino, .. } => *ino,
+            Entry::Dir { inode, .. } => *inode,
+            Entry::File { inode, .. } => *inode,
         }
+    }
+
+    fn is_dir(&self) -> bool {
+        matches!(self, Entry::Dir { .. })
     }
 
     fn parent(&self) -> Option<u64> {
@@ -418,6 +426,13 @@ impl Entry {
         match self {
             Entry::Dir { name, .. } => name,
             Entry::File { name, .. } => name,
+        }
+    }
+
+    fn set_name(&mut self, new_name: &OsStr) {
+        match self {
+            Entry::Dir { name, .. } => *name = new_name.into(),
+            Entry::File { name, .. } => *name = new_name.into(),
         }
     }
 }
@@ -742,7 +757,7 @@ impl BackgroundScanner {
 
                         // If it does not match, then detach this inode from its current parent, and
                         // record that it may have been removed from the worktree.
-                        snapshot.reparent_entry(snapshot_inode, snapshot_parent_inode, None);
+                        snapshot.reparent_entry(snapshot_inode, None, snapshot_parent_inode, None);
                         possible_removed_inodes.insert(snapshot_inode);
                     }
 
@@ -751,7 +766,12 @@ impl BackgroundScanner {
                     // the filesystem.
                     if let Some(snapshot_entry_for_inode) = snapshot.entries.get(&fs_inode) {
                         let snapshot_parent_inode = snapshot_entry_for_inode.parent();
-                        snapshot.reparent_entry(fs_inode, snapshot_parent_inode, fs_parent_inode);
+                        snapshot.reparent_entry(
+                            fs_inode,
+                            path.file_name(),
+                            snapshot_parent_inode,
+                            fs_parent_inode,
+                        );
                     }
                     // If the snapshot has no entry for this inode, then scan the filesystem to find
                     // all descendents of this new inode. Discard any subsequent events that are
@@ -761,18 +781,31 @@ impl BackgroundScanner {
                         while let Some(next_path) = paths.peek() {
                             if next_path.starts_with(&path) {
                                 paths.next();
+                            } else {
+                                break;
                             }
                         }
-                        scan_queue_tx
-                            .send(Ok(ScanJob {
-                                ino: fs_inode,
-                                path: Arc::from(path),
-                                relative_path,
-                                dir_entry: fs_entry,
-                                ignore: Some(ignore),
-                                scan_queue: scan_queue_tx.clone(),
-                            }))
-                            .unwrap();
+
+                        snapshot.entries.insert(fs_entry.clone());
+                        snapshot.reparent_entry(fs_inode, None, None, fs_parent_inode);
+
+                        if fs_entry.is_dir() {
+                            let relative_path = snapshot
+                                .path
+                                .parent()
+                                .map_or(path.as_path(), |parent| path.strip_prefix(parent).unwrap())
+                                .to_path_buf();
+                            scan_queue_tx
+                                .send(Ok(ScanJob {
+                                    ino: fs_inode,
+                                    path: Arc::from(path),
+                                    relative_path,
+                                    dir_entry: fs_entry,
+                                    ignore: Some(ignore),
+                                    scan_queue: scan_queue_tx.clone(),
+                                }))
+                                .unwrap();
+                        }
                     }
                 }
 
@@ -781,7 +814,7 @@ impl BackgroundScanner {
                     if let Some(snapshot_entry) = snapshot_entry {
                         let snapshot_inode = snapshot_entry.ino();
                         let snapshot_parent_inode = snapshot_entry.parent();
-                        snapshot.reparent_entry(snapshot_inode, snapshot_parent_inode, None);
+                        snapshot.reparent_entry(snapshot_inode, None, snapshot_parent_inode, None);
                         possible_removed_inodes.insert(snapshot_inode);
                     }
                 }
@@ -877,7 +910,9 @@ impl BackgroundScanner {
                             name,
                             path: PathEntry::new(
                                 inode,
-                                &path.strip_prefix(root_path).unwrap(),
+                                root_path
+                                    .parent()
+                                    .map_or(path, |parent| path.strip_prefix(parent).unwrap()),
                                 is_ignored,
                             ),
                             inode,
