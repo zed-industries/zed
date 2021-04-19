@@ -258,10 +258,10 @@ impl Snapshot {
     }
 
     fn remove_path(&mut self, path: &Path) {
-        if let Some(parent_path) = path.parent() {
+        if let Some(mut parent_entry) = path.parent().and_then(|p| self.entry_for_path(p).cloned())
+        {
             let mut edits = Vec::new();
 
-            let mut parent_entry = self.entry_for_path(parent_path).unwrap().clone();
             let parent_inode = parent_entry.inode();
             let mut entry_inode = None;
             if let Entry::Dir { children, .. } = &mut parent_entry {
@@ -278,7 +278,6 @@ impl Snapshot {
                     entry_inode = None;
                 }
 
-                dbg!(&children, &new_children, entry_inode, parent_inode);
                 *children = new_children.into();
                 edits.push(Edit::Insert(parent_entry));
             } else {
@@ -286,17 +285,16 @@ impl Snapshot {
             }
 
             if let Some(entry_inode) = entry_inode {
-                let entry = self.entries.get(&entry_inode).unwrap();
-
                 // Recursively remove the orphaned nodes' descendants.
                 let mut descendant_stack = Vec::new();
-                if entry.parent() == Some(parent_inode) {
-                    descendant_stack.push(entry_inode);
-                    while let Some(inode) = descendant_stack.pop() {
-                        if let Some(entry) = self.entries.get(&inode) {
+                descendant_stack.push((entry_inode, parent_inode));
+                while let Some((inode, parent_inode)) = descendant_stack.pop() {
+                    if let Some(entry) = self.entries.get(&inode) {
+                        if entry.parent() == Some(parent_inode) {
                             edits.push(Edit::Remove(inode));
                             if let Entry::Dir { children, .. } = entry {
-                                descendant_stack.extend(children.iter().map(|c| c.0));
+                                descendant_stack
+                                    .extend(children.iter().map(|c| (c.0, entry.inode())));
                             }
                         }
                     }
@@ -696,7 +694,6 @@ impl BackgroundScanner {
                     continue;
                 }
             };
-            // dbg!(&path, &relative_path, snapshot.entries.items());
 
             while paths.peek().map_or(false, |p| p.starts_with(&path)) {
                 paths.next();
@@ -706,22 +703,19 @@ impl BackgroundScanner {
 
             match self.fs_entry_for_path(&snapshot.path, &path) {
                 Ok(Some((fs_entry, ignore))) => {
-                    // snapshot.remove_entry(fs_entry.inode());
                     let mut edits = Vec::new();
                     edits.push(Edit::Insert(fs_entry.clone()));
                     if let Some(parent) = fs_entry.parent() {
                         let mut parent_entry = snapshot.entries.get(&parent).unwrap().clone();
                         if let Entry::Dir { children, .. } = &mut parent_entry {
-                            if !children.iter().any(|c| c.0 == fs_entry.inode()) {
-                                let name = Arc::from(path.file_name().unwrap());
-                                *children = children
-                                    .into_iter()
-                                    .cloned()
-                                    .chain(Some((fs_entry.inode(), name)))
-                                    .collect::<Vec<_>>()
-                                    .into();
-                                edits.push(Edit::Insert(parent_entry));
-                            }
+                            let name = Arc::from(path.file_name().unwrap());
+                            *children = children
+                                .into_iter()
+                                .cloned()
+                                .chain(Some((fs_entry.inode(), name)))
+                                .collect::<Vec<_>>()
+                                .into();
+                            edits.push(Edit::Insert(parent_entry));
                         } else {
                             unreachable!();
                         }
@@ -1111,7 +1105,6 @@ mod tests {
                 notify_tx,
             );
             new_scanner.scan_dirs().unwrap();
-            dbg!(scanner.snapshot().entries.items());
             assert_eq!(scanner.snapshot().to_vec(), new_scanner.snapshot().to_vec());
         }
     }
