@@ -9,3 +9,6 @@ cocoa = {git = "https://github.com/servo/core-foundation-rs", rev = "e9a65bb15d5
 cocoa-foundation = {git = "https://github.com/servo/core-foundation-rs", rev = "e9a65bb15d591ec22649e03659db8095d4f2dd60"}
 core-foundation = {git = "https://github.com/servo/core-foundation-rs", rev = "e9a65bb15d591ec22649e03659db8095d4f2dd60"}
 core-graphics = {git = "https://github.com/servo/core-foundation-rs", rev = "e9a65bb15d591ec22649e03659db8095d4f2dd60"}
+
+[profile.dev]
+split-debuginfo = "unpacked"
