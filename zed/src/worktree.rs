@@ -17,7 +17,7 @@ use std::{
     ffi::OsStr,
     fmt, fs,
     io::{self, Read, Write},
-    ops::AddAssign,
+    ops::{AddAssign, Deref},
     os::unix::fs::MetadataExt,
     path::{Path, PathBuf},
     sync::Arc,
@@ -38,14 +38,6 @@ pub struct Worktree {
     scanner: Arc<BackgroundScanner>,
     scan_state: ScanState,
     poll_scheduled: bool,
-}
-
-#[derive(Clone)]
-pub struct Snapshot {
-    id: usize,
-    path: Arc<Path>,
-    root_inode: Option<u64>,
-    entries: SumTree<Entry>,
 }
 
 #[derive(Clone)]
@@ -129,31 +121,6 @@ impl Worktree {
         Ok(result)
     }
 
-    pub fn path_for_inode(&self, ino: u64, include_root: bool) -> Result<PathBuf> {
-        let mut components = Vec::new();
-        let mut entry = self
-            .snapshot
-            .entries
-            .get(&ino)
-            .ok_or_else(|| anyhow!("entry does not exist in worktree"))?;
-        components.push(entry.name());
-        while let Some(parent) = entry.parent() {
-            entry = self.snapshot.entries.get(&parent).unwrap();
-            components.push(entry.name());
-        }
-
-        let mut components = components.into_iter().rev();
-        if !include_root {
-            components.next();
-        }
-
-        let mut path = PathBuf::new();
-        for component in components {
-            path.push(component);
-        }
-        Ok(path)
-    }
-
     pub fn load_history(
         &self,
         ino: u64,
@@ -187,31 +154,6 @@ impl Worktree {
         })
     }
 
-    fn fmt_entry(&self, f: &mut fmt::Formatter<'_>, ino: u64, indent: usize) -> fmt::Result {
-        match self.snapshot.entries.get(&ino).unwrap() {
-            Entry::Dir { name, children, .. } => {
-                write!(
-                    f,
-                    "{}{}/ ({})\n",
-                    " ".repeat(indent),
-                    name.to_string_lossy(),
-                    ino
-                )?;
-                for child_id in children.iter() {
-                    self.fmt_entry(f, *child_id, indent + 2)?;
-                }
-                Ok(())
-            }
-            Entry::File { name, .. } => write!(
-                f,
-                "{}{} ({})\n",
-                " ".repeat(indent),
-                name.to_string_lossy(),
-                ino
-            ),
-        }
-    }
-
     #[cfg(test)]
     pub fn files<'a>(&'a self) -> impl Iterator<Item = u64> + 'a {
         self.snapshot
@@ -231,14 +173,26 @@ impl Entity for Worktree {
     type Event = ();
 }
 
+impl Deref for Worktree {
+    type Target = Snapshot;
+
+    fn deref(&self) -> &Self::Target {
+        &self.snapshot
+    }
+}
+
 impl fmt::Debug for Worktree {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        if let Some(root_ino) = self.snapshot.root_inode {
-            self.fmt_entry(f, root_ino, 0)
-        } else {
-            write!(f, "Empty tree\n")
-        }
+        self.snapshot.fmt(f)
     }
+}
+
+#[derive(Clone)]
+pub struct Snapshot {
+    id: usize,
+    path: Arc<Path>,
+    root_inode: Option<u64>,
+    entries: SumTree<Entry>,
 }
 
 impl Snapshot {
@@ -272,6 +226,30 @@ impl Snapshot {
     fn entry_for_path(&self, path: impl AsRef<Path>) -> Option<&Entry> {
         self.inode_for_path(path)
             .and_then(|inode| self.entries.get(&inode))
+    }
+
+    pub fn path_for_inode(&self, ino: u64, include_root: bool) -> Result<PathBuf> {
+        let mut components = Vec::new();
+        let mut entry = self
+            .entries
+            .get(&ino)
+            .ok_or_else(|| anyhow!("entry does not exist in worktree"))?;
+        components.push(entry.name());
+        while let Some(parent) = entry.parent() {
+            entry = self.entries.get(&parent).unwrap();
+            components.push(entry.name());
+        }
+
+        let mut components = components.into_iter().rev();
+        if !include_root {
+            components.next();
+        }
+
+        let mut path = PathBuf::new();
+        for component in components {
+            path.push(component);
+        }
+        Ok(path)
     }
 
     fn reparent_entry(
@@ -350,6 +328,41 @@ impl Snapshot {
         }
 
         self.entries.edit(insertions);
+    }
+
+    fn fmt_entry(&self, f: &mut fmt::Formatter<'_>, ino: u64, indent: usize) -> fmt::Result {
+        match self.entries.get(&ino).unwrap() {
+            Entry::Dir { name, children, .. } => {
+                write!(
+                    f,
+                    "{}{}/ ({})\n",
+                    " ".repeat(indent),
+                    name.to_string_lossy(),
+                    ino
+                )?;
+                for child_id in children.iter() {
+                    self.fmt_entry(f, *child_id, indent + 2)?;
+                }
+                Ok(())
+            }
+            Entry::File { name, .. } => write!(
+                f,
+                "{}{} ({})\n",
+                " ".repeat(indent),
+                name.to_string_lossy(),
+                ino
+            ),
+        }
+    }
+}
+
+impl fmt::Debug for Snapshot {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        if let Some(root_ino) = self.root_inode {
+            self.fmt_entry(f, root_ino, 0)
+        } else {
+            write!(f, "Empty tree\n")
+        }
     }
 }
 
@@ -987,8 +1000,13 @@ mod tests {
     use crate::test::*;
     use anyhow::Result;
     use gpui::App;
+    use log::LevelFilter;
+    use rand::prelude::*;
     use serde_json::json;
+    use simplelog::SimpleLogger;
+    use std::env;
     use std::os::unix;
+    use std::time::{SystemTime, UNIX_EPOCH};
 
     #[test]
     fn test_populate_and_search() {
@@ -1135,5 +1153,203 @@ mod tests {
                 assert_eq!(tree.snapshot().inode_for_path("dir2/dir3"), Some(dir_inode));
             });
         });
+    }
+
+    #[test]
+    fn test_random() {
+        if let Ok(true) = env::var("LOG").map(|l| l.parse().unwrap()) {
+            SimpleLogger::init(LevelFilter::Info, Default::default()).unwrap();
+        }
+
+        let iterations = env::var("ITERATIONS")
+            .map(|i| i.parse().unwrap())
+            .unwrap_or(100);
+        let operations = env::var("OPERATIONS")
+            .map(|o| o.parse().unwrap())
+            .unwrap_or(40);
+        let seeds = if let Ok(seed) = env::var("SEED").map(|s| s.parse().unwrap()) {
+            seed..seed + 1
+        } else {
+            0..iterations
+        };
+
+        for seed in seeds {
+            dbg!(seed);
+            let mut rng = StdRng::seed_from_u64(seed);
+
+            let root_dir = tempdir::TempDir::new(&format!("test-{}", seed)).unwrap();
+            for _ in 0..20 {
+                randomly_mutate_tree(root_dir.path(), 1.0, &mut rng).unwrap();
+            }
+            log::info!("Generated initial tree");
+
+            let (notify_tx, _notify_rx) = smol::channel::unbounded();
+            let scanner = BackgroundScanner::new(
+                Snapshot {
+                    id: 0,
+                    path: root_dir.path().into(),
+                    root_inode: None,
+                    entries: Default::default(),
+                },
+                notify_tx,
+            );
+            scanner.scan_dirs().unwrap();
+
+            let mut events = Vec::new();
+            let mut mutations_len = operations;
+            while mutations_len > 1 {
+                if !events.is_empty() && rng.gen_bool(0.4) {
+                    let len = rng.gen_range(0..=events.len());
+                    let to_deliver = events.drain(0..len).collect::<Vec<_>>();
+                    scanner.process_events(to_deliver);
+                } else {
+                    events.extend(randomly_mutate_tree(root_dir.path(), 0.6, &mut rng).unwrap());
+                    mutations_len -= 1;
+                }
+            }
+            scanner.process_events(events);
+
+            let (notify_tx, _notify_rx) = smol::channel::unbounded();
+            let new_scanner = BackgroundScanner::new(
+                Snapshot {
+                    id: 0,
+                    path: root_dir.path().into(),
+                    root_inode: None,
+                    entries: Default::default(),
+                },
+                notify_tx,
+            );
+            new_scanner.scan_dirs().unwrap();
+            assert_eq!(scanner.snapshot().to_vec(), new_scanner.snapshot().to_vec());
+        }
+    }
+
+    fn randomly_mutate_tree(
+        root_path: &Path,
+        insertion_probability: f64,
+        rng: &mut impl Rng,
+    ) -> Result<Vec<fsevent::Event>> {
+        let (dirs, files) = read_dir_recursive(root_path.to_path_buf());
+
+        let mut events = Vec::new();
+        let mut record_event = |path: PathBuf| {
+            events.push(fsevent::Event {
+                event_id: SystemTime::now()
+                    .duration_since(UNIX_EPOCH)
+                    .unwrap()
+                    .as_secs(),
+                flags: fsevent::StreamFlags::empty(),
+                path,
+            });
+        };
+
+        if (files.is_empty() && dirs.len() == 1) || rng.gen_bool(insertion_probability) {
+            let path = dirs.choose(rng).unwrap();
+            let new_path = path.join(gen_name(rng));
+
+            if rng.gen() {
+                log::info!("Creating dir {:?}", new_path.strip_prefix(root_path)?);
+                fs::create_dir(&new_path)?;
+            } else {
+                log::info!("Creating file {:?}", new_path.strip_prefix(root_path)?);
+                fs::write(&new_path, "")?;
+            }
+            record_event(new_path);
+        } else {
+            let old_path = {
+                let file_path = files.choose(rng);
+                let dir_path = dirs[1..].choose(rng);
+                file_path.into_iter().chain(dir_path).choose(rng).unwrap()
+            };
+
+            let is_rename = rng.gen();
+            if is_rename {
+                let new_path_parent = dirs
+                    .iter()
+                    .filter(|d| !d.starts_with(old_path))
+                    .choose(rng)
+                    .unwrap();
+                let new_path = new_path_parent.join(gen_name(rng));
+
+                log::info!(
+                    "Renaming {:?} to {:?}",
+                    old_path.strip_prefix(&root_path)?,
+                    new_path.strip_prefix(&root_path)?
+                );
+                fs::rename(&old_path, &new_path)?;
+                record_event(old_path.clone());
+                record_event(new_path);
+            } else if old_path.is_dir() {
+                let (dirs, files) = read_dir_recursive(old_path.clone());
+
+                log::info!("Deleting dir {:?}", old_path.strip_prefix(&root_path)?);
+                fs::remove_dir_all(&old_path).unwrap();
+                for file in files {
+                    record_event(file);
+                }
+                for dir in dirs {
+                    record_event(dir);
+                }
+            } else {
+                log::info!("Deleting file {:?}", old_path.strip_prefix(&root_path)?);
+                fs::remove_file(old_path).unwrap();
+                record_event(old_path.clone());
+            }
+        }
+
+        Ok(events)
+    }
+
+    fn read_dir_recursive(path: PathBuf) -> (Vec<PathBuf>, Vec<PathBuf>) {
+        let child_entries = fs::read_dir(&path).unwrap();
+        let mut dirs = vec![path];
+        let mut files = Vec::new();
+        for child_entry in child_entries {
+            let child_path = child_entry.unwrap().path();
+            if child_path.is_dir() {
+                let (child_dirs, child_files) = read_dir_recursive(child_path);
+                dirs.extend(child_dirs);
+                files.extend(child_files);
+            } else {
+                files.push(child_path);
+            }
+        }
+        (dirs, files)
+    }
+
+    fn gen_name(rng: &mut impl Rng) -> String {
+        (0..6)
+            .map(|_| rng.sample(rand::distributions::Alphanumeric))
+            .map(char::from)
+            .collect()
+    }
+
+    impl Snapshot {
+        fn to_vec(&self) -> Vec<(PathBuf, u64)> {
+            use std::iter::FromIterator;
+
+            let mut paths = Vec::new();
+
+            let mut stack = Vec::new();
+            stack.extend(self.root_inode);
+            while let Some(inode) = stack.pop() {
+                let computed_path = self.path_for_inode(inode, true).unwrap();
+                match self.entries.get(&inode).unwrap() {
+                    Entry::Dir { children, .. } => {
+                        stack.extend_from_slice(children);
+                    }
+                    Entry::File { path, .. } => {
+                        assert_eq!(
+                            String::from_iter(path.path.iter()),
+                            computed_path.to_str().unwrap()
+                        );
+                    }
+                }
+                paths.push((computed_path, inode));
+            }
+
+            paths.sort_by(|a, b| a.0.cmp(&b.0));
+            paths
+        }
     }
 }
