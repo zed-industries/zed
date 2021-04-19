@@ -208,6 +208,11 @@ impl Snapshot {
         self.path.file_name()
     }
 
+    fn entry_for_path(&self, path: impl AsRef<Path>) -> Option<&Entry> {
+        self.inode_for_path(path)
+            .and_then(|inode| self.entries.get(&inode))
+    }
+
     fn inode_for_path(&self, path: impl AsRef<Path>) -> Option<u64> {
         let path = path.as_ref();
         self.root_inode.and_then(|mut inode| {
@@ -226,38 +231,53 @@ impl Snapshot {
         })
     }
 
-    fn entry_for_path(&self, path: impl AsRef<Path>) -> Option<&Entry> {
-        self.inode_for_path(path)
-            .and_then(|inode| self.entries.get(&inode))
-    }
-
-    pub fn path_for_inode(&self, mut ino: u64, include_root: bool) -> Result<PathBuf> {
+    pub fn path_for_inode(&self, mut inode: u64, include_root: bool) -> Result<PathBuf> {
         let mut components = Vec::new();
         let mut entry = self
             .entries
-            .get(&ino)
+            .get(&inode)
             .ok_or_else(|| anyhow!("entry does not exist in worktree"))?;
         while let Some(parent) = entry.parent() {
             entry = self.entries.get(&parent).unwrap();
             if let Entry::Dir { children, .. } = entry {
                 let (_, child_name) = children
                     .iter()
-                    .find(|(child_inode, _)| *child_inode == ino)
+                    .find(|(child_inode, _)| *child_inode == inode)
                     .unwrap();
                 components.push(child_name.as_ref());
-                ino = parent;
+                inode = parent;
             } else {
                 unreachable!();
             }
         }
         if include_root {
-            components.push(self.path.file_name().unwrap());
+            components.push(self.root_name().unwrap());
         }
-
         Ok(components.into_iter().rev().collect())
     }
 
-    fn remove_path(&mut self, path: &Path) {
+    fn insert_entry(&mut self, path: &Path, entry: Entry) {
+        let mut edits = Vec::new();
+        edits.push(Edit::Insert(entry.clone()));
+        if let Some(parent) = entry.parent() {
+            let mut parent_entry = self.entries.get(&parent).unwrap().clone();
+            if let Entry::Dir { children, .. } = &mut parent_entry {
+                let name = Arc::from(path.file_name().unwrap());
+                *children = children
+                    .into_iter()
+                    .cloned()
+                    .chain(Some((entry.inode(), name)))
+                    .collect::<Vec<_>>()
+                    .into();
+                edits.push(Edit::Insert(parent_entry));
+            } else {
+                unreachable!();
+            }
+        }
+        self.entries.edit(edits);
+    }
+
+    fn remove_entry(&mut self, path: &Path) {
         let mut parent_entry = match path.parent().and_then(|p| self.entry_for_path(p).cloned()) {
             Some(e) => e,
             None => return,
@@ -687,7 +707,7 @@ impl BackgroundScanner {
             let relative_path = match path.strip_prefix(&snapshot.path) {
                 Ok(relative_path) => relative_path.to_path_buf(),
                 Err(e) => {
-                    log::error!("Unexpected event {:?}", e);
+                    log::error!("unexpected event {:?}", e);
                     continue;
                 }
             };
@@ -696,40 +716,21 @@ impl BackgroundScanner {
                 paths.next();
             }
 
-            snapshot.remove_path(&relative_path);
+            snapshot.remove_entry(&relative_path);
 
             match self.fs_entry_for_path(&snapshot.path, &path) {
                 Ok(Some((fs_entry, ignore))) => {
-                    let mut edits = Vec::new();
-                    edits.push(Edit::Insert(fs_entry.clone()));
-                    if let Some(parent) = fs_entry.parent() {
-                        let mut parent_entry = snapshot.entries.get(&parent).unwrap().clone();
-                        if let Entry::Dir { children, .. } = &mut parent_entry {
-                            let name = Arc::from(path.file_name().unwrap());
-                            *children = children
-                                .into_iter()
-                                .cloned()
-                                .chain(Some((fs_entry.inode(), name)))
-                                .collect::<Vec<_>>()
-                                .into();
-                            edits.push(Edit::Insert(parent_entry));
-                        } else {
-                            unreachable!();
-                        }
-                    }
-                    snapshot.entries.edit(edits);
+                    snapshot.insert_entry(&path, fs_entry.clone());
 
                     if fs_entry.is_dir() {
-                        let relative_path = snapshot
-                            .path
-                            .parent()
-                            .map_or(path.as_path(), |parent| path.strip_prefix(parent).unwrap())
-                            .to_path_buf();
                         scan_queue_tx
                             .send(Ok(ScanJob {
                                 inode: fs_entry.inode(),
                                 path: Arc::from(path),
-                                relative_path,
+                                relative_path: snapshot
+                                    .root_name()
+                                    .map_or(PathBuf::new(), PathBuf::from)
+                                    .join(relative_path),
                                 dir_entry: fs_entry,
                                 ignore: Some(ignore),
                                 scan_queue: scan_queue_tx.clone(),
@@ -740,14 +741,14 @@ impl BackgroundScanner {
                 Ok(None) => {}
                 Err(err) => {
                     // TODO - create a special 'error' entry in the entries tree to mark this
-                    log::error!("Error reading file on event {:?}", err);
+                    log::error!("error reading file on event {:?}", err);
                 }
             }
         }
 
         *self.snapshot.lock() = snapshot;
 
-        // Scan any directories that were moved into this worktree as part of this event batch.
+        // Scan any directories that were created as part of this event batch.
         drop(scan_queue_tx);
         self.thread_pool.scoped(|pool| {
             for _ in 0..self.thread_pool.workers() {
