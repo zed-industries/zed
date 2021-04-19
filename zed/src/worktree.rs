@@ -252,7 +252,7 @@ impl Snapshot {
         Ok(path)
     }
 
-    fn reparent_entry(
+    fn move_entry(
         &mut self,
         child_inode: u64,
         new_path: Option<&Path>,
@@ -271,11 +271,13 @@ impl Snapshot {
 
         // Remove the entries from the sum tree.
         deletions.push(Edit::Remove(child_inode));
-        if let Some(old_parent_inode) = old_parent_inode {
-            deletions.push(Edit::Remove(old_parent_inode));
-        }
-        if let Some(new_parent_inode) = new_parent_inode {
-            deletions.push(Edit::Remove(new_parent_inode));
+        if old_parent_inode != new_parent_inode {
+            if let Some(old_parent_inode) = old_parent_inode {
+                deletions.push(Edit::Remove(old_parent_inode));
+            }
+            if let Some(new_parent_inode) = new_parent_inode {
+                deletions.push(Edit::Remove(new_parent_inode));
+            }
         }
         let removed_entries = self.entries.edit(deletions);
         let mut child_entry = None;
@@ -292,7 +294,7 @@ impl Snapshot {
         }
 
         // Update the child entry's parent.
-        let mut child_entry = child_entry.expect("cannot reparent non-existent entry");
+        let mut child_entry = child_entry.expect("cannot move non-existent entry");
         child_entry.set_parent(new_parent_inode);
         if let Some(new_path) = new_path {
             let new_path = new_path.strip_prefix(self.path.parent().unwrap()).unwrap();
@@ -313,8 +315,8 @@ impl Snapshot {
                         }
 
                         // Descendant directories don't need to be mutated because their properties
-                        // haven't changed, so only re-insert this directory if it is the entry we
-                        // were reparenting.
+                        // haven't changed, so only re-insert this directory if it is the top entry
+                        // we were moving.
                         if *inode == child_inode {
                             insertions.push(Edit::Insert(entry));
                         }
@@ -805,7 +807,7 @@ impl BackgroundScanner {
 
                         // If it does not match, then detach this inode from its current parent, and
                         // record that it may have been removed from the worktree.
-                        snapshot.reparent_entry(snapshot_inode, None, snapshot_parent_inode, None);
+                        snapshot.move_entry(snapshot_inode, None, snapshot_parent_inode, None);
                         possible_removed_inodes.insert(snapshot_inode);
                     }
 
@@ -814,7 +816,7 @@ impl BackgroundScanner {
                     // the filesystem.
                     if let Some(snapshot_entry_for_inode) = snapshot.entries.get(&fs_inode) {
                         let snapshot_parent_inode = snapshot_entry_for_inode.parent();
-                        snapshot.reparent_entry(
+                        snapshot.move_entry(
                             fs_inode,
                             Some(&path),
                             snapshot_parent_inode,
@@ -835,7 +837,7 @@ impl BackgroundScanner {
                         }
 
                         snapshot.entries.insert(fs_entry.clone());
-                        snapshot.reparent_entry(fs_inode, None, None, fs_parent_inode);
+                        snapshot.move_entry(fs_inode, None, None, fs_parent_inode);
 
                         if fs_entry.is_dir() {
                             let relative_path = snapshot
@@ -862,7 +864,7 @@ impl BackgroundScanner {
                     if let Some(snapshot_entry) = snapshot_entry {
                         let snapshot_inode = snapshot_entry.inode();
                         let snapshot_parent_inode = snapshot_entry.parent();
-                        snapshot.reparent_entry(snapshot_inode, None, snapshot_parent_inode, None);
+                        snapshot.move_entry(snapshot_inode, None, snapshot_parent_inode, None);
                         possible_removed_inodes.insert(snapshot_inode);
                     }
                 }
