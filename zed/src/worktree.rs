@@ -282,8 +282,6 @@ impl Snapshot {
 
             *children = new_children.into();
             edits.push(Edit::Insert(parent_entry));
-        } else {
-            unreachable!();
         }
 
         if let Some(entry_inode) = entry_inode {
@@ -1153,11 +1151,24 @@ mod tests {
                     .filter(|d| !d.starts_with(old_path))
                     .choose(rng)
                     .unwrap();
-                let new_path = new_path_parent.join(gen_name(rng));
+
+                let overwrite_existing_dir =
+                    !old_path.starts_with(&new_path_parent) && rng.gen_bool(0.3);
+                let new_path = if overwrite_existing_dir {
+                    fs::remove_dir_all(&new_path_parent).ok();
+                    new_path_parent.to_path_buf()
+                } else {
+                    new_path_parent.join(gen_name(rng))
+                };
 
                 log::info!(
-                    "Renaming {:?} to {:?}",
+                    "Renaming {:?} to {}{:?}",
                     old_path.strip_prefix(&root_path)?,
+                    if overwrite_existing_dir {
+                        "overwrite "
+                    } else {
+                        ""
+                    },
                     new_path.strip_prefix(&root_path)?
                 );
                 fs::rename(&old_path, &new_path)?;
