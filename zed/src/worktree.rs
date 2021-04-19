@@ -1194,10 +1194,6 @@ mod tests {
 
     #[test]
     fn test_random() {
-        if let Ok(true) = env::var("LOG").map(|l| l.parse().unwrap()) {
-            SimpleLogger::init(LevelFilter::Info, Default::default()).unwrap();
-        }
-
         let iterations = env::var("ITERATIONS")
             .map(|i| i.parse().unwrap())
             .unwrap_or(100);
@@ -1208,6 +1204,8 @@ mod tests {
             .map(|o| o.parse().unwrap())
             .unwrap_or(20);
         let seeds = if let Ok(seed) = env::var("SEED").map(|s| s.parse().unwrap()) {
+            // Init logging so that we can debug the operations for this seed.
+            SimpleLogger::init(LevelFilter::Info, Default::default()).unwrap();
             seed..seed + 1
         } else {
             0..iterations
