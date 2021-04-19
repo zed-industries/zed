@@ -260,18 +260,19 @@ impl Snapshot {
         let mut edits = Vec::new();
         edits.push(Edit::Insert(entry.clone()));
         if let Some(parent) = entry.parent() {
-            let mut parent_entry = self.entries.get(&parent).unwrap().clone();
-            if let Entry::Dir { children, .. } = &mut parent_entry {
-                let name = Arc::from(path.file_name().unwrap());
-                *children = children
-                    .into_iter()
-                    .cloned()
-                    .chain(Some((entry.inode(), name)))
-                    .collect::<Vec<_>>()
-                    .into();
-                edits.push(Edit::Insert(parent_entry));
-            } else {
-                unreachable!();
+            if let Some(mut parent_entry) = self.entries.get(&parent).cloned() {
+                if let Entry::Dir { children, .. } = &mut parent_entry {
+                    let name = Arc::from(path.file_name().unwrap());
+                    *children = children
+                        .into_iter()
+                        .cloned()
+                        .chain(Some((entry.inode(), name)))
+                        .collect::<Vec<_>>()
+                        .into();
+                    edits.push(Edit::Insert(parent_entry));
+                } else {
+                    unreachable!();
+                }
             }
         }
         self.entries.edit(edits);
@@ -500,16 +501,7 @@ impl BackgroundScanner {
     }
 
     fn run(&self) {
-        let path = {
-            let mut snapshot = self.snapshot.lock();
-            let canonical_path = snapshot
-                .path
-                .canonicalize()
-                .map(Arc::from)
-                .unwrap_or_else(|_| snapshot.path.clone());
-            snapshot.path = canonical_path.clone();
-            canonical_path
-        };
+        let path = self.snapshot.lock().path.clone();
 
         // Create the event stream before we start scanning to ensure we receive events for changes
         // that occur in the middle of the scan.
@@ -699,15 +691,19 @@ impl BackgroundScanner {
 
     fn process_events(&self, mut events: Vec<fsevent::Event>) {
         let mut snapshot = self.snapshot();
+        let root_path = snapshot
+            .path
+            .canonicalize()
+            .unwrap_or_else(|_| snapshot.path.to_path_buf());
 
         events.sort_unstable_by(|a, b| a.path.cmp(&b.path));
         let mut paths = events.into_iter().map(|e| e.path).peekable();
         let (scan_queue_tx, scan_queue_rx) = crossbeam_channel::unbounded();
         while let Some(path) = paths.next() {
-            let relative_path = match path.strip_prefix(&snapshot.path) {
+            let relative_path = match path.strip_prefix(&root_path) {
                 Ok(relative_path) => relative_path.to_path_buf(),
-                Err(e) => {
-                    log::error!("unexpected event {:?}", e);
+                Err(_) => {
+                    log::error!("unexpected event {:?} for root path {:?}", path, root_path);
                     continue;
                 }
             };
@@ -718,7 +714,7 @@ impl BackgroundScanner {
 
             snapshot.remove_entry(&relative_path);
 
-            match self.fs_entry_for_path(&snapshot.path, &path) {
+            match self.fs_entry_for_path(&root_path, &path) {
                 Ok(Some((fs_entry, ignore))) => {
                     snapshot.insert_entry(&path, fs_entry.clone());
 
@@ -977,61 +973,49 @@ mod tests {
     #[test]
     fn test_rescan() {
         App::test_async((), |mut app| async move {
-            let dir2 = temp_tree(json!({
-                "dir1": {
-                    "dir3": {
-                        "file": "contents",
-                    }
-                },
-                "dir2": {
-                }
-            }));
             let dir = temp_tree(json!({
                 "dir1": {
-                    "dir3": {
-                        "file": "contents",
-                    }
+                    "file1": "contents 1",
                 },
                 "dir2": {
+                    "dir3": {
+                        "file2": "contents 2",
+                    }
                 }
             }));
 
             let tree = app.add_model(|ctx| Worktree::new(dir.path(), ctx));
-            assert_condition(1, 300, || app.read(|ctx| tree.read(ctx).file_count() == 1)).await;
+            assert_condition(1, 300, || app.read(|ctx| tree.read(ctx).file_count() == 2)).await;
 
-            let dir_inode = app.read(|ctx| {
+            let file2_inode = app.read(|ctx| {
                 tree.read(ctx)
                     .snapshot()
-                    .inode_for_path("dir1/dir3")
+                    .inode_for_path("dir2/dir3/file2")
                     .unwrap()
             });
             app.read(|ctx| {
                 let tree = tree.read(ctx);
                 assert_eq!(
-                    tree.path_for_inode(dir_inode, false)
+                    tree.path_for_inode(file2_inode, false)
                         .unwrap()
                         .to_str()
                         .unwrap(),
-                    "dir1/dir3"
+                    "dir2/dir3/file2"
                 );
             });
 
-            std::fs::rename(dir2.path(), dir.path().join("foo")).unwrap();
+            std::fs::rename(dir.path().join("dir2/dir3"), dir.path().join("dir4")).unwrap();
             assert_condition(1, 300, || {
                 app.read(|ctx| {
                     let tree = tree.read(ctx);
-                    tree.path_for_inode(dir_inode, false)
+                    tree.path_for_inode(file2_inode, false)
                         .unwrap()
                         .to_str()
                         .unwrap()
-                        == "dir2/dir3"
+                        == "dir4/file2"
                 })
             })
             .await;
-            app.read(|ctx| {
-                let tree = tree.read(ctx);
-                assert_eq!(tree.snapshot().inode_for_path("dir2/dir3"), Some(dir_inode));
-            });
         });
     }
 
@@ -1112,7 +1096,8 @@ mod tests {
         insertion_probability: f64,
         rng: &mut impl Rng,
     ) -> Result<Vec<fsevent::Event>> {
-        let (dirs, files) = read_dir_recursive(root_path.to_path_buf());
+        let root_path = root_path.canonicalize().unwrap();
+        let (dirs, files) = read_dir_recursive(root_path.clone());
 
         let mut events = Vec::new();
         let mut record_event = |path: PathBuf| {
