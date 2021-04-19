@@ -128,12 +128,11 @@ where
 
                         let skipped_prefix_len = if include_root_name {
                             0
-                        } else if let Some(Entry::Dir { name, .. }) = snapshot.root_entry() {
-                            let name = name.to_string_lossy();
-                            if name == "/" {
-                                1
+                        } else if let Some(Entry::Dir { .. }) = snapshot.root_entry() {
+                            if let Some(name) = snapshot.root_name() {
+                                name.to_string_lossy().chars().count() + 1
                             } else {
-                                name.chars().count() + 1
+                                1
                             }
                         } else {
                             0

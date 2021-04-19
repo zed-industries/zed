@@ -12,7 +12,7 @@ use gpui::{scoped_pool, AppContext, Entity, ModelContext, ModelHandle, Task};
 use ignore::dir::{Ignore, IgnoreBuilder};
 use parking_lot::Mutex;
 use smol::{channel::Sender, Timer};
-use std::{collections::HashSet, future::Future};
+use std::future::Future;
 use std::{
     ffi::OsStr,
     fmt, fs,
@@ -204,15 +204,18 @@ impl Snapshot {
         self.root_inode.and_then(|inode| self.entries.get(&inode))
     }
 
+    pub fn root_name(&self) -> Option<&OsStr> {
+        self.path.file_name()
+    }
+
     fn inode_for_path(&self, path: impl AsRef<Path>) -> Option<u64> {
         let path = path.as_ref();
         self.root_inode.and_then(|mut inode| {
             'components: for path_component in path {
                 if let Some(Entry::Dir { children, .. }) = &self.entries.get(&inode) {
-                    for child in children.as_ref() {
-                        if self.entries.get(child).map(|entry| entry.name()) == Some(path_component)
-                        {
-                            inode = *child;
+                    for (child_inode, name) in children.as_ref() {
+                        if name.as_ref() == path_component {
+                            inode = *child_inode;
                             continue 'components;
                         }
                     }
@@ -228,183 +231,91 @@ impl Snapshot {
             .and_then(|inode| self.entries.get(&inode))
     }
 
-    pub fn path_for_inode(&self, ino: u64, include_root: bool) -> Result<PathBuf> {
+    pub fn path_for_inode(&self, mut ino: u64, include_root: bool) -> Result<PathBuf> {
         let mut components = Vec::new();
         let mut entry = self
             .entries
             .get(&ino)
             .ok_or_else(|| anyhow!("entry does not exist in worktree"))?;
-        components.push(entry.name());
         while let Some(parent) = entry.parent() {
             entry = self.entries.get(&parent).unwrap();
-            components.push(entry.name());
+            if let Entry::Dir { children, .. } = entry {
+                let (_, child_name) = children
+                    .iter()
+                    .find(|(child_inode, _)| *child_inode == ino)
+                    .unwrap();
+                components.push(child_name.as_ref());
+                ino = parent;
+            } else {
+                unreachable!();
+            }
+        }
+        if include_root {
+            components.push(self.path.file_name().unwrap());
         }
 
-        let mut components = components.into_iter().rev();
-        if !include_root {
-            components.next();
-        }
-
-        let mut path = PathBuf::new();
-        for component in components {
-            path.push(component);
-        }
-        Ok(path)
+        Ok(components.into_iter().rev().collect())
     }
 
-    fn remove_entry(&mut self, inode: u64) {
-        if let Some(entry) = self.entries.get(&inode).cloned() {
+    fn remove_path(&mut self, path: &Path) {
+        if let Some(parent_path) = path.parent() {
             let mut edits = Vec::new();
 
-            if let Some(parent) = entry.parent() {
-                let mut parent_entry = self.entries.get(&parent).unwrap().clone();
-                if let Entry::Dir { children, .. } = &mut parent_entry {
-                    *children = children
-                        .into_iter()
-                        .copied()
-                        .filter(|child| *child != entry.inode())
-                        .collect::<Vec<_>>()
-                        .into();
-                    edits.push(Edit::Insert(parent_entry));
-                } else {
-                    unreachable!();
+            let mut parent_entry = self.entry_for_path(parent_path).unwrap().clone();
+            let parent_inode = parent_entry.inode();
+            let mut entry_inode = None;
+            if let Entry::Dir { children, .. } = &mut parent_entry {
+                let mut new_children = Vec::new();
+                for (child_inode, child_name) in children.as_ref() {
+                    if Some(child_name.as_ref()) == path.file_name() {
+                        entry_inode = Some(*child_inode);
+                    } else {
+                        new_children.push((*child_inode, child_name.clone()));
+                    }
                 }
+
+                if new_children.iter().any(|c| Some(c.0) == entry_inode) {
+                    entry_inode = None;
+                }
+
+                dbg!(&children, &new_children, entry_inode, parent_inode);
+                *children = new_children.into();
+                edits.push(Edit::Insert(parent_entry));
+            } else {
+                unreachable!();
             }
 
-            // Recursively remove the orphaned nodes' descendants.
-            let mut descendant_stack = vec![entry.inode()];
-            while let Some(inode) = descendant_stack.pop() {
-                if let Some(entry) = self.entries.get(&inode) {
-                    edits.push(Edit::Remove(inode));
-                    if let Entry::Dir { children, .. } = entry {
-                        descendant_stack.extend_from_slice(children.as_ref());
+            if let Some(entry_inode) = entry_inode {
+                let entry = self.entries.get(&entry_inode).unwrap();
+
+                // Recursively remove the orphaned nodes' descendants.
+                let mut descendant_stack = Vec::new();
+                if entry.parent() == Some(parent_inode) {
+                    descendant_stack.push(entry_inode);
+                    while let Some(inode) = descendant_stack.pop() {
+                        if let Some(entry) = self.entries.get(&inode) {
+                            edits.push(Edit::Remove(inode));
+                            if let Entry::Dir { children, .. } = entry {
+                                descendant_stack.extend(children.iter().map(|c| c.0));
+                            }
+                        }
                     }
                 }
             }
 
-            // dbg!(&edits);
             self.entries.edit(edits);
         }
     }
 
-    fn move_entry(
-        &mut self,
-        child_inode: u64,
-        new_path: Option<&Path>,
-        old_parent_inode: Option<u64>,
-        new_parent_inode: Option<u64>,
-    ) {
-        let mut edits_len = 1;
-        if old_parent_inode.is_some() {
-            edits_len += 1;
-        }
-        if new_parent_inode.is_some() {
-            edits_len += 1;
-        }
-        let mut deletions = Vec::with_capacity(edits_len);
-        let mut insertions = Vec::with_capacity(edits_len);
-
-        // Remove the entries from the sum tree.
-        deletions.push(Edit::Remove(child_inode));
-        if old_parent_inode != new_parent_inode {
-            if let Some(old_parent_inode) = old_parent_inode {
-                deletions.push(Edit::Remove(old_parent_inode));
-            }
-            if let Some(new_parent_inode) = new_parent_inode {
-                deletions.push(Edit::Remove(new_parent_inode));
-            }
-        }
-        let removed_entries = self.entries.edit(deletions);
-        let mut child_entry = None;
-        let mut old_parent_entry = None;
-        let mut new_parent_entry = None;
-        for removed_entry in removed_entries {
-            if removed_entry.inode() == child_inode {
-                child_entry = Some(removed_entry);
-            } else if Some(removed_entry.inode()) == old_parent_inode {
-                old_parent_entry = Some(removed_entry);
-            } else if Some(removed_entry.inode()) == new_parent_inode {
-                new_parent_entry = Some(removed_entry);
-            }
-        }
-
-        // Update the child entry's parent.
-        let mut child_entry = child_entry.expect("cannot move non-existent entry");
-        child_entry.set_parent(new_parent_inode);
-        if let Some(new_path) = new_path {
-            let new_path = new_path.strip_prefix(self.path.parent().unwrap()).unwrap();
-            child_entry.set_name(new_path.file_name().unwrap());
-
-            // Recompute the PathEntry for each file under this subtree.
-            let mut stack = Vec::new();
-            stack.push((child_entry, new_path.parent().unwrap().to_path_buf()));
-            while let Some((mut entry, mut new_path)) = stack.pop() {
-                new_path.push(entry.name());
-                match &mut entry {
-                    Entry::Dir {
-                        children, inode, ..
-                    } => {
-                        for child_inode in children.as_ref() {
-                            let child_entry = self.entries.get(child_inode).unwrap();
-                            stack.push((child_entry.clone(), new_path.clone()));
-                        }
-
-                        // Descendant directories don't need to be mutated because their properties
-                        // haven't changed, so only re-insert this directory if it is the top entry
-                        // we were moving.
-                        if *inode == child_inode {
-                            insertions.push(Edit::Insert(entry));
-                        }
-                    }
-                    Entry::File {
-                        inode,
-                        is_ignored,
-                        path,
-                        ..
-                    } => {
-                        *path = PathEntry::new(*inode, &new_path, *is_ignored);
-                        insertions.push(Edit::Insert(entry));
-                    }
-                }
-            }
-        } else {
-            insertions.push(Edit::Insert(child_entry));
-        }
-
-        // Remove the child entry from its old parent's children.
-        if let Some(mut old_parent_entry) = old_parent_entry {
-            if let Entry::Dir { children, .. } = &mut old_parent_entry {
-                *children = children
-                    .into_iter()
-                    .cloned()
-                    .filter(|c| *c != child_inode)
-                    .collect();
-                insertions.push(Edit::Insert(old_parent_entry));
-            } else {
-                panic!("snapshot entry's new parent was not a directory");
-            }
-        }
-
-        // Add the child entry to its new parent's children.
-        if let Some(mut new_parent_entry) = new_parent_entry {
-            if let Entry::Dir { children, .. } = &mut new_parent_entry {
-                *children = children
-                    .into_iter()
-                    .cloned()
-                    .chain(Some(child_inode))
-                    .collect();
-                insertions.push(Edit::Insert(new_parent_entry));
-            } else {
-                panic!("snapshot entry's new parent is not a directory");
-            }
-        }
-
-        self.entries.edit(insertions);
-    }
-
-    fn fmt_entry(&self, f: &mut fmt::Formatter<'_>, ino: u64, indent: usize) -> fmt::Result {
+    fn fmt_entry(
+        &self,
+        f: &mut fmt::Formatter<'_>,
+        ino: u64,
+        name: &OsStr,
+        indent: usize,
+    ) -> fmt::Result {
         match self.entries.get(&ino).unwrap() {
-            Entry::Dir { name, children, .. } => {
+            Entry::Dir { children, .. } => {
                 write!(
                     f,
                     "{}{}/ ({})\n",
@@ -412,12 +323,12 @@ impl Snapshot {
                     name.to_string_lossy(),
                     ino
                 )?;
-                for child_id in children.iter() {
-                    self.fmt_entry(f, *child_id, indent + 2)?;
+                for (child_inode, child_name) in children.iter() {
+                    self.fmt_entry(f, *child_inode, child_name, indent + 2)?;
                 }
                 Ok(())
             }
-            Entry::File { name, .. } => write!(
+            Entry::File { .. } => write!(
                 f,
                 "{}{} ({})\n",
                 " ".repeat(indent),
@@ -431,7 +342,7 @@ impl Snapshot {
 impl fmt::Debug for Snapshot {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         if let Some(root_ino) = self.root_inode {
-            self.fmt_entry(f, root_ino, 0)
+            self.fmt_entry(f, root_ino, self.path.file_name().unwrap(), 0)
         } else {
             write!(f, "Empty tree\n")
         }
@@ -464,16 +375,14 @@ impl FileHandle {
 pub enum Entry {
     Dir {
         parent: Option<u64>,
-        name: Arc<OsStr>,
         inode: u64,
         is_symlink: bool,
         is_ignored: bool,
-        children: Arc<[u64]>,
+        children: Arc<[(u64, Arc<OsStr>)]>,
         pending: bool,
     },
     File {
         parent: Option<u64>,
-        name: Arc<OsStr>,
         path: PathEntry,
         inode: u64,
         is_symlink: bool,
@@ -497,27 +406,6 @@ impl Entry {
         match self {
             Entry::Dir { parent, .. } => *parent,
             Entry::File { parent, .. } => *parent,
-        }
-    }
-
-    fn set_parent(&mut self, new_parent: Option<u64>) {
-        match self {
-            Entry::Dir { parent, .. } => *parent = new_parent,
-            Entry::File { parent, .. } => *parent = new_parent,
-        }
-    }
-
-    fn name(&self) -> &OsStr {
-        match self {
-            Entry::Dir { name, .. } => name,
-            Entry::File { name, .. } => name,
-        }
-    }
-
-    fn set_name(&mut self, new_name: &OsStr) {
-        match self {
-            Entry::Dir { name, .. } => *name = new_name.into(),
-            Entry::File { name, .. } => *name = new_name.into(),
         }
     }
 }
@@ -660,7 +548,6 @@ impl BackgroundScanner {
             let is_ignored = is_ignored || name.as_ref() == ".git";
             let dir_entry = Entry::Dir {
                 parent: None,
-                name,
                 inode,
                 is_symlink,
                 is_ignored,
@@ -702,7 +589,6 @@ impl BackgroundScanner {
         } else {
             self.insert_entries(Some(Entry::File {
                 parent: None,
-                name,
                 path: PathEntry::new(inode, &relative_path, is_ignored),
                 inode,
                 is_symlink,
@@ -731,7 +617,7 @@ impl BackgroundScanner {
             let is_symlink = metadata.file_type().is_symlink();
             let path = job.path.join(name.as_ref());
 
-            new_children.push(ino);
+            new_children.push((ino, name.clone()));
             if metadata.is_dir() {
                 let mut is_ignored = true;
                 let mut ignore = None;
@@ -747,7 +633,6 @@ impl BackgroundScanner {
 
                 let dir_entry = Entry::Dir {
                     parent: Some(job.inode),
-                    name,
                     inode: ino,
                     is_symlink,
                     is_ignored,
@@ -770,7 +655,6 @@ impl BackgroundScanner {
                     .map_or(true, |i| i.matched(&path, false).is_ignore());
                 new_entries.push(Entry::File {
                     parent: Some(job.inode),
-                    name,
                     path: PathEntry::new(ino, &relative_path, is_ignored),
                     inode: ino,
                     is_symlink,
@@ -818,24 +702,22 @@ impl BackgroundScanner {
                 paths.next();
             }
 
-            if let Some(snapshot_inode) = snapshot.inode_for_path(&relative_path) {
-                snapshot.remove_entry(snapshot_inode);
-            }
+            snapshot.remove_path(&relative_path);
 
             match self.fs_entry_for_path(&snapshot.path, &path) {
                 Ok(Some((fs_entry, ignore))) => {
-                    snapshot.remove_entry(fs_entry.inode());
-
+                    // snapshot.remove_entry(fs_entry.inode());
                     let mut edits = Vec::new();
                     edits.push(Edit::Insert(fs_entry.clone()));
                     if let Some(parent) = fs_entry.parent() {
                         let mut parent_entry = snapshot.entries.get(&parent).unwrap().clone();
                         if let Entry::Dir { children, .. } = &mut parent_entry {
-                            if !children.contains(&fs_entry.inode()) {
+                            if !children.iter().any(|c| c.0 == fs_entry.inode()) {
+                                let name = Arc::from(path.file_name().unwrap());
                                 *children = children
                                     .into_iter()
-                                    .copied()
-                                    .chain(Some(fs_entry.inode()))
+                                    .cloned()
+                                    .chain(Some((fs_entry.inode(), name)))
                                     .collect::<Vec<_>>()
                                     .into();
                                 edits.push(Edit::Insert(parent_entry));
@@ -899,7 +781,6 @@ impl BackgroundScanner {
                 let is_ignored = ignore.matched(&path, metadata.is_dir()).is_ignore();
 
                 let inode = metadata.ino();
-                let name: Arc<OsStr> = Arc::from(path.file_name().unwrap_or(OsStr::new("/")));
                 let is_symlink = fs::symlink_metadata(&path)?.file_type().is_symlink();
                 let parent = if path == root_path {
                     None
@@ -910,7 +791,6 @@ impl BackgroundScanner {
                     Ok(Some((
                         Entry::Dir {
                             parent,
-                            name,
                             inode,
                             is_symlink,
                             is_ignored,
@@ -923,7 +803,6 @@ impl BackgroundScanner {
                     Ok(Some((
                         Entry::File {
                             parent,
-                            name,
                             path: PathEntry::new(
                                 inode,
                                 root_path
@@ -1349,7 +1228,7 @@ mod tests {
                 let computed_path = self.path_for_inode(inode, true).unwrap();
                 match self.entries.get(&inode).unwrap() {
                     Entry::Dir { children, .. } => {
-                        stack.extend_from_slice(children);
+                        stack.extend(children.iter().map(|c| c.0));
                     }
                     Entry::File { path, .. } => {
                         assert_eq!(
