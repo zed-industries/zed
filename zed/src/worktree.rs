@@ -255,7 +255,7 @@ impl Snapshot {
     fn reparent_entry(
         &mut self,
         child_inode: u64,
-        new_filename: Option<&OsStr>,
+        new_path: Option<&Path>,
         old_parent_inode: Option<u64>,
         new_parent_inode: Option<u64>,
     ) {
@@ -282,11 +282,11 @@ impl Snapshot {
         let mut old_parent_entry = None;
         let mut new_parent_entry = None;
         for removed_entry in removed_entries {
-            if removed_entry.ino() == child_inode {
+            if removed_entry.inode() == child_inode {
                 child_entry = Some(removed_entry);
-            } else if Some(removed_entry.ino()) == old_parent_inode {
+            } else if Some(removed_entry.inode()) == old_parent_inode {
                 old_parent_entry = Some(removed_entry);
-            } else if Some(removed_entry.ino()) == new_parent_inode {
+            } else if Some(removed_entry.inode()) == new_parent_inode {
                 new_parent_entry = Some(removed_entry);
             }
         }
@@ -294,12 +294,47 @@ impl Snapshot {
         // Update the child entry's parent.
         let mut child_entry = child_entry.expect("cannot reparent non-existent entry");
         child_entry.set_parent(new_parent_inode);
-        if let Some(new_filename) = new_filename {
-            child_entry.set_name(new_filename);
-        }
-        insertions.push(Edit::Insert(child_entry));
+        if let Some(new_path) = new_path {
+            let new_path = new_path.strip_prefix(self.path.parent().unwrap()).unwrap();
+            child_entry.set_name(new_path.file_name().unwrap());
 
-        // Remove the child entry from it's old parent's children.
+            // Recompute the PathEntry for each file under this subtree.
+            let mut stack = Vec::new();
+            stack.push((child_entry, new_path.parent().unwrap().to_path_buf()));
+            while let Some((mut entry, mut new_path)) = stack.pop() {
+                new_path.push(entry.name());
+                match &mut entry {
+                    Entry::Dir {
+                        children, inode, ..
+                    } => {
+                        for child_inode in children.as_ref() {
+                            let child_entry = self.entries.get(child_inode).unwrap();
+                            stack.push((child_entry.clone(), new_path.clone()));
+                        }
+
+                        // Descendant directories don't need to be mutated because their properties
+                        // haven't changed, so only re-insert this directory if it is the entry we
+                        // were reparenting.
+                        if *inode == child_inode {
+                            insertions.push(Edit::Insert(entry));
+                        }
+                    }
+                    Entry::File {
+                        inode,
+                        is_ignored,
+                        path,
+                        ..
+                    } => {
+                        *path = PathEntry::new(*inode, &new_path, *is_ignored);
+                        insertions.push(Edit::Insert(entry));
+                    }
+                }
+            }
+        } else {
+            insertions.push(Edit::Insert(child_entry));
+        }
+
+        // Remove the child entry from its old parent's children.
         if let Some(mut old_parent_entry) = old_parent_entry {
             if let Entry::Dir { children, .. } = &mut old_parent_entry {
                 *children = children
@@ -313,7 +348,7 @@ impl Snapshot {
             }
         }
 
-        // Add the child entry to it's new parent's children.
+        // Add the child entry to its new parent's children.
         if let Some(mut new_parent_entry) = new_parent_entry {
             if let Entry::Dir { children, .. } = &mut new_parent_entry {
                 *children = children
@@ -410,7 +445,7 @@ pub enum Entry {
 }
 
 impl Entry {
-    fn ino(&self) -> u64 {
+    fn inode(&self) -> u64 {
         match self {
             Entry::Dir { inode, .. } => *inode,
             Entry::File { inode, .. } => *inode,
@@ -455,7 +490,7 @@ impl sum_tree::Item for Entry {
 
     fn summary(&self) -> Self::Summary {
         EntrySummary {
-            max_ino: self.ino(),
+            max_ino: self.inode(),
             file_count: if matches!(self, Self::File { .. }) {
                 1
             } else {
@@ -469,7 +504,7 @@ impl sum_tree::KeyedItem for Entry {
     type Key = u64;
 
     fn key(&self) -> Self::Key {
-        self.ino()
+        self.inode()
     }
 }
 
@@ -753,13 +788,13 @@ impl BackgroundScanner {
                 // If this path currently exists on the filesystem, then ensure that the snapshot's
                 // entry for this path is up-to-date.
                 Ok(Some((fs_entry, ignore))) => {
-                    let fs_inode = fs_entry.ino();
+                    let fs_inode = fs_entry.inode();
                     let fs_parent_inode = fs_entry.parent();
 
                     // If the snapshot already contains an entry for this path, then ensure that the
                     // entry has the correct inode and parent.
                     if let Some(snapshot_entry) = snapshot_entry {
-                        let snapshot_inode = snapshot_entry.ino();
+                        let snapshot_inode = snapshot_entry.inode();
                         let snapshot_parent_inode = snapshot_entry.parent();
 
                         // If the snapshot entry already matches the filesystem, then skip to the
@@ -781,7 +816,7 @@ impl BackgroundScanner {
                         let snapshot_parent_inode = snapshot_entry_for_inode.parent();
                         snapshot.reparent_entry(
                             fs_inode,
-                            path.file_name(),
+                            Some(&path),
                             snapshot_parent_inode,
                             fs_parent_inode,
                         );
@@ -825,7 +860,7 @@ impl BackgroundScanner {
                 // If this path no longer exists on the filesystem, then remove it from the snapshot.
                 Ok(None) => {
                     if let Some(snapshot_entry) = snapshot_entry {
-                        let snapshot_inode = snapshot_entry.ino();
+                        let snapshot_inode = snapshot_entry.inode();
                         let snapshot_parent_inode = snapshot_entry.parent();
                         snapshot.reparent_entry(snapshot_inode, None, snapshot_parent_inode, None);
                         possible_removed_inodes.insert(snapshot_inode);
@@ -1167,6 +1202,9 @@ mod tests {
         let operations = env::var("OPERATIONS")
             .map(|o| o.parse().unwrap())
             .unwrap_or(40);
+        let initial_entries = env::var("INITIAL_ENTRIES")
+            .map(|o| o.parse().unwrap())
+            .unwrap_or(20);
         let seeds = if let Ok(seed) = env::var("SEED").map(|s| s.parse().unwrap()) {
             seed..seed + 1
         } else {
@@ -1178,7 +1216,7 @@ mod tests {
             let mut rng = StdRng::seed_from_u64(seed);
 
             let root_dir = tempdir::TempDir::new(&format!("test-{}", seed)).unwrap();
-            for _ in 0..20 {
+            for _ in 0..initial_entries {
                 randomly_mutate_tree(root_dir.path(), 1.0, &mut rng).unwrap();
             }
             log::info!("Generated initial tree");
@@ -1201,12 +1239,14 @@ mod tests {
                 if !events.is_empty() && rng.gen_bool(0.4) {
                     let len = rng.gen_range(0..=events.len());
                     let to_deliver = events.drain(0..len).collect::<Vec<_>>();
+                    log::info!("Delivering events: {:#?}", to_deliver);
                     scanner.process_events(to_deliver);
                 } else {
                     events.extend(randomly_mutate_tree(root_dir.path(), 0.6, &mut rng).unwrap());
                     mutations_len -= 1;
                 }
             }
+            log::info!("Quiescing: {:#?}", events);
             scanner.process_events(events);
 
             let (notify_tx, _notify_rx) = smol::channel::unbounded();
