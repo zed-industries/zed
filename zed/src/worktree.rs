@@ -252,6 +252,41 @@ impl Snapshot {
         Ok(path)
     }
 
+    fn remove_entry(&mut self, inode: u64) {
+        if let Some(entry) = self.entries.get(&inode).cloned() {
+            let mut edits = Vec::new();
+
+            if let Some(parent) = entry.parent() {
+                let mut parent_entry = self.entries.get(&parent).unwrap().clone();
+                if let Entry::Dir { children, .. } = &mut parent_entry {
+                    *children = children
+                        .into_iter()
+                        .copied()
+                        .filter(|child| *child != entry.inode())
+                        .collect::<Vec<_>>()
+                        .into();
+                    edits.push(Edit::Insert(parent_entry));
+                } else {
+                    unreachable!();
+                }
+            }
+
+            // Recursively remove the orphaned nodes' descendants.
+            let mut descendant_stack = vec![entry.inode()];
+            while let Some(inode) = descendant_stack.pop() {
+                if let Some(entry) = self.entries.get(&inode) {
+                    edits.push(Edit::Remove(inode));
+                    if let Entry::Dir { children, .. } = entry {
+                        descendant_stack.extend_from_slice(children.as_ref());
+                    }
+                }
+            }
+
+            // dbg!(&edits);
+            self.entries.edit(edits);
+        }
+    }
+
     fn move_entry(
         &mut self,
         child_inode: u64,
@@ -638,7 +673,7 @@ impl BackgroundScanner {
             let (tx, rx) = crossbeam_channel::unbounded();
 
             tx.send(Ok(ScanJob {
-                ino: inode,
+                inode,
                 path: path.clone(),
                 relative_path,
                 dir_entry,
@@ -655,7 +690,7 @@ impl BackgroundScanner {
                     pool.execute(|| {
                         let result = result;
                         while let Ok(job) = rx.recv() {
-                            if let Err(err) = job.and_then(|job| self.scan_dir(job, None)) {
+                            if let Err(err) = job.and_then(|job| self.scan_dir(job)) {
                                 *result = Err(err);
                                 break;
                             }
@@ -679,7 +714,7 @@ impl BackgroundScanner {
         Ok(())
     }
 
-    fn scan_dir(&self, job: ScanJob, mut children: Option<&mut Vec<u64>>) -> io::Result<()> {
+    fn scan_dir(&self, job: ScanJob) -> io::Result<()> {
         let scan_queue = job.scan_queue;
         let mut dir_entry = job.dir_entry;
 
@@ -697,9 +732,6 @@ impl BackgroundScanner {
             let path = job.path.join(name.as_ref());
 
             new_children.push(ino);
-            if let Some(children) = children.as_mut() {
-                children.push(ino);
-            }
             if metadata.is_dir() {
                 let mut is_ignored = true;
                 let mut ignore = None;
@@ -714,7 +746,7 @@ impl BackgroundScanner {
                 }
 
                 let dir_entry = Entry::Dir {
-                    parent: Some(job.ino),
+                    parent: Some(job.inode),
                     name,
                     inode: ino,
                     is_symlink,
@@ -724,7 +756,7 @@ impl BackgroundScanner {
                 };
                 new_entries.push(dir_entry.clone());
                 new_jobs.push(ScanJob {
-                    ino,
+                    inode: ino,
                     path: Arc::from(path),
                     relative_path,
                     dir_entry,
@@ -737,7 +769,7 @@ impl BackgroundScanner {
                     .as_ref()
                     .map_or(true, |i| i.matched(&path, false).is_ignore());
                 new_entries.push(Entry::File {
-                    parent: Some(job.ino),
+                    parent: Some(job.inode),
                     name,
                     path: PathEntry::new(ino, &relative_path, is_ignored),
                     inode: ino,
@@ -771,9 +803,7 @@ impl BackgroundScanner {
 
         events.sort_unstable_by(|a, b| a.path.cmp(&b.path));
         let mut paths = events.into_iter().map(|e| e.path).peekable();
-        let mut possible_removed_inodes = HashSet::new();
         let (scan_queue_tx, scan_queue_rx) = crossbeam_channel::unbounded();
-
         while let Some(path) = paths.next() {
             let relative_path = match path.strip_prefix(&snapshot.path) {
                 Ok(relative_path) => relative_path.to_path_buf(),
@@ -782,145 +812,81 @@ impl BackgroundScanner {
                     continue;
                 }
             };
+            // dbg!(&path, &relative_path, snapshot.entries.items());
 
-            let snapshot_entry = snapshot.entry_for_path(&relative_path);
-            let fs_entry = self.fs_entry_for_path(&snapshot.path, &path);
+            while paths.peek().map_or(false, |p| p.starts_with(&path)) {
+                paths.next();
+            }
 
-            match fs_entry {
-                // If this path currently exists on the filesystem, then ensure that the snapshot's
-                // entry for this path is up-to-date.
+            if let Some(snapshot_inode) = snapshot.inode_for_path(&relative_path) {
+                snapshot.remove_entry(snapshot_inode);
+            }
+
+            match self.fs_entry_for_path(&snapshot.path, &path) {
                 Ok(Some((fs_entry, ignore))) => {
-                    let fs_inode = fs_entry.inode();
-                    let fs_parent_inode = fs_entry.parent();
+                    snapshot.remove_entry(fs_entry.inode());
 
-                    // If the snapshot already contains an entry for this path, then ensure that the
-                    // entry has the correct inode and parent.
-                    if let Some(snapshot_entry) = snapshot_entry {
-                        let snapshot_inode = snapshot_entry.inode();
-                        let snapshot_parent_inode = snapshot_entry.parent();
-
-                        // If the snapshot entry already matches the filesystem, then skip to the
-                        // next event path.
-                        if snapshot_inode == fs_inode && snapshot_parent_inode == fs_parent_inode {
-                            continue;
-                        }
-
-                        // If it does not match, then detach this inode from its current parent, and
-                        // record that it may have been removed from the worktree.
-                        snapshot.move_entry(snapshot_inode, None, snapshot_parent_inode, None);
-                        possible_removed_inodes.insert(snapshot_inode);
-                    }
-
-                    // If the snapshot already contained an entry for the inode that is now located
-                    // at this path in the filesystem, then move it to reflect its current parent on
-                    // the filesystem.
-                    if let Some(snapshot_entry_for_inode) = snapshot.entries.get(&fs_inode) {
-                        let snapshot_parent_inode = snapshot_entry_for_inode.parent();
-                        snapshot.move_entry(
-                            fs_inode,
-                            Some(&path),
-                            snapshot_parent_inode,
-                            fs_parent_inode,
-                        );
-                    }
-                    // If the snapshot has no entry for this inode, then scan the filesystem to find
-                    // all descendents of this new inode. Discard any subsequent events that are
-                    // contained by the current path, since the directory is already being scanned
-                    // from scratch.
-                    else {
-                        while let Some(next_path) = paths.peek() {
-                            if next_path.starts_with(&path) {
-                                paths.next();
-                            } else {
-                                break;
+                    let mut edits = Vec::new();
+                    edits.push(Edit::Insert(fs_entry.clone()));
+                    if let Some(parent) = fs_entry.parent() {
+                        let mut parent_entry = snapshot.entries.get(&parent).unwrap().clone();
+                        if let Entry::Dir { children, .. } = &mut parent_entry {
+                            if !children.contains(&fs_entry.inode()) {
+                                *children = children
+                                    .into_iter()
+                                    .copied()
+                                    .chain(Some(fs_entry.inode()))
+                                    .collect::<Vec<_>>()
+                                    .into();
+                                edits.push(Edit::Insert(parent_entry));
                             }
-                        }
-
-                        snapshot.entries.insert(fs_entry.clone());
-                        snapshot.move_entry(fs_inode, None, None, fs_parent_inode);
-
-                        if fs_entry.is_dir() {
-                            let relative_path = snapshot
-                                .path
-                                .parent()
-                                .map_or(path.as_path(), |parent| path.strip_prefix(parent).unwrap())
-                                .to_path_buf();
-                            scan_queue_tx
-                                .send(Ok(ScanJob {
-                                    ino: fs_inode,
-                                    path: Arc::from(path),
-                                    relative_path,
-                                    dir_entry: fs_entry,
-                                    ignore: Some(ignore),
-                                    scan_queue: scan_queue_tx.clone(),
-                                }))
-                                .unwrap();
+                        } else {
+                            unreachable!();
                         }
                     }
-                }
+                    snapshot.entries.edit(edits);
 
-                // If this path no longer exists on the filesystem, then remove it from the snapshot.
-                Ok(None) => {
-                    if let Some(snapshot_entry) = snapshot_entry {
-                        let snapshot_inode = snapshot_entry.inode();
-                        let snapshot_parent_inode = snapshot_entry.parent();
-                        snapshot.move_entry(snapshot_inode, None, snapshot_parent_inode, None);
-                        possible_removed_inodes.insert(snapshot_inode);
+                    if fs_entry.is_dir() {
+                        let relative_path = snapshot
+                            .path
+                            .parent()
+                            .map_or(path.as_path(), |parent| path.strip_prefix(parent).unwrap())
+                            .to_path_buf();
+                        scan_queue_tx
+                            .send(Ok(ScanJob {
+                                inode: fs_entry.inode(),
+                                path: Arc::from(path),
+                                relative_path,
+                                dir_entry: fs_entry,
+                                ignore: Some(ignore),
+                                scan_queue: scan_queue_tx.clone(),
+                            }))
+                            .unwrap();
                     }
                 }
-                Err(e) => {
+                Ok(None) => {}
+                Err(err) => {
                     // TODO - create a special 'error' entry in the entries tree to mark this
-                    log::error!("Error reading file on event {:?}", e);
+                    log::error!("Error reading file on event {:?}", err);
                 }
             }
         }
 
-        // For now, update the locked snapshot at this point, because `scan_dir` uses that.
         *self.snapshot.lock() = snapshot;
 
         // Scan any directories that were moved into this worktree as part of this event batch.
         drop(scan_queue_tx);
-        let mut scanned_inodes = Vec::new();
-        scanned_inodes.resize_with(self.thread_pool.workers(), || Ok(Vec::new()));
         self.thread_pool.scoped(|pool| {
-            for worker_inodes in &mut scanned_inodes {
+            for _ in 0..self.thread_pool.workers() {
                 pool.execute(|| {
-                    let worker_inodes = worker_inodes;
                     while let Ok(job) = scan_queue_rx.recv() {
-                        if let Err(err) = job.and_then(|job| {
-                            self.scan_dir(job, Some(worker_inodes.as_mut().unwrap()))
-                        }) {
-                            *worker_inodes = Err(err);
-                            break;
+                        if let Err(err) = job.and_then(|job| self.scan_dir(job)) {
+                            log::error!("Error scanning {:?}", err);
                         }
                     }
                 });
             }
         });
-
-        // Remove any entries that became orphaned when processing this events batch.
-        let mut snapshot = self.snapshot();
-        let mut deletions = Vec::new();
-        let mut descendent_stack = Vec::new();
-        for inode in possible_removed_inodes {
-            if let Some(entry) = snapshot.entries.get(&inode) {
-                if entry.parent().is_none() {
-                    descendent_stack.push(inode);
-                }
-            }
-
-            // Recursively remove the orphaned nodes' descendants.
-            while let Some(inode) = descendent_stack.pop() {
-                if let Some(entry) = snapshot.entries.get(&inode) {
-                    deletions.push(Edit::Remove(inode));
-                    if let Entry::Dir { children, .. } = entry {
-                        descendent_stack.extend_from_slice(children.as_ref());
-                    }
-                }
-            }
-        }
-        snapshot.entries.edit(deletions);
-        *self.snapshot.lock() = snapshot;
     }
 
     fn fs_entry_for_path(&self, root_path: &Path, path: &Path) -> Result<Option<(Entry, Ignore)>> {
@@ -991,8 +957,14 @@ impl BackgroundScanner {
     }
 }
 
+impl Drop for BackgroundScanner {
+    fn drop(&mut self) {
+        self.thread_pool.shutdown();
+    }
+}
+
 struct ScanJob {
-    ino: u64,
+    inode: u64,
     path: Arc<Path>,
     relative_path: PathBuf,
     dir_entry: Entry,
@@ -1260,6 +1232,7 @@ mod tests {
                 notify_tx,
             );
             new_scanner.scan_dirs().unwrap();
+            dbg!(scanner.snapshot().entries.items());
             assert_eq!(scanner.snapshot().to_vec(), new_scanner.snapshot().to_vec());
         }
     }
