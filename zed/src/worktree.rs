@@ -955,7 +955,8 @@ mod tests {
             }));
 
             let tree = app.add_model(|ctx| Worktree::new(dir.path(), ctx));
-            assert_condition(1, 300, || app.read(|ctx| tree.read(ctx).file_count() == 1)).await;
+            app.read(|ctx| tree.read(ctx).scan_complete()).await;
+            app.read(|ctx| assert_eq!(tree.read(ctx).file_count(), 1));
 
             let buffer = Buffer::new(1, "a line of text.\n".repeat(10 * 1024));
 
@@ -988,48 +989,30 @@ mod tests {
     fn test_rescan() {
         App::test_async((), |mut app| async move {
             let dir = temp_tree(json!({
-                "dir1": {
-                    "file1": "contents 1",
+                "a": {
+                    "file1": "",
                 },
-                "dir2": {
-                    "dir3": {
-                        "file2": "contents 2",
+                "b": {
+                    "c": {
+                        "file2": "",
                     }
                 }
             }));
 
             let tree = app.add_model(|ctx| Worktree::new(dir.path(), ctx));
-            assert_condition(1, 300, || app.read(|ctx| tree.read(ctx).file_count() == 2)).await;
+            app.read(|ctx| tree.read(ctx).scan_complete()).await;
+            app.read(|ctx| assert_eq!(tree.read(ctx).file_count(), 2));
 
-            let file2_inode = app.read(|ctx| {
-                tree.read(ctx)
-                    .snapshot()
-                    .inode_for_path("dir2/dir3/file2")
-                    .unwrap()
-            });
-            app.read(|ctx| {
-                let tree = tree.read(ctx);
-                assert_eq!(
-                    tree.path_for_inode(file2_inode, false)
-                        .unwrap()
-                        .to_str()
-                        .unwrap(),
-                    "dir2/dir3/file2"
-                );
+            let file2 = app.read(|ctx| {
+                let inode = tree.read(ctx).inode_for_path("b/c/file2").unwrap();
+                let file2 = tree.file(inode, ctx).unwrap();
+                assert_eq!(file2.path(ctx), Path::new("b/c/file2"));
+                file2
             });
 
-            std::fs::rename(dir.path().join("dir2/dir3"), dir.path().join("dir4")).unwrap();
-            assert_condition(1, 300, || {
-                app.read(|ctx| {
-                    let tree = tree.read(ctx);
-                    tree.path_for_inode(file2_inode, false)
-                        .unwrap()
-                        .to_str()
-                        .unwrap()
-                        == "dir4/file2"
-                })
-            })
-            .await;
+            std::fs::rename(dir.path().join("b/c"), dir.path().join("d")).unwrap();
+            tree.condition(&app, move |_, ctx| file2.path(ctx) == Path::new("d/file2"))
+                .await;
         });
     }
 
