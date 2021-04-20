@@ -37,8 +37,9 @@ enum ScanState {
 
 pub struct Worktree {
     snapshot: Snapshot,
-    scanner: Arc<BackgroundScanner>,
+    background_snapshot: Arc<Mutex<Snapshot>>,
     scan_state: (watch::Sender<ScanState>, watch::Receiver<ScanState>),
+    _event_stream_handle: fsevent::Handle,
     poll_scheduled: bool,
 }
 
@@ -50,25 +51,33 @@ pub struct FileHandle {
 
 impl Worktree {
     pub fn new(path: impl Into<Arc<Path>>, ctx: &mut ModelContext<Self>) -> Self {
-        let scan_state = smol::channel::unbounded();
+        let (scan_state_tx, scan_state_rx) = smol::channel::unbounded();
+        let id = ctx.model_id();
         let snapshot = Snapshot {
-            id: ctx.model_id(),
+            id,
             path: path.into(),
             root_inode: None,
             entries: Default::default(),
         };
-        let scanner = Arc::new(BackgroundScanner::new(snapshot.clone(), scan_state.0));
+        let (event_stream, event_stream_handle) =
+            fsevent::EventStream::new(&[snapshot.path.as_ref()], Duration::from_millis(100));
+
+        let background_snapshot = Arc::new(Mutex::new(snapshot.clone()));
+
         let tree = Self {
             snapshot,
-            scanner,
+            background_snapshot: background_snapshot.clone(),
             scan_state: watch::channel_with(ScanState::Scanning),
+            _event_stream_handle: event_stream_handle,
             poll_scheduled: false,
         };
 
-        let scanner = tree.scanner.clone();
-        std::thread::spawn(move || scanner.run());
+        std::thread::spawn(move || {
+            let scanner = BackgroundScanner::new(background_snapshot, scan_state_tx, id);
+            scanner.run(event_stream)
+        });
 
-        ctx.spawn_stream(scan_state.1, Self::observe_scan_state, |_, _| {})
+        ctx.spawn_stream(scan_state_rx, Self::observe_scan_state, |_, _| {})
             .detach();
 
         tree
@@ -90,7 +99,7 @@ impl Worktree {
     }
 
     fn poll_entries(&mut self, ctx: &mut ModelContext<Self>) {
-        self.snapshot = self.scanner.snapshot();
+        self.snapshot = self.background_snapshot.lock().clone();
         ctx.notify();
 
         if self.is_scanning() && !self.poll_scheduled {
@@ -490,17 +499,17 @@ impl<'a> sum_tree::Dimension<'a, EntrySummary> for FileCount {
 }
 
 struct BackgroundScanner {
-    snapshot: Mutex<Snapshot>,
+    snapshot: Arc<Mutex<Snapshot>>,
     notify: Sender<ScanState>,
     thread_pool: scoped_pool::Pool,
 }
 
 impl BackgroundScanner {
-    fn new(snapshot: Snapshot, notify: Sender<ScanState>) -> Self {
+    fn new(snapshot: Arc<Mutex<Snapshot>>, notify: Sender<ScanState>, worktree_id: usize) -> Self {
         Self {
-            snapshot: Mutex::new(snapshot),
+            snapshot,
             notify,
-            thread_pool: scoped_pool::Pool::new(16),
+            thread_pool: scoped_pool::Pool::new(16, format!("worktree-{}-scanner", worktree_id)),
         }
     }
 
@@ -512,28 +521,7 @@ impl BackgroundScanner {
         self.snapshot.lock().clone()
     }
 
-    fn run(&self) {
-        let path = self.snapshot.lock().path.clone();
-
-        // Create the event stream before we start scanning to ensure we receive events for changes
-        // that occur in the middle of the scan.
-        let event_stream =
-            fsevent::EventStream::new(&[path.as_ref()], Duration::from_millis(100), |events| {
-                if smol::block_on(self.notify.send(ScanState::Scanning)).is_err() {
-                    return false;
-                }
-
-                if !self.process_events(events) {
-                    return false;
-                }
-
-                if smol::block_on(self.notify.send(ScanState::Idle)).is_err() {
-                    return false;
-                }
-
-                true
-            });
-
+    fn run(self, event_stream: fsevent::EventStream) {
         if smol::block_on(self.notify.send(ScanState::Scanning)).is_err() {
             return;
         }
@@ -548,7 +536,21 @@ impl BackgroundScanner {
             return;
         }
 
-        event_stream.run();
+        event_stream.run(move |events| {
+            if smol::block_on(self.notify.send(ScanState::Scanning)).is_err() {
+                return false;
+            }
+
+            if !self.process_events(events) {
+                return false;
+            }
+
+            if smol::block_on(self.notify.send(ScanState::Idle)).is_err() {
+                return false;
+            }
+
+            true
+        });
     }
 
     fn scan_dirs(&self) -> io::Result<()> {
@@ -592,7 +594,7 @@ impl BackgroundScanner {
             drop(tx);
 
             let mut results = Vec::new();
-            results.resize_with(self.thread_pool.workers(), || Ok(()));
+            results.resize_with(self.thread_pool.thread_count(), || Ok(()));
             self.thread_pool.scoped(|pool| {
                 for result in &mut results {
                     pool.execute(|| {
@@ -762,7 +764,7 @@ impl BackgroundScanner {
         // Scan any directories that were created as part of this event batch.
         drop(scan_queue_tx);
         self.thread_pool.scoped(|pool| {
-            for _ in 0..self.thread_pool.workers() {
+            for _ in 0..self.thread_pool.thread_count() {
                 pool.execute(|| {
                     while let Ok(job) = scan_queue_rx.recv() {
                         if let Err(err) = job.and_then(|job| self.scan_dir(job)) {
@@ -841,12 +843,6 @@ impl BackgroundScanner {
             .lock()
             .entries
             .edit(entries.into_iter().map(Edit::Insert).collect::<Vec<_>>());
-    }
-}
-
-impl Drop for BackgroundScanner {
-    fn drop(&mut self) {
-        self.thread_pool.shutdown();
     }
 }
 
@@ -951,6 +947,8 @@ mod tests {
                 );
             })
         });
+
+        eprintln!("HI");
     }
 
     #[test]
@@ -1051,13 +1049,14 @@ mod tests {
 
             let (notify_tx, _notify_rx) = smol::channel::unbounded();
             let scanner = BackgroundScanner::new(
-                Snapshot {
+                Arc::new(Mutex::new(Snapshot {
                     id: 0,
                     path: root_dir.path().into(),
                     root_inode: None,
                     entries: Default::default(),
-                },
+                })),
                 notify_tx,
+                0,
             );
             scanner.scan_dirs().unwrap();
 
@@ -1079,13 +1078,14 @@ mod tests {
 
             let (notify_tx, _notify_rx) = smol::channel::unbounded();
             let new_scanner = BackgroundScanner::new(
-                Snapshot {
+                Arc::new(Mutex::new(Snapshot {
                     id: 0,
                     path: root_dir.path().into(),
                     root_inode: None,
                     entries: Default::default(),
-                },
+                })),
                 notify_tx,
+                1,
             );
             new_scanner.scan_dirs().unwrap();
             assert_eq!(scanner.snapshot().to_vec(), new_scanner.snapshot().to_vec());

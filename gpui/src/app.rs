@@ -411,7 +411,7 @@ impl MutableAppContext {
                 windows: HashMap::new(),
                 ref_counts: Arc::new(Mutex::new(RefCounts::default())),
                 background: Arc::new(executor::Background::new()),
-                thread_pool: scoped_pool::Pool::new(num_cpus::get()),
+                thread_pool: scoped_pool::Pool::new(num_cpus::get(), "app"),
             },
             actions: HashMap::new(),
             global_actions: HashMap::new(),
