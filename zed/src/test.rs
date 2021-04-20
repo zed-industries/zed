@@ -1,4 +1,8 @@
+use crate::time::ReplicaId;
+use ctor::ctor;
+use log::LevelFilter;
 use rand::Rng;
+use simplelog::SimpleLogger;
 use std::{
     collections::BTreeMap,
     path::{Path, PathBuf},
@@ -6,7 +10,10 @@ use std::{
 };
 use tempdir::TempDir;
 
-use crate::time::ReplicaId;
+#[ctor]
+fn init_logger() {
+    SimpleLogger::init(LevelFilter::Info, Default::default()).expect("could not initialize logger");
+}
 
 #[derive(Clone)]
 struct Envelope<T: Clone> {

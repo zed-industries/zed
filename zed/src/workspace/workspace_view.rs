@@ -402,7 +402,21 @@ mod tests {
 
             // Open the first entry
             workspace_view.update(&mut app, |w, ctx| w.open_entry(entries[0], ctx));
-            app.finish_pending_tasks().await;
+
+            workspace_view
+                .condition(&app, |workspace_view, ctx| {
+                    workspace_view.active_pane().read(ctx).items().len() == 1
+                })
+                .await;
+
+            // Open the second entry
+            workspace_view.update(&mut app, |w, ctx| w.open_entry(entries[1], ctx));
+
+            workspace_view
+                .condition(&app, |workspace_view, ctx| {
+                    workspace_view.active_pane().read(ctx).items().len() == 2
+                })
+                .await;
 
             app.read(|ctx| {
                 assert_eq!(
@@ -410,36 +424,34 @@ mod tests {
                         .read(ctx)
                         .active_pane()
                         .read(ctx)
-                        .items()
-                        .len(),
-                    1
-                )
-            });
-
-            // Open the second entry
-            workspace_view.update(&mut app, |w, ctx| w.open_entry(entries[1], ctx));
-            app.finish_pending_tasks().await;
-
-            app.read(|ctx| {
-                let active_pane = workspace_view.read(ctx).active_pane().read(ctx);
-                assert_eq!(active_pane.items().len(), 2);
-                assert_eq!(
-                    active_pane.active_item().unwrap().entry_id(ctx),
+                        .active_item()
+                        .unwrap()
+                        .entry_id(ctx),
                     Some(entries[1])
                 );
             });
 
             // Open the first entry again
             workspace_view.update(&mut app, |w, ctx| w.open_entry(entries[0], ctx));
-            app.finish_pending_tasks().await;
+
+            {
+                let entries = entries.clone();
+                workspace_view
+                    .condition(&app, move |workspace_view, ctx| {
+                        workspace_view
+                            .active_pane()
+                            .read(ctx)
+                            .active_item()
+                            .unwrap()
+                            .entry_id(ctx)
+                            == Some(entries[0])
+                    })
+                    .await;
+            }
 
             app.read(|ctx| {
                 let active_pane = workspace_view.read(ctx).active_pane().read(ctx);
                 assert_eq!(active_pane.items().len(), 2);
-                assert_eq!(
-                    active_pane.active_item().unwrap().entry_id(ctx),
-                    Some(entries[0])
-                );
             });
 
             // Open the third entry twice concurrently
@@ -447,19 +459,12 @@ mod tests {
                 w.open_entry(entries[2], ctx);
                 w.open_entry(entries[2], ctx);
             });
-            app.finish_pending_tasks().await;
 
-            app.read(|ctx| {
-                assert_eq!(
-                    workspace_view
-                        .read(ctx)
-                        .active_pane()
-                        .read(ctx)
-                        .items()
-                        .len(),
-                    3
-                );
-            });
+            workspace_view
+                .condition(&app, |workspace_view, ctx| {
+                    workspace_view.active_pane().read(ctx).items().len() == 3
+                })
+                .await;
         });
     }
 

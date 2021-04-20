@@ -13,11 +13,12 @@ use keymap::MatchResult;
 use parking_lot::Mutex;
 use pathfinder_geometry::{rect::RectF, vector::vec2f};
 use platform::Event;
+use postage::{sink::Sink as _, stream::Stream as _};
 use smol::prelude::*;
 use std::{
     any::{type_name, Any, TypeId},
     cell::RefCell,
-    collections::{HashMap, HashSet, VecDeque},
+    collections::{hash_map::Entry, HashMap, HashSet, VecDeque},
     fmt::{self, Debug},
     hash::{Hash, Hasher},
     marker::PhantomData,
@@ -384,6 +385,7 @@ pub struct MutableAppContext {
     next_task_id: usize,
     subscriptions: HashMap<usize, Vec<Subscription>>,
     observations: HashMap<usize, Vec<Observation>>,
+    async_observations: HashMap<usize, postage::broadcast::Sender<()>>,
     window_invalidations: HashMap<usize, WindowInvalidation>,
     presenters_and_platform_windows:
         HashMap<usize, (Rc<RefCell<Presenter>>, Box<dyn platform::Window>)>,
@@ -424,6 +426,7 @@ impl MutableAppContext {
             next_task_id: 0,
             subscriptions: HashMap::new(),
             observations: HashMap::new(),
+            async_observations: HashMap::new(),
             window_invalidations: HashMap::new(),
             presenters_and_platform_windows: HashMap::new(),
             debug_elements_callbacks: HashMap::new(),
@@ -877,11 +880,13 @@ impl MutableAppContext {
                 self.ctx.models.remove(&model_id);
                 self.subscriptions.remove(&model_id);
                 self.observations.remove(&model_id);
+                self.async_observations.remove(&model_id);
             }
 
             for (window_id, view_id) in dropped_views {
                 self.subscriptions.remove(&view_id);
                 self.observations.remove(&view_id);
+                self.async_observations.remove(&view_id);
                 if let Some(window) = self.ctx.windows.get_mut(&window_id) {
                     self.window_invalidations
                         .entry(window_id)
@@ -1045,6 +1050,12 @@ impl MutableAppContext {
                             .push(observation);
                     }
                 }
+            }
+        }
+
+        if let Entry::Occupied(mut entry) = self.async_observations.entry(observed_id) {
+            if entry.get_mut().blocking_send(()).is_err() {
+                entry.remove_entry();
             }
         }
     }
@@ -2012,6 +2023,36 @@ impl<T: Entity> ModelHandle<T> {
     {
         app.update_model(self, update)
     }
+
+    pub fn condition(
+        &self,
+        ctx: &TestAppContext,
+        mut predicate: impl 'static + FnMut(&T, &AppContext) -> bool,
+    ) -> impl 'static + Future<Output = ()> {
+        let mut ctx = ctx.0.borrow_mut();
+        let tx = ctx
+            .async_observations
+            .entry(self.id())
+            .or_insert_with(|| postage::broadcast::channel(128).0);
+        let mut rx = tx.subscribe();
+        let ctx = ctx.weak_self.as_ref().unwrap().upgrade().unwrap();
+        let handle = self.clone();
+
+        async move {
+            loop {
+                {
+                    let ctx = ctx.borrow();
+                    let ctx = ctx.as_ref();
+                    if predicate(handle.read(ctx), ctx) {
+                        break;
+                    }
+                }
+                if rx.recv().await.is_none() {
+                    break;
+                }
+            }
+        }
+    }
 }
 
 impl<T> Clone for ModelHandle<T> {
@@ -2144,6 +2185,36 @@ impl<T: View> ViewHandle<T> {
     pub fn is_focused(&self, app: &AppContext) -> bool {
         app.focused_view_id(self.window_id)
             .map_or(false, |focused_id| focused_id == self.view_id)
+    }
+
+    pub fn condition(
+        &self,
+        ctx: &TestAppContext,
+        mut predicate: impl 'static + FnMut(&T, &AppContext) -> bool,
+    ) -> impl 'static + Future<Output = ()> {
+        let mut ctx = ctx.0.borrow_mut();
+        let tx = ctx
+            .async_observations
+            .entry(self.id())
+            .or_insert_with(|| postage::broadcast::channel(128).0);
+        let mut rx = tx.subscribe();
+        let ctx = ctx.weak_self.as_ref().unwrap().upgrade().unwrap();
+        let handle = self.clone();
+
+        async move {
+            loop {
+                {
+                    let ctx = ctx.borrow();
+                    let ctx = ctx.as_ref();
+                    if predicate(handle.read(ctx), ctx) {
+                        break;
+                    }
+                }
+                if rx.recv().await.is_none() {
+                    break;
+                }
+            }
+        }
     }
 }
 

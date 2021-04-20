@@ -16,10 +16,11 @@ path = "src/main.rs"
 anyhow = "1.0.38"
 arrayvec = "0.5.2"
 crossbeam-channel = "0.5.0"
+ctor = "0.1.20"
 dirs = "3.0"
 easy-parallel = "3.1.0"
-futures-core = "0.3"
 fsevent = {path = "../fsevent"}
+futures-core = "0.3"
 gpui = {path = "../gpui"}
 ignore = {git = "https://github.com/zed-industries/ripgrep", rev = "1d152118f35b3e3590216709b86277062d79b8a0"}
 lazy_static = "1.4.0"
@@ -31,8 +32,8 @@ postage = {version = "0.4.1", features = ["futures-traits"]}
 rand = "0.8.3"
 rust-embed = "5.9.0"
 seahash = "4.1"
+serde = {version = "1", features = ["derive"]}
 simplelog = "0.9"
-serde = { version = "1", features = ["derive"] }
 smallvec = "1.6.1"
 smol = "1.2.5"
 

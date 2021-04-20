@@ -15,6 +15,7 @@ ordered-float = "2.1.1"
 parking_lot = "0.11.1"
 pathfinder_color = "0.5"
 pathfinder_geometry = "0.5"
+postage = {version = "0.4.1", features = ["futures-traits"]}
 rand = "0.8.3"
 replace_with = "0.1.7"
 resvg = "0.14"

@@ -568,9 +568,9 @@ dependencies = [
 
 [[package]]
 name = "ctor"
-version = "0.1.19"
+version = "0.1.20"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "e8f45d9ad417bcef4817d614a501ab55cdd96a6fdb24f49aab89a54acfd66b19"
+checksum = "5e98e2ad1a782e33928b96fc3948e7c355e5af34ba4de7670fe8bac2a3b2006d"
 dependencies = [
  "quote",
  "syn",
@@ -1005,6 +1005,7 @@ dependencies = [
  "pathfinder_color",
  "pathfinder_geometry",
  "png",
+ "postage",
  "rand 0.8.3",
  "replace_with",
  "resvg",
@@ -2449,6 +2450,7 @@ dependencies = [
  "anyhow",
  "arrayvec",
  "crossbeam-channel 0.5.0",
+ "ctor",
  "dirs",
  "easy-parallel",
  "fsevent",
