@@ -393,7 +393,8 @@ mod tests {
 
             let settings = settings::channel(&app.font_cache()).unwrap().1;
             let workspace = app.add_model(|ctx| Workspace::new(vec![dir.path().into()], ctx));
-            app.finish_pending_tasks().await; // Open and populate worktree.
+            app.read(|ctx| workspace.read(ctx).worktree_scans_complete(ctx))
+                .await;
             let entries = app.read(|ctx| workspace.file_entries(ctx));
 
             let (_, workspace_view) =

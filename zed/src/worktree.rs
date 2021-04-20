@@ -6,17 +6,20 @@ use crate::{
     sum_tree::{self, Edit, SumTree},
 };
 use anyhow::{anyhow, Result};
+use futures_core::future::BoxFuture;
 pub use fuzzy::match_paths;
 use fuzzy::PathEntry;
 use gpui::{scoped_pool, AppContext, Entity, ModelContext, ModelHandle, Task};
 use ignore::dir::{Ignore, IgnoreBuilder};
 use parking_lot::Mutex;
+use postage::{oneshot, prelude::Stream, sink::Sink};
 use smol::{channel::Sender, Timer};
-use std::future::Future;
 use std::{
     ffi::OsStr,
     fmt, fs,
+    future::Future,
     io::{self, Read, Write},
+    mem,
     ops::{AddAssign, Deref},
     os::unix::fs::MetadataExt,
     path::{Path, PathBuf},
@@ -36,6 +39,7 @@ enum ScanState {
 pub struct Worktree {
     snapshot: Snapshot,
     scanner: Arc<BackgroundScanner>,
+    scan_listeners: Mutex<Vec<postage::oneshot::Sender<()>>>,
     scan_state: ScanState,
     poll_scheduled: bool,
 }
@@ -59,7 +63,8 @@ impl Worktree {
         let tree = Self {
             snapshot,
             scanner,
-            scan_state: ScanState::Idle,
+            scan_listeners: Default::default(),
+            scan_state: ScanState::Scanning,
             poll_scheduled: false,
         };
 
@@ -70,6 +75,18 @@ impl Worktree {
             .detach();
 
         tree
+    }
+
+    pub fn scan_complete(&self) -> BoxFuture<'static, ()> {
+        if self.is_scanning() {
+            let (tx, mut rx) = oneshot::channel::<()>();
+            self.scan_listeners.lock().push(tx);
+            Box::pin(async move {
+                rx.recv().await;
+            })
+        } else {
+            Box::pin(async {})
+        }
     }
 
     fn observe_scan_state(&mut self, scan_state: ScanState, ctx: &mut ModelContext<Self>) {
@@ -88,6 +105,18 @@ impl Worktree {
             })
             .detach();
             self.poll_scheduled = true;
+        } else {
+            let mut listeners = Vec::new();
+            mem::swap(self.scan_listeners.lock().as_mut(), &mut listeners);
+            ctx.spawn(
+                async move {
+                    for mut tx in listeners {
+                        tx.send(()).await.ok();
+                    }
+                },
+                |_, _, _| {},
+            )
+            .detach();
         }
     }
 
@@ -906,9 +935,11 @@ mod tests {
             unix::fs::symlink(&dir.path().join("root"), &root_link_path).unwrap();
 
             let tree = app.add_model(|ctx| Worktree::new(root_link_path, ctx));
-            assert_condition(1, 300, || app.read(|ctx| tree.read(ctx).file_count() == 4)).await;
+
+            app.read(|ctx| tree.read(ctx).scan_complete()).await;
             app.read(|ctx| {
                 let tree = tree.read(ctx);
+                assert_eq!(tree.file_count(), 4);
                 let results = match_paths(
                     Some(tree.snapshot()).iter(),
                     "bna",

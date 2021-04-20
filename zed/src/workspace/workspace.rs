@@ -94,6 +94,19 @@ impl Workspace {
         &self.worktrees
     }
 
+    pub fn worktree_scans_complete(&self, ctx: &AppContext) -> impl Future<Output = ()> + 'static {
+        let futures = self
+            .worktrees
+            .iter()
+            .map(|worktree| worktree.read(ctx).scan_complete())
+            .collect::<Vec<_>>();
+        async move {
+            for future in futures {
+                future.await;
+            }
+        }
+    }
+
     pub fn contains_paths(&self, paths: &[PathBuf], app: &AppContext) -> bool {
         paths.iter().all(|path| self.contains_path(&path, app))
     }
@@ -235,7 +248,8 @@ mod tests {
             }));
 
             let workspace = app.add_model(|ctx| Workspace::new(vec![dir.path().into()], ctx));
-            app.finish_pending_tasks().await; // Open and populate worktree.
+            app.read(|ctx| workspace.read(ctx).worktree_scans_complete(ctx))
+                .await;
 
             // Get the first file entry.
             let tree = app.read(|ctx| workspace.read(ctx).worktrees.iter().next().unwrap().clone());

@@ -421,7 +421,8 @@ mod tests {
             let workspace = app.add_model(|ctx| Workspace::new(vec![tmp_dir.path().into()], ctx));
             let (window_id, workspace_view) =
                 app.add_window(|ctx| WorkspaceView::new(workspace.clone(), settings, ctx));
-            app.finish_pending_tasks().await; // Open and populate worktree.
+            app.read(|ctx| workspace.read(ctx).worktree_scans_complete(ctx))
+                .await;
             app.dispatch_action(
                 window_id,
                 vec![workspace_view.id()],
@@ -444,7 +445,6 @@ mod tests {
             app.dispatch_action(window_id, chain.clone(), "buffer:insert", "b".to_string());
             app.dispatch_action(window_id, chain.clone(), "buffer:insert", "n".to_string());
             app.dispatch_action(window_id, chain.clone(), "buffer:insert", "a".to_string());
-            app.finish_pending_tasks().await; // Complete path search.
 
             // let view_state = finder.state(&app);
             // assert!(view_state.matches.len() > 1);
