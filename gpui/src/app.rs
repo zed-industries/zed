@@ -3332,6 +3332,10 @@ mod tests {
 
             model.update(&mut app, |model, ctx| model.inc(ctx));
             assert_eq!(poll_once(&mut condition2).await, Some(()));
+
+            // Broadcast channel should be removed if no conditions remain on next notification.
+            model.update(&mut app, |_, ctx| ctx.notify());
+            app.update(|ctx| assert!(ctx.async_observations.get(&model.id()).is_none()));
         });
     }
 
@@ -3409,6 +3413,10 @@ mod tests {
 
             view.update(&mut app, |view, ctx| view.inc(ctx));
             assert_eq!(poll_once(&mut condition2).await, Some(()));
+
+            // Broadcast channel should be removed if no conditions remain on next notification.
+            view.update(&mut app, |_, ctx| ctx.notify());
+            app.update(|ctx| assert!(ctx.async_observations.get(&view.id()).is_none()));
         });
     }
 
