@@ -5,7 +5,6 @@ name = "gpui"
 version = "0.1.0"
 
 [dependencies]
-async-std = {version = "1.9.0", features = ["unstable"]}
 async-task = "4.0.3"
 ctor = "0.1"
 etagere = "0.2"

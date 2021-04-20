@@ -8,7 +8,6 @@ use crate::{
     AssetCache, AssetSource, ClipboardItem, FontCache, PathPromptOptions, TextLayoutCache,
 };
 use anyhow::{anyhow, Result};
-use async_std::sync::Condvar;
 use keymap::MatchResult;
 use parking_lot::Mutex;
 use pathfinder_geometry::{rect::RectF, vector::vec2f};
@@ -390,7 +389,6 @@ pub struct MutableAppContext {
     foreground: Rc<executor::Foreground>,
     future_handlers: Rc<RefCell<HashMap<usize, FutureHandler>>>,
     stream_handlers: Rc<RefCell<HashMap<usize, StreamHandler>>>,
-    task_done: Arc<Condvar>,
     pending_effects: VecDeque<Effect>,
     pending_flushes: usize,
     flushing_effects: bool,
@@ -430,7 +428,6 @@ impl MutableAppContext {
             foreground,
             future_handlers: Default::default(),
             stream_handlers: Default::default(),
-            task_done: Default::default(),
             pending_effects: VecDeque::new(),
             pending_flushes: 0,
             flushing_effects: false,
@@ -1139,7 +1136,6 @@ impl MutableAppContext {
             task_id,
             task,
             TaskHandlerMap::Future(self.future_handlers.clone()),
-            self.task_done.clone(),
         )
     }
 
@@ -1175,7 +1171,6 @@ impl MutableAppContext {
             task_id,
             task,
             TaskHandlerMap::Stream(self.stream_handlers.clone()),
-            self.task_done.clone(),
         )
     }
 
@@ -1184,7 +1179,6 @@ impl MutableAppContext {
         let future_callback = self.future_handlers.borrow_mut().remove(&task_id).unwrap();
         let result = future_callback(output, self);
         self.flush_effects();
-        self.task_done.notify_all();
         result
     }
 
@@ -1206,7 +1200,6 @@ impl MutableAppContext {
         let result = (handler.done_callback)(self);
 
         self.flush_effects();
-        self.task_done.notify_all();
         result
     }
 
@@ -2430,7 +2423,6 @@ pub struct EntityTask<T> {
     id: usize,
     task: Option<executor::Task<T>>,
     handler_map: TaskHandlerMap,
-    task_done: Arc<Condvar>,
 }
 
 enum TaskHandlerMap {
@@ -2440,17 +2432,11 @@ enum TaskHandlerMap {
 }
 
 impl<T> EntityTask<T> {
-    fn new(
-        id: usize,
-        task: executor::Task<T>,
-        handler_map: TaskHandlerMap,
-        task_done: Arc<Condvar>,
-    ) -> Self {
+    fn new(id: usize, task: executor::Task<T>, handler_map: TaskHandlerMap) -> Self {
         Self {
             id,
             task: Some(task),
             handler_map,
-            task_done,
         }
     }
 
@@ -2490,7 +2476,6 @@ impl<T> Drop for EntityTask<T> {
                 map.borrow_mut().remove(&self.id);
             }
         }
-        self.task_done.notify_all();
     }
 }
 
