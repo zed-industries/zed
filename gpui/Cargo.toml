@@ -34,6 +34,7 @@ bindgen = "0.57"
 cc = "1.0.67"
 
 [dev-dependencies]
+env_logger = "0.8"
 png = "0.16"
 simplelog = "0.9"
 

@@ -1,8 +1,6 @@
 use crate::time::ReplicaId;
 use ctor::ctor;
-use log::LevelFilter;
 use rand::Rng;
-use simplelog::SimpleLogger;
 use std::{
     collections::BTreeMap,
     path::{Path, PathBuf},
@@ -11,7 +9,7 @@ use tempdir::TempDir;
 
 #[ctor]
 fn init_logger() {
-    SimpleLogger::init(LevelFilter::Info, Default::default()).expect("could not initialize logger");
+    env_logger::init();
 }
 
 #[derive(Clone)]

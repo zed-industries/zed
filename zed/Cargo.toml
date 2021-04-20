@@ -38,6 +38,7 @@ smallvec = "1.6.1"
 smol = "1.2.5"
 
 [dev-dependencies]
+env_logger = "0.8"
 serde_json = {version = "1.0.64", features = ["preserve_order"]}
 tempdir = "0.3.7"
 unindent = "0.1.7"

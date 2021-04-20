@@ -888,10 +888,8 @@ mod tests {
     use crate::test::*;
     use anyhow::Result;
     use gpui::App;
-    use log::LevelFilter;
     use rand::prelude::*;
     use serde_json::json;
-    use simplelog::SimpleLogger;
     use std::env;
     use std::os::unix;
     use std::time::{SystemTime, UNIX_EPOCH};
@@ -1028,8 +1026,6 @@ mod tests {
             .map(|o| o.parse().unwrap())
             .unwrap_or(20);
         let seeds = if let Ok(seed) = env::var("SEED").map(|s| s.parse().unwrap()) {
-            // Init logging so that we can debug the operations for this seed.
-            SimpleLogger::init(LevelFilter::Info, Default::default()).unwrap();
             seed..seed + 1
         } else {
             0..iterations
