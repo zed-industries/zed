@@ -782,7 +782,7 @@ impl BackgroundScanner {
 
                 let inode = metadata.ino();
                 let is_symlink = fs::symlink_metadata(&path)
-                    .context("symlink_metadata")?
+                    .context("failed to read symlink metadata")?
                     .file_type()
                     .is_symlink();
                 let parent = if path == root_path {
@@ -790,7 +790,7 @@ impl BackgroundScanner {
                 } else {
                     Some(
                         fs::metadata(path.parent().unwrap())
-                            .context("parent metadata")?
+                            .context("failed to read parent inode")?
                             .ino(),
                     )
                 };
@@ -825,14 +825,11 @@ impl BackgroundScanner {
                     )))
                 }
             }
-            Err(err) => {
-                dbg!(&err);
-                if err.kind() == io::ErrorKind::NotFound {
-                    Ok(None)
-                } else {
-                    Err(anyhow::Error::new(err)).context("fs::metadata")
-                }
-            }
+            Err(err) => match (err.kind(), err.raw_os_error()) {
+                (io::ErrorKind::NotFound, _) => Ok(None),
+                (io::ErrorKind::Other, Some(libc::ENOTDIR)) => Ok(None),
+                _ => Err(anyhow::Error::new(err)),
+            },
         }
     }
 
