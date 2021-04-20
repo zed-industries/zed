@@ -2005,7 +2005,7 @@ impl<T: Entity> ModelHandle<T> {
             .or_insert_with(|| postage::broadcast::channel(128).0);
         let mut rx = tx.subscribe();
         let ctx = ctx.weak_self.as_ref().unwrap().upgrade().unwrap();
-        let handle = self.clone();
+        let handle = self.downgrade();
 
         async move {
             timeout(Duration::from_millis(200), async move {
@@ -2013,14 +2013,20 @@ impl<T: Entity> ModelHandle<T> {
                     {
                         let ctx = ctx.borrow();
                         let ctx = ctx.as_ref();
-                        if predicate(handle.read(ctx), ctx) {
+                        if predicate(
+                            handle
+                                .upgrade(ctx)
+                                .expect("model dropped with pending condition")
+                                .read(ctx),
+                            ctx,
+                        ) {
                             break;
                         }
                     }
 
-                    if rx.recv().await.is_none() {
-                        panic!("model dropped with pending condition");
-                    }
+                    rx.recv()
+                        .await
+                        .expect("model dropped with pending condition");
                 }
             })
             .await
@@ -2173,7 +2179,7 @@ impl<T: View> ViewHandle<T> {
             .or_insert_with(|| postage::broadcast::channel(128).0);
         let mut rx = tx.subscribe();
         let ctx = ctx.weak_self.as_ref().unwrap().upgrade().unwrap();
-        let handle = self.clone();
+        let handle = self.downgrade();
 
         async move {
             timeout(Duration::from_millis(200), async move {
@@ -2181,14 +2187,20 @@ impl<T: View> ViewHandle<T> {
                     {
                         let ctx = ctx.borrow();
                         let ctx = ctx.as_ref();
-                        if predicate(handle.read(ctx), ctx) {
+                        if predicate(
+                            handle
+                                .upgrade(ctx)
+                                .expect("model dropped with pending condition")
+                                .read(ctx),
+                            ctx,
+                        ) {
                             break;
                         }
                     }
 
-                    if rx.recv().await.is_none() {
-                        panic!("model dropped with pending condition");
-                    }
+                    rx.recv()
+                        .await
+                        .expect("model dropped with pending condition");
                 }
             })
             .await
@@ -3339,6 +3351,23 @@ mod tests {
     }
 
     #[test]
+    #[should_panic(expected = "model dropped with pending condition")]
+    fn test_model_condition_panic_on_drop() {
+        struct Model;
+
+        impl super::Entity for Model {
+            type Event = ();
+        }
+
+        App::test_async((), |mut app| async move {
+            let model = app.add_model(|_| Model);
+            let condition = model.condition(&app, |_, _| false);
+            app.update(|_| drop(model));
+            condition.await;
+        });
+    }
+
+    #[test]
     fn test_view_condition() {
         struct Counter(usize);
 
@@ -3405,6 +3434,35 @@ mod tests {
         App::test_async((), |mut app| async move {
             let (_, view) = app.add_window(|_| View);
             view.condition(&app, |_, _| false).await;
+        });
+    }
+
+    #[test]
+    #[should_panic(expected = "model dropped with pending condition")]
+    fn test_view_condition_panic_on_drop() {
+        struct View;
+
+        impl super::Entity for View {
+            type Event = ();
+        }
+
+        impl super::View for View {
+            fn ui_name() -> &'static str {
+                "test view"
+            }
+
+            fn render(&self, _: &AppContext) -> ElementBox {
+                Empty::new().boxed()
+            }
+        }
+
+        App::test_async((), |mut app| async move {
+            let window_id = app.add_window(|_| View).0;
+            let view = app.add_view(window_id, |_| View);
+
+            let condition = view.condition(&app, |_, _| false);
+            app.update(|_| drop(view));
+            condition.await;
         });
     }
 
