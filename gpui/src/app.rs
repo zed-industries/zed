@@ -325,10 +325,6 @@ impl TestAppContext {
         result
     }
 
-    pub fn finish_pending_tasks(&self) -> impl Future<Output = ()> {
-        self.0.borrow().finish_pending_tasks()
-    }
-
     pub fn font_cache(&self) -> Arc<FontCache> {
         self.0.borrow().font_cache.clone()
     }
@@ -1066,6 +1062,12 @@ impl MutableAppContext {
             .or_default()
             .updated
             .insert(view_id);
+
+        if let Entry::Occupied(mut entry) = self.async_observations.entry(view_id) {
+            if entry.get_mut().blocking_send(()).is_err() {
+                entry.remove_entry();
+            }
+        }
     }
 
     fn focus(&mut self, window_id: usize, focused_id: usize) {
@@ -1205,40 +1207,6 @@ impl MutableAppContext {
         self.flush_effects();
         self.task_done.notify_all();
         result
-    }
-
-    pub fn finish_pending_tasks(&self) -> impl Future<Output = ()> {
-        let mut pending_tasks = self
-            .future_handlers
-            .borrow()
-            .keys()
-            .cloned()
-            .collect::<HashSet<_>>();
-        pending_tasks.extend(self.stream_handlers.borrow().keys());
-
-        let task_done = self.task_done.clone();
-        let future_handlers = self.future_handlers.clone();
-        let stream_handlers = self.stream_handlers.clone();
-
-        async move {
-            // A Condvar expects the condition to be protected by a Mutex, but in this case we know
-            // that this logic will always run on the main thread.
-            let mutex = async_std::sync::Mutex::new(());
-            loop {
-                {
-                    let future_handlers = future_handlers.borrow();
-                    let stream_handlers = stream_handlers.borrow();
-                    pending_tasks.retain(|task_id| {
-                        future_handlers.contains_key(task_id)
-                            || stream_handlers.contains_key(task_id)
-                    });
-                    if pending_tasks.is_empty() {
-                        break;
-                    }
-                }
-                task_done.wait(mutex.lock().await).await;
-            }
-        }
     }
 
     pub fn write_to_clipboard(&self, item: ClipboardItem) {
@@ -3388,98 +3356,4 @@ mod tests {
     //         assert!(invalidation.removed.is_empty());
     //     });
     // }
-
-    #[test]
-    fn test_finish_pending_tasks() {
-        struct View;
-
-        impl Entity for View {
-            type Event = ();
-        }
-
-        impl super::View for View {
-            fn render<'a>(&self, _: &AppContext) -> ElementBox {
-                Empty::new().boxed()
-            }
-
-            fn ui_name() -> &'static str {
-                "View"
-            }
-        }
-
-        struct Model;
-
-        impl Entity for Model {
-            type Event = ();
-        }
-
-        App::test_async((), |mut app| async move {
-            let model = app.add_model(|_| Model);
-            let (_, view) = app.add_window(|_| View);
-
-            model.update(&mut app, |_, ctx| {
-                ctx.spawn(async {}, |_, _, _| {}).detach();
-                // Cancel this task
-                drop(ctx.spawn(async {}, |_, _, _| {}));
-            });
-
-            view.update(&mut app, |_, ctx| {
-                ctx.spawn(async {}, |_, _, _| {}).detach();
-                // Cancel this task
-                drop(ctx.spawn(async {}, |_, _, _| {}));
-            });
-
-            assert!(!app.0.borrow().future_handlers.borrow().is_empty());
-            app.finish_pending_tasks().await;
-            assert!(app.0.borrow().future_handlers.borrow().is_empty());
-            app.finish_pending_tasks().await; // Don't block if there are no tasks
-
-            model.update(&mut app, |_, ctx| {
-                ctx.spawn_stream(smol::stream::iter(vec![1, 2, 3]), |_, _, _| {}, |_, _| {})
-                    .detach();
-                // Cancel this task
-                drop(ctx.spawn_stream(smol::stream::iter(vec![1, 2, 3]), |_, _, _| {}, |_, _| {}));
-            });
-
-            view.update(&mut app, |_, ctx| {
-                ctx.spawn_stream(smol::stream::iter(vec![1, 2, 3]), |_, _, _| {}, |_, _| {})
-                    .detach();
-                // Cancel this task
-                drop(ctx.spawn_stream(smol::stream::iter(vec![1, 2, 3]), |_, _, _| {}, |_, _| {}));
-            });
-
-            assert!(!app.0.borrow().stream_handlers.borrow().is_empty());
-            app.finish_pending_tasks().await;
-            assert!(app.0.borrow().stream_handlers.borrow().is_empty());
-            app.finish_pending_tasks().await; // Don't block if there are no tasks
-
-            // Tasks are considered finished when we drop handles
-            let mut tasks = Vec::new();
-            model.update(&mut app, |_, ctx| {
-                tasks.push(Box::new(ctx.spawn(async {}, |_, _, _| {})));
-                tasks.push(Box::new(ctx.spawn_stream(
-                    smol::stream::iter(vec![1, 2, 3]),
-                    |_, _, _| {},
-                    |_, _| {},
-                )));
-            });
-
-            view.update(&mut app, |_, ctx| {
-                tasks.push(Box::new(ctx.spawn(async {}, |_, _, _| {})));
-                tasks.push(Box::new(ctx.spawn_stream(
-                    smol::stream::iter(vec![1, 2, 3]),
-                    |_, _, _| {},
-                    |_, _| {},
-                )));
-            });
-
-            assert!(!app.0.borrow().stream_handlers.borrow().is_empty());
-
-            let finish_pending_tasks = app.finish_pending_tasks();
-            drop(tasks);
-            finish_pending_tasks.await;
-            assert!(app.0.borrow().stream_handlers.borrow().is_empty());
-            app.finish_pending_tasks().await; // Don't block if there are no tasks
-        });
-    }
 }

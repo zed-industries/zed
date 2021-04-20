@@ -6,7 +6,6 @@ use simplelog::SimpleLogger;
 use std::{
     collections::BTreeMap,
     path::{Path, PathBuf},
-    time::{Duration, Instant},
 };
 use tempdir::TempDir;
 
@@ -142,20 +141,5 @@ fn write_tree(path: &Path, tree: serde_json::Value) {
         }
     } else {
         panic!("You must pass a JSON object to this helper")
-    }
-}
-
-pub async fn assert_condition(poll_interval: u64, timeout: u64, mut f: impl FnMut() -> bool) {
-    let poll_interval = Duration::from_millis(poll_interval);
-    let timeout = Duration::from_millis(timeout);
-    let start = Instant::now();
-    loop {
-        if f() {
-            return;
-        } else if Instant::now().duration_since(start) < timeout {
-            smol::Timer::after(poll_interval).await;
-        } else {
-            panic!("timed out waiting on condition");
-        }
     }
 }
