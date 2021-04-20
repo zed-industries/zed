@@ -4,7 +4,7 @@ use crate::{
     keymap::{self, Keystroke},
     platform::{self, WindowOptions},
     presenter::Presenter,
-    util::post_inc,
+    util::{post_inc, timeout},
     AssetCache, AssetSource, ClipboardItem, FontCache, PathPromptOptions, TextLayoutCache,
 };
 use anyhow::{anyhow, Result};
@@ -25,6 +25,7 @@ use std::{
     path::PathBuf,
     rc::{self, Rc},
     sync::{Arc, Weak},
+    time::Duration,
 };
 
 pub trait Entity: 'static + Send + Sync {
@@ -2007,18 +2008,23 @@ impl<T: Entity> ModelHandle<T> {
         let handle = self.clone();
 
         async move {
-            loop {
-                {
-                    let ctx = ctx.borrow();
-                    let ctx = ctx.as_ref();
-                    if predicate(handle.read(ctx), ctx) {
-                        break;
+            timeout(Duration::from_millis(200), async move {
+                loop {
+                    {
+                        let ctx = ctx.borrow();
+                        let ctx = ctx.as_ref();
+                        if predicate(handle.read(ctx), ctx) {
+                            break;
+                        }
+                    }
+
+                    if rx.recv().await.is_none() {
+                        panic!("model dropped with pending condition");
                     }
                 }
-                if rx.recv().await.is_none() {
-                    break;
-                }
-            }
+            })
+            .await
+            .expect("condition timed out");
         }
     }
 }
@@ -2170,18 +2176,23 @@ impl<T: View> ViewHandle<T> {
         let handle = self.clone();
 
         async move {
-            loop {
-                {
-                    let ctx = ctx.borrow();
-                    let ctx = ctx.as_ref();
-                    if predicate(handle.read(ctx), ctx) {
-                        break;
+            timeout(Duration::from_millis(200), async move {
+                loop {
+                    {
+                        let ctx = ctx.borrow();
+                        let ctx = ctx.as_ref();
+                        if predicate(handle.read(ctx), ctx) {
+                            break;
+                        }
+                    }
+
+                    if rx.recv().await.is_none() {
+                        panic!("model dropped with pending condition");
                     }
                 }
-                if rx.recv().await.is_none() {
-                    break;
-                }
-            }
+            })
+            .await
+            .expect("condition timed out");
         }
     }
 }
@@ -2475,6 +2486,7 @@ impl<T> Drop for EntityTask<T> {
 mod tests {
     use super::*;
     use crate::elements::*;
+    use smol::future::poll_once;
 
     #[test]
     fn test_model_handles() {
@@ -3273,6 +3285,126 @@ mod tests {
             .unwrap();
 
             assert!(handled_action.get());
+        });
+    }
+
+    #[test]
+    fn test_model_condition() {
+        struct Counter(usize);
+
+        impl super::Entity for Counter {
+            type Event = ();
+        }
+
+        impl Counter {
+            fn inc(&mut self, ctx: &mut ModelContext<Self>) {
+                self.0 += 1;
+                ctx.notify();
+            }
+        }
+
+        App::test_async((), |mut app| async move {
+            let model = app.add_model(|_| Counter(0));
+
+            let condition1 = model.condition(&app, |model, _| model.0 == 2);
+            let condition2 = model.condition(&app, |model, _| model.0 == 3);
+            smol::pin!(condition1, condition2);
+
+            model.update(&mut app, |model, ctx| model.inc(ctx));
+            assert_eq!(poll_once(&mut condition1).await, None);
+            assert_eq!(poll_once(&mut condition2).await, None);
+
+            model.update(&mut app, |model, ctx| model.inc(ctx));
+            assert_eq!(poll_once(&mut condition1).await, Some(()));
+            assert_eq!(poll_once(&mut condition2).await, None);
+
+            model.update(&mut app, |model, ctx| model.inc(ctx));
+            assert_eq!(poll_once(&mut condition2).await, Some(()));
+        });
+    }
+
+    #[test]
+    #[should_panic]
+    fn test_model_condition_timeout() {
+        struct Model;
+
+        impl super::Entity for Model {
+            type Event = ();
+        }
+
+        App::test_async((), |mut app| async move {
+            let model = app.add_model(|_| Model);
+            model.condition(&app, |_, _| false).await;
+        });
+    }
+
+    #[test]
+    fn test_view_condition() {
+        struct Counter(usize);
+
+        impl super::Entity for Counter {
+            type Event = ();
+        }
+
+        impl super::View for Counter {
+            fn ui_name() -> &'static str {
+                "test view"
+            }
+
+            fn render(&self, _: &AppContext) -> ElementBox {
+                Empty::new().boxed()
+            }
+        }
+
+        impl Counter {
+            fn inc(&mut self, ctx: &mut ViewContext<Self>) {
+                self.0 += 1;
+                ctx.notify();
+            }
+        }
+
+        App::test_async((), |mut app| async move {
+            let (_, view) = app.add_window(|_| Counter(0));
+
+            let condition1 = view.condition(&app, |view, _| view.0 == 2);
+            let condition2 = view.condition(&app, |view, _| view.0 == 3);
+            smol::pin!(condition1, condition2);
+
+            view.update(&mut app, |view, ctx| view.inc(ctx));
+            assert_eq!(poll_once(&mut condition1).await, None);
+            assert_eq!(poll_once(&mut condition2).await, None);
+
+            view.update(&mut app, |view, ctx| view.inc(ctx));
+            assert_eq!(poll_once(&mut condition1).await, Some(()));
+            assert_eq!(poll_once(&mut condition2).await, None);
+
+            view.update(&mut app, |view, ctx| view.inc(ctx));
+            assert_eq!(poll_once(&mut condition2).await, Some(()));
+        });
+    }
+
+    #[test]
+    #[should_panic]
+    fn test_view_condition_timeout() {
+        struct View;
+
+        impl super::Entity for View {
+            type Event = ();
+        }
+
+        impl super::View for View {
+            fn ui_name() -> &'static str {
+                "test view"
+            }
+
+            fn render(&self, _: &AppContext) -> ElementBox {
+                Empty::new().boxed()
+            }
+        }
+
+        App::test_async((), |mut app| async move {
+            let (_, view) = app.add_window(|_| View);
+            view.condition(&app, |_, _| false).await;
         });
     }
 

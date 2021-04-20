@@ -77,9 +77,9 @@ impl Worktree {
     pub fn scan_complete(&self) -> impl Future<Output = ()> {
         let mut scan_state_rx = self.scan_state.1.clone();
         async move {
-            let mut next_scan_state = Some(scan_state_rx.borrow().clone());
-            while let Some(ScanState::Scanning) = next_scan_state {
-                next_scan_state = scan_state_rx.recv().await;
+            let mut scan_state = Some(scan_state_rx.borrow().clone());
+            while let Some(ScanState::Scanning) = scan_state {
+                scan_state = scan_state_rx.recv().await;
             }
         }
     }
