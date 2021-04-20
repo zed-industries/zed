@@ -753,6 +753,7 @@ version = "2.0.2"
 dependencies = [
  "bitflags",
  "fsevent-sys",
+ "parking_lot",
  "tempdir",
 ]
 

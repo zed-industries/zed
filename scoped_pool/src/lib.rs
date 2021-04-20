@@ -21,11 +21,11 @@ struct Request {
 }
 
 impl Pool {
-    pub fn new(thread_count: usize, name: &str) -> Self {
+    pub fn new(thread_count: usize, name: impl AsRef<str>) -> Self {
         let (req_tx, req_rx) = chan::unbounded();
         for i in 0..thread_count {
             thread::Builder::new()
-                .name(format!("scoped_pool {} {}", name, i))
+                .name(format!("scoped_pool {} {}", name.as_ref(), i))
                 .spawn({
                     let req_rx = req_rx.clone();
                     move || loop {
