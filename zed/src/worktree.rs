@@ -5,7 +5,7 @@ use crate::{
     editor::{History, Snapshot as BufferSnapshot},
     sum_tree::{self, Edit, SumTree},
 };
-use anyhow::{anyhow, Result};
+use anyhow::{anyhow, Context, Result};
 use fuzzy::PathEntry;
 pub use fuzzy::{match_paths, PathMatch};
 use gpui::{scoped_pool, AppContext, Entity, ModelContext, ModelHandle, Task};
@@ -781,11 +781,18 @@ impl BackgroundScanner {
                 let is_ignored = ignore.matched(&path, metadata.is_dir()).is_ignore();
 
                 let inode = metadata.ino();
-                let is_symlink = fs::symlink_metadata(&path)?.file_type().is_symlink();
+                let is_symlink = fs::symlink_metadata(&path)
+                    .context("symlink_metadata")?
+                    .file_type()
+                    .is_symlink();
                 let parent = if path == root_path {
                     None
                 } else {
-                    Some(fs::metadata(path.parent().unwrap())?.ino())
+                    Some(
+                        fs::metadata(path.parent().unwrap())
+                            .context("parent metadata")?
+                            .ino(),
+                    )
                 };
                 if metadata.file_type().is_dir() {
                     Ok(Some((
@@ -819,10 +826,11 @@ impl BackgroundScanner {
                 }
             }
             Err(err) => {
+                dbg!(&err);
                 if err.kind() == io::ErrorKind::NotFound {
                     Ok(None)
                 } else {
-                    Err(anyhow::Error::new(err))
+                    Err(anyhow::Error::new(err)).context("fs::metadata")
                 }
             }
         }
