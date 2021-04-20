@@ -523,7 +523,9 @@ impl BackgroundScanner {
                     return false;
                 }
 
-                self.process_events(events);
+                if !self.process_events(events) {
+                    return false;
+                }
 
                 if smol::block_on(self.notify.send(ScanState::Idle)).is_err() {
                     return false;
@@ -701,12 +703,13 @@ impl BackgroundScanner {
         Ok(())
     }
 
-    fn process_events(&self, mut events: Vec<fsevent::Event>) {
+    fn process_events(&self, mut events: Vec<fsevent::Event>) -> bool {
         let mut snapshot = self.snapshot();
-        let root_path = snapshot
-            .path
-            .canonicalize()
-            .unwrap_or_else(|_| snapshot.path.to_path_buf());
+        let root_path = if let Ok(path) = snapshot.path.canonicalize() {
+            path
+        } else {
+            return false;
+        };
 
         events.sort_unstable_by(|a, b| a.path.cmp(&b.path));
         let mut paths = events.into_iter().map(|e| e.path).peekable();
@@ -769,68 +772,68 @@ impl BackgroundScanner {
                 });
             }
         });
+
+        true
     }
 
     fn fs_entry_for_path(&self, root_path: &Path, path: &Path) -> Result<Option<(Entry, Ignore)>> {
-        match fs::metadata(&path) {
-            Ok(metadata) => {
-                let mut ignore = IgnoreBuilder::new().build().add_parents(&path).unwrap();
-                if metadata.is_dir() {
-                    ignore = ignore.add_child(&path).unwrap();
-                }
-                let is_ignored = ignore.matched(&path, metadata.is_dir()).is_ignore();
-
-                let inode = metadata.ino();
-                let is_symlink = fs::symlink_metadata(&path)
-                    .context("failed to read symlink metadata")?
-                    .file_type()
-                    .is_symlink();
-                let parent = if path == root_path {
-                    None
-                } else {
-                    Some(
-                        fs::metadata(path.parent().unwrap())
-                            .context("failed to read parent inode")?
-                            .ino(),
-                    )
-                };
-                if metadata.file_type().is_dir() {
-                    Ok(Some((
-                        Entry::Dir {
-                            parent,
-                            inode,
-                            is_symlink,
-                            is_ignored,
-                            children: Arc::from([]),
-                            pending: true,
-                        },
-                        ignore,
-                    )))
-                } else {
-                    Ok(Some((
-                        Entry::File {
-                            parent,
-                            path: PathEntry::new(
-                                inode,
-                                root_path
-                                    .parent()
-                                    .map_or(path, |parent| path.strip_prefix(parent).unwrap()),
-                                is_ignored,
-                            ),
-                            inode,
-                            is_symlink,
-                            is_ignored,
-                        },
-                        ignore,
-                    )))
+        let metadata = match fs::metadata(&path) {
+            Err(err) => {
+                return match (err.kind(), err.raw_os_error()) {
+                    (io::ErrorKind::NotFound, _) => Ok(None),
+                    (io::ErrorKind::Other, Some(libc::ENOTDIR)) => Ok(None),
+                    _ => Err(anyhow::Error::new(err)),
                 }
             }
-            Err(err) => match (err.kind(), err.raw_os_error()) {
-                (io::ErrorKind::NotFound, _) => Ok(None),
-                (io::ErrorKind::Other, Some(libc::ENOTDIR)) => Ok(None),
-                _ => Err(anyhow::Error::new(err)),
-            },
+            Ok(metadata) => metadata,
+        };
+
+        let mut ignore = IgnoreBuilder::new().build().add_parents(&path).unwrap();
+        if metadata.is_dir() {
+            ignore = ignore.add_child(&path).unwrap();
         }
+        let is_ignored = ignore.matched(&path, metadata.is_dir()).is_ignore();
+        let inode = metadata.ino();
+        let is_symlink = fs::symlink_metadata(&path)
+            .context("failed to read symlink metadata")?
+            .file_type()
+            .is_symlink();
+        let parent = if path == root_path {
+            None
+        } else {
+            Some(
+                fs::metadata(path.parent().unwrap())
+                    .context("failed to read parent inode")?
+                    .ino(),
+            )
+        };
+
+        let entry = if metadata.file_type().is_dir() {
+            Entry::Dir {
+                inode,
+                parent,
+                is_symlink,
+                is_ignored,
+                pending: true,
+                children: Arc::from([]),
+            }
+        } else {
+            Entry::File {
+                inode,
+                parent,
+                is_symlink,
+                is_ignored,
+                path: PathEntry::new(
+                    inode,
+                    root_path
+                        .parent()
+                        .map_or(path, |parent| path.strip_prefix(parent).unwrap()),
+                    is_ignored,
+                ),
+            }
+        };
+
+        Ok(Some((entry, ignore)))
     }
 
     fn insert_entries(&self, entries: impl IntoIterator<Item = Entry>) {
