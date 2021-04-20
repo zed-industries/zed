@@ -500,7 +500,7 @@ impl BackgroundScanner {
         Self {
             snapshot: Mutex::new(snapshot),
             notify,
-            thread_pool: scoped_pool::Pool::new(16),
+            thread_pool: scoped_pool::Pool::new(16, "background-scanner"),
         }
     }
 
@@ -592,7 +592,7 @@ impl BackgroundScanner {
             drop(tx);
 
             let mut results = Vec::new();
-            results.resize_with(self.thread_pool.workers(), || Ok(()));
+            results.resize_with(self.thread_pool.thread_count(), || Ok(()));
             self.thread_pool.scoped(|pool| {
                 for result in &mut results {
                     pool.execute(|| {
@@ -762,7 +762,7 @@ impl BackgroundScanner {
         // Scan any directories that were created as part of this event batch.
         drop(scan_queue_tx);
         self.thread_pool.scoped(|pool| {
-            for _ in 0..self.thread_pool.workers() {
+            for _ in 0..self.thread_pool.thread_count() {
                 pool.execute(|| {
                     while let Ok(job) = scan_queue_rx.recv() {
                         if let Err(err) = job.and_then(|job| self.scan_dir(job)) {
@@ -841,12 +841,6 @@ impl BackgroundScanner {
             .lock()
             .entries
             .edit(entries.into_iter().map(Edit::Insert).collect::<Vec<_>>());
-    }
-}
-
-impl Drop for BackgroundScanner {
-    fn drop(&mut self) {
-        self.thread_pool.shutdown();
     }
 }
 

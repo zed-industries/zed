@@ -18,7 +18,7 @@ postage = {version = "0.4.1", features = ["futures-traits"]}
 rand = "0.8.3"
 replace_with = "0.1.7"
 resvg = "0.14"
-scoped-pool = "1.0.0"
+scoped-pool = {path = "../scoped_pool"}
 seahash = "4.1"
 serde = {version = "1.0.125", features = ["derive"]}
 serde_json = "1.0.64"
