@@ -1149,6 +1149,7 @@ mod tests {
                 1,
             );
             new_scanner.scan_dirs().unwrap();
+            scanner.snapshot().check_invariants();
             assert_eq!(scanner.snapshot().to_vec(), new_scanner.snapshot().to_vec());
         }
     }
@@ -1268,6 +1269,13 @@ mod tests {
     }
 
     impl Snapshot {
+        fn check_invariants(&self) {
+            for entry in self.entries.items() {
+                let path = self.path_for_inode(entry.inode(), false).unwrap();
+                assert_eq!(self.inode_for_path(path).unwrap(), entry.inode());
+            }
+        }
+
         fn to_vec(&self) -> Vec<(PathBuf, u64)> {
             use std::iter::FromIterator;
 
@@ -1291,6 +1299,7 @@ mod tests {
                 paths.push((computed_path, inode));
             }
 
+            assert_eq!(paths.len(), self.entries.items().len());
             paths.sort_by(|a, b| a.0.cmp(&b.0));
             paths
         }
