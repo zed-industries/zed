@@ -317,10 +317,10 @@ impl Snapshot {
         self.entries.edit(edits);
     }
 
-    fn populate_dir<'a>(
+    fn populate_dir(
         &mut self,
         parent_inode: u64,
-        children: impl IntoIterator<Item = (&'a OsStr, Entry)>,
+        children: impl IntoIterator<Item = (Arc<OsStr>, Entry)>,
     ) {
         let mut edits = Vec::new();
 
@@ -359,7 +359,7 @@ impl Snapshot {
 
         // For any children that were re-parented, remove them from their old parents
         for (parent_inode, to_remove) in old_children {
-            let mut parent = self.entries.get(&parent_inode).unwrap().clone();
+            let parent = self.entries.get(&parent_inode).unwrap().clone();
             self.remove_children(parent, &mut edits, |inode| to_remove.contains(&inode));
         }
 
@@ -383,7 +383,7 @@ impl Snapshot {
         }
     }
 
-    fn clear_descendants(&mut self, mut inode: u64, edits: &mut Vec<Edit<Entry>>) {
+    fn clear_descendants(&mut self, inode: u64, edits: &mut Vec<Edit<Entry>>) {
         let mut stack = vec![inode];
         while let Some(inode) = stack.pop() {
             if let Entry::Dir { children, .. } = self.entries.get(&inode).unwrap() {
@@ -412,61 +412,6 @@ impl Snapshot {
             unreachable!("non-directory parent");
         }
         edits.push(Edit::Insert(parent));
-    }
-
-    fn insert_entry_old(&mut self, path: &Path, entry: Entry) {
-        let mut edits = Vec::new();
-        edits.push(Edit::Insert(entry.clone()));
-        if let Some(parent) = entry.parent() {
-            if let Some(mut parent_entry) = self.entries.get(&parent).cloned() {
-                if let Entry::Dir { children, .. } = &mut parent_entry {
-                    let name = Arc::from(path.file_name().unwrap());
-                    *children = children
-                        .into_iter()
-                        .cloned()
-                        .chain(Some((entry.inode(), name)))
-                        .collect::<Vec<_>>()
-                        .into();
-                    edits.push(Edit::Insert(parent_entry));
-                } else {
-                    unreachable!();
-                }
-            }
-        }
-        self.entries.edit(edits);
-    }
-
-    fn remove_subtree(&mut self, subtree_inode: u64) {
-        let entry = self.entries.get(&subtree_inode).unwrap();
-
-        let mut edits = Vec::new();
-
-        // Update the parent entry to not include this subtree as one of its children.
-        if let Some(parent_inode) = entry.parent() {
-            let mut parent_entry = self.entries.get(&parent_inode).unwrap().clone();
-            if let Entry::Dir { children, .. } = &mut parent_entry {
-                *children = children
-                    .into_iter()
-                    .filter(|(child_inode, _)| *child_inode != subtree_inode)
-                    .cloned()
-                    .collect::<Vec<_>>()
-                    .into();
-            } else {
-                unreachable!("parent was not a directory");
-            }
-            edits.push(Edit::Insert(parent_entry));
-        }
-
-        // Remove all descendant entries for this subtree.
-        let mut stack = vec![subtree_inode];
-        while let Some(inode) = stack.pop() {
-            edits.push(Edit::Remove(inode));
-            if let Entry::Dir { children, .. } = self.entries.get(&inode).unwrap() {
-                stack.extend(children.iter().map(|(child_inode, _)| *child_inode));
-            }
-        }
-
-        self.entries.edit(edits);
     }
 
     fn fmt_entry(
@@ -702,8 +647,12 @@ impl BackgroundScanner {
                 children: Arc::from([]),
                 pending: true,
             };
-            self.insert_entries(Some(dir_entry.clone()));
-            self.snapshot.lock().root_inode = Some(inode);
+
+            {
+                let mut snapshot = self.snapshot.lock();
+                snapshot.insert_entry(None, dir_entry);
+                snapshot.root_inode = Some(inode);
+            }
 
             let (tx, rx) = crossbeam_channel::unbounded();
 
@@ -711,7 +660,6 @@ impl BackgroundScanner {
                 inode,
                 path: path.clone(),
                 relative_path,
-                dir_entry,
                 ignore: Some(ignore),
                 scan_queue: tx.clone(),
             }))
@@ -735,14 +683,18 @@ impl BackgroundScanner {
             });
             results.into_iter().collect::<io::Result<()>>()?;
         } else {
-            self.insert_entries(Some(Entry::File {
-                parent: None,
-                path: PathEntry::new(inode, &relative_path, is_ignored),
-                inode,
-                is_symlink,
-                is_ignored,
-            }));
-            self.snapshot.lock().root_inode = Some(inode);
+            let mut snapshot = self.snapshot.lock();
+            snapshot.insert_entry(
+                None,
+                Entry::File {
+                    parent: None,
+                    path: PathEntry::new(inode, &relative_path, is_ignored),
+                    inode,
+                    is_symlink,
+                    is_ignored,
+                },
+            );
+            snapshot.root_inode = Some(inode);
         }
 
         Ok(())
@@ -750,49 +702,47 @@ impl BackgroundScanner {
 
     fn scan_dir(&self, job: ScanJob) -> io::Result<()> {
         let scan_queue = job.scan_queue;
-        let mut dir_entry = job.dir_entry;
 
-        let mut new_children = Vec::new();
         let mut new_entries = Vec::new();
         let mut new_jobs = Vec::new();
 
         for child_entry in fs::read_dir(&job.path)? {
             let child_entry = child_entry?;
-            let name: Arc<OsStr> = child_entry.file_name().into();
-            let relative_path = job.relative_path.join(name.as_ref());
-            let metadata = child_entry.metadata()?;
-            let ino = metadata.ino();
-            let is_symlink = metadata.file_type().is_symlink();
-            let path = job.path.join(name.as_ref());
+            let child_name: Arc<OsStr> = child_entry.file_name().into();
+            let child_relative_path = job.relative_path.join(child_name.as_ref());
+            let child_metadata = child_entry.metadata()?;
+            let child_inode = child_metadata.ino();
+            let child_is_symlink = child_metadata.file_type().is_symlink();
+            let child_path = job.path.join(child_name.as_ref());
 
-            new_children.push((ino, name.clone()));
-            if metadata.is_dir() {
+            if child_metadata.is_dir() {
                 let mut is_ignored = true;
                 let mut ignore = None;
 
                 if let Some(parent_ignore) = job.ignore.as_ref() {
-                    let child_ignore = parent_ignore.add_child(&path).unwrap();
-                    is_ignored =
-                        child_ignore.matched(&path, true).is_ignore() || name.as_ref() == ".git";
+                    let child_ignore = parent_ignore.add_child(&child_path).unwrap();
+                    is_ignored = child_ignore.matched(&child_path, true).is_ignore()
+                        || child_name.as_ref() == ".git";
                     if !is_ignored {
                         ignore = Some(child_ignore);
                     }
                 }
 
-                let dir_entry = Entry::Dir {
-                    parent: Some(job.inode),
-                    inode: ino,
-                    is_symlink,
-                    is_ignored,
-                    children: Arc::from([]),
-                    pending: true,
-                };
-                new_entries.push(dir_entry.clone());
+                new_entries.push((
+                    child_name,
+                    Entry::Dir {
+                        parent: Some(job.inode),
+                        inode: child_inode,
+                        is_symlink: child_is_symlink,
+                        is_ignored,
+                        children: Arc::from([]),
+                        pending: true,
+                    },
+                ));
                 new_jobs.push(ScanJob {
-                    inode: ino,
-                    path: Arc::from(path),
-                    relative_path,
-                    dir_entry,
+                    inode: child_inode,
+                    path: Arc::from(child_path),
+                    relative_path: child_relative_path,
                     ignore,
                     scan_queue: scan_queue.clone(),
                 });
@@ -800,29 +750,21 @@ impl BackgroundScanner {
                 let is_ignored = job
                     .ignore
                     .as_ref()
-                    .map_or(true, |i| i.matched(&path, false).is_ignore());
-                new_entries.push(Entry::File {
-                    parent: Some(job.inode),
-                    path: PathEntry::new(ino, &relative_path, is_ignored),
-                    inode: ino,
-                    is_symlink,
-                    is_ignored,
-                });
+                    .map_or(true, |i| i.matched(&child_path, false).is_ignore());
+                new_entries.push((
+                    child_name,
+                    Entry::File {
+                        parent: Some(job.inode),
+                        path: PathEntry::new(child_inode, &child_relative_path, is_ignored),
+                        inode: child_inode,
+                        is_symlink: child_is_symlink,
+                        is_ignored,
+                    },
+                ));
             };
         }
 
-        if let Entry::Dir {
-            children, pending, ..
-        } = &mut dir_entry
-        {
-            *children = Arc::from(new_children);
-            *pending = false;
-        } else {
-            unreachable!()
-        }
-        new_entries.push(dir_entry);
-
-        self.insert_entries(new_entries);
+        self.snapshot.lock().populate_dir(job.inode, new_entries);
         for new_job in new_jobs {
             scan_queue.send(Ok(new_job)).unwrap();
         }
@@ -854,24 +796,23 @@ impl BackgroundScanner {
                 paths.next();
             }
 
-            if let Some(inode) = snapshot.inode_for_path(&relative_path) {
-                snapshot.remove_subtree(inode);
-            }
+            snapshot.remove_path(&relative_path);
 
             match self.fs_entry_for_path(&root_path, &path) {
                 Ok(Some((fs_entry, ignore))) => {
-                    snapshot.insert_entry_old(&path, fs_entry.clone());
+                    let is_dir = fs_entry.is_dir();
+                    let inode = fs_entry.inode();
 
-                    if fs_entry.is_dir() {
+                    snapshot.insert_entry(path.file_name(), fs_entry);
+                    if is_dir {
                         scan_queue_tx
                             .send(Ok(ScanJob {
-                                inode: fs_entry.inode(),
+                                inode,
                                 path: Arc::from(path),
                                 relative_path: snapshot
                                     .root_name()
                                     .map_or(PathBuf::new(), PathBuf::from)
                                     .join(relative_path),
-                                dir_entry: fs_entry,
                                 ignore: Some(ignore),
                                 scan_queue: scan_queue_tx.clone(),
                             }))
@@ -964,20 +905,12 @@ impl BackgroundScanner {
 
         Ok(Some((entry, ignore)))
     }
-
-    fn insert_entries(&self, entries: impl IntoIterator<Item = Entry>) {
-        self.snapshot
-            .lock()
-            .entries
-            .edit(entries.into_iter().map(Edit::Insert).collect::<Vec<_>>());
-    }
 }
 
 struct ScanJob {
     inode: u64,
     path: Arc<Path>,
     relative_path: PathBuf,
-    dir_entry: Entry,
     ignore: Option<Ignore>,
     scan_queue: crossbeam_channel::Sender<io::Result<ScanJob>>,
 }
