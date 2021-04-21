@@ -45,9 +45,9 @@ impl PathEntry {
 pub struct PathMatch {
     pub score: f64,
     pub positions: Vec<usize>,
+    pub path: String,
     pub tree_id: usize,
     pub entry_id: u64,
-    pub include_root: bool,
 }
 
 impl PartialEq for PathMatch {
@@ -234,9 +234,9 @@ fn match_single_tree_paths<'a>(
             results.push(Reverse(PathMatch {
                 tree_id,
                 entry_id: path_entry.ino,
+                path: path_entry.path.iter().skip(skipped_prefix_len).collect(),
                 score,
                 positions: match_positions.clone(),
-                include_root: skipped_prefix_len == 0,
             }));
             if results.len() == max_results {
                 *min_score = results.peek().unwrap().0.score;

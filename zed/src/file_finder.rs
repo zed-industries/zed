@@ -14,7 +14,7 @@ use gpui::{
     AppContext, Axis, Border, Entity, ModelHandle, MutableAppContext, View, ViewContext,
     ViewHandle, WeakViewHandle,
 };
-use std::cmp;
+use std::{cmp, path::Path};
 
 pub struct FileFinder {
     handle: WeakViewHandle<Self>,
@@ -139,17 +139,14 @@ impl FileFinder {
         let tree_id = path_match.tree_id;
         let entry_id = path_match.entry_id;
 
-        self.worktree(tree_id, app).map(|tree| {
-            let path = tree
-                .path_for_inode(entry_id, path_match.include_root)
-                .unwrap();
-            let file_name = path
+        self.worktree(tree_id, app).map(|_| {
+            let path = &path_match.path;
+            let file_name = Path::new(path)
                 .file_name()
                 .unwrap_or_default()
                 .to_string_lossy()
                 .to_string();
 
-            let path = path.to_string_lossy().to_string();
             let path_positions = path_match.positions.clone();
             let file_name_start = path.chars().count() - file_name.chars().count();
             let mut file_name_positions = Vec::new();
