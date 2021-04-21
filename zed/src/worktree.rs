@@ -342,6 +342,7 @@ impl Snapshot {
                     }
                 }
             }
+            edits.push(Edit::Insert(child));
         }
 
         // Replace the parent with a clone that includes the children and isn't pending
