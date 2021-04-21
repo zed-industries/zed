@@ -299,45 +299,33 @@ impl Snapshot {
         self.entries.edit(edits);
     }
 
-    fn remove_entry(&mut self, path: &Path) {
-        let mut parent_entry = match path.parent().and_then(|p| self.entry_for_path(p).cloned()) {
-            Some(e) => e,
-            None => return,
-        };
+    fn remove_subtree(&mut self, subtree_inode: u64) {
+        let entry = self.entries.get(&subtree_inode).unwrap();
 
         let mut edits = Vec::new();
-        let parent_inode = parent_entry.inode();
-        let mut entry_inode = None;
-        if let Entry::Dir { children, .. } = &mut parent_entry {
-            let mut new_children = Vec::new();
-            for (child_inode, child_name) in children.as_ref() {
-                if Some(child_name.as_ref()) == path.file_name() {
-                    entry_inode = Some(*child_inode);
-                } else {
-                    new_children.push((*child_inode, child_name.clone()));
-                }
-            }
 
-            if new_children.iter().any(|c| Some(c.0) == entry_inode) {
-                entry_inode = None;
+        // Update the parent entry to not include this subtree as one of its children.
+        if let Some(parent_inode) = entry.parent() {
+            let mut parent_entry = self.entries.get(&parent_inode).unwrap().clone();
+            if let Entry::Dir { children, .. } = &mut parent_entry {
+                *children = children
+                    .into_iter()
+                    .filter(|(child_inode, _)| *child_inode != subtree_inode)
+                    .cloned()
+                    .collect::<Vec<_>>()
+                    .into();
+            } else {
+                unreachable!("parent was not a directory");
             }
-
-            *children = new_children.into();
             edits.push(Edit::Insert(parent_entry));
         }
 
-        if let Some(entry_inode) = entry_inode {
-            let mut descendant_stack = Vec::new();
-            descendant_stack.push((entry_inode, parent_inode));
-            while let Some((inode, parent_inode)) = descendant_stack.pop() {
-                if let Some(entry) = self.entries.get(&inode) {
-                    if entry.parent() == Some(parent_inode) {
-                        edits.push(Edit::Remove(inode));
-                        if let Entry::Dir { children, .. } = entry {
-                            descendant_stack.extend(children.iter().map(|c| (c.0, entry.inode())));
-                        }
-                    }
-                }
+        // Remove all descendant entries for this subtree.
+        let mut stack = vec![subtree_inode];
+        while let Some(inode) = stack.pop() {
+            edits.push(Edit::Remove(inode));
+            if let Entry::Dir { children, .. } = self.entries.get(&inode).unwrap() {
+                stack.extend(children.iter().map(|(child_inode, _)| *child_inode));
             }
         }
 
@@ -729,7 +717,9 @@ impl BackgroundScanner {
                 paths.next();
             }
 
-            snapshot.remove_entry(&relative_path);
+            if let Some(inode) = snapshot.inode_for_path(&relative_path) {
+                snapshot.remove_subtree(inode);
+            }
 
             match self.fs_entry_for_path(&root_path, &path) {
                 Ok(Some((fs_entry, ignore))) => {
