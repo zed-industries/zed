@@ -32,8 +32,8 @@ pub fn init(app: &mut MutableAppContext) {
     app.add_action("file_finder:toggle", FileFinder::toggle);
     app.add_action("file_finder:confirm", FileFinder::confirm);
     app.add_action("file_finder:select", FileFinder::select);
-    app.add_action("buffer:move_up", FileFinder::select_prev);
-    app.add_action("buffer:move_down", FileFinder::select_next);
+    app.add_action("menu:select_prev", FileFinder::select_prev);
+    app.add_action("menu:select_next", FileFinder::select_next);
     app.add_action("uniform_list:scroll", FileFinder::scroll);
 
     app.add_bindings(vec![
@@ -445,32 +445,30 @@ mod tests {
             app.dispatch_action(window_id, chain.clone(), "buffer:insert", "b".to_string());
             app.dispatch_action(window_id, chain.clone(), "buffer:insert", "n".to_string());
             app.dispatch_action(window_id, chain.clone(), "buffer:insert", "a".to_string());
+            finder
+                .condition(&app, |finder, _| finder.matches.len() == 2)
+                .await;
 
-            // let view_state = finder.state(&app);
-            // assert!(view_state.matches.len() > 1);
-            // app.dispatch_action(
-            //     window_id,
-            //     vec![workspace_view.id(), finder.id()],
-            //     "menu:select_next",
-            //     (),
-            // );
-            // app.dispatch_action(
-            //     window_id,
-            //     vec![workspace_view.id(), finder.id()],
-            //     "file_finder:confirm",
-            //     (),
-            // );
-            // app.finish_pending_tasks().await; // Load Buffer and open BufferView.
-            // let active_pane = workspace_view.as_ref(app).active_pane().clone();
-            // assert_eq!(
-            //     active_pane.state(&app),
-            //     pane::State {
-            //         tabs: vec![pane::TabState {
-            //             title: "bandana".into(),
-            //             active: true,
-            //         }]
-            //     }
-            // );
+            let active_pane = app.read(|ctx| workspace_view.read(ctx).active_pane().clone());
+            app.dispatch_action(
+                window_id,
+                vec![workspace_view.id(), finder.id()],
+                "menu:select_next",
+                (),
+            );
+            app.dispatch_action(
+                window_id,
+                vec![workspace_view.id(), finder.id()],
+                "file_finder:confirm",
+                (),
+            );
+            active_pane
+                .condition(&app, |pane, _| pane.active_item().is_some())
+                .await;
+            app.read(|ctx| {
+                let active_item = active_pane.read(ctx).active_item().unwrap();
+                assert_eq!(active_item.title(ctx), "bandana");
+            });
         });
     }
 }
