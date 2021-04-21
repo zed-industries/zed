@@ -94,6 +94,21 @@ impl Worktree {
         }
     }
 
+    pub fn next_scan_complete(&self) -> impl Future<Output = ()> {
+        let mut scan_state_rx = self.scan_state.1.clone();
+        let mut did_scan = matches!(*scan_state_rx.borrow(), ScanState::Scanning);
+        async move {
+            loop {
+                if let ScanState::Scanning = *scan_state_rx.borrow() {
+                    did_scan = true;
+                } else if did_scan {
+                    break;
+                }
+                scan_state_rx.recv().await;
+            }
+        }
+    }
+
     fn observe_scan_state(&mut self, scan_state: ScanState, ctx: &mut ModelContext<Self>) {
         let _ = self.scan_state.0.blocking_send(scan_state);
         self.poll_entries(ctx);
@@ -1082,6 +1097,53 @@ mod tests {
     }
 
     #[test]
+    fn test_rescan_with_gitignore() {
+        App::test_async((), |mut app| async move {
+            let dir = temp_tree(json!({
+                ".git": {},
+                ".gitignore": "ignored-dir\n",
+                "tracked-dir": {
+                    "tracked-file1": "tracked contents",
+                },
+                "ignored-dir": {
+                    "ignored-file1": "ignored contents",
+                }
+            }));
+
+            let tree = app.add_model(|ctx| Worktree::new(dir.path(), ctx));
+            app.read(|ctx| tree.read(ctx).scan_complete()).await;
+            app.read(|ctx| {
+                let tree = tree.read(ctx);
+                assert!(!tree
+                    .entry_for_path("tracked-dir/tracked-file1")
+                    .unwrap()
+                    .is_ignored());
+                assert!(tree
+                    .entry_for_path("ignored-dir/ignored-file1")
+                    .unwrap()
+                    .is_ignored());
+            });
+
+            fs::write(dir.path().join("tracked-dir/tracked-file2"), "").unwrap();
+            fs::write(dir.path().join("ignored-dir/ignored-file2"), "").unwrap();
+            // tree.condition(&app, move |_, ctx| file2.path(ctx) == Path::new("d/file2"))
+            //     .await;
+            app.read(|ctx| tree.read(ctx).scan_complete()).await;
+            app.read(|ctx| {
+                let tree = tree.read(ctx);
+                assert!(!tree
+                    .entry_for_path("tracked-dir/tracked-file2")
+                    .unwrap()
+                    .is_ignored());
+                assert!(tree
+                    .entry_for_path("ignored-dir/ignored-file2")
+                    .unwrap()
+                    .is_ignored());
+            });
+        });
+    }
+
+    #[test]
     fn test_random() {
         let iterations = env::var("ITERATIONS")
             .map(|i| i.parse().unwrap())
@@ -1266,6 +1328,14 @@ mod tests {
             .map(|_| rng.sample(rand::distributions::Alphanumeric))
             .map(char::from)
             .collect()
+    }
+
+    impl Entry {
+        fn is_ignored(&self) -> bool {
+            match self {
+                Entry::Dir { is_ignored, .. } | Entry::File { is_ignored, .. } => *is_ignored,
+            }
+        }
     }
 
     impl Snapshot {
