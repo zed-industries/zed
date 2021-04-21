@@ -17,6 +17,7 @@ use postage::{
 };
 use smol::{channel::Sender, Timer};
 use std::{
+    collections::{HashMap, HashSet},
     ffi::OsStr,
     fmt, fs,
     future::Future,
@@ -277,7 +278,143 @@ impl Snapshot {
         Ok(components.into_iter().rev().collect())
     }
 
-    fn insert_entry(&mut self, path: &Path, entry: Entry) {
+    fn insert_entry(&mut self, name: Option<&OsStr>, entry: Entry) {
+        let mut edits = Vec::new();
+
+        if let Some(old_entry) = self.entries.get(&entry.inode()) {
+            // If the entry's parent changed, remove the entry from the old parent's children.
+            if old_entry.parent() != entry.parent() {
+                if let Some(old_parent_inode) = old_entry.parent() {
+                    let old_parent = self.entries.get(&old_parent_inode).unwrap().clone();
+                    self.remove_children(old_parent, &mut edits, |inode| inode == entry.inode());
+                }
+            }
+
+            // Remove all descendants of the old version of the entry being inserted.
+            self.clear_descendants(entry.inode(), &mut edits);
+        }
+
+        // Insert the entry in its new parent with the correct name.
+        if let Some(new_parent_inode) = entry.parent() {
+            let mut new_parent = self.entries.get(&new_parent_inode).unwrap().clone();
+            if let Entry::Dir { children, .. } = &mut new_parent {
+                *children = children
+                    .iter()
+                    .filter(|(inode, _)| *inode != entry.inode())
+                    .cloned()
+                    .chain(Some((entry.inode(), name.unwrap().into())))
+                    .collect::<Vec<_>>()
+                    .into();
+            } else {
+                unreachable!("non-directory parent");
+            }
+            edits.push(Edit::Insert(new_parent));
+        }
+
+        // Insert the entry itself.
+        edits.push(Edit::Insert(entry));
+
+        self.entries.edit(edits);
+    }
+
+    fn populate_dir<'a>(
+        &mut self,
+        parent_inode: u64,
+        children: impl IntoIterator<Item = (&'a OsStr, Entry)>,
+    ) {
+        let mut edits = Vec::new();
+
+        self.clear_descendants(parent_inode, &mut edits);
+
+        // Determine which children are being re-parented and populate array of new children to
+        // assign to the parent.
+        let mut new_children = Vec::new();
+        let mut old_children = HashMap::<u64, HashSet<u64>>::new();
+        for (name, child) in children.into_iter() {
+            new_children.push((child.inode(), name.into()));
+            if let Some(old_child) = self.entries.get(&child.inode()) {
+                if let Some(old_parent_inode) = old_child.parent() {
+                    if old_parent_inode != parent_inode {
+                        old_children
+                            .entry(old_parent_inode)
+                            .or_default()
+                            .insert(child.inode());
+                    }
+                }
+            }
+        }
+
+        // Replace the parent with a clone that includes the children and isn't pending
+        let mut parent = self.entries.get(&parent_inode).unwrap().clone();
+        if let Entry::Dir {
+            children, pending, ..
+        } = &mut parent
+        {
+            *children = new_children.into();
+            *pending = false;
+        } else {
+            unreachable!("non-directory parent");
+        }
+        edits.push(Edit::Insert(parent));
+
+        // For any children that were re-parented, remove them from their old parents
+        for (parent_inode, to_remove) in old_children {
+            let mut parent = self.entries.get(&parent_inode).unwrap().clone();
+            self.remove_children(parent, &mut edits, |inode| to_remove.contains(&inode));
+        }
+
+        self.entries.edit(edits);
+    }
+
+    fn remove_path(&mut self, path: &Path) {
+        if let Some(entry) = self.entry_for_path(path).cloned() {
+            let mut edits = Vec::new();
+
+            self.clear_descendants(entry.inode(), &mut edits);
+
+            if let Some(parent_inode) = entry.parent() {
+                let parent = self.entries.get(&parent_inode).unwrap().clone();
+                self.remove_children(parent, &mut edits, |inode| inode == entry.inode());
+            }
+
+            edits.push(Edit::Remove(entry.inode()));
+
+            self.entries.edit(edits);
+        }
+    }
+
+    fn clear_descendants(&mut self, mut inode: u64, edits: &mut Vec<Edit<Entry>>) {
+        let mut stack = vec![inode];
+        while let Some(inode) = stack.pop() {
+            if let Entry::Dir { children, .. } = self.entries.get(&inode).unwrap() {
+                for (child_inode, _) in children.iter() {
+                    edits.push(Edit::Remove(*child_inode));
+                    stack.push(*child_inode);
+                }
+            }
+        }
+    }
+
+    fn remove_children(
+        &mut self,
+        mut parent: Entry,
+        edits: &mut Vec<Edit<Entry>>,
+        predicate: impl Fn(u64) -> bool,
+    ) {
+        if let Entry::Dir { children, .. } = &mut parent {
+            *children = children
+                .iter()
+                .filter(|(inode, _)| !predicate(*inode))
+                .cloned()
+                .collect::<Vec<_>>()
+                .into();
+        } else {
+            unreachable!("non-directory parent");
+        }
+        edits.push(Edit::Insert(parent));
+    }
+
+    fn insert_entry_old(&mut self, path: &Path, entry: Entry) {
         let mut edits = Vec::new();
         edits.push(Edit::Insert(entry.clone()));
         if let Some(parent) = entry.parent() {
@@ -723,7 +860,7 @@ impl BackgroundScanner {
 
             match self.fs_entry_for_path(&root_path, &path) {
                 Ok(Some((fs_entry, ignore))) => {
-                    snapshot.insert_entry(&path, fs_entry.clone());
+                    snapshot.insert_entry_old(&path, fs_entry.clone());
 
                     if fs_entry.is_dir() {
                         scan_queue_tx
