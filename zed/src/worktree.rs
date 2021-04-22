@@ -784,12 +784,12 @@ impl BackgroundScanner {
 
             let (tx, rx) = crossbeam_channel::unbounded();
 
-            tx.send(Ok(ScanJob {
+            tx.send(ScanJob {
                 inode,
                 path: path.clone(),
                 relative_path,
                 scan_queue: tx.clone(),
-            }))
+            })
             .unwrap();
             drop(tx);
 
@@ -800,7 +800,8 @@ impl BackgroundScanner {
                     pool.execute(|| {
                         let result = result;
                         while let Ok(job) = rx.recv() {
-                            if let Err(err) = job.and_then(|job| self.scan_dir(job)) {
+                            if let Err(err) = self.scan_dir(&job) {
+                                log::error!("error scanning {:?}: {}", job.path, err);
                                 *result = Err(err);
                                 break;
                             }
@@ -829,9 +830,7 @@ impl BackgroundScanner {
         Ok(())
     }
 
-    fn scan_dir(&self, job: ScanJob) -> io::Result<()> {
-        let scan_queue = job.scan_queue;
-
+    fn scan_dir(&self, job: &ScanJob) -> io::Result<()> {
         let mut new_entries = Vec::new();
         let mut new_jobs = Vec::new();
 
@@ -860,7 +859,7 @@ impl BackgroundScanner {
                     inode: child_inode,
                     path: Arc::from(child_path),
                     relative_path: child_relative_path,
-                    scan_queue: scan_queue.clone(),
+                    scan_queue: job.scan_queue.clone(),
                 });
             } else {
                 new_entries.push((
@@ -878,7 +877,7 @@ impl BackgroundScanner {
 
         self.snapshot.lock().populate_dir(job.inode, new_entries);
         for new_job in new_jobs {
-            scan_queue.send(Ok(new_job)).unwrap();
+            job.scan_queue.send(new_job).unwrap();
         }
 
         Ok(())
@@ -920,7 +919,7 @@ impl BackgroundScanner {
                     snapshot.insert_entry(path.file_name(), fs_entry);
                     if is_dir {
                         scan_queue_tx
-                            .send(Ok(ScanJob {
+                            .send(ScanJob {
                                 inode,
                                 path: Arc::from(path),
                                 relative_path: snapshot
@@ -928,7 +927,7 @@ impl BackgroundScanner {
                                     .map_or(PathBuf::new(), PathBuf::from)
                                     .join(relative_path),
                                 scan_queue: scan_queue_tx.clone(),
-                            }))
+                            })
                             .unwrap();
                     }
                 }
@@ -948,8 +947,8 @@ impl BackgroundScanner {
             for _ in 0..self.thread_pool.thread_count() {
                 pool.execute(|| {
                     while let Ok(job) = scan_queue_rx.recv() {
-                        if let Err(err) = job.and_then(|job| self.scan_dir(job)) {
-                            log::error!("Error scanning {:?}", err);
+                        if let Err(err) = self.scan_dir(&job) {
+                            log::error!("error scanning {:?}: {}", job.path, err);
                         }
                     }
                 });
@@ -1139,7 +1138,7 @@ struct ScanJob {
     inode: u64,
     path: Arc<Path>,
     relative_path: PathBuf,
-    scan_queue: crossbeam_channel::Sender<io::Result<ScanJob>>,
+    scan_queue: crossbeam_channel::Sender<ScanJob>,
 }
 
 pub trait WorktreeHandle {
