@@ -21,10 +21,11 @@ pub struct PathEntry {
     pub path_chars: CharBag,
     pub path: Arc<[char]>,
     pub lowercase_path: Arc<[char]>,
+    pub is_ignored: Option<bool>,
 }
 
 impl PathEntry {
-    pub fn new(ino: u64, path: &Path) -> Self {
+    pub fn new(ino: u64, path: &Path, is_ignored: Option<bool>) -> Self {
         let path = path.to_string_lossy();
         let lowercase_path = path.to_lowercase().chars().collect::<Vec<_>>().into();
         let path: Arc<[char]> = path.chars().collect::<Vec<_>>().into();
@@ -35,6 +36,7 @@ impl PathEntry {
             path_chars,
             path,
             lowercase_path,
+            is_ignored,
         }
     }
 }
@@ -196,7 +198,7 @@ fn match_single_tree_paths<'a>(
             continue;
         }
 
-        if !include_ignored && snapshot.is_inode_ignored(path_entry.ino).unwrap_or(true) {
+        if !include_ignored && path_entry.is_ignored.unwrap_or(false) {
             continue;
         }
 
@@ -500,6 +502,7 @@ mod tests {
                 path_chars,
                 path,
                 lowercase_path,
+                is_ignored: Some(false),
             });
         }
 
@@ -512,6 +515,7 @@ mod tests {
         match_single_tree_paths(
             &Snapshot {
                 id: 0,
+                scan_id: 0,
                 path: PathBuf::new().into(),
                 root_inode: None,
                 ignores: Default::default(),

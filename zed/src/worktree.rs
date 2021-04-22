@@ -17,11 +17,12 @@ use postage::{
 };
 use smol::{channel::Sender, Timer};
 use std::{
-    collections::{HashMap, HashSet},
+    collections::{BTreeMap, HashMap, HashSet},
     ffi::OsStr,
     fmt, fs,
     future::Future,
     io::{self, Read, Write},
+    mem,
     ops::{AddAssign, Deref},
     os::unix::fs::MetadataExt,
     path::{Path, PathBuf},
@@ -30,6 +31,7 @@ use std::{
 };
 
 const GITIGNORE: &'static str = ".gitignore";
+const EDIT_BATCH_LEN: usize = 2000;
 
 #[derive(Clone, Debug)]
 enum ScanState {
@@ -58,6 +60,7 @@ impl Worktree {
         let id = ctx.model_id();
         let snapshot = Snapshot {
             id,
+            scan_id: 0,
             path: path.into(),
             root_inode: None,
             ignores: Default::default(),
@@ -230,9 +233,10 @@ impl fmt::Debug for Worktree {
 #[derive(Clone)]
 pub struct Snapshot {
     id: usize,
+    scan_id: usize,
     path: Arc<Path>,
     root_inode: Option<u64>,
-    ignores: HashMap<u64, Gitignore>,
+    ignores: HashMap<u64, (Arc<Gitignore>, usize)>,
     entries: SumTree<Entry>,
 }
 
@@ -272,15 +276,7 @@ impl Snapshot {
         })
     }
 
-    pub fn is_path_ignored(&self, path: impl AsRef<Path>) -> Result<bool> {
-        if let Some(inode) = self.inode_for_path(path.as_ref()) {
-            self.is_inode_ignored(inode)
-        } else {
-            Ok(false)
-        }
-    }
-
-    pub fn is_inode_ignored(&self, mut inode: u64) -> Result<bool> {
+    fn is_inode_ignored(&self, mut inode: u64) -> Result<bool> {
         let mut components = Vec::new();
         let mut relative_path = PathBuf::new();
         let mut entry = self
@@ -297,7 +293,7 @@ impl Snapshot {
                 components.push(child_name.as_ref());
                 inode = parent;
 
-                if let Some(ignore) = self.ignores.get(&inode) {
+                if let Some((ignore, _)) = self.ignores.get(&inode) {
                     relative_path.clear();
                     relative_path.extend(components.iter().rev());
                     match ignore.matched_path_or_any_parents(&relative_path, entry.is_dir()) {
@@ -506,7 +502,8 @@ impl Snapshot {
             log::info!("error in ignore file {:?} - {:?}", path, err);
         }
 
-        self.ignores.insert(dir_inode, ignore);
+        self.ignores
+            .insert(dir_inode, (Arc::new(ignore), self.scan_id));
     }
 
     fn remove_ignore_file(&mut self, dir_inode: u64) {
@@ -585,16 +582,37 @@ pub enum Entry {
         is_symlink: bool,
         children: Arc<[(u64, Arc<OsStr>)]>,
         pending: bool,
+        is_ignored: Option<bool>,
     },
     File {
         inode: u64,
         parent: Option<u64>,
         is_symlink: bool,
         path: PathEntry,
+        is_ignored: Option<bool>,
     },
 }
 
 impl Entry {
+    fn is_ignored(&self) -> Option<bool> {
+        match self {
+            Entry::Dir { is_ignored, .. } => *is_ignored,
+            Entry::File { is_ignored, .. } => *is_ignored,
+        }
+    }
+
+    fn set_ignored(&mut self, ignored: bool) {
+        match self {
+            Entry::Dir { is_ignored, .. } => *is_ignored = Some(ignored),
+            Entry::File {
+                is_ignored, path, ..
+            } => {
+                *is_ignored = Some(ignored);
+                path.is_ignored = Some(ignored);
+            }
+        }
+    }
+
     fn inode(&self) -> u64 {
         match self {
             Entry::Dir { inode, .. } => *inode,
@@ -625,6 +643,7 @@ impl sum_tree::Item for Entry {
             } else {
                 0
             },
+            recompute_is_ignored: self.is_ignored().is_none(),
         }
     }
 }
@@ -641,12 +660,14 @@ impl sum_tree::KeyedItem for Entry {
 pub struct EntrySummary {
     max_ino: u64,
     file_count: usize,
+    recompute_is_ignored: bool,
 }
 
 impl<'a> AddAssign<&'a EntrySummary> for EntrySummary {
     fn add_assign(&mut self, rhs: &'a EntrySummary) {
         self.max_ino = rhs.max_ino;
         self.file_count += rhs.file_count;
+        self.recompute_is_ignored |= rhs.recompute_is_ignored;
     }
 }
 
@@ -721,6 +742,8 @@ impl BackgroundScanner {
     }
 
     fn scan_dirs(&self) -> io::Result<()> {
+        self.snapshot.lock().scan_id += 1;
+
         let path = self.path();
         let metadata = fs::metadata(&path)?;
         let inode = metadata.ino();
@@ -735,6 +758,7 @@ impl BackgroundScanner {
                 is_symlink,
                 children: Arc::from([]),
                 pending: true,
+                is_ignored: None,
             };
 
             {
@@ -776,13 +800,16 @@ impl BackgroundScanner {
                 None,
                 Entry::File {
                     parent: None,
-                    path: PathEntry::new(inode, &relative_path),
+                    path: PathEntry::new(inode, &relative_path, None),
                     inode,
                     is_symlink,
+                    is_ignored: None,
                 },
             );
             snapshot.root_inode = Some(inode);
         }
+
+        self.recompute_ignore_statuses();
 
         Ok(())
     }
@@ -811,6 +838,7 @@ impl BackgroundScanner {
                         is_symlink: child_is_symlink,
                         children: Arc::from([]),
                         pending: true,
+                        is_ignored: None,
                     },
                 ));
                 new_jobs.push(ScanJob {
@@ -824,9 +852,10 @@ impl BackgroundScanner {
                     child_name,
                     Entry::File {
                         parent: Some(job.inode),
-                        path: PathEntry::new(child_inode, &child_relative_path),
+                        path: PathEntry::new(child_inode, &child_relative_path, None),
                         inode: child_inode,
                         is_symlink: child_is_symlink,
+                        is_ignored: None,
                     },
                 ));
             };
@@ -842,6 +871,8 @@ impl BackgroundScanner {
 
     fn process_events(&self, mut events: Vec<fsevent::Event>) -> bool {
         let mut snapshot = self.snapshot();
+        snapshot.scan_id += 1;
+
         let root_path = if let Ok(path) = snapshot.path.canonicalize() {
             path
         } else {
@@ -910,7 +941,131 @@ impl BackgroundScanner {
             }
         });
 
+        self.recompute_ignore_statuses();
+
         true
+    }
+
+    fn recompute_ignore_statuses(&self) {
+        self.compute_ignore_status_for_new_ignores();
+        self.compute_ignore_status_for_new_entries();
+    }
+
+    fn compute_ignore_status_for_new_ignores(&self) {
+        struct IgnoreJob {
+            inode: u64,
+            ignore_queue_tx: crossbeam_channel::Sender<IgnoreJob>,
+        }
+
+        let snapshot = self.snapshot.lock().clone();
+
+        let mut new_ignore_parents = BTreeMap::new();
+        for (parent_inode, (_, scan_id)) in &snapshot.ignores {
+            if *scan_id == snapshot.scan_id {
+                let parent_path = snapshot.path_for_inode(*parent_inode, false).unwrap();
+                new_ignore_parents.insert(parent_path, *parent_inode);
+            }
+        }
+        let mut new_ignores = new_ignore_parents.into_iter().peekable();
+
+        let (ignore_queue_tx, ignore_queue_rx) = crossbeam_channel::unbounded();
+        while let Some((parent_path, parent_inode)) = new_ignores.next() {
+            while new_ignores
+                .peek()
+                .map_or(false, |(p, _)| p.starts_with(&parent_path))
+            {
+                new_ignores.next().unwrap();
+            }
+
+            ignore_queue_tx
+                .send(IgnoreJob {
+                    inode: parent_inode,
+                    ignore_queue_tx: ignore_queue_tx.clone(),
+                })
+                .unwrap();
+        }
+        drop(ignore_queue_tx);
+
+        self.thread_pool.scoped(|scope| {
+            let (edits_tx, edits_rx) = crossbeam_channel::unbounded();
+
+            scope.execute(move || {
+                let mut edits = Vec::new();
+                while let Ok(edit) = edits_rx.recv() {
+                    edits.push(edit);
+                    while let Ok(edit) = edits_rx.try_recv() {
+                        edits.push(edit);
+                        if edits.len() == EDIT_BATCH_LEN {
+                            break;
+                        }
+                    }
+                    self.snapshot.lock().entries.edit(mem::take(&mut edits));
+                }
+            });
+
+            for _ in 0..self.thread_pool.thread_count() - 1 {
+                let edits_tx = edits_tx.clone();
+                scope.execute(|| {
+                    let edits_tx = edits_tx;
+                    while let Ok(job) = ignore_queue_rx.recv() {
+                        let mut entry = snapshot.entries.get(&job.inode).unwrap().clone();
+                        entry.set_ignored(snapshot.is_inode_ignored(job.inode).unwrap());
+                        if let Entry::Dir { children, .. } = &entry {
+                            for (child_inode, _) in children.as_ref() {
+                                job.ignore_queue_tx
+                                    .send(IgnoreJob {
+                                        inode: *child_inode,
+                                        ignore_queue_tx: job.ignore_queue_tx.clone(),
+                                    })
+                                    .unwrap();
+                            }
+                        }
+
+                        edits_tx.send(Edit::Insert(entry)).unwrap();
+                    }
+                });
+            }
+        });
+    }
+
+    fn compute_ignore_status_for_new_entries(&self) {
+        let snapshot = self.snapshot.lock().clone();
+
+        let (entries_tx, entries_rx) = crossbeam_channel::unbounded();
+        self.thread_pool.scoped(|scope| {
+            let (edits_tx, edits_rx) = crossbeam_channel::unbounded();
+            scope.execute(move || {
+                let mut edits = Vec::new();
+                while let Ok(edit) = edits_rx.recv() {
+                    edits.push(edit);
+                    while let Ok(edit) = edits_rx.try_recv() {
+                        edits.push(edit);
+                        if edits.len() == EDIT_BATCH_LEN {
+                            break;
+                        }
+                    }
+                    self.snapshot.lock().entries.edit(mem::take(&mut edits));
+                }
+            });
+
+            scope.execute(|| {
+                let entries_tx = entries_tx;
+                for entry in snapshot.entries.filter::<_, ()>(|e| e.recompute_is_ignored) {
+                    entries_tx.send(entry.clone()).unwrap();
+                }
+            });
+
+            for _ in 0..self.thread_pool.thread_count() - 2 {
+                let edits_tx = edits_tx.clone();
+                scope.execute(|| {
+                    let edits_tx = edits_tx;
+                    while let Ok(mut entry) = entries_rx.recv() {
+                        entry.set_ignored(snapshot.is_inode_ignored(entry.inode()).unwrap());
+                        edits_tx.send(Edit::Insert(entry)).unwrap();
+                    }
+                });
+            }
+        });
     }
 
     fn fs_entry_for_path(&self, root_path: &Path, path: &Path) -> Result<Option<Entry>> {
@@ -947,6 +1102,7 @@ impl BackgroundScanner {
                 is_symlink,
                 pending: true,
                 children: Arc::from([]),
+                is_ignored: None,
             }
         } else {
             Entry::File {
@@ -958,7 +1114,9 @@ impl BackgroundScanner {
                     root_path
                         .parent()
                         .map_or(path, |parent| path.strip_prefix(parent).unwrap()),
+                    None,
                 ),
+                is_ignored: None,
             }
         };
 
@@ -1143,8 +1301,10 @@ mod tests {
             app.read(|ctx| tree.read(ctx).scan_complete()).await;
             app.read(|ctx| {
                 let tree = tree.read(ctx);
-                assert!(!tree.is_path_ignored("tracked-dir/tracked-file1").unwrap());
-                assert!(tree.is_path_ignored("ignored-dir/ignored-file1").unwrap());
+                let tracked = tree.entry_for_path("tracked-dir/tracked-file1").unwrap();
+                let ignored = tree.entry_for_path("ignored-dir/ignored-file1").unwrap();
+                assert_eq!(tracked.is_ignored(), Some(false));
+                assert_eq!(ignored.is_ignored(), Some(true));
             });
 
             fs::write(dir.path().join("tracked-dir/tracked-file2"), "").unwrap();
@@ -1152,8 +1312,10 @@ mod tests {
             app.read(|ctx| tree.read(ctx).next_scan_complete()).await;
             app.read(|ctx| {
                 let tree = tree.read(ctx);
-                assert!(!tree.is_path_ignored("tracked-dir/tracked-file2").unwrap());
-                assert!(tree.is_path_ignored("ignored-dir/ignored-file2").unwrap());
+                let tracked = tree.entry_for_path("tracked-dir/tracked-file2").unwrap();
+                let ignored = tree.entry_for_path("ignored-dir/ignored-file2").unwrap();
+                assert_eq!(tracked.is_ignored(), Some(false));
+                assert_eq!(ignored.is_ignored(), Some(true));
             });
         });
     }
@@ -1189,6 +1351,7 @@ mod tests {
             let scanner = BackgroundScanner::new(
                 Arc::new(Mutex::new(Snapshot {
                     id: 0,
+                    scan_id: 0,
                     path: root_dir.path().into(),
                     root_inode: None,
                     entries: Default::default(),
@@ -1219,6 +1382,7 @@ mod tests {
             let new_scanner = BackgroundScanner::new(
                 Arc::new(Mutex::new(Snapshot {
                     id: 0,
+                    scan_id: 0,
                     path: root_dir.path().into(),
                     root_inode: None,
                     entries: Default::default(),
