@@ -403,6 +403,8 @@ impl Snapshot {
                             .insert(child.inode());
                     }
                 }
+
+                self.clear_descendants(child.inode(), &mut edits);
             }
             edits.push(Edit::Insert(child));
         }
