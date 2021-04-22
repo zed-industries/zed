@@ -18,13 +18,13 @@ use postage::{
 use smol::{channel::Sender, Timer};
 use std::{
     collections::{BTreeMap, HashMap, HashSet},
-    ffi::OsStr,
+    ffi::{CStr, OsStr},
     fmt, fs,
     future::Future,
     io::{self, Read, Write},
     mem,
     ops::{AddAssign, Deref},
-    os::unix::fs::MetadataExt,
+    os::unix::{ffi::OsStrExt, fs::MetadataExt},
     path::{Path, PathBuf},
     sync::Arc,
     time::Duration,
@@ -1229,30 +1229,21 @@ impl<'a> Iterator for FileIter<'a> {
 }
 
 fn mounted_volume_paths() -> Vec<PathBuf> {
-    use cocoa::{
-        base::{id, nil},
-        foundation::{NSArray, NSString, NSURL},
-    };
-    use objc::{class, msg_send, sel, sel_impl};
-
     unsafe {
-        let manager: id = msg_send![class!(NSFileManager), defaultManager];
-        let array = NSArray::array(nil);
-        let urls: id =
-            msg_send![manager, mountedVolumeURLsIncludingResourceValuesForKeys:array options:0];
-        let len = urls.count() as usize;
-        let mut result = Vec::with_capacity(len);
-        for i in 0..len {
-            let url = urls.objectAtIndex(i as u64);
-            let string = url.absoluteString();
-            let string = std::ffi::CStr::from_ptr(string.UTF8String())
-                .to_string_lossy()
-                .to_string();
-            if let Some(path) = string.strip_prefix("file://") {
-                result.push(PathBuf::from(path));
+        let mut stat_ptr: *mut libc::statfs = std::ptr::null_mut();
+        let count = libc::getmntinfo(&mut stat_ptr as *mut _, libc::MNT_WAIT);
+        if count >= 0 {
+            std::slice::from_raw_parts(stat_ptr, count as usize)
+                .iter()
+                .map(|stat| {
+                    PathBuf::from(OsStr::from_bytes(
+                        CStr::from_ptr(&stat.f_mntonname[0]).to_bytes(),
+                    ))
+                })
+                .collect()
+        } else {
+            panic!("failed to run getmntinfo");
             }
-        }
-        result
     }
 }
 
