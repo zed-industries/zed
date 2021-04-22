@@ -244,6 +244,10 @@ impl Snapshot {
         self.entries.summary().file_count
     }
 
+    pub fn visible_file_count(&self) -> usize {
+        self.entries.summary().visible_file_count
+    }
+
     pub fn root_entry(&self) -> Option<&Entry> {
         self.root_inode.and_then(|inode| self.entries.get(&inode))
     }
@@ -606,12 +610,7 @@ impl Entry {
     fn set_ignored(&mut self, ignored: bool) {
         match self {
             Entry::Dir { is_ignored, .. } => *is_ignored = Some(ignored),
-            Entry::File {
-                is_ignored, path, ..
-            } => {
-                *is_ignored = Some(ignored);
-                path.is_ignored = Some(ignored);
-            }
+            Entry::File { is_ignored, .. } => *is_ignored = Some(ignored),
         }
     }
 
@@ -638,14 +637,25 @@ impl sum_tree::Item for Entry {
     type Summary = EntrySummary;
 
     fn summary(&self) -> Self::Summary {
+        let file_count;
+        let visible_file_count;
+        if let Entry::File { is_ignored, .. } = self {
+            file_count = 1;
+            if is_ignored.unwrap_or(false) {
+                visible_file_count = 0;
+            } else {
+                visible_file_count = 1;
+            }
+        } else {
+            file_count = 0;
+            visible_file_count = 0;
+        }
+
         EntrySummary {
             max_ino: self.inode(),
-            file_count: if matches!(self, Self::File { .. }) {
-                1
-            } else {
-                0
-            },
-            recompute_is_ignored: self.is_ignored().is_none(),
+            file_count,
+            visible_file_count,
+            recompute_ignore_status: self.is_ignored().is_none(),
         }
     }
 }
@@ -662,14 +672,16 @@ impl sum_tree::KeyedItem for Entry {
 pub struct EntrySummary {
     max_ino: u64,
     file_count: usize,
-    recompute_is_ignored: bool,
+    visible_file_count: usize,
+    recompute_ignore_status: bool,
 }
 
 impl<'a> AddAssign<&'a EntrySummary> for EntrySummary {
     fn add_assign(&mut self, rhs: &'a EntrySummary) {
         self.max_ino = rhs.max_ino;
         self.file_count += rhs.file_count;
-        self.recompute_is_ignored |= rhs.recompute_is_ignored;
+        self.visible_file_count += rhs.visible_file_count;
+        self.recompute_ignore_status |= rhs.recompute_ignore_status;
     }
 }
 
@@ -685,6 +697,15 @@ struct FileCount(usize);
 impl<'a> sum_tree::Dimension<'a, EntrySummary> for FileCount {
     fn add_summary(&mut self, summary: &'a EntrySummary) {
         self.0 += summary.file_count;
+    }
+}
+
+#[derive(Copy, Clone, Default, Debug, Eq, PartialEq, Ord, PartialOrd)]
+struct VisibleFileCount(usize);
+
+impl<'a> sum_tree::Dimension<'a, EntrySummary> for VisibleFileCount {
+    fn add_summary(&mut self, summary: &'a EntrySummary) {
+        self.0 += summary.visible_file_count;
     }
 }
 
@@ -802,7 +823,7 @@ impl BackgroundScanner {
                 None,
                 Entry::File {
                     parent: None,
-                    path: PathEntry::new(inode, &relative_path, None),
+                    path: PathEntry::new(inode, &relative_path),
                     inode,
                     is_symlink,
                     is_ignored: None,
@@ -854,7 +875,7 @@ impl BackgroundScanner {
                     child_name,
                     Entry::File {
                         parent: Some(job.inode),
-                        path: PathEntry::new(child_inode, &child_relative_path, None),
+                        path: PathEntry::new(child_inode, &child_relative_path),
                         inode: child_inode,
                         is_symlink: child_is_symlink,
                         is_ignored: None,
@@ -1046,7 +1067,10 @@ impl BackgroundScanner {
 
             scope.execute(|| {
                 let entries_tx = entries_tx;
-                for entry in snapshot.entries.filter::<_, ()>(|e| e.recompute_is_ignored) {
+                for entry in snapshot
+                    .entries
+                    .filter::<_, ()>(|e| e.recompute_ignore_status)
+                {
                     entries_tx.send(entry.clone()).unwrap();
                 }
             });
@@ -1110,7 +1134,6 @@ impl BackgroundScanner {
                     root_path
                         .parent()
                         .map_or(path, |parent| path.strip_prefix(parent).unwrap()),
-                    None,
                 ),
                 is_ignored: None,
             }

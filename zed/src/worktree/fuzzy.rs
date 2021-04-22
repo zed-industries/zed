@@ -2,7 +2,7 @@ use gpui::scoped_pool;
 
 use crate::sum_tree::SeekBias;
 
-use super::{char_bag::CharBag, Entry, FileCount, Snapshot};
+use super::{char_bag::CharBag, Entry, FileCount, Snapshot, VisibleFileCount};
 
 use std::{
     cmp::{max, min, Ordering, Reverse},
@@ -21,11 +21,10 @@ pub struct PathEntry {
     pub path_chars: CharBag,
     pub path: Arc<[char]>,
     pub lowercase_path: Arc<[char]>,
-    pub is_ignored: Option<bool>,
 }
 
 impl PathEntry {
-    pub fn new(ino: u64, path: &Path, is_ignored: Option<bool>) -> Self {
+    pub fn new(ino: u64, path: &Path) -> Self {
         let path = path.to_string_lossy();
         let lowercase_path = path.to_lowercase().chars().collect::<Vec<_>>().into();
         let path: Arc<[char]> = path.chars().collect::<Vec<_>>().into();
@@ -36,7 +35,6 @@ impl PathEntry {
             path_chars,
             path,
             lowercase_path,
-            is_ignored,
         }
     }
 }
@@ -90,7 +88,12 @@ where
     let query_chars = CharBag::from(&lowercase_query[..]);
 
     let cpus = num_cpus::get();
-    let path_count: usize = snapshots.clone().map(Snapshot::file_count).sum();
+    let path_count: usize = if include_ignored {
+        snapshots.clone().map(Snapshot::file_count).sum()
+    } else {
+        snapshots.clone().map(Snapshot::visible_file_count).sum()
+    };
+
     let segment_size = (path_count + cpus - 1) / cpus;
     let mut segment_results = (0..cpus).map(|_| BinaryHeap::new()).collect::<Vec<_>>();
 
@@ -111,22 +114,15 @@ where
 
                 let mut tree_start = 0;
                 for snapshot in trees {
-                    let tree_end = tree_start + snapshot.file_count();
+                    let tree_end = if include_ignored {
+                        tree_start + snapshot.file_count()
+                    } else {
+                        tree_start + snapshot.visible_file_count()
+                    };
                     if tree_start < segment_end && segment_start < tree_end {
                         let start = max(tree_start, segment_start) - tree_start;
                         let end = min(tree_end, segment_end) - tree_start;
-                        let mut cursor = snapshot.entries.cursor::<_, ()>();
-                        cursor.seek(&FileCount(start), SeekBias::Right);
-                        let path_entries = cursor
-                            .filter_map(|e| {
-                                if let Entry::File { path, .. } = e {
-                                    Some(path)
-                                } else {
-                                    None
-                                }
-                            })
-                            .take(end - start);
-
+                        let path_entries = path_entries_iter(snapshot, start, end, include_ignored);
                         let skipped_prefix_len = if include_root_name {
                             0
                         } else if let Some(Entry::Dir { .. }) = snapshot.root_entry() {
@@ -145,8 +141,7 @@ where
                             path_entries,
                             query,
                             lowercase_query,
-                            query_chars.clone(),
-                            include_ignored,
+                            query_chars,
                             smart_case,
                             results,
                             max_results,
@@ -176,6 +171,44 @@ where
     results
 }
 
+fn path_entries_iter<'a>(
+    snapshot: &'a Snapshot,
+    start: usize,
+    end: usize,
+    include_ignored: bool,
+) -> impl Iterator<Item = &'a PathEntry> {
+    let mut files_cursor = None;
+    let mut visible_files_cursor = None;
+    if include_ignored {
+        let mut cursor = snapshot.entries.cursor::<_, ()>();
+        cursor.seek(&FileCount(start), SeekBias::Right);
+        files_cursor = Some(cursor);
+    } else {
+        let mut cursor = snapshot.entries.cursor::<_, ()>();
+        cursor.seek(&VisibleFileCount(start), SeekBias::Right);
+        visible_files_cursor = Some(cursor);
+    }
+    files_cursor
+        .into_iter()
+        .flatten()
+        .chain(visible_files_cursor.into_iter().flatten())
+        .filter_map(move |e| {
+            if let Entry::File {
+                path, is_ignored, ..
+            } = e
+            {
+                if is_ignored.unwrap_or(false) && !include_ignored {
+                    None
+                } else {
+                    Some(path)
+                }
+            } else {
+                None
+            }
+        })
+        .take(end - start)
+}
+
 fn match_single_tree_paths<'a>(
     snapshot: &Snapshot,
     skipped_prefix_len: usize,
@@ -183,7 +216,6 @@ fn match_single_tree_paths<'a>(
     query: &[char],
     lowercase_query: &[char],
     query_chars: CharBag,
-    include_ignored: bool,
     smart_case: bool,
     results: &mut BinaryHeap<Reverse<PathMatch>>,
     max_results: usize,
@@ -194,11 +226,7 @@ fn match_single_tree_paths<'a>(
     best_position_matrix: &mut Vec<usize>,
 ) {
     for path_entry in path_entries {
-        if !path_entry.path_chars.is_superset(query_chars.clone()) {
-            continue;
-        }
-
-        if !include_ignored && path_entry.is_ignored.unwrap_or(false) {
+        if !path_entry.path_chars.is_superset(query_chars) {
             continue;
         }
 
@@ -502,7 +530,6 @@ mod tests {
                 path_chars,
                 path,
                 lowercase_path,
-                is_ignored: Some(false),
             });
         }
 
@@ -526,7 +553,6 @@ mod tests {
             &query[..],
             &lowercase_query[..],
             query_chars,
-            true,
             smart_case,
             &mut results,
             100,
