@@ -2220,6 +2220,7 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "arrayvec",
+ "cocoa",
  "crossbeam-channel",
  "ctor",
  "dirs",
@@ -2233,6 +2234,7 @@ dependencies = [
  "libc",
  "log",
  "num_cpus",
+ "objc",
  "parking_lot",
  "postage",
  "rand 0.8.3",

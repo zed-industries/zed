@@ -354,7 +354,11 @@ impl Snapshot {
                 self.insert_ignore_file(new_parent_inode);
             }
 
-            let mut new_parent = self.entries.get(&new_parent_inode).unwrap().clone();
+            let mut new_parent = self
+                .entries
+                .get(&new_parent_inode)
+                .expect(&format!("no entry for inode {}", new_parent_inode))
+                .clone();
             if let Entry::Dir { children, .. } = &mut new_parent {
                 *children = children
                     .iter()
@@ -417,7 +421,7 @@ impl Snapshot {
             *children = new_children.into();
             *pending = false;
         } else {
-            unreachable!("non-directory parent");
+            unreachable!("non-directory parent {}", parent_inode);
         }
         edits.push(Edit::Insert(parent));
 
@@ -703,16 +707,30 @@ impl<'a> sum_tree::Dimension<'a, EntrySummary> for VisibleFileCount {
 struct BackgroundScanner {
     snapshot: Arc<Mutex<Snapshot>>,
     notify: Sender<ScanState>,
+    other_mount_paths: HashSet<PathBuf>,
     thread_pool: scoped_pool::Pool,
 }
 
 impl BackgroundScanner {
     fn new(snapshot: Arc<Mutex<Snapshot>>, notify: Sender<ScanState>, worktree_id: usize) -> Self {
-        Self {
+        let mut scanner = Self {
             snapshot,
             notify,
+            other_mount_paths: Default::default(),
             thread_pool: scoped_pool::Pool::new(16, format!("worktree-{}-scanner", worktree_id)),
-        }
+        };
+        scanner.update_other_mount_paths();
+        scanner
+    }
+
+    fn update_other_mount_paths(&mut self) {
+        let path = self.snapshot.lock().path.clone();
+        self.other_mount_paths.clear();
+        self.other_mount_paths.extend(
+            mounted_volume_paths()
+                .into_iter()
+                .filter(|mount_path| !path.starts_with(mount_path)),
+        );
     }
 
     fn path(&self) -> Arc<Path> {
@@ -723,7 +741,7 @@ impl BackgroundScanner {
         self.snapshot.lock().clone()
     }
 
-    fn run(self, event_stream: fsevent::EventStream) {
+    fn run(mut self, event_stream: fsevent::EventStream) {
         if smol::block_on(self.notify.send(ScanState::Scanning)).is_err() {
             return;
         }
@@ -792,23 +810,17 @@ impl BackgroundScanner {
             .unwrap();
             drop(tx);
 
-            let mut results = Vec::new();
-            results.resize_with(self.thread_pool.thread_count(), || Ok(()));
             self.thread_pool.scoped(|pool| {
-                for result in &mut results {
+                for _ in 0..self.thread_pool.thread_count() {
                     pool.execute(|| {
-                        let result = result;
                         while let Ok(job) = rx.recv() {
                             if let Err(err) = self.scan_dir(&job) {
                                 log::error!("error scanning {:?}: {}", job.path, err);
-                                *result = Err(err);
-                                break;
                             }
                         }
                     });
                 }
             });
-            results.into_iter().collect::<io::Result<()>>()?;
         } else {
             let mut snapshot = self.snapshot.lock();
             snapshot.insert_entry(
@@ -842,6 +854,11 @@ impl BackgroundScanner {
             let child_is_symlink = child_metadata.file_type().is_symlink();
             let child_path = job.path.join(child_name.as_ref());
 
+            // Disallow mount points outside the file system containing the root of this worktree
+            if self.other_mount_paths.contains(&child_path) {
+                continue;
+            }
+
             if child_metadata.is_dir() {
                 new_entries.push((
                     child_name,
@@ -874,7 +891,6 @@ impl BackgroundScanner {
             };
         }
 
-        dbg!(&job.path);
         self.snapshot.lock().populate_dir(job.inode, new_entries);
         for new_job in new_jobs {
             job.scan_queue.send(new_job).unwrap();
@@ -883,7 +899,9 @@ impl BackgroundScanner {
         Ok(())
     }
 
-    fn process_events(&self, mut events: Vec<fsevent::Event>) -> bool {
+    fn process_events(&mut self, mut events: Vec<fsevent::Event>) -> bool {
+        self.update_other_mount_paths();
+
         let mut snapshot = self.snapshot();
         snapshot.scan_id += 1;
 
@@ -1210,6 +1228,34 @@ impl<'a> Iterator for FileIter<'a> {
     }
 }
 
+fn mounted_volume_paths() -> Vec<PathBuf> {
+    use cocoa::{
+        base::{id, nil},
+        foundation::{NSArray, NSString, NSURL},
+    };
+    use objc::{class, msg_send, sel, sel_impl};
+
+    unsafe {
+        let manager: id = msg_send![class!(NSFileManager), defaultManager];
+        let array = NSArray::array(nil);
+        let urls: id =
+            msg_send![manager, mountedVolumeURLsIncludingResourceValuesForKeys:array options:0];
+        let len = urls.count() as usize;
+        let mut result = Vec::with_capacity(len);
+        for i in 0..len {
+            let url = urls.objectAtIndex(i as u64);
+            let string = url.absoluteString();
+            let string = std::ffi::CStr::from_ptr(string.UTF8String())
+                .to_string_lossy()
+                .to_string();
+            if let Some(path) = string.strip_prefix("file://") {
+                result.push(PathBuf::from(path));
+            }
+        }
+        result
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1273,8 +1319,6 @@ mod tests {
                 );
             })
         });
-
-        eprintln!("HI");
     }
 
     #[test]
@@ -1384,6 +1428,12 @@ mod tests {
     }
 
     #[test]
+    fn test_mounted_volume_paths() {
+        let paths = mounted_volume_paths();
+        assert!(paths.contains(&"/".into()));
+    }
+
+    #[test]
     fn test_random() {
         let iterations = env::var("ITERATIONS")
             .map(|i| i.parse().unwrap())
@@ -1411,7 +1461,7 @@ mod tests {
             log::info!("Generated initial tree");
 
             let (notify_tx, _notify_rx) = smol::channel::unbounded();
-            let scanner = BackgroundScanner::new(
+            let mut scanner = BackgroundScanner::new(
                 Arc::new(Mutex::new(Snapshot {
                     id: 0,
                     scan_id: 0,
