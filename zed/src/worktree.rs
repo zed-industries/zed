@@ -1221,6 +1221,7 @@ mod tests {
     use rand::prelude::*;
     use serde_json::json;
     use std::env;
+    use std::fmt::Write;
     use std::os::unix;
     use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -1424,6 +1425,7 @@ mod tests {
                 0,
             );
             scanner.scan_dirs().unwrap();
+            scanner.snapshot().check_invariants();
 
             let mut events = Vec::new();
             let mut mutations_len = operations;
@@ -1433,6 +1435,7 @@ mod tests {
                     let to_deliver = events.drain(0..len).collect::<Vec<_>>();
                     log::info!("Delivering events: {:#?}", to_deliver);
                     scanner.process_events(to_deliver);
+                    scanner.snapshot().check_invariants();
                 } else {
                     events.extend(randomly_mutate_tree(root_dir.path(), 0.6, &mut rng).unwrap());
                     mutations_len -= 1;
@@ -1440,6 +1443,7 @@ mod tests {
             }
             log::info!("Quiescing: {:#?}", events);
             scanner.process_events(events);
+            scanner.snapshot().check_invariants();
 
             let (notify_tx, _notify_rx) = smol::channel::unbounded();
             let new_scanner = BackgroundScanner::new(
@@ -1455,7 +1459,6 @@ mod tests {
                 1,
             );
             new_scanner.scan_dirs().unwrap();
-            scanner.snapshot().check_invariants();
             assert_eq!(scanner.snapshot().to_vec(), new_scanner.snapshot().to_vec());
         }
     }
@@ -1492,6 +1495,39 @@ mod tests {
                 fs::write(&new_path, "")?;
             }
             record_event(new_path);
+        } else if rng.gen_bool(0.05) {
+            let ignore_dir_path = dirs.choose(rng).unwrap();
+            let ignore_path = ignore_dir_path.join(GITIGNORE);
+
+            let (subdirs, subfiles) = read_dir_recursive(ignore_dir_path.clone());
+            let files_to_ignore = {
+                let len = rng.gen_range(0..=subfiles.len());
+                subfiles.choose_multiple(rng, len)
+            };
+            let dirs_to_ignore = {
+                let len = rng.gen_range(0..subdirs.len());
+                subdirs.choose_multiple(rng, len)
+            };
+
+            let mut ignore_contents = String::new();
+            for path_to_ignore in files_to_ignore.chain(dirs_to_ignore) {
+                write!(
+                    ignore_contents,
+                    "{}\n",
+                    path_to_ignore
+                        .strip_prefix(&ignore_dir_path)?
+                        .to_str()
+                        .unwrap()
+                )
+                .unwrap();
+            }
+            log::info!(
+                "Creating {:?} with contents:\n{}",
+                ignore_path.strip_prefix(&root_path)?,
+                ignore_contents
+            );
+            fs::write(&ignore_path, ignore_contents).unwrap();
+            record_event(ignore_path);
         } else {
             let old_path = {
                 let file_path = files.choose(rng);
@@ -1576,16 +1612,24 @@ mod tests {
 
     impl Snapshot {
         fn check_invariants(&self) {
-            let mut path_entries = self.files(0);
+            let mut files = self.files(0);
+            let mut visible_files = self.visible_files(0);
             for entry in self.entries.items() {
                 let path = self.path_for_inode(entry.inode(), false).unwrap();
                 assert_eq!(self.inode_for_path(path).unwrap(), entry.inode());
 
-                if let Entry::File { inode, .. } = entry {
-                    assert_eq!(path_entries.next().unwrap().inode(), inode);
+                if let Entry::File {
+                    inode, is_ignored, ..
+                } = entry
+                {
+                    assert_eq!(files.next().unwrap().inode(), inode);
+                    if !is_ignored.unwrap() {
+                        assert_eq!(visible_files.next().unwrap().inode(), inode);
+                    }
                 }
             }
-            assert!(path_entries.next().is_none());
+            assert!(files.next().is_none());
+            assert!(visible_files.next().is_none());
         }
 
         fn to_vec(&self) -> Vec<(PathBuf, u64)> {
