@@ -31,7 +31,6 @@ use std::{
 };
 
 const GITIGNORE: &'static str = ".gitignore";
-const EDIT_BATCH_LEN: usize = 2000;
 
 #[derive(Clone, Debug)]
 enum ScanState {
@@ -995,9 +994,6 @@ impl BackgroundScanner {
                     edits.push(edit);
                     while let Ok(edit) = edits_rx.try_recv() {
                         edits.push(edit);
-                        if edits.len() == EDIT_BATCH_LEN {
-                            break;
-                        }
                     }
                     self.snapshot.lock().entries.edit(mem::take(&mut edits));
                 }
@@ -1040,9 +1036,6 @@ impl BackgroundScanner {
                     edits.push(edit);
                     while let Ok(edit) = edits_rx.try_recv() {
                         edits.push(edit);
-                        if edits.len() == EDIT_BATCH_LEN {
-                            break;
-                        }
                     }
                     self.snapshot.lock().entries.edit(mem::take(&mut edits));
                 }
