@@ -3,7 +3,7 @@ mod fuzzy;
 
 use crate::{
     editor::{History, Snapshot as BufferSnapshot},
-    sum_tree::{self, Edit, SumTree},
+    sum_tree::{self, Cursor, Edit, SeekBias, SumTree},
 };
 use anyhow::{anyhow, Context, Result};
 use fuzzy::PathEntry;
@@ -153,10 +153,6 @@ impl Worktree {
         self.snapshot.entries.get(&inode).is_some()
     }
 
-    pub fn file_count(&self) -> usize {
-        self.snapshot.entries.summary().file_count
-    }
-
     pub fn abs_path_for_inode(&self, ino: u64) -> Result<PathBuf> {
         let mut result = self.snapshot.path.to_path_buf();
         result.push(self.path_for_inode(ino, false)?);
@@ -195,20 +191,6 @@ impl Worktree {
             Ok(())
         })
     }
-
-    #[cfg(test)]
-    pub fn files<'a>(&'a self) -> impl Iterator<Item = u64> + 'a {
-        self.snapshot
-            .entries
-            .cursor::<(), ()>()
-            .filter_map(|entry| {
-                if let Entry::File { inode, .. } = entry {
-                    Some(*inode)
-                } else {
-                    None
-                }
-            })
-    }
 }
 
 impl Entity for Worktree {
@@ -246,6 +228,14 @@ impl Snapshot {
 
     pub fn visible_file_count(&self) -> usize {
         self.entries.summary().visible_file_count
+    }
+
+    pub fn files(&self, start: usize) -> FileIter {
+        FileIter::all(self, start)
+    }
+
+    pub fn visible_files(&self, start: usize) -> FileIter {
+        FileIter::visible(self, start)
     }
 
     pub fn root_entry(&self) -> Option<&Entry> {
@@ -614,7 +604,7 @@ impl Entry {
         }
     }
 
-    fn inode(&self) -> u64 {
+    pub fn inode(&self) -> u64 {
         match self {
             Entry::Dir { inode, .. } => *inode,
             Entry::File { inode, .. } => *inode,
@@ -692,7 +682,7 @@ impl<'a> sum_tree::Dimension<'a, EntrySummary> for u64 {
 }
 
 #[derive(Copy, Clone, Default, Debug, Eq, PartialEq, Ord, PartialOrd)]
-struct FileCount(usize);
+pub struct FileCount(usize);
 
 impl<'a> sum_tree::Dimension<'a, EntrySummary> for FileCount {
     fn add_summary(&mut self, summary: &'a EntrySummary) {
@@ -701,7 +691,7 @@ impl<'a> sum_tree::Dimension<'a, EntrySummary> for FileCount {
 }
 
 #[derive(Copy, Clone, Default, Debug, Eq, PartialEq, Ord, PartialOrd)]
-struct VisibleFileCount(usize);
+pub struct VisibleFileCount(usize);
 
 impl<'a> sum_tree::Dimension<'a, EntrySummary> for VisibleFileCount {
     fn add_summary(&mut self, summary: &'a EntrySummary) {
@@ -1167,6 +1157,58 @@ impl WorktreeHandle for ModelHandle<Worktree> {
     }
 }
 
+pub enum FileIter<'a> {
+    All(Cursor<'a, Entry, FileCount, FileCount>),
+    Visible(Cursor<'a, Entry, VisibleFileCount, VisibleFileCount>),
+}
+
+impl<'a> FileIter<'a> {
+    fn all(snapshot: &'a Snapshot, start: usize) -> Self {
+        let mut cursor = snapshot.entries.cursor();
+        cursor.seek(&FileCount(start), SeekBias::Right);
+        Self::All(cursor)
+    }
+
+    fn visible(snapshot: &'a Snapshot, start: usize) -> Self {
+        let mut cursor = snapshot.entries.cursor();
+        cursor.seek(&VisibleFileCount(start), SeekBias::Right);
+        Self::Visible(cursor)
+    }
+
+    fn next_internal(&mut self) {
+        match self {
+            Self::All(cursor) => {
+                let ix = *cursor.start();
+                cursor.seek_forward(&FileCount(ix.0 + 1), SeekBias::Right);
+            }
+            Self::Visible(cursor) => {
+                let ix = *cursor.start();
+                cursor.seek_forward(&VisibleFileCount(ix.0 + 1), SeekBias::Right);
+            }
+        }
+    }
+
+    fn item(&self) -> Option<&'a Entry> {
+        match self {
+            Self::All(cursor) => cursor.item(),
+            Self::Visible(cursor) => cursor.item(),
+        }
+    }
+}
+
+impl<'a> Iterator for FileIter<'a> {
+    type Item = &'a Entry;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        if let Some(entry) = self.item() {
+            self.next_internal();
+            Some(entry)
+        } else {
+            None
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1248,7 +1290,7 @@ mod tests {
 
             let file_inode = app.read(|ctx| {
                 let tree = tree.read(ctx);
-                let inode = tree.files().next().unwrap();
+                let inode = tree.files(0).next().unwrap().inode();
                 assert_eq!(
                     tree.path_for_inode(inode, false)
                         .unwrap()
@@ -1532,10 +1574,16 @@ mod tests {
 
     impl Snapshot {
         fn check_invariants(&self) {
+            let mut path_entries = self.files(0);
             for entry in self.entries.items() {
                 let path = self.path_for_inode(entry.inode(), false).unwrap();
                 assert_eq!(self.inode_for_path(path).unwrap(), entry.inode());
+
+                if let Entry::File { inode, .. } = entry {
+                    assert_eq!(path_entries.next().unwrap().inode(), inode);
+                }
             }
+            assert!(path_entries.next().is_none());
         }
 
         fn to_vec(&self) -> Vec<(PathBuf, u64)> {

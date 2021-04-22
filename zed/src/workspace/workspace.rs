@@ -224,7 +224,7 @@ impl WorkspaceHandle for ModelHandle<Workspace> {
             .iter()
             .flat_map(|tree| {
                 let tree_id = tree.id();
-                tree.read(app).files().map(move |inode| (tree_id, inode))
+                tree.read(app).files(0).map(move |f| (tree_id, f.inode()))
             })
             .collect::<Vec<_>>()
     }
@@ -253,7 +253,7 @@ mod tests {
 
             // Get the first file entry.
             let tree = app.read(|ctx| workspace.read(ctx).worktrees.iter().next().unwrap().clone());
-            let file_inode = app.read(|ctx| tree.read(ctx).files().next().unwrap());
+            let file_inode = app.read(|ctx| tree.read(ctx).files(0).next().unwrap().inode());
             let entry = (tree.id(), file_inode);
 
             // Open the same entry twice before it finishes loading.

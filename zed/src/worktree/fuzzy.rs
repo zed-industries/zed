@@ -1,9 +1,5 @@
+use super::{char_bag::CharBag, Entry, Snapshot};
 use gpui::scoped_pool;
-
-use crate::sum_tree::SeekBias;
-
-use super::{char_bag::CharBag, Entry, FileCount, Snapshot, VisibleFileCount};
-
 use std::{
     cmp::{max, min, Ordering, Reverse},
     collections::BinaryHeap,
@@ -122,7 +118,19 @@ where
                     if tree_start < segment_end && segment_start < tree_end {
                         let start = max(tree_start, segment_start) - tree_start;
                         let end = min(tree_end, segment_end) - tree_start;
-                        let path_entries = path_entries_iter(snapshot, start, end, include_ignored);
+                        let entries = if include_ignored {
+                            snapshot.files(start).take(end - start)
+                        } else {
+                            snapshot.visible_files(start).take(end - start)
+                        };
+                        let path_entries = entries.map(|entry| {
+                            if let Entry::File { path, .. } = entry {
+                                path
+                            } else {
+                                unreachable!()
+                            }
+                        });
+
                         let skipped_prefix_len = if include_root_name {
                             0
                         } else if let Some(Entry::Dir { .. }) = snapshot.root_entry() {
@@ -169,44 +177,6 @@ where
     results.sort_unstable_by(|a, b| b.score.partial_cmp(&a.score).unwrap());
     results.truncate(max_results);
     results
-}
-
-fn path_entries_iter<'a>(
-    snapshot: &'a Snapshot,
-    start: usize,
-    end: usize,
-    include_ignored: bool,
-) -> impl Iterator<Item = &'a PathEntry> {
-    let mut files_cursor = None;
-    let mut visible_files_cursor = None;
-    if include_ignored {
-        let mut cursor = snapshot.entries.cursor::<_, ()>();
-        cursor.seek(&FileCount(start), SeekBias::Right);
-        files_cursor = Some(cursor);
-    } else {
-        let mut cursor = snapshot.entries.cursor::<_, ()>();
-        cursor.seek(&VisibleFileCount(start), SeekBias::Right);
-        visible_files_cursor = Some(cursor);
-    }
-    files_cursor
-        .into_iter()
-        .flatten()
-        .chain(visible_files_cursor.into_iter().flatten())
-        .filter_map(move |e| {
-            if let Entry::File {
-                path, is_ignored, ..
-            } = e
-            {
-                if is_ignored.unwrap_or(false) && !include_ignored {
-                    None
-                } else {
-                    Some(path)
-                }
-            } else {
-                None
-            }
-        })
-        .take(end - start)
 }
 
 fn match_single_tree_paths<'a>(
