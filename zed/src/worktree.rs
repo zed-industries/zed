@@ -306,7 +306,10 @@ impl Snapshot {
             }
             entry = parent_entry;
         }
-        Ok(false)
+
+        relative_path.clear();
+        relative_path.extend(components.iter().rev());
+        Ok(relative_path.starts_with(".git"))
     }
 
     pub fn path_for_inode(&self, mut inode: u64, include_root: bool) -> Result<PathBuf> {
