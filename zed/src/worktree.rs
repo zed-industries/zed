@@ -401,10 +401,9 @@ impl Snapshot {
                             .entry(old_parent_inode)
                             .or_default()
                             .insert(child.inode());
+                        self.clear_descendants(child.inode(), &mut edits);
                     }
                 }
-
-                self.clear_descendants(child.inode(), &mut edits);
             }
             edits.push(Edit::Insert(child));
         }
@@ -875,6 +874,7 @@ impl BackgroundScanner {
             };
         }
 
+        dbg!(&job.path);
         self.snapshot.lock().populate_dir(job.inode, new_entries);
         for new_job in new_jobs {
             job.scan_queue.send(new_job).unwrap();
