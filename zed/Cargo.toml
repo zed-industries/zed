@@ -22,7 +22,7 @@ easy-parallel = "3.1.0"
 fsevent = {path = "../fsevent"}
 futures-core = "0.3"
 gpui = {path = "../gpui"}
-ignore = {git = "https://github.com/zed-industries/ripgrep", rev = "1d152118f35b3e3590216709b86277062d79b8a0"}
+ignore = "0.4"
 lazy_static = "1.4.0"
 libc = "0.2"
 log = "0.4"

@@ -21,11 +21,10 @@ pub struct PathEntry {
     pub path_chars: CharBag,
     pub path: Arc<[char]>,
     pub lowercase_path: Arc<[char]>,
-    pub is_ignored: bool,
 }
 
 impl PathEntry {
-    pub fn new(ino: u64, path: &Path, is_ignored: bool) -> Self {
+    pub fn new(ino: u64, path: &Path) -> Self {
         let path = path.to_string_lossy();
         let lowercase_path = path.to_lowercase().chars().collect::<Vec<_>>().into();
         let path: Arc<[char]> = path.chars().collect::<Vec<_>>().into();
@@ -36,7 +35,6 @@ impl PathEntry {
             path_chars,
             path,
             lowercase_path,
-            is_ignored,
         }
     }
 }
@@ -84,6 +82,7 @@ where
 {
     let lowercase_query = query.to_lowercase().chars().collect::<Vec<_>>();
     let query = query.chars().collect::<Vec<_>>();
+
     let lowercase_query = &lowercase_query;
     let query = &query;
     let query_chars = CharBag::from(&lowercase_query[..]);
@@ -139,7 +138,7 @@ where
                         };
 
                         match_single_tree_paths(
-                            snapshot.id,
+                            snapshot,
                             skipped_prefix_len,
                             path_entries,
                             query,
@@ -176,7 +175,7 @@ where
 }
 
 fn match_single_tree_paths<'a>(
-    tree_id: usize,
+    snapshot: &Snapshot,
     skipped_prefix_len: usize,
     path_entries: impl Iterator<Item = &'a PathEntry>,
     query: &[char],
@@ -193,11 +192,11 @@ fn match_single_tree_paths<'a>(
     best_position_matrix: &mut Vec<usize>,
 ) {
     for path_entry in path_entries {
-        if !include_ignored && path_entry.is_ignored {
+        if !path_entry.path_chars.is_superset(query_chars.clone()) {
             continue;
         }
 
-        if !path_entry.path_chars.is_superset(query_chars.clone()) {
+        if !include_ignored && snapshot.is_inode_ignored(path_entry.ino).unwrap_or(true) {
             continue;
         }
 
@@ -232,7 +231,7 @@ fn match_single_tree_paths<'a>(
 
         if score > 0.0 {
             results.push(Reverse(PathMatch {
-                tree_id,
+                tree_id: snapshot.id,
                 entry_id: path_entry.ino,
                 path: path_entry.path.iter().skip(skipped_prefix_len).collect(),
                 score,
@@ -438,6 +437,7 @@ fn recursive_score_match(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::path::PathBuf;
 
     #[test]
     fn test_match_path_entries() {
@@ -500,7 +500,6 @@ mod tests {
                 path_chars,
                 path,
                 lowercase_path,
-                is_ignored: false,
             });
         }
 
@@ -511,7 +510,13 @@ mod tests {
 
         let mut results = BinaryHeap::new();
         match_single_tree_paths(
-            0,
+            &Snapshot {
+                id: 0,
+                path: PathBuf::new().into(),
+                root_inode: None,
+                ignores: Default::default(),
+                entries: Default::default(),
+            },
             0,
             path_entries.iter(),
             &query[..],

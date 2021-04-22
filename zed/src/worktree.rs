@@ -9,7 +9,7 @@ use anyhow::{anyhow, Context, Result};
 use fuzzy::PathEntry;
 pub use fuzzy::{match_paths, PathMatch};
 use gpui::{scoped_pool, AppContext, Entity, ModelContext, ModelHandle, Task};
-use ignore::dir::{Ignore, IgnoreBuilder};
+use ignore::gitignore::Gitignore;
 use parking_lot::Mutex;
 use postage::{
     prelude::{Sink, Stream},
@@ -28,6 +28,8 @@ use std::{
     sync::Arc,
     time::Duration,
 };
+
+const GITIGNORE: &'static str = ".gitignore";
 
 #[derive(Clone, Debug)]
 enum ScanState {
@@ -58,6 +60,7 @@ impl Worktree {
             id,
             path: path.into(),
             root_inode: None,
+            ignores: Default::default(),
             entries: Default::default(),
         };
         let (event_stream, event_stream_handle) =
@@ -229,6 +232,7 @@ pub struct Snapshot {
     id: usize,
     path: Arc<Path>,
     root_inode: Option<u64>,
+    ignores: HashMap<u64, Gitignore>,
     entries: SumTree<Entry>,
 }
 
@@ -266,6 +270,48 @@ impl Snapshot {
             }
             Some(inode)
         })
+    }
+
+    pub fn is_path_ignored(&self, path: impl AsRef<Path>) -> Result<bool> {
+        if let Some(inode) = self.inode_for_path(path.as_ref()) {
+            self.is_inode_ignored(inode)
+        } else {
+            Ok(false)
+        }
+    }
+
+    pub fn is_inode_ignored(&self, mut inode: u64) -> Result<bool> {
+        let mut components = Vec::new();
+        let mut relative_path = PathBuf::new();
+        let mut entry = self
+            .entries
+            .get(&inode)
+            .ok_or_else(|| anyhow!("entry does not exist in worktree"))?;
+        while let Some(parent) = entry.parent() {
+            let parent_entry = self.entries.get(&parent).unwrap();
+            if let Entry::Dir { children, .. } = parent_entry {
+                let (_, child_name) = children
+                    .iter()
+                    .find(|(child_inode, _)| *child_inode == inode)
+                    .unwrap();
+                components.push(child_name.as_ref());
+                inode = parent;
+
+                if let Some(ignore) = self.ignores.get(&inode) {
+                    relative_path.clear();
+                    relative_path.extend(components.iter().rev());
+                    match ignore.matched_path_or_any_parents(&relative_path, entry.is_dir()) {
+                        ignore::Match::Whitelist(_) => return Ok(false),
+                        ignore::Match::Ignore(_) => return Ok(true),
+                        ignore::Match::None => {}
+                    }
+                }
+            } else {
+                unreachable!();
+            }
+            entry = parent_entry;
+        }
+        Ok(false)
     }
 
     pub fn path_for_inode(&self, mut inode: u64, include_root: bool) -> Result<PathBuf> {
@@ -311,13 +357,18 @@ impl Snapshot {
 
         // Insert the entry in its new parent with the correct name.
         if let Some(new_parent_inode) = entry.parent() {
+            let name = name.unwrap();
+            if name == GITIGNORE {
+                self.insert_ignore_file(new_parent_inode);
+            }
+
             let mut new_parent = self.entries.get(&new_parent_inode).unwrap().clone();
             if let Entry::Dir { children, .. } = &mut new_parent {
                 *children = children
                     .iter()
                     .filter(|(inode, _)| *inode != entry.inode())
                     .cloned()
-                    .chain(Some((entry.inode(), name.unwrap().into())))
+                    .chain(Some((entry.inode(), name.into())))
                     .collect::<Vec<_>>()
                     .into();
             } else {
@@ -346,6 +397,10 @@ impl Snapshot {
         let mut new_children = Vec::new();
         let mut old_children = HashMap::<u64, HashSet<u64>>::new();
         for (name, child) in children.into_iter() {
+            if *name == *GITIGNORE {
+                self.insert_ignore_file(parent_inode);
+            }
+
             new_children.push((child.inode(), name.into()));
             if let Some(old_child) = self.entries.get(&child.inode()) {
                 if let Some(old_parent_inode) = old_child.parent() {
@@ -389,6 +444,11 @@ impl Snapshot {
             self.clear_descendants(entry.inode(), &mut edits);
 
             if let Some(parent_inode) = entry.parent() {
+                if let Some(file_name) = path.file_name() {
+                    if file_name == GITIGNORE {
+                        self.remove_ignore_file(parent_inode);
+                    }
+                }
                 let parent = self.entries.get(&parent_inode).unwrap().clone();
                 self.remove_children(parent, &mut edits, |inode| inode == entry.inode());
             }
@@ -402,11 +462,18 @@ impl Snapshot {
     fn clear_descendants(&mut self, inode: u64, edits: &mut Vec<Edit<Entry>>) {
         let mut stack = vec![inode];
         while let Some(inode) = stack.pop() {
+            let mut has_gitignore = false;
             if let Entry::Dir { children, .. } = self.entries.get(&inode).unwrap() {
-                for (child_inode, _) in children.iter() {
+                for (child_inode, child_name) in children.iter() {
+                    if **child_name == *GITIGNORE {
+                        has_gitignore = true;
+                    }
                     edits.push(Edit::Remove(*child_inode));
                     stack.push(*child_inode);
                 }
+            }
+            if has_gitignore {
+                self.remove_ignore_file(inode);
             }
         }
     }
@@ -428,6 +495,22 @@ impl Snapshot {
             unreachable!("non-directory parent");
         }
         edits.push(Edit::Insert(parent));
+    }
+
+    fn insert_ignore_file(&mut self, dir_inode: u64) {
+        let mut path = self.path.to_path_buf();
+        path.push(self.path_for_inode(dir_inode, false).unwrap());
+        path.push(GITIGNORE);
+        let (ignore, err) = Gitignore::new(&path);
+        if let Some(err) = err {
+            log::info!("error in ignore file {:?} - {:?}", path, err);
+        }
+
+        self.ignores.insert(dir_inode, ignore);
+    }
+
+    fn remove_ignore_file(&mut self, dir_inode: u64) {
+        self.ignores.remove(&dir_inode);
     }
 
     fn fmt_entry(
@@ -500,7 +583,6 @@ pub enum Entry {
         inode: u64,
         parent: Option<u64>,
         is_symlink: bool,
-        is_ignored: bool,
         children: Arc<[(u64, Arc<OsStr>)]>,
         pending: bool,
     },
@@ -508,7 +590,6 @@ pub enum Entry {
         inode: u64,
         parent: Option<u64>,
         is_symlink: bool,
-        is_ignored: bool,
         path: PathEntry,
     },
 }
@@ -647,19 +728,11 @@ impl BackgroundScanner {
         let name = Arc::from(path.file_name().unwrap_or(OsStr::new("/")));
         let relative_path = PathBuf::from(&name);
 
-        let mut ignore = IgnoreBuilder::new().build().add_parents(&path).unwrap();
-        if metadata.is_dir() {
-            ignore = ignore.add_child(&path).unwrap();
-        }
-        let is_ignored = ignore.matched(&path, metadata.is_dir()).is_ignore();
-
         if metadata.file_type().is_dir() {
-            let is_ignored = is_ignored || name.as_ref() == ".git";
             let dir_entry = Entry::Dir {
                 parent: None,
                 inode,
                 is_symlink,
-                is_ignored,
                 children: Arc::from([]),
                 pending: true,
             };
@@ -676,7 +749,6 @@ impl BackgroundScanner {
                 inode,
                 path: path.clone(),
                 relative_path,
-                ignore: Some(ignore),
                 scan_queue: tx.clone(),
             }))
             .unwrap();
@@ -704,10 +776,9 @@ impl BackgroundScanner {
                 None,
                 Entry::File {
                     parent: None,
-                    path: PathEntry::new(inode, &relative_path, is_ignored),
+                    path: PathEntry::new(inode, &relative_path),
                     inode,
                     is_symlink,
-                    is_ignored,
                 },
             );
             snapshot.root_inode = Some(inode);
@@ -732,25 +803,12 @@ impl BackgroundScanner {
             let child_path = job.path.join(child_name.as_ref());
 
             if child_metadata.is_dir() {
-                let mut is_ignored = true;
-                let mut ignore = None;
-
-                if let Some(parent_ignore) = job.ignore.as_ref() {
-                    let child_ignore = parent_ignore.add_child(&child_path).unwrap();
-                    is_ignored = child_ignore.matched(&child_path, true).is_ignore()
-                        || child_name.as_ref() == ".git";
-                    if !is_ignored {
-                        ignore = Some(child_ignore);
-                    }
-                }
-
                 new_entries.push((
                     child_name,
                     Entry::Dir {
                         parent: Some(job.inode),
                         inode: child_inode,
                         is_symlink: child_is_symlink,
-                        is_ignored,
                         children: Arc::from([]),
                         pending: true,
                     },
@@ -759,22 +817,16 @@ impl BackgroundScanner {
                     inode: child_inode,
                     path: Arc::from(child_path),
                     relative_path: child_relative_path,
-                    ignore,
                     scan_queue: scan_queue.clone(),
                 });
             } else {
-                let is_ignored = job
-                    .ignore
-                    .as_ref()
-                    .map_or(true, |i| i.matched(&child_path, false).is_ignore());
                 new_entries.push((
                     child_name,
                     Entry::File {
                         parent: Some(job.inode),
-                        path: PathEntry::new(child_inode, &child_relative_path, is_ignored),
+                        path: PathEntry::new(child_inode, &child_relative_path),
                         inode: child_inode,
                         is_symlink: child_is_symlink,
-                        is_ignored,
                     },
                 ));
             };
@@ -815,7 +867,7 @@ impl BackgroundScanner {
             snapshot.remove_path(&relative_path);
 
             match self.fs_entry_for_path(&root_path, &path) {
-                Ok(Some((fs_entry, ignore))) => {
+                Ok(Some(fs_entry)) => {
                     let is_dir = fs_entry.is_dir();
                     let inode = fs_entry.inode();
 
@@ -829,7 +881,6 @@ impl BackgroundScanner {
                                     .root_name()
                                     .map_or(PathBuf::new(), PathBuf::from)
                                     .join(relative_path),
-                                ignore: Some(ignore),
                                 scan_queue: scan_queue_tx.clone(),
                             }))
                             .unwrap();
@@ -862,7 +913,7 @@ impl BackgroundScanner {
         true
     }
 
-    fn fs_entry_for_path(&self, root_path: &Path, path: &Path) -> Result<Option<(Entry, Ignore)>> {
+    fn fs_entry_for_path(&self, root_path: &Path, path: &Path) -> Result<Option<Entry>> {
         let metadata = match fs::metadata(&path) {
             Err(err) => {
                 return match (err.kind(), err.raw_os_error()) {
@@ -874,11 +925,6 @@ impl BackgroundScanner {
             Ok(metadata) => metadata,
         };
 
-        let mut ignore = IgnoreBuilder::new().build().add_parents(&path).unwrap();
-        if metadata.is_dir() {
-            ignore = ignore.add_child(&path).unwrap();
-        }
-        let is_ignored = ignore.matched(&path, metadata.is_dir()).is_ignore();
         let inode = metadata.ino();
         let is_symlink = fs::symlink_metadata(&path)
             .context("failed to read symlink metadata")?
@@ -899,7 +945,6 @@ impl BackgroundScanner {
                 inode,
                 parent,
                 is_symlink,
-                is_ignored,
                 pending: true,
                 children: Arc::from([]),
             }
@@ -908,18 +953,16 @@ impl BackgroundScanner {
                 inode,
                 parent,
                 is_symlink,
-                is_ignored,
                 path: PathEntry::new(
                     inode,
                     root_path
                         .parent()
                         .map_or(path, |parent| path.strip_prefix(parent).unwrap()),
-                    is_ignored,
                 ),
             }
         };
 
-        Ok(Some((entry, ignore)))
+        Ok(Some(entry))
     }
 }
 
@@ -927,7 +970,6 @@ struct ScanJob {
     inode: u64,
     path: Arc<Path>,
     relative_path: PathBuf,
-    ignore: Option<Ignore>,
     scan_queue: crossbeam_channel::Sender<io::Result<ScanJob>>,
 }
 
@@ -945,19 +987,6 @@ impl WorktreeHandle for ModelHandle<Worktree> {
         } else {
             Err(anyhow!("entry does not exist in tree"))
         }
-    }
-}
-
-trait UnwrapIgnoreTuple {
-    fn unwrap(self) -> Ignore;
-}
-
-impl UnwrapIgnoreTuple for (Ignore, Option<ignore::Error>) {
-    fn unwrap(self) -> Ignore {
-        if let Some(error) = self.1 {
-            log::error!("error loading gitignore data: {}", error);
-        }
-        self.0
     }
 }
 
@@ -1114,31 +1143,17 @@ mod tests {
             app.read(|ctx| tree.read(ctx).scan_complete()).await;
             app.read(|ctx| {
                 let tree = tree.read(ctx);
-                assert!(!tree
-                    .entry_for_path("tracked-dir/tracked-file1")
-                    .unwrap()
-                    .is_ignored());
-                assert!(tree
-                    .entry_for_path("ignored-dir/ignored-file1")
-                    .unwrap()
-                    .is_ignored());
+                assert!(!tree.is_path_ignored("tracked-dir/tracked-file1").unwrap());
+                assert!(tree.is_path_ignored("ignored-dir/ignored-file1").unwrap());
             });
 
             fs::write(dir.path().join("tracked-dir/tracked-file2"), "").unwrap();
             fs::write(dir.path().join("ignored-dir/ignored-file2"), "").unwrap();
-            // tree.condition(&app, move |_, ctx| file2.path(ctx) == Path::new("d/file2"))
-            //     .await;
-            app.read(|ctx| tree.read(ctx).scan_complete()).await;
+            app.read(|ctx| tree.read(ctx).next_scan_complete()).await;
             app.read(|ctx| {
                 let tree = tree.read(ctx);
-                assert!(!tree
-                    .entry_for_path("tracked-dir/tracked-file2")
-                    .unwrap()
-                    .is_ignored());
-                assert!(tree
-                    .entry_for_path("ignored-dir/ignored-file2")
-                    .unwrap()
-                    .is_ignored());
+                assert!(!tree.is_path_ignored("tracked-dir/tracked-file2").unwrap());
+                assert!(tree.is_path_ignored("ignored-dir/ignored-file2").unwrap());
             });
         });
     }
@@ -1177,6 +1192,7 @@ mod tests {
                     path: root_dir.path().into(),
                     root_inode: None,
                     entries: Default::default(),
+                    ignores: Default::default(),
                 })),
                 notify_tx,
                 0,
@@ -1206,6 +1222,7 @@ mod tests {
                     path: root_dir.path().into(),
                     root_inode: None,
                     entries: Default::default(),
+                    ignores: Default::default(),
                 })),
                 notify_tx,
                 1,
@@ -1328,14 +1345,6 @@ mod tests {
             .map(|_| rng.sample(rand::distributions::Alphanumeric))
             .map(char::from)
             .collect()
-    }
-
-    impl Entry {
-        fn is_ignored(&self) -> bool {
-            match self {
-                Entry::Dir { is_ignored, .. } | Entry::File { is_ignored, .. } => *is_ignored,
-            }
-        }
     }
 
     impl Snapshot {
