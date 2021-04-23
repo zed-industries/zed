@@ -114,7 +114,7 @@ impl Workspace {
     pub fn contains_path(&self, path: &Path, app: &AppContext) -> bool {
         self.worktrees
             .iter()
-            .any(|worktree| worktree.read(app).contains_path(path))
+            .any(|worktree| worktree.read(app).contains_abs_path(path))
     }
 
     pub fn open_paths(&mut self, paths: &[PathBuf], ctx: &mut ModelContext<Self>) {
@@ -125,7 +125,7 @@ impl Workspace {
 
     pub fn open_path<'a>(&'a mut self, path: PathBuf, ctx: &mut ModelContext<Self>) {
         for tree in self.worktrees.iter() {
-            if tree.read(ctx).contains_path(&path) {
+            if tree.read(ctx).contains_abs_path(&path) {
                 return;
             }
         }

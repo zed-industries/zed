@@ -64,12 +64,12 @@ impl Worktree {
         let snapshot = Snapshot {
             id,
             scan_id: 0,
-            path: path.into(),
+            abs_path: path.into(),
             ignores: Default::default(),
             entries: Default::default(),
         };
         let (event_stream, event_stream_handle) =
-            fsevent::EventStream::new(&[snapshot.path.as_ref()], Duration::from_millis(100));
+            fsevent::EventStream::new(&[snapshot.abs_path.as_ref()], Duration::from_millis(100));
 
         let background_snapshot = Arc::new(Mutex::new(snapshot.clone()));
 
@@ -148,18 +148,18 @@ impl Worktree {
         self.snapshot.clone()
     }
 
-    pub fn contains_path(&self, path: &Path) -> bool {
-        path.starts_with(&self.snapshot.path)
+    pub fn contains_abs_path(&self, path: &Path) -> bool {
+        path.starts_with(&self.snapshot.abs_path)
     }
 
     pub fn load_history(
         &self,
-        relative_path: &Path,
+        path: &Path,
         ctx: &AppContext,
     ) -> impl Future<Output = Result<History>> {
-        let path = self.snapshot.path.join(relative_path);
+        let abs_path = self.snapshot.abs_path.join(path);
         ctx.background_executor().spawn(async move {
-            let mut file = std::fs::File::open(&path)?;
+            let mut file = std::fs::File::open(&abs_path)?;
             let mut base_text = String::new();
             file.read_to_string(&mut base_text)?;
             Ok(History::new(Arc::from(base_text)))
@@ -168,14 +168,14 @@ impl Worktree {
 
     pub fn save<'a>(
         &self,
-        relative_path: &Path,
+        path: &Path,
         content: BufferSnapshot,
         ctx: &AppContext,
     ) -> Task<Result<()>> {
-        let path = self.snapshot.path.join(relative_path);
+        let abs_path = self.snapshot.abs_path.join(path);
         ctx.background_executor().spawn(async move {
             let buffer_size = content.text_summary().bytes.min(10 * 1024);
-            let file = std::fs::File::create(&path)?;
+            let file = std::fs::File::create(&abs_path)?;
             let mut writer = std::io::BufWriter::with_capacity(buffer_size, file);
             for chunk in content.fragments() {
                 writer.write(chunk.as_bytes())?;
@@ -208,7 +208,7 @@ impl fmt::Debug for Worktree {
 pub struct Snapshot {
     id: usize,
     scan_id: usize,
-    path: Arc<Path>,
+    abs_path: Arc<Path>,
     ignores: BTreeMap<Arc<Path>, (Arc<Gitignore>, usize)>,
     entries: SumTree<Entry>,
 }
@@ -226,16 +226,23 @@ impl Snapshot {
         FileIter::all(self, start)
     }
 
+    #[cfg(test)]
+    pub fn paths(&self) -> impl Iterator<Item = &Arc<Path>> {
+        let mut cursor = self.entries.cursor::<(), ()>();
+        cursor.next();
+        cursor.map(|entry| entry.path())
+    }
+
     pub fn visible_files(&self, start: usize) -> FileIter {
         FileIter::visible(self, start)
     }
 
     pub fn root_entry(&self) -> Entry {
-        self.entry_for_path(&self.path).unwrap()
+        self.entry_for_path(&self.abs_path).unwrap()
     }
 
     pub fn root_name(&self) -> Option<&OsStr> {
-        self.path.file_name()
+        self.abs_path.file_name()
     }
 
     fn entry_for_path(&self, path: impl AsRef<Path>) -> Option<Entry> {
@@ -252,6 +259,8 @@ impl Snapshot {
     }
 
     fn is_path_ignored(&self, path: &Path) -> Result<bool> {
+        dbg!(path);
+
         let mut entry = self
             .entry_for_path(path)
             .ok_or_else(|| anyhow!("entry does not exist in worktree"))?;
@@ -263,6 +272,7 @@ impl Snapshot {
                 entry.path().parent().and_then(|p| self.entry_for_path(p))
             {
                 let parent_path = parent_entry.path();
+                dbg!(parent_path);
                 if let Some((ignore, _)) = self.ignores.get(parent_path) {
                     let relative_path = path.strip_prefix(parent_path).unwrap();
                     match ignore.matched_path_or_any_parents(relative_path, entry.is_dir()) {
@@ -322,8 +332,7 @@ impl Snapshot {
     }
 
     fn insert_ignore_file(&mut self, path: &Path) {
-        let root_path = self.path.parent().unwrap_or(Path::new(""));
-        let (ignore, err) = Gitignore::new(root_path.join(path));
+        let (ignore, err) = Gitignore::new(self.abs_path.join(path));
         if let Some(err) = err {
             log::error!("error in ignore file {:?} - {:?}", path, err);
         }
@@ -573,7 +582,7 @@ impl BackgroundScanner {
     }
 
     fn update_other_mount_paths(&mut self) {
-        let path = self.snapshot.lock().path.clone();
+        let path = self.snapshot.lock().abs_path.clone();
         self.other_mount_paths.clear();
         self.other_mount_paths.extend(
             mounted_volume_paths()
@@ -582,8 +591,8 @@ impl BackgroundScanner {
         );
     }
 
-    fn path(&self) -> Arc<Path> {
-        self.snapshot.lock().path.clone()
+    fn abs_path(&self) -> Arc<Path> {
+        self.snapshot.lock().abs_path.clone()
     }
 
     fn snapshot(&self) -> Snapshot {
@@ -625,16 +634,15 @@ impl BackgroundScanner {
     fn scan_dirs(&self) -> io::Result<()> {
         self.snapshot.lock().scan_id += 1;
 
-        let path = self.path();
-        let metadata = fs::metadata(&path)?;
+        let path: Arc<Path> = Arc::from(Path::new(""));
+        let abs_path = self.abs_path();
+        let metadata = fs::metadata(&abs_path)?;
         let inode = metadata.ino();
-        let is_symlink = fs::symlink_metadata(&path)?.file_type().is_symlink();
-        let name: Arc<OsStr> = path.file_name().unwrap_or(OsStr::new("/")).into();
-        let relative_path: Arc<Path> = Arc::from((*name).as_ref());
+        let is_symlink = fs::symlink_metadata(&abs_path)?.file_type().is_symlink();
 
         if metadata.file_type().is_dir() {
             let dir_entry = Entry::Dir {
-                path: relative_path.clone(),
+                path: path.clone(),
                 inode,
                 is_symlink,
                 pending: true,
@@ -645,8 +653,8 @@ impl BackgroundScanner {
             let (tx, rx) = crossbeam_channel::unbounded();
 
             tx.send(ScanJob {
-                path: path.to_path_buf(),
-                relative_path,
+                abs_path: abs_path.to_path_buf(),
+                path,
                 scan_queue: tx.clone(),
             })
             .unwrap();
@@ -657,7 +665,7 @@ impl BackgroundScanner {
                     pool.execute(|| {
                         while let Ok(job) = rx.recv() {
                             if let Err(err) = self.scan_dir(&job) {
-                                log::error!("error scanning {:?}: {}", job.path, err);
+                                log::error!("error scanning {:?}: {}", job.abs_path, err);
                             }
                         }
                     });
@@ -665,8 +673,8 @@ impl BackgroundScanner {
             });
         } else {
             self.snapshot.lock().insert_entry(Entry::File {
-                path_entry: PathEntry::new(inode, relative_path.clone()),
-                path: relative_path,
+                path_entry: PathEntry::new(inode, path.clone()),
+                path,
                 inode,
                 is_symlink,
                 is_ignored: None,
@@ -682,37 +690,37 @@ impl BackgroundScanner {
         let mut new_entries = Vec::new();
         let mut new_jobs = Vec::new();
 
-        for child_entry in fs::read_dir(&job.path)? {
+        for child_entry in fs::read_dir(&job.abs_path)? {
             let child_entry = child_entry?;
-            let child_name: Arc<OsStr> = child_entry.file_name().into();
-            let child_relative_path: Arc<Path> = job.relative_path.join(child_name.as_ref()).into();
+            let child_name = child_entry.file_name();
+            let child_abs_path = job.abs_path.join(&child_name);
+            let child_path: Arc<Path> = job.path.join(&child_name).into();
             let child_metadata = child_entry.metadata()?;
             let child_inode = child_metadata.ino();
             let child_is_symlink = child_metadata.file_type().is_symlink();
-            let child_path = job.path.join(child_name.as_ref());
 
             // Disallow mount points outside the file system containing the root of this worktree
-            if self.other_mount_paths.contains(&child_path) {
+            if self.other_mount_paths.contains(&child_abs_path) {
                 continue;
             }
 
             if child_metadata.is_dir() {
                 new_entries.push(Entry::Dir {
-                    path: child_relative_path.clone(),
+                    path: child_path.clone(),
                     inode: child_inode,
                     is_symlink: child_is_symlink,
                     pending: true,
                     is_ignored: None,
                 });
                 new_jobs.push(ScanJob {
+                    abs_path: child_abs_path,
                     path: child_path,
-                    relative_path: child_relative_path,
                     scan_queue: job.scan_queue.clone(),
                 });
             } else {
                 new_entries.push(Entry::File {
-                    path_entry: PathEntry::new(child_inode, child_relative_path.clone()),
-                    path: child_relative_path,
+                    path_entry: PathEntry::new(child_inode, child_path.clone()),
+                    path: child_path,
                     inode: child_inode,
                     is_symlink: child_is_symlink,
                     is_ignored: None,
@@ -722,7 +730,7 @@ impl BackgroundScanner {
 
         self.snapshot
             .lock()
-            .populate_dir(job.relative_path.clone(), new_entries);
+            .populate_dir(job.path.clone(), new_entries);
         for new_job in new_jobs {
             job.scan_queue.send(new_job).unwrap();
         }
@@ -736,40 +744,44 @@ impl BackgroundScanner {
         let mut snapshot = self.snapshot();
         snapshot.scan_id += 1;
 
-        let root_path = if let Ok(path) = snapshot.path.canonicalize() {
-            path
+        let root_abs_path = if let Ok(abs_path) = snapshot.abs_path.canonicalize() {
+            abs_path
         } else {
             return false;
         };
 
         events.sort_unstable_by(|a, b| a.path.cmp(&b.path));
-        let mut paths = events.into_iter().map(|e| e.path).peekable();
+        let mut abs_paths = events.into_iter().map(|e| e.path).peekable();
         let (scan_queue_tx, scan_queue_rx) = crossbeam_channel::unbounded();
-        while let Some(path) = paths.next() {
-            let relative_path =
-                match path.strip_prefix(&root_path.parent().unwrap_or(Path::new(""))) {
-                    Ok(relative_path) => relative_path.to_path_buf(),
-                    Err(_) => {
-                        log::error!("unexpected event {:?} for root path {:?}", path, root_path);
-                        continue;
-                    }
-                };
 
-            while paths.peek().map_or(false, |p| p.starts_with(&path)) {
-                paths.next();
+        while let Some(abs_path) = abs_paths.next() {
+            let path = match abs_path.strip_prefix(&root_abs_path) {
+                Ok(path) => Arc::from(path.to_path_buf()),
+                Err(_) => {
+                    log::error!(
+                        "unexpected event {:?} for root path {:?}",
+                        abs_path,
+                        root_abs_path
+                    );
+                    continue;
+                }
+            };
+
+            while abs_paths.peek().map_or(false, |p| p.starts_with(&abs_path)) {
+                abs_paths.next();
             }
 
-            snapshot.remove_path(&relative_path);
+            snapshot.remove_path(&path);
 
-            match self.fs_entry_for_path(&root_path, &path) {
+            match self.fs_entry_for_path(path.clone(), &abs_path) {
                 Ok(Some(fs_entry)) => {
                     let is_dir = fs_entry.is_dir();
                     snapshot.insert_entry(fs_entry);
                     if is_dir {
                         scan_queue_tx
                             .send(ScanJob {
+                                abs_path,
                                 path,
-                                relative_path: relative_path.into(),
                                 scan_queue: scan_queue_tx.clone(),
                             })
                             .unwrap();
@@ -792,7 +804,7 @@ impl BackgroundScanner {
                 pool.execute(|| {
                     while let Ok(job) = scan_queue_rx.recv() {
                         if let Err(err) = self.scan_dir(&job) {
-                            log::error!("error scanning {:?}: {}", job.path, err);
+                            log::error!("error scanning {:?}: {}", job.abs_path, err);
                         }
                     }
                 });
@@ -919,8 +931,8 @@ impl BackgroundScanner {
         });
     }
 
-    fn fs_entry_for_path(&self, root_path: &Path, path: &Path) -> Result<Option<Entry>> {
-        let metadata = match fs::metadata(&path) {
+    fn fs_entry_for_path(&self, path: Arc<Path>, abs_path: &Path) -> Result<Option<Entry>> {
+        let metadata = match fs::metadata(&abs_path) {
             Err(err) => {
                 return match (err.kind(), err.raw_os_error()) {
                     (io::ErrorKind::NotFound, _) => Ok(None),
@@ -930,20 +942,15 @@ impl BackgroundScanner {
             }
             Ok(metadata) => metadata,
         };
-
         let inode = metadata.ino();
-        let is_symlink = fs::symlink_metadata(&path)
+        let is_symlink = fs::symlink_metadata(&abs_path)
             .context("failed to read symlink metadata")?
             .file_type()
             .is_symlink();
-        let relative_path_with_root = root_path
-            .parent()
-            .map_or(path, |parent| path.strip_prefix(parent).unwrap())
-            .into();
 
         let entry = if metadata.file_type().is_dir() {
             Entry::Dir {
-                path: relative_path_with_root,
+                path,
                 inode,
                 is_symlink,
                 pending: true,
@@ -951,8 +958,8 @@ impl BackgroundScanner {
             }
         } else {
             Entry::File {
-                path_entry: PathEntry::new(inode, relative_path_with_root.clone()),
-                path: relative_path_with_root,
+                path_entry: PathEntry::new(inode, path.clone()),
+                path,
                 inode,
                 is_symlink,
                 is_ignored: None,
@@ -964,8 +971,8 @@ impl BackgroundScanner {
 }
 
 struct ScanJob {
-    path: PathBuf,
-    relative_path: Arc<Path>,
+    abs_path: PathBuf,
+    path: Arc<Path>,
     scan_queue: crossbeam_channel::Sender<ScanJob>,
 }
 
@@ -1149,7 +1156,7 @@ mod tests {
     }
 
     #[test]
-    fn test_rescan() {
+    fn test_rescan_simple() {
         App::test_async((), |mut app| async move {
             let dir = temp_tree(json!({
                 "a": {
@@ -1173,10 +1180,23 @@ mod tests {
             });
 
             std::fs::rename(dir.path().join("b/c"), dir.path().join("d")).unwrap();
-            tree.condition(&app, move |_, _| {
-                file2.path().as_ref() == Path::new("d/file2")
-            })
-            .await;
+
+            app.read(|ctx| tree.read(ctx).next_scan_complete()).await;
+
+            app.read(|ctx| {
+                assert_eq!(
+                    tree.read(ctx)
+                        .paths()
+                        .map(|p| p.to_str().unwrap())
+                        .collect::<Vec<_>>(),
+                    vec!["a", "a/file1", "b", "d", "d/file2"]
+                )
+            });
+
+            // tree.condition(&app, move |_, _| {
+            //     file2.path().as_ref() == Path::new("d/file2")
+            // })
+            // .await;
         });
     }
 
@@ -1196,6 +1216,16 @@ mod tests {
 
             let tree = app.add_model(|ctx| Worktree::new(dir.path(), ctx));
             app.read(|ctx| tree.read(ctx).scan_complete()).await;
+
+            app.read(|ctx| {
+                let paths = tree
+                    .read(ctx)
+                    .paths()
+                    .map(|p| p.to_str().unwrap())
+                    .collect::<Vec<_>>();
+                println!("paths {:?}", paths);
+            });
+
             app.read(|ctx| {
                 let tree = tree.read(ctx);
                 let tracked = tree.entry_for_path("tracked-dir/tracked-file1").unwrap();
@@ -1255,7 +1285,7 @@ mod tests {
                 Arc::new(Mutex::new(Snapshot {
                     id: 0,
                     scan_id: 0,
-                    path: root_dir.path().into(),
+                    abs_path: root_dir.path().into(),
                     entries: Default::default(),
                     ignores: Default::default(),
                 })),
@@ -1288,7 +1318,7 @@ mod tests {
                 Arc::new(Mutex::new(Snapshot {
                     id: 0,
                     scan_id: 0,
-                    path: root_dir.path().into(),
+                    abs_path: root_dir.path().into(),
                     entries: Default::default(),
                     ignores: Default::default(),
                 })),

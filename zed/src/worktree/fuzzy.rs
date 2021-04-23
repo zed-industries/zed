@@ -523,7 +523,7 @@ mod tests {
             &Snapshot {
                 id: 0,
                 scan_id: 0,
-                path: PathBuf::new().into(),
+                abs_path: PathBuf::new().into(),
                 ignores: Default::default(),
                 entries: Default::default(),
             },

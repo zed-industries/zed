@@ -199,6 +199,9 @@ where
     }
 
     pub fn next(&mut self) {
+        if !self.did_seek {
+            self.descend_to_first_item(self.tree, |_| true)
+        }
         self.next_internal(|_| true)
     }
 
