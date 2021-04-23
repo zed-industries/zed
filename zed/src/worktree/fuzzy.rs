@@ -124,7 +124,10 @@ where
                             snapshot.visible_files(start).take(end - start)
                         };
                         let path_entries = entries.map(|entry| {
-                            if let Entry::File { path, .. } = entry {
+                            if let Entry::File {
+                                path_entry: path, ..
+                            } = entry
+                            {
                                 path
                             } else {
                                 unreachable!()
@@ -133,7 +136,7 @@ where
 
                         let skipped_prefix_len = if include_root_name {
                             0
-                        } else if let Some(Entry::Dir { .. }) = snapshot.root_entry() {
+                        } else if let Entry::Dir { .. } = snapshot.root_entry() {
                             if let Some(name) = snapshot.root_name() {
                                 name.to_string_lossy().chars().count() + 1
                             } else {
@@ -514,7 +517,6 @@ mod tests {
                 id: 0,
                 scan_id: 0,
                 path: PathBuf::new().into(),
-                root_inode: None,
                 ignores: Default::default(),
                 entries: Default::default(),
             },
