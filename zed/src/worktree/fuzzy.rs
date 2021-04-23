@@ -21,11 +21,12 @@ pub struct PathEntry {
 }
 
 impl PathEntry {
-    pub fn new(ino: u64, path: Arc<Path>) -> Self {
+    pub fn new(ino: u64, root_char_bag: CharBag, path: Arc<Path>) -> Self {
         let path_str = path.to_string_lossy();
         let lowercase_path = path_str.to_lowercase().chars().collect::<Vec<_>>().into();
         let path_chars: Arc<[char]> = path_str.chars().collect::<Vec<_>>().into();
-        let char_bag = CharBag::from(path_chars.as_ref());
+        let mut char_bag = root_char_bag;
+        char_bag.extend(path_chars.iter().copied());
 
         Self {
             ino,
@@ -136,21 +137,9 @@ where
                             }
                         });
 
-                        let skipped_prefix_len = if include_root_name {
-                            0
-                        } else if let Entry::Dir { .. } = snapshot.root_entry() {
-                            if let Some(name) = snapshot.root_name() {
-                                name.to_string_lossy().chars().count() + 1
-                            } else {
-                                1
-                            }
-                        } else {
-                            0
-                        };
-
                         match_single_tree_paths(
                             snapshot,
-                            skipped_prefix_len,
+                            include_root_name,
                             path_entries,
                             query,
                             lowercase_query,
@@ -186,7 +175,7 @@ where
 
 fn match_single_tree_paths<'a>(
     snapshot: &Snapshot,
-    skipped_prefix_len: usize,
+    include_root_name: bool,
     path_entries: impl Iterator<Item = &'a PathEntry>,
     query: &[char],
     lowercase_query: &[char],
@@ -200,6 +189,12 @@ fn match_single_tree_paths<'a>(
     score_matrix: &mut Vec<Option<f64>>,
     best_position_matrix: &mut Vec<usize>,
 ) {
+    let prefix = if include_root_name {
+        snapshot.root_name_chars.as_slice()
+    } else {
+        &[]
+    };
+
     for path_entry in path_entries {
         if !path_entry.char_bag.is_superset(query_chars) {
             continue;
@@ -207,25 +202,25 @@ fn match_single_tree_paths<'a>(
 
         if !find_last_positions(
             last_positions,
-            skipped_prefix_len,
+            prefix,
             &path_entry.lowercase_path,
             &lowercase_query[..],
         ) {
             continue;
         }
 
-        let matrix_len = query.len() * (path_entry.path_chars.len() - skipped_prefix_len);
+        let matrix_len = query.len() * (path_entry.path_chars.len() + prefix.len());
         score_matrix.clear();
         score_matrix.resize(matrix_len, None);
         best_position_matrix.clear();
-        best_position_matrix.resize(matrix_len, skipped_prefix_len);
+        best_position_matrix.resize(matrix_len, 0);
 
         let score = score_match(
             &query[..],
             &lowercase_query[..],
             &path_entry.path_chars,
             &path_entry.lowercase_path,
-            skipped_prefix_len,
+            prefix,
             smart_case,
             &last_positions,
             score_matrix,
@@ -237,11 +232,7 @@ fn match_single_tree_paths<'a>(
         if score > 0.0 {
             results.push(Reverse(PathMatch {
                 tree_id: snapshot.id,
-                path_string: path_entry
-                    .path_chars
-                    .iter()
-                    .skip(skipped_prefix_len)
-                    .collect(),
+                path_string: path_entry.path_chars.iter().collect(),
                 path: path_entry.path.clone(),
                 score,
                 positions: match_positions.clone(),
@@ -255,18 +246,17 @@ fn match_single_tree_paths<'a>(
 
 fn find_last_positions(
     last_positions: &mut Vec<usize>,
-    skipped_prefix_len: usize,
+    prefix: &[char],
     path: &[char],
     query: &[char],
 ) -> bool {
     let mut path = path.iter();
+    let mut prefix_iter = prefix.iter();
     for (i, char) in query.iter().enumerate().rev() {
         if let Some(j) = path.rposition(|c| c == char) {
-            if j >= skipped_prefix_len {
-                last_positions[i] = j;
-            } else {
-                return false;
-            }
+            last_positions[i] = j + prefix.len();
+        } else if let Some(j) = prefix_iter.rposition(|c| c == char) {
+            last_positions[i] = j;
         } else {
             return false;
         }
@@ -279,7 +269,7 @@ fn score_match(
     query_cased: &[char],
     path: &[char],
     path_cased: &[char],
-    skipped_prefix_len: usize,
+    prefix: &[char],
     smart_case: bool,
     last_positions: &[usize],
     score_matrix: &mut [Option<f64>],
@@ -292,14 +282,14 @@ fn score_match(
         query_cased,
         path,
         path_cased,
-        skipped_prefix_len,
+        prefix,
         smart_case,
         last_positions,
         score_matrix,
         best_position_matrix,
         min_score,
         0,
-        skipped_prefix_len,
+        0,
         query.len() as f64,
     ) * query.len() as f64;
 
@@ -307,10 +297,10 @@ fn score_match(
         return 0.0;
     }
 
-    let path_len = path.len() - skipped_prefix_len;
+    let path_len = path.len() + prefix.len();
     let mut cur_start = 0;
     for i in 0..query.len() {
-        match_positions[i] = best_position_matrix[i * path_len + cur_start] - skipped_prefix_len;
+        match_positions[i] = best_position_matrix[i * path_len + cur_start];
         cur_start = match_positions[i] + 1;
     }
 
@@ -322,7 +312,7 @@ fn recursive_score_match(
     query_cased: &[char],
     path: &[char],
     path_cased: &[char],
-    skipped_prefix_len: usize,
+    prefix: &[char],
     smart_case: bool,
     last_positions: &[usize],
     score_matrix: &mut [Option<f64>],
@@ -336,9 +326,9 @@ fn recursive_score_match(
         return 1.0;
     }
 
-    let path_len = path.len() - skipped_prefix_len;
+    let path_len = prefix.len() + path.len();
 
-    if let Some(memoized) = score_matrix[query_idx * path_len + path_idx - skipped_prefix_len] {
+    if let Some(memoized) = score_matrix[query_idx * path_len + path_idx] {
         return memoized;
     }
 
@@ -350,7 +340,11 @@ fn recursive_score_match(
 
     let mut last_slash = 0;
     for j in path_idx..=limit {
-        let path_char = path_cased[j];
+        let path_char = if j < prefix.len() {
+            prefix[j]
+        } else {
+            path_cased[j - prefix.len()]
+        };
         let is_path_sep = path_char == '/' || path_char == '\\';
 
         if query_idx == 0 && is_path_sep {
@@ -358,10 +352,19 @@ fn recursive_score_match(
         }
 
         if query_char == path_char || (is_path_sep && query_char == '_' || query_char == '\\') {
+            let curr = if j < prefix.len() {
+                prefix[j]
+            } else {
+                path[j - prefix.len()]
+            };
+
             let mut char_score = 1.0;
             if j > path_idx {
-                let last = path[j - 1];
-                let curr = path[j];
+                let last = if j - 1 < prefix.len() {
+                    prefix[j - 1]
+                } else {
+                    path[j - 1 - prefix.len()]
+                };
 
                 if last == '/' {
                     char_score = 0.9;
@@ -384,15 +387,15 @@ fn recursive_score_match(
             // Apply a severe penalty if the case doesn't match.
             // This will make the exact matches have higher score than the case-insensitive and the
             // path insensitive matches.
-            if (smart_case || path[j] == '/') && query[query_idx] != path[j] {
+            if (smart_case || curr == '/') && query[query_idx] != curr {
                 char_score *= 0.001;
             }
 
             let mut multiplier = char_score;
 
-            // Scale the score based on how deep within the patch we found the match.
+            // Scale the score based on how deep within the path we found the match.
             if query_idx == 0 {
-                multiplier /= (path.len() - last_slash) as f64;
+                multiplier /= ((prefix.len() + path.len()) - last_slash) as f64;
             }
 
             let mut next_score = 1.0;
@@ -413,7 +416,7 @@ fn recursive_score_match(
                 query_cased,
                 path,
                 path_cased,
-                skipped_prefix_len,
+                prefix,
                 smart_case,
                 last_positions,
                 score_matrix,
@@ -436,10 +439,10 @@ fn recursive_score_match(
     }
 
     if best_position != 0 {
-        best_position_matrix[query_idx * path_len + path_idx - skipped_prefix_len] = best_position;
+        best_position_matrix[query_idx * path_len + path_idx] = best_position;
     }
 
-    score_matrix[query_idx * path_len + path_idx - skipped_prefix_len] = Some(score);
+    score_matrix[query_idx * path_len + path_idx] = Some(score);
     score
 }
 
@@ -447,6 +450,38 @@ fn recursive_score_match(
 mod tests {
     use super::*;
     use std::path::PathBuf;
+
+    #[test]
+    fn test_get_last_positions() {
+        let mut last_positions = vec![0; 2];
+        let result = find_last_positions(
+            &mut last_positions,
+            &['a', 'b', 'c'],
+            &['b', 'd', 'e', 'f'],
+            &['d', 'c'],
+        );
+        assert_eq!(result, false);
+
+        last_positions.resize(2, 0);
+        let result = find_last_positions(
+            &mut last_positions,
+            &['a', 'b', 'c'],
+            &['b', 'd', 'e', 'f'],
+            &['c', 'd'],
+        );
+        assert_eq!(result, true);
+        assert_eq!(last_positions, vec![2, 4]);
+
+        last_positions.resize(4, 0);
+        let result = find_last_positions(
+            &mut last_positions,
+            &['z', 'e', 'd', '/'],
+            &['z', 'e', 'd', '/', 'f'],
+            &['z', '/', 'z', 'f'],
+        );
+        assert_eq!(result, true);
+        assert_eq!(last_positions, vec![0, 3, 4, 8]);
+    }
 
     #[test]
     fn test_match_path_entries() {
@@ -526,8 +561,9 @@ mod tests {
                 abs_path: PathBuf::new().into(),
                 ignores: Default::default(),
                 entries: Default::default(),
+                root_name_chars: Vec::new(),
             },
-            0,
+            false,
             path_entries.iter(),
             &query[..],
             &lowercase_query[..],

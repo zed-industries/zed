@@ -24,6 +24,7 @@ pub struct FileFinder {
     search_count: usize,
     latest_search_id: usize,
     matches: Vec<PathMatch>,
+    include_root_name: bool,
     selected: usize,
     list_state: UniformListState,
 }
@@ -138,7 +139,12 @@ impl FileFinder {
     ) -> Option<ElementBox> {
         let tree_id = path_match.tree_id;
 
-        self.worktree(tree_id, app).map(|_| {
+        self.worktree(tree_id, app).map(|tree| {
+            let prefix = if self.include_root_name {
+                tree.root_name_chars()
+            } else {
+                &[]
+            };
             let path = path_match.path.clone();
             let path_string = &path_match.path_string;
             let file_name = Path::new(&path_string)
@@ -148,7 +154,8 @@ impl FileFinder {
                 .to_string();
 
             let path_positions = path_match.positions.clone();
-            let file_name_start = path_string.chars().count() - file_name.chars().count();
+            let file_name_start =
+                prefix.len() + path_string.chars().count() - file_name.chars().count();
             let mut file_name_positions = Vec::new();
             file_name_positions.extend(path_positions.iter().filter_map(|pos| {
                 if pos >= &file_name_start {
@@ -161,6 +168,9 @@ impl FileFinder {
             let settings = smol::block_on(self.settings.read());
             let highlight_color = ColorU::from_u32(0x304ee2ff);
             let bold = *Properties::new().weight(Weight::BOLD);
+
+            let mut full_path = prefix.iter().collect::<String>();
+            full_path.push_str(&path_string);
 
             let mut container = Container::new(
                 Flex::row()
@@ -191,7 +201,7 @@ impl FileFinder {
                                 )
                                 .with_child(
                                     Label::new(
-                                        path_string.into(),
+                                        full_path,
                                         settings.ui_font_family,
                                         settings.ui_font_size,
                                     )
@@ -275,6 +285,7 @@ impl FileFinder {
             search_count: 0,
             latest_search_id: 0,
             matches: Vec::new(),
+            include_root_name: false,
             selected: 0,
             list_state: UniformListState::new(),
         }
@@ -348,16 +359,17 @@ impl FileFinder {
         let search_id = util::post_inc(&mut self.search_count);
         let pool = ctx.as_ref().thread_pool().clone();
         let task = ctx.background_executor().spawn(async move {
+            let include_root_name = snapshots.len() > 1;
             let matches = match_paths(
                 snapshots.iter(),
                 &query,
-                snapshots.len() > 1,
+                include_root_name,
                 false,
                 false,
                 100,
                 pool,
             );
-            (search_id, matches)
+            (search_id, include_root_name, matches)
         });
 
         ctx.spawn(task, Self::update_matches).detach();
@@ -365,12 +377,13 @@ impl FileFinder {
 
     fn update_matches(
         &mut self,
-        (search_id, matches): (usize, Vec<PathMatch>),
+        (search_id, include_root_name, matches): (usize, bool, Vec<PathMatch>),
         ctx: &mut ViewContext<Self>,
     ) {
         if search_id >= self.latest_search_id {
             self.latest_search_id = search_id;
             self.matches = matches;
+            self.include_root_name = include_root_name;
             self.selected = 0;
             self.list_state.scroll_to(0);
             ctx.notify();

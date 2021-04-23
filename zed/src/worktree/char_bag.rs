@@ -1,4 +1,4 @@
-#[derive(Copy, Clone, Debug)]
+#[derive(Copy, Clone, Debug, Default)]
 pub struct CharBag(u64);
 
 impl CharBag {
@@ -19,6 +19,14 @@ impl CharBag {
             self.0 |= 1 << (idx + 52);
         } else if c == '-' {
             self.0 |= 1 << 62;
+        }
+    }
+}
+
+impl Extend<char> for CharBag {
+    fn extend<T: IntoIterator<Item = char>>(&mut self, iter: T) {
+        for c in iter {
+            self.insert(c);
         }
     }
 }

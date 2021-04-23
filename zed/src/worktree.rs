@@ -32,6 +32,8 @@ use std::{
     time::Duration,
 };
 
+use self::char_bag::CharBag;
+
 lazy_static! {
     static ref GITIGNORE: &'static OsStr = OsStr::new(".gitignore");
 }
@@ -59,12 +61,17 @@ pub struct FileHandle {
 
 impl Worktree {
     pub fn new(path: impl Into<Arc<Path>>, ctx: &mut ModelContext<Self>) -> Self {
+        let abs_path = path.into();
+        let root_name_chars = abs_path.file_name().map_or(Vec::new(), |n| {
+            n.to_string_lossy().chars().chain(Some('/')).collect()
+        });
         let (scan_state_tx, scan_state_rx) = smol::channel::unbounded();
         let id = ctx.model_id();
         let snapshot = Snapshot {
             id,
             scan_id: 0,
-            abs_path: path.into(),
+            abs_path,
+            root_name_chars,
             ignores: Default::default(),
             entries: Default::default(),
         };
@@ -209,6 +216,7 @@ pub struct Snapshot {
     id: usize,
     scan_id: usize,
     abs_path: Arc<Path>,
+    root_name_chars: Vec<char>,
     ignores: BTreeMap<Arc<Path>, (Arc<Gitignore>, usize)>,
     entries: SumTree<Entry>,
 }
@@ -238,11 +246,15 @@ impl Snapshot {
     }
 
     pub fn root_entry(&self) -> Entry {
-        self.entry_for_path(&self.abs_path).unwrap()
+        self.entry_for_path("").unwrap()
     }
 
     pub fn root_name(&self) -> Option<&OsStr> {
         self.abs_path.file_name()
+    }
+
+    pub fn root_name_chars(&self) -> &[char] {
+        &self.root_name_chars
     }
 
     fn entry_for_path(&self, path: impl AsRef<Path>) -> Option<Entry> {
@@ -259,8 +271,6 @@ impl Snapshot {
     }
 
     fn is_path_ignored(&self, path: &Path) -> Result<bool> {
-        dbg!(path);
-
         let mut entry = self
             .entry_for_path(path)
             .ok_or_else(|| anyhow!("entry does not exist in worktree"))?;
@@ -272,7 +282,6 @@ impl Snapshot {
                 entry.path().parent().and_then(|p| self.entry_for_path(p))
             {
                 let parent_path = parent_entry.path();
-                dbg!(parent_path);
                 if let Some((ignore, _)) = self.ignores.get(parent_path) {
                     let relative_path = path.strip_prefix(parent_path).unwrap();
                     match ignore.matched_path_or_any_parents(relative_path, entry.is_dir()) {
@@ -567,11 +576,14 @@ struct BackgroundScanner {
     notify: Sender<ScanState>,
     other_mount_paths: HashSet<PathBuf>,
     thread_pool: scoped_pool::Pool,
+    root_char_bag: CharBag,
 }
 
 impl BackgroundScanner {
     fn new(snapshot: Arc<Mutex<Snapshot>>, notify: Sender<ScanState>, worktree_id: usize) -> Self {
+        let root_char_bag = CharBag::from(snapshot.lock().root_name_chars.as_slice());
         let mut scanner = Self {
+            root_char_bag,
             snapshot,
             notify,
             other_mount_paths: Default::default(),
@@ -673,7 +685,7 @@ impl BackgroundScanner {
             });
         } else {
             self.snapshot.lock().insert_entry(Entry::File {
-                path_entry: PathEntry::new(inode, path.clone()),
+                path_entry: PathEntry::new(inode, self.root_char_bag, path.clone()),
                 path,
                 inode,
                 is_symlink,
@@ -719,7 +731,7 @@ impl BackgroundScanner {
                 });
             } else {
                 new_entries.push(Entry::File {
-                    path_entry: PathEntry::new(child_inode, child_path.clone()),
+                    path_entry: PathEntry::new(child_inode, self.root_char_bag, child_path.clone()),
                     path: child_path,
                     inode: child_inode,
                     is_symlink: child_is_symlink,
@@ -958,7 +970,7 @@ impl BackgroundScanner {
             }
         } else {
             Entry::File {
-                path_entry: PathEntry::new(inode, path.clone()),
+                path_entry: PathEntry::new(inode, self.root_char_bag, path.clone()),
                 path,
                 inode,
                 is_symlink,
@@ -1113,14 +1125,14 @@ mod tests {
                     10,
                     ctx.thread_pool().clone(),
                 )
-                .iter()
-                .map(|result| result.path.clone())
+                .into_iter()
+                .map(|result| result.path)
                 .collect::<Vec<Arc<Path>>>();
                 assert_eq!(
                     results,
                     vec![
-                        PathBuf::from("root_link/banana/carrot/date").into(),
-                        PathBuf::from("root_link/banana/carrot/endive").into(),
+                        PathBuf::from("banana/carrot/date").into(),
+                        PathBuf::from("banana/carrot/endive").into(),
                     ]
                 );
             })
@@ -1288,6 +1300,7 @@ mod tests {
                     abs_path: root_dir.path().into(),
                     entries: Default::default(),
                     ignores: Default::default(),
+                    root_name_chars: Default::default(),
                 })),
                 notify_tx,
                 0,
@@ -1321,6 +1334,7 @@ mod tests {
                     abs_path: root_dir.path().into(),
                     entries: Default::default(),
                     ignores: Default::default(),
+                    root_name_chars: Default::default(),
                 })),
                 notify_tx,
                 1,
