@@ -323,7 +323,7 @@ impl Snapshot {
         let new_entries = {
             let mut cursor = self.entries.cursor::<_, ()>();
             let mut new_entries = cursor.slice(&PathSearch::Exact(path), SeekBias::Left);
-            cursor.seek_forward(&PathSearch::Sibling(path), SeekBias::Left);
+            cursor.seek_forward(&PathSearch::Successor(path), SeekBias::Left);
             new_entries.push_tree(cursor.suffix());
             new_entries
         };
@@ -516,14 +516,14 @@ impl<'a> sum_tree::Dimension<'a, EntrySummary> for PathKey {
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
 enum PathSearch<'a> {
     Exact(&'a Path),
-    Sibling(&'a Path),
+    Successor(&'a Path),
 }
 
 impl<'a> Ord for PathSearch<'a> {
     fn cmp(&self, other: &Self) -> cmp::Ordering {
         match (self, other) {
             (Self::Exact(a), Self::Exact(b)) => a.cmp(b),
-            (Self::Sibling(a), Self::Exact(b)) => {
+            (Self::Successor(a), Self::Exact(b)) => {
                 if b.starts_with(a) {
                     cmp::Ordering::Greater
                 } else {
