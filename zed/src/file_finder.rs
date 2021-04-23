@@ -146,12 +146,12 @@ impl FileFinder {
                 &[]
             };
             let path = path_match.path.clone();
-            let path_string = &path_match.path_string;
-            let file_name = Path::new(&path_string)
+            let path_string = path_match.path.to_string_lossy();
+            let file_name = path_match
+                .path
                 .file_name()
                 .unwrap_or_default()
-                .to_string_lossy()
-                .to_string();
+                .to_string_lossy();
 
             let path_positions = path_match.positions.clone();
             let file_name_start =
@@ -192,7 +192,7 @@ impl FileFinder {
                             Flex::column()
                                 .with_child(
                                     Label::new(
-                                        file_name,
+                                        file_name.to_string(),
                                         settings.ui_font_family,
                                         settings.ui_font_size,
                                     )

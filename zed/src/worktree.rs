@@ -6,7 +6,6 @@ use crate::{
     sum_tree::{self, Cursor, Edit, SeekBias, SumTree},
 };
 use anyhow::{anyhow, Context, Result};
-use fuzzy::PathEntry;
 pub use fuzzy::{match_paths, PathMatch};
 use gpui::{scoped_pool, AppContext, Entity, ModelContext, ModelHandle, Task};
 use ignore::gitignore::Gitignore;
@@ -307,8 +306,8 @@ impl Snapshot {
         let mut edits = Vec::new();
 
         let mut parent_entry = self.entries.get(&PathKey(parent_path)).unwrap().clone();
-        if let Entry::Dir { pending, .. } = &mut parent_entry {
-            *pending = false;
+        if matches!(parent_entry.kind, EntryKind::PendingDir) {
+            parent_entry.kind = EntryKind::Dir;
         } else {
             unreachable!();
         }
@@ -384,54 +383,40 @@ impl FileHandle {
 }
 
 #[derive(Clone, Debug)]
-pub enum Entry {
-    Dir {
-        path: Arc<Path>,
-        inode: u64,
-        is_symlink: bool,
-        pending: bool,
-        is_ignored: Option<bool>,
-    },
-    File {
-        path: Arc<Path>,
-        inode: u64,
-        is_symlink: bool,
-        path_entry: PathEntry,
-        is_ignored: Option<bool>,
-    },
+pub struct Entry {
+    kind: EntryKind,
+    path: Arc<Path>,
+    inode: u64,
+    is_symlink: bool,
+    is_ignored: Option<bool>,
+}
+
+#[derive(Clone, Debug)]
+pub enum EntryKind {
+    PendingDir,
+    Dir,
+    File(CharBag),
 }
 
 impl Entry {
     pub fn path(&self) -> &Arc<Path> {
-        match self {
-            Entry::Dir { path, .. } => path,
-            Entry::File { path, .. } => path,
-        }
+        &self.path
     }
 
     pub fn inode(&self) -> u64 {
-        match self {
-            Entry::Dir { inode, .. } => *inode,
-            Entry::File { inode, .. } => *inode,
-        }
+        self.inode
     }
 
     fn is_ignored(&self) -> Option<bool> {
-        match self {
-            Entry::Dir { is_ignored, .. } => *is_ignored,
-            Entry::File { is_ignored, .. } => *is_ignored,
-        }
+        self.is_ignored
     }
 
     fn set_ignored(&mut self, ignored: bool) {
-        match self {
-            Entry::Dir { is_ignored, .. } => *is_ignored = Some(ignored),
-            Entry::File { is_ignored, .. } => *is_ignored = Some(ignored),
-        }
+        self.is_ignored = Some(ignored);
     }
 
     fn is_dir(&self) -> bool {
-        matches!(self, Entry::Dir { .. })
+        matches!(self.kind, EntryKind::Dir | EntryKind::PendingDir)
     }
 }
 
@@ -441,9 +426,9 @@ impl sum_tree::Item for Entry {
     fn summary(&self) -> Self::Summary {
         let file_count;
         let visible_file_count;
-        if let Entry::File { is_ignored, .. } = self {
+        if matches!(self.kind, EntryKind::File(_)) {
             file_count = 1;
-            if is_ignored.unwrap_or(false) {
+            if self.is_ignored.unwrap_or(false) {
                 visible_file_count = 0;
             } else {
                 visible_file_count = 1;
@@ -653,11 +638,11 @@ impl BackgroundScanner {
         let is_symlink = fs::symlink_metadata(&abs_path)?.file_type().is_symlink();
 
         if metadata.file_type().is_dir() {
-            let dir_entry = Entry::Dir {
+            let dir_entry = Entry {
+                kind: EntryKind::PendingDir,
                 path: path.clone(),
                 inode,
                 is_symlink,
-                pending: true,
                 is_ignored: None,
             };
             self.snapshot.lock().insert_entry(dir_entry);
@@ -684,8 +669,8 @@ impl BackgroundScanner {
                 }
             });
         } else {
-            self.snapshot.lock().insert_entry(Entry::File {
-                path_entry: PathEntry::new(inode, self.root_char_bag, path.clone()),
+            self.snapshot.lock().insert_entry(Entry {
+                kind: EntryKind::File(self.char_bag(&path)),
                 path,
                 inode,
                 is_symlink,
@@ -717,11 +702,11 @@ impl BackgroundScanner {
             }
 
             if child_metadata.is_dir() {
-                new_entries.push(Entry::Dir {
+                new_entries.push(Entry {
+                    kind: EntryKind::PendingDir,
                     path: child_path.clone(),
                     inode: child_inode,
                     is_symlink: child_is_symlink,
-                    pending: true,
                     is_ignored: None,
                 });
                 new_jobs.push(ScanJob {
@@ -730,8 +715,8 @@ impl BackgroundScanner {
                     scan_queue: job.scan_queue.clone(),
                 });
             } else {
-                new_entries.push(Entry::File {
-                    path_entry: PathEntry::new(child_inode, self.root_char_bag, child_path.clone()),
+                new_entries.push(Entry {
+                    kind: EntryKind::File(self.char_bag(&child_path)),
                     path: child_path,
                     inode: child_inode,
                     is_symlink: child_is_symlink,
@@ -960,25 +945,25 @@ impl BackgroundScanner {
             .file_type()
             .is_symlink();
 
-        let entry = if metadata.file_type().is_dir() {
-            Entry::Dir {
-                path,
-                inode,
-                is_symlink,
-                pending: true,
-                is_ignored: None,
-            }
-        } else {
-            Entry::File {
-                path_entry: PathEntry::new(inode, self.root_char_bag, path.clone()),
-                path,
-                inode,
-                is_symlink,
-                is_ignored: None,
-            }
+        let entry = Entry {
+            kind: if metadata.file_type().is_dir() {
+                EntryKind::PendingDir
+            } else {
+                EntryKind::File(self.char_bag(&path))
+            },
+            path,
+            inode,
+            is_symlink,
+            is_ignored: None,
         };
 
         Ok(Some(entry))
+    }
+
+    fn char_bag(&self, path: &Path) -> CharBag {
+        let mut result = self.root_char_bag;
+        result.extend(path.to_string_lossy().chars());
+        result
     }
 }
 
@@ -1496,13 +1481,10 @@ mod tests {
             let mut files = self.files(0);
             let mut visible_files = self.visible_files(0);
             for entry in self.entries.cursor::<(), ()>() {
-                if let Entry::File {
-                    inode, is_ignored, ..
-                } = entry
-                {
-                    assert_eq!(files.next().unwrap().inode(), *inode);
-                    if !is_ignored.unwrap() {
-                        assert_eq!(visible_files.next().unwrap().inode(), *inode);
+                if matches!(entry.kind, EntryKind::File(_)) {
+                    assert_eq!(files.next().unwrap().inode(), entry.inode);
+                    if !entry.is_ignored.unwrap() {
+                        assert_eq!(visible_files.next().unwrap().inode(), entry.inode);
                     }
                 }
             }
@@ -1518,8 +1500,6 @@ mod tests {
         }
 
         fn to_vec(&self) -> Vec<(&Path, u64, bool)> {
-            use std::iter::FromIterator;
-
             let mut paths = Vec::new();
             for entry in self.entries.cursor::<(), ()>() {
                 paths.push((
@@ -1527,12 +1507,6 @@ mod tests {
                     entry.inode(),
                     entry.is_ignored().unwrap(),
                 ));
-                if let Entry::File { path_entry, .. } = entry {
-                    assert_eq!(
-                        String::from_iter(path_entry.path_chars.iter()),
-                        entry.path().to_str().unwrap()
-                    );
-                }
             }
             paths.sort_by(|a, b| a.0.cmp(&b.0));
             paths

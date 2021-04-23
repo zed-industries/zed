@@ -1,4 +1,4 @@
-use super::{char_bag::CharBag, Entry, Snapshot};
+use super::{char_bag::CharBag, EntryKind, Snapshot};
 use gpui::scoped_pool;
 use std::{
     cmp::{max, min, Ordering, Reverse},
@@ -12,37 +12,15 @@ const ADDITIONAL_DISTANCE_PENALTY: f64 = 0.05;
 const MIN_DISTANCE_PENALTY: f64 = 0.2;
 
 #[derive(Clone, Debug)]
-pub struct PathEntry {
-    pub ino: u64,
+pub struct MatchCandidate<'a> {
+    pub path: &'a Arc<Path>,
     pub char_bag: CharBag,
-    pub path_chars: Arc<[char]>,
-    pub path: Arc<Path>,
-    pub lowercase_path: Arc<[char]>,
-}
-
-impl PathEntry {
-    pub fn new(ino: u64, root_char_bag: CharBag, path: Arc<Path>) -> Self {
-        let path_str = path.to_string_lossy();
-        let lowercase_path = path_str.to_lowercase().chars().collect::<Vec<_>>().into();
-        let path_chars: Arc<[char]> = path_str.chars().collect::<Vec<_>>().into();
-        let mut char_bag = root_char_bag;
-        char_bag.extend(path_chars.iter().copied());
-
-        Self {
-            ino,
-            char_bag,
-            path_chars,
-            path,
-            lowercase_path,
-        }
-    }
 }
 
 #[derive(Clone, Debug)]
 pub struct PathMatch {
     pub score: f64,
     pub positions: Vec<usize>,
-    pub path_string: String,
     pub tree_id: usize,
     pub path: Arc<Path>,
 }
@@ -77,7 +55,7 @@ pub fn match_paths<'a, T>(
     pool: scoped_pool::Pool,
 ) -> Vec<PathMatch>
 where
-    T: Clone + Send + Iterator<Item = &'a Snapshot>,
+    T: Clone + Send + Iterator<Item = &'a Snapshot> + 'a,
 {
     let lowercase_query = query.to_lowercase().chars().collect::<Vec<_>>();
     let query = query.chars().collect::<Vec<_>>();
@@ -126,12 +104,12 @@ where
                         } else {
                             snapshot.visible_files(start).take(end - start)
                         };
-                        let path_entries = entries.map(|entry| {
-                            if let Entry::File {
-                                path_entry: path, ..
-                            } = entry
-                            {
-                                path
+                        let paths = entries.map(|entry| {
+                            if let EntryKind::File(char_bag) = entry.kind {
+                                MatchCandidate {
+                                    path: &entry.path,
+                                    char_bag,
+                                }
                             } else {
                                 unreachable!()
                             }
@@ -140,7 +118,7 @@ where
                         match_single_tree_paths(
                             snapshot,
                             include_root_name,
-                            path_entries,
+                            paths,
                             query,
                             lowercase_query,
                             query_chars,
@@ -176,7 +154,7 @@ where
 fn match_single_tree_paths<'a>(
     snapshot: &Snapshot,
     include_root_name: bool,
-    path_entries: impl Iterator<Item = &'a PathEntry>,
+    path_entries: impl Iterator<Item = MatchCandidate<'a>>,
     query: &[char],
     lowercase_query: &[char],
     query_chars: CharBag,
@@ -189,6 +167,9 @@ fn match_single_tree_paths<'a>(
     score_matrix: &mut Vec<Option<f64>>,
     best_position_matrix: &mut Vec<usize>,
 ) {
+    let mut path_chars = Vec::new();
+    let mut lowercase_path_chars = Vec::new();
+
     let prefix = if include_root_name {
         snapshot.root_name_chars.as_slice()
     } else {
@@ -200,16 +181,23 @@ fn match_single_tree_paths<'a>(
             continue;
         }
 
+        path_chars.clear();
+        lowercase_path_chars.clear();
+        for c in path_entry.path.to_string_lossy().chars() {
+            path_chars.push(c);
+            lowercase_path_chars.push(c.to_ascii_lowercase());
+        }
+
         if !find_last_positions(
             last_positions,
             prefix,
-            &path_entry.lowercase_path,
+            &lowercase_path_chars,
             &lowercase_query[..],
         ) {
             continue;
         }
 
-        let matrix_len = query.len() * (path_entry.path_chars.len() + prefix.len());
+        let matrix_len = query.len() * (path_chars.len() + prefix.len());
         score_matrix.clear();
         score_matrix.resize(matrix_len, None);
         best_position_matrix.clear();
@@ -218,9 +206,9 @@ fn match_single_tree_paths<'a>(
         let score = score_match(
             &query[..],
             &lowercase_query[..],
-            &path_entry.path_chars,
-            &path_entry.lowercase_path,
-            prefix,
+            &path_chars,
+            &lowercase_path_chars,
+            &prefix,
             smart_case,
             &last_positions,
             score_matrix,
@@ -232,7 +220,6 @@ fn match_single_tree_paths<'a>(
         if score > 0.0 {
             results.push(Reverse(PathMatch {
                 tree_id: snapshot.id,
-                path_string: path_entry.path_chars.iter().collect(),
                 path: path_entry.path.clone(),
                 score,
                 positions: match_positions.clone(),
@@ -533,18 +520,17 @@ mod tests {
         let query = query.chars().collect::<Vec<_>>();
         let query_chars = CharBag::from(&lowercase_query[..]);
 
+        let path_arcs = paths
+            .iter()
+            .map(|path| Arc::from(PathBuf::from(path)))
+            .collect::<Vec<_>>();
         let mut path_entries = Vec::new();
         for (i, path) in paths.iter().enumerate() {
-            let lowercase_path: Arc<[char]> =
-                path.to_lowercase().chars().collect::<Vec<_>>().into();
-            let char_bag = CharBag::from(lowercase_path.as_ref());
-            let path_chars = path.chars().collect();
-            path_entries.push(PathEntry {
-                ino: i as u64,
+            let lowercase_path = path.to_lowercase().chars().collect::<Vec<_>>();
+            let char_bag = CharBag::from(lowercase_path.as_slice());
+            path_entries.push(MatchCandidate {
                 char_bag,
-                path_chars,
-                path: Arc::from(PathBuf::from(path)),
-                lowercase_path,
+                path: path_arcs.get(i).unwrap(),
             });
         }
 
@@ -564,7 +550,7 @@ mod tests {
                 root_name_chars: Vec::new(),
             },
             false,
-            path_entries.iter(),
+            path_entries.into_iter(),
             &query[..],
             &lowercase_query[..],
             query_chars,
