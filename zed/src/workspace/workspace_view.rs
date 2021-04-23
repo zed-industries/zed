@@ -6,7 +6,11 @@ use gpui::{
     ClipboardItem, Entity, ModelHandle, MutableAppContext, View, ViewContext, ViewHandle,
 };
 use log::error;
-use std::{collections::HashSet, path::PathBuf};
+use std::{
+    collections::HashSet,
+    path::{Path, PathBuf},
+    sync::Arc,
+};
 
 pub fn init(app: &mut MutableAppContext) {
     app.add_action("workspace:save", WorkspaceView::save_active_item);
@@ -19,7 +23,7 @@ pub fn init(app: &mut MutableAppContext) {
 
 pub trait ItemView: View {
     fn title(&self, app: &AppContext) -> String;
-    fn entry_id(&self, app: &AppContext) -> Option<(usize, u64)>;
+    fn entry_id(&self, app: &AppContext) -> Option<(usize, Arc<Path>)>;
     fn clone_on_split(&self, _: &mut ViewContext<Self>) -> Option<Self>
     where
         Self: Sized,
@@ -42,7 +46,7 @@ pub trait ItemView: View {
 
 pub trait ItemViewHandle: Send + Sync {
     fn title(&self, app: &AppContext) -> String;
-    fn entry_id(&self, app: &AppContext) -> Option<(usize, u64)>;
+    fn entry_id(&self, app: &AppContext) -> Option<(usize, Arc<Path>)>;
     fn boxed_clone(&self) -> Box<dyn ItemViewHandle>;
     fn clone_on_split(&self, app: &mut MutableAppContext) -> Option<Box<dyn ItemViewHandle>>;
     fn set_parent_pane(&self, pane: &ViewHandle<Pane>, app: &mut MutableAppContext);
@@ -57,7 +61,7 @@ impl<T: ItemView> ItemViewHandle for ViewHandle<T> {
         self.read(app).title(app)
     }
 
-    fn entry_id(&self, app: &AppContext) -> Option<(usize, u64)> {
+    fn entry_id(&self, app: &AppContext) -> Option<(usize, Arc<Path>)> {
         self.read(app).entry_id(app)
     }
 
@@ -124,7 +128,7 @@ pub struct WorkspaceView {
     center: PaneGroup,
     panes: Vec<ViewHandle<Pane>>,
     active_pane: ViewHandle<Pane>,
-    loading_entries: HashSet<(usize, u64)>,
+    loading_entries: HashSet<(usize, Arc<Path>)>,
 }
 
 impl WorkspaceView {
@@ -189,24 +193,23 @@ impl WorkspaceView {
         }
     }
 
-    pub fn open_entry(&mut self, entry: (usize, u64), ctx: &mut ViewContext<Self>) {
+    pub fn open_entry(&mut self, entry: (usize, Arc<Path>), ctx: &mut ViewContext<Self>) {
         if self.loading_entries.contains(&entry) {
             return;
         }
 
         if self
             .active_pane()
-            .update(ctx, |pane, ctx| pane.activate_entry(entry, ctx))
+            .update(ctx, |pane, ctx| pane.activate_entry(entry.clone(), ctx))
         {
             return;
         }
 
-        self.loading_entries.insert(entry);
+        self.loading_entries.insert(entry.clone());
 
-        match self
-            .workspace
-            .update(ctx, |workspace, ctx| workspace.open_entry(entry, ctx))
-        {
+        match self.workspace.update(ctx, |workspace, ctx| {
+            workspace.open_entry(entry.clone(), ctx)
+        }) {
             Err(error) => error!("{}", error),
             Ok(item) => {
                 let settings = self.settings.clone();
@@ -396,32 +399,35 @@ mod tests {
             app.read(|ctx| workspace.read(ctx).worktree_scans_complete(ctx))
                 .await;
             let entries = app.read(|ctx| workspace.file_entries(ctx));
-            let file1 = entries[0];
-            let file2 = entries[1];
-            let file3 = entries[2];
+            let file1 = entries[0].clone();
+            let file2 = entries[1].clone();
+            let file3 = entries[2].clone();
 
             let (_, workspace_view) =
                 app.add_window(|ctx| WorkspaceView::new(workspace.clone(), settings, ctx));
             let pane = app.read(|ctx| workspace_view.read(ctx).active_pane().clone());
 
             // Open the first entry
-            workspace_view.update(&mut app, |w, ctx| w.open_entry(file1, ctx));
+            workspace_view.update(&mut app, |w, ctx| w.open_entry(file1.clone(), ctx));
             pane.condition(&app, |pane, _| pane.items().len() == 1)
                 .await;
 
             // Open the second entry
-            workspace_view.update(&mut app, |w, ctx| w.open_entry(file2, ctx));
+            workspace_view.update(&mut app, |w, ctx| w.open_entry(file2.clone(), ctx));
             pane.condition(&app, |pane, _| pane.items().len() == 2)
                 .await;
             app.read(|ctx| {
                 let pane = pane.read(ctx);
-                assert_eq!(pane.active_item().unwrap().entry_id(ctx), Some(file2));
+                assert_eq!(
+                    pane.active_item().unwrap().entry_id(ctx),
+                    Some(file2.clone())
+                );
             });
 
             // Open the first entry again
-            workspace_view.update(&mut app, |w, ctx| w.open_entry(file1, ctx));
+            workspace_view.update(&mut app, |w, ctx| w.open_entry(file1.clone(), ctx));
             pane.condition(&app, move |pane, ctx| {
-                pane.active_item().unwrap().entry_id(ctx) == Some(file1)
+                pane.active_item().unwrap().entry_id(ctx) == Some(file1.clone())
             })
             .await;
             app.read(|ctx| {
@@ -430,8 +436,8 @@ mod tests {
 
             // Open the third entry twice concurrently
             workspace_view.update(&mut app, |w, ctx| {
-                w.open_entry(file3, ctx);
-                w.open_entry(file3, ctx);
+                w.open_entry(file3.clone(), ctx);
+                w.open_entry(file3.clone(), ctx);
             });
             pane.condition(&app, |pane, _| pane.items().len() == 3)
                 .await;
@@ -456,18 +462,21 @@ mod tests {
             app.read(|ctx| workspace.read(ctx).worktree_scans_complete(ctx))
                 .await;
             let entries = app.read(|ctx| workspace.file_entries(ctx));
-            let file1 = entries[0];
+            let file1 = entries[0].clone();
 
             let (window_id, workspace_view) =
                 app.add_window(|ctx| WorkspaceView::new(workspace.clone(), settings, ctx));
             let pane_1 = app.read(|ctx| workspace_view.read(ctx).active_pane().clone());
 
-            workspace_view.update(&mut app, |w, ctx| w.open_entry(file1, ctx));
-            pane_1
-                .condition(&app, move |pane, ctx| {
-                    pane.active_item().and_then(|i| i.entry_id(ctx)) == Some(file1)
-                })
-                .await;
+            workspace_view.update(&mut app, |w, ctx| w.open_entry(file1.clone(), ctx));
+            {
+                let file1 = file1.clone();
+                pane_1
+                    .condition(&app, move |pane, ctx| {
+                        pane.active_item().and_then(|i| i.entry_id(ctx)) == Some(file1.clone())
+                    })
+                    .await;
+            }
 
             app.dispatch_action(window_id, vec![pane_1.id()], "pane:split_right", ());
             app.update(|ctx| {
@@ -475,7 +484,7 @@ mod tests {
                 assert_ne!(pane_1, pane_2);
 
                 let pane2_item = pane_2.read(ctx).active_item().unwrap();
-                assert_eq!(pane2_item.entry_id(ctx.as_ref()), Some(file1));
+                assert_eq!(pane2_item.entry_id(ctx.as_ref()), Some(file1.clone()));
 
                 ctx.dispatch_action(window_id, vec![pane_2.id()], "pane:close_active_item", ());
                 let workspace_view = workspace_view.read(ctx);

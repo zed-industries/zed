@@ -20,6 +20,7 @@ use std::{
     fmt::Write,
     iter::FromIterator,
     ops::Range,
+    path::Path,
     sync::Arc,
     time::Duration,
 };
@@ -1375,7 +1376,7 @@ impl workspace::ItemView for BufferView {
     }
 
     fn title(&self, app: &AppContext) -> std::string::String {
-        if let Some(path) = self.buffer.read(app).path(app) {
+        if let Some(path) = self.buffer.read(app).path() {
             path.file_name()
                 .expect("buffer's path is always to a file")
                 .to_string_lossy()
@@ -1385,7 +1386,7 @@ impl workspace::ItemView for BufferView {
         }
     }
 
-    fn entry_id(&self, app: &AppContext) -> Option<(usize, u64)> {
+    fn entry_id(&self, app: &AppContext) -> Option<(usize, Arc<Path>)> {
         self.buffer.read(app).entry_id()
     }
 

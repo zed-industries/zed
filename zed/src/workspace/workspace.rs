@@ -138,10 +138,22 @@ impl Workspace {
 
     pub fn open_entry(
         &mut self,
-        entry: (usize, u64),
+        (worktree_id, path): (usize, Arc<Path>),
         ctx: &mut ModelContext<'_, Self>,
     ) -> anyhow::Result<Pin<Box<dyn Future<Output = OpenResult> + Send>>> {
-        if let Some(item) = self.items.get(&entry).cloned() {
+        let worktree = self
+            .worktrees
+            .get(&worktree_id)
+            .cloned()
+            .ok_or_else(|| anyhow!("worktree {} does not exist", worktree_id,))?;
+
+        let inode = worktree
+            .read(ctx)
+            .inode_for_path(&path)
+            .ok_or_else(|| anyhow!("path {:?} does not exist", path))?;
+
+        let item_key = (worktree_id, inode);
+        if let Some(item) = self.items.get(&item_key).cloned() {
             return Ok(async move {
                 match item {
                     OpenedItem::Loaded(handle) => {
@@ -159,25 +171,20 @@ impl Workspace {
             .boxed());
         }
 
-        let worktree = self
-            .worktrees
-            .get(&entry.0)
-            .cloned()
-            .ok_or(anyhow!("worktree {} does not exist", entry.0,))?;
-
         let replica_id = self.replica_id;
-        let file = worktree.file(entry.1, ctx.as_ref())?;
+        let file = worktree.file(path.clone(), ctx.as_ref())?;
         let history = file.load_history(ctx.as_ref());
         let buffer = async move { Ok(Buffer::from_history(replica_id, file, history.await?)) };
 
         let (mut tx, rx) = watch::channel(None);
-        self.items.insert(entry, OpenedItem::Loading(rx));
+        self.items.insert(item_key, OpenedItem::Loading(rx));
         ctx.spawn(
             buffer,
             move |me, buffer: anyhow::Result<Buffer>, ctx| match buffer {
                 Ok(buffer) => {
                     let handle = Box::new(ctx.add_model(|_| buffer)) as Box<dyn ItemHandle>;
-                    me.items.insert(entry, OpenedItem::Loaded(handle.clone()));
+                    me.items
+                        .insert(item_key, OpenedItem::Loaded(handle.clone()));
                     ctx.spawn(
                         async move {
                             tx.update(|value| *value = Some(Ok(handle))).await;
@@ -199,7 +206,7 @@ impl Workspace {
         )
         .detach();
 
-        self.open_entry(entry, ctx)
+        self.open_entry((worktree_id, path), ctx)
     }
 
     fn on_worktree_updated(&mut self, _: ModelHandle<Worktree>, ctx: &mut ModelContext<Self>) {
@@ -213,18 +220,20 @@ impl Entity for Workspace {
 
 #[cfg(test)]
 pub trait WorkspaceHandle {
-    fn file_entries(&self, app: &AppContext) -> Vec<(usize, u64)>;
+    fn file_entries(&self, app: &AppContext) -> Vec<(usize, Arc<Path>)>;
 }
 
 #[cfg(test)]
 impl WorkspaceHandle for ModelHandle<Workspace> {
-    fn file_entries(&self, app: &AppContext) -> Vec<(usize, u64)> {
+    fn file_entries(&self, app: &AppContext) -> Vec<(usize, Arc<Path>)> {
         self.read(app)
             .worktrees()
             .iter()
             .flat_map(|tree| {
                 let tree_id = tree.id();
-                tree.read(app).files(0).map(move |f| (tree_id, f.inode()))
+                tree.read(app)
+                    .files(0)
+                    .map(move |f| (tree_id, f.path().clone()))
             })
             .collect::<Vec<_>>()
     }
@@ -253,14 +262,14 @@ mod tests {
 
             // Get the first file entry.
             let tree = app.read(|ctx| workspace.read(ctx).worktrees.iter().next().unwrap().clone());
-            let file_inode = app.read(|ctx| tree.read(ctx).files(0).next().unwrap().inode());
-            let entry = (tree.id(), file_inode);
+            let path = app.read(|ctx| tree.read(ctx).files(0).next().unwrap().path().clone());
+            let entry = (tree.id(), path);
 
             // Open the same entry twice before it finishes loading.
             let (future_1, future_2) = workspace.update(&mut app, |w, app| {
                 (
-                    w.open_entry(entry, app).unwrap(),
-                    w.open_entry(entry, app).unwrap(),
+                    w.open_entry(entry.clone(), app).unwrap(),
+                    w.open_entry(entry.clone(), app).unwrap(),
                 )
             });
 

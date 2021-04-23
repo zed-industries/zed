@@ -18,7 +18,7 @@ use crate::{
     worktree::FileHandle,
 };
 use anyhow::{anyhow, Result};
-use gpui::{AppContext, Entity, ModelContext};
+use gpui::{Entity, ModelContext};
 use lazy_static::lazy_static;
 use rand::prelude::*;
 use std::{
@@ -26,7 +26,7 @@ use std::{
     hash::BuildHasher,
     iter::{self, Iterator},
     ops::{AddAssign, Range},
-    path::PathBuf,
+    path::Path,
     str,
     sync::Arc,
     time::{Duration, Instant},
@@ -429,11 +429,11 @@ impl Buffer {
         }
     }
 
-    pub fn path(&self, app: &AppContext) -> Option<PathBuf> {
-        self.file.as_ref().map(|file| file.path(app))
+    pub fn path(&self) -> Option<&Arc<Path>> {
+        self.file.as_ref().map(|file| file.path())
     }
 
-    pub fn entry_id(&self) -> Option<(usize, u64)> {
+    pub fn entry_id(&self) -> Option<(usize, Arc<Path>)> {
         self.file.as_ref().map(|file| file.entry_id())
     }
 

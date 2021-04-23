@@ -54,7 +54,7 @@ pub struct Worktree {
 #[derive(Clone)]
 pub struct FileHandle {
     worktree: ModelHandle<Worktree>,
-    inode: u64,
+    path: Arc<Path>,
 }
 
 impl Worktree {
@@ -152,25 +152,14 @@ impl Worktree {
         path.starts_with(&self.snapshot.path)
     }
 
-    pub fn has_inode(&self, inode: u64) -> bool {
-        todo!()
-        // self.snapshot.entries.get(&inode).is_some()
-    }
-
-    pub fn abs_path_for_inode(&self, ino: u64) -> Result<PathBuf> {
-        let mut result = self.snapshot.path.to_path_buf();
-        result.push(self.path_for_inode(ino, false)?);
-        Ok(result)
-    }
-
     pub fn load_history(
         &self,
-        ino: u64,
+        relative_path: &Path,
         ctx: &AppContext,
     ) -> impl Future<Output = Result<History>> {
-        let path = self.abs_path_for_inode(ino);
+        let path = self.snapshot.path.join(relative_path);
         ctx.background_executor().spawn(async move {
-            let mut file = std::fs::File::open(&path?)?;
+            let mut file = std::fs::File::open(&path)?;
             let mut base_text = String::new();
             file.read_to_string(&mut base_text)?;
             Ok(History::new(Arc::from(base_text)))
@@ -179,14 +168,14 @@ impl Worktree {
 
     pub fn save<'a>(
         &self,
-        ino: u64,
+        relative_path: &Path,
         content: BufferSnapshot,
         ctx: &AppContext,
     ) -> Task<Result<()>> {
-        let path = self.abs_path_for_inode(ino);
+        let path = self.snapshot.path.join(relative_path);
         ctx.background_executor().spawn(async move {
             let buffer_size = content.text_summary().bytes.min(10 * 1024);
-            let file = std::fs::File::create(&path?)?;
+            let file = std::fs::File::create(&path)?;
             let mut writer = std::io::BufWriter::with_capacity(buffer_size, file);
             for chunk in content.fragments() {
                 writer.write(chunk.as_bytes())?;
@@ -258,7 +247,7 @@ impl Snapshot {
         }
     }
 
-    fn inode_for_path(&self, path: impl AsRef<Path>) -> Option<u64> {
+    pub fn inode_for_path(&self, path: impl AsRef<Path>) -> Option<u64> {
         self.entry_for_path(path.as_ref()).map(|e| e.inode())
     }
 
@@ -286,10 +275,6 @@ impl Snapshot {
             }
             Ok(false)
         }
-    }
-
-    pub fn path_for_inode(&self, mut inode: u64, include_root: bool) -> Result<PathBuf> {
-        todo!("this method should go away")
     }
 
     fn insert_entry(&mut self, entry: Entry) {
@@ -362,24 +347,21 @@ impl fmt::Debug for Snapshot {
 }
 
 impl FileHandle {
-    pub fn path(&self, ctx: &AppContext) -> PathBuf {
-        self.worktree
-            .read(ctx)
-            .path_for_inode(self.inode, false)
-            .unwrap()
+    pub fn path(&self) -> &Arc<Path> {
+        &self.path
     }
 
     pub fn load_history(&self, ctx: &AppContext) -> impl Future<Output = Result<History>> {
-        self.worktree.read(ctx).load_history(self.inode, ctx)
+        self.worktree.read(ctx).load_history(&self.path, ctx)
     }
 
     pub fn save<'a>(&self, content: BufferSnapshot, ctx: &AppContext) -> Task<Result<()>> {
         let worktree = self.worktree.read(ctx);
-        worktree.save(self.inode, content, ctx)
+        worktree.save(&self.path, content, ctx)
     }
 
-    pub fn entry_id(&self) -> (usize, u64) {
-        (self.worktree.id(), self.inode)
+    pub fn entry_id(&self) -> (usize, Arc<Path>) {
+        (self.worktree.id(), self.path.clone())
     }
 }
 
@@ -402,10 +384,17 @@ pub enum Entry {
 }
 
 impl Entry {
-    fn path(&self) -> &Arc<Path> {
+    pub fn path(&self) -> &Arc<Path> {
         match self {
             Entry::Dir { path, .. } => path,
             Entry::File { path, .. } => path,
+        }
+    }
+
+    pub fn inode(&self) -> u64 {
+        match self {
+            Entry::Dir { inode, .. } => *inode,
+            Entry::File { inode, .. } => *inode,
         }
     }
 
@@ -420,13 +409,6 @@ impl Entry {
         match self {
             Entry::Dir { is_ignored, .. } => *is_ignored = Some(ignored),
             Entry::File { is_ignored, .. } => *is_ignored = Some(ignored),
-        }
-    }
-
-    pub fn inode(&self) -> u64 {
-        match self {
-            Entry::Dir { inode, .. } => *inode,
-            Entry::File { inode, .. } => *inode,
         }
     }
 
@@ -683,7 +665,7 @@ impl BackgroundScanner {
             });
         } else {
             self.snapshot.lock().insert_entry(Entry::File {
-                path_entry: PathEntry::new(inode, &relative_path),
+                path_entry: PathEntry::new(inode, relative_path.clone()),
                 path: relative_path,
                 inode,
                 is_symlink,
@@ -729,7 +711,7 @@ impl BackgroundScanner {
                 });
             } else {
                 new_entries.push(Entry::File {
-                    path_entry: PathEntry::new(child_inode, &child_relative_path),
+                    path_entry: PathEntry::new(child_inode, child_relative_path.clone()),
                     path: child_relative_path,
                     inode: child_inode,
                     is_symlink: child_is_symlink,
@@ -956,11 +938,12 @@ impl BackgroundScanner {
             .is_symlink();
         let relative_path_with_root = root_path
             .parent()
-            .map_or(path, |parent| path.strip_prefix(parent).unwrap());
+            .map_or(path, |parent| path.strip_prefix(parent).unwrap())
+            .into();
 
         let entry = if metadata.file_type().is_dir() {
             Entry::Dir {
-                path: Arc::from(relative_path_with_root),
+                path: relative_path_with_root,
                 inode,
                 is_symlink,
                 pending: true,
@@ -968,8 +951,8 @@ impl BackgroundScanner {
             }
         } else {
             Entry::File {
-                path_entry: PathEntry::new(inode, relative_path_with_root),
-                path: Arc::from(relative_path_with_root),
+                path_entry: PathEntry::new(inode, relative_path_with_root.clone()),
+                path: relative_path_with_root,
                 inode,
                 is_symlink,
                 is_ignored: None,
@@ -987,19 +970,18 @@ struct ScanJob {
 }
 
 pub trait WorktreeHandle {
-    fn file(&self, entry_id: u64, app: &AppContext) -> Result<FileHandle>;
+    fn file(&self, path: impl AsRef<Path>, app: &AppContext) -> Result<FileHandle>;
 }
 
 impl WorktreeHandle for ModelHandle<Worktree> {
-    fn file(&self, inode: u64, app: &AppContext) -> Result<FileHandle> {
-        if self.read(app).has_inode(inode) {
-            Ok(FileHandle {
+    fn file(&self, path: impl AsRef<Path>, app: &AppContext) -> Result<FileHandle> {
+        self.read(app)
+            .entry_for_path(&path)
+            .map(|entry| FileHandle {
                 worktree: self.clone(),
-                inode,
+                path: entry.path().clone(),
             })
-        } else {
-            Err(anyhow!("entry does not exist in tree"))
-        }
+            .ok_or_else(|| anyhow!("path does not exist in tree"))
     }
 }
 
@@ -1125,14 +1107,13 @@ mod tests {
                     ctx.thread_pool().clone(),
                 )
                 .iter()
-                .map(|result| tree.path_for_inode(result.entry_id, true))
-                .collect::<Result<Vec<PathBuf>, _>>()
-                .unwrap();
+                .map(|result| result.path.clone())
+                .collect::<Vec<Arc<Path>>>();
                 assert_eq!(
                     results,
                     vec![
-                        PathBuf::from("root_link/banana/carrot/date"),
-                        PathBuf::from("root_link/banana/carrot/endive"),
+                        PathBuf::from("root_link/banana/carrot/date").into(),
+                        PathBuf::from("root_link/banana/carrot/endive").into(),
                     ]
                 );
             })
@@ -1152,25 +1133,15 @@ mod tests {
 
             let buffer = Buffer::new(1, "a line of text.\n".repeat(10 * 1024));
 
-            let file_inode = app.read(|ctx| {
-                let tree = tree.read(ctx);
-                let inode = tree.files(0).next().unwrap().inode();
-                assert_eq!(
-                    tree.path_for_inode(inode, false)
-                        .unwrap()
-                        .file_name()
-                        .unwrap(),
-                    "file1"
-                );
-                inode
-            });
-
-            tree.update(&mut app, |tree, ctx| {
-                smol::block_on(tree.save(file_inode, buffer.snapshot(), ctx.as_ref())).unwrap()
+            let path = tree.update(&mut app, |tree, ctx| {
+                let path = tree.files(0).next().unwrap().path().clone();
+                assert_eq!(path.file_name().unwrap(), "file1");
+                smol::block_on(tree.save(&path, buffer.snapshot(), ctx.as_ref())).unwrap();
+                path
             });
 
             let loaded_history = app
-                .read(|ctx| tree.read(ctx).load_history(file_inode, ctx))
+                .read(|ctx| tree.read(ctx).load_history(&path, ctx))
                 .await
                 .unwrap();
             assert_eq!(loaded_history.base_text.as_ref(), buffer.text());
@@ -1196,15 +1167,16 @@ mod tests {
             app.read(|ctx| assert_eq!(tree.read(ctx).file_count(), 2));
 
             let file2 = app.read(|ctx| {
-                let inode = tree.read(ctx).inode_for_path("b/c/file2").unwrap();
-                let file2 = tree.file(inode, ctx).unwrap();
-                assert_eq!(file2.path(ctx), Path::new("b/c/file2"));
+                let file2 = tree.file("b/c/file2", ctx).unwrap();
+                assert_eq!(file2.path().as_ref(), Path::new("b/c/file2"));
                 file2
             });
 
             std::fs::rename(dir.path().join("b/c"), dir.path().join("d")).unwrap();
-            tree.condition(&app, move |_, ctx| file2.path(ctx) == Path::new("d/file2"))
-                .await;
+            tree.condition(&app, move |_, _| {
+                file2.path().as_ref() == Path::new("d/file2")
+            })
+            .await;
         });
     }
 
@@ -1513,7 +1485,7 @@ mod tests {
                 ));
                 if let Entry::File { path_entry, .. } = entry {
                     assert_eq!(
-                        String::from_iter(path_entry.path.iter()),
+                        String::from_iter(path_entry.path_chars.iter()),
                         entry.path().to_str().unwrap()
                     );
                 }

@@ -14,7 +14,7 @@ use gpui::{
     AppContext, Axis, Border, Entity, ModelHandle, MutableAppContext, View, ViewContext,
     ViewHandle, WeakViewHandle,
 };
-use std::{cmp, path::Path};
+use std::{cmp, path::Path, sync::Arc};
 
 pub struct FileFinder {
     handle: WeakViewHandle<Self>,
@@ -44,7 +44,7 @@ pub fn init(app: &mut MutableAppContext) {
 }
 
 pub enum Event {
-    Selected(usize, u64),
+    Selected(usize, Arc<Path>),
     Dismissed,
 }
 
@@ -137,18 +137,18 @@ impl FileFinder {
         app: &AppContext,
     ) -> Option<ElementBox> {
         let tree_id = path_match.tree_id;
-        let entry_id = path_match.entry_id;
 
         self.worktree(tree_id, app).map(|_| {
-            let path = &path_match.path;
-            let file_name = Path::new(path)
+            let path = path_match.path.clone();
+            let path_string = &path_match.path_string;
+            let file_name = Path::new(&path_string)
                 .file_name()
                 .unwrap_or_default()
                 .to_string_lossy()
                 .to_string();
 
             let path_positions = path_match.positions.clone();
-            let file_name_start = path.chars().count() - file_name.chars().count();
+            let file_name_start = path_string.chars().count() - file_name.chars().count();
             let mut file_name_positions = Vec::new();
             file_name_positions.extend(path_positions.iter().filter_map(|pos| {
                 if pos >= &file_name_start {
@@ -191,7 +191,7 @@ impl FileFinder {
                                 )
                                 .with_child(
                                     Label::new(
-                                        path.into(),
+                                        path_string.into(),
                                         settings.ui_font_family,
                                         settings.ui_font_size,
                                     )
@@ -217,7 +217,7 @@ impl FileFinder {
 
             EventHandler::new(container.boxed())
                 .on_mouse_down(move |ctx| {
-                    ctx.dispatch_action("file_finder:select", (tree_id, entry_id));
+                    ctx.dispatch_action("file_finder:select", (tree_id, path.clone()));
                     true
                 })
                 .named("match")
@@ -245,8 +245,8 @@ impl FileFinder {
         ctx: &mut ViewContext<WorkspaceView>,
     ) {
         match event {
-            Event::Selected(tree_id, entry_id) => {
-                workspace_view.open_entry((*tree_id, *entry_id), ctx);
+            Event::Selected(tree_id, path) => {
+                workspace_view.open_entry((*tree_id, path.clone()), ctx);
                 workspace_view.dismiss_modal(ctx);
             }
             Event::Dismissed => {
@@ -329,13 +329,12 @@ impl FileFinder {
 
     fn confirm(&mut self, _: &(), ctx: &mut ViewContext<Self>) {
         if let Some(m) = self.matches.get(self.selected) {
-            ctx.emit(Event::Selected(m.tree_id, m.entry_id));
+            ctx.emit(Event::Selected(m.tree_id, m.path.clone()));
         }
     }
 
-    fn select(&mut self, entry: &(usize, u64), ctx: &mut ViewContext<Self>) {
-        let (tree_id, entry_id) = *entry;
-        ctx.emit(Event::Selected(tree_id, entry_id));
+    fn select(&mut self, (tree_id, path): &(usize, Arc<Path>), ctx: &mut ViewContext<Self>) {
+        ctx.emit(Event::Selected(*tree_id, path.clone()));
     }
 
     fn spawn_search(&mut self, query: String, ctx: &mut ViewContext<Self>) {

@@ -14,20 +14,22 @@ const MIN_DISTANCE_PENALTY: f64 = 0.2;
 #[derive(Clone, Debug)]
 pub struct PathEntry {
     pub ino: u64,
-    pub path_chars: CharBag,
-    pub path: Arc<[char]>,
+    pub char_bag: CharBag,
+    pub path_chars: Arc<[char]>,
+    pub path: Arc<Path>,
     pub lowercase_path: Arc<[char]>,
 }
 
 impl PathEntry {
-    pub fn new(ino: u64, path: &Path) -> Self {
-        let path = path.to_string_lossy();
-        let lowercase_path = path.to_lowercase().chars().collect::<Vec<_>>().into();
-        let path: Arc<[char]> = path.chars().collect::<Vec<_>>().into();
-        let path_chars = CharBag::from(path.as_ref());
+    pub fn new(ino: u64, path: Arc<Path>) -> Self {
+        let path_str = path.to_string_lossy();
+        let lowercase_path = path_str.to_lowercase().chars().collect::<Vec<_>>().into();
+        let path_chars: Arc<[char]> = path_str.chars().collect::<Vec<_>>().into();
+        let char_bag = CharBag::from(path_chars.as_ref());
 
         Self {
             ino,
+            char_bag,
             path_chars,
             path,
             lowercase_path,
@@ -39,9 +41,9 @@ impl PathEntry {
 pub struct PathMatch {
     pub score: f64,
     pub positions: Vec<usize>,
-    pub path: String,
+    pub path_string: String,
     pub tree_id: usize,
-    pub entry_id: u64,
+    pub path: Arc<Path>,
 }
 
 impl PartialEq for PathMatch {
@@ -199,7 +201,7 @@ fn match_single_tree_paths<'a>(
     best_position_matrix: &mut Vec<usize>,
 ) {
     for path_entry in path_entries {
-        if !path_entry.path_chars.is_superset(query_chars) {
+        if !path_entry.char_bag.is_superset(query_chars) {
             continue;
         }
 
@@ -212,7 +214,7 @@ fn match_single_tree_paths<'a>(
             continue;
         }
 
-        let matrix_len = query.len() * (path_entry.path.len() - skipped_prefix_len);
+        let matrix_len = query.len() * (path_entry.path_chars.len() - skipped_prefix_len);
         score_matrix.clear();
         score_matrix.resize(matrix_len, None);
         best_position_matrix.clear();
@@ -221,7 +223,7 @@ fn match_single_tree_paths<'a>(
         let score = score_match(
             &query[..],
             &lowercase_query[..],
-            &path_entry.path,
+            &path_entry.path_chars,
             &path_entry.lowercase_path,
             skipped_prefix_len,
             smart_case,
@@ -235,8 +237,12 @@ fn match_single_tree_paths<'a>(
         if score > 0.0 {
             results.push(Reverse(PathMatch {
                 tree_id: snapshot.id,
-                entry_id: path_entry.ino,
-                path: path_entry.path.iter().skip(skipped_prefix_len).collect(),
+                path_string: path_entry
+                    .path_chars
+                    .iter()
+                    .skip(skipped_prefix_len)
+                    .collect(),
+                path: path_entry.path.clone(),
                 score,
                 positions: match_positions.clone(),
             }));
@@ -496,12 +502,13 @@ mod tests {
         for (i, path) in paths.iter().enumerate() {
             let lowercase_path: Arc<[char]> =
                 path.to_lowercase().chars().collect::<Vec<_>>().into();
-            let path_chars = CharBag::from(lowercase_path.as_ref());
-            let path = path.chars().collect();
+            let char_bag = CharBag::from(lowercase_path.as_ref());
+            let path_chars = path.chars().collect();
             path_entries.push(PathEntry {
                 ino: i as u64,
+                char_bag,
                 path_chars,
-                path,
+                path: Arc::from(PathBuf::from(path)),
                 lowercase_path,
             });
         }
@@ -540,7 +547,11 @@ mod tests {
             .rev()
             .map(|result| {
                 (
-                    paths[result.0.entry_id as usize].clone(),
+                    paths
+                        .iter()
+                        .copied()
+                        .find(|p| result.0.path.as_ref() == Path::new(p))
+                        .unwrap(),
                     result.0.positions,
                 )
             })

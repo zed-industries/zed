@@ -7,7 +7,7 @@ use gpui::{
     keymap::Binding,
     AppContext, Border, Entity, MutableAppContext, Quad, View, ViewContext,
 };
-use std::cmp;
+use std::{cmp, path::Path, sync::Arc};
 
 pub fn init(app: &mut MutableAppContext) {
     app.add_action(
@@ -105,7 +105,11 @@ impl Pane {
         self.items.get(self.active_item).cloned()
     }
 
-    pub fn activate_entry(&mut self, entry_id: (usize, u64), ctx: &mut ViewContext<Self>) -> bool {
+    pub fn activate_entry(
+        &mut self,
+        entry_id: (usize, Arc<Path>),
+        ctx: &mut ViewContext<Self>,
+    ) -> bool {
         if let Some(index) = self.items.iter().position(|item| {
             item.entry_id(ctx.as_ref())
                 .map_or(false, |id| id == entry_id)
