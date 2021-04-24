@@ -244,7 +244,7 @@ impl Snapshot {
         FileIter::visible(self, start)
     }
 
-    pub fn root_entry(&self) -> Entry {
+    pub fn root_entry(&self) -> &Entry {
         self.entry_for_path("").unwrap()
     }
 
@@ -256,10 +256,10 @@ impl Snapshot {
         &self.root_name_chars
     }
 
-    fn entry_for_path(&self, path: impl AsRef<Path>) -> Option<Entry> {
+    fn entry_for_path(&self, path: impl AsRef<Path>) -> Option<&Entry> {
         let mut cursor = self.entries.cursor::<_, ()>();
         if cursor.seek(&PathSearch::Exact(path.as_ref()), SeekBias::Left) {
-            cursor.item().cloned()
+            cursor.item()
         } else {
             None
         }
@@ -532,7 +532,7 @@ impl<'a> Default for PathSearch<'a> {
     }
 }
 
-impl<'a> sum_tree::Dimension<'a, EntrySummary> for PathSearch<'a> {
+impl<'a: 'b, 'b> sum_tree::Dimension<'a, EntrySummary> for PathSearch<'b> {
     fn add_summary(&mut self, summary: &'a EntrySummary) {
         *self = Self::Exact(summary.max_path.as_ref());
     }

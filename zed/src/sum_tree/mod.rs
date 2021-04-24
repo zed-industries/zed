@@ -22,7 +22,7 @@ pub trait KeyedItem: Item {
     fn key(&self) -> Self::Key;
 }
 
-pub trait Dimension<'a, Summary: Default>: 'a + Clone + fmt::Debug + Default {
+pub trait Dimension<'a, Summary: Default>: Clone + fmt::Debug + Default {
     fn add_summary(&mut self, summary: &'a Summary);
 }
 
