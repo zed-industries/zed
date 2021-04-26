@@ -27,7 +27,7 @@ use std::{
     ops::{AddAssign, Deref},
     os::unix::{ffi::OsStrExt, fs::MetadataExt},
     path::{Path, PathBuf},
-    sync::Arc,
+    sync::{Arc, Weak},
     time::Duration,
 };
 
@@ -47,6 +47,7 @@ enum ScanState {
 pub struct Worktree {
     snapshot: Snapshot,
     background_snapshot: Arc<Mutex<Snapshot>>,
+    handles: Arc<Mutex<HashMap<Arc<Path>, Weak<Mutex<FileHandleState>>>>>,
     scan_state: (watch::Sender<ScanState>, watch::Receiver<ScanState>),
     _event_stream_handle: fsevent::Handle,
     poll_scheduled: bool,
@@ -55,7 +56,12 @@ pub struct Worktree {
 #[derive(Clone)]
 pub struct FileHandle {
     worktree: ModelHandle<Worktree>,
+    state: Arc<Mutex<FileHandleState>>,
+}
+
+struct FileHandleState {
     path: Arc<Path>,
+    is_deleted: bool,
 }
 
 impl Worktree {
@@ -78,17 +84,19 @@ impl Worktree {
             fsevent::EventStream::new(&[snapshot.abs_path.as_ref()], Duration::from_millis(100));
 
         let background_snapshot = Arc::new(Mutex::new(snapshot.clone()));
+        let handles = Arc::new(Mutex::new(Default::default()));
 
         let tree = Self {
             snapshot,
             background_snapshot: background_snapshot.clone(),
+            handles: handles.clone(),
             scan_state: watch::channel_with(ScanState::Scanning),
             _event_stream_handle: event_stream_handle,
             poll_scheduled: false,
         };
 
         std::thread::spawn(move || {
-            let scanner = BackgroundScanner::new(background_snapshot, scan_state_tx, id);
+            let scanner = BackgroundScanner::new(background_snapshot, handles, scan_state_tx, id);
             scanner.run(event_stream)
         });
 
@@ -374,21 +382,21 @@ impl fmt::Debug for Snapshot {
 }
 
 impl FileHandle {
-    pub fn path(&self) -> &Arc<Path> {
-        &self.path
+    pub fn path(&self) -> Arc<Path> {
+        self.state.lock().path.clone()
     }
 
     pub fn load_history(&self, ctx: &AppContext) -> impl Future<Output = Result<History>> {
-        self.worktree.read(ctx).load_history(&self.path, ctx)
+        self.worktree.read(ctx).load_history(&self.path(), ctx)
     }
 
     pub fn save<'a>(&self, content: BufferSnapshot, ctx: &AppContext) -> Task<Result<()>> {
         let worktree = self.worktree.read(ctx);
-        worktree.save(&self.path, content, ctx)
+        worktree.save(&self.path(), content, ctx)
     }
 
     pub fn entry_id(&self) -> (usize, Arc<Path>) {
-        (self.worktree.id(), self.path.clone())
+        (self.worktree.id(), self.path())
     }
 }
 
@@ -561,18 +569,25 @@ impl<'a> sum_tree::Dimension<'a, EntrySummary> for VisibleFileCount {
 struct BackgroundScanner {
     snapshot: Arc<Mutex<Snapshot>>,
     notify: Sender<ScanState>,
+    handles: Arc<Mutex<HashMap<Arc<Path>, Weak<Mutex<FileHandleState>>>>>,
     other_mount_paths: HashSet<PathBuf>,
     thread_pool: scoped_pool::Pool,
     root_char_bag: CharBag,
 }
 
 impl BackgroundScanner {
-    fn new(snapshot: Arc<Mutex<Snapshot>>, notify: Sender<ScanState>, worktree_id: usize) -> Self {
+    fn new(
+        snapshot: Arc<Mutex<Snapshot>>,
+        handles: Arc<Mutex<HashMap<Arc<Path>, Weak<Mutex<FileHandleState>>>>>,
+        notify: Sender<ScanState>,
+        worktree_id: usize,
+    ) -> Self {
         let root_char_bag = CharBag::from(snapshot.lock().root_name_chars.as_slice());
         let mut scanner = Self {
             root_char_bag,
             snapshot,
             notify,
+            handles,
             other_mount_paths: Default::default(),
             thread_pool: scoped_pool::Pool::new(16, format!("worktree-{}-scanner", worktree_id)),
         };
@@ -997,13 +1012,27 @@ pub trait WorktreeHandle {
 
 impl WorktreeHandle for ModelHandle<Worktree> {
     fn file(&self, path: impl AsRef<Path>, app: &AppContext) -> Result<FileHandle> {
-        self.read(app)
+        let tree = self.read(app);
+        let entry = tree
             .entry_for_path(&path)
-            .map(|entry| FileHandle {
-                worktree: self.clone(),
-                path: entry.path().clone(),
-            })
-            .ok_or_else(|| anyhow!("path does not exist in tree"))
+            .ok_or_else(|| anyhow!("path does not exist in tree"))?;
+        let path = entry.path().clone();
+        let mut handles = tree.handles.lock();
+        let state = if let Some(state) = handles.get(&path).and_then(Weak::upgrade) {
+            state
+        } else {
+            let state = Arc::new(Mutex::new(FileHandleState {
+                path: path.clone(),
+                is_deleted: false,
+            }));
+            handles.insert(path, Arc::downgrade(&state));
+            state
+        };
+
+        Ok(FileHandle {
+            worktree: self.clone(),
+            state,
+        })
     }
 }
 
@@ -1329,6 +1358,7 @@ mod tests {
                     ignores: Default::default(),
                     root_name_chars: Default::default(),
                 })),
+                Arc::new(Mutex::new(Default::default())),
                 notify_tx,
                 0,
             );
@@ -1363,6 +1393,7 @@ mod tests {
                     ignores: Default::default(),
                     root_name_chars: Default::default(),
                 })),
+                Arc::new(Mutex::new(Default::default())),
                 notify_tx,
                 1,
             );

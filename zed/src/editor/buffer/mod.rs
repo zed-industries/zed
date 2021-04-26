@@ -429,7 +429,7 @@ impl Buffer {
         }
     }
 
-    pub fn path(&self) -> Option<&Arc<Path>> {
+    pub fn path(&self) -> Option<Arc<Path>> {
         self.file.as_ref().map(|file| file.path())
     }
 
