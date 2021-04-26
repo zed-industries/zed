@@ -1,6 +1,5 @@
-use std::{path::Path, sync::Arc};
-
 use ignore::gitignore::Gitignore;
+use std::{ffi::OsStr, path::Path, sync::Arc};
 
 pub enum IgnoreStack {
     None,
@@ -37,6 +36,10 @@ impl IgnoreStack {
     }
 
     pub fn is_path_ignored(&self, path: &Path, is_dir: bool) -> bool {
+        if is_dir && path.file_name() == Some(OsStr::new(".git")) {
+            return true;
+        }
+
         match self {
             Self::None => false,
             Self::All => true,

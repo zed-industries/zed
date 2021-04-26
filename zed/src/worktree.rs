@@ -1423,10 +1423,12 @@ mod tests {
             app.read(|ctx| tree.read(ctx).next_scan_complete()).await;
             app.read(|ctx| {
                 let tree = tree.read(ctx);
+                let dot_git = tree.entry_for_path(".git").unwrap();
                 let tracked = tree.entry_for_path("tracked-dir/tracked-file2").unwrap();
                 let ignored = tree.entry_for_path("ignored-dir/ignored-file2").unwrap();
                 assert_eq!(tracked.is_ignored(), false);
                 assert_eq!(ignored.is_ignored(), true);
+                assert_eq!(dot_git.is_ignored(), true);
             });
         });
     }
