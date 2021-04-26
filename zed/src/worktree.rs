@@ -19,7 +19,7 @@ use postage::{
 use smol::{channel::Sender, Timer};
 use std::{
     cmp,
-    collections::{BTreeMap, HashSet},
+    collections::{HashMap, HashSet},
     ffi::{CStr, OsStr},
     fmt, fs,
     future::Future,
@@ -216,7 +216,7 @@ pub struct Snapshot {
     scan_id: usize,
     abs_path: Arc<Path>,
     root_name_chars: Vec<char>,
-    ignores: BTreeMap<u64, Arc<Gitignore>>,
+    ignores: HashMap<Arc<Path>, (Arc<Gitignore>, usize)>,
     entries: SumTree<Entry>,
 }
 
@@ -244,6 +244,10 @@ impl Snapshot {
         FileIter::visible(self, start)
     }
 
+    fn child_entries<'a>(&'a self, path: &'a Path) -> ChildEntriesIter<'a> {
+        ChildEntriesIter::new(path, self)
+    }
+
     pub fn root_entry(&self) -> &Entry {
         self.entry_for_path("").unwrap()
     }
@@ -269,37 +273,16 @@ impl Snapshot {
         self.entry_for_path(path.as_ref()).map(|e| e.inode())
     }
 
-    fn is_path_ignored(&self, path: &Path) -> Result<bool> {
-        todo!();
-        Ok(false)
-        // let mut entry = self
-        //     .entry_for_path(path)
-        //     .ok_or_else(|| anyhow!("entry does not exist in worktree"))?;
-
-        // if path.starts_with(".git") {
-        //     Ok(true)
-        // } else {
-        //     while let Some(parent_entry) =
-        //         entry.path().parent().and_then(|p| self.entry_for_path(p))
-        //     {
-        //         let parent_path = parent_entry.path();
-        //         if let Some((ignore, _)) = self.ignores.get(parent_path) {
-        //             let relative_path = path.strip_prefix(parent_path).unwrap();
-        //             match ignore.matched_path_or_any_parents(relative_path, entry.is_dir()) {
-        //                 ::ignore::Match::Whitelist(_) => return Ok(false),
-        //                 ::ignore::Match::Ignore(_) => return Ok(true),
-        //                 ::ignore::Match::None => {}
-        //             }
-        //         }
-        //         entry = parent_entry;
-        //     }
-        //     Ok(false)
-        // }
-    }
-
     fn insert_entry(&mut self, entry: Entry) {
         if !entry.is_dir() && entry.path().file_name() == Some(&GITIGNORE) {
-            self.insert_ignore_file(entry.path());
+            let (ignore, err) = Gitignore::new(self.abs_path.join(entry.path()));
+            if let Some(err) = err {
+                log::error!("error in ignore file {:?} - {:?}", entry.path(), err);
+            }
+
+            let ignore_dir_path = entry.path().parent().unwrap();
+            self.ignores
+                .insert(ignore_dir_path.into(), (Arc::new(ignore), self.scan_id));
         }
         self.entries.insert(entry);
     }
@@ -312,9 +295,13 @@ impl Snapshot {
     ) {
         let mut edits = Vec::new();
 
-        let mut parent_entry = self.entries.get(&PathKey(parent_path)).unwrap().clone();
+        let mut parent_entry = self
+            .entries
+            .get(&PathKey(parent_path.clone()))
+            .unwrap()
+            .clone();
         if let Some(ignore) = ignore {
-            self.ignores.insert(parent_entry.inode, ignore);
+            self.ignores.insert(parent_path, (ignore, self.scan_id));
         }
         if matches!(parent_entry.kind, EntryKind::PendingDir) {
             parent_entry.kind = EntryKind::Dir;
@@ -324,9 +311,6 @@ impl Snapshot {
         edits.push(Edit::Insert(parent_entry));
 
         for entry in entries {
-            if !entry.is_dir() && entry.path().file_name() == Some(&GITIGNORE) {
-                self.insert_ignore_file(entry.path());
-            }
             edits.push(Edit::Insert(entry));
         }
         self.entries.edit(edits);
@@ -342,22 +326,38 @@ impl Snapshot {
         };
         self.entries = new_entries;
 
-        // if path.file_name() == Some(&GITIGNORE) {
-        //     if let Some((_, scan_id)) = self.ignores.get_mut(path.parent().unwrap()) {
-        //         *scan_id = self.scan_id;
-        //     }
-        // }
+        if path.file_name() == Some(&GITIGNORE) {
+            if let Some((_, scan_id)) = self.ignores.get_mut(path.parent().unwrap()) {
+                *scan_id = self.scan_id;
+            }
+        }
     }
 
-    fn insert_ignore_file(&mut self, path: &Path) -> Arc<Gitignore> {
-        let (ignore, err) = Gitignore::new(self.abs_path.join(path));
-        if let Some(err) = err {
-            log::error!("error in ignore file {:?} - {:?}", path, err);
+    fn ignore_stack_for_path(&self, path: &Path, is_dir: bool) -> Arc<IgnoreStack> {
+        let mut new_ignores = Vec::new();
+        for ancestor in path.ancestors().skip(1) {
+            if let Some((ignore, _)) = self.ignores.get(ancestor) {
+                new_ignores.push((ancestor, Some(ignore.clone())));
+            } else {
+                new_ignores.push((ancestor, None));
+            }
         }
-        let ignore = Arc::new(ignore);
-        let ignore_parent_inode = self.entry_for_path(path.parent().unwrap()).unwrap().inode;
-        self.ignores.insert(ignore_parent_inode, ignore.clone());
-        ignore
+
+        let mut ignore_stack = IgnoreStack::none();
+        for (parent_path, ignore) in new_ignores.into_iter().rev() {
+            if ignore_stack.is_path_ignored(&parent_path, true) {
+                ignore_stack = IgnoreStack::all();
+                break;
+            } else if let Some(ignore) = ignore {
+                ignore_stack = ignore_stack.append(Arc::from(parent_path), ignore);
+            }
+        }
+
+        if ignore_stack.is_path_ignored(path, is_dir) {
+            ignore_stack = IgnoreStack::all();
+        }
+
+        ignore_stack
     }
 }
 
@@ -417,12 +417,8 @@ impl Entry {
         self.inode
     }
 
-    fn is_ignored(&self) -> bool {
+    pub fn is_ignored(&self) -> bool {
         self.is_ignored
-    }
-
-    fn set_ignored(&mut self, ignored: bool) {
-        self.is_ignored = ignored;
     }
 
     fn is_dir(&self) -> bool {
@@ -617,8 +613,6 @@ impl BackgroundScanner {
             return;
         }
 
-        return;
-
         event_stream.run(move |events| {
             if smol::block_on(self.notify.send(ScanState::Scanning)).is_err() {
                 return false;
@@ -686,8 +680,6 @@ impl BackgroundScanner {
                 is_ignored: false,
             });
         }
-
-        self.recompute_ignore_statuses();
 
         Ok(())
     }
@@ -816,15 +808,17 @@ impl BackgroundScanner {
             snapshot.remove_path(&path);
 
             match self.fs_entry_for_path(path.clone(), &abs_path) {
-                Ok(Some(fs_entry)) => {
+                Ok(Some(mut fs_entry)) => {
                     let is_dir = fs_entry.is_dir();
+                    let ignore_stack = snapshot.ignore_stack_for_path(&path, is_dir);
+                    fs_entry.is_ignored = ignore_stack.is_all();
                     snapshot.insert_entry(fs_entry);
                     if is_dir {
                         scan_queue_tx
                             .send(ScanJob {
                                 abs_path,
                                 path,
-                                ignore_stack: todo!(),
+                                ignore_stack,
                                 scan_queue: scan_queue_tx.clone(),
                             })
                             .unwrap();
@@ -854,124 +848,95 @@ impl BackgroundScanner {
             }
         });
 
-        self.recompute_ignore_statuses();
+        self.update_ignore_statuses();
 
         true
     }
 
-    fn recompute_ignore_statuses(&self) {
-        self.compute_ignore_status_for_new_ignores();
-        self.compute_ignore_status_for_new_entries();
+    fn update_ignore_statuses(&self) {
+        let mut snapshot = self.snapshot();
+
+        let mut ignores_to_update = Vec::new();
+        let mut ignores_to_delete = Vec::new();
+        for (parent_path, (_, scan_id)) in &snapshot.ignores {
+            if *scan_id == snapshot.scan_id && snapshot.entry_for_path(parent_path).is_some() {
+                ignores_to_update.push(parent_path.clone());
+            }
+
+            let ignore_path = parent_path.join(&*GITIGNORE);
+            if snapshot.entry_for_path(ignore_path).is_none() {
+                ignores_to_delete.push(parent_path.clone());
+            }
+        }
+
+        for parent_path in ignores_to_delete {
+            snapshot.ignores.remove(&parent_path);
+            self.snapshot.lock().ignores.remove(&parent_path);
+        }
+
+        let (ignore_queue_tx, ignore_queue_rx) = crossbeam_channel::unbounded();
+        ignores_to_update.sort_unstable();
+        let mut ignores_to_update = ignores_to_update.into_iter().peekable();
+        while let Some(parent_path) = ignores_to_update.next() {
+            while ignores_to_update
+                .peek()
+                .map_or(false, |p| p.starts_with(&parent_path))
+            {
+                ignores_to_update.next().unwrap();
+            }
+
+            let ignore_stack = snapshot.ignore_stack_for_path(&parent_path, true);
+            ignore_queue_tx
+                .send(UpdateIgnoreStatusJob {
+                    path: parent_path,
+                    ignore_stack,
+                    ignore_queue: ignore_queue_tx.clone(),
+                })
+                .unwrap();
+        }
+        drop(ignore_queue_tx);
+
+        self.thread_pool.scoped(|scope| {
+            for _ in 0..self.thread_pool.thread_count() {
+                scope.execute(|| {
+                    while let Ok(job) = ignore_queue_rx.recv() {
+                        self.update_ignore_status(job, &snapshot);
+                    }
+                });
+            }
+        });
     }
 
-    fn compute_ignore_status_for_new_ignores(&self) {
-        // let mut snapshot = self.snapshot();
+    fn update_ignore_status(&self, job: UpdateIgnoreStatusJob, snapshot: &Snapshot) {
+        let mut ignore_stack = job.ignore_stack;
+        if let Some((ignore, _)) = snapshot.ignores.get(&job.path) {
+            ignore_stack = ignore_stack.append(job.path.clone(), ignore.clone());
+        }
 
-        // let mut ignores_to_delete = Vec::new();
-        // let mut changed_ignore_parents = Vec::new();
-        // for (parent_path, (_, scan_id)) in &snapshot.ignores {
-        //     let prev_ignore_parent = changed_ignore_parents.last();
-        //     if *scan_id == snapshot.scan_id
-        //         && prev_ignore_parent.map_or(true, |l| !parent_path.starts_with(l))
-        //     {
-        //         changed_ignore_parents.push(parent_path.clone());
-        //     }
+        let mut edits = Vec::new();
+        for mut entry in snapshot.child_entries(&job.path).cloned() {
+            let was_ignored = entry.is_ignored;
+            entry.is_ignored = ignore_stack.is_path_ignored(entry.path(), entry.is_dir());
+            if entry.is_dir() {
+                let child_ignore_stack = if entry.is_ignored {
+                    IgnoreStack::all()
+                } else {
+                    ignore_stack.clone()
+                };
+                job.ignore_queue
+                    .send(UpdateIgnoreStatusJob {
+                        path: entry.path().clone(),
+                        ignore_stack: child_ignore_stack,
+                        ignore_queue: job.ignore_queue.clone(),
+                    })
+                    .unwrap();
+            }
 
-        //     let ignore_parent_exists = snapshot.entry_for_path(parent_path).is_some();
-        //     let ignore_exists = snapshot
-        //         .entry_for_path(parent_path.join(&*GITIGNORE))
-        //         .is_some();
-        //     if !ignore_parent_exists || !ignore_exists {
-        //         ignores_to_delete.push(parent_path.clone());
-        //     }
-        // }
-
-        // for parent_path in ignores_to_delete {
-        //     snapshot.ignores.remove(&parent_path);
-        //     self.snapshot.lock().ignores.remove(&parent_path);
-        // }
-
-        // let (entries_tx, entries_rx) = crossbeam_channel::unbounded();
-        // self.thread_pool.scoped(|scope| {
-        //     let (edits_tx, edits_rx) = crossbeam_channel::unbounded();
-        //     scope.execute(move || {
-        //         let mut edits = Vec::new();
-        //         while let Ok(edit) = edits_rx.recv() {
-        //             edits.push(edit);
-        //             while let Ok(edit) = edits_rx.try_recv() {
-        //                 edits.push(edit);
-        //             }
-        //             self.snapshot.lock().entries.edit(mem::take(&mut edits));
-        //         }
-        //     });
-
-        //     scope.execute(|| {
-        //         let entries_tx = entries_tx;
-        //         let mut cursor = snapshot.entries.cursor::<_, ()>();
-        //         for ignore_parent_path in &changed_ignore_parents {
-        //             cursor.seek(&PathSearch::Exact(ignore_parent_path), SeekBias::Right);
-        //             while let Some(entry) = cursor.item() {
-        //                 if entry.path().starts_with(ignore_parent_path) {
-        //                     entries_tx.send(entry.clone()).unwrap();
-        //                     cursor.next();
-        //                 } else {
-        //                     break;
-        //                 }
-        //             }
-        //         }
-        //     });
-
-        //     for _ in 0..self.thread_pool.thread_count() - 2 {
-        //         let edits_tx = edits_tx.clone();
-        //         scope.execute(|| {
-        //             let edits_tx = edits_tx;
-        //             while let Ok(mut entry) = entries_rx.recv() {
-        //                 entry.set_ignored(snapshot.is_path_ignored(entry.path()).unwrap());
-        //                 edits_tx.send(Edit::Insert(entry)).unwrap();
-        //             }
-        //         });
-        //     }
-        // });
-    }
-
-    fn compute_ignore_status_for_new_entries(&self) {
-        // let snapshot = self.snapshot.lock().clone();
-
-        // let (entries_tx, entries_rx) = crossbeam_channel::unbounded();
-        // self.thread_pool.scoped(|scope| {
-        //     let (edits_tx, edits_rx) = crossbeam_channel::unbounded();
-        //     scope.execute(move || {
-        //         let mut edits = Vec::new();
-        //         while let Ok(edit) = edits_rx.recv() {
-        //             edits.push(edit);
-        //             while let Ok(edit) = edits_rx.try_recv() {
-        //                 edits.push(edit);
-        //             }
-        //             self.snapshot.lock().entries.edit(mem::take(&mut edits));
-        //         }
-        //     });
-
-        //     scope.execute(|| {
-        //         let entries_tx = entries_tx;
-        //         for entry in snapshot
-        //             .entries
-        //             .filter::<_, ()>(|e| e.recompute_ignore_status)
-        //         {
-        //             entries_tx.send(entry.clone()).unwrap();
-        //         }
-        //     });
-
-        //     for _ in 0..self.thread_pool.thread_count() - 2 {
-        //         let edits_tx = edits_tx.clone();
-        //         scope.execute(|| {
-        //             let edits_tx = edits_tx;
-        //             while let Ok(mut entry) = entries_rx.recv() {
-        //                 entry.set_ignored(snapshot.is_path_ignored(entry.path()).unwrap());
-        //                 edits_tx.send(Edit::Insert(entry)).unwrap();
-        //             }
-        //         });
-        //     }
-        // });
+            if entry.is_ignored != was_ignored {
+                edits.push(Edit::Insert(entry));
+            }
+        }
+        self.snapshot.lock().entries.edit(edits);
     }
 
     fn fs_entry_for_path(&self, path: Arc<Path>, abs_path: &Path) -> Result<Option<Entry>> {
@@ -1018,6 +983,12 @@ struct ScanJob {
     path: Arc<Path>,
     ignore_stack: Arc<IgnoreStack>,
     scan_queue: crossbeam_channel::Sender<ScanJob>,
+}
+
+struct UpdateIgnoreStatusJob {
+    path: Arc<Path>,
+    ignore_stack: Arc<IgnoreStack>,
+    ignore_queue: crossbeam_channel::Sender<UpdateIgnoreStatusJob>,
 }
 
 pub trait WorktreeHandle {
@@ -1082,6 +1053,40 @@ impl<'a> Iterator for FileIter<'a> {
         if let Some(entry) = self.item() {
             self.next_internal();
             Some(entry)
+        } else {
+            None
+        }
+    }
+}
+
+struct ChildEntriesIter<'a> {
+    parent_path: &'a Path,
+    cursor: Cursor<'a, Entry, PathSearch<'a>, ()>,
+}
+
+impl<'a> ChildEntriesIter<'a> {
+    fn new(parent_path: &'a Path, snapshot: &'a Snapshot) -> Self {
+        let mut cursor = snapshot.entries.cursor();
+        cursor.seek(&PathSearch::Exact(parent_path), SeekBias::Right);
+        Self {
+            parent_path,
+            cursor,
+        }
+    }
+}
+
+impl<'a> Iterator for ChildEntriesIter<'a> {
+    type Item = &'a Entry;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        if let Some(item) = self.cursor.item() {
+            if item.path().starts_with(self.parent_path) {
+                self.cursor
+                    .seek_forward(&PathSearch::Successor(item.path()), SeekBias::Left);
+                Some(item)
+            } else {
+                None
+            }
         } else {
             None
         }
@@ -1260,16 +1265,6 @@ mod tests {
 
             let tree = app.add_model(|ctx| Worktree::new(dir.path(), ctx));
             app.read(|ctx| tree.read(ctx).scan_complete()).await;
-
-            app.read(|ctx| {
-                let paths = tree
-                    .read(ctx)
-                    .paths()
-                    .map(|p| p.to_str().unwrap())
-                    .collect::<Vec<_>>();
-                println!("paths {:?}", paths);
-            });
-
             app.read(|ctx| {
                 let tree = tree.read(ctx);
                 let tracked = tree.entry_for_path("tracked-dir/tracked-file1").unwrap();
@@ -1277,8 +1272,6 @@ mod tests {
                 assert_eq!(tracked.is_ignored(), false);
                 assert_eq!(ignored.is_ignored(), true);
             });
-
-            return;
 
             fs::write(dir.path().join("tracked-dir/tracked-file2"), "").unwrap();
             fs::write(dir.path().join("ignored-dir/ignored-file2"), "").unwrap();
@@ -1540,12 +1533,29 @@ mod tests {
             assert!(files.next().is_none());
             assert!(visible_files.next().is_none());
 
-            // for (ignore_parent_path, _) in &self.ignores {
-            //     assert!(self.entry_for_path(ignore_parent_path).is_some());
-            //     assert!(self
-            //         .entry_for_path(ignore_parent_path.join(&*GITIGNORE))
-            //         .is_some());
-            // }
+            let mut bfs_paths = Vec::new();
+            let mut stack = vec![Path::new("")];
+            while let Some(path) = stack.pop() {
+                bfs_paths.push(path);
+                let ix = stack.len();
+                for child_entry in self.child_entries(path) {
+                    stack.insert(ix, child_entry.path());
+                }
+            }
+
+            let dfs_paths = self
+                .entries
+                .cursor::<(), ()>()
+                .map(|e| e.path().as_ref())
+                .collect::<Vec<_>>();
+            assert_eq!(bfs_paths, dfs_paths);
+
+            for (ignore_parent_path, _) in &self.ignores {
+                assert!(self.entry_for_path(ignore_parent_path).is_some());
+                assert!(self
+                    .entry_for_path(ignore_parent_path.join(&*GITIGNORE))
+                    .is_some());
+            }
         }
 
         fn to_vec(&self) -> Vec<(&Path, u64, bool)> {

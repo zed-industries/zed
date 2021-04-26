@@ -21,8 +21,11 @@ impl IgnoreStack {
         Arc::new(Self::All)
     }
 
+    pub fn is_all(&self) -> bool {
+        matches!(self, IgnoreStack::All)
+    }
+
     pub fn append(self: Arc<Self>, base: Arc<Path>, ignore: Arc<Gitignore>) -> Arc<Self> {
-        log::info!("appending ignore {:?}", base);
         match self.as_ref() {
             IgnoreStack::All => self,
             _ => Arc::new(Self::Some {
@@ -34,33 +37,18 @@ impl IgnoreStack {
     }
 
     pub fn is_path_ignored(&self, path: &Path, is_dir: bool) -> bool {
-        println!("is_path_ignored? {:?} {}", path, is_dir);
         match self {
-            Self::None => {
-                println!("none case");
-                false
-            }
-            Self::All => {
-                println!("all case");
-                true
-            }
+            Self::None => false,
+            Self::All => true,
             Self::Some {
                 base,
                 ignore,
                 parent: prev,
-            } => {
-                println!(
-                    "some case {:?} {:?}",
-                    base,
-                    path.strip_prefix(base).unwrap()
-                );
-
-                match ignore.matched(path.strip_prefix(base).unwrap(), is_dir) {
-                    ignore::Match::None => prev.is_path_ignored(path, is_dir),
-                    ignore::Match::Ignore(_) => true,
-                    ignore::Match::Whitelist(_) => false,
-                }
-            }
+            } => match ignore.matched(path.strip_prefix(base).unwrap(), is_dir) {
+                ignore::Match::None => prev.is_path_ignored(path, is_dir),
+                ignore::Match::Ignore(_) => true,
+                ignore::Match::Whitelist(_) => false,
+            },
         }
     }
 }
