@@ -1277,6 +1277,7 @@ mod tests {
                     false,
                     false,
                     10,
+                    Default::default(),
                     ctx.thread_pool().clone(),
                 )
                 .into_iter()

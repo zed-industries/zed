@@ -4,6 +4,7 @@ use std::{
     cmp::{max, min, Ordering, Reverse},
     collections::BinaryHeap,
     path::Path,
+    sync::atomic::{self, AtomicBool},
     sync::Arc,
 };
 
@@ -52,6 +53,7 @@ pub fn match_paths<'a, T>(
     include_ignored: bool,
     smart_case: bool,
     max_results: usize,
+    cancel_flag: Arc<AtomicBool>,
     pool: scoped_pool::Pool,
 ) -> Vec<PathMatch>
 where
@@ -77,6 +79,7 @@ where
     pool.scoped(|scope| {
         for (segment_idx, results) in segment_results.iter_mut().enumerate() {
             let trees = snapshots.clone();
+            let cancel_flag = &cancel_flag;
             scope.execute(move || {
                 let segment_start = segment_idx * segment_size;
                 let segment_end = segment_start + segment_size;
@@ -130,6 +133,7 @@ where
                             &mut last_positions,
                             &mut score_matrix,
                             &mut best_position_matrix,
+                            &cancel_flag,
                         );
                     }
                     if tree_end >= segment_end {
@@ -166,6 +170,7 @@ fn match_single_tree_paths<'a>(
     last_positions: &mut Vec<usize>,
     score_matrix: &mut Vec<Option<f64>>,
     best_position_matrix: &mut Vec<usize>,
+    cancel_flag: &AtomicBool,
 ) {
     let mut path_chars = Vec::new();
     let mut lowercase_path_chars = Vec::new();
@@ -185,6 +190,10 @@ fn match_single_tree_paths<'a>(
     for path_entry in path_entries {
         if !path_entry.char_bag.is_superset(query_chars) {
             continue;
+        }
+
+        if cancel_flag.load(atomic::Ordering::Relaxed) {
+            break;
         }
 
         path_chars.clear();
@@ -550,6 +559,7 @@ mod tests {
         match_positions.resize(query.len(), 0);
         last_positions.resize(query.len(), 0);
 
+        let cancel_flag = AtomicBool::new(false);
         let mut results = BinaryHeap::new();
         match_single_tree_paths(
             &Snapshot {
@@ -573,6 +583,7 @@ mod tests {
             &mut last_positions,
             &mut Vec::new(),
             &mut Vec::new(),
+            &cancel_flag,
         );
 
         results

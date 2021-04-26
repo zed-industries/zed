@@ -14,7 +14,14 @@ use gpui::{
     AppContext, Axis, Border, Entity, ModelHandle, MutableAppContext, View, ViewContext,
     ViewHandle, WeakViewHandle,
 };
-use std::{cmp, path::Path, sync::Arc};
+use std::{
+    cmp,
+    path::Path,
+    sync::{
+        atomic::{self, AtomicBool},
+        Arc,
+    },
+};
 
 pub struct FileFinder {
     handle: WeakViewHandle<Self>,
@@ -26,6 +33,7 @@ pub struct FileFinder {
     matches: Vec<PathMatch>,
     include_root_name: bool,
     selected: usize,
+    cancel_flag: Arc<AtomicBool>,
     list_state: UniformListState,
 }
 
@@ -287,6 +295,7 @@ impl FileFinder {
             matches: Vec::new(),
             include_root_name: false,
             selected: 0,
+            cancel_flag: Arc::new(AtomicBool::new(false)),
             list_state: UniformListState::new(),
         }
     }
@@ -358,6 +367,9 @@ impl FileFinder {
             .collect::<Vec<_>>();
         let search_id = util::post_inc(&mut self.search_count);
         let pool = ctx.as_ref().thread_pool().clone();
+        self.cancel_flag.store(true, atomic::Ordering::Relaxed);
+        self.cancel_flag = Arc::new(AtomicBool::new(false));
+        let cancel_flag = self.cancel_flag.clone();
         let task = ctx.background_executor().spawn(async move {
             let include_root_name = snapshots.len() > 1;
             let matches = match_paths(
@@ -367,6 +379,7 @@ impl FileFinder {
                 false,
                 false,
                 100,
+                cancel_flag,
                 pool,
             );
             (search_id, include_root_name, matches)
