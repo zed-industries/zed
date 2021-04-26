@@ -141,9 +141,9 @@ impl FileFinder {
 
         self.worktree(tree_id, app).map(|tree| {
             let prefix = if self.include_root_name {
-                tree.root_name_chars()
+                tree.root_name()
             } else {
-                &[]
+                ""
             };
             let path = path_match.path.clone();
             let path_string = path_match.path.to_string_lossy();
@@ -169,7 +169,7 @@ impl FileFinder {
             let highlight_color = ColorU::from_u32(0x304ee2ff);
             let bold = *Properties::new().weight(Weight::BOLD);
 
-            let mut full_path = prefix.iter().collect::<String>();
+            let mut full_path = prefix.to_string();
             full_path.push_str(&path_string);
 
             let mut container = Container::new(

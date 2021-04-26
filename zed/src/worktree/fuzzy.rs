@@ -171,10 +171,16 @@ fn match_single_tree_paths<'a>(
     let mut lowercase_path_chars = Vec::new();
 
     let prefix = if include_root_name {
-        snapshot.root_name_chars.as_slice()
+        snapshot.root_name()
     } else {
-        &[]
-    };
+        ""
+    }
+    .chars()
+    .collect::<Vec<_>>();
+    let lowercase_prefix = prefix
+        .iter()
+        .map(|c| c.to_ascii_lowercase())
+        .collect::<Vec<_>>();
 
     for path_entry in path_entries {
         if !path_entry.char_bag.is_superset(query_chars) {
@@ -190,7 +196,7 @@ fn match_single_tree_paths<'a>(
 
         if !find_last_positions(
             last_positions,
-            prefix,
+            &lowercase_prefix,
             &lowercase_path_chars,
             &lowercase_query[..],
         ) {
@@ -209,6 +215,7 @@ fn match_single_tree_paths<'a>(
             &path_chars,
             &lowercase_path_chars,
             &prefix,
+            &lowercase_prefix,
             smart_case,
             &last_positions,
             score_matrix,
@@ -257,6 +264,7 @@ fn score_match(
     path: &[char],
     path_cased: &[char],
     prefix: &[char],
+    lowercase_prefix: &[char],
     smart_case: bool,
     last_positions: &[usize],
     score_matrix: &mut [Option<f64>],
@@ -270,6 +278,7 @@ fn score_match(
         path,
         path_cased,
         prefix,
+        lowercase_prefix,
         smart_case,
         last_positions,
         score_matrix,
@@ -300,6 +309,7 @@ fn recursive_score_match(
     path: &[char],
     path_cased: &[char],
     prefix: &[char],
+    lowercase_prefix: &[char],
     smart_case: bool,
     last_positions: &[usize],
     score_matrix: &mut [Option<f64>],
@@ -328,7 +338,7 @@ fn recursive_score_match(
     let mut last_slash = 0;
     for j in path_idx..=limit {
         let path_char = if j < prefix.len() {
-            prefix[j]
+            lowercase_prefix[j]
         } else {
             path_cased[j - prefix.len()]
         };
@@ -404,6 +414,7 @@ fn recursive_score_match(
                 path,
                 path_cased,
                 prefix,
+                lowercase_prefix,
                 smart_case,
                 last_positions,
                 score_matrix,
@@ -547,7 +558,7 @@ mod tests {
                 abs_path: PathBuf::new().into(),
                 ignores: Default::default(),
                 entries: Default::default(),
-                root_name_chars: Vec::new(),
+                root_name: Default::default(),
             },
             false,
             path_entries.into_iter(),

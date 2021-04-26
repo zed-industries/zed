@@ -68,16 +68,16 @@ struct FileHandleState {
 impl Worktree {
     pub fn new(path: impl Into<Arc<Path>>, ctx: &mut ModelContext<Self>) -> Self {
         let abs_path = path.into();
-        let root_name_chars = abs_path.file_name().map_or(Vec::new(), |n| {
-            n.to_string_lossy().chars().chain(Some('/')).collect()
-        });
+        let root_name = abs_path
+            .file_name()
+            .map_or(String::new(), |n| n.to_string_lossy().to_string() + "/");
         let (scan_state_tx, scan_state_rx) = smol::channel::unbounded();
         let id = ctx.model_id();
         let snapshot = Snapshot {
             id,
             scan_id: 0,
             abs_path,
-            root_name_chars,
+            root_name,
             ignores: Default::default(),
             entries: Default::default(),
         };
@@ -224,7 +224,7 @@ pub struct Snapshot {
     id: usize,
     scan_id: usize,
     abs_path: Arc<Path>,
-    root_name_chars: Vec<char>,
+    root_name: String,
     ignores: HashMap<Arc<Path>, (Arc<Gitignore>, usize)>,
     entries: SumTree<Entry>,
 }
@@ -261,12 +261,10 @@ impl Snapshot {
         self.entry_for_path("").unwrap()
     }
 
-    pub fn root_name(&self) -> Option<&OsStr> {
-        self.abs_path.file_name()
-    }
-
-    pub fn root_name_chars(&self) -> &[char] {
-        &self.root_name_chars
+    /// Returns the filename of the snapshot's root directory,
+    /// with a trailing slash.
+    pub fn root_name(&self) -> &str {
+        &self.root_name
     }
 
     fn entry_for_path(&self, path: impl AsRef<Path>) -> Option<&Entry> {
@@ -613,7 +611,12 @@ impl BackgroundScanner {
         notify: Sender<ScanState>,
         worktree_id: usize,
     ) -> Self {
-        let root_char_bag = CharBag::from(snapshot.lock().root_name_chars.as_slice());
+        let root_char_bag = snapshot
+            .lock()
+            .root_name
+            .chars()
+            .map(|c| c.to_ascii_lowercase())
+            .collect();
         let mut scanner = Self {
             root_char_bag,
             snapshot,
@@ -1069,7 +1072,11 @@ impl BackgroundScanner {
 
     fn char_bag(&self, path: &Path) -> CharBag {
         let mut result = self.root_char_bag;
-        result.extend(path.to_string_lossy().chars());
+        result.extend(
+            path.to_string_lossy()
+                .chars()
+                .map(|c| c.to_ascii_lowercase()),
+        );
         result
     }
 }
@@ -1465,7 +1472,7 @@ mod tests {
                     abs_path: root_dir.path().into(),
                     entries: Default::default(),
                     ignores: Default::default(),
-                    root_name_chars: Default::default(),
+                    root_name: Default::default(),
                 })),
                 Arc::new(Mutex::new(Default::default())),
                 notify_tx,
@@ -1500,7 +1507,7 @@ mod tests {
                     abs_path: root_dir.path().into(),
                     entries: Default::default(),
                     ignores: Default::default(),
-                    root_name_chars: Default::default(),
+                    root_name: Default::default(),
                 })),
                 Arc::new(Mutex::new(Default::default())),
                 notify_tx,
