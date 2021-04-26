@@ -59,6 +59,7 @@ pub struct FileHandle {
     state: Arc<Mutex<FileHandleState>>,
 }
 
+#[derive(Debug)]
 struct FileHandleState {
     path: Arc<Path>,
     is_deleted: bool,
@@ -384,6 +385,10 @@ impl fmt::Debug for Snapshot {
 impl FileHandle {
     pub fn path(&self) -> Arc<Path> {
         self.state.lock().path.clone()
+    }
+
+    pub fn is_deleted(&self) -> bool {
+        self.state.lock().is_deleted
     }
 
     pub fn load_history(&self, ctx: &AppContext) -> impl Future<Output = Result<History>> {
@@ -799,6 +804,38 @@ impl BackgroundScanner {
             return false;
         };
 
+        let mut renamed_paths: HashMap<u64, PathBuf> = HashMap::new();
+        let mut updated_handles = HashMap::new();
+        for event in &events {
+            if event.flags.contains(fsevent::StreamFlags::ITEM_RENAMED) {
+                if let Ok(path) = event.path.strip_prefix(&root_abs_path) {
+                    if let Some(inode) = snapshot.inode_for_path(path) {
+                        renamed_paths.insert(inode, path.to_path_buf());
+                    } else if let Ok(metadata) = fs::metadata(&event.path) {
+                        let new_path = path;
+                        let mut handles = self.handles.lock();
+                        if let Some(old_path) = renamed_paths.get(&metadata.ino()) {
+                            handles.retain(|handle_path, handle_state| {
+                                if let Ok(path_suffix) = handle_path.strip_prefix(&old_path) {
+                                    let new_handle_path: Arc<Path> =
+                                        new_path.join(path_suffix).into();
+                                    if let Some(handle_state) = Weak::upgrade(&handle_state) {
+                                        handle_state.lock().path = new_handle_path.clone();
+                                        updated_handles
+                                            .insert(new_handle_path, Arc::downgrade(&handle_state));
+                                    }
+                                    false
+                                } else {
+                                    true
+                                }
+                            });
+                            handles.extend(updated_handles.drain());
+                        }
+                    }
+                }
+            }
+        }
+
         events.sort_unstable_by(|a, b| a.path.cmp(&b.path));
         let mut abs_paths = events.into_iter().map(|e| e.path).peekable();
         let (scan_queue_tx, scan_queue_rx) = crossbeam_channel::unbounded();
@@ -864,6 +901,19 @@ impl BackgroundScanner {
         });
 
         self.update_ignore_statuses();
+
+        let mut handles = self.handles.lock();
+        let snapshot = self.snapshot.lock();
+        handles.retain(|path, handle_state| {
+            if let Some(handle_state) = Weak::upgrade(&handle_state) {
+                if snapshot.entry_for_path(&path).is_none() {
+                    handle_state.lock().is_deleted = true;
+                }
+                true
+            } else {
+                false
+            }
+        });
 
         true
     }
@@ -1239,26 +1289,34 @@ mod tests {
             let dir = temp_tree(json!({
                 "a": {
                     "file1": "",
+                    "file2": "",
+                    "file3": "",
                 },
                 "b": {
                     "c": {
-                        "file2": "",
+                        "file4": "",
+                        "file5": "",
                     }
                 }
             }));
 
             let tree = app.add_model(|ctx| Worktree::new(dir.path(), ctx));
             app.read(|ctx| tree.read(ctx).scan_complete()).await;
-            app.read(|ctx| assert_eq!(tree.read(ctx).file_count(), 2));
+            app.read(|ctx| assert_eq!(tree.read(ctx).file_count(), 5));
 
-            let file2 = app.read(|ctx| {
-                let file2 = tree.file("b/c/file2", ctx).unwrap();
-                assert_eq!(file2.path().as_ref(), Path::new("b/c/file2"));
-                file2
+            let (file2, file3, file4, file5) = app.read(|ctx| {
+                (
+                    tree.file("a/file2", ctx).unwrap(),
+                    tree.file("a/file3", ctx).unwrap(),
+                    tree.file("b/c/file4", ctx).unwrap(),
+                    tree.file("b/c/file5", ctx).unwrap(),
+                )
             });
 
+            std::fs::rename(dir.path().join("a/file3"), dir.path().join("b/c/file3")).unwrap();
+            std::fs::remove_file(dir.path().join("b/c/file5")).unwrap();
+            std::fs::rename(dir.path().join("a/file2"), dir.path().join("a/file2.new")).unwrap();
             std::fs::rename(dir.path().join("b/c"), dir.path().join("d")).unwrap();
-
             app.read(|ctx| tree.read(ctx).next_scan_complete()).await;
 
             app.read(|ctx| {
@@ -1267,14 +1325,29 @@ mod tests {
                         .paths()
                         .map(|p| p.to_str().unwrap())
                         .collect::<Vec<_>>(),
-                    vec!["a", "a/file1", "b", "d", "d/file2"]
-                )
-            });
+                    vec![
+                        "a",
+                        "a/file1",
+                        "a/file2.new",
+                        "b",
+                        "d",
+                        "d/file3",
+                        "d/file4"
+                    ]
+                );
+                assert_eq!(file2.path().as_ref(), Path::new("a/file2.new"));
+                assert_eq!(file4.path().as_ref(), Path::new("d/file4"));
+                assert_eq!(file5.path().as_ref(), Path::new("d/file5"));
+                assert!(!file2.is_deleted());
+                assert!(!file4.is_deleted());
+                assert!(file5.is_deleted());
 
-            // tree.condition(&app, move |_, _| {
-            //     file2.path().as_ref() == Path::new("d/file2")
-            // })
-            // .await;
+                // Right now, this rename isn't detected because the target path
+                // no longer exists on the file system by the time we process the
+                // rename event.
+                assert_eq!(file3.path().as_ref(), Path::new("a/file3"));
+                assert!(file3.is_deleted());
+            });
         });
     }
 
