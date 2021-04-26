@@ -1,6 +1,6 @@
 use super::{ItemView, ItemViewHandle};
 use crate::{
-    editor::Buffer,
+    editor::{Buffer, History},
     settings::Settings,
     time::ReplicaId,
     watch,
@@ -174,15 +174,17 @@ impl Workspace {
         let replica_id = self.replica_id;
         let file = worktree.file(path.clone(), ctx.as_ref())?;
         let history = file.load_history(ctx.as_ref());
-        let buffer = async move { Ok(Buffer::from_history(replica_id, file, history.await?)) };
+        // let buffer = async move { Ok(Buffer::from_history(replica_id, file, history.await?)) };
 
         let (mut tx, rx) = watch::channel(None);
         self.items.insert(item_key, OpenedItem::Loading(rx));
         ctx.spawn(
-            buffer,
-            move |me, buffer: anyhow::Result<Buffer>, ctx| match buffer {
-                Ok(buffer) => {
-                    let handle = Box::new(ctx.add_model(|_| buffer)) as Box<dyn ItemHandle>;
+            history,
+            move |me, history: anyhow::Result<History>, ctx| match history {
+                Ok(history) => {
+                    let handle = Box::new(
+                        ctx.add_model(|ctx| Buffer::from_history(replica_id, file, history, ctx)),
+                    ) as Box<dyn ItemHandle>;
                     me.items
                         .insert(item_key, OpenedItem::Loaded(handle.clone()));
                     ctx.spawn(

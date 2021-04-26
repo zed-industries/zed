@@ -59,7 +59,7 @@ pub struct FileHandle {
     state: Arc<Mutex<FileHandleState>>,
 }
 
-#[derive(Debug)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 struct FileHandleState {
     path: Arc<Path>,
     is_deleted: bool,
@@ -402,6 +402,32 @@ impl FileHandle {
 
     pub fn entry_id(&self) -> (usize, Arc<Path>) {
         (self.worktree.id(), self.path())
+    }
+
+    pub fn observe_from_model<T: Entity>(
+        &self,
+        ctx: &mut ModelContext<T>,
+        mut callback: impl FnMut(&mut T, FileHandle, &mut ModelContext<T>) + 'static,
+    ) {
+        let mut prev_state = self.state.lock().clone();
+        let cur_state = Arc::downgrade(&self.state);
+        ctx.observe(&self.worktree, move |observer, worktree, ctx| {
+            if let Some(cur_state) = cur_state.upgrade() {
+                let cur_state_unlocked = cur_state.lock();
+                if *cur_state_unlocked != prev_state {
+                    prev_state = cur_state_unlocked.clone();
+                    drop(cur_state_unlocked);
+                    callback(
+                        observer,
+                        FileHandle {
+                            worktree,
+                            state: cur_state,
+                        },
+                        ctx,
+                    );
+                }
+            }
+        });
     }
 }
 
@@ -818,7 +844,12 @@ impl BackgroundScanner {
                             handles.retain(|handle_path, handle_state| {
                                 if let Ok(path_suffix) = handle_path.strip_prefix(&old_path) {
                                     let new_handle_path: Arc<Path> =
-                                        new_path.join(path_suffix).into();
+                                        if path_suffix.file_name().is_some() {
+                                            new_path.join(path_suffix)
+                                        } else {
+                                            new_path.to_path_buf()
+                                        }
+                                        .into();
                                     if let Some(handle_state) = Weak::upgrade(&handle_state) {
                                         handle_state.lock().path = new_handle_path.clone();
                                         updated_handles
@@ -1266,20 +1297,24 @@ mod tests {
             app.read(|ctx| tree.read(ctx).scan_complete()).await;
             app.read(|ctx| assert_eq!(tree.read(ctx).file_count(), 1));
 
-            let buffer = Buffer::new(1, "a line of text.\n".repeat(10 * 1024));
+            let buffer =
+                app.add_model(|ctx| Buffer::new(1, "a line of text.\n".repeat(10 * 1024), ctx));
 
             let path = tree.update(&mut app, |tree, ctx| {
                 let path = tree.files(0).next().unwrap().path().clone();
                 assert_eq!(path.file_name().unwrap(), "file1");
-                smol::block_on(tree.save(&path, buffer.snapshot(), ctx.as_ref())).unwrap();
+                smol::block_on(tree.save(&path, buffer.read(ctx).snapshot(), ctx.as_ref()))
+                    .unwrap();
                 path
             });
 
-            let loaded_history = app
+            let history = app
                 .read(|ctx| tree.read(ctx).load_history(&path, ctx))
                 .await
                 .unwrap();
-            assert_eq!(loaded_history.base_text.as_ref(), buffer.text());
+            app.read(|ctx| {
+                assert_eq!(history.base_text.as_ref(), buffer.read(ctx).text());
+            });
         });
     }
 
@@ -1335,7 +1370,8 @@ mod tests {
                         "d/file4"
                     ]
                 );
-                assert_eq!(file2.path().as_ref(), Path::new("a/file2.new"));
+
+                assert_eq!(file2.path().to_str().unwrap(), "a/file2.new");
                 assert_eq!(file4.path().as_ref(), Path::new("d/file4"));
                 assert_eq!(file5.path().as_ref(), Path::new("d/file5"));
                 assert!(!file2.is_deleted());

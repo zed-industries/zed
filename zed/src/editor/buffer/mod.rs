@@ -353,15 +353,29 @@ pub struct UndoOperation {
 }
 
 impl Buffer {
-    pub fn new<T: Into<Arc<str>>>(replica_id: ReplicaId, base_text: T) -> Self {
-        Self::build(replica_id, None, History::new(base_text.into()))
+    pub fn new<T: Into<Arc<str>>>(
+        replica_id: ReplicaId,
+        base_text: T,
+        ctx: &mut ModelContext<Self>,
+    ) -> Self {
+        Self::build(replica_id, None, History::new(base_text.into()), ctx)
     }
 
-    pub fn from_history(replica_id: ReplicaId, file: FileHandle, history: History) -> Self {
-        Self::build(replica_id, Some(file), history)
+    pub fn from_history(
+        replica_id: ReplicaId,
+        file: FileHandle,
+        history: History,
+        ctx: &mut ModelContext<Self>,
+    ) -> Self {
+        Self::build(replica_id, Some(file), history, ctx)
     }
 
-    fn build(replica_id: ReplicaId, file: Option<FileHandle>, history: History) -> Self {
+    fn build(
+        replica_id: ReplicaId,
+        file: Option<FileHandle>,
+        history: History,
+        ctx: &mut ModelContext<Self>,
+    ) -> Self {
         let mut insertion_splits = HashMap::default();
         let mut fragments = SumTree::new();
 
@@ -410,6 +424,10 @@ impl Buffer {
             });
         }
 
+        if let Some(file) = file.as_ref() {
+            file.observe_from_model(ctx, |_, _, ctx| ctx.emit(Event::FileHandleChanged));
+        }
+
         Self {
             file,
             fragments,
@@ -445,6 +463,8 @@ impl Buffer {
 
     pub fn save(&mut self, ctx: &mut ModelContext<Self>) -> LocalBoxFuture<'static, Result<()>> {
         if let Some(file) = &self.file {
+            dbg!(file.path());
+
             let snapshot = self.snapshot();
             let version = self.version.clone();
             let save_task = file.save(snapshot, ctx.as_ref());
@@ -1772,6 +1792,7 @@ pub enum Event {
     Edited(Vec<Edit>),
     Dirtied,
     Saved,
+    FileHandleChanged,
 }
 
 impl Entity for Buffer {
@@ -2305,21 +2326,24 @@ mod tests {
     use std::{cell::RefCell, rc::Rc};
 
     #[test]
-    fn test_edit() -> Result<()> {
-        let mut buffer = Buffer::new(0, "abc");
-        assert_eq!(buffer.text(), "abc");
-        buffer.edit(vec![3..3], "def", None)?;
-        assert_eq!(buffer.text(), "abcdef");
-        buffer.edit(vec![0..0], "ghi", None)?;
-        assert_eq!(buffer.text(), "ghiabcdef");
-        buffer.edit(vec![5..5], "jkl", None)?;
-        assert_eq!(buffer.text(), "ghiabjklcdef");
-        buffer.edit(vec![6..7], "", None)?;
-        assert_eq!(buffer.text(), "ghiabjlcdef");
-        buffer.edit(vec![4..9], "mno", None)?;
-        assert_eq!(buffer.text(), "ghiamnoef");
-
-        Ok(())
+    fn test_edit() {
+        App::test((), |ctx| {
+            ctx.add_model(|ctx| {
+                let mut buffer = Buffer::new(0, "abc", ctx);
+                assert_eq!(buffer.text(), "abc");
+                buffer.edit(vec![3..3], "def", None).unwrap();
+                assert_eq!(buffer.text(), "abcdef");
+                buffer.edit(vec![0..0], "ghi", None).unwrap();
+                assert_eq!(buffer.text(), "ghiabcdef");
+                buffer.edit(vec![5..5], "jkl", None).unwrap();
+                assert_eq!(buffer.text(), "ghiabjklcdef");
+                buffer.edit(vec![6..7], "", None).unwrap();
+                assert_eq!(buffer.text(), "ghiabjlcdef");
+                buffer.edit(vec![4..9], "mno", None).unwrap();
+                assert_eq!(buffer.text(), "ghiamnoef");
+                buffer
+            });
+        })
     }
 
     #[test]
@@ -2329,8 +2353,8 @@ mod tests {
             let buffer_1_events = Rc::new(RefCell::new(Vec::new()));
             let buffer_2_events = Rc::new(RefCell::new(Vec::new()));
 
-            let buffer1 = app.add_model(|_| Buffer::new(0, "abcdef"));
-            let buffer2 = app.add_model(|_| Buffer::new(1, "abcdef"));
+            let buffer1 = app.add_model(|ctx| Buffer::new(0, "abcdef", ctx));
+            let buffer2 = app.add_model(|ctx| Buffer::new(1, "abcdef", ctx));
             let mut buffer_ops = Vec::new();
             buffer1.update(app, |buffer, ctx| {
                 let buffer_1_events = buffer_1_events.clone();
@@ -2408,187 +2432,207 @@ mod tests {
     #[test]
     fn test_random_edits() {
         for seed in 0..100 {
-            println!("{:?}", seed);
-            let mut rng = &mut StdRng::seed_from_u64(seed);
+            App::test((), |ctx| {
+                println!("{:?}", seed);
+                let mut rng = &mut StdRng::seed_from_u64(seed);
 
-            let reference_string_len = rng.gen_range(0..3);
-            let mut reference_string = RandomCharIter::new(&mut rng)
-                .take(reference_string_len)
-                .collect::<String>();
-            let mut buffer = Buffer::new(0, reference_string.as_str());
-            let mut buffer_versions = Vec::new();
+                let reference_string_len = rng.gen_range(0..3);
+                let mut reference_string = RandomCharIter::new(&mut rng)
+                    .take(reference_string_len)
+                    .collect::<String>();
+                ctx.add_model(|ctx| {
+                    let mut buffer = Buffer::new(0, reference_string.as_str(), ctx);
+                    let mut buffer_versions = Vec::new();
+                    for _i in 0..10 {
+                        let (old_ranges, new_text, _) = buffer.randomly_mutate(rng, None);
+                        for old_range in old_ranges.iter().rev() {
+                            reference_string = [
+                                &reference_string[0..old_range.start],
+                                new_text.as_str(),
+                                &reference_string[old_range.end..],
+                            ]
+                            .concat();
+                        }
+                        assert_eq!(buffer.text(), reference_string);
 
-            for _i in 0..10 {
-                let (old_ranges, new_text, _) = buffer.randomly_mutate(rng, None);
-                for old_range in old_ranges.iter().rev() {
-                    reference_string = [
-                        &reference_string[0..old_range.start],
-                        new_text.as_str(),
-                        &reference_string[old_range.end..],
-                    ]
-                    .concat();
-                }
-                assert_eq!(buffer.text(), reference_string);
+                        if rng.gen_bool(0.25) {
+                            buffer.randomly_undo_redo(rng);
+                            reference_string = buffer.text();
+                        }
 
-                if rng.gen_bool(0.25) {
-                    buffer.randomly_undo_redo(rng);
-                    reference_string = buffer.text();
-                }
+                        {
+                            let line_lengths = line_lengths_in_range(&buffer, 0..buffer.len());
 
-                {
-                    let line_lengths = line_lengths_in_range(&buffer, 0..buffer.len());
+                            for (len, rows) in &line_lengths {
+                                for row in rows {
+                                    assert_eq!(buffer.line_len(*row).unwrap(), *len);
+                                }
+                            }
 
-                    for (len, rows) in &line_lengths {
-                        for row in rows {
-                            assert_eq!(buffer.line_len(*row).unwrap(), *len);
+                            let (longest_column, longest_rows) =
+                                line_lengths.iter().next_back().unwrap();
+                            let rightmost_point = buffer.rightmost_point();
+                            assert_eq!(rightmost_point.column, *longest_column);
+                            assert!(longest_rows.contains(&rightmost_point.row));
+                        }
+
+                        for _ in 0..5 {
+                            let end = rng.gen_range(0..buffer.len() + 1);
+                            let start = rng.gen_range(0..end + 1);
+
+                            let line_lengths = line_lengths_in_range(&buffer, start..end);
+                            let (longest_column, longest_rows) =
+                                line_lengths.iter().next_back().unwrap();
+                            let range_sum = buffer.text_summary_for_range(start..end);
+                            assert_eq!(range_sum.rightmost_point.column, *longest_column);
+                            assert!(longest_rows.contains(&range_sum.rightmost_point.row));
+                            let range_text = &buffer.text()[start..end];
+                            assert_eq!(range_sum.chars, range_text.chars().count());
+                            assert_eq!(range_sum.bytes, range_text.len());
+                        }
+
+                        if rng.gen_bool(0.3) {
+                            buffer_versions.push(buffer.clone());
                         }
                     }
 
-                    let (longest_column, longest_rows) = line_lengths.iter().next_back().unwrap();
-                    let rightmost_point = buffer.rightmost_point();
-                    assert_eq!(rightmost_point.column, *longest_column);
-                    assert!(longest_rows.contains(&rightmost_point.row));
-                }
+                    for mut old_buffer in buffer_versions {
+                        let mut delta = 0_isize;
+                        for Edit {
+                            old_range,
+                            new_range,
+                        } in buffer.edits_since(old_buffer.version.clone())
+                        {
+                            let old_len = old_range.end - old_range.start;
+                            let new_len = new_range.end - new_range.start;
+                            let old_start = (old_range.start as isize + delta) as usize;
+                            let new_text: String =
+                                buffer.text_for_range(new_range).unwrap().collect();
+                            old_buffer
+                                .edit(Some(old_start..old_start + old_len), new_text, None)
+                                .unwrap();
 
-                for _ in 0..5 {
-                    let end = rng.gen_range(0..buffer.len() + 1);
-                    let start = rng.gen_range(0..end + 1);
+                            delta += new_len as isize - old_len as isize;
+                        }
+                        assert_eq!(old_buffer.text(), buffer.text());
+                    }
 
-                    let line_lengths = line_lengths_in_range(&buffer, start..end);
-                    let (longest_column, longest_rows) = line_lengths.iter().next_back().unwrap();
-                    let range_sum = buffer.text_summary_for_range(start..end);
-                    assert_eq!(range_sum.rightmost_point.column, *longest_column);
-                    assert!(longest_rows.contains(&range_sum.rightmost_point.row));
-                    let range_text = &buffer.text()[start..end];
-                    assert_eq!(range_sum.chars, range_text.chars().count());
-                    assert_eq!(range_sum.bytes, range_text.len());
-                }
-
-                if rng.gen_bool(0.3) {
-                    buffer_versions.push(buffer.clone());
-                }
-            }
-
-            for mut old_buffer in buffer_versions {
-                let mut delta = 0_isize;
-                for Edit {
-                    old_range,
-                    new_range,
-                } in buffer.edits_since(old_buffer.version.clone())
-                {
-                    let old_len = old_range.end - old_range.start;
-                    let new_len = new_range.end - new_range.start;
-                    let old_start = (old_range.start as isize + delta) as usize;
-                    let new_text: String = buffer.text_for_range(new_range).unwrap().collect();
-                    old_buffer
-                        .edit(Some(old_start..old_start + old_len), new_text, None)
-                        .unwrap();
-
-                    delta += new_len as isize - old_len as isize;
-                }
-                assert_eq!(old_buffer.text(), buffer.text());
-            }
+                    buffer
+                })
+            });
         }
     }
 
     #[test]
-    fn test_line_len() -> Result<()> {
-        let mut buffer = Buffer::new(0, "");
-        buffer.edit(vec![0..0], "abcd\nefg\nhij", None)?;
-        buffer.edit(vec![12..12], "kl\nmno", None)?;
-        buffer.edit(vec![18..18], "\npqrs\n", None)?;
-        buffer.edit(vec![18..21], "\nPQ", None)?;
+    fn test_line_len() {
+        App::test((), |ctx| {
+            ctx.add_model(|ctx| {
+                let mut buffer = Buffer::new(0, "", ctx);
+                buffer.edit(vec![0..0], "abcd\nefg\nhij", None).unwrap();
+                buffer.edit(vec![12..12], "kl\nmno", None).unwrap();
+                buffer.edit(vec![18..18], "\npqrs\n", None).unwrap();
+                buffer.edit(vec![18..21], "\nPQ", None).unwrap();
 
-        assert_eq!(buffer.line_len(0)?, 4);
-        assert_eq!(buffer.line_len(1)?, 3);
-        assert_eq!(buffer.line_len(2)?, 5);
-        assert_eq!(buffer.line_len(3)?, 3);
-        assert_eq!(buffer.line_len(4)?, 4);
-        assert_eq!(buffer.line_len(5)?, 0);
-        assert!(buffer.line_len(6).is_err());
-
-        Ok(())
+                assert_eq!(buffer.line_len(0).unwrap(), 4);
+                assert_eq!(buffer.line_len(1).unwrap(), 3);
+                assert_eq!(buffer.line_len(2).unwrap(), 5);
+                assert_eq!(buffer.line_len(3).unwrap(), 3);
+                assert_eq!(buffer.line_len(4).unwrap(), 4);
+                assert_eq!(buffer.line_len(5).unwrap(), 0);
+                assert!(buffer.line_len(6).is_err());
+                buffer
+            });
+        });
     }
 
     #[test]
-    fn test_rightmost_point() -> Result<()> {
-        let mut buffer = Buffer::new(0, "");
-        assert_eq!(buffer.rightmost_point().row, 0);
-        buffer.edit(vec![0..0], "abcd\nefg\nhij", None)?;
-        assert_eq!(buffer.rightmost_point().row, 0);
-        buffer.edit(vec![12..12], "kl\nmno", None)?;
-        assert_eq!(buffer.rightmost_point().row, 2);
-        buffer.edit(vec![18..18], "\npqrs", None)?;
-        assert_eq!(buffer.rightmost_point().row, 2);
-        buffer.edit(vec![10..12], "", None)?;
-        assert_eq!(buffer.rightmost_point().row, 0);
-        buffer.edit(vec![24..24], "tuv", None)?;
-        assert_eq!(buffer.rightmost_point().row, 4);
-
-        println!("{:?}", buffer.text());
-
-        Ok(())
+    fn test_rightmost_point() {
+        App::test((), |ctx| {
+            ctx.add_model(|ctx| {
+                let mut buffer = Buffer::new(0, "", ctx);
+                assert_eq!(buffer.rightmost_point().row, 0);
+                buffer.edit(vec![0..0], "abcd\nefg\nhij", None).unwrap();
+                assert_eq!(buffer.rightmost_point().row, 0);
+                buffer.edit(vec![12..12], "kl\nmno", None).unwrap();
+                assert_eq!(buffer.rightmost_point().row, 2);
+                buffer.edit(vec![18..18], "\npqrs", None).unwrap();
+                assert_eq!(buffer.rightmost_point().row, 2);
+                buffer.edit(vec![10..12], "", None).unwrap();
+                assert_eq!(buffer.rightmost_point().row, 0);
+                buffer.edit(vec![24..24], "tuv", None).unwrap();
+                assert_eq!(buffer.rightmost_point().row, 4);
+                buffer
+            });
+        });
     }
 
     #[test]
     fn test_text_summary_for_range() {
-        let buffer = Buffer::new(0, "ab\nefg\nhklm\nnopqrs\ntuvwxyz");
-        let text = Text::from(buffer.text());
-
-        assert_eq!(
-            buffer.text_summary_for_range(1..3),
-            text.slice(1..3).summary()
-        );
-        assert_eq!(
-            buffer.text_summary_for_range(1..12),
-            text.slice(1..12).summary()
-        );
-        assert_eq!(
-            buffer.text_summary_for_range(0..20),
-            text.slice(0..20).summary()
-        );
-        assert_eq!(
-            buffer.text_summary_for_range(0..22),
-            text.slice(0..22).summary()
-        );
-        assert_eq!(
-            buffer.text_summary_for_range(7..22),
-            text.slice(7..22).summary()
-        );
+        App::test((), |ctx| {
+            ctx.add_model(|ctx| {
+                let buffer = Buffer::new(0, "ab\nefg\nhklm\nnopqrs\ntuvwxyz", ctx);
+                let text = Text::from(buffer.text());
+                assert_eq!(
+                    buffer.text_summary_for_range(1..3),
+                    text.slice(1..3).summary()
+                );
+                assert_eq!(
+                    buffer.text_summary_for_range(1..12),
+                    text.slice(1..12).summary()
+                );
+                assert_eq!(
+                    buffer.text_summary_for_range(0..20),
+                    text.slice(0..20).summary()
+                );
+                assert_eq!(
+                    buffer.text_summary_for_range(0..22),
+                    text.slice(0..22).summary()
+                );
+                assert_eq!(
+                    buffer.text_summary_for_range(7..22),
+                    text.slice(7..22).summary()
+                );
+                buffer
+            });
+        });
     }
 
     #[test]
-    fn test_chars_at() -> Result<()> {
-        let mut buffer = Buffer::new(0, "");
-        buffer.edit(vec![0..0], "abcd\nefgh\nij", None)?;
-        buffer.edit(vec![12..12], "kl\nmno", None)?;
-        buffer.edit(vec![18..18], "\npqrs", None)?;
-        buffer.edit(vec![18..21], "\nPQ", None)?;
+    fn test_chars_at() {
+        App::test((), |ctx| {
+            ctx.add_model(|ctx| {
+                let mut buffer = Buffer::new(0, "", ctx);
+                buffer.edit(vec![0..0], "abcd\nefgh\nij", None).unwrap();
+                buffer.edit(vec![12..12], "kl\nmno", None).unwrap();
+                buffer.edit(vec![18..18], "\npqrs", None).unwrap();
+                buffer.edit(vec![18..21], "\nPQ", None).unwrap();
 
-        let chars = buffer.chars_at(Point::new(0, 0))?;
-        assert_eq!(chars.collect::<String>(), "abcd\nefgh\nijkl\nmno\nPQrs");
+                let chars = buffer.chars_at(Point::new(0, 0)).unwrap();
+                assert_eq!(chars.collect::<String>(), "abcd\nefgh\nijkl\nmno\nPQrs");
 
-        let chars = buffer.chars_at(Point::new(1, 0))?;
-        assert_eq!(chars.collect::<String>(), "efgh\nijkl\nmno\nPQrs");
+                let chars = buffer.chars_at(Point::new(1, 0)).unwrap();
+                assert_eq!(chars.collect::<String>(), "efgh\nijkl\nmno\nPQrs");
 
-        let chars = buffer.chars_at(Point::new(2, 0))?;
-        assert_eq!(chars.collect::<String>(), "ijkl\nmno\nPQrs");
+                let chars = buffer.chars_at(Point::new(2, 0)).unwrap();
+                assert_eq!(chars.collect::<String>(), "ijkl\nmno\nPQrs");
 
-        let chars = buffer.chars_at(Point::new(3, 0))?;
-        assert_eq!(chars.collect::<String>(), "mno\nPQrs");
+                let chars = buffer.chars_at(Point::new(3, 0)).unwrap();
+                assert_eq!(chars.collect::<String>(), "mno\nPQrs");
 
-        let chars = buffer.chars_at(Point::new(4, 0))?;
-        assert_eq!(chars.collect::<String>(), "PQrs");
+                let chars = buffer.chars_at(Point::new(4, 0)).unwrap();
+                assert_eq!(chars.collect::<String>(), "PQrs");
 
-        // Regression test:
-        let mut buffer = Buffer::new(0, "");
-        buffer.edit(vec![0..0], "[workspace]\nmembers = [\n    \"xray_core\",\n    \"xray_server\",\n    \"xray_cli\",\n    \"xray_wasm\",\n]\n", None)?;
-        buffer.edit(vec![60..60], "\n", None)?;
+                // Regression test:
+                let mut buffer = Buffer::new(0, "", ctx);
+                buffer.edit(vec![0..0], "[workspace]\nmembers = [\n    \"xray_core\",\n    \"xray_server\",\n    \"xray_cli\",\n    \"xray_wasm\",\n]\n", None).unwrap();
+                buffer.edit(vec![60..60], "\n", None).unwrap();
 
-        let chars = buffer.chars_at(Point::new(6, 0))?;
-        assert_eq!(chars.collect::<String>(), "    \"xray_wasm\",\n]\n");
+                let chars = buffer.chars_at(Point::new(6, 0)).unwrap();
+                assert_eq!(chars.collect::<String>(), "    \"xray_wasm\",\n]\n");
 
-        Ok(())
+                buffer
+            });
+        });
     }
 
     // #[test]
@@ -2706,177 +2750,202 @@ mod tests {
     }
 
     #[test]
-    fn test_anchors() -> Result<()> {
-        let mut buffer = Buffer::new(0, "");
-        buffer.edit(vec![0..0], "abc", None)?;
-        let left_anchor = buffer.anchor_before(2).unwrap();
-        let right_anchor = buffer.anchor_after(2).unwrap();
+    fn test_anchors() {
+        App::test((), |ctx| {
+            ctx.add_model(|ctx| {
+                let mut buffer = Buffer::new(0, "", ctx);
+                buffer.edit(vec![0..0], "abc", None).unwrap();
+                let left_anchor = buffer.anchor_before(2).unwrap();
+                let right_anchor = buffer.anchor_after(2).unwrap();
 
-        buffer.edit(vec![1..1], "def\n", None)?;
-        assert_eq!(buffer.text(), "adef\nbc");
-        assert_eq!(left_anchor.to_offset(&buffer).unwrap(), 6);
-        assert_eq!(right_anchor.to_offset(&buffer).unwrap(), 6);
-        assert_eq!(
-            left_anchor.to_point(&buffer).unwrap(),
-            Point { row: 1, column: 1 }
-        );
-        assert_eq!(
-            right_anchor.to_point(&buffer).unwrap(),
-            Point { row: 1, column: 1 }
-        );
+                buffer.edit(vec![1..1], "def\n", None).unwrap();
+                assert_eq!(buffer.text(), "adef\nbc");
+                assert_eq!(left_anchor.to_offset(&buffer).unwrap(), 6);
+                assert_eq!(right_anchor.to_offset(&buffer).unwrap(), 6);
+                assert_eq!(
+                    left_anchor.to_point(&buffer).unwrap(),
+                    Point { row: 1, column: 1 }
+                );
+                assert_eq!(
+                    right_anchor.to_point(&buffer).unwrap(),
+                    Point { row: 1, column: 1 }
+                );
 
-        buffer.edit(vec![2..3], "", None)?;
-        assert_eq!(buffer.text(), "adf\nbc");
-        assert_eq!(left_anchor.to_offset(&buffer).unwrap(), 5);
-        assert_eq!(right_anchor.to_offset(&buffer).unwrap(), 5);
-        assert_eq!(
-            left_anchor.to_point(&buffer).unwrap(),
-            Point { row: 1, column: 1 }
-        );
-        assert_eq!(
-            right_anchor.to_point(&buffer).unwrap(),
-            Point { row: 1, column: 1 }
-        );
+                buffer.edit(vec![2..3], "", None).unwrap();
+                assert_eq!(buffer.text(), "adf\nbc");
+                assert_eq!(left_anchor.to_offset(&buffer).unwrap(), 5);
+                assert_eq!(right_anchor.to_offset(&buffer).unwrap(), 5);
+                assert_eq!(
+                    left_anchor.to_point(&buffer).unwrap(),
+                    Point { row: 1, column: 1 }
+                );
+                assert_eq!(
+                    right_anchor.to_point(&buffer).unwrap(),
+                    Point { row: 1, column: 1 }
+                );
 
-        buffer.edit(vec![5..5], "ghi\n", None)?;
-        assert_eq!(buffer.text(), "adf\nbghi\nc");
-        assert_eq!(left_anchor.to_offset(&buffer).unwrap(), 5);
-        assert_eq!(right_anchor.to_offset(&buffer).unwrap(), 9);
-        assert_eq!(
-            left_anchor.to_point(&buffer).unwrap(),
-            Point { row: 1, column: 1 }
-        );
-        assert_eq!(
-            right_anchor.to_point(&buffer).unwrap(),
-            Point { row: 2, column: 0 }
-        );
+                buffer.edit(vec![5..5], "ghi\n", None).unwrap();
+                assert_eq!(buffer.text(), "adf\nbghi\nc");
+                assert_eq!(left_anchor.to_offset(&buffer).unwrap(), 5);
+                assert_eq!(right_anchor.to_offset(&buffer).unwrap(), 9);
+                assert_eq!(
+                    left_anchor.to_point(&buffer).unwrap(),
+                    Point { row: 1, column: 1 }
+                );
+                assert_eq!(
+                    right_anchor.to_point(&buffer).unwrap(),
+                    Point { row: 2, column: 0 }
+                );
 
-        buffer.edit(vec![7..9], "", None)?;
-        assert_eq!(buffer.text(), "adf\nbghc");
-        assert_eq!(left_anchor.to_offset(&buffer).unwrap(), 5);
-        assert_eq!(right_anchor.to_offset(&buffer).unwrap(), 7);
-        assert_eq!(
-            left_anchor.to_point(&buffer).unwrap(),
-            Point { row: 1, column: 1 },
-        );
-        assert_eq!(
-            right_anchor.to_point(&buffer).unwrap(),
-            Point { row: 1, column: 3 }
-        );
+                buffer.edit(vec![7..9], "", None).unwrap();
+                assert_eq!(buffer.text(), "adf\nbghc");
+                assert_eq!(left_anchor.to_offset(&buffer).unwrap(), 5);
+                assert_eq!(right_anchor.to_offset(&buffer).unwrap(), 7);
+                assert_eq!(
+                    left_anchor.to_point(&buffer).unwrap(),
+                    Point { row: 1, column: 1 },
+                );
+                assert_eq!(
+                    right_anchor.to_point(&buffer).unwrap(),
+                    Point { row: 1, column: 3 }
+                );
 
-        // Ensure anchoring to a point is equivalent to anchoring to an offset.
-        assert_eq!(
-            buffer.anchor_before(Point { row: 0, column: 0 })?,
-            buffer.anchor_before(0)?
-        );
-        assert_eq!(
-            buffer.anchor_before(Point { row: 0, column: 1 })?,
-            buffer.anchor_before(1)?
-        );
-        assert_eq!(
-            buffer.anchor_before(Point { row: 0, column: 2 })?,
-            buffer.anchor_before(2)?
-        );
-        assert_eq!(
-            buffer.anchor_before(Point { row: 0, column: 3 })?,
-            buffer.anchor_before(3)?
-        );
-        assert_eq!(
-            buffer.anchor_before(Point { row: 1, column: 0 })?,
-            buffer.anchor_before(4)?
-        );
-        assert_eq!(
-            buffer.anchor_before(Point { row: 1, column: 1 })?,
-            buffer.anchor_before(5)?
-        );
-        assert_eq!(
-            buffer.anchor_before(Point { row: 1, column: 2 })?,
-            buffer.anchor_before(6)?
-        );
-        assert_eq!(
-            buffer.anchor_before(Point { row: 1, column: 3 })?,
-            buffer.anchor_before(7)?
-        );
-        assert_eq!(
-            buffer.anchor_before(Point { row: 1, column: 4 })?,
-            buffer.anchor_before(8)?
-        );
+                // Ensure anchoring to a point is equivalent to anchoring to an offset.
+                assert_eq!(
+                    buffer.anchor_before(Point { row: 0, column: 0 }).unwrap(),
+                    buffer.anchor_before(0).unwrap()
+                );
+                assert_eq!(
+                    buffer.anchor_before(Point { row: 0, column: 1 }).unwrap(),
+                    buffer.anchor_before(1).unwrap()
+                );
+                assert_eq!(
+                    buffer.anchor_before(Point { row: 0, column: 2 }).unwrap(),
+                    buffer.anchor_before(2).unwrap()
+                );
+                assert_eq!(
+                    buffer.anchor_before(Point { row: 0, column: 3 }).unwrap(),
+                    buffer.anchor_before(3).unwrap()
+                );
+                assert_eq!(
+                    buffer.anchor_before(Point { row: 1, column: 0 }).unwrap(),
+                    buffer.anchor_before(4).unwrap()
+                );
+                assert_eq!(
+                    buffer.anchor_before(Point { row: 1, column: 1 }).unwrap(),
+                    buffer.anchor_before(5).unwrap()
+                );
+                assert_eq!(
+                    buffer.anchor_before(Point { row: 1, column: 2 }).unwrap(),
+                    buffer.anchor_before(6).unwrap()
+                );
+                assert_eq!(
+                    buffer.anchor_before(Point { row: 1, column: 3 }).unwrap(),
+                    buffer.anchor_before(7).unwrap()
+                );
+                assert_eq!(
+                    buffer.anchor_before(Point { row: 1, column: 4 }).unwrap(),
+                    buffer.anchor_before(8).unwrap()
+                );
 
-        // Comparison between anchors.
-        let anchor_at_offset_0 = buffer.anchor_before(0).unwrap();
-        let anchor_at_offset_1 = buffer.anchor_before(1).unwrap();
-        let anchor_at_offset_2 = buffer.anchor_before(2).unwrap();
+                // Comparison between anchors.
+                let anchor_at_offset_0 = buffer.anchor_before(0).unwrap();
+                let anchor_at_offset_1 = buffer.anchor_before(1).unwrap();
+                let anchor_at_offset_2 = buffer.anchor_before(2).unwrap();
 
-        assert_eq!(
-            anchor_at_offset_0.cmp(&anchor_at_offset_0, &buffer)?,
-            Ordering::Equal
-        );
-        assert_eq!(
-            anchor_at_offset_1.cmp(&anchor_at_offset_1, &buffer)?,
-            Ordering::Equal
-        );
-        assert_eq!(
-            anchor_at_offset_2.cmp(&anchor_at_offset_2, &buffer)?,
-            Ordering::Equal
-        );
+                assert_eq!(
+                    anchor_at_offset_0
+                        .cmp(&anchor_at_offset_0, &buffer)
+                        .unwrap(),
+                    Ordering::Equal
+                );
+                assert_eq!(
+                    anchor_at_offset_1
+                        .cmp(&anchor_at_offset_1, &buffer)
+                        .unwrap(),
+                    Ordering::Equal
+                );
+                assert_eq!(
+                    anchor_at_offset_2
+                        .cmp(&anchor_at_offset_2, &buffer)
+                        .unwrap(),
+                    Ordering::Equal
+                );
 
-        assert_eq!(
-            anchor_at_offset_0.cmp(&anchor_at_offset_1, &buffer)?,
-            Ordering::Less
-        );
-        assert_eq!(
-            anchor_at_offset_1.cmp(&anchor_at_offset_2, &buffer)?,
-            Ordering::Less
-        );
-        assert_eq!(
-            anchor_at_offset_0.cmp(&anchor_at_offset_2, &buffer)?,
-            Ordering::Less
-        );
+                assert_eq!(
+                    anchor_at_offset_0
+                        .cmp(&anchor_at_offset_1, &buffer)
+                        .unwrap(),
+                    Ordering::Less
+                );
+                assert_eq!(
+                    anchor_at_offset_1
+                        .cmp(&anchor_at_offset_2, &buffer)
+                        .unwrap(),
+                    Ordering::Less
+                );
+                assert_eq!(
+                    anchor_at_offset_0
+                        .cmp(&anchor_at_offset_2, &buffer)
+                        .unwrap(),
+                    Ordering::Less
+                );
 
-        assert_eq!(
-            anchor_at_offset_1.cmp(&anchor_at_offset_0, &buffer)?,
-            Ordering::Greater
-        );
-        assert_eq!(
-            anchor_at_offset_2.cmp(&anchor_at_offset_1, &buffer)?,
-            Ordering::Greater
-        );
-        assert_eq!(
-            anchor_at_offset_2.cmp(&anchor_at_offset_0, &buffer)?,
-            Ordering::Greater
-        );
-        Ok(())
+                assert_eq!(
+                    anchor_at_offset_1
+                        .cmp(&anchor_at_offset_0, &buffer)
+                        .unwrap(),
+                    Ordering::Greater
+                );
+                assert_eq!(
+                    anchor_at_offset_2
+                        .cmp(&anchor_at_offset_1, &buffer)
+                        .unwrap(),
+                    Ordering::Greater
+                );
+                assert_eq!(
+                    anchor_at_offset_2
+                        .cmp(&anchor_at_offset_0, &buffer)
+                        .unwrap(),
+                    Ordering::Greater
+                );
+                buffer
+            });
+        });
     }
 
     #[test]
-    fn test_anchors_at_start_and_end() -> Result<()> {
-        let mut buffer = Buffer::new(0, "");
-        let before_start_anchor = buffer.anchor_before(0).unwrap();
-        let after_end_anchor = buffer.anchor_after(0).unwrap();
+    fn test_anchors_at_start_and_end() {
+        App::test((), |ctx| {
+            ctx.add_model(|ctx| {
+                let mut buffer = Buffer::new(0, "", ctx);
+                let before_start_anchor = buffer.anchor_before(0).unwrap();
+                let after_end_anchor = buffer.anchor_after(0).unwrap();
 
-        buffer.edit(vec![0..0], "abc", None)?;
-        assert_eq!(buffer.text(), "abc");
-        assert_eq!(before_start_anchor.to_offset(&buffer).unwrap(), 0);
-        assert_eq!(after_end_anchor.to_offset(&buffer).unwrap(), 3);
+                buffer.edit(vec![0..0], "abc", None).unwrap();
+                assert_eq!(buffer.text(), "abc");
+                assert_eq!(before_start_anchor.to_offset(&buffer).unwrap(), 0);
+                assert_eq!(after_end_anchor.to_offset(&buffer).unwrap(), 3);
 
-        let after_start_anchor = buffer.anchor_after(0).unwrap();
-        let before_end_anchor = buffer.anchor_before(3).unwrap();
+                let after_start_anchor = buffer.anchor_after(0).unwrap();
+                let before_end_anchor = buffer.anchor_before(3).unwrap();
 
-        buffer.edit(vec![3..3], "def", None)?;
-        buffer.edit(vec![0..0], "ghi", None)?;
-        assert_eq!(buffer.text(), "ghiabcdef");
-        assert_eq!(before_start_anchor.to_offset(&buffer).unwrap(), 0);
-        assert_eq!(after_start_anchor.to_offset(&buffer).unwrap(), 3);
-        assert_eq!(before_end_anchor.to_offset(&buffer).unwrap(), 6);
-        assert_eq!(after_end_anchor.to_offset(&buffer).unwrap(), 9);
-
-        Ok(())
+                buffer.edit(vec![3..3], "def", None).unwrap();
+                buffer.edit(vec![0..0], "ghi", None).unwrap();
+                assert_eq!(buffer.text(), "ghiabcdef");
+                assert_eq!(before_start_anchor.to_offset(&buffer).unwrap(), 0);
+                assert_eq!(after_start_anchor.to_offset(&buffer).unwrap(), 3);
+                assert_eq!(before_end_anchor.to_offset(&buffer).unwrap(), 6);
+                assert_eq!(after_end_anchor.to_offset(&buffer).unwrap(), 9);
+                buffer
+            });
+        });
     }
 
     #[test]
-    fn test_is_modified() -> Result<()> {
+    fn test_is_modified() {
         App::test((), |app| {
-            let model = app.add_model(|_| Buffer::new(0, "abc"));
+            let model = app.add_model(|ctx| Buffer::new(0, "abc", ctx));
             let events = Rc::new(RefCell::new(Vec::new()));
 
             // initially, the buffer isn't dirty.
@@ -2958,94 +3027,113 @@ mod tests {
                 );
             });
         });
-        Ok(())
     }
 
     #[test]
-    fn test_undo_redo() -> Result<()> {
-        let mut buffer = Buffer::new(0, "1234");
+    fn test_undo_redo() {
+        App::test((), |app| {
+            app.add_model(|ctx| {
+                let mut buffer = Buffer::new(0, "1234", ctx);
 
-        let edit1 = buffer.edit(vec![1..1], "abx", None)?;
-        let edit2 = buffer.edit(vec![3..4], "yzef", None)?;
-        let edit3 = buffer.edit(vec![3..5], "cd", None)?;
-        assert_eq!(buffer.text(), "1abcdef234");
+                let edit1 = buffer.edit(vec![1..1], "abx", None).unwrap();
+                let edit2 = buffer.edit(vec![3..4], "yzef", None).unwrap();
+                let edit3 = buffer.edit(vec![3..5], "cd", None).unwrap();
+                assert_eq!(buffer.text(), "1abcdef234");
 
-        buffer.undo_or_redo(edit1[0].edit_id().unwrap())?;
-        assert_eq!(buffer.text(), "1cdef234");
-        buffer.undo_or_redo(edit1[0].edit_id().unwrap())?;
-        assert_eq!(buffer.text(), "1abcdef234");
+                buffer.undo_or_redo(edit1[0].edit_id().unwrap()).unwrap();
+                assert_eq!(buffer.text(), "1cdef234");
+                buffer.undo_or_redo(edit1[0].edit_id().unwrap()).unwrap();
+                assert_eq!(buffer.text(), "1abcdef234");
 
-        buffer.undo_or_redo(edit2[0].edit_id().unwrap())?;
-        assert_eq!(buffer.text(), "1abcdx234");
-        buffer.undo_or_redo(edit3[0].edit_id().unwrap())?;
-        assert_eq!(buffer.text(), "1abx234");
-        buffer.undo_or_redo(edit2[0].edit_id().unwrap())?;
-        assert_eq!(buffer.text(), "1abyzef234");
-        buffer.undo_or_redo(edit3[0].edit_id().unwrap())?;
-        assert_eq!(buffer.text(), "1abcdef234");
+                buffer.undo_or_redo(edit2[0].edit_id().unwrap()).unwrap();
+                assert_eq!(buffer.text(), "1abcdx234");
+                buffer.undo_or_redo(edit3[0].edit_id().unwrap()).unwrap();
+                assert_eq!(buffer.text(), "1abx234");
+                buffer.undo_or_redo(edit2[0].edit_id().unwrap()).unwrap();
+                assert_eq!(buffer.text(), "1abyzef234");
+                buffer.undo_or_redo(edit3[0].edit_id().unwrap()).unwrap();
+                assert_eq!(buffer.text(), "1abcdef234");
 
-        buffer.undo_or_redo(edit3[0].edit_id().unwrap())?;
-        assert_eq!(buffer.text(), "1abyzef234");
-        buffer.undo_or_redo(edit1[0].edit_id().unwrap())?;
-        assert_eq!(buffer.text(), "1yzef234");
-        buffer.undo_or_redo(edit2[0].edit_id().unwrap())?;
-        assert_eq!(buffer.text(), "1234");
+                buffer.undo_or_redo(edit3[0].edit_id().unwrap()).unwrap();
+                assert_eq!(buffer.text(), "1abyzef234");
+                buffer.undo_or_redo(edit1[0].edit_id().unwrap()).unwrap();
+                assert_eq!(buffer.text(), "1yzef234");
+                buffer.undo_or_redo(edit2[0].edit_id().unwrap()).unwrap();
+                assert_eq!(buffer.text(), "1234");
 
-        Ok(())
+                buffer
+            });
+        });
     }
 
     #[test]
-    fn test_history() -> Result<()> {
-        let mut now = Instant::now();
-        let mut buffer = Buffer::new(0, "123456");
+    fn test_history() {
+        App::test((), |app| {
+            app.add_model(|ctx| {
+                let mut now = Instant::now();
+                let mut buffer = Buffer::new(0, "123456", ctx);
 
-        let (set_id, _) =
-            buffer.add_selection_set(buffer.selections_from_ranges(vec![4..4])?, None);
-        buffer.start_transaction_at(Some(set_id), now)?;
-        buffer.edit(vec![2..4], "cd", None)?;
-        buffer.end_transaction_at(Some(set_id), now, None)?;
-        assert_eq!(buffer.text(), "12cd56");
-        assert_eq!(buffer.selection_ranges(set_id)?, vec![4..4]);
+                let (set_id, _) = buffer
+                    .add_selection_set(buffer.selections_from_ranges(vec![4..4]).unwrap(), None);
+                buffer.start_transaction_at(Some(set_id), now).unwrap();
+                buffer.edit(vec![2..4], "cd", None).unwrap();
+                buffer.end_transaction_at(Some(set_id), now, None).unwrap();
+                assert_eq!(buffer.text(), "12cd56");
+                assert_eq!(buffer.selection_ranges(set_id).unwrap(), vec![4..4]);
 
-        buffer.start_transaction_at(Some(set_id), now)?;
-        buffer.update_selection_set(set_id, buffer.selections_from_ranges(vec![1..3])?, None)?;
-        buffer.edit(vec![4..5], "e", None)?;
-        buffer.end_transaction_at(Some(set_id), now, None)?;
-        assert_eq!(buffer.text(), "12cde6");
-        assert_eq!(buffer.selection_ranges(set_id)?, vec![1..3]);
+                buffer.start_transaction_at(Some(set_id), now).unwrap();
+                buffer
+                    .update_selection_set(
+                        set_id,
+                        buffer.selections_from_ranges(vec![1..3]).unwrap(),
+                        None,
+                    )
+                    .unwrap();
+                buffer.edit(vec![4..5], "e", None).unwrap();
+                buffer.end_transaction_at(Some(set_id), now, None).unwrap();
+                assert_eq!(buffer.text(), "12cde6");
+                assert_eq!(buffer.selection_ranges(set_id).unwrap(), vec![1..3]);
 
-        now += UNDO_GROUP_INTERVAL + Duration::from_millis(1);
-        buffer.start_transaction_at(Some(set_id), now)?;
-        buffer.update_selection_set(set_id, buffer.selections_from_ranges(vec![2..2])?, None)?;
-        buffer.edit(vec![0..1], "a", None)?;
-        buffer.edit(vec![1..1], "b", None)?;
-        buffer.end_transaction_at(Some(set_id), now, None)?;
-        assert_eq!(buffer.text(), "ab2cde6");
-        assert_eq!(buffer.selection_ranges(set_id)?, vec![3..3]);
+                now += UNDO_GROUP_INTERVAL + Duration::from_millis(1);
+                buffer.start_transaction_at(Some(set_id), now).unwrap();
+                buffer
+                    .update_selection_set(
+                        set_id,
+                        buffer.selections_from_ranges(vec![2..2]).unwrap(),
+                        None,
+                    )
+                    .unwrap();
+                buffer.edit(vec![0..1], "a", None).unwrap();
+                buffer.edit(vec![1..1], "b", None).unwrap();
+                buffer.end_transaction_at(Some(set_id), now, None).unwrap();
+                assert_eq!(buffer.text(), "ab2cde6");
+                assert_eq!(buffer.selection_ranges(set_id).unwrap(), vec![3..3]);
 
-        // Last transaction happened past the group interval, undo it on its
-        // own.
-        buffer.undo(None);
-        assert_eq!(buffer.text(), "12cde6");
-        assert_eq!(buffer.selection_ranges(set_id)?, vec![1..3]);
+                // Last transaction happened past the group interval, undo it on its
+                // own.
+                buffer.undo(None);
+                assert_eq!(buffer.text(), "12cde6");
+                assert_eq!(buffer.selection_ranges(set_id).unwrap(), vec![1..3]);
 
-        // First two transactions happened within the group interval, undo them
-        // together.
-        buffer.undo(None);
-        assert_eq!(buffer.text(), "123456");
-        assert_eq!(buffer.selection_ranges(set_id)?, vec![4..4]);
+                // First two transactions happened within the group interval, undo them
+                // together.
+                buffer.undo(None);
+                assert_eq!(buffer.text(), "123456");
+                assert_eq!(buffer.selection_ranges(set_id).unwrap(), vec![4..4]);
 
-        // Redo the first two transactions together.
-        buffer.redo(None);
-        assert_eq!(buffer.text(), "12cde6");
-        assert_eq!(buffer.selection_ranges(set_id)?, vec![1..3]);
+                // Redo the first two transactions together.
+                buffer.redo(None);
+                assert_eq!(buffer.text(), "12cde6");
+                assert_eq!(buffer.selection_ranges(set_id).unwrap(), vec![1..3]);
 
-        // Redo the last transaction on its own.
-        buffer.redo(None);
-        assert_eq!(buffer.text(), "ab2cde6");
-        assert_eq!(buffer.selection_ranges(set_id)?, vec![3..3]);
+                // Redo the last transaction on its own.
+                buffer.redo(None);
+                assert_eq!(buffer.text(), "ab2cde6");
+                assert_eq!(buffer.selection_ranges(set_id).unwrap(), vec![3..3]);
 
-        Ok(())
+                buffer
+            });
+        });
     }
 
     #[test]
@@ -3058,61 +3146,66 @@ mod tests {
             println!("{:?}", seed);
             let mut rng = &mut StdRng::seed_from_u64(seed);
 
-            let base_text_len = rng.gen_range(0..10);
-            let base_text = RandomCharIter::new(&mut rng)
-                .take(base_text_len)
-                .collect::<String>();
-            let mut replica_ids = Vec::new();
-            let mut buffers = Vec::new();
-            let mut network = Network::new();
-            for i in 0..PEERS {
-                let buffer = Buffer::new(i as ReplicaId, base_text.as_str());
-                buffers.push(buffer);
-                replica_ids.push(i as u16);
-                network.add_peer(i as u16);
-            }
-
-            let mut mutation_count = 10;
-            loop {
-                let replica_index = rng.gen_range(0..PEERS);
-                let replica_id = replica_ids[replica_index];
-                let buffer = &mut buffers[replica_index];
-
-                match rng.gen_range(0..=100) {
-                    0..=50 if mutation_count != 0 => {
-                        let (_, _, ops) = buffer.randomly_mutate(&mut rng, None);
-                        network.broadcast(replica_id, ops, &mut rng);
-                        mutation_count -= 1;
-                    }
-                    51..=70 if mutation_count != 0 => {
-                        let ops = buffer.randomly_undo_redo(&mut rng);
-                        network.broadcast(replica_id, ops, &mut rng);
-                        mutation_count -= 1;
-                    }
-                    71..=100 if network.has_unreceived(replica_id) => {
-                        buffer
-                            .apply_ops(network.receive(replica_id, &mut rng), None)
-                            .unwrap();
-                    }
-                    _ => {}
+            App::test((), |ctx| {
+                let base_text_len = rng.gen_range(0..10);
+                let base_text = RandomCharIter::new(&mut rng)
+                    .take(base_text_len)
+                    .collect::<String>();
+                let mut replica_ids = Vec::new();
+                let mut buffers = Vec::new();
+                let mut network = Network::new();
+                for i in 0..PEERS {
+                    let buffer =
+                        ctx.add_model(|ctx| Buffer::new(i as ReplicaId, base_text.as_str(), ctx));
+                    buffers.push(buffer);
+                    replica_ids.push(i as u16);
+                    network.add_peer(i as u16);
                 }
 
-                if mutation_count == 0 && network.is_idle() {
-                    break;
-                }
-            }
+                let mut mutation_count = 10;
+                loop {
+                    let replica_index = rng.gen_range(0..PEERS);
+                    let replica_id = replica_ids[replica_index];
+                    buffers[replica_index].update(ctx, |buffer, _| match rng.gen_range(0..=100) {
+                        0..=50 if mutation_count != 0 => {
+                            let (_, _, ops) = buffer.randomly_mutate(&mut rng, None);
+                            network.broadcast(replica_id, ops, &mut rng);
+                            mutation_count -= 1;
+                        }
+                        51..=70 if mutation_count != 0 => {
+                            let ops = buffer.randomly_undo_redo(&mut rng);
+                            network.broadcast(replica_id, ops, &mut rng);
+                            mutation_count -= 1;
+                        }
+                        71..=100 if network.has_unreceived(replica_id) => {
+                            buffer
+                                .apply_ops(network.receive(replica_id, &mut rng), None)
+                                .unwrap();
+                        }
+                        _ => {}
+                    });
 
-            for buffer in &buffers[1..] {
-                assert_eq!(buffer.text(), buffers[0].text());
-                assert_eq!(
-                    buffer.all_selections().collect::<HashMap<_, _>>(),
-                    buffers[0].all_selections().collect::<HashMap<_, _>>()
-                );
-                assert_eq!(
-                    buffer.all_selection_ranges().collect::<HashMap<_, _>>(),
-                    buffers[0].all_selection_ranges().collect::<HashMap<_, _>>()
-                );
-            }
+                    if mutation_count == 0 && network.is_idle() {
+                        break;
+                    }
+                }
+
+                let first_buffer = buffers[0].read(ctx);
+                for buffer in &buffers[1..] {
+                    let buffer = buffer.read(ctx);
+                    assert_eq!(buffer.text(), first_buffer.text());
+                    assert_eq!(
+                        buffer.all_selections().collect::<HashMap<_, _>>(),
+                        first_buffer.all_selections().collect::<HashMap<_, _>>()
+                    );
+                    assert_eq!(
+                        buffer.all_selection_ranges().collect::<HashMap<_, _>>(),
+                        first_buffer
+                            .all_selection_ranges()
+                            .collect::<HashMap<_, _>>()
+                    );
+                }
+            });
         }
     }
 
