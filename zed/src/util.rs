@@ -7,6 +7,29 @@ pub fn post_inc(value: &mut usize) -> usize {
     prev
 }
 
+/// Extend a sorted vector with a sorted sequence of items, maintaining the vector's sort order and
+/// enforcing a maximum length. Sort the items according to the given callback. Before calling this,
+/// both `vec` and `new_items` should already be sorted according to the `cmp` comparator.
+pub fn extend_sorted<T, I, F>(vec: &mut Vec<T>, new_items: I, limit: usize, mut cmp: F)
+where
+    I: IntoIterator<Item = T>,
+    F: FnMut(&T, &T) -> Ordering,
+{
+    let mut start_index = 0;
+    for new_item in new_items {
+        if let Err(i) = vec[start_index..].binary_search_by(|m| cmp(m, &new_item)) {
+            let index = start_index + i;
+            if vec.len() < limit {
+                vec.insert(index, new_item);
+            } else if index < vec.len() {
+                vec.pop();
+                vec.insert(index, new_item);
+            }
+            start_index = index;
+        }
+    }
+}
+
 pub fn find_insertion_index<'a, F, T, E>(slice: &'a [T], mut f: F) -> Result<usize, E>
 where
     F: FnMut(&'a T) -> Result<Ordering, E>,
@@ -68,5 +91,19 @@ mod tests {
             find_insertion_index(&[0, 4, 8], |probe| Ok::<Ordering, ()>(probe.cmp(&2))),
             Ok(1)
         );
+    }
+
+    #[test]
+    fn test_extend_sorted() {
+        let mut vec = vec![];
+
+        extend_sorted(&mut vec, vec![21, 17, 13, 8, 1, 0], 5, |a, b| b.cmp(a));
+        assert_eq!(vec, &[21, 17, 13, 8, 1]);
+
+        extend_sorted(&mut vec, vec![101, 19, 17, 8, 2], 8, |a, b| b.cmp(a));
+        assert_eq!(vec, &[101, 21, 19, 17, 13, 8, 2, 1]);
+
+        extend_sorted(&mut vec, vec![1000, 19, 17, 9, 5], 8, |a, b| b.cmp(a));
+        assert_eq!(vec, &[1000, 101, 21, 19, 17, 13, 9, 8]);
     }
 }

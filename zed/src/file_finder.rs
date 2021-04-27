@@ -30,6 +30,8 @@ pub struct FileFinder {
     query_buffer: ViewHandle<BufferView>,
     search_count: usize,
     latest_search_id: usize,
+    latest_search_did_cancel: bool,
+    latest_search_query: String,
     matches: Vec<PathMatch>,
     include_root_name: bool,
     selected: Option<Arc<Path>>,
@@ -293,6 +295,8 @@ impl FileFinder {
             query_buffer,
             search_count: 0,
             latest_search_id: 0,
+            latest_search_did_cancel: false,
+            latest_search_query: String::new(),
             matches: Vec::new(),
             include_root_name: false,
             selected: None,
@@ -395,10 +399,11 @@ impl FileFinder {
                 false,
                 false,
                 100,
-                cancel_flag,
+                cancel_flag.clone(),
                 pool,
             );
-            (search_id, include_root_name, matches)
+            let did_cancel = cancel_flag.load(atomic::Ordering::Relaxed);
+            (search_id, include_root_name, did_cancel, query, matches)
         });
 
         ctx.spawn(task, Self::update_matches).detach();
@@ -406,12 +411,24 @@ impl FileFinder {
 
     fn update_matches(
         &mut self,
-        (search_id, include_root_name, matches): (usize, bool, Vec<PathMatch>),
+        (search_id, include_root_name, did_cancel, query, matches): (
+            usize,
+            bool,
+            bool,
+            String,
+            Vec<PathMatch>,
+        ),
         ctx: &mut ViewContext<Self>,
     ) {
         if search_id >= self.latest_search_id {
             self.latest_search_id = search_id;
-            self.matches = matches;
+            if did_cancel && self.latest_search_did_cancel && query == self.latest_search_query {
+                util::extend_sorted(&mut self.matches, matches.into_iter(), 100, |a, b| b.cmp(a));
+            } else {
+                self.matches = matches;
+                self.latest_search_did_cancel = did_cancel;
+                self.latest_search_query = query;
+            }
             self.include_root_name = include_root_name;
             self.list_state.scroll_to(self.selected_index());
             ctx.notify();
@@ -432,9 +449,11 @@ mod tests {
     use super::*;
     use crate::{
         editor, settings,
+        test::temp_tree,
         workspace::{Workspace, WorkspaceView},
     };
     use gpui::App;
+    use serde_json::json;
     use smol::fs;
     use tempdir::TempDir;
 
@@ -505,6 +524,64 @@ mod tests {
             app.read(|ctx| {
                 let active_item = active_pane.read(ctx).active_item().unwrap();
                 assert_eq!(active_item.title(ctx), "bandana");
+            });
+        });
+    }
+
+    #[test]
+    fn test_matching_cancellation() {
+        App::test_async((), |mut app| async move {
+            let tmp_dir = temp_tree(json!({
+                "hello": "",
+                "goodbye": "",
+                "halogen-light": "",
+                "happiness": "",
+                "height": "",
+                "hi": "",
+                "hiccup": "",
+            }));
+            let settings = settings::channel(&app.font_cache()).unwrap().1;
+            let workspace = app.add_model(|ctx| Workspace::new(vec![tmp_dir.path().into()], ctx));
+            app.read(|ctx| workspace.read(ctx).worktree_scans_complete(ctx))
+                .await;
+            let (_, finder) =
+                app.add_window(|ctx| FileFinder::new(settings, workspace.clone(), ctx));
+
+            let query = "hi".to_string();
+            finder.update(&mut app, |f, ctx| f.spawn_search(query.clone(), ctx));
+            finder.condition(&app, |f, _| f.matches.len() == 5).await;
+
+            finder.update(&mut app, |finder, ctx| {
+                let matches = finder.matches.clone();
+
+                // Simulate a search being cancelled after the time limit,
+                // returning only a subset of the matches that would have been found.
+                finder.spawn_search(query.clone(), ctx);
+                finder.update_matches(
+                    (
+                        finder.latest_search_id,
+                        true,
+                        true, // did-cancel
+                        query.clone(),
+                        vec![matches[1].clone(), matches[3].clone()],
+                    ),
+                    ctx,
+                );
+
+                // Simulate another cancellation.
+                finder.spawn_search(query.clone(), ctx);
+                finder.update_matches(
+                    (
+                        finder.latest_search_id,
+                        true,
+                        true, // did-cancel
+                        query.clone(),
+                        vec![matches[0].clone(), matches[2].clone(), matches[3].clone()],
+                    ),
+                    ctx,
+                );
+
+                assert_eq!(finder.matches, matches[0..4])
             });
         });
     }

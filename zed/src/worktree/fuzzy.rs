@@ -36,13 +36,17 @@ impl Eq for PathMatch {}
 
 impl PartialOrd for PathMatch {
     fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
-        self.score.partial_cmp(&other.score)
+        Some(self.cmp(other))
     }
 }
 
 impl Ord for PathMatch {
     fn cmp(&self, other: &Self) -> Ordering {
-        self.partial_cmp(other).unwrap_or(Ordering::Equal)
+        self.score
+            .partial_cmp(&other.score)
+            .unwrap_or(Ordering::Equal)
+            .then_with(|| self.tree_id.cmp(&other.tree_id))
+            .then_with(|| Arc::as_ptr(&self.path).cmp(&Arc::as_ptr(&other.path)))
     }
 }
 
@@ -150,7 +154,7 @@ where
         .flatten()
         .map(|r| r.0)
         .collect::<Vec<_>>();
-    results.sort_unstable_by(|a, b| b.score.partial_cmp(&a.score).unwrap());
+    results.sort_unstable_by(|a, b| b.cmp(&a));
     results.truncate(max_results);
     results
 }
