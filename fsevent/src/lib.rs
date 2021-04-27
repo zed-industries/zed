@@ -148,19 +148,25 @@ impl EventStream {
                 let path_c_str = CStr::from_ptr(paths[p]);
                 let path = PathBuf::from(OsStr::from_bytes(path_c_str.to_bytes()));
                 if let Some(flag) = StreamFlags::from_bits(flags[p]) {
-                    events.push(Event {
-                        event_id: ids[p],
-                        flags: flag,
-                        path,
-                    });
+                    if flag.contains(StreamFlags::HISTORY_DONE) {
+                        events.clear();
+                    } else {
+                        events.push(Event {
+                            event_id: ids[p],
+                            flags: flag,
+                            path,
+                        });
+                    }
                 } else {
                     debug_assert!(false, "unknown flag set for fs event: {}", flags[p]);
                 }
             }
 
-            if !callback(events) {
-                fs::FSEventStreamStop(stream_ref);
-                cf::CFRunLoopStop(cf::CFRunLoopGetCurrent());
+            if !events.is_empty() {
+                if !callback(events) {
+                    fs::FSEventStreamStop(stream_ref);
+                    cf::CFRunLoopStop(cf::CFRunLoopGetCurrent());
+                }
             }
         }
     }
