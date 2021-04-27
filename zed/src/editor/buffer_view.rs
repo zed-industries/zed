@@ -322,7 +322,7 @@ impl BufferView {
         };
 
         if !add {
-            self.update_selections(Vec::new(), ctx);
+            self.update_selections(Vec::new(), false, ctx);
         }
         self.pending_selection = Some(selection);
 
@@ -357,7 +357,7 @@ impl BufferView {
             let ix = self.selection_insertion_index(&selection.start, ctx.as_ref());
             let mut selections = self.selections(ctx.as_ref()).to_vec();
             selections.insert(ix, selection);
-            self.update_selections(selections, ctx);
+            self.update_selections(selections, false, ctx);
         } else {
             log::error!("end_selection dispatched with no pending selection");
         }
@@ -382,7 +382,7 @@ impl BufferView {
                 goal_column: None,
             });
         }
-        self.update_selections(selections, ctx);
+        self.update_selections(selections, false, ctx);
         Ok(())
     }
 
@@ -401,7 +401,7 @@ impl BufferView {
                 goal_column: None,
             });
         }
-        self.update_selections(selections, ctx);
+        self.update_selections(selections, false, ctx);
         Ok(())
     }
 
@@ -445,7 +445,7 @@ impl BufferView {
                 .collect();
         });
 
-        self.update_selections(new_selections, ctx);
+        self.update_selections(new_selections, true, ctx);
         self.end_transaction(ctx);
     }
 
@@ -482,8 +482,7 @@ impl BufferView {
             }
         }
 
-        self.update_selections(selections, ctx);
-        self.changed_selections(ctx);
+        self.update_selections(selections, true, ctx);
         self.insert(&String::new(), ctx);
         self.end_transaction(ctx);
     }
@@ -517,8 +516,7 @@ impl BufferView {
                 });
             }
         }
-        self.update_selections(selections, ctx);
-        self.changed_selections(ctx);
+        self.update_selections(selections, true, ctx);
         self.insert(&String::new(), ctx);
         self.end_transaction(ctx);
 
@@ -607,7 +605,7 @@ impl BufferView {
                         });
                     });
                 }
-                self.update_selections(new_selections, ctx);
+                self.update_selections(new_selections, true, ctx);
                 self.end_transaction(ctx);
             } else {
                 self.insert(clipboard_text, ctx);
@@ -647,8 +645,7 @@ impl BufferView {
                 selection.goal_column = None;
             }
         }
-        self.update_selections(selections, ctx);
-        self.changed_selections(ctx);
+        self.update_selections(selections, true, ctx);
     }
 
     pub fn select_left(&mut self, _: &(), ctx: &mut ViewContext<Self>) {
@@ -672,8 +669,7 @@ impl BufferView {
                 selection.goal_column = None;
             }
         }
-        self.update_selections(selections, ctx);
-        self.changed_selections(ctx);
+        self.update_selections(selections, true, ctx);
     }
 
     pub fn move_right(&mut self, _: &(), ctx: &mut ViewContext<Self>) {
@@ -698,8 +694,7 @@ impl BufferView {
                 selection.goal_column = None;
             }
         }
-        self.update_selections(selections, ctx);
-        self.changed_selections(ctx);
+        self.update_selections(selections, true, ctx);
     }
 
     pub fn select_right(&mut self, _: &(), ctx: &mut ViewContext<Self>) {
@@ -720,8 +715,7 @@ impl BufferView {
                 selection.goal_column = None;
             }
         }
-        self.update_selections(selections, ctx);
-        self.changed_selections(ctx);
+        self.update_selections(selections, true, ctx);
     }
 
     pub fn move_up(&mut self, _: &(), ctx: &mut ViewContext<Self>) {
@@ -748,8 +742,7 @@ impl BufferView {
                     selection.reversed = false;
                 }
             }
-            self.update_selections(selections, ctx);
-            self.changed_selections(ctx);
+            self.update_selections(selections, true, ctx);
         }
     }
 
@@ -770,8 +763,7 @@ impl BufferView {
                     selection.goal_column = goal_column;
                 }
             }
-            self.update_selections(selections, ctx);
-            self.changed_selections(ctx);
+            self.update_selections(selections, true, ctx);
         }
     }
 
@@ -799,8 +791,7 @@ impl BufferView {
                     selection.reversed = false;
                 }
             }
-            self.update_selections(selections, ctx);
-            self.changed_selections(ctx);
+            self.update_selections(selections, true, ctx);
         }
     }
 
@@ -821,29 +812,8 @@ impl BufferView {
                     selection.goal_column = goal_column;
                 }
             }
-            self.update_selections(selections, ctx);
-            self.changed_selections(ctx);
+            self.update_selections(selections, true, ctx);
         }
-    }
-
-    pub fn changed_selections(&mut self, ctx: &mut ViewContext<Self>) {
-        self.pause_cursor_blinking(ctx);
-        *self.autoscroll_requested.lock() = true;
-        ctx.notify();
-    }
-
-    pub fn first_selection(&self, app: &AppContext) -> Range<DisplayPoint> {
-        self.selections(app)
-            .first()
-            .unwrap()
-            .display_range(self.display_map.read(app), app)
-    }
-
-    pub fn last_selection(&self, app: &AppContext) -> Range<DisplayPoint> {
-        self.selections(app)
-            .last()
-            .unwrap()
-            .display_range(self.display_map.read(app), app)
     }
 
     pub fn selections_in_range<'a>(
@@ -894,7 +864,12 @@ impl BufferView {
             .unwrap()
     }
 
-    fn update_selections(&self, mut selections: Vec<Selection>, ctx: &mut ViewContext<Self>) {
+    fn update_selections(
+        &mut self,
+        mut selections: Vec<Selection>,
+        autoscroll: bool,
+        ctx: &mut ViewContext<Self>,
+    ) {
         // Merge overlapping selections.
         let buffer = self.buffer.read(ctx);
         let mut i = 1;
@@ -922,6 +897,12 @@ impl BufferView {
                 .update_selection_set(self.selection_set_id, selections, Some(ctx))
                 .unwrap()
         });
+        self.pause_cursor_blinking(ctx);
+
+        if autoscroll {
+            *self.autoscroll_requested.lock() = true;
+            ctx.notify();
+        }
     }
 
     fn start_transaction(&self, ctx: &mut ViewContext<Self>) {
