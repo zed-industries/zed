@@ -30,6 +30,7 @@ const CURSOR_BLINK_INTERVAL: Duration = Duration::from_millis(500);
 pub fn init(app: &mut MutableAppContext) {
     app.add_bindings(vec![
         Binding::new("backspace", "buffer:backspace", Some("BufferView")),
+        Binding::new("delete", "buffer:delete", Some("BufferView")),
         Binding::new("enter", "buffer:newline", Some("BufferView")),
         Binding::new("cmd-x", "buffer:cut", Some("BufferView")),
         Binding::new("cmd-c", "buffer:copy", Some("BufferView")),
@@ -61,6 +62,7 @@ pub fn init(app: &mut MutableAppContext) {
     app.add_action("buffer:insert", BufferView::insert);
     app.add_action("buffer:newline", BufferView::newline);
     app.add_action("buffer:backspace", BufferView::backspace);
+    app.add_action("buffer:delete", BufferView::delete);
     app.add_action("buffer:cut", BufferView::cut);
     app.add_action("buffer:copy", BufferView::copy);
     app.add_action("buffer:paste", BufferView::paste);
@@ -475,6 +477,36 @@ impl BufferView {
                         .anchor_before(
                             movement::left(map, head, ctx.as_ref()).unwrap(),
                             Bias::Left,
+                            ctx.as_ref(),
+                        )
+                        .unwrap();
+                    selection.set_head(&buffer, cursor);
+                    selection.goal_column = None;
+                }
+            }
+        }
+
+        self.update_selections(selections, true, ctx);
+        self.insert(&String::new(), ctx);
+        self.end_transaction(ctx);
+    }
+
+    pub fn delete(&mut self, _: &(), ctx: &mut ViewContext<Self>) {
+        self.start_transaction(ctx);
+        let mut selections = self.selections(ctx.as_ref()).to_vec();
+        {
+            let buffer = self.buffer.read(ctx);
+            let map = self.display_map.read(ctx);
+            for selection in &mut selections {
+                if selection.range(buffer).is_empty() {
+                    let head = selection
+                        .head()
+                        .to_display_point(map, ctx.as_ref())
+                        .unwrap();
+                    let cursor = map
+                        .anchor_before(
+                            movement::right(map, head, ctx.as_ref()).unwrap(),
+                            Bias::Right,
                             ctx.as_ref(),
                         )
                         .unwrap();
@@ -1711,6 +1743,43 @@ mod tests {
             assert_eq!(
                 buffer.read(app).text(),
                 "oe two three\nfou five six\nseven ten\n"
+            );
+        })
+    }
+
+    #[test]
+    fn test_delete() {
+        App::test((), |app| {
+            let buffer = app.add_model(|ctx| {
+                Buffer::new(
+                    0,
+                    "one two three\nfour five six\nseven eight nine\nten\n",
+                    ctx,
+                )
+            });
+            let settings = settings::channel(&app.font_cache()).unwrap().1;
+            let (_, view) =
+                app.add_window(|ctx| BufferView::for_buffer(buffer.clone(), settings, ctx));
+
+            view.update(app, |view, ctx| {
+                view.select_display_ranges(
+                    &[
+                        // an empty selection - the following character is deleted
+                        DisplayPoint::new(0, 2)..DisplayPoint::new(0, 2),
+                        // one character selected - it is deleted
+                        DisplayPoint::new(1, 3)..DisplayPoint::new(1, 4),
+                        // a line suffix selected - it is deleted
+                        DisplayPoint::new(2, 6)..DisplayPoint::new(3, 0),
+                    ],
+                    ctx,
+                )
+                .unwrap();
+                view.delete(&(), ctx);
+            });
+
+            assert_eq!(
+                buffer.read(app).text(),
+                "on two three\nfou five six\nseven ten\n"
             );
         })
     }
