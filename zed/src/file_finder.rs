@@ -422,13 +422,13 @@ impl FileFinder {
     ) {
         if search_id >= self.latest_search_id {
             self.latest_search_id = search_id;
-            if did_cancel && self.latest_search_did_cancel && query == self.latest_search_query {
+            if self.latest_search_did_cancel && query == self.latest_search_query {
                 util::extend_sorted(&mut self.matches, matches.into_iter(), 100, |a, b| b.cmp(a));
             } else {
                 self.matches = matches;
-                self.latest_search_did_cancel = did_cancel;
-                self.latest_search_query = query;
             }
+            self.latest_search_query = query;
+            self.latest_search_did_cancel = did_cancel;
             self.include_root_name = include_root_name;
             self.list_state.scroll_to(self.selected_index());
             ctx.notify();
