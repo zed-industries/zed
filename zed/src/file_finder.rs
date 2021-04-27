@@ -32,7 +32,7 @@ pub struct FileFinder {
     latest_search_id: usize,
     matches: Vec<PathMatch>,
     include_root_name: bool,
-    selected: usize,
+    selected: Option<Arc<Path>>,
     cancel_flag: Arc<AtomicBool>,
     list_state: UniformListState,
 }
@@ -224,12 +224,13 @@ impl FileFinder {
             )
             .with_uniform_padding(6.0);
 
-            if index == self.selected || index < self.matches.len() - 1 {
+            let selected_index = self.selected_index();
+            if index == selected_index || index < self.matches.len() - 1 {
                 container =
                     container.with_border(Border::bottom(1.0, ColorU::from_u32(0xdbdbdcff)));
             }
 
-            if index == self.selected {
+            if index == selected_index {
                 container = container.with_background_color(ColorU::from_u32(0xdbdbdcff));
             }
 
@@ -294,7 +295,7 @@ impl FileFinder {
             latest_search_id: 0,
             matches: Vec::new(),
             include_root_name: false,
-            selected: 0,
+            selected: None,
             cancel_flag: Arc::new(AtomicBool::new(false)),
             list_state: UniformListState::new(),
         }
@@ -327,19 +328,34 @@ impl FileFinder {
         }
     }
 
-    fn select_prev(&mut self, _: &(), ctx: &mut ViewContext<Self>) {
-        if self.selected > 0 {
-            self.selected -= 1;
+    fn selected_index(&self) -> usize {
+        if let Some(selected) = self.selected.as_ref() {
+            for (ix, path_match) in self.matches.iter().enumerate() {
+                if path_match.path.as_ref() == selected.as_ref() {
+                    return ix;
+                }
+            }
         }
-        self.list_state.scroll_to(self.selected);
+        0
+    }
+
+    fn select_prev(&mut self, _: &(), ctx: &mut ViewContext<Self>) {
+        let mut selected_index = self.selected_index();
+        if selected_index > 0 {
+            selected_index -= 1;
+            self.selected = Some(self.matches[selected_index].path.clone());
+        }
+        self.list_state.scroll_to(selected_index);
         ctx.notify();
     }
 
     fn select_next(&mut self, _: &(), ctx: &mut ViewContext<Self>) {
-        if self.selected + 1 < self.matches.len() {
-            self.selected += 1;
+        let mut selected_index = self.selected_index();
+        if selected_index + 1 < self.matches.len() {
+            selected_index += 1;
+            self.selected = Some(self.matches[selected_index].path.clone());
         }
-        self.list_state.scroll_to(self.selected);
+        self.list_state.scroll_to(selected_index);
         ctx.notify();
     }
 
@@ -348,7 +364,7 @@ impl FileFinder {
     }
 
     fn confirm(&mut self, _: &(), ctx: &mut ViewContext<Self>) {
-        if let Some(m) = self.matches.get(self.selected) {
+        if let Some(m) = self.matches.get(self.selected_index()) {
             ctx.emit(Event::Selected(m.tree_id, m.path.clone()));
         }
     }
@@ -397,8 +413,7 @@ impl FileFinder {
             self.latest_search_id = search_id;
             self.matches = matches;
             self.include_root_name = include_root_name;
-            self.selected = 0;
-            self.list_state.scroll_to(0);
+            self.list_state.scroll_to(self.selected_index());
             ctx.notify();
         }
     }

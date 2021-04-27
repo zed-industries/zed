@@ -187,8 +187,8 @@ fn match_single_tree_paths<'a>(
         .map(|c| c.to_ascii_lowercase())
         .collect::<Vec<_>>();
 
-    for path_entry in path_entries {
-        if !path_entry.char_bag.is_superset(query_chars) {
+    for candidate in path_entries {
+        if !candidate.char_bag.is_superset(query_chars) {
             continue;
         }
 
@@ -198,7 +198,7 @@ fn match_single_tree_paths<'a>(
 
         path_chars.clear();
         lowercase_path_chars.clear();
-        for c in path_entry.path.to_string_lossy().chars() {
+        for c in candidate.path.to_string_lossy().chars() {
             path_chars.push(c);
             lowercase_path_chars.push(c.to_ascii_lowercase());
         }
@@ -236,7 +236,7 @@ fn match_single_tree_paths<'a>(
         if score > 0.0 {
             results.push(Reverse(PathMatch {
                 tree_id: snapshot.id,
-                path: path_entry.path.clone(),
+                path: candidate.path.clone(),
                 score,
                 positions: match_positions.clone(),
             }));
