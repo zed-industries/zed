@@ -1934,6 +1934,47 @@ mod tests {
     }
 
     #[test]
+    fn test_delete_lines() {
+        App::test((), |app| {
+            let settings = settings::channel(&app.font_cache()).unwrap().1;
+            let buffer = app.add_model(|ctx| Buffer::new(0, "abc\ndef\nghi\n", ctx));
+            let (_, view) = app.add_window(|ctx| BufferView::for_buffer(buffer, settings, ctx));
+            view.update(app, |view, ctx| {
+                view.select_display_ranges(
+                    &[
+                        DisplayPoint::new(0, 1)..DisplayPoint::new(0, 1),
+                        DisplayPoint::new(1, 0)..DisplayPoint::new(1, 1),
+                        DisplayPoint::new(3, 0)..DisplayPoint::new(3, 0),
+                    ],
+                    ctx,
+                )
+                .unwrap();
+                view.delete_line(&(), ctx);
+            });
+            assert_eq!(view.read(app).text(app.as_ref()), "ghi");
+            assert_eq!(
+                view.read(app).selection_ranges(app.as_ref()),
+                vec![
+                    DisplayPoint::new(0, 1)..DisplayPoint::new(0, 1),
+                    DisplayPoint::new(0, 3)..DisplayPoint::new(0, 3)
+                ]
+            );
+
+            // view.undo(&(), ctx);
+            // view.select_display_ranges(
+            //     &[
+            //         DisplayPoint::new(0, 1)..DisplayPoint::new(0, 1),
+            //         DisplayPoint::new(1, 0)..DisplayPoint::new(1, 1),
+            //         DisplayPoint::new(3, 0)..DisplayPoint::new(3, 0),
+            //     ],
+            //     ctx,
+            // )
+            // .unwrap();
+            // });
+        });
+    }
+
+    #[test]
     fn test_clipboard() {
         App::test((), |app| {
             let buffer = app.add_model(|ctx| Buffer::new(0, "one two three four five six ", ctx));
