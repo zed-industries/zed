@@ -32,6 +32,7 @@ pub fn init(app: &mut MutableAppContext) {
         Binding::new("backspace", "buffer:backspace", Some("BufferView")),
         Binding::new("delete", "buffer:delete", Some("BufferView")),
         Binding::new("enter", "buffer:newline", Some("BufferView")),
+        Binding::new("ctrl-shift-K", "buffer:delete_line", Some("BufferView")),
         Binding::new("cmd-x", "buffer:cut", Some("BufferView")),
         Binding::new("cmd-c", "buffer:copy", Some("BufferView")),
         Binding::new("cmd-v", "buffer:paste", Some("BufferView")),
@@ -71,6 +72,7 @@ pub fn init(app: &mut MutableAppContext) {
     app.add_action("buffer:newline", BufferView::newline);
     app.add_action("buffer:backspace", BufferView::backspace);
     app.add_action("buffer:delete", BufferView::delete);
+    app.add_action("buffer:delete_line", BufferView::delete_line);
     app.add_action("buffer:cut", BufferView::cut);
     app.add_action("buffer:copy", BufferView::copy);
     app.add_action("buffer:paste", BufferView::paste);
@@ -533,6 +535,74 @@ impl BufferView {
 
         self.update_selections(selections, true, ctx);
         self.insert(&String::new(), ctx);
+        self.end_transaction(ctx);
+    }
+
+    pub fn delete_line(&mut self, _: &(), ctx: &mut ViewContext<Self>) {
+        self.start_transaction(ctx);
+
+        let app = ctx.as_ref();
+        let buffer = self.buffer.read(app);
+
+        // Accumulate contiguous regions of rows that we want to delete.
+        let mut row_ranges: Vec<(u32, Range<u32>)> = Vec::new();
+        for selection in self.selections(app) {
+            let start = selection.start.to_point(buffer).unwrap();
+            let end = selection.end.to_point(buffer).unwrap();
+            let goal_column = if selection.reversed {
+                start.column
+            } else {
+                end.column
+            };
+
+            if let Some((_, last_row_range)) = row_ranges.last_mut() {
+                if start.row <= last_row_range.end {
+                    *last_row_range = last_row_range.start..start.row + 1;
+                } else {
+                    row_ranges.push((goal_column, start.row..end.row + 1));
+                }
+            } else {
+                row_ranges.push((goal_column, start.row..end.row + 1));
+            }
+        }
+
+        let mut edit_ranges = Vec::new();
+        let mut new_selections = Vec::new();
+        for (goal_column, range) in row_ranges {
+            let mut start = Point::new(range.start, 0).to_offset(buffer).unwrap();
+            let end;
+            let mut cursor;
+
+            if let Ok(end_offset) = Point::new(range.end, 0).to_offset(buffer) {
+                // If there's a line after the range, delete the \n from the end of the row range
+                // and position the cursor on the next line.
+                end = end_offset;
+                cursor = Point::new(range.end, goal_column);
+            } else {
+                // If there isn't a line after the range, delete the \n from the line before the
+                // start of the row range and position the cursor there.
+                start = start.saturating_sub(1);
+                end = buffer.len();
+                cursor = Point::new(range.start.saturating_sub(1), goal_column);
+            }
+            // We tried to maintain the column of the original cursors but the new lines may be
+            // shorter, so clip the new cursor's column.
+            cursor.column = cmp::min(cursor.column, buffer.line_len(cursor.row).unwrap());
+            let cursor = buffer.anchor_before(cursor).unwrap();
+
+            edit_ranges.push(start..end);
+            new_selections.push(Selection {
+                start: cursor.clone(),
+                end: cursor,
+                reversed: false,
+                goal_column: None,
+            });
+        }
+
+        self.update_selections(new_selections, true, ctx);
+        self.buffer
+            .update(ctx, |buffer, ctx| buffer.edit(edit_ranges, "", Some(ctx)))
+            .unwrap();
         self.end_transaction(ctx);
     }
 
