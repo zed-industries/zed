@@ -1,8 +1,8 @@
 use super::{char_bag::CharBag, EntryKind, Snapshot};
+use crate::util;
 use gpui::scoped_pool;
 use std::{
-    cmp::{max, min, Ordering, Reverse},
-    collections::BinaryHeap,
+    cmp::{max, min, Ordering},
     path::Path,
     sync::atomic::{self, AtomicBool},
     sync::Arc,
@@ -78,7 +78,9 @@ where
     };
 
     let segment_size = (path_count + cpus - 1) / cpus;
-    let mut segment_results = (0..cpus).map(|_| BinaryHeap::new()).collect::<Vec<_>>();
+    let mut segment_results = (0..cpus)
+        .map(|_| Vec::with_capacity(max_results))
+        .collect::<Vec<_>>();
 
     pool.scoped(|scope| {
         for (segment_idx, results) in segment_results.iter_mut().enumerate() {
@@ -149,13 +151,14 @@ where
         }
     });
 
-    let mut results = segment_results
-        .into_iter()
-        .flatten()
-        .map(|r| r.0)
-        .collect::<Vec<_>>();
-    results.sort_unstable_by(|a, b| b.cmp(&a));
-    results.truncate(max_results);
+    let mut results = Vec::new();
+    for segment_result in segment_results {
+        if results.is_empty() {
+            results = segment_result;
+        } else {
+            util::extend_sorted(&mut results, segment_result, max_results, |a, b| b.cmp(&a));
+        }
+    }
     results
 }
 
@@ -167,7 +170,7 @@ fn match_single_tree_paths<'a>(
     lowercase_query: &[char],
     query_chars: CharBag,
     smart_case: bool,
-    results: &mut BinaryHeap<Reverse<PathMatch>>,
+    results: &mut Vec<PathMatch>,
     max_results: usize,
     min_score: &mut f64,
     match_positions: &mut Vec<usize>,
@@ -238,14 +241,22 @@ fn match_single_tree_paths<'a>(
         );
 
         if score > 0.0 {
-            results.push(Reverse(PathMatch {
+            let mat = PathMatch {
                 tree_id: snapshot.id,
                 path: candidate.path.clone(),
                 score,
                 positions: match_positions.clone(),
-            }));
-            if results.len() == max_results {
-                *min_score = results.peek().unwrap().0.score;
+            };
+            if let Err(i) = results.binary_search_by(|m| mat.cmp(&m)) {
+                if results.len() < max_results {
+                    results.insert(i, mat);
+                } else if i < results.len() {
+                    results.pop();
+                    results.insert(i, mat);
+                }
+                if results.len() == max_results {
+                    *min_score = results.last().unwrap().score;
+                }
             }
         }
     }
@@ -564,7 +575,7 @@ mod tests {
         last_positions.resize(query.len(), 0);
 
         let cancel_flag = AtomicBool::new(false);
-        let mut results = BinaryHeap::new();
+        let mut results = Vec::new();
         match_single_tree_paths(
             &Snapshot {
                 id: 0,
@@ -592,15 +603,14 @@ mod tests {
 
         results
             .into_iter()
-            .rev()
             .map(|result| {
                 (
                     paths
                         .iter()
                         .copied()
-                        .find(|p| result.0.path.as_ref() == Path::new(p))
+                        .find(|p| result.path.as_ref() == Path::new(p))
                         .unwrap(),
-                    result.0.positions,
+                    result.positions,
                 )
             })
             .collect()
