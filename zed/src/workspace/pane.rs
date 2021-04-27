@@ -183,54 +183,61 @@ impl Pane {
         let mut row = Flex::row();
         let last_item_ix = self.items.len() - 1;
         for (ix, item) in self.items.iter().enumerate() {
-            let title = item.title(ctx);
-
-            let mut border = Border::new(1.0, border_color);
-            border.left = ix > 0;
-            border.right = ix == last_item_ix;
-            border.bottom = ix != self.active_item;
-
-            let padding = 6.;
-            let mut container = Container::new(
-                Stack::new()
-                    .with_child(
-                        Align::new(
-                            Label::new(title, settings.ui_font_family, settings.ui_font_size)
-                                .boxed(),
-                        )
-                        .boxed(),
-                    )
-                    .with_child(
-                        LineBox::new(
-                            settings.ui_font_family,
-                            settings.ui_font_size,
-                            Align::new(Self::render_modified_icon(item.is_dirty(ctx)))
-                                .right()
-                                .boxed(),
-                        )
-                        .boxed(),
-                    )
-                    .boxed(),
-            )
-            .with_vertical_padding(padding)
-            .with_horizontal_padding(10.)
-            .with_border(border);
-
-            if ix == self.active_item {
-                container = container
-                    .with_background_color(ColorU::white())
-                    .with_padding_bottom(padding + border.width);
-            } else {
-                container = container.with_background_color(ColorU::from_u32(0xeaeaebff));
-            }
-
             enum Tab {}
 
             row.add_child(
                 Expanded::new(
                     1.0,
                     MouseEventHandler::new::<Tab, _>(item.id(), ctx, |mouse_state| {
-                        log::info!("mouse event handler {:?}", mouse_state);
+                        let title = item.title(ctx);
+
+                        let mut border = Border::new(1.0, border_color);
+                        border.left = ix > 0;
+                        border.right = ix == last_item_ix;
+                        border.bottom = ix != self.active_item;
+
+                        let padding = 6.;
+                        let mut container = Container::new(
+                            Stack::new()
+                                .with_child(
+                                    Align::new(
+                                        Label::new(
+                                            title,
+                                            settings.ui_font_family,
+                                            settings.ui_font_size,
+                                        )
+                                        .boxed(),
+                                    )
+                                    .boxed(),
+                                )
+                                .with_child(
+                                    LineBox::new(
+                                        settings.ui_font_family,
+                                        settings.ui_font_size,
+                                        Align::new(Self::render_tab_icon(
+                                            mouse_state.hovered,
+                                            item.is_dirty(ctx),
+                                        ))
+                                        .right()
+                                        .boxed(),
+                                    )
+                                    .boxed(),
+                                )
+                                .boxed(),
+                        )
+                        .with_vertical_padding(padding)
+                        .with_horizontal_padding(10.)
+                        .with_border(border);
+
+                        if ix == self.active_item {
+                            container = container
+                                .with_background_color(ColorU::white())
+                                .with_padding_bottom(padding + border.width);
+                        } else {
+                            container =
+                                container.with_background_color(ColorU::from_u32(0xeaeaebff));
+                        }
+
                         ConstrainedBox::new(
                             EventHandler::new(container.boxed())
                                 .on_mouse_down(move |ctx| {
@@ -290,25 +297,36 @@ impl Pane {
         row.named("tabs")
     }
 
-    fn render_modified_icon(is_modified: bool) -> ElementBox {
-        let diameter = 8.;
-        ConstrainedBox::new(
-            Canvas::new(move |bounds, ctx| {
-                if is_modified {
-                    let square = RectF::new(bounds.origin(), vec2f(diameter, diameter));
-                    ctx.scene.push_quad(Quad {
-                        bounds: square,
-                        background: Some(ColorF::new(0.639, 0.839, 1.0, 1.0).to_u8()),
-                        border: Default::default(),
-                        corner_radius: diameter / 2.,
-                    });
-                }
-            })
-            .boxed(),
-        )
-        .with_width(diameter)
-        .with_height(diameter)
-        .named("tab-right-icon")
+    fn render_tab_icon(tab_hovered: bool, is_modified: bool) -> ElementBox {
+        let modified_color = ColorU::from_u32(0x556de8ff);
+        if tab_hovered {
+            let mut icon = Svg::new("icons/x.svg");
+            if is_modified {
+                icon = icon.with_color(modified_color);
+            }
+            ConstrainedBox::new(icon.boxed())
+                .with_width(10.)
+                .named("close-tab-icon")
+        } else {
+            let diameter = 8.;
+            ConstrainedBox::new(
+                Canvas::new(move |bounds, ctx| {
+                    if is_modified {
+                        let square = RectF::new(bounds.origin(), vec2f(diameter, diameter));
+                        ctx.scene.push_quad(Quad {
+                            bounds: square,
+                            background: Some(modified_color),
+                            border: Default::default(),
+                            corner_radius: diameter / 2.,
+                        });
+                    }
+                })
+                .boxed(),
+            )
+            .with_width(diameter)
+            .with_height(diameter)
+            .named("unsaved-tab-icon")
+        }
     }
 }
 

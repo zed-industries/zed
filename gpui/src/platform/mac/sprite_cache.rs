@@ -9,7 +9,7 @@ use crate::{
 use etagere::BucketedAtlasAllocator;
 use metal::{MTLPixelFormat, TextureDescriptor};
 use ordered_float::OrderedFloat;
-use std::{collections::HashMap, sync::Arc};
+use std::{borrow::Cow, collections::HashMap, sync::Arc};
 
 #[derive(Hash, Eq, PartialEq)]
 struct GlyphDescriptor {
@@ -29,7 +29,7 @@ pub struct GlyphSprite {
 
 #[derive(Hash, Eq, PartialEq)]
 struct IconDescriptor {
-    path: String,
+    path: Cow<'static, str>,
     width: i32,
     height: i32,
 }
@@ -138,7 +138,7 @@ impl SpriteCache {
     pub fn render_icon(
         &mut self,
         size: Vector2F,
-        path: String,
+        path: Cow<'static, str>,
         svg: usvg::Tree,
         scale_factor: f32,
     ) -> IconSprite {

@@ -12,8 +12,8 @@ pub struct MouseEventHandler {
 
 #[derive(Clone, Copy, Debug, Default)]
 pub struct MouseState {
-    hovered: bool,
-    clicked: bool,
+    pub hovered: bool,
+    pub clicked: bool,
 }
 
 impl MouseEventHandler {
