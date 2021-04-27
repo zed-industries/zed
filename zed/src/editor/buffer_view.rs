@@ -41,6 +41,8 @@ pub fn init(app: &mut MutableAppContext) {
         Binding::new("down", "buffer:move_down", Some("BufferView")),
         Binding::new("left", "buffer:move_left", Some("BufferView")),
         Binding::new("right", "buffer:move_right", Some("BufferView")),
+        Binding::new("cmd-up", "buffer:move_to_beginning", Some("BufferView")),
+        Binding::new("cmd-down", "buffer:move_to_end", Some("BufferView")),
         Binding::new("shift-up", "buffer:select_up", Some("BufferView")),
         Binding::new("shift-down", "buffer:select_down", Some("BufferView")),
         Binding::new("shift-left", "buffer:select_left", Some("BufferView")),
@@ -72,6 +74,8 @@ pub fn init(app: &mut MutableAppContext) {
     app.add_action("buffer:move_down", BufferView::move_down);
     app.add_action("buffer:move_left", BufferView::move_left);
     app.add_action("buffer:move_right", BufferView::move_right);
+    app.add_action("buffer:move_to_beginning", BufferView::move_to_beginning);
+    app.add_action("buffer:move_to_end", BufferView::move_to_end);
     app.add_action("buffer:select_up", BufferView::select_up);
     app.add_action("buffer:select_down", BufferView::select_down);
     app.add_action("buffer:select_left", BufferView::select_left);
@@ -850,6 +854,26 @@ impl BufferView {
         }
     }
 
+    pub fn move_to_beginning(&mut self, _: &(), ctx: &mut ViewContext<Self>) {
+        let selection = Selection {
+            start: Anchor::Start,
+            end: Anchor::Start,
+            reversed: false,
+            goal_column: None,
+        };
+        self.update_selections(vec![selection], true, ctx);
+    }
+
+    pub fn move_to_end(&mut self, _: &(), ctx: &mut ViewContext<Self>) {
+        let selection = Selection {
+            start: Anchor::End,
+            end: Anchor::End,
+            reversed: false,
+            goal_column: None,
+        };
+        self.update_selections(vec![selection], true, ctx);
+    }
+
     pub fn select_all(&mut self, _: &(), ctx: &mut ViewContext<Self>) {
         let selection = Selection {
             start: Anchor::Start,
@@ -1442,7 +1466,6 @@ impl workspace::ItemView for BufferView {
 mod tests {
     use super::*;
     use crate::{editor::Point, settings, test::sample_text};
-    use anyhow::Error;
     use gpui::App;
     use unindent::Unindent;
 
@@ -1674,7 +1697,7 @@ mod tests {
     }
 
     #[test]
-    fn test_move_cursor() -> Result<()> {
+    fn test_move_cursor() {
         App::test((), |app| {
             let buffer = app.add_model(|ctx| Buffer::new(0, sample_text(6, 6), ctx));
             let settings = settings::channel(&app.font_cache()).unwrap().1;
@@ -1682,15 +1705,17 @@ mod tests {
                 app.add_window(|ctx| BufferView::for_buffer(buffer.clone(), settings, ctx));
 
             buffer.update(app, |buffer, ctx| {
-                buffer.edit(
-                    vec![
-                        Point::new(1, 0)..Point::new(1, 0),
-                        Point::new(1, 1)..Point::new(1, 1),
-                    ],
-                    "\t",
-                    Some(ctx),
-                )
-            })?;
+                buffer
+                    .edit(
+                        vec![
+                            Point::new(1, 0)..Point::new(1, 0),
+                            Point::new(1, 1)..Point::new(1, 1),
+                        ],
+                        "\t",
+                        Some(ctx),
+                    )
+                    .unwrap();
+            });
 
             view.update(app, |view, ctx| {
                 view.move_down(&(), ctx);
@@ -1698,16 +1723,38 @@ mod tests {
                     view.selection_ranges(ctx.as_ref()),
                     &[DisplayPoint::new(1, 0)..DisplayPoint::new(1, 0)]
                 );
+
                 view.move_right(&(), ctx);
                 assert_eq!(
                     view.selection_ranges(ctx.as_ref()),
                     &[DisplayPoint::new(1, 4)..DisplayPoint::new(1, 4)]
                 );
-                Ok::<(), Error>(())
-            })?;
 
-            Ok(())
-        })
+                view.move_left(&(), ctx);
+                assert_eq!(
+                    view.selection_ranges(ctx.as_ref()),
+                    &[DisplayPoint::new(1, 0)..DisplayPoint::new(1, 0)]
+                );
+
+                view.move_up(&(), ctx);
+                assert_eq!(
+                    view.selection_ranges(ctx.as_ref()),
+                    &[DisplayPoint::new(0, 0)..DisplayPoint::new(0, 0)]
+                );
+
+                view.move_to_end(&(), ctx);
+                assert_eq!(
+                    view.selection_ranges(ctx.as_ref()),
+                    &[DisplayPoint::new(5, 6)..DisplayPoint::new(5, 6)]
+                );
+
+                view.move_to_beginning(&(), ctx);
+                assert_eq!(
+                    view.selection_ranges(ctx.as_ref()),
+                    &[DisplayPoint::new(0, 0)..DisplayPoint::new(0, 0)]
+                );
+            });
+        });
     }
 
     #[test]
