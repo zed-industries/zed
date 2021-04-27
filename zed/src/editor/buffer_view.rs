@@ -47,6 +47,12 @@ pub fn init(app: &mut MutableAppContext) {
         Binding::new("shift-down", "buffer:select_down", Some("BufferView")),
         Binding::new("shift-left", "buffer:select_left", Some("BufferView")),
         Binding::new("shift-right", "buffer:select_right", Some("BufferView")),
+        Binding::new(
+            "cmd-shift-up",
+            "buffer:select_to_beginning",
+            Some("BufferView"),
+        ),
+        Binding::new("cmd-shift-down", "buffer:select_to_end", Some("BufferView")),
         Binding::new("cmd-a", "buffer:select_all", Some("BufferView")),
         Binding::new("pageup", "buffer:page_up", Some("BufferView")),
         Binding::new("pagedown", "buffer:page_down", Some("BufferView")),
@@ -80,6 +86,11 @@ pub fn init(app: &mut MutableAppContext) {
     app.add_action("buffer:select_down", BufferView::select_down);
     app.add_action("buffer:select_left", BufferView::select_left);
     app.add_action("buffer:select_right", BufferView::select_right);
+    app.add_action(
+        "buffer:select_to_beginning",
+        BufferView::select_to_beginning,
+    );
+    app.add_action("buffer:select_to_end", BufferView::select_to_end);
     app.add_action("buffer:select_all", BufferView::select_all);
     app.add_action("buffer:page_up", BufferView::page_up);
     app.add_action("buffer:page_down", BufferView::page_down);
@@ -864,6 +875,12 @@ impl BufferView {
         self.update_selections(vec![selection], true, ctx);
     }
 
+    pub fn select_to_beginning(&mut self, _: &(), ctx: &mut ViewContext<Self>) {
+        let mut selection = self.selections(ctx.as_ref()).last().unwrap().clone();
+        selection.set_head(self.buffer.read(ctx), Anchor::Start);
+        self.update_selections(vec![selection], true, ctx);
+    }
+
     pub fn move_to_end(&mut self, _: &(), ctx: &mut ViewContext<Self>) {
         let selection = Selection {
             start: Anchor::End,
@@ -871,6 +888,12 @@ impl BufferView {
             reversed: false,
             goal_column: None,
         };
+        self.update_selections(vec![selection], true, ctx);
+    }
+
+    pub fn select_to_end(&mut self, _: &(), ctx: &mut ViewContext<Self>) {
+        let mut selection = self.selections(ctx.as_ref()).last().unwrap().clone();
+        selection.set_head(self.buffer.read(ctx), Anchor::End);
         self.update_selections(vec![selection], true, ctx);
     }
 
@@ -1752,6 +1775,23 @@ mod tests {
                 assert_eq!(
                     view.selection_ranges(ctx.as_ref()),
                     &[DisplayPoint::new(0, 0)..DisplayPoint::new(0, 0)]
+                );
+
+                view.select_display_ranges(
+                    &[DisplayPoint::new(0, 1)..DisplayPoint::new(0, 2)],
+                    ctx,
+                )
+                .unwrap();
+                view.select_to_beginning(&(), ctx);
+                assert_eq!(
+                    view.selection_ranges(ctx.as_ref()),
+                    &[DisplayPoint::new(0, 1)..DisplayPoint::new(0, 0)]
+                );
+
+                view.select_to_end(&(), ctx);
+                assert_eq!(
+                    view.selection_ranges(ctx.as_ref()),
+                    &[DisplayPoint::new(0, 1)..DisplayPoint::new(5, 6)]
                 );
             });
         });
