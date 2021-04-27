@@ -14,7 +14,14 @@ use gpui::{
     AppContext, Axis, Border, Entity, ModelHandle, MutableAppContext, View, ViewContext,
     ViewHandle, WeakViewHandle,
 };
-use std::cmp;
+use std::{
+    cmp,
+    path::Path,
+    sync::{
+        atomic::{self, AtomicBool},
+        Arc,
+    },
+};
 
 pub struct FileFinder {
     handle: WeakViewHandle<Self>,
@@ -24,7 +31,9 @@ pub struct FileFinder {
     search_count: usize,
     latest_search_id: usize,
     matches: Vec<PathMatch>,
-    selected: usize,
+    include_root_name: bool,
+    selected: Option<Arc<Path>>,
+    cancel_flag: Arc<AtomicBool>,
     list_state: UniformListState,
 }
 
@@ -32,8 +41,8 @@ pub fn init(app: &mut MutableAppContext) {
     app.add_action("file_finder:toggle", FileFinder::toggle);
     app.add_action("file_finder:confirm", FileFinder::confirm);
     app.add_action("file_finder:select", FileFinder::select);
-    app.add_action("buffer:move_up", FileFinder::select_prev);
-    app.add_action("buffer:move_down", FileFinder::select_next);
+    app.add_action("menu:select_prev", FileFinder::select_prev);
+    app.add_action("menu:select_next", FileFinder::select_next);
     app.add_action("uniform_list:scroll", FileFinder::scroll);
 
     app.add_bindings(vec![
@@ -44,7 +53,7 @@ pub fn init(app: &mut MutableAppContext) {
 }
 
 pub enum Event {
-    Selected(usize, usize),
+    Selected(usize, Arc<Path>),
     Dismissed,
 }
 
@@ -137,24 +146,24 @@ impl FileFinder {
         app: &AppContext,
     ) -> Option<ElementBox> {
         let tree_id = path_match.tree_id;
-        let entry_id = path_match.entry_id;
 
         self.worktree(tree_id, app).map(|tree| {
-            let path = tree.entry_path(entry_id).unwrap();
-            let file_name = path
+            let prefix = if self.include_root_name {
+                tree.root_name()
+            } else {
+                ""
+            };
+            let path = path_match.path.clone();
+            let path_string = path_match.path.to_string_lossy();
+            let file_name = path_match
+                .path
                 .file_name()
                 .unwrap_or_default()
-                .to_string_lossy()
-                .to_string();
-
-            let mut path = path.to_string_lossy().to_string();
-            if path_match.skipped_prefix_len > 0 {
-                let mut i = 0;
-                path.retain(|_| util::post_inc(&mut i) >= path_match.skipped_prefix_len)
-            }
+                .to_string_lossy();
 
             let path_positions = path_match.positions.clone();
-            let file_name_start = path.chars().count() - file_name.chars().count();
+            let file_name_start =
+                prefix.len() + path_string.chars().count() - file_name.chars().count();
             let mut file_name_positions = Vec::new();
             file_name_positions.extend(path_positions.iter().filter_map(|pos| {
                 if pos >= &file_name_start {
@@ -167,6 +176,9 @@ impl FileFinder {
             let settings = smol::block_on(self.settings.read());
             let highlight_color = ColorU::from_u32(0x304ee2ff);
             let bold = *Properties::new().weight(Weight::BOLD);
+
+            let mut full_path = prefix.to_string();
+            full_path.push_str(&path_string);
 
             let mut container = Container::new(
                 Flex::row()
@@ -188,7 +200,7 @@ impl FileFinder {
                             Flex::column()
                                 .with_child(
                                     Label::new(
-                                        file_name,
+                                        file_name.to_string(),
                                         settings.ui_font_family,
                                         settings.ui_font_size,
                                     )
@@ -197,7 +209,7 @@ impl FileFinder {
                                 )
                                 .with_child(
                                     Label::new(
-                                        path.into(),
+                                        full_path,
                                         settings.ui_font_family,
                                         settings.ui_font_size,
                                     )
@@ -212,18 +224,19 @@ impl FileFinder {
             )
             .with_uniform_padding(6.0);
 
-            if index == self.selected || index < self.matches.len() - 1 {
+            let selected_index = self.selected_index();
+            if index == selected_index || index < self.matches.len() - 1 {
                 container =
                     container.with_border(Border::bottom(1.0, ColorU::from_u32(0xdbdbdcff)));
             }
 
-            if index == self.selected {
+            if index == selected_index {
                 container = container.with_background_color(ColorU::from_u32(0xdbdbdcff));
             }
 
             EventHandler::new(container.boxed())
                 .on_mouse_down(move |ctx| {
-                    ctx.dispatch_action("file_finder:select", (tree_id, entry_id));
+                    ctx.dispatch_action("file_finder:select", (tree_id, path.clone()));
                     true
                 })
                 .named("match")
@@ -251,8 +264,8 @@ impl FileFinder {
         ctx: &mut ViewContext<WorkspaceView>,
     ) {
         match event {
-            Event::Selected(tree_id, entry_id) => {
-                workspace_view.open_entry((*tree_id, *entry_id), ctx);
+            Event::Selected(tree_id, path) => {
+                workspace_view.open_entry((*tree_id, path.clone()), ctx);
                 workspace_view.dismiss_modal(ctx);
             }
             Event::Dismissed => {
@@ -281,7 +294,9 @@ impl FileFinder {
             search_count: 0,
             latest_search_id: 0,
             matches: Vec::new(),
-            selected: 0,
+            include_root_name: false,
+            selected: None,
+            cancel_flag: Arc::new(AtomicBool::new(false)),
             list_state: UniformListState::new(),
         }
     }
@@ -313,19 +328,34 @@ impl FileFinder {
         }
     }
 
-    fn select_prev(&mut self, _: &(), ctx: &mut ViewContext<Self>) {
-        if self.selected > 0 {
-            self.selected -= 1;
+    fn selected_index(&self) -> usize {
+        if let Some(selected) = self.selected.as_ref() {
+            for (ix, path_match) in self.matches.iter().enumerate() {
+                if path_match.path.as_ref() == selected.as_ref() {
+                    return ix;
+                }
+            }
         }
-        self.list_state.scroll_to(self.selected);
+        0
+    }
+
+    fn select_prev(&mut self, _: &(), ctx: &mut ViewContext<Self>) {
+        let mut selected_index = self.selected_index();
+        if selected_index > 0 {
+            selected_index -= 1;
+            self.selected = Some(self.matches[selected_index].path.clone());
+        }
+        self.list_state.scroll_to(selected_index);
         ctx.notify();
     }
 
     fn select_next(&mut self, _: &(), ctx: &mut ViewContext<Self>) {
-        if self.selected + 1 < self.matches.len() {
-            self.selected += 1;
+        let mut selected_index = self.selected_index();
+        if selected_index + 1 < self.matches.len() {
+            selected_index += 1;
+            self.selected = Some(self.matches[selected_index].path.clone());
         }
-        self.list_state.scroll_to(self.selected);
+        self.list_state.scroll_to(selected_index);
         ctx.notify();
     }
 
@@ -334,23 +364,41 @@ impl FileFinder {
     }
 
     fn confirm(&mut self, _: &(), ctx: &mut ViewContext<Self>) {
-        if let Some(m) = self.matches.get(self.selected) {
-            ctx.emit(Event::Selected(m.tree_id, m.entry_id));
+        if let Some(m) = self.matches.get(self.selected_index()) {
+            ctx.emit(Event::Selected(m.tree_id, m.path.clone()));
         }
     }
 
-    fn select(&mut self, entry: &(usize, usize), ctx: &mut ViewContext<Self>) {
-        let (tree_id, entry_id) = *entry;
-        ctx.emit(Event::Selected(tree_id, entry_id));
+    fn select(&mut self, (tree_id, path): &(usize, Arc<Path>), ctx: &mut ViewContext<Self>) {
+        ctx.emit(Event::Selected(*tree_id, path.clone()));
     }
 
     fn spawn_search(&mut self, query: String, ctx: &mut ViewContext<Self>) {
-        let worktrees = self.worktrees(ctx.as_ref());
+        let snapshots = self
+            .workspace
+            .read(ctx)
+            .worktrees()
+            .iter()
+            .map(|tree| tree.read(ctx).snapshot())
+            .collect::<Vec<_>>();
         let search_id = util::post_inc(&mut self.search_count);
-        let pool = ctx.as_ref().scoped_pool().clone();
+        let pool = ctx.as_ref().thread_pool().clone();
+        self.cancel_flag.store(true, atomic::Ordering::Relaxed);
+        self.cancel_flag = Arc::new(AtomicBool::new(false));
+        let cancel_flag = self.cancel_flag.clone();
         let task = ctx.background_executor().spawn(async move {
-            let matches = match_paths(worktrees.as_slice(), &query, false, false, 100, pool);
-            (search_id, matches)
+            let include_root_name = snapshots.len() > 1;
+            let matches = match_paths(
+                snapshots.iter(),
+                &query,
+                include_root_name,
+                false,
+                false,
+                100,
+                cancel_flag,
+                pool,
+            );
+            (search_id, include_root_name, matches)
         });
 
         ctx.spawn(task, Self::update_matches).detach();
@@ -358,14 +406,14 @@ impl FileFinder {
 
     fn update_matches(
         &mut self,
-        (search_id, matches): (usize, Vec<PathMatch>),
+        (search_id, include_root_name, matches): (usize, bool, Vec<PathMatch>),
         ctx: &mut ViewContext<Self>,
     ) {
         if search_id >= self.latest_search_id {
             self.latest_search_id = search_id;
             self.matches = matches;
-            self.selected = 0;
-            self.list_state.scroll_to(0);
+            self.include_root_name = include_root_name;
+            self.list_state.scroll_to(self.selected_index());
             ctx.notify();
         }
     }
@@ -376,15 +424,6 @@ impl FileFinder {
             .worktrees()
             .get(&tree_id)
             .map(|worktree| worktree.read(app))
-    }
-
-    fn worktrees(&self, app: &AppContext) -> Vec<Worktree> {
-        self.workspace
-            .read(app)
-            .worktrees()
-            .iter()
-            .map(|worktree| worktree.read(app).clone())
-            .collect()
     }
 }
 
@@ -419,7 +458,8 @@ mod tests {
             let workspace = app.add_model(|ctx| Workspace::new(vec![tmp_dir.path().into()], ctx));
             let (window_id, workspace_view) =
                 app.add_window(|ctx| WorkspaceView::new(workspace.clone(), settings, ctx));
-            app.finish_pending_tasks().await; // Open and populate worktree.
+            app.read(|ctx| workspace.read(ctx).worktree_scans_complete(ctx))
+                .await;
             app.dispatch_action(
                 window_id,
                 vec![workspace_view.id()],
@@ -442,33 +482,30 @@ mod tests {
             app.dispatch_action(window_id, chain.clone(), "buffer:insert", "b".to_string());
             app.dispatch_action(window_id, chain.clone(), "buffer:insert", "n".to_string());
             app.dispatch_action(window_id, chain.clone(), "buffer:insert", "a".to_string());
-            app.finish_pending_tasks().await; // Complete path search.
+            finder
+                .condition(&app, |finder, _| finder.matches.len() == 2)
+                .await;
 
-            // let view_state = finder.state(&app);
-            // assert!(view_state.matches.len() > 1);
-            // app.dispatch_action(
-            //     window_id,
-            //     vec![workspace_view.id(), finder.id()],
-            //     "menu:select_next",
-            //     (),
-            // );
-            // app.dispatch_action(
-            //     window_id,
-            //     vec![workspace_view.id(), finder.id()],
-            //     "file_finder:confirm",
-            //     (),
-            // );
-            // app.finish_pending_tasks().await; // Load Buffer and open BufferView.
-            // let active_pane = workspace_view.as_ref(app).active_pane().clone();
-            // assert_eq!(
-            //     active_pane.state(&app),
-            //     pane::State {
-            //         tabs: vec![pane::TabState {
-            //             title: "bandana".into(),
-            //             active: true,
-            //         }]
-            //     }
-            // );
+            let active_pane = app.read(|ctx| workspace_view.read(ctx).active_pane().clone());
+            app.dispatch_action(
+                window_id,
+                vec![workspace_view.id(), finder.id()],
+                "menu:select_next",
+                (),
+            );
+            app.dispatch_action(
+                window_id,
+                vec![workspace_view.id(), finder.id()],
+                "file_finder:confirm",
+                (),
+            );
+            active_pane
+                .condition(&app, |pane, _| pane.active_item().is_some())
+                .await;
+            app.read(|ctx| {
+                let active_item = active_pane.read(ctx).active_item().unwrap();
+                assert_eq!(active_item.title(ctx), "bandana");
+            });
         });
     }
 }

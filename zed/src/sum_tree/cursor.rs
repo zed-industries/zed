@@ -199,6 +199,9 @@ where
     }
 
     pub fn next(&mut self) {
+        if !self.did_seek {
+            self.descend_to_first_item(self.tree, |_| true)
+        }
         self.next_internal(|_| true)
     }
 
@@ -271,6 +274,7 @@ where
         }
 
         self.at_end = self.stack.is_empty();
+        debug_assert!(self.stack.is_empty() || self.stack.last().unwrap().tree.0.is_leaf());
     }
 
     pub fn descend_to_first_item<F>(&mut self, mut subtree: &'a SumTree<T>, filter_node: F)
@@ -656,6 +660,7 @@ where
         }
 
         self.at_end = self.stack.is_empty();
+        debug_assert!(self.stack.is_empty() || self.stack.last().unwrap().tree.0.is_leaf());
         if bias == SeekBias::Left {
             let mut end = self.seek_dimension.clone();
             if let Some(summary) = self.item_summary() {

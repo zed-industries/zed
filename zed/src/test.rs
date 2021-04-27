@@ -1,3 +1,5 @@
+use crate::time::ReplicaId;
+use ctor::ctor;
 use rand::Rng;
 use std::{
     collections::BTreeMap,
@@ -5,7 +7,10 @@ use std::{
 };
 use tempdir::TempDir;
 
-use crate::time::ReplicaId;
+#[ctor]
+fn init_logger() {
+    env_logger::init();
+}
 
 #[derive(Clone)]
 struct Envelope<T: Clone> {

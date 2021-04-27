@@ -1,0 +1,16 @@
+[package]
+name = "fsevent"
+version = "2.0.2"
+license = "MIT"
+edition = "2018"
+
+[dependencies]
+bitflags = "1"
+fsevent-sys = "3.0.2"
+parking_lot = "0.11.1"
+
+[dev-dependencies]
+tempdir = "0.3.7"
+
+[package.metadata.docs.rs]
+targets = ["x86_64-apple-darwin"]

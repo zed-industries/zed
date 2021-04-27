@@ -5,7 +5,6 @@ name = "gpui"
 version = "0.1.0"
 
 [dependencies]
-async-std = {version = "1.9.0", features = ["unstable"]}
 async-task = "4.0.3"
 ctor = "0.1"
 etagere = "0.2"
@@ -15,10 +14,11 @@ ordered-float = "2.1.1"
 parking_lot = "0.11.1"
 pathfinder_color = "0.5"
 pathfinder_geometry = "0.5"
+postage = {version = "0.4.1", features = ["futures-traits"]}
 rand = "0.8.3"
 replace_with = "0.1.7"
 resvg = "0.14"
-scoped-pool = "1.0.0"
+scoped-pool = {path = "../scoped_pool"}
 seahash = "4.1"
 serde = {version = "1.0.125", features = ["derive"]}
 serde_json = "1.0.64"
@@ -33,6 +33,7 @@ bindgen = "0.57"
 cc = "1.0.67"
 
 [dev-dependencies]
+env_logger = "0.8"
 png = "0.16"
 simplelog = "0.9"
 

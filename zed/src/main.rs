@@ -1,3 +1,6 @@
+// Allow binary to be called Zed for a nice application menu when running executable direcly
+#![allow(non_snake_case)]
+
 use fs::OpenOptions;
 use log::LevelFilter;
 use simplelog::SimpleLogger;

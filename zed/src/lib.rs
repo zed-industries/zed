@@ -8,7 +8,6 @@ mod sum_tree;
 #[cfg(test)]
 mod test;
 mod time;
-mod timer;
 mod util;
 pub mod watch;
 pub mod workspace;

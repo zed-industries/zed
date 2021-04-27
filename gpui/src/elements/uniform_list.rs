@@ -68,16 +68,12 @@ where
 
     fn scroll(
         &self,
-        position: Vector2F,
+        _: Vector2F,
         delta: Vector2F,
         precise: bool,
         scroll_max: f32,
         ctx: &mut EventContext,
     ) -> bool {
-        if !self.rect().unwrap().contains_point(position) {
-            return false;
-        }
-
         if !precise {
             todo!("still need to handle non-precise scroll events from a mouse wheel");
         }
@@ -110,11 +106,6 @@ where
 
     fn scroll_top(&self) -> f32 {
         self.state.0.lock().scroll_top
-    }
-
-    fn rect(&self) -> Option<RectF> {
-        todo!()
-        // try_rect(self.origin, self.size)
     }
 }
 
@@ -213,7 +204,7 @@ where
     fn dispatch_event(
         &mut self,
         event: &Event,
-        _: RectF,
+        bounds: RectF,
         layout: &mut Self::LayoutState,
         _: &mut Self::PaintState,
         ctx: &mut EventContext,
@@ -229,8 +220,10 @@ where
                 delta,
                 precise,
             } => {
-                if self.scroll(*position, *delta, *precise, layout.scroll_max, ctx) {
-                    handled = true;
+                if bounds.contains_point(*position) {
+                    if self.scroll(*position, *delta, *precise, layout.scroll_max, ctx) {
+                        handled = true;
+                    }
                 }
             }
             _ => {}

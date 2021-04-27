@@ -4,26 +4,27 @@ use crate::{
     keymap::{self, Keystroke},
     platform::{self, WindowOptions},
     presenter::Presenter,
-    util::post_inc,
+    util::{post_inc, timeout},
     AssetCache, AssetSource, ClipboardItem, FontCache, PathPromptOptions, TextLayoutCache,
 };
 use anyhow::{anyhow, Result};
-use async_std::sync::Condvar;
 use keymap::MatchResult;
 use parking_lot::Mutex;
 use pathfinder_geometry::{rect::RectF, vector::vec2f};
 use platform::Event;
+use postage::{sink::Sink as _, stream::Stream as _};
 use smol::prelude::*;
 use std::{
     any::{type_name, Any, TypeId},
     cell::RefCell,
-    collections::{HashMap, HashSet, VecDeque},
+    collections::{hash_map::Entry, HashMap, HashSet, VecDeque},
     fmt::{self, Debug},
     hash::{Hash, Hasher},
     marker::PhantomData,
     path::PathBuf,
     rc::{self, Rc},
     sync::{Arc, Weak},
+    time::Duration,
 };
 
 pub trait Entity: 'static + Send + Sync {
@@ -324,10 +325,6 @@ impl TestAppContext {
         result
     }
 
-    pub fn finish_pending_tasks(&self) -> impl Future<Output = ()> {
-        self.0.borrow().finish_pending_tasks()
-    }
-
     pub fn font_cache(&self) -> Arc<FontCache> {
         self.0.borrow().font_cache.clone()
     }
@@ -384,6 +381,7 @@ pub struct MutableAppContext {
     next_task_id: usize,
     subscriptions: HashMap<usize, Vec<Subscription>>,
     observations: HashMap<usize, Vec<Observation>>,
+    async_observations: HashMap<usize, postage::broadcast::Sender<()>>,
     window_invalidations: HashMap<usize, WindowInvalidation>,
     presenters_and_platform_windows:
         HashMap<usize, (Rc<RefCell<Presenter>>, Box<dyn platform::Window>)>,
@@ -391,7 +389,6 @@ pub struct MutableAppContext {
     foreground: Rc<executor::Foreground>,
     future_handlers: Rc<RefCell<HashMap<usize, FutureHandler>>>,
     stream_handlers: Rc<RefCell<HashMap<usize, StreamHandler>>>,
-    task_done: Arc<Condvar>,
     pending_effects: VecDeque<Effect>,
     pending_flushes: usize,
     flushing_effects: bool,
@@ -414,7 +411,7 @@ impl MutableAppContext {
                 windows: HashMap::new(),
                 ref_counts: Arc::new(Mutex::new(RefCounts::default())),
                 background: Arc::new(executor::Background::new()),
-                scoped_pool: scoped_pool::Pool::new(num_cpus::get()),
+                thread_pool: scoped_pool::Pool::new(num_cpus::get(), "app"),
             },
             actions: HashMap::new(),
             global_actions: HashMap::new(),
@@ -424,13 +421,13 @@ impl MutableAppContext {
             next_task_id: 0,
             subscriptions: HashMap::new(),
             observations: HashMap::new(),
+            async_observations: HashMap::new(),
             window_invalidations: HashMap::new(),
             presenters_and_platform_windows: HashMap::new(),
             debug_elements_callbacks: HashMap::new(),
             foreground,
             future_handlers: Default::default(),
             stream_handlers: Default::default(),
-            task_done: Default::default(),
             pending_effects: VecDeque::new(),
             pending_flushes: 0,
             flushing_effects: false,
@@ -877,11 +874,13 @@ impl MutableAppContext {
                 self.ctx.models.remove(&model_id);
                 self.subscriptions.remove(&model_id);
                 self.observations.remove(&model_id);
+                self.async_observations.remove(&model_id);
             }
 
             for (window_id, view_id) in dropped_views {
                 self.subscriptions.remove(&view_id);
                 self.observations.remove(&view_id);
+                self.async_observations.remove(&view_id);
                 if let Some(window) = self.ctx.windows.get_mut(&window_id) {
                     self.window_invalidations
                         .entry(window_id)
@@ -1047,6 +1046,12 @@ impl MutableAppContext {
                 }
             }
         }
+
+        if let Entry::Occupied(mut entry) = self.async_observations.entry(observed_id) {
+            if entry.get_mut().blocking_send(()).is_err() {
+                entry.remove_entry();
+            }
+        }
     }
 
     fn notify_view_observers(&mut self, window_id: usize, view_id: usize) {
@@ -1055,6 +1060,12 @@ impl MutableAppContext {
             .or_default()
             .updated
             .insert(view_id);
+
+        if let Entry::Occupied(mut entry) = self.async_observations.entry(view_id) {
+            if entry.get_mut().blocking_send(()).is_err() {
+                entry.remove_entry();
+            }
+        }
     }
 
     fn focus(&mut self, window_id: usize, focused_id: usize) {
@@ -1125,7 +1136,6 @@ impl MutableAppContext {
             task_id,
             task,
             TaskHandlerMap::Future(self.future_handlers.clone()),
-            self.task_done.clone(),
         )
     }
 
@@ -1161,7 +1171,6 @@ impl MutableAppContext {
             task_id,
             task,
             TaskHandlerMap::Stream(self.stream_handlers.clone()),
-            self.task_done.clone(),
         )
     }
 
@@ -1170,7 +1179,6 @@ impl MutableAppContext {
         let future_callback = self.future_handlers.borrow_mut().remove(&task_id).unwrap();
         let result = future_callback(output, self);
         self.flush_effects();
-        self.task_done.notify_all();
         result
     }
 
@@ -1192,42 +1200,7 @@ impl MutableAppContext {
         let result = (handler.done_callback)(self);
 
         self.flush_effects();
-        self.task_done.notify_all();
         result
-    }
-
-    pub fn finish_pending_tasks(&self) -> impl Future<Output = ()> {
-        let mut pending_tasks = self
-            .future_handlers
-            .borrow()
-            .keys()
-            .cloned()
-            .collect::<HashSet<_>>();
-        pending_tasks.extend(self.stream_handlers.borrow().keys());
-
-        let task_done = self.task_done.clone();
-        let future_handlers = self.future_handlers.clone();
-        let stream_handlers = self.stream_handlers.clone();
-
-        async move {
-            // A Condvar expects the condition to be protected by a Mutex, but in this case we know
-            // that this logic will always run on the main thread.
-            let mutex = async_std::sync::Mutex::new(());
-            loop {
-                {
-                    let future_handlers = future_handlers.borrow();
-                    let stream_handlers = stream_handlers.borrow();
-                    pending_tasks.retain(|task_id| {
-                        future_handlers.contains_key(task_id)
-                            || stream_handlers.contains_key(task_id)
-                    });
-                    if pending_tasks.is_empty() {
-                        break;
-                    }
-                }
-                task_done.wait(mutex.lock().await).await;
-            }
-        }
     }
 
     pub fn write_to_clipboard(&self, item: ClipboardItem) {
@@ -1337,7 +1310,7 @@ pub struct AppContext {
     windows: HashMap<usize, Window>,
     background: Arc<executor::Background>,
     ref_counts: Arc<Mutex<RefCounts>>,
-    scoped_pool: scoped_pool::Pool,
+    thread_pool: scoped_pool::Pool,
 }
 
 impl AppContext {
@@ -1377,8 +1350,8 @@ impl AppContext {
         &self.background
     }
 
-    pub fn scoped_pool(&self) -> &scoped_pool::Pool {
-        &self.scoped_pool
+    pub fn thread_pool(&self) -> &scoped_pool::Pool {
+        &self.thread_pool
     }
 }
 
@@ -1524,6 +1497,10 @@ impl<'a, T: Entity> ModelContext<'a, T> {
 
     pub fn background_executor(&self) -> &Arc<executor::Background> {
         &self.app.ctx.background
+    }
+
+    pub fn thread_pool(&self) -> &scoped_pool::Pool {
+        &self.app.ctx.thread_pool
     }
 
     pub fn halt_stream(&mut self) {
@@ -2008,6 +1985,47 @@ impl<T: Entity> ModelHandle<T> {
     {
         app.update_model(self, update)
     }
+
+    pub fn condition(
+        &self,
+        ctx: &TestAppContext,
+        mut predicate: impl 'static + FnMut(&T, &AppContext) -> bool,
+    ) -> impl 'static + Future<Output = ()> {
+        let mut ctx = ctx.0.borrow_mut();
+        let tx = ctx
+            .async_observations
+            .entry(self.id())
+            .or_insert_with(|| postage::broadcast::channel(128).0);
+        let mut rx = tx.subscribe();
+        let ctx = ctx.weak_self.as_ref().unwrap().upgrade().unwrap();
+        let handle = self.downgrade();
+
+        async move {
+            timeout(Duration::from_millis(200), async move {
+                loop {
+                    {
+                        let ctx = ctx.borrow();
+                        let ctx = ctx.as_ref();
+                        if predicate(
+                            handle
+                                .upgrade(ctx)
+                                .expect("model dropped with pending condition")
+                                .read(ctx),
+                            ctx,
+                        ) {
+                            break;
+                        }
+                    }
+
+                    rx.recv()
+                        .await
+                        .expect("model dropped with pending condition");
+                }
+            })
+            .await
+            .expect("condition timed out");
+        }
+    }
 }
 
 impl<T> Clone for ModelHandle<T> {
@@ -2140,6 +2158,47 @@ impl<T: View> ViewHandle<T> {
     pub fn is_focused(&self, app: &AppContext) -> bool {
         app.focused_view_id(self.window_id)
             .map_or(false, |focused_id| focused_id == self.view_id)
+    }
+
+    pub fn condition(
+        &self,
+        ctx: &TestAppContext,
+        mut predicate: impl 'static + FnMut(&T, &AppContext) -> bool,
+    ) -> impl 'static + Future<Output = ()> {
+        let mut ctx = ctx.0.borrow_mut();
+        let tx = ctx
+            .async_observations
+            .entry(self.id())
+            .or_insert_with(|| postage::broadcast::channel(128).0);
+        let mut rx = tx.subscribe();
+        let ctx = ctx.weak_self.as_ref().unwrap().upgrade().unwrap();
+        let handle = self.downgrade();
+
+        async move {
+            timeout(Duration::from_millis(200), async move {
+                loop {
+                    {
+                        let ctx = ctx.borrow();
+                        let ctx = ctx.as_ref();
+                        if predicate(
+                            handle
+                                .upgrade(ctx)
+                                .expect("model dropped with pending condition")
+                                .read(ctx),
+                            ctx,
+                        ) {
+                            break;
+                        }
+                    }
+
+                    rx.recv()
+                        .await
+                        .expect("model dropped with pending condition");
+                }
+            })
+            .await
+            .expect("condition timed out");
+        }
     }
 }
 
@@ -2364,7 +2423,6 @@ pub struct EntityTask<T> {
     id: usize,
     task: Option<executor::Task<T>>,
     handler_map: TaskHandlerMap,
-    task_done: Arc<Condvar>,
 }
 
 enum TaskHandlerMap {
@@ -2374,17 +2432,11 @@ enum TaskHandlerMap {
 }
 
 impl<T> EntityTask<T> {
-    fn new(
-        id: usize,
-        task: executor::Task<T>,
-        handler_map: TaskHandlerMap,
-        task_done: Arc<Condvar>,
-    ) -> Self {
+    fn new(id: usize, task: executor::Task<T>, handler_map: TaskHandlerMap) -> Self {
         Self {
             id,
             task: Some(task),
             handler_map,
-            task_done,
         }
     }
 
@@ -2424,7 +2476,6 @@ impl<T> Drop for EntityTask<T> {
                 map.borrow_mut().remove(&self.id);
             }
         }
-        self.task_done.notify_all();
     }
 }
 
@@ -2432,6 +2483,7 @@ impl<T> Drop for EntityTask<T> {
 mod tests {
     use super::*;
     use crate::elements::*;
+    use smol::future::poll_once;
 
     #[test]
     fn test_model_handles() {
@@ -3233,6 +3285,180 @@ mod tests {
         });
     }
 
+    #[test]
+    fn test_model_condition() {
+        struct Counter(usize);
+
+        impl super::Entity for Counter {
+            type Event = ();
+        }
+
+        impl Counter {
+            fn inc(&mut self, ctx: &mut ModelContext<Self>) {
+                self.0 += 1;
+                ctx.notify();
+            }
+        }
+
+        App::test_async((), |mut app| async move {
+            let model = app.add_model(|_| Counter(0));
+
+            let condition1 = model.condition(&app, |model, _| model.0 == 2);
+            let condition2 = model.condition(&app, |model, _| model.0 == 3);
+            smol::pin!(condition1, condition2);
+
+            model.update(&mut app, |model, ctx| model.inc(ctx));
+            assert_eq!(poll_once(&mut condition1).await, None);
+            assert_eq!(poll_once(&mut condition2).await, None);
+
+            model.update(&mut app, |model, ctx| model.inc(ctx));
+            assert_eq!(poll_once(&mut condition1).await, Some(()));
+            assert_eq!(poll_once(&mut condition2).await, None);
+
+            model.update(&mut app, |model, ctx| model.inc(ctx));
+            assert_eq!(poll_once(&mut condition2).await, Some(()));
+
+            // Broadcast channel should be removed if no conditions remain on next notification.
+            model.update(&mut app, |_, ctx| ctx.notify());
+            app.update(|ctx| assert!(ctx.async_observations.get(&model.id()).is_none()));
+        });
+    }
+
+    #[test]
+    #[should_panic]
+    fn test_model_condition_timeout() {
+        struct Model;
+
+        impl super::Entity for Model {
+            type Event = ();
+        }
+
+        App::test_async((), |mut app| async move {
+            let model = app.add_model(|_| Model);
+            model.condition(&app, |_, _| false).await;
+        });
+    }
+
+    #[test]
+    #[should_panic(expected = "model dropped with pending condition")]
+    fn test_model_condition_panic_on_drop() {
+        struct Model;
+
+        impl super::Entity for Model {
+            type Event = ();
+        }
+
+        App::test_async((), |mut app| async move {
+            let model = app.add_model(|_| Model);
+            let condition = model.condition(&app, |_, _| false);
+            app.update(|_| drop(model));
+            condition.await;
+        });
+    }
+
+    #[test]
+    fn test_view_condition() {
+        struct Counter(usize);
+
+        impl super::Entity for Counter {
+            type Event = ();
+        }
+
+        impl super::View for Counter {
+            fn ui_name() -> &'static str {
+                "test view"
+            }
+
+            fn render(&self, _: &AppContext) -> ElementBox {
+                Empty::new().boxed()
+            }
+        }
+
+        impl Counter {
+            fn inc(&mut self, ctx: &mut ViewContext<Self>) {
+                self.0 += 1;
+                ctx.notify();
+            }
+        }
+
+        App::test_async((), |mut app| async move {
+            let (_, view) = app.add_window(|_| Counter(0));
+
+            let condition1 = view.condition(&app, |view, _| view.0 == 2);
+            let condition2 = view.condition(&app, |view, _| view.0 == 3);
+            smol::pin!(condition1, condition2);
+
+            view.update(&mut app, |view, ctx| view.inc(ctx));
+            assert_eq!(poll_once(&mut condition1).await, None);
+            assert_eq!(poll_once(&mut condition2).await, None);
+
+            view.update(&mut app, |view, ctx| view.inc(ctx));
+            assert_eq!(poll_once(&mut condition1).await, Some(()));
+            assert_eq!(poll_once(&mut condition2).await, None);
+
+            view.update(&mut app, |view, ctx| view.inc(ctx));
+            assert_eq!(poll_once(&mut condition2).await, Some(()));
+
+            // Broadcast channel should be removed if no conditions remain on next notification.
+            view.update(&mut app, |_, ctx| ctx.notify());
+            app.update(|ctx| assert!(ctx.async_observations.get(&view.id()).is_none()));
+        });
+    }
+
+    #[test]
+    #[should_panic]
+    fn test_view_condition_timeout() {
+        struct View;
+
+        impl super::Entity for View {
+            type Event = ();
+        }
+
+        impl super::View for View {
+            fn ui_name() -> &'static str {
+                "test view"
+            }
+
+            fn render(&self, _: &AppContext) -> ElementBox {
+                Empty::new().boxed()
+            }
+        }
+
+        App::test_async((), |mut app| async move {
+            let (_, view) = app.add_window(|_| View);
+            view.condition(&app, |_, _| false).await;
+        });
+    }
+
+    #[test]
+    #[should_panic(expected = "model dropped with pending condition")]
+    fn test_view_condition_panic_on_drop() {
+        struct View;
+
+        impl super::Entity for View {
+            type Event = ();
+        }
+
+        impl super::View for View {
+            fn ui_name() -> &'static str {
+                "test view"
+            }
+
+            fn render(&self, _: &AppContext) -> ElementBox {
+                Empty::new().boxed()
+            }
+        }
+
+        App::test_async((), |mut app| async move {
+            let window_id = app.add_window(|_| View).0;
+            let view = app.add_view(window_id, |_| View);
+
+            let condition = view.condition(&app, |_, _| false);
+            app.update(|_| drop(view));
+            condition.await;
+        });
+    }
+
     // #[test]
     // fn test_ui_and_window_updates() {
     //     struct View {
@@ -3313,98 +3539,4 @@ mod tests {
     //         assert!(invalidation.removed.is_empty());
     //     });
     // }
-
-    #[test]
-    fn test_finish_pending_tasks() {
-        struct View;
-
-        impl Entity for View {
-            type Event = ();
-        }
-
-        impl super::View for View {
-            fn render<'a>(&self, _: &AppContext) -> ElementBox {
-                Empty::new().boxed()
-            }
-
-            fn ui_name() -> &'static str {
-                "View"
-            }
-        }
-
-        struct Model;
-
-        impl Entity for Model {
-            type Event = ();
-        }
-
-        App::test_async((), |mut app| async move {
-            let model = app.add_model(|_| Model);
-            let (_, view) = app.add_window(|_| View);
-
-            model.update(&mut app, |_, ctx| {
-                ctx.spawn(async {}, |_, _, _| {}).detach();
-                // Cancel this task
-                drop(ctx.spawn(async {}, |_, _, _| {}));
-            });
-
-            view.update(&mut app, |_, ctx| {
-                ctx.spawn(async {}, |_, _, _| {}).detach();
-                // Cancel this task
-                drop(ctx.spawn(async {}, |_, _, _| {}));
-            });
-
-            assert!(!app.0.borrow().future_handlers.borrow().is_empty());
-            app.finish_pending_tasks().await;
-            assert!(app.0.borrow().future_handlers.borrow().is_empty());
-            app.finish_pending_tasks().await; // Don't block if there are no tasks
-
-            model.update(&mut app, |_, ctx| {
-                ctx.spawn_stream(smol::stream::iter(vec![1, 2, 3]), |_, _, _| {}, |_, _| {})
-                    .detach();
-                // Cancel this task
-                drop(ctx.spawn_stream(smol::stream::iter(vec![1, 2, 3]), |_, _, _| {}, |_, _| {}));
-            });
-
-            view.update(&mut app, |_, ctx| {
-                ctx.spawn_stream(smol::stream::iter(vec![1, 2, 3]), |_, _, _| {}, |_, _| {})
-                    .detach();
-                // Cancel this task
-                drop(ctx.spawn_stream(smol::stream::iter(vec![1, 2, 3]), |_, _, _| {}, |_, _| {}));
-            });
-
-            assert!(!app.0.borrow().stream_handlers.borrow().is_empty());
-            app.finish_pending_tasks().await;
-            assert!(app.0.borrow().stream_handlers.borrow().is_empty());
-            app.finish_pending_tasks().await; // Don't block if there are no tasks
-
-            // Tasks are considered finished when we drop handles
-            let mut tasks = Vec::new();
-            model.update(&mut app, |_, ctx| {
-                tasks.push(Box::new(ctx.spawn(async {}, |_, _, _| {})));
-                tasks.push(Box::new(ctx.spawn_stream(
-                    smol::stream::iter(vec![1, 2, 3]),
-                    |_, _, _| {},
-                    |_, _| {},
-                )));
-            });
-
-            view.update(&mut app, |_, ctx| {
-                tasks.push(Box::new(ctx.spawn(async {}, |_, _, _| {})));
-                tasks.push(Box::new(ctx.spawn_stream(
-                    smol::stream::iter(vec![1, 2, 3]),
-                    |_, _, _| {},
-                    |_, _| {},
-                )));
-            });
-
-            assert!(!app.0.borrow().stream_handlers.borrow().is_empty());
-
-            let finish_pending_tasks = app.finish_pending_tasks();
-            drop(tasks);
-            finish_pending_tasks.await;
-            assert!(app.0.borrow().stream_handlers.borrow().is_empty());
-            app.finish_pending_tasks().await; // Don't block if there are no tasks
-        });
-    }
 }

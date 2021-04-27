@@ -10,7 +10,7 @@ const TREE_BASE: usize = 2;
 #[cfg(not(test))]
 const TREE_BASE: usize = 6;
 
-pub trait Item: Clone + Eq + fmt::Debug {
+pub trait Item: Clone + fmt::Debug {
     type Summary: for<'a> AddAssign<&'a Self::Summary> + Default + Clone + fmt::Debug;
 
     fn summary(&self) -> Self::Summary;
@@ -22,7 +22,7 @@ pub trait KeyedItem: Item {
     fn key(&self) -> Self::Key;
 }
 
-pub trait Dimension<'a, Summary: Default>: 'a + Clone + fmt::Debug + Default {
+pub trait Dimension<'a, Summary: Default>: Clone + fmt::Debug + Default {
     fn add_summary(&mut self, summary: &'a Summary);
 }
 
@@ -332,11 +332,12 @@ impl<T: KeyedItem> SumTree<T> {
         };
     }
 
-    pub fn edit(&mut self, edits: &mut [Edit<T>]) {
+    pub fn edit(&mut self, mut edits: Vec<Edit<T>>) -> Vec<T> {
         if edits.is_empty() {
-            return;
+            return Vec::new();
         }
 
+        let mut removed = Vec::new();
         edits.sort_unstable_by_key(|item| item.key());
 
         *self = {
@@ -358,13 +359,19 @@ impl<T: KeyedItem> SumTree<T> {
                     new_tree.push_tree(slice);
                     old_item = cursor.item();
                 }
-                if old_item.map_or(false, |old_item| old_item.key() == new_key) {
-                    cursor.next();
+
+                if let Some(old_item) = old_item {
+                    if old_item.key() == new_key {
+                        removed.push(old_item.clone());
+                        cursor.next();
+                    }
                 }
+
                 match edit {
                     Edit::Insert(item) => {
-                        buffered_items.push(item.clone());
+                        buffered_items.push(item);
                     }
+                    Edit::Remove(_) => {}
                 }
             }
 
@@ -372,6 +379,23 @@ impl<T: KeyedItem> SumTree<T> {
             new_tree.push_tree(cursor.suffix());
             new_tree
         };
+
+        removed
+    }
+
+    pub fn get(&self, key: &T::Key) -> Option<&T> {
+        let mut cursor = self.cursor::<T::Key, ()>();
+        if cursor.seek(key, SeekBias::Left) {
+            cursor.item()
+        } else {
+            None
+        }
+    }
+}
+
+impl<T: Item> Default for SumTree<T> {
+    fn default() -> Self {
+        Self::new()
     }
 }
 
@@ -446,12 +470,14 @@ impl<T: Item> Node<T> {
 #[derive(Debug)]
 pub enum Edit<T: KeyedItem> {
     Insert(T),
+    Remove(T::Key),
 }
 
 impl<T: KeyedItem> Edit<T> {
     fn key(&self) -> T::Key {
         match self {
             Edit::Insert(item) => item.key(),
+            Edit::Remove(key) => key.clone(),
         }
     }
 }
@@ -471,6 +497,7 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::cmp;
     use std::ops::Add;
 
     #[test]
@@ -754,11 +781,33 @@ mod tests {
         assert_eq!(cursor.slice(&Count(6), SeekBias::Right).items(), vec![6]);
     }
 
+    #[test]
+    fn test_edit() {
+        let mut tree = SumTree::<u8>::new();
+
+        let removed = tree.edit(vec![Edit::Insert(1), Edit::Insert(2), Edit::Insert(0)]);
+        assert_eq!(tree.items(), vec![0, 1, 2]);
+        assert_eq!(removed, Vec::<u8>::new());
+        assert_eq!(tree.get(&0), Some(&0));
+        assert_eq!(tree.get(&1), Some(&1));
+        assert_eq!(tree.get(&2), Some(&2));
+        assert_eq!(tree.get(&4), None);
+
+        let removed = tree.edit(vec![Edit::Insert(2), Edit::Insert(4), Edit::Remove(0)]);
+        assert_eq!(tree.items(), vec![1, 2, 4]);
+        assert_eq!(removed, vec![0, 2]);
+        assert_eq!(tree.get(&0), None);
+        assert_eq!(tree.get(&1), Some(&1));
+        assert_eq!(tree.get(&2), Some(&2));
+        assert_eq!(tree.get(&4), Some(&4));
+    }
+
     #[derive(Clone, Default, Debug)]
     pub struct IntegersSummary {
         count: Count,
         sum: Sum,
         contains_even: bool,
+        max: u8,
     }
 
     #[derive(Ord, PartialOrd, Default, Eq, PartialEq, Clone, Debug)]
@@ -775,7 +824,22 @@ mod tests {
                 count: Count(1),
                 sum: Sum(*self as usize),
                 contains_even: (*self & 1) == 0,
+                max: *self,
             }
+        }
+    }
+
+    impl KeyedItem for u8 {
+        type Key = u8;
+
+        fn key(&self) -> Self::Key {
+            *self
+        }
+    }
+
+    impl<'a> Dimension<'a, IntegersSummary> for u8 {
+        fn add_summary(&mut self, summary: &IntegersSummary) {
+            *self = summary.max;
         }
     }
 
@@ -784,6 +848,7 @@ mod tests {
             self.count.0 += &other.count.0;
             self.sum.0 += &other.sum.0;
             self.contains_even |= other.contains_even;
+            self.max = cmp::max(self.max, other.max);
         }
     }
 
@@ -792,15 +857,6 @@ mod tests {
             self.0 += summary.count.0;
         }
     }
-
-    // impl<'a> Add<&'a Self> for Count {
-    //     type Output = Self;
-    //
-    //     fn add(mut self, other: &Self) -> Self {
-    //         self.0 += other.0;
-    //         self
-    //     }
-    // }
 
     impl<'a> Dimension<'a, IntegersSummary> for Sum {
         fn add_summary(&mut self, summary: &IntegersSummary) {
