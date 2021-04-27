@@ -74,7 +74,7 @@ impl EventStream {
                 Self::trampoline,
                 &stream_context,
                 cf_paths,
-                fs::kFSEventStreamEventIdSinceNow,
+                FSEventsGetCurrentEventId(),
                 latency.as_secs_f64(),
                 fs::kFSEventStreamCreateFlagFileEvents
                     | fs::kFSEventStreamCreateFlagNoDefer
@@ -283,6 +283,11 @@ impl std::fmt::Display for StreamFlags {
         }
         write!(f, "")
     }
+}
+
+#[link(name = "CoreServices", kind = "framework")]
+extern "C" {
+    pub fn FSEventsGetCurrentEventId() -> u64;
 }
 
 #[test]
