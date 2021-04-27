@@ -44,6 +44,7 @@ pub fn init(app: &mut MutableAppContext) {
         Binding::new("shift-down", "buffer:select_down", Some("BufferView")),
         Binding::new("shift-left", "buffer:select_left", Some("BufferView")),
         Binding::new("shift-right", "buffer:select_right", Some("BufferView")),
+        Binding::new("cmd-a", "buffer:select_all", Some("BufferView")),
         Binding::new("pageup", "buffer:page_up", Some("BufferView")),
         Binding::new("pagedown", "buffer:page_down", Some("BufferView")),
         Binding::new("alt-cmd-[", "buffer:fold", Some("BufferView")),
@@ -73,6 +74,7 @@ pub fn init(app: &mut MutableAppContext) {
     app.add_action("buffer:select_down", BufferView::select_down);
     app.add_action("buffer:select_left", BufferView::select_left);
     app.add_action("buffer:select_right", BufferView::select_right);
+    app.add_action("buffer:select_all", BufferView::select_all);
     app.add_action("buffer:page_up", BufferView::page_up);
     app.add_action("buffer:page_down", BufferView::page_down);
     app.add_action("buffer:fold", BufferView::fold);
@@ -814,6 +816,16 @@ impl BufferView {
             }
             self.update_selections(selections, true, ctx);
         }
+    }
+
+    pub fn select_all(&mut self, _: &(), ctx: &mut ViewContext<Self>) {
+        let selection = Selection {
+            start: Anchor::Start,
+            end: Anchor::End,
+            reversed: false,
+            goal_column: None,
+        };
+        self.update_selections(vec![selection], false, ctx);
     }
 
     pub fn selections_in_range<'a>(
@@ -1840,6 +1852,20 @@ mod tests {
                     DisplayPoint::new(3, 0)..DisplayPoint::new(3, 0),
                     DisplayPoint::new(5, 1)..DisplayPoint::new(5, 1),
                 ]
+            );
+        });
+    }
+
+    #[test]
+    fn test_select_all() {
+        App::test((), |app| {
+            let buffer = app.add_model(|ctx| Buffer::new(0, "abc\nde\nfgh", ctx));
+            let settings = settings::channel(&app.font_cache()).unwrap().1;
+            let (_, view) = app.add_window(|ctx| BufferView::for_buffer(buffer, settings, ctx));
+            view.update(app, |b, ctx| b.select_all(&(), ctx));
+            assert_eq!(
+                view.read(app).selection_ranges(app.as_ref()),
+                &[DisplayPoint::new(0, 0)..DisplayPoint::new(2, 3)]
             );
         });
     }
