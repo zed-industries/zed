@@ -796,24 +796,20 @@ impl BufferView {
     }
 
     pub fn select_up(&mut self, _: &(), ctx: &mut ViewContext<Self>) {
-        if self.single_line {
-            ctx.propagate_action();
-        } else {
-            let mut selections = self.selections(ctx.as_ref()).to_vec();
-            {
-                let app = ctx.as_ref();
-                let buffer = self.buffer.read(app);
-                let map = self.display_map.read(app);
-                for selection in &mut selections {
-                    let head = selection.head().to_display_point(map, app).unwrap();
-                    let (head, goal_column) =
-                        movement::up(map, head, selection.goal_column, app).unwrap();
-                    selection.set_head(&buffer, map.anchor_before(head, Bias::Left, app).unwrap());
-                    selection.goal_column = goal_column;
-                }
+        let mut selections = self.selections(ctx.as_ref()).to_vec();
+        {
+            let app = ctx.as_ref();
+            let buffer = self.buffer.read(app);
+            let map = self.display_map.read(app);
+            for selection in &mut selections {
+                let head = selection.head().to_display_point(map, app).unwrap();
+                let (head, goal_column) =
+                    movement::up(map, head, selection.goal_column, app).unwrap();
+                selection.set_head(&buffer, map.anchor_before(head, Bias::Left, app).unwrap());
+                selection.goal_column = goal_column;
             }
-            self.update_selections(selections, true, ctx);
         }
+        self.update_selections(selections, true, ctx);
     }
 
     pub fn move_down(&mut self, _: &(), ctx: &mut ViewContext<Self>) {
@@ -845,24 +841,20 @@ impl BufferView {
     }
 
     pub fn select_down(&mut self, _: &(), ctx: &mut ViewContext<Self>) {
-        if self.single_line {
-            ctx.propagate_action();
-        } else {
-            let mut selections = self.selections(ctx.as_ref()).to_vec();
-            {
-                let app = ctx.as_ref();
-                let buffer = self.buffer.read(app);
-                let map = self.display_map.read(app);
-                for selection in &mut selections {
-                    let head = selection.head().to_display_point(map, app).unwrap();
-                    let (head, goal_column) =
-                        movement::down(map, head, selection.goal_column, app).unwrap();
-                    selection.set_head(&buffer, map.anchor_before(head, Bias::Right, app).unwrap());
-                    selection.goal_column = goal_column;
-                }
+        let mut selections = self.selections(ctx.as_ref()).to_vec();
+        {
+            let app = ctx.as_ref();
+            let buffer = self.buffer.read(app);
+            let map = self.display_map.read(app);
+            for selection in &mut selections {
+                let head = selection.head().to_display_point(map, app).unwrap();
+                let (head, goal_column) =
+                    movement::down(map, head, selection.goal_column, app).unwrap();
+                selection.set_head(&buffer, map.anchor_before(head, Bias::Right, app).unwrap());
+                selection.goal_column = goal_column;
             }
-            self.update_selections(selections, true, ctx);
         }
+        self.update_selections(selections, true, ctx);
     }
 
     pub fn move_to_beginning(&mut self, _: &(), ctx: &mut ViewContext<Self>) {
