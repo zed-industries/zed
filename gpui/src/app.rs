@@ -407,8 +407,9 @@ impl MutableAppContext {
             font_cache: Arc::new(FontCache::new(fonts)),
             assets: Arc::new(AssetCache::new(asset_source)),
             ctx: AppContext {
-                models: HashMap::new(),
-                windows: HashMap::new(),
+                models: Default::default(),
+                windows: Default::default(),
+                values: Default::default(),
                 ref_counts: Arc::new(Mutex::new(RefCounts::default())),
                 background: Arc::new(executor::Background::new()),
                 thread_pool: scoped_pool::Pool::new(num_cpus::get(), "app"),
@@ -865,8 +866,8 @@ impl MutableAppContext {
 
     fn remove_dropped_entities(&mut self) {
         loop {
-            let (dropped_models, dropped_views) = self.ctx.ref_counts.lock().take_dropped();
-            if dropped_models.is_empty() && dropped_views.is_empty() {
+            let (dropped_models, dropped_views, dropped_values) = self.ctx.ref_counts.lock().take_dropped();
+            if dropped_models.is_empty() && dropped_views.is_empty() && dropped_values.is_empty() {
                 break;
             }
 
@@ -889,6 +890,11 @@ impl MutableAppContext {
                         .push(view_id);
                     window.views.remove(&view_id);
                 }
+            }
+
+            let mut values = self.ctx.values.lock();
+            for key in dropped_values {
+                values.remove(&key);
             }
         }
     }
@@ -1308,6 +1314,7 @@ impl AsRef<AppContext> for MutableAppContext {
 pub struct AppContext {
     models: HashMap<usize, Box<dyn AnyModel>>,
     windows: HashMap<usize, Window>,
+    values: Mutex<HashMap<(TypeId, usize), Box<dyn Any>>>,
     background: Arc<executor::Background>,
     ref_counts: Arc<Mutex<RefCounts>>,
     thread_pool: scoped_pool::Pool,
@@ -1352,6 +1359,13 @@ impl AppContext {
 
     pub fn thread_pool(&self) -> &scoped_pool::Pool {
         &self.thread_pool
+    }
+
+    pub fn value<T: 'static + Default, Tag: 'static>(&self, id: usize) -> ValueHandle<T> {
+        let key = (TypeId::of::<Tag>(), id);
+        let mut values = self.values.lock();
+        values.entry(key).or_insert_with(|| Box::new(T::default()));
+        ValueHandle::new(TypeId::of::<Tag>(), id, &self.ref_counts)
     }
 }
 
@@ -1958,7 +1972,7 @@ pub struct ModelHandle<T> {
 
 impl<T: Entity> ModelHandle<T> {
     fn new(model_id: usize, ref_counts: &Arc<Mutex<RefCounts>>) -> Self {
-        ref_counts.lock().inc(model_id);
+        ref_counts.lock().inc_entity(model_id);
         Self {
             model_id,
             model_type: PhantomData,
@@ -2031,7 +2045,7 @@ impl<T: Entity> ModelHandle<T> {
 impl<T> Clone for ModelHandle<T> {
     fn clone(&self) -> Self {
         if let Some(ref_counts) = self.ref_counts.upgrade() {
-            ref_counts.lock().inc(self.model_id);
+            ref_counts.lock().inc_entity(self.model_id);
         }
 
         Self {
@@ -2122,7 +2136,7 @@ pub struct ViewHandle<T> {
 
 impl<T: View> ViewHandle<T> {
     fn new(window_id: usize, view_id: usize, ref_counts: &Arc<Mutex<RefCounts>>) -> Self {
-        ref_counts.lock().inc(view_id);
+        ref_counts.lock().inc_entity(view_id);
         Self {
             window_id,
             view_id,
@@ -2205,7 +2219,7 @@ impl<T: View> ViewHandle<T> {
 impl<T> Clone for ViewHandle<T> {
     fn clone(&self) -> Self {
         if let Some(ref_counts) = self.ref_counts.upgrade() {
-            ref_counts.lock().inc(self.view_id);
+            ref_counts.lock().inc_entity(self.view_id);
         }
 
         Self {
@@ -2282,7 +2296,7 @@ impl AnyViewHandle {
 impl<T: View> From<&ViewHandle<T>> for AnyViewHandle {
     fn from(handle: &ViewHandle<T>) -> Self {
         if let Some(ref_counts) = handle.ref_counts.upgrade() {
-            ref_counts.lock().inc(handle.view_id);
+            ref_counts.lock().inc_entity(handle.view_id);
         }
         AnyViewHandle {
             window_id: handle.window_id,
@@ -2342,48 +2356,97 @@ impl<T> Clone for WeakViewHandle<T> {
     }
 }
 
+pub struct ValueHandle<T> {
+    value_type: PhantomData<T>,
+    tag_type_id: TypeId,
+    id: usize,
+    ref_counts: Weak<Mutex<RefCounts>>,
+}
+
+impl<T: 'static> ValueHandle<T> {
+    fn new(tag_type_id: TypeId, id: usize, ref_counts: &Arc<Mutex<RefCounts>>) -> Self {
+        ref_counts.lock().inc_value(tag_type_id, id);
+        Self {
+            value_type: PhantomData,
+            tag_type_id,
+            id,
+            ref_counts: Arc::downgrade(ref_counts),
+        }
+    }
+
+    pub fn map<R>(&self, ctx: &AppContext, f: impl FnOnce(&mut T) -> R) -> R {
+        f(ctx
+            .values
+            .lock()
+            .get_mut(&(self.tag_type_id, self.id))
+            .unwrap()
+            .downcast_mut()
+            .unwrap())
+    }
+}
+
+impl<T> Drop for ValueHandle<T> {
+    fn drop(&mut self) {
+        if let Some(ref_counts) = self.ref_counts.upgrade() {
+            ref_counts.lock().dec_value(self.tag_type_id, self.id);
+        }
+    }
+}
+
 #[derive(Default)]
 struct RefCounts {
-    counts: HashMap<usize, usize>,
+    entity_counts: HashMap<usize, usize>,
+    value_counts: HashMap<(TypeId, usize), usize>,
     dropped_models: HashSet<usize>,
     dropped_views: HashSet<(usize, usize)>,
+    dropped_values: HashSet<(TypeId, usize)>,
 }
 
 impl RefCounts {
-    fn inc(&mut self, model_id: usize) {
-        *self.counts.entry(model_id).or_insert(0) += 1;
+    fn inc_entity(&mut self, model_id: usize) {
+        *self.entity_counts.entry(model_id).or_insert(0) += 1;
+    }
+
+    fn inc_value(&mut self, tag_type_id: TypeId, id: usize) {
+        *self.value_counts.entry((tag_type_id, id)).or_insert(0) += 1;
     }
 
     fn dec_model(&mut self, model_id: usize) {
-        if let Some(count) = self.counts.get_mut(&model_id) {
-            *count -= 1;
-            if *count == 0 {
-                self.counts.remove(&model_id);
-                self.dropped_models.insert(model_id);
-            }
-        } else {
-            panic!("Expected ref count to be positive")
+        let count = self.entity_counts.get_mut(&model_id).unwrap();
+        *count -= 1;
+        if *count == 0 {
+            self.entity_counts.remove(&model_id);
+            self.dropped_models.insert(model_id);
         }
     }
 
     fn dec_view(&mut self, window_id: usize, view_id: usize) {
-        if let Some(count) = self.counts.get_mut(&view_id) {
-            *count -= 1;
-            if *count == 0 {
-                self.counts.remove(&view_id);
-                self.dropped_views.insert((window_id, view_id));
-            }
-        } else {
-            panic!("Expected ref count to be positive")
+        let count = self.entity_counts.get_mut(&view_id).unwrap();
+        *count -= 1;
+        if *count == 0 {
+            self.entity_counts.remove(&view_id);
+            self.dropped_views.insert((window_id, view_id));
         }
     }
 
-    fn take_dropped(&mut self) -> (HashSet<usize>, HashSet<(usize, usize)>) {
+    fn dec_value(&mut self, tag_type_id: TypeId, id: usize) {
+        let key = (tag_type_id, id);
+        let count = self.value_counts.get_mut(&key).unwrap();
+        *count -= 1;
+        if *count == 0 {
+            self.value_counts.remove(&key);
+            self.dropped_values.insert(key);
+        }
+    }
+
+    fn take_dropped(&mut self) -> (HashSet<usize>, HashSet<(usize, usize)>, HashSet<(TypeId, usize)>) {
         let mut dropped_models = HashSet::new();
         let mut dropped_views = HashSet::new();
+        let mut dropped_values = HashSet::new();
         std::mem::swap(&mut self.dropped_models, &mut dropped_models);
         std::mem::swap(&mut self.dropped_views, &mut dropped_views);
-        (dropped_models, dropped_views)
+        std::mem::swap(&mut self.dropped_values, &mut dropped_values);
+        (dropped_models, dropped_views, dropped_values)
     }
 }
 
