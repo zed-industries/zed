@@ -23,6 +23,7 @@ pub use event_handler::*;
 pub use flex::*;
 pub use label::*;
 pub use line_box::*;
+pub use mouse_event_handler::*;
 pub use new::*;
 pub use stack::*;
 pub use svg::*;

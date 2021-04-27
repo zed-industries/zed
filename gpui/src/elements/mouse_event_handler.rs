@@ -17,11 +17,11 @@ pub struct MouseState {
 }
 
 impl MouseEventHandler {
-    pub fn new<Tag: 'static>(
-        id: usize,
-        ctx: &AppContext,
-        render_child: impl FnOnce(MouseState) -> ElementBox,
-    ) -> Self {
+    pub fn new<Tag, F>(id: usize, ctx: &AppContext, render_child: F) -> Self
+    where
+        Tag: 'static,
+        F: FnOnce(MouseState) -> ElementBox,
+    {
         let state = ctx.value::<Tag, _>(id);
         let child = state.map(ctx, |state| render_child(*state));
         Self { state, child }
@@ -30,7 +30,6 @@ impl MouseEventHandler {
 
 impl Element for MouseEventHandler {
     type LayoutState = ();
-
     type PaintState = ();
 
     fn layout(
@@ -72,7 +71,6 @@ impl Element for MouseEventHandler {
                 let mouse_in = bounds.contains_point(*position);
                 if state.hovered != mouse_in {
                     state.hovered = mouse_in;
-                    log::info!("hovered {}", state.hovered);
                     // ctx.notify();
                     true
                 } else {
@@ -81,7 +79,6 @@ impl Element for MouseEventHandler {
             }
             Event::LeftMouseDown { position, .. } => {
                 if bounds.contains_point(*position) {
-                    log::info!("clicked");
                     state.clicked = true;
                     // ctx.notify();
                     true
@@ -91,7 +88,6 @@ impl Element for MouseEventHandler {
             }
             Event::LeftMouseUp { .. } => {
                 if state.clicked {
-                    log::info!("unclicked");
                     state.clicked = false;
                     // ctx.notify();
                     true

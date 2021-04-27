@@ -176,14 +176,14 @@ impl Pane {
         ctx.emit(Event::Split(direction));
     }
 
-    fn render_tabs(&self, app: &AppContext) -> ElementBox {
+    fn render_tabs(&self, ctx: &AppContext) -> ElementBox {
         let settings = smol::block_on(self.settings.read());
         let border_color = ColorU::from_u32(0xdbdbdcff);
 
         let mut row = Flex::row();
         let last_item_ix = self.items.len() - 1;
         for (ix, item) in self.items.iter().enumerate() {
-            let title = item.title(app);
+            let title = item.title(ctx);
 
             let mut border = Border::new(1.0, border_color);
             border.left = ix > 0;
@@ -204,7 +204,7 @@ impl Pane {
                         LineBox::new(
                             settings.ui_font_family,
                             settings.ui_font_size,
-                            Align::new(Self::render_modified_icon(item.is_dirty(app)))
+                            Align::new(Self::render_modified_icon(item.is_dirty(ctx)))
                                 .right()
                                 .boxed(),
                         )
@@ -224,19 +224,24 @@ impl Pane {
                 container = container.with_background_color(ColorU::from_u32(0xeaeaebff));
             }
 
+            enum Tab {}
+
             row.add_child(
                 Expanded::new(
                     1.0,
-                    ConstrainedBox::new(
-                        EventHandler::new(container.boxed())
-                            .on_mouse_down(move |ctx| {
-                                ctx.dispatch_action("pane:activate_item", ix);
-                                true
-                            })
-                            .boxed(),
-                    )
-                    .with_min_width(80.0)
-                    .with_max_width(264.0)
+                    MouseEventHandler::new::<Tab, _>(0, ctx, |mouse_state| {
+                        ConstrainedBox::new(
+                            EventHandler::new(container.boxed())
+                                .on_mouse_down(move |ctx| {
+                                    ctx.dispatch_action("pane:activate_item", ix);
+                                    true
+                                })
+                                .boxed(),
+                        )
+                        .with_min_width(80.0)
+                        .with_max_width(264.0)
+                        .boxed()
+                    })
                     .boxed(),
                 )
                 .named("tab"),
