@@ -136,7 +136,7 @@ impl Pane {
     pub fn activate_prev_item(&mut self, ctx: &mut ViewContext<Self>) {
         if self.active_item > 0 {
             self.active_item -= 1;
-        } else {
+        } else if self.items.len() > 0 {
             self.active_item = self.items.len() - 1;
         }
         self.focus_active_item(ctx);
