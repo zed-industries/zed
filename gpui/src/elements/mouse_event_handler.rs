@@ -10,7 +10,7 @@ pub struct MouseEventHandler {
     child: ElementBox,
 }
 
-#[derive(Clone, Copy, Default)]
+#[derive(Clone, Copy, Debug, Default)]
 pub struct MouseState {
     hovered: bool,
     clicked: bool,
@@ -66,36 +66,38 @@ impl Element for MouseEventHandler {
         _: &mut Self::PaintState,
         ctx: &mut EventContext,
     ) -> bool {
+        let handled_in_child = self.child.dispatch_event(event, ctx);
+
         self.state.map(ctx.app, |state| match event {
             Event::MouseMoved { position } => {
                 let mouse_in = bounds.contains_point(*position);
                 if state.hovered != mouse_in {
                     state.hovered = mouse_in;
-                    // ctx.notify();
+                    ctx.notify();
                     true
                 } else {
-                    false
+                    handled_in_child
                 }
             }
             Event::LeftMouseDown { position, .. } => {
-                if bounds.contains_point(*position) {
+                if !handled_in_child && bounds.contains_point(*position) {
                     state.clicked = true;
-                    // ctx.notify();
+                    ctx.notify();
                     true
                 } else {
-                    false
+                    handled_in_child
                 }
             }
             Event::LeftMouseUp { .. } => {
-                if state.clicked {
+                if !handled_in_child && state.clicked {
                     state.clicked = false;
-                    // ctx.notify();
+                    ctx.notify();
                     true
                 } else {
-                    false
+                    handled_in_child
                 }
             }
-            _ => false,
+            _ => handled_in_child,
         })
     }
 

@@ -788,7 +788,15 @@ impl MutableAppContext {
                         }
                     }
 
-                    let actions = presenter.borrow_mut().dispatch_event(event, ctx.as_ref());
+                    let (actions, invalidated_views) =
+                        presenter.borrow_mut().dispatch_event(event, ctx.as_ref());
+
+                    ctx.window_invalidations
+                        .entry(window_id)
+                        .or_default()
+                        .updated
+                        .extend(invalidated_views.into_iter());
+
                     for action in actions {
                         ctx.dispatch_action_any(
                             window_id,

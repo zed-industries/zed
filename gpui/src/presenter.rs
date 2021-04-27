@@ -9,7 +9,11 @@ use crate::{
 };
 use pathfinder_geometry::vector::{vec2f, Vector2F};
 use serde_json::json;
-use std::{any::Any, collections::HashMap, sync::Arc};
+use std::{
+    any::Any,
+    collections::{HashMap, HashSet},
+    sync::Arc,
+};
 
 pub struct Presenter {
     window_id: usize,
@@ -114,20 +118,25 @@ impl Presenter {
         }
     }
 
-    pub fn dispatch_event(&mut self, event: Event, app: &AppContext) -> Vec<ActionToDispatch> {
+    pub fn dispatch_event(
+        &mut self,
+        event: Event,
+        app: &AppContext,
+    ) -> (Vec<ActionToDispatch>, HashSet<usize>) {
         if let Some(root_view_id) = app.root_view_id(self.window_id) {
             let mut ctx = EventContext {
                 rendered_views: &mut self.rendered_views,
-                actions: Vec::new(),
+                actions: Default::default(),
                 font_cache: &self.font_cache,
                 text_layout_cache: &self.text_layout_cache,
-                view_stack: Vec::new(),
+                view_stack: Default::default(),
+                invalidated_views: Default::default(),
                 app,
             };
             ctx.dispatch_event(root_view_id, &event);
-            ctx.actions
+            (ctx.actions, ctx.invalidated_views)
         } else {
-            Vec::new()
+            Default::default()
         }
     }
 
@@ -214,6 +223,7 @@ pub struct EventContext<'a> {
     pub text_layout_cache: &'a TextLayoutCache,
     pub app: &'a AppContext,
     view_stack: Vec<usize>,
+    invalidated_views: HashSet<usize>,
 }
 
 impl<'a> EventContext<'a> {
@@ -235,6 +245,11 @@ impl<'a> EventContext<'a> {
             name,
             arg: Box::new(arg),
         });
+    }
+
+    pub fn notify(&mut self) {
+        self.invalidated_views
+            .insert(*self.view_stack.last().unwrap());
     }
 }
 

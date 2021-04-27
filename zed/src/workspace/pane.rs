@@ -229,7 +229,8 @@ impl Pane {
             row.add_child(
                 Expanded::new(
                     1.0,
-                    MouseEventHandler::new::<Tab, _>(0, ctx, |mouse_state| {
+                    MouseEventHandler::new::<Tab, _>(item.id(), ctx, |mouse_state| {
+                        log::info!("mouse event handler {:?}", mouse_state);
                         ConstrainedBox::new(
                             EventHandler::new(container.boxed())
                                 .on_mouse_down(move |ctx| {
