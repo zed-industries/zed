@@ -7,6 +7,7 @@ mod event_handler;
 mod flex;
 mod label;
 mod line_box;
+mod mouse_event_handler;
 mod new;
 mod stack;
 mod svg;

@@ -21,4 +21,7 @@ pub enum Event {
     LeftMouseDragged {
         position: Vector2F,
     },
+    MouseMoved {
+        position: Vector2F,
+    },
 }

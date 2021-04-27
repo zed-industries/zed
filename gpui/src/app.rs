@@ -866,7 +866,8 @@ impl MutableAppContext {
 
     fn remove_dropped_entities(&mut self) {
         loop {
-            let (dropped_models, dropped_views, dropped_values) = self.ctx.ref_counts.lock().take_dropped();
+            let (dropped_models, dropped_views, dropped_values) =
+                self.ctx.ref_counts.lock().take_dropped();
             if dropped_models.is_empty() && dropped_views.is_empty() && dropped_values.is_empty() {
                 break;
             }
@@ -1361,7 +1362,7 @@ impl AppContext {
         &self.thread_pool
     }
 
-    pub fn value<T: 'static + Default, Tag: 'static>(&self, id: usize) -> ValueHandle<T> {
+    pub fn value<Tag: 'static, T: 'static + Default>(&self, id: usize) -> ValueHandle<T> {
         let key = (TypeId::of::<Tag>(), id);
         let mut values = self.values.lock();
         values.entry(key).or_insert_with(|| Box::new(T::default()));
@@ -2439,7 +2440,13 @@ impl RefCounts {
         }
     }
 
-    fn take_dropped(&mut self) -> (HashSet<usize>, HashSet<(usize, usize)>, HashSet<(TypeId, usize)>) {
+    fn take_dropped(
+        &mut self,
+    ) -> (
+        HashSet<usize>,
+        HashSet<(usize, usize)>,
+        HashSet<(TypeId, usize)>,
+    ) {
         let mut dropped_models = HashSet::new();
         let mut dropped_views = HashSet::new();
         let mut dropped_values = HashSet::new();
