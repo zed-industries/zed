@@ -216,7 +216,7 @@ impl App {
     }
 
     pub fn font_cache(&self) -> Arc<FontCache> {
-        self.0.borrow().font_cache.clone()
+        self.0.borrow().ctx.font_cache.clone()
     }
 
     fn update<T, F: FnOnce(&mut MutableAppContext) -> T>(&mut self, callback: F) -> T {
@@ -326,7 +326,7 @@ impl TestAppContext {
     }
 
     pub fn font_cache(&self) -> Arc<FontCache> {
-        self.0.borrow().font_cache.clone()
+        self.0.borrow().ctx.font_cache.clone()
     }
 
     pub fn platform(&self) -> Rc<dyn platform::Platform> {
@@ -370,7 +370,6 @@ type GlobalActionCallback = dyn FnMut(&dyn Any, &mut MutableAppContext);
 pub struct MutableAppContext {
     weak_self: Option<rc::Weak<RefCell<Self>>>,
     platform: Rc<dyn platform::Platform>,
-    font_cache: Arc<FontCache>,
     assets: Arc<AssetCache>,
     ctx: AppContext,
     actions: HashMap<TypeId, HashMap<String, Vec<Box<ActionCallback>>>>,
@@ -404,7 +403,6 @@ impl MutableAppContext {
         Self {
             weak_self: None,
             platform,
-            font_cache: Arc::new(FontCache::new(fonts)),
             assets: Arc::new(AssetCache::new(asset_source)),
             ctx: AppContext {
                 models: Default::default(),
@@ -413,6 +411,7 @@ impl MutableAppContext {
                 ref_counts: Arc::new(Mutex::new(RefCounts::default())),
                 background: Arc::new(executor::Background::new()),
                 thread_pool: scoped_pool::Pool::new(num_cpus::get(), "app"),
+                font_cache: Arc::new(FontCache::new(fonts)),
             },
             actions: HashMap::new(),
             global_actions: HashMap::new(),
@@ -444,7 +443,7 @@ impl MutableAppContext {
     }
 
     pub fn font_cache(&self) -> &Arc<FontCache> {
-        &self.font_cache
+        &self.ctx.font_cache
     }
 
     pub fn foreground_executor(&self) -> &Rc<executor::Foreground> {
@@ -764,7 +763,7 @@ impl MutableAppContext {
         let text_layout_cache = TextLayoutCache::new(self.platform.fonts());
         let presenter = Rc::new(RefCell::new(Presenter::new(
             window_id,
-            self.font_cache.clone(),
+            self.ctx.font_cache.clone(),
             text_layout_cache,
             self.assets.clone(),
             self,
@@ -1327,6 +1326,7 @@ pub struct AppContext {
     background: Arc<executor::Background>,
     ref_counts: Arc<Mutex<RefCounts>>,
     thread_pool: scoped_pool::Pool,
+    font_cache: Arc<FontCache>,
 }
 
 impl AppContext {
@@ -1364,6 +1364,10 @@ impl AppContext {
 
     pub fn background_executor(&self) -> &Arc<executor::Background> {
         &self.background
+    }
+
+    pub fn font_cache(&self) -> &FontCache {
+        &self.font_cache
     }
 
     pub fn thread_pool(&self) -> &scoped_pool::Pool {

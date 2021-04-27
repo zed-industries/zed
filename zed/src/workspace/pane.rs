@@ -1,7 +1,7 @@
 use super::{ItemViewHandle, SplitDirection};
 use crate::{settings::Settings, watch};
 use gpui::{
-    color::{ColorF, ColorU},
+    color::ColorU,
     elements::*,
     geometry::{rect::RectF, vector::vec2f},
     keymap::Binding,
@@ -179,6 +179,10 @@ impl Pane {
     fn render_tabs(&self, ctx: &AppContext) -> ElementBox {
         let settings = smol::block_on(self.settings.read());
         let border_color = ColorU::from_u32(0xdbdbdcff);
+        let line_height = ctx.font_cache().line_height(
+            ctx.font_cache().default_font(settings.ui_font_family),
+            settings.ui_font_size,
+        );
 
         let mut row = Flex::row();
         let last_item_ix = self.items.len() - 1;
@@ -196,7 +200,6 @@ impl Pane {
                         border.right = ix == last_item_ix;
                         border.bottom = ix != self.active_item;
 
-                        let padding = 6.;
                         let mut container = Container::new(
                             Stack::new()
                                 .with_child(
@@ -211,28 +214,23 @@ impl Pane {
                                     .boxed(),
                                 )
                                 .with_child(
-                                    LineBox::new(
-                                        settings.ui_font_family,
-                                        settings.ui_font_size,
-                                        Align::new(Self::render_tab_icon(
-                                            mouse_state.hovered,
-                                            item.is_dirty(ctx),
-                                        ))
-                                        .right()
-                                        .boxed(),
-                                    )
+                                    Align::new(Self::render_tab_icon(
+                                        line_height - 2.,
+                                        mouse_state.hovered,
+                                        item.is_dirty(ctx),
+                                    ))
+                                    .right()
                                     .boxed(),
                                 )
                                 .boxed(),
                         )
-                        .with_vertical_padding(padding)
                         .with_horizontal_padding(10.)
                         .with_border(border);
 
                         if ix == self.active_item {
                             container = container
                                 .with_background_color(ColorU::white())
-                                .with_padding_bottom(padding + border.width);
+                                .with_padding_bottom(border.width);
                         } else {
                             container =
                                 container.with_background_color(ColorU::from_u32(0xeaeaebff));
@@ -260,17 +258,9 @@ impl Pane {
         // so that the tab's border doesn't abut the window's border.
         row.add_child(
             ConstrainedBox::new(
-                Container::new(
-                    LineBox::new(
-                        settings.ui_font_family,
-                        settings.ui_font_size,
-                        Empty::new().boxed(),
-                    )
+                Container::new(Empty::new().boxed())
+                    .with_border(Border::bottom(1.0, border_color))
                     .boxed(),
-                )
-                .with_uniform_padding(6.0)
-                .with_border(Border::bottom(1.0, border_color))
-                .boxed(),
             )
             .with_min_width(20.)
             .named("fixed-filler"),
@@ -279,34 +269,26 @@ impl Pane {
         row.add_child(
             Expanded::new(
                 0.0,
-                Container::new(
-                    LineBox::new(
-                        settings.ui_font_family,
-                        settings.ui_font_size,
-                        Empty::new().boxed(),
-                    )
+                Container::new(Empty::new().boxed())
+                    .with_border(Border::bottom(1.0, border_color))
                     .boxed(),
-                )
-                .with_uniform_padding(6.0)
-                .with_border(Border::bottom(1.0, border_color))
-                .boxed(),
             )
             .named("filler"),
         );
 
-        row.named("tabs")
+        ConstrainedBox::new(row.boxed())
+            .with_height(line_height + 16.)
+            .named("tabs")
     }
 
-    fn render_tab_icon(tab_hovered: bool, is_modified: bool) -> ElementBox {
+    fn render_tab_icon(close_icon_size: f32, tab_hovered: bool, is_modified: bool) -> ElementBox {
         let modified_color = ColorU::from_u32(0x556de8ff);
-        if tab_hovered {
+        let icon = if tab_hovered {
             let mut icon = Svg::new("icons/x.svg");
             if is_modified {
                 icon = icon.with_color(modified_color);
             }
-            ConstrainedBox::new(icon.boxed())
-                .with_width(10.)
-                .named("close-tab-icon")
+            icon.named("close-tab-icon")
         } else {
             let diameter = 8.;
             ConstrainedBox::new(
@@ -326,7 +308,11 @@ impl Pane {
             .with_width(diameter)
             .with_height(diameter)
             .named("unsaved-tab-icon")
-        }
+        };
+
+        ConstrainedBox::new(Align::new(icon).boxed())
+            .with_width(close_icon_size)
+            .named("tab-icon")
     }
 }
 
