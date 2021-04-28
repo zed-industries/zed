@@ -132,6 +132,11 @@ impl Worktree {
         }
     }
 
+    #[cfg(test)]
+    fn flush_fs_events(&self) {
+        self._event_stream_handle.flush();
+    }
+
     fn observe_scan_state(&mut self, scan_state: ScanState, ctx: &mut ModelContext<Self>) {
         let _ = self.scan_state.0.blocking_send(scan_state);
         self.poll_entries(ctx);
@@ -1360,7 +1365,12 @@ mod tests {
             std::fs::remove_file(dir.path().join("b/c/file5")).unwrap();
             std::fs::rename(dir.path().join("a/file2"), dir.path().join("a/file2.new")).unwrap();
             std::fs::rename(dir.path().join("b/c"), dir.path().join("d")).unwrap();
-            app.read(|ctx| tree.read(ctx).next_scan_complete()).await;
+            app.read(|ctx| {
+                let tree = tree.read(ctx);
+                tree.flush_fs_events();
+                tree.next_scan_complete()
+            })
+            .await;
 
             app.read(|ctx| {
                 assert_eq!(

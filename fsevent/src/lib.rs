@@ -26,6 +26,11 @@ pub struct EventStream {
     callback: Box<Option<RunCallback>>,
 }
 
+pub struct Handle {
+    stream: fs::FSEventStreamRef,
+    state: Arc<Mutex<Lifecycle>>,
+}
+
 type RunCallback = Box<dyn FnMut(Vec<Event>) -> bool>;
 
 enum Lifecycle {
@@ -34,10 +39,10 @@ enum Lifecycle {
     Stopped,
 }
 
-pub struct Handle(Arc<Mutex<Lifecycle>>);
-
 unsafe impl Send for EventStream {}
 unsafe impl Send for Lifecycle {}
+unsafe impl Send for Handle {}
+unsafe impl Sync for Handle {}
 
 impl EventStream {
     pub fn new(paths: &[&Path], latency: Duration) -> (Self, Handle) {
@@ -99,7 +104,7 @@ impl EventStream {
                     state: state.clone(),
                     callback,
                 },
-                Handle(state),
+                Handle { stream, state },
             )
         }
     }
@@ -178,9 +183,17 @@ impl EventStream {
     }
 }
 
+impl Handle {
+    pub fn flush(&self) {
+        unsafe {
+            fs::FSEventStreamFlushSync(self.stream);
+        }
+    }
+}
+
 impl Drop for Handle {
     fn drop(&mut self) {
-        let mut state = self.0.lock();
+        let mut state = self.state.lock();
         if let Lifecycle::Running(run_loop) = *state {
             unsafe {
                 cf::CFRunLoopStop(run_loop);
