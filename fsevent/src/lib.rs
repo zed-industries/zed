@@ -82,15 +82,6 @@ impl EventStream {
             );
             cf::CFRelease(cf_paths);
 
-            fs::FSEventStreamScheduleWithRunLoop(
-                stream,
-                cf::CFRunLoopGetCurrent(),
-                cf::kCFRunLoopDefaultMode,
-            );
-            fs::FSEventStreamStart(stream);
-            fs::FSEventStreamFlushSync(stream);
-            fs::FSEventStreamStop(stream);
-
             let state = Arc::new(Mutex::new(Lifecycle::New));
 
             (
@@ -302,70 +293,118 @@ extern "C" {
     pub fn FSEventsGetCurrentEventId() -> u64;
 }
 
-#[test]
-fn test_event_stream() {
-    use std::{fs, sync::mpsc, time::Duration};
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::{fs, sync::mpsc, thread, time::Duration};
     use tempdir::TempDir;
 
-    let dir = TempDir::new("test_observe").unwrap();
-    let path = dir.path().canonicalize().unwrap();
-    fs::write(path.join("a"), "a contents").unwrap();
-
-    let (tx, rx) = mpsc::channel();
-    let (stream, handle) = EventStream::new(&[&path], Duration::from_millis(50));
-    std::thread::spawn(move || stream.run(move |events| tx.send(events.to_vec()).is_ok()));
-
-    fs::write(path.join("b"), "b contents").unwrap();
-    let events = rx.recv_timeout(Duration::from_millis(500)).unwrap();
-    let event = events.last().unwrap();
-    assert_eq!(event.path, path.join("b"));
-    assert!(event.flags.contains(StreamFlags::ITEM_CREATED));
-
-    fs::remove_file(path.join("a")).unwrap();
-    let events = rx.recv_timeout(Duration::from_millis(500)).unwrap();
-    let event = events.last().unwrap();
-    assert_eq!(event.path, path.join("a"));
-    assert!(event.flags.contains(StreamFlags::ITEM_REMOVED));
-    drop(handle);
-}
-
-#[test]
-fn test_event_stream_shutdown() {
-    use std::{fs, sync::mpsc, time::Duration};
-    use tempdir::TempDir;
-
-    let dir = TempDir::new("test_observe").unwrap();
-    let path = dir.path().canonicalize().unwrap();
-
-    let (tx, rx) = mpsc::channel();
-    let (stream, handle) = EventStream::new(&[&path], Duration::from_millis(50));
-    std::thread::spawn(move || {
-        stream.run({
-            let tx = tx.clone();
-            move |_| {
-                tx.send(()).unwrap();
-                true
+    #[test]
+    fn test_event_stream_simple() {
+        for _ in 0..3 {
+            let dir = TempDir::new("test-event-stream").unwrap();
+            let path = dir.path().canonicalize().unwrap();
+            for i in 0..10 {
+                fs::write(path.join(format!("existing-file-{}", i)), "").unwrap();
             }
+
+            let (tx, rx) = mpsc::channel();
+            let (stream, handle) = EventStream::new(&[&path], Duration::from_millis(50));
+            thread::spawn(move || stream.run(move |events| tx.send(events.to_vec()).is_ok()));
+
+            // Flush any historical events.
+            rx.recv_timeout(Duration::from_millis(500)).ok();
+
+            fs::write(path.join("new-file"), "").unwrap();
+            let events = rx.recv_timeout(Duration::from_millis(500)).unwrap();
+            let event = events.last().unwrap();
+            assert_eq!(event.path, path.join("new-file"));
+            assert!(event.flags.contains(StreamFlags::ITEM_CREATED));
+
+            fs::remove_file(path.join("existing-file-5")).unwrap();
+            let events = rx.recv_timeout(Duration::from_millis(500)).unwrap();
+            let event = events.last().unwrap();
+            assert_eq!(event.path, path.join("existing-file-5"));
+            assert!(event.flags.contains(StreamFlags::ITEM_REMOVED));
+            drop(handle);
+        }
+    }
+
+    #[test]
+    fn test_event_stream_delayed_start() {
+        for _ in 0..3 {
+            let dir = TempDir::new("test-event-stream").unwrap();
+            let path = dir.path().canonicalize().unwrap();
+            for i in 0..10 {
+                fs::write(path.join(format!("existing-file-{}", i)), "").unwrap();
+            }
+
+            let (tx, rx) = mpsc::channel();
+            let (stream, handle) = EventStream::new(&[&path], Duration::from_millis(50));
+
+            // Delay the call to `run` in order to make sure we don't miss any events that occur
+            // between creating the `EventStream` and calling `run`.
+            thread::spawn(move || {
+                thread::sleep(Duration::from_millis(250));
+                stream.run(move |events| tx.send(events.to_vec()).is_ok())
+            });
+
+            fs::write(path.join("new-file"), "").unwrap();
+            let events = rx.recv_timeout(Duration::from_millis(500)).unwrap();
+            let event = events.last().unwrap();
+            assert_eq!(event.path, path.join("new-file"));
+            assert!(event.flags.contains(StreamFlags::ITEM_CREATED));
+
+            fs::remove_file(path.join("existing-file-5")).unwrap();
+            let events = rx.recv_timeout(Duration::from_millis(500)).unwrap();
+            let event = events.last().unwrap();
+            assert_eq!(event.path, path.join("existing-file-5"));
+            assert!(event.flags.contains(StreamFlags::ITEM_REMOVED));
+            drop(handle);
+        }
+    }
+
+    #[test]
+    fn test_event_stream_shutdown_by_dropping_handle() {
+        let dir = TempDir::new("test-event-stream").unwrap();
+        let path = dir.path().canonicalize().unwrap();
+
+        let (tx, rx) = mpsc::channel();
+        let (stream, handle) = EventStream::new(&[&path], Duration::from_millis(50));
+        thread::spawn(move || {
+            stream.run({
+                let tx = tx.clone();
+                move |_| {
+                    tx.send("running").unwrap();
+                    true
+                }
+            });
+            tx.send("stopped").unwrap();
         });
-        tx.send(()).unwrap();
-    });
 
-    fs::write(path.join("b"), "b contents").unwrap();
-    rx.recv_timeout(Duration::from_millis(500)).unwrap();
+        fs::write(path.join("new-file"), "").unwrap();
+        assert_eq!(
+            rx.recv_timeout(Duration::from_millis(500)).unwrap(),
+            "running"
+        );
 
-    drop(handle);
-    rx.recv_timeout(Duration::from_millis(500)).unwrap();
-}
+        // Dropping the handle causes `EventStream::run` to return.
+        drop(handle);
+        assert_eq!(
+            rx.recv_timeout(Duration::from_millis(500)).unwrap(),
+            "stopped"
+        );
+    }
 
-#[test]
-fn test_event_stream_shutdown_before_run() {
-    use std::time::Duration;
-    use tempdir::TempDir;
+    #[test]
+    fn test_event_stream_shutdown_before_run() {
+        let dir = TempDir::new("test-event-stream").unwrap();
+        let path = dir.path().canonicalize().unwrap();
 
-    let dir = TempDir::new("test_observe").unwrap();
-    let path = dir.path().canonicalize().unwrap();
+        let (stream, handle) = EventStream::new(&[&path], Duration::from_millis(50));
+        drop(handle);
 
-    let (stream, handle) = EventStream::new(&[&path], Duration::from_millis(50));
-    drop(handle);
-    stream.run(|_| true);
+        // This returns immediately because the handle was already dropped.
+        stream.run(|_| true);
+    }
 }

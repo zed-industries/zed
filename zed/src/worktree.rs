@@ -1235,7 +1235,7 @@ mod tests {
     use crate::editor::Buffer;
     use crate::test::*;
     use anyhow::Result;
-    use gpui::App;
+    use gpui::{App, TestAppContext};
     use rand::prelude::*;
     use serde_json::json;
     use std::env;
@@ -1345,7 +1345,7 @@ mod tests {
 
             let tree = app.add_model(|ctx| Worktree::new(dir.path(), ctx));
             app.read(|ctx| tree.read(ctx).scan_complete()).await;
-            app.read(|ctx| assert_eq!(tree.read(ctx).file_count(), 5));
+            flush_fs_events(&tree, &app).await;
 
             let (file2, file3, file4, file5) = app.read(|ctx| {
                 (
@@ -1358,8 +1358,8 @@ mod tests {
 
             std::fs::rename(dir.path().join("a/file3"), dir.path().join("b/c/file3")).unwrap();
             std::fs::remove_file(dir.path().join("b/c/file5")).unwrap();
-            std::fs::rename(dir.path().join("a/file2"), dir.path().join("a/file2.new")).unwrap();
             std::fs::rename(dir.path().join("b/c"), dir.path().join("d")).unwrap();
+            std::fs::rename(dir.path().join("a/file2"), dir.path().join("a/file2.new")).unwrap();
             app.read(|ctx| tree.read(ctx).next_scan_complete()).await;
 
             app.read(|ctx| {
@@ -1411,6 +1411,7 @@ mod tests {
 
             let tree = app.add_model(|ctx| Worktree::new(dir.path(), ctx));
             app.read(|ctx| tree.read(ctx).scan_complete()).await;
+            flush_fs_events(&tree, &app).await;
             app.read(|ctx| {
                 let tree = tree.read(ctx);
                 let tracked = tree.entry_for_path("tracked-dir/tracked-file1").unwrap();
@@ -1716,5 +1717,30 @@ mod tests {
             paths.sort_by(|a, b| a.0.cmp(&b.0));
             paths
         }
+    }
+
+    // When the worktree's FS event stream sometimes delivers "redundant" events for FS changes that
+    // occurred before the worktree was constructed. These events can cause the worktree to perfrom
+    // extra directory scans, and emit extra scan-state notifications.
+    //
+    // This function mutates the worktree's directory and waits for those mutations to be picked up,
+    // to ensure that all redundant FS events have already been processed.
+    async fn flush_fs_events(tree: &ModelHandle<Worktree>, app: &TestAppContext) {
+        let filename = "fs-event-sentinel";
+        let root_path = app.read(|ctx| tree.read(ctx).abs_path.clone());
+
+        fs::write(root_path.join(filename), "").unwrap();
+        tree.condition_with_duration(Duration::from_secs(5), &app, |tree, _| {
+            tree.entry_for_path(filename).is_some()
+        })
+        .await;
+
+        fs::remove_file(root_path.join(filename)).unwrap();
+        tree.condition_with_duration(Duration::from_secs(5), &app, |tree, _| {
+            tree.entry_for_path(filename).is_none()
+        })
+        .await;
+
+        app.read(|ctx| tree.read(ctx).scan_complete()).await;
     }
 }

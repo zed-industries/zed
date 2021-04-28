@@ -2003,8 +2003,17 @@ impl<T: Entity> ModelHandle<T> {
     pub fn condition(
         &self,
         ctx: &TestAppContext,
-        mut predicate: impl 'static + FnMut(&T, &AppContext) -> bool,
-    ) -> impl 'static + Future<Output = ()> {
+        predicate: impl FnMut(&T, &AppContext) -> bool,
+    ) -> impl Future<Output = ()> {
+        self.condition_with_duration(Duration::from_millis(100), ctx, predicate)
+    }
+
+    pub fn condition_with_duration(
+        &self,
+        duration: Duration,
+        ctx: &TestAppContext,
+        mut predicate: impl FnMut(&T, &AppContext) -> bool,
+    ) -> impl Future<Output = ()> {
         let mut ctx = ctx.0.borrow_mut();
         let tx = ctx
             .async_observations
@@ -2015,7 +2024,7 @@ impl<T: Entity> ModelHandle<T> {
         let handle = self.downgrade();
 
         async move {
-            timeout(Duration::from_millis(200), async move {
+            timeout(duration, async move {
                 loop {
                     {
                         let ctx = ctx.borrow();
