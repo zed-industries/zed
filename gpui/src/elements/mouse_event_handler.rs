@@ -8,6 +8,7 @@ use serde_json::json;
 pub struct MouseEventHandler {
     state: ValueHandle<MouseState>,
     child: ElementBox,
+    click_handler: Option<Box<dyn FnMut(&mut EventContext)>>,
 }
 
 #[derive(Clone, Copy, Debug, Default)]
@@ -28,7 +29,13 @@ impl MouseEventHandler {
         Self {
             state: state_handle,
             child,
+            click_handler: None,
         }
+    }
+
+    pub fn on_click(mut self, handler: impl FnMut(&mut EventContext) + 'static) -> Self {
+        self.click_handler = Some(Box::new(handler));
+        self
     }
 }
 
@@ -70,6 +77,8 @@ impl Element for MouseEventHandler {
         _: &mut Self::PaintState,
         ctx: &mut EventContext,
     ) -> bool {
+        let click_handler = self.click_handler.as_mut();
+
         let handled_in_child = self.child.dispatch_event(event, ctx);
 
         self.state.update(ctx.app, |state| match event {
@@ -92,10 +101,15 @@ impl Element for MouseEventHandler {
                     handled_in_child
                 }
             }
-            Event::LeftMouseUp { .. } => {
+            Event::LeftMouseUp { position, .. } => {
                 if !handled_in_child && state.clicked {
                     state.clicked = false;
                     ctx.notify();
+                    if let Some(handler) = click_handler {
+                        if bounds.contains_point(*position) {
+                            handler(ctx);
+                        }
+                    }
                     true
                 } else {
                     handled_in_child

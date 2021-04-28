@@ -25,6 +25,12 @@ pub fn init(app: &mut MutableAppContext) {
     app.add_action("pane:close_active_item", |pane: &mut Pane, _: &(), ctx| {
         pane.close_active_item(ctx);
     });
+    app.add_action(
+        "pane:close_item",
+        |pane: &mut Pane, item_id: &usize, ctx| {
+            pane.close_item(*item_id, ctx);
+        },
+    );
     app.add_action("pane:split_up", |pane: &mut Pane, _: &(), ctx| {
         pane.split(SplitDirection::Up, ctx);
     });
@@ -155,15 +161,17 @@ impl Pane {
 
     pub fn close_active_item(&mut self, ctx: &mut ViewContext<Self>) {
         if !self.items.is_empty() {
-            self.items.remove(self.active_item);
-            if self.active_item >= self.items.len() {
-                self.active_item = self.items.len().saturating_sub(1);
-            }
-            ctx.notify();
+            self.close_item(self.items[self.active_item].id(), ctx)
         }
+    }
+
+    pub fn close_item(&mut self, item_id: usize, ctx: &mut ViewContext<Self>) {
+        self.items.retain(|item| item.id() != item_id);
+        self.active_item = cmp::min(self.active_item, self.items.len().saturating_sub(1));
         if self.items.is_empty() {
             ctx.emit(Event::Remove);
         }
+        ctx.notify();
     }
 
     fn focus_active_item(&mut self, ctx: &mut ViewContext<Self>) {
@@ -316,6 +324,7 @@ impl Pane {
                     icon.boxed()
                 }
             })
+            .on_click(move |ctx| ctx.dispatch_action("pane:close_item", item_id))
             .named("close-tab-icon")
         } else {
             let diameter = 8.;
