@@ -49,5 +49,5 @@ jobs:
         run: script/bundle
       - uses: actions/upload-artifact@v2
         with:
-          name: Zed.app
+          name: Zed.dmg
           path: target/release/bundle/Zed.dmg
