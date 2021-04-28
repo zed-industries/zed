@@ -413,13 +413,24 @@ impl BufferView {
     where
         T: IntoIterator<Item = &'a Range<DisplayPoint>>,
     {
+        use std::mem;
+
         let map = self.display_map.read(ctx);
         let mut selections = Vec::new();
         for range in ranges {
+            let mut start = range.start;
+            let mut end = range.end;
+            let reversed = if start > end {
+                mem::swap(&mut start, &mut end);
+                true
+            } else {
+                false
+            };
+
             selections.push(Selection {
-                start: map.anchor_before(range.start, Bias::Left, ctx.as_ref())?,
-                end: map.anchor_before(range.end, Bias::Left, ctx.as_ref())?,
-                reversed: false,
+                start: map.anchor_before(start, Bias::Left, ctx.as_ref())?,
+                end: map.anchor_before(end, Bias::Left, ctx.as_ref())?,
+                reversed,
                 goal_column: None,
             });
         }
@@ -567,6 +578,12 @@ impl BufferView {
                 } else {
                     break;
                 }
+            }
+
+            // When the deletion straddles multiple rows but ends at the beginning of a line, avoid
+            // deleting that final line.
+            if start.row != end.row && end.column == 0 {
+                end.row -= 1;
             }
 
             let mut edit_start = Point::new(start.row, 0).to_offset(buffer).unwrap();
@@ -1939,7 +1956,7 @@ mod tests {
     }
 
     #[test]
-    fn test_delete_lines() {
+    fn test_delete_line() {
         App::test((), |app| {
             let settings = settings::channel(&app.font_cache()).unwrap().1;
             let buffer = app.add_model(|ctx| Buffer::new(0, "abc\ndef\nghi\n", ctx));
@@ -1963,6 +1980,23 @@ mod tests {
                     DisplayPoint::new(0, 0)..DisplayPoint::new(0, 0),
                     DisplayPoint::new(0, 1)..DisplayPoint::new(0, 1)
                 ]
+            );
+
+            let settings = settings::channel(&app.font_cache()).unwrap().1;
+            let buffer = app.add_model(|ctx| Buffer::new(0, "abc\ndef\nghi\n", ctx));
+            let (_, view) = app.add_window(|ctx| BufferView::for_buffer(buffer, settings, ctx));
+            view.update(app, |view, ctx| {
+                view.select_display_ranges(
+                    &[DisplayPoint::new(2, 0)..DisplayPoint::new(0, 1)],
+                    ctx,
+                )
+                .unwrap();
+                view.delete_line(&(), ctx);
+            });
+            assert_eq!(view.read(app).text(app.as_ref()), "ghi\n");
+            assert_eq!(
+                view.read(app).selection_ranges(app.as_ref()),
+                vec![DisplayPoint::new(0, 1)..DisplayPoint::new(0, 1)]
             );
         });
     }
