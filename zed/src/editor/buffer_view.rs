@@ -544,61 +544,65 @@ impl BufferView {
         let app = ctx.as_ref();
         let buffer = self.buffer.read(app);
 
-        // Accumulate contiguous regions of rows that we want to delete.
-        let mut row_ranges: Vec<(u32, Range<u32>)> = Vec::new();
-        for selection in self.selections(app) {
+        let mut new_cursors = Vec::new();
+        let mut edit_ranges = Vec::new();
+
+        let mut selections = self.selections(app).iter().peekable();
+        while let Some(selection) = selections.next() {
             let start = selection.start.to_point(buffer).unwrap();
-            let end = selection.end.to_point(buffer).unwrap();
+            let mut end = selection.end.to_point(buffer).unwrap();
             let goal_column = if selection.reversed {
                 start.column
             } else {
                 end.column
             };
 
-            if let Some((_, last_row_range)) = row_ranges.last_mut() {
-                if start.row <= last_row_range.end {
-                    *last_row_range = last_row_range.start..start.row + 1;
+            // Accumulate contiguous regions of rows that we want to delete.
+            while let Some(next_selection) = selections.peek() {
+                let next_start = next_selection.start.to_point(buffer).unwrap();
+                if next_start.row <= end.row + 1 {
+                    end = next_selection.end.to_point(buffer).unwrap();
+                    selections.next().unwrap();
                 } else {
-                    row_ranges.push((goal_column, start.row..end.row + 1));
+                    break;
                 }
-            } else {
-                row_ranges.push((goal_column, start.row..end.row + 1));
             }
-        }
 
-        let mut edit_ranges = Vec::new();
-        let mut new_selections = Vec::new();
-        for (goal_column, range) in row_ranges {
-            let mut start = Point::new(range.start, 0).to_offset(buffer).unwrap();
-            let end;
+            let mut edit_start = Point::new(start.row, 0).to_offset(buffer).unwrap();
+            let edit_end;
             let mut cursor;
 
-            if let Ok(end_offset) = Point::new(range.end, 0).to_offset(buffer) {
+            if let Ok(end_offset) = Point::new(end.row + 1, 0).to_offset(buffer) {
                 // If there's a line after the range, delete the \n from the end of the row range
                 // and position the cursor on the next line.
-                end = end_offset;
-                cursor = Point::new(range.end, goal_column);
+                edit_end = end_offset;
+                cursor = Point::new(end.row + 1, goal_column);
             } else {
                 // If there isn't a line after the range, delete the \n from the line before the
                 // start of the row range and position the cursor there.
-                start = start.saturating_sub(1);
-                end = buffer.len();
-                cursor = Point::new(range.start.saturating_sub(1), goal_column);
+                edit_start = edit_start.saturating_sub(1);
+                edit_end = buffer.len();
+                cursor = Point::new(start.row.saturating_sub(1), goal_column);
             }
-            // We tried to maintain the column of the original cursors but the new lines may be
+            // We tried to maintain the column of the original cursor but the new line may be
             // shorter, so clip the new cursor's column.
             cursor.column = cmp::min(cursor.column, buffer.line_len(cursor.row).unwrap());
-            let cursor = buffer.anchor_before(cursor).unwrap();
 
-            edit_ranges.push(start..end);
-            new_selections.push(Selection {
-                start: cursor.clone(),
-                end: cursor,
-                reversed: false,
-                goal_column: None,
-            });
+            new_cursors.push(cursor);
+            edit_ranges.push(edit_start..edit_end);
         }
 
+        new_cursors.sort_unstable();
+        let new_selections = new_cursors
+            .into_iter()
+            .map(|cursor| buffer.anchor_before(cursor).unwrap())
+            .map(|anchor| Selection {
+                start: anchor.clone(),
+                end: anchor,
+                reversed: false,
+                goal_column: None,
+            })
+            .collect();
         self.update_selections(new_selections, true, ctx);
         self.buffer
             .update(ctx, |buffer, ctx| buffer.edit(edit_ranges, "", Some(ctx)))
@@ -1955,22 +1959,10 @@ mod tests {
             assert_eq!(
                 view.read(app).selection_ranges(app.as_ref()),
                 vec![
-                    DisplayPoint::new(0, 1)..DisplayPoint::new(0, 1),
-                    DisplayPoint::new(0, 3)..DisplayPoint::new(0, 3)
+                    DisplayPoint::new(0, 0)..DisplayPoint::new(0, 0),
+                    DisplayPoint::new(0, 1)..DisplayPoint::new(0, 1)
                 ]
             );
-
-            // view.undo(&(), ctx);
-            // view.select_display_ranges(
-            //     &[
-            //         DisplayPoint::new(0, 1)..DisplayPoint::new(0, 1),
-            //         DisplayPoint::new(1, 0)..DisplayPoint::new(1, 1),
-            //         DisplayPoint::new(3, 0)..DisplayPoint::new(3, 0),
-            //     ],
-            //     ctx,
-            // )
-            // .unwrap();
-            // });
         });
     }
 
