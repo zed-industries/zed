@@ -34,6 +34,7 @@ pub fn init(app: &mut MutableAppContext) {
         Binding::new("ctrl-d", "buffer:delete", Some("BufferView")),
         Binding::new("enter", "buffer:newline", Some("BufferView")),
         Binding::new("ctrl-shift-K", "buffer:delete_line", Some("BufferView")),
+        Binding::new("cmd-shift-D", "buffer:duplicate_line", Some("BufferView")),
         Binding::new("cmd-x", "buffer:cut", Some("BufferView")),
         Binding::new("cmd-c", "buffer:copy", Some("BufferView")),
         Binding::new("cmd-v", "buffer:paste", Some("BufferView")),
@@ -74,6 +75,7 @@ pub fn init(app: &mut MutableAppContext) {
     app.add_action("buffer:backspace", BufferView::backspace);
     app.add_action("buffer:delete", BufferView::delete);
     app.add_action("buffer:delete_line", BufferView::delete_line);
+    app.add_action("buffer:duplicate_line", BufferView::duplicate_line);
     app.add_action("buffer:cut", BufferView::cut);
     app.add_action("buffer:copy", BufferView::copy);
     app.add_action("buffer:paste", BufferView::paste);
@@ -623,6 +625,68 @@ impl BufferView {
         self.buffer
             .update(ctx, |buffer, ctx| buffer.edit(edit_ranges, "", Some(ctx)))
             .unwrap();
+        self.end_transaction(ctx);
+    }
+
+    pub fn duplicate_line(&mut self, _: &(), ctx: &mut ViewContext<Self>) {
+        self.start_transaction(ctx);
+
+        let mut selections = self.selections(ctx.as_ref()).to_vec();
+        {
+            // Temporarily bias selections right to allow duplicate lines to push them down when
+            // they are at the start of a line.
+            let buffer = self.buffer.read(ctx);
+            for selection in &mut selections {
+                selection.start = selection.start.bias_right(buffer).unwrap();
+                selection.end = selection.end.bias_right(buffer).unwrap();
+            }
+        }
+        self.update_selections(selections.clone(), false, ctx);
+
+        let app = ctx.as_ref();
+        let buffer = self.buffer.read(ctx);
+        let map = self.display_map.read(ctx);
+
+        let mut edits = Vec::new();
+        let mut selections_iter = selections.iter_mut().peekable();
+        while let Some(selection) = selections_iter.next() {
+            // Avoid duplicating the same lines twice.
+            let mut range = selection.buffer_row_range(map, app);
+            while let Some(next_selection) = selections_iter.peek() {
+                let next_range = next_selection.buffer_row_range(map, app);
+                if next_range.start <= range.end - 1 {
+                    range.end = next_range.end;
+                    selections_iter.next().unwrap();
+                } else {
+                    break;
+                }
+            }
+
+            // Copy the text from the selected row region and splice it at the start of the region.
+            let start = Point::new(range.start, 0);
+            let end = Point::new(range.end - 1, buffer.line_len(range.end - 1).unwrap());
+            let text = buffer
+                .text_for_range(start..end)
+                .unwrap()
+                .chain(Some('\n'))
+                .collect::<String>();
+            edits.push((start, text));
+        }
+
+        self.buffer.update(ctx, |buffer, ctx| {
+            for (offset, text) in edits.into_iter().rev() {
+                buffer.edit(Some(offset..offset), text, Some(ctx)).unwrap();
+            }
+        });
+
+        // Restore bias on selections.
+        let buffer = self.buffer.read(ctx);
+        for selection in &mut selections {
+            selection.start = selection.start.bias_right(buffer).unwrap();
+            selection.end = selection.end.bias_right(buffer).unwrap();
+        }
+        self.update_selections(selections, true, ctx);
+
         self.end_transaction(ctx);
     }
 
@@ -1995,6 +2059,67 @@ mod tests {
             assert_eq!(
                 view.read(app).selection_ranges(app.as_ref()),
                 vec![DisplayPoint::new(0, 1)..DisplayPoint::new(0, 1)]
+            );
+        });
+    }
+
+    #[test]
+    fn test_duplicate_line() {
+        App::test((), |app| {
+            let settings = settings::channel(&app.font_cache()).unwrap().1;
+            let buffer = app.add_model(|ctx| Buffer::new(0, "abc\ndef\nghi\n", ctx));
+            let (_, view) = app.add_window(|ctx| BufferView::for_buffer(buffer, settings, ctx));
+            view.update(app, |view, ctx| {
+                view.select_display_ranges(
+                    &[
+                        DisplayPoint::new(0, 0)..DisplayPoint::new(0, 1),
+                        DisplayPoint::new(0, 2)..DisplayPoint::new(0, 2),
+                        DisplayPoint::new(1, 0)..DisplayPoint::new(1, 0),
+                        DisplayPoint::new(3, 0)..DisplayPoint::new(3, 0),
+                    ],
+                    ctx,
+                )
+                .unwrap();
+                view.duplicate_line(&(), ctx);
+            });
+            assert_eq!(
+                view.read(app).text(app.as_ref()),
+                "abc\nabc\ndef\ndef\nghi\n\n"
+            );
+            assert_eq!(
+                view.read(app).selection_ranges(app.as_ref()),
+                vec![
+                    DisplayPoint::new(1, 0)..DisplayPoint::new(1, 1),
+                    DisplayPoint::new(1, 2)..DisplayPoint::new(1, 2),
+                    DisplayPoint::new(3, 0)..DisplayPoint::new(3, 0),
+                    DisplayPoint::new(6, 0)..DisplayPoint::new(6, 0),
+                ]
+            );
+
+            let settings = settings::channel(&app.font_cache()).unwrap().1;
+            let buffer = app.add_model(|ctx| Buffer::new(0, "abc\ndef\nghi\n", ctx));
+            let (_, view) = app.add_window(|ctx| BufferView::for_buffer(buffer, settings, ctx));
+            view.update(app, |view, ctx| {
+                view.select_display_ranges(
+                    &[
+                        DisplayPoint::new(0, 1)..DisplayPoint::new(1, 1),
+                        DisplayPoint::new(1, 2)..DisplayPoint::new(2, 1),
+                    ],
+                    ctx,
+                )
+                .unwrap();
+                view.duplicate_line(&(), ctx);
+            });
+            assert_eq!(
+                view.read(app).text(app.as_ref()),
+                "abc\ndef\nghi\nabc\ndef\nghi\n"
+            );
+            assert_eq!(
+                view.read(app).selection_ranges(app.as_ref()),
+                vec![
+                    DisplayPoint::new(3, 1)..DisplayPoint::new(4, 1),
+                    DisplayPoint::new(4, 2)..DisplayPoint::new(5, 1),
+                ]
             );
         });
     }
