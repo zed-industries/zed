@@ -9,7 +9,7 @@ use crate::{
 };
 use anyhow::{anyhow, Result};
 use keymap::MatchResult;
-use parking_lot::Mutex;
+use parking_lot::{Mutex, RwLock};
 use pathfinder_geometry::{rect::RectF, vector::vec2f};
 use platform::Event;
 use postage::{sink::Sink as _, stream::Stream as _};
@@ -900,7 +900,7 @@ impl MutableAppContext {
                 }
             }
 
-            let mut values = self.ctx.values.lock();
+            let mut values = self.ctx.values.write();
             for key in dropped_values {
                 values.remove(&key);
             }
@@ -1322,7 +1322,7 @@ impl AsRef<AppContext> for MutableAppContext {
 pub struct AppContext {
     models: HashMap<usize, Box<dyn AnyModel>>,
     windows: HashMap<usize, Window>,
-    values: Mutex<HashMap<(TypeId, usize), Box<dyn Any>>>,
+    values: RwLock<HashMap<(TypeId, usize), Box<dyn Any>>>,
     background: Arc<executor::Background>,
     ref_counts: Arc<Mutex<RefCounts>>,
     thread_pool: scoped_pool::Pool,
@@ -1376,7 +1376,7 @@ impl AppContext {
 
     pub fn value<Tag: 'static, T: 'static + Default>(&self, id: usize) -> ValueHandle<T> {
         let key = (TypeId::of::<Tag>(), id);
-        let mut values = self.values.lock();
+        let mut values = self.values.write();
         values.entry(key).or_insert_with(|| Box::new(T::default()));
         ValueHandle::new(TypeId::of::<Tag>(), id, &self.ref_counts)
     }
@@ -2387,10 +2387,20 @@ impl<T: 'static> ValueHandle<T> {
         }
     }
 
-    pub fn map<R>(&self, ctx: &AppContext, f: impl FnOnce(&mut T) -> R) -> R {
+    pub fn read<R>(&self, ctx: &AppContext, f: impl FnOnce(&T) -> R) -> R {
         f(ctx
             .values
-            .lock()
+            .read()
+            .get(&(self.tag_type_id, self.id))
+            .unwrap()
+            .downcast_ref()
+            .unwrap())
+    }
+
+    pub fn update<R>(&self, ctx: &AppContext, f: impl FnOnce(&mut T) -> R) -> R {
+        f(ctx
+            .values
+            .write()
             .get_mut(&(self.tag_type_id, self.id))
             .unwrap()
             .downcast_mut()

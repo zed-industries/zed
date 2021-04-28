@@ -186,9 +186,9 @@ vertex SpriteFragmentInput sprite_vertex(
 ) {
     float2 unit_vertex = unit_vertices[unit_vertex_id];
     GPUISprite sprite = sprites[sprite_id];
-    float2 position = unit_vertex * sprite.size + sprite.origin;
+    float2 position = unit_vertex * sprite.target_size + sprite.origin;
     float4 device_position = to_device_position(position, *viewport_size);
-    float2 atlas_position = (unit_vertex * sprite.size + sprite.atlas_origin) / *atlas_size;
+    float2 atlas_position = (unit_vertex * sprite.source_size + sprite.atlas_origin) / *atlas_size;
 
     return SpriteFragmentInput {
         device_position,

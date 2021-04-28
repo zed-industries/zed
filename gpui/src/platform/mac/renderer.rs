@@ -510,7 +510,7 @@ impl Renderer {
             );
 
             // Snap sprite to pixel grid.
-            let origin = (icon.bounds.origin() * scene.scale_factor()).floor();
+            let origin = (icon.bounds.origin() * scene.scale_factor()); //.floor();
             sprites_by_atlas
                 .entry(sprite.atlas_id)
                 .or_insert_with(Vec::new)

@@ -215,9 +215,11 @@ impl Pane {
                                 )
                                 .with_child(
                                     Align::new(Self::render_tab_icon(
+                                        item.id(),
                                         line_height - 2.,
                                         mouse_state.hovered,
                                         item.is_dirty(ctx),
+                                        ctx,
                                     ))
                                     .right()
                                     .boxed(),
@@ -281,14 +283,33 @@ impl Pane {
             .named("tabs")
     }
 
-    fn render_tab_icon(close_icon_size: f32, tab_hovered: bool, is_modified: bool) -> ElementBox {
+    fn render_tab_icon(
+        item_id: usize,
+        close_icon_size: f32,
+        tab_hovered: bool,
+        is_modified: bool,
+        ctx: &AppContext,
+    ) -> ElementBox {
+        enum TabCloseButton {}
+
         let modified_color = ColorU::from_u32(0x556de8ff);
         let icon = if tab_hovered {
             let mut icon = Svg::new("icons/x.svg");
-            if is_modified {
-                icon = icon.with_color(modified_color);
-            }
-            icon.named("close-tab-icon")
+
+            MouseEventHandler::new::<TabCloseButton, _>(item_id, ctx, |mouse_state| {
+                if mouse_state.hovered {
+                    Container::new(icon.with_color(ColorU::white()).boxed())
+                        .with_background_color(modified_color)
+                        .with_corner_radius(close_icon_size / 2.)
+                        .boxed()
+                } else {
+                    if is_modified {
+                        icon = icon.with_color(modified_color);
+                    }
+                    icon.boxed()
+                }
+            })
+            .named("close-tab-icon")
         } else {
             let diameter = 8.;
             ConstrainedBox::new(
