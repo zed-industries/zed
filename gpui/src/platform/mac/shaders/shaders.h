@@ -49,7 +49,8 @@ typedef enum {
 
 typedef struct {
     vector_float2 origin;
-    vector_float2 size;
+    vector_float2 target_size;
+    vector_float2 source_size;
     vector_float2 atlas_origin;
     vector_uchar4 color;
     uint8_t compute_winding;

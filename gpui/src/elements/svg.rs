@@ -1,3 +1,5 @@
+use std::borrow::Cow;
+
 use serde_json::json;
 
 use crate::{
@@ -11,14 +13,14 @@ use crate::{
 };
 
 pub struct Svg {
-    path: String,
+    path: Cow<'static, str>,
     color: ColorU,
 }
 
 impl Svg {
-    pub fn new(path: String) -> Self {
+    pub fn new(path: impl Into<Cow<'static, str>>) -> Self {
         Self {
-            path,
+            path: path.into(),
             color: ColorU::black(),
         }
     }

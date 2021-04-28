@@ -1,3 +1,5 @@
+use std::borrow::Cow;
+
 use serde_json::json;
 
 use crate::{
@@ -51,7 +53,7 @@ pub struct Glyph {
 pub struct Icon {
     pub bounds: RectF,
     pub svg: usvg::Tree,
-    pub path: String,
+    pub path: Cow<'static, str>,
     pub color: ColorU,
 }
 

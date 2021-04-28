@@ -1,6 +1,6 @@
 use crate::{geometry::vector::Vector2F, keymap::Keystroke};
 
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 pub enum Event {
     KeyDown {
         keystroke: Keystroke,
@@ -19,6 +19,9 @@ pub enum Event {
         position: Vector2F,
     },
     LeftMouseDragged {
+        position: Vector2F,
+    },
+    MouseMoved {
         position: Vector2F,
     },
 }

@@ -108,6 +108,12 @@ impl Event {
                 ),
                 precise: native_event.hasPreciseScrollingDeltas() == YES,
             }),
+            NSEventType::NSMouseMoved => window_height.map(|window_height| Self::MouseMoved {
+                position: vec2f(
+                    native_event.locationInWindow().x as f32,
+                    window_height - native_event.locationInWindow().y as f32,
+                ),
+            }),
             _ => None,
         }
     }

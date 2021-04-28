@@ -9,7 +9,7 @@ use crate::{
 };
 use anyhow::{anyhow, Result};
 use keymap::MatchResult;
-use parking_lot::Mutex;
+use parking_lot::{Mutex, RwLock};
 use pathfinder_geometry::{rect::RectF, vector::vec2f};
 use platform::Event;
 use postage::{sink::Sink as _, stream::Stream as _};
@@ -216,7 +216,7 @@ impl App {
     }
 
     pub fn font_cache(&self) -> Arc<FontCache> {
-        self.0.borrow().font_cache.clone()
+        self.0.borrow().ctx.font_cache.clone()
     }
 
     fn update<T, F: FnOnce(&mut MutableAppContext) -> T>(&mut self, callback: F) -> T {
@@ -326,7 +326,7 @@ impl TestAppContext {
     }
 
     pub fn font_cache(&self) -> Arc<FontCache> {
-        self.0.borrow().font_cache.clone()
+        self.0.borrow().ctx.font_cache.clone()
     }
 
     pub fn platform(&self) -> Rc<dyn platform::Platform> {
@@ -370,7 +370,6 @@ type GlobalActionCallback = dyn FnMut(&dyn Any, &mut MutableAppContext);
 pub struct MutableAppContext {
     weak_self: Option<rc::Weak<RefCell<Self>>>,
     platform: Rc<dyn platform::Platform>,
-    font_cache: Arc<FontCache>,
     assets: Arc<AssetCache>,
     ctx: AppContext,
     actions: HashMap<TypeId, HashMap<String, Vec<Box<ActionCallback>>>>,
@@ -404,14 +403,15 @@ impl MutableAppContext {
         Self {
             weak_self: None,
             platform,
-            font_cache: Arc::new(FontCache::new(fonts)),
             assets: Arc::new(AssetCache::new(asset_source)),
             ctx: AppContext {
-                models: HashMap::new(),
-                windows: HashMap::new(),
+                models: Default::default(),
+                windows: Default::default(),
+                values: Default::default(),
                 ref_counts: Arc::new(Mutex::new(RefCounts::default())),
                 background: Arc::new(executor::Background::new()),
                 thread_pool: scoped_pool::Pool::new(num_cpus::get(), "app"),
+                font_cache: Arc::new(FontCache::new(fonts)),
             },
             actions: HashMap::new(),
             global_actions: HashMap::new(),
@@ -443,7 +443,7 @@ impl MutableAppContext {
     }
 
     pub fn font_cache(&self) -> &Arc<FontCache> {
-        &self.font_cache
+        &self.ctx.font_cache
     }
 
     pub fn foreground_executor(&self) -> &Rc<executor::Foreground> {
@@ -584,6 +584,11 @@ impl MutableAppContext {
         );
     }
 
+    pub(crate) fn notify_view(&mut self, window_id: usize, view_id: usize) {
+        self.pending_effects
+            .push_back(Effect::ViewNotification { window_id, view_id });
+    }
+
     pub fn dispatch_action<T: 'static + Any>(
         &mut self,
         window_id: usize,
@@ -594,7 +599,7 @@ impl MutableAppContext {
         self.dispatch_action_any(window_id, &responder_chain, name, Box::new(arg).as_ref());
     }
 
-    fn dispatch_action_any(
+    pub(crate) fn dispatch_action_any(
         &mut self,
         window_id: usize,
         path: &[usize],
@@ -763,7 +768,7 @@ impl MutableAppContext {
         let text_layout_cache = TextLayoutCache::new(self.platform.fonts());
         let presenter = Rc::new(RefCell::new(Presenter::new(
             window_id,
-            self.font_cache.clone(),
+            self.ctx.font_cache.clone(),
             text_layout_cache,
             self.assets.clone(),
             self,
@@ -787,15 +792,7 @@ impl MutableAppContext {
                         }
                     }
 
-                    let actions = presenter.borrow_mut().dispatch_event(event, ctx.as_ref());
-                    for action in actions {
-                        ctx.dispatch_action_any(
-                            window_id,
-                            &action.path,
-                            action.name,
-                            action.arg.as_ref(),
-                        );
-                    }
+                    presenter.borrow_mut().dispatch_event(event, ctx);
                 })
             }));
         }
@@ -865,8 +862,9 @@ impl MutableAppContext {
 
     fn remove_dropped_entities(&mut self) {
         loop {
-            let (dropped_models, dropped_views) = self.ctx.ref_counts.lock().take_dropped();
-            if dropped_models.is_empty() && dropped_views.is_empty() {
+            let (dropped_models, dropped_views, dropped_values) =
+                self.ctx.ref_counts.lock().take_dropped();
+            if dropped_models.is_empty() && dropped_views.is_empty() && dropped_values.is_empty() {
                 break;
             }
 
@@ -890,6 +888,11 @@ impl MutableAppContext {
                     window.views.remove(&view_id);
                 }
             }
+
+            let mut values = self.ctx.values.write();
+            for key in dropped_values {
+                values.remove(&key);
+            }
         }
     }
 
@@ -910,11 +913,14 @@ impl MutableAppContext {
                         self.focus(window_id, view_id);
                     }
                 }
+
+                if self.pending_effects.is_empty() {
+                    self.remove_dropped_entities();
+                    self.update_windows();
+                }
             }
 
             self.flushing_effects = false;
-            self.remove_dropped_entities();
-            self.update_windows();
         }
     }
 
@@ -1308,9 +1314,11 @@ impl AsRef<AppContext> for MutableAppContext {
 pub struct AppContext {
     models: HashMap<usize, Box<dyn AnyModel>>,
     windows: HashMap<usize, Window>,
+    values: RwLock<HashMap<(TypeId, usize), Box<dyn Any>>>,
     background: Arc<executor::Background>,
     ref_counts: Arc<Mutex<RefCounts>>,
     thread_pool: scoped_pool::Pool,
+    font_cache: Arc<FontCache>,
 }
 
 impl AppContext {
@@ -1350,8 +1358,19 @@ impl AppContext {
         &self.background
     }
 
+    pub fn font_cache(&self) -> &FontCache {
+        &self.font_cache
+    }
+
     pub fn thread_pool(&self) -> &scoped_pool::Pool {
         &self.thread_pool
+    }
+
+    pub fn value<Tag: 'static, T: 'static + Default>(&self, id: usize) -> ValueHandle<T> {
+        let key = (TypeId::of::<Tag>(), id);
+        let mut values = self.values.write();
+        values.entry(key).or_insert_with(|| Box::new(T::default()));
+        ValueHandle::new(TypeId::of::<Tag>(), id, &self.ref_counts)
     }
 }
 
@@ -1823,12 +1842,7 @@ impl<'a, T: View> ViewContext<'a, T> {
     }
 
     pub fn notify(&mut self) {
-        self.app
-            .pending_effects
-            .push_back(Effect::ViewNotification {
-                window_id: self.window_id,
-                view_id: self.view_id,
-            });
+        self.app.notify_view(self.window_id, self.view_id);
     }
 
     pub fn propagate_action(&mut self) {
@@ -1958,7 +1972,7 @@ pub struct ModelHandle<T> {
 
 impl<T: Entity> ModelHandle<T> {
     fn new(model_id: usize, ref_counts: &Arc<Mutex<RefCounts>>) -> Self {
-        ref_counts.lock().inc(model_id);
+        ref_counts.lock().inc_entity(model_id);
         Self {
             model_id,
             model_type: PhantomData,
@@ -2031,7 +2045,7 @@ impl<T: Entity> ModelHandle<T> {
 impl<T> Clone for ModelHandle<T> {
     fn clone(&self) -> Self {
         if let Some(ref_counts) = self.ref_counts.upgrade() {
-            ref_counts.lock().inc(self.model_id);
+            ref_counts.lock().inc_entity(self.model_id);
         }
 
         Self {
@@ -2122,7 +2136,7 @@ pub struct ViewHandle<T> {
 
 impl<T: View> ViewHandle<T> {
     fn new(window_id: usize, view_id: usize, ref_counts: &Arc<Mutex<RefCounts>>) -> Self {
-        ref_counts.lock().inc(view_id);
+        ref_counts.lock().inc_entity(view_id);
         Self {
             window_id,
             view_id,
@@ -2205,7 +2219,7 @@ impl<T: View> ViewHandle<T> {
 impl<T> Clone for ViewHandle<T> {
     fn clone(&self) -> Self {
         if let Some(ref_counts) = self.ref_counts.upgrade() {
-            ref_counts.lock().inc(self.view_id);
+            ref_counts.lock().inc_entity(self.view_id);
         }
 
         Self {
@@ -2282,7 +2296,7 @@ impl AnyViewHandle {
 impl<T: View> From<&ViewHandle<T>> for AnyViewHandle {
     fn from(handle: &ViewHandle<T>) -> Self {
         if let Some(ref_counts) = handle.ref_counts.upgrade() {
-            ref_counts.lock().inc(handle.view_id);
+            ref_counts.lock().inc_entity(handle.view_id);
         }
         AnyViewHandle {
             window_id: handle.window_id,
@@ -2342,48 +2356,113 @@ impl<T> Clone for WeakViewHandle<T> {
     }
 }
 
+pub struct ValueHandle<T> {
+    value_type: PhantomData<T>,
+    tag_type_id: TypeId,
+    id: usize,
+    ref_counts: Weak<Mutex<RefCounts>>,
+}
+
+impl<T: 'static> ValueHandle<T> {
+    fn new(tag_type_id: TypeId, id: usize, ref_counts: &Arc<Mutex<RefCounts>>) -> Self {
+        ref_counts.lock().inc_value(tag_type_id, id);
+        Self {
+            value_type: PhantomData,
+            tag_type_id,
+            id,
+            ref_counts: Arc::downgrade(ref_counts),
+        }
+    }
+
+    pub fn read<R>(&self, ctx: &AppContext, f: impl FnOnce(&T) -> R) -> R {
+        f(ctx
+            .values
+            .read()
+            .get(&(self.tag_type_id, self.id))
+            .unwrap()
+            .downcast_ref()
+            .unwrap())
+    }
+
+    pub fn update<R>(&self, ctx: &AppContext, f: impl FnOnce(&mut T) -> R) -> R {
+        f(ctx
+            .values
+            .write()
+            .get_mut(&(self.tag_type_id, self.id))
+            .unwrap()
+            .downcast_mut()
+            .unwrap())
+    }
+}
+
+impl<T> Drop for ValueHandle<T> {
+    fn drop(&mut self) {
+        if let Some(ref_counts) = self.ref_counts.upgrade() {
+            ref_counts.lock().dec_value(self.tag_type_id, self.id);
+        }
+    }
+}
+
 #[derive(Default)]
 struct RefCounts {
-    counts: HashMap<usize, usize>,
+    entity_counts: HashMap<usize, usize>,
+    value_counts: HashMap<(TypeId, usize), usize>,
     dropped_models: HashSet<usize>,
     dropped_views: HashSet<(usize, usize)>,
+    dropped_values: HashSet<(TypeId, usize)>,
 }
 
 impl RefCounts {
-    fn inc(&mut self, model_id: usize) {
-        *self.counts.entry(model_id).or_insert(0) += 1;
+    fn inc_entity(&mut self, model_id: usize) {
+        *self.entity_counts.entry(model_id).or_insert(0) += 1;
+    }
+
+    fn inc_value(&mut self, tag_type_id: TypeId, id: usize) {
+        *self.value_counts.entry((tag_type_id, id)).or_insert(0) += 1;
     }
 
     fn dec_model(&mut self, model_id: usize) {
-        if let Some(count) = self.counts.get_mut(&model_id) {
-            *count -= 1;
-            if *count == 0 {
-                self.counts.remove(&model_id);
-                self.dropped_models.insert(model_id);
-            }
-        } else {
-            panic!("Expected ref count to be positive")
+        let count = self.entity_counts.get_mut(&model_id).unwrap();
+        *count -= 1;
+        if *count == 0 {
+            self.entity_counts.remove(&model_id);
+            self.dropped_models.insert(model_id);
         }
     }
 
     fn dec_view(&mut self, window_id: usize, view_id: usize) {
-        if let Some(count) = self.counts.get_mut(&view_id) {
-            *count -= 1;
-            if *count == 0 {
-                self.counts.remove(&view_id);
-                self.dropped_views.insert((window_id, view_id));
-            }
-        } else {
-            panic!("Expected ref count to be positive")
+        let count = self.entity_counts.get_mut(&view_id).unwrap();
+        *count -= 1;
+        if *count == 0 {
+            self.entity_counts.remove(&view_id);
+            self.dropped_views.insert((window_id, view_id));
         }
     }
 
-    fn take_dropped(&mut self) -> (HashSet<usize>, HashSet<(usize, usize)>) {
+    fn dec_value(&mut self, tag_type_id: TypeId, id: usize) {
+        let key = (tag_type_id, id);
+        let count = self.value_counts.get_mut(&key).unwrap();
+        *count -= 1;
+        if *count == 0 {
+            self.value_counts.remove(&key);
+            self.dropped_values.insert(key);
+        }
+    }
+
+    fn take_dropped(
+        &mut self,
+    ) -> (
+        HashSet<usize>,
+        HashSet<(usize, usize)>,
+        HashSet<(TypeId, usize)>,
+    ) {
         let mut dropped_models = HashSet::new();
         let mut dropped_views = HashSet::new();
+        let mut dropped_values = HashSet::new();
         std::mem::swap(&mut self.dropped_models, &mut dropped_models);
         std::mem::swap(&mut self.dropped_views, &mut dropped_views);
-        (dropped_models, dropped_views)
+        std::mem::swap(&mut self.dropped_values, &mut dropped_values);
+        (dropped_models, dropped_views, dropped_values)
     }
 }
 

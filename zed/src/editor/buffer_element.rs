@@ -474,6 +474,7 @@ impl Element for BufferElement {
                     precise,
                 } => self.scroll(*position, *delta, *precise, layout, paint, ctx),
                 Event::KeyDown { chars, .. } => self.key_down(chars, ctx),
+                _ => false,
             }
         } else {
             false

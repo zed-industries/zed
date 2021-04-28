@@ -189,7 +189,7 @@ impl FileFinder {
                             LineBox::new(
                                 settings.ui_font_family,
                                 settings.ui_font_size,
-                                Svg::new("icons/file-16.svg".into()).boxed(),
+                                Svg::new("icons/file-16.svg").boxed(),
                             )
                             .boxed(),
                         )
