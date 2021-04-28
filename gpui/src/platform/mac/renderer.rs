@@ -153,7 +153,8 @@ impl Renderer {
                     atlas_id,
                     shader_data: shaders::GPUISprite {
                         origin: origin.floor().to_float2(),
-                        size: size.to_float2(),
+                        target_size: size.to_float2(),
+                        source_size: size.to_float2(),
                         atlas_origin: atlas_origin.to_float2(),
                         color: path.color.to_uchar4(),
                         compute_winding: 1,
@@ -493,7 +494,8 @@ impl Renderer {
                     .or_insert_with(Vec::new)
                     .push(shaders::GPUISprite {
                         origin: origin.to_float2(),
-                        size: sprite.size.to_float2(),
+                        target_size: sprite.size.to_float2(),
+                        source_size: sprite.size.to_float2(),
                         atlas_origin: sprite.atlas_origin.to_float2(),
                         color: glyph.color.to_uchar4(),
                         compute_winding: 0,
@@ -502,21 +504,21 @@ impl Renderer {
         }
 
         for icon in layer.icons() {
-            let sprite = self.sprite_cache.render_icon(
-                icon.bounds.size(),
-                icon.path.clone(),
-                icon.svg.clone(),
-                scene.scale_factor(),
-            );
+            let origin = icon.bounds.origin() * scene.scale_factor();
+            let target_size = icon.bounds.size() * scene.scale_factor();
+            let source_size = (target_size * 2.).ceil().to_i32();
 
-            // Snap sprite to pixel grid.
-            let origin = (icon.bounds.origin() * scene.scale_factor()); //.floor();
+            let sprite =
+                self.sprite_cache
+                    .render_icon(source_size, icon.path.clone(), icon.svg.clone());
+
             sprites_by_atlas
                 .entry(sprite.atlas_id)
                 .or_insert_with(Vec::new)
                 .push(shaders::GPUISprite {
                     origin: origin.to_float2(),
-                    size: sprite.size.to_float2(),
+                    target_size: target_size.to_float2(),
+                    source_size: sprite.size.to_float2(),
                     atlas_origin: sprite.atlas_origin.to_float2(),
                     color: icon.color.to_uchar4(),
                     compute_winding: 0,

@@ -137,30 +137,13 @@ impl SpriteCache {
 
     pub fn render_icon(
         &mut self,
-        size: Vector2F,
+        size: Vector2I,
         path: Cow<'static, str>,
         svg: usvg::Tree,
-        target_position: Vector2F,
-        scale_factor: f32,
     ) -> IconSprite {
-        const SUBPIXEL_VARIANTS: u8 = 4;
-
-        let target_position = target_position * scale_factor;
-        let subpixel_variant = (
-            (target_position.x().fract() * SUBPIXEL_VARIANTS as f32).round() as u8
-                % SUBPIXEL_VARIANTS,
-            (target_position.y().fract() * SUBPIXEL_VARIANTS as f32).round() as u8
-                % SUBPIXEL_VARIANTS,
-        );
-        let subpixel_shift = vec2f(
-            subpixel_variant.0 as f32 / SUBPIXEL_VARIANTS as f32,
-            subpixel_variant.1 as f32 / SUBPIXEL_VARIANTS as f32,
-        );
-
         let atlases = &mut self.atlases;
         let atlas_size = self.atlas_size;
         let device = &self.device;
-        let size = (size * scale_factor).round().to_i32();
         assert!(size.x() < atlas_size.x());
         assert!(size.y() < atlas_size.y());
         self.icons
