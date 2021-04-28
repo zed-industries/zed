@@ -2,13 +2,14 @@
 
 set -e
 
-pushd zed
+pushd zed > /dev/null
 cargo bundle --release
-popd
+popd > /dev/null
+hdiutil create -volname Zed -srcfolder target/release/bundle/osx -ov -format UDZO target/release/bundle/Zed.dmg
 
 while getopts o flag
 do
     case "${flag}" in
-        o) open target/release/bundle/osx;;
+        o) open target/release/bundle;;
     esac
 done
