@@ -902,25 +902,30 @@ impl MutableAppContext {
         if !self.flushing_effects && self.pending_flushes == 0 {
             self.flushing_effects = true;
 
-            while let Some(effect) = self.pending_effects.pop_front() {
-                match effect {
-                    Effect::Event { entity_id, payload } => self.emit_event(entity_id, payload),
-                    Effect::ModelNotification { model_id } => self.notify_model_observers(model_id),
-                    Effect::ViewNotification { window_id, view_id } => {
-                        self.notify_view_observers(window_id, view_id)
+            loop {
+                if let Some(effect) = self.pending_effects.pop_front() {
+                    match effect {
+                        Effect::Event { entity_id, payload } => self.emit_event(entity_id, payload),
+                        Effect::ModelNotification { model_id } => {
+                            self.notify_model_observers(model_id)
+                        }
+                        Effect::ViewNotification { window_id, view_id } => {
+                            self.notify_view_observers(window_id, view_id)
+                        }
+                        Effect::Focus { window_id, view_id } => {
+                            self.focus(window_id, view_id);
+                        }
                     }
-                    Effect::Focus { window_id, view_id } => {
-                        self.focus(window_id, view_id);
-                    }
-                }
-
-                if self.pending_effects.is_empty() {
+                } else {
                     self.remove_dropped_entities();
                     self.update_windows();
+
+                    if self.pending_effects.is_empty() {
+                        self.flushing_effects = false;
+                        break;
+                    }
                 }
             }
-
-            self.flushing_effects = false;
         }
     }
 
