@@ -554,6 +554,7 @@ impl BufferView {
         self.start_transaction(ctx);
 
         let app = ctx.as_ref();
+        let map = self.display_map.read(app);
         let buffer = self.buffer.read(app);
 
         let mut new_cursors = Vec::new();
@@ -561,52 +562,49 @@ impl BufferView {
 
         let mut selections = self.selections(app).iter().peekable();
         while let Some(selection) = selections.next() {
-            let start = selection.start.to_point(buffer).unwrap();
-            let mut end = selection.end.to_point(buffer).unwrap();
-            let goal_column = if selection.reversed {
-                start.column
-            } else {
-                end.column
-            };
+            let mut range = selection.buffer_row_range(map, app);
+            let goal_display_column = selection
+                .head()
+                .to_display_point(map, app)
+                .unwrap()
+                .column();
 
             // Accumulate contiguous regions of rows that we want to delete.
             while let Some(next_selection) = selections.peek() {
-                let next_start = next_selection.start.to_point(buffer).unwrap();
-                if next_start.row <= end.row + 1 {
-                    end = next_selection.end.to_point(buffer).unwrap();
+                let next_range = next_selection.buffer_row_range(map, app);
+                if next_range.start <= range.end {
+                    range.end = next_range.end;
                     selections.next().unwrap();
                 } else {
                     break;
                 }
             }
 
-            // When the deletion straddles multiple rows but ends at the beginning of a line, avoid
-            // deleting that final line.
-            if start.row != end.row && end.column == 0 {
-                end.row -= 1;
-            }
-
-            let mut edit_start = Point::new(start.row, 0).to_offset(buffer).unwrap();
+            let mut edit_start = Point::new(range.start, 0).to_offset(buffer).unwrap();
             let edit_end;
-            let mut cursor;
-
-            if let Ok(end_offset) = Point::new(end.row + 1, 0).to_offset(buffer) {
+            let cursor_buffer_row;
+            if let Ok(end_offset) = Point::new(range.end, 0).to_offset(buffer) {
                 // If there's a line after the range, delete the \n from the end of the row range
                 // and position the cursor on the next line.
                 edit_end = end_offset;
-                cursor = Point::new(end.row + 1, goal_column);
+                cursor_buffer_row = range.end;
             } else {
                 // If there isn't a line after the range, delete the \n from the line before the
                 // start of the row range and position the cursor there.
                 edit_start = edit_start.saturating_sub(1);
                 edit_end = buffer.len();
-                cursor = Point::new(start.row.saturating_sub(1), goal_column);
+                cursor_buffer_row = range.start.saturating_sub(1);
             }
-            // We tried to maintain the column of the original cursor but the new line may be
-            // shorter, so clip the new cursor's column.
-            cursor.column = cmp::min(cursor.column, buffer.line_len(cursor.row).unwrap());
 
-            new_cursors.push(cursor);
+            let mut cursor = Point::new(cursor_buffer_row, 0)
+                .to_display_point(map, app)
+                .unwrap();
+            *cursor.column_mut() = cmp::min(
+                goal_display_column,
+                map.line_len(cursor.row(), app).unwrap(),
+            );
+
+            new_cursors.push(cursor.to_buffer_point(map, Bias::Left, app).unwrap());
             edit_ranges.push(edit_start..edit_end);
         }
 
