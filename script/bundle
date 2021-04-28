@@ -1,0 +1,14 @@
+#!/bin/bash
+
+set -e
+
+pushd zed
+cargo bundle --release
+popd
+
+while getopts o flag
+do
+    case "${flag}" in
+        o) open target/release/bundle/osx;;
+    esac
+done

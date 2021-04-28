@@ -1,5 +1,6 @@
 [package]
 authors = ["Nathan Sobo <nathansobo@gmail.com>"]
+description = "The fast, collaborative code editor."
 edition = "2018"
 name = "zed"
 version = "0.1.0"
@@ -38,7 +39,13 @@ smallvec = "1.6.1"
 smol = "1.2.5"
 
 [dev-dependencies]
+cargo-bundle = "0.5.0"
 env_logger = "0.8"
 serde_json = {version = "1.0.64", features = ["preserve_order"]}
 tempdir = "0.3.7"
 unindent = "0.1.7"
+
+[package.metadata.bundle]
+icon = ["app-icon@2x.png", "app-icon.png"]
+identifier = "dev.zed.Zed"
+name = "Zed"
