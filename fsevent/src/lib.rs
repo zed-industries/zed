@@ -74,13 +74,22 @@ impl EventStream {
                 Self::trampoline,
                 &stream_context,
                 cf_paths,
-                fs::kFSEventStreamEventIdSinceNow,
+                FSEventsGetCurrentEventId(),
                 latency.as_secs_f64(),
                 fs::kFSEventStreamCreateFlagFileEvents
                     | fs::kFSEventStreamCreateFlagNoDefer
                     | fs::kFSEventStreamCreateFlagWatchRoot,
             );
             cf::CFRelease(cf_paths);
+
+            fs::FSEventStreamScheduleWithRunLoop(
+                stream,
+                cf::CFRunLoopGetCurrent(),
+                cf::kCFRunLoopDefaultMode,
+            );
+            fs::FSEventStreamStart(stream);
+            fs::FSEventStreamFlushSync(stream);
+            fs::FSEventStreamStop(stream);
 
             let state = Arc::new(Mutex::new(Lifecycle::New));
 
@@ -111,12 +120,8 @@ impl EventStream {
                 }
             }
             fs::FSEventStreamScheduleWithRunLoop(self.stream, run_loop, cf::kCFRunLoopDefaultMode);
-
             fs::FSEventStreamStart(self.stream);
             cf::CFRunLoopRun();
-
-            fs::FSEventStreamFlushSync(self.stream);
-            fs::FSEventStreamStop(self.stream);
             fs::FSEventStreamRelease(self.stream);
         }
     }
@@ -133,11 +138,12 @@ impl EventStream {
             let event_paths = event_paths as *const *const ::std::os::raw::c_char;
             let e_ptr = event_flags as *mut u32;
             let i_ptr = event_ids as *mut u64;
-            let callback = (info as *mut Option<RunCallback>)
-                .as_mut()
-                .unwrap()
-                .as_mut()
-                .unwrap();
+            let callback_ptr = (info as *mut Option<RunCallback>).as_mut().unwrap();
+            let callback = if let Some(callback) = callback_ptr.as_mut() {
+                callback
+            } else {
+                return;
+            };
 
             let paths = slice::from_raw_parts(event_paths, num);
             let flags = slice::from_raw_parts_mut(e_ptr, num);
@@ -148,19 +154,25 @@ impl EventStream {
                 let path_c_str = CStr::from_ptr(paths[p]);
                 let path = PathBuf::from(OsStr::from_bytes(path_c_str.to_bytes()));
                 if let Some(flag) = StreamFlags::from_bits(flags[p]) {
-                    events.push(Event {
-                        event_id: ids[p],
-                        flags: flag,
-                        path,
-                    });
+                    if flag.contains(StreamFlags::HISTORY_DONE) {
+                        events.clear();
+                    } else {
+                        events.push(Event {
+                            event_id: ids[p],
+                            flags: flag,
+                            path,
+                        });
+                    }
                 } else {
                     debug_assert!(false, "unknown flag set for fs event: {}", flags[p]);
                 }
             }
 
-            if !callback(events) {
-                fs::FSEventStreamStop(stream_ref);
-                cf::CFRunLoopStop(cf::CFRunLoopGetCurrent());
+            if !events.is_empty() {
+                if !callback(events) {
+                    fs::FSEventStreamStop(stream_ref);
+                    cf::CFRunLoopStop(cf::CFRunLoopGetCurrent());
+                }
             }
         }
     }
@@ -283,6 +295,11 @@ impl std::fmt::Display for StreamFlags {
         }
         write!(f, "")
     }
+}
+
+#[link(name = "CoreServices", kind = "framework")]
+extern "C" {
+    pub fn FSEventsGetCurrentEventId() -> u64;
 }
 
 #[test]
