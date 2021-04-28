@@ -293,13 +293,20 @@ impl Pane {
         enum TabCloseButton {}
 
         let modified_color = ColorU::from_u32(0x556de8ff);
+        let mut clicked_color = modified_color;
+        clicked_color.a = 180;
+
         let icon = if tab_hovered {
             let mut icon = Svg::new("icons/x.svg");
 
             MouseEventHandler::new::<TabCloseButton, _>(item_id, ctx, |mouse_state| {
                 if mouse_state.hovered {
                     Container::new(icon.with_color(ColorU::white()).boxed())
-                        .with_background_color(modified_color)
+                        .with_background_color(if mouse_state.clicked {
+                            clicked_color
+                        } else {
+                            modified_color
+                        })
                         .with_corner_radius(close_icon_size / 2.)
                         .boxed()
                 } else {
