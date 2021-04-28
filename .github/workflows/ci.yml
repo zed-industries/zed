@@ -43,4 +43,4 @@ jobs:
           profile: minimal
 
       - name: Run tests
-        run: cargo test
+        run: cargo test --no-fail-fast
