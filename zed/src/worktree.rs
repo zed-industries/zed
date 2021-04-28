@@ -744,9 +744,15 @@ impl BackgroundScanner {
             let child_name = child_entry.file_name();
             let child_abs_path = job.abs_path.join(&child_name);
             let child_path: Arc<Path> = job.path.join(&child_name).into();
-            let child_metadata = child_entry.metadata()?;
+            let child_is_symlink = child_entry.metadata()?.file_type().is_symlink();
+            let child_metadata = if let Ok(metadata) = fs::metadata(&child_abs_path) {
+                metadata
+            } else {
+                log::error!("could not get metadata for path {:?}", child_abs_path);
+                continue;
+            };
+
             let child_inode = child_metadata.ino();
-            let child_is_symlink = child_metadata.file_type().is_symlink();
 
             // Disallow mount points outside the file system containing the root of this worktree
             if self.other_mount_paths.contains(&child_abs_path) {
@@ -1263,13 +1269,24 @@ mod tests {
 
             let root_link_path = dir.path().join("root_link");
             unix::fs::symlink(&dir.path().join("root"), &root_link_path).unwrap();
+            unix::fs::symlink(
+                &dir.path().join("root/fennel"),
+                &dir.path().join("root/finnochio"),
+            )
+            .unwrap();
 
             let tree = app.add_model(|ctx| Worktree::new(root_link_path, ctx));
 
             app.read(|ctx| tree.read(ctx).scan_complete()).await;
             app.read(|ctx| {
                 let tree = tree.read(ctx);
-                assert_eq!(tree.file_count(), 4);
+                assert_eq!(tree.file_count(), 5);
+
+                assert_eq!(
+                    tree.inode_for_path("fennel/grape"),
+                    tree.inode_for_path("finnochio/grape")
+                );
+
                 let results = match_paths(
                     Some(tree.snapshot()).iter(),
                     "bna",
