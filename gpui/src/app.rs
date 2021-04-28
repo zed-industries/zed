@@ -584,6 +584,11 @@ impl MutableAppContext {
         );
     }
 
+    pub(crate) fn notify_view(&mut self, window_id: usize, view_id: usize) {
+        self.pending_effects
+            .push_back(Effect::ViewNotification { window_id, view_id });
+    }
+
     pub fn dispatch_action<T: 'static + Any>(
         &mut self,
         window_id: usize,
@@ -594,7 +599,7 @@ impl MutableAppContext {
         self.dispatch_action_any(window_id, &responder_chain, name, Box::new(arg).as_ref());
     }
 
-    fn dispatch_action_any(
+    pub(crate) fn dispatch_action_any(
         &mut self,
         window_id: usize,
         path: &[usize],
@@ -787,23 +792,7 @@ impl MutableAppContext {
                         }
                     }
 
-                    let (actions, invalidated_views) =
-                        presenter.borrow_mut().dispatch_event(event, ctx.as_ref());
-
-                    ctx.window_invalidations
-                        .entry(window_id)
-                        .or_default()
-                        .updated
-                        .extend(invalidated_views.into_iter());
-
-                    for action in actions {
-                        ctx.dispatch_action_any(
-                            window_id,
-                            &action.path,
-                            action.name,
-                            action.arg.as_ref(),
-                        );
-                    }
+                    presenter.borrow_mut().dispatch_event(event, ctx);
                 })
             }));
         }
@@ -924,11 +913,14 @@ impl MutableAppContext {
                         self.focus(window_id, view_id);
                     }
                 }
+
+                if self.pending_effects.is_empty() {
+                    self.remove_dropped_entities();
+                    self.update_windows();
+                }
             }
 
             self.flushing_effects = false;
-            self.remove_dropped_entities();
-            self.update_windows();
         }
     }
 
@@ -1850,12 +1842,7 @@ impl<'a, T: View> ViewContext<'a, T> {
     }
 
     pub fn notify(&mut self) {
-        self.app
-            .pending_effects
-            .push_back(Effect::ViewNotification {
-                window_id: self.window_id,
-                view_id: self.view_id,
-            });
+        self.app.notify_view(self.window_id, self.view_id);
     }
 
     pub fn propagate_action(&mut self) {

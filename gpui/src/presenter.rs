@@ -22,6 +22,7 @@ pub struct Presenter {
     font_cache: Arc<FontCache>,
     text_layout_cache: TextLayoutCache,
     asset_cache: Arc<AssetCache>,
+    last_mouse_moved_event: Option<Event>,
 }
 
 impl Presenter {
@@ -39,6 +40,7 @@ impl Presenter {
             font_cache,
             text_layout_cache,
             asset_cache,
+            last_mouse_moved_event: None,
         }
     }
 
@@ -84,6 +86,10 @@ impl Presenter {
             };
             ctx.paint(root_view_id, Vector2F::zero());
             self.text_layout_cache.finish_frame();
+
+            if let Some(event) = self.last_mouse_moved_event.clone() {
+                self.dispatch_event(event, app)
+            }
         } else {
             log::error!("could not find root_view_id for window {}", self.window_id);
         }
@@ -118,12 +124,12 @@ impl Presenter {
         }
     }
 
-    pub fn dispatch_event(
-        &mut self,
-        event: Event,
-        app: &AppContext,
-    ) -> (Vec<ActionToDispatch>, HashSet<usize>) {
+    pub fn dispatch_event(&mut self, event: Event, app: &mut MutableAppContext) {
         if let Some(root_view_id) = app.root_view_id(self.window_id) {
+            if matches!(event, Event::MouseMoved { .. }) {
+                self.last_mouse_moved_event = Some(event.clone());
+            }
+
             let mut ctx = EventContext {
                 rendered_views: &mut self.rendered_views,
                 actions: Default::default(),
@@ -131,12 +137,24 @@ impl Presenter {
                 text_layout_cache: &self.text_layout_cache,
                 view_stack: Default::default(),
                 invalidated_views: Default::default(),
-                app,
+                app: app.as_ref(),
             };
             ctx.dispatch_event(root_view_id, &event);
-            (ctx.actions, ctx.invalidated_views)
-        } else {
-            Default::default()
+
+            let invalidated_views = ctx.invalidated_views;
+            let actions = ctx.actions;
+
+            for view_id in invalidated_views {
+                app.notify_view(self.window_id, view_id);
+            }
+            for action in actions {
+                app.dispatch_action_any(
+                    self.window_id,
+                    &action.path,
+                    action.name,
+                    action.arg.as_ref(),
+                );
+            }
         }
     }
 

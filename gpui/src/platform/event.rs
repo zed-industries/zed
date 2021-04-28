@@ -1,6 +1,6 @@
 use crate::{geometry::vector::Vector2F, keymap::Keystroke};
 
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 pub enum Event {
     KeyDown {
         keystroke: Keystroke,
