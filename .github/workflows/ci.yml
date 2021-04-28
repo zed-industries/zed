@@ -35,7 +35,7 @@ jobs:
             target
           key: ${{ runner.os }}-cargo-${{ hashFiles('Cargo.lock') }}
 
-      - name: Install rust
+      - name: Install Rust
         if: steps.cache.outputs.cache-hit != 'true'
         uses: actions-rs/toolchain@v1
         with:
@@ -44,3 +44,10 @@ jobs:
 
       - name: Run tests
         run: cargo test --no-fail-fast
+
+      - name: Create and upload app bundle
+        run: script/bundle
+      - uses: actions/upload-artifact@v2
+        with:
+          name: Zed.app
+          path: target/release/bundle/osx/Zed.app
