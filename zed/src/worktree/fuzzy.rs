@@ -24,6 +24,7 @@ pub struct PathMatch {
     pub positions: Vec<usize>,
     pub tree_id: usize,
     pub path: Arc<Path>,
+    pub include_root_name: bool,
 }
 
 impl PartialEq for PathMatch {
@@ -84,7 +85,7 @@ where
 
     pool.scoped(|scope| {
         for (segment_idx, results) in segment_results.iter_mut().enumerate() {
-            let trees = snapshots.clone();
+            let snapshots = snapshots.clone();
             let cancel_flag = &cancel_flag;
             scope.execute(move || {
                 let segment_start = segment_idx * segment_size;
@@ -99,12 +100,14 @@ where
                 let mut best_position_matrix = Vec::new();
 
                 let mut tree_start = 0;
-                for snapshot in trees {
+                for snapshot in snapshots {
                     let tree_end = if include_ignored {
                         tree_start + snapshot.file_count()
                     } else {
                         tree_start + snapshot.visible_file_count()
                     };
+
+                    let include_root_name = include_root_name || snapshot.root_entry().is_file();
                     if tree_start < segment_end && segment_start < tree_end {
                         let start = max(tree_start, segment_start) - tree_start;
                         let end = min(tree_end, segment_end) - tree_start;
@@ -246,6 +249,7 @@ fn match_single_tree_paths<'a>(
                 path: candidate.path.clone(),
                 score,
                 positions: match_positions.clone(),
+                include_root_name,
             };
             if let Err(i) = results.binary_search_by(|m| mat.cmp(&m)) {
                 if results.len() < max_results {

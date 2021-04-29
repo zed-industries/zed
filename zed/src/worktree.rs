@@ -68,16 +68,13 @@ struct FileHandleState {
 impl Worktree {
     pub fn new(path: impl Into<Arc<Path>>, ctx: &mut ModelContext<Self>) -> Self {
         let abs_path = path.into();
-        let root_name = abs_path
-            .file_name()
-            .map_or(String::new(), |n| n.to_string_lossy().to_string() + "/");
         let (scan_state_tx, scan_state_rx) = smol::channel::unbounded();
         let id = ctx.model_id();
         let snapshot = Snapshot {
             id,
             scan_id: 0,
             abs_path,
-            root_name,
+            root_name: Default::default(),
             ignores: Default::default(),
             entries: Default::default(),
         };
@@ -269,8 +266,8 @@ impl Snapshot {
         self.entry_for_path("").unwrap()
     }
 
-    /// Returns the filename of the snapshot's root directory,
-    /// with a trailing slash.
+    /// Returns the filename of the snapshot's root, plus a trailing slash if the snapshot's root is
+    /// a directory.
     pub fn root_name(&self) -> &str {
         &self.root_name
     }
@@ -481,6 +478,10 @@ impl Entry {
     fn is_dir(&self) -> bool {
         matches!(self.kind, EntryKind::Dir | EntryKind::PendingDir)
     }
+
+    fn is_file(&self) -> bool {
+        matches!(self.kind, EntryKind::File(_))
+    }
 }
 
 impl sum_tree::Item for Entry {
@@ -489,7 +490,7 @@ impl sum_tree::Item for Entry {
     fn summary(&self) -> Self::Summary {
         let file_count;
         let visible_file_count;
-        if matches!(self.kind, EntryKind::File(_)) {
+        if self.is_file() {
             file_count = 1;
             if self.is_ignored {
                 visible_file_count = 0;
@@ -631,14 +632,8 @@ impl BackgroundScanner {
         notify: Sender<ScanState>,
         worktree_id: usize,
     ) -> Self {
-        let root_char_bag = snapshot
-            .lock()
-            .root_name
-            .chars()
-            .map(|c| c.to_ascii_lowercase())
-            .collect();
         let mut scanner = Self {
-            root_char_bag,
+            root_char_bag: Default::default(),
             snapshot,
             notify,
             handles,
@@ -699,7 +694,7 @@ impl BackgroundScanner {
         });
     }
 
-    fn scan_dirs(&self) -> io::Result<()> {
+    fn scan_dirs(&mut self) -> io::Result<()> {
         self.snapshot.lock().scan_id += 1;
 
         let path: Arc<Path> = Arc::from(Path::new(""));
@@ -707,19 +702,29 @@ impl BackgroundScanner {
         let metadata = fs::metadata(&abs_path)?;
         let inode = metadata.ino();
         let is_symlink = fs::symlink_metadata(&abs_path)?.file_type().is_symlink();
+        let is_dir = metadata.file_type().is_dir();
 
-        if metadata.file_type().is_dir() {
-            let dir_entry = Entry {
+        // After determining whether the root entry is a file or a directory, populate the
+        // snapshot's "root name", which will be used for the purpose of fuzzy matching.
+        let mut root_name = abs_path
+            .file_name()
+            .map_or(String::new(), |f| f.to_string_lossy().to_string());
+        if is_dir {
+            root_name.push('/');
+        }
+        self.root_char_bag = root_name.chars().map(|c| c.to_ascii_lowercase()).collect();
+        self.snapshot.lock().root_name = root_name;
+
+        if is_dir {
+            self.snapshot.lock().insert_entry(Entry {
                 kind: EntryKind::PendingDir,
                 path: path.clone(),
                 inode,
                 is_symlink,
                 is_ignored: false,
-            };
-            self.snapshot.lock().insert_entry(dir_entry);
+            });
 
             let (tx, rx) = crossbeam_channel::unbounded();
-
             tx.send(ScanJob {
                 abs_path: abs_path.to_path_buf(),
                 path,
@@ -1541,7 +1546,7 @@ mod tests {
             scanner.snapshot().check_invariants();
 
             let (notify_tx, _notify_rx) = smol::channel::unbounded();
-            let new_scanner = BackgroundScanner::new(
+            let mut new_scanner = BackgroundScanner::new(
                 Arc::new(Mutex::new(Snapshot {
                     id: 0,
                     scan_id: 0,
@@ -1711,7 +1716,7 @@ mod tests {
             let mut files = self.files(0);
             let mut visible_files = self.visible_files(0);
             for entry in self.entries.cursor::<(), ()>() {
-                if matches!(entry.kind, EntryKind::File(_)) {
+                if entry.is_file() {
                     assert_eq!(files.next().unwrap().inode(), entry.inode);
                     if !entry.is_ignored {
                         assert_eq!(visible_files.next().unwrap().inode(), entry.inode);
