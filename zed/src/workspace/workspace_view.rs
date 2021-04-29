@@ -3,7 +3,8 @@ use crate::{settings::Settings, watch};
 use futures_core::{future::LocalBoxFuture, Future};
 use gpui::{
     color::rgbu, elements::*, json::to_string_pretty, keymap::Binding, AnyViewHandle, AppContext,
-    ClipboardItem, Entity, ModelHandle, MutableAppContext, View, ViewContext, ViewHandle,
+    ClipboardItem, Entity, EntityTask, ModelHandle, MutableAppContext, View, ViewContext,
+    ViewHandle,
 };
 use log::error;
 use std::{
@@ -223,11 +224,12 @@ impl WorkspaceView {
         }
     }
 
+    #[must_use]
     pub fn open_entry(
         &mut self,
         entry: (usize, Arc<Path>),
         ctx: &mut ViewContext<Self>,
-    ) -> Option<impl Future<Output = ()>> {
+    ) -> Option<EntityTask<()>> {
         if self.loading_entries.contains(&entry) {
             return None;
         }

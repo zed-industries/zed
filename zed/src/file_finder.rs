@@ -275,7 +275,9 @@ impl FileFinder {
     ) {
         match event {
             Event::Selected(tree_id, path) => {
-                workspace_view.open_entry((*tree_id, path.clone()), ctx);
+                workspace_view
+                    .open_entry((*tree_id, path.clone()), ctx)
+                    .map(|d| d.detach());
                 workspace_view.dismiss_modal(ctx);
             }
             Event::Dismissed => {
