@@ -52,7 +52,8 @@ fn open_paths(params: &OpenParams, app: &mut MutableAppContext) {
         if let Some(handle) = app.root_view::<WorkspaceView>(window_id) {
             if handle.update(app, |view, ctx| {
                 if view.contains_paths(&params.paths, ctx.as_ref()) {
-                    view.open_paths(&params.paths, ctx);
+                    let open_paths = view.open_paths(&params.paths, ctx);
+                    ctx.foreground().spawn(open_paths).detach();
                     log::info!("open paths on existing workspace");
                     true
                 } else {
@@ -70,7 +71,8 @@ fn open_paths(params: &OpenParams, app: &mut MutableAppContext) {
     let workspace = app.add_model(|ctx| Workspace::new(vec![], ctx));
     app.add_window(|ctx| {
         let view = WorkspaceView::new(workspace, params.settings.clone(), ctx);
-        view.open_paths(&params.paths, ctx);
+        let open_paths = view.open_paths(&params.paths, ctx);
+        ctx.foreground().spawn(open_paths).detach();
         view
     });
 }

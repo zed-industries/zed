@@ -1717,6 +1717,10 @@ impl<'a, T: View> ViewContext<'a, T> {
         self.window_id
     }
 
+    pub fn foreground(&self) -> &Rc<executor::Foreground> {
+        self.app.foreground_executor()
+    }
+
     pub fn background_executor(&self) -> &Arc<executor::Background> {
         &self.app.ctx.background
     }
