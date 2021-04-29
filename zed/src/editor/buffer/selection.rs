@@ -73,7 +73,7 @@ impl Selection {
         }
     }
 
-    pub fn buffer_row_range(&self, map: &DisplayMap, ctx: &AppContext) -> Range<u32> {
+    pub fn buffer_rows_for_display_rows(&self, map: &DisplayMap, ctx: &AppContext) -> Range<u32> {
         let display_start = self.start.to_display_point(map, ctx).unwrap();
         let buffer_start = DisplayPoint::new(display_start.row(), 0)
             .to_buffer_point(map, Bias::Left, ctx)

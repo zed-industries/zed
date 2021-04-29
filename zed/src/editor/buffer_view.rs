@@ -638,7 +638,7 @@ impl BufferView {
 
         let mut selections = self.selections(app).iter().peekable();
         while let Some(selection) = selections.next() {
-            let mut range = selection.buffer_row_range(map, app);
+            let mut rows = selection.buffer_rows_for_display_rows(map, app);
             let goal_display_column = selection
                 .head()
                 .to_display_point(map, app)
@@ -647,29 +647,29 @@ impl BufferView {
 
             // Accumulate contiguous regions of rows that we want to delete.
             while let Some(next_selection) = selections.peek() {
-                let next_range = next_selection.buffer_row_range(map, app);
-                if next_range.start <= range.end {
-                    range.end = next_range.end;
+                let next_rows = next_selection.buffer_rows_for_display_rows(map, app);
+                if next_rows.start <= rows.end {
+                    rows.end = next_rows.end;
                     selections.next().unwrap();
                 } else {
                     break;
                 }
             }
 
-            let mut edit_start = Point::new(range.start, 0).to_offset(buffer).unwrap();
+            let mut edit_start = Point::new(rows.start, 0).to_offset(buffer).unwrap();
             let edit_end;
             let cursor_buffer_row;
-            if let Ok(end_offset) = Point::new(range.end, 0).to_offset(buffer) {
+            if let Ok(end_offset) = Point::new(rows.end, 0).to_offset(buffer) {
                 // If there's a line after the range, delete the \n from the end of the row range
                 // and position the cursor on the next line.
                 edit_end = end_offset;
-                cursor_buffer_row = range.end;
+                cursor_buffer_row = rows.end;
             } else {
                 // If there isn't a line after the range, delete the \n from the line before the
                 // start of the row range and position the cursor there.
                 edit_start = edit_start.saturating_sub(1);
                 edit_end = buffer.len();
-                cursor_buffer_row = range.start.saturating_sub(1);
+                cursor_buffer_row = rows.start.saturating_sub(1);
             }
 
             let mut cursor = Point::new(cursor_buffer_row, 0)
@@ -707,8 +707,8 @@ impl BufferView {
 
         let mut selections = self.selections(ctx.as_ref()).to_vec();
         {
-            // Temporarily bias selections right to allow duplicate lines to push them down when
-            // they are at the start of a line.
+            // Temporarily bias selections right to allow newly duplicate lines to push them down
+            // when the selections are at the beginning of a line.
             let buffer = self.buffer.read(ctx);
             for selection in &mut selections {
                 selection.start = selection.start.bias_right(buffer).unwrap();
@@ -725,11 +725,11 @@ impl BufferView {
         let mut selections_iter = selections.iter_mut().peekable();
         while let Some(selection) = selections_iter.next() {
             // Avoid duplicating the same lines twice.
-            let mut range = selection.buffer_row_range(map, app);
+            let mut rows = selection.buffer_rows_for_display_rows(map, app);
             while let Some(next_selection) = selections_iter.peek() {
-                let next_range = next_selection.buffer_row_range(map, app);
-                if next_range.start <= range.end - 1 {
-                    range.end = next_range.end;
+                let next_rows = next_selection.buffer_rows_for_display_rows(map, app);
+                if next_rows.start <= rows.end - 1 {
+                    rows.end = next_rows.end;
                     selections_iter.next().unwrap();
                 } else {
                     break;
@@ -737,8 +737,8 @@ impl BufferView {
             }
 
             // Copy the text from the selected row region and splice it at the start of the region.
-            let start = Point::new(range.start, 0);
-            let end = Point::new(range.end - 1, buffer.line_len(range.end - 1).unwrap());
+            let start = Point::new(rows.start, 0);
+            let end = Point::new(rows.end - 1, buffer.line_len(rows.end - 1).unwrap());
             let text = buffer
                 .text_for_range(start..end)
                 .unwrap()
