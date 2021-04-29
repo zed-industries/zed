@@ -33,8 +33,7 @@ pub struct FileFinder {
     latest_search_did_cancel: bool,
     latest_search_query: String,
     matches: Vec<PathMatch>,
-    include_root_name: bool,
-    selected: Option<Arc<Path>>,
+    selected: Option<(usize, Arc<Path>)>,
     cancel_flag: Arc<AtomicBool>,
     list_state: UniformListState,
 }
@@ -147,101 +146,110 @@ impl FileFinder {
         index: usize,
         app: &AppContext,
     ) -> Option<ElementBox> {
-        let tree_id = path_match.tree_id;
+        self.labels_for_match(path_match, app).map(
+            |(file_name, file_name_positions, full_path, full_path_positions)| {
+                let settings = smol::block_on(self.settings.read());
+                let highlight_color = ColorU::from_u32(0x304ee2ff);
+                let bold = *Properties::new().weight(Weight::BOLD);
+                let mut container = Container::new(
+                    Flex::row()
+                        .with_child(
+                            Container::new(
+                                LineBox::new(
+                                    settings.ui_font_family,
+                                    settings.ui_font_size,
+                                    Svg::new("icons/file-16.svg").boxed(),
+                                )
+                                .boxed(),
+                            )
+                            .with_padding_right(6.0)
+                            .boxed(),
+                        )
+                        .with_child(
+                            Expanded::new(
+                                1.0,
+                                Flex::column()
+                                    .with_child(
+                                        Label::new(
+                                            file_name.to_string(),
+                                            settings.ui_font_family,
+                                            settings.ui_font_size,
+                                        )
+                                        .with_highlights(highlight_color, bold, file_name_positions)
+                                        .boxed(),
+                                    )
+                                    .with_child(
+                                        Label::new(
+                                            full_path,
+                                            settings.ui_font_family,
+                                            settings.ui_font_size,
+                                        )
+                                        .with_highlights(highlight_color, bold, full_path_positions)
+                                        .boxed(),
+                                    )
+                                    .boxed(),
+                            )
+                            .boxed(),
+                        )
+                        .boxed(),
+                )
+                .with_uniform_padding(6.0);
 
-        self.worktree(tree_id, app).map(|tree| {
-            let prefix = if self.include_root_name {
+                let selected_index = self.selected_index();
+                if index == selected_index || index < self.matches.len() - 1 {
+                    container =
+                        container.with_border(Border::bottom(1.0, ColorU::from_u32(0xdbdbdcff)));
+                }
+
+                if index == selected_index {
+                    container = container.with_background_color(ColorU::from_u32(0xdbdbdcff));
+                }
+
+                let entry = (path_match.tree_id, path_match.path.clone());
+                EventHandler::new(container.boxed())
+                    .on_mouse_down(move |ctx| {
+                        ctx.dispatch_action("file_finder:select", entry.clone());
+                        true
+                    })
+                    .named("match")
+            },
+        )
+    }
+
+    fn labels_for_match(
+        &self,
+        path_match: &PathMatch,
+        app: &AppContext,
+    ) -> Option<(String, Vec<usize>, String, Vec<usize>)> {
+        self.worktree(path_match.tree_id, app).map(|tree| {
+            let prefix = if path_match.include_root_name {
                 tree.root_name()
             } else {
                 ""
             };
-            let path = path_match.path.clone();
+
             let path_string = path_match.path.to_string_lossy();
-            let file_name = path_match
-                .path
-                .file_name()
-                .unwrap_or_default()
-                .to_string_lossy();
-
+            let full_path = [prefix, path_string.as_ref()].join("");
             let path_positions = path_match.positions.clone();
+
+            let file_name = path_match.path.file_name().map_or_else(
+                || prefix.to_string(),
+                |file_name| file_name.to_string_lossy().to_string(),
+            );
             let file_name_start =
-                prefix.len() + path_string.chars().count() - file_name.chars().count();
-            let mut file_name_positions = Vec::new();
-            file_name_positions.extend(path_positions.iter().filter_map(|pos| {
-                if pos >= &file_name_start {
-                    Some(pos - file_name_start)
-                } else {
-                    None
-                }
-            }));
-
-            let settings = smol::block_on(self.settings.read());
-            let highlight_color = ColorU::from_u32(0x304ee2ff);
-            let bold = *Properties::new().weight(Weight::BOLD);
-
-            let mut full_path = prefix.to_string();
-            full_path.push_str(&path_string);
-
-            let mut container = Container::new(
-                Flex::row()
-                    .with_child(
-                        Container::new(
-                            LineBox::new(
-                                settings.ui_font_family,
-                                settings.ui_font_size,
-                                Svg::new("icons/file-16.svg").boxed(),
-                            )
-                            .boxed(),
-                        )
-                        .with_padding_right(6.0)
-                        .boxed(),
-                    )
-                    .with_child(
-                        Expanded::new(
-                            1.0,
-                            Flex::column()
-                                .with_child(
-                                    Label::new(
-                                        file_name.to_string(),
-                                        settings.ui_font_family,
-                                        settings.ui_font_size,
-                                    )
-                                    .with_highlights(highlight_color, bold, file_name_positions)
-                                    .boxed(),
-                                )
-                                .with_child(
-                                    Label::new(
-                                        full_path,
-                                        settings.ui_font_family,
-                                        settings.ui_font_size,
-                                    )
-                                    .with_highlights(highlight_color, bold, path_positions)
-                                    .boxed(),
-                                )
-                                .boxed(),
-                        )
-                        .boxed(),
-                    )
-                    .boxed(),
-            )
-            .with_uniform_padding(6.0);
-
-            let selected_index = self.selected_index();
-            if index == selected_index || index < self.matches.len() - 1 {
-                container =
-                    container.with_border(Border::bottom(1.0, ColorU::from_u32(0xdbdbdcff)));
-            }
-
-            if index == selected_index {
-                container = container.with_background_color(ColorU::from_u32(0xdbdbdcff));
-            }
-
-            EventHandler::new(container.boxed())
-                .on_mouse_down(move |ctx| {
-                    ctx.dispatch_action("file_finder:select", (tree_id, path.clone()));
-                    true
+                prefix.chars().count() + path_string.chars().count() - file_name.chars().count();
+            let file_name_positions = path_positions
+                .iter()
+                .filter_map(|pos| {
+                    if pos >= &file_name_start {
+                        Some(pos - file_name_start)
+                    } else {
+                        None
+                    }
                 })
-                .named("match")
+                .collect();
+
+            (file_name, file_name_positions, full_path, path_positions)
         })
     }
 
@@ -267,7 +275,9 @@ impl FileFinder {
     ) {
         match event {
             Event::Selected(tree_id, path) => {
-                workspace_view.open_entry((*tree_id, path.clone()), ctx);
+                workspace_view
+                    .open_entry((*tree_id, path.clone()), ctx)
+                    .map(|d| d.detach());
                 workspace_view.dismiss_modal(ctx);
             }
             Event::Dismissed => {
@@ -298,7 +308,6 @@ impl FileFinder {
             latest_search_did_cancel: false,
             latest_search_query: String::new(),
             matches: Vec::new(),
-            include_root_name: false,
             selected: None,
             cancel_flag: Arc::new(AtomicBool::new(false)),
             list_state: UniformListState::new(),
@@ -335,7 +344,9 @@ impl FileFinder {
     fn selected_index(&self) -> usize {
         if let Some(selected) = self.selected.as_ref() {
             for (ix, path_match) in self.matches.iter().enumerate() {
-                if path_match.path.as_ref() == selected.as_ref() {
+                if (path_match.tree_id, path_match.path.as_ref())
+                    == (selected.0, selected.1.as_ref())
+                {
                     return ix;
                 }
             }
@@ -347,7 +358,8 @@ impl FileFinder {
         let mut selected_index = self.selected_index();
         if selected_index > 0 {
             selected_index -= 1;
-            self.selected = Some(self.matches[selected_index].path.clone());
+            let mat = &self.matches[selected_index];
+            self.selected = Some((mat.tree_id, mat.path.clone()));
         }
         self.list_state.scroll_to(selected_index);
         ctx.notify();
@@ -357,7 +369,8 @@ impl FileFinder {
         let mut selected_index = self.selected_index();
         if selected_index + 1 < self.matches.len() {
             selected_index += 1;
-            self.selected = Some(self.matches[selected_index].path.clone());
+            let mat = &self.matches[selected_index];
+            self.selected = Some((mat.tree_id, mat.path.clone()));
         }
         self.list_state.scroll_to(selected_index);
         ctx.notify();
@@ -403,7 +416,7 @@ impl FileFinder {
                 pool,
             );
             let did_cancel = cancel_flag.load(atomic::Ordering::Relaxed);
-            (search_id, include_root_name, did_cancel, query, matches)
+            (search_id, did_cancel, query, matches)
         });
 
         ctx.spawn(task, Self::update_matches).detach();
@@ -411,13 +424,7 @@ impl FileFinder {
 
     fn update_matches(
         &mut self,
-        (search_id, include_root_name, did_cancel, query, matches): (
-            usize,
-            bool,
-            bool,
-            String,
-            Vec<PathMatch>,
-        ),
+        (search_id, did_cancel, query, matches): (usize, bool, String, Vec<PathMatch>),
         ctx: &mut ViewContext<Self>,
     ) {
         if search_id >= self.latest_search_id {
@@ -429,7 +436,6 @@ impl FileFinder {
             }
             self.latest_search_query = query;
             self.latest_search_did_cancel = did_cancel;
-            self.include_root_name = include_root_name;
             self.list_state.scroll_to(self.selected_index());
             ctx.notify();
         }
@@ -454,20 +460,16 @@ mod tests {
     };
     use gpui::App;
     use serde_json::json;
-    use smol::fs;
+    use std::fs;
     use tempdir::TempDir;
 
     #[test]
     fn test_matching_paths() {
         App::test_async((), |mut app| async move {
             let tmp_dir = TempDir::new("example").unwrap();
-            fs::create_dir(tmp_dir.path().join("a")).await.unwrap();
-            fs::write(tmp_dir.path().join("a/banana"), "banana")
-                .await
-                .unwrap();
-            fs::write(tmp_dir.path().join("a/bandana"), "bandana")
-                .await
-                .unwrap();
+            fs::create_dir(tmp_dir.path().join("a")).unwrap();
+            fs::write(tmp_dir.path().join("a/banana"), "banana").unwrap();
+            fs::write(tmp_dir.path().join("a/bandana"), "bandana").unwrap();
             app.update(|ctx| {
                 super::init(ctx);
                 editor::init(ctx);
@@ -560,7 +562,6 @@ mod tests {
                 finder.update_matches(
                     (
                         finder.latest_search_id,
-                        true,
                         true, // did-cancel
                         query.clone(),
                         vec![matches[1].clone(), matches[3].clone()],
@@ -573,7 +574,6 @@ mod tests {
                 finder.update_matches(
                     (
                         finder.latest_search_id,
-                        true,
                         true, // did-cancel
                         query.clone(),
                         vec![matches[0].clone(), matches[2].clone(), matches[3].clone()],
@@ -582,6 +582,79 @@ mod tests {
                 );
 
                 assert_eq!(finder.matches, matches[0..4])
+            });
+        });
+    }
+
+    #[test]
+    fn test_single_file_worktrees() {
+        App::test_async((), |mut app| async move {
+            let temp_dir = TempDir::new("test-single-file-worktrees").unwrap();
+            let dir_path = temp_dir.path().join("the-parent-dir");
+            let file_path = dir_path.join("the-file");
+            fs::create_dir(&dir_path).unwrap();
+            fs::write(&file_path, "").unwrap();
+
+            let settings = settings::channel(&app.font_cache()).unwrap().1;
+            let workspace = app.add_model(|ctx| Workspace::new(vec![file_path], ctx));
+            app.read(|ctx| workspace.read(ctx).worktree_scans_complete(ctx))
+                .await;
+            let (_, finder) =
+                app.add_window(|ctx| FileFinder::new(settings, workspace.clone(), ctx));
+
+            // Even though there is only one worktree, that worktree's filename
+            // is included in the matching, because the worktree is a single file.
+            finder.update(&mut app, |f, ctx| f.spawn_search("thf".into(), ctx));
+            finder.condition(&app, |f, _| f.matches.len() == 1).await;
+
+            app.read(|ctx| {
+                let finder = finder.read(ctx);
+                let (file_name, file_name_positions, full_path, full_path_positions) =
+                    finder.labels_for_match(&finder.matches[0], ctx).unwrap();
+
+                assert_eq!(file_name, "the-file");
+                assert_eq!(file_name_positions, &[0, 1, 4]);
+                assert_eq!(full_path, "the-file");
+                assert_eq!(full_path_positions, &[0, 1, 4]);
+            });
+
+            // Since the worktree root is a file, searching for its name followed by a slash does
+            // not match anything.
+            finder.update(&mut app, |f, ctx| f.spawn_search("thf/".into(), ctx));
+            finder.condition(&app, |f, _| f.matches.len() == 0).await;
+        });
+    }
+
+    #[test]
+    fn test_multiple_matches_with_same_relative_path() {
+        App::test_async((), |mut app| async move {
+            let tmp_dir = temp_tree(json!({
+                "dir1": { "a.txt": "" },
+                "dir2": { "a.txt": "" }
+            }));
+            let settings = settings::channel(&app.font_cache()).unwrap().1;
+            let workspace = app.add_model(|ctx| {
+                Workspace::new(
+                    vec![tmp_dir.path().join("dir1"), tmp_dir.path().join("dir2")],
+                    ctx,
+                )
+            });
+            app.read(|ctx| workspace.read(ctx).worktree_scans_complete(ctx))
+                .await;
+            let (_, finder) =
+                app.add_window(|ctx| FileFinder::new(settings, workspace.clone(), ctx));
+
+            // Run a search that matches two files with the same relative path.
+            finder.update(&mut app, |f, ctx| f.spawn_search("a.t".into(), ctx));
+            finder.condition(&app, |f, _| f.matches.len() == 2).await;
+
+            // Can switch between different matches with the same relative path.
+            finder.update(&mut app, |f, ctx| {
+                assert_eq!(f.selected_index(), 0);
+                f.select_next(&(), ctx);
+                assert_eq!(f.selected_index(), 1);
+                f.select_prev(&(), ctx);
+                assert_eq!(f.selected_index(), 0);
             });
         });
     }

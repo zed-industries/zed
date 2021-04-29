@@ -1,9 +1,10 @@
 use super::{pane, Pane, PaneGroup, SplitDirection, Workspace};
 use crate::{settings::Settings, watch};
-use futures_core::future::LocalBoxFuture;
+use futures_core::{future::LocalBoxFuture, Future};
 use gpui::{
     color::rgbu, elements::*, json::to_string_pretty, keymap::Binding, AnyViewHandle, AppContext,
-    ClipboardItem, Entity, ModelHandle, MutableAppContext, View, ViewContext, ViewHandle,
+    ClipboardItem, Entity, EntityTask, ModelHandle, MutableAppContext, View, ViewContext,
+    ViewHandle,
 };
 use log::error;
 use std::{
@@ -161,9 +162,39 @@ impl WorkspaceView {
         self.workspace.read(app).contains_paths(paths, app)
     }
 
-    pub fn open_paths(&self, paths: &[PathBuf], app: &mut MutableAppContext) {
-        self.workspace
-            .update(app, |workspace, ctx| workspace.open_paths(paths, ctx));
+    pub fn open_paths(
+        &self,
+        paths: &[PathBuf],
+        ctx: &mut ViewContext<Self>,
+    ) -> impl Future<Output = ()> {
+        let entries = self
+            .workspace
+            .update(ctx, |workspace, ctx| workspace.open_paths(paths, ctx));
+        let bg = ctx.background_executor().clone();
+        let tasks = paths
+            .iter()
+            .cloned()
+            .zip(entries.into_iter())
+            .map(|(path, entry)| {
+                ctx.spawn(
+                    bg.spawn(async move { path.is_file() }),
+                    |me, is_file, ctx| {
+                        if is_file {
+                            me.open_entry(entry, ctx)
+                        } else {
+                            None
+                        }
+                    },
+                )
+            })
+            .collect::<Vec<_>>();
+        async move {
+            for task in tasks {
+                if let Some(task) = task.await {
+                    task.await;
+                }
+            }
+        }
     }
 
     pub fn toggle_modal<V, F>(&mut self, ctx: &mut ViewContext<Self>, add_view: F)
@@ -193,16 +224,21 @@ impl WorkspaceView {
         }
     }
 
-    pub fn open_entry(&mut self, entry: (usize, Arc<Path>), ctx: &mut ViewContext<Self>) {
+    #[must_use]
+    pub fn open_entry(
+        &mut self,
+        entry: (usize, Arc<Path>),
+        ctx: &mut ViewContext<Self>,
+    ) -> Option<EntityTask<()>> {
         if self.loading_entries.contains(&entry) {
-            return;
+            return None;
         }
 
         if self
             .active_pane()
             .update(ctx, |pane, ctx| pane.activate_entry(entry.clone(), ctx))
         {
-            return;
+            return None;
         }
 
         self.loading_entries.insert(entry.clone());
@@ -210,10 +246,13 @@ impl WorkspaceView {
         match self.workspace.update(ctx, |workspace, ctx| {
             workspace.open_entry(entry.clone(), ctx)
         }) {
-            Err(error) => error!("{}", error),
+            Err(error) => {
+                error!("{}", error);
+                None
+            }
             Ok(item) => {
                 let settings = self.settings.clone();
-                ctx.spawn(item, move |me, item, ctx| {
+                Some(ctx.spawn(item, move |me, item, ctx| {
                     me.loading_entries.remove(&entry);
                     match item {
                         Ok(item) => {
@@ -224,8 +263,7 @@ impl WorkspaceView {
                             error!("{}", error);
                         }
                     }
-                })
-                .detach();
+                }))
             }
         }
     }
@@ -382,6 +420,7 @@ mod tests {
     use crate::{settings, test::temp_tree, workspace::WorkspaceHandle as _};
     use gpui::App;
     use serde_json::json;
+    use std::collections::HashSet;
 
     #[test]
     fn test_open_entry() {
@@ -408,13 +447,23 @@ mod tests {
             let pane = app.read(|ctx| workspace_view.read(ctx).active_pane().clone());
 
             // Open the first entry
-            workspace_view.update(&mut app, |w, ctx| w.open_entry(file1.clone(), ctx));
-            pane.condition(&app, |pane, _| pane.items().len() == 1)
+            workspace_view
+                .update(&mut app, |w, ctx| w.open_entry(file1.clone(), ctx))
+                .unwrap()
                 .await;
+            app.read(|ctx| {
+                let pane = pane.read(ctx);
+                assert_eq!(
+                    pane.active_item().unwrap().entry_id(ctx),
+                    Some(file1.clone())
+                );
+                assert_eq!(pane.items().len(), 1);
+            });
 
             // Open the second entry
-            workspace_view.update(&mut app, |w, ctx| w.open_entry(file2.clone(), ctx));
-            pane.condition(&app, |pane, _| pane.items().len() == 2)
+            workspace_view
+                .update(&mut app, |w, ctx| w.open_entry(file2.clone(), ctx))
+                .unwrap()
                 .await;
             app.read(|ctx| {
                 let pane = pane.read(ctx);
@@ -422,25 +471,107 @@ mod tests {
                     pane.active_item().unwrap().entry_id(ctx),
                     Some(file2.clone())
                 );
+                assert_eq!(pane.items().len(), 2);
             });
 
-            // Open the first entry again
-            workspace_view.update(&mut app, |w, ctx| w.open_entry(file1.clone(), ctx));
-            pane.condition(&app, move |pane, ctx| {
-                pane.active_item().unwrap().entry_id(ctx) == Some(file1.clone())
+            // Open the first entry again. The existing pane item is activated.
+            workspace_view.update(&mut app, |w, ctx| {
+                assert!(w.open_entry(file1.clone(), ctx).is_none())
+            });
+            app.read(|ctx| {
+                let pane = pane.read(ctx);
+                assert_eq!(
+                    pane.active_item().unwrap().entry_id(ctx),
+                    Some(file1.clone())
+                );
+                assert_eq!(pane.items().len(), 2);
+            });
+
+            // Open the third entry twice concurrently. Only one pane item is added.
+            workspace_view
+                .update(&mut app, |w, ctx| {
+                    let task = w.open_entry(file3.clone(), ctx).unwrap();
+                    assert!(w.open_entry(file3.clone(), ctx).is_none());
+                    task
+                })
+                .await;
+            app.read(|ctx| {
+                let pane = pane.read(ctx);
+                assert_eq!(
+                    pane.active_item().unwrap().entry_id(ctx),
+                    Some(file3.clone())
+                );
+                assert_eq!(pane.items().len(), 3);
+            });
+        });
+    }
+
+    #[test]
+    fn test_open_paths() {
+        App::test_async((), |mut app| async move {
+            let dir1 = temp_tree(json!({
+                "a.txt": "",
+            }));
+            let dir2 = temp_tree(json!({
+                "b.txt": "",
+            }));
+
+            let workspace = app.add_model(|ctx| Workspace::new(vec![dir1.path().into()], ctx));
+            let settings = settings::channel(&app.font_cache()).unwrap().1;
+            let (_, workspace_view) =
+                app.add_window(|ctx| WorkspaceView::new(workspace.clone(), settings, ctx));
+            app.read(|ctx| workspace.read(ctx).worktree_scans_complete(ctx))
+                .await;
+
+            // Open a file within an existing worktree.
+            app.update(|ctx| {
+                workspace_view.update(ctx, |view, ctx| {
+                    view.open_paths(&[dir1.path().join("a.txt")], ctx)
+                })
             })
             .await;
             app.read(|ctx| {
-                assert_eq!(pane.read(ctx).items().len(), 2);
+                workspace_view
+                    .read(ctx)
+                    .active_pane()
+                    .read(ctx)
+                    .active_item()
+                    .unwrap()
+                    .title(ctx)
+                    == "a.txt"
             });
 
-            // Open the third entry twice concurrently
-            workspace_view.update(&mut app, |w, ctx| {
-                w.open_entry(file3.clone(), ctx);
-                w.open_entry(file3.clone(), ctx);
+            // Open a file outside of any existing worktree.
+            app.update(|ctx| {
+                workspace_view.update(ctx, |view, ctx| {
+                    view.open_paths(&[dir2.path().join("b.txt")], ctx)
+                })
+            })
+            .await;
+            app.update(|ctx| {
+                let worktree_roots = workspace
+                    .read(ctx)
+                    .worktrees()
+                    .iter()
+                    .map(|w| w.read(ctx).abs_path())
+                    .collect::<HashSet<_>>();
+                assert_eq!(
+                    worktree_roots,
+                    vec![dir1.path(), &dir2.path().join("b.txt")]
+                        .into_iter()
+                        .collect(),
+                );
             });
-            pane.condition(&app, |pane, _| pane.items().len() == 3)
-                .await;
+            app.read(|ctx| {
+                workspace_view
+                    .read(ctx)
+                    .active_pane()
+                    .read(ctx)
+                    .active_item()
+                    .unwrap()
+                    .title(ctx)
+                    == "b.txt"
+            });
         });
     }
 
@@ -468,15 +599,16 @@ mod tests {
                 app.add_window(|ctx| WorkspaceView::new(workspace.clone(), settings, ctx));
             let pane_1 = app.read(|ctx| workspace_view.read(ctx).active_pane().clone());
 
-            workspace_view.update(&mut app, |w, ctx| w.open_entry(file1.clone(), ctx));
-            {
-                let file1 = file1.clone();
-                pane_1
-                    .condition(&app, move |pane, ctx| {
-                        pane.active_item().and_then(|i| i.entry_id(ctx)) == Some(file1.clone())
-                    })
-                    .await;
-            }
+            workspace_view
+                .update(&mut app, |w, ctx| w.open_entry(file1.clone(), ctx))
+                .unwrap()
+                .await;
+            app.read(|ctx| {
+                assert_eq!(
+                    pane_1.read(ctx).active_item().unwrap().entry_id(ctx),
+                    Some(file1.clone())
+                );
+            });
 
             app.dispatch_action(window_id, vec![pane_1.id()], "pane:split_right", ());
             app.update(|ctx| {

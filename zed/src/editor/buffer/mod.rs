@@ -18,11 +18,12 @@ use crate::{
     worktree::FileHandle,
 };
 use anyhow::{anyhow, Result};
-use gpui::{Entity, ModelContext};
+use gpui::{AppContext, Entity, ModelContext};
 use lazy_static::lazy_static;
 use rand::prelude::*;
 use std::{
     cmp,
+    ffi::OsString,
     hash::BuildHasher,
     iter::{self, Iterator},
     ops::{AddAssign, Range},
@@ -445,6 +446,10 @@ impl Buffer {
             local_clock: time::Local::new(replica_id),
             lamport_clock: time::Lamport::new(replica_id),
         }
+    }
+
+    pub fn file_name(&self, ctx: &AppContext) -> Option<OsString> {
+        self.file.as_ref().and_then(|file| file.file_name(ctx))
     }
 
     pub fn path(&self) -> Option<Arc<Path>> {

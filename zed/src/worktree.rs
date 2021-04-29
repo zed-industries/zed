@@ -20,7 +20,7 @@ use smol::{channel::Sender, Timer};
 use std::{
     cmp,
     collections::{HashMap, HashSet},
-    ffi::{CStr, OsStr},
+    ffi::{CStr, OsStr, OsString},
     fmt, fs,
     future::Future,
     io::{self, Read, Write},
@@ -68,16 +68,13 @@ struct FileHandleState {
 impl Worktree {
     pub fn new(path: impl Into<Arc<Path>>, ctx: &mut ModelContext<Self>) -> Self {
         let abs_path = path.into();
-        let root_name = abs_path
-            .file_name()
-            .map_or(String::new(), |n| n.to_string_lossy().to_string() + "/");
         let (scan_state_tx, scan_state_rx) = smol::channel::unbounded();
         let id = ctx.model_id();
         let snapshot = Snapshot {
             id,
             scan_id: 0,
             abs_path,
-            root_name,
+            root_name: Default::default(),
             ignores: Default::default(),
             entries: Default::default(),
         };
@@ -163,6 +160,10 @@ impl Worktree {
         self.snapshot.clone()
     }
 
+    pub fn abs_path(&self) -> &Path {
+        self.snapshot.abs_path.as_ref()
+    }
+
     pub fn contains_abs_path(&self, path: &Path) -> bool {
         path.starts_with(&self.snapshot.abs_path)
     }
@@ -172,7 +173,11 @@ impl Worktree {
         path: &Path,
         ctx: &AppContext,
     ) -> impl Future<Output = Result<History>> {
-        let abs_path = self.snapshot.abs_path.join(path);
+        let abs_path = if path.file_name().is_some() {
+            self.snapshot.abs_path.join(path)
+        } else {
+            self.snapshot.abs_path.to_path_buf()
+        };
         ctx.background_executor().spawn(async move {
             let mut file = std::fs::File::open(&abs_path)?;
             let mut base_text = String::new();
@@ -261,8 +266,8 @@ impl Snapshot {
         self.entry_for_path("").unwrap()
     }
 
-    /// Returns the filename of the snapshot's root directory,
-    /// with a trailing slash.
+    /// Returns the filename of the snapshot's root, plus a trailing slash if the snapshot's root is
+    /// a directory.
     pub fn root_name(&self) -> &str {
         &self.root_name
     }
@@ -381,8 +386,20 @@ impl fmt::Debug for Snapshot {
 }
 
 impl FileHandle {
+    /// Returns this file's path relative to the root of its worktree.
     pub fn path(&self) -> Arc<Path> {
         self.state.lock().path.clone()
+    }
+
+    /// Returns the last component of this handle's absolute path. If this handle refers to the root
+    /// of its worktree, then this method will return the name of the worktree itself.
+    pub fn file_name<'a>(&'a self, ctx: &'a AppContext) -> Option<OsString> {
+        self.state
+            .lock()
+            .path
+            .file_name()
+            .or_else(|| self.worktree.read(ctx).abs_path().file_name())
+            .map(Into::into)
     }
 
     pub fn is_deleted(&self) -> bool {
@@ -461,6 +478,10 @@ impl Entry {
     fn is_dir(&self) -> bool {
         matches!(self.kind, EntryKind::Dir | EntryKind::PendingDir)
     }
+
+    fn is_file(&self) -> bool {
+        matches!(self.kind, EntryKind::File(_))
+    }
 }
 
 impl sum_tree::Item for Entry {
@@ -469,7 +490,7 @@ impl sum_tree::Item for Entry {
     fn summary(&self) -> Self::Summary {
         let file_count;
         let visible_file_count;
-        if matches!(self.kind, EntryKind::File(_)) {
+        if self.is_file() {
             file_count = 1;
             if self.is_ignored {
                 visible_file_count = 0;
@@ -611,14 +632,8 @@ impl BackgroundScanner {
         notify: Sender<ScanState>,
         worktree_id: usize,
     ) -> Self {
-        let root_char_bag = snapshot
-            .lock()
-            .root_name
-            .chars()
-            .map(|c| c.to_ascii_lowercase())
-            .collect();
         let mut scanner = Self {
-            root_char_bag,
+            root_char_bag: Default::default(),
             snapshot,
             notify,
             handles,
@@ -679,7 +694,7 @@ impl BackgroundScanner {
         });
     }
 
-    fn scan_dirs(&self) -> io::Result<()> {
+    fn scan_dirs(&mut self) -> io::Result<()> {
         self.snapshot.lock().scan_id += 1;
 
         let path: Arc<Path> = Arc::from(Path::new(""));
@@ -687,19 +702,29 @@ impl BackgroundScanner {
         let metadata = fs::metadata(&abs_path)?;
         let inode = metadata.ino();
         let is_symlink = fs::symlink_metadata(&abs_path)?.file_type().is_symlink();
+        let is_dir = metadata.file_type().is_dir();
 
-        if metadata.file_type().is_dir() {
-            let dir_entry = Entry {
+        // After determining whether the root entry is a file or a directory, populate the
+        // snapshot's "root name", which will be used for the purpose of fuzzy matching.
+        let mut root_name = abs_path
+            .file_name()
+            .map_or(String::new(), |f| f.to_string_lossy().to_string());
+        if is_dir {
+            root_name.push('/');
+        }
+        self.root_char_bag = root_name.chars().map(|c| c.to_ascii_lowercase()).collect();
+        self.snapshot.lock().root_name = root_name;
+
+        if is_dir {
+            self.snapshot.lock().insert_entry(Entry {
                 kind: EntryKind::PendingDir,
                 path: path.clone(),
                 inode,
                 is_symlink,
                 is_ignored: false,
-            };
-            self.snapshot.lock().insert_entry(dir_entry);
+            });
 
             let (tx, rx) = crossbeam_channel::unbounded();
-
             tx.send(ScanJob {
                 abs_path: abs_path.to_path_buf(),
                 path,
@@ -1521,7 +1546,7 @@ mod tests {
             scanner.snapshot().check_invariants();
 
             let (notify_tx, _notify_rx) = smol::channel::unbounded();
-            let new_scanner = BackgroundScanner::new(
+            let mut new_scanner = BackgroundScanner::new(
                 Arc::new(Mutex::new(Snapshot {
                     id: 0,
                     scan_id: 0,
@@ -1691,7 +1716,7 @@ mod tests {
             let mut files = self.files(0);
             let mut visible_files = self.visible_files(0);
             for entry in self.entries.cursor::<(), ()>() {
-                if matches!(entry.kind, EntryKind::File(_)) {
+                if entry.is_file() {
                     assert_eq!(files.next().unwrap().inode(), entry.inode);
                     if !entry.is_ignored {
                         assert_eq!(visible_files.next().unwrap().inode(), entry.inode);
