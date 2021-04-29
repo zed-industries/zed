@@ -18,16 +18,14 @@ use crate::{
     worktree::FileHandle,
 };
 use anyhow::{anyhow, Result};
-use gpui::{AppContext, Entity, ModelContext};
+use gpui::{Entity, ModelContext};
 use lazy_static::lazy_static;
 use rand::prelude::*;
 use std::{
     cmp,
-    ffi::OsString,
     hash::BuildHasher,
     iter::{self, Iterator},
     ops::{AddAssign, Range},
-    path::Path,
     str,
     sync::Arc,
     time::{Duration, Instant},
@@ -59,7 +57,6 @@ type HashMap<K, V> = std::collections::HashMap<K, V>;
 type HashSet<T> = std::collections::HashSet<T>;
 
 pub struct Buffer {
-    file: Option<FileHandle>,
     fragments: SumTree<Fragment>,
     insertion_splits: HashMap<time::Local, SumTree<InsertionSplit>>,
     pub version: time::Global,
@@ -359,24 +356,18 @@ impl Buffer {
         base_text: T,
         ctx: &mut ModelContext<Self>,
     ) -> Self {
-        Self::build(replica_id, None, History::new(base_text.into()), ctx)
+        Self::build(replica_id, History::new(base_text.into()), ctx)
     }
 
     pub fn from_history(
         replica_id: ReplicaId,
-        file: FileHandle,
         history: History,
         ctx: &mut ModelContext<Self>,
     ) -> Self {
-        Self::build(replica_id, Some(file), history, ctx)
+        Self::build(replica_id, history, ctx)
     }
 
-    fn build(
-        replica_id: ReplicaId,
-        file: Option<FileHandle>,
-        history: History,
-        ctx: &mut ModelContext<Self>,
-    ) -> Self {
+    fn build(replica_id: ReplicaId, history: History, _: &mut ModelContext<Self>) -> Self {
         let mut insertion_splits = HashMap::default();
         let mut fragments = SumTree::new();
 
@@ -425,12 +416,7 @@ impl Buffer {
             });
         }
 
-        if let Some(file) = file.as_ref() {
-            file.observe_from_model(ctx, |_, _, ctx| ctx.emit(Event::FileHandleChanged));
-        }
-
         Self {
-            file,
             fragments,
             insertion_splits,
             version: time::Global::new(),
@@ -448,41 +434,27 @@ impl Buffer {
         }
     }
 
-    pub fn file_name(&self, ctx: &AppContext) -> Option<OsString> {
-        self.file.as_ref().and_then(|file| file.file_name(ctx))
-    }
-
-    pub fn path(&self) -> Option<Arc<Path>> {
-        self.file.as_ref().map(|file| file.path())
-    }
-
-    pub fn entry_id(&self) -> Option<(usize, Arc<Path>)> {
-        self.file.as_ref().map(|file| file.entry_id())
-    }
-
     pub fn snapshot(&self) -> Snapshot {
         Snapshot {
             fragments: self.fragments.clone(),
         }
     }
 
-    pub fn save(&mut self, ctx: &mut ModelContext<Self>) -> LocalBoxFuture<'static, Result<()>> {
-        if let Some(file) = &self.file {
-            dbg!(file.path());
-
-            let snapshot = self.snapshot();
-            let version = self.version.clone();
-            let save_task = file.save(snapshot, ctx.as_ref());
-            let task = ctx.spawn(save_task, |me, save_result, ctx| {
-                if save_result.is_ok() {
-                    me.did_save(version, ctx);
-                }
-                save_result
-            });
-            Box::pin(task)
-        } else {
-            Box::pin(async { Ok(()) })
-        }
+    pub fn save(
+        &mut self,
+        file: &FileHandle,
+        ctx: &mut ModelContext<Self>,
+    ) -> LocalBoxFuture<'static, Result<()>> {
+        let snapshot = self.snapshot();
+        let version = self.version.clone();
+        let save_task = file.save(snapshot, ctx.as_ref());
+        let task = ctx.spawn(save_task, |me, save_result, ctx| {
+            if save_result.is_ok() {
+                me.did_save(version, ctx);
+            }
+            save_result
+        });
+        Box::pin(task)
     }
 
     fn did_save(&mut self, version: time::Global, ctx: &mut ModelContext<Buffer>) {
@@ -1763,7 +1735,6 @@ impl Buffer {
 impl Clone for Buffer {
     fn clone(&self) -> Self {
         Self {
-            file: self.file.clone(),
             fragments: self.fragments.clone(),
             insertion_splits: self.insertion_splits.clone(),
             version: self.version.clone(),

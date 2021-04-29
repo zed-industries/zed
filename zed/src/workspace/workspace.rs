@@ -4,7 +4,7 @@ use crate::{
     settings::Settings,
     time::ReplicaId,
     watch,
-    worktree::{Worktree, WorktreeHandle as _},
+    worktree::{FileHandle, Worktree, WorktreeHandle as _},
 };
 use anyhow::anyhow;
 use gpui::{AppContext, Entity, Handle, ModelContext, ModelHandle, MutableAppContext, ViewContext};
@@ -25,6 +25,7 @@ where
     fn build_view(
         handle: ModelHandle<Self>,
         settings: watch::Receiver<Settings>,
+        file: Option<FileHandle>,
         ctx: &mut ViewContext<Self::View>,
     ) -> Self::View;
 }
@@ -34,6 +35,7 @@ pub trait ItemHandle: Debug + Send + Sync {
         &self,
         window_id: usize,
         settings: watch::Receiver<Settings>,
+        file: Option<FileHandle>,
         app: &mut MutableAppContext,
     ) -> Box<dyn ItemViewHandle>;
     fn id(&self) -> usize;
@@ -45,9 +47,12 @@ impl<T: 'static + Item> ItemHandle for ModelHandle<T> {
         &self,
         window_id: usize,
         settings: watch::Receiver<Settings>,
+        file: Option<FileHandle>,
         app: &mut MutableAppContext,
     ) -> Box<dyn ItemViewHandle> {
-        Box::new(app.add_view(window_id, |ctx| T::build_view(self.clone(), settings, ctx)))
+        Box::new(app.add_view(window_id, |ctx| {
+            T::build_view(self.clone(), settings, file, ctx)
+        }))
     }
 
     fn id(&self) -> usize {
@@ -148,7 +153,7 @@ impl Workspace {
         &mut self,
         (worktree_id, path): (usize, Arc<Path>),
         ctx: &mut ModelContext<'_, Self>,
-    ) -> anyhow::Result<Pin<Box<dyn Future<Output = OpenResult> + Send>>> {
+    ) -> anyhow::Result<Pin<Box<dyn Future<Output = (OpenResult, FileHandle)> + Send>>> {
         let worktree = self
             .worktrees
             .get(&worktree_id)
@@ -160,18 +165,20 @@ impl Workspace {
             .inode_for_path(&path)
             .ok_or_else(|| anyhow!("path {:?} does not exist", path))?;
 
+        let file = worktree.file(path.clone(), ctx.as_ref())?;
+
         let item_key = (worktree_id, inode);
         if let Some(item) = self.items.get(&item_key).cloned() {
             return Ok(async move {
                 match item {
                     OpenedItem::Loaded(handle) => {
-                        return Ok(handle);
+                        return (Ok(handle), file);
                     }
                     OpenedItem::Loading(rx) => loop {
                         rx.updated().await;
 
                         if let Some(result) = smol::block_on(rx.read()).clone() {
-                            return result;
+                            return (result, file);
                         }
                     },
                 }
@@ -180,7 +187,6 @@ impl Workspace {
         }
 
         let replica_id = self.replica_id;
-        let file = worktree.file(path.clone(), ctx.as_ref())?;
         let history = file.load_history(ctx.as_ref());
 
         let (mut tx, rx) = watch::channel(None);
@@ -190,7 +196,7 @@ impl Workspace {
             move |me, history: anyhow::Result<History>, ctx| match history {
                 Ok(history) => {
                     let handle = Box::new(
-                        ctx.add_model(|ctx| Buffer::from_history(replica_id, file, history, ctx)),
+                        ctx.add_model(|ctx| Buffer::from_history(replica_id, history, ctx)),
                     ) as Box<dyn ItemHandle>;
                     me.items
                         .insert(item_key, OpenedItem::Loaded(handle.clone()));
@@ -282,14 +288,15 @@ mod tests {
                 )
             });
 
-            let handle_1 = future_1.await.unwrap();
-            let handle_2 = future_2.await.unwrap();
+            let handle_1 = future_1.await.0.unwrap();
+            let handle_2 = future_2.await.0.unwrap();
             assert_eq!(handle_1.id(), handle_2.id());
 
             // Open the same entry again now that it has loaded
             let handle_3 = workspace
                 .update(&mut app, |w, app| w.open_entry(entry, app).unwrap())
                 .await
+                .0
                 .unwrap();
 
             assert_eq!(handle_3.id(), handle_1.id());

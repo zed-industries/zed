@@ -9,7 +9,7 @@ use crate::{
 use ::ignore::gitignore::Gitignore;
 use anyhow::{anyhow, Context, Result};
 pub use fuzzy::{match_paths, PathMatch};
-use gpui::{scoped_pool, AppContext, Entity, ModelContext, ModelHandle, Task};
+use gpui::{scoped_pool, AppContext, Entity, ModelContext, ModelHandle, Task, View, ViewContext};
 use lazy_static::lazy_static;
 use parking_lot::Mutex;
 use postage::{
@@ -419,10 +419,10 @@ impl FileHandle {
         (self.worktree.id(), self.path())
     }
 
-    pub fn observe_from_model<T: Entity>(
+    pub fn observe_from_view<T: View>(
         &self,
-        ctx: &mut ModelContext<T>,
-        mut callback: impl FnMut(&mut T, FileHandle, &mut ModelContext<T>) + 'static,
+        ctx: &mut ViewContext<T>,
+        mut callback: impl FnMut(&mut T, FileHandle, &mut ViewContext<T>) + 'static,
     ) {
         let mut prev_state = self.state.lock().clone();
         let cur_state = Arc::downgrade(&self.state);

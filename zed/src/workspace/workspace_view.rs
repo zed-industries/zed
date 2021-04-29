@@ -250,13 +250,14 @@ impl WorkspaceView {
                 error!("{}", error);
                 None
             }
-            Ok(item) => {
+            Ok(future) => {
                 let settings = self.settings.clone();
-                Some(ctx.spawn(item, move |me, item, ctx| {
+                Some(ctx.spawn(future, move |me, (item, file), ctx| {
                     me.loading_entries.remove(&entry);
                     match item {
                         Ok(item) => {
-                            let item_view = item.add_view(ctx.window_id(), settings, ctx.as_mut());
+                            let item_view =
+                                item.add_view(ctx.window_id(), settings, Some(file), ctx.as_mut());
                             me.add_item(item_view, ctx);
                         }
                         Err(error) => {
@@ -417,10 +418,10 @@ impl View for WorkspaceView {
 #[cfg(test)]
 mod tests {
     use super::{pane, Workspace, WorkspaceView};
-    use crate::{settings, test::temp_tree, workspace::WorkspaceHandle as _};
+    use crate::{editor::BufferView, settings, test::temp_tree, workspace::WorkspaceHandle as _};
     use gpui::App;
     use serde_json::json;
-    use std::collections::HashSet;
+    use std::{collections::HashSet, os::unix};
 
     #[test]
     fn test_open_entry() {
@@ -571,6 +572,63 @@ mod tests {
                     .unwrap()
                     .title(ctx)
                     == "b.txt"
+            });
+        });
+    }
+
+    #[test]
+    fn test_open_two_paths_to_the_same_file() {
+        use crate::workspace::ItemViewHandle;
+
+        App::test_async((), |mut app| async move {
+            // Create a worktree with a symlink:
+            //   dir
+            //   ├── hello.txt
+            //   └── hola.txt -> hello.txt
+            let temp_dir = temp_tree(json!({ "hello.txt": "hi" }));
+            let dir = temp_dir.path();
+            unix::fs::symlink(dir.join("hello.txt"), dir.join("hola.txt")).unwrap();
+
+            let workspace = app.add_model(|ctx| Workspace::new(vec![dir.into()], ctx));
+            let settings = settings::channel(&app.font_cache()).unwrap().1;
+            let (_, workspace_view) =
+                app.add_window(|ctx| WorkspaceView::new(workspace.clone(), settings, ctx));
+
+            // Simultaneously open both the original file and the symlink to the same file.
+            app.update(|ctx| {
+                workspace_view.update(ctx, |view, ctx| {
+                    view.open_paths(&[dir.join("hello.txt"), dir.join("hola.txt")], ctx)
+                })
+            })
+            .await;
+
+            // The same content shows up with two different editors.
+            let buffer_views = app.read(|ctx| {
+                workspace_view
+                    .read(ctx)
+                    .active_pane()
+                    .read(ctx)
+                    .items()
+                    .iter()
+                    .map(|i| i.to_any().downcast::<BufferView>().unwrap())
+                    .collect::<Vec<_>>()
+            });
+            app.read(|ctx| {
+                assert_eq!(buffer_views[0].title(ctx), "hello.txt");
+                assert_eq!(buffer_views[1].title(ctx), "hola.txt");
+                assert_eq!(buffer_views[0].read(ctx).text(ctx), "hi");
+                assert_eq!(buffer_views[1].read(ctx).text(ctx), "hi");
+            });
+
+            // When modifying one buffer, the changes appear in both editors.
+            app.update(|ctx| {
+                buffer_views[0].update(ctx, |buf, ctx| {
+                    buf.insert(&"oh, ".to_string(), ctx);
+                });
+            });
+            app.read(|ctx| {
+                assert_eq!(buffer_views[0].read(ctx).text(ctx), "oh, hi");
+                assert_eq!(buffer_views[1].read(ctx).text(ctx), "oh, hi");
             });
         });
     }
