@@ -79,3 +79,42 @@ pub fn line_end(map: &DisplayMap, point: DisplayPoint, app: &AppContext) -> Resu
         map.line_len(point.row(), app)?,
     ))
 }
+
+pub fn prev_word_boundary(
+    map: &DisplayMap,
+    point: DisplayPoint,
+    app: &AppContext,
+) -> Result<DisplayPoint> {
+    todo!()
+}
+
+pub fn next_word_boundary(
+    map: &DisplayMap,
+    mut point: DisplayPoint,
+    app: &AppContext,
+) -> Result<DisplayPoint> {
+    let mut prev_c = None;
+    for c in map.chars_at(point, app)? {
+        if prev_c.is_some() && (c == '\n' || is_word_char(prev_c.unwrap()) != is_word_char(c)) {
+            break;
+        }
+
+        if c == '\n' {
+            *point.row_mut() += 1;
+            *point.column_mut() = 0;
+        } else {
+            *point.column_mut() += 1;
+        }
+        prev_c = Some(c);
+    }
+    Ok(point)
+}
+
+fn is_word_char(c: char) -> bool {
+    match c {
+        '/' | '\\' | '(' | ')' | '"' | '\'' | ':' | ',' | '.' | ';' | '<' | '>' | '~' | '!'
+        | '@' | '#' | '$' | '%' | '^' | '&' | '*' | '|' | '+' | '=' | '[' | ']' | '{' | '}'
+        | '`' | '?' | '-' | '…' | ' ' | '\n' => false,
+        _ => true,
+    }
+}
