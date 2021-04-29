@@ -499,7 +499,8 @@ impl BufferView {
             let buffer = self.buffer.read(ctx);
             let map = self.display_map.read(ctx);
             for selection in &mut selections {
-                if selection.range(buffer).is_empty() {
+                let range = selection.range(buffer);
+                if range.start == range.end {
                     let head = selection
                         .head()
                         .to_display_point(map, ctx.as_ref())
@@ -529,7 +530,8 @@ impl BufferView {
             let buffer = self.buffer.read(ctx);
             let map = self.display_map.read(ctx);
             for selection in &mut selections {
-                if selection.range(buffer).is_empty() {
+                let range = selection.range(buffer);
+                if range.start == range.end {
                     let head = selection
                         .head()
                         .to_display_point(map, ctx.as_ref())
@@ -1174,15 +1176,19 @@ impl BufferView {
         let app = ctx.as_ref();
         let map = self.display_map.read(app);
         for selection in self.selections(app) {
-            let (start, end) = selection.display_range(map, app).sorted();
-            let buffer_start_row = start.to_buffer_point(map, Bias::Left, app).unwrap().row;
+            let range = selection.display_range(map, app).sorted();
+            let buffer_start_row = range
+                .start
+                .to_buffer_point(map, Bias::Left, app)
+                .unwrap()
+                .row;
 
-            for row in (0..=end.row()).rev() {
+            for row in (0..=range.end.row()).rev() {
                 if self.is_line_foldable(row, app) && !map.is_line_folded(row) {
                     let fold_range = self.foldable_range_for_line(row, app).unwrap();
                     if fold_range.end.row >= buffer_start_row {
                         fold_ranges.push(fold_range);
-                        if row <= start.row() {
+                        if row <= range.start.row() {
                             break;
                         }
                     }
@@ -1208,9 +1214,9 @@ impl BufferView {
             .selections(app)
             .iter()
             .map(|s| {
-                let (start, end) = s.display_range(map, app).sorted();
-                let mut start = start.to_buffer_point(map, Bias::Left, app).unwrap();
-                let mut end = end.to_buffer_point(map, Bias::Left, app).unwrap();
+                let range = s.display_range(map, app).sorted();
+                let mut start = range.start.to_buffer_point(map, Bias::Left, app).unwrap();
+                let mut end = range.end.to_buffer_point(map, Bias::Left, app).unwrap();
                 start.column = 0;
                 end.column = buffer.line_len(end.row).unwrap();
                 start..end
@@ -1282,12 +1288,14 @@ impl BufferView {
     }
 
     pub fn fold_selected_ranges(&mut self, _: &(), ctx: &mut ViewContext<Self>) {
+        use super::RangeExt;
+
         self.display_map.update(ctx, |map, ctx| {
             let buffer = self.buffer.read(ctx);
             let ranges = self
                 .selections(ctx.as_ref())
                 .iter()
-                .map(|s| s.range(buffer))
+                .map(|s| s.range(buffer).sorted())
                 .collect::<Vec<_>>();
             map.fold(ranges, ctx).unwrap();
         });
