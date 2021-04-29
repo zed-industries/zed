@@ -85,7 +85,31 @@ pub fn prev_word_boundary(
     point: DisplayPoint,
     app: &AppContext,
 ) -> Result<DisplayPoint> {
-    todo!()
+    if point.column() == 0 {
+        if point.row() == 0 {
+            Ok(DisplayPoint::new(0, 0))
+        } else {
+            let row = point.row() - 1;
+            Ok(DisplayPoint::new(row, map.line_len(row, app)?))
+        }
+    } else {
+        let mut boundary = DisplayPoint::new(point.row(), 0);
+        let mut column = 0;
+        let mut prev_c = None;
+        for c in map.chars_at(boundary, app)? {
+            if column >= point.column() {
+                break;
+            }
+
+            if prev_c.is_none() || char_kind(prev_c.unwrap()) != char_kind(c) {
+                *boundary.column_mut() = column;
+            }
+
+            prev_c = Some(c);
+            column += 1;
+        }
+        Ok(boundary)
+    }
 }
 
 pub fn next_word_boundary(
@@ -95,7 +119,7 @@ pub fn next_word_boundary(
 ) -> Result<DisplayPoint> {
     let mut prev_c = None;
     for c in map.chars_at(point, app)? {
-        if prev_c.is_some() && (c == '\n' || is_word_char(prev_c.unwrap()) != is_word_char(c)) {
+        if prev_c.is_some() && (c == '\n' || char_kind(prev_c.unwrap()) != char_kind(c)) {
             break;
         }
 
@@ -110,11 +134,19 @@ pub fn next_word_boundary(
     Ok(point)
 }
 
-fn is_word_char(c: char) -> bool {
-    match c {
-        '/' | '\\' | '(' | ')' | '"' | '\'' | ':' | ',' | '.' | ';' | '<' | '>' | '~' | '!'
-        | '@' | '#' | '$' | '%' | '^' | '&' | '*' | '|' | '+' | '=' | '[' | ']' | '{' | '}'
-        | '`' | '?' | '-' | '…' | ' ' | '\n' => false,
-        _ => true,
+#[derive(Copy, Clone, Eq, PartialEq)]
+enum CharKind {
+    Whitespace,
+    Punctuation,
+    Word,
+}
+
+fn char_kind(c: char) -> CharKind {
+    if c.is_whitespace() {
+        CharKind::Whitespace
+    } else if c.is_alphanumeric() || c == '_' {
+        CharKind::Word
+    } else {
+        CharKind::Punctuation
     }
 }

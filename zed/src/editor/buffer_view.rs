@@ -55,6 +55,11 @@ pub fn init(app: &mut MutableAppContext) {
         Binding::new("left", "buffer:move_left", Some("BufferView")),
         Binding::new("right", "buffer:move_right", Some("BufferView")),
         Binding::new(
+            "alt-left",
+            "buffer:move_to_previous_word_boundary",
+            Some("BufferView"),
+        ),
+        Binding::new(
             "alt-right",
             "buffer:move_to_next_word_boundary",
             Some("BufferView"),
@@ -146,6 +151,10 @@ pub fn init(app: &mut MutableAppContext) {
     app.add_action("buffer:move_down", BufferView::move_down);
     app.add_action("buffer:move_left", BufferView::move_left);
     app.add_action("buffer:move_right", BufferView::move_right);
+    app.add_action(
+        "buffer:move_to_previous_word_boundary",
+        BufferView::move_to_previous_word_boundary,
+    );
     app.add_action(
         "buffer:move_to_next_word_boundary",
         BufferView::move_to_next_word_boundary,
@@ -1089,6 +1098,24 @@ impl BufferView {
                     movement::down(map, head, selection.goal_column, app).unwrap();
                 selection.set_head(&buffer, map.anchor_before(head, Bias::Right, app).unwrap());
                 selection.goal_column = goal_column;
+            }
+        }
+        self.update_selections(selections, true, ctx);
+    }
+
+    pub fn move_to_previous_word_boundary(&mut self, _: &(), ctx: &mut ViewContext<Self>) {
+        let app = ctx.as_ref();
+        let mut selections = self.selections(app).to_vec();
+        {
+            let map = self.display_map.read(app);
+            for selection in &mut selections {
+                let head = selection.head().to_display_point(map, app).unwrap();
+                let new_head = movement::prev_word_boundary(map, head, app).unwrap();
+                let anchor = map.anchor_before(new_head, Bias::Left, app).unwrap();
+                selection.start = anchor.clone();
+                selection.end = anchor;
+                selection.reversed = false;
+                selection.goal_column = None;
             }
         }
         self.update_selections(selections, true, ctx);
