@@ -161,9 +161,23 @@ impl WorkspaceView {
         self.workspace.read(app).contains_paths(paths, app)
     }
 
-    pub fn open_paths(&self, paths: &[PathBuf], app: &mut MutableAppContext) {
-        self.workspace
-            .update(app, |workspace, ctx| workspace.open_paths(paths, ctx));
+    pub fn open_paths(&self, paths: &[PathBuf], ctx: &mut ViewContext<Self>) {
+        let entries = self
+            .workspace
+            .update(ctx, |workspace, ctx| workspace.open_paths(paths, ctx));
+        for (i, entry) in entries.into_iter().enumerate() {
+            let path = paths[i].clone();
+            ctx.spawn(
+                ctx.background_executor()
+                    .spawn(async move { path.is_file() }),
+                |me, is_file, ctx| {
+                    if is_file {
+                        me.open_entry(entry, ctx)
+                    }
+                },
+            )
+            .detach();
+        }
     }
 
     pub fn toggle_modal<V, F>(&mut self, ctx: &mut ViewContext<Self>, add_view: F)
@@ -382,6 +396,7 @@ mod tests {
     use crate::{settings, test::temp_tree, workspace::WorkspaceHandle as _};
     use gpui::App;
     use serde_json::json;
+    use std::collections::HashSet;
 
     #[test]
     fn test_open_entry() {
@@ -440,6 +455,67 @@ mod tests {
                 w.open_entry(file3.clone(), ctx);
             });
             pane.condition(&app, |pane, _| pane.items().len() == 3)
+                .await;
+        });
+    }
+
+    #[test]
+    fn test_open_paths() {
+        App::test_async((), |mut app| async move {
+            let dir1 = temp_tree(json!({
+                "a.txt": "",
+            }));
+            let dir2 = temp_tree(json!({
+                "b.txt": "",
+            }));
+
+            let workspace = app.add_model(|ctx| Workspace::new(vec![dir1.path().into()], ctx));
+            let settings = settings::channel(&app.font_cache()).unwrap().1;
+            let (_, workspace_view) =
+                app.add_window(|ctx| WorkspaceView::new(workspace.clone(), settings, ctx));
+            app.read(|ctx| workspace.read(ctx).worktree_scans_complete(ctx))
+                .await;
+
+            // Open a file within an existing worktree.
+            app.update(|ctx| {
+                workspace_view.update(ctx, |view, ctx| {
+                    view.open_paths(&[dir1.path().join("a.txt")], ctx);
+                });
+            });
+            workspace_view
+                .condition(&app, |view, ctx| {
+                    view.active_pane()
+                        .read(ctx)
+                        .active_item()
+                        .map_or(false, |item| item.title(&ctx) == "a.txt")
+                })
+                .await;
+
+            // Open a file outside of any existing worktree.
+            app.update(|ctx| {
+                workspace_view.update(ctx, |view, ctx| {
+                    view.open_paths(&[dir2.path().join("b.txt")], ctx);
+                });
+                let worktree_roots = workspace
+                    .read(ctx)
+                    .worktrees()
+                    .iter()
+                    .map(|w| w.read(ctx).abs_path())
+                    .collect::<HashSet<_>>();
+                assert_eq!(
+                    worktree_roots,
+                    vec![dir1.path(), &dir2.path().join("b.txt")]
+                        .into_iter()
+                        .collect(),
+                );
+            });
+            workspace_view
+                .condition(&app, |view, ctx| {
+                    view.active_pane()
+                        .read(ctx)
+                        .active_item()
+                        .map_or(false, |item| item.title(&ctx) == "b.txt")
+                })
                 .await;
         });
     }

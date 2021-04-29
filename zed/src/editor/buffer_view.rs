@@ -1362,11 +1362,8 @@ impl workspace::ItemView for BufferView {
     }
 
     fn title(&self, app: &AppContext) -> std::string::String {
-        if let Some(path) = self.buffer.read(app).path() {
-            path.file_name()
-                .expect("buffer's path is always to a file")
-                .to_string_lossy()
-                .into()
+        if let Some(name) = self.buffer.read(app).file_name(app) {
+            name.to_string_lossy().into()
         } else {
             "untitled".into()
         }

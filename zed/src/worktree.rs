@@ -20,7 +20,7 @@ use smol::{channel::Sender, Timer};
 use std::{
     cmp,
     collections::{HashMap, HashSet},
-    ffi::{CStr, OsStr},
+    ffi::{CStr, OsStr, OsString},
     fmt, fs,
     future::Future,
     io::{self, Read, Write},
@@ -163,6 +163,10 @@ impl Worktree {
         self.snapshot.clone()
     }
 
+    pub fn abs_path(&self) -> &Path {
+        self.snapshot.abs_path.as_ref()
+    }
+
     pub fn contains_abs_path(&self, path: &Path) -> bool {
         path.starts_with(&self.snapshot.abs_path)
     }
@@ -172,7 +176,11 @@ impl Worktree {
         path: &Path,
         ctx: &AppContext,
     ) -> impl Future<Output = Result<History>> {
-        let abs_path = self.snapshot.abs_path.join(path);
+        let abs_path = if path.file_name().is_some() {
+            self.snapshot.abs_path.join(path)
+        } else {
+            self.snapshot.abs_path.to_path_buf()
+        };
         ctx.background_executor().spawn(async move {
             let mut file = std::fs::File::open(&abs_path)?;
             let mut base_text = String::new();
@@ -381,8 +389,20 @@ impl fmt::Debug for Snapshot {
 }
 
 impl FileHandle {
+    /// Returns this file's path relative to the root of its worktree.
     pub fn path(&self) -> Arc<Path> {
         self.state.lock().path.clone()
+    }
+
+    /// Returns the last component of this handle's absolute path. If this handle refers to the root
+    /// of its worktree, then this method will return the name of the worktree itself.
+    pub fn file_name<'a>(&'a self, ctx: &'a AppContext) -> Option<OsString> {
+        self.state
+            .lock()
+            .path
+            .file_name()
+            .or_else(|| self.worktree.read(ctx).abs_path().file_name())
+            .map(Into::into)
     }
 
     pub fn is_deleted(&self) -> bool {

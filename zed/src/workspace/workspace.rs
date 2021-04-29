@@ -117,23 +117,31 @@ impl Workspace {
             .any(|worktree| worktree.read(app).contains_abs_path(path))
     }
 
-    pub fn open_paths(&mut self, paths: &[PathBuf], ctx: &mut ModelContext<Self>) {
-        for path in paths.iter().cloned() {
-            self.open_path(path, ctx);
-        }
+    pub fn open_paths(
+        &mut self,
+        paths: &[PathBuf],
+        ctx: &mut ModelContext<Self>,
+    ) -> Vec<(usize, Arc<Path>)> {
+        paths
+            .iter()
+            .cloned()
+            .map(move |path| self.open_path(path, ctx))
+            .collect()
     }
 
-    pub fn open_path<'a>(&'a mut self, path: PathBuf, ctx: &mut ModelContext<Self>) {
+    fn open_path(&mut self, path: PathBuf, ctx: &mut ModelContext<Self>) -> (usize, Arc<Path>) {
         for tree in self.worktrees.iter() {
-            if tree.read(ctx).contains_abs_path(&path) {
-                return;
+            if let Ok(relative_path) = path.strip_prefix(tree.read(ctx).abs_path()) {
+                return (tree.id(), relative_path.into());
             }
         }
 
-        let worktree = ctx.add_model(|ctx| Worktree::new(path, ctx));
+        let worktree = ctx.add_model(|ctx| Worktree::new(path.clone(), ctx));
+        let worktree_id = worktree.id();
         ctx.observe(&worktree, Self::on_worktree_updated);
         self.worktrees.insert(worktree);
         ctx.notify();
+        (worktree_id, Path::new("").into())
     }
 
     pub fn open_entry(
@@ -174,7 +182,6 @@ impl Workspace {
         let replica_id = self.replica_id;
         let file = worktree.file(path.clone(), ctx.as_ref())?;
         let history = file.load_history(ctx.as_ref());
-        // let buffer = async move { Ok(Buffer::from_history(replica_id, file, history.await?)) };
 
         let (mut tx, rx) = watch::channel(None);
         self.items.insert(item_key, OpenedItem::Loading(rx));
