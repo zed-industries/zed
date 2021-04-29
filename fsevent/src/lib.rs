@@ -345,12 +345,12 @@ mod tests {
             // Delay the call to `run` in order to make sure we don't miss any events that occur
             // between creating the `EventStream` and calling `run`.
             thread::spawn(move || {
-                thread::sleep(Duration::from_millis(250));
+                thread::sleep(Duration::from_millis(100));
                 stream.run(move |events| tx.send(events.to_vec()).is_ok())
             });
 
             fs::write(path.join("new-file"), "").unwrap();
-            let events = rx.recv_timeout(Duration::from_millis(500)).unwrap();
+            let events = rx.recv_timeout(Duration::from_millis(800)).unwrap();
             let event = events.last().unwrap();
             assert_eq!(event.path, path.join("new-file"));
             assert!(event.flags.contains(StreamFlags::ITEM_CREATED));
