@@ -67,6 +67,20 @@ impl DisplayMap {
         Ok(chars.take_while(|c| *c != '\n').collect())
     }
 
+    pub fn line_indent(&self, display_row: u32, app: &AppContext) -> Result<(u32, bool)> {
+        let mut indent = 0;
+        let mut is_blank = true;
+        for c in self.chars_at(DisplayPoint::new(display_row, 0), app)? {
+            if c == ' ' {
+                indent += 1;
+            } else {
+                is_blank = c == '\n';
+                break;
+            }
+        }
+        Ok((indent, is_blank))
+    }
+
     pub fn chars_at<'a>(&'a self, point: DisplayPoint, app: &'a AppContext) -> Result<Chars<'a>> {
         let column = point.column() as usize;
         let (point, to_next_stop) = point.collapse_tabs(self, Bias::Left, app)?;

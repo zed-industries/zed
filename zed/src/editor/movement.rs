@@ -58,3 +58,24 @@ pub fn down(
 
     Ok((point, goal_column))
 }
+
+pub fn line_beginning(
+    map: &DisplayMap,
+    point: DisplayPoint,
+    toggle_indent: bool,
+    app: &AppContext,
+) -> Result<DisplayPoint> {
+    let (indent, is_blank) = map.line_indent(point.row(), app)?;
+    if toggle_indent && !is_blank && point.column() != indent {
+        Ok(DisplayPoint::new(point.row(), indent))
+    } else {
+        Ok(DisplayPoint::new(point.row(), 0))
+    }
+}
+
+pub fn line_end(map: &DisplayMap, point: DisplayPoint, app: &AppContext) -> Result<DisplayPoint> {
+    Ok(DisplayPoint::new(
+        point.row(),
+        map.line_len(point.row(), app)?,
+    ))
+}

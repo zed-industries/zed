@@ -34,6 +34,16 @@ pub fn init(app: &mut MutableAppContext) {
         Binding::new("ctrl-d", "buffer:delete", Some("BufferView")),
         Binding::new("enter", "buffer:newline", Some("BufferView")),
         Binding::new("ctrl-shift-K", "buffer:delete_line", Some("BufferView")),
+        Binding::new(
+            "cmd-backspace",
+            "buffer:delete_to_beginning_of_line",
+            Some("BufferView"),
+        ),
+        Binding::new(
+            "cmd-delete",
+            "buffer:delete_to_end_of_line",
+            Some("BufferView"),
+        ),
         Binding::new("cmd-shift-D", "buffer:duplicate_line", Some("BufferView")),
         Binding::new("cmd-x", "buffer:cut", Some("BufferView")),
         Binding::new("cmd-c", "buffer:copy", Some("BufferView")),
@@ -44,12 +54,50 @@ pub fn init(app: &mut MutableAppContext) {
         Binding::new("down", "buffer:move_down", Some("BufferView")),
         Binding::new("left", "buffer:move_left", Some("BufferView")),
         Binding::new("right", "buffer:move_right", Some("BufferView")),
+        Binding::new(
+            "cmd-left",
+            "buffer:move_to_beginning_of_line",
+            Some("BufferView"),
+        ),
+        Binding::new(
+            "ctrl-a",
+            "buffer:move_to_beginning_of_line",
+            Some("BufferView"),
+        ),
+        Binding::new(
+            "cmd-right",
+            "buffer:move_to_end_of_line",
+            Some("BufferView"),
+        ),
+        Binding::new("ctrl-e", "buffer:move_to_end_of_line", Some("BufferView")),
         Binding::new("cmd-up", "buffer:move_to_beginning", Some("BufferView")),
         Binding::new("cmd-down", "buffer:move_to_end", Some("BufferView")),
         Binding::new("shift-up", "buffer:select_up", Some("BufferView")),
         Binding::new("shift-down", "buffer:select_down", Some("BufferView")),
         Binding::new("shift-left", "buffer:select_left", Some("BufferView")),
         Binding::new("shift-right", "buffer:select_right", Some("BufferView")),
+        Binding::new(
+            "cmd-shift-left",
+            "buffer:select_to_beginning_of_line",
+            Some("BufferView"),
+        )
+        .with_arg(true),
+        Binding::new(
+            "ctrl-shift-A",
+            "buffer:select_to_beginning_of_line",
+            Some("BufferView"),
+        )
+        .with_arg(true),
+        Binding::new(
+            "cmd-shift-right",
+            "buffer:select_to_end_of_line",
+            Some("BufferView"),
+        ),
+        Binding::new(
+            "ctrl-shift-E",
+            "buffer:select_to_end_of_line",
+            Some("BufferView"),
+        ),
         Binding::new(
             "cmd-shift-up",
             "buffer:select_to_beginning",
@@ -75,6 +123,14 @@ pub fn init(app: &mut MutableAppContext) {
     app.add_action("buffer:backspace", BufferView::backspace);
     app.add_action("buffer:delete", BufferView::delete);
     app.add_action("buffer:delete_line", BufferView::delete_line);
+    app.add_action(
+        "buffer:delete_to_beginning_of_line",
+        BufferView::delete_to_beginning_of_line,
+    );
+    app.add_action(
+        "buffer:delete_to_end_of_line",
+        BufferView::delete_to_end_of_line,
+    );
     app.add_action("buffer:duplicate_line", BufferView::duplicate_line);
     app.add_action("buffer:cut", BufferView::cut);
     app.add_action("buffer:copy", BufferView::copy);
@@ -85,12 +141,28 @@ pub fn init(app: &mut MutableAppContext) {
     app.add_action("buffer:move_down", BufferView::move_down);
     app.add_action("buffer:move_left", BufferView::move_left);
     app.add_action("buffer:move_right", BufferView::move_right);
+    app.add_action(
+        "buffer:move_to_beginning_of_line",
+        BufferView::move_to_beginning_of_line,
+    );
+    app.add_action(
+        "buffer:move_to_end_of_line",
+        BufferView::move_to_end_of_line,
+    );
     app.add_action("buffer:move_to_beginning", BufferView::move_to_beginning);
     app.add_action("buffer:move_to_end", BufferView::move_to_end);
     app.add_action("buffer:select_up", BufferView::select_up);
     app.add_action("buffer:select_down", BufferView::select_down);
     app.add_action("buffer:select_left", BufferView::select_left);
     app.add_action("buffer:select_right", BufferView::select_right);
+    app.add_action(
+        "buffer:select_to_beginning_of_line",
+        BufferView::select_to_beginning_of_line,
+    );
+    app.add_action(
+        "buffer:select_to_end_of_line",
+        BufferView::select_to_end_of_line,
+    );
     app.add_action(
         "buffer:select_to_beginning",
         BufferView::select_to_beginning,
@@ -1013,6 +1085,94 @@ impl BufferView {
         self.update_selections(selections, true, ctx);
     }
 
+    pub fn move_to_beginning_of_line(&mut self, _: &(), ctx: &mut ViewContext<Self>) {
+        let app = ctx.as_ref();
+        let mut selections = self.selections(app).to_vec();
+        {
+            let map = self.display_map.read(app);
+            for selection in &mut selections {
+                let head = selection.head().to_display_point(map, app).unwrap();
+                let new_head = movement::line_beginning(map, head, true, app).unwrap();
+                let anchor = map.anchor_before(new_head, Bias::Left, app).unwrap();
+                selection.start = anchor.clone();
+                selection.end = anchor;
+                selection.reversed = false;
+                selection.goal_column = None;
+            }
+        }
+        self.update_selections(selections, true, ctx);
+    }
+
+    pub fn select_to_beginning_of_line(
+        &mut self,
+        toggle_indent: &bool,
+        ctx: &mut ViewContext<Self>,
+    ) {
+        let app = ctx.as_ref();
+        let mut selections = self.selections(app).to_vec();
+        {
+            let buffer = self.buffer.read(ctx);
+            let map = self.display_map.read(app);
+            for selection in &mut selections {
+                let head = selection.head().to_display_point(map, app).unwrap();
+                let new_head = movement::line_beginning(map, head, *toggle_indent, app).unwrap();
+                let anchor = map.anchor_before(new_head, Bias::Left, app).unwrap();
+                selection.set_head(buffer, anchor);
+                selection.goal_column = None;
+            }
+        }
+        self.update_selections(selections, true, ctx);
+    }
+
+    pub fn delete_to_beginning_of_line(&mut self, _: &(), ctx: &mut ViewContext<Self>) {
+        self.start_transaction(ctx);
+        self.select_to_beginning_of_line(&false, ctx);
+        self.backspace(&(), ctx);
+        self.end_transaction(ctx);
+    }
+
+    pub fn move_to_end_of_line(&mut self, _: &(), ctx: &mut ViewContext<Self>) {
+        let app = ctx.as_ref();
+        let mut selections = self.selections(app).to_vec();
+        {
+            let map = self.display_map.read(app);
+            for selection in &mut selections {
+                let head = selection.head().to_display_point(map, app).unwrap();
+                let new_head = movement::line_end(map, head, app).unwrap();
+                let anchor = map.anchor_before(new_head, Bias::Left, app).unwrap();
+                selection.start = anchor.clone();
+                selection.end = anchor;
+                selection.reversed = false;
+                selection.goal_column = None;
+            }
+        }
+        self.update_selections(selections, true, ctx);
+    }
+
+    pub fn select_to_end_of_line(&mut self, _: &(), ctx: &mut ViewContext<Self>) {
+        let app = ctx.as_ref();
+        let mut selections = self.selections(app).to_vec();
+        {
+            let buffer = self.buffer.read(ctx);
+            let map = self.display_map.read(app);
+            for selection in &mut selections {
+                let head = selection.head().to_display_point(map, app).unwrap();
+                let new_head = movement::line_end(map, head, app).unwrap();
+                let anchor = map.anchor_before(new_head, Bias::Left, app).unwrap();
+                selection.set_head(buffer, anchor);
+                selection.goal_column = None;
+            }
+        }
+        self.update_selections(selections, true, ctx);
+    }
+
+    pub fn delete_to_end_of_line(&mut self, _: &(), ctx: &mut ViewContext<Self>) {
+        self.start_transaction(ctx);
+        self.select_to_end_of_line(&(), ctx);
+        self.delete(&(), ctx);
+        self.end_transaction(ctx);
+    }
+
     pub fn move_to_beginning(&mut self, _: &(), ctx: &mut ViewContext<Self>) {
         let selection = Selection {
             start: Anchor::Start,
@@ -1230,16 +1390,17 @@ impl BufferView {
     }
 
     fn is_line_foldable(&self, display_row: u32, app: &AppContext) -> bool {
+        let map = self.display_map.read(app);
         let max_point = self.max_point(app);
         if display_row >= max_point.row() {
             false
         } else {
-            let (start_indent, is_blank) = self.line_indent(display_row, app).unwrap();
+            let (start_indent, is_blank) = map.line_indent(display_row, app).unwrap();
             if is_blank {
                 false
             } else {
                 for display_row in display_row + 1..=max_point.row() {
-                    let (indent, is_blank) = self.line_indent(display_row, app).unwrap();
+                    let (indent, is_blank) = map.line_indent(display_row, app).unwrap();
                     if !is_blank {
                         return indent > start_indent;
                     }
@@ -1249,33 +1410,15 @@ impl BufferView {
         }
     }
 
-    fn line_indent(&self, display_row: u32, app: &AppContext) -> Result<(usize, bool)> {
-        let mut indent = 0;
-        let mut is_blank = true;
-        for c in self
-            .display_map
-            .read(app)
-            .chars_at(DisplayPoint::new(display_row, 0), app)?
-        {
-            if c == ' ' {
-                indent += 1;
-            } else {
-                is_blank = c == '\n';
-                break;
-            }
-        }
-        Ok((indent, is_blank))
-    }
-
     fn foldable_range_for_line(&self, start_row: u32, app: &AppContext) -> Result<Range<Point>> {
         let map = self.display_map.read(app);
         let max_point = self.max_point(app);
 
-        let (start_indent, _) = self.line_indent(start_row, app)?;
+        let (start_indent, _) = map.line_indent(start_row, app)?;
         let start = DisplayPoint::new(start_row, self.line_len(start_row, app)?);
         let mut end = None;
         for row in start_row + 1..=max_point.row() {
-            let (indent, is_blank) = self.line_indent(row, app)?;
+            let (indent, is_blank) = map.line_indent(row, app)?;
             if !is_blank && indent <= start_indent {
                 end = Some(DisplayPoint::new(row - 1, self.line_len(row - 1, app)?));
                 break;
@@ -1952,6 +2095,134 @@ mod tests {
     }
 
     #[test]
+    fn test_beginning_end_of_line() {
+        App::test((), |app| {
+            let buffer = app.add_model(|ctx| Buffer::new(0, "abc\n  def", ctx));
+            let settings = settings::channel(&app.font_cache()).unwrap().1;
+            let (_, view) = app.add_window(|ctx| BufferView::for_buffer(buffer, settings, ctx));
+            view.update(app, |view, ctx| {
+                view.select_display_ranges(
+                    &[
+                        DisplayPoint::new(0, 1)..DisplayPoint::new(0, 1),
+                        DisplayPoint::new(1, 4)..DisplayPoint::new(1, 4),
+                    ],
+                    ctx,
+                )
+                .unwrap();
+            });
+
+            view.update(app, |view, ctx| view.move_to_beginning_of_line(&(), ctx));
+            assert_eq!(
+                view.read(app).selection_ranges(app.as_ref()),
+                &[
+                    DisplayPoint::new(0, 0)..DisplayPoint::new(0, 0),
+                    DisplayPoint::new(1, 2)..DisplayPoint::new(1, 2),
+                ]
+            );
+
+            view.update(app, |view, ctx| view.move_to_beginning_of_line(&(), ctx));
+            assert_eq!(
+                view.read(app).selection_ranges(app.as_ref()),
+                &[
+                    DisplayPoint::new(0, 0)..DisplayPoint::new(0, 0),
+                    DisplayPoint::new(1, 0)..DisplayPoint::new(1, 0),
+                ]
+            );
+
+            view.update(app, |view, ctx| view.move_to_beginning_of_line(&(), ctx));
+            assert_eq!(
+                view.read(app).selection_ranges(app.as_ref()),
+                &[
+                    DisplayPoint::new(0, 0)..DisplayPoint::new(0, 0),
+                    DisplayPoint::new(1, 2)..DisplayPoint::new(1, 2),
+                ]
+            );
+
+            view.update(app, |view, ctx| view.move_to_end_of_line(&(), ctx));
+            assert_eq!(
+                view.read(app).selection_ranges(app.as_ref()),
+                &[
+                    DisplayPoint::new(0, 3)..DisplayPoint::new(0, 3),
+                    DisplayPoint::new(1, 5)..DisplayPoint::new(1, 5),
+                ]
+            );
+
+            // Moving to the end of line again is a no-op.
+            view.update(app, |view, ctx| view.move_to_end_of_line(&(), ctx));
+            assert_eq!(
+                view.read(app).selection_ranges(app.as_ref()),
+                &[
+                    DisplayPoint::new(0, 3)..DisplayPoint::new(0, 3),
+                    DisplayPoint::new(1, 5)..DisplayPoint::new(1, 5),
+                ]
+            );
+
+            view.update(app, |view, ctx| {
+                view.move_left(&(), ctx);
+                view.select_to_beginning_of_line(&true, ctx);
+            });
+            assert_eq!(
+                view.read(app).selection_ranges(app.as_ref()),
+                &[
+                    DisplayPoint::new(0, 2)..DisplayPoint::new(0, 0),
+                    DisplayPoint::new(1, 4)..DisplayPoint::new(1, 2),
+                ]
+            );
+
+            view.update(app, |view, ctx| {
+                view.select_to_beginning_of_line(&true, ctx)
+            });
+            assert_eq!(
+                view.read(app).selection_ranges(app.as_ref()),
+                &[
+                    DisplayPoint::new(0, 2)..DisplayPoint::new(0, 0),
+                    DisplayPoint::new(1, 4)..DisplayPoint::new(1, 0),
+                ]
+            );
+
+            view.update(app, |view, ctx| {
+                view.select_to_beginning_of_line(&true, ctx)
+            });
+            assert_eq!(
+                view.read(app).selection_ranges(app.as_ref()),
+                &[
+                    DisplayPoint::new(0, 2)..DisplayPoint::new(0, 0),
+                    DisplayPoint::new(1, 4)..DisplayPoint::new(1, 2),
+                ]
+            );
+
+            view.update(app, |view, ctx| view.select_to_end_of_line(&(), ctx));
+            assert_eq!(
+                view.read(app).selection_ranges(app.as_ref()),
+                &[
+                    DisplayPoint::new(0, 2)..DisplayPoint::new(0, 3),
+                    DisplayPoint::new(1, 4)..DisplayPoint::new(1, 5),
+                ]
+            );
+
+            view.update(app, |view, ctx| view.delete_to_end_of_line(&(), ctx));
+            assert_eq!(view.read(app).text(app.as_ref()), "ab\n  de");
+            assert_eq!(
+                view.read(app).selection_ranges(app.as_ref()),
+                &[
+                    DisplayPoint::new(0, 2)..DisplayPoint::new(0, 2),
+                    DisplayPoint::new(1, 4)..DisplayPoint::new(1, 4),
+                ]
+            );
+
+            view.update(app, |view, ctx| view.delete_to_beginning_of_line(&(), ctx));
+            assert_eq!(view.read(app).text(app.as_ref()), "\n");
+            assert_eq!(
+                view.read(app).selection_ranges(app.as_ref()),
+                &[
+                    DisplayPoint::new(0, 0)..DisplayPoint::new(0, 0),
+                    DisplayPoint::new(1, 0)..DisplayPoint::new(1, 0),
+                ]
+            );
+        });
+    }
+
+    #[test]
     fn test_backspace() {
         App::test((), |app| {
             let buffer = app.add_model(|ctx| {
@@ -1971,7 +2242,7 @@ mod tests {
                         // an empty selection - the preceding character is deleted
                         DisplayPoint::new(0, 2)..DisplayPoint::new(0, 2),
                         // one character selected - it is deleted
-                        DisplayPoint::new(1, 3)..DisplayPoint::new(1, 4),
+                        DisplayPoint::new(1, 4)..DisplayPoint::new(1, 3),
                         // a line suffix selected - it is deleted
                         DisplayPoint::new(2, 6)..DisplayPoint::new(3, 0),
                     ],
@@ -2008,7 +2279,7 @@ mod tests {
                         // an empty selection - the following character is deleted
                         DisplayPoint::new(0, 2)..DisplayPoint::new(0, 2),
                         // one character selected - it is deleted
-                        DisplayPoint::new(1, 3)..DisplayPoint::new(1, 4),
+                        DisplayPoint::new(1, 4)..DisplayPoint::new(1, 3),
                         // a line suffix selected - it is deleted
                         DisplayPoint::new(2, 6)..DisplayPoint::new(3, 0),
                     ],
