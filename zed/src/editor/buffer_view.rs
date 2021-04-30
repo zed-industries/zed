@@ -30,7 +30,21 @@ const CURSOR_BLINK_INTERVAL: Duration = Duration::from_millis(500);
 pub fn init(app: &mut MutableAppContext) {
     app.add_bindings(vec![
         Binding::new("backspace", "buffer:backspace", Some("BufferView")),
+        Binding::new("delete", "buffer:delete", Some("BufferView")),
+        Binding::new("ctrl-d", "buffer:delete", Some("BufferView")),
         Binding::new("enter", "buffer:newline", Some("BufferView")),
+        Binding::new("ctrl-shift-K", "buffer:delete_line", Some("BufferView")),
+        Binding::new(
+            "cmd-backspace",
+            "buffer:delete_to_beginning_of_line",
+            Some("BufferView"),
+        ),
+        Binding::new(
+            "cmd-delete",
+            "buffer:delete_to_end_of_line",
+            Some("BufferView"),
+        ),
+        Binding::new("cmd-shift-D", "buffer:duplicate_line", Some("BufferView")),
         Binding::new("cmd-x", "buffer:cut", Some("BufferView")),
         Binding::new("cmd-c", "buffer:copy", Some("BufferView")),
         Binding::new("cmd-v", "buffer:paste", Some("BufferView")),
@@ -40,10 +54,57 @@ pub fn init(app: &mut MutableAppContext) {
         Binding::new("down", "buffer:move_down", Some("BufferView")),
         Binding::new("left", "buffer:move_left", Some("BufferView")),
         Binding::new("right", "buffer:move_right", Some("BufferView")),
+        Binding::new(
+            "cmd-left",
+            "buffer:move_to_beginning_of_line",
+            Some("BufferView"),
+        ),
+        Binding::new(
+            "ctrl-a",
+            "buffer:move_to_beginning_of_line",
+            Some("BufferView"),
+        ),
+        Binding::new(
+            "cmd-right",
+            "buffer:move_to_end_of_line",
+            Some("BufferView"),
+        ),
+        Binding::new("ctrl-e", "buffer:move_to_end_of_line", Some("BufferView")),
+        Binding::new("cmd-up", "buffer:move_to_beginning", Some("BufferView")),
+        Binding::new("cmd-down", "buffer:move_to_end", Some("BufferView")),
         Binding::new("shift-up", "buffer:select_up", Some("BufferView")),
         Binding::new("shift-down", "buffer:select_down", Some("BufferView")),
         Binding::new("shift-left", "buffer:select_left", Some("BufferView")),
         Binding::new("shift-right", "buffer:select_right", Some("BufferView")),
+        Binding::new(
+            "cmd-shift-left",
+            "buffer:select_to_beginning_of_line",
+            Some("BufferView"),
+        )
+        .with_arg(true),
+        Binding::new(
+            "ctrl-shift-A",
+            "buffer:select_to_beginning_of_line",
+            Some("BufferView"),
+        )
+        .with_arg(true),
+        Binding::new(
+            "cmd-shift-right",
+            "buffer:select_to_end_of_line",
+            Some("BufferView"),
+        ),
+        Binding::new(
+            "ctrl-shift-E",
+            "buffer:select_to_end_of_line",
+            Some("BufferView"),
+        ),
+        Binding::new(
+            "cmd-shift-up",
+            "buffer:select_to_beginning",
+            Some("BufferView"),
+        ),
+        Binding::new("cmd-shift-down", "buffer:select_to_end", Some("BufferView")),
+        Binding::new("cmd-a", "buffer:select_all", Some("BufferView")),
         Binding::new("pageup", "buffer:page_up", Some("BufferView")),
         Binding::new("pagedown", "buffer:page_down", Some("BufferView")),
         Binding::new("alt-cmd-[", "buffer:fold", Some("BufferView")),
@@ -60,6 +121,17 @@ pub fn init(app: &mut MutableAppContext) {
     app.add_action("buffer:insert", BufferView::insert);
     app.add_action("buffer:newline", BufferView::newline);
     app.add_action("buffer:backspace", BufferView::backspace);
+    app.add_action("buffer:delete", BufferView::delete);
+    app.add_action("buffer:delete_line", BufferView::delete_line);
+    app.add_action(
+        "buffer:delete_to_beginning_of_line",
+        BufferView::delete_to_beginning_of_line,
+    );
+    app.add_action(
+        "buffer:delete_to_end_of_line",
+        BufferView::delete_to_end_of_line,
+    );
+    app.add_action("buffer:duplicate_line", BufferView::duplicate_line);
     app.add_action("buffer:cut", BufferView::cut);
     app.add_action("buffer:copy", BufferView::copy);
     app.add_action("buffer:paste", BufferView::paste);
@@ -69,10 +141,34 @@ pub fn init(app: &mut MutableAppContext) {
     app.add_action("buffer:move_down", BufferView::move_down);
     app.add_action("buffer:move_left", BufferView::move_left);
     app.add_action("buffer:move_right", BufferView::move_right);
+    app.add_action(
+        "buffer:move_to_beginning_of_line",
+        BufferView::move_to_beginning_of_line,
+    );
+    app.add_action(
+        "buffer:move_to_end_of_line",
+        BufferView::move_to_end_of_line,
+    );
+    app.add_action("buffer:move_to_beginning", BufferView::move_to_beginning);
+    app.add_action("buffer:move_to_end", BufferView::move_to_end);
     app.add_action("buffer:select_up", BufferView::select_up);
     app.add_action("buffer:select_down", BufferView::select_down);
     app.add_action("buffer:select_left", BufferView::select_left);
     app.add_action("buffer:select_right", BufferView::select_right);
+    app.add_action(
+        "buffer:select_to_beginning_of_line",
+        BufferView::select_to_beginning_of_line,
+    );
+    app.add_action(
+        "buffer:select_to_end_of_line",
+        BufferView::select_to_end_of_line,
+    );
+    app.add_action(
+        "buffer:select_to_beginning",
+        BufferView::select_to_beginning,
+    );
+    app.add_action("buffer:select_to_end", BufferView::select_to_end);
+    app.add_action("buffer:select_all", BufferView::select_all);
     app.add_action("buffer:page_up", BufferView::page_up);
     app.add_action("buffer:page_down", BufferView::page_down);
     app.add_action("buffer:fold", BufferView::fold);
@@ -391,13 +487,24 @@ impl BufferView {
     where
         T: IntoIterator<Item = &'a Range<DisplayPoint>>,
     {
+        use std::mem;
+
         let map = self.display_map.read(ctx);
         let mut selections = Vec::new();
         for range in ranges {
+            let mut start = range.start;
+            let mut end = range.end;
+            let reversed = if start > end {
+                mem::swap(&mut start, &mut end);
+                true
+            } else {
+                false
+            };
+
             selections.push(Selection {
-                start: map.anchor_before(range.start, Bias::Left, ctx.as_ref())?,
-                end: map.anchor_before(range.end, Bias::Left, ctx.as_ref())?,
-                reversed: false,
+                start: map.anchor_before(start, Bias::Left, ctx.as_ref())?,
+                end: map.anchor_before(end, Bias::Left, ctx.as_ref())?,
+                reversed,
                 goal_column: None,
             });
         }
@@ -464,7 +571,8 @@ impl BufferView {
             let buffer = self.buffer.read(ctx);
             let map = self.display_map.read(ctx);
             for selection in &mut selections {
-                if selection.range(buffer).is_empty() {
+                let range = selection.range(buffer);
+                if range.start == range.end {
                     let head = selection
                         .head()
                         .to_display_point(map, ctx.as_ref())
@@ -484,6 +592,175 @@ impl BufferView {
 
         self.update_selections(selections, true, ctx);
         self.insert(&String::new(), ctx);
+        self.end_transaction(ctx);
+    }
+
+    pub fn delete(&mut self, _: &(), ctx: &mut ViewContext<Self>) {
+        self.start_transaction(ctx);
+        let mut selections = self.selections(ctx.as_ref()).to_vec();
+        {
+            let buffer = self.buffer.read(ctx);
+            let map = self.display_map.read(ctx);
+            for selection in &mut selections {
+                let range = selection.range(buffer);
+                if range.start == range.end {
+                    let head = selection
+                        .head()
+                        .to_display_point(map, ctx.as_ref())
+                        .unwrap();
+                    let cursor = map
+                        .anchor_before(
+                            movement::right(map, head, ctx.as_ref()).unwrap(),
+                            Bias::Right,
+                            ctx.as_ref(),
+                        )
+                        .unwrap();
+                    selection.set_head(&buffer, cursor);
+                    selection.goal_column = None;
+                }
+            }
+        }
+
+        self.update_selections(selections, true, ctx);
+        self.insert(&String::new(), ctx);
+        self.end_transaction(ctx);
+    }
+
+    pub fn delete_line(&mut self, _: &(), ctx: &mut ViewContext<Self>) {
+        self.start_transaction(ctx);
+
+        let app = ctx.as_ref();
+        let map = self.display_map.read(app);
+        let buffer = self.buffer.read(app);
+
+        let mut new_cursors = Vec::new();
+        let mut edit_ranges = Vec::new();
+
+        let mut selections = self.selections(app).iter().peekable();
+        while let Some(selection) = selections.next() {
+            let mut rows = selection.buffer_rows_for_display_rows(map, app);
+            let goal_display_column = selection
+                .head()
+                .to_display_point(map, app)
+                .unwrap()
+                .column();
+
+            // Accumulate contiguous regions of rows that we want to delete.
+            while let Some(next_selection) = selections.peek() {
+                let next_rows = next_selection.buffer_rows_for_display_rows(map, app);
+                if next_rows.start <= rows.end {
+                    rows.end = next_rows.end;
+                    selections.next().unwrap();
+                } else {
+                    break;
+                }
+            }
+
+            let mut edit_start = Point::new(rows.start, 0).to_offset(buffer).unwrap();
+            let edit_end;
+            let cursor_buffer_row;
+            if let Ok(end_offset) = Point::new(rows.end, 0).to_offset(buffer) {
+                // If there's a line after the range, delete the \n from the end of the row range
+                // and position the cursor on the next line.
+                edit_end = end_offset;
+                cursor_buffer_row = rows.end;
+            } else {
+                // If there isn't a line after the range, delete the \n from the line before the
+                // start of the row range and position the cursor there.
+                edit_start = edit_start.saturating_sub(1);
+                edit_end = buffer.len();
+                cursor_buffer_row = rows.start.saturating_sub(1);
+            }
+
+            let mut cursor = Point::new(cursor_buffer_row, 0)
+                .to_display_point(map, app)
+                .unwrap();
+            *cursor.column_mut() = cmp::min(
+                goal_display_column,
+                map.line_len(cursor.row(), app).unwrap(),
+            );
+
+            new_cursors.push(cursor.to_buffer_point(map, Bias::Left, app).unwrap());
+            edit_ranges.push(edit_start..edit_end);
+        }
+
+        new_cursors.sort_unstable();
+        let new_selections = new_cursors
+            .into_iter()
+            .map(|cursor| buffer.anchor_before(cursor).unwrap())
+            .map(|anchor| Selection {
+                start: anchor.clone(),
+                end: anchor,
+                reversed: false,
+                goal_column: None,
+            })
+            .collect();
+        self.update_selections(new_selections, true, ctx);
+        self.buffer
+            .update(ctx, |buffer, ctx| buffer.edit(edit_ranges, "", Some(ctx)))
+            .unwrap();
+        self.end_transaction(ctx);
+    }
+
+    pub fn duplicate_line(&mut self, _: &(), ctx: &mut ViewContext<Self>) {
+        self.start_transaction(ctx);
+
+        let mut selections = self.selections(ctx.as_ref()).to_vec();
+        {
+            // Temporarily bias selections right to allow newly duplicate lines to push them down
+            // when the selections are at the beginning of a line.
+            let buffer = self.buffer.read(ctx);
+            for selection in &mut selections {
+                selection.start = selection.start.bias_right(buffer).unwrap();
+                selection.end = selection.end.bias_right(buffer).unwrap();
+            }
+        }
+        self.update_selections(selections.clone(), false, ctx);
+
+        let app = ctx.as_ref();
+        let buffer = self.buffer.read(ctx);
+        let map = self.display_map.read(ctx);
+
+        let mut edits = Vec::new();
+        let mut selections_iter = selections.iter_mut().peekable();
+        while let Some(selection) = selections_iter.next() {
+            // Avoid duplicating the same lines twice.
+            let mut rows = selection.buffer_rows_for_display_rows(map, app);
+            while let Some(next_selection) = selections_iter.peek() {
+                let next_rows = next_selection.buffer_rows_for_display_rows(map, app);
+                if next_rows.start <= rows.end - 1 {
+                    rows.end = next_rows.end;
+                    selections_iter.next().unwrap();
+                } else {
+                    break;
+                }
+            }
+
+            // Copy the text from the selected row region and splice it at the start of the region.
+            let start = Point::new(rows.start, 0);
+            let end = Point::new(rows.end - 1, buffer.line_len(rows.end - 1).unwrap());
+            let text = buffer
+                .text_for_range(start..end)
+                .unwrap()
+                .chain(Some('\n'))
+                .collect::<String>();
+            edits.push((start, text));
+        }
+
+        self.buffer.update(ctx, |buffer, ctx| {
+            for (offset, text) in edits.into_iter().rev() {
+                buffer.edit(Some(offset..offset), text, Some(ctx)).unwrap();
+            }
+        });
+
+        // Restore bias on selections.
+        let buffer = self.buffer.read(ctx);
+        for selection in &mut selections {
+            selection.start = selection.start.bias_right(buffer).unwrap();
+            selection.end = selection.end.bias_right(buffer).unwrap();
+        }
+        self.update_selections(selections, true, ctx);
+
         self.end_transaction(ctx);
     }
 
@@ -747,24 +1024,20 @@ impl BufferView {
     }
 
     pub fn select_up(&mut self, _: &(), ctx: &mut ViewContext<Self>) {
-        if self.single_line {
-            ctx.propagate_action();
-        } else {
-            let mut selections = self.selections(ctx.as_ref()).to_vec();
-            {
-                let app = ctx.as_ref();
-                let buffer = self.buffer.read(app);
-                let map = self.display_map.read(app);
-                for selection in &mut selections {
-                    let head = selection.head().to_display_point(map, app).unwrap();
-                    let (head, goal_column) =
-                        movement::up(map, head, selection.goal_column, app).unwrap();
-                    selection.set_head(&buffer, map.anchor_before(head, Bias::Left, app).unwrap());
-                    selection.goal_column = goal_column;
-                }
+        let mut selections = self.selections(ctx.as_ref()).to_vec();
+        {
+            let app = ctx.as_ref();
+            let buffer = self.buffer.read(app);
+            let map = self.display_map.read(app);
+            for selection in &mut selections {
+                let head = selection.head().to_display_point(map, app).unwrap();
+                let (head, goal_column) =
+                    movement::up(map, head, selection.goal_column, app).unwrap();
+                selection.set_head(&buffer, map.anchor_before(head, Bias::Left, app).unwrap());
+                selection.goal_column = goal_column;
             }
-            self.update_selections(selections, true, ctx);
         }
+        self.update_selections(selections, true, ctx);
     }
 
     pub fn move_down(&mut self, _: &(), ctx: &mut ViewContext<Self>) {
@@ -796,24 +1069,150 @@ impl BufferView {
     }
 
     pub fn select_down(&mut self, _: &(), ctx: &mut ViewContext<Self>) {
-        if self.single_line {
-            ctx.propagate_action();
-        } else {
-            let mut selections = self.selections(ctx.as_ref()).to_vec();
-            {
-                let app = ctx.as_ref();
-                let buffer = self.buffer.read(app);
-                let map = self.display_map.read(app);
-                for selection in &mut selections {
-                    let head = selection.head().to_display_point(map, app).unwrap();
-                    let (head, goal_column) =
-                        movement::down(map, head, selection.goal_column, app).unwrap();
-                    selection.set_head(&buffer, map.anchor_before(head, Bias::Right, app).unwrap());
-                    selection.goal_column = goal_column;
-                }
+        let mut selections = self.selections(ctx.as_ref()).to_vec();
+        {
+            let app = ctx.as_ref();
+            let buffer = self.buffer.read(app);
+            let map = self.display_map.read(app);
+            for selection in &mut selections {
+                let head = selection.head().to_display_point(map, app).unwrap();
+                let (head, goal_column) =
+                    movement::down(map, head, selection.goal_column, app).unwrap();
+                selection.set_head(&buffer, map.anchor_before(head, Bias::Right, app).unwrap());
+                selection.goal_column = goal_column;
             }
-            self.update_selections(selections, true, ctx);
         }
+        self.update_selections(selections, true, ctx);
+    }
+
+    pub fn move_to_beginning_of_line(&mut self, _: &(), ctx: &mut ViewContext<Self>) {
+        let app = ctx.as_ref();
+        let mut selections = self.selections(app).to_vec();
+        {
+            let map = self.display_map.read(app);
+            for selection in &mut selections {
+                let head = selection.head().to_display_point(map, app).unwrap();
+                let new_head = movement::line_beginning(map, head, true, app).unwrap();
+                let anchor = map.anchor_before(new_head, Bias::Left, app).unwrap();
+                selection.start = anchor.clone();
+                selection.end = anchor;
+                selection.reversed = false;
+                selection.goal_column = None;
+            }
+        }
+        self.update_selections(selections, true, ctx);
+    }
+
+    pub fn select_to_beginning_of_line(
+        &mut self,
+        toggle_indent: &bool,
+        ctx: &mut ViewContext<Self>,
+    ) {
+        let app = ctx.as_ref();
+        let mut selections = self.selections(app).to_vec();
+        {
+            let buffer = self.buffer.read(ctx);
+            let map = self.display_map.read(app);
+            for selection in &mut selections {
+                let head = selection.head().to_display_point(map, app).unwrap();
+                let new_head = movement::line_beginning(map, head, *toggle_indent, app).unwrap();
+                let anchor = map.anchor_before(new_head, Bias::Left, app).unwrap();
+                selection.set_head(buffer, anchor);
+                selection.goal_column = None;
+            }
+        }
+        self.update_selections(selections, true, ctx);
+    }
+
+    pub fn delete_to_beginning_of_line(&mut self, _: &(), ctx: &mut ViewContext<Self>) {
+        self.start_transaction(ctx);
+        self.select_to_beginning_of_line(&false, ctx);
+        self.backspace(&(), ctx);
+        self.end_transaction(ctx);
+    }
+
+    pub fn move_to_end_of_line(&mut self, _: &(), ctx: &mut ViewContext<Self>) {
+        let app = ctx.as_ref();
+        let mut selections = self.selections(app).to_vec();
+        {
+            let map = self.display_map.read(app);
+            for selection in &mut selections {
+                let head = selection.head().to_display_point(map, app).unwrap();
+                let new_head = movement::line_end(map, head, app).unwrap();
+                let anchor = map.anchor_before(new_head, Bias::Left, app).unwrap();
+                selection.start = anchor.clone();
+                selection.end = anchor;
+                selection.reversed = false;
+                selection.goal_column = None;
+            }
+        }
+        self.update_selections(selections, true, ctx);
+    }
+
+    pub fn select_to_end_of_line(&mut self, _: &(), ctx: &mut ViewContext<Self>) {
+        let app = ctx.as_ref();
+        let mut selections = self.selections(app).to_vec();
+        {
+            let buffer = self.buffer.read(ctx);
+            let map = self.display_map.read(app);
+            for selection in &mut selections {
+                let head = selection.head().to_display_point(map, app).unwrap();
+                let new_head = movement::line_end(map, head, app).unwrap();
+                let anchor = map.anchor_before(new_head, Bias::Left, app).unwrap();
+                selection.set_head(buffer, anchor);
+                selection.goal_column = None;
+            }
+        }
+        self.update_selections(selections, true, ctx);
+    }
+
+    pub fn delete_to_end_of_line(&mut self, _: &(), ctx: &mut ViewContext<Self>) {
+        self.start_transaction(ctx);
+        self.select_to_end_of_line(&(), ctx);
+        self.delete(&(), ctx);
+        self.end_transaction(ctx);
+    }
+
+    pub fn move_to_beginning(&mut self, _: &(), ctx: &mut ViewContext<Self>) {
+        let selection = Selection {
+            start: Anchor::Start,
+            end: Anchor::Start,
+            reversed: false,
+            goal_column: None,
+        };
+        self.update_selections(vec![selection], true, ctx);
+    }
+
+    pub fn select_to_beginning(&mut self, _: &(), ctx: &mut ViewContext<Self>) {
+        let mut selection = self.selections(ctx.as_ref()).last().unwrap().clone();
+        selection.set_head(self.buffer.read(ctx), Anchor::Start);
+        self.update_selections(vec![selection], true, ctx);
+    }
+
+    pub fn move_to_end(&mut self, _: &(), ctx: &mut ViewContext<Self>) {
+        let selection = Selection {
+            start: Anchor::End,
+            end: Anchor::End,
+            reversed: false,
+            goal_column: None,
+        };
+        self.update_selections(vec![selection], true, ctx);
+    }
+
+    pub fn select_to_end(&mut self, _: &(), ctx: &mut ViewContext<Self>) {
+        let mut selection = self.selections(ctx.as_ref()).last().unwrap().clone();
+        selection.set_head(self.buffer.read(ctx), Anchor::End);
+        self.update_selections(vec![selection], true, ctx);
+    }
+
+    pub fn select_all(&mut self, _: &(), ctx: &mut ViewContext<Self>) {
+        let selection = Selection {
+            start: Anchor::Start,
+            end: Anchor::End,
+            reversed: false,
+            goal_column: None,
+        };
+        self.update_selections(vec![selection], false, ctx);
     }
 
     pub fn selections_in_range<'a>(
@@ -937,15 +1336,19 @@ impl BufferView {
         let app = ctx.as_ref();
         let map = self.display_map.read(app);
         for selection in self.selections(app) {
-            let (start, end) = selection.display_range(map, app).sorted();
-            let buffer_start_row = start.to_buffer_point(map, Bias::Left, app).unwrap().row;
+            let range = selection.display_range(map, app).sorted();
+            let buffer_start_row = range
+                .start
+                .to_buffer_point(map, Bias::Left, app)
+                .unwrap()
+                .row;
 
-            for row in (0..=end.row()).rev() {
+            for row in (0..=range.end.row()).rev() {
                 if self.is_line_foldable(row, app) && !map.is_line_folded(row) {
                     let fold_range = self.foldable_range_for_line(row, app).unwrap();
                     if fold_range.end.row >= buffer_start_row {
                         fold_ranges.push(fold_range);
-                        if row <= start.row() {
+                        if row <= range.start.row() {
                             break;
                         }
                     }
@@ -971,9 +1374,9 @@ impl BufferView {
             .selections(app)
             .iter()
             .map(|s| {
-                let (start, end) = s.display_range(map, app).sorted();
-                let mut start = start.to_buffer_point(map, Bias::Left, app).unwrap();
-                let mut end = end.to_buffer_point(map, Bias::Left, app).unwrap();
+                let range = s.display_range(map, app).sorted();
+                let mut start = range.start.to_buffer_point(map, Bias::Left, app).unwrap();
+                let mut end = range.end.to_buffer_point(map, Bias::Left, app).unwrap();
                 start.column = 0;
                 end.column = buffer.line_len(end.row).unwrap();
                 start..end
@@ -987,16 +1390,17 @@ impl BufferView {
     }
 
     fn is_line_foldable(&self, display_row: u32, app: &AppContext) -> bool {
+        let map = self.display_map.read(app);
         let max_point = self.max_point(app);
         if display_row >= max_point.row() {
             false
         } else {
-            let (start_indent, is_blank) = self.line_indent(display_row, app).unwrap();
+            let (start_indent, is_blank) = map.line_indent(display_row, app).unwrap();
             if is_blank {
                 false
             } else {
                 for display_row in display_row + 1..=max_point.row() {
-                    let (indent, is_blank) = self.line_indent(display_row, app).unwrap();
+                    let (indent, is_blank) = map.line_indent(display_row, app).unwrap();
                     if !is_blank {
                         return indent > start_indent;
                     }
@@ -1006,33 +1410,15 @@ impl BufferView {
         }
     }
 
-    fn line_indent(&self, display_row: u32, app: &AppContext) -> Result<(usize, bool)> {
-        let mut indent = 0;
-        let mut is_blank = true;
-        for c in self
-            .display_map
-            .read(app)
-            .chars_at(DisplayPoint::new(display_row, 0), app)?
-        {
-            if c == ' ' {
-                indent += 1;
-            } else {
-                is_blank = c == '\n';
-                break;
-            }
-        }
-        Ok((indent, is_blank))
-    }
-
     fn foldable_range_for_line(&self, start_row: u32, app: &AppContext) -> Result<Range<Point>> {
         let map = self.display_map.read(app);
         let max_point = self.max_point(app);
 
-        let (start_indent, _) = self.line_indent(start_row, app)?;
+        let (start_indent, _) = map.line_indent(start_row, app)?;
         let start = DisplayPoint::new(start_row, self.line_len(start_row, app)?);
         let mut end = None;
         for row in start_row + 1..=max_point.row() {
-            let (indent, is_blank) = self.line_indent(row, app)?;
+            let (indent, is_blank) = map.line_indent(row, app)?;
             if !is_blank && indent <= start_indent {
                 end = Some(DisplayPoint::new(row - 1, self.line_len(row - 1, app)?));
                 break;
@@ -1045,12 +1431,14 @@ impl BufferView {
     }
 
     pub fn fold_selected_ranges(&mut self, _: &(), ctx: &mut ViewContext<Self>) {
+        use super::RangeExt;
+
         self.display_map.update(ctx, |map, ctx| {
             let buffer = self.buffer.read(ctx);
             let ranges = self
                 .selections(ctx.as_ref())
                 .iter()
-                .map(|s| s.range(buffer))
+                .map(|s| s.range(buffer).sorted())
                 .collect::<Vec<_>>();
             map.fold(ranges, ctx).unwrap();
         });
@@ -1395,7 +1783,6 @@ impl workspace::ItemView for BufferView {
 mod tests {
     use super::*;
     use crate::{editor::Point, settings, test::sample_text};
-    use anyhow::Error;
     use gpui::App;
     use unindent::Unindent;
 
@@ -1627,7 +2014,7 @@ mod tests {
     }
 
     #[test]
-    fn test_move_cursor() -> Result<()> {
+    fn test_move_cursor() {
         App::test((), |app| {
             let buffer = app.add_model(|ctx| Buffer::new(0, sample_text(6, 6), ctx));
             let settings = settings::channel(&app.font_cache()).unwrap().1;
@@ -1635,15 +2022,17 @@ mod tests {
                 app.add_window(|ctx| BufferView::for_buffer(buffer.clone(), settings, ctx));
 
             buffer.update(app, |buffer, ctx| {
-                buffer.edit(
-                    vec![
-                        Point::new(1, 0)..Point::new(1, 0),
-                        Point::new(1, 1)..Point::new(1, 1),
-                    ],
-                    "\t",
-                    Some(ctx),
-                )
-            })?;
+                buffer
+                    .edit(
+                        vec![
+                            Point::new(1, 0)..Point::new(1, 0),
+                            Point::new(1, 1)..Point::new(1, 1),
+                        ],
+                        "\t",
+                        Some(ctx),
+                    )
+                    .unwrap();
+            });
 
             view.update(app, |view, ctx| {
                 view.move_down(&(), ctx);
@@ -1651,16 +2040,183 @@ mod tests {
                     view.selection_ranges(ctx.as_ref()),
                     &[DisplayPoint::new(1, 0)..DisplayPoint::new(1, 0)]
                 );
+
                 view.move_right(&(), ctx);
                 assert_eq!(
                     view.selection_ranges(ctx.as_ref()),
                     &[DisplayPoint::new(1, 4)..DisplayPoint::new(1, 4)]
                 );
-                Ok::<(), Error>(())
-            })?;
 
-            Ok(())
-        })
+                view.move_left(&(), ctx);
+                assert_eq!(
+                    view.selection_ranges(ctx.as_ref()),
+                    &[DisplayPoint::new(1, 0)..DisplayPoint::new(1, 0)]
+                );
+
+                view.move_up(&(), ctx);
+                assert_eq!(
+                    view.selection_ranges(ctx.as_ref()),
+                    &[DisplayPoint::new(0, 0)..DisplayPoint::new(0, 0)]
+                );
+
+                view.move_to_end(&(), ctx);
+                assert_eq!(
+                    view.selection_ranges(ctx.as_ref()),
+                    &[DisplayPoint::new(5, 6)..DisplayPoint::new(5, 6)]
+                );
+
+                view.move_to_beginning(&(), ctx);
+                assert_eq!(
+                    view.selection_ranges(ctx.as_ref()),
+                    &[DisplayPoint::new(0, 0)..DisplayPoint::new(0, 0)]
+                );
+
+                view.select_display_ranges(
+                    &[DisplayPoint::new(0, 1)..DisplayPoint::new(0, 2)],
+                    ctx,
+                )
+                .unwrap();
+                view.select_to_beginning(&(), ctx);
+                assert_eq!(
+                    view.selection_ranges(ctx.as_ref()),
+                    &[DisplayPoint::new(0, 1)..DisplayPoint::new(0, 0)]
+                );
+
+                view.select_to_end(&(), ctx);
+                assert_eq!(
+                    view.selection_ranges(ctx.as_ref()),
+                    &[DisplayPoint::new(0, 1)..DisplayPoint::new(5, 6)]
+                );
+            });
+        });
+    }
+
+    #[test]
+    fn test_beginning_end_of_line() {
+        App::test((), |app| {
+            let buffer = app.add_model(|ctx| Buffer::new(0, "abc\n  def", ctx));
+            let settings = settings::channel(&app.font_cache()).unwrap().1;
+            let (_, view) = app.add_window(|ctx| BufferView::for_buffer(buffer, settings, ctx));
+            view.update(app, |view, ctx| {
+                view.select_display_ranges(
+                    &[
+                        DisplayPoint::new(0, 1)..DisplayPoint::new(0, 1),
+                        DisplayPoint::new(1, 4)..DisplayPoint::new(1, 4),
+                    ],
+                    ctx,
+                )
+                .unwrap();
+            });
+
+            view.update(app, |view, ctx| view.move_to_beginning_of_line(&(), ctx));
+            assert_eq!(
+                view.read(app).selection_ranges(app.as_ref()),
+                &[
+                    DisplayPoint::new(0, 0)..DisplayPoint::new(0, 0),
+                    DisplayPoint::new(1, 2)..DisplayPoint::new(1, 2),
+                ]
+            );
+
+            view.update(app, |view, ctx| view.move_to_beginning_of_line(&(), ctx));
+            assert_eq!(
+                view.read(app).selection_ranges(app.as_ref()),
+                &[
+                    DisplayPoint::new(0, 0)..DisplayPoint::new(0, 0),
+                    DisplayPoint::new(1, 0)..DisplayPoint::new(1, 0),
+                ]
+            );
+
+            view.update(app, |view, ctx| view.move_to_beginning_of_line(&(), ctx));
+            assert_eq!(
+                view.read(app).selection_ranges(app.as_ref()),
+                &[
+                    DisplayPoint::new(0, 0)..DisplayPoint::new(0, 0),
+                    DisplayPoint::new(1, 2)..DisplayPoint::new(1, 2),
+                ]
+            );
+
+            view.update(app, |view, ctx| view.move_to_end_of_line(&(), ctx));
+            assert_eq!(
+                view.read(app).selection_ranges(app.as_ref()),
+                &[
+                    DisplayPoint::new(0, 3)..DisplayPoint::new(0, 3),
+                    DisplayPoint::new(1, 5)..DisplayPoint::new(1, 5),
+                ]
+            );
+
+            // Moving to the end of line again is a no-op.
+            view.update(app, |view, ctx| view.move_to_end_of_line(&(), ctx));
+            assert_eq!(
+                view.read(app).selection_ranges(app.as_ref()),
+                &[
+                    DisplayPoint::new(0, 3)..DisplayPoint::new(0, 3),
+                    DisplayPoint::new(1, 5)..DisplayPoint::new(1, 5),
+                ]
+            );
+
+            view.update(app, |view, ctx| {
+                view.move_left(&(), ctx);
+                view.select_to_beginning_of_line(&true, ctx);
+            });
+            assert_eq!(
+                view.read(app).selection_ranges(app.as_ref()),
+                &[
+                    DisplayPoint::new(0, 2)..DisplayPoint::new(0, 0),
+                    DisplayPoint::new(1, 4)..DisplayPoint::new(1, 2),
+                ]
+            );
+
+            view.update(app, |view, ctx| {
+                view.select_to_beginning_of_line(&true, ctx)
+            });
+            assert_eq!(
+                view.read(app).selection_ranges(app.as_ref()),
+                &[
+                    DisplayPoint::new(0, 2)..DisplayPoint::new(0, 0),
+                    DisplayPoint::new(1, 4)..DisplayPoint::new(1, 0),
+                ]
+            );
+
+            view.update(app, |view, ctx| {
+                view.select_to_beginning_of_line(&true, ctx)
+            });
+            assert_eq!(
+                view.read(app).selection_ranges(app.as_ref()),
+                &[
+                    DisplayPoint::new(0, 2)..DisplayPoint::new(0, 0),
+                    DisplayPoint::new(1, 4)..DisplayPoint::new(1, 2),
+                ]
+            );
+
+            view.update(app, |view, ctx| view.select_to_end_of_line(&(), ctx));
+            assert_eq!(
+                view.read(app).selection_ranges(app.as_ref()),
+                &[
+                    DisplayPoint::new(0, 2)..DisplayPoint::new(0, 3),
+                    DisplayPoint::new(1, 4)..DisplayPoint::new(1, 5),
+                ]
+            );
+
+            view.update(app, |view, ctx| view.delete_to_end_of_line(&(), ctx));
+            assert_eq!(view.read(app).text(app.as_ref()), "ab\n  de");
+            assert_eq!(
+                view.read(app).selection_ranges(app.as_ref()),
+                &[
+                    DisplayPoint::new(0, 2)..DisplayPoint::new(0, 2),
+                    DisplayPoint::new(1, 4)..DisplayPoint::new(1, 4),
+                ]
+            );
+
+            view.update(app, |view, ctx| view.delete_to_beginning_of_line(&(), ctx));
+            assert_eq!(view.read(app).text(app.as_ref()), "\n");
+            assert_eq!(
+                view.read(app).selection_ranges(app.as_ref()),
+                &[
+                    DisplayPoint::new(0, 0)..DisplayPoint::new(0, 0),
+                    DisplayPoint::new(1, 0)..DisplayPoint::new(1, 0),
+                ]
+            );
+        });
     }
 
     #[test]
@@ -1683,7 +2239,7 @@ mod tests {
                         // an empty selection - the preceding character is deleted
                         DisplayPoint::new(0, 2)..DisplayPoint::new(0, 2),
                         // one character selected - it is deleted
-                        DisplayPoint::new(1, 3)..DisplayPoint::new(1, 4),
+                        DisplayPoint::new(1, 4)..DisplayPoint::new(1, 3),
                         // a line suffix selected - it is deleted
                         DisplayPoint::new(2, 6)..DisplayPoint::new(3, 0),
                     ],
@@ -1698,6 +2254,150 @@ mod tests {
                 "oe two three\nfou five six\nseven ten\n"
             );
         })
+    }
+
+    #[test]
+    fn test_delete() {
+        App::test((), |app| {
+            let buffer = app.add_model(|ctx| {
+                Buffer::new(
+                    0,
+                    "one two three\nfour five six\nseven eight nine\nten\n",
+                    ctx,
+                )
+            });
+            let settings = settings::channel(&app.font_cache()).unwrap().1;
+            let (_, view) =
+                app.add_window(|ctx| BufferView::for_buffer(buffer.clone(), settings, ctx));
+
+            view.update(app, |view, ctx| {
+                view.select_display_ranges(
+                    &[
+                        // an empty selection - the following character is deleted
+                        DisplayPoint::new(0, 2)..DisplayPoint::new(0, 2),
+                        // one character selected - it is deleted
+                        DisplayPoint::new(1, 4)..DisplayPoint::new(1, 3),
+                        // a line suffix selected - it is deleted
+                        DisplayPoint::new(2, 6)..DisplayPoint::new(3, 0),
+                    ],
+                    ctx,
+                )
+                .unwrap();
+                view.delete(&(), ctx);
+            });
+
+            assert_eq!(
+                buffer.read(app).text(),
+                "on two three\nfou five six\nseven ten\n"
+            );
+        })
+    }
+
+    #[test]
+    fn test_delete_line() {
+        App::test((), |app| {
+            let settings = settings::channel(&app.font_cache()).unwrap().1;
+            let buffer = app.add_model(|ctx| Buffer::new(0, "abc\ndef\nghi\n", ctx));
+            let (_, view) = app.add_window(|ctx| BufferView::for_buffer(buffer, settings, ctx));
+            view.update(app, |view, ctx| {
+                view.select_display_ranges(
+                    &[
+                        DisplayPoint::new(0, 1)..DisplayPoint::new(0, 1),
+                        DisplayPoint::new(1, 0)..DisplayPoint::new(1, 1),
+                        DisplayPoint::new(3, 0)..DisplayPoint::new(3, 0),
+                    ],
+                    ctx,
+                )
+                .unwrap();
+                view.delete_line(&(), ctx);
+            });
+            assert_eq!(view.read(app).text(app.as_ref()), "ghi");
+            assert_eq!(
+                view.read(app).selection_ranges(app.as_ref()),
+                vec![
+                    DisplayPoint::new(0, 0)..DisplayPoint::new(0, 0),
+                    DisplayPoint::new(0, 1)..DisplayPoint::new(0, 1)
+                ]
+            );
+
+            let settings = settings::channel(&app.font_cache()).unwrap().1;
+            let buffer = app.add_model(|ctx| Buffer::new(0, "abc\ndef\nghi\n", ctx));
+            let (_, view) = app.add_window(|ctx| BufferView::for_buffer(buffer, settings, ctx));
+            view.update(app, |view, ctx| {
+                view.select_display_ranges(
+                    &[DisplayPoint::new(2, 0)..DisplayPoint::new(0, 1)],
+                    ctx,
+                )
+                .unwrap();
+                view.delete_line(&(), ctx);
+            });
+            assert_eq!(view.read(app).text(app.as_ref()), "ghi\n");
+            assert_eq!(
+                view.read(app).selection_ranges(app.as_ref()),
+                vec![DisplayPoint::new(0, 1)..DisplayPoint::new(0, 1)]
+            );
+        });
+    }
+
+    #[test]
+    fn test_duplicate_line() {
+        App::test((), |app| {
+            let settings = settings::channel(&app.font_cache()).unwrap().1;
+            let buffer = app.add_model(|ctx| Buffer::new(0, "abc\ndef\nghi\n", ctx));
+            let (_, view) = app.add_window(|ctx| BufferView::for_buffer(buffer, settings, ctx));
+            view.update(app, |view, ctx| {
+                view.select_display_ranges(
+                    &[
+                        DisplayPoint::new(0, 0)..DisplayPoint::new(0, 1),
+                        DisplayPoint::new(0, 2)..DisplayPoint::new(0, 2),
+                        DisplayPoint::new(1, 0)..DisplayPoint::new(1, 0),
+                        DisplayPoint::new(3, 0)..DisplayPoint::new(3, 0),
+                    ],
+                    ctx,
+                )
+                .unwrap();
+                view.duplicate_line(&(), ctx);
+            });
+            assert_eq!(
+                view.read(app).text(app.as_ref()),
+                "abc\nabc\ndef\ndef\nghi\n\n"
+            );
+            assert_eq!(
+                view.read(app).selection_ranges(app.as_ref()),
+                vec![
+                    DisplayPoint::new(1, 0)..DisplayPoint::new(1, 1),
+                    DisplayPoint::new(1, 2)..DisplayPoint::new(1, 2),
+                    DisplayPoint::new(3, 0)..DisplayPoint::new(3, 0),
+                    DisplayPoint::new(6, 0)..DisplayPoint::new(6, 0),
+                ]
+            );
+
+            let settings = settings::channel(&app.font_cache()).unwrap().1;
+            let buffer = app.add_model(|ctx| Buffer::new(0, "abc\ndef\nghi\n", ctx));
+            let (_, view) = app.add_window(|ctx| BufferView::for_buffer(buffer, settings, ctx));
+            view.update(app, |view, ctx| {
+                view.select_display_ranges(
+                    &[
+                        DisplayPoint::new(0, 1)..DisplayPoint::new(1, 1),
+                        DisplayPoint::new(1, 2)..DisplayPoint::new(2, 1),
+                    ],
+                    ctx,
+                )
+                .unwrap();
+                view.duplicate_line(&(), ctx);
+            });
+            assert_eq!(
+                view.read(app).text(app.as_ref()),
+                "abc\ndef\nghi\nabc\ndef\nghi\n"
+            );
+            assert_eq!(
+                view.read(app).selection_ranges(app.as_ref()),
+                vec![
+                    DisplayPoint::new(3, 1)..DisplayPoint::new(4, 1),
+                    DisplayPoint::new(4, 2)..DisplayPoint::new(5, 1),
+                ]
+            );
+        });
     }
 
     #[test]
@@ -1837,6 +2537,20 @@ mod tests {
                     DisplayPoint::new(3, 0)..DisplayPoint::new(3, 0),
                     DisplayPoint::new(5, 1)..DisplayPoint::new(5, 1),
                 ]
+            );
+        });
+    }
+
+    #[test]
+    fn test_select_all() {
+        App::test((), |app| {
+            let buffer = app.add_model(|ctx| Buffer::new(0, "abc\nde\nfgh", ctx));
+            let settings = settings::channel(&app.font_cache()).unwrap().1;
+            let (_, view) = app.add_window(|ctx| BufferView::for_buffer(buffer, settings, ctx));
+            view.update(app, |b, ctx| b.select_all(&(), ctx));
+            assert_eq!(
+                view.read(app).selection_ranges(app.as_ref()),
+                &[DisplayPoint::new(0, 0)..DisplayPoint::new(2, 3)]
             );
         });
     }

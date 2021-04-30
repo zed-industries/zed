@@ -12,14 +12,11 @@ use display_map::*;
 use std::{cmp, ops::Range};
 
 trait RangeExt<T> {
-    fn sorted(&self) -> (T, T);
+    fn sorted(&self) -> Range<T>;
 }
 
 impl<T: Ord + Clone> RangeExt<T> for Range<T> {
-    fn sorted(&self) -> (T, T) {
-        (
-            cmp::min(&self.start, &self.end).clone(),
-            cmp::max(&self.start, &self.end).clone(),
-        )
+    fn sorted(&self) -> Self {
+        cmp::min(&self.start, &self.end).clone()..cmp::max(&self.start, &self.end).clone()
     }
 }
