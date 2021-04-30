@@ -87,6 +87,16 @@ pub fn init(app: &mut MutableAppContext) {
         Binding::new("shift-left", "buffer:select_left", Some("BufferView")),
         Binding::new("shift-right", "buffer:select_right", Some("BufferView")),
         Binding::new(
+            "alt-shift-left",
+            "buffer:select_to_previous_word_boundary",
+            Some("BufferView"),
+        ),
+        Binding::new(
+            "alt-shift-right",
+            "buffer:select_to_next_word_boundary",
+            Some("BufferView"),
+        ),
+        Binding::new(
             "cmd-shift-left",
             "buffer:select_to_beginning_of_line",
             Some("BufferView"),
@@ -173,6 +183,14 @@ pub fn init(app: &mut MutableAppContext) {
     app.add_action("buffer:select_down", BufferView::select_down);
     app.add_action("buffer:select_left", BufferView::select_left);
     app.add_action("buffer:select_right", BufferView::select_right);
+    app.add_action(
+        "buffer:select_to_previous_word_boundary",
+        BufferView::select_to_previous_word_boundary,
+    );
+    app.add_action(
+        "buffer:select_to_next_word_boundary",
+        BufferView::select_to_next_word_boundary,
+    );
     app.add_action(
         "buffer:select_to_beginning_of_line",
         BufferView::select_to_beginning_of_line,
@@ -1121,6 +1139,23 @@ impl BufferView {
         self.update_selections(selections, true, ctx);
     }
 
+    pub fn select_to_previous_word_boundary(&mut self, _: &(), ctx: &mut ViewContext<Self>) {
+        let app = ctx.as_ref();
+        let mut selections = self.selections(app).to_vec();
+        {
+            let buffer = self.buffer.read(ctx);
+            let map = self.display_map.read(app);
+            for selection in &mut selections {
+                let head = selection.head().to_display_point(map, app).unwrap();
+                let new_head = movement::prev_word_boundary(map, head, app).unwrap();
+                let anchor = map.anchor_before(new_head, Bias::Left, app).unwrap();
+                selection.set_head(buffer, anchor);
+                selection.goal_column = None;
+            }
+        }
+        self.update_selections(selections, true, ctx);
+    }
+
     pub fn move_to_next_word_boundary(&mut self, _: &(), ctx: &mut ViewContext<Self>) {
         let app = ctx.as_ref();
         let mut selections = self.selections(app).to_vec();
@@ -1133,6 +1168,23 @@ impl BufferView {
                 selection.start = anchor.clone();
                 selection.end = anchor;
                 selection.reversed = false;
+                selection.goal_column = None;
+            }
+        }
+        self.update_selections(selections, true, ctx);
+    }
+
+    pub fn select_to_next_word_boundary(&mut self, _: &(), ctx: &mut ViewContext<Self>) {
+        let app = ctx.as_ref();
+        let mut selections = self.selections(app).to_vec();
+        {
+            let buffer = self.buffer.read(ctx);
+            let map = self.display_map.read(app);
+            for selection in &mut selections {
+                let head = selection.head().to_display_point(map, app).unwrap();
+                let new_head = movement::next_word_boundary(map, head, app).unwrap();
+                let anchor = map.anchor_before(new_head, Bias::Left, app).unwrap();
+                selection.set_head(buffer, anchor);
                 selection.goal_column = None;
             }
         }
