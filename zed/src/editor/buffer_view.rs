@@ -35,6 +35,16 @@ pub fn init(app: &mut MutableAppContext) {
         Binding::new("enter", "buffer:newline", Some("BufferView")),
         Binding::new("ctrl-shift-K", "buffer:delete_line", Some("BufferView")),
         Binding::new(
+            "alt-backspace",
+            "buffer:delete_to_previous_word_boundary",
+            Some("BufferView"),
+        ),
+        Binding::new(
+            "alt-delete",
+            "buffer:delete_to_next_word_boundary",
+            Some("BufferView"),
+        ),
+        Binding::new(
             "cmd-backspace",
             "buffer:delete_to_beginning_of_line",
             Some("BufferView"),
@@ -143,6 +153,14 @@ pub fn init(app: &mut MutableAppContext) {
     app.add_action("buffer:backspace", BufferView::backspace);
     app.add_action("buffer:delete", BufferView::delete);
     app.add_action("buffer:delete_line", BufferView::delete_line);
+    app.add_action(
+        "buffer:delete_to_previous_word_boundary",
+        BufferView::delete_to_previous_word_boundary,
+    );
+    app.add_action(
+        "buffer:delete_to_next_word_boundary",
+        BufferView::delete_to_next_word_boundary,
+    );
     app.add_action(
         "buffer:delete_to_beginning_of_line",
         BufferView::delete_to_beginning_of_line,
@@ -1156,6 +1174,13 @@ impl BufferView {
         self.update_selections(selections, true, ctx);
     }
 
+    pub fn delete_to_previous_word_boundary(&mut self, _: &(), ctx: &mut ViewContext<Self>) {
+        self.start_transaction(ctx);
+        self.select_to_previous_word_boundary(&(), ctx);
+        self.backspace(&(), ctx);
+        self.end_transaction(ctx);
+    }
+
     pub fn move_to_next_word_boundary(&mut self, _: &(), ctx: &mut ViewContext<Self>) {
         let app = ctx.as_ref();
         let mut selections = self.selections(app).to_vec();
@@ -1189,6 +1214,13 @@ impl BufferView {
             }
         }
         self.update_selections(selections, true, ctx);
+    }
+
+    pub fn delete_to_next_word_boundary(&mut self, _: &(), ctx: &mut ViewContext<Self>) {
+        self.start_transaction(ctx);
+        self.select_to_next_word_boundary(&(), ctx);
+        self.delete(&(), ctx);
+        self.end_transaction(ctx);
     }
 
     pub fn move_to_beginning_of_line(&mut self, _: &(), ctx: &mut ViewContext<Self>) {
