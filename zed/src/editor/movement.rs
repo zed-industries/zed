@@ -119,7 +119,7 @@ pub fn next_word_boundary(
 ) -> Result<DisplayPoint> {
     let mut prev_c = None;
     for c in map.chars_at(point, app)? {
-        if prev_c.is_some() && char_kind(prev_c.unwrap()) != char_kind(c) {
+        if prev_c.is_some() && (c == '\n' || char_kind(prev_c.unwrap()) != char_kind(c)) {
             break;
         }
 
@@ -136,13 +136,16 @@ pub fn next_word_boundary(
 
 #[derive(Copy, Clone, Eq, PartialEq)]
 enum CharKind {
+    Newline,
     Whitespace,
     Punctuation,
     Word,
 }
 
 fn char_kind(c: char) -> CharKind {
-    if c.is_whitespace() {
+    if c == '\n' {
+        CharKind::Newline
+    } else if c.is_whitespace() {
         CharKind::Whitespace
     } else if c.is_alphanumeric() || c == '_' {
         CharKind::Word

@@ -2358,6 +2358,188 @@ mod tests {
     }
 
     #[test]
+    fn test_prev_next_word_boundary() {
+        App::test((), |app| {
+            let buffer = app
+                .add_model(|ctx| Buffer::new(0, "use std::str::{foo, bar}\n\n  {baz.qux()}", ctx));
+            let settings = settings::channel(&app.font_cache()).unwrap().1;
+            let (_, view) = app.add_window(|ctx| BufferView::for_buffer(buffer, settings, ctx));
+            view.update(app, |view, ctx| {
+                view.select_display_ranges(
+                    &[
+                        DisplayPoint::new(0, 11)..DisplayPoint::new(0, 11),
+                        DisplayPoint::new(2, 4)..DisplayPoint::new(2, 4),
+                    ],
+                    ctx,
+                )
+                .unwrap();
+            });
+
+            view.update(app, |view, ctx| {
+                view.move_to_previous_word_boundary(&(), ctx)
+            });
+            assert_eq!(
+                view.read(app).selection_ranges(app.as_ref()),
+                &[
+                    DisplayPoint::new(0, 9)..DisplayPoint::new(0, 9),
+                    DisplayPoint::new(2, 3)..DisplayPoint::new(2, 3),
+                ]
+            );
+
+            view.update(app, |view, ctx| {
+                view.move_to_previous_word_boundary(&(), ctx)
+            });
+            assert_eq!(
+                view.read(app).selection_ranges(app.as_ref()),
+                &[
+                    DisplayPoint::new(0, 7)..DisplayPoint::new(0, 7),
+                    DisplayPoint::new(2, 2)..DisplayPoint::new(2, 2),
+                ]
+            );
+
+            view.update(app, |view, ctx| {
+                view.move_to_previous_word_boundary(&(), ctx)
+            });
+            assert_eq!(
+                view.read(app).selection_ranges(app.as_ref()),
+                &[
+                    DisplayPoint::new(0, 4)..DisplayPoint::new(0, 4),
+                    DisplayPoint::new(2, 0)..DisplayPoint::new(2, 0),
+                ]
+            );
+
+            view.update(app, |view, ctx| {
+                view.move_to_previous_word_boundary(&(), ctx)
+            });
+            assert_eq!(
+                view.read(app).selection_ranges(app.as_ref()),
+                &[
+                    DisplayPoint::new(0, 3)..DisplayPoint::new(0, 3),
+                    DisplayPoint::new(1, 0)..DisplayPoint::new(1, 0),
+                ]
+            );
+
+            view.update(app, |view, ctx| {
+                view.move_to_previous_word_boundary(&(), ctx)
+            });
+            assert_eq!(
+                view.read(app).selection_ranges(app.as_ref()),
+                &[
+                    DisplayPoint::new(0, 0)..DisplayPoint::new(0, 0),
+                    DisplayPoint::new(0, 24)..DisplayPoint::new(0, 24),
+                ]
+            );
+
+            view.update(app, |view, ctx| {
+                view.move_to_previous_word_boundary(&(), ctx)
+            });
+            assert_eq!(
+                view.read(app).selection_ranges(app.as_ref()),
+                &[
+                    DisplayPoint::new(0, 0)..DisplayPoint::new(0, 0),
+                    DisplayPoint::new(0, 23)..DisplayPoint::new(0, 23),
+                ]
+            );
+
+            view.update(app, |view, ctx| view.move_to_next_word_boundary(&(), ctx));
+            assert_eq!(
+                view.read(app).selection_ranges(app.as_ref()),
+                &[
+                    DisplayPoint::new(0, 3)..DisplayPoint::new(0, 3),
+                    DisplayPoint::new(0, 24)..DisplayPoint::new(0, 24),
+                ]
+            );
+
+            view.update(app, |view, ctx| view.move_to_next_word_boundary(&(), ctx));
+            assert_eq!(
+                view.read(app).selection_ranges(app.as_ref()),
+                &[
+                    DisplayPoint::new(0, 4)..DisplayPoint::new(0, 4),
+                    DisplayPoint::new(1, 0)..DisplayPoint::new(1, 0),
+                ]
+            );
+
+            view.update(app, |view, ctx| view.move_to_next_word_boundary(&(), ctx));
+            assert_eq!(
+                view.read(app).selection_ranges(app.as_ref()),
+                &[
+                    DisplayPoint::new(0, 7)..DisplayPoint::new(0, 7),
+                    DisplayPoint::new(2, 0)..DisplayPoint::new(2, 0),
+                ]
+            );
+
+            view.update(app, |view, ctx| view.move_to_next_word_boundary(&(), ctx));
+            assert_eq!(
+                view.read(app).selection_ranges(app.as_ref()),
+                &[
+                    DisplayPoint::new(0, 9)..DisplayPoint::new(0, 9),
+                    DisplayPoint::new(2, 2)..DisplayPoint::new(2, 2),
+                ]
+            );
+
+            view.update(app, |view, ctx| {
+                view.move_right(&(), ctx);
+                view.select_to_previous_word_boundary(&(), ctx);
+            });
+            assert_eq!(
+                view.read(app).selection_ranges(app.as_ref()),
+                &[
+                    DisplayPoint::new(0, 10)..DisplayPoint::new(0, 9),
+                    DisplayPoint::new(2, 3)..DisplayPoint::new(2, 2),
+                ]
+            );
+
+            view.update(app, |view, ctx| {
+                view.select_to_previous_word_boundary(&(), ctx)
+            });
+            assert_eq!(
+                view.read(app).selection_ranges(app.as_ref()),
+                &[
+                    DisplayPoint::new(0, 10)..DisplayPoint::new(0, 7),
+                    DisplayPoint::new(2, 3)..DisplayPoint::new(2, 0),
+                ]
+            );
+
+            view.update(app, |view, ctx| view.select_to_next_word_boundary(&(), ctx));
+            assert_eq!(
+                view.read(app).selection_ranges(app.as_ref()),
+                &[
+                    DisplayPoint::new(0, 10)..DisplayPoint::new(0, 9),
+                    DisplayPoint::new(2, 3)..DisplayPoint::new(2, 2),
+                ]
+            );
+
+            view.update(app, |view, ctx| view.delete_to_next_word_boundary(&(), ctx));
+            assert_eq!(
+                view.read(app).text(app.as_ref()),
+                "use std::s::{foo, bar}\n\n  {az.qux()}"
+            );
+            assert_eq!(
+                view.read(app).selection_ranges(app.as_ref()),
+                &[
+                    DisplayPoint::new(0, 10)..DisplayPoint::new(0, 10),
+                    DisplayPoint::new(2, 3)..DisplayPoint::new(2, 3),
+                ]
+            );
+
+            view.update(app, |view, ctx| {
+                view.delete_to_previous_word_boundary(&(), ctx)
+            });
+            assert_eq!(
+                view.read(app).text(app.as_ref()),
+                "use std::::{foo, bar}\n\n  az.qux()}"
+            );
+            assert_eq!(
+                view.read(app).selection_ranges(app.as_ref()),
+                &[
+                    DisplayPoint::new(0, 9)..DisplayPoint::new(0, 9),
+                    DisplayPoint::new(2, 2)..DisplayPoint::new(2, 2),
+                ]
+            );
+        });
+    }
+
+    #[test]
     fn test_backspace() {
         App::test((), |app| {
             let buffer = app.add_model(|ctx| {
