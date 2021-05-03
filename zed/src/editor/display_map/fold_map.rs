@@ -471,7 +471,7 @@ mod tests {
     #[test]
     fn test_basic_folds() {
         App::test((), |app| {
-            let buffer = app.add_model(|ctx| Buffer::new(0, sample_text(5, 6)));
+            let buffer = app.add_model(|_| Buffer::new(0, sample_text(5, 6)));
             let mut map = FoldMap::new(buffer.clone(), app.as_ref());
 
             map.fold(

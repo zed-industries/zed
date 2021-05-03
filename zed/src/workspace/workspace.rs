@@ -1,89 +1,25 @@
-use super::{ItemView, ItemViewHandle};
+use super::ItemViewHandle;
 use crate::{
-    editor::{Buffer, BufferView, History},
+    editor::{Buffer, BufferView},
     settings::Settings,
     time::ReplicaId,
     watch,
-    worktree::{FileHandle, Worktree, WorktreeHandle as _},
+    worktree::{Worktree, WorktreeHandle as _},
 };
 use anyhow::anyhow;
 use futures_core::future::LocalBoxFuture;
-use gpui::{AppContext, Entity, Handle, ModelContext, ModelHandle, MutableAppContext, ViewContext};
+use gpui::{AppContext, Entity, ModelContext, ModelHandle};
 use smol::prelude::*;
 use std::{collections::hash_map::Entry, future};
 use std::{
     collections::{HashMap, HashSet},
-    fmt::Debug,
     path::{Path, PathBuf},
-    pin::Pin,
     sync::Arc,
 };
-
-pub trait Item
-where
-    Self: Sized,
-{
-    type View: ItemView;
-    fn build_view(
-        handle: ModelHandle<Self>,
-        settings: watch::Receiver<Settings>,
-        file: Option<FileHandle>,
-        ctx: &mut ViewContext<Self::View>,
-    ) -> Self::View;
-}
-
-pub trait ItemHandle: Debug + Send + Sync {
-    fn add_view(
-        &self,
-        window_id: usize,
-        settings: watch::Receiver<Settings>,
-        file: Option<FileHandle>,
-        app: &mut MutableAppContext,
-    ) -> Box<dyn ItemViewHandle>;
-    fn id(&self) -> usize;
-    fn boxed_clone(&self) -> Box<dyn ItemHandle>;
-}
-
-impl<T: 'static + Item> ItemHandle for ModelHandle<T> {
-    fn add_view(
-        &self,
-        window_id: usize,
-        settings: watch::Receiver<Settings>,
-        file: Option<FileHandle>,
-        app: &mut MutableAppContext,
-    ) -> Box<dyn ItemViewHandle> {
-        Box::new(app.add_view(window_id, |ctx| {
-            T::build_view(self.clone(), settings, file, ctx)
-        }))
-    }
-
-    fn id(&self) -> usize {
-        Handle::id(self)
-    }
-
-    fn boxed_clone(&self) -> Box<dyn ItemHandle> {
-        Box::new(self.clone())
-    }
-}
-
-impl Clone for Box<dyn ItemHandle> {
-    fn clone(&self) -> Self {
-        self.boxed_clone()
-    }
-}
-
-pub type OpenResult = Result<Box<dyn ItemHandle>, Arc<anyhow::Error>>;
-
-#[derive(Clone)]
-enum OpenedItem {
-    Loading(watch::Receiver<Option<OpenResult>>),
-    Loaded(Box<dyn ItemHandle>),
-}
 
 pub struct Workspace {
     replica_id: ReplicaId,
     worktrees: HashSet<ModelHandle<Worktree>>,
-    items: HashMap<(usize, u64), OpenedItem>,
     buffers: HashMap<
         (usize, u64),
         postage::watch::Receiver<Option<Result<ModelHandle<Buffer>, Arc<anyhow::Error>>>>,
@@ -95,7 +31,6 @@ impl Workspace {
         let mut workspace = Self {
             replica_id: 0,
             worktrees: Default::default(),
-            items: Default::default(),
             buffers: Default::default(),
         };
         workspace.open_paths(&paths, ctx);
@@ -156,7 +91,7 @@ impl Workspace {
         (worktree_id, Path::new("").into())
     }
 
-    pub fn open_entry2(
+    pub fn open_entry(
         &mut self,
         (worktree_id, path): (usize, Arc<Path>),
         window_id: usize,
@@ -228,83 +163,6 @@ impl Workspace {
         .boxed_local()
     }
 
-    pub fn open_entry(
-        &mut self,
-        (worktree_id, path): (usize, Arc<Path>),
-        ctx: &mut ModelContext<'_, Self>,
-    ) -> anyhow::Result<Pin<Box<dyn Future<Output = (OpenResult, FileHandle)> + Send>>> {
-        let worktree = self
-            .worktrees
-            .get(&worktree_id)
-            .cloned()
-            .ok_or_else(|| anyhow!("worktree {} does not exist", worktree_id,))?;
-
-        let inode = worktree
-            .read(ctx)
-            .inode_for_path(&path)
-            .ok_or_else(|| anyhow!("path {:?} does not exist", path))?;
-
-        let file = worktree
-            .file(path.clone(), ctx.as_ref())
-            .ok_or_else(|| anyhow!("path {:?} does not exist", path))?;
-
-        let item_key = (worktree_id, inode);
-        if let Some(item) = self.items.get(&item_key).cloned() {
-            return Ok(async move {
-                match item {
-                    OpenedItem::Loaded(handle) => {
-                        return (Ok(handle), file);
-                    }
-                    OpenedItem::Loading(rx) => loop {
-                        rx.updated().await;
-
-                        if let Some(result) = smol::block_on(rx.read()).clone() {
-                            return (result, file);
-                        }
-                    },
-                }
-            }
-            .boxed());
-        }
-
-        let replica_id = self.replica_id;
-        let history = file.load_history(ctx.as_ref());
-
-        let (mut tx, rx) = watch::channel(None);
-        self.items.insert(item_key, OpenedItem::Loading(rx));
-        ctx.spawn(
-            history,
-            move |me, history: anyhow::Result<History>, ctx| match history {
-                Ok(history) => {
-                    let handle =
-                        Box::new(ctx.add_model(|_| Buffer::from_history(replica_id, history)))
-                            as Box<dyn ItemHandle>;
-                    me.items
-                        .insert(item_key, OpenedItem::Loaded(handle.clone()));
-                    ctx.spawn(
-                        async move {
-                            tx.update(|value| *value = Some(Ok(handle))).await;
-                        },
-                        |_, _, _| {},
-                    )
-                    .detach();
-                }
-                Err(error) => {
-                    ctx.spawn(
-                        async move {
-                            tx.update(|value| *value = Some(Err(Arc::new(error)))).await;
-                        },
-                        |_, _, _| {},
-                    )
-                    .detach();
-                }
-            },
-        )
-        .detach();
-
-        self.open_entry((worktree_id, path), ctx)
-    }
-
     fn on_worktree_updated(&mut self, _: ModelHandle<Worktree>, ctx: &mut ModelContext<Self>) {
         ctx.notify();
     }
@@ -332,55 +190,5 @@ impl WorkspaceHandle for ModelHandle<Workspace> {
                     .map(move |f| (tree_id, f.path().clone()))
             })
             .collect::<Vec<_>>()
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::test::temp_tree;
-    use gpui::App;
-    use serde_json::json;
-
-    #[test]
-    fn test_open_entry() {
-        App::test_async((), |mut app| async move {
-            let dir = temp_tree(json!({
-                "a": {
-                    "aa": "aa contents",
-                    "ab": "ab contents",
-                },
-            }));
-
-            let workspace = app.add_model(|ctx| Workspace::new(vec![dir.path().into()], ctx));
-            app.read(|ctx| workspace.read(ctx).worktree_scans_complete(ctx))
-                .await;
-
-            // Get the first file entry.
-            let tree = app.read(|ctx| workspace.read(ctx).worktrees.iter().next().unwrap().clone());
-            let path = app.read(|ctx| tree.read(ctx).files(0).next().unwrap().path().clone());
-            let entry = (tree.id(), path);
-
-            // Open the same entry twice before it finishes loading.
-            let (future_1, future_2) = workspace.update(&mut app, |w, app| {
-                (
-                    w.open_entry(entry.clone(), app).unwrap(),
-                    w.open_entry(entry.clone(), app).unwrap(),
-                )
-            });
-
-            let handle_1 = future_1.await.0.unwrap();
-            let handle_2 = future_2.await.0.unwrap();
-            assert_eq!(handle_1.id(), handle_2.id());
-
-            // Open the same entry again now that it has loaded
-            let handle_3 = workspace
-                .update(&mut app, |w, app| w.open_entry(entry, app).unwrap())
-                .await
-                .0
-                .unwrap();
-
-            assert_eq!(handle_3.id(), handle_1.id());
-        })
     }
 }

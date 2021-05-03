@@ -245,7 +245,7 @@ impl WorkspaceView {
 
         let window_id = ctx.window_id();
         let future = self.workspace.update(ctx, |workspace, ctx| {
-            workspace.open_entry2(entry.clone(), window_id, self.settings.clone(), ctx)
+            workspace.open_entry(entry.clone(), window_id, self.settings.clone(), ctx)
         });
 
         Some(ctx.spawn(future, move |me, item_view, ctx| {

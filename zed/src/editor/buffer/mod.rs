@@ -2408,7 +2408,7 @@ mod tests {
                 let mut reference_string = RandomCharIter::new(&mut rng)
                     .take(reference_string_len)
                     .collect::<String>();
-                ctx.add_model(|ctx| {
+                ctx.add_model(|_| {
                     let mut buffer = Buffer::new(0, reference_string.as_str());
                     let mut buffer_versions = Vec::new();
                     for _i in 0..10 {
@@ -2494,7 +2494,7 @@ mod tests {
     #[test]
     fn test_line_len() {
         App::test((), |ctx| {
-            ctx.add_model(|ctx| {
+            ctx.add_model(|_| {
                 let mut buffer = Buffer::new(0, "");
                 buffer.edit(vec![0..0], "abcd\nefg\nhij", None).unwrap();
                 buffer.edit(vec![12..12], "kl\nmno", None).unwrap();
@@ -2516,7 +2516,7 @@ mod tests {
     #[test]
     fn test_rightmost_point() {
         App::test((), |ctx| {
-            ctx.add_model(|ctx| {
+            ctx.add_model(|_| {
                 let mut buffer = Buffer::new(0, "");
                 assert_eq!(buffer.rightmost_point().row, 0);
                 buffer.edit(vec![0..0], "abcd\nefg\nhij", None).unwrap();
@@ -2537,7 +2537,7 @@ mod tests {
     #[test]
     fn test_text_summary_for_range() {
         App::test((), |ctx| {
-            ctx.add_model(|ctx| {
+            ctx.add_model(|_| {
                 let buffer = Buffer::new(0, "ab\nefg\nhklm\nnopqrs\ntuvwxyz");
                 let text = Text::from(buffer.text());
                 assert_eq!(
@@ -2568,7 +2568,7 @@ mod tests {
     #[test]
     fn test_chars_at() {
         App::test((), |ctx| {
-            ctx.add_model(|ctx| {
+            ctx.add_model(|_| {
                 let mut buffer = Buffer::new(0, "");
                 buffer.edit(vec![0..0], "abcd\nefgh\nij", None).unwrap();
                 buffer.edit(vec![12..12], "kl\nmno", None).unwrap();
@@ -2720,7 +2720,7 @@ mod tests {
     #[test]
     fn test_anchors() {
         App::test((), |ctx| {
-            ctx.add_model(|ctx| {
+            ctx.add_model(|_| {
                 let mut buffer = Buffer::new(0, "");
                 buffer.edit(vec![0..0], "abc", None).unwrap();
                 let left_anchor = buffer.anchor_before(2).unwrap();
@@ -2885,7 +2885,7 @@ mod tests {
     #[test]
     fn test_anchors_at_start_and_end() {
         App::test((), |ctx| {
-            ctx.add_model(|ctx| {
+            ctx.add_model(|_| {
                 let mut buffer = Buffer::new(0, "");
                 let before_start_anchor = buffer.anchor_before(0).unwrap();
                 let after_end_anchor = buffer.anchor_after(0).unwrap();
@@ -2913,7 +2913,7 @@ mod tests {
     #[test]
     fn test_is_modified() {
         App::test((), |app| {
-            let model = app.add_model(|ctx| Buffer::new(0, "abc"));
+            let model = app.add_model(|_| Buffer::new(0, "abc"));
             let events = Rc::new(RefCell::new(Vec::new()));
 
             // initially, the buffer isn't dirty.
@@ -3000,7 +3000,7 @@ mod tests {
     #[test]
     fn test_undo_redo() {
         App::test((), |app| {
-            app.add_model(|ctx| {
+            app.add_model(|_| {
                 let mut buffer = Buffer::new(0, "1234");
 
                 let edit1 = buffer.edit(vec![1..1], "abx", None).unwrap();
@@ -3037,7 +3037,7 @@ mod tests {
     #[test]
     fn test_history() {
         App::test((), |app| {
-            app.add_model(|ctx| {
+            app.add_model(|_| {
                 let mut now = Instant::now();
                 let mut buffer = Buffer::new(0, "123456");
 
@@ -3124,7 +3124,7 @@ mod tests {
                 let mut network = Network::new();
                 for i in 0..PEERS {
                     let buffer =
-                        ctx.add_model(|ctx| Buffer::new(i as ReplicaId, base_text.as_str()));
+                        ctx.add_model(|_| Buffer::new(i as ReplicaId, base_text.as_str()));
                     buffers.push(buffer);
                     replica_ids.push(i as u16);
                     network.add_peer(i as u16);

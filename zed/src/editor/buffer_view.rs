@@ -1344,19 +1344,6 @@ impl View for BufferView {
     }
 }
 
-impl workspace::Item for Buffer {
-    type View = BufferView;
-
-    fn build_view(
-        buffer: ModelHandle<Self>,
-        settings: watch::Receiver<Settings>,
-        file: Option<FileHandle>,
-        ctx: &mut ViewContext<Self::View>,
-    ) -> Self::View {
-        BufferView::for_buffer(buffer, file, settings, ctx)
-    }
-}
-
 impl workspace::ItemView for BufferView {
     fn should_activate_item_on_event(event: &Self::Event) -> bool {
         matches!(event, Event::Activate)
@@ -1421,7 +1408,7 @@ mod tests {
     #[test]
     fn test_selection_with_mouse() {
         App::test((), |app| {
-            let buffer = app.add_model(|ctx| Buffer::new(0, "aaaaaa\nbbbbbb\ncccccc\ndddddd\n"));
+            let buffer = app.add_model(|_| Buffer::new(0, "aaaaaa\nbbbbbb\ncccccc\ndddddd\n"));
             let settings = settings::channel(&app.font_cache()).unwrap().1;
             let (_, buffer_view) =
                 app.add_window(|ctx| BufferView::for_buffer(buffer, None, settings, ctx));
