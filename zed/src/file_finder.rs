@@ -2,7 +2,7 @@ use crate::{
     editor::{buffer_view, BufferView},
     settings::Settings,
     util, watch,
-    workspace::{Workspace, WorkspaceView},
+    workspace::WorkspaceView,
     worktree::{match_paths, PathMatch, Worktree},
 };
 use gpui::{
@@ -11,8 +11,8 @@ use gpui::{
     fonts::{Properties, Weight},
     geometry::vector::vec2f,
     keymap::{self, Binding},
-    AppContext, Axis, Border, Entity, ModelHandle, MutableAppContext, View, ViewContext,
-    ViewHandle, WeakViewHandle,
+    AppContext, Axis, Border, Entity, MutableAppContext, View, ViewContext, ViewHandle,
+    WeakViewHandle,
 };
 use std::{
     cmp,
@@ -26,7 +26,7 @@ use std::{
 pub struct FileFinder {
     handle: WeakViewHandle<Self>,
     settings: watch::Receiver<Settings>,
-    workspace: ModelHandle<Workspace>,
+    workspace: WeakViewHandle<WorkspaceView>,
     query_buffer: ViewHandle<BufferView>,
     search_count: usize,
     latest_search_id: usize,
@@ -255,15 +255,11 @@ impl FileFinder {
 
     fn toggle(workspace_view: &mut WorkspaceView, _: &(), ctx: &mut ViewContext<WorkspaceView>) {
         workspace_view.toggle_modal(ctx, |ctx, workspace_view| {
-            let handle = ctx.add_view(|ctx| {
-                Self::new(
-                    workspace_view.settings.clone(),
-                    workspace_view.workspace.clone(),
-                    ctx,
-                )
-            });
-            ctx.subscribe_to_view(&handle, Self::on_event);
-            handle
+            let workspace = ctx.handle();
+            let finder =
+                ctx.add_view(|ctx| Self::new(workspace_view.settings.clone(), workspace, ctx));
+            ctx.subscribe_to_view(&finder, Self::on_event);
+            finder
         });
     }
 
@@ -288,10 +284,10 @@ impl FileFinder {
 
     pub fn new(
         settings: watch::Receiver<Settings>,
-        workspace: ModelHandle<Workspace>,
+        workspace: ViewHandle<WorkspaceView>,
         ctx: &mut ViewContext<Self>,
     ) -> Self {
-        ctx.observe(&workspace, Self::workspace_updated);
+        ctx.observe_view(&workspace, Self::workspace_updated);
 
         let query_buffer = ctx.add_view(|ctx| BufferView::single_line(settings.clone(), ctx));
         ctx.subscribe_to_view(&query_buffer, Self::on_query_buffer_event);
@@ -301,7 +297,7 @@ impl FileFinder {
         Self {
             handle: ctx.handle().downgrade(),
             settings,
-            workspace,
+            workspace: workspace.downgrade(),
             query_buffer,
             search_count: 0,
             latest_search_id: 0,
@@ -314,7 +310,7 @@ impl FileFinder {
         }
     }
 
-    fn workspace_updated(&mut self, _: ModelHandle<Workspace>, ctx: &mut ViewContext<Self>) {
+    fn workspace_updated(&mut self, _: ViewHandle<WorkspaceView>, ctx: &mut ViewContext<Self>) {
         self.spawn_search(self.query_buffer.read(ctx).text(ctx.as_ref()), ctx);
     }
 
@@ -390,9 +386,10 @@ impl FileFinder {
         ctx.emit(Event::Selected(*tree_id, path.clone()));
     }
 
-    fn spawn_search(&mut self, query: String, ctx: &mut ViewContext<Self>) {
+    fn spawn_search(&mut self, query: String, ctx: &mut ViewContext<Self>) -> Option<()> {
         let snapshots = self
             .workspace
+            .upgrade(&ctx)?
             .read(ctx)
             .worktrees()
             .iter()
@@ -420,6 +417,8 @@ impl FileFinder {
         });
 
         ctx.spawn(task, Self::update_matches).detach();
+
+        Some(())
     }
 
     fn update_matches(
@@ -443,6 +442,7 @@ impl FileFinder {
 
     fn worktree<'a>(&'a self, tree_id: usize, app: &'a AppContext) -> Option<&'a Worktree> {
         self.workspace
+            .upgrade(app)?
             .read(app)
             .worktrees()
             .get(&tree_id)
@@ -453,11 +453,7 @@ impl FileFinder {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{
-        editor, settings,
-        test::temp_tree,
-        workspace::{Workspace, WorkspaceView},
-    };
+    use crate::{editor, settings, test::temp_tree, workspace::WorkspaceView};
     use gpui::App;
     use serde_json::json;
     use std::fs;
@@ -476,20 +472,22 @@ mod tests {
             });
 
             let settings = settings::channel(&app.font_cache()).unwrap().1;
-            let workspace = app.add_model(|ctx| Workspace::new(vec![tmp_dir.path().into()], ctx));
-            let (window_id, workspace_view) =
-                app.add_window(|ctx| WorkspaceView::new(workspace.clone(), settings, ctx));
+            let (window_id, workspace) = app.add_window(|ctx| {
+                let mut workspace = WorkspaceView::new(0, settings, ctx);
+                workspace.open_path(tmp_dir.path().into(), ctx);
+                workspace
+            });
             app.read(|ctx| workspace.read(ctx).worktree_scans_complete(ctx))
                 .await;
             app.dispatch_action(
                 window_id,
-                vec![workspace_view.id()],
+                vec![workspace.id()],
                 "file_finder:toggle".into(),
                 (),
             );
 
             let finder = app.read(|ctx| {
-                workspace_view
+                workspace
                     .read(ctx)
                     .modal()
                     .cloned()
@@ -507,16 +505,16 @@ mod tests {
                 .condition(&app, |finder, _| finder.matches.len() == 2)
                 .await;
 
-            let active_pane = app.read(|ctx| workspace_view.read(ctx).active_pane().clone());
+            let active_pane = app.read(|ctx| workspace.read(ctx).active_pane().clone());
             app.dispatch_action(
                 window_id,
-                vec![workspace_view.id(), finder.id()],
+                vec![workspace.id(), finder.id()],
                 "menu:select_next",
                 (),
             );
             app.dispatch_action(
                 window_id,
-                vec![workspace_view.id(), finder.id()],
+                vec![workspace.id(), finder.id()],
                 "file_finder:confirm",
                 (),
             );
@@ -543,7 +541,11 @@ mod tests {
                 "hiccup": "",
             }));
             let settings = settings::channel(&app.font_cache()).unwrap().1;
-            let workspace = app.add_model(|ctx| Workspace::new(vec![tmp_dir.path().into()], ctx));
+            let (_, workspace) = app.add_window(|ctx| {
+                let mut workspace = WorkspaceView::new(0, settings.clone(), ctx);
+                workspace.open_path(tmp_dir.path().into(), ctx);
+                workspace
+            });
             app.read(|ctx| workspace.read(ctx).worktree_scans_complete(ctx))
                 .await;
             let (_, finder) =
@@ -596,7 +598,11 @@ mod tests {
             fs::write(&file_path, "").unwrap();
 
             let settings = settings::channel(&app.font_cache()).unwrap().1;
-            let workspace = app.add_model(|ctx| Workspace::new(vec![file_path], ctx));
+            let (_, workspace) = app.add_window(|ctx| {
+                let mut workspace = WorkspaceView::new(0, settings.clone(), ctx);
+                workspace.open_path(file_path, ctx);
+                workspace
+            });
             app.read(|ctx| workspace.read(ctx).worktree_scans_complete(ctx))
                 .await;
             let (_, finder) =
@@ -633,11 +639,14 @@ mod tests {
                 "dir2": { "a.txt": "" }
             }));
             let settings = settings::channel(&app.font_cache()).unwrap().1;
-            let workspace = app.add_model(|ctx| {
-                Workspace::new(
-                    vec![tmp_dir.path().join("dir1"), tmp_dir.path().join("dir2")],
+
+            let (_, workspace) = app.add_window(|ctx| {
+                let mut workspace = WorkspaceView::new(0, settings.clone(), ctx);
+                smol::block_on(workspace.open_paths(
+                    &[tmp_dir.path().join("dir1"), tmp_dir.path().join("dir2")],
                     ctx,
-                )
+                ));
+                workspace
             });
             app.read(|ctx| workspace.read(ctx).worktree_scans_complete(ctx))
                 .await;

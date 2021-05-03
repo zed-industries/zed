@@ -138,7 +138,7 @@ impl BufferView {
             file.observe_from_view(ctx, |_, _, ctx| ctx.emit(Event::FileHandleChanged));
         }
 
-        ctx.observe(&buffer, Self::on_buffer_changed);
+        ctx.observe_model(&buffer, Self::on_buffer_changed);
         ctx.subscribe_to_model(&buffer, Self::on_buffer_event);
         let display_map = ctx.add_model(|ctx| {
             DisplayMap::new(
@@ -147,7 +147,7 @@ impl BufferView {
                 ctx,
             )
         });
-        ctx.observe(&display_map, Self::on_display_map_changed);
+        ctx.observe_model(&display_map, Self::on_display_map_changed);
 
         let (selection_set_id, _) = buffer.update(ctx, |buffer, ctx| {
             buffer.add_selection_set(

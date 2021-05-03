@@ -1,11 +1,9 @@
 pub mod pane;
 pub mod pane_group;
-pub mod workspace;
 pub mod workspace_view;
 
 pub use pane::*;
 pub use pane_group::*;
-pub use workspace::*;
 pub use workspace_view::*;
 
 use crate::{
@@ -68,9 +66,8 @@ fn open_paths(params: &OpenParams, app: &mut MutableAppContext) {
     log::info!("open new workspace");
 
     // Add a new workspace if necessary
-    let workspace = app.add_model(|ctx| Workspace::new(vec![], ctx));
     app.add_window(|ctx| {
-        let view = WorkspaceView::new(workspace, params.settings.clone(), ctx);
+        let mut view = WorkspaceView::new(0, params.settings.clone(), ctx);
         let open_paths = view.open_paths(&params.paths, ctx);
         ctx.foreground().spawn(open_paths).detach();
         view
@@ -133,15 +130,7 @@ mod tests {
             let workspace_view_1 = app
                 .root_view::<WorkspaceView>(app.window_ids().next().unwrap())
                 .unwrap();
-            assert_eq!(
-                workspace_view_1
-                    .read(app)
-                    .workspace
-                    .read(app)
-                    .worktrees()
-                    .len(),
-                2
-            );
+            assert_eq!(workspace_view_1.read(app).worktrees().len(), 2);
 
             app.dispatch_global_action(
                 "workspace:open_paths",

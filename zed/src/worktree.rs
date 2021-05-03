@@ -426,7 +426,7 @@ impl FileHandle {
     ) {
         let mut prev_state = self.state.lock().clone();
         let cur_state = Arc::downgrade(&self.state);
-        ctx.observe(&self.worktree, move |observer, worktree, ctx| {
+        ctx.observe_model(&self.worktree, move |observer, worktree, ctx| {
             if let Some(cur_state) = cur_state.upgrade() {
                 let cur_state_unlocked = cur_state.lock();
                 if *cur_state_unlocked != prev_state {
