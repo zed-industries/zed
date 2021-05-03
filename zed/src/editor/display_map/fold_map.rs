@@ -269,7 +269,7 @@ impl FoldMap {
                     let next_edit = edits.next().unwrap();
                     delta += next_edit.delta();
 
-                    if next_edit.old_range.end > edit.old_range.end {
+                    if next_edit.old_range.end >= edit.old_range.end {
                         edit.old_range.end = next_edit.old_range.end;
                         cursor.seek(&edit.old_range.end, SeekBias::Right);
                         cursor.next();
@@ -566,14 +566,14 @@ mod tests {
                 assert_eq!(map.text(app.as_ref()), "abcde…ijkl");
 
                 // Create an fold adjacent to the start of the first fold.
-                map.fold(vec![1..1, 2..5], app.as_ref()).unwrap();
+                map.fold(vec![0..1, 2..5], app.as_ref()).unwrap();
                 map.check_invariants(app.as_ref());
-                assert_eq!(map.text(app.as_ref()), "ab…ijkl");
+                assert_eq!(map.text(app.as_ref()), "…b…ijkl");
 
                 // Create an fold adjacent to the end of the first fold.
                 map.fold(vec![11..11, 8..10], app.as_ref()).unwrap();
                 map.check_invariants(app.as_ref());
-                assert_eq!(map.text(app.as_ref()), "ab…kl");
+                assert_eq!(map.text(app.as_ref()), "…b…kl");
             }
 
             {
@@ -677,10 +677,8 @@ mod tests {
                 });
                 let mut map = FoldMap::new(buffer.clone(), app.as_ref());
 
-                for op_ix in 0..operations {
-                    dbg!(op_ix);
-
-                    log::info!("Text: {:?}", buffer.read(app).text());
+                for _ in 0..operations {
+                    log::info!("text: {:?}", buffer.read(app).text());
                     {
                         let buffer = buffer.read(app);
 
@@ -691,7 +689,7 @@ mod tests {
                             let start = rng.gen_range(0..end + 1);
                             fold_ranges.push(start..end);
                         }
-                        log::info!("Folding {:?}", fold_ranges);
+                        log::info!("folding {:?}", fold_ranges);
                         map.fold(fold_ranges.clone(), app.as_ref()).unwrap();
                         map.check_invariants(app.as_ref());
 
@@ -714,7 +712,7 @@ mod tests {
                         buffer.randomly_edit(&mut rng, edit_count, Some(ctx));
                         buffer.edits_since(start_version).collect::<Vec<_>>()
                     });
-                    log::info!("Editing {:?}", edits);
+                    log::info!("editing {:?}", edits);
                     map.apply_edits(&edits, app.as_ref()).unwrap();
                     map.check_invariants(app.as_ref());
 
