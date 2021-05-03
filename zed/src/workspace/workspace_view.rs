@@ -243,30 +243,18 @@ impl WorkspaceView {
 
         self.loading_entries.insert(entry.clone());
 
-        match self.workspace.update(ctx, |workspace, ctx| {
-            workspace.open_entry(entry.clone(), ctx)
-        }) {
-            Err(error) => {
-                error!("{}", error);
-                None
+        let window_id = ctx.window_id();
+        let future = self.workspace.update(ctx, |workspace, ctx| {
+            workspace.open_entry2(entry.clone(), window_id, self.settings.clone(), ctx)
+        });
+
+        Some(ctx.spawn(future, move |me, item_view, ctx| {
+            me.loading_entries.remove(&entry);
+            match item_view {
+                Ok(item_view) => me.add_item(item_view, ctx),
+                Err(error) => log::error!("error opening item: {}", error),
             }
-            Ok(future) => {
-                let settings = self.settings.clone();
-                Some(ctx.spawn(future, move |me, (item, file), ctx| {
-                    me.loading_entries.remove(&entry);
-                    match item {
-                        Ok(item) => {
-                            let item_view =
-                                item.add_view(ctx.window_id(), settings, Some(file), ctx.as_mut());
-                            me.add_item(item_view, ctx);
-                        }
-                        Err(error) => {
-                            error!("{}", error);
-                        }
-                    }
-                }))
-            }
-        }
+        }))
     }
 
     pub fn save_active_item(&mut self, _: &(), ctx: &mut ViewContext<Self>) {

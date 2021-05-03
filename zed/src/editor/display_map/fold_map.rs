@@ -471,7 +471,7 @@ mod tests {
     #[test]
     fn test_basic_folds() {
         App::test((), |app| {
-            let buffer = app.add_model(|ctx| Buffer::new(0, sample_text(5, 6), ctx));
+            let buffer = app.add_model(|ctx| Buffer::new(0, sample_text(5, 6)));
             let mut map = FoldMap::new(buffer.clone(), app.as_ref());
 
             map.fold(
@@ -522,7 +522,7 @@ mod tests {
     #[test]
     fn test_overlapping_folds() {
         App::test((), |app| {
-            let buffer = app.add_model(|ctx| Buffer::new(0, sample_text(5, 6), ctx));
+            let buffer = app.add_model(|_| Buffer::new(0, sample_text(5, 6)));
             let mut map = FoldMap::new(buffer.clone(), app.as_ref());
             map.fold(
                 vec![
@@ -541,7 +541,7 @@ mod tests {
     #[test]
     fn test_merging_folds_via_edit() {
         App::test((), |app| {
-            let buffer = app.add_model(|ctx| Buffer::new(0, sample_text(5, 6), ctx));
+            let buffer = app.add_model(|_| Buffer::new(0, sample_text(5, 6)));
             let mut map = FoldMap::new(buffer.clone(), app.as_ref());
 
             map.fold(
@@ -589,10 +589,10 @@ mod tests {
             let mut rng = StdRng::seed_from_u64(seed);
 
             App::test((), |app| {
-                let buffer = app.add_model(|ctx| {
+                let buffer = app.add_model(|_| {
                     let len = rng.gen_range(0..10);
                     let text = RandomCharIter::new(&mut rng).take(len).collect::<String>();
-                    Buffer::new(0, text, ctx)
+                    Buffer::new(0, text)
                 });
                 let mut map = FoldMap::new(buffer.clone(), app.as_ref());
 
@@ -664,7 +664,7 @@ mod tests {
     fn test_buffer_rows() {
         App::test((), |app| {
             let text = sample_text(6, 6) + "\n";
-            let buffer = app.add_model(|ctx| Buffer::new(0, text, ctx));
+            let buffer = app.add_model(|_| Buffer::new(0, text));
 
             let mut map = FoldMap::new(buffer.clone(), app.as_ref());
 

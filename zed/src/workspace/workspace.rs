@@ -1,14 +1,16 @@
 use super::{ItemView, ItemViewHandle};
 use crate::{
-    editor::{Buffer, History},
+    editor::{Buffer, BufferView, History},
     settings::Settings,
     time::ReplicaId,
     watch,
     worktree::{FileHandle, Worktree, WorktreeHandle as _},
 };
 use anyhow::anyhow;
+use futures_core::future::LocalBoxFuture;
 use gpui::{AppContext, Entity, Handle, ModelContext, ModelHandle, MutableAppContext, ViewContext};
 use smol::prelude::*;
+use std::{collections::hash_map::Entry, future};
 use std::{
     collections::{HashMap, HashSet},
     fmt::Debug,
@@ -82,14 +84,19 @@ pub struct Workspace {
     replica_id: ReplicaId,
     worktrees: HashSet<ModelHandle<Worktree>>,
     items: HashMap<(usize, u64), OpenedItem>,
+    buffers: HashMap<
+        (usize, u64),
+        postage::watch::Receiver<Option<Result<ModelHandle<Buffer>, Arc<anyhow::Error>>>>,
+    >,
 }
 
 impl Workspace {
     pub fn new(paths: Vec<PathBuf>, ctx: &mut ModelContext<Self>) -> Self {
         let mut workspace = Self {
             replica_id: 0,
-            worktrees: HashSet::new(),
-            items: HashMap::new(),
+            worktrees: Default::default(),
+            items: Default::default(),
+            buffers: Default::default(),
         };
         workspace.open_paths(&paths, ctx);
         workspace
@@ -149,6 +156,78 @@ impl Workspace {
         (worktree_id, Path::new("").into())
     }
 
+    pub fn open_entry2(
+        &mut self,
+        (worktree_id, path): (usize, Arc<Path>),
+        window_id: usize,
+        settings: watch::Receiver<Settings>,
+        ctx: &mut ModelContext<Self>,
+    ) -> LocalBoxFuture<'static, Result<Box<dyn ItemViewHandle>, Arc<anyhow::Error>>> {
+        let worktree = match self.worktrees.get(&worktree_id).cloned() {
+            Some(worktree) => worktree,
+            None => {
+                return future::ready(Err(Arc::new(anyhow!(
+                    "worktree {} does not exist",
+                    worktree_id
+                ))))
+                .boxed_local();
+            }
+        };
+
+        let inode = match worktree.read(ctx).inode_for_path(&path) {
+            Some(inode) => inode,
+            None => {
+                return future::ready(Err(Arc::new(anyhow!("path {:?} does not exist", path))))
+                    .boxed_local();
+            }
+        };
+
+        let file = match worktree.file(path.clone(), ctx.as_ref()) {
+            Some(file) => file,
+            None => {
+                return future::ready(Err(Arc::new(anyhow!("path {:?} does not exist", path))))
+                    .boxed_local()
+            }
+        };
+
+        if let Entry::Vacant(entry) = self.buffers.entry((worktree_id, inode)) {
+            let (mut tx, rx) = postage::watch::channel();
+            entry.insert(rx);
+            let history = file.load_history(ctx.as_ref());
+            let replica_id = self.replica_id;
+            let buffer = ctx
+                .background_executor()
+                .spawn(async move { Ok(Buffer::from_history(replica_id, history.await?)) });
+            ctx.spawn(buffer, move |_, from_history_result, ctx| {
+                *tx.borrow_mut() = Some(match from_history_result {
+                    Ok(buffer) => Ok(ctx.add_model(|_| buffer)),
+                    Err(error) => Err(Arc::new(error)),
+                })
+            })
+            .detach()
+        }
+
+        let mut watch = self.buffers.get(&(worktree_id, inode)).unwrap().clone();
+        ctx.spawn(
+            async move {
+                loop {
+                    if let Some(load_result) = watch.borrow().as_ref() {
+                        return load_result.clone();
+                    }
+                    watch.next().await;
+                }
+            },
+            move |_, load_result, ctx| {
+                load_result.map(|buffer_handle| {
+                    Box::new(ctx.as_mut().add_view(window_id, |ctx| {
+                        BufferView::for_buffer(buffer_handle, Some(file), settings, ctx)
+                    })) as Box<dyn ItemViewHandle>
+                })
+            },
+        )
+        .boxed_local()
+    }
+
     pub fn open_entry(
         &mut self,
         (worktree_id, path): (usize, Arc<Path>),
@@ -165,7 +244,9 @@ impl Workspace {
             .inode_for_path(&path)
             .ok_or_else(|| anyhow!("path {:?} does not exist", path))?;
 
-        let file = worktree.file(path.clone(), ctx.as_ref())?;
+        let file = worktree
+            .file(path.clone(), ctx.as_ref())
+            .ok_or_else(|| anyhow!("path {:?} does not exist", path))?;
 
         let item_key = (worktree_id, inode);
         if let Some(item) = self.items.get(&item_key).cloned() {
@@ -195,9 +276,9 @@ impl Workspace {
             history,
             move |me, history: anyhow::Result<History>, ctx| match history {
                 Ok(history) => {
-                    let handle = Box::new(
-                        ctx.add_model(|ctx| Buffer::from_history(replica_id, history, ctx)),
-                    ) as Box<dyn ItemHandle>;
+                    let handle =
+                        Box::new(ctx.add_model(|_| Buffer::from_history(replica_id, history)))
+                            as Box<dyn ItemHandle>;
                     me.items
                         .insert(item_key, OpenedItem::Loaded(handle.clone()));
                     ctx.spawn(

@@ -7,7 +7,7 @@ use crate::{
     sum_tree::{self, Cursor, Edit, SeekBias, SumTree},
 };
 use ::ignore::gitignore::Gitignore;
-use anyhow::{anyhow, Context, Result};
+use anyhow::{Context, Result};
 pub use fuzzy::{match_paths, PathMatch};
 use gpui::{scoped_pool, AppContext, Entity, ModelContext, ModelHandle, Task, View, ViewContext};
 use lazy_static::lazy_static;
@@ -1126,15 +1126,14 @@ struct UpdateIgnoreStatusJob {
 }
 
 pub trait WorktreeHandle {
-    fn file(&self, path: impl AsRef<Path>, app: &AppContext) -> Result<FileHandle>;
+    fn file(&self, path: impl AsRef<Path>, app: &AppContext) -> Option<FileHandle>;
 }
 
 impl WorktreeHandle for ModelHandle<Worktree> {
-    fn file(&self, path: impl AsRef<Path>, app: &AppContext) -> Result<FileHandle> {
+    fn file(&self, path: impl AsRef<Path>, app: &AppContext) -> Option<FileHandle> {
         let tree = self.read(app);
-        let entry = tree
-            .entry_for_path(&path)
-            .ok_or_else(|| anyhow!("path does not exist in tree"))?;
+        let entry = tree.entry_for_path(&path)?;
+
         let path = entry.path().clone();
         let mut handles = tree.handles.lock();
         let state = if let Some(state) = handles.get(&path).and_then(Weak::upgrade) {
@@ -1148,7 +1147,7 @@ impl WorktreeHandle for ModelHandle<Worktree> {
             state
         };
 
-        Ok(FileHandle {
+        Some(FileHandle {
             worktree: self.clone(),
             state,
         })
@@ -1347,8 +1346,7 @@ mod tests {
             app.read(|ctx| tree.read(ctx).scan_complete()).await;
             app.read(|ctx| assert_eq!(tree.read(ctx).file_count(), 1));
 
-            let buffer =
-                app.add_model(|ctx| Buffer::new(1, "a line of text.\n".repeat(10 * 1024), ctx));
+            let buffer = app.add_model(|_| Buffer::new(1, "a line of text.\n".repeat(10 * 1024)));
 
             let path = tree.update(&mut app, |tree, ctx| {
                 let path = tree.files(0).next().unwrap().path().clone();
