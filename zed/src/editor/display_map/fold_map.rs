@@ -554,6 +554,50 @@ mod tests {
     }
 
     #[test]
+    fn test_adjacent_folds() {
+        App::test((), |app| {
+            let buffer = app.add_model(|ctx| Buffer::new(0, "abcdefghijkl", ctx));
+
+            {
+                let mut map = FoldMap::new(buffer.clone(), app.as_ref());
+
+                map.fold(vec![5..8], app.as_ref()).unwrap();
+                map.check_invariants(app.as_ref());
+                assert_eq!(map.text(app.as_ref()), "abcde…ijkl");
+
+                // Create an fold adjacent to the start of the first fold.
+                map.fold(vec![1..1, 2..5], app.as_ref()).unwrap();
+                map.check_invariants(app.as_ref());
+                assert_eq!(map.text(app.as_ref()), "ab…ijkl");
+
+                // Create an fold adjacent to the end of the first fold.
+                map.fold(vec![11..11, 8..10], app.as_ref()).unwrap();
+                map.check_invariants(app.as_ref());
+                assert_eq!(map.text(app.as_ref()), "ab…kl");
+            }
+
+            {
+                let mut map = FoldMap::new(buffer.clone(), app.as_ref());
+
+                // Create two adjacent folds.
+                map.fold(vec![0..2, 2..5], app.as_ref()).unwrap();
+                map.check_invariants(app.as_ref());
+                assert_eq!(map.text(app.as_ref()), "…fghijkl");
+
+                // Edit within one of the folds.
+                let edits = buffer.update(app, |buffer, ctx| {
+                    let version = buffer.version();
+                    buffer.edit(vec![0..1], "12345", Some(ctx)).unwrap();
+                    buffer.edits_since(version).collect::<Vec<_>>()
+                });
+                map.apply_edits(edits.as_slice(), app.as_ref()).unwrap();
+                map.check_invariants(app.as_ref());
+                assert_eq!(map.text(app.as_ref()), "12345…fghijkl");
+            }
+        });
+    }
+
+    #[test]
     fn test_overlapping_folds() {
         App::test((), |app| {
             let buffer = app.add_model(|ctx| Buffer::new(0, sample_text(5, 6), ctx));
@@ -621,8 +665,6 @@ mod tests {
             0..iterations
         };
 
-        let operations = 2;
-        let seed_range = 133..=133;
         for seed in seed_range {
             println!("{:?}", seed);
             let mut rng = StdRng::seed_from_u64(seed);
@@ -650,11 +692,8 @@ mod tests {
                             fold_ranges.push(start..end);
                         }
                         log::info!("Folding {:?}", fold_ranges);
-                        if op_ix == 1 {
-                            dbg!("stopping");
-                        }
                         map.fold(fold_ranges.clone(), app.as_ref()).unwrap();
-                        assert_eq!(map.transforms.summary().buffer.chars, buffer.len());
+                        map.check_invariants(app.as_ref());
 
                         let mut expected_text = buffer.text();
                         for fold_range in map.merged_fold_ranges(app.as_ref()).into_iter().rev() {
@@ -677,10 +716,7 @@ mod tests {
                     });
                     log::info!("Editing {:?}", edits);
                     map.apply_edits(&edits, app.as_ref()).unwrap();
-                    assert_eq!(
-                        map.transforms.summary().buffer.chars,
-                        buffer.read(app).len()
-                    );
+                    map.check_invariants(app.as_ref());
 
                     let buffer = map.buffer.read(app);
                     let mut expected_text = buffer.text();
@@ -771,6 +807,14 @@ mod tests {
                 }
             }
             merged_ranges
+        }
+
+        fn check_invariants(&self, app: &AppContext) {
+            assert_eq!(
+                self.transforms.summary().buffer.chars,
+                self.buffer.read(app).len(),
+                "transform tree does not match buffer's length"
+            );
         }
     }
 }
