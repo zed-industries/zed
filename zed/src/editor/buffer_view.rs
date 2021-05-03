@@ -761,8 +761,8 @@ impl BufferView {
         // Restore bias on selections.
         let buffer = self.buffer.read(ctx);
         for selection in &mut selections {
-            selection.start = selection.start.bias_right(buffer).unwrap();
-            selection.end = selection.end.bias_right(buffer).unwrap();
+            selection.start = selection.start.bias_left(buffer).unwrap();
+            selection.end = selection.end.bias_left(buffer).unwrap();
         }
         self.update_selections(selections, true, ctx);
 
@@ -777,19 +777,22 @@ impl BufferView {
         let map = self.display_map.read(ctx);
 
         let mut edits = Vec::new();
-        let selections = self.selections(ctx.as_ref()).to_vec();
-        let mut selections_iter = selections.iter().peekable();
-        while let Some(selection) = selections_iter.next() {
+        let mut new_selection_ranges = Vec::new();
+        let mut selections = self.selections(app).iter().peekable();
+        let mut contiguous_selections = Vec::new();
+        while let Some(selection) = selections.next() {
             // Accumulate contiguous regions of rows that we want to move.
+            contiguous_selections.push(selection.range(buffer));
             let (mut buffer_rows, mut display_rows) =
                 selection.buffer_rows_for_display_rows(map, app);
-            while let Some(next_selection) = selections_iter.peek() {
+            while let Some(next_selection) = selections.peek() {
                 let (next_buffer_rows, next_display_rows) =
                     next_selection.buffer_rows_for_display_rows(map, app);
                 if next_buffer_rows.start <= buffer_rows.end {
                     buffer_rows.end = next_buffer_rows.end;
                     display_rows.end = next_display_rows.end;
-                    selections_iter.next().unwrap();
+                    contiguous_selections.push(next_selection.range(buffer));
+                    selections.next().unwrap();
                 } else {
                     break;
                 }
@@ -824,7 +827,14 @@ impl BufferView {
                 );
                 edits.push((prev_line_start..prev_line_end + 1, String::new()));
                 edits.push((selection_line_end..selection_line_end, text));
+
+                // Move selections to the previous line.
+                for range in &mut contiguous_selections {
+                    range.start.row -= 1;
+                    range.end.row -= 1;
+                }
             }
+            new_selection_ranges.extend(contiguous_selections.drain(..));
         }
 
         self.buffer.update(ctx, |buffer, ctx| {
@@ -832,43 +842,48 @@ impl BufferView {
                 buffer.edit(Some(range), text, Some(ctx)).unwrap();
             }
         });
-        self.update_selections(selections, true, ctx);
+
+        let buffer = self.buffer.read(ctx);
+        let mut new_selections = Vec::new();
+        for range in new_selection_ranges {
+            let start = cmp::min(range.start, range.end);
+            let end = cmp::max(range.start, range.end);
+            new_selections.push(Selection {
+                start: buffer.anchor_before(start).unwrap(),
+                end: buffer.anchor_before(end).unwrap(),
+                reversed: range.start > range.end,
+                goal_column: None,
+            });
+        }
+        self.update_selections(new_selections, true, ctx);
+
         self.end_transaction(ctx);
     }
 
     pub fn move_line_down(&mut self, _: &(), ctx: &mut ViewContext<Self>) {
         self.start_transaction(ctx);
 
-        let mut selections = self.selections(ctx.as_ref()).to_vec();
-        {
-            // Temporarily bias selections right to allow moved lines to push them down when the
-            // selections are at the beginning of a line.
-            let buffer = self.buffer.read(ctx);
-            for selection in &mut selections {
-                selection.start = selection.start.bias_right(buffer).unwrap();
-                selection.end = selection.end.bias_right(buffer).unwrap();
-            }
-        }
-        self.update_selections(selections.clone(), false, ctx);
-
         let app = ctx.as_ref();
         let buffer = self.buffer.read(ctx);
         let map = self.display_map.read(ctx);
 
         let mut edits = Vec::new();
-        let selections = self.selections(ctx.as_ref()).to_vec();
-        let mut selections_iter = selections.iter().peekable();
-        while let Some(selection) = selections_iter.next() {
+        let mut new_selection_ranges = Vec::new();
+        let mut selections = self.selections(app).iter().peekable();
+        let mut contiguous_selections = Vec::new();
+        while let Some(selection) = selections.next() {
             // Accumulate contiguous regions of rows that we want to move.
+            contiguous_selections.push(selection.range(buffer));
             let (mut buffer_rows, mut display_rows) =
                 selection.buffer_rows_for_display_rows(map, app);
-            while let Some(next_selection) = selections_iter.peek() {
+            while let Some(next_selection) = selections.peek() {
                 let (next_buffer_rows, next_display_rows) =
                     next_selection.buffer_rows_for_display_rows(map, app);
                 if next_buffer_rows.start <= buffer_rows.end {
                     buffer_rows.end = next_buffer_rows.end;
                     display_rows.end = next_display_rows.end;
-                    selections_iter.next().unwrap();
+                    contiguous_selections.push(next_selection.range(buffer));
+                    selections.next().unwrap();
                 } else {
                     break;
                 }
@@ -896,7 +911,14 @@ impl BufferView {
                 text.push('\n');
                 edits.push((selection_line_start..selection_line_start, text));
                 edits.push((next_line_start - 1..next_line_end, String::new()));
+
+                // Move selections to the next line.
+                for range in &mut contiguous_selections {
+                    range.start.row += 1;
+                    range.end.row += 1;
+                }
             }
+            new_selection_ranges.extend(contiguous_selections.drain(..));
         }
 
         self.buffer.update(ctx, |buffer, ctx| {
@@ -905,16 +927,19 @@ impl BufferView {
             }
         });
 
-        let mut selections = self.selections(ctx.as_ref()).to_vec();
-        {
-            // Restore bias on selections.
-            let buffer = self.buffer.read(ctx);
-            for selection in &mut selections {
-                selection.start = selection.start.bias_left(buffer).unwrap();
-                selection.end = selection.end.bias_left(buffer).unwrap();
-            }
+        let buffer = self.buffer.read(ctx);
+        let mut new_selections = Vec::new();
+        for range in new_selection_ranges {
+            let start = cmp::min(range.start, range.end);
+            let end = cmp::max(range.start, range.end);
+            new_selections.push(Selection {
+                start: buffer.anchor_before(start).unwrap(),
+                end: buffer.anchor_before(end).unwrap(),
+                reversed: range.start > range.end,
+                goal_column: None,
+            });
         }
-        self.update_selections(selections, true, ctx);
+        self.update_selections(new_selections, true, ctx);
 
         self.end_transaction(ctx);
     }

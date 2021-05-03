@@ -84,7 +84,7 @@ impl Selection {
             .unwrap();
 
         let mut display_end = self.end.to_display_point(map, ctx).unwrap();
-        if display_end != map.max_point(ctx)
+        if display_end.row() != map.max_point(ctx).row()
             && display_start.row() != display_end.row()
             && display_end.column() == 0
         {
