@@ -19,6 +19,7 @@ use std::{
     cmp::{self, Ordering},
     fmt::Write,
     iter::FromIterator,
+    mem,
     ops::Range,
     path::Path,
     sync::Arc,
@@ -468,23 +469,30 @@ impl BufferView {
         self.pending_selection.is_some()
     }
 
-    #[cfg(test)]
-    fn select_ranges<'a, T>(&mut self, ranges: T, ctx: &mut ViewContext<Self>) -> Result<()>
+    fn select_ranges<I, T>(&mut self, ranges: I, autoscroll: bool, ctx: &mut ViewContext<Self>)
     where
-        T: IntoIterator<Item = &'a Range<usize>>,
+        I: IntoIterator<Item = Range<T>>,
+        T: ToOffset,
     {
         let buffer = self.buffer.read(ctx);
         let mut selections = Vec::new();
         for range in ranges {
+            let mut start = range.start.to_offset(buffer).unwrap();
+            let mut end = range.end.to_offset(buffer).unwrap();
+            let reversed = if start > end {
+                mem::swap(&mut start, &mut end);
+                true
+            } else {
+                false
+            };
             selections.push(Selection {
-                start: buffer.anchor_before(range.start)?,
-                end: buffer.anchor_before(range.end)?,
-                reversed: false,
+                start: buffer.anchor_before(start).unwrap(),
+                end: buffer.anchor_before(end).unwrap(),
+                reversed,
                 goal_column: None,
             });
         }
-        self.update_selections(selections, false, ctx);
-        Ok(())
+        self.update_selections(selections, autoscroll, ctx);
     }
 
     #[cfg(test)]
@@ -492,8 +500,6 @@ impl BufferView {
     where
         T: IntoIterator<Item = &'a Range<DisplayPoint>>,
     {
-        use std::mem;
-
         let map = self.display_map.read(ctx);
         let mut selections = Vec::new();
         for range in ranges {
@@ -824,10 +830,15 @@ impl BufferView {
                 edits.push((prev_row_start..prev_row_start, text));
                 edits.push((selection_row_start - 1..selection_row_end, String::new()));
 
-                // Move selections to the previous line.
+                // Move selections up.
+                let row_delta = buffer_rows.start
+                    - prev_row_display_start
+                        .to_buffer_point(map, Bias::Left, app)
+                        .unwrap()
+                        .row;
                 for range in &mut contiguous_selections {
-                    range.start.row -= 1;
-                    range.end.row -= 1;
+                    range.start.row -= row_delta;
+                    range.end.row -= row_delta;
                 }
             }
             new_selection_ranges.extend(contiguous_selections.drain(..));
@@ -838,20 +849,7 @@ impl BufferView {
                 buffer.edit(Some(range), text, Some(ctx)).unwrap();
             }
         });
-
-        let buffer = self.buffer.read(ctx);
-        let mut new_selections = Vec::new();
-        for range in new_selection_ranges {
-            let start = cmp::min(range.start, range.end);
-            let end = cmp::max(range.start, range.end);
-            new_selections.push(Selection {
-                start: buffer.anchor_before(start).unwrap(),
-                end: buffer.anchor_before(end).unwrap(),
-                reversed: range.start > range.end,
-                goal_column: None,
-            });
-        }
-        self.update_selections(new_selections, true, ctx);
+        self.select_ranges(new_selection_ranges, true, ctx);
 
         self.end_transaction(ctx);
     }
@@ -914,10 +912,16 @@ impl BufferView {
                 edits.push((selection_row_start..selection_row_end + 1, String::new()));
                 edits.push((next_row_end..next_row_end, text));
 
-                // Move selections to the next line.
+                // Move selections down.
+                let row_delta = next_row_display_end
+                    .to_buffer_point(map, Bias::Right, app)
+                    .unwrap()
+                    .row
+                    - buffer_rows.end
+                    + 1;
                 for range in &mut contiguous_selections {
-                    range.start.row += 1;
-                    range.end.row += 1;
+                    range.start.row += row_delta;
+                    range.end.row += row_delta;
                 }
             }
             new_selection_ranges.extend(contiguous_selections.drain(..));
@@ -928,20 +932,7 @@ impl BufferView {
                 buffer.edit(Some(range), text, Some(ctx)).unwrap();
             }
         });
-
-        let buffer = self.buffer.read(ctx);
-        let mut new_selections = Vec::new();
-        for range in new_selection_ranges {
-            let start = cmp::min(range.start, range.end);
-            let end = cmp::max(range.start, range.end);
-            new_selections.push(Selection {
-                start: buffer.anchor_before(start).unwrap(),
-                end: buffer.anchor_before(end).unwrap(),
-                reversed: range.start > range.end,
-                goal_column: None,
-            });
-        }
-        self.update_selections(new_selections, true, ctx);
+        self.select_ranges(new_selection_ranges, true, ctx);
 
         self.end_transaction(ctx);
     }
@@ -2597,14 +2588,14 @@ mod tests {
 
             // Cut with three selections. Clipboard text is divided into three slices.
             view.update(app, |view, ctx| {
-                view.select_ranges(&[0..4, 8..14, 19..24], ctx).unwrap();
+                view.select_ranges(vec![0..4, 8..14, 19..24], false, ctx);
                 view.cut(&(), ctx);
             });
             assert_eq!(view.read(app).text(app.as_ref()), "two four six ");
 
             // Paste with three cursors. Each cursor pastes one slice of the clipboard text.
             view.update(app, |view, ctx| {
-                view.select_ranges(&[4..4, 9..9, 13..13], ctx).unwrap();
+                view.select_ranges(vec![4..4, 9..9, 13..13], false, ctx);
                 view.paste(&(), ctx);
             });
             assert_eq!(
@@ -2624,7 +2615,7 @@ mod tests {
             // match the number of slices in the clipboard, the entire clipboard text
             // is pasted at each cursor.
             view.update(app, |view, ctx| {
-                view.select_ranges(&[0..0, 28..28], ctx).unwrap();
+                view.select_ranges(vec![0..0, 28..28], false, ctx);
                 view.insert(&"( ".to_string(), ctx);
                 view.paste(&(), ctx);
                 view.insert(&") ".to_string(), ctx);
@@ -2635,7 +2626,7 @@ mod tests {
             );
 
             view.update(app, |view, ctx| {
-                view.select_ranges(&[0..0], ctx).unwrap();
+                view.select_ranges(vec![0..0], false, ctx);
                 view.insert(&"123\n4567\n89\n".to_string(), ctx);
             });
             assert_eq!(
