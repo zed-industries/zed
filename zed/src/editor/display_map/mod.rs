@@ -179,6 +179,11 @@ impl DisplayPoint {
             .to_buffer_point(self.collapse_tabs(map, bias, app)?.0))
     }
 
+    pub fn to_buffer_offset(self, map: &DisplayMap, bias: Bias, app: &AppContext) -> Result<usize> {
+        map.fold_map
+            .to_buffer_offset(self.collapse_tabs(map, bias, app)?.0, app)
+    }
+
     fn expand_tabs(mut self, map: &DisplayMap, app: &AppContext) -> Result<Self> {
         let chars = map
             .fold_map

@@ -169,6 +169,13 @@ impl FoldMap {
         false
     }
 
+    pub fn to_buffer_offset(&self, point: DisplayPoint, app: &AppContext) -> Result<usize> {
+        let mut cursor = self.transforms.cursor::<DisplayPoint, TransformSummary>();
+        cursor.seek(&point, SeekBias::Right);
+        let overshoot = point.0 - cursor.start().display.lines;
+        (cursor.start().buffer.lines + overshoot).to_offset(self.buffer.read(app))
+    }
+
     pub fn to_display_offset(
         &self,
         point: DisplayPoint,

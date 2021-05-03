@@ -46,6 +46,8 @@ pub fn init(app: &mut MutableAppContext) {
             Some("BufferView"),
         ),
         Binding::new("cmd-shift-D", "buffer:duplicate_line", Some("BufferView")),
+        Binding::new("ctrl-cmd-up", "buffer:move_line_up", Some("BufferView")),
+        Binding::new("ctrl-cmd-down", "buffer:move_line_down", Some("BufferView")),
         Binding::new("cmd-x", "buffer:cut", Some("BufferView")),
         Binding::new("cmd-c", "buffer:copy", Some("BufferView")),
         Binding::new("cmd-v", "buffer:paste", Some("BufferView")),
@@ -133,6 +135,8 @@ pub fn init(app: &mut MutableAppContext) {
         BufferView::delete_to_end_of_line,
     );
     app.add_action("buffer:duplicate_line", BufferView::duplicate_line);
+    app.add_action("buffer:move_line_up", BufferView::move_line_up);
+    app.add_action("buffer:move_line_down", BufferView::move_line_down);
     app.add_action("buffer:cut", BufferView::cut);
     app.add_action("buffer:copy", BufferView::copy);
     app.add_action("buffer:paste", BufferView::paste);
@@ -639,7 +643,7 @@ impl BufferView {
 
         let mut selections = self.selections(app).iter().peekable();
         while let Some(selection) = selections.next() {
-            let mut rows = selection.buffer_rows_for_display_rows(map, app);
+            let (mut rows, _) = selection.buffer_rows_for_display_rows(map, app);
             let goal_display_column = selection
                 .head()
                 .to_display_point(map, app)
@@ -648,7 +652,7 @@ impl BufferView {
 
             // Accumulate contiguous regions of rows that we want to delete.
             while let Some(next_selection) = selections.peek() {
-                let next_rows = next_selection.buffer_rows_for_display_rows(map, app);
+                let (next_rows, _) = next_selection.buffer_rows_for_display_rows(map, app);
                 if next_rows.start <= rows.end {
                     rows.end = next_rows.end;
                     selections.next().unwrap();
@@ -696,10 +700,10 @@ impl BufferView {
                 goal_column: None,
             })
             .collect();
-        self.update_selections(new_selections, true, ctx);
         self.buffer
             .update(ctx, |buffer, ctx| buffer.edit(edit_ranges, "", Some(ctx)))
             .unwrap();
+        self.update_selections(new_selections, true, ctx);
         self.end_transaction(ctx);
     }
 
@@ -726,9 +730,9 @@ impl BufferView {
         let mut selections_iter = selections.iter_mut().peekable();
         while let Some(selection) = selections_iter.next() {
             // Avoid duplicating the same lines twice.
-            let mut rows = selection.buffer_rows_for_display_rows(map, app);
+            let (mut rows, _) = selection.buffer_rows_for_display_rows(map, app);
             while let Some(next_selection) = selections_iter.peek() {
-                let next_rows = next_selection.buffer_rows_for_display_rows(map, app);
+                let (next_rows, _) = next_selection.buffer_rows_for_display_rows(map, app);
                 if next_rows.start <= rows.end - 1 {
                     rows.end = next_rows.end;
                     selections_iter.next().unwrap();
@@ -759,6 +763,156 @@ impl BufferView {
         for selection in &mut selections {
             selection.start = selection.start.bias_right(buffer).unwrap();
             selection.end = selection.end.bias_right(buffer).unwrap();
+        }
+        self.update_selections(selections, true, ctx);
+
+        self.end_transaction(ctx);
+    }
+
+    pub fn move_line_up(&mut self, _: &(), ctx: &mut ViewContext<Self>) {
+        self.start_transaction(ctx);
+
+        let app = ctx.as_ref();
+        let buffer = self.buffer.read(ctx);
+        let map = self.display_map.read(ctx);
+
+        let mut edits = Vec::new();
+        let selections = self.selections(ctx.as_ref()).to_vec();
+        let mut selections_iter = selections.iter().peekable();
+        while let Some(selection) = selections_iter.next() {
+            // Accumulate contiguous regions of rows that we want to move.
+            let (mut buffer_rows, mut display_rows) =
+                selection.buffer_rows_for_display_rows(map, app);
+            while let Some(next_selection) = selections_iter.peek() {
+                let (next_buffer_rows, next_display_rows) =
+                    next_selection.buffer_rows_for_display_rows(map, app);
+                if next_buffer_rows.start <= buffer_rows.end {
+                    buffer_rows.end = next_buffer_rows.end;
+                    display_rows.end = next_display_rows.end;
+                    selections_iter.next().unwrap();
+                } else {
+                    break;
+                }
+            }
+
+            // Cut the text from the previous line and paste it at the end of the selected region.
+            if display_rows.start != 0 {
+                let selection_line_end = Point::new(
+                    buffer_rows.end - 1,
+                    buffer.line_len(buffer_rows.end - 1).unwrap(),
+                )
+                .to_offset(buffer)
+                .unwrap();
+                let prev_line_display_start = DisplayPoint::new(display_rows.start - 1, 0);
+                let prev_line_display_end = DisplayPoint::new(
+                    prev_line_display_start.row(),
+                    map.line_len(prev_line_display_start.row(), app).unwrap(),
+                );
+                let prev_line_start = prev_line_display_start
+                    .to_buffer_offset(map, Bias::Left, app)
+                    .unwrap();
+                let prev_line_end = prev_line_display_end
+                    .to_buffer_offset(map, Bias::Right, app)
+                    .unwrap();
+
+                let mut text = String::new();
+                text.push('\n');
+                text.extend(
+                    buffer
+                        .text_for_range(prev_line_start..prev_line_end)
+                        .unwrap(),
+                );
+                edits.push((prev_line_start..prev_line_end + 1, String::new()));
+                edits.push((selection_line_end..selection_line_end, text));
+            }
+        }
+
+        self.buffer.update(ctx, |buffer, ctx| {
+            for (range, text) in edits.into_iter().rev() {
+                buffer.edit(Some(range), text, Some(ctx)).unwrap();
+            }
+        });
+        self.update_selections(selections, true, ctx);
+        self.end_transaction(ctx);
+    }
+
+    pub fn move_line_down(&mut self, _: &(), ctx: &mut ViewContext<Self>) {
+        self.start_transaction(ctx);
+
+        let mut selections = self.selections(ctx.as_ref()).to_vec();
+        {
+            // Temporarily bias selections right to allow moved lines to push them down when the
+            // selections are at the beginning of a line.
+            let buffer = self.buffer.read(ctx);
+            for selection in &mut selections {
+                selection.start = selection.start.bias_right(buffer).unwrap();
+                selection.end = selection.end.bias_right(buffer).unwrap();
+            }
+        }
+        self.update_selections(selections.clone(), false, ctx);
+
+        let app = ctx.as_ref();
+        let buffer = self.buffer.read(ctx);
+        let map = self.display_map.read(ctx);
+
+        let mut edits = Vec::new();
+        let selections = self.selections(ctx.as_ref()).to_vec();
+        let mut selections_iter = selections.iter().peekable();
+        while let Some(selection) = selections_iter.next() {
+            // Accumulate contiguous regions of rows that we want to move.
+            let (mut buffer_rows, mut display_rows) =
+                selection.buffer_rows_for_display_rows(map, app);
+            while let Some(next_selection) = selections_iter.peek() {
+                let (next_buffer_rows, next_display_rows) =
+                    next_selection.buffer_rows_for_display_rows(map, app);
+                if next_buffer_rows.start <= buffer_rows.end {
+                    buffer_rows.end = next_buffer_rows.end;
+                    display_rows.end = next_display_rows.end;
+                    selections_iter.next().unwrap();
+                } else {
+                    break;
+                }
+            }
+
+            // Cut the text from the following line and paste it at the start of the selected region.
+            if buffer_rows.end <= buffer.max_point().row {
+                let selection_line_start =
+                    Point::new(buffer_rows.start, 0).to_offset(buffer).unwrap();
+                let next_line_display_end = DisplayPoint::new(
+                    display_rows.end,
+                    map.line_len(display_rows.end, app).unwrap(),
+                );
+                let next_line_start = Point::new(buffer_rows.end, 0).to_offset(buffer).unwrap();
+                let next_line_end = next_line_display_end
+                    .to_buffer_offset(map, Bias::Right, app)
+                    .unwrap();
+
+                let mut text = String::new();
+                text.extend(
+                    buffer
+                        .text_for_range(next_line_start..next_line_end)
+                        .unwrap(),
+                );
+                text.push('\n');
+                edits.push((selection_line_start..selection_line_start, text));
+                edits.push((next_line_start - 1..next_line_end, String::new()));
+            }
+        }
+
+        self.buffer.update(ctx, |buffer, ctx| {
+            for (range, text) in edits.into_iter().rev() {
+                buffer.edit(Some(range), text, Some(ctx)).unwrap();
+            }
+        });
+
+        let mut selections = self.selections(ctx.as_ref()).to_vec();
+        {
+            // Restore bias on selections.
+            let buffer = self.buffer.read(ctx);
+            for selection in &mut selections {
+                selection.start = selection.start.bias_left(buffer).unwrap();
+                selection.end = selection.end.bias_left(buffer).unwrap();
+            }
         }
         self.update_selections(selections, true, ctx);
 
@@ -1175,9 +1329,11 @@ impl BufferView {
     }
 
     pub fn move_to_beginning(&mut self, _: &(), ctx: &mut ViewContext<Self>) {
+        let buffer = self.buffer.read(ctx);
+        let cursor = buffer.anchor_before(Point::new(0, 0)).unwrap();
         let selection = Selection {
-            start: Anchor::Start,
-            end: Anchor::Start,
+            start: cursor.clone(),
+            end: cursor,
             reversed: false,
             goal_column: None,
         };
@@ -1191,9 +1347,11 @@ impl BufferView {
     }
 
     pub fn move_to_end(&mut self, _: &(), ctx: &mut ViewContext<Self>) {
+        let buffer = self.buffer.read(ctx);
+        let cursor = buffer.anchor_before(buffer.max_point()).unwrap();
         let selection = Selection {
-            start: Anchor::End,
-            end: Anchor::End,
+            start: cursor.clone(),
+            end: cursor,
             reversed: false,
             goal_column: None,
         };
