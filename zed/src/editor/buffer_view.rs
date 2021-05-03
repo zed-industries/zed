@@ -798,35 +798,31 @@ impl BufferView {
                 }
             }
 
-            // Cut the text from the previous line and paste it at the end of the selected region.
+            // Cut the text from the selected rows and paste it at the start of the previous line.
             if display_rows.start != 0 {
-                let selection_line_end = Point::new(
+                let selection_row_start =
+                    Point::new(buffer_rows.start, 0).to_offset(buffer).unwrap();
+                let selection_row_end = Point::new(
                     buffer_rows.end - 1,
                     buffer.line_len(buffer_rows.end - 1).unwrap(),
                 )
                 .to_offset(buffer)
                 .unwrap();
-                let prev_line_display_start = DisplayPoint::new(display_rows.start - 1, 0);
-                let prev_line_display_end = DisplayPoint::new(
-                    prev_line_display_start.row(),
-                    map.line_len(prev_line_display_start.row(), app).unwrap(),
-                );
-                let prev_line_start = prev_line_display_start
+
+                let prev_row_display_start = DisplayPoint::new(display_rows.start - 1, 0);
+                let prev_row_start = prev_row_display_start
                     .to_buffer_offset(map, Bias::Left, app)
-                    .unwrap();
-                let prev_line_end = prev_line_display_end
-                    .to_buffer_offset(map, Bias::Right, app)
                     .unwrap();
 
                 let mut text = String::new();
-                text.push('\n');
                 text.extend(
                     buffer
-                        .text_for_range(prev_line_start..prev_line_end)
+                        .text_for_range(selection_row_start..selection_row_end)
                         .unwrap(),
                 );
-                edits.push((prev_line_start..prev_line_end + 1, String::new()));
-                edits.push((selection_line_end..selection_line_end, text));
+                text.push('\n');
+                edits.push((prev_row_start..prev_row_start, text));
+                edits.push((selection_row_start - 1..selection_row_end, String::new()));
 
                 // Move selections to the previous line.
                 for range in &mut contiguous_selections {
@@ -889,28 +885,34 @@ impl BufferView {
                 }
             }
 
-            // Cut the text from the following line and paste it at the start of the selected region.
-            if buffer_rows.end <= buffer.max_point().row {
-                let selection_line_start =
+            // Cut the text from the selected rows and paste it at the end of the next line.
+            if display_rows.end <= map.max_point(app).row() {
+                let selection_row_start =
                     Point::new(buffer_rows.start, 0).to_offset(buffer).unwrap();
-                let next_line_display_end = DisplayPoint::new(
+                let selection_row_end = Point::new(
+                    buffer_rows.end - 1,
+                    buffer.line_len(buffer_rows.end - 1).unwrap(),
+                )
+                .to_offset(buffer)
+                .unwrap();
+
+                let next_row_display_end = DisplayPoint::new(
                     display_rows.end,
                     map.line_len(display_rows.end, app).unwrap(),
                 );
-                let next_line_start = Point::new(buffer_rows.end, 0).to_offset(buffer).unwrap();
-                let next_line_end = next_line_display_end
-                    .to_buffer_offset(map, Bias::Right, app)
+                let next_row_end = next_row_display_end
+                    .to_buffer_offset(map, Bias::Left, app)
                     .unwrap();
 
                 let mut text = String::new();
+                text.push('\n');
                 text.extend(
                     buffer
-                        .text_for_range(next_line_start..next_line_end)
+                        .text_for_range(selection_row_start..selection_row_end)
                         .unwrap(),
                 );
-                text.push('\n');
-                edits.push((selection_line_start..selection_line_start, text));
-                edits.push((next_line_start - 1..next_line_end, String::new()));
+                edits.push((selection_row_start..selection_row_end + 1, String::new()));
+                edits.push((next_row_end..next_row_end, text));
 
                 // Move selections to the next line.
                 for range in &mut contiguous_selections {
