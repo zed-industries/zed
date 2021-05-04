@@ -1,25 +1,99 @@
-use super::{pane, Pane, PaneGroup, SplitDirection, Workspace};
-use crate::{settings::Settings, watch};
-use futures_core::{future::LocalBoxFuture, Future};
-use gpui::{
-    color::rgbu, elements::*, json::to_string_pretty, keymap::Binding, AnyViewHandle, AppContext,
-    ClipboardItem, Entity, EntityTask, ModelHandle, MutableAppContext, View, ViewContext,
-    ViewHandle,
-};
-use log::error;
-use std::{
-    collections::HashSet,
-    path::{Path, PathBuf},
-    sync::Arc,
-};
+pub mod pane;
+pub mod pane_group;
+pub use pane::*;
+pub use pane_group::*;
 
+use crate::{
+    settings::Settings,
+    watch::{self, Receiver},
+};
+use gpui::{MutableAppContext, PathPromptOptions};
+use std::path::PathBuf;
 pub fn init(app: &mut MutableAppContext) {
-    app.add_action("workspace:save", WorkspaceView::save_active_item);
-    app.add_action("workspace:debug_elements", WorkspaceView::debug_elements);
+    app.add_global_action("workspace:open", open);
+    app.add_global_action("workspace:open_paths", open_paths);
+    app.add_global_action("app:quit", quit);
+    app.add_action("workspace:save", Workspace::save_active_item);
+    app.add_action("workspace:debug_elements", Workspace::debug_elements);
     app.add_bindings(vec![
         Binding::new("cmd-s", "workspace:save", None),
         Binding::new("cmd-alt-i", "workspace:debug_elements", None),
     ]);
+    pane::init(app);
+}
+use crate::{
+    editor::{Buffer, BufferView},
+    time::ReplicaId,
+    worktree::{Worktree, WorktreeHandle},
+};
+use futures_core::{future::LocalBoxFuture, Future};
+use gpui::{
+    color::rgbu, elements::*, json::to_string_pretty, keymap::Binding, AnyViewHandle, AppContext,
+    ClipboardItem, Entity, EntityTask, ModelHandle, View, ViewContext, ViewHandle,
+};
+use log::error;
+use smol::prelude::*;
+use std::{
+    collections::{hash_map::Entry, HashMap, HashSet},
+    path::Path,
+    sync::Arc,
+};
+
+pub struct OpenParams {
+    pub paths: Vec<PathBuf>,
+    pub settings: watch::Receiver<Settings>,
+}
+
+fn open(settings: &Receiver<Settings>, ctx: &mut MutableAppContext) {
+    let settings = settings.clone();
+    ctx.prompt_for_paths(
+        PathPromptOptions {
+            files: true,
+            directories: true,
+            multiple: true,
+        },
+        move |paths, ctx| {
+            if let Some(paths) = paths {
+                ctx.dispatch_global_action("workspace:open_paths", OpenParams { paths, settings });
+            }
+        },
+    );
+}
+
+fn open_paths(params: &OpenParams, app: &mut MutableAppContext) {
+    log::info!("open paths {:?}", params.paths);
+
+    // Open paths in existing workspace if possible
+    for window_id in app.window_ids().collect::<Vec<_>>() {
+        if let Some(handle) = app.root_view::<Workspace>(window_id) {
+            if handle.update(app, |view, ctx| {
+                if view.contains_paths(&params.paths, ctx.as_ref()) {
+                    let open_paths = view.open_paths(&params.paths, ctx);
+                    ctx.foreground().spawn(open_paths).detach();
+                    log::info!("open paths on existing workspace");
+                    true
+                } else {
+                    false
+                }
+            }) {
+                return;
+            }
+        }
+    }
+
+    log::info!("open new workspace");
+
+    // Add a new workspace if necessary
+    app.add_window(|ctx| {
+        let mut view = Workspace::new(0, params.settings.clone(), ctx);
+        let open_paths = view.open_paths(&params.paths, ctx);
+        ctx.foreground().spawn(open_paths).detach();
+        view
+    });
+}
+
+fn quit(_: &(), app: &mut MutableAppContext) {
+    app.platform().quit();
 }
 
 pub trait ItemView: View {
@@ -122,24 +196,27 @@ pub struct State {
     pub center: PaneGroup,
 }
 
-pub struct WorkspaceView {
-    pub workspace: ModelHandle<Workspace>,
+pub struct Workspace {
     pub settings: watch::Receiver<Settings>,
     modal: Option<AnyViewHandle>,
     center: PaneGroup,
     panes: Vec<ViewHandle<Pane>>,
     active_pane: ViewHandle<Pane>,
     loading_entries: HashSet<(usize, Arc<Path>)>,
+    replica_id: ReplicaId,
+    worktrees: HashSet<ModelHandle<Worktree>>,
+    buffers: HashMap<
+        (usize, u64),
+        postage::watch::Receiver<Option<Result<ModelHandle<Buffer>, Arc<anyhow::Error>>>>,
+    >,
 }
 
-impl WorkspaceView {
+impl Workspace {
     pub fn new(
-        workspace: ModelHandle<Workspace>,
+        replica_id: ReplicaId,
         settings: watch::Receiver<Settings>,
         ctx: &mut ViewContext<Self>,
     ) -> Self {
-        ctx.observe(&workspace, Self::workspace_updated);
-
         let pane = ctx.add_view(|_| Pane::new(settings.clone()));
         let pane_id = pane.id();
         ctx.subscribe_to_view(&pane, move |me, _, event, ctx| {
@@ -147,29 +224,65 @@ impl WorkspaceView {
         });
         ctx.focus(&pane);
 
-        WorkspaceView {
-            workspace,
+        Workspace {
             modal: None,
             center: PaneGroup::new(pane.id()),
             panes: vec![pane.clone()],
             active_pane: pane.clone(),
             loading_entries: HashSet::new(),
             settings,
+            replica_id,
+            worktrees: Default::default(),
+            buffers: Default::default(),
         }
     }
 
+    pub fn worktrees(&self) -> &HashSet<ModelHandle<Worktree>> {
+        &self.worktrees
+    }
+
     pub fn contains_paths(&self, paths: &[PathBuf], app: &AppContext) -> bool {
-        self.workspace.read(app).contains_paths(paths, app)
+        paths.iter().all(|path| self.contains_path(&path, app))
+    }
+
+    pub fn contains_path(&self, path: &Path, app: &AppContext) -> bool {
+        self.worktrees
+            .iter()
+            .any(|worktree| worktree.read(app).contains_abs_path(path))
+    }
+
+    pub fn worktree_scans_complete(&self, ctx: &AppContext) -> impl Future<Output = ()> + 'static {
+        let futures = self
+            .worktrees
+            .iter()
+            .map(|worktree| worktree.read(ctx).scan_complete())
+            .collect::<Vec<_>>();
+        async move {
+            for future in futures {
+                future.await;
+            }
+        }
     }
 
     pub fn open_paths(
-        &self,
+        &mut self,
         paths: &[PathBuf],
         ctx: &mut ViewContext<Self>,
     ) -> impl Future<Output = ()> {
-        let entries = self
-            .workspace
-            .update(ctx, |workspace, ctx| workspace.open_paths(paths, ctx));
+        let entries = paths
+            .iter()
+            .cloned()
+            .map(|path| {
+                for tree in self.worktrees.iter() {
+                    if let Ok(relative_path) = path.strip_prefix(tree.read(ctx).abs_path()) {
+                        return (tree.id(), relative_path.into());
+                    }
+                }
+                let worktree_id = self.add_worktree(&path, ctx);
+                (worktree_id, Path::new("").into())
+            })
+            .collect::<Vec<_>>();
+
         let bg = ctx.background_executor().clone();
         let tasks = paths
             .iter()
@@ -195,6 +308,15 @@ impl WorkspaceView {
                 }
             }
         }
+    }
+
+    pub fn add_worktree(&mut self, path: &Path, ctx: &mut ViewContext<Self>) -> usize {
+        let worktree = ctx.add_model(|ctx| Worktree::new(path, ctx));
+        let worktree_id = worktree.id();
+        ctx.observe_model(&worktree, |_, _, ctx| ctx.notify());
+        self.worktrees.insert(worktree);
+        ctx.notify();
+        worktree_id
     }
 
     pub fn toggle_modal<V, F>(&mut self, ctx: &mut ViewContext<Self>, add_view: F)
@@ -241,31 +363,81 @@ impl WorkspaceView {
             return None;
         }
 
+        let (worktree_id, path) = entry.clone();
+
+        let worktree = match self.worktrees.get(&worktree_id).cloned() {
+            Some(worktree) => worktree,
+            None => {
+                log::error!("worktree {} does not exist", worktree_id);
+                return None;
+            }
+        };
+
+        let inode = match worktree.read(ctx).inode_for_path(&path) {
+            Some(inode) => inode,
+            None => {
+                log::error!("path {:?} does not exist", path);
+                return None;
+            }
+        };
+
+        let file = match worktree.file(path.clone(), ctx.as_ref()) {
+            Some(file) => file,
+            None => {
+                log::error!("path {:?} does not exist", path);
+                return None;
+            }
+        };
+
         self.loading_entries.insert(entry.clone());
 
-        match self.workspace.update(ctx, |workspace, ctx| {
-            workspace.open_entry(entry.clone(), ctx)
-        }) {
-            Err(error) => {
-                error!("{}", error);
-                None
-            }
-            Ok(item) => {
-                let settings = self.settings.clone();
-                Some(ctx.spawn(item, move |me, item, ctx| {
-                    me.loading_entries.remove(&entry);
-                    match item {
-                        Ok(item) => {
-                            let item_view = item.add_view(ctx.window_id(), settings, ctx.as_mut());
-                            me.add_item(item_view, ctx);
-                        }
-                        Err(error) => {
-                            error!("{}", error);
-                        }
-                    }
-                }))
-            }
+        if let Entry::Vacant(entry) = self.buffers.entry((worktree_id, inode)) {
+            let (mut tx, rx) = postage::watch::channel();
+            entry.insert(rx);
+            let history = file.load_history(ctx.as_ref());
+            let replica_id = self.replica_id;
+            let buffer = ctx
+                .background_executor()
+                .spawn(async move { Ok(Buffer::from_history(replica_id, history.await?)) });
+            ctx.spawn(buffer, move |_, from_history_result, ctx| {
+                *tx.borrow_mut() = Some(match from_history_result {
+                    Ok(buffer) => Ok(ctx.add_model(|_| buffer)),
+                    Err(error) => Err(Arc::new(error)),
+                })
+            })
+            .detach()
         }
+
+        let mut watch = self.buffers.get(&(worktree_id, inode)).unwrap().clone();
+        Some(ctx.spawn(
+            async move {
+                loop {
+                    if let Some(load_result) = watch.borrow().as_ref() {
+                        return load_result.clone();
+                    }
+                    watch.next().await;
+                }
+            },
+            move |me, load_result, ctx| {
+                me.loading_entries.remove(&entry);
+                match load_result {
+                    Ok(buffer_handle) => {
+                        let buffer_view = Box::new(ctx.add_view(|ctx| {
+                            BufferView::for_buffer(
+                                buffer_handle,
+                                Some(file),
+                                me.settings.clone(),
+                                ctx,
+                            )
+                        }));
+                        me.add_item(buffer_view, ctx);
+                    }
+                    Err(error) => {
+                        log::error!("error opening item: {}", error);
+                    }
+                }
+            },
+        ))
     }
 
     pub fn save_active_item(&mut self, _: &(), ctx: &mut ViewContext<Self>) {
@@ -297,10 +469,6 @@ impl WorkspaceView {
                 log::error!("error debugging elements: {}", error);
             }
         };
-    }
-
-    fn workspace_updated(&mut self, _: ModelHandle<Workspace>, ctx: &mut ViewContext<Self>) {
-        ctx.notify();
     }
 
     fn add_pane(&mut self, ctx: &mut ViewContext<Self>) -> ViewHandle<Pane> {
@@ -388,11 +556,11 @@ impl WorkspaceView {
     }
 }
 
-impl Entity for WorkspaceView {
+impl Entity for Workspace {
     type Event = ();
 }
 
-impl View for WorkspaceView {
+impl View for Workspace {
     fn ui_name() -> &'static str {
         "Workspace"
     }
@@ -415,12 +583,94 @@ impl View for WorkspaceView {
 }
 
 #[cfg(test)]
+pub trait WorkspaceHandle {
+    fn file_entries(&self, app: &AppContext) -> Vec<(usize, Arc<Path>)>;
+}
+
+#[cfg(test)]
+impl WorkspaceHandle for ViewHandle<Workspace> {
+    fn file_entries(&self, app: &AppContext) -> Vec<(usize, Arc<Path>)> {
+        self.read(app)
+            .worktrees()
+            .iter()
+            .flat_map(|tree| {
+                let tree_id = tree.id();
+                tree.read(app)
+                    .files(0)
+                    .map(move |f| (tree_id, f.path().clone()))
+            })
+            .collect::<Vec<_>>()
+    }
+}
+
+#[cfg(test)]
 mod tests {
-    use super::{pane, Workspace, WorkspaceView};
-    use crate::{settings, test::temp_tree, workspace::WorkspaceHandle as _};
+    use super::*;
+    use crate::{editor::BufferView, settings, test::temp_tree};
     use gpui::App;
     use serde_json::json;
-    use std::collections::HashSet;
+    use std::{collections::HashSet, os::unix};
+
+    #[test]
+    fn test_open_paths_action() {
+        App::test((), |app| {
+            let settings = settings::channel(&app.font_cache()).unwrap().1;
+
+            init(app);
+
+            let dir = temp_tree(json!({
+                "a": {
+                    "aa": null,
+                    "ab": null,
+                },
+                "b": {
+                    "ba": null,
+                    "bb": null,
+                },
+                "c": {
+                    "ca": null,
+                    "cb": null,
+                },
+            }));
+
+            app.dispatch_global_action(
+                "workspace:open_paths",
+                OpenParams {
+                    paths: vec![
+                        dir.path().join("a").to_path_buf(),
+                        dir.path().join("b").to_path_buf(),
+                    ],
+                    settings: settings.clone(),
+                },
+            );
+            assert_eq!(app.window_ids().count(), 1);
+
+            app.dispatch_global_action(
+                "workspace:open_paths",
+                OpenParams {
+                    paths: vec![dir.path().join("a").to_path_buf()],
+                    settings: settings.clone(),
+                },
+            );
+            assert_eq!(app.window_ids().count(), 1);
+            let workspace_view_1 = app
+                .root_view::<Workspace>(app.window_ids().next().unwrap())
+                .unwrap();
+            assert_eq!(workspace_view_1.read(app).worktrees().len(), 2);
+
+            app.dispatch_global_action(
+                "workspace:open_paths",
+                OpenParams {
+                    paths: vec![
+                        dir.path().join("b").to_path_buf(),
+                        dir.path().join("c").to_path_buf(),
+                    ],
+                    settings: settings.clone(),
+                },
+            );
+            assert_eq!(app.window_ids().count(), 2);
+        });
+    }
 
     #[test]
     fn test_open_entry() {
@@ -434,7 +684,13 @@ mod tests {
             }));
 
             let settings = settings::channel(&app.font_cache()).unwrap().1;
-            let workspace = app.add_model(|ctx| Workspace::new(vec![dir.path().into()], ctx));
+
+            let (_, workspace) = app.add_window(|ctx| {
+                let mut workspace = Workspace::new(0, settings, ctx);
+                workspace.add_worktree(dir.path(), ctx);
+                workspace
+            });
+
             app.read(|ctx| workspace.read(ctx).worktree_scans_complete(ctx))
                 .await;
             let entries = app.read(|ctx| workspace.file_entries(ctx));
@@ -442,12 +698,10 @@ mod tests {
             let file2 = entries[1].clone();
             let file3 = entries[2].clone();
 
-            let (_, workspace_view) =
-                app.add_window(|ctx| WorkspaceView::new(workspace.clone(), settings, ctx));
-            let pane = app.read(|ctx| workspace_view.read(ctx).active_pane().clone());
+            let pane = app.read(|ctx| workspace.read(ctx).active_pane().clone());
 
             // Open the first entry
-            workspace_view
+            workspace
                 .update(&mut app, |w, ctx| w.open_entry(file1.clone(), ctx))
                 .unwrap()
                 .await;
@@ -461,7 +715,7 @@ mod tests {
             });
 
             // Open the second entry
-            workspace_view
+            workspace
                 .update(&mut app, |w, ctx| w.open_entry(file2.clone(), ctx))
                 .unwrap()
                 .await;
@@ -475,7 +729,7 @@ mod tests {
             });
 
             // Open the first entry again. The existing pane item is activated.
-            workspace_view.update(&mut app, |w, ctx| {
+            workspace.update(&mut app, |w, ctx| {
                 assert!(w.open_entry(file1.clone(), ctx).is_none())
             });
             app.read(|ctx| {
@@ -488,7 +742,7 @@ mod tests {
             });
 
             // Open the third entry twice concurrently. Only one pane item is added.
-            workspace_view
+            workspace
                 .update(&mut app, |w, ctx| {
                     let task = w.open_entry(file3.clone(), ctx).unwrap();
                     assert!(w.open_entry(file3.clone(), ctx).is_none());
@@ -516,22 +770,24 @@ mod tests {
                 "b.txt": "",
             }));
 
-            let workspace = app.add_model(|ctx| Workspace::new(vec![dir1.path().into()], ctx));
             let settings = settings::channel(&app.font_cache()).unwrap().1;
-            let (_, workspace_view) =
-                app.add_window(|ctx| WorkspaceView::new(workspace.clone(), settings, ctx));
+            let (_, workspace) = app.add_window(|ctx| {
+                let mut workspace = Workspace::new(0, settings, ctx);
+                workspace.add_worktree(dir1.path(), ctx);
+                workspace
+            });
             app.read(|ctx| workspace.read(ctx).worktree_scans_complete(ctx))
                 .await;
 
             // Open a file within an existing worktree.
             app.update(|ctx| {
-                workspace_view.update(ctx, |view, ctx| {
+                workspace.update(ctx, |view, ctx| {
                     view.open_paths(&[dir1.path().join("a.txt")], ctx)
                 })
             })
             .await;
             app.read(|ctx| {
-                workspace_view
+                workspace
                     .read(ctx)
                     .active_pane()
                     .read(ctx)
@@ -543,7 +799,7 @@ mod tests {
 
             // Open a file outside of any existing worktree.
             app.update(|ctx| {
-                workspace_view.update(ctx, |view, ctx| {
+                workspace.update(ctx, |view, ctx| {
                     view.open_paths(&[dir2.path().join("b.txt")], ctx)
                 })
             })
@@ -563,7 +819,7 @@ mod tests {
                 );
             });
             app.read(|ctx| {
-                workspace_view
+                workspace
                     .read(ctx)
                     .active_pane()
                     .read(ctx)
@@ -571,6 +827,67 @@ mod tests {
                     .unwrap()
                     .title(ctx)
                     == "b.txt"
+            });
+        });
+    }
+
+    #[test]
+    fn test_open_two_paths_to_the_same_file() {
+        use crate::workspace::ItemViewHandle;
+
+        App::test_async((), |mut app| async move {
+            // Create a worktree with a symlink:
+            //   dir
+            //   ├── hello.txt
+            //   └── hola.txt -> hello.txt
+            let temp_dir = temp_tree(json!({ "hello.txt": "hi" }));
+            let dir = temp_dir.path();
+            unix::fs::symlink(dir.join("hello.txt"), dir.join("hola.txt")).unwrap();
+
+            let settings = settings::channel(&app.font_cache()).unwrap().1;
+            let (_, workspace) = app.add_window(|ctx| {
+                let mut workspace = Workspace::new(0, settings, ctx);
+                workspace.add_worktree(dir, ctx);
+                workspace
+            });
+            app.read(|ctx| workspace.read(ctx).worktree_scans_complete(ctx))
+                .await;
+
+            // Simultaneously open both the original file and the symlink to the same file.
+            app.update(|ctx| {
+                workspace.update(ctx, |view, ctx| {
+                    view.open_paths(&[dir.join("hello.txt"), dir.join("hola.txt")], ctx)
+                })
+            })
+            .await;
+
+            // The same content shows up with two different editors.
+            let buffer_views = app.read(|ctx| {
+                workspace
+                    .read(ctx)
+                    .active_pane()
+                    .read(ctx)
+                    .items()
+                    .iter()
+                    .map(|i| i.to_any().downcast::<BufferView>().unwrap())
+                    .collect::<Vec<_>>()
+            });
+            app.read(|ctx| {
+                assert_eq!(buffer_views[0].title(ctx), "hello.txt");
+                assert_eq!(buffer_views[1].title(ctx), "hola.txt");
+                assert_eq!(buffer_views[0].read(ctx).text(ctx), "hi");
+                assert_eq!(buffer_views[1].read(ctx).text(ctx), "hi");
+            });
+
+            // When modifying one buffer, the changes appear in both editors.
+            app.update(|ctx| {
+                buffer_views[0].update(ctx, |buf, ctx| {
+                    buf.insert(&"oh, ".to_string(), ctx);
+                });
+            });
+            app.read(|ctx| {
+                assert_eq!(buffer_views[0].read(ctx).text(ctx), "oh, hi");
+                assert_eq!(buffer_views[1].read(ctx).text(ctx), "oh, hi");
             });
         });
     }
@@ -589,17 +906,19 @@ mod tests {
             }));
 
             let settings = settings::channel(&app.font_cache()).unwrap().1;
-            let workspace = app.add_model(|ctx| Workspace::new(vec![dir.path().into()], ctx));
+            let (window_id, workspace) = app.add_window(|ctx| {
+                let mut workspace = Workspace::new(0, settings, ctx);
+                workspace.add_worktree(dir.path(), ctx);
+                workspace
+            });
             app.read(|ctx| workspace.read(ctx).worktree_scans_complete(ctx))
                 .await;
             let entries = app.read(|ctx| workspace.file_entries(ctx));
             let file1 = entries[0].clone();
 
-            let (window_id, workspace_view) =
-                app.add_window(|ctx| WorkspaceView::new(workspace.clone(), settings, ctx));
-            let pane_1 = app.read(|ctx| workspace_view.read(ctx).active_pane().clone());
+            let pane_1 = app.read(|ctx| workspace.read(ctx).active_pane().clone());
 
-            workspace_view
+            workspace
                 .update(&mut app, |w, ctx| w.open_entry(file1.clone(), ctx))
                 .unwrap()
                 .await;
@@ -612,14 +931,14 @@ mod tests {
 
             app.dispatch_action(window_id, vec![pane_1.id()], "pane:split_right", ());
             app.update(|ctx| {
-                let pane_2 = workspace_view.read(ctx).active_pane().clone();
+                let pane_2 = workspace.read(ctx).active_pane().clone();
                 assert_ne!(pane_1, pane_2);
 
                 let pane2_item = pane_2.read(ctx).active_item().unwrap();
                 assert_eq!(pane2_item.entry_id(ctx.as_ref()), Some(file1.clone()));
 
                 ctx.dispatch_action(window_id, vec![pane_2.id()], "pane:close_active_item", ());
-                let workspace_view = workspace_view.read(ctx);
+                let workspace_view = workspace.read(ctx);
                 assert_eq!(workspace_view.panes.len(), 1);
                 assert_eq!(workspace_view.active_pane(), &pane_1);
             });

@@ -2,7 +2,7 @@ use super::{
     buffer, movement, Anchor, Bias, Buffer, BufferElement, DisplayMap, DisplayPoint, Point,
     Selection, SelectionSetId, ToOffset, ToPoint,
 };
-use crate::{settings::Settings, watch, workspace};
+use crate::{settings::Settings, watch, workspace, worktree::FileHandle};
 use anyhow::Result;
 use futures_core::future::LocalBoxFuture;
 use gpui::{
@@ -254,6 +254,7 @@ pub enum SelectAction {
 pub struct BufferView {
     handle: WeakViewHandle<Self>,
     buffer: ModelHandle<Buffer>,
+    file: Option<FileHandle>,
     display_map: ModelHandle<DisplayMap>,
     selection_set_id: SelectionSetId,
     pending_selection: Option<Selection>,
@@ -275,20 +276,25 @@ struct ClipboardSelection {
 
 impl BufferView {
     pub fn single_line(settings: watch::Receiver<Settings>, ctx: &mut ViewContext<Self>) -> Self {
-        let buffer = ctx.add_model(|ctx| Buffer::new(0, String::new(), ctx));
-        let mut view = Self::for_buffer(buffer, settings, ctx);
+        let buffer = ctx.add_model(|_| Buffer::new(0, String::new()));
+        let mut view = Self::for_buffer(buffer, None, settings, ctx);
         view.single_line = true;
         view
     }
 
     pub fn for_buffer(
         buffer: ModelHandle<Buffer>,
+        file: Option<FileHandle>,
         settings: watch::Receiver<Settings>,
         ctx: &mut ViewContext<Self>,
     ) -> Self {
         settings.notify_view_on_change(ctx);
 
-        ctx.observe(&buffer, Self::on_buffer_changed);
+        if let Some(file) = file.as_ref() {
+            file.observe_from_view(ctx, |_, _, ctx| ctx.emit(Event::FileHandleChanged));
+        }
+
+        ctx.observe_model(&buffer, Self::on_buffer_changed);
         ctx.subscribe_to_model(&buffer, Self::on_buffer_event);
         let display_map = ctx.add_model(|ctx| {
             DisplayMap::new(
@@ -297,7 +303,7 @@ impl BufferView {
                 ctx,
             )
         });
-        ctx.observe(&display_map, Self::on_display_map_changed);
+        ctx.observe_model(&display_map, Self::on_display_map_changed);
 
         let (selection_set_id, _) = buffer.update(ctx, |buffer, ctx| {
             buffer.add_selection_set(
@@ -313,6 +319,7 @@ impl BufferView {
         Self {
             handle: ctx.handle().downgrade(),
             buffer,
+            file,
             display_map,
             selection_set_id,
             pending_selection: None,
@@ -577,7 +584,7 @@ impl BufferView {
         Ok(())
     }
 
-    fn insert(&mut self, text: &String, ctx: &mut ViewContext<Self>) {
+    pub fn insert(&mut self, text: &String, ctx: &mut ViewContext<Self>) {
         let mut offset_ranges = SmallVec::<[Range<usize>; 32]>::new();
         {
             let buffer = self.buffer.read(ctx);
@@ -2089,18 +2096,6 @@ impl View for BufferView {
     }
 }
 
-impl workspace::Item for Buffer {
-    type View = BufferView;
-
-    fn build_view(
-        buffer: ModelHandle<Self>,
-        settings: watch::Receiver<Settings>,
-        ctx: &mut ViewContext<Self::View>,
-    ) -> Self::View {
-        BufferView::for_buffer(buffer, settings, ctx)
-    }
-}
-
 impl workspace::ItemView for BufferView {
     fn should_activate_item_on_event(event: &Self::Event) -> bool {
         matches!(event, Event::Activate)
@@ -2114,28 +2109,39 @@ impl workspace::ItemView for BufferView {
     }
 
     fn title(&self, app: &AppContext) -> std::string::String {
-        if let Some(name) = self.buffer.read(app).file_name(app) {
+        let filename = self.file.as_ref().and_then(|file| file.file_name(app));
+        if let Some(name) = filename {
             name.to_string_lossy().into()
         } else {
             "untitled".into()
         }
     }
 
-    fn entry_id(&self, app: &AppContext) -> Option<(usize, Arc<Path>)> {
-        self.buffer.read(app).entry_id()
+    fn entry_id(&self, _: &AppContext) -> Option<(usize, Arc<Path>)> {
+        self.file.as_ref().map(|file| file.entry_id())
     }
 
     fn clone_on_split(&self, ctx: &mut ViewContext<Self>) -> Option<Self>
     where
         Self: Sized,
     {
-        let clone = BufferView::for_buffer(self.buffer.clone(), self.settings.clone(), ctx);
+        let clone = BufferView::for_buffer(
+            self.buffer.clone(),
+            self.file.clone(),
+            self.settings.clone(),
+            ctx,
+        );
         *clone.scroll_position.lock() = *self.scroll_position.lock();
         Some(clone)
     }
 
     fn save(&self, ctx: &mut ViewContext<Self>) -> LocalBoxFuture<'static, Result<()>> {
-        self.buffer.update(ctx, |buffer, ctx| buffer.save(ctx))
+        if let Some(file) = self.file.as_ref() {
+            self.buffer
+                .update(ctx, |buffer, ctx| buffer.save(file, ctx))
+        } else {
+            Box::pin(async { Ok(()) })
+        }
     }
 
     fn is_dirty(&self, ctx: &AppContext) -> bool {
@@ -2153,11 +2159,10 @@ mod tests {
     #[test]
     fn test_selection_with_mouse() {
         App::test((), |app| {
-            let buffer =
-                app.add_model(|ctx| Buffer::new(0, "aaaaaa\nbbbbbb\ncccccc\ndddddd\n", ctx));
+            let buffer = app.add_model(|_| Buffer::new(0, "aaaaaa\nbbbbbb\ncccccc\ndddddd\n"));
             let settings = settings::channel(&app.font_cache()).unwrap().1;
             let (_, buffer_view) =
-                app.add_window(|ctx| BufferView::for_buffer(buffer, settings, ctx));
+                app.add_window(|ctx| BufferView::for_buffer(buffer, None, settings, ctx));
 
             buffer_view.update(app, |view, ctx| {
                 view.begin_selection(DisplayPoint::new(2, 2), false, ctx);
@@ -2268,11 +2273,11 @@ mod tests {
             let layout_cache = TextLayoutCache::new(app.platform().fonts());
             let font_cache = app.font_cache().clone();
 
-            let buffer = app.add_model(|ctx| Buffer::new(0, sample_text(6, 6), ctx));
+            let buffer = app.add_model(|_| Buffer::new(0, sample_text(6, 6)));
 
             let settings = settings::channel(&font_cache).unwrap().1;
             let (_, view) =
-                app.add_window(|ctx| BufferView::for_buffer(buffer.clone(), settings, ctx));
+                app.add_window(|ctx| BufferView::for_buffer(buffer.clone(), None, settings, ctx));
 
             let layouts = view
                 .read(app)
@@ -2285,7 +2290,7 @@ mod tests {
     #[test]
     fn test_fold() {
         App::test((), |app| {
-            let buffer = app.add_model(|ctx| {
+            let buffer = app.add_model(|_| {
                 Buffer::new(
                     0,
                     "
@@ -2306,12 +2311,11 @@ mod tests {
                     }
                 "
                     .unindent(),
-                    ctx,
                 )
             });
             let settings = settings::channel(&app.font_cache()).unwrap().1;
             let (_, view) =
-                app.add_window(|ctx| BufferView::for_buffer(buffer.clone(), settings, ctx));
+                app.add_window(|ctx| BufferView::for_buffer(buffer.clone(), None, settings, ctx));
 
             view.update(app, |view, ctx| {
                 view.select_display_ranges(
@@ -2380,10 +2384,10 @@ mod tests {
     #[test]
     fn test_move_cursor() {
         App::test((), |app| {
-            let buffer = app.add_model(|ctx| Buffer::new(0, sample_text(6, 6), ctx));
+            let buffer = app.add_model(|_| Buffer::new(0, sample_text(6, 6)));
             let settings = settings::channel(&app.font_cache()).unwrap().1;
             let (_, view) =
-                app.add_window(|ctx| BufferView::for_buffer(buffer.clone(), settings, ctx));
+                app.add_window(|ctx| BufferView::for_buffer(buffer.clone(), None, settings, ctx));
 
             buffer.update(app, |buffer, ctx| {
                 buffer
@@ -2458,9 +2462,10 @@ mod tests {
     #[test]
     fn test_beginning_end_of_line() {
         App::test((), |app| {
-            let buffer = app.add_model(|ctx| Buffer::new(0, "abc\n  def", ctx));
+            let buffer = app.add_model(|_| Buffer::new(0, "abc\n  def"));
             let settings = settings::channel(&app.font_cache()).unwrap().1;
-            let (_, view) = app.add_window(|ctx| BufferView::for_buffer(buffer, settings, ctx));
+            let (_, view) =
+                app.add_window(|ctx| BufferView::for_buffer(buffer, None, settings, ctx));
             view.update(app, |view, ctx| {
                 view.select_display_ranges(
                     &[
@@ -2586,10 +2591,11 @@ mod tests {
     #[test]
     fn test_prev_next_word_boundary() {
         App::test((), |app| {
-            let buffer = app
-                .add_model(|ctx| Buffer::new(0, "use std::str::{foo, bar}\n\n  {baz.qux()}", ctx));
+            let buffer =
+                app.add_model(|_| Buffer::new(0, "use std::str::{foo, bar}\n\n  {baz.qux()}"));
             let settings = settings::channel(&app.font_cache()).unwrap().1;
-            let (_, view) = app.add_window(|ctx| BufferView::for_buffer(buffer, settings, ctx));
+            let (_, view) =
+                app.add_window(|ctx| BufferView::for_buffer(buffer, None, settings, ctx));
             view.update(app, |view, ctx| {
                 view.select_display_ranges(
                     &[
@@ -2768,16 +2774,12 @@ mod tests {
     #[test]
     fn test_backspace() {
         App::test((), |app| {
-            let buffer = app.add_model(|ctx| {
-                Buffer::new(
-                    0,
-                    "one two three\nfour five six\nseven eight nine\nten\n",
-                    ctx,
-                )
+            let buffer = app.add_model(|_| {
+                Buffer::new(0, "one two three\nfour five six\nseven eight nine\nten\n")
             });
             let settings = settings::channel(&app.font_cache()).unwrap().1;
             let (_, view) =
-                app.add_window(|ctx| BufferView::for_buffer(buffer.clone(), settings, ctx));
+                app.add_window(|ctx| BufferView::for_buffer(buffer.clone(), None, settings, ctx));
 
             view.update(app, |view, ctx| {
                 view.select_display_ranges(
@@ -2805,16 +2807,12 @@ mod tests {
     #[test]
     fn test_delete() {
         App::test((), |app| {
-            let buffer = app.add_model(|ctx| {
-                Buffer::new(
-                    0,
-                    "one two three\nfour five six\nseven eight nine\nten\n",
-                    ctx,
-                )
+            let buffer = app.add_model(|_| {
+                Buffer::new(0, "one two three\nfour five six\nseven eight nine\nten\n")
             });
             let settings = settings::channel(&app.font_cache()).unwrap().1;
             let (_, view) =
-                app.add_window(|ctx| BufferView::for_buffer(buffer.clone(), settings, ctx));
+                app.add_window(|ctx| BufferView::for_buffer(buffer.clone(), None, settings, ctx));
 
             view.update(app, |view, ctx| {
                 view.select_display_ranges(
@@ -2843,8 +2841,9 @@ mod tests {
     fn test_delete_line() {
         App::test((), |app| {
             let settings = settings::channel(&app.font_cache()).unwrap().1;
-            let buffer = app.add_model(|ctx| Buffer::new(0, "abc\ndef\nghi\n", ctx));
-            let (_, view) = app.add_window(|ctx| BufferView::for_buffer(buffer, settings, ctx));
+            let buffer = app.add_model(|_| Buffer::new(0, "abc\ndef\nghi\n"));
+            let (_, view) =
+                app.add_window(|ctx| BufferView::for_buffer(buffer, None, settings, ctx));
             view.update(app, |view, ctx| {
                 view.select_display_ranges(
                     &[
@@ -2867,8 +2866,9 @@ mod tests {
             );
 
             let settings = settings::channel(&app.font_cache()).unwrap().1;
-            let buffer = app.add_model(|ctx| Buffer::new(0, "abc\ndef\nghi\n", ctx));
-            let (_, view) = app.add_window(|ctx| BufferView::for_buffer(buffer, settings, ctx));
+            let buffer = app.add_model(|_| Buffer::new(0, "abc\ndef\nghi\n"));
+            let (_, view) =
+                app.add_window(|ctx| BufferView::for_buffer(buffer, None, settings, ctx));
             view.update(app, |view, ctx| {
                 view.select_display_ranges(
                     &[DisplayPoint::new(2, 0)..DisplayPoint::new(0, 1)],
@@ -2889,8 +2889,9 @@ mod tests {
     fn test_duplicate_line() {
         App::test((), |app| {
             let settings = settings::channel(&app.font_cache()).unwrap().1;
-            let buffer = app.add_model(|ctx| Buffer::new(0, "abc\ndef\nghi\n", ctx));
-            let (_, view) = app.add_window(|ctx| BufferView::for_buffer(buffer, settings, ctx));
+            let buffer = app.add_model(|_| Buffer::new(0, "abc\ndef\nghi\n"));
+            let (_, view) =
+                app.add_window(|ctx| BufferView::for_buffer(buffer, None, settings, ctx));
             view.update(app, |view, ctx| {
                 view.select_display_ranges(
                     &[
@@ -2919,8 +2920,9 @@ mod tests {
             );
 
             let settings = settings::channel(&app.font_cache()).unwrap().1;
-            let buffer = app.add_model(|ctx| Buffer::new(0, "abc\ndef\nghi\n", ctx));
-            let (_, view) = app.add_window(|ctx| BufferView::for_buffer(buffer, settings, ctx));
+            let buffer = app.add_model(|_| Buffer::new(0, "abc\ndef\nghi\n"));
+            let (_, view) =
+                app.add_window(|ctx| BufferView::for_buffer(buffer, None, settings, ctx));
             view.update(app, |view, ctx| {
                 view.select_display_ranges(
                     &[
@@ -2949,10 +2951,10 @@ mod tests {
     #[test]
     fn test_clipboard() {
         App::test((), |app| {
-            let buffer = app.add_model(|ctx| Buffer::new(0, "one two three four five six ", ctx));
+            let buffer = app.add_model(|_| Buffer::new(0, "one two three four five six "));
             let settings = settings::channel(&app.font_cache()).unwrap().1;
             let view = app
-                .add_window(|ctx| BufferView::for_buffer(buffer.clone(), settings, ctx))
+                .add_window(|ctx| BufferView::for_buffer(buffer.clone(), None, settings, ctx))
                 .1;
 
             // Cut with three selections. Clipboard text is divided into three slices.
@@ -3090,9 +3092,10 @@ mod tests {
     #[test]
     fn test_select_all() {
         App::test((), |app| {
-            let buffer = app.add_model(|ctx| Buffer::new(0, "abc\nde\nfgh", ctx));
+            let buffer = app.add_model(|_| Buffer::new(0, "abc\nde\nfgh"));
             let settings = settings::channel(&app.font_cache()).unwrap().1;
-            let (_, view) = app.add_window(|ctx| BufferView::for_buffer(buffer, settings, ctx));
+            let (_, view) =
+                app.add_window(|ctx| BufferView::for_buffer(buffer, None, settings, ctx));
             view.update(app, |b, ctx| b.select_all(&(), ctx));
             assert_eq!(
                 view.read(app).selection_ranges(app.as_ref()),
