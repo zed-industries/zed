@@ -13,6 +13,9 @@ cargo build --release --target aarch64-apple-darwin
 # Replace the bundle's binary with a "fat binary" that combines the two architecture-specific binaries
 lipo -create target/x86_64-apple-darwin/release/Zed target/aarch64-apple-darwin/release/Zed -output target/x86_64-apple-darwin/release/bundle/osx/Zed.app/Contents/MacOS/zed
 
+# Sign the app bundle with an ad-hoc signature so it runs on the M1. We need a real certificate but this works for now.
+codesign --force --deep -s - target/x86_64-apple-darwin/release/bundle/osx/Zed.app
+
 # Create a DMG
 mkdir -p target/release
 hdiutil create -volname Zed -srcfolder target/x86_64-apple-darwin/release/bundle/osx -ov -format UDZO target/release/Zed.dmg
