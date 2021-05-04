@@ -89,31 +89,20 @@ impl FoldMap {
         DisplayPoint(self.transforms.summary().display.rightmost_point)
     }
 
-    pub fn folds_in_range<T>(&self, range: Range<T>, app: &AppContext) -> Result<&[Range<Anchor>]>
+    pub fn folds_in_range<'a, T>(
+        &'a self,
+        range: Range<T>,
+        app: &'a AppContext,
+    ) -> Result<impl Iterator<Item = &'a Range<Anchor>>>
     where
         T: ToOffset,
     {
         let buffer = self.buffer.read(app);
         let range = buffer.anchor_before(range.start)?..buffer.anchor_before(range.end)?;
-        let mut start_ix = find_insertion_index(&self.folds, |probe| probe.cmp(&range, buffer))?;
-        let mut end_ix = start_ix;
-
-        for fold in self.folds[..start_ix].iter().rev() {
-            if fold.end.cmp(&range.start, buffer)? == Ordering::Greater {
-                start_ix -= 1;
-            } else {
-                break;
-            }
-        }
-        for fold in &self.folds[end_ix..] {
-            if range.end.cmp(&fold.start, buffer)? == Ordering::Greater {
-                end_ix += 1;
-            } else {
-                break;
-            }
-        }
-
-        Ok(&self.folds[start_ix..end_ix])
+        Ok(self.folds.iter().filter(move |fold| {
+            range.start.cmp(&fold.end, buffer).unwrap() == Ordering::Less
+                && range.end.cmp(&fold.start, buffer).unwrap() == Ordering::Greater
+        }))
     }
 
     pub fn fold<T: ToOffset>(
@@ -500,6 +489,7 @@ impl<'a> Dimension<'a, TransformSummary> for usize {
 mod tests {
     use super::*;
     use crate::test::sample_text;
+    use buffer::ToPoint;
     use gpui::App;
 
     #[test]
@@ -642,6 +632,40 @@ mod tests {
 
             map.apply_edits(&edits, app.as_ref()).unwrap();
             assert_eq!(map.text(app.as_ref()), "aa…eeeee");
+        });
+    }
+
+    #[test]
+    fn test_folds_in_range() {
+        App::test((), |app| {
+            let buffer = app.add_model(|ctx| Buffer::new(0, sample_text(5, 6), ctx));
+            let mut map = FoldMap::new(buffer.clone(), app.as_ref());
+            let buffer = buffer.read(app);
+
+            map.fold(
+                vec![
+                    Point::new(0, 2)..Point::new(2, 2),
+                    Point::new(0, 4)..Point::new(1, 0),
+                    Point::new(1, 2)..Point::new(3, 2),
+                    Point::new(3, 1)..Point::new(4, 1),
+                ],
+                app.as_ref(),
+            )
+            .unwrap();
+            let fold_ranges = map
+                .folds_in_range(Point::new(1, 0)..Point::new(1, 3), app.as_ref())
+                .unwrap()
+                .map(|fold| {
+                    fold.start.to_point(buffer).unwrap()..fold.end.to_point(buffer).unwrap()
+                })
+                .collect::<Vec<_>>();
+            assert_eq!(
+                fold_ranges,
+                vec![
+                    Point::new(0, 2)..Point::new(2, 2),
+                    Point::new(1, 2)..Point::new(3, 2)
+                ]
+            );
         });
     }
 

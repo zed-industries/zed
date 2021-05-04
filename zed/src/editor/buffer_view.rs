@@ -863,9 +863,8 @@ impl BufferView {
 
             // Cut the text from the selected rows and paste it at the start of the previous line.
             if display_rows.start != 0 {
-                let selection_row_start =
-                    Point::new(buffer_rows.start, 0).to_offset(buffer).unwrap();
-                let selection_row_end = Point::new(
+                let start = Point::new(buffer_rows.start, 0).to_offset(buffer).unwrap();
+                let end = Point::new(
                     buffer_rows.end - 1,
                     buffer.line_len(buffer_rows.end - 1).unwrap(),
                 )
@@ -878,14 +877,10 @@ impl BufferView {
                     .unwrap();
 
                 let mut text = String::new();
-                text.extend(
-                    buffer
-                        .text_for_range(selection_row_start..selection_row_end)
-                        .unwrap(),
-                );
+                text.extend(buffer.text_for_range(start..end).unwrap());
                 text.push('\n');
                 edits.push((prev_row_start..prev_row_start, text));
-                edits.push((selection_row_start - 1..selection_row_end, String::new()));
+                edits.push((start - 1..end, String::new()));
 
                 let row_delta = buffer_rows.start
                     - prev_row_display_start
@@ -900,11 +895,8 @@ impl BufferView {
                 }
 
                 // Move folds up.
-                old_folds.push(selection_row_start..selection_row_end);
-                for fold in map
-                    .folds_in_range(selection_row_start..selection_row_end, app)
-                    .unwrap()
-                {
+                old_folds.push(start..end);
+                for fold in map.folds_in_range(start..end, app).unwrap() {
                     let mut start = fold.start.to_point(buffer).unwrap();
                     let mut end = fold.end.to_point(buffer).unwrap();
                     start.row -= row_delta;
@@ -962,9 +954,8 @@ impl BufferView {
 
             // Cut the text from the selected rows and paste it at the end of the next line.
             if display_rows.end <= map.max_point(app).row() {
-                let selection_row_start =
-                    Point::new(buffer_rows.start, 0).to_offset(buffer).unwrap();
-                let selection_row_end = Point::new(
+                let start = Point::new(buffer_rows.start, 0).to_offset(buffer).unwrap();
+                let end = Point::new(
                     buffer_rows.end - 1,
                     buffer.line_len(buffer_rows.end - 1).unwrap(),
                 )
@@ -981,12 +972,8 @@ impl BufferView {
 
                 let mut text = String::new();
                 text.push('\n');
-                text.extend(
-                    buffer
-                        .text_for_range(selection_row_start..selection_row_end)
-                        .unwrap(),
-                );
-                edits.push((selection_row_start..selection_row_end + 1, String::new()));
+                text.extend(buffer.text_for_range(start..end).unwrap());
+                edits.push((start..end + 1, String::new()));
                 edits.push((next_row_end..next_row_end, text));
 
                 let row_delta = next_row_display_end
@@ -1003,11 +990,8 @@ impl BufferView {
                 }
 
                 // Move folds down.
-                old_folds.push(selection_row_start..selection_row_end);
-                for fold in map
-                    .folds_in_range(selection_row_start..selection_row_end, app)
-                    .unwrap()
-                {
+                old_folds.push(start..end);
+                for fold in map.folds_in_range(start..end, app).unwrap() {
                     let mut start = fold.start.to_point(buffer).unwrap();
                     let mut end = fold.end.to_point(buffer).unwrap();
                     start.row += row_delta;

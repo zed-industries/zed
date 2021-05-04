@@ -34,7 +34,11 @@ impl DisplayMap {
         }
     }
 
-    pub fn folds_in_range<T>(&self, range: Range<T>, app: &AppContext) -> Result<&[Range<Anchor>]>
+    pub fn folds_in_range<'a, T>(
+        &'a self,
+        range: Range<T>,
+        app: &'a AppContext,
+    ) -> Result<impl Iterator<Item = &'a Range<Anchor>>>
     where
         T: ToOffset,
     {
