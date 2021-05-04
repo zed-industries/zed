@@ -487,8 +487,6 @@ impl<'a> Dimension<'a, TransformSummary> for usize {
 
 #[cfg(test)]
 mod tests {
-    use std::cmp::Reverse;
-
     use super::*;
     use crate::test::sample_text;
     use buffer::ToPoint;
@@ -775,6 +773,25 @@ mod tests {
                         display_offset.0 += 1;
                     }
 
+                    for _ in 0..5 {
+                        let row = rng.gen_range(0..=map.max_point().row());
+                        let column = rng.gen_range(0..=map.line_len(row, app.as_ref()).unwrap());
+                        let point = DisplayPoint::new(row, column);
+                        let offset = map.to_display_offset(point, app.as_ref()).unwrap().0;
+                        let len = rng.gen_range(0..=map.len() - offset);
+                        assert_eq!(
+                            map.chars_at(point, app.as_ref())
+                                .unwrap()
+                                .take(len)
+                                .collect::<String>(),
+                            expected_text
+                                .chars()
+                                .skip(offset)
+                                .take(len)
+                                .collect::<String>()
+                        );
+                    }
+
                     for (idx, buffer_row) in expected_buffer_rows.iter().enumerate() {
                         let display_row = map.to_display_point(Point::new(*buffer_row, 0)).row();
                         assert_eq!(
@@ -828,8 +845,10 @@ mod tests {
 
         fn merged_fold_ranges(&self, app: &AppContext) -> Vec<Range<usize>> {
             let buffer = self.buffer.read(app);
-            let mut fold_ranges = self
-                .folds
+            let mut folds = self.folds.clone();
+            // Ensure sorting doesn't change how folds get merged and displayed.
+            folds.sort_by(|a, b| a.cmp(b, buffer).unwrap());
+            let mut fold_ranges = folds
                 .iter()
                 .map(|fold| {
                     fold.start.to_offset(buffer).unwrap()..fold.end.to_offset(buffer).unwrap()
@@ -862,17 +881,6 @@ mod tests {
                 buffer.len(),
                 "transform tree does not match buffer's length"
             );
-
-            let mut fold_ranges = Vec::new();
-            let mut sorted_fold_ranges = Vec::new();
-            for fold in &self.folds {
-                let start = fold.start.to_offset(buffer).unwrap();
-                let end = fold.end.to_offset(buffer).unwrap();
-                fold_ranges.push(start..end);
-                sorted_fold_ranges.push(start..end);
-            }
-            sorted_fold_ranges.sort_by_key(|fold| (fold.start, Reverse(fold.end)));
-            assert_eq!(fold_ranges, sorted_fold_ranges);
         }
     }
 }
