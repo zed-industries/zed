@@ -50,4 +50,4 @@ jobs:
       - uses: actions/upload-artifact@v2
         with:
           name: Zed.dmg
-          path: target/release/bundle/Zed.dmg
+          path: target/release/Zed.dmg

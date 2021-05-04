@@ -2,14 +2,25 @@
 
 set -e
 
+# Build the app bundle for x86_64
 pushd zed > /dev/null
-cargo bundle --release
+cargo bundle --release --target x86_64-apple-darwin
 popd > /dev/null
-hdiutil create -volname Zed -srcfolder target/release/bundle/osx -ov -format UDZO target/release/bundle/Zed.dmg
 
+# Build the binary for aarch64 (Apple M1)
+cargo build --release --target aarch64-apple-darwin
+
+# Replace the bundle's binary with a "fat binary" that combines the two architecture-specific binaries
+lipo -create target/x86_64-apple-darwin/release/Zed target/aarch64-apple-darwin/release/Zed -output target/x86_64-apple-darwin/release/bundle/osx/Zed.app/Contents/MacOS/zed
+
+# Create a DMG
+mkdir -p target/release
+hdiutil create -volname Zed -srcfolder target/x86_64-apple-darwin/release/bundle/osx -ov -format UDZO target/release/Zed.dmg
+
+# If -o option is specified, open the target/release directory in Finder to reveal the DMG
 while getopts o flag
 do
     case "${flag}" in
-        o) open target/release/bundle;;
+        o) open target/release;;
     esac
 done
