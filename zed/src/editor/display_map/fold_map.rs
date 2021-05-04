@@ -487,6 +487,8 @@ impl<'a> Dimension<'a, TransformSummary> for usize {
 
 #[cfg(test)]
 mod tests {
+    use std::cmp::Reverse;
+
     use super::*;
     use crate::test::sample_text;
     use buffer::ToPoint;
@@ -703,10 +705,10 @@ mod tests {
 
                 for _ in 0..operations {
                     log::info!("text: {:?}", buffer.read(app).text());
-                    {
+                    if rng.gen() {
                         let buffer = buffer.read(app);
 
-                        let fold_count = rng.gen_range(0..=2);
+                        let fold_count = rng.gen_range(1..=5);
                         let mut fold_ranges: Vec<Range<usize>> = Vec::new();
                         for _ in 0..fold_count {
                             let end = rng.gen_range(0..buffer.len() + 1);
@@ -715,29 +717,16 @@ mod tests {
                         }
                         log::info!("folding {:?}", fold_ranges);
                         map.fold(fold_ranges.clone(), app.as_ref()).unwrap();
-                        map.check_invariants(app.as_ref());
-
-                        let mut expected_text = buffer.text();
-                        for fold_range in map.merged_fold_ranges(app.as_ref()).into_iter().rev() {
-                            expected_text.replace_range(fold_range.start..fold_range.end, "…");
-                        }
-                        assert_eq!(map.text(app.as_ref()), expected_text);
-
-                        for fold_range in map.merged_fold_ranges(app.as_ref()) {
-                            let display_point =
-                                map.to_display_point(fold_range.start.to_point(buffer).unwrap());
-                            assert!(map.is_line_folded(display_point.row()));
-                        }
+                    } else {
+                        let edits = buffer.update(app, |buffer, ctx| {
+                            let start_version = buffer.version.clone();
+                            let edit_count = rng.gen_range(1..=5);
+                            buffer.randomly_edit(&mut rng, edit_count, Some(ctx));
+                            buffer.edits_since(start_version).collect::<Vec<_>>()
+                        });
+                        log::info!("editing {:?}", edits);
+                        map.apply_edits(&edits, app.as_ref()).unwrap();
                     }
-
-                    let edits = buffer.update(app, |buffer, ctx| {
-                        let start_version = buffer.version.clone();
-                        let edit_count = rng.gen_range(0..=2);
-                        buffer.randomly_edit(&mut rng, edit_count, Some(ctx));
-                        buffer.edits_since(start_version).collect::<Vec<_>>()
-                    });
-                    log::info!("editing {:?}", edits);
-                    map.apply_edits(&edits, app.as_ref()).unwrap();
                     map.check_invariants(app.as_ref());
 
                     let buffer = map.buffer.read(app);
@@ -763,6 +752,12 @@ mod tests {
                             map.buffer_rows(display_row).unwrap().collect::<Vec<_>>(),
                             expected_buffer_rows[idx..],
                         );
+                    }
+
+                    for fold_range in map.merged_fold_ranges(app.as_ref()) {
+                        let display_point =
+                            map.to_display_point(fold_range.start.to_point(buffer).unwrap());
+                        assert!(map.is_line_folded(display_point.row()));
                     }
                 }
             });
@@ -832,11 +827,23 @@ mod tests {
         }
 
         fn check_invariants(&self, app: &AppContext) {
+            let buffer = self.buffer.read(app);
             assert_eq!(
                 self.transforms.summary().buffer.chars,
-                self.buffer.read(app).len(),
+                buffer.len(),
                 "transform tree does not match buffer's length"
             );
+
+            let mut fold_ranges = Vec::new();
+            let mut sorted_fold_ranges = Vec::new();
+            for fold in &self.folds {
+                let start = fold.start.to_offset(buffer).unwrap();
+                let end = fold.end.to_offset(buffer).unwrap();
+                fold_ranges.push(start..end);
+                sorted_fold_ranges.push(start..end);
+            }
+            sorted_fold_ranges.sort_by_key(|fold| (fold.start, Reverse(fold.end)));
+            assert_eq!(fold_ranges, sorted_fold_ranges);
         }
     }
 }
