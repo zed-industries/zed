@@ -1,32 +1,99 @@
-use super::{pane, Pane, PaneGroup, SplitDirection};
+pub mod pane;
+pub mod pane_group;
+pub use pane::*;
+pub use pane_group::*;
+
+use crate::{
+    settings::Settings,
+    watch::{self, Receiver},
+};
+use gpui::{MutableAppContext, PathPromptOptions};
+use std::path::PathBuf;
+pub fn init(app: &mut MutableAppContext) {
+    app.add_global_action("workspace:open", open);
+    app.add_global_action("workspace:open_paths", open_paths);
+    app.add_global_action("app:quit", quit);
+    app.add_action("workspace:save", Workspace::save_active_item);
+    app.add_action("workspace:debug_elements", Workspace::debug_elements);
+    app.add_bindings(vec![
+        Binding::new("cmd-s", "workspace:save", None),
+        Binding::new("cmd-alt-i", "workspace:debug_elements", None),
+    ]);
+    pane::init(app);
+}
 use crate::{
     editor::{Buffer, BufferView},
-    settings::Settings,
     time::ReplicaId,
-    watch,
     worktree::{Worktree, WorktreeHandle},
 };
 use futures_core::{future::LocalBoxFuture, Future};
 use gpui::{
     color::rgbu, elements::*, json::to_string_pretty, keymap::Binding, AnyViewHandle, AppContext,
-    ClipboardItem, Entity, EntityTask, ModelHandle, MutableAppContext, View, ViewContext,
-    ViewHandle,
+    ClipboardItem, Entity, EntityTask, ModelHandle, View, ViewContext, ViewHandle,
 };
 use log::error;
 use smol::prelude::*;
 use std::{
     collections::{hash_map::Entry, HashMap, HashSet},
-    path::{Path, PathBuf},
+    path::Path,
     sync::Arc,
 };
 
-pub fn init(app: &mut MutableAppContext) {
-    app.add_action("workspace:save", WorkspaceView::save_active_item);
-    app.add_action("workspace:debug_elements", WorkspaceView::debug_elements);
-    app.add_bindings(vec![
-        Binding::new("cmd-s", "workspace:save", None),
-        Binding::new("cmd-alt-i", "workspace:debug_elements", None),
-    ]);
+pub struct OpenParams {
+    pub paths: Vec<PathBuf>,
+    pub settings: watch::Receiver<Settings>,
+}
+
+fn open(settings: &Receiver<Settings>, ctx: &mut MutableAppContext) {
+    let settings = settings.clone();
+    ctx.prompt_for_paths(
+        PathPromptOptions {
+            files: true,
+            directories: true,
+            multiple: true,
+        },
+        move |paths, ctx| {
+            if let Some(paths) = paths {
+                ctx.dispatch_global_action("workspace:open_paths", OpenParams { paths, settings });
+            }
+        },
+    );
+}
+
+fn open_paths(params: &OpenParams, app: &mut MutableAppContext) {
+    log::info!("open paths {:?}", params.paths);
+
+    // Open paths in existing workspace if possible
+    for window_id in app.window_ids().collect::<Vec<_>>() {
+        if let Some(handle) = app.root_view::<Workspace>(window_id) {
+            if handle.update(app, |view, ctx| {
+                if view.contains_paths(&params.paths, ctx.as_ref()) {
+                    let open_paths = view.open_paths(&params.paths, ctx);
+                    ctx.foreground().spawn(open_paths).detach();
+                    log::info!("open paths on existing workspace");
+                    true
+                } else {
+                    false
+                }
+            }) {
+                return;
+            }
+        }
+    }
+
+    log::info!("open new workspace");
+
+    // Add a new workspace if necessary
+    app.add_window(|ctx| {
+        let mut view = Workspace::new(0, params.settings.clone(), ctx);
+        let open_paths = view.open_paths(&params.paths, ctx);
+        ctx.foreground().spawn(open_paths).detach();
+        view
+    });
+}
+
+fn quit(_: &(), app: &mut MutableAppContext) {
+    app.platform().quit();
 }
 
 pub trait ItemView: View {
@@ -129,7 +196,7 @@ pub struct State {
     pub center: PaneGroup,
 }
 
-pub struct WorkspaceView {
+pub struct Workspace {
     pub settings: watch::Receiver<Settings>,
     modal: Option<AnyViewHandle>,
     center: PaneGroup,
@@ -144,7 +211,7 @@ pub struct WorkspaceView {
     >,
 }
 
-impl WorkspaceView {
+impl Workspace {
     pub fn new(
         replica_id: ReplicaId,
         settings: watch::Receiver<Settings>,
@@ -157,7 +224,7 @@ impl WorkspaceView {
         });
         ctx.focus(&pane);
 
-        WorkspaceView {
+        Workspace {
             modal: None,
             center: PaneGroup::new(pane.id()),
             panes: vec![pane.clone()],
@@ -487,11 +554,11 @@ impl WorkspaceView {
     }
 }
 
-impl Entity for WorkspaceView {
+impl Entity for Workspace {
     type Event = ();
 }
 
-impl View for WorkspaceView {
+impl View for Workspace {
     fn ui_name() -> &'static str {
         "Workspace"
     }
@@ -514,12 +581,12 @@ impl View for WorkspaceView {
 }
 
 #[cfg(test)]
-pub trait WorkspaceViewHandle {
+pub trait WorkspaceHandle {
     fn file_entries(&self, app: &AppContext) -> Vec<(usize, Arc<Path>)>;
 }
 
 #[cfg(test)]
-impl WorkspaceViewHandle for ViewHandle<WorkspaceView> {
+impl WorkspaceHandle for ViewHandle<Workspace> {
     fn file_entries(&self, app: &AppContext) -> Vec<(usize, Arc<Path>)> {
         self.read(app)
             .worktrees()
@@ -536,11 +603,72 @@ impl WorkspaceViewHandle for ViewHandle<WorkspaceView> {
 
 #[cfg(test)]
 mod tests {
-    use super::{pane, WorkspaceView, WorkspaceViewHandle as _};
+    use super::*;
     use crate::{editor::BufferView, settings, test::temp_tree};
     use gpui::App;
     use serde_json::json;
     use std::{collections::HashSet, os::unix};
+
+    #[test]
+    fn test_open_paths_action() {
+        App::test((), |app| {
+            let settings = settings::channel(&app.font_cache()).unwrap().1;
+
+            init(app);
+
+            let dir = temp_tree(json!({
+                "a": {
+                    "aa": null,
+                    "ab": null,
+                },
+                "b": {
+                    "ba": null,
+                    "bb": null,
+                },
+                "c": {
+                    "ca": null,
+                    "cb": null,
+                },
+            }));
+
+            app.dispatch_global_action(
+                "workspace:open_paths",
+                OpenParams {
+                    paths: vec![
+                        dir.path().join("a").to_path_buf(),
+                        dir.path().join("b").to_path_buf(),
+                    ],
+                    settings: settings.clone(),
+                },
+            );
+            assert_eq!(app.window_ids().count(), 1);
+
+            app.dispatch_global_action(
+                "workspace:open_paths",
+                OpenParams {
+                    paths: vec![dir.path().join("a").to_path_buf()],
+                    settings: settings.clone(),
+                },
+            );
+            assert_eq!(app.window_ids().count(), 1);
+            let workspace_view_1 = app
+                .root_view::<Workspace>(app.window_ids().next().unwrap())
+                .unwrap();
+            assert_eq!(workspace_view_1.read(app).worktrees().len(), 2);
+
+            app.dispatch_global_action(
+                "workspace:open_paths",
+                OpenParams {
+                    paths: vec![
+                        dir.path().join("b").to_path_buf(),
+                        dir.path().join("c").to_path_buf(),
+                    ],
+                    settings: settings.clone(),
+                },
+            );
+            assert_eq!(app.window_ids().count(), 2);
+        });
+    }
 
     #[test]
     fn test_open_entry() {
@@ -556,7 +684,7 @@ mod tests {
             let settings = settings::channel(&app.font_cache()).unwrap().1;
 
             let (_, workspace) = app.add_window(|ctx| {
-                let mut workspace = WorkspaceView::new(0, settings, ctx);
+                let mut workspace = Workspace::new(0, settings, ctx);
                 smol::block_on(workspace.open_paths(&[dir.path().into()], ctx));
                 workspace
             });
@@ -642,7 +770,7 @@ mod tests {
 
             let settings = settings::channel(&app.font_cache()).unwrap().1;
             let (_, workspace) = app.add_window(|ctx| {
-                let mut workspace = WorkspaceView::new(0, settings, ctx);
+                let mut workspace = Workspace::new(0, settings, ctx);
                 workspace.open_path(dir1.path().into(), ctx);
                 workspace
             });
@@ -716,7 +844,7 @@ mod tests {
 
             let settings = settings::channel(&app.font_cache()).unwrap().1;
             let (_, workspace) = app.add_window(|ctx| {
-                let mut workspace = WorkspaceView::new(0, settings, ctx);
+                let mut workspace = Workspace::new(0, settings, ctx);
                 workspace.open_path(dir.into(), ctx);
                 workspace
             });
@@ -777,7 +905,7 @@ mod tests {
 
             let settings = settings::channel(&app.font_cache()).unwrap().1;
             let (window_id, workspace) = app.add_window(|ctx| {
-                let mut workspace = WorkspaceView::new(0, settings, ctx);
+                let mut workspace = Workspace::new(0, settings, ctx);
                 workspace.open_path(dir.path().into(), ctx);
                 workspace
             });

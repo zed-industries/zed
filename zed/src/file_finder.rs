@@ -2,7 +2,7 @@ use crate::{
     editor::{buffer_view, BufferView},
     settings::Settings,
     util, watch,
-    workspace::WorkspaceView,
+    workspace::Workspace,
     worktree::{match_paths, PathMatch, Worktree},
 };
 use gpui::{
@@ -26,7 +26,7 @@ use std::{
 pub struct FileFinder {
     handle: WeakViewHandle<Self>,
     settings: watch::Receiver<Settings>,
-    workspace: WeakViewHandle<WorkspaceView>,
+    workspace: WeakViewHandle<Workspace>,
     query_buffer: ViewHandle<BufferView>,
     search_count: usize,
     latest_search_id: usize,
@@ -253,7 +253,7 @@ impl FileFinder {
         })
     }
 
-    fn toggle(workspace_view: &mut WorkspaceView, _: &(), ctx: &mut ViewContext<WorkspaceView>) {
+    fn toggle(workspace_view: &mut Workspace, _: &(), ctx: &mut ViewContext<Workspace>) {
         workspace_view.toggle_modal(ctx, |ctx, workspace_view| {
             let workspace = ctx.handle();
             let finder =
@@ -264,10 +264,10 @@ impl FileFinder {
     }
 
     fn on_event(
-        workspace_view: &mut WorkspaceView,
+        workspace_view: &mut Workspace,
         _: ViewHandle<FileFinder>,
         event: &Event,
-        ctx: &mut ViewContext<WorkspaceView>,
+        ctx: &mut ViewContext<Workspace>,
     ) {
         match event {
             Event::Selected(tree_id, path) => {
@@ -284,7 +284,7 @@ impl FileFinder {
 
     pub fn new(
         settings: watch::Receiver<Settings>,
-        workspace: ViewHandle<WorkspaceView>,
+        workspace: ViewHandle<Workspace>,
         ctx: &mut ViewContext<Self>,
     ) -> Self {
         ctx.observe_view(&workspace, Self::workspace_updated);
@@ -310,7 +310,7 @@ impl FileFinder {
         }
     }
 
-    fn workspace_updated(&mut self, _: ViewHandle<WorkspaceView>, ctx: &mut ViewContext<Self>) {
+    fn workspace_updated(&mut self, _: ViewHandle<Workspace>, ctx: &mut ViewContext<Self>) {
         self.spawn_search(self.query_buffer.read(ctx).text(ctx.as_ref()), ctx);
     }
 
@@ -453,7 +453,7 @@ impl FileFinder {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{editor, settings, test::temp_tree, workspace::WorkspaceView};
+    use crate::{editor, settings, test::temp_tree, workspace::Workspace};
     use gpui::App;
     use serde_json::json;
     use std::fs;
@@ -473,7 +473,7 @@ mod tests {
 
             let settings = settings::channel(&app.font_cache()).unwrap().1;
             let (window_id, workspace) = app.add_window(|ctx| {
-                let mut workspace = WorkspaceView::new(0, settings, ctx);
+                let mut workspace = Workspace::new(0, settings, ctx);
                 workspace.open_path(tmp_dir.path().into(), ctx);
                 workspace
             });
@@ -542,7 +542,7 @@ mod tests {
             }));
             let settings = settings::channel(&app.font_cache()).unwrap().1;
             let (_, workspace) = app.add_window(|ctx| {
-                let mut workspace = WorkspaceView::new(0, settings.clone(), ctx);
+                let mut workspace = Workspace::new(0, settings.clone(), ctx);
                 workspace.open_path(tmp_dir.path().into(), ctx);
                 workspace
             });
@@ -599,7 +599,7 @@ mod tests {
 
             let settings = settings::channel(&app.font_cache()).unwrap().1;
             let (_, workspace) = app.add_window(|ctx| {
-                let mut workspace = WorkspaceView::new(0, settings.clone(), ctx);
+                let mut workspace = Workspace::new(0, settings.clone(), ctx);
                 workspace.open_path(file_path, ctx);
                 workspace
             });
@@ -641,7 +641,7 @@ mod tests {
             let settings = settings::channel(&app.font_cache()).unwrap().1;
 
             let (_, workspace) = app.add_window(|ctx| {
-                let mut workspace = WorkspaceView::new(0, settings.clone(), ctx);
+                let mut workspace = Workspace::new(0, settings.clone(), ctx);
                 smol::block_on(workspace.open_paths(
                     &[tmp_dir.path().join("dir1"), tmp_dir.path().join("dir2")],
                     ctx,
