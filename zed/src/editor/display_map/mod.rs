@@ -34,6 +34,13 @@ impl DisplayMap {
         }
     }
 
+    pub fn folds_in_range<T>(&self, range: Range<T>, app: &AppContext) -> Result<&[Range<Anchor>]>
+    where
+        T: ToOffset,
+    {
+        self.fold_map.folds_in_range(range, app)
+    }
+
     pub fn fold<T: ToOffset>(
         &mut self,
         ranges: impl IntoIterator<Item = Range<T>>,
@@ -65,6 +72,20 @@ impl DisplayMap {
     pub fn line(&self, display_row: u32, app: &AppContext) -> Result<String> {
         let chars = self.chars_at(DisplayPoint::new(display_row, 0), app)?;
         Ok(chars.take_while(|c| *c != '\n').collect())
+    }
+
+    pub fn line_indent(&self, display_row: u32, app: &AppContext) -> Result<(u32, bool)> {
+        let mut indent = 0;
+        let mut is_blank = true;
+        for c in self.chars_at(DisplayPoint::new(display_row, 0), app)? {
+            if c == ' ' {
+                indent += 1;
+            } else {
+                is_blank = c == '\n';
+                break;
+            }
+        }
+        Ok((indent, is_blank))
     }
 
     pub fn chars_at<'a>(&'a self, point: DisplayPoint, app: &'a AppContext) -> Result<Chars<'a>> {
@@ -163,6 +184,11 @@ impl DisplayPoint {
         Ok(map
             .fold_map
             .to_buffer_point(self.collapse_tabs(map, bias, app)?.0))
+    }
+
+    pub fn to_buffer_offset(self, map: &DisplayMap, bias: Bias, app: &AppContext) -> Result<usize> {
+        map.fold_map
+            .to_buffer_offset(self.collapse_tabs(map, bias, app)?.0, app)
     }
 
     fn expand_tabs(mut self, map: &DisplayMap, app: &AppContext) -> Result<Self> {

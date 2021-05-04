@@ -1,7 +1,7 @@
 use crate::{
     editor::{
         buffer::{Anchor, Buffer, Point, ToPoint},
-        display_map::DisplayMap,
+        display_map::{Bias, DisplayMap},
         DisplayPoint,
     },
     time,
@@ -71,5 +71,35 @@ impl Selection {
         } else {
             start..end
         }
+    }
+
+    pub fn buffer_rows_for_display_rows(
+        &self,
+        map: &DisplayMap,
+        ctx: &AppContext,
+    ) -> (Range<u32>, Range<u32>) {
+        let display_start = self.start.to_display_point(map, ctx).unwrap();
+        let buffer_start = DisplayPoint::new(display_start.row(), 0)
+            .to_buffer_point(map, Bias::Left, ctx)
+            .unwrap();
+
+        let mut display_end = self.end.to_display_point(map, ctx).unwrap();
+        if display_end.row() != map.max_point(ctx).row()
+            && display_start.row() != display_end.row()
+            && display_end.column() == 0
+        {
+            *display_end.row_mut() -= 1;
+        }
+        let buffer_end = DisplayPoint::new(
+            display_end.row(),
+            map.line_len(display_end.row(), ctx).unwrap(),
+        )
+        .to_buffer_point(map, Bias::Left, ctx)
+        .unwrap();
+
+        (
+            buffer_start.row..buffer_end.row + 1,
+            display_start.row()..display_end.row() + 1,
+        )
     }
 }
