@@ -6,7 +6,6 @@ use crate::{
     watch,
     worktree::{Worktree, WorktreeHandle},
 };
-use anyhow::anyhow;
 use futures_core::{future::LocalBoxFuture, Future};
 use gpui::{
     color::rgbu, elements::*, json::to_string_pretty, keymap::Binding, AnyViewHandle, AppContext,
@@ -17,7 +16,6 @@ use log::error;
 use smol::prelude::*;
 use std::{
     collections::{hash_map::Entry, HashMap, HashSet},
-    future,
     path::{Path, PathBuf},
     sync::Arc,
 };
@@ -204,7 +202,11 @@ impl WorkspaceView {
         paths: &[PathBuf],
         ctx: &mut ViewContext<Self>,
     ) -> impl Future<Output = ()> {
-        let entries = self.open_paths2(paths, ctx);
+        let entries = paths
+            .iter()
+            .cloned()
+            .map(|path| self.open_path(path, ctx))
+            .collect::<Vec<_>>();
 
         let bg = ctx.background_executor().clone();
         let tasks = paths
@@ -231,18 +233,6 @@ impl WorkspaceView {
                 }
             }
         }
-    }
-
-    pub fn open_paths2(
-        &mut self,
-        paths: &[PathBuf],
-        ctx: &mut ViewContext<Self>,
-    ) -> Vec<(usize, Arc<Path>)> {
-        paths
-            .iter()
-            .cloned()
-            .map(move |path| self.open_path(path, ctx))
-            .collect()
     }
 
     pub fn open_path(&mut self, path: PathBuf, ctx: &mut ViewContext<Self>) -> (usize, Arc<Path>) {
@@ -304,53 +294,33 @@ impl WorkspaceView {
             return None;
         }
 
-        self.loading_entries.insert(entry.clone());
+        let (worktree_id, path) = entry.clone();
 
-        let window_id = ctx.window_id();
-        let future = self.open_entry2(entry.clone(), window_id, self.settings.clone(), ctx);
-
-        Some(ctx.spawn(future, move |me, item_view, ctx| {
-            me.loading_entries.remove(&entry);
-            match item_view {
-                Ok(item_view) => me.add_item(item_view, ctx),
-                Err(error) => log::error!("error opening item: {}", error),
-            }
-        }))
-    }
-
-    pub fn open_entry2(
-        &mut self,
-        (worktree_id, path): (usize, Arc<Path>),
-        window_id: usize,
-        settings: watch::Receiver<Settings>,
-        ctx: &mut ViewContext<Self>,
-    ) -> LocalBoxFuture<'static, Result<Box<dyn ItemViewHandle>, Arc<anyhow::Error>>> {
         let worktree = match self.worktrees.get(&worktree_id).cloned() {
             Some(worktree) => worktree,
             None => {
-                return future::ready(Err(Arc::new(anyhow!(
-                    "worktree {} does not exist",
-                    worktree_id
-                ))))
-                .boxed_local();
+                log::error!("worktree {} does not exist", worktree_id);
+                return None;
             }
         };
 
         let inode = match worktree.read(ctx).inode_for_path(&path) {
             Some(inode) => inode,
             None => {
-                return future::ready(Err(Arc::new(anyhow!("path {:?} does not exist", path))))
-                    .boxed_local();
+                log::error!("path {:?} does not exist", path);
+                return None;
             }
         };
 
         let file = match worktree.file(path.clone(), ctx.as_ref()) {
             Some(file) => file,
             None => {
-                return future::ready(Err(Arc::new(anyhow!("path {:?} does not exist", path))))
-                    .boxed_local()
+                log::error!("path {:?} does not exist", path);
+                return None;
             }
         };
+
+        self.loading_entries.insert(entry.clone());
 
         if let Entry::Vacant(entry) = self.buffers.entry((worktree_id, inode)) {
             let (mut tx, rx) = postage::watch::channel();
@@ -370,7 +340,7 @@ impl WorkspaceView {
         }
 
         let mut watch = self.buffers.get(&(worktree_id, inode)).unwrap().clone();
-        ctx.spawn(
+        Some(ctx.spawn(
             async move {
                 loop {
                     if let Some(load_result) = watch.borrow().as_ref() {
@@ -379,15 +349,26 @@ impl WorkspaceView {
                     watch.next().await;
                 }
             },
-            move |_, load_result, ctx| {
-                load_result.map(|buffer_handle| {
-                    Box::new(ctx.as_mut().add_view(window_id, |ctx| {
-                        BufferView::for_buffer(buffer_handle, Some(file), settings, ctx)
-                    })) as Box<dyn ItemViewHandle>
-                })
+            move |me, load_result, ctx| {
+                me.loading_entries.remove(&entry);
+                match load_result {
+                    Ok(buffer_handle) => {
+                        let buffer_view = Box::new(ctx.add_view(|ctx| {
+                            BufferView::for_buffer(
+                                buffer_handle,
+                                Some(file),
+                                me.settings.clone(),
+                                ctx,
+                            )
+                        }));
+                        me.add_item(buffer_view, ctx);
+                    }
+                    Err(error) => {
+                        log::error!("error opening item: {}", error);
+                    }
+                }
             },
-        )
-        .boxed_local()
+        ))
     }
 
     pub fn save_active_item(&mut self, _: &(), ctx: &mut ViewContext<Self>) {
