@@ -272,7 +272,15 @@ impl Workspace {
         let entries = paths
             .iter()
             .cloned()
-            .map(|path| self.open_path(path, ctx))
+            .map(|path| {
+                for tree in self.worktrees.iter() {
+                    if let Ok(relative_path) = path.strip_prefix(tree.read(ctx).abs_path()) {
+                        return (tree.id(), relative_path.into());
+                    }
+                }
+                let worktree_id = self.add_worktree(&path, ctx);
+                (worktree_id, Path::new("").into())
+            })
             .collect::<Vec<_>>();
 
         let bg = ctx.background_executor().clone();
@@ -302,19 +310,13 @@ impl Workspace {
         }
     }
 
-    pub fn open_path(&mut self, path: PathBuf, ctx: &mut ViewContext<Self>) -> (usize, Arc<Path>) {
-        for tree in self.worktrees.iter() {
-            if let Ok(relative_path) = path.strip_prefix(tree.read(ctx).abs_path()) {
-                return (tree.id(), relative_path.into());
-            }
-        }
-
-        let worktree = ctx.add_model(|ctx| Worktree::new(path.clone(), ctx));
+    pub fn add_worktree(&mut self, path: &Path, ctx: &mut ViewContext<Self>) -> usize {
+        let worktree = ctx.add_model(|ctx| Worktree::new(path, ctx));
         let worktree_id = worktree.id();
         ctx.observe_model(&worktree, |_, _, ctx| ctx.notify());
         self.worktrees.insert(worktree);
         ctx.notify();
-        (worktree_id, Path::new("").into())
+        worktree_id
     }
 
     pub fn toggle_modal<V, F>(&mut self, ctx: &mut ViewContext<Self>, add_view: F)
@@ -685,7 +687,7 @@ mod tests {
 
             let (_, workspace) = app.add_window(|ctx| {
                 let mut workspace = Workspace::new(0, settings, ctx);
-                workspace.open_path(dir.path().into(), ctx);
+                workspace.add_worktree(dir.path(), ctx);
                 workspace
             });
 
@@ -771,7 +773,7 @@ mod tests {
             let settings = settings::channel(&app.font_cache()).unwrap().1;
             let (_, workspace) = app.add_window(|ctx| {
                 let mut workspace = Workspace::new(0, settings, ctx);
-                workspace.open_path(dir1.path().into(), ctx);
+                workspace.add_worktree(dir1.path(), ctx);
                 workspace
             });
             app.read(|ctx| workspace.read(ctx).worktree_scans_complete(ctx))
@@ -845,7 +847,7 @@ mod tests {
             let settings = settings::channel(&app.font_cache()).unwrap().1;
             let (_, workspace) = app.add_window(|ctx| {
                 let mut workspace = Workspace::new(0, settings, ctx);
-                workspace.open_path(dir.into(), ctx);
+                workspace.add_worktree(dir, ctx);
                 workspace
             });
             app.read(|ctx| workspace.read(ctx).worktree_scans_complete(ctx))
@@ -906,7 +908,7 @@ mod tests {
             let settings = settings::channel(&app.font_cache()).unwrap().1;
             let (window_id, workspace) = app.add_window(|ctx| {
                 let mut workspace = Workspace::new(0, settings, ctx);
-                workspace.open_path(dir.path().into(), ctx);
+                workspace.add_worktree(dir.path(), ctx);
                 workspace
             });
             app.read(|ctx| workspace.read(ctx).worktree_scans_complete(ctx))

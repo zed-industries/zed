@@ -474,7 +474,7 @@ mod tests {
             let settings = settings::channel(&app.font_cache()).unwrap().1;
             let (window_id, workspace) = app.add_window(|ctx| {
                 let mut workspace = Workspace::new(0, settings, ctx);
-                workspace.open_path(tmp_dir.path().into(), ctx);
+                workspace.add_worktree(tmp_dir.path(), ctx);
                 workspace
             });
             app.read(|ctx| workspace.read(ctx).worktree_scans_complete(ctx))
@@ -543,7 +543,7 @@ mod tests {
             let settings = settings::channel(&app.font_cache()).unwrap().1;
             let (_, workspace) = app.add_window(|ctx| {
                 let mut workspace = Workspace::new(0, settings.clone(), ctx);
-                workspace.open_path(tmp_dir.path().into(), ctx);
+                workspace.add_worktree(tmp_dir.path(), ctx);
                 workspace
             });
             app.read(|ctx| workspace.read(ctx).worktree_scans_complete(ctx))
@@ -600,7 +600,7 @@ mod tests {
             let settings = settings::channel(&app.font_cache()).unwrap().1;
             let (_, workspace) = app.add_window(|ctx| {
                 let mut workspace = Workspace::new(0, settings.clone(), ctx);
-                workspace.open_path(file_path, ctx);
+                workspace.add_worktree(&file_path, ctx);
                 workspace
             });
             app.read(|ctx| workspace.read(ctx).worktree_scans_complete(ctx))
