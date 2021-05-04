@@ -640,16 +640,19 @@ mod tests {
             }));
             let settings = settings::channel(&app.font_cache()).unwrap().1;
 
-            let (_, workspace) = app.add_window(|ctx| {
-                let mut workspace = Workspace::new(0, settings.clone(), ctx);
-                smol::block_on(workspace.open_paths(
-                    &[tmp_dir.path().join("dir1"), tmp_dir.path().join("dir2")],
-                    ctx,
-                ));
-                workspace
-            });
+            let (_, workspace) = app.add_window(|ctx| Workspace::new(0, settings.clone(), ctx));
+
+            workspace
+                .update(&mut app, |workspace, ctx| {
+                    workspace.open_paths(
+                        &[tmp_dir.path().join("dir1"), tmp_dir.path().join("dir2")],
+                        ctx,
+                    )
+                })
+                .await;
             app.read(|ctx| workspace.read(ctx).worktree_scans_complete(ctx))
                 .await;
+
             let (_, finder) =
                 app.add_window(|ctx| FileFinder::new(settings, workspace.clone(), ctx));
 

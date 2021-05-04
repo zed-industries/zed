@@ -685,7 +685,7 @@ mod tests {
 
             let (_, workspace) = app.add_window(|ctx| {
                 let mut workspace = Workspace::new(0, settings, ctx);
-                smol::block_on(workspace.open_paths(&[dir.path().into()], ctx));
+                workspace.open_path(dir.path().into(), ctx);
                 workspace
             });
 
