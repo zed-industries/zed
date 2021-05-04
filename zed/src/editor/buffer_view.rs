@@ -967,7 +967,7 @@ impl BufferView {
                     map.line_len(display_rows.end, app).unwrap(),
                 );
                 let next_row_end = next_row_display_end
-                    .to_buffer_offset(map, Bias::Left, app)
+                    .to_buffer_offset(map, Bias::Right, app)
                     .unwrap();
 
                 let mut text = String::new();
