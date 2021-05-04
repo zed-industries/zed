@@ -73,14 +73,18 @@ impl Selection {
         }
     }
 
-    pub fn buffer_rows_for_display_rows(&self, map: &DisplayMap, ctx: &AppContext) -> Range<u32> {
+    pub fn buffer_rows_for_display_rows(
+        &self,
+        map: &DisplayMap,
+        ctx: &AppContext,
+    ) -> (Range<u32>, Range<u32>) {
         let display_start = self.start.to_display_point(map, ctx).unwrap();
         let buffer_start = DisplayPoint::new(display_start.row(), 0)
             .to_buffer_point(map, Bias::Left, ctx)
             .unwrap();
 
         let mut display_end = self.end.to_display_point(map, ctx).unwrap();
-        if display_end != map.max_point(ctx)
+        if display_end.row() != map.max_point(ctx).row()
             && display_start.row() != display_end.row()
             && display_end.column() == 0
         {
@@ -93,6 +97,9 @@ impl Selection {
         .to_buffer_point(map, Bias::Left, ctx)
         .unwrap();
 
-        buffer_start.row..buffer_end.row + 1
+        (
+            buffer_start.row..buffer_end.row + 1,
+            display_start.row()..display_end.row() + 1,
+        )
     }
 }

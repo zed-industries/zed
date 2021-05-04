@@ -34,6 +34,13 @@ impl DisplayMap {
         }
     }
 
+    pub fn folds_in_range<T>(&self, range: Range<T>, app: &AppContext) -> Result<&[Range<Anchor>]>
+    where
+        T: ToOffset,
+    {
+        self.fold_map.folds_in_range(range, app)
+    }
+
     pub fn fold<T: ToOffset>(
         &mut self,
         ranges: impl IntoIterator<Item = Range<T>>,
@@ -177,6 +184,11 @@ impl DisplayPoint {
         Ok(map
             .fold_map
             .to_buffer_point(self.collapse_tabs(map, bias, app)?.0))
+    }
+
+    pub fn to_buffer_offset(self, map: &DisplayMap, bias: Bias, app: &AppContext) -> Result<usize> {
+        map.fold_map
+            .to_buffer_offset(self.collapse_tabs(map, bias, app)?.0, app)
     }
 
     fn expand_tabs(mut self, map: &DisplayMap, app: &AppContext) -> Result<Self> {

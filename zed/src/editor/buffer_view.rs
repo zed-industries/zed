@@ -19,6 +19,7 @@ use std::{
     cmp::{self, Ordering},
     fmt::Write,
     iter::FromIterator,
+    mem,
     ops::Range,
     path::Path,
     sync::Arc,
@@ -56,6 +57,8 @@ pub fn init(app: &mut MutableAppContext) {
             Some("BufferView"),
         ),
         Binding::new("cmd-shift-D", "buffer:duplicate_line", Some("BufferView")),
+        Binding::new("ctrl-cmd-up", "buffer:move_line_up", Some("BufferView")),
+        Binding::new("ctrl-cmd-down", "buffer:move_line_down", Some("BufferView")),
         Binding::new("cmd-x", "buffer:cut", Some("BufferView")),
         Binding::new("cmd-c", "buffer:copy", Some("BufferView")),
         Binding::new("cmd-v", "buffer:paste", Some("BufferView")),
@@ -171,6 +174,8 @@ pub fn init(app: &mut MutableAppContext) {
         BufferView::delete_to_end_of_line,
     );
     app.add_action("buffer:duplicate_line", BufferView::duplicate_line);
+    app.add_action("buffer:move_line_up", BufferView::move_line_up);
+    app.add_action("buffer:move_line_down", BufferView::move_line_down);
     app.add_action("buffer:cut", BufferView::cut);
     app.add_action("buffer:copy", BufferView::copy);
     app.add_action("buffer:paste", BufferView::paste);
@@ -518,23 +523,30 @@ impl BufferView {
         self.pending_selection.is_some()
     }
 
-    #[cfg(test)]
-    fn select_ranges<'a, T>(&mut self, ranges: T, ctx: &mut ViewContext<Self>) -> Result<()>
+    fn select_ranges<I, T>(&mut self, ranges: I, autoscroll: bool, ctx: &mut ViewContext<Self>)
     where
-        T: IntoIterator<Item = &'a Range<usize>>,
+        I: IntoIterator<Item = Range<T>>,
+        T: ToOffset,
     {
         let buffer = self.buffer.read(ctx);
         let mut selections = Vec::new();
         for range in ranges {
+            let mut start = range.start.to_offset(buffer).unwrap();
+            let mut end = range.end.to_offset(buffer).unwrap();
+            let reversed = if start > end {
+                mem::swap(&mut start, &mut end);
+                true
+            } else {
+                false
+            };
             selections.push(Selection {
-                start: buffer.anchor_before(range.start)?,
-                end: buffer.anchor_before(range.end)?,
-                reversed: false,
+                start: buffer.anchor_before(start).unwrap(),
+                end: buffer.anchor_before(end).unwrap(),
+                reversed,
                 goal_column: None,
             });
         }
-        self.update_selections(selections, false, ctx);
-        Ok(())
+        self.update_selections(selections, autoscroll, ctx);
     }
 
     #[cfg(test)]
@@ -542,8 +554,6 @@ impl BufferView {
     where
         T: IntoIterator<Item = &'a Range<DisplayPoint>>,
     {
-        use std::mem;
-
         let map = self.display_map.read(ctx);
         let mut selections = Vec::new();
         for range in ranges {
@@ -693,7 +703,7 @@ impl BufferView {
 
         let mut selections = self.selections(app).iter().peekable();
         while let Some(selection) = selections.next() {
-            let mut rows = selection.buffer_rows_for_display_rows(map, app);
+            let (mut rows, _) = selection.buffer_rows_for_display_rows(map, app);
             let goal_display_column = selection
                 .head()
                 .to_display_point(map, app)
@@ -702,7 +712,7 @@ impl BufferView {
 
             // Accumulate contiguous regions of rows that we want to delete.
             while let Some(next_selection) = selections.peek() {
-                let next_rows = next_selection.buffer_rows_for_display_rows(map, app);
+                let (next_rows, _) = next_selection.buffer_rows_for_display_rows(map, app);
                 if next_rows.start <= rows.end {
                     rows.end = next_rows.end;
                     selections.next().unwrap();
@@ -750,10 +760,10 @@ impl BufferView {
                 goal_column: None,
             })
             .collect();
-        self.update_selections(new_selections, true, ctx);
         self.buffer
             .update(ctx, |buffer, ctx| buffer.edit(edit_ranges, "", Some(ctx)))
             .unwrap();
+        self.update_selections(new_selections, true, ctx);
         self.end_transaction(ctx);
     }
 
@@ -780,9 +790,9 @@ impl BufferView {
         let mut selections_iter = selections.iter_mut().peekable();
         while let Some(selection) = selections_iter.next() {
             // Avoid duplicating the same lines twice.
-            let mut rows = selection.buffer_rows_for_display_rows(map, app);
+            let (mut rows, _) = selection.buffer_rows_for_display_rows(map, app);
             while let Some(next_selection) = selections_iter.peek() {
-                let next_rows = next_selection.buffer_rows_for_display_rows(map, app);
+                let (next_rows, _) = next_selection.buffer_rows_for_display_rows(map, app);
                 if next_rows.start <= rows.end - 1 {
                     rows.end = next_rows.end;
                     selections_iter.next().unwrap();
@@ -811,10 +821,212 @@ impl BufferView {
         // Restore bias on selections.
         let buffer = self.buffer.read(ctx);
         for selection in &mut selections {
-            selection.start = selection.start.bias_right(buffer).unwrap();
-            selection.end = selection.end.bias_right(buffer).unwrap();
+            selection.start = selection.start.bias_left(buffer).unwrap();
+            selection.end = selection.end.bias_left(buffer).unwrap();
         }
         self.update_selections(selections, true, ctx);
+
+        self.end_transaction(ctx);
+    }
+
+    pub fn move_line_up(&mut self, _: &(), ctx: &mut ViewContext<Self>) {
+        self.start_transaction(ctx);
+
+        let app = ctx.as_ref();
+        let buffer = self.buffer.read(ctx);
+        let map = self.display_map.read(ctx);
+
+        let mut edits = Vec::new();
+        let mut new_selection_ranges = Vec::new();
+        let mut old_folds = Vec::new();
+        let mut new_folds = Vec::new();
+
+        let mut selections = self.selections(app).iter().peekable();
+        let mut contiguous_selections = Vec::new();
+        while let Some(selection) = selections.next() {
+            // Accumulate contiguous regions of rows that we want to move.
+            contiguous_selections.push(selection.range(buffer));
+            let (mut buffer_rows, mut display_rows) =
+                selection.buffer_rows_for_display_rows(map, app);
+            while let Some(next_selection) = selections.peek() {
+                let (next_buffer_rows, next_display_rows) =
+                    next_selection.buffer_rows_for_display_rows(map, app);
+                if next_buffer_rows.start <= buffer_rows.end {
+                    buffer_rows.end = next_buffer_rows.end;
+                    display_rows.end = next_display_rows.end;
+                    contiguous_selections.push(next_selection.range(buffer));
+                    selections.next().unwrap();
+                } else {
+                    break;
+                }
+            }
+
+            // Cut the text from the selected rows and paste it at the start of the previous line.
+            if display_rows.start != 0 {
+                let selection_row_start =
+                    Point::new(buffer_rows.start, 0).to_offset(buffer).unwrap();
+                let selection_row_end = Point::new(
+                    buffer_rows.end - 1,
+                    buffer.line_len(buffer_rows.end - 1).unwrap(),
+                )
+                .to_offset(buffer)
+                .unwrap();
+
+                let prev_row_display_start = DisplayPoint::new(display_rows.start - 1, 0);
+                let prev_row_start = prev_row_display_start
+                    .to_buffer_offset(map, Bias::Left, app)
+                    .unwrap();
+
+                let mut text = String::new();
+                text.extend(
+                    buffer
+                        .text_for_range(selection_row_start..selection_row_end)
+                        .unwrap(),
+                );
+                text.push('\n');
+                edits.push((prev_row_start..prev_row_start, text));
+                edits.push((selection_row_start - 1..selection_row_end, String::new()));
+
+                let row_delta = buffer_rows.start
+                    - prev_row_display_start
+                        .to_buffer_point(map, Bias::Left, app)
+                        .unwrap()
+                        .row;
+
+                // Move selections up.
+                for range in &mut contiguous_selections {
+                    range.start.row -= row_delta;
+                    range.end.row -= row_delta;
+                }
+
+                // Move folds up.
+                old_folds.push(selection_row_start..selection_row_end);
+                for fold in map
+                    .folds_in_range(selection_row_start..selection_row_end, app)
+                    .unwrap()
+                {
+                    let mut start = fold.start.to_point(buffer).unwrap();
+                    let mut end = fold.end.to_point(buffer).unwrap();
+                    start.row -= row_delta;
+                    end.row -= row_delta;
+                    new_folds.push(start..end);
+                }
+            }
+
+            new_selection_ranges.extend(contiguous_selections.drain(..));
+        }
+
+        self.unfold_ranges(old_folds, ctx);
+        self.buffer.update(ctx, |buffer, ctx| {
+            for (range, text) in edits.into_iter().rev() {
+                buffer.edit(Some(range), text, Some(ctx)).unwrap();
+            }
+        });
+        self.fold_ranges(new_folds, ctx);
+        self.select_ranges(new_selection_ranges, true, ctx);
+
+        self.end_transaction(ctx);
+    }
+
+    pub fn move_line_down(&mut self, _: &(), ctx: &mut ViewContext<Self>) {
+        self.start_transaction(ctx);
+
+        let app = ctx.as_ref();
+        let buffer = self.buffer.read(ctx);
+        let map = self.display_map.read(ctx);
+
+        let mut edits = Vec::new();
+        let mut new_selection_ranges = Vec::new();
+        let mut old_folds = Vec::new();
+        let mut new_folds = Vec::new();
+
+        let mut selections = self.selections(app).iter().peekable();
+        let mut contiguous_selections = Vec::new();
+        while let Some(selection) = selections.next() {
+            // Accumulate contiguous regions of rows that we want to move.
+            contiguous_selections.push(selection.range(buffer));
+            let (mut buffer_rows, mut display_rows) =
+                selection.buffer_rows_for_display_rows(map, app);
+            while let Some(next_selection) = selections.peek() {
+                let (next_buffer_rows, next_display_rows) =
+                    next_selection.buffer_rows_for_display_rows(map, app);
+                if next_buffer_rows.start <= buffer_rows.end {
+                    buffer_rows.end = next_buffer_rows.end;
+                    display_rows.end = next_display_rows.end;
+                    contiguous_selections.push(next_selection.range(buffer));
+                    selections.next().unwrap();
+                } else {
+                    break;
+                }
+            }
+
+            // Cut the text from the selected rows and paste it at the end of the next line.
+            if display_rows.end <= map.max_point(app).row() {
+                let selection_row_start =
+                    Point::new(buffer_rows.start, 0).to_offset(buffer).unwrap();
+                let selection_row_end = Point::new(
+                    buffer_rows.end - 1,
+                    buffer.line_len(buffer_rows.end - 1).unwrap(),
+                )
+                .to_offset(buffer)
+                .unwrap();
+
+                let next_row_display_end = DisplayPoint::new(
+                    display_rows.end,
+                    map.line_len(display_rows.end, app).unwrap(),
+                );
+                let next_row_end = next_row_display_end
+                    .to_buffer_offset(map, Bias::Left, app)
+                    .unwrap();
+
+                let mut text = String::new();
+                text.push('\n');
+                text.extend(
+                    buffer
+                        .text_for_range(selection_row_start..selection_row_end)
+                        .unwrap(),
+                );
+                edits.push((selection_row_start..selection_row_end + 1, String::new()));
+                edits.push((next_row_end..next_row_end, text));
+
+                let row_delta = next_row_display_end
+                    .to_buffer_point(map, Bias::Right, app)
+                    .unwrap()
+                    .row
+                    - buffer_rows.end
+                    + 1;
+
+                // Move selections down.
+                for range in &mut contiguous_selections {
+                    range.start.row += row_delta;
+                    range.end.row += row_delta;
+                }
+
+                // Move folds down.
+                old_folds.push(selection_row_start..selection_row_end);
+                for fold in map
+                    .folds_in_range(selection_row_start..selection_row_end, app)
+                    .unwrap()
+                {
+                    let mut start = fold.start.to_point(buffer).unwrap();
+                    let mut end = fold.end.to_point(buffer).unwrap();
+                    start.row += row_delta;
+                    end.row += row_delta;
+                    new_folds.push(start..end);
+                }
+            }
+
+            new_selection_ranges.extend(contiguous_selections.drain(..));
+        }
+
+        self.unfold_ranges(old_folds, ctx);
+        self.buffer.update(ctx, |buffer, ctx| {
+            for (range, text) in edits.into_iter().rev() {
+                buffer.edit(Some(range), text, Some(ctx)).unwrap();
+            }
+        });
+        self.fold_ranges(new_folds, ctx);
+        self.select_ranges(new_selection_ranges, true, ctx);
 
         self.end_transaction(ctx);
     }
@@ -1313,9 +1525,11 @@ impl BufferView {
     }
 
     pub fn move_to_beginning(&mut self, _: &(), ctx: &mut ViewContext<Self>) {
+        let buffer = self.buffer.read(ctx);
+        let cursor = buffer.anchor_before(Point::new(0, 0)).unwrap();
         let selection = Selection {
-            start: Anchor::Start,
-            end: Anchor::Start,
+            start: cursor.clone(),
+            end: cursor,
             reversed: false,
             goal_column: None,
         };
@@ -1329,9 +1543,11 @@ impl BufferView {
     }
 
     pub fn move_to_end(&mut self, _: &(), ctx: &mut ViewContext<Self>) {
+        let buffer = self.buffer.read(ctx);
+        let cursor = buffer.anchor_before(buffer.max_point()).unwrap();
         let selection = Selection {
-            start: Anchor::End,
-            end: Anchor::End,
+            start: cursor.clone(),
+            end: cursor,
             reversed: false,
             goal_column: None,
         };
@@ -1495,12 +1711,7 @@ impl BufferView {
             }
         }
 
-        if !fold_ranges.is_empty() {
-            self.display_map.update(ctx, |map, ctx| {
-                map.fold(fold_ranges, ctx).unwrap();
-            });
-            *self.autoscroll_requested.lock() = true;
-        }
+        self.fold_ranges(fold_ranges, ctx);
     }
 
     pub fn unfold(&mut self, _: &(), ctx: &mut ViewContext<Self>) {
@@ -1521,11 +1732,7 @@ impl BufferView {
                 start..end
             })
             .collect::<Vec<_>>();
-
-        self.display_map.update(ctx, |map, ctx| {
-            map.unfold(ranges, ctx).unwrap();
-        });
-        *self.autoscroll_requested.lock() = true;
+        self.unfold_ranges(ranges, ctx);
     }
 
     fn is_line_foldable(&self, display_row: u32, app: &AppContext) -> bool {
@@ -1581,6 +1788,24 @@ impl BufferView {
                 .collect::<Vec<_>>();
             map.fold(ranges, ctx).unwrap();
         });
+    }
+
+    fn fold_ranges<T: ToOffset>(&mut self, ranges: Vec<Range<T>>, ctx: &mut ViewContext<Self>) {
+        if !ranges.is_empty() {
+            self.display_map.update(ctx, |map, ctx| {
+                map.fold(ranges, ctx).unwrap();
+            });
+            *self.autoscroll_requested.lock() = true;
+        }
+    }
+
+    fn unfold_ranges<T: ToOffset>(&mut self, ranges: Vec<Range<T>>, ctx: &mut ViewContext<Self>) {
+        if !ranges.is_empty() {
+            self.display_map.update(ctx, |map, ctx| {
+                map.unfold(ranges, ctx).unwrap();
+            });
+            *self.autoscroll_requested.lock() = true;
+        }
     }
 
     pub fn line(&self, display_row: u32, app: &AppContext) -> Result<String> {
@@ -2732,14 +2957,14 @@ mod tests {
 
             // Cut with three selections. Clipboard text is divided into three slices.
             view.update(app, |view, ctx| {
-                view.select_ranges(&[0..4, 8..14, 19..24], ctx).unwrap();
+                view.select_ranges(vec![0..4, 8..14, 19..24], false, ctx);
                 view.cut(&(), ctx);
             });
             assert_eq!(view.read(app).text(app.as_ref()), "two four six ");
 
             // Paste with three cursors. Each cursor pastes one slice of the clipboard text.
             view.update(app, |view, ctx| {
-                view.select_ranges(&[4..4, 9..9, 13..13], ctx).unwrap();
+                view.select_ranges(vec![4..4, 9..9, 13..13], false, ctx);
                 view.paste(&(), ctx);
             });
             assert_eq!(
@@ -2759,7 +2984,7 @@ mod tests {
             // match the number of slices in the clipboard, the entire clipboard text
             // is pasted at each cursor.
             view.update(app, |view, ctx| {
-                view.select_ranges(&[0..0, 28..28], ctx).unwrap();
+                view.select_ranges(vec![0..0, 28..28], false, ctx);
                 view.insert(&"( ".to_string(), ctx);
                 view.paste(&(), ctx);
                 view.insert(&") ".to_string(), ctx);
@@ -2770,7 +2995,7 @@ mod tests {
             );
 
             view.update(app, |view, ctx| {
-                view.select_ranges(&[0..0], ctx).unwrap();
+                view.select_ranges(vec![0..0], false, ctx);
                 view.insert(&"123\n4567\n89\n".to_string(), ctx);
             });
             assert_eq!(
