@@ -746,6 +746,35 @@ mod tests {
 
                     assert_eq!(map.text(app.as_ref()), expected_text);
 
+                    for (display_row, line) in expected_text.lines().enumerate() {
+                        let line_len = map.line_len(display_row as u32, app.as_ref()).unwrap();
+                        assert_eq!(line_len, line.chars().count() as u32);
+                    }
+
+                    let mut display_point = DisplayPoint::new(0, 0);
+                    let mut display_offset = DisplayOffset(0);
+                    for c in expected_text.chars() {
+                        let buffer_point = map.to_buffer_point(display_point);
+                        let buffer_offset = buffer_point.to_offset(buffer).unwrap();
+                        assert_eq!(map.to_display_point(buffer_point), display_point);
+                        assert_eq!(
+                            map.to_buffer_offset(display_point, app.as_ref()).unwrap(),
+                            buffer_offset
+                        );
+                        assert_eq!(
+                            map.to_display_offset(display_point, app.as_ref()).unwrap(),
+                            display_offset
+                        );
+
+                        if c == '\n' {
+                            *display_point.row_mut() += 1;
+                            *display_point.column_mut() = 0;
+                        } else {
+                            *display_point.column_mut() += 1;
+                        }
+                        display_offset.0 += 1;
+                    }
+
                     for (idx, buffer_row) in expected_buffer_rows.iter().enumerate() {
                         let display_row = map.to_display_point(Point::new(*buffer_row, 0)).row();
                         assert_eq!(
