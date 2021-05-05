@@ -379,7 +379,8 @@ pub struct MutableAppContext {
     next_window_id: usize,
     next_task_id: usize,
     subscriptions: HashMap<usize, Vec<Subscription>>,
-    observations: HashMap<usize, Vec<Observation>>,
+    model_observations: HashMap<usize, Vec<ModelObservation>>,
+    view_observations: HashMap<usize, Vec<ViewObservation>>,
     async_observations: HashMap<usize, postage::broadcast::Sender<()>>,
     window_invalidations: HashMap<usize, WindowInvalidation>,
     presenters_and_platform_windows:
@@ -420,7 +421,8 @@ impl MutableAppContext {
             next_window_id: 0,
             next_task_id: 0,
             subscriptions: HashMap::new(),
-            observations: HashMap::new(),
+            model_observations: HashMap::new(),
+            view_observations: HashMap::new(),
             async_observations: HashMap::new(),
             window_invalidations: HashMap::new(),
             presenters_and_platform_windows: HashMap::new(),
@@ -871,13 +873,13 @@ impl MutableAppContext {
             for model_id in dropped_models {
                 self.ctx.models.remove(&model_id);
                 self.subscriptions.remove(&model_id);
-                self.observations.remove(&model_id);
+                self.model_observations.remove(&model_id);
                 self.async_observations.remove(&model_id);
             }
 
             for (window_id, view_id) in dropped_views {
                 self.subscriptions.remove(&view_id);
-                self.observations.remove(&view_id);
+                self.model_observations.remove(&view_id);
                 self.async_observations.remove(&view_id);
                 if let Some(window) = self.ctx.windows.get_mut(&window_id) {
                     self.window_invalidations
@@ -1004,11 +1006,11 @@ impl MutableAppContext {
     }
 
     fn notify_model_observers(&mut self, observed_id: usize) {
-        if let Some(observations) = self.observations.remove(&observed_id) {
+        if let Some(observations) = self.model_observations.remove(&observed_id) {
             if self.ctx.models.contains_key(&observed_id) {
                 for mut observation in observations {
                     let alive = match &mut observation {
-                        Observation::FromModel { model_id, callback } => {
+                        ModelObservation::FromModel { model_id, callback } => {
                             if let Some(mut model) = self.ctx.models.remove(model_id) {
                                 callback(model.as_any_mut(), observed_id, self, *model_id);
                                 self.ctx.models.insert(*model_id, model);
@@ -1017,7 +1019,7 @@ impl MutableAppContext {
                                 false
                             }
                         }
-                        Observation::FromView {
+                        ModelObservation::FromView {
                             window_id,
                             view_id,
                             callback,
@@ -1049,7 +1051,7 @@ impl MutableAppContext {
                     };
 
                     if alive {
-                        self.observations
+                        self.model_observations
                             .entry(observed_id)
                             .or_default()
                             .push(observation);
@@ -1071,6 +1073,44 @@ impl MutableAppContext {
             .or_default()
             .updated
             .insert(view_id);
+
+        if let Some(observations) = self.view_observations.remove(&view_id) {
+            if self.ctx.models.contains_key(&view_id) {
+                for mut observation in observations {
+                    let alive = if let Some(mut view) = self
+                        .ctx
+                        .windows
+                        .get_mut(&observation.window_id)
+                        .and_then(|w| w.views.remove(&observation.view_id))
+                    {
+                        (observation.callback)(
+                            view.as_any_mut(),
+                            view_id,
+                            window_id,
+                            self,
+                            observation.window_id,
+                            observation.view_id,
+                        );
+                        self.ctx
+                            .windows
+                            .get_mut(&observation.window_id)
+                            .unwrap()
+                            .views
+                            .insert(observation.view_id, view);
+                        true
+                    } else {
+                        false
+                    };
+
+                    if alive {
+                        self.view_observations
+                            .entry(view_id)
+                            .or_default()
+                            .push(observation);
+                    }
+                }
+            }
+        }
 
         if let Entry::Occupied(mut entry) = self.async_observations.entry(view_id) {
             if entry.get_mut().blocking_send(()).is_err() {
@@ -1576,10 +1616,10 @@ impl<'a, T: Entity> ModelContext<'a, T> {
         F: 'static + FnMut(&mut T, ModelHandle<S>, &mut ModelContext<T>),
     {
         self.app
-            .observations
+            .model_observations
             .entry(handle.model_id)
             .or_default()
-            .push(Observation::FromModel {
+            .push(ModelObservation::FromModel {
                 model_id: self.model_id,
                 callback: Box::new(move |model, observed_id, app, model_id| {
                     let model = model.downcast_mut().expect("downcast is type safe");
@@ -1812,7 +1852,7 @@ impl<'a, T: View> ViewContext<'a, T> {
                 window_id: self.window_id,
                 view_id: self.view_id,
                 callback: Box::new(move |view, payload, app, window_id, view_id| {
-                    if let Some(emitter_handle) = emitter_handle.upgrade(app.as_ref()) {
+                    if let Some(emitter_handle) = emitter_handle.upgrade(&app) {
                         let model = view.downcast_mut().expect("downcast is type safe");
                         let payload = payload.downcast_ref().expect("downcast is type safe");
                         let mut ctx = ViewContext::new(app, window_id, view_id);
@@ -1829,16 +1869,16 @@ impl<'a, T: View> ViewContext<'a, T> {
         });
     }
 
-    pub fn observe<S, F>(&mut self, handle: &ModelHandle<S>, mut callback: F)
+    pub fn observe_model<S, F>(&mut self, handle: &ModelHandle<S>, mut callback: F)
     where
         S: Entity,
         F: 'static + FnMut(&mut T, ModelHandle<S>, &mut ViewContext<T>),
     {
         self.app
-            .observations
+            .model_observations
             .entry(handle.id())
             .or_default()
-            .push(Observation::FromView {
+            .push(ModelObservation::FromView {
                 window_id: self.window_id,
                 view_id: self.view_id,
                 callback: Box::new(move |view, observed_id, app, window_id, view_id| {
@@ -1847,6 +1887,38 @@ impl<'a, T: View> ViewContext<'a, T> {
                     let mut ctx = ViewContext::new(app, window_id, view_id);
                     callback(view, observed, &mut ctx);
                 }),
+            });
+    }
+
+    pub fn observe_view<S, F>(&mut self, handle: &ViewHandle<S>, mut callback: F)
+    where
+        S: View,
+        F: 'static + FnMut(&mut T, ViewHandle<S>, &mut ViewContext<T>),
+    {
+        self.app
+            .view_observations
+            .entry(handle.id())
+            .or_default()
+            .push(ViewObservation {
+                window_id: self.window_id,
+                view_id: self.view_id,
+                callback: Box::new(
+                    move |view,
+                          observed_view_id,
+                          observed_window_id,
+                          app,
+                          observing_window_id,
+                          observing_view_id| {
+                        let view = view.downcast_mut().expect("downcast is type safe");
+                        let observed_handle = ViewHandle::new(
+                            observed_view_id,
+                            observed_window_id,
+                            &app.ctx.ref_counts,
+                        );
+                        let mut ctx = ViewContext::new(app, observing_window_id, observing_view_id);
+                        callback(view, observed_handle, &mut ctx);
+                    },
+                ),
             });
     }
 
@@ -1915,6 +1987,12 @@ impl<'a, T: View> ViewContext<'a, T> {
             },
         );
         task
+    }
+}
+
+impl AsRef<AppContext> for &AppContext {
+    fn as_ref(&self) -> &AppContext {
+        self
     }
 }
 
@@ -2346,8 +2424,9 @@ impl<T: View> WeakViewHandle<T> {
         }
     }
 
-    pub fn upgrade(&self, app: &AppContext) -> Option<ViewHandle<T>> {
-        if app
+    pub fn upgrade(&self, ctx: impl AsRef<AppContext>) -> Option<ViewHandle<T>> {
+        let ctx = ctx.as_ref();
+        if ctx
             .windows
             .get(&self.window_id)
             .and_then(|w| w.views.get(&self.view_id))
@@ -2356,7 +2435,7 @@ impl<T: View> WeakViewHandle<T> {
             Some(ViewHandle::new(
                 self.window_id,
                 self.view_id,
-                &app.ref_counts,
+                &ctx.ref_counts,
             ))
         } else {
             None
@@ -2496,7 +2575,7 @@ enum Subscription {
     },
 }
 
-enum Observation {
+enum ModelObservation {
     FromModel {
         model_id: usize,
         callback: Box<dyn FnMut(&mut dyn Any, usize, &mut MutableAppContext, usize)>,
@@ -2506,6 +2585,12 @@ enum Observation {
         view_id: usize,
         callback: Box<dyn FnMut(&mut dyn Any, usize, &mut MutableAppContext, usize, usize)>,
     },
+}
+
+struct ViewObservation {
+    window_id: usize,
+    view_id: usize,
+    callback: Box<dyn FnMut(&mut dyn Any, usize, usize, &mut MutableAppContext, usize, usize)>,
 }
 
 type FutureHandler = Box<dyn FnOnce(Box<dyn Any>, &mut MutableAppContext) -> Box<dyn Any>>;
@@ -2639,7 +2724,7 @@ mod tests {
 
             assert_eq!(app.ctx.models.len(), 1);
             assert!(app.subscriptions.is_empty());
-            assert!(app.observations.is_empty());
+            assert!(app.model_observations.is_empty());
         });
     }
 
@@ -2842,7 +2927,7 @@ mod tests {
 
             assert_eq!(app.ctx.windows[&window_id].views.len(), 2);
             assert!(app.subscriptions.is_empty());
-            assert!(app.observations.is_empty());
+            assert!(app.model_observations.is_empty());
         })
     }
 
@@ -2988,7 +3073,7 @@ mod tests {
             let model = app.add_model(|_| Model::default());
 
             view.update(app, |_, c| {
-                c.observe(&model, |me, observed, c| {
+                c.observe_model(&model, |me, observed, c| {
                     me.events.push(observed.read(c).count)
                 });
             });
@@ -3032,7 +3117,7 @@ mod tests {
             let observed_model = app.add_model(|_| Model);
 
             observing_view.update(app, |_, ctx| {
-                ctx.observe(&observed_model, |_, _, _| {});
+                ctx.observe_model(&observed_model, |_, _, _| {});
             });
             observing_model.update(app, |_, ctx| {
                 ctx.observe(&observed_model, |_, _, _| {});
