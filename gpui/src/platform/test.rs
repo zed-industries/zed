@@ -1,11 +1,18 @@
 use crate::ClipboardItem;
 use pathfinder_geometry::vector::Vector2F;
-use std::{any::Any, cell::RefCell, path::Path, rc::Rc, sync::Arc};
+use std::{
+    any::Any,
+    cell::RefCell,
+    path::{Path, PathBuf},
+    rc::Rc,
+    sync::Arc,
+};
 
-struct Platform {
+pub(crate) struct Platform {
     dispatcher: Arc<dyn super::Dispatcher>,
     fonts: Arc<dyn super::FontSystem>,
     current_clipboard_item: RefCell<Option<ClipboardItem>>,
+    last_prompt_for_new_path_args: RefCell<Option<(PathBuf, Box<dyn FnOnce(Option<PathBuf>)>)>>,
 }
 
 struct Dispatcher;
@@ -23,8 +30,20 @@ impl Platform {
         Self {
             dispatcher: Arc::new(Dispatcher),
             fonts: Arc::new(super::current::FontSystem::new()),
-            current_clipboard_item: RefCell::new(None),
+            current_clipboard_item: Default::default(),
+            last_prompt_for_new_path_args: Default::default(),
         }
+    }
+
+    pub(crate) fn simulate_new_path_selection(
+        &self,
+        result: impl FnOnce(PathBuf) -> Option<PathBuf>,
+    ) {
+        let (dir_path, callback) = self
+            .last_prompt_for_new_path_args
+            .take()
+            .expect("prompt_for_new_path was not called");
+        callback(result(dir_path));
     }
 }
 
@@ -77,7 +96,9 @@ impl super::Platform for Platform {
     ) {
     }
 
-    fn prompt_for_new_path(&self, _: &Path, _: Box<dyn FnOnce(Option<std::path::PathBuf>)>) {}
+    fn prompt_for_new_path(&self, path: &Path, f: Box<dyn FnOnce(Option<std::path::PathBuf>)>) {
+        *self.last_prompt_for_new_path_args.borrow_mut() = Some((path.to_path_buf(), f));
+    }
 
     fn write_to_clipboard(&self, item: ClipboardItem) {
         *self.current_clipboard_item.borrow_mut() = Some(item);
@@ -134,6 +155,6 @@ impl super::Window for Window {
     }
 }
 
-pub fn platform() -> impl super::Platform {
+pub(crate) fn platform() -> Platform {
     Platform::new()
 }

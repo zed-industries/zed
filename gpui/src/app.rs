@@ -87,7 +87,7 @@ pub enum MenuItem<'a> {
 pub struct App(Rc<RefCell<MutableAppContext>>);
 
 #[derive(Clone)]
-pub struct TestAppContext(Rc<RefCell<MutableAppContext>>);
+pub struct TestAppContext(Rc<RefCell<MutableAppContext>>, Rc<platform::test::Platform>);
 
 impl App {
     pub fn test<T, A: AssetSource, F: FnOnce(&mut MutableAppContext) -> T>(
@@ -111,13 +111,16 @@ impl App {
         Fn: FnOnce(TestAppContext) -> F,
         F: Future<Output = T>,
     {
-        let platform = platform::test::platform();
+        let platform = Rc::new(platform::test::platform());
         let foreground = Rc::new(executor::Foreground::test());
-        let ctx = TestAppContext(Rc::new(RefCell::new(MutableAppContext::new(
-            foreground.clone(),
-            Rc::new(platform),
-            asset_source,
-        ))));
+        let ctx = TestAppContext(
+            Rc::new(RefCell::new(MutableAppContext::new(
+                foreground.clone(),
+                platform.clone(),
+                asset_source,
+            ))),
+            platform,
+        );
         ctx.0.borrow_mut().weak_self = Some(Rc::downgrade(&ctx.0));
 
         let future = f(ctx);
@@ -331,6 +334,10 @@ impl TestAppContext {
 
     pub fn platform(&self) -> Rc<dyn platform::Platform> {
         self.0.borrow().platform.clone()
+    }
+
+    pub fn simulate_new_path_selection(&self, result: impl FnOnce(PathBuf) -> Option<PathBuf>) {
+        self.1.as_ref().simulate_new_path_selection(result);
     }
 }
 
