@@ -16,6 +16,7 @@ pub struct Window {
     current_scene: Option<crate::Scene>,
     event_handlers: Vec<Box<dyn FnMut(super::Event)>>,
     resize_handlers: Vec<Box<dyn FnMut(&mut dyn super::WindowContext)>>,
+    close_handlers: Vec<Box<dyn FnOnce()>>,
 }
 
 impl Platform {
@@ -92,6 +93,7 @@ impl Window {
             size,
             event_handlers: Vec::new(),
             resize_handlers: Vec::new(),
+            close_handlers: Vec::new(),
             scale_factor: 1.0,
             current_scene: None,
         }
@@ -129,6 +131,10 @@ impl super::Window for Window {
 
     fn on_resize(&mut self, callback: Box<dyn FnMut(&mut dyn super::WindowContext)>) {
         self.resize_handlers.push(callback);
+    }
+
+    fn on_close(&mut self, callback: Box<dyn FnOnce()>) {
+        self.close_handlers.push(callback);
     }
 }
 

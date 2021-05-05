@@ -61,6 +61,7 @@ unsafe fn build_classes() {
             sel!(sendEvent:),
             send_event as extern "C" fn(&Object, Sel, id),
         );
+        decl.add_method(sel!(close), close_window as extern "C" fn(&Object, Sel));
         decl.register()
     };
 
@@ -125,6 +126,7 @@ struct WindowState {
     native_window: id,
     event_callback: Option<Box<dyn FnMut(Event)>>,
     resize_callback: Option<Box<dyn FnMut(&mut dyn platform::WindowContext)>>,
+    close_callback: Option<Box<dyn FnOnce()>>,
     synthetic_drag_counter: usize,
     executor: Rc<executor::Foreground>,
     scene_to_render: Option<Scene>,
@@ -184,6 +186,7 @@ impl Window {
                 native_window,
                 event_callback: None,
                 resize_callback: None,
+                close_callback: None,
                 synthetic_drag_counter: 0,
                 executor,
                 scene_to_render: Default::default(),
@@ -262,6 +265,10 @@ impl platform::Window for Window {
     fn on_resize(&mut self, callback: Box<dyn FnMut(&mut dyn platform::WindowContext)>) {
         self.0.as_ref().borrow_mut().resize_callback = Some(callback);
     }
+
+    fn on_close(&mut self, callback: Box<dyn FnOnce()>) {
+        self.0.as_ref().borrow_mut().close_callback = Some(callback);
+    }
 }
 
 impl platform::WindowContext for Window {
@@ -310,7 +317,7 @@ unsafe fn get_window_state(object: &Object) -> Rc<RefCell<WindowState>> {
 
 unsafe fn drop_window_state(object: &Object) {
     let raw: *mut c_void = *object.get_ivar(WINDOW_STATE_IVAR);
-    Rc::from_raw(raw as *mut WindowState);
+    Rc::from_raw(raw as *mut RefCell<WindowState>);
 }
 
 extern "C" fn yes(_: &Object, _: Sel) -> BOOL {
@@ -368,6 +375,22 @@ extern "C" fn handle_view_event(this: &Object, _: Sel, native_event: id) {
 extern "C" fn send_event(this: &Object, _: Sel, native_event: id) {
     unsafe {
         let () = msg_send![super(this, class!(NSWindow)), sendEvent: native_event];
+    }
+}
+
+extern "C" fn close_window(this: &Object, _: Sel) {
+    unsafe {
+        let window_state = get_window_state(this);
+        let close_callback = window_state
+            .as_ref()
+            .try_borrow_mut()
+            .ok()
+            .and_then(|mut window_state| window_state.close_callback.take());
+        if let Some(callback) = close_callback {
+            callback();
+        }
+
+        let () = msg_send![super(this, class!(NSWindow)), close];
     }
 }
 

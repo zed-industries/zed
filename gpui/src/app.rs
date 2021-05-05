@@ -758,6 +758,10 @@ impl MutableAppContext {
         (window_id, root_handle)
     }
 
+    pub fn remove_window(&mut self, window_id: usize) {
+        self.presenters_and_platform_windows.remove(&window_id);
+    }
+
     fn open_platform_window(&mut self, window_id: usize) {
         let mut window = self.platform.open_window(
             window_id,
@@ -811,6 +815,13 @@ impl MutableAppContext {
                     );
                     window.present_scene(scene);
                 })
+            }));
+        }
+
+        {
+            let mut app = self.upgrade();
+            window.on_close(Box::new(move || {
+                app.update(|ctx| ctx.remove_window(window_id));
             }));
         }
 
