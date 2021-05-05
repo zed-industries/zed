@@ -3035,6 +3035,100 @@ mod tests {
     }
 
     #[test]
+    fn test_move_line_up_down() {
+        App::test((), |app| {
+            let settings = settings::channel(&app.font_cache()).unwrap().1;
+            let buffer = app.add_model(|_| Buffer::new(0, sample_text(10, 5)));
+            let (_, view) =
+                app.add_window(|ctx| BufferView::for_buffer(buffer, None, settings, ctx));
+            view.update(app, |view, ctx| {
+                view.fold_ranges(
+                    vec![
+                        Point::new(0, 2)..Point::new(1, 2),
+                        Point::new(2, 3)..Point::new(4, 1),
+                        Point::new(7, 0)..Point::new(8, 4),
+                    ],
+                    ctx,
+                );
+                view.select_display_ranges(
+                    &[
+                        DisplayPoint::new(0, 1)..DisplayPoint::new(0, 1),
+                        DisplayPoint::new(3, 1)..DisplayPoint::new(3, 1),
+                        DisplayPoint::new(3, 2)..DisplayPoint::new(4, 2),
+                        DisplayPoint::new(5, 0)..DisplayPoint::new(5, 2),
+                    ],
+                    ctx,
+                )
+                .unwrap();
+            });
+            assert_eq!(
+                view.read(app).text(app.as_ref()),
+                "aa…bbb\nccc…eeee\nfffff\nggggg\n…i\njjjjj"
+            );
+
+            view.update(app, |view, ctx| view.move_line_up(&(), ctx));
+            assert_eq!(
+                view.read(app).text(app.as_ref()),
+                "aa…bbb\nccc…eeee\nggggg\n…i\njjjjj\nfffff"
+            );
+            assert_eq!(
+                view.read(app).selection_ranges(app.as_ref()),
+                vec![
+                    DisplayPoint::new(0, 1)..DisplayPoint::new(0, 1),
+                    DisplayPoint::new(2, 1)..DisplayPoint::new(2, 1),
+                    DisplayPoint::new(2, 2)..DisplayPoint::new(3, 2),
+                    DisplayPoint::new(4, 0)..DisplayPoint::new(4, 2)
+                ]
+            );
+
+            view.update(app, |view, ctx| view.move_line_down(&(), ctx));
+            assert_eq!(
+                view.read(app).text(app.as_ref()),
+                "ccc…eeee\naa…bbb\nfffff\nggggg\n…i\njjjjj"
+            );
+            assert_eq!(
+                view.read(app).selection_ranges(app.as_ref()),
+                vec![
+                    DisplayPoint::new(1, 1)..DisplayPoint::new(1, 1),
+                    DisplayPoint::new(3, 1)..DisplayPoint::new(3, 1),
+                    DisplayPoint::new(3, 2)..DisplayPoint::new(4, 2),
+                    DisplayPoint::new(5, 0)..DisplayPoint::new(5, 2)
+                ]
+            );
+
+            view.update(app, |view, ctx| view.move_line_down(&(), ctx));
+            assert_eq!(
+                view.read(app).text(app.as_ref()),
+                "ccc…eeee\nfffff\naa…bbb\nggggg\n…i\njjjjj"
+            );
+            assert_eq!(
+                view.read(app).selection_ranges(app.as_ref()),
+                vec![
+                    DisplayPoint::new(2, 1)..DisplayPoint::new(2, 1),
+                    DisplayPoint::new(3, 1)..DisplayPoint::new(3, 1),
+                    DisplayPoint::new(3, 2)..DisplayPoint::new(4, 2),
+                    DisplayPoint::new(5, 0)..DisplayPoint::new(5, 2)
+                ]
+            );
+
+            view.update(app, |view, ctx| view.move_line_up(&(), ctx));
+            assert_eq!(
+                view.read(app).text(app.as_ref()),
+                "ccc…eeee\naa…bbb\nggggg\n…i\njjjjj\nfffff"
+            );
+            assert_eq!(
+                view.read(app).selection_ranges(app.as_ref()),
+                vec![
+                    DisplayPoint::new(1, 1)..DisplayPoint::new(1, 1),
+                    DisplayPoint::new(2, 1)..DisplayPoint::new(2, 1),
+                    DisplayPoint::new(2, 2)..DisplayPoint::new(3, 2),
+                    DisplayPoint::new(4, 0)..DisplayPoint::new(4, 2)
+                ]
+            );
+        });
+    }
+
+    #[test]
     fn test_clipboard() {
         App::test((), |app| {
             let buffer = app.add_model(|_| Buffer::new(0, "one two three four five six "));
