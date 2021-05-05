@@ -6,11 +6,10 @@ use crate::{settings::Settings, watch, workspace, worktree::FileHandle};
 use anyhow::Result;
 use futures_core::future::LocalBoxFuture;
 use gpui::{
-    fonts::Properties as FontProperties, keymap::Binding, text_layout, AppContext, ClipboardItem,
-    Element, ElementBox, Entity, FontCache, ModelHandle, MutableAppContext, View, ViewContext,
-    WeakViewHandle,
+    fonts::Properties as FontProperties, geometry::vector::Vector2F, keymap::Binding, text_layout,
+    AppContext, ClipboardItem, Element, ElementBox, Entity, FontCache, ModelHandle,
+    MutableAppContext, TextLayoutCache, View, ViewContext, WeakViewHandle,
 };
-use gpui::{geometry::vector::Vector2F, TextLayoutCache};
 use parking_lot::Mutex;
 use serde::{Deserialize, Serialize};
 use smallvec::SmallVec;
@@ -2135,7 +2134,14 @@ impl workspace::ItemView for BufferView {
         Some(clone)
     }
 
-    fn save(&self, ctx: &mut ViewContext<Self>) -> LocalBoxFuture<'static, Result<()>> {
+    fn save(
+        &mut self,
+        file: Option<FileHandle>,
+        ctx: &mut ViewContext<Self>,
+    ) -> LocalBoxFuture<'static, Result<()>> {
+        if file.is_some() {
+            self.file = file;
+        }
         if let Some(file) = self.file.as_ref() {
             self.buffer
                 .update(ctx, |buffer, ctx| buffer.save(file, ctx))

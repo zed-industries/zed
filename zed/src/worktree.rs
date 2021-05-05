@@ -1126,31 +1126,38 @@ struct UpdateIgnoreStatusJob {
 }
 
 pub trait WorktreeHandle {
-    fn file(&self, path: impl AsRef<Path>, app: &AppContext) -> Option<FileHandle>;
+    fn file(&self, path: impl AsRef<Path>, app: &AppContext) -> FileHandle;
 }
 
 impl WorktreeHandle for ModelHandle<Worktree> {
-    fn file(&self, path: impl AsRef<Path>, app: &AppContext) -> Option<FileHandle> {
+    fn file(&self, path: impl AsRef<Path>, app: &AppContext) -> FileHandle {
+        let path = path.as_ref();
         let tree = self.read(app);
-        let entry = tree.entry_for_path(&path)?;
-
-        let path = entry.path().clone();
         let mut handles = tree.handles.lock();
-        let state = if let Some(state) = handles.get(&path).and_then(Weak::upgrade) {
+        let state = if let Some(state) = handles.get(path).and_then(Weak::upgrade) {
             state
         } else {
-            let state = Arc::new(Mutex::new(FileHandleState {
-                path: path.clone(),
-                is_deleted: false,
-            }));
-            handles.insert(path, Arc::downgrade(&state));
+            let handle_state = if let Some(entry) = tree.entry_for_path(path) {
+                FileHandleState {
+                    path: entry.path().clone(),
+                    is_deleted: false,
+                }
+            } else {
+                FileHandleState {
+                    path: path.into(),
+                    is_deleted: true,
+                }
+            };
+
+            let state = Arc::new(Mutex::new(handle_state.clone()));
+            handles.insert(handle_state.path, Arc::downgrade(&state));
             state
         };
 
-        Some(FileHandle {
+        FileHandle {
             worktree: self.clone(),
             state,
-        })
+        }
     }
 }
 
@@ -1389,10 +1396,10 @@ mod tests {
 
             let (file2, file3, file4, file5) = app.read(|ctx| {
                 (
-                    tree.file("a/file2", ctx).unwrap(),
-                    tree.file("a/file3", ctx).unwrap(),
-                    tree.file("b/c/file4", ctx).unwrap(),
-                    tree.file("b/c/file5", ctx).unwrap(),
+                    tree.file("a/file2", ctx),
+                    tree.file("a/file3", ctx),
+                    tree.file("b/c/file4", ctx),
+                    tree.file("b/c/file5", ctx),
                 )
             });
 

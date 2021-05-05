@@ -1,6 +1,6 @@
 use crate::ClipboardItem;
 use pathfinder_geometry::vector::Vector2F;
-use std::{any::Any, cell::RefCell, rc::Rc, sync::Arc};
+use std::{any::Any, cell::RefCell, path::Path, rc::Rc, sync::Arc};
 
 struct Platform {
     dispatcher: Arc<dyn super::Dispatcher>,
@@ -76,6 +76,8 @@ impl super::Platform for Platform {
         _: Box<dyn FnOnce(Option<Vec<std::path::PathBuf>>)>,
     ) {
     }
+
+    fn prompt_for_new_path(&self, _: &Path, _: Box<dyn FnOnce(Option<std::path::PathBuf>)>) {}
 
     fn write_to_clipboard(&self, item: ClipboardItem) {
         *self.current_clipboard_item.borrow_mut() = Some(item);

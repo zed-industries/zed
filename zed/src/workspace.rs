@@ -6,6 +6,7 @@ pub use pane_group::*;
 use crate::{
     settings::Settings,
     watch::{self, Receiver},
+    worktree::FileHandle,
 };
 use gpui::{MutableAppContext, PathPromptOptions};
 use std::path::PathBuf;
@@ -15,6 +16,7 @@ pub fn init(app: &mut MutableAppContext) {
     app.add_global_action("app:quit", quit);
     app.add_action("workspace:save", Workspace::save_active_item);
     app.add_action("workspace:debug_elements", Workspace::debug_elements);
+    app.add_action("workspace:new_file", Workspace::open_new_file);
     app.add_bindings(vec![
         Binding::new("cmd-s", "workspace:save", None),
         Binding::new("cmd-alt-i", "workspace:debug_elements", None),
@@ -108,7 +110,11 @@ pub trait ItemView: View {
     fn is_dirty(&self, _: &AppContext) -> bool {
         false
     }
-    fn save(&self, _: &mut ViewContext<Self>) -> LocalBoxFuture<'static, anyhow::Result<()>> {
+    fn save(
+        &mut self,
+        _: Option<FileHandle>,
+        _: &mut ViewContext<Self>,
+    ) -> LocalBoxFuture<'static, anyhow::Result<()>> {
         Box::pin(async { Ok(()) })
     }
     fn should_activate_item_on_event(_: &Self::Event) -> bool {
@@ -128,7 +134,11 @@ pub trait ItemViewHandle: Send + Sync {
     fn id(&self) -> usize;
     fn to_any(&self) -> AnyViewHandle;
     fn is_dirty(&self, ctx: &AppContext) -> bool;
-    fn save(&self, ctx: &mut MutableAppContext) -> LocalBoxFuture<'static, anyhow::Result<()>>;
+    fn save(
+        &self,
+        file: Option<FileHandle>,
+        ctx: &mut MutableAppContext,
+    ) -> LocalBoxFuture<'static, anyhow::Result<()>>;
 }
 
 impl<T: ItemView> ItemViewHandle for ViewHandle<T> {
@@ -167,8 +177,12 @@ impl<T: ItemView> ItemViewHandle for ViewHandle<T> {
         })
     }
 
-    fn save(&self, ctx: &mut MutableAppContext) -> LocalBoxFuture<'static, anyhow::Result<()>> {
-        self.update(ctx, |item, ctx| item.save(ctx))
+    fn save(
+        &self,
+        file: Option<FileHandle>,
+        ctx: &mut MutableAppContext,
+    ) -> LocalBoxFuture<'static, anyhow::Result<()>> {
+        self.update(ctx, |item, ctx| item.save(file, ctx))
     }
 
     fn is_dirty(&self, ctx: &AppContext) -> bool {
@@ -209,6 +223,7 @@ pub struct Workspace {
         (usize, u64),
         postage::watch::Receiver<Option<Result<ModelHandle<Buffer>, Arc<anyhow::Error>>>>,
     >,
+    untitled_buffers: HashSet<ModelHandle<Buffer>>,
 }
 
 impl Workspace {
@@ -234,6 +249,7 @@ impl Workspace {
             replica_id,
             worktrees: Default::default(),
             buffers: Default::default(),
+            untitled_buffers: Default::default(),
         }
     }
 
@@ -272,15 +288,7 @@ impl Workspace {
         let entries = paths
             .iter()
             .cloned()
-            .map(|path| {
-                for tree in self.worktrees.iter() {
-                    if let Ok(relative_path) = path.strip_prefix(tree.read(ctx).abs_path()) {
-                        return (tree.id(), relative_path.into());
-                    }
-                }
-                let worktree_id = self.add_worktree(&path, ctx);
-                (worktree_id, Path::new("").into())
-            })
+            .map(|path| self.file_for_path(&path, ctx))
             .collect::<Vec<_>>();
 
         let bg = ctx.background_executor().clone();
@@ -288,12 +296,12 @@ impl Workspace {
             .iter()
             .cloned()
             .zip(entries.into_iter())
-            .map(|(path, entry)| {
+            .map(|(abs_path, file)| {
                 ctx.spawn(
-                    bg.spawn(async move { path.is_file() }),
-                    |me, is_file, ctx| {
+                    bg.spawn(async move { abs_path.is_file() }),
+                    move |me, is_file, ctx| {
                         if is_file {
-                            me.open_entry(entry, ctx)
+                            me.open_entry(file.entry_id(), ctx)
                         } else {
                             None
                         }
@@ -310,13 +318,26 @@ impl Workspace {
         }
     }
 
-    pub fn add_worktree(&mut self, path: &Path, ctx: &mut ViewContext<Self>) -> usize {
+    fn file_for_path(&mut self, abs_path: &Path, ctx: &mut ViewContext<Self>) -> FileHandle {
+        for tree in self.worktrees.iter() {
+            if let Ok(relative_path) = abs_path.strip_prefix(tree.read(ctx).abs_path()) {
+                return tree.file(relative_path, ctx.as_ref());
+            }
+        }
+        let worktree = self.add_worktree(&abs_path, ctx);
+        worktree.file(Path::new(""), ctx.as_ref())
+    }
+
+    pub fn add_worktree(
+        &mut self,
+        path: &Path,
+        ctx: &mut ViewContext<Self>,
+    ) -> ModelHandle<Worktree> {
         let worktree = ctx.add_model(|ctx| Worktree::new(path, ctx));
-        let worktree_id = worktree.id();
         ctx.observe_model(&worktree, |_, _, ctx| ctx.notify());
-        self.worktrees.insert(worktree);
+        self.worktrees.insert(worktree.clone());
         ctx.notify();
-        worktree_id
+        worktree
     }
 
     pub fn toggle_modal<V, F>(&mut self, ctx: &mut ViewContext<Self>, add_view: F)
@@ -344,6 +365,15 @@ impl Workspace {
             ctx.focus(&self.active_pane);
             ctx.notify();
         }
+    }
+
+    pub fn open_new_file(&mut self, _: &(), ctx: &mut ViewContext<Self>) {
+        let buffer = ctx.add_model(|_| Buffer::new(self.replica_id, ""));
+        let buffer_view = Box::new(ctx.add_view(|ctx| {
+            BufferView::for_buffer(buffer.clone(), None, self.settings.clone(), ctx)
+        }));
+        self.untitled_buffers.insert(buffer);
+        self.add_item(buffer_view, ctx);
     }
 
     #[must_use]
@@ -381,13 +411,11 @@ impl Workspace {
             }
         };
 
-        let file = match worktree.file(path.clone(), ctx.as_ref()) {
-            Some(file) => file,
-            None => {
-                log::error!("path {:?} does not exist", path);
-                return None;
-            }
-        };
+        let file = worktree.file(path.clone(), ctx.as_ref());
+        if file.is_deleted() {
+            log::error!("path {:?} does not exist", path);
+            return None;
+        }
 
         self.loading_entries.insert(entry.clone());
 
@@ -441,12 +469,34 @@ impl Workspace {
     }
 
     pub fn save_active_item(&mut self, _: &(), ctx: &mut ViewContext<Self>) {
-        self.active_pane.update(ctx, |pane, ctx| {
+        let handle = ctx.handle();
+        let first_worktree = self.worktrees.iter().next();
+        self.active_pane.update(ctx, move |pane, ctx| {
             if let Some(item) = pane.active_item() {
-                let task = item.save(ctx.as_mut());
+                if item.entry_id(ctx.as_ref()).is_none() {
+                    let start_path = first_worktree
+                        .map_or(Path::new(""), |h| h.read(ctx).abs_path())
+                        .to_path_buf();
+                    ctx.prompt_for_new_path(&start_path, move |path, ctx| {
+                        if let Some(path) = path {
+                            handle.update(ctx, move |this, ctx| {
+                                let file = this.file_for_path(&path, ctx);
+                                let task = item.save(Some(file), ctx.as_mut());
+                                ctx.spawn(task, |_, result, _| {
+                                    if let Err(e) = result {
+                                        error!("failed to save item: {:?}, ", e);
+                                    }
+                                })
+                                .detach()
+                            })
+                        }
+                    });
+                    return;
+                }
+
+                let task = item.save(None, ctx.as_mut());
                 ctx.spawn(task, |_, result, _| {
                     if let Err(e) = result {
-                        // TODO - present this error to the user
                         error!("failed to save item: {:?}, ", e);
                     }
                 })

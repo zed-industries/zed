@@ -21,7 +21,7 @@ use std::{
     fmt::{self, Debug},
     hash::{Hash, Hasher},
     marker::PhantomData,
-    path::PathBuf,
+    path::{Path, PathBuf},
     rc::{self, Rc},
     sync::{Arc, Weak},
     time::Duration,
@@ -581,6 +581,22 @@ impl MutableAppContext {
             Box::new(move |paths| {
                 foreground
                     .spawn(async move { (done_fn)(paths, &mut *app.borrow_mut()) })
+                    .detach();
+            }),
+        );
+    }
+
+    pub fn prompt_for_new_path<F>(&self, directory: &Path, done_fn: F)
+    where
+        F: 'static + FnOnce(Option<PathBuf>, &mut MutableAppContext),
+    {
+        let app = self.weak_self.as_ref().unwrap().upgrade().unwrap();
+        let foreground = self.foreground.clone();
+        self.platform().prompt_for_new_path(
+            directory,
+            Box::new(move |path| {
+                foreground
+                    .spawn(async move { (done_fn)(path, &mut *app.borrow_mut()) })
                     .detach();
             }),
         );
@@ -1763,6 +1779,20 @@ impl<'a, T: View> ViewContext<'a, T> {
 
     pub fn background_executor(&self) -> &Arc<executor::Background> {
         &self.app.ctx.background
+    }
+
+    pub fn prompt_for_paths<F>(&self, options: PathPromptOptions, done_fn: F)
+    where
+        F: 'static + FnOnce(Option<Vec<PathBuf>>, &mut MutableAppContext),
+    {
+        self.app.prompt_for_paths(options, done_fn)
+    }
+
+    pub fn prompt_for_new_path<F>(&self, directory: &Path, done_fn: F)
+    where
+        F: 'static + FnOnce(Option<PathBuf>, &mut MutableAppContext),
+    {
+        self.app.prompt_for_new_path(directory, done_fn)
     }
 
     pub fn debug_elements(&self) -> crate::json::Value {
