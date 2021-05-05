@@ -3123,8 +3123,7 @@ mod tests {
                 let mut buffers = Vec::new();
                 let mut network = Network::new();
                 for i in 0..PEERS {
-                    let buffer =
-                        ctx.add_model(|_| Buffer::new(i as ReplicaId, base_text.as_str()));
+                    let buffer = ctx.add_model(|_| Buffer::new(i as ReplicaId, base_text.as_str()));
                     buffers.push(buffer);
                     replica_ids.push(i as u16);
                     network.add_peer(i as u16);

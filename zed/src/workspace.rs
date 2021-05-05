@@ -369,11 +369,11 @@ impl Workspace {
 
     pub fn open_new_file(&mut self, _: &(), ctx: &mut ViewContext<Self>) {
         let buffer = ctx.add_model(|_| Buffer::new(self.replica_id, ""));
-        let buffer_view = Box::new(ctx.add_view(|ctx| {
+        let buffer_view = ctx.add_view(|ctx| {
             BufferView::for_buffer(buffer.clone(), None, self.settings.clone(), ctx)
-        }));
+        });
         self.untitled_buffers.insert(buffer);
-        self.add_item(buffer_view, ctx);
+        self.add_item(Box::new(buffer_view), ctx);
     }
 
     #[must_use]
@@ -468,41 +468,45 @@ impl Workspace {
         ))
     }
 
-    pub fn save_active_item(&mut self, _: &(), ctx: &mut ViewContext<Self>) {
-        let handle = ctx.handle();
-        let first_worktree = self.worktrees.iter().next();
-        self.active_pane.update(ctx, move |pane, ctx| {
-            if let Some(item) = pane.active_item() {
-                if item.entry_id(ctx.as_ref()).is_none() {
-                    let start_path = first_worktree
-                        .map_or(Path::new(""), |h| h.read(ctx).abs_path())
-                        .to_path_buf();
-                    ctx.prompt_for_new_path(&start_path, move |path, ctx| {
-                        if let Some(path) = path {
-                            handle.update(ctx, move |this, ctx| {
-                                let file = this.file_for_path(&path, ctx);
-                                let task = item.save(Some(file), ctx.as_mut());
-                                ctx.spawn(task, |_, result, _| {
-                                    if let Err(e) = result {
-                                        error!("failed to save item: {:?}, ", e);
-                                    }
-                                })
-                                .detach()
-                            })
-                        }
-                    });
-                    return;
-                }
+    pub fn active_item(&self, ctx: &ViewContext<Self>) -> Option<Box<dyn ItemViewHandle>> {
+        self.active_pane().read(ctx).active_item()
+    }
 
-                let task = item.save(None, ctx.as_mut());
-                ctx.spawn(task, |_, result, _| {
-                    if let Err(e) = result {
-                        error!("failed to save item: {:?}, ", e);
+    pub fn save_active_item(&mut self, _: &(), ctx: &mut ViewContext<Self>) {
+        if let Some(item) = self.active_item(ctx) {
+            if item.entry_id(ctx.as_ref()).is_none() {
+                let handle = ctx.handle();
+                let start_path = self
+                    .worktrees
+                    .iter()
+                    .next()
+                    .map_or(Path::new(""), |h| h.read(ctx).abs_path())
+                    .to_path_buf();
+                ctx.prompt_for_new_path(&start_path, move |path, ctx| {
+                    if let Some(path) = path {
+                        handle.update(ctx, move |this, ctx| {
+                            let file = this.file_for_path(&path, ctx);
+                            let task = item.save(Some(file), ctx.as_mut());
+                            ctx.spawn(task, |_, result, _| {
+                                if let Err(e) = result {
+                                    error!("failed to save item: {:?}, ", e);
+                                }
+                            })
+                            .detach()
+                        })
                     }
-                })
-                .detach()
+                });
+                return;
             }
-        });
+
+            let task = item.save(None, ctx.as_mut());
+            ctx.spawn(task, |_, result, _| {
+                if let Err(e) = result {
+                    error!("failed to save item: {:?}, ", e);
+                }
+            })
+            .detach()
+        }
     }
 
     pub fn debug_elements(&mut self, _: &(), ctx: &mut ViewContext<Self>) {
@@ -660,6 +664,7 @@ mod tests {
     use gpui::App;
     use serde_json::json;
     use std::{collections::HashSet, os::unix};
+    use tempdir::TempDir;
 
     #[test]
     fn test_open_paths_action() {
@@ -939,6 +944,49 @@ mod tests {
                 assert_eq!(buffer_views[0].read(ctx).text(ctx), "oh, hi");
                 assert_eq!(buffer_views[1].read(ctx).text(ctx), "oh, hi");
             });
+        });
+    }
+
+    #[test]
+    fn test_open_and_save_new_file() {
+        App::test_async((), |mut app| async move {
+            let dir = TempDir::new("test-new-file").unwrap();
+            let settings = settings::channel(&app.font_cache()).unwrap().1;
+            let (_, workspace) = app.add_window(|ctx| {
+                let mut workspace = Workspace::new(0, settings, ctx);
+                workspace.add_worktree(dir.path(), ctx);
+                workspace
+            });
+
+            // Create a new untitled buffer
+            let editor = workspace.update(&mut app, |workspace, ctx| {
+                workspace.open_new_file(&(), ctx);
+                workspace
+                    .active_item(ctx)
+                    .unwrap()
+                    .to_any()
+                    .downcast::<BufferView>()
+                    .unwrap()
+            });
+            editor.update(&mut app, |editor, ctx| {
+                assert_eq!(editor.title(ctx.as_ref()), "untitled");
+                editor.insert(&"hi".to_string(), ctx)
+            });
+
+            // Save the buffer, selecting a filename
+            workspace.update(&mut app, |workspace, ctx| {
+                workspace.save_active_item(&(), ctx)
+            });
+            app.simulate_new_path_selection(|parent_dir| {
+                assert_eq!(parent_dir, dir.path());
+                Some(parent_dir.join("the-new-name"))
+            });
+            app.read(|ctx| assert_eq!(editor.title(ctx), "untitled"));
+
+            // When the save completes, the buffer's title is updated.
+            editor
+                .condition(&app, |editor, ctx| editor.title(ctx) == "the-new-name")
+                .await;
         });
     }
 

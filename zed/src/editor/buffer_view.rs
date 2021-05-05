@@ -13,7 +13,7 @@ use gpui::{
 use parking_lot::Mutex;
 use serde::{Deserialize, Serialize};
 use smallvec::SmallVec;
-use smol::Timer;
+use smol::{future::FutureExt, Timer};
 use std::{
     cmp::{self, Ordering},
     fmt::Write,
@@ -2136,15 +2136,20 @@ impl workspace::ItemView for BufferView {
 
     fn save(
         &mut self,
-        file: Option<FileHandle>,
+        new_file: Option<FileHandle>,
         ctx: &mut ViewContext<Self>,
     ) -> LocalBoxFuture<'static, Result<()>> {
-        if file.is_some() {
-            self.file = file;
-        }
-        if let Some(file) = self.file.as_ref() {
-            self.buffer
-                .update(ctx, |buffer, ctx| buffer.save(file, ctx))
+        if let Some(file) = new_file.as_ref().or(self.file.as_ref()) {
+            let save = self.buffer.update(ctx, |b, ctx| b.save(file, ctx));
+            ctx.spawn(save, move |this, result, ctx| {
+                if new_file.is_some() && result.is_ok() {
+                    this.file = new_file;
+                    ctx.emit(Event::FileHandleChanged);
+                    ctx.notify();
+                }
+                result
+            })
+            .boxed_local()
         } else {
             Box::pin(async { Ok(()) })
         }
