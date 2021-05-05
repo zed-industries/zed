@@ -191,17 +191,18 @@ impl Worktree {
         path: &Path,
         content: BufferSnapshot,
         ctx: &AppContext,
-    ) -> Task<Result<()>> {
+    ) -> Task<Result<u64>> {
         let abs_path = self.snapshot.abs_path.join(path);
         ctx.background_executor().spawn(async move {
             let buffer_size = content.text_summary().bytes.min(10 * 1024);
             let file = std::fs::File::create(&abs_path)?;
+            let metadata = file.metadata()?;
             let mut writer = std::io::BufWriter::with_capacity(buffer_size, file);
             for chunk in content.fragments() {
                 writer.write(chunk.as_bytes())?;
             }
             writer.flush()?;
-            Ok(())
+            Ok(metadata.ino())
         })
     }
 }
@@ -406,13 +407,21 @@ impl FileHandle {
         self.state.lock().is_deleted
     }
 
+    pub fn exists(&self) -> bool {
+        !self.is_deleted()
+    }
+
     pub fn load_history(&self, ctx: &AppContext) -> impl Future<Output = Result<History>> {
         self.worktree.read(ctx).load_history(&self.path(), ctx)
     }
 
-    pub fn save<'a>(&self, content: BufferSnapshot, ctx: &AppContext) -> Task<Result<()>> {
+    pub fn save<'a>(&self, content: BufferSnapshot, ctx: &AppContext) -> Task<Result<u64>> {
         let worktree = self.worktree.read(ctx);
         worktree.save(&self.path(), content, ctx)
+    }
+
+    pub fn worktree_id(&self) -> usize {
+        self.worktree.id()
     }
 
     pub fn entry_id(&self) -> (usize, Arc<Path>) {
@@ -971,9 +980,8 @@ impl BackgroundScanner {
         let snapshot = self.snapshot.lock();
         handles.retain(|path, handle_state| {
             if let Some(handle_state) = Weak::upgrade(&handle_state) {
-                if snapshot.entry_for_path(&path).is_none() {
-                    handle_state.lock().is_deleted = true;
-                }
+                let mut handle_state = handle_state.lock();
+                handle_state.is_deleted = snapshot.entry_for_path(&path).is_none();
                 true
             } else {
                 false

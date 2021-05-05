@@ -2058,6 +2058,10 @@ impl BufferView {
             buffer::Event::FileHandleChanged => ctx.emit(Event::FileHandleChanged),
         }
     }
+
+    pub fn file(&self) -> Option<&FileHandle> {
+        self.file.as_ref()
+    }
 }
 
 pub enum Event {
@@ -2138,7 +2142,7 @@ impl workspace::ItemView for BufferView {
         &mut self,
         new_file: Option<FileHandle>,
         ctx: &mut ViewContext<Self>,
-    ) -> LocalBoxFuture<'static, Result<()>> {
+    ) -> LocalBoxFuture<'static, Result<u64>> {
         if let Some(file) = new_file.as_ref().or(self.file.as_ref()) {
             let save = self.buffer.update(ctx, |b, ctx| b.save(file, ctx));
             ctx.spawn(save, move |this, result, ctx| {
@@ -2151,7 +2155,7 @@ impl workspace::ItemView for BufferView {
             })
             .boxed_local()
         } else {
-            Box::pin(async { Ok(()) })
+            Box::pin(async { Err(anyhow::anyhow!("can't save a buffer with no file")) })
         }
     }
 

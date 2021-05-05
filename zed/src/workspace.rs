@@ -114,9 +114,7 @@ pub trait ItemView: View {
         &mut self,
         _: Option<FileHandle>,
         _: &mut ViewContext<Self>,
-    ) -> LocalBoxFuture<'static, anyhow::Result<()>> {
-        Box::pin(async { Ok(()) })
-    }
+    ) -> LocalBoxFuture<'static, anyhow::Result<u64>>;
     fn should_activate_item_on_event(_: &Self::Event) -> bool {
         false
     }
@@ -138,7 +136,7 @@ pub trait ItemViewHandle: Send + Sync {
         &self,
         file: Option<FileHandle>,
         ctx: &mut MutableAppContext,
-    ) -> LocalBoxFuture<'static, anyhow::Result<()>>;
+    ) -> LocalBoxFuture<'static, anyhow::Result<u64>>;
 }
 
 impl<T: ItemView> ItemViewHandle for ViewHandle<T> {
@@ -181,7 +179,7 @@ impl<T: ItemView> ItemViewHandle for ViewHandle<T> {
         &self,
         file: Option<FileHandle>,
         ctx: &mut MutableAppContext,
-    ) -> LocalBoxFuture<'static, anyhow::Result<()>> {
+    ) -> LocalBoxFuture<'static, anyhow::Result<u64>> {
         self.update(ctx, |item, ctx| item.save(file, ctx))
     }
 
@@ -223,7 +221,7 @@ pub struct Workspace {
         (usize, u64),
         postage::watch::Receiver<Option<Result<ModelHandle<Buffer>, Arc<anyhow::Error>>>>,
     >,
-    untitled_buffers: HashSet<ModelHandle<Buffer>>,
+    untitled_buffers: HashMap<usize, ModelHandle<Buffer>>,
 }
 
 impl Workspace {
@@ -372,7 +370,7 @@ impl Workspace {
         let buffer_view = ctx.add_view(|ctx| {
             BufferView::for_buffer(buffer.clone(), None, self.settings.clone(), ctx)
         });
-        self.untitled_buffers.insert(buffer);
+        self.untitled_buffers.insert(buffer_view.id(), buffer);
         self.add_item(Box::new(buffer_view), ctx);
     }
 
@@ -486,10 +484,19 @@ impl Workspace {
                     if let Some(path) = path {
                         handle.update(ctx, move |this, ctx| {
                             let file = this.file_for_path(&path, ctx);
+                            let worktree_id = file.worktree_id();
                             let task = item.save(Some(file), ctx.as_mut());
-                            ctx.spawn(task, |_, result, _| {
-                                if let Err(e) = result {
+                            let item_id = item.id();
+                            ctx.spawn(task, move |this, result, _| match result {
+                                Err(e) => {
                                     error!("failed to save item: {:?}, ", e);
+                                }
+                                Ok(inode) => {
+                                    if let Some(buffer) = this.untitled_buffers.remove(&item_id) {
+                                        let (_, rx) =
+                                            postage::watch::channel_with(Some(Ok(buffer)));
+                                        this.buffers.insert((worktree_id, inode), rx);
+                                    }
                                 }
                             })
                             .detach()
@@ -984,9 +991,47 @@ mod tests {
             app.read(|ctx| assert_eq!(editor.title(ctx), "untitled"));
 
             // When the save completes, the buffer's title is updated.
-            editor
-                .condition(&app, |editor, ctx| editor.title(ctx) == "the-new-name")
+            let worktree = app.read(|ctx| {
+                workspace
+                    .read(ctx)
+                    .worktrees()
+                    .iter()
+                    .next()
+                    .unwrap()
+                    .clone()
+            });
+            worktree
+                .condition(&app, |worktree, _| {
+                    worktree.inode_for_path("the-new-name").is_some()
+                })
                 .await;
+
+            // Open the same newly-created file in another pane item.
+            // The new editor should reuse the same buffer.
+            workspace
+                .update(&mut app, |workspace, ctx| {
+                    workspace.open_new_file(&(), ctx);
+                    workspace.split_pane(
+                        workspace.active_pane().clone(),
+                        SplitDirection::Right,
+                        ctx,
+                    );
+                    workspace
+                        .open_entry((worktree.id(), Path::new("the-new-name").into()), ctx)
+                        .unwrap()
+                })
+                .await;
+            let editor2 = workspace.update(&mut app, |workspace, ctx| {
+                workspace
+                    .active_item(ctx)
+                    .unwrap()
+                    .to_any()
+                    .downcast::<BufferView>()
+                    .unwrap()
+            });
+            app.read(|ctx| {
+                assert_eq!(editor.read(ctx).buffer(), editor2.read(ctx).buffer());
+            })
         });
     }
 

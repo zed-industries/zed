@@ -436,7 +436,7 @@ impl Buffer {
         &mut self,
         file: &FileHandle,
         ctx: &mut ModelContext<Self>,
-    ) -> LocalBoxFuture<'static, Result<()>> {
+    ) -> LocalBoxFuture<'static, Result<u64>> {
         let snapshot = self.snapshot();
         let version = self.version.clone();
         let save_task = file.save(snapshot, ctx.as_ref());
