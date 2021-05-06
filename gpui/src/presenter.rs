@@ -55,14 +55,15 @@ impl Presenter {
         path
     }
 
-    pub fn invalidate(&mut self, invalidation: WindowInvalidation, app: &AppContext) {
+    pub fn invalidate(&mut self, mut invalidation: WindowInvalidation, app: &AppContext) {
+        for view_id in invalidation.removed {
+            invalidation.updated.remove(&view_id);
+            self.rendered_views.remove(&view_id);
+            self.parents.remove(&view_id);
+        }
         for view_id in invalidation.updated {
             self.rendered_views
                 .insert(view_id, app.render_view(self.window_id, view_id).unwrap());
-        }
-        for view_id in invalidation.removed {
-            self.rendered_views.remove(&view_id);
-            self.parents.remove(&view_id);
         }
     }
 
