@@ -678,9 +678,8 @@ impl Buffer {
             if let Some(ctx) = ctx {
                 ctx.notify();
 
-                let changes = self.edits_since(since).collect::<Vec<_>>();
-                if !changes.is_empty() {
-                    self.did_edit(changes, was_dirty, ctx);
+                if self.edits_since(since).next().is_some() {
+                    self.did_edit(was_dirty, ctx);
                 }
             }
         }
@@ -741,8 +740,8 @@ impl Buffer {
         Ok(ops)
     }
 
-    fn did_edit(&self, changes: Vec<Edit>, was_dirty: bool, ctx: &mut ModelContext<Self>) {
-        ctx.emit(Event::Edited(changes));
+    fn did_edit(&self, was_dirty: bool, ctx: &mut ModelContext<Self>) {
+        ctx.emit(Event::Edited);
         if !was_dirty {
             ctx.emit(Event::Dirtied);
         }
@@ -891,9 +890,8 @@ impl Buffer {
 
         if let Some(ctx) = ctx {
             ctx.notify();
-            let changes = self.edits_since(old_version).collect::<Vec<_>>();
-            if !changes.is_empty() {
-                self.did_edit(changes, was_dirty, ctx);
+            if self.edits_since(old_version).next().is_some() {
+                self.did_edit(was_dirty, ctx);
             }
         }
 
@@ -1085,9 +1083,8 @@ impl Buffer {
 
         if let Some(ctx) = ctx {
             ctx.notify();
-            let changes = self.edits_since(old_version).collect::<Vec<_>>();
-            if !changes.is_empty() {
-                self.did_edit(changes, was_dirty, ctx);
+            if self.edits_since(old_version).next().is_some() {
+                self.did_edit(was_dirty, ctx);
             }
         }
 
@@ -1112,9 +1109,8 @@ impl Buffer {
 
         if let Some(ctx) = ctx {
             ctx.notify();
-            let changes = self.edits_since(old_version).collect::<Vec<_>>();
-            if !changes.is_empty() {
-                self.did_edit(changes, was_dirty, ctx);
+            if self.edits_since(old_version).next().is_some() {
+                self.did_edit(was_dirty, ctx);
             }
         }
 
@@ -1793,7 +1789,7 @@ impl Snapshot {
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum Event {
-    Edited(Vec<Edit>),
+    Edited,
     Dirtied,
     Saved,
     FileHandleChanged,
@@ -2402,34 +2398,11 @@ mod tests {
             let buffer_1_events = buffer_1_events.borrow();
             assert_eq!(
                 *buffer_1_events,
-                vec![
-                    Event::Edited(vec![Edit {
-                        old_range: 2..4,
-                        new_range: 2..5
-                    }]),
-                    Event::Dirtied,
-                    Event::Edited(vec![Edit {
-                        old_range: 5..5,
-                        new_range: 5..7
-                    }]),
-                    Event::Edited(vec![Edit {
-                        old_range: 5..7,
-                        new_range: 5..5
-                    }]),
-                ]
+                vec![Event::Edited, Event::Dirtied, Event::Edited, Event::Edited]
             );
 
             let buffer_2_events = buffer_2_events.borrow();
-            assert_eq!(
-                *buffer_2_events,
-                vec![
-                    Event::Edited(vec![Edit {
-                        old_range: 2..4,
-                        new_range: 2..5
-                    },]),
-                    Event::Dirtied
-                ]
-            );
+            assert_eq!(*buffer_2_events, vec![Event::Edited, Event::Dirtied]);
         });
     }
 
@@ -2969,16 +2942,7 @@ mod tests {
             model.update(app, |buffer, ctx| {
                 assert!(buffer.text() == "ac");
                 assert!(buffer.is_dirty());
-                assert_eq!(
-                    *events.borrow(),
-                    &[
-                        Event::Edited(vec![Edit {
-                            old_range: 1..2,
-                            new_range: 1..1
-                        }]),
-                        Event::Dirtied
-                    ]
-                );
+                assert_eq!(*events.borrow(), &[Event::Edited, Event::Dirtied]);
                 events.borrow_mut().clear();
 
                 buffer.did_save(buffer.version(), None, ctx);
@@ -3000,17 +2964,7 @@ mod tests {
                 assert!(buffer.is_dirty());
                 assert_eq!(
                     *events.borrow(),
-                    &[
-                        Event::Edited(vec![Edit {
-                            old_range: 1..1,
-                            new_range: 1..2
-                        }]),
-                        Event::Dirtied,
-                        Event::Edited(vec![Edit {
-                            old_range: 2..2,
-                            new_range: 2..3
-                        }]),
-                    ],
+                    &[Event::Edited, Event::Dirtied, Event::Edited],
                 );
                 events.borrow_mut().clear();
 
@@ -3022,13 +2976,7 @@ mod tests {
             });
 
             model.update(app, |_, _| {
-                assert_eq!(
-                    *events.borrow(),
-                    &[Event::Edited(vec![Edit {
-                        old_range: 1..3,
-                        new_range: 1..1
-                    },])]
-                );
+                assert_eq!(*events.borrow(), &[Event::Edited]);
             });
         });
     }
