@@ -208,7 +208,7 @@ where
     {
         let mut descend = false;
 
-        if !self.did_seek {
+        if self.stack.is_empty() && !self.at_end {
             self.stack.push(StackEntry {
                 tree: self.tree,
                 index: 0,
@@ -342,42 +342,30 @@ where
     S: SeekDimension<'a, T::Summary>,
     U: Dimension<'a, T::Summary>,
 {
-    pub fn seek(&mut self, pos: &S, bias: SeekBias) -> bool {
-        self.seek_with_ctx(pos, bias, None)
-    }
-
-    pub fn seek_with_ctx(
+    pub fn seek(
         &mut self,
         pos: &S,
         bias: SeekBias,
-        ctx: Option<&'a <T::Summary as Summary>::Context>,
+        ctx: &<T::Summary as Summary>::Context,
     ) -> bool {
         self.reset();
         self.seek_internal::<()>(pos, bias, &mut SeekAggregate::None, ctx)
     }
 
-    pub fn seek_forward(&mut self, pos: &S, bias: SeekBias) -> bool {
-        self.seek_forward_with_ctx(pos, bias, None)
-    }
-
-    pub fn seek_forward_with_ctx(
+    pub fn seek_forward(
         &mut self,
         pos: &S,
         bias: SeekBias,
-        ctx: Option<&'a <T::Summary as Summary>::Context>,
+        ctx: &<T::Summary as Summary>::Context,
     ) -> bool {
         self.seek_internal::<()>(pos, bias, &mut SeekAggregate::None, ctx)
     }
 
-    pub fn slice(&mut self, end: &S, bias: SeekBias) -> SumTree<T> {
-        self.slice_with_ctx(end, bias, None)
-    }
-
-    pub fn slice_with_ctx(
+    pub fn slice(
         &mut self,
         end: &S,
         bias: SeekBias,
-        ctx: Option<&'a <T::Summary as Summary>::Context>,
+        ctx: &<T::Summary as Summary>::Context,
     ) -> SumTree<T> {
         let mut slice = SeekAggregate::Slice(SumTree::new());
         self.seek_internal::<()>(end, bias, &mut slice, ctx);
@@ -388,14 +376,7 @@ where
         }
     }
 
-    pub fn suffix(&mut self) -> SumTree<T> {
-        self.suffix_with_ctx(None)
-    }
-
-    pub fn suffix_with_ctx(
-        &mut self,
-        ctx: Option<&'a <T::Summary as Summary>::Context>,
-    ) -> SumTree<T> {
+    pub fn suffix(&mut self, ctx: &<T::Summary as Summary>::Context) -> SumTree<T> {
         let extent = self.tree.extent::<S>();
         let mut slice = SeekAggregate::Slice(SumTree::new());
         self.seek_internal::<()>(&extent, SeekBias::Right, &mut slice, ctx);
@@ -406,18 +387,11 @@ where
         }
     }
 
-    pub fn summary<D>(&mut self, end: &S, bias: SeekBias) -> D
-    where
-        D: Dimension<'a, T::Summary>,
-    {
-        self.summary_with_ctx(end, bias, None)
-    }
-
-    pub fn summary_with_ctx<D>(
+    pub fn summary<D>(
         &mut self,
         end: &S,
         bias: SeekBias,
-        ctx: Option<&'a <T::Summary as Summary>::Context>,
+        ctx: &<T::Summary as Summary>::Context,
     ) -> D
     where
         D: Dimension<'a, T::Summary>,
@@ -436,7 +410,7 @@ where
         target: &S,
         bias: SeekBias,
         aggregate: &mut SeekAggregate<T, D>,
-        ctx: Option<&'a <T::Summary as Summary>::Context>,
+        ctx: &<T::Summary as Summary>::Context,
     ) -> bool
     where
         D: Dimension<'a, T::Summary>,
@@ -470,7 +444,7 @@ where
                                     match aggregate {
                                         SeekAggregate::None => {}
                                         SeekAggregate::Slice(slice) => {
-                                            slice.push_tree_with_ctx(child_tree.clone(), ctx);
+                                            slice.push_tree(child_tree.clone(), ctx);
                                         }
                                         SeekAggregate::Summary(summary) => {
                                             summary.add_summary(child_summary);
@@ -526,7 +500,7 @@ where
                                     entry.index += 1;
                                 } else {
                                     if let SeekAggregate::Slice(slice) = aggregate {
-                                        slice.push_tree_with_ctx(
+                                        slice.push_tree(
                                             SumTree(Arc::new(Node::Leaf {
                                                 summary: slice_items_summary.unwrap(),
                                                 items: slice_items,
@@ -541,7 +515,7 @@ where
 
                             if let SeekAggregate::Slice(slice) = aggregate {
                                 if !slice_items.is_empty() {
-                                    slice.push_tree_with_ctx(
+                                    slice.push_tree(
                                         SumTree(Arc::new(Node::Leaf {
                                             summary: slice_items_summary.unwrap(),
                                             items: slice_items,
@@ -586,7 +560,7 @@ where
                                 match aggregate {
                                     SeekAggregate::None => {}
                                     SeekAggregate::Slice(slice) => {
-                                        slice.push_tree_with_ctx(child_trees[index].clone(), ctx);
+                                        slice.push_tree(child_trees[index].clone(), ctx);
                                     }
                                     SeekAggregate::Summary(summary) => {
                                         summary.add_summary(child_summary);
@@ -656,7 +630,7 @@ where
 
                         if let SeekAggregate::Slice(slice) = aggregate {
                             if !slice_items.is_empty() {
-                                slice.push_tree_with_ctx(
+                                slice.push_tree(
                                     SumTree(Arc::new(Node::Leaf {
                                         summary: slice_items_summary.unwrap(),
                                         items: slice_items,

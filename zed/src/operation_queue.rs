@@ -32,7 +32,8 @@ impl<T: Operation> OperationQueue<T> {
     pub fn insert(&mut self, mut ops: Vec<T>) {
         ops.sort_by_key(|op| op.timestamp());
         ops.dedup_by_key(|op| op.timestamp());
-        self.0.edit(ops.into_iter().map(Edit::Insert).collect());
+        self.0
+            .edit(ops.into_iter().map(Edit::Insert).collect(), &());
     }
 
     pub fn drain(&mut self) -> Self {
@@ -68,7 +69,7 @@ impl<T: Operation> KeyedItem for T {
 impl Summary for OperationSummary {
     type Context = ();
 
-    fn add_summary(&mut self, other: &Self, _: Option<&Self::Context>) {
+    fn add_summary(&mut self, other: &Self, _: &()) {
         assert!(self.key < other.key);
         self.key = other.key;
         self.len += other.len;

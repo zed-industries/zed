@@ -29,13 +29,16 @@ impl FoldMap {
         Self {
             buffer: buffer_handle,
             folds: Default::default(),
-            transforms: Mutex::new(SumTree::from_item(Transform {
-                summary: TransformSummary {
-                    buffer: text_summary.clone(),
-                    display: text_summary,
+            transforms: Mutex::new(SumTree::from_item(
+                Transform {
+                    summary: TransformSummary {
+                        buffer: text_summary.clone(),
+                        display: text_summary,
+                    },
+                    display_text: None,
                 },
-                display_text: None,
-            })),
+                &(),
+            )),
             last_sync: Mutex::new(buffer.version()),
         }
     }
@@ -106,16 +109,12 @@ impl FoldMap {
             self.folds = {
                 let mut new_tree = SumTree::new();
                 let mut cursor = self.folds.cursor::<_, ()>();
-                new_tree.push_tree_with_ctx(
-                    cursor.slice_with_ctx(
-                        &FoldRange(fold.0.clone()),
-                        SeekBias::Right,
-                        Some(buffer),
-                    ),
-                    Some(buffer),
+                new_tree.push_tree(
+                    cursor.slice(&FoldRange(fold.0.clone()), SeekBias::Right, buffer),
+                    buffer,
                 );
-                new_tree.push_with_ctx(fold, Some(buffer));
-                new_tree.push_tree_with_ctx(cursor.suffix_with_ctx(Some(buffer)), Some(buffer));
+                new_tree.push(fold, buffer);
+                new_tree.push_tree(cursor.suffix(buffer), buffer);
                 new_tree
             };
         }
@@ -162,13 +161,10 @@ impl FoldMap {
             let mut cursor = self.folds.cursor::<_, ()>();
             let mut folds = SumTree::new();
             for fold_ix in fold_ixs_to_delete {
-                folds.push_tree_with_ctx(
-                    cursor.slice_with_ctx(&fold_ix, SeekBias::Right, Some(buffer)),
-                    Some(buffer),
-                );
+                folds.push_tree(cursor.slice(&fold_ix, SeekBias::Right, buffer), buffer);
                 cursor.next();
             }
-            folds.push_tree_with_ctx(cursor.suffix_with_ctx(Some(buffer)), Some(buffer));
+            folds.push_tree(cursor.suffix(buffer), buffer);
             folds
         };
 
@@ -196,7 +192,7 @@ impl FoldMap {
     pub fn is_line_folded(&self, display_row: u32, ctx: &AppContext) -> bool {
         let transforms = self.sync(ctx);
         let mut cursor = transforms.cursor::<DisplayPoint, DisplayPoint>();
-        cursor.seek(&DisplayPoint::new(display_row, 0), SeekBias::Right);
+        cursor.seek(&DisplayPoint::new(display_row, 0), SeekBias::Right, &());
         while let Some(transform) = cursor.item() {
             if transform.display_text.is_some() {
                 return true;
@@ -213,7 +209,7 @@ impl FoldMap {
     pub fn to_buffer_offset(&self, point: DisplayPoint, ctx: &AppContext) -> Result<usize> {
         let transforms = self.sync(ctx);
         let mut cursor = transforms.cursor::<DisplayPoint, TransformSummary>();
-        cursor.seek(&point, SeekBias::Right);
+        cursor.seek(&point, SeekBias::Right, &());
         let overshoot = point.0 - cursor.start().display.lines;
         (cursor.start().buffer.lines + overshoot).to_offset(self.buffer.read(ctx))
     }
@@ -229,7 +225,7 @@ impl FoldMap {
     pub fn to_buffer_point(&self, display_point: DisplayPoint, ctx: &AppContext) -> Point {
         let transforms = self.sync(ctx);
         let mut cursor = transforms.cursor::<DisplayPoint, TransformSummary>();
-        cursor.seek(&display_point, SeekBias::Right);
+        cursor.seek(&display_point, SeekBias::Right, &());
         let overshoot = display_point.0 - cursor.start().display.lines;
         cursor.start().buffer.lines + overshoot
     }
@@ -237,7 +233,7 @@ impl FoldMap {
     pub fn to_display_point(&self, point: Point, ctx: &AppContext) -> DisplayPoint {
         let transforms = self.sync(ctx);
         let mut cursor = transforms.cursor::<Point, TransformSummary>();
-        cursor.seek(&point, SeekBias::Right);
+        cursor.seek(&point, SeekBias::Right, &());
         let overshoot = point - cursor.start().buffer.lines;
         DisplayPoint(cmp::min(
             cursor.start().display.lines + overshoot,
@@ -262,14 +258,17 @@ impl FoldMap {
         let mut new_transforms = SumTree::new();
         let mut transforms = self.transforms.lock();
         let mut cursor = transforms.cursor::<usize, usize>();
-        cursor.seek(&0, SeekBias::Right);
+        cursor.seek(&0, SeekBias::Right, &());
 
         while let Some(mut edit) = edits.next() {
-            new_transforms.push_tree(cursor.slice(&edit.old_range.start, SeekBias::Left));
+            new_transforms.push_tree(
+                cursor.slice(&edit.old_range.start, SeekBias::Left, &()),
+                &(),
+            );
             edit.new_range.start -= edit.old_range.start - cursor.start();
             edit.old_range.start = *cursor.start();
 
-            cursor.seek(&edit.old_range.end, SeekBias::Right);
+            cursor.seek(&edit.old_range.end, SeekBias::Right, &());
             cursor.next();
 
             let mut delta = edit.delta();
@@ -286,7 +285,7 @@ impl FoldMap {
 
                     if next_edit.old_range.end >= edit.old_range.end {
                         edit.old_range.end = next_edit.old_range.end;
-                        cursor.seek(&edit.old_range.end, SeekBias::Right);
+                        cursor.seek(&edit.old_range.end, SeekBias::Right, &());
                         cursor.next();
                     }
                 } else {
@@ -299,11 +298,7 @@ impl FoldMap {
 
             let anchor = buffer.anchor_before(edit.new_range.start).unwrap();
             let mut folds_cursor = self.folds.cursor::<_, ()>();
-            folds_cursor.seek_with_ctx(
-                &FoldRange(anchor..Anchor::End),
-                SeekBias::Left,
-                Some(buffer),
-            );
+            folds_cursor.seek(&FoldRange(anchor..Anchor::End), SeekBias::Left, buffer);
             let mut folds = folds_cursor
                 .map(|f| f.0.start.to_offset(buffer).unwrap()..f.0.end.to_offset(buffer).unwrap())
                 .peekable();
@@ -329,29 +324,35 @@ impl FoldMap {
 
                 if fold.start > sum.buffer.chars {
                     let text_summary = buffer.text_summary_for_range(sum.buffer.chars..fold.start);
-                    new_transforms.push(Transform {
-                        summary: TransformSummary {
-                            display: text_summary.clone(),
-                            buffer: text_summary,
+                    new_transforms.push(
+                        Transform {
+                            summary: TransformSummary {
+                                display: text_summary.clone(),
+                                buffer: text_summary,
+                            },
+                            display_text: None,
                         },
-                        display_text: None,
-                    });
+                        &(),
+                    );
                 }
 
                 if fold.end > fold.start {
-                    new_transforms.push(Transform {
-                        summary: TransformSummary {
-                            display: TextSummary {
-                                chars: 1,
-                                bytes: '…'.len_utf8(),
-                                lines: Point::new(0, 1),
-                                first_line_len: 1,
-                                rightmost_point: Point::new(0, 1),
+                    new_transforms.push(
+                        Transform {
+                            summary: TransformSummary {
+                                display: TextSummary {
+                                    chars: 1,
+                                    bytes: '…'.len_utf8(),
+                                    lines: Point::new(0, 1),
+                                    first_line_len: 1,
+                                    rightmost_point: Point::new(0, 1),
+                                },
+                                buffer: buffer.text_summary_for_range(fold.start..fold.end),
                             },
-                            buffer: buffer.text_summary_for_range(fold.start..fold.end),
+                            display_text: Some('…'),
                         },
-                        display_text: Some('…'),
-                    });
+                        &(),
+                    );
                 }
             }
 
@@ -359,26 +360,32 @@ impl FoldMap {
             if sum.buffer.chars < edit.new_range.end {
                 let text_summary =
                     buffer.text_summary_for_range(sum.buffer.chars..edit.new_range.end);
-                new_transforms.push(Transform {
+                new_transforms.push(
+                    Transform {
+                        summary: TransformSummary {
+                            display: text_summary.clone(),
+                            buffer: text_summary,
+                        },
+                        display_text: None,
+                    },
+                    &(),
+                );
+            }
+        }
+
+        new_transforms.push_tree(cursor.suffix(&()), &());
+        if new_transforms.is_empty() {
+            let text_summary = buffer.text_summary();
+            new_transforms.push(
+                Transform {
                     summary: TransformSummary {
                         display: text_summary.clone(),
                         buffer: text_summary,
                     },
                     display_text: None,
-                });
-            }
-        }
-
-        new_transforms.push_tree(cursor.suffix());
-        if new_transforms.is_empty() {
-            let text_summary = buffer.text_summary();
-            new_transforms.push(Transform {
-                summary: TransformSummary {
-                    display: text_summary.clone(),
-                    buffer: text_summary,
                 },
-                display_text: None,
-            });
+                &(),
+            );
         }
 
         drop(cursor);
@@ -399,7 +406,7 @@ impl FoldMapSnapshot {
 
         let display_point = Point::new(start_row, 0);
         let mut cursor = self.transforms.cursor();
-        cursor.seek(&DisplayPoint(display_point), SeekBias::Left);
+        cursor.seek(&DisplayPoint(display_point), SeekBias::Left, &());
 
         Ok(BufferRows {
             display_point,
@@ -410,7 +417,7 @@ impl FoldMapSnapshot {
     pub fn chars_at<'a>(&'a self, point: DisplayPoint, ctx: &'a AppContext) -> Result<Chars<'a>> {
         let offset = self.to_display_offset(point, ctx)?;
         let mut cursor = self.transforms.cursor();
-        cursor.seek(&offset, SeekBias::Right);
+        cursor.seek(&offset, SeekBias::Right, &());
         Ok(Chars {
             cursor,
             offset: offset.0,
@@ -421,7 +428,7 @@ impl FoldMapSnapshot {
 
     fn to_display_offset(&self, point: DisplayPoint, ctx: &AppContext) -> Result<DisplayOffset> {
         let mut cursor = self.transforms.cursor::<DisplayPoint, TransformSummary>();
-        cursor.seek(&point, SeekBias::Right);
+        cursor.seek(&point, SeekBias::Right, &());
         let overshoot = point.0 - cursor.start().display.lines;
         let mut offset = cursor.start().display.chars;
         if !overshoot.is_zero() {
@@ -460,7 +467,7 @@ impl sum_tree::Item for Transform {
 impl sum_tree::Summary for TransformSummary {
     type Context = ();
 
-    fn add_summary(&mut self, other: &Self, _: Option<&Self::Context>) {
+    fn add_summary(&mut self, other: &Self, _: &()) {
         self.buffer += &other.buffer;
         self.display += &other.display;
     }
@@ -468,7 +475,7 @@ impl sum_tree::Summary for TransformSummary {
 
 impl<'a> sum_tree::Dimension<'a, TransformSummary> for TransformSummary {
     fn add_summary(&mut self, summary: &'a TransformSummary) {
-        sum_tree::Summary::add_summary(self, summary, None);
+        sum_tree::Summary::add_summary(self, summary, &());
     }
 }
 
@@ -513,8 +520,7 @@ impl Default for FoldSummary {
 impl sum_tree::Summary for FoldSummary {
     type Context = Buffer;
 
-    fn add_summary(&mut self, other: &Self, buffer: Option<&Self::Context>) {
-        let buffer = buffer.unwrap();
+    fn add_summary(&mut self, other: &Self, buffer: &Buffer) {
         if other.min_start.cmp(&self.min_start, buffer).unwrap() == Ordering::Less {
             self.min_start = other.min_start.clone();
         }
@@ -553,8 +559,8 @@ impl<'a> sum_tree::Dimension<'a, FoldSummary> for FoldRange {
 }
 
 impl<'a> sum_tree::SeekDimension<'a, FoldSummary> for FoldRange {
-    fn cmp(&self, other: &Self, buffer: Option<&Buffer>) -> Ordering {
-        self.0.cmp(&other.0, buffer.unwrap()).unwrap()
+    fn cmp(&self, other: &Self, buffer: &Buffer) -> Ordering {
+        self.0.cmp(&other.0, buffer).unwrap()
     }
 }
 
