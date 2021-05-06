@@ -35,7 +35,7 @@ impl Presenter {
     ) -> Self {
         Self {
             window_id,
-            rendered_views: app.render_views(window_id).unwrap(),
+            rendered_views: app.render_views(window_id),
             parents: HashMap::new(),
             font_cache,
             text_layout_cache,

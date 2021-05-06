@@ -382,7 +382,6 @@ pub struct MutableAppContext {
     model_observations: HashMap<usize, Vec<ModelObservation>>,
     view_observations: HashMap<usize, Vec<ViewObservation>>,
     async_observations: HashMap<usize, postage::broadcast::Sender<()>>,
-    window_invalidations: HashMap<usize, WindowInvalidation>,
     presenters_and_platform_windows:
         HashMap<usize, (Rc<RefCell<Presenter>>, Box<dyn platform::Window>)>,
     debug_elements_callbacks: HashMap<usize, Box<dyn Fn(&AppContext) -> crate::json::Value>>,
@@ -407,6 +406,7 @@ impl MutableAppContext {
             assets: Arc::new(AssetCache::new(asset_source)),
             ctx: AppContext {
                 models: Default::default(),
+                views: Default::default(),
                 windows: Default::default(),
                 values: Default::default(),
                 ref_counts: Arc::new(Mutex::new(RefCounts::default())),
@@ -424,7 +424,6 @@ impl MutableAppContext {
             model_observations: HashMap::new(),
             view_observations: HashMap::new(),
             async_observations: HashMap::new(),
-            window_invalidations: HashMap::new(),
             presenters_and_platform_windows: HashMap::new(),
             debug_elements_callbacks: HashMap::new(),
             foreground,
@@ -555,7 +554,7 @@ impl MutableAppContext {
         self.ctx.render_view(window_id, view_id)
     }
 
-    pub fn render_views(&self, window_id: usize) -> Result<HashMap<usize, ElementBox>> {
+    pub fn render_views(&self, window_id: usize) -> HashMap<usize, ElementBox> {
         self.ctx.render_views(window_id)
     }
 
@@ -612,12 +611,7 @@ impl MutableAppContext {
         let mut halted_dispatch = false;
 
         for view_id in path.iter().rev() {
-            if let Some(mut view) = self
-                .ctx
-                .windows
-                .get_mut(&window_id)
-                .and_then(|w| w.views.remove(view_id))
-            {
+            if let Some(mut view) = self.ctx.views.remove(&(window_id, *view_id)) {
                 let type_id = view.as_any().type_id();
 
                 if let Some((name, mut handlers)) = self
@@ -638,12 +632,7 @@ impl MutableAppContext {
                         .insert(name, handlers);
                 }
 
-                self.ctx
-                    .windows
-                    .get_mut(&window_id)
-                    .unwrap()
-                    .views
-                    .insert(*view_id, view);
+                self.ctx.views.insert((window_id, *view_id), view);
 
                 if halted_dispatch {
                     break;
@@ -687,12 +676,7 @@ impl MutableAppContext {
         let mut context_chain = Vec::new();
         let mut context = keymap::Context::default();
         for view_id in &responder_chain {
-            if let Some(view) = self
-                .ctx
-                .windows
-                .get(&window_id)
-                .and_then(|w| w.views.get(view_id))
-            {
+            if let Some(view) = self.ctx.views.get(&(window_id, *view_id)) {
                 context.extend(view.keymap_context(self.as_ref()));
                 context_chain.push(context.clone());
             } else {
@@ -759,6 +743,7 @@ impl MutableAppContext {
     }
 
     pub fn remove_window(&mut self, window_id: usize) {
+        self.ctx.windows.remove(&window_id);
         self.presenters_and_platform_windows.remove(&window_id);
     }
 
@@ -855,16 +840,14 @@ impl MutableAppContext {
         self.pending_flushes += 1;
         let mut ctx = ViewContext::new(self, window_id, view_id);
         let handle = if let Some(view) = build_view(&mut ctx) {
+            self.ctx.views.insert((window_id, view_id), Box::new(view));
             if let Some(window) = self.ctx.windows.get_mut(&window_id) {
-                window.views.insert(view_id, Box::new(view));
-            } else {
-                panic!("Window does not exist");
+                window
+                    .invalidation
+                    .get_or_insert_with(Default::default)
+                    .updated
+                    .insert(view_id);
             }
-            self.window_invalidations
-                .entry(window_id)
-                .or_default()
-                .updated
-                .insert(view_id);
             Some(ViewHandle::new(window_id, view_id, &self.ctx.ref_counts))
         } else {
             None
@@ -892,13 +875,13 @@ impl MutableAppContext {
                 self.subscriptions.remove(&view_id);
                 self.model_observations.remove(&view_id);
                 self.async_observations.remove(&view_id);
+                self.ctx.views.remove(&(window_id, view_id));
                 if let Some(window) = self.ctx.windows.get_mut(&window_id) {
-                    self.window_invalidations
-                        .entry(window_id)
-                        .or_default()
+                    window
+                        .invalidation
+                        .get_or_insert_with(Default::default)
                         .removed
                         .push(view_id);
-                    window.views.remove(&view_id);
                 }
             }
 
@@ -944,7 +927,11 @@ impl MutableAppContext {
 
     fn update_windows(&mut self) {
         let mut invalidations = HashMap::new();
-        std::mem::swap(&mut invalidations, &mut self.window_invalidations);
+        for (window_id, window) in &mut self.ctx.windows {
+            if let Some(invalidation) = window.invalidation.take() {
+                invalidations.insert(*window_id, invalidation);
+            }
+        }
 
         for (window_id, invalidation) in invalidations {
             if let Some((presenter, mut window)) =
@@ -980,12 +967,7 @@ impl MutableAppContext {
                         view_id,
                         callback,
                     } => {
-                        if let Some(mut view) = self
-                            .ctx
-                            .windows
-                            .get_mut(&window_id)
-                            .and_then(|window| window.views.remove(view_id))
-                        {
+                        if let Some(mut view) = self.ctx.views.remove(&(*window_id, *view_id)) {
                             callback(
                                 view.as_any_mut(),
                                 payload.as_ref(),
@@ -993,12 +975,7 @@ impl MutableAppContext {
                                 *window_id,
                                 *view_id,
                             );
-                            self.ctx
-                                .windows
-                                .get_mut(&window_id)
-                                .unwrap()
-                                .views
-                                .insert(*view_id, view);
+                            self.ctx.views.insert((*window_id, *view_id), view);
                             true
                         } else {
                             false
@@ -1035,12 +1012,7 @@ impl MutableAppContext {
                             view_id,
                             callback,
                         } => {
-                            if let Some(mut view) = self
-                                .ctx
-                                .windows
-                                .get_mut(window_id)
-                                .and_then(|w| w.views.remove(view_id))
-                            {
+                            if let Some(mut view) = self.ctx.views.remove(&(*window_id, *view_id)) {
                                 callback(
                                     view.as_any_mut(),
                                     observed_id,
@@ -1048,12 +1020,7 @@ impl MutableAppContext {
                                     *window_id,
                                     *view_id,
                                 );
-                                self.ctx
-                                    .windows
-                                    .get_mut(window_id)
-                                    .unwrap()
-                                    .views
-                                    .insert(*view_id, view);
+                                self.ctx.views.insert((*window_id, *view_id), view);
                                 true
                             } else {
                                 false
@@ -1079,20 +1046,21 @@ impl MutableAppContext {
     }
 
     fn notify_view_observers(&mut self, window_id: usize, view_id: usize) {
-        self.window_invalidations
-            .entry(window_id)
-            .or_default()
-            .updated
-            .insert(view_id);
+        if let Some(window) = self.ctx.windows.get_mut(&window_id) {
+            window
+                .invalidation
+                .get_or_insert_with(Default::default)
+                .updated
+                .insert(view_id);
+        }
 
         if let Some(observations) = self.view_observations.remove(&view_id) {
             if self.ctx.models.contains_key(&view_id) {
                 for mut observation in observations {
                     let alive = if let Some(mut view) = self
                         .ctx
-                        .windows
-                        .get_mut(&observation.window_id)
-                        .and_then(|w| w.views.remove(&observation.view_id))
+                        .views
+                        .remove(&(observation.window_id, observation.view_id))
                     {
                         (observation.callback)(
                             view.as_any_mut(),
@@ -1103,11 +1071,8 @@ impl MutableAppContext {
                             observation.view_id,
                         );
                         self.ctx
-                            .windows
-                            .get_mut(&observation.window_id)
-                            .unwrap()
                             .views
-                            .insert(observation.view_id, view);
+                            .insert((observation.window_id, observation.view_id), view);
                         true
                     } else {
                         false
@@ -1143,35 +1108,22 @@ impl MutableAppContext {
 
         self.pending_flushes += 1;
 
-        if let Some((blurred_id, mut blurred)) =
-            self.ctx.windows.get_mut(&window_id).and_then(|w| {
-                let blurred_view = w.focused_view;
-                w.focused_view = Some(focused_id);
-                blurred_view.and_then(|id| w.views.remove(&id).map(|view| (id, view)))
-            })
-        {
-            blurred.on_blur(self, window_id, blurred_id);
-            self.ctx
-                .windows
-                .get_mut(&window_id)
-                .unwrap()
-                .views
-                .insert(blurred_id, blurred);
+        let blurred_id = self.ctx.windows.get_mut(&window_id).and_then(|window| {
+            let blurred_id = window.focused_view;
+            window.focused_view = Some(focused_id);
+            blurred_id
+        });
+
+        if let Some(blurred_id) = blurred_id {
+            if let Some(mut blurred_view) = self.ctx.views.remove(&(window_id, blurred_id)) {
+                blurred_view.on_blur(self, window_id, blurred_id);
+                self.ctx.views.insert((window_id, blurred_id), blurred_view);
+            }
         }
 
-        if let Some(mut focused) = self
-            .ctx
-            .windows
-            .get_mut(&window_id)
-            .and_then(|w| w.views.remove(&focused_id))
-        {
-            focused.on_focus(self, window_id, focused_id);
-            self.ctx
-                .windows
-                .get_mut(&window_id)
-                .unwrap()
-                .views
-                .insert(focused_id, focused);
+        if let Some(mut focused_view) = self.ctx.views.remove(&(window_id, focused_id)) {
+            focused_view.on_focus(self, window_id, focused_id);
+            self.ctx.views.insert((window_id, focused_id), focused_view);
         }
 
         self.flush_effects();
@@ -1314,14 +1266,10 @@ impl UpdateModel for MutableAppContext {
 
 impl ReadView for MutableAppContext {
     fn read_view<T: View>(&self, handle: &ViewHandle<T>) -> &T {
-        if let Some(window) = self.ctx.windows.get(&handle.window_id) {
-            if let Some(view) = window.views.get(&handle.view_id) {
-                view.as_any().downcast_ref().expect("Downcast is type safe")
-            } else {
-                panic!("Circular view reference");
-            }
+        if let Some(view) = self.ctx.views.get(&(handle.window_id, handle.view_id)) {
+            view.as_any().downcast_ref().expect("downcast is type safe")
         } else {
-            panic!("Window does not exist");
+            panic!("circular view reference");
         }
     }
 }
@@ -1333,15 +1281,11 @@ impl UpdateView for MutableAppContext {
         F: FnOnce(&mut T, &mut ViewContext<T>) -> S,
     {
         self.pending_flushes += 1;
-        let mut view = if let Some(window) = self.ctx.windows.get_mut(&handle.window_id) {
-            if let Some(view) = window.views.remove(&handle.view_id) {
-                view
-            } else {
-                panic!("Circular view update");
-            }
-        } else {
-            panic!("Window does not exist");
-        };
+        let mut view = self
+            .ctx
+            .views
+            .remove(&(handle.window_id, handle.view_id))
+            .expect("circular view update");
 
         let mut ctx = ViewContext::new(self, handle.window_id, handle.view_id);
         let result = update(
@@ -1351,11 +1295,8 @@ impl UpdateView for MutableAppContext {
             &mut ctx,
         );
         self.ctx
-            .windows
-            .get_mut(&handle.window_id)
-            .unwrap()
             .views
-            .insert(handle.view_id, view);
+            .insert((handle.window_id, handle.view_id), view);
         self.flush_effects();
         result
     }
@@ -1369,6 +1310,7 @@ impl AsRef<AppContext> for MutableAppContext {
 
 pub struct AppContext {
     models: HashMap<usize, Box<dyn AnyModel>>,
+    views: HashMap<(usize, usize), Box<dyn AnyView>>,
     windows: HashMap<usize, Window>,
     values: RwLock<HashMap<(TypeId, usize), Box<dyn Any>>>,
     background: Arc<executor::Background>,
@@ -1391,23 +1333,23 @@ impl AppContext {
     }
 
     pub fn render_view(&self, window_id: usize, view_id: usize) -> Result<ElementBox> {
-        self.windows
-            .get(&window_id)
-            .and_then(|w| w.views.get(&view_id))
+        self.views
+            .get(&(window_id, view_id))
             .map(|v| v.render(self))
             .ok_or(anyhow!("view not found"))
     }
 
-    pub fn render_views(&self, window_id: usize) -> Result<HashMap<usize, ElementBox>> {
-        self.windows
-            .get(&window_id)
-            .map(|w| {
-                w.views
-                    .iter()
-                    .map(|(id, view)| (*id, view.render(self)))
-                    .collect::<HashMap<_, ElementBox>>()
+    pub fn render_views(&self, window_id: usize) -> HashMap<usize, ElementBox> {
+        self.views
+            .iter()
+            .filter_map(|((win_id, view_id), view)| {
+                if *win_id == window_id {
+                    Some((*view_id, view.render(self)))
+                } else {
+                    None
+                }
             })
-            .ok_or(anyhow!("window not found"))
+            .collect::<HashMap<_, ElementBox>>()
     }
 
     pub fn background_executor(&self) -> &Arc<executor::Background> {
@@ -1445,25 +1387,21 @@ impl ReadModel for AppContext {
 
 impl ReadView for AppContext {
     fn read_view<T: View>(&self, handle: &ViewHandle<T>) -> &T {
-        if let Some(window) = self.windows.get(&handle.window_id) {
-            if let Some(view) = window.views.get(&handle.view_id) {
-                view.as_any()
-                    .downcast_ref()
-                    .expect("downcast should be type safe")
-            } else {
-                panic!("circular view reference");
-            }
+        if let Some(view) = self.views.get(&(handle.window_id, handle.view_id)) {
+            view.as_any()
+                .downcast_ref()
+                .expect("downcast should be type safe")
         } else {
-            panic!("window does not exist");
+            panic!("circular view reference");
         }
     }
 }
 
 #[derive(Default)]
 struct Window {
-    views: HashMap<usize, Box<dyn AnyView>>,
     root_view: Option<AnyViewHandle>,
     focused_view: Option<usize>,
+    invalidation: Option<WindowInvalidation>,
 }
 
 #[derive(Default, Clone)]
@@ -2437,12 +2375,7 @@ impl<T: View> WeakViewHandle<T> {
 
     pub fn upgrade(&self, ctx: impl AsRef<AppContext>) -> Option<ViewHandle<T>> {
         let ctx = ctx.as_ref();
-        if ctx
-            .windows
-            .get(&self.window_id)
-            .and_then(|w| w.views.get(&self.view_id))
-            .is_some()
-        {
+        if ctx.views.get(&(self.window_id, self.view_id)).is_some() {
             Some(ViewHandle::new(
                 self.window_id,
                 self.view_id,
@@ -2915,7 +2848,7 @@ mod tests {
             let (window_id, _) = app.add_window(|ctx| View::new(None, ctx));
             let handle_1 = app.add_view(window_id, |ctx| View::new(None, ctx));
             let handle_2 = app.add_view(window_id, |ctx| View::new(Some(handle_1.clone()), ctx));
-            assert_eq!(app.ctx.windows[&window_id].views.len(), 3);
+            assert_eq!(app.ctx.views.len(), 3);
 
             handle_1.update(app, |view, ctx| {
                 view.events.push("updated".into());
@@ -2936,7 +2869,7 @@ mod tests {
                 view.other.take();
             });
 
-            assert_eq!(app.ctx.windows[&window_id].views.len(), 2);
+            assert_eq!(app.ctx.views.len(), 2);
             assert!(app.subscriptions.is_empty());
             assert!(app.model_observations.is_empty());
         })
