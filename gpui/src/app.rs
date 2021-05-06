@@ -884,12 +884,21 @@ impl MutableAppContext {
                 self.model_observations.remove(&view_id);
                 self.async_observations.remove(&view_id);
                 self.ctx.views.remove(&(window_id, view_id));
-                if let Some(window) = self.ctx.windows.get_mut(&window_id) {
+                let change_focus_to = self.ctx.windows.get_mut(&window_id).and_then(|window| {
                     window
                         .invalidation
                         .get_or_insert_with(Default::default)
                         .removed
                         .push(view_id);
+                    if window.focused_view_id == view_id {
+                        Some(window.root_view.id())
+                    } else {
+                        None
+                    }
+                });
+
+                if let Some(view_id) = change_focus_to {
+                    self.focus(window_id, view_id);
                 }
             }
 
