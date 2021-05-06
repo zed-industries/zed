@@ -9,6 +9,5 @@ mod sum_tree;
 mod test;
 mod time;
 mod util;
-pub mod watch;
 pub mod workspace;
 mod worktree;

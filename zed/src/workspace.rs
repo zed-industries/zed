@@ -3,11 +3,9 @@ pub mod pane_group;
 pub use pane::*;
 pub use pane_group::*;
 
-use crate::{
-    settings::Settings,
-    watch::{self, Receiver},
-};
+use crate::settings::Settings;
 use gpui::{MutableAppContext, PathPromptOptions};
+use postage::watch;
 use std::path::PathBuf;
 pub fn init(app: &mut MutableAppContext) {
     app.add_global_action("workspace:open", open);
@@ -44,7 +42,7 @@ pub struct OpenParams {
     pub settings: watch::Receiver<Settings>,
 }
 
-fn open(settings: &Receiver<Settings>, ctx: &mut MutableAppContext) {
+fn open(settings: &watch::Receiver<Settings>, ctx: &mut MutableAppContext) {
     let settings = settings.clone();
     ctx.prompt_for_paths(
         PathPromptOptions {

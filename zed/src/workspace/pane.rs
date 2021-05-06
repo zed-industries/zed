@@ -1,5 +1,5 @@
 use super::{ItemViewHandle, SplitDirection};
-use crate::{settings::Settings, watch};
+use crate::settings::Settings;
 use gpui::{
     color::ColorU,
     elements::*,
@@ -7,6 +7,7 @@ use gpui::{
     keymap::Binding,
     AppContext, Border, Entity, MutableAppContext, Quad, View, ViewContext,
 };
+use postage::watch;
 use std::{cmp, path::Path, sync::Arc};
 
 pub fn init(app: &mut MutableAppContext) {
@@ -185,7 +186,7 @@ impl Pane {
     }
 
     fn render_tabs(&self, ctx: &AppContext) -> ElementBox {
-        let settings = smol::block_on(self.settings.read());
+        let settings = self.settings.borrow();
         let border_color = ColorU::from_u32(0xdbdbdcff);
         let line_height = ctx.font_cache().line_height(
             ctx.font_cache().default_font(settings.ui_font_family),

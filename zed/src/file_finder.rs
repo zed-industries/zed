@@ -1,7 +1,7 @@
 use crate::{
     editor::{buffer_view, BufferView},
     settings::Settings,
-    util, watch,
+    util,
     workspace::Workspace,
     worktree::{match_paths, PathMatch, Worktree},
 };
@@ -14,6 +14,7 @@ use gpui::{
     AppContext, Axis, Border, Entity, MutableAppContext, View, ViewContext, ViewHandle,
     WeakViewHandle,
 };
+use postage::watch;
 use std::{
     cmp,
     path::Path,
@@ -105,7 +106,7 @@ impl View for FileFinder {
 impl FileFinder {
     fn render_matches(&self) -> ElementBox {
         if self.matches.is_empty() {
-            let settings = smol::block_on(self.settings.read());
+            let settings = self.settings.borrow();
             return Container::new(
                 Label::new(
                     "No matches".into(),
@@ -148,7 +149,7 @@ impl FileFinder {
     ) -> Option<ElementBox> {
         self.labels_for_match(path_match, app).map(
             |(file_name, file_name_positions, full_path, full_path_positions)| {
-                let settings = smol::block_on(self.settings.read());
+                let settings = self.settings.borrow();
                 let highlight_color = ColorU::from_u32(0x304ee2ff);
                 let bold = *Properties::new().weight(Weight::BOLD);
                 let mut container = Container::new(
@@ -291,8 +292,6 @@ impl FileFinder {
 
         let query_buffer = ctx.add_view(|ctx| BufferView::single_line(settings.clone(), ctx));
         ctx.subscribe_to_view(&query_buffer, Self::on_query_buffer_event);
-
-        settings.notify_view_on_change(ctx);
 
         Self {
             handle: ctx.handle().downgrade(),
