@@ -560,7 +560,7 @@ where
                                             slice_items_summary
                                                 .as_mut()
                                                 .unwrap()
-                                                .add_summary_with_ctx(item_summary, ctx);
+                                                .add_summary(item_summary, ctx);
                                         }
                                         SeekAggregate::Summary(summary) => {
                                             summary.add_summary(item_summary);
@@ -679,7 +679,7 @@ where
                                         slice_items_summary
                                             .as_mut()
                                             .unwrap()
-                                            .add_summary_with_ctx(item_summary, ctx);
+                                            .add_summary(item_summary, ctx);
                                         slice_item_summaries.push(item_summary.clone());
                                     }
                                     SeekAggregate::Summary(summary) => {

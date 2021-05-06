@@ -459,7 +459,7 @@ impl sum_tree::Item for Transform {
 impl sum_tree::Summary for TransformSummary {
     type Context = ();
 
-    fn add_summary(&mut self, other: &Self) {
+    fn add_summary(&mut self, other: &Self, _: Option<&Self::Context>) {
         self.buffer += &other.buffer;
         self.display += &other.display;
     }
@@ -467,7 +467,7 @@ impl sum_tree::Summary for TransformSummary {
 
 impl<'a> sum_tree::Dimension<'a, TransformSummary> for TransformSummary {
     fn add_summary(&mut self, summary: &'a TransformSummary) {
-        sum_tree::Summary::add_summary(self, summary);
+        sum_tree::Summary::add_summary(self, summary, None);
     }
 }
 
@@ -512,7 +512,7 @@ impl Default for FoldSummary {
 impl sum_tree::Summary for FoldSummary {
     type Context = Buffer;
 
-    fn add_summary_with_ctx(&mut self, other: &Self, buffer: Option<&Self::Context>) {
+    fn add_summary(&mut self, other: &Self, buffer: Option<&Self::Context>) {
         let buffer = buffer.unwrap();
         if other.min_start.cmp(&self.min_start, buffer).unwrap() == Ordering::Less {
             self.min_start = other.min_start.clone();

@@ -68,7 +68,7 @@ impl<T: Operation> KeyedItem for T {
 impl Summary for OperationSummary {
     type Context = ();
 
-    fn add_summary(&mut self, other: &Self) {
+    fn add_summary(&mut self, other: &Self, _: Option<&Self::Context>) {
         assert!(self.key < other.key);
         self.key = other.key;
         self.len += other.len;

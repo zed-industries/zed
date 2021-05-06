@@ -25,14 +25,7 @@ pub trait KeyedItem: Item {
 pub trait Summary: Default + Clone + fmt::Debug {
     type Context;
 
-    fn add_summary(&mut self, _summary: &Self) {
-        unimplemented!();
-    }
-
-    fn add_summary_with_ctx(&mut self, summary: &Self, ctx: Option<&Self::Context>) {
-        assert!(ctx.is_none());
-        self.add_summary(summary);
-    }
+    fn add_summary(&mut self, summary: &Self, ctx: Option<&Self::Context>);
 }
 
 pub trait Dimension<'a, S: Summary>: Clone + fmt::Debug + Default {
@@ -137,6 +130,13 @@ impl<T: Item> SumTree<T> {
     where
         I: IntoIterator<Item = T>,
     {
+        self.extend_with_ctx(iter, None)
+    }
+
+    pub fn extend_with_ctx<I>(&mut self, iter: I, ctx: Option<&<T::Summary as Summary>::Context>)
+    where
+        I: IntoIterator<Item = T>,
+    {
         let mut leaf: Option<Node<T>> = None;
 
         for item in iter {
@@ -159,7 +159,7 @@ impl<T: Item> SumTree<T> {
             }) = leaf.as_mut()
             {
                 let item_summary = item.summary();
-                summary.add_summary(&item_summary);
+                summary.add_summary(&item_summary, ctx);
                 items.push(item);
                 item_summaries.push(item_summary);
             } else {
@@ -226,7 +226,7 @@ impl<T: Item> SumTree<T> {
                 ..
             } => {
                 let other_node = other.0.clone();
-                summary.add_summary_with_ctx(other_node.summary(), ctx);
+                summary.add_summary(other_node.summary(), ctx);
 
                 let height_delta = *height - other_node.height();
                 let mut summaries_to_append = ArrayVec::<[T::Summary; 2 * TREE_BASE]>::new();
@@ -323,7 +323,7 @@ impl<T: Item> SumTree<T> {
                         item_summaries: right_summaries,
                     })))
                 } else {
-                    summary.add_summary_with_ctx(other_node.summary(), ctx);
+                    summary.add_summary(other_node.summary(), ctx);
                     items.extend(other_node.items().iter().cloned());
                     item_summaries.extend(other_node.child_summaries().iter().cloned());
                     None
@@ -538,7 +538,7 @@ where
 {
     let mut sum = T::default();
     for value in iter {
-        sum.add_summary_with_ctx(value, ctx);
+        sum.add_summary(value, ctx);
     }
     sum
 }
@@ -889,7 +889,7 @@ mod tests {
     impl Summary for IntegersSummary {
         type Context = ();
 
-        fn add_summary(&mut self, other: &Self) {
+        fn add_summary(&mut self, other: &Self, _: Option<&Self::Context>) {
             self.count.0 += &other.count.0;
             self.sum.0 += &other.sum.0;
             self.contains_even |= other.contains_even;

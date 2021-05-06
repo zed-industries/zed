@@ -2105,7 +2105,7 @@ impl sum_tree::Item for Fragment {
 impl sum_tree::Summary for FragmentSummary {
     type Context = ();
 
-    fn add_summary(&mut self, other: &Self) {
+    fn add_summary(&mut self, other: &Self, _: Option<&Self::Context>) {
         self.text_summary += &other.text_summary;
         debug_assert!(self.max_fragment_id <= other.max_fragment_id);
         self.max_fragment_id = other.max_fragment_id.clone();
@@ -2171,7 +2171,7 @@ impl sum_tree::Item for InsertionSplit {
 impl sum_tree::Summary for InsertionSplitSummary {
     type Context = ();
 
-    fn add_summary(&mut self, other: &Self) {
+    fn add_summary(&mut self, other: &Self, _: Option<&Self::Context>) {
         self.extent += other.extent;
     }
 }

@@ -538,7 +538,7 @@ impl Default for EntrySummary {
 impl sum_tree::Summary for EntrySummary {
     type Context = ();
 
-    fn add_summary(&mut self, rhs: &Self) {
+    fn add_summary(&mut self, rhs: &Self, _: Option<&Self::Context>) {
         self.max_path = rhs.max_path.clone();
         self.file_count += rhs.file_count;
         self.visible_file_count += rhs.visible_file_count;
