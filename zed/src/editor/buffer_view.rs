@@ -2161,8 +2161,8 @@ impl Entity for BufferView {
 }
 
 impl View for BufferView {
-    fn render<'a>(&self, app: &AppContext) -> ElementBox {
-        BufferElement::new(self.handle.upgrade(app).unwrap()).boxed()
+    fn render<'a>(&self, _: &AppContext) -> ElementBox {
+        BufferElement::new(self.handle.clone()).boxed()
     }
 
     fn ui_name() -> &'static str {
