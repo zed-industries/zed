@@ -94,11 +94,11 @@ impl FoldMap {
         let buffer = self.buffer.read(ctx);
         for range in ranges.into_iter() {
             let range = range.start.to_offset(buffer)?..range.end.to_offset(buffer)?;
-            let fold = if range.start == range.end {
-                Fold(buffer.anchor_after(range.start)?..buffer.anchor_after(range.end)?)
-            } else {
-                Fold(buffer.anchor_after(range.start)?..buffer.anchor_before(range.end)?)
-            };
+            if range.start == range.end {
+                continue;
+            }
+
+            let fold = Fold(buffer.anchor_after(range.start)?..buffer.anchor_before(range.end)?);
             edits.push(Edit {
                 old_range: range.clone(),
                 new_range: range.clone(),
