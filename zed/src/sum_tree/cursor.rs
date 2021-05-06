@@ -199,9 +199,6 @@ where
     }
 
     pub fn next(&mut self) {
-        if !self.did_seek {
-            self.descend_to_first_item(self.tree, |_| true)
-        }
         self.next_internal(|_| true)
     }
 
@@ -209,133 +206,93 @@ where
     where
         F: Fn(&T::Summary) -> bool,
     {
-        assert!(self.did_seek, "Must seek before calling this method");
+        let mut descend = false;
 
-        if self.stack.is_empty() {
-            if !self.at_end {
-                self.descend_to_first_item(self.tree, filter_node);
-            }
-        } else {
-            while self.stack.len() > 0 {
-                let new_subtree = {
-                    let entry = self.stack.last_mut().unwrap();
-                    match entry.tree.0.as_ref() {
-                        Node::Internal {
-                            child_trees,
-                            child_summaries,
-                            ..
-                        } => {
-                            while entry.index < child_summaries.len() {
-                                entry
-                                    .seek_dimension
-                                    .add_summary(&child_summaries[entry.index]);
-                                entry
-                                    .sum_dimension
-                                    .add_summary(&child_summaries[entry.index]);
+        if !self.did_seek {
+            self.stack.push(StackEntry {
+                tree: self.tree,
+                index: 0,
+                seek_dimension: S::default(),
+                sum_dimension: U::default(),
+            });
+            descend = true;
+            self.did_seek = true;
+        }
 
-                                entry.index += 1;
-                                if let Some(next_summary) = child_summaries.get(entry.index) {
-                                    if filter_node(next_summary) {
-                                        break;
-                                    } else {
-                                        self.seek_dimension.add_summary(next_summary);
-                                        self.sum_dimension.add_summary(next_summary);
-                                    }
-                                }
-                            }
-
-                            child_trees.get(entry.index)
+        while self.stack.len() > 0 {
+            let new_subtree = {
+                let entry = self.stack.last_mut().unwrap();
+                match entry.tree.0.as_ref() {
+                    Node::Internal {
+                        child_trees,
+                        child_summaries,
+                        ..
+                    } => {
+                        if !descend {
+                            let summary = &child_summaries[entry.index];
+                            entry.seek_dimension.add_summary(summary);
+                            entry.sum_dimension.add_summary(summary);
+                            entry.index += 1;
                         }
-                        Node::Leaf { item_summaries, .. } => loop {
+
+                        while entry.index < child_summaries.len() {
+                            let next_summary = &child_summaries[entry.index];
+                            if filter_node(next_summary) {
+                                break;
+                            } else {
+                                self.seek_dimension.add_summary(next_summary);
+                                self.sum_dimension.add_summary(next_summary);
+                            }
+                            entry.index += 1;
+                        }
+
+                        child_trees.get(entry.index)
+                    }
+                    Node::Leaf { item_summaries, .. } => {
+                        if !descend {
                             let item_summary = &item_summaries[entry.index];
                             self.seek_dimension.add_summary(item_summary);
                             entry.seek_dimension.add_summary(item_summary);
                             self.sum_dimension.add_summary(item_summary);
                             entry.sum_dimension.add_summary(item_summary);
                             entry.index += 1;
+                        }
+
+                        loop {
                             if let Some(next_item_summary) = item_summaries.get(entry.index) {
                                 if filter_node(next_item_summary) {
                                     return;
+                                } else {
+                                    self.seek_dimension.add_summary(next_item_summary);
+                                    entry.seek_dimension.add_summary(next_item_summary);
+                                    self.sum_dimension.add_summary(next_item_summary);
+                                    entry.sum_dimension.add_summary(next_item_summary);
+                                    entry.index += 1;
                                 }
                             } else {
                                 break None;
                             }
-                        },
+                        }
                     }
-                };
-
-                if let Some(subtree) = new_subtree {
-                    self.descend_to_first_item(subtree, filter_node);
-                    break;
-                } else {
-                    self.stack.pop();
                 }
+            };
+
+            if let Some(subtree) = new_subtree {
+                descend = true;
+                self.stack.push(StackEntry {
+                    tree: subtree,
+                    index: 0,
+                    seek_dimension: self.seek_dimension.clone(),
+                    sum_dimension: self.sum_dimension.clone(),
+                });
+            } else {
+                descend = false;
+                self.stack.pop();
             }
         }
 
         self.at_end = self.stack.is_empty();
         debug_assert!(self.stack.is_empty() || self.stack.last().unwrap().tree.0.is_leaf());
-    }
-
-    pub fn descend_to_first_item<F>(&mut self, mut subtree: &'a SumTree<T>, filter_node: F)
-    where
-        F: Fn(&T::Summary) -> bool,
-    {
-        self.did_seek = true;
-        loop {
-            subtree = match *subtree.0 {
-                Node::Internal {
-                    ref child_trees,
-                    ref child_summaries,
-                    ..
-                } => {
-                    let mut new_index = None;
-                    for (index, summary) in child_summaries.iter().enumerate() {
-                        if filter_node(summary) {
-                            new_index = Some(index);
-                            break;
-                        }
-                        self.seek_dimension.add_summary(summary);
-                        self.sum_dimension.add_summary(summary);
-                    }
-
-                    if let Some(new_index) = new_index {
-                        self.stack.push(StackEntry {
-                            tree: subtree,
-                            index: new_index,
-                            seek_dimension: self.seek_dimension.clone(),
-                            sum_dimension: self.sum_dimension.clone(),
-                        });
-                        &child_trees[new_index]
-                    } else {
-                        break;
-                    }
-                }
-                Node::Leaf {
-                    ref item_summaries, ..
-                } => {
-                    let mut new_index = None;
-                    for (index, item_summary) in item_summaries.iter().enumerate() {
-                        if filter_node(item_summary) {
-                            new_index = Some(index);
-                            break;
-                        }
-                        self.seek_dimension.add_summary(item_summary);
-                        self.sum_dimension.add_summary(item_summary);
-                    }
-
-                    if let Some(new_index) = new_index {
-                        self.stack.push(StackEntry {
-                            tree: subtree,
-                            index: new_index,
-                            seek_dimension: self.seek_dimension.clone(),
-                            sum_dimension: self.sum_dimension.clone(),
-                        });
-                    }
-                    break;
-                }
-            }
-        }
     }
 
     fn descend_to_last_item(&mut self, mut subtree: &'a SumTree<T>) {
@@ -744,7 +701,7 @@ where
 
     fn next(&mut self) -> Option<Self::Item> {
         if !self.did_seek {
-            self.descend_to_first_item(self.tree, |_| true);
+            self.next();
         }
 
         if let Some(item) = self.item() {
@@ -769,13 +726,7 @@ where
 {
     pub fn new(tree: &'a SumTree<T>, filter_node: F) -> Self {
         let mut cursor = tree.cursor::<(), U>();
-        if filter_node(&tree.summary()) {
-            cursor.descend_to_first_item(tree, &filter_node);
-        } else {
-            cursor.did_seek = true;
-            cursor.at_end = true;
-        }
-
+        cursor.next_internal(&filter_node);
         Self {
             cursor,
             filter_node,

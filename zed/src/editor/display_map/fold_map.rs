@@ -3,7 +3,7 @@ use super::{
     Anchor, Buffer, DisplayPoint, Edit, Point, TextSummary, ToOffset,
 };
 use crate::{
-    sum_tree::{self, Cursor, SeekBias, SumTree},
+    sum_tree::{self, Cursor, FilterCursor, SeekBias, SumTree},
     time,
 };
 use anyhow::{anyhow, Result};
@@ -80,15 +80,7 @@ impl FoldMap {
     where
         T: ToOffset,
     {
-        let buffer = self.buffer.read(ctx);
-        let range = buffer.anchor_before(range.start)?..buffer.anchor_before(range.end)?;
-        Ok(self
-            .folds
-            .filter::<_, usize>(move |summary| {
-                range.start.cmp(&summary.max_end, buffer).unwrap() < Ordering::Equal
-                    && range.end.cmp(&summary.min_start, buffer).unwrap() >= Ordering::Equal
-            })
-            .map(|f| &f.0))
+        Ok(self.intersecting_folds(range, ctx)?.map(|f| &f.0))
     }
 
     pub fn fold<T: ToOffset>(
@@ -150,25 +142,17 @@ impl FoldMap {
         let mut edits = Vec::new();
         let mut fold_ixs_to_delete = Vec::new();
         for range in ranges.into_iter() {
-            let start = buffer.anchor_before(range.start.to_offset(buffer)?)?;
-            let end = buffer.anchor_after(range.end.to_offset(buffer)?)?;
-            let range = start..end;
-
             // Remove intersecting folds and add their ranges to edits that are passed to apply_edits
-            let mut cursor = self.folds.filter::<_, usize>(|summary| {
-                range.start.cmp(&summary.max_end, buffer).unwrap() < Ordering::Equal
-                    && range.end.cmp(&summary.min_start, buffer).unwrap() >= Ordering::Equal
-            });
-
-            while let Some(fold) = cursor.item() {
+            let mut folds_cursor = self.intersecting_folds(range, ctx)?;
+            while let Some(fold) = folds_cursor.item() {
                 let offset_range =
                     fold.0.start.to_offset(buffer).unwrap()..fold.0.end.to_offset(buffer).unwrap();
                 edits.push(Edit {
                     old_range: offset_range.clone(),
                     new_range: offset_range,
                 });
-                fold_ixs_to_delete.push(*cursor.start());
-                cursor.next();
+                fold_ixs_to_delete.push(*folds_cursor.start());
+                folds_cursor.next();
             }
         }
         fold_ixs_to_delete.sort_unstable();
@@ -190,6 +174,23 @@ impl FoldMap {
 
         self.apply_edits(edits, ctx);
         Ok(())
+    }
+
+    fn intersecting_folds<'a, T>(
+        &self,
+        range: Range<T>,
+        ctx: &'a AppContext,
+    ) -> Result<FilterCursor<impl 'a + Fn(&FoldSummary) -> bool, Fold, usize>>
+    where
+        T: ToOffset,
+    {
+        let buffer = self.buffer.read(ctx);
+        let start = buffer.anchor_before(range.start.to_offset(buffer)?)?;
+        let end = buffer.anchor_after(range.end.to_offset(buffer)?)?;
+        Ok(self.folds.filter::<_, usize>(move |summary| {
+            start.cmp(&summary.max_end, buffer).unwrap() <= Ordering::Equal
+                && end.cmp(&summary.min_start, buffer).unwrap() >= Ordering::Equal
+        }))
     }
 
     pub fn is_line_folded(&self, display_row: u32, ctx: &AppContext) -> bool {
@@ -502,7 +503,7 @@ impl Default for FoldSummary {
         Self {
             start: Anchor::Start,
             end: Anchor::End,
-            min_start: Anchor::Start,
+            min_start: Anchor::End,
             max_end: Anchor::Start,
             count: 0,
         }
@@ -521,12 +522,12 @@ impl sum_tree::Summary for FoldSummary {
             self.max_end = other.max_end.clone();
         }
 
-        if cfg!(debug_assertions) {
+        #[cfg(debug_assertions)]
+        {
             let start_comparison = self.start.cmp(&other.start, buffer).unwrap();
-            let end_comparison = self.end.cmp(&other.end, buffer).unwrap();
             assert!(start_comparison <= Ordering::Equal);
             if start_comparison == Ordering::Equal {
-                assert!(end_comparison >= Ordering::Equal);
+                assert!(self.end.cmp(&other.end, buffer).unwrap() >= Ordering::Equal);
             }
         }
         self.start = other.start.clone();
@@ -821,6 +822,7 @@ mod tests {
                 fold_ranges,
                 vec![
                     Point::new(0, 2)..Point::new(2, 2),
+                    Point::new(0, 4)..Point::new(1, 0),
                     Point::new(1, 2)..Point::new(3, 2)
                 ]
             );
@@ -848,7 +850,7 @@ mod tests {
         };
 
         for seed in seed_range {
-            println!("{:?}", seed);
+            dbg!(seed);
             let mut rng = StdRng::seed_from_u64(seed);
 
             App::test((), |app| {
@@ -972,6 +974,30 @@ mod tests {
                             app.as_ref(),
                         );
                         assert!(map.is_line_folded(display_point.row(), app.as_ref()));
+                    }
+
+                    for _ in 0..5 {
+                        let end = rng.gen_range(0..=buffer.len());
+                        let start = rng.gen_range(0..=end);
+                        let expected_folds = map
+                            .folds
+                            .items()
+                            .into_iter()
+                            .filter(|fold| {
+                                let fold_start = fold.0.start.to_offset(buffer).unwrap();
+                                let fold_end = fold.0.end.to_offset(buffer).unwrap();
+                                start <= fold_end && end >= fold_start
+                            })
+                            .map(|fold| fold.0)
+                            .collect::<Vec<_>>();
+
+                        assert_eq!(
+                            map.folds_in_range(start..end, app.as_ref())
+                                .unwrap()
+                                .cloned()
+                                .collect::<Vec<_>>(),
+                            expected_folds
+                        );
                     }
                 }
             });

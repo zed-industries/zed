@@ -73,7 +73,6 @@ impl<T: Item> SumTree<T> {
     #[allow(unused)]
     pub fn items(&self) -> Vec<T> {
         let mut cursor = self.cursor::<(), ()>();
-        cursor.descend_to_first_item(self, |_| true);
         cursor.cloned().collect()
     }
 
@@ -566,6 +565,7 @@ mod tests {
         for seed in 0..100 {
             use rand::{distributions, prelude::*};
 
+            dbg!(seed);
             let rng = &mut StdRng::seed_from_u64(seed);
 
             let mut tree = SumTree::<u8>::new();
