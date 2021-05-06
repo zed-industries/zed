@@ -94,27 +94,22 @@ impl FoldMap {
         let _ = self.sync(ctx);
 
         let mut edits = Vec::new();
+        let mut folds = Vec::new();
         let buffer = self.buffer.read(ctx);
         for range in ranges.into_iter() {
             let range = range.start.to_offset(buffer)?..range.end.to_offset(buffer)?;
-            if range.start == range.end {
-                continue;
+            if range.start != range.end {
+                let fold =
+                    Fold(buffer.anchor_after(range.start)?..buffer.anchor_before(range.end)?);
+                folds.push(fold);
+                edits.push(Edit {
+                    old_range: range.clone(),
+                    new_range: range.clone(),
+                });
             }
-
-            let fold = Fold(buffer.anchor_after(range.start)?..buffer.anchor_before(range.end)?);
-            edits.push(Edit {
-                old_range: range.clone(),
-                new_range: range.clone(),
-            });
-            self.folds = {
-                let mut new_tree = SumTree::new();
-                let mut cursor = self.folds.cursor::<_, ()>();
-                new_tree.push_tree(cursor.slice(&fold, SeekBias::Right, buffer), buffer);
-                new_tree.push(fold, buffer);
-                new_tree.push_tree(cursor.suffix(buffer), buffer);
-                new_tree
-            };
         }
+
+        folds.sort_unstable_by(|a, b| sum_tree::SeekDimension::cmp(a, b, buffer));
         edits.sort_unstable_by(|a, b| {
             a.old_range
                 .start
@@ -122,6 +117,16 @@ impl FoldMap {
                 .then_with(|| b.old_range.end.cmp(&a.old_range.end))
         });
 
+        self.folds = {
+            let mut new_tree = SumTree::new();
+            let mut cursor = self.folds.cursor::<_, ()>();
+            for fold in folds {
+                new_tree.push_tree(cursor.slice(&fold, SeekBias::Right, buffer), buffer);
+                new_tree.push(fold, buffer);
+            }
+            new_tree.push_tree(cursor.suffix(buffer), buffer);
+            new_tree
+        };
         self.apply_edits(edits, ctx);
         Ok(())
     }
