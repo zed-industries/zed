@@ -539,7 +539,7 @@ impl MutableAppContext {
         self.ctx
             .windows
             .get(&window_id)
-            .and_then(|window| window.root_view.as_ref().unwrap().clone().downcast::<T>())
+            .and_then(|window| window.root_view.clone().downcast::<T>())
     }
 
     pub fn root_view_id(&self, window_id: usize) -> Option<usize> {
@@ -732,19 +732,25 @@ impl MutableAppContext {
     {
         self.pending_flushes += 1;
         let window_id = post_inc(&mut self.next_window_id);
-        self.ctx.windows.insert(window_id, Window::default());
+        let root_view = self.add_view(window_id, build_root_view);
+        self.ctx.windows.insert(
+            window_id,
+            Window {
+                root_view: root_view.clone().into(),
+                focused_view_id: root_view.id(),
+                invalidation: None,
+            },
+        );
         self.open_platform_window(window_id);
-        let root_handle = self.add_view(window_id, build_root_view);
-        self.ctx.windows.get_mut(&window_id).unwrap().root_view = Some(root_handle.clone().into());
-        self.focus(window_id, root_handle.id());
         self.flush_effects();
 
-        (window_id, root_handle)
+        (window_id, root_view)
     }
 
     pub fn remove_window(&mut self, window_id: usize) {
         self.ctx.windows.remove(&window_id);
         self.presenters_and_platform_windows.remove(&window_id);
+        self.remove_dropped_entities();
     }
 
     fn open_platform_window(&mut self, window_id: usize) {
@@ -1100,7 +1106,7 @@ impl MutableAppContext {
             .ctx
             .windows
             .get(&window_id)
-            .and_then(|w| w.focused_view)
+            .map(|w| w.focused_view_id)
             .map_or(false, |cur_focused| cur_focused == focused_id)
         {
             return;
@@ -1108,9 +1114,9 @@ impl MutableAppContext {
 
         self.pending_flushes += 1;
 
-        let blurred_id = self.ctx.windows.get_mut(&window_id).and_then(|window| {
-            let blurred_id = window.focused_view;
-            window.focused_view = Some(focused_id);
+        let blurred_id = self.ctx.windows.get_mut(&window_id).map(|window| {
+            let blurred_id = window.focused_view_id;
+            window.focused_view_id = focused_id;
             blurred_id
         });
 
@@ -1323,13 +1329,13 @@ impl AppContext {
     pub fn root_view_id(&self, window_id: usize) -> Option<usize> {
         self.windows
             .get(&window_id)
-            .and_then(|window| window.root_view.as_ref().map(|v| v.id()))
+            .map(|window| window.root_view.id())
     }
 
     pub fn focused_view_id(&self, window_id: usize) -> Option<usize> {
         self.windows
             .get(&window_id)
-            .and_then(|window| window.focused_view)
+            .map(|window| window.focused_view_id)
     }
 
     pub fn render_view(&self, window_id: usize, view_id: usize) -> Result<ElementBox> {
@@ -1397,10 +1403,9 @@ impl ReadView for AppContext {
     }
 }
 
-#[derive(Default)]
 struct Window {
-    root_view: Option<AnyViewHandle>,
-    focused_view: Option<usize>,
+    root_view: AnyViewHandle,
+    focused_view_id: usize,
     invalidation: Option<WindowInvalidation>,
 }
 
