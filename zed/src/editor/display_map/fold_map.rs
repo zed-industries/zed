@@ -421,8 +421,8 @@ impl sum_tree::Item for Transform {
     }
 }
 
-impl<'a> std::ops::AddAssign<&'a Self> for TransformSummary {
-    fn add_assign(&mut self, other: &'a Self) {
+impl sum_tree::Summary for TransformSummary {
+    fn add_summary(&mut self, other: &Self) {
         self.buffer += &other.buffer;
         self.display += &other.display;
     }
@@ -430,7 +430,7 @@ impl<'a> std::ops::AddAssign<&'a Self> for TransformSummary {
 
 impl<'a> Dimension<'a, TransformSummary> for TransformSummary {
     fn add_summary(&mut self, summary: &'a TransformSummary) {
-        *self += summary;
+        sum_tree::Summary::add_summary(self, summary);
     }
 }
 

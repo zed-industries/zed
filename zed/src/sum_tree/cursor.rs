@@ -511,7 +511,10 @@ where
                                         SeekAggregate::Slice(_) => {
                                             slice_items.push(item.clone());
                                             slice_item_summaries.push(item_summary.clone());
-                                            *slice_items_summary.as_mut().unwrap() += item_summary;
+                                            slice_items_summary
+                                                .as_mut()
+                                                .unwrap()
+                                                .add_summary(item_summary);
                                         }
                                         SeekAggregate::Summary(summary) => {
                                             summary.add_summary(item_summary);
@@ -621,7 +624,10 @@ where
                                     SeekAggregate::None => {}
                                     SeekAggregate::Slice(_) => {
                                         slice_items.push(item.clone());
-                                        *slice_items_summary.as_mut().unwrap() += item_summary;
+                                        slice_items_summary
+                                            .as_mut()
+                                            .unwrap()
+                                            .add_summary(item_summary);
                                         slice_item_summaries.push(item_summary.clone());
                                     }
                                     SeekAggregate::Summary(summary) => {

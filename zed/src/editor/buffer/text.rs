@@ -58,6 +58,12 @@ pub struct TextSummary {
     pub rightmost_point: Point,
 }
 
+impl sum_tree::Summary for TextSummary {
+    fn add_summary(&mut self, other: &Self) {
+        *self += other;
+    }
+}
+
 impl<'a> std::ops::AddAssign<&'a Self> for TextSummary {
     fn add_assign(&mut self, other: &'a Self) {
         let joined_line_len = self.lines.column + other.first_line_len;
@@ -85,8 +91,8 @@ impl std::ops::AddAssign<Self> for TextSummary {
 }
 
 impl<'a> sum_tree::Dimension<'a, TextSummary> for TextSummary {
-    fn add_summary(&mut self, summary: &TextSummary) {
-        *self += summary;
+    fn add_summary(&mut self, other: &TextSummary) {
+        *self += other;
     }
 }
 

@@ -475,17 +475,17 @@ impl Buffer {
         if let Some(fragment) = cursor.item() {
             let summary_start = cmp::max(*cursor.start(), range.start) - cursor.start();
             let summary_end = cmp::min(range.end - cursor.start(), fragment.len());
-            summary += &fragment.text.slice(summary_start..summary_end).summary();
+            summary += fragment.text.slice(summary_start..summary_end).summary();
             cursor.next();
         }
 
         if range.end > *cursor.start() {
-            summary += &cursor.summary::<TextSummary>(&range.end, SeekBias::Right);
+            summary += cursor.summary::<TextSummary>(&range.end, SeekBias::Right);
 
             if let Some(fragment) = cursor.item() {
                 let summary_start = cmp::max(*cursor.start(), range.start) - cursor.start();
                 let summary_end = cmp::min(range.end - cursor.start(), fragment.len());
-                summary += &fragment.text.slice(summary_start..summary_end).summary();
+                summary += fragment.text.slice(summary_start..summary_end).summary();
             }
         }
 
@@ -520,17 +520,17 @@ impl Buffer {
         if let Some(fragment) = cursor.item() {
             let summary_start = cmp::max(*cursor.start(), range.start) - cursor.start();
             let summary_end = cmp::min(range.end - cursor.start(), fragment.len());
-            summary += &fragment.text.slice(summary_start..summary_end).summary();
+            summary += fragment.text.slice(summary_start..summary_end).summary();
             cursor.next();
         }
 
         if range.end > *cursor.start() {
-            summary += &cursor.summary::<TextSummary>(&range.end, SeekBias::Right);
+            summary += cursor.summary::<TextSummary>(&range.end, SeekBias::Right);
 
             if let Some(fragment) = cursor.item() {
                 let summary_start = cmp::max(*cursor.start(), range.start) - cursor.start();
                 let summary_end = cmp::min(range.end - cursor.start(), fragment.len());
-                summary += &fragment.text.slice(summary_start..summary_end).summary();
+                summary += fragment.text.slice(summary_start..summary_end).summary();
             }
         }
 
@@ -2102,8 +2102,8 @@ impl sum_tree::Item for Fragment {
     }
 }
 
-impl<'a> AddAssign<&'a FragmentSummary> for FragmentSummary {
-    fn add_assign(&mut self, other: &Self) {
+impl sum_tree::Summary for FragmentSummary {
+    fn add_summary(&mut self, other: &Self) {
         self.text_summary += &other.text_summary;
         debug_assert!(self.max_fragment_id <= other.max_fragment_id);
         self.max_fragment_id = other.max_fragment_id.clone();
@@ -2166,8 +2166,8 @@ impl sum_tree::Item for InsertionSplit {
     }
 }
 
-impl<'a> AddAssign<&'a InsertionSplitSummary> for InsertionSplitSummary {
-    fn add_assign(&mut self, other: &Self) {
+impl sum_tree::Summary for InsertionSplitSummary {
+    fn add_summary(&mut self, other: &Self) {
         self.extent += other.extent;
     }
 }
@@ -3071,8 +3071,7 @@ mod tests {
                 let mut buffers = Vec::new();
                 let mut network = Network::new();
                 for i in 0..PEERS {
-                    let buffer =
-                        ctx.add_model(|_| Buffer::new(i as ReplicaId, base_text.as_str()));
+                    let buffer = ctx.add_model(|_| Buffer::new(i as ReplicaId, base_text.as_str()));
                     buffers.push(buffer);
                     replica_ids.push(i as u16);
                     network.add_peer(i as u16);

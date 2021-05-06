@@ -24,7 +24,7 @@ use std::{
     fmt, fs,
     future::Future,
     io::{self, Read, Write},
-    ops::{AddAssign, Deref},
+    ops::Deref,
     os::unix::{ffi::OsStrExt, fs::MetadataExt},
     path::{Path, PathBuf},
     sync::{Arc, Weak},
@@ -535,8 +535,8 @@ impl Default for EntrySummary {
     }
 }
 
-impl<'a> AddAssign<&'a EntrySummary> for EntrySummary {
-    fn add_assign(&mut self, rhs: &'a EntrySummary) {
+impl sum_tree::Summary for EntrySummary {
+    fn add_summary(&mut self, rhs: &Self) {
         self.max_path = rhs.max_path.clone();
         self.file_count += rhs.file_count;
         self.visible_file_count += rhs.visible_file_count;

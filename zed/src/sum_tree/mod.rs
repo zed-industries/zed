@@ -3,7 +3,7 @@ mod cursor;
 use arrayvec::ArrayVec;
 pub use cursor::Cursor;
 pub use cursor::FilterCursor;
-use std::{fmt, iter::FromIterator, ops::AddAssign, sync::Arc};
+use std::{fmt, iter::FromIterator, sync::Arc};
 
 #[cfg(test)]
 const TREE_BASE: usize = 2;
@@ -11,7 +11,7 @@ const TREE_BASE: usize = 2;
 const TREE_BASE: usize = 6;
 
 pub trait Item: Clone + fmt::Debug {
-    type Summary: for<'a> AddAssign<&'a Self::Summary> + Default + Clone + fmt::Debug;
+    type Summary: Summary;
 
     fn summary(&self) -> Self::Summary;
 }
@@ -20,6 +20,10 @@ pub trait KeyedItem: Item {
     type Key: for<'a> Dimension<'a, Self::Summary> + Ord;
 
     fn key(&self) -> Self::Key;
+}
+
+pub trait Summary: Default + Clone + fmt::Debug {
+    fn add_summary(&mut self, summary: &Self);
 }
 
 pub trait Dimension<'a, Summary: Default>: Clone + fmt::Debug + Default {
@@ -136,7 +140,7 @@ impl<T: Item> SumTree<T> {
             }) = leaf.as_mut()
             {
                 let item_summary = item.summary();
-                *summary += &item_summary;
+                summary.add_summary(&item_summary);
                 items.push(item);
                 item_summaries.push(item_summary);
             } else {
@@ -183,7 +187,7 @@ impl<T: Item> SumTree<T> {
                 ..
             } => {
                 let other_node = other.0.clone();
-                *summary += other_node.summary();
+                summary.add_summary(other_node.summary());
 
                 let height_delta = *height - other_node.height();
                 let mut summaries_to_append = ArrayVec::<[T::Summary; 2 * TREE_BASE]>::new();
@@ -277,7 +281,7 @@ impl<T: Item> SumTree<T> {
                         item_summaries: right_summaries,
                     })))
                 } else {
-                    *summary += other_node.summary();
+                    summary.add_summary(other_node.summary());
                     items.extend(other_node.items().iter().cloned());
                     item_summaries.extend(other_node.child_summaries().iter().cloned());
                     None
@@ -484,12 +488,12 @@ impl<T: KeyedItem> Edit<T> {
 
 fn sum<'a, T, I>(iter: I) -> T
 where
-    T: 'a + Default + AddAssign<&'a T>,
+    T: 'a + Summary,
     I: Iterator<Item = &'a T>,
 {
     let mut sum = T::default();
     for value in iter {
-        sum += value;
+        sum.add_summary(value);
     }
     sum
 }
@@ -836,19 +840,18 @@ mod tests {
             *self
         }
     }
-
-    impl<'a> Dimension<'a, IntegersSummary> for u8 {
-        fn add_summary(&mut self, summary: &IntegersSummary) {
-            *self = summary.max;
-        }
-    }
-
-    impl<'a> AddAssign<&'a Self> for IntegersSummary {
-        fn add_assign(&mut self, other: &Self) {
+    impl Summary for IntegersSummary {
+        fn add_summary(&mut self, other: &Self) {
             self.count.0 += &other.count.0;
             self.sum.0 += &other.sum.0;
             self.contains_even |= other.contains_even;
             self.max = cmp::max(self.max, other.max);
+        }
+    }
+
+    impl<'a> Dimension<'a, IntegersSummary> for u8 {
+        fn add_summary(&mut self, summary: &IntegersSummary) {
+            *self = summary.max;
         }
     }
 

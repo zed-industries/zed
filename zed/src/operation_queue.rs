@@ -1,11 +1,8 @@
 use crate::{
-    sum_tree::{Cursor, Dimension, Edit, Item, KeyedItem, SumTree},
+    sum_tree::{Cursor, Dimension, Edit, Item, KeyedItem, SumTree, Summary},
     time,
 };
-use std::{
-    fmt::Debug,
-    ops::{Add, AddAssign},
-};
+use std::{fmt::Debug, ops::Add};
 
 pub trait Operation: Clone + Debug + Eq {
     fn timestamp(&self) -> time::Lamport;
@@ -68,8 +65,8 @@ impl<T: Operation> KeyedItem for T {
     }
 }
 
-impl<'a> AddAssign<&'a Self> for OperationSummary {
-    fn add_assign(&mut self, other: &Self) {
+impl Summary for OperationSummary {
+    fn add_summary(&mut self, other: &Self) {
         assert!(self.key < other.key);
         self.key = other.key;
         self.len += other.len;
