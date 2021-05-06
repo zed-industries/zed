@@ -59,6 +59,8 @@ pub struct TextSummary {
 }
 
 impl sum_tree::Summary for TextSummary {
+    type Context = ();
+
     fn add_summary(&mut self, other: &Self) {
         *self += other;
     }

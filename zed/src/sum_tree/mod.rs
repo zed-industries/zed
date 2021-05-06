@@ -3,7 +3,7 @@ mod cursor;
 use arrayvec::ArrayVec;
 pub use cursor::Cursor;
 pub use cursor::FilterCursor;
-use std::{fmt, iter::FromIterator, sync::Arc};
+use std::{cmp::Ordering, fmt, iter::FromIterator, sync::Arc};
 
 #[cfg(test)]
 const TREE_BASE: usize = 2;
@@ -23,15 +23,34 @@ pub trait KeyedItem: Item {
 }
 
 pub trait Summary: Default + Clone + fmt::Debug {
-    fn add_summary(&mut self, summary: &Self);
+    type Context;
+
+    fn add_summary(&mut self, _summary: &Self) {
+        unimplemented!();
+    }
+
+    fn add_summary_with_ctx(&mut self, summary: &Self, ctx: Option<&Self::Context>) {
+        assert!(ctx.is_none());
+        self.add_summary(summary);
+    }
 }
 
-pub trait Dimension<'a, Summary: Default>: Clone + fmt::Debug + Default {
-    fn add_summary(&mut self, summary: &'a Summary);
+pub trait Dimension<'a, S: Summary>: Clone + fmt::Debug + Default {
+    fn add_summary(&mut self, _summary: &'a S);
 }
 
-impl<'a, T: Default> Dimension<'a, T> for () {
+impl<'a, T: Summary> Dimension<'a, T> for () {
     fn add_summary(&mut self, _: &'a T) {}
+}
+
+pub trait SeekDimension<'a, T: Summary>: Dimension<'a, T> {
+    fn cmp(&self, other: &Self, ctx: Option<&T::Context>) -> Ordering;
+}
+
+impl<'a, S: Summary, T: Dimension<'a, S> + Ord> SeekDimension<'a, S> for T {
+    fn cmp(&self, other: &Self, _ctx: Option<&S::Context>) -> Ordering {
+        Ord::cmp(self, other)
+    }
 }
 
 #[derive(Copy, Clone, Eq, PartialEq)]
@@ -94,7 +113,7 @@ impl<T: Item> SumTree<T> {
         let mut extent = D::default();
         match self.0.as_ref() {
             Node::Internal { summary, .. } | Node::Leaf { summary, .. } => {
-                extent.add_summary(summary)
+                extent.add_summary(summary);
             }
         }
         extent
@@ -154,30 +173,50 @@ impl<T: Item> SumTree<T> {
     }
 
     pub fn push(&mut self, item: T) {
+        self.push_with_ctx(item, None);
+    }
+
+    pub fn push_with_ctx(&mut self, item: T, ctx: Option<&<T::Summary as Summary>::Context>) {
         let summary = item.summary();
-        self.push_tree(SumTree::from_child_trees(vec![SumTree(Arc::new(
-            Node::Leaf {
-                summary: summary.clone(),
-                items: ArrayVec::from_iter(Some(item)),
-                item_summaries: ArrayVec::from_iter(Some(summary)),
-            },
-        ))]))
+        self.push_tree_with_ctx(
+            SumTree::from_child_trees(
+                vec![SumTree(Arc::new(Node::Leaf {
+                    summary: summary.clone(),
+                    items: ArrayVec::from_iter(Some(item)),
+                    item_summaries: ArrayVec::from_iter(Some(summary)),
+                }))],
+                ctx,
+            ),
+            ctx,
+        )
     }
 
     pub fn push_tree(&mut self, other: Self) {
+        self.push_tree_with_ctx(other, None);
+    }
+
+    pub fn push_tree_with_ctx(
+        &mut self,
+        other: Self,
+        ctx: Option<&<T::Summary as Summary>::Context>,
+    ) {
         let other_node = other.0.clone();
         if !other_node.is_leaf() || other_node.items().len() > 0 {
             if self.0.height() < other_node.height() {
                 for tree in other_node.child_trees() {
-                    self.push_tree(tree.clone());
+                    self.push_tree_with_ctx(tree.clone(), ctx);
                 }
-            } else if let Some(split_tree) = self.push_tree_recursive(other) {
-                *self = Self::from_child_trees(vec![self.clone(), split_tree]);
+            } else if let Some(split_tree) = self.push_tree_recursive(other, ctx) {
+                *self = Self::from_child_trees(vec![self.clone(), split_tree], ctx);
             }
         }
     }
 
-    fn push_tree_recursive(&mut self, other: SumTree<T>) -> Option<SumTree<T>> {
+    fn push_tree_recursive(
+        &mut self,
+        other: SumTree<T>,
+        ctx: Option<&<T::Summary as Summary>::Context>,
+    ) -> Option<SumTree<T>> {
         match Arc::make_mut(&mut self.0) {
             Node::Internal {
                 height,
@@ -187,7 +226,7 @@ impl<T: Item> SumTree<T> {
                 ..
             } => {
                 let other_node = other.0.clone();
-                summary.add_summary(other_node.summary());
+                summary.add_summary_with_ctx(other_node.summary(), ctx);
 
                 let height_delta = *height - other_node.height();
                 let mut summaries_to_append = ArrayVec::<[T::Summary; 2 * TREE_BASE]>::new();
@@ -199,7 +238,10 @@ impl<T: Item> SumTree<T> {
                     summaries_to_append.push(other_node.summary().clone());
                     trees_to_append.push(other)
                 } else {
-                    let tree_to_append = child_trees.last_mut().unwrap().push_tree_recursive(other);
+                    let tree_to_append = child_trees
+                        .last_mut()
+                        .unwrap()
+                        .push_tree_recursive(other, ctx);
                     *child_summaries.last_mut().unwrap() =
                         child_trees.last().unwrap().0.summary().clone();
 
@@ -229,13 +271,13 @@ impl<T: Item> SumTree<T> {
                         left_trees = all_trees.by_ref().take(midpoint).collect();
                         right_trees = all_trees.collect();
                     }
-                    *summary = sum(left_summaries.iter());
+                    *summary = sum(left_summaries.iter(), ctx);
                     *child_summaries = left_summaries;
                     *child_trees = left_trees;
 
                     Some(SumTree(Arc::new(Node::Internal {
                         height: *height,
-                        summary: sum(right_summaries.iter()),
+                        summary: sum(right_summaries.iter(), ctx),
                         child_summaries: right_summaries,
                         child_trees: right_trees,
                     })))
@@ -274,14 +316,14 @@ impl<T: Item> SumTree<T> {
                     }
                     *items = left_items;
                     *item_summaries = left_summaries;
-                    *summary = sum(item_summaries.iter());
+                    *summary = sum(item_summaries.iter(), ctx);
                     Some(SumTree(Arc::new(Node::Leaf {
                         items: right_items,
-                        summary: sum(right_summaries.iter()),
+                        summary: sum(right_summaries.iter(), ctx),
                         item_summaries: right_summaries,
                     })))
                 } else {
-                    summary.add_summary(other_node.summary());
+                    summary.add_summary_with_ctx(other_node.summary(), ctx);
                     items.extend(other_node.items().iter().cloned());
                     item_summaries.extend(other_node.child_summaries().iter().cloned());
                     None
@@ -290,13 +332,16 @@ impl<T: Item> SumTree<T> {
         }
     }
 
-    fn from_child_trees(child_trees: Vec<SumTree<T>>) -> Self {
+    fn from_child_trees(
+        child_trees: Vec<SumTree<T>>,
+        ctx: Option<&<T::Summary as Summary>::Context>,
+    ) -> Self {
         let height = child_trees[0].0.height() + 1;
         let mut child_summaries = ArrayVec::new();
         for child in &child_trees {
             child_summaries.push(child.0.summary().clone());
         }
-        let summary = sum(child_summaries.iter());
+        let summary = sum(child_summaries.iter(), ctx);
         SumTree(Arc::new(Node::Internal {
             height,
             summary,
@@ -486,14 +531,14 @@ impl<T: KeyedItem> Edit<T> {
     }
 }
 
-fn sum<'a, T, I>(iter: I) -> T
+fn sum<'a, T, I>(iter: I, ctx: Option<&T::Context>) -> T
 where
     T: 'a + Summary,
     I: Iterator<Item = &'a T>,
 {
     let mut sum = T::default();
     for value in iter {
-        sum.add_summary(value);
+        sum.add_summary_with_ctx(value, ctx);
     }
     sum
 }
@@ -840,7 +885,10 @@ mod tests {
             *self
         }
     }
+
     impl Summary for IntegersSummary {
+        type Context = ();
+
         fn add_summary(&mut self, other: &Self) {
             self.count.0 += &other.count.0;
             self.sum.0 += &other.sum.0;

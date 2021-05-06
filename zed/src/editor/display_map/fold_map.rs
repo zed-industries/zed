@@ -1,10 +1,10 @@
 use super::{
-    buffer, Anchor, AnchorRangeExt, Buffer, DisplayPoint, Edit, Point, TextSummary, ToOffset,
+    buffer::{self, AnchorRangeExt},
+    Anchor, Buffer, DisplayPoint, Edit, Point, TextSummary, ToOffset,
 };
 use crate::{
-    sum_tree::{self, Cursor, SumTree},
+    sum_tree::{self, Cursor, SeekBias, SumTree},
     time,
-    util::find_insertion_index,
 };
 use anyhow::{anyhow, Result};
 use gpui::{AppContext, ModelHandle};
@@ -14,12 +14,11 @@ use std::{
     iter::Take,
     ops::Range,
 };
-use sum_tree::{Dimension, SeekBias};
 
 pub struct FoldMap {
     buffer: ModelHandle<Buffer>,
     transforms: Mutex<SumTree<Transform>>,
-    folds: Vec<Range<Anchor>>,
+    folds: SumTree<Fold>,
     last_sync: Mutex<time::Global>,
 }
 
@@ -29,7 +28,7 @@ impl FoldMap {
         let text_summary = buffer.text_summary();
         Self {
             buffer: buffer_handle,
-            folds: Vec::new(),
+            folds: Default::default(),
             transforms: Mutex::new(SumTree::from_item(Transform {
                 summary: TransformSummary {
                     buffer: text_summary.clone(),
@@ -76,17 +75,20 @@ impl FoldMap {
     pub fn folds_in_range<'a, T>(
         &'a self,
         range: Range<T>,
-        app: &'a AppContext,
+        ctx: &'a AppContext,
     ) -> Result<impl Iterator<Item = &'a Range<Anchor>>>
     where
         T: ToOffset,
     {
-        let buffer = self.buffer.read(app);
+        let buffer = self.buffer.read(ctx);
         let range = buffer.anchor_before(range.start)?..buffer.anchor_before(range.end)?;
-        Ok(self.folds.iter().filter(move |fold| {
-            range.start.cmp(&fold.end, buffer).unwrap() == Ordering::Less
-                && range.end.cmp(&fold.start, buffer).unwrap() == Ordering::Greater
-        }))
+        Ok(self
+            .folds
+            .filter::<_, usize>(move |summary| {
+                range.start.cmp(&summary.max_end, buffer).unwrap() < Ordering::Equal
+                    && range.end.cmp(&summary.min_start, buffer).unwrap() >= Ordering::Equal
+            })
+            .map(|f| &f.0))
     }
 
     pub fn fold<T: ToOffset>(
@@ -99,16 +101,31 @@ impl FoldMap {
         let mut edits = Vec::new();
         let buffer = self.buffer.read(ctx);
         for range in ranges.into_iter() {
-            let start = range.start.to_offset(buffer)?;
-            let end = range.end.to_offset(buffer)?;
+            let range = range.start.to_offset(buffer)?..range.end.to_offset(buffer)?;
+            let fold = if range.start == range.end {
+                Fold(buffer.anchor_after(range.start)?..buffer.anchor_after(range.end)?)
+            } else {
+                Fold(buffer.anchor_after(range.start)?..buffer.anchor_before(range.end)?)
+            };
             edits.push(Edit {
-                old_range: start..end,
-                new_range: start..end,
+                old_range: range.clone(),
+                new_range: range.clone(),
             });
-
-            let fold = buffer.anchor_after(start)?..buffer.anchor_before(end)?;
-            let ix = find_insertion_index(&self.folds, |probe| probe.cmp(&fold, buffer))?;
-            self.folds.insert(ix, fold);
+            self.folds = {
+                let mut new_tree = SumTree::new();
+                let mut cursor = self.folds.cursor::<_, ()>();
+                new_tree.push_tree_with_ctx(
+                    cursor.slice_with_ctx(
+                        &FoldRange(fold.0.clone()),
+                        SeekBias::Right,
+                        Some(buffer),
+                    ),
+                    Some(buffer),
+                );
+                new_tree.push_with_ctx(fold, Some(buffer));
+                new_tree.push_tree_with_ctx(cursor.suffix_with_ctx(Some(buffer)), Some(buffer));
+                new_tree
+            };
         }
         edits.sort_unstable_by(|a, b| {
             a.old_range
@@ -131,27 +148,45 @@ impl FoldMap {
         let buffer = self.buffer.read(ctx);
 
         let mut edits = Vec::new();
+        let mut fold_ixs_to_delete = Vec::new();
         for range in ranges.into_iter() {
             let start = buffer.anchor_before(range.start.to_offset(buffer)?)?;
             let end = buffer.anchor_after(range.end.to_offset(buffer)?)?;
+            let range = start..end;
 
             // Remove intersecting folds and add their ranges to edits that are passed to apply_edits
-            self.folds.retain(|fold| {
-                if fold.start.cmp(&end, buffer).unwrap() > Ordering::Equal
-                    || fold.end.cmp(&start, buffer).unwrap() < Ordering::Equal
-                {
-                    true
-                } else {
-                    let offset_range =
-                        fold.start.to_offset(buffer).unwrap()..fold.end.to_offset(buffer).unwrap();
-                    edits.push(Edit {
-                        old_range: offset_range.clone(),
-                        new_range: offset_range,
-                    });
-                    false
-                }
+            let mut cursor = self.folds.filter::<_, usize>(|summary| {
+                range.start.cmp(&summary.max_end, buffer).unwrap() < Ordering::Equal
+                    && range.end.cmp(&summary.min_start, buffer).unwrap() >= Ordering::Equal
             });
+
+            while let Some(fold) = cursor.item() {
+                let offset_range =
+                    fold.0.start.to_offset(buffer).unwrap()..fold.0.end.to_offset(buffer).unwrap();
+                edits.push(Edit {
+                    old_range: offset_range.clone(),
+                    new_range: offset_range,
+                });
+                fold_ixs_to_delete.push(*cursor.start());
+                cursor.next();
+            }
         }
+        fold_ixs_to_delete.sort_unstable();
+        fold_ixs_to_delete.dedup();
+
+        self.folds = {
+            let mut cursor = self.folds.cursor::<_, ()>();
+            let mut folds = SumTree::new();
+            for fold_ix in fold_ixs_to_delete {
+                folds.push_tree_with_ctx(
+                    cursor.slice_with_ctx(&fold_ix, SeekBias::Right, Some(buffer)),
+                    Some(buffer),
+                );
+                cursor.next();
+            }
+            folds.push_tree_with_ctx(cursor.suffix_with_ctx(Some(buffer)), Some(buffer));
+            folds
+        };
 
         self.apply_edits(edits, ctx);
         Ok(())
@@ -262,14 +297,14 @@ impl FoldMap {
                 ((edit.new_range.start + edit.old_extent()) as isize + delta) as usize;
 
             let anchor = buffer.anchor_before(edit.new_range.start).unwrap();
-            let folds_start =
-                find_insertion_index(&self.folds, |probe| probe.start.cmp(&anchor, buffer))
-                    .unwrap();
-            let mut folds = self.folds[folds_start..]
-                .iter()
-                .map(|fold| {
-                    fold.start.to_offset(buffer).unwrap()..fold.end.to_offset(buffer).unwrap()
-                })
+            let mut folds_cursor = self.folds.cursor::<_, ()>();
+            folds_cursor.seek_with_ctx(
+                &FoldRange(anchor..Anchor::End),
+                SeekBias::Left,
+                Some(buffer),
+            );
+            let mut folds = folds_cursor
+                .map(|f| f.0.start.to_offset(buffer).unwrap()..f.0.end.to_offset(buffer).unwrap())
                 .peekable();
 
             while folds
@@ -422,15 +457,109 @@ impl sum_tree::Item for Transform {
 }
 
 impl sum_tree::Summary for TransformSummary {
+    type Context = ();
+
     fn add_summary(&mut self, other: &Self) {
         self.buffer += &other.buffer;
         self.display += &other.display;
     }
 }
 
-impl<'a> Dimension<'a, TransformSummary> for TransformSummary {
+impl<'a> sum_tree::Dimension<'a, TransformSummary> for TransformSummary {
     fn add_summary(&mut self, summary: &'a TransformSummary) {
         sum_tree::Summary::add_summary(self, summary);
+    }
+}
+
+#[derive(Clone, Debug)]
+struct Fold(Range<Anchor>);
+
+impl sum_tree::Item for Fold {
+    type Summary = FoldSummary;
+
+    fn summary(&self) -> Self::Summary {
+        FoldSummary {
+            start: self.0.start.clone(),
+            end: self.0.end.clone(),
+            min_start: self.0.start.clone(),
+            max_end: self.0.end.clone(),
+            count: 1,
+        }
+    }
+}
+
+#[derive(Clone, Debug)]
+struct FoldSummary {
+    start: Anchor,
+    end: Anchor,
+    min_start: Anchor,
+    max_end: Anchor,
+    count: usize,
+}
+
+impl Default for FoldSummary {
+    fn default() -> Self {
+        Self {
+            start: Anchor::Start,
+            end: Anchor::End,
+            min_start: Anchor::Start,
+            max_end: Anchor::Start,
+            count: 0,
+        }
+    }
+}
+
+impl sum_tree::Summary for FoldSummary {
+    type Context = Buffer;
+
+    fn add_summary_with_ctx(&mut self, other: &Self, buffer: Option<&Self::Context>) {
+        let buffer = buffer.unwrap();
+        if other.min_start.cmp(&self.min_start, buffer).unwrap() == Ordering::Less {
+            self.min_start = other.min_start.clone();
+        }
+        if other.max_end.cmp(&self.max_end, buffer).unwrap() == Ordering::Greater {
+            self.max_end = other.max_end.clone();
+        }
+
+        if cfg!(debug_assertions) {
+            let start_comparison = self.start.cmp(&other.start, buffer).unwrap();
+            let end_comparison = self.end.cmp(&other.end, buffer).unwrap();
+            assert!(start_comparison <= Ordering::Equal);
+            if start_comparison == Ordering::Equal {
+                assert!(end_comparison >= Ordering::Equal);
+            }
+        }
+        self.start = other.start.clone();
+        self.end = other.end.clone();
+        self.count += other.count;
+    }
+}
+
+#[derive(Clone, Debug)]
+struct FoldRange(Range<Anchor>);
+
+impl Default for FoldRange {
+    fn default() -> Self {
+        Self(Anchor::Start..Anchor::End)
+    }
+}
+
+impl<'a> sum_tree::Dimension<'a, FoldSummary> for FoldRange {
+    fn add_summary(&mut self, summary: &'a FoldSummary) {
+        self.0.start = summary.start.clone();
+        self.0.end = summary.end.clone();
+    }
+}
+
+impl<'a> sum_tree::SeekDimension<'a, FoldSummary> for FoldRange {
+    fn cmp(&self, other: &Self, buffer: Option<&Buffer>) -> Ordering {
+        self.0.cmp(&other.0, buffer.unwrap()).unwrap()
+    }
+}
+
+impl<'a> sum_tree::Dimension<'a, FoldSummary> for usize {
+    fn add_summary(&mut self, summary: &'a FoldSummary) {
+        *self += summary.count;
     }
 }
 
@@ -498,7 +627,7 @@ impl<'a> Iterator for Chars<'a> {
     }
 }
 
-impl<'a> Dimension<'a, TransformSummary> for DisplayPoint {
+impl<'a> sum_tree::Dimension<'a, TransformSummary> for DisplayPoint {
     fn add_summary(&mut self, summary: &'a TransformSummary) {
         self.0 += &summary.display.lines;
     }
@@ -507,19 +636,19 @@ impl<'a> Dimension<'a, TransformSummary> for DisplayPoint {
 #[derive(Copy, Clone, Debug, Default, Eq, Ord, PartialOrd, PartialEq)]
 pub struct DisplayOffset(usize);
 
-impl<'a> Dimension<'a, TransformSummary> for DisplayOffset {
+impl<'a> sum_tree::Dimension<'a, TransformSummary> for DisplayOffset {
     fn add_summary(&mut self, summary: &'a TransformSummary) {
         self.0 += &summary.display.chars;
     }
 }
 
-impl<'a> Dimension<'a, TransformSummary> for Point {
+impl<'a> sum_tree::Dimension<'a, TransformSummary> for Point {
     fn add_summary(&mut self, summary: &'a TransformSummary) {
         *self += &summary.buffer.lines;
     }
 }
 
-impl<'a> Dimension<'a, TransformSummary> for usize {
+impl<'a> sum_tree::Dimension<'a, TransformSummary> for usize {
     fn add_summary(&mut self, summary: &'a TransformSummary) {
         *self += &summary.buffer.chars;
     }
@@ -894,13 +1023,13 @@ mod tests {
 
         fn merged_fold_ranges(&self, app: &AppContext) -> Vec<Range<usize>> {
             let buffer = self.buffer.read(app);
-            let mut folds = self.folds.clone();
+            let mut folds = self.folds.items();
             // Ensure sorting doesn't change how folds get merged and displayed.
-            folds.sort_by(|a, b| a.cmp(b, buffer).unwrap());
+            folds.sort_by(|a, b| a.0.cmp(&b.0, buffer).unwrap());
             let mut fold_ranges = folds
                 .iter()
                 .map(|fold| {
-                    fold.start.to_offset(buffer).unwrap()..fold.end.to_offset(buffer).unwrap()
+                    fold.0.start.to_offset(buffer).unwrap()..fold.0.end.to_offset(buffer).unwrap()
                 })
                 .peekable();
 

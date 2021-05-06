@@ -382,22 +382,48 @@ where
 impl<'a, T, S, U> Cursor<'a, T, S, U>
 where
     T: Item,
-    S: Dimension<'a, T::Summary> + Ord,
+    S: SeekDimension<'a, T::Summary>,
     U: Dimension<'a, T::Summary>,
 {
     pub fn seek(&mut self, pos: &S, bias: SeekBias) -> bool {
-        self.reset();
-        self.seek_internal::<()>(pos, bias, &mut SeekAggregate::None)
+        self.seek_with_ctx(pos, bias, None)
     }
 
-    #[allow(unused)]
+    pub fn seek_with_ctx(
+        &mut self,
+        pos: &S,
+        bias: SeekBias,
+        ctx: Option<&'a <T::Summary as Summary>::Context>,
+    ) -> bool {
+        self.reset();
+        self.seek_internal::<()>(pos, bias, &mut SeekAggregate::None, ctx)
+    }
+
     pub fn seek_forward(&mut self, pos: &S, bias: SeekBias) -> bool {
-        self.seek_internal::<()>(pos, bias, &mut SeekAggregate::None)
+        self.seek_forward_with_ctx(pos, bias, None)
+    }
+
+    pub fn seek_forward_with_ctx(
+        &mut self,
+        pos: &S,
+        bias: SeekBias,
+        ctx: Option<&'a <T::Summary as Summary>::Context>,
+    ) -> bool {
+        self.seek_internal::<()>(pos, bias, &mut SeekAggregate::None, ctx)
     }
 
     pub fn slice(&mut self, end: &S, bias: SeekBias) -> SumTree<T> {
+        self.slice_with_ctx(end, bias, None)
+    }
+
+    pub fn slice_with_ctx(
+        &mut self,
+        end: &S,
+        bias: SeekBias,
+        ctx: Option<&'a <T::Summary as Summary>::Context>,
+    ) -> SumTree<T> {
         let mut slice = SeekAggregate::Slice(SumTree::new());
-        self.seek_internal::<()>(end, bias, &mut slice);
+        self.seek_internal::<()>(end, bias, &mut slice, ctx);
         if let SeekAggregate::Slice(slice) = slice {
             slice
         } else {
@@ -406,9 +432,16 @@ where
     }
 
     pub fn suffix(&mut self) -> SumTree<T> {
+        self.suffix_with_ctx(None)
+    }
+
+    pub fn suffix_with_ctx(
+        &mut self,
+        ctx: Option<&'a <T::Summary as Summary>::Context>,
+    ) -> SumTree<T> {
         let extent = self.tree.extent::<S>();
         let mut slice = SeekAggregate::Slice(SumTree::new());
-        self.seek_internal::<()>(&extent, SeekBias::Right, &mut slice);
+        self.seek_internal::<()>(&extent, SeekBias::Right, &mut slice, ctx);
         if let SeekAggregate::Slice(slice) = slice {
             slice
         } else {
@@ -420,8 +453,20 @@ where
     where
         D: Dimension<'a, T::Summary>,
     {
+        self.summary_with_ctx(end, bias, None)
+    }
+
+    pub fn summary_with_ctx<D>(
+        &mut self,
+        end: &S,
+        bias: SeekBias,
+        ctx: Option<&'a <T::Summary as Summary>::Context>,
+    ) -> D
+    where
+        D: Dimension<'a, T::Summary>,
+    {
         let mut summary = SeekAggregate::Summary(D::default());
-        self.seek_internal(end, bias, &mut summary);
+        self.seek_internal(end, bias, &mut summary, ctx);
         if let SeekAggregate::Summary(summary) = summary {
             summary
         } else {
@@ -434,11 +479,12 @@ where
         target: &S,
         bias: SeekBias,
         aggregate: &mut SeekAggregate<T, D>,
+        ctx: Option<&'a <T::Summary as Summary>::Context>,
     ) -> bool
     where
         D: Dimension<'a, T::Summary>,
     {
-        debug_assert!(target >= &self.seek_dimension);
+        debug_assert!(target.cmp(&self.seek_dimension, ctx) >= Ordering::Equal);
         let mut containing_subtree = None;
 
         if self.did_seek {
@@ -458,7 +504,7 @@ where
                                 let mut child_end = self.seek_dimension.clone();
                                 child_end.add_summary(&child_summary);
 
-                                let comparison = target.cmp(&child_end);
+                                let comparison = target.cmp(&child_end, ctx);
                                 if comparison == Ordering::Greater
                                     || (comparison == Ordering::Equal && bias == SeekBias::Right)
                                 {
@@ -467,7 +513,7 @@ where
                                     match aggregate {
                                         SeekAggregate::None => {}
                                         SeekAggregate::Slice(slice) => {
-                                            slice.push_tree(child_tree.clone());
+                                            slice.push_tree_with_ctx(child_tree.clone(), ctx);
                                         }
                                         SeekAggregate::Summary(summary) => {
                                             summary.add_summary(child_summary);
@@ -500,7 +546,7 @@ where
                                 let mut item_end = self.seek_dimension.clone();
                                 item_end.add_summary(item_summary);
 
-                                let comparison = target.cmp(&item_end);
+                                let comparison = target.cmp(&item_end, ctx);
                                 if comparison == Ordering::Greater
                                     || (comparison == Ordering::Equal && bias == SeekBias::Right)
                                 {
@@ -514,7 +560,7 @@ where
                                             slice_items_summary
                                                 .as_mut()
                                                 .unwrap()
-                                                .add_summary(item_summary);
+                                                .add_summary_with_ctx(item_summary, ctx);
                                         }
                                         SeekAggregate::Summary(summary) => {
                                             summary.add_summary(item_summary);
@@ -523,11 +569,14 @@ where
                                     entry.index += 1;
                                 } else {
                                     if let SeekAggregate::Slice(slice) = aggregate {
-                                        slice.push_tree(SumTree(Arc::new(Node::Leaf {
-                                            summary: slice_items_summary.unwrap(),
-                                            items: slice_items,
-                                            item_summaries: slice_item_summaries,
-                                        })));
+                                        slice.push_tree_with_ctx(
+                                            SumTree(Arc::new(Node::Leaf {
+                                                summary: slice_items_summary.unwrap(),
+                                                items: slice_items,
+                                                item_summaries: slice_item_summaries,
+                                            })),
+                                            ctx,
+                                        );
                                     }
                                     break 'outer;
                                 }
@@ -535,11 +584,14 @@ where
 
                             if let SeekAggregate::Slice(slice) = aggregate {
                                 if !slice_items.is_empty() {
-                                    slice.push_tree(SumTree(Arc::new(Node::Leaf {
-                                        summary: slice_items_summary.unwrap(),
-                                        items: slice_items,
-                                        item_summaries: slice_item_summaries,
-                                    })));
+                                    slice.push_tree_with_ctx(
+                                        SumTree(Arc::new(Node::Leaf {
+                                            summary: slice_items_summary.unwrap(),
+                                            items: slice_items,
+                                            item_summaries: slice_item_summaries,
+                                        })),
+                                        ctx,
+                                    );
                                 }
                             }
                         }
@@ -568,7 +620,7 @@ where
                             let mut child_end = self.seek_dimension.clone();
                             child_end.add_summary(child_summary);
 
-                            let comparison = target.cmp(&child_end);
+                            let comparison = target.cmp(&child_end, ctx);
                             if comparison == Ordering::Greater
                                 || (comparison == Ordering::Equal && bias == SeekBias::Right)
                             {
@@ -577,7 +629,7 @@ where
                                 match aggregate {
                                     SeekAggregate::None => {}
                                     SeekAggregate::Slice(slice) => {
-                                        slice.push_tree(child_trees[index].clone());
+                                        slice.push_tree_with_ctx(child_trees[index].clone(), ctx);
                                     }
                                     SeekAggregate::Summary(summary) => {
                                         summary.add_summary(child_summary);
@@ -614,7 +666,7 @@ where
                             let mut child_end = self.seek_dimension.clone();
                             child_end.add_summary(item_summary);
 
-                            let comparison = target.cmp(&child_end);
+                            let comparison = target.cmp(&child_end, ctx);
                             if comparison == Ordering::Greater
                                 || (comparison == Ordering::Equal && bias == SeekBias::Right)
                             {
@@ -627,7 +679,7 @@ where
                                         slice_items_summary
                                             .as_mut()
                                             .unwrap()
-                                            .add_summary(item_summary);
+                                            .add_summary_with_ctx(item_summary, ctx);
                                         slice_item_summaries.push(item_summary.clone());
                                     }
                                     SeekAggregate::Summary(summary) => {
@@ -647,11 +699,14 @@ where
 
                         if let SeekAggregate::Slice(slice) = aggregate {
                             if !slice_items.is_empty() {
-                                slice.push_tree(SumTree(Arc::new(Node::Leaf {
-                                    summary: slice_items_summary.unwrap(),
-                                    items: slice_items,
-                                    item_summaries: slice_item_summaries,
-                                })));
+                                slice.push_tree_with_ctx(
+                                    SumTree(Arc::new(Node::Leaf {
+                                        summary: slice_items_summary.unwrap(),
+                                        items: slice_items,
+                                        item_summaries: slice_item_summaries,
+                                    })),
+                                    ctx,
+                                );
                             }
                         }
                     }
@@ -672,9 +727,9 @@ where
             if let Some(summary) = self.item_summary() {
                 end.add_summary(summary);
             }
-            *target == end
+            target.cmp(&end, ctx) == Ordering::Equal
         } else {
-            *target == self.seek_dimension
+            target.cmp(&self.seek_dimension, ctx) == Ordering::Equal
         }
     }
 }
