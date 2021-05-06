@@ -9,7 +9,7 @@ use crate::{
 use ::ignore::gitignore::Gitignore;
 use anyhow::{Context, Result};
 pub use fuzzy::{match_paths, PathMatch};
-use gpui::{scoped_pool, AppContext, Entity, ModelContext, ModelHandle, Task, View, ViewContext};
+use gpui::{scoped_pool, AppContext, Entity, ModelContext, ModelHandle, Task};
 use lazy_static::lazy_static;
 use parking_lot::Mutex;
 use postage::{
@@ -53,7 +53,7 @@ pub struct Worktree {
     poll_scheduled: bool,
 }
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct FileHandle {
     worktree: ModelHandle<Worktree>,
     state: Arc<Mutex<FileHandleState>>,
@@ -191,18 +191,17 @@ impl Worktree {
         path: &Path,
         content: BufferSnapshot,
         ctx: &AppContext,
-    ) -> Task<Result<u64>> {
+    ) -> Task<Result<()>> {
         let abs_path = self.snapshot.abs_path.join(path);
         ctx.background_executor().spawn(async move {
             let buffer_size = content.text_summary().bytes.min(10 * 1024);
             let file = std::fs::File::create(&abs_path)?;
-            let metadata = file.metadata()?;
             let mut writer = std::io::BufWriter::with_capacity(buffer_size, file);
             for chunk in content.fragments() {
                 writer.write(chunk.as_bytes())?;
             }
             writer.flush()?;
-            Ok(metadata.ino())
+            Ok(())
         })
     }
 }
@@ -415,7 +414,7 @@ impl FileHandle {
         self.worktree.read(ctx).load_history(&self.path(), ctx)
     }
 
-    pub fn save<'a>(&self, content: BufferSnapshot, ctx: &AppContext) -> Task<Result<u64>> {
+    pub fn save<'a>(&self, content: BufferSnapshot, ctx: &AppContext) -> Task<Result<()>> {
         let worktree = self.worktree.read(ctx);
         worktree.save(&self.path(), content, ctx)
     }
@@ -428,14 +427,14 @@ impl FileHandle {
         (self.worktree.id(), self.path())
     }
 
-    pub fn observe_from_view<T: View>(
+    pub fn observe_from_model<T: Entity>(
         &self,
-        ctx: &mut ViewContext<T>,
-        mut callback: impl FnMut(&mut T, FileHandle, &mut ViewContext<T>) + 'static,
+        ctx: &mut ModelContext<T>,
+        mut callback: impl FnMut(&mut T, FileHandle, &mut ModelContext<T>) + 'static,
     ) {
         let mut prev_state = self.state.lock().clone();
         let cur_state = Arc::downgrade(&self.state);
-        ctx.observe_model(&self.worktree, move |observer, worktree, ctx| {
+        ctx.observe(&self.worktree, move |observer, worktree, ctx| {
             if let Some(cur_state) = cur_state.upgrade() {
                 let cur_state_unlocked = cur_state.lock();
                 if *cur_state_unlocked != prev_state {
@@ -1361,7 +1360,8 @@ mod tests {
             app.read(|ctx| tree.read(ctx).scan_complete()).await;
             app.read(|ctx| assert_eq!(tree.read(ctx).file_count(), 1));
 
-            let buffer = app.add_model(|_| Buffer::new(1, "a line of text.\n".repeat(10 * 1024)));
+            let buffer =
+                app.add_model(|ctx| Buffer::new(1, "a line of text.\n".repeat(10 * 1024), ctx));
 
             let path = tree.update(&mut app, |tree, ctx| {
                 let path = tree.files(0).next().unwrap().path().clone();
