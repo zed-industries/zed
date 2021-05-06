@@ -109,10 +109,7 @@ impl FoldMap {
             self.folds = {
                 let mut new_tree = SumTree::new();
                 let mut cursor = self.folds.cursor::<_, ()>();
-                new_tree.push_tree(
-                    cursor.slice(&FoldRange(fold.0.clone()), SeekBias::Right, buffer),
-                    buffer,
-                );
+                new_tree.push_tree(cursor.slice(&fold, SeekBias::Right, buffer), buffer);
                 new_tree.push(fold, buffer);
                 new_tree.push_tree(cursor.suffix(buffer), buffer);
                 new_tree
@@ -298,7 +295,7 @@ impl FoldMap {
 
             let anchor = buffer.anchor_before(edit.new_range.start).unwrap();
             let mut folds_cursor = self.folds.cursor::<_, ()>();
-            folds_cursor.seek(&FoldRange(anchor..Anchor::End), SeekBias::Left, buffer);
+            folds_cursor.seek(&Fold(anchor..Anchor::End), SeekBias::Left, buffer);
             let mut folds = folds_cursor
                 .map(|f| f.0.start.to_offset(buffer).unwrap()..f.0.end.to_offset(buffer).unwrap())
                 .peekable();
@@ -482,6 +479,12 @@ impl<'a> sum_tree::Dimension<'a, TransformSummary> for TransformSummary {
 #[derive(Clone, Debug)]
 struct Fold(Range<Anchor>);
 
+impl Default for Fold {
+    fn default() -> Self {
+        Self(Anchor::Start..Anchor::End)
+    }
+}
+
 impl sum_tree::Item for Fold {
     type Summary = FoldSummary;
 
@@ -542,23 +545,14 @@ impl sum_tree::Summary for FoldSummary {
     }
 }
 
-#[derive(Clone, Debug)]
-struct FoldRange(Range<Anchor>);
-
-impl Default for FoldRange {
-    fn default() -> Self {
-        Self(Anchor::Start..Anchor::End)
-    }
-}
-
-impl<'a> sum_tree::Dimension<'a, FoldSummary> for FoldRange {
+impl<'a> sum_tree::Dimension<'a, FoldSummary> for Fold {
     fn add_summary(&mut self, summary: &'a FoldSummary) {
         self.0.start = summary.start.clone();
         self.0.end = summary.end.clone();
     }
 }
 
-impl<'a> sum_tree::SeekDimension<'a, FoldSummary> for FoldRange {
+impl<'a> sum_tree::SeekDimension<'a, FoldSummary> for Fold {
     fn cmp(&self, other: &Self, buffer: &Buffer) -> Ordering {
         self.0.cmp(&other.0, buffer).unwrap()
     }
