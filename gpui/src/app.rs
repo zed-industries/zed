@@ -718,11 +718,12 @@ impl MutableAppContext {
     {
         self.pending_flushes += 1;
         let model_id = post_inc(&mut self.next_entity_id);
+        let handle = ModelHandle::new(model_id, &self.ctx.ref_counts);
         let mut ctx = ModelContext::new(self, model_id);
         let model = build_model(&mut ctx);
         self.ctx.models.insert(model_id, Box::new(model));
         self.flush_effects();
-        ModelHandle::new(model_id, &self.ctx.ref_counts)
+        handle
     }
 
     pub fn add_window<T, F>(&mut self, build_root_view: F) -> (usize, ViewHandle<T>)
@@ -925,6 +926,11 @@ impl MutableAppContext {
 
                     if self.pending_effects.is_empty() {
                         self.flushing_effects = false;
+
+                        for (key, view) in &self.ctx.views {
+                            log::info!("{:?} {}", key, view.ui_name());
+                        }
+
                         break;
                     }
                 }
@@ -1136,7 +1142,7 @@ impl MutableAppContext {
         self.flush_effects();
     }
 
-    fn spawn<F, T>(&mut self, future: F) -> EntityTask<T>
+    fn spawn<F, T>(&mut self, spawner: Spawner, future: F) -> EntityTask<T>
     where
         F: 'static + Future,
         T: 'static,
@@ -1147,20 +1153,20 @@ impl MutableAppContext {
             let app = app.clone();
             self.foreground.spawn(async move {
                 let output = future.await;
-                *app.borrow_mut()
+                app.borrow_mut()
                     .handle_future_output(task_id, Box::new(output))
-                    .downcast::<T>()
-                    .unwrap()
+                    .map(|output| *output.downcast::<T>().unwrap())
             })
         };
         EntityTask::new(
             task_id,
             task,
+            spawner,
             TaskHandlerMap::Future(self.future_handlers.clone()),
         )
     }
 
-    fn spawn_stream<F, T>(&mut self, mut stream: F) -> EntityTask<T>
+    fn spawn_stream<F, T>(&mut self, spawner: Spawner, mut stream: F) -> EntityTask<T>
     where
         F: 'static + Stream + Unpin,
         T: 'static,
@@ -1182,20 +1188,24 @@ impl MutableAppContext {
                 }
             }
 
-            *app.borrow_mut()
+            app.borrow_mut()
                 .stream_completed(task_id)
-                .downcast::<T>()
-                .unwrap()
+                .map(|output| *output.downcast::<T>().unwrap())
         });
 
         EntityTask::new(
             task_id,
             task,
+            spawner,
             TaskHandlerMap::Stream(self.stream_handlers.clone()),
         )
     }
 
-    fn handle_future_output(&mut self, task_id: usize, output: Box<dyn Any>) -> Box<dyn Any> {
+    fn handle_future_output(
+        &mut self,
+        task_id: usize,
+        output: Box<dyn Any>,
+    ) -> Option<Box<dyn Any>> {
         self.pending_flushes += 1;
         let future_callback = self.future_handlers.borrow_mut().remove(&task_id).unwrap();
         let result = future_callback(output, self);
@@ -1214,7 +1224,7 @@ impl MutableAppContext {
         halt
     }
 
-    fn stream_completed(&mut self, task_id: usize) -> Box<dyn Any> {
+    fn stream_completed(&mut self, task_id: usize) -> Option<Box<dyn Any>> {
         self.pending_flushes += 1;
 
         let handler = self.stream_handlers.borrow_mut().remove(&task_id).unwrap();
@@ -1239,9 +1249,9 @@ impl ReadModel for MutableAppContext {
             model
                 .as_any()
                 .downcast_ref()
-                .expect("Downcast is type safe")
+                .expect("downcast is type safe")
         } else {
-            panic!("Circular model reference");
+            panic!("circular model reference");
         }
     }
 }
@@ -1259,14 +1269,14 @@ impl UpdateModel for MutableAppContext {
                 model
                     .as_any_mut()
                     .downcast_mut()
-                    .expect("Downcast is type safe"),
+                    .expect("downcast is type safe"),
                 &mut ctx,
             );
             self.ctx.models.insert(handle.model_id, model);
             self.flush_effects();
             result
         } else {
-            panic!("Circular model update");
+            panic!("circular model update");
         }
     }
 }
@@ -1298,7 +1308,7 @@ impl UpdateView for MutableAppContext {
         let result = update(
             view.as_any_mut()
                 .downcast_mut()
-                .expect("Downcast is type safe"),
+                .expect("downcast is type safe"),
             &mut ctx,
         );
         self.ctx
@@ -1604,13 +1614,20 @@ impl<'a, T: Entity> ModelContext<'a, T> {
         U: 'static,
     {
         let handle = self.handle();
-        let task = self.app.spawn::<S, U>(future);
+        let weak_handle = handle.downgrade();
+        let task = self
+            .app
+            .spawn::<S, U>(Spawner::Model(handle.into()), future);
 
         self.app.future_handlers.borrow_mut().insert(
             task.id,
             Box::new(move |output, ctx| {
-                let output = *output.downcast().unwrap();
-                handle.update(ctx, |model, ctx| Box::new(callback(model, output, ctx)))
+                weak_handle.upgrade(ctx.as_ref()).map(|handle| {
+                    let output = *output.downcast().unwrap();
+                    handle.update(ctx, |model, ctx| {
+                        Box::new(callback(model, output, ctx)) as Box<dyn Any>
+                    })
+                })
             }),
         );
 
@@ -1630,23 +1647,31 @@ impl<'a, T: Entity> ModelContext<'a, T> {
         U: 'static + Any,
     {
         let handle = self.handle();
-        let task = self.app.spawn_stream(stream);
+        let weak_handle = handle.downgrade();
+        let task = self.app.spawn_stream(Spawner::Model(handle.into()), stream);
 
         self.app.stream_handlers.borrow_mut().insert(
             task.id,
             StreamHandler {
                 item_callback: {
-                    let handle = handle.clone();
+                    let weak_handle = weak_handle.clone();
                     Box::new(move |output, app| {
-                        let output = *output.downcast().unwrap();
-                        handle.update(app, |model, ctx| {
-                            item_callback(model, output, ctx);
-                            ctx.halt_stream
-                        })
+                        if let Some(handle) = weak_handle.upgrade(app.as_ref()) {
+                            let output = *output.downcast().unwrap();
+                            handle.update(app, |model, ctx| {
+                                item_callback(model, output, ctx);
+                                ctx.halt_stream
+                            })
+                        } else {
+                            true
+                        }
                     })
                 },
                 done_callback: Box::new(move |app| {
-                    handle.update(app, |model, ctx| Box::new(done_callback(model, ctx)))
+                    weak_handle.upgrade(app.as_ref()).map(|handle| {
+                        handle.update(app, |model, ctx| Box::new(done_callback(model, ctx)))
+                            as Box<dyn Any>
+                    })
                 }),
             },
         );
@@ -1896,13 +1921,18 @@ impl<'a, T: View> ViewContext<'a, T> {
         U: 'static,
     {
         let handle = self.handle();
-        let task = self.app.spawn(future);
+        let weak_handle = handle.downgrade();
+        let task = self.app.spawn(Spawner::View(handle.into()), future);
 
         self.app.future_handlers.borrow_mut().insert(
             task.id,
             Box::new(move |output, app| {
-                let output = *output.downcast().unwrap();
-                handle.update(app, |view, ctx| Box::new(callback(view, output, ctx)))
+                weak_handle.upgrade(app.as_ref()).map(|handle| {
+                    let output = *output.downcast().unwrap();
+                    handle.update(app, |view, ctx| {
+                        Box::new(callback(view, output, ctx)) as Box<dyn Any>
+                    })
+                })
             }),
         );
 
@@ -1922,22 +1952,31 @@ impl<'a, T: View> ViewContext<'a, T> {
         U: 'static + Any,
     {
         let handle = self.handle();
-        let task = self.app.spawn_stream(stream);
+        let weak_handle = handle.downgrade();
+        let task = self.app.spawn_stream(Spawner::View(handle.into()), stream);
         self.app.stream_handlers.borrow_mut().insert(
             task.id,
             StreamHandler {
                 item_callback: {
-                    let handle = handle.clone();
-                    Box::new(move |output, app| {
-                        let output = *output.downcast().unwrap();
-                        handle.update(app, |view, ctx| {
-                            item_callback(view, output, ctx);
-                            ctx.halt_stream
-                        })
+                    let weak_handle = weak_handle.clone();
+                    Box::new(move |output, ctx| {
+                        if let Some(handle) = weak_handle.upgrade(ctx.as_ref()) {
+                            let output = *output.downcast().unwrap();
+                            handle.update(ctx, |view, ctx| {
+                                item_callback(view, output, ctx);
+                                ctx.halt_stream
+                            })
+                        } else {
+                            true
+                        }
                     })
                 },
-                done_callback: Box::new(move |app| {
-                    handle.update(app, |view, ctx| Box::new(done_callback(view, ctx)))
+                done_callback: Box::new(move |ctx| {
+                    weak_handle.upgrade(ctx.as_ref()).map(|handle| {
+                        handle.update(ctx, |view, ctx| {
+                            Box::new(done_callback(view, ctx)) as Box<dyn Any>
+                        })
+                    })
                 }),
             },
         );
@@ -2174,6 +2213,40 @@ impl<T: Entity> WeakModelHandle<T> {
             Some(ModelHandle::new(self.model_id, &app.ref_counts))
         } else {
             None
+        }
+    }
+}
+
+impl<T> Clone for WeakModelHandle<T> {
+    fn clone(&self) -> Self {
+        Self {
+            model_id: self.model_id,
+            model_type: PhantomData,
+        }
+    }
+}
+
+pub struct AnyModelHandle {
+    model_id: usize,
+    ref_counts: Weak<Mutex<RefCounts>>,
+}
+
+impl<T: Entity> From<ModelHandle<T>> for AnyModelHandle {
+    fn from(handle: ModelHandle<T>) -> Self {
+        if let Some(ref_counts) = handle.ref_counts.upgrade() {
+            ref_counts.lock().inc_entity(handle.model_id);
+        }
+        Self {
+            model_id: handle.model_id,
+            ref_counts: handle.ref_counts.clone(),
+        }
+    }
+}
+
+impl Drop for AnyModelHandle {
+    fn drop(&mut self) {
+        if let Some(ref_counts) = self.ref_counts.upgrade() {
+            ref_counts.lock().dec_model(self.model_id);
         }
     }
 }
@@ -2551,18 +2624,24 @@ struct ViewObservation {
     callback: Box<dyn FnMut(&mut dyn Any, usize, usize, &mut MutableAppContext, usize, usize)>,
 }
 
-type FutureHandler = Box<dyn FnOnce(Box<dyn Any>, &mut MutableAppContext) -> Box<dyn Any>>;
+type FutureHandler = Box<dyn FnOnce(Box<dyn Any>, &mut MutableAppContext) -> Option<Box<dyn Any>>>;
 
 struct StreamHandler {
     item_callback: Box<dyn FnMut(Box<dyn Any>, &mut MutableAppContext) -> bool>,
-    done_callback: Box<dyn FnOnce(&mut MutableAppContext) -> Box<dyn Any>>,
+    done_callback: Box<dyn FnOnce(&mut MutableAppContext) -> Option<Box<dyn Any>>>,
 }
 
 #[must_use]
 pub struct EntityTask<T> {
     id: usize,
-    task: Option<executor::Task<T>>,
+    task: Option<executor::Task<Option<T>>>,
+    _spawner: Spawner, // Keeps the spawning entity alive for as long as the task exists
     handler_map: TaskHandlerMap,
+}
+
+pub enum Spawner {
+    Model(AnyModelHandle),
+    View(AnyViewHandle),
 }
 
 enum TaskHandlerMap {
@@ -2572,10 +2651,16 @@ enum TaskHandlerMap {
 }
 
 impl<T> EntityTask<T> {
-    fn new(id: usize, task: executor::Task<T>, handler_map: TaskHandlerMap) -> Self {
+    fn new(
+        id: usize,
+        task: executor::Task<Option<T>>,
+        spawner: Spawner,
+        handler_map: TaskHandlerMap,
+    ) -> Self {
         Self {
             id,
             task: Some(task),
+            _spawner: spawner,
             handler_map,
         }
     }
@@ -2587,7 +2672,7 @@ impl<T> EntityTask<T> {
 
     pub async fn cancel(mut self) -> Option<T> {
         let task = self.task.take().unwrap();
-        task.cancel().await
+        task.cancel().await.unwrap()
     }
 }
 
@@ -2599,7 +2684,7 @@ impl<T> Future for EntityTask<T> {
         ctx: &mut std::task::Context<'_>,
     ) -> std::task::Poll<Self::Output> {
         let task = unsafe { self.map_unchecked_mut(|task| task.task.as_mut().unwrap()) };
-        task.poll(ctx)
+        task.poll(ctx).map(|output| output.unwrap())
     }
 }
 
