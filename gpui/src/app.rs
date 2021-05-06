@@ -2363,6 +2363,14 @@ impl<T: View> From<ViewHandle<T>> for AnyViewHandle {
     }
 }
 
+impl Drop for AnyViewHandle {
+    fn drop(&mut self) {
+        if let Some(ref_counts) = self.ref_counts.upgrade() {
+            ref_counts.lock().dec_view(self.window_id, self.view_id);
+        }
+    }
+}
+
 pub struct WeakViewHandle<T> {
     window_id: usize,
     view_id: usize,
