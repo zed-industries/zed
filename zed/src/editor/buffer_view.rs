@@ -1952,9 +1952,8 @@ impl BufferView {
             .selections(ctx.as_ref())
             .iter()
             .map(|s| s.range(buffer).sorted())
-            .collect::<Vec<_>>();
-        self.display_map.fold(ranges, ctx.as_ref()).unwrap();
-        ctx.notify();
+            .collect();
+        self.fold_ranges(ranges, ctx);
     }
 
     fn fold_ranges<T: ToOffset>(&mut self, ranges: Vec<Range<T>>, ctx: &mut ViewContext<Self>) {
