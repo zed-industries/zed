@@ -1,14 +1,28 @@
 pub mod pane;
 pub mod pane_group;
+use crate::{
+    editor::{Buffer, BufferView},
+    settings::Settings,
+    time::ReplicaId,
+    watch::{self, Receiver},
+    worktree::{FileHandle, Worktree, WorktreeHandle},
+};
+use futures_core::{future::LocalBoxFuture, Future};
+use gpui::{
+    color::rgbu, elements::*, json::to_string_pretty, keymap::Binding, AnyViewHandle, AppContext,
+    ClipboardItem, Entity, EntityTask, ModelHandle, MutableAppContext, PathPromptOptions, View,
+    ViewContext, ViewHandle, WeakModelHandle,
+};
+use log::error;
 pub use pane::*;
 pub use pane_group::*;
-
-use crate::{
-    settings::Settings,
-    watch::{self, Receiver},
-    worktree::FileHandle,
+use smol::prelude::*;
+use std::{collections::HashMap, path::PathBuf};
+use std::{
+    collections::{hash_map::Entry, HashSet},
+    path::Path,
+    sync::Arc,
 };
-use std::{collections::HashMap, fmt, path::PathBuf};
 
 pub fn init(app: &mut MutableAppContext) {
     app.add_global_action("workspace:open", open);
@@ -23,24 +37,6 @@ pub fn init(app: &mut MutableAppContext) {
     ]);
     pane::init(app);
 }
-use crate::{
-    editor::{Buffer, BufferView},
-    time::ReplicaId,
-    worktree::{Worktree, WorktreeHandle},
-};
-use futures_core::{future::LocalBoxFuture, Future};
-use gpui::{
-    color::rgbu, elements::*, json::to_string_pretty, keymap::Binding, AnyViewHandle, AppContext,
-    ClipboardItem, Entity, EntityTask, ModelHandle, MutableAppContext, PathPromptOptions, View,
-    ViewContext, ViewHandle,
-};
-use log::error;
-use smol::prelude::*;
-use std::{
-    collections::{hash_map::Entry, HashSet},
-    path::Path,
-    sync::Arc,
-};
 
 pub struct OpenParams {
     pub paths: Vec<PathBuf>,
@@ -137,15 +133,19 @@ pub trait ItemView: View {
 }
 
 pub trait ItemHandle: Send + Sync {
-    fn id(&self) -> usize;
+    fn boxed_clone(&self) -> Box<dyn ItemHandle>;
+    fn downgrade(&self) -> Box<dyn WeakItemHandle>;
+}
+
+pub trait WeakItemHandle: Send + Sync {
     fn file<'a>(&'a self, ctx: &'a AppContext) -> Option<&'a FileHandle>;
     fn add_view(
         &self,
         window_id: usize,
         settings: watch::Receiver<Settings>,
         app: &mut MutableAppContext,
-    ) -> Box<dyn ItemViewHandle>;
-    fn boxed_clone(&self) -> Box<dyn ItemHandle>;
+    ) -> Option<Box<dyn ItemViewHandle>>;
+    fn alive(&self, ctx: &AppContext) -> bool;
 }
 
 pub trait ItemViewHandle: Send + Sync {
@@ -165,25 +165,37 @@ pub trait ItemViewHandle: Send + Sync {
 }
 
 impl<T: Item> ItemHandle for ModelHandle<T> {
-    fn id(&self) -> usize {
-        self.id()
+    fn boxed_clone(&self) -> Box<dyn ItemHandle> {
+        Box::new(self.clone())
     }
 
+    fn downgrade(&self) -> Box<dyn WeakItemHandle> {
+        Box::new(self.downgrade())
+    }
+}
+
+impl<T: Item> WeakItemHandle for WeakModelHandle<T> {
     fn file<'a>(&'a self, ctx: &'a AppContext) -> Option<&'a FileHandle> {
-        self.read(ctx).file()
+        self.upgrade(ctx).and_then(|h| h.read(ctx).file())
     }
 
     fn add_view(
         &self,
         window_id: usize,
-        settings: watch::Receiver<Settings>,
-        app: &mut MutableAppContext,
-    ) -> Box<dyn ItemViewHandle> {
-        Box::new(app.add_view(window_id, |ctx| T::build_view(self.clone(), settings, ctx)))
+        settings: Receiver<Settings>,
+        ctx: &mut MutableAppContext,
+    ) -> Option<Box<dyn ItemViewHandle>> {
+        if let Some(handle) = self.upgrade(ctx.as_ref()) {
+            Some(Box::new(ctx.add_view(window_id, |ctx| {
+                T::build_view(handle, settings, ctx)
+            })))
+        } else {
+            None
+        }
     }
 
-    fn boxed_clone(&self) -> Box<dyn ItemHandle> {
-        Box::new(self.clone())
+    fn alive(&self, ctx: &AppContext) -> bool {
+        self.upgrade(ctx).is_some()
     }
 }
 
@@ -256,12 +268,6 @@ impl Clone for Box<dyn ItemHandle> {
     }
 }
 
-impl fmt::Debug for Box<dyn ItemHandle> {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "ItemHandle {{id: {}}}", self.id())
-    }
-}
-
 #[derive(Debug)]
 pub struct State {
     pub modal: Option<usize>,
@@ -276,7 +282,7 @@ pub struct Workspace {
     active_pane: ViewHandle<Pane>,
     replica_id: ReplicaId,
     worktrees: HashSet<ModelHandle<Worktree>>,
-    items: Vec<Box<dyn ItemHandle>>,
+    items: Vec<Box<dyn WeakItemHandle>>,
     loading_items: HashMap<
         (usize, Arc<Path>),
         postage::watch::Receiver<Option<Result<Box<dyn ItemHandle>, Arc<anyhow::Error>>>>,
@@ -427,7 +433,7 @@ impl Workspace {
         let buffer = ctx.add_model(|ctx| Buffer::new(self.replica_id, "", ctx));
         let buffer_view =
             ctx.add_view(|ctx| BufferView::for_buffer(buffer.clone(), self.settings.clone(), ctx));
-        self.items.push(Box::new(buffer));
+        self.items.push(ItemHandle::downgrade(&buffer));
         self.add_item(Box::new(buffer_view), ctx);
     }
 
@@ -451,12 +457,25 @@ impl Workspace {
 
         // Otherwise, if this file is already open somewhere in the workspace,
         // then add another view for it.
-        if let Some(item) = self.items.iter().find(|item| {
-            item.file(ctx.as_ref())
-                .map_or(false, |f| f.entry_id() == entry)
-        }) {
-            self.add_item(item.add_view(window_id, settings, ctx.as_mut()), ctx);
-            return None;
+        let mut i = 0;
+        while i < self.items.len() {
+            let item = &self.items[i];
+            if item.alive(ctx.as_ref()) {
+                if item
+                    .file(ctx.as_ref())
+                    .map_or(false, |f| f.entry_id() == entry)
+                {
+                    self.add_item(
+                        item.add_view(window_id, settings.clone(), ctx.as_mut())
+                            .unwrap(),
+                        ctx,
+                    );
+                    return None;
+                }
+                i += 1;
+            } else {
+                self.items.remove(i);
+            }
         }
 
         let (worktree_id, path) = entry.clone();
@@ -507,8 +526,11 @@ impl Workspace {
                 me.loading_items.remove(&entry);
                 match load_result {
                     Ok(item) => {
-                        me.items.push(item.clone());
-                        let view = item.add_view(window_id, settings, ctx.as_mut());
+                        let weak_item = item.downgrade();
+                        let view = weak_item
+                            .add_view(window_id, settings, ctx.as_mut())
+                            .unwrap();
+                        me.items.push(weak_item);
                         me.add_item(view, ctx);
                     }
                     Err(error) => {

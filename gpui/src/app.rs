@@ -2100,7 +2100,7 @@ impl<T: Entity> ModelHandle<T> {
         }
     }
 
-    fn downgrade(&self) -> WeakModelHandle<T> {
+    pub fn downgrade(&self) -> WeakModelHandle<T> {
         WeakModelHandle::new(self.model_id)
     }
 
@@ -2264,6 +2264,15 @@ impl<T: Entity> WeakModelHandle<T> {
             Some(ModelHandle::new(self.model_id, &app.ref_counts))
         } else {
             None
+        }
+    }
+}
+
+impl<T> Clone for WeakModelHandle<T> {
+    fn clone(&self) -> Self {
+        Self {
+            model_id: self.model_id,
+            model_type: PhantomData,
         }
     }
 }
