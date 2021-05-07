@@ -345,7 +345,7 @@ mod tests {
     fn test_chars_at() {
         App::test((), |app| {
             let text = sample_text(6, 6);
-            let buffer = app.add_model(|_| Buffer::new(0, text));
+            let buffer = app.add_model(|ctx| Buffer::new(0, text, ctx));
             let map = DisplayMap::new(buffer.clone(), 4, app.as_ref());
             buffer
                 .update(app, |buffer, ctx| {
@@ -414,7 +414,7 @@ mod tests {
     #[test]
     fn test_max_point() {
         App::test((), |app| {
-            let buffer = app.add_model(|_| Buffer::new(0, "aaa\n\t\tbbb"));
+            let buffer = app.add_model(|ctx| Buffer::new(0, "aaa\n\t\tbbb", ctx));
             let map = DisplayMap::new(buffer.clone(), 4, app.as_ref());
             assert_eq!(map.max_point(app.as_ref()), DisplayPoint::new(1, 11))
         });

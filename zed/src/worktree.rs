@@ -9,7 +9,7 @@ use crate::{
 use ::ignore::gitignore::Gitignore;
 use anyhow::{Context, Result};
 pub use fuzzy::{match_paths, PathMatch};
-use gpui::{scoped_pool, AppContext, Entity, ModelContext, ModelHandle, Task, View, ViewContext};
+use gpui::{scoped_pool, AppContext, Entity, ModelContext, ModelHandle, Task};
 use lazy_static::lazy_static;
 use parking_lot::Mutex;
 use postage::{
@@ -53,7 +53,7 @@ pub struct Worktree {
     poll_scheduled: bool,
 }
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct FileHandle {
     worktree: ModelHandle<Worktree>,
     state: Arc<Mutex<FileHandleState>>,
@@ -407,6 +407,10 @@ impl FileHandle {
         self.state.lock().is_deleted
     }
 
+    pub fn exists(&self) -> bool {
+        !self.is_deleted()
+    }
+
     pub fn load_history(&self, ctx: &AppContext) -> impl Future<Output = Result<History>> {
         self.worktree.read(ctx).load_history(&self.path(), ctx)
     }
@@ -416,18 +420,22 @@ impl FileHandle {
         worktree.save(&self.path(), content, ctx)
     }
 
+    pub fn worktree_id(&self) -> usize {
+        self.worktree.id()
+    }
+
     pub fn entry_id(&self) -> (usize, Arc<Path>) {
         (self.worktree.id(), self.path())
     }
 
-    pub fn observe_from_view<T: View>(
+    pub fn observe_from_model<T: Entity>(
         &self,
-        ctx: &mut ViewContext<T>,
-        mut callback: impl FnMut(&mut T, FileHandle, &mut ViewContext<T>) + 'static,
+        ctx: &mut ModelContext<T>,
+        mut callback: impl FnMut(&mut T, FileHandle, &mut ModelContext<T>) + 'static,
     ) {
         let mut prev_state = self.state.lock().clone();
         let cur_state = Arc::downgrade(&self.state);
-        ctx.observe_model(&self.worktree, move |observer, worktree, ctx| {
+        ctx.observe(&self.worktree, move |observer, worktree, ctx| {
             if let Some(cur_state) = cur_state.upgrade() {
                 let cur_state_unlocked = cur_state.lock();
                 if *cur_state_unlocked != prev_state {
@@ -974,9 +982,8 @@ impl BackgroundScanner {
         let snapshot = self.snapshot.lock();
         handles.retain(|path, handle_state| {
             if let Some(handle_state) = Weak::upgrade(&handle_state) {
-                if snapshot.entry_for_path(&path).is_none() {
-                    handle_state.lock().is_deleted = true;
-                }
+                let mut handle_state = handle_state.lock();
+                handle_state.is_deleted = snapshot.entry_for_path(&path).is_none();
                 true
             } else {
                 false
@@ -1129,31 +1136,38 @@ struct UpdateIgnoreStatusJob {
 }
 
 pub trait WorktreeHandle {
-    fn file(&self, path: impl AsRef<Path>, app: &AppContext) -> Option<FileHandle>;
+    fn file(&self, path: impl AsRef<Path>, app: &AppContext) -> FileHandle;
 }
 
 impl WorktreeHandle for ModelHandle<Worktree> {
-    fn file(&self, path: impl AsRef<Path>, app: &AppContext) -> Option<FileHandle> {
+    fn file(&self, path: impl AsRef<Path>, app: &AppContext) -> FileHandle {
+        let path = path.as_ref();
         let tree = self.read(app);
-        let entry = tree.entry_for_path(&path)?;
-
-        let path = entry.path().clone();
         let mut handles = tree.handles.lock();
-        let state = if let Some(state) = handles.get(&path).and_then(Weak::upgrade) {
+        let state = if let Some(state) = handles.get(path).and_then(Weak::upgrade) {
             state
         } else {
-            let state = Arc::new(Mutex::new(FileHandleState {
-                path: path.clone(),
-                is_deleted: false,
-            }));
-            handles.insert(path, Arc::downgrade(&state));
+            let handle_state = if let Some(entry) = tree.entry_for_path(path) {
+                FileHandleState {
+                    path: entry.path().clone(),
+                    is_deleted: false,
+                }
+            } else {
+                FileHandleState {
+                    path: path.into(),
+                    is_deleted: true,
+                }
+            };
+
+            let state = Arc::new(Mutex::new(handle_state.clone()));
+            handles.insert(handle_state.path, Arc::downgrade(&state));
             state
         };
 
-        Some(FileHandle {
+        FileHandle {
             worktree: self.clone(),
             state,
-        })
+        }
     }
 }
 
@@ -1349,7 +1363,8 @@ mod tests {
             app.read(|ctx| tree.read(ctx).scan_complete()).await;
             app.read(|ctx| assert_eq!(tree.read(ctx).file_count(), 1));
 
-            let buffer = app.add_model(|_| Buffer::new(1, "a line of text.\n".repeat(10 * 1024)));
+            let buffer =
+                app.add_model(|ctx| Buffer::new(1, "a line of text.\n".repeat(10 * 1024), ctx));
 
             let path = tree.update(&mut app, |tree, ctx| {
                 let path = tree.files(0).next().unwrap().path().clone();
@@ -1392,10 +1407,10 @@ mod tests {
 
             let (file2, file3, file4, file5) = app.read(|ctx| {
                 (
-                    tree.file("a/file2", ctx).unwrap(),
-                    tree.file("a/file3", ctx).unwrap(),
-                    tree.file("b/c/file4", ctx).unwrap(),
-                    tree.file("b/c/file5", ctx).unwrap(),
+                    tree.file("a/file2", ctx),
+                    tree.file("a/file3", ctx),
+                    tree.file("b/c/file4", ctx),
+                    tree.file("b/c/file5", ctx),
                 )
             });
 

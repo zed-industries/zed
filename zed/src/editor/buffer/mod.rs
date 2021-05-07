@@ -8,6 +8,7 @@ use futures_core::future::LocalBoxFuture;
 pub use point::*;
 use seahash::SeaHasher;
 pub use selection::*;
+use smol::future::FutureExt;
 pub use text::*;
 
 use crate::{
@@ -64,6 +65,7 @@ pub struct Buffer {
     last_edit: time::Local,
     undo_map: UndoMap,
     history: History,
+    file: Option<FileHandle>,
     selections: HashMap<SelectionSetId, Arc<[Selection]>>,
     pub selections_last_update: SelectionsVersion,
     deferred_ops: OperationQueue<Operation>,
@@ -351,15 +353,33 @@ pub struct UndoOperation {
 }
 
 impl Buffer {
-    pub fn new<T: Into<Arc<str>>>(replica_id: ReplicaId, base_text: T) -> Self {
-        Self::build(replica_id, History::new(base_text.into()))
+    pub fn new<T: Into<Arc<str>>>(
+        replica_id: ReplicaId,
+        base_text: T,
+        ctx: &mut ModelContext<Self>,
+    ) -> Self {
+        Self::build(replica_id, History::new(base_text.into()), None, ctx)
     }
 
-    pub fn from_history(replica_id: ReplicaId, history: History) -> Self {
-        Self::build(replica_id, history)
+    pub fn from_history(
+        replica_id: ReplicaId,
+        history: History,
+        file: Option<FileHandle>,
+        ctx: &mut ModelContext<Self>,
+    ) -> Self {
+        Self::build(replica_id, history, file, ctx)
     }
 
-    fn build(replica_id: ReplicaId, history: History) -> Self {
+    fn build(
+        replica_id: ReplicaId,
+        history: History,
+        file: Option<FileHandle>,
+        ctx: &mut ModelContext<Self>,
+    ) -> Self {
+        if let Some(file) = file.as_ref() {
+            file.observe_from_model(ctx, |_, _, ctx| ctx.emit(Event::FileHandleChanged));
+        }
+
         let mut insertion_splits = HashMap::default();
         let mut fragments = SumTree::new();
 
@@ -425,6 +445,7 @@ impl Buffer {
             last_edit: time::Local::default(),
             undo_map: Default::default(),
             history,
+            file,
             selections: HashMap::default(),
             selections_last_update: 0,
             deferred_ops: OperationQueue::new(),
@@ -441,24 +462,40 @@ impl Buffer {
         }
     }
 
+    pub fn file(&self) -> Option<&FileHandle> {
+        self.file.as_ref()
+    }
+
     pub fn save(
         &mut self,
-        file: &FileHandle,
+        new_file: Option<FileHandle>,
         ctx: &mut ModelContext<Self>,
     ) -> LocalBoxFuture<'static, Result<()>> {
         let snapshot = self.snapshot();
         let version = self.version.clone();
-        let save_task = file.save(snapshot, ctx.as_ref());
-        let task = ctx.spawn(save_task, |me, save_result, ctx| {
-            if save_result.is_ok() {
-                me.did_save(version, ctx);
-            }
-            save_result
-        });
-        Box::pin(task)
+        if let Some(file) = new_file.as_ref().or(self.file.as_ref()) {
+            let save_task = file.save(snapshot, ctx.as_ref());
+            ctx.spawn(save_task, |me, save_result, ctx| {
+                if save_result.is_ok() {
+                    me.did_save(version, new_file, ctx);
+                }
+                save_result
+            })
+            .boxed_local()
+        } else {
+            async { Ok(()) }.boxed_local()
+        }
     }
 
-    fn did_save(&mut self, version: time::Global, ctx: &mut ModelContext<Buffer>) {
+    fn did_save(
+        &mut self,
+        version: time::Global,
+        file: Option<FileHandle>,
+        ctx: &mut ModelContext<Buffer>,
+    ) {
+        if file.is_some() {
+            self.file = file;
+        }
         self.saved_version = version;
         ctx.emit(Event::Saved);
     }
@@ -1783,6 +1820,7 @@ impl Clone for Buffer {
             selections: self.selections.clone(),
             selections_last_update: self.selections_last_update.clone(),
             deferred_ops: self.deferred_ops.clone(),
+            file: self.file.clone(),
             deferred_replicas: self.deferred_replicas.clone(),
             replica_id: self.replica_id,
             local_clock: self.local_clock.clone(),
@@ -2346,8 +2384,8 @@ mod tests {
     #[test]
     fn test_edit() {
         App::test((), |ctx| {
-            ctx.add_model(|_| {
-                let mut buffer = Buffer::new(0, "abc");
+            ctx.add_model(|ctx| {
+                let mut buffer = Buffer::new(0, "abc", ctx);
                 assert_eq!(buffer.text(), "abc");
                 buffer.edit(vec![3..3], "def", None).unwrap();
                 assert_eq!(buffer.text(), "abcdef");
@@ -2371,8 +2409,8 @@ mod tests {
             let buffer_1_events = Rc::new(RefCell::new(Vec::new()));
             let buffer_2_events = Rc::new(RefCell::new(Vec::new()));
 
-            let buffer1 = app.add_model(|_| Buffer::new(0, "abcdef"));
-            let buffer2 = app.add_model(|_| Buffer::new(1, "abcdef"));
+            let buffer1 = app.add_model(|ctx| Buffer::new(0, "abcdef", ctx));
+            let buffer2 = app.add_model(|ctx| Buffer::new(1, "abcdef", ctx));
             let mut buffer_ops = Vec::new();
             buffer1.update(app, |buffer, ctx| {
                 let buffer_1_events = buffer_1_events.clone();
@@ -2435,8 +2473,8 @@ mod tests {
                 let mut reference_string = RandomCharIter::new(&mut rng)
                     .take(reference_string_len)
                     .collect::<String>();
-                ctx.add_model(|_| {
-                    let mut buffer = Buffer::new(0, reference_string.as_str());
+                ctx.add_model(|ctx| {
+                    let mut buffer = Buffer::new(0, reference_string.as_str(), ctx);
                     let mut buffer_versions = Vec::new();
                     for _i in 0..10 {
                         let (old_ranges, new_text, _) = buffer.randomly_mutate(rng, None);
@@ -2521,8 +2559,8 @@ mod tests {
     #[test]
     fn test_line_len() {
         App::test((), |ctx| {
-            ctx.add_model(|_| {
-                let mut buffer = Buffer::new(0, "");
+            ctx.add_model(|ctx| {
+                let mut buffer = Buffer::new(0, "", ctx);
                 buffer.edit(vec![0..0], "abcd\nefg\nhij", None).unwrap();
                 buffer.edit(vec![12..12], "kl\nmno", None).unwrap();
                 buffer.edit(vec![18..18], "\npqrs\n", None).unwrap();
@@ -2543,8 +2581,8 @@ mod tests {
     #[test]
     fn test_rightmost_point() {
         App::test((), |ctx| {
-            ctx.add_model(|_| {
-                let mut buffer = Buffer::new(0, "");
+            ctx.add_model(|ctx| {
+                let mut buffer = Buffer::new(0, "", ctx);
                 assert_eq!(buffer.rightmost_point().row, 0);
                 buffer.edit(vec![0..0], "abcd\nefg\nhij", None).unwrap();
                 assert_eq!(buffer.rightmost_point().row, 0);
@@ -2564,8 +2602,8 @@ mod tests {
     #[test]
     fn test_text_summary_for_range() {
         App::test((), |ctx| {
-            ctx.add_model(|_| {
-                let buffer = Buffer::new(0, "ab\nefg\nhklm\nnopqrs\ntuvwxyz");
+            ctx.add_model(|ctx| {
+                let buffer = Buffer::new(0, "ab\nefg\nhklm\nnopqrs\ntuvwxyz", ctx);
                 let text = Text::from(buffer.text());
                 assert_eq!(
                     buffer.text_summary_for_range(1..3),
@@ -2595,8 +2633,8 @@ mod tests {
     #[test]
     fn test_chars_at() {
         App::test((), |ctx| {
-            ctx.add_model(|_| {
-                let mut buffer = Buffer::new(0, "");
+            ctx.add_model(|ctx| {
+                let mut buffer = Buffer::new(0, "", ctx);
                 buffer.edit(vec![0..0], "abcd\nefgh\nij", None).unwrap();
                 buffer.edit(vec![12..12], "kl\nmno", None).unwrap();
                 buffer.edit(vec![18..18], "\npqrs", None).unwrap();
@@ -2618,7 +2656,7 @@ mod tests {
                 assert_eq!(chars.collect::<String>(), "PQrs");
 
                 // Regression test:
-                let mut buffer = Buffer::new(0, "");
+                let mut buffer = Buffer::new(0, "", ctx);
                 buffer.edit(vec![0..0], "[workspace]\nmembers = [\n    \"xray_core\",\n    \"xray_server\",\n    \"xray_cli\",\n    \"xray_wasm\",\n]\n", None).unwrap();
                 buffer.edit(vec![60..60], "\n", None).unwrap();
 
@@ -2747,8 +2785,8 @@ mod tests {
     #[test]
     fn test_anchors() {
         App::test((), |ctx| {
-            ctx.add_model(|_| {
-                let mut buffer = Buffer::new(0, "");
+            ctx.add_model(|ctx| {
+                let mut buffer = Buffer::new(0, "", ctx);
                 buffer.edit(vec![0..0], "abc", None).unwrap();
                 let left_anchor = buffer.anchor_before(2).unwrap();
                 let right_anchor = buffer.anchor_after(2).unwrap();
@@ -2912,8 +2950,8 @@ mod tests {
     #[test]
     fn test_anchors_at_start_and_end() {
         App::test((), |ctx| {
-            ctx.add_model(|_| {
-                let mut buffer = Buffer::new(0, "");
+            ctx.add_model(|ctx| {
+                let mut buffer = Buffer::new(0, "", ctx);
                 let before_start_anchor = buffer.anchor_before(0).unwrap();
                 let after_end_anchor = buffer.anchor_after(0).unwrap();
 
@@ -2940,7 +2978,7 @@ mod tests {
     #[test]
     fn test_is_modified() {
         App::test((), |app| {
-            let model = app.add_model(|_| Buffer::new(0, "abc"));
+            let model = app.add_model(|ctx| Buffer::new(0, "abc", ctx));
             let events = Rc::new(RefCell::new(Vec::new()));
 
             // initially, the buffer isn't dirty.
@@ -2963,7 +3001,7 @@ mod tests {
                 assert_eq!(*events.borrow(), &[Event::Edited, Event::Dirtied]);
                 events.borrow_mut().clear();
 
-                buffer.did_save(buffer.version(), ctx);
+                buffer.did_save(buffer.version(), None, ctx);
             });
 
             // after saving, the buffer is not dirty, and emits a saved event.
@@ -3002,8 +3040,8 @@ mod tests {
     #[test]
     fn test_undo_redo() {
         App::test((), |app| {
-            app.add_model(|_| {
-                let mut buffer = Buffer::new(0, "1234");
+            app.add_model(|ctx| {
+                let mut buffer = Buffer::new(0, "1234", ctx);
 
                 let edit1 = buffer.edit(vec![1..1], "abx", None).unwrap();
                 let edit2 = buffer.edit(vec![3..4], "yzef", None).unwrap();
@@ -3039,9 +3077,9 @@ mod tests {
     #[test]
     fn test_history() {
         App::test((), |app| {
-            app.add_model(|_| {
+            app.add_model(|ctx| {
                 let mut now = Instant::now();
-                let mut buffer = Buffer::new(0, "123456");
+                let mut buffer = Buffer::new(0, "123456", ctx);
 
                 let (set_id, _) = buffer
                     .add_selection_set(buffer.selections_from_ranges(vec![4..4]).unwrap(), None);
@@ -3125,7 +3163,8 @@ mod tests {
                 let mut buffers = Vec::new();
                 let mut network = Network::new();
                 for i in 0..PEERS {
-                    let buffer = ctx.add_model(|_| Buffer::new(i as ReplicaId, base_text.as_str()));
+                    let buffer =
+                        ctx.add_model(|ctx| Buffer::new(i as ReplicaId, base_text.as_str(), ctx));
                     buffers.push(buffer);
                     replica_ids.push(i as u16);
                     network.add_peer(i as u16);

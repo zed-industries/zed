@@ -12,16 +12,16 @@ use keymap::MatchResult;
 use parking_lot::{Mutex, RwLock};
 use pathfinder_geometry::{rect::RectF, vector::vec2f};
 use platform::Event;
-use postage::{sink::Sink as _, stream::Stream as _};
+use postage::{mpsc, sink::Sink as _, stream::Stream as _};
 use smol::prelude::*;
 use std::{
     any::{type_name, Any, TypeId},
     cell::RefCell,
-    collections::{hash_map::Entry, HashMap, HashSet, VecDeque},
+    collections::{HashMap, HashSet, VecDeque},
     fmt::{self, Debug},
     hash::{Hash, Hasher},
     marker::PhantomData,
-    path::PathBuf,
+    path::{Path, PathBuf},
     rc::{self, Rc},
     sync::{Arc, Weak},
     time::Duration,
@@ -87,7 +87,7 @@ pub enum MenuItem<'a> {
 pub struct App(Rc<RefCell<MutableAppContext>>);
 
 #[derive(Clone)]
-pub struct TestAppContext(Rc<RefCell<MutableAppContext>>);
+pub struct TestAppContext(Rc<RefCell<MutableAppContext>>, Rc<platform::test::Platform>);
 
 impl App {
     pub fn test<T, A: AssetSource, F: FnOnce(&mut MutableAppContext) -> T>(
@@ -111,13 +111,16 @@ impl App {
         Fn: FnOnce(TestAppContext) -> F,
         F: Future<Output = T>,
     {
-        let platform = platform::test::platform();
+        let platform = Rc::new(platform::test::platform());
         let foreground = Rc::new(executor::Foreground::test());
-        let ctx = TestAppContext(Rc::new(RefCell::new(MutableAppContext::new(
-            foreground.clone(),
-            Rc::new(platform),
-            asset_source,
-        ))));
+        let ctx = TestAppContext(
+            Rc::new(RefCell::new(MutableAppContext::new(
+                foreground.clone(),
+                platform.clone(),
+                asset_source,
+            ))),
+            platform,
+        );
         ctx.0.borrow_mut().weak_self = Some(Rc::downgrade(&ctx.0));
 
         let future = f(ctx);
@@ -332,6 +335,14 @@ impl TestAppContext {
     pub fn platform(&self) -> Rc<dyn platform::Platform> {
         self.0.borrow().platform.clone()
     }
+
+    pub fn simulate_new_path_selection(&self, result: impl FnOnce(PathBuf) -> Option<PathBuf>) {
+        self.1.as_ref().simulate_new_path_selection(result);
+    }
+
+    pub fn did_prompt_for_new_path(&self) -> bool {
+        self.1.as_ref().did_prompt_for_new_path()
+    }
 }
 
 impl UpdateModel for TestAppContext {
@@ -381,7 +392,6 @@ pub struct MutableAppContext {
     subscriptions: HashMap<usize, Vec<Subscription>>,
     model_observations: HashMap<usize, Vec<ModelObservation>>,
     view_observations: HashMap<usize, Vec<ViewObservation>>,
-    async_observations: HashMap<usize, postage::broadcast::Sender<()>>,
     window_invalidations: HashMap<usize, WindowInvalidation>,
     presenters_and_platform_windows:
         HashMap<usize, (Rc<RefCell<Presenter>>, Box<dyn platform::Window>)>,
@@ -423,7 +433,6 @@ impl MutableAppContext {
             subscriptions: HashMap::new(),
             model_observations: HashMap::new(),
             view_observations: HashMap::new(),
-            async_observations: HashMap::new(),
             window_invalidations: HashMap::new(),
             presenters_and_platform_windows: HashMap::new(),
             debug_elements_callbacks: HashMap::new(),
@@ -581,6 +590,22 @@ impl MutableAppContext {
             Box::new(move |paths| {
                 foreground
                     .spawn(async move { (done_fn)(paths, &mut *app.borrow_mut()) })
+                    .detach();
+            }),
+        );
+    }
+
+    pub fn prompt_for_new_path<F>(&self, directory: &Path, done_fn: F)
+    where
+        F: 'static + FnOnce(Option<PathBuf>, &mut MutableAppContext),
+    {
+        let app = self.weak_self.as_ref().unwrap().upgrade().unwrap();
+        let foreground = self.foreground.clone();
+        self.platform().prompt_for_new_path(
+            directory,
+            Box::new(move |path| {
+                foreground
+                    .spawn(async move { (done_fn)(path, &mut *app.borrow_mut()) })
                     .detach();
             }),
         );
@@ -874,13 +899,11 @@ impl MutableAppContext {
                 self.ctx.models.remove(&model_id);
                 self.subscriptions.remove(&model_id);
                 self.model_observations.remove(&model_id);
-                self.async_observations.remove(&model_id);
             }
 
             for (window_id, view_id) in dropped_views {
                 self.subscriptions.remove(&view_id);
                 self.model_observations.remove(&view_id);
-                self.async_observations.remove(&view_id);
                 if let Some(window) = self.ctx.windows.get_mut(&window_id) {
                     self.window_invalidations
                         .entry(window_id)
@@ -1059,12 +1082,6 @@ impl MutableAppContext {
                 }
             }
         }
-
-        if let Entry::Occupied(mut entry) = self.async_observations.entry(observed_id) {
-            if entry.get_mut().blocking_send(()).is_err() {
-                entry.remove_entry();
-            }
-        }
     }
 
     fn notify_view_observers(&mut self, window_id: usize, view_id: usize) {
@@ -1075,7 +1092,12 @@ impl MutableAppContext {
             .insert(view_id);
 
         if let Some(observations) = self.view_observations.remove(&view_id) {
-            if self.ctx.models.contains_key(&view_id) {
+            if self
+                .ctx
+                .windows
+                .get(&window_id)
+                .map_or(false, |w| w.views.contains_key(&view_id))
+            {
                 for mut observation in observations {
                     let alive = if let Some(mut view) = self
                         .ctx
@@ -1109,12 +1131,6 @@ impl MutableAppContext {
                             .push(observation);
                     }
                 }
-            }
-        }
-
-        if let Entry::Occupied(mut entry) = self.async_observations.entry(view_id) {
-            if entry.get_mut().blocking_send(()).is_err() {
-                entry.remove_entry();
             }
         }
     }
@@ -1757,12 +1773,30 @@ impl<'a, T: View> ViewContext<'a, T> {
         self.window_id
     }
 
+    pub fn view_id(&self) -> usize {
+        self.view_id
+    }
+
     pub fn foreground(&self) -> &Rc<executor::Foreground> {
         self.app.foreground_executor()
     }
 
     pub fn background_executor(&self) -> &Arc<executor::Background> {
         &self.app.ctx.background
+    }
+
+    pub fn prompt_for_paths<F>(&self, options: PathPromptOptions, done_fn: F)
+    where
+        F: 'static + FnOnce(Option<Vec<PathBuf>>, &mut MutableAppContext),
+    {
+        self.app.prompt_for_paths(options, done_fn)
+    }
+
+    pub fn prompt_for_new_path<F>(&self, directory: &Path, done_fn: F)
+    where
+        F: 'static + FnOnce(Option<PathBuf>, &mut MutableAppContext),
+    {
+        self.app.prompt_for_new_path(directory, done_fn)
     }
 
     pub fn debug_elements(&self) -> crate::json::Value {
@@ -1818,22 +1852,11 @@ impl<'a, T: View> ViewContext<'a, T> {
         F: 'static + FnMut(&mut T, ModelHandle<E>, &E::Event, &mut ViewContext<T>),
     {
         let emitter_handle = handle.downgrade();
-        self.app
-            .subscriptions
-            .entry(handle.id())
-            .or_default()
-            .push(Subscription::FromView {
-                window_id: self.window_id,
-                view_id: self.view_id,
-                callback: Box::new(move |view, payload, app, window_id, view_id| {
-                    if let Some(emitter_handle) = emitter_handle.upgrade(app.as_ref()) {
-                        let model = view.downcast_mut().expect("downcast is type safe");
-                        let payload = payload.downcast_ref().expect("downcast is type safe");
-                        let mut ctx = ViewContext::new(app, window_id, view_id);
-                        callback(model, emitter_handle, payload, &mut ctx);
-                    }
-                }),
-            });
+        self.subscribe(handle, move |model, payload, ctx| {
+            if let Some(emitter_handle) = emitter_handle.upgrade(ctx.as_ref()) {
+                callback(model, emitter_handle, payload, ctx);
+            }
+        });
     }
 
     pub fn subscribe_to_view<V, F>(&mut self, handle: &ViewHandle<V>, mut callback: F)
@@ -1843,7 +1866,19 @@ impl<'a, T: View> ViewContext<'a, T> {
         F: 'static + FnMut(&mut T, ViewHandle<V>, &V::Event, &mut ViewContext<T>),
     {
         let emitter_handle = handle.downgrade();
+        self.subscribe(handle, move |view, payload, ctx| {
+            if let Some(emitter_handle) = emitter_handle.upgrade(ctx.as_ref()) {
+                callback(view, emitter_handle, payload, ctx);
+            }
+        });
+    }
 
+    pub fn subscribe<E, F>(&mut self, handle: &impl Handle<E>, mut callback: F)
+    where
+        E: Entity,
+        E::Event: 'static,
+        F: 'static + FnMut(&mut T, &E::Event, &mut ViewContext<T>),
+    {
         self.app
             .subscriptions
             .entry(handle.id())
@@ -1851,13 +1886,11 @@ impl<'a, T: View> ViewContext<'a, T> {
             .push(Subscription::FromView {
                 window_id: self.window_id,
                 view_id: self.view_id,
-                callback: Box::new(move |view, payload, app, window_id, view_id| {
-                    if let Some(emitter_handle) = emitter_handle.upgrade(&app) {
-                        let model = view.downcast_mut().expect("downcast is type safe");
-                        let payload = payload.downcast_ref().expect("downcast is type safe");
-                        let mut ctx = ViewContext::new(app, window_id, view_id);
-                        callback(model, emitter_handle, payload, &mut ctx);
-                    }
+                callback: Box::new(move |entity, payload, app, window_id, view_id| {
+                    let entity = entity.downcast_mut().expect("downcast is type safe");
+                    let payload = payload.downcast_ref().expect("downcast is type safe");
+                    let mut ctx = ViewContext::new(app, window_id, view_id);
+                    callback(entity, payload, &mut ctx);
                 }),
             });
     }
@@ -2067,7 +2100,7 @@ impl<T: Entity> ModelHandle<T> {
         }
     }
 
-    fn downgrade(&self) -> WeakModelHandle<T> {
+    pub fn downgrade(&self) -> WeakModelHandle<T> {
         WeakModelHandle::new(self.model_id)
     }
 
@@ -2101,12 +2134,24 @@ impl<T: Entity> ModelHandle<T> {
         ctx: &TestAppContext,
         mut predicate: impl FnMut(&T, &AppContext) -> bool,
     ) -> impl Future<Output = ()> {
+        let (tx, mut rx) = mpsc::channel(1024);
+
         let mut ctx = ctx.0.borrow_mut();
-        let tx = ctx
-            .async_observations
-            .entry(self.id())
-            .or_insert_with(|| postage::broadcast::channel(128).0);
-        let mut rx = tx.subscribe();
+        self.update(&mut *ctx, |_, ctx| {
+            ctx.observe(self, {
+                let mut tx = tx.clone();
+                move |_, _, _| {
+                    tx.blocking_send(()).ok();
+                }
+            });
+            ctx.subscribe(self, {
+                let mut tx = tx.clone();
+                move |_, _, _| {
+                    tx.blocking_send(()).ok();
+                }
+            })
+        });
+
         let ctx = ctx.weak_self.as_ref().unwrap().upgrade().unwrap();
         let handle = self.downgrade();
 
@@ -2223,6 +2268,15 @@ impl<T: Entity> WeakModelHandle<T> {
     }
 }
 
+impl<T> Clone for WeakModelHandle<T> {
+    fn clone(&self) -> Self {
+        Self {
+            model_id: self.model_id,
+            model_type: PhantomData,
+        }
+    }
+}
+
 pub struct ViewHandle<T> {
     window_id: usize,
     view_id: usize,
@@ -2273,19 +2327,41 @@ impl<T: View> ViewHandle<T> {
     pub fn condition(
         &self,
         ctx: &TestAppContext,
-        mut predicate: impl 'static + FnMut(&T, &AppContext) -> bool,
-    ) -> impl 'static + Future<Output = ()> {
+        predicate: impl FnMut(&T, &AppContext) -> bool,
+    ) -> impl Future<Output = ()> {
+        self.condition_with_duration(Duration::from_millis(500), ctx, predicate)
+    }
+
+    pub fn condition_with_duration(
+        &self,
+        duration: Duration,
+        ctx: &TestAppContext,
+        mut predicate: impl FnMut(&T, &AppContext) -> bool,
+    ) -> impl Future<Output = ()> {
+        let (tx, mut rx) = mpsc::channel(1024);
+
         let mut ctx = ctx.0.borrow_mut();
-        let tx = ctx
-            .async_observations
-            .entry(self.id())
-            .or_insert_with(|| postage::broadcast::channel(128).0);
-        let mut rx = tx.subscribe();
+        self.update(&mut *ctx, |_, ctx| {
+            ctx.observe_view(self, {
+                let mut tx = tx.clone();
+                move |_, _, _| {
+                    tx.blocking_send(()).ok();
+                }
+            });
+
+            ctx.subscribe(self, {
+                let mut tx = tx.clone();
+                move |_, _, _| {
+                    tx.blocking_send(()).ok();
+                }
+            })
+        });
+
         let ctx = ctx.weak_self.as_ref().unwrap().upgrade().unwrap();
         let handle = self.downgrade();
 
         async move {
-            timeout(Duration::from_millis(200), async move {
+            timeout(duration, async move {
                 loop {
                     {
                         let ctx = ctx.borrow();
@@ -2293,7 +2369,7 @@ impl<T: View> ViewHandle<T> {
                         if predicate(
                             handle
                                 .upgrade(ctx)
-                                .expect("model dropped with pending condition")
+                                .expect("view dropped with pending condition")
                                 .read(ctx),
                             ctx,
                         ) {
@@ -2303,7 +2379,7 @@ impl<T: View> ViewHandle<T> {
 
                     rx.recv()
                         .await
-                        .expect("model dropped with pending condition");
+                        .expect("view dropped with pending condition");
                 }
             })
             .await
@@ -3500,9 +3576,7 @@ mod tests {
             model.update(&mut app, |model, ctx| model.inc(ctx));
             assert_eq!(poll_once(&mut condition2).await, Some(()));
 
-            // Broadcast channel should be removed if no conditions remain on next notification.
             model.update(&mut app, |_, ctx| ctx.notify());
-            app.update(|ctx| assert!(ctx.async_observations.get(&model.id()).is_none()));
         });
     }
 
@@ -3580,10 +3654,7 @@ mod tests {
 
             view.update(&mut app, |view, ctx| view.inc(ctx));
             assert_eq!(poll_once(&mut condition2).await, Some(()));
-
-            // Broadcast channel should be removed if no conditions remain on next notification.
             view.update(&mut app, |_, ctx| ctx.notify());
-            app.update(|ctx| assert!(ctx.async_observations.get(&view.id()).is_none()));
         });
     }
 
@@ -3613,7 +3684,7 @@ mod tests {
     }
 
     #[test]
-    #[should_panic(expected = "model dropped with pending condition")]
+    #[should_panic(expected = "view dropped with pending condition")]
     fn test_view_condition_panic_on_drop() {
         struct View;
 
