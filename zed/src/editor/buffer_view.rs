@@ -1692,13 +1692,15 @@ impl BufferView {
     }
 
     pub fn split_selection_into_lines(&mut self, _: &(), ctx: &mut ViewContext<Self>) {
+        use super::RangeExt;
+
         let app = ctx.as_ref();
         let buffer = self.buffer.read(app);
 
         let mut to_unfold = Vec::new();
         let mut new_selections = Vec::new();
         for selection in self.selections(app) {
-            let range = selection.range(buffer);
+            let range = selection.range(buffer).sorted();
             if range.start.row != range.end.row {
                 new_selections.push(Selection {
                     start: selection.start.clone(),
@@ -3446,7 +3448,7 @@ mod tests {
 
             view.update(app, |view, ctx| {
                 view.select_display_ranges(
-                    &[DisplayPoint::new(0, 1)..DisplayPoint::new(4, 0)],
+                    &[DisplayPoint::new(4, 0)..DisplayPoint::new(0, 1)],
                     ctx,
                 )
                 .unwrap();
