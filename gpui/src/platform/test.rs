@@ -45,6 +45,10 @@ impl Platform {
             .expect("prompt_for_new_path was not called");
         callback(result(dir_path));
     }
+
+    pub(crate) fn did_prompt_for_new_path(&self) -> bool {
+        self.last_prompt_for_new_path_args.borrow().is_some()
+    }
 }
 
 impl super::Platform for Platform {

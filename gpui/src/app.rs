@@ -339,6 +339,10 @@ impl TestAppContext {
     pub fn simulate_new_path_selection(&self, result: impl FnOnce(PathBuf) -> Option<PathBuf>) {
         self.1.as_ref().simulate_new_path_selection(result);
     }
+
+    pub fn did_prompt_for_new_path(&self) -> bool {
+        self.1.as_ref().did_prompt_for_new_path()
+    }
 }
 
 impl UpdateModel for TestAppContext {

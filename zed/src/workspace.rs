@@ -714,7 +714,8 @@ mod tests {
     use crate::{editor::BufferView, settings, test::temp_tree};
     use gpui::App;
     use serde_json::json;
-    use std::{collections::HashSet, os::unix};
+    use std::collections::HashSet;
+    use std::time;
     use tempdir::TempDir;
 
     #[test]
@@ -957,67 +958,6 @@ mod tests {
     }
 
     #[test]
-    fn test_open_two_paths_to_the_same_file() {
-        use crate::workspace::ItemViewHandle;
-
-        App::test_async((), |mut app| async move {
-            // Create a worktree with a symlink:
-            //   dir
-            //   ├── hello.txt
-            //   └── hola.txt -> hello.txt
-            let temp_dir = temp_tree(json!({ "hello.txt": "hi" }));
-            let dir = temp_dir.path();
-            unix::fs::symlink(dir.join("hello.txt"), dir.join("hola.txt")).unwrap();
-
-            let settings = settings::channel(&app.font_cache()).unwrap().1;
-            let (_, workspace) = app.add_window(|ctx| {
-                let mut workspace = Workspace::new(0, settings, ctx);
-                workspace.add_worktree(dir, ctx);
-                workspace
-            });
-            app.read(|ctx| workspace.read(ctx).worktree_scans_complete(ctx))
-                .await;
-
-            // Simultaneously open both the original file and the symlink to the same file.
-            app.update(|ctx| {
-                workspace.update(ctx, |view, ctx| {
-                    view.open_paths(&[dir.join("hello.txt"), dir.join("hola.txt")], ctx)
-                })
-            })
-            .await;
-
-            // The same content shows up with two different editors.
-            let buffer_views = app.read(|ctx| {
-                workspace
-                    .read(ctx)
-                    .active_pane()
-                    .read(ctx)
-                    .items()
-                    .iter()
-                    .map(|i| i.to_any().downcast::<BufferView>().unwrap())
-                    .collect::<Vec<_>>()
-            });
-            app.read(|ctx| {
-                assert_eq!(buffer_views[0].title(ctx), "hello.txt");
-                assert_eq!(buffer_views[1].title(ctx), "hola.txt");
-                assert_eq!(buffer_views[0].read(ctx).text(ctx), "hi");
-                assert_eq!(buffer_views[1].read(ctx).text(ctx), "hi");
-            });
-
-            // When modifying one buffer, the changes appear in both editors.
-            app.update(|ctx| {
-                buffer_views[0].update(ctx, |buf, ctx| {
-                    buf.insert(&"oh, ".to_string(), ctx);
-                });
-            });
-            app.read(|ctx| {
-                assert_eq!(buffer_views[0].read(ctx).text(ctx), "oh, hi");
-                assert_eq!(buffer_views[1].read(ctx).text(ctx), "oh, hi");
-            });
-        });
-    }
-
-    #[test]
     fn test_open_and_save_new_file() {
         App::test_async((), |mut app| async move {
             let dir = TempDir::new("test-new-file").unwrap();
@@ -1026,6 +966,15 @@ mod tests {
                 let mut workspace = Workspace::new(0, settings, ctx);
                 workspace.add_worktree(dir.path(), ctx);
                 workspace
+            });
+            let worktree = app.read(|ctx| {
+                workspace
+                    .read(ctx)
+                    .worktrees()
+                    .iter()
+                    .next()
+                    .unwrap()
+                    .clone()
             });
 
             // Create a new untitled buffer
@@ -1039,11 +988,13 @@ mod tests {
                     .unwrap()
             });
             editor.update(&mut app, |editor, ctx| {
+                assert!(!editor.is_dirty(ctx.as_ref()));
                 assert_eq!(editor.title(ctx.as_ref()), "untitled");
-                editor.insert(&"hi".to_string(), ctx)
+                editor.insert(&"hi".to_string(), ctx);
+                assert!(editor.is_dirty(ctx.as_ref()));
             });
 
-            // Save the buffer, selecting a filename
+            // Save the buffer. This prompts for a filename.
             workspace.update(&mut app, |workspace, ctx| {
                 workspace.save_active_item(&(), ctx)
             });
@@ -1051,26 +1002,38 @@ mod tests {
                 assert_eq!(parent_dir, dir.path());
                 Some(parent_dir.join("the-new-name"))
             });
-            app.read(|ctx| assert_eq!(editor.title(ctx), "untitled"));
+            app.read(|ctx| {
+                assert!(editor.is_dirty(ctx));
+                assert_eq!(editor.title(ctx), "untitled");
+            });
 
             // When the save completes, the buffer's title is updated.
-            let worktree = app.read(|ctx| {
-                workspace
-                    .read(ctx)
-                    .worktrees()
-                    .iter()
-                    .next()
-                    .unwrap()
-                    .clone()
-            });
+            editor
+                .condition(&app, |editor, ctx| !editor.is_dirty(ctx))
+                .await;
             worktree
-                .condition(&app, |worktree, _| {
+                .condition_with_duration(time::Duration::from_millis(500), &app, |worktree, _| {
                     worktree.inode_for_path("the-new-name").is_some()
                 })
                 .await;
+            app.read(|ctx| assert_eq!(editor.title(ctx), "the-new-name"));
 
-            // Open the same newly-created file in another pane item.
-            // The new editor should reuse the same buffer.
+            // Edit the file and save it again. This time, there is no filename prompt.
+            editor.update(&mut app, |editor, ctx| {
+                editor.insert(&" there".to_string(), ctx);
+                assert_eq!(editor.is_dirty(ctx.as_ref()), true);
+            });
+            workspace.update(&mut app, |workspace, ctx| {
+                workspace.save_active_item(&(), ctx)
+            });
+            assert!(!app.did_prompt_for_new_path());
+            editor
+                .condition(&app, |editor, ctx| !editor.is_dirty(ctx))
+                .await;
+            app.read(|ctx| assert_eq!(editor.title(ctx), "the-new-name"));
+
+            // Open the same newly-created file in another pane item. The new editor should reuse
+            // the same buffer.
             workspace.update(&mut app, |workspace, ctx| {
                 workspace.open_new_file(&(), ctx);
                 workspace.split_pane(workspace.active_pane().clone(), SplitDirection::Right, ctx);

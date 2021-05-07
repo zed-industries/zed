@@ -484,7 +484,9 @@ impl Buffer {
         file: Option<FileHandle>,
         ctx: &mut ModelContext<Buffer>,
     ) {
-        self.file = file;
+        if file.is_some() {
+            self.file = file;
+        }
         self.saved_version = version;
         ctx.emit(Event::Saved);
     }
