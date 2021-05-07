@@ -2059,7 +2059,7 @@ pub enum EntityLocation {
 pub struct ModelHandle<T> {
     model_id: usize,
     model_type: PhantomData<T>,
-    ref_counts: Weak<Mutex<RefCounts>>,
+    ref_counts: Arc<Mutex<RefCounts>>,
 }
 
 impl<T: Entity> ModelHandle<T> {
@@ -2068,7 +2068,7 @@ impl<T: Entity> ModelHandle<T> {
         Self {
             model_id,
             model_type: PhantomData,
-            ref_counts: Arc::downgrade(ref_counts),
+            ref_counts: ref_counts.clone(),
         }
     }
 
@@ -2145,10 +2145,7 @@ impl<T: Entity> ModelHandle<T> {
 
 impl<T> Clone for ModelHandle<T> {
     fn clone(&self) -> Self {
-        if let Some(ref_counts) = self.ref_counts.upgrade() {
-            ref_counts.lock().inc_entity(self.model_id);
-        }
-
+        self.ref_counts.lock().inc_entity(self.model_id);
         Self {
             model_id: self.model_id,
             model_type: PhantomData,
@@ -2190,9 +2187,7 @@ unsafe impl<T> Sync for ModelHandle<T> {}
 
 impl<T> Drop for ModelHandle<T> {
     fn drop(&mut self) {
-        if let Some(ref_counts) = self.ref_counts.upgrade() {
-            ref_counts.lock().dec_model(self.model_id);
-        }
+        self.ref_counts.lock().dec_model(self.model_id);
     }
 }
 
@@ -2239,14 +2234,12 @@ impl<T> Clone for WeakModelHandle<T> {
 
 pub struct AnyModelHandle {
     model_id: usize,
-    ref_counts: Weak<Mutex<RefCounts>>,
+    ref_counts: Arc<Mutex<RefCounts>>,
 }
 
 impl<T: Entity> From<ModelHandle<T>> for AnyModelHandle {
     fn from(handle: ModelHandle<T>) -> Self {
-        if let Some(ref_counts) = handle.ref_counts.upgrade() {
-            ref_counts.lock().inc_entity(handle.model_id);
-        }
+        handle.ref_counts.lock().inc_entity(handle.model_id);
         Self {
             model_id: handle.model_id,
             ref_counts: handle.ref_counts.clone(),
@@ -2256,9 +2249,7 @@ impl<T: Entity> From<ModelHandle<T>> for AnyModelHandle {
 
 impl Drop for AnyModelHandle {
     fn drop(&mut self) {
-        if let Some(ref_counts) = self.ref_counts.upgrade() {
-            ref_counts.lock().dec_model(self.model_id);
-        }
+        self.ref_counts.lock().dec_model(self.model_id);
     }
 }
 
@@ -2266,7 +2257,7 @@ pub struct ViewHandle<T> {
     window_id: usize,
     view_id: usize,
     view_type: PhantomData<T>,
-    ref_counts: Weak<Mutex<RefCounts>>,
+    ref_counts: Arc<Mutex<RefCounts>>,
 }
 
 impl<T: View> ViewHandle<T> {
@@ -2276,7 +2267,7 @@ impl<T: View> ViewHandle<T> {
             window_id,
             view_id,
             view_type: PhantomData,
-            ref_counts: Arc::downgrade(ref_counts),
+            ref_counts: ref_counts.clone(),
         }
     }
 
@@ -2353,10 +2344,7 @@ impl<T: View> ViewHandle<T> {
 
 impl<T> Clone for ViewHandle<T> {
     fn clone(&self) -> Self {
-        if let Some(ref_counts) = self.ref_counts.upgrade() {
-            ref_counts.lock().inc_entity(self.view_id);
-        }
-
+        self.ref_counts.lock().inc_entity(self.view_id);
         Self {
             window_id: self.window_id,
             view_id: self.view_id,
@@ -2385,9 +2373,9 @@ impl<T> Debug for ViewHandle<T> {
 
 impl<T> Drop for ViewHandle<T> {
     fn drop(&mut self) {
-        if let Some(ref_counts) = self.ref_counts.upgrade() {
-            ref_counts.lock().dec_view(self.window_id, self.view_id);
-        }
+        self.ref_counts
+            .lock()
+            .dec_view(self.window_id, self.view_id);
     }
 }
 
@@ -2406,7 +2394,7 @@ pub struct AnyViewHandle {
     window_id: usize,
     view_id: usize,
     view_type: TypeId,
-    ref_counts: Weak<Mutex<RefCounts>>,
+    ref_counts: Arc<Mutex<RefCounts>>,
 }
 
 impl AnyViewHandle {
@@ -2420,19 +2408,26 @@ impl AnyViewHandle {
 
     pub fn downcast<T: View>(self) -> Option<ViewHandle<T>> {
         if self.is::<T>() {
-            if let Some(ref_counts) = self.ref_counts.upgrade() {
-                return Some(ViewHandle::new(self.window_id, self.view_id, &ref_counts));
+            let result = Some(ViewHandle {
+                window_id: self.window_id,
+                view_id: self.view_id,
+                ref_counts: self.ref_counts.clone(),
+                view_type: PhantomData,
+            });
+            unsafe {
+                Arc::decrement_strong_count(&self.ref_counts);
             }
+            std::mem::forget(self);
+            result
+        } else {
+            None
         }
-        None
     }
 }
 
 impl<T: View> From<&ViewHandle<T>> for AnyViewHandle {
     fn from(handle: &ViewHandle<T>) -> Self {
-        if let Some(ref_counts) = handle.ref_counts.upgrade() {
-            ref_counts.lock().inc_entity(handle.view_id);
-        }
+        handle.ref_counts.lock().inc_entity(handle.view_id);
         AnyViewHandle {
             window_id: handle.window_id,
             view_id: handle.view_id,
@@ -2444,15 +2439,25 @@ impl<T: View> From<&ViewHandle<T>> for AnyViewHandle {
 
 impl<T: View> From<ViewHandle<T>> for AnyViewHandle {
     fn from(handle: ViewHandle<T>) -> Self {
-        (&handle).into()
+        let any_handle = AnyViewHandle {
+            window_id: handle.window_id,
+            view_id: handle.view_id,
+            view_type: TypeId::of::<T>(),
+            ref_counts: handle.ref_counts.clone(),
+        };
+        unsafe {
+            Arc::decrement_strong_count(&handle.ref_counts);
+        }
+        std::mem::forget(handle);
+        any_handle
     }
 }
 
 impl Drop for AnyViewHandle {
     fn drop(&mut self) {
-        if let Some(ref_counts) = self.ref_counts.upgrade() {
-            ref_counts.lock().dec_view(self.window_id, self.view_id);
-        }
+        self.ref_counts
+            .lock()
+            .dec_view(self.window_id, self.view_id);
     }
 }
 
@@ -2473,7 +2478,7 @@ impl<T: View> WeakViewHandle<T> {
 
     pub fn upgrade(&self, ctx: impl AsRef<AppContext>) -> Option<ViewHandle<T>> {
         let ctx = ctx.as_ref();
-        if ctx.views.get(&(self.window_id, self.view_id)).is_some() {
+        if ctx.ref_counts.lock().is_entity_alive(self.view_id) {
             Some(ViewHandle::new(
                 self.window_id,
                 self.view_id,
@@ -2552,8 +2557,8 @@ struct RefCounts {
 }
 
 impl RefCounts {
-    fn inc_entity(&mut self, model_id: usize) {
-        *self.entity_counts.entry(model_id).or_insert(0) += 1;
+    fn inc_entity(&mut self, entity_id: usize) {
+        *self.entity_counts.entry(entity_id).or_insert(0) += 1;
     }
 
     fn inc_value(&mut self, tag_type_id: TypeId, id: usize) {
@@ -2586,6 +2591,10 @@ impl RefCounts {
             self.value_counts.remove(&key);
             self.dropped_values.insert(key);
         }
+    }
+
+    fn is_entity_alive(&self, entity_id: usize) -> bool {
+        self.entity_counts.contains_key(&entity_id)
     }
 
     fn take_dropped(
