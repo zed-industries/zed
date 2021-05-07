@@ -5,7 +5,7 @@ use cocoa::{
     appkit::{
         NSApplication, NSApplicationActivationPolicy::NSApplicationActivationPolicyRegular,
         NSEventModifierFlags, NSMenu, NSMenuItem, NSModalResponse, NSOpenPanel, NSPasteboard,
-        NSPasteboardTypeString, NSWindow,
+        NSPasteboardTypeString, NSSavePanel, NSWindow,
     },
     base::{id, nil, selector},
     foundation::{NSArray, NSAutoreleasePool, NSData, NSInteger, NSString, NSURL},
@@ -25,7 +25,7 @@ use std::{
     convert::TryInto,
     ffi::{c_void, CStr},
     os::raw::c_char,
-    path::PathBuf,
+    path::{Path, PathBuf},
     ptr,
     rc::Rc,
     slice, str,
@@ -292,6 +292,43 @@ impl platform::Platform for MacPlatform {
                         }
                     }
                     Some(result)
+                } else {
+                    None
+                };
+
+                if let Some(done_fn) = done_fn.take() {
+                    (done_fn)(result);
+                }
+            });
+            let block = block.copy();
+            let _: () = msg_send![panel, beginWithCompletionHandler: block];
+        }
+    }
+
+    fn prompt_for_new_path(
+        &self,
+        directory: &Path,
+        done_fn: Box<dyn FnOnce(Option<std::path::PathBuf>)>,
+    ) {
+        unsafe {
+            let panel = NSSavePanel::savePanel(nil);
+            let path = ns_string(directory.to_string_lossy().as_ref());
+            let url = NSURL::fileURLWithPath_isDirectory_(nil, path, true.to_objc());
+            panel.setDirectoryURL(url);
+
+            let done_fn = Cell::new(Some(done_fn));
+            let block = ConcreteBlock::new(move |response: NSModalResponse| {
+                let result = if response == NSModalResponse::NSModalResponseOk {
+                    let url = panel.URL();
+                    let string = url.absoluteString();
+                    let string = std::ffi::CStr::from_ptr(string.UTF8String())
+                        .to_string_lossy()
+                        .to_string();
+                    if let Some(path) = string.strip_prefix("file://") {
+                        Some(PathBuf::from(path))
+                    } else {
+                        None
+                    }
                 } else {
                     None
                 };

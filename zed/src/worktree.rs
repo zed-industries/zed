@@ -9,7 +9,7 @@ use crate::{
 use ::ignore::gitignore::Gitignore;
 use anyhow::{Context, Result};
 pub use fuzzy::{match_paths, PathMatch};
-use gpui::{scoped_pool, AppContext, Entity, ModelContext, ModelHandle, Task, View, ViewContext};
+use gpui::{scoped_pool, AppContext, Entity, ModelContext, ModelHandle, Task};
 use lazy_static::lazy_static;
 use parking_lot::Mutex;
 use postage::{
@@ -24,7 +24,7 @@ use std::{
     fmt, fs,
     future::Future,
     io::{self, Read, Write},
-    ops::{AddAssign, Deref},
+    ops::Deref,
     os::unix::{ffi::OsStrExt, fs::MetadataExt},
     path::{Path, PathBuf},
     sync::{Arc, Weak},
@@ -53,7 +53,7 @@ pub struct Worktree {
     poll_scheduled: bool,
 }
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct FileHandle {
     worktree: ModelHandle<Worktree>,
     state: Arc<Mutex<FileHandleState>>,
@@ -249,9 +249,10 @@ impl Snapshot {
 
     #[cfg(test)]
     pub fn paths(&self) -> impl Iterator<Item = &Arc<Path>> {
-        let mut cursor = self.entries.cursor::<(), ()>();
-        cursor.next();
-        cursor.map(|entry| entry.path())
+        self.entries
+            .cursor::<(), ()>()
+            .skip(1)
+            .map(|entry| entry.path())
     }
 
     pub fn visible_files(&self, start: usize) -> FileIter {
@@ -274,7 +275,7 @@ impl Snapshot {
 
     fn entry_for_path(&self, path: impl AsRef<Path>) -> Option<&Entry> {
         let mut cursor = self.entries.cursor::<_, ()>();
-        if cursor.seek(&PathSearch::Exact(path.as_ref()), SeekBias::Left) {
+        if cursor.seek(&PathSearch::Exact(path.as_ref()), SeekBias::Left, &()) {
             cursor.item()
         } else {
             None
@@ -296,7 +297,7 @@ impl Snapshot {
             self.ignores
                 .insert(ignore_dir_path.into(), (Arc::new(ignore), self.scan_id));
         }
-        self.entries.insert(entry);
+        self.entries.insert(entry, &());
     }
 
     fn populate_dir(
@@ -309,7 +310,7 @@ impl Snapshot {
 
         let mut parent_entry = self
             .entries
-            .get(&PathKey(parent_path.clone()))
+            .get(&PathKey(parent_path.clone()), &())
             .unwrap()
             .clone();
         if let Some(ignore) = ignore {
@@ -325,15 +326,15 @@ impl Snapshot {
         for entry in entries {
             edits.push(Edit::Insert(entry));
         }
-        self.entries.edit(edits);
+        self.entries.edit(edits, &());
     }
 
     fn remove_path(&mut self, path: &Path) {
         let new_entries = {
             let mut cursor = self.entries.cursor::<_, ()>();
-            let mut new_entries = cursor.slice(&PathSearch::Exact(path), SeekBias::Left);
-            cursor.seek_forward(&PathSearch::Successor(path), SeekBias::Left);
-            new_entries.push_tree(cursor.suffix());
+            let mut new_entries = cursor.slice(&PathSearch::Exact(path), SeekBias::Left, &());
+            cursor.seek_forward(&PathSearch::Successor(path), SeekBias::Left, &());
+            new_entries.push_tree(cursor.suffix(&()), &());
             new_entries
         };
         self.entries = new_entries;
@@ -406,6 +407,10 @@ impl FileHandle {
         self.state.lock().is_deleted
     }
 
+    pub fn exists(&self) -> bool {
+        !self.is_deleted()
+    }
+
     pub fn load_history(&self, ctx: &AppContext) -> impl Future<Output = Result<History>> {
         self.worktree.read(ctx).load_history(&self.path(), ctx)
     }
@@ -415,18 +420,22 @@ impl FileHandle {
         worktree.save(&self.path(), content, ctx)
     }
 
+    pub fn worktree_id(&self) -> usize {
+        self.worktree.id()
+    }
+
     pub fn entry_id(&self) -> (usize, Arc<Path>) {
         (self.worktree.id(), self.path())
     }
 
-    pub fn observe_from_view<T: View>(
+    pub fn observe_from_model<T: Entity>(
         &self,
-        ctx: &mut ViewContext<T>,
-        mut callback: impl FnMut(&mut T, FileHandle, &mut ViewContext<T>) + 'static,
+        ctx: &mut ModelContext<T>,
+        mut callback: impl FnMut(&mut T, FileHandle, &mut ModelContext<T>) + 'static,
     ) {
         let mut prev_state = self.state.lock().clone();
         let cur_state = Arc::downgrade(&self.state);
-        ctx.observe_model(&self.worktree, move |observer, worktree, ctx| {
+        ctx.observe(&self.worktree, move |observer, worktree, ctx| {
             if let Some(cur_state) = cur_state.upgrade() {
                 let cur_state_unlocked = cur_state.lock();
                 if *cur_state_unlocked != prev_state {
@@ -535,8 +544,10 @@ impl Default for EntrySummary {
     }
 }
 
-impl<'a> AddAssign<&'a EntrySummary> for EntrySummary {
-    fn add_assign(&mut self, rhs: &'a EntrySummary) {
+impl sum_tree::Summary for EntrySummary {
+    type Context = ();
+
+    fn add_summary(&mut self, rhs: &Self, _: &()) {
         self.max_path = rhs.max_path.clone();
         self.file_count += rhs.file_count;
         self.visible_file_count += rhs.visible_file_count;
@@ -971,9 +982,8 @@ impl BackgroundScanner {
         let snapshot = self.snapshot.lock();
         handles.retain(|path, handle_state| {
             if let Some(handle_state) = Weak::upgrade(&handle_state) {
-                if snapshot.entry_for_path(&path).is_none() {
-                    handle_state.lock().is_deleted = true;
-                }
+                let mut handle_state = handle_state.lock();
+                handle_state.is_deleted = snapshot.entry_for_path(&path).is_none();
                 true
             } else {
                 false
@@ -1066,7 +1076,7 @@ impl BackgroundScanner {
                 edits.push(Edit::Insert(entry));
             }
         }
-        self.snapshot.lock().entries.edit(edits);
+        self.snapshot.lock().entries.edit(edits, &());
     }
 
     fn fs_entry_for_path(&self, path: Arc<Path>, abs_path: &Path) -> Result<Option<Entry>> {
@@ -1126,31 +1136,38 @@ struct UpdateIgnoreStatusJob {
 }
 
 pub trait WorktreeHandle {
-    fn file(&self, path: impl AsRef<Path>, app: &AppContext) -> Option<FileHandle>;
+    fn file(&self, path: impl AsRef<Path>, app: &AppContext) -> FileHandle;
 }
 
 impl WorktreeHandle for ModelHandle<Worktree> {
-    fn file(&self, path: impl AsRef<Path>, app: &AppContext) -> Option<FileHandle> {
+    fn file(&self, path: impl AsRef<Path>, app: &AppContext) -> FileHandle {
+        let path = path.as_ref();
         let tree = self.read(app);
-        let entry = tree.entry_for_path(&path)?;
-
-        let path = entry.path().clone();
         let mut handles = tree.handles.lock();
-        let state = if let Some(state) = handles.get(&path).and_then(Weak::upgrade) {
+        let state = if let Some(state) = handles.get(path).and_then(Weak::upgrade) {
             state
         } else {
-            let state = Arc::new(Mutex::new(FileHandleState {
-                path: path.clone(),
-                is_deleted: false,
-            }));
-            handles.insert(path, Arc::downgrade(&state));
+            let handle_state = if let Some(entry) = tree.entry_for_path(path) {
+                FileHandleState {
+                    path: entry.path().clone(),
+                    is_deleted: false,
+                }
+            } else {
+                FileHandleState {
+                    path: path.into(),
+                    is_deleted: true,
+                }
+            };
+
+            let state = Arc::new(Mutex::new(handle_state.clone()));
+            handles.insert(handle_state.path, Arc::downgrade(&state));
             state
         };
 
-        Some(FileHandle {
+        FileHandle {
             worktree: self.clone(),
             state,
-        })
+        }
     }
 }
 
@@ -1162,13 +1179,13 @@ pub enum FileIter<'a> {
 impl<'a> FileIter<'a> {
     fn all(snapshot: &'a Snapshot, start: usize) -> Self {
         let mut cursor = snapshot.entries.cursor();
-        cursor.seek(&FileCount(start), SeekBias::Right);
+        cursor.seek(&FileCount(start), SeekBias::Right, &());
         Self::All(cursor)
     }
 
     fn visible(snapshot: &'a Snapshot, start: usize) -> Self {
         let mut cursor = snapshot.entries.cursor();
-        cursor.seek(&VisibleFileCount(start), SeekBias::Right);
+        cursor.seek(&VisibleFileCount(start), SeekBias::Right, &());
         Self::Visible(cursor)
     }
 
@@ -1176,11 +1193,11 @@ impl<'a> FileIter<'a> {
         match self {
             Self::All(cursor) => {
                 let ix = *cursor.start();
-                cursor.seek_forward(&FileCount(ix.0 + 1), SeekBias::Right);
+                cursor.seek_forward(&FileCount(ix.0 + 1), SeekBias::Right, &());
             }
             Self::Visible(cursor) => {
                 let ix = *cursor.start();
-                cursor.seek_forward(&VisibleFileCount(ix.0 + 1), SeekBias::Right);
+                cursor.seek_forward(&VisibleFileCount(ix.0 + 1), SeekBias::Right, &());
             }
         }
     }
@@ -1214,7 +1231,7 @@ struct ChildEntriesIter<'a> {
 impl<'a> ChildEntriesIter<'a> {
     fn new(parent_path: &'a Path, snapshot: &'a Snapshot) -> Self {
         let mut cursor = snapshot.entries.cursor();
-        cursor.seek(&PathSearch::Exact(parent_path), SeekBias::Right);
+        cursor.seek(&PathSearch::Exact(parent_path), SeekBias::Right, &());
         Self {
             parent_path,
             cursor,
@@ -1229,7 +1246,7 @@ impl<'a> Iterator for ChildEntriesIter<'a> {
         if let Some(item) = self.cursor.item() {
             if item.path().starts_with(self.parent_path) {
                 self.cursor
-                    .seek_forward(&PathSearch::Successor(item.path()), SeekBias::Left);
+                    .seek_forward(&PathSearch::Successor(item.path()), SeekBias::Left, &());
                 Some(item)
             } else {
                 None
@@ -1346,7 +1363,8 @@ mod tests {
             app.read(|ctx| tree.read(ctx).scan_complete()).await;
             app.read(|ctx| assert_eq!(tree.read(ctx).file_count(), 1));
 
-            let buffer = app.add_model(|_| Buffer::new(1, "a line of text.\n".repeat(10 * 1024)));
+            let buffer =
+                app.add_model(|ctx| Buffer::new(1, "a line of text.\n".repeat(10 * 1024), ctx));
 
             let path = tree.update(&mut app, |tree, ctx| {
                 let path = tree.files(0).next().unwrap().path().clone();
@@ -1389,10 +1407,10 @@ mod tests {
 
             let (file2, file3, file4, file5) = app.read(|ctx| {
                 (
-                    tree.file("a/file2", ctx).unwrap(),
-                    tree.file("a/file3", ctx).unwrap(),
-                    tree.file("b/c/file4", ctx).unwrap(),
-                    tree.file("b/c/file5", ctx).unwrap(),
+                    tree.file("a/file2", ctx),
+                    tree.file("a/file3", ctx),
+                    tree.file("b/c/file4", ctx),
+                    tree.file("b/c/file5", ctx),
                 )
             });
 

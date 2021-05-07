@@ -25,12 +25,21 @@ pub fn menus(settings: watch::Receiver<Settings>) -> Vec<Menu<'static>> {
         },
         Menu {
             name: "File",
-            items: vec![MenuItem::Action {
-                name: "Open…",
-                keystroke: Some("cmd-o"),
-                action: "workspace:open",
-                arg: Some(Box::new(settings)),
-            }],
+            items: vec![
+                MenuItem::Action {
+                    name: "New",
+                    keystroke: Some("cmd-n"),
+                    action: "workspace:new_file",
+                    arg: None,
+                },
+                MenuItem::Separator,
+                MenuItem::Action {
+                    name: "Open…",
+                    keystroke: Some("cmd-o"),
+                    action: "workspace:open",
+                    arg: Some(Box::new(settings)),
+                },
+            ],
         },
         Menu {
             name: "Edit",

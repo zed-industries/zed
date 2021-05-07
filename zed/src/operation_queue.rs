@@ -1,11 +1,8 @@
 use crate::{
-    sum_tree::{Cursor, Dimension, Edit, Item, KeyedItem, SumTree},
+    sum_tree::{Cursor, Dimension, Edit, Item, KeyedItem, SumTree, Summary},
     time,
 };
-use std::{
-    fmt::Debug,
-    ops::{Add, AddAssign},
-};
+use std::{fmt::Debug, ops::Add};
 
 pub trait Operation: Clone + Debug + Eq {
     fn timestamp(&self) -> time::Lamport;
@@ -35,7 +32,8 @@ impl<T: Operation> OperationQueue<T> {
     pub fn insert(&mut self, mut ops: Vec<T>) {
         ops.sort_by_key(|op| op.timestamp());
         ops.dedup_by_key(|op| op.timestamp());
-        self.0.edit(ops.into_iter().map(Edit::Insert).collect());
+        self.0
+            .edit(ops.into_iter().map(Edit::Insert).collect(), &());
     }
 
     pub fn drain(&mut self) -> Self {
@@ -68,8 +66,10 @@ impl<T: Operation> KeyedItem for T {
     }
 }
 
-impl<'a> AddAssign<&'a Self> for OperationSummary {
-    fn add_assign(&mut self, other: &Self) {
+impl Summary for OperationSummary {
+    type Context = ();
+
+    fn add_summary(&mut self, other: &Self, _: &()) {
         assert!(self.key < other.key);
         self.key = other.key;
         self.len += other.len;

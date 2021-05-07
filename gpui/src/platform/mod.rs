@@ -19,7 +19,13 @@ use crate::{
 };
 use async_task::Runnable;
 pub use event::Event;
-use std::{any::Any, ops::Range, path::PathBuf, rc::Rc, sync::Arc};
+use std::{
+    any::Any,
+    ops::Range,
+    path::{Path, PathBuf},
+    rc::Rc,
+    sync::Arc,
+};
 
 pub trait Platform {
     fn on_menu_command(&self, callback: Box<dyn FnMut(&str, Option<&dyn Any>)>);
@@ -44,6 +50,11 @@ pub trait Platform {
         &self,
         options: PathPromptOptions,
         done_fn: Box<dyn FnOnce(Option<Vec<std::path::PathBuf>>)>,
+    );
+    fn prompt_for_new_path(
+        &self,
+        directory: &Path,
+        done_fn: Box<dyn FnOnce(Option<std::path::PathBuf>)>,
     );
     fn quit(&self);
     fn write_to_clipboard(&self, item: ClipboardItem);

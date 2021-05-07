@@ -1,41 +1,42 @@
 pub mod pane;
 pub mod pane_group;
+use crate::{
+    editor::{Buffer, BufferView},
+    settings::Settings,
+    time::ReplicaId,
+    worktree::{FileHandle, Worktree, WorktreeHandle},
+};
+use futures_core::{future::LocalBoxFuture, Future};
+use gpui::{
+    color::rgbu, elements::*, json::to_string_pretty, keymap::Binding, AnyViewHandle, AppContext,
+    ClipboardItem, Entity, EntityTask, ModelHandle, MutableAppContext, PathPromptOptions, View,
+    ViewContext, ViewHandle, WeakModelHandle,
+};
+use log::error;
 pub use pane::*;
 pub use pane_group::*;
-
-use crate::settings::Settings;
-use gpui::{MutableAppContext, PathPromptOptions};
 use postage::watch;
-use std::path::PathBuf;
+use smol::prelude::*;
+use std::{collections::HashMap, path::PathBuf};
+use std::{
+    collections::{hash_map::Entry, HashSet},
+    path::Path,
+    sync::Arc,
+};
+
 pub fn init(app: &mut MutableAppContext) {
     app.add_global_action("workspace:open", open);
     app.add_global_action("workspace:open_paths", open_paths);
     app.add_global_action("app:quit", quit);
     app.add_action("workspace:save", Workspace::save_active_item);
     app.add_action("workspace:debug_elements", Workspace::debug_elements);
+    app.add_action("workspace:new_file", Workspace::open_new_file);
     app.add_bindings(vec![
         Binding::new("cmd-s", "workspace:save", None),
         Binding::new("cmd-alt-i", "workspace:debug_elements", None),
     ]);
     pane::init(app);
 }
-use crate::{
-    editor::{Buffer, BufferView},
-    time::ReplicaId,
-    worktree::{Worktree, WorktreeHandle},
-};
-use futures_core::{future::LocalBoxFuture, Future};
-use gpui::{
-    color::rgbu, elements::*, json::to_string_pretty, keymap::Binding, AnyViewHandle, AppContext,
-    ClipboardItem, Entity, EntityTask, ModelHandle, View, ViewContext, ViewHandle,
-};
-use log::error;
-use smol::prelude::*;
-use std::{
-    collections::{hash_map::Entry, HashMap, HashSet},
-    path::Path,
-    sync::Arc,
-};
 
 pub struct OpenParams {
     pub paths: Vec<PathBuf>,
@@ -94,6 +95,18 @@ fn quit(_: &(), app: &mut MutableAppContext) {
     app.platform().quit();
 }
 
+pub trait Item: Entity + Sized {
+    type View: ItemView;
+
+    fn build_view(
+        handle: ModelHandle<Self>,
+        settings: watch::Receiver<Settings>,
+        ctx: &mut ViewContext<Self::View>,
+    ) -> Self::View;
+
+    fn file(&self) -> Option<&FileHandle>;
+}
+
 pub trait ItemView: View {
     fn title(&self, app: &AppContext) -> String;
     fn entry_id(&self, app: &AppContext) -> Option<(usize, Arc<Path>)>;
@@ -106,15 +119,33 @@ pub trait ItemView: View {
     fn is_dirty(&self, _: &AppContext) -> bool {
         false
     }
-    fn save(&self, _: &mut ViewContext<Self>) -> LocalBoxFuture<'static, anyhow::Result<()>> {
-        Box::pin(async { Ok(()) })
-    }
+    fn save(
+        &mut self,
+        _: Option<FileHandle>,
+        _: &mut ViewContext<Self>,
+    ) -> LocalBoxFuture<'static, anyhow::Result<()>>;
     fn should_activate_item_on_event(_: &Self::Event) -> bool {
         false
     }
     fn should_update_tab_on_event(_: &Self::Event) -> bool {
         false
     }
+}
+
+pub trait ItemHandle: Send + Sync {
+    fn boxed_clone(&self) -> Box<dyn ItemHandle>;
+    fn downgrade(&self) -> Box<dyn WeakItemHandle>;
+}
+
+pub trait WeakItemHandle: Send + Sync {
+    fn file<'a>(&'a self, ctx: &'a AppContext) -> Option<&'a FileHandle>;
+    fn add_view(
+        &self,
+        window_id: usize,
+        settings: watch::Receiver<Settings>,
+        app: &mut MutableAppContext,
+    ) -> Option<Box<dyn ItemViewHandle>>;
+    fn alive(&self, ctx: &AppContext) -> bool;
 }
 
 pub trait ItemViewHandle: Send + Sync {
@@ -126,7 +157,46 @@ pub trait ItemViewHandle: Send + Sync {
     fn id(&self) -> usize;
     fn to_any(&self) -> AnyViewHandle;
     fn is_dirty(&self, ctx: &AppContext) -> bool;
-    fn save(&self, ctx: &mut MutableAppContext) -> LocalBoxFuture<'static, anyhow::Result<()>>;
+    fn save(
+        &self,
+        file: Option<FileHandle>,
+        ctx: &mut MutableAppContext,
+    ) -> LocalBoxFuture<'static, anyhow::Result<()>>;
+}
+
+impl<T: Item> ItemHandle for ModelHandle<T> {
+    fn boxed_clone(&self) -> Box<dyn ItemHandle> {
+        Box::new(self.clone())
+    }
+
+    fn downgrade(&self) -> Box<dyn WeakItemHandle> {
+        Box::new(self.downgrade())
+    }
+}
+
+impl<T: Item> WeakItemHandle for WeakModelHandle<T> {
+    fn file<'a>(&'a self, ctx: &'a AppContext) -> Option<&'a FileHandle> {
+        self.upgrade(ctx).and_then(|h| h.read(ctx).file())
+    }
+
+    fn add_view(
+        &self,
+        window_id: usize,
+        settings: watch::Receiver<Settings>,
+        ctx: &mut MutableAppContext,
+    ) -> Option<Box<dyn ItemViewHandle>> {
+        if let Some(handle) = self.upgrade(ctx.as_ref()) {
+            Some(Box::new(ctx.add_view(window_id, |ctx| {
+                T::build_view(handle, settings, ctx)
+            })))
+        } else {
+            None
+        }
+    }
+
+    fn alive(&self, ctx: &AppContext) -> bool {
+        self.upgrade(ctx).is_some()
+    }
 }
 
 impl<T: ItemView> ItemViewHandle for ViewHandle<T> {
@@ -165,8 +235,12 @@ impl<T: ItemView> ItemViewHandle for ViewHandle<T> {
         })
     }
 
-    fn save(&self, ctx: &mut MutableAppContext) -> LocalBoxFuture<'static, anyhow::Result<()>> {
-        self.update(ctx, |item, ctx| item.save(ctx))
+    fn save(
+        &self,
+        file: Option<FileHandle>,
+        ctx: &mut MutableAppContext,
+    ) -> LocalBoxFuture<'static, anyhow::Result<()>> {
+        self.update(ctx, |item, ctx| item.save(file, ctx))
     }
 
     fn is_dirty(&self, ctx: &AppContext) -> bool {
@@ -188,6 +262,12 @@ impl Clone for Box<dyn ItemViewHandle> {
     }
 }
 
+impl Clone for Box<dyn ItemHandle> {
+    fn clone(&self) -> Box<dyn ItemHandle> {
+        self.boxed_clone()
+    }
+}
+
 #[derive(Debug)]
 pub struct State {
     pub modal: Option<usize>,
@@ -200,12 +280,12 @@ pub struct Workspace {
     center: PaneGroup,
     panes: Vec<ViewHandle<Pane>>,
     active_pane: ViewHandle<Pane>,
-    loading_entries: HashSet<(usize, Arc<Path>)>,
     replica_id: ReplicaId,
     worktrees: HashSet<ModelHandle<Worktree>>,
-    buffers: HashMap<
-        (usize, u64),
-        postage::watch::Receiver<Option<Result<ModelHandle<Buffer>, Arc<anyhow::Error>>>>,
+    items: Vec<Box<dyn WeakItemHandle>>,
+    loading_items: HashMap<
+        (usize, Arc<Path>),
+        postage::watch::Receiver<Option<Result<Box<dyn ItemHandle>, Arc<anyhow::Error>>>>,
     >,
 }
 
@@ -227,11 +307,11 @@ impl Workspace {
             center: PaneGroup::new(pane.id()),
             panes: vec![pane.clone()],
             active_pane: pane.clone(),
-            loading_entries: HashSet::new(),
             settings,
             replica_id,
             worktrees: Default::default(),
-            buffers: Default::default(),
+            items: Default::default(),
+            loading_items: Default::default(),
         }
     }
 
@@ -270,15 +350,7 @@ impl Workspace {
         let entries = paths
             .iter()
             .cloned()
-            .map(|path| {
-                for tree in self.worktrees.iter() {
-                    if let Ok(relative_path) = path.strip_prefix(tree.read(ctx).abs_path()) {
-                        return (tree.id(), relative_path.into());
-                    }
-                }
-                let worktree_id = self.add_worktree(&path, ctx);
-                (worktree_id, Path::new("").into())
-            })
+            .map(|path| self.file_for_path(&path, ctx))
             .collect::<Vec<_>>();
 
         let bg = ctx.background_executor().clone();
@@ -286,12 +358,12 @@ impl Workspace {
             .iter()
             .cloned()
             .zip(entries.into_iter())
-            .map(|(path, entry)| {
+            .map(|(abs_path, file)| {
                 ctx.spawn(
-                    bg.spawn(async move { path.is_file() }),
-                    |me, is_file, ctx| {
+                    bg.spawn(async move { abs_path.is_file() }),
+                    move |me, is_file, ctx| {
                         if is_file {
-                            me.open_entry(entry, ctx)
+                            me.open_entry(file.entry_id(), ctx)
                         } else {
                             None
                         }
@@ -308,13 +380,26 @@ impl Workspace {
         }
     }
 
-    pub fn add_worktree(&mut self, path: &Path, ctx: &mut ViewContext<Self>) -> usize {
+    fn file_for_path(&mut self, abs_path: &Path, ctx: &mut ViewContext<Self>) -> FileHandle {
+        for tree in self.worktrees.iter() {
+            if let Ok(relative_path) = abs_path.strip_prefix(tree.read(ctx).abs_path()) {
+                return tree.file(relative_path, ctx.as_ref());
+            }
+        }
+        let worktree = self.add_worktree(&abs_path, ctx);
+        worktree.file(Path::new(""), ctx.as_ref())
+    }
+
+    pub fn add_worktree(
+        &mut self,
+        path: &Path,
+        ctx: &mut ViewContext<Self>,
+    ) -> ModelHandle<Worktree> {
         let worktree = ctx.add_model(|ctx| Worktree::new(path, ctx));
-        let worktree_id = worktree.id();
         ctx.observe_model(&worktree, |_, _, ctx| ctx.notify());
-        self.worktrees.insert(worktree);
+        self.worktrees.insert(worktree.clone());
         ctx.notify();
-        worktree_id
+        worktree
     }
 
     pub fn toggle_modal<V, F>(&mut self, ctx: &mut ViewContext<Self>, add_view: F)
@@ -344,20 +429,52 @@ impl Workspace {
         }
     }
 
+    pub fn open_new_file(&mut self, _: &(), ctx: &mut ViewContext<Self>) {
+        let buffer = ctx.add_model(|ctx| Buffer::new(self.replica_id, "", ctx));
+        let buffer_view =
+            ctx.add_view(|ctx| BufferView::for_buffer(buffer.clone(), self.settings.clone(), ctx));
+        self.items.push(ItemHandle::downgrade(&buffer));
+        self.add_item_view(Box::new(buffer_view), ctx);
+    }
+
     #[must_use]
     pub fn open_entry(
         &mut self,
         entry: (usize, Arc<Path>),
         ctx: &mut ViewContext<Self>,
     ) -> Option<EntityTask<()>> {
-        if self.loading_entries.contains(&entry) {
-            return None;
-        }
-
+        // If the active pane contains a view for this file, then activate
+        // that item view.
         if self
             .active_pane()
             .update(ctx, |pane, ctx| pane.activate_entry(entry.clone(), ctx))
         {
+            return None;
+        }
+
+        // Otherwise, if this file is already open somewhere in the workspace,
+        // then add another view for it.
+        let settings = self.settings.clone();
+        let mut view_for_existing_item = None;
+        self.items.retain(|item| {
+            if item.alive(ctx.as_ref()) {
+                if view_for_existing_item.is_none()
+                    && item
+                        .file(ctx.as_ref())
+                        .map_or(false, |f| f.entry_id() == entry)
+                {
+                    view_for_existing_item = Some(
+                        item.add_view(ctx.window_id(), settings.clone(), ctx.as_mut())
+                            .unwrap(),
+                    );
+                }
+                true
+            } else {
+                false
+            }
+        });
+        if let Some(view) = view_for_existing_item {
+            self.add_item_view(view, ctx);
             return None;
         }
 
@@ -371,42 +488,31 @@ impl Workspace {
             }
         };
 
-        let inode = match worktree.read(ctx).inode_for_path(&path) {
-            Some(inode) => inode,
-            None => {
-                log::error!("path {:?} does not exist", path);
-                return None;
-            }
-        };
+        let file = worktree.file(path.clone(), ctx.as_ref());
+        if file.is_deleted() {
+            log::error!("path {:?} does not exist", path);
+            return None;
+        }
 
-        let file = match worktree.file(path.clone(), ctx.as_ref()) {
-            Some(file) => file,
-            None => {
-                log::error!("path {:?} does not exist", path);
-                return None;
-            }
-        };
-
-        self.loading_entries.insert(entry.clone());
-
-        if let Entry::Vacant(entry) = self.buffers.entry((worktree_id, inode)) {
+        if let Entry::Vacant(entry) = self.loading_items.entry(entry.clone()) {
             let (mut tx, rx) = postage::watch::channel();
             entry.insert(rx);
-            let history = file.load_history(ctx.as_ref());
             let replica_id = self.replica_id;
-            let buffer = ctx
+            let history = ctx
                 .background_executor()
-                .spawn(async move { Ok(Buffer::from_history(replica_id, history.await?)) });
-            ctx.spawn(buffer, move |_, from_history_result, ctx| {
-                *tx.borrow_mut() = Some(match from_history_result {
-                    Ok(buffer) => Ok(ctx.add_model(|_| buffer)),
+                .spawn(file.load_history(ctx.as_ref()));
+            ctx.spawn(history, move |_, history, ctx| {
+                *tx.borrow_mut() = Some(match history {
+                    Ok(history) => Ok(Box::new(ctx.add_model(|ctx| {
+                        Buffer::from_history(replica_id, history, Some(file), ctx)
+                    }))),
                     Err(error) => Err(Arc::new(error)),
                 })
             })
             .detach()
         }
 
-        let mut watch = self.buffers.get(&(worktree_id, inode)).unwrap().clone();
+        let mut watch = self.loading_items.get(&entry).unwrap().clone();
         Some(ctx.spawn(
             async move {
                 loop {
@@ -417,18 +523,15 @@ impl Workspace {
                 }
             },
             move |me, load_result, ctx| {
-                me.loading_entries.remove(&entry);
+                me.loading_items.remove(&entry);
                 match load_result {
-                    Ok(buffer_handle) => {
-                        let buffer_view = Box::new(ctx.add_view(|ctx| {
-                            BufferView::for_buffer(
-                                buffer_handle,
-                                Some(file),
-                                me.settings.clone(),
-                                ctx,
-                            )
-                        }));
-                        me.add_item(buffer_view, ctx);
+                    Ok(item) => {
+                        let weak_item = item.downgrade();
+                        let view = weak_item
+                            .add_view(ctx.window_id(), settings, ctx.as_mut())
+                            .unwrap();
+                        me.items.push(weak_item);
+                        me.add_item_view(view, ctx);
                     }
                     Err(error) => {
                         log::error!("error opening item: {}", error);
@@ -438,19 +541,45 @@ impl Workspace {
         ))
     }
 
+    pub fn active_item(&self, ctx: &ViewContext<Self>) -> Option<Box<dyn ItemViewHandle>> {
+        self.active_pane().read(ctx).active_item()
+    }
+
     pub fn save_active_item(&mut self, _: &(), ctx: &mut ViewContext<Self>) {
-        self.active_pane.update(ctx, |pane, ctx| {
-            if let Some(item) = pane.active_item() {
-                let task = item.save(ctx.as_mut());
-                ctx.spawn(task, |_, result, _| {
-                    if let Err(e) = result {
-                        // TODO - present this error to the user
-                        error!("failed to save item: {:?}, ", e);
+        if let Some(item) = self.active_item(ctx) {
+            if item.entry_id(ctx.as_ref()).is_none() {
+                let handle = ctx.handle();
+                let start_path = self
+                    .worktrees
+                    .iter()
+                    .next()
+                    .map_or(Path::new(""), |h| h.read(ctx).abs_path())
+                    .to_path_buf();
+                ctx.prompt_for_new_path(&start_path, move |path, ctx| {
+                    if let Some(path) = path {
+                        handle.update(ctx, move |this, ctx| {
+                            let file = this.file_for_path(&path, ctx);
+                            let task = item.save(Some(file), ctx.as_mut());
+                            ctx.spawn(task, move |_, result, _| {
+                                if let Err(e) = result {
+                                    error!("failed to save item: {:?}, ", e);
+                                }
+                            })
+                            .detach()
+                        })
                     }
-                })
-                .detach()
+                });
+                return;
             }
-        });
+
+            let task = item.save(None, ctx.as_mut());
+            ctx.spawn(task, |_, result, _| {
+                if let Err(e) = result {
+                    error!("failed to save item: {:?}, ", e);
+                }
+            })
+            .detach()
+        }
     }
 
     pub fn debug_elements(&mut self, _: &(), ctx: &mut ViewContext<Self>) {
@@ -519,7 +648,7 @@ impl Workspace {
         self.activate_pane(new_pane.clone(), ctx);
         if let Some(item) = pane.read(ctx).active_item() {
             if let Some(clone) = item.clone_on_split(ctx.as_mut()) {
-                self.add_item(clone, ctx);
+                self.add_item_view(clone, ctx);
             }
         }
         self.center
@@ -544,7 +673,7 @@ impl Workspace {
         &self.active_pane
     }
 
-    fn add_item(&self, item: Box<dyn ItemViewHandle>, ctx: &mut ViewContext<Self>) {
+    fn add_item_view(&self, item: Box<dyn ItemViewHandle>, ctx: &mut ViewContext<Self>) {
         let active_pane = self.active_pane();
         item.set_parent_pane(&active_pane, ctx.as_mut());
         active_pane.update(ctx, |pane, ctx| {
@@ -607,7 +736,9 @@ mod tests {
     use crate::{editor::BufferView, settings, test::temp_tree};
     use gpui::App;
     use serde_json::json;
-    use std::{collections::HashSet, os::unix};
+    use std::collections::HashSet;
+    use std::time;
+    use tempdir::TempDir;
 
     #[test]
     fn test_open_paths_action() {
@@ -696,15 +827,13 @@ mod tests {
             let file2 = entries[1].clone();
             let file3 = entries[2].clone();
 
-            let pane = app.read(|ctx| workspace.read(ctx).active_pane().clone());
-
             // Open the first entry
             workspace
                 .update(&mut app, |w, ctx| w.open_entry(file1.clone(), ctx))
                 .unwrap()
                 .await;
             app.read(|ctx| {
-                let pane = pane.read(ctx);
+                let pane = workspace.read(ctx).active_pane().read(ctx);
                 assert_eq!(
                     pane.active_item().unwrap().entry_id(ctx),
                     Some(file1.clone())
@@ -718,7 +847,7 @@ mod tests {
                 .unwrap()
                 .await;
             app.read(|ctx| {
-                let pane = pane.read(ctx);
+                let pane = workspace.read(ctx).active_pane().read(ctx);
                 assert_eq!(
                     pane.active_item().unwrap().entry_id(ctx),
                     Some(file2.clone())
@@ -731,7 +860,7 @@ mod tests {
                 assert!(w.open_entry(file1.clone(), ctx).is_none())
             });
             app.read(|ctx| {
-                let pane = pane.read(ctx);
+                let pane = workspace.read(ctx).active_pane().read(ctx);
                 assert_eq!(
                     pane.active_item().unwrap().entry_id(ctx),
                     Some(file1.clone())
@@ -739,21 +868,42 @@ mod tests {
                 assert_eq!(pane.items().len(), 2);
             });
 
-            // Open the third entry twice concurrently. Only one pane item is added.
-            workspace
-                .update(&mut app, |w, ctx| {
-                    let task = w.open_entry(file3.clone(), ctx).unwrap();
-                    assert!(w.open_entry(file3.clone(), ctx).is_none());
-                    task
-                })
-                .await;
+            // Split the pane with the first entry, then open the second entry again.
+            workspace.update(&mut app, |w, ctx| {
+                w.split_pane(w.active_pane().clone(), SplitDirection::Right, ctx);
+                assert!(w.open_entry(file2.clone(), ctx).is_none());
+                assert_eq!(
+                    w.active_pane()
+                        .read(ctx)
+                        .active_item()
+                        .unwrap()
+                        .entry_id(ctx.as_ref()),
+                    Some(file2.clone())
+                );
+            });
+
+            // Open the third entry twice concurrently. Two pane items
+            // are added.
+            let (t1, t2) = workspace.update(&mut app, |w, ctx| {
+                (
+                    w.open_entry(file3.clone(), ctx).unwrap(),
+                    w.open_entry(file3.clone(), ctx).unwrap(),
+                )
+            });
+            t1.await;
+            t2.await;
             app.read(|ctx| {
-                let pane = pane.read(ctx);
+                let pane = workspace.read(ctx).active_pane().read(ctx);
                 assert_eq!(
                     pane.active_item().unwrap().entry_id(ctx),
                     Some(file3.clone())
                 );
-                assert_eq!(pane.items().len(), 3);
+                let pane_entries = pane
+                    .items()
+                    .iter()
+                    .map(|i| i.entry_id(ctx).unwrap())
+                    .collect::<Vec<_>>();
+                assert_eq!(pane_entries, &[file1, file2, file3.clone(), file3]);
             });
         });
     }
@@ -830,63 +980,100 @@ mod tests {
     }
 
     #[test]
-    fn test_open_two_paths_to_the_same_file() {
-        use crate::workspace::ItemViewHandle;
-
+    fn test_open_and_save_new_file() {
         App::test_async((), |mut app| async move {
-            // Create a worktree with a symlink:
-            //   dir
-            //   ├── hello.txt
-            //   └── hola.txt -> hello.txt
-            let temp_dir = temp_tree(json!({ "hello.txt": "hi" }));
-            let dir = temp_dir.path();
-            unix::fs::symlink(dir.join("hello.txt"), dir.join("hola.txt")).unwrap();
-
+            let dir = TempDir::new("test-new-file").unwrap();
             let settings = settings::channel(&app.font_cache()).unwrap().1;
             let (_, workspace) = app.add_window(|ctx| {
                 let mut workspace = Workspace::new(0, settings, ctx);
-                workspace.add_worktree(dir, ctx);
+                workspace.add_worktree(dir.path(), ctx);
                 workspace
             });
-            app.read(|ctx| workspace.read(ctx).worktree_scans_complete(ctx))
-                .await;
-
-            // Simultaneously open both the original file and the symlink to the same file.
-            app.update(|ctx| {
-                workspace.update(ctx, |view, ctx| {
-                    view.open_paths(&[dir.join("hello.txt"), dir.join("hola.txt")], ctx)
-                })
-            })
-            .await;
-
-            // The same content shows up with two different editors.
-            let buffer_views = app.read(|ctx| {
+            let worktree = app.read(|ctx| {
                 workspace
                     .read(ctx)
-                    .active_pane()
-                    .read(ctx)
-                    .items()
+                    .worktrees()
                     .iter()
-                    .map(|i| i.to_any().downcast::<BufferView>().unwrap())
-                    .collect::<Vec<_>>()
-            });
-            app.read(|ctx| {
-                assert_eq!(buffer_views[0].title(ctx), "hello.txt");
-                assert_eq!(buffer_views[1].title(ctx), "hola.txt");
-                assert_eq!(buffer_views[0].read(ctx).text(ctx), "hi");
-                assert_eq!(buffer_views[1].read(ctx).text(ctx), "hi");
+                    .next()
+                    .unwrap()
+                    .clone()
             });
 
-            // When modifying one buffer, the changes appear in both editors.
-            app.update(|ctx| {
-                buffer_views[0].update(ctx, |buf, ctx| {
-                    buf.insert(&"oh, ".to_string(), ctx);
-                });
+            // Create a new untitled buffer
+            let editor = workspace.update(&mut app, |workspace, ctx| {
+                workspace.open_new_file(&(), ctx);
+                workspace
+                    .active_item(ctx)
+                    .unwrap()
+                    .to_any()
+                    .downcast::<BufferView>()
+                    .unwrap()
+            });
+            editor.update(&mut app, |editor, ctx| {
+                assert!(!editor.is_dirty(ctx.as_ref()));
+                assert_eq!(editor.title(ctx.as_ref()), "untitled");
+                editor.insert(&"hi".to_string(), ctx);
+                assert!(editor.is_dirty(ctx.as_ref()));
+            });
+
+            // Save the buffer. This prompts for a filename.
+            workspace.update(&mut app, |workspace, ctx| {
+                workspace.save_active_item(&(), ctx)
+            });
+            app.simulate_new_path_selection(|parent_dir| {
+                assert_eq!(parent_dir, dir.path());
+                Some(parent_dir.join("the-new-name"))
             });
             app.read(|ctx| {
-                assert_eq!(buffer_views[0].read(ctx).text(ctx), "oh, hi");
-                assert_eq!(buffer_views[1].read(ctx).text(ctx), "oh, hi");
+                assert!(editor.is_dirty(ctx));
+                assert_eq!(editor.title(ctx), "untitled");
             });
+
+            // When the save completes, the buffer's title is updated.
+            editor
+                .condition(&app, |editor, ctx| !editor.is_dirty(ctx))
+                .await;
+            worktree
+                .condition_with_duration(time::Duration::from_millis(500), &app, |worktree, _| {
+                    worktree.inode_for_path("the-new-name").is_some()
+                })
+                .await;
+            app.read(|ctx| assert_eq!(editor.title(ctx), "the-new-name"));
+
+            // Edit the file and save it again. This time, there is no filename prompt.
+            editor.update(&mut app, |editor, ctx| {
+                editor.insert(&" there".to_string(), ctx);
+                assert_eq!(editor.is_dirty(ctx.as_ref()), true);
+            });
+            workspace.update(&mut app, |workspace, ctx| {
+                workspace.save_active_item(&(), ctx)
+            });
+            assert!(!app.did_prompt_for_new_path());
+            editor
+                .condition(&app, |editor, ctx| !editor.is_dirty(ctx))
+                .await;
+            app.read(|ctx| assert_eq!(editor.title(ctx), "the-new-name"));
+
+            // Open the same newly-created file in another pane item. The new editor should reuse
+            // the same buffer.
+            workspace.update(&mut app, |workspace, ctx| {
+                workspace.open_new_file(&(), ctx);
+                workspace.split_pane(workspace.active_pane().clone(), SplitDirection::Right, ctx);
+                assert!(workspace
+                    .open_entry((worktree.id(), Path::new("the-new-name").into()), ctx)
+                    .is_none());
+            });
+            let editor2 = workspace.update(&mut app, |workspace, ctx| {
+                workspace
+                    .active_item(ctx)
+                    .unwrap()
+                    .to_any()
+                    .downcast::<BufferView>()
+                    .unwrap()
+            });
+            app.read(|ctx| {
+                assert_eq!(editor2.read(ctx).buffer(), editor.read(ctx).buffer());
+            })
         });
     }
 
