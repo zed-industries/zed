@@ -143,7 +143,7 @@ impl FoldMap {
         let mut edits = Vec::new();
         let mut fold_ixs_to_delete = Vec::new();
         for range in ranges.into_iter() {
-            // Remove intersecting folds and add their ranges to edits that are passed to apply_edits
+            // Remove intersecting folds and add their ranges to edits that are passed to apply_edits.
             let mut folds_cursor = self.intersecting_folds(range, ctx)?;
             while let Some(fold) = folds_cursor.item() {
                 let offset_range =
@@ -156,8 +156,15 @@ impl FoldMap {
                 folds_cursor.next();
             }
         }
+
         fold_ixs_to_delete.sort_unstable();
         fold_ixs_to_delete.dedup();
+        edits.sort_unstable_by(|a, b| {
+            a.old_range
+                .start
+                .cmp(&b.old_range.start)
+                .then_with(|| b.old_range.end.cmp(&a.old_range.end))
+        });
 
         self.folds = {
             let mut cursor = self.folds.cursor::<_, ()>();
@@ -169,7 +176,6 @@ impl FoldMap {
             folds.push_tree(cursor.suffix(buffer), buffer);
             folds
         };
-
         self.apply_edits(edits, ctx);
         Ok(())
     }
@@ -868,26 +874,38 @@ mod tests {
 
                 for _ in 0..operations {
                     log::info!("text: {:?}", buffer.read(app).text());
-                    if rng.gen() {
-                        let buffer = buffer.read(app);
-
-                        let fold_count = rng.gen_range(1..=5);
-                        let mut fold_ranges: Vec<Range<usize>> = Vec::new();
-                        for _ in 0..fold_count {
-                            let end = rng.gen_range(0..buffer.len() + 1);
-                            let start = rng.gen_range(0..end + 1);
-                            fold_ranges.push(start..end);
+                    match rng.gen_range(0..=100) {
+                        0..=34 => {
+                            let buffer = buffer.read(app);
+                            let mut to_fold = Vec::new();
+                            for _ in 0..rng.gen_range(1..=5) {
+                                let end = rng.gen_range(0..=buffer.len());
+                                let start = rng.gen_range(0..=end);
+                                to_fold.push(start..end);
+                            }
+                            log::info!("folding {:?}", to_fold);
+                            map.fold(to_fold, app.as_ref()).unwrap();
                         }
-                        log::info!("folding {:?}", fold_ranges);
-                        map.fold(fold_ranges.clone(), app.as_ref()).unwrap();
-                    } else {
-                        let edits = buffer.update(app, |buffer, ctx| {
-                            let start_version = buffer.version.clone();
-                            let edit_count = rng.gen_range(1..=5);
-                            buffer.randomly_edit(&mut rng, edit_count, Some(ctx));
-                            buffer.edits_since(start_version).collect::<Vec<_>>()
-                        });
-                        log::info!("editing {:?}", edits);
+                        35..=59 if !map.folds.is_empty() => {
+                            let buffer = buffer.read(app);
+                            let mut to_unfold = Vec::new();
+                            for _ in 0..rng.gen_range(1..=3) {
+                                let end = rng.gen_range(0..=buffer.len());
+                                let start = rng.gen_range(0..=end);
+                                to_unfold.push(start..end);
+                            }
+                            log::info!("unfolding {:?}", to_unfold);
+                            map.unfold(to_unfold, app.as_ref()).unwrap();
+                        }
+                        _ => {
+                            let edits = buffer.update(app, |buffer, ctx| {
+                                let start_version = buffer.version.clone();
+                                let edit_count = rng.gen_range(1..=5);
+                                buffer.randomly_edit(&mut rng, edit_count, Some(ctx));
+                                buffer.edits_since(start_version).collect::<Vec<_>>()
+                            });
+                            log::info!("editing {:?}", edits);
+                        }
                     }
                     map.check_invariants(app.as_ref());
 
