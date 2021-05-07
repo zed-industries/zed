@@ -5,10 +5,10 @@ members = ["zed", "gpui", "fsevent", "scoped_pool"]
 async-task = {git = "https://github.com/zed-industries/async-task", rev = "341b57d6de98cdfd7b418567b8de2022ca993a6e"}
 
 # TODO - Remove when a version is released with this PR: https://github.com/servo/core-foundation-rs/pull/457
-cocoa = {git = "https://github.com/zed-industries/core-foundation-rs", rev = "39e1e0eeef11a17cf49aa6a500c37e665d967d2a"}
-cocoa-foundation = {git = "https://github.com/zed-industries/core-foundation-rs", rev = "39e1e0eeef11a17cf49aa6a500c37e665d967d2a"}
-core-foundation = {git = "https://github.com/zed-industries/core-foundation-rs", rev = "39e1e0eeef11a17cf49aa6a500c37e665d967d2a"}
-core-graphics = {git = "https://github.com/zed-industries/core-foundation-rs", rev = "39e1e0eeef11a17cf49aa6a500c37e665d967d2a"}
+cocoa = {git = "https://github.com/servo/core-foundation-rs", rev = "025dcb3c0d1ef01530f57ef65f3b1deb948f5737"}
+cocoa-foundation = {git = "https://github.com/servo/core-foundation-rs", rev = "025dcb3c0d1ef01530f57ef65f3b1deb948f5737"}
+core-foundation = {git = "https://github.com/servo/core-foundation-rs", rev = "025dcb3c0d1ef01530f57ef65f3b1deb948f5737"}
+core-graphics = {git = "https://github.com/servo/core-foundation-rs", rev = "025dcb3c0d1ef01530f57ef65f3b1deb948f5737"}
 
 [profile.dev]
 split-debuginfo = "unpacked"
