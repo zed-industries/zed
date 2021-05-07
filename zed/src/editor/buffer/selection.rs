@@ -75,6 +75,7 @@ impl Selection {
 
     pub fn buffer_rows_for_display_rows(
         &self,
+        expand_if_ends_at_line_start: bool,
         map: &DisplayMap,
         ctx: &AppContext,
     ) -> (Range<u32>, Range<u32>) {
@@ -84,7 +85,8 @@ impl Selection {
             .unwrap();
 
         let mut display_end = self.end.to_display_point(map, ctx).unwrap();
-        if display_end.row() != map.max_point(ctx).row()
+        if !expand_if_ends_at_line_start
+            && display_end.row() != map.max_point(ctx).row()
             && display_start.row() != display_end.row()
             && display_end.column() == 0
         {
