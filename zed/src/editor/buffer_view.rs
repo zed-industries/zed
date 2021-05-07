@@ -140,6 +140,11 @@ pub fn init(app: &mut MutableAppContext) {
         Binding::new("cmd-shift-down", "buffer:select_to_end", Some("BufferView")),
         Binding::new("cmd-a", "buffer:select_all", Some("BufferView")),
         Binding::new("cmd-l", "buffer:select_line", Some("BufferView")),
+        Binding::new(
+            "cmd-shift-L",
+            "buffer:split_selection_into_lines",
+            Some("BufferView"),
+        ),
         Binding::new("pageup", "buffer:page_up", Some("BufferView")),
         Binding::new("pagedown", "buffer:page_down", Some("BufferView")),
         Binding::new("alt-cmd-[", "buffer:fold", Some("BufferView")),
@@ -231,6 +236,10 @@ pub fn init(app: &mut MutableAppContext) {
     app.add_action("buffer:select_to_end", BufferView::select_to_end);
     app.add_action("buffer:select_all", BufferView::select_all);
     app.add_action("buffer:select_line", BufferView::select_line);
+    app.add_action(
+        "buffer:split_selection_into_lines",
+        BufferView::split_selection_into_lines,
+    );
     app.add_action("buffer:page_up", BufferView::page_up);
     app.add_action("buffer:page_down", BufferView::page_down);
     app.add_action("buffer:fold", BufferView::fold);
@@ -1680,6 +1689,45 @@ impl BufferView {
             selection.reversed = false;
         }
         self.update_selections(selections, true, ctx);
+    }
+
+    pub fn split_selection_into_lines(&mut self, _: &(), ctx: &mut ViewContext<Self>) {
+        let app = ctx.as_ref();
+        let buffer = self.buffer.read(app);
+
+        let mut to_unfold = Vec::new();
+        let mut new_selections = Vec::new();
+        for selection in self.selections(app) {
+            let range = selection.range(buffer);
+            if range.start.row != range.end.row {
+                new_selections.push(Selection {
+                    start: selection.start.clone(),
+                    end: selection.start.clone(),
+                    reversed: false,
+                    goal_column: None,
+                });
+            }
+            for row in range.start.row + 1..range.end.row {
+                let cursor = buffer
+                    .anchor_before(Point::new(row, buffer.line_len(row).unwrap()))
+                    .unwrap();
+                new_selections.push(Selection {
+                    start: cursor.clone(),
+                    end: cursor,
+                    reversed: false,
+                    goal_column: None,
+                });
+            }
+            new_selections.push(Selection {
+                start: selection.end.clone(),
+                end: selection.end.clone(),
+                reversed: false,
+                goal_column: None,
+            });
+            to_unfold.push(range);
+        }
+        self.unfold_ranges(to_unfold, ctx);
+        self.update_selections(new_selections, true, ctx);
     }
 
     pub fn selections_in_range<'a>(
@@ -3345,6 +3393,81 @@ mod tests {
             assert_eq!(
                 view.read(app).selection_ranges(app.as_ref()),
                 vec![DisplayPoint::new(0, 0)..DisplayPoint::new(5, 5)]
+            );
+        });
+    }
+
+    #[test]
+    fn test_split_selection_into_lines() {
+        App::test((), |app| {
+            let settings = settings::channel(&app.font_cache()).unwrap().1;
+            let buffer = app.add_model(|_| Buffer::new(0, sample_text(9, 5)));
+            let (_, view) =
+                app.add_window(|ctx| BufferView::for_buffer(buffer, None, settings, ctx));
+            view.update(app, |view, ctx| {
+                view.fold_ranges(
+                    vec![
+                        Point::new(0, 2)..Point::new(1, 2),
+                        Point::new(2, 3)..Point::new(4, 1),
+                        Point::new(7, 0)..Point::new(8, 4),
+                    ],
+                    ctx,
+                );
+                view.select_display_ranges(
+                    &[
+                        DisplayPoint::new(0, 0)..DisplayPoint::new(0, 1),
+                        DisplayPoint::new(0, 2)..DisplayPoint::new(0, 2),
+                        DisplayPoint::new(1, 0)..DisplayPoint::new(1, 0),
+                        DisplayPoint::new(4, 2)..DisplayPoint::new(4, 2),
+                    ],
+                    ctx,
+                )
+                .unwrap();
+            });
+            assert_eq!(
+                view.read(app).text(app.as_ref()),
+                "aa…bbb\nccc…eeee\nfffff\nggggg\n…i"
+            );
+
+            view.update(app, |view, ctx| view.split_selection_into_lines(&(), ctx));
+            assert_eq!(
+                view.read(app).text(app.as_ref()),
+                "aa…bbb\nccc…eeee\nfffff\nggggg\n…i"
+            );
+            assert_eq!(
+                view.read(app).selection_ranges(app.as_ref()),
+                [
+                    DisplayPoint::new(0, 1)..DisplayPoint::new(0, 1),
+                    DisplayPoint::new(0, 2)..DisplayPoint::new(0, 2),
+                    DisplayPoint::new(1, 0)..DisplayPoint::new(1, 0),
+                    DisplayPoint::new(4, 2)..DisplayPoint::new(4, 2)
+                ]
+            );
+
+            view.update(app, |view, ctx| {
+                view.select_display_ranges(
+                    &[DisplayPoint::new(0, 1)..DisplayPoint::new(4, 0)],
+                    ctx,
+                )
+                .unwrap();
+                view.split_selection_into_lines(&(), ctx);
+            });
+            assert_eq!(
+                view.read(app).text(app.as_ref()),
+                "aaaaa\nbbbbb\nccccc\nddddd\neeeee\nfffff\nggggg\n…i"
+            );
+            assert_eq!(
+                view.read(app).selection_ranges(app.as_ref()),
+                [
+                    DisplayPoint::new(0, 1)..DisplayPoint::new(0, 1),
+                    DisplayPoint::new(1, 5)..DisplayPoint::new(1, 5),
+                    DisplayPoint::new(2, 5)..DisplayPoint::new(2, 5),
+                    DisplayPoint::new(3, 5)..DisplayPoint::new(3, 5),
+                    DisplayPoint::new(4, 5)..DisplayPoint::new(4, 5),
+                    DisplayPoint::new(5, 5)..DisplayPoint::new(5, 5),
+                    DisplayPoint::new(6, 5)..DisplayPoint::new(6, 5),
+                    DisplayPoint::new(7, 0)..DisplayPoint::new(7, 0)
+                ]
             );
         });
     }
