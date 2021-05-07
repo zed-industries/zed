@@ -960,11 +960,6 @@ impl MutableAppContext {
 
                     if self.pending_effects.is_empty() {
                         self.flushing_effects = false;
-
-                        for (key, view) in &self.ctx.views {
-                            log::info!("{:?} {}", key, view.ui_name());
-                        }
-
                         break;
                     }
                 }
