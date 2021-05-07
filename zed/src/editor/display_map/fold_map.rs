@@ -192,8 +192,8 @@ impl FoldMap {
         let start = buffer.anchor_before(range.start.to_offset(buffer)?)?;
         let end = buffer.anchor_after(range.end.to_offset(buffer)?)?;
         Ok(self.folds.filter::<_, usize>(move |summary| {
-            start.cmp(&summary.max_end, buffer).unwrap() <= Ordering::Equal
-                && end.cmp(&summary.min_start, buffer).unwrap() >= Ordering::Equal
+            start.cmp(&summary.max_end, buffer).unwrap() == Ordering::Less
+                && end.cmp(&summary.min_start, buffer).unwrap() == Ordering::Greater
         }))
     }
 
@@ -712,7 +712,7 @@ mod tests {
             });
             assert_eq!(map.text(app.as_ref()), "123a…c123456eee");
 
-            map.unfold(Some(Point::new(0, 4)..Point::new(0, 4)), app.as_ref())
+            map.unfold(Some(Point::new(0, 4)..Point::new(0, 5)), app.as_ref())
                 .unwrap();
             assert_eq!(map.text(app.as_ref()), "123aaaaa\nbbbbbb\nccc123456eee");
         });
@@ -833,7 +833,6 @@ mod tests {
                 fold_ranges,
                 vec![
                     Point::new(0, 2)..Point::new(2, 2),
-                    Point::new(0, 4)..Point::new(1, 0),
                     Point::new(1, 2)..Point::new(3, 2)
                 ]
             );
@@ -1007,9 +1006,10 @@ mod tests {
                             .items()
                             .into_iter()
                             .filter(|fold| {
-                                let fold_start = fold.0.start.to_offset(buffer).unwrap();
-                                let fold_end = fold.0.end.to_offset(buffer).unwrap();
-                                start <= fold_end && end >= fold_start
+                                let start = buffer.anchor_before(start).unwrap();
+                                let end = buffer.anchor_after(end).unwrap();
+                                start.cmp(&fold.0.end, buffer).unwrap() == Ordering::Less
+                                    && end.cmp(&fold.0.start, buffer).unwrap() == Ordering::Greater
                             })
                             .map(|fold| fold.0)
                             .collect::<Vec<_>>();
