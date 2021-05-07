@@ -2389,7 +2389,6 @@ impl<T> Handle<T> for ViewHandle<T> {
     }
 }
 
-#[derive(Clone)]
 pub struct AnyViewHandle {
     window_id: usize,
     view_id: usize,
@@ -2421,6 +2420,18 @@ impl AnyViewHandle {
             result
         } else {
             None
+        }
+    }
+}
+
+impl Clone for AnyViewHandle {
+    fn clone(&self) -> Self {
+        self.ref_counts.lock().inc_entity(self.view_id);
+        Self {
+            window_id: self.window_id,
+            view_id: self.view_id,
+            view_type: self.view_type,
+            ref_counts: self.ref_counts.clone(),
         }
     }
 }
