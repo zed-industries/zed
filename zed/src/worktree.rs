@@ -24,7 +24,7 @@ use std::{
     fmt, fs,
     future::Future,
     io::{self, Read, Write},
-    ops::{AddAssign, Deref},
+    ops::Deref,
     os::unix::{ffi::OsStrExt, fs::MetadataExt},
     path::{Path, PathBuf},
     sync::{Arc, Weak},
@@ -249,9 +249,10 @@ impl Snapshot {
 
     #[cfg(test)]
     pub fn paths(&self) -> impl Iterator<Item = &Arc<Path>> {
-        let mut cursor = self.entries.cursor::<(), ()>();
-        cursor.next();
-        cursor.map(|entry| entry.path())
+        self.entries
+            .cursor::<(), ()>()
+            .skip(1)
+            .map(|entry| entry.path())
     }
 
     pub fn visible_files(&self, start: usize) -> FileIter {
@@ -274,7 +275,7 @@ impl Snapshot {
 
     fn entry_for_path(&self, path: impl AsRef<Path>) -> Option<&Entry> {
         let mut cursor = self.entries.cursor::<_, ()>();
-        if cursor.seek(&PathSearch::Exact(path.as_ref()), SeekBias::Left) {
+        if cursor.seek(&PathSearch::Exact(path.as_ref()), SeekBias::Left, &()) {
             cursor.item()
         } else {
             None
@@ -296,7 +297,7 @@ impl Snapshot {
             self.ignores
                 .insert(ignore_dir_path.into(), (Arc::new(ignore), self.scan_id));
         }
-        self.entries.insert(entry);
+        self.entries.insert(entry, &());
     }
 
     fn populate_dir(
@@ -309,7 +310,7 @@ impl Snapshot {
 
         let mut parent_entry = self
             .entries
-            .get(&PathKey(parent_path.clone()))
+            .get(&PathKey(parent_path.clone()), &())
             .unwrap()
             .clone();
         if let Some(ignore) = ignore {
@@ -325,15 +326,15 @@ impl Snapshot {
         for entry in entries {
             edits.push(Edit::Insert(entry));
         }
-        self.entries.edit(edits);
+        self.entries.edit(edits, &());
     }
 
     fn remove_path(&mut self, path: &Path) {
         let new_entries = {
             let mut cursor = self.entries.cursor::<_, ()>();
-            let mut new_entries = cursor.slice(&PathSearch::Exact(path), SeekBias::Left);
-            cursor.seek_forward(&PathSearch::Successor(path), SeekBias::Left);
-            new_entries.push_tree(cursor.suffix());
+            let mut new_entries = cursor.slice(&PathSearch::Exact(path), SeekBias::Left, &());
+            cursor.seek_forward(&PathSearch::Successor(path), SeekBias::Left, &());
+            new_entries.push_tree(cursor.suffix(&()), &());
             new_entries
         };
         self.entries = new_entries;
@@ -535,8 +536,10 @@ impl Default for EntrySummary {
     }
 }
 
-impl<'a> AddAssign<&'a EntrySummary> for EntrySummary {
-    fn add_assign(&mut self, rhs: &'a EntrySummary) {
+impl sum_tree::Summary for EntrySummary {
+    type Context = ();
+
+    fn add_summary(&mut self, rhs: &Self, _: &()) {
         self.max_path = rhs.max_path.clone();
         self.file_count += rhs.file_count;
         self.visible_file_count += rhs.visible_file_count;
@@ -1066,7 +1069,7 @@ impl BackgroundScanner {
                 edits.push(Edit::Insert(entry));
             }
         }
-        self.snapshot.lock().entries.edit(edits);
+        self.snapshot.lock().entries.edit(edits, &());
     }
 
     fn fs_entry_for_path(&self, path: Arc<Path>, abs_path: &Path) -> Result<Option<Entry>> {
@@ -1162,13 +1165,13 @@ pub enum FileIter<'a> {
 impl<'a> FileIter<'a> {
     fn all(snapshot: &'a Snapshot, start: usize) -> Self {
         let mut cursor = snapshot.entries.cursor();
-        cursor.seek(&FileCount(start), SeekBias::Right);
+        cursor.seek(&FileCount(start), SeekBias::Right, &());
         Self::All(cursor)
     }
 
     fn visible(snapshot: &'a Snapshot, start: usize) -> Self {
         let mut cursor = snapshot.entries.cursor();
-        cursor.seek(&VisibleFileCount(start), SeekBias::Right);
+        cursor.seek(&VisibleFileCount(start), SeekBias::Right, &());
         Self::Visible(cursor)
     }
 
@@ -1176,11 +1179,11 @@ impl<'a> FileIter<'a> {
         match self {
             Self::All(cursor) => {
                 let ix = *cursor.start();
-                cursor.seek_forward(&FileCount(ix.0 + 1), SeekBias::Right);
+                cursor.seek_forward(&FileCount(ix.0 + 1), SeekBias::Right, &());
             }
             Self::Visible(cursor) => {
                 let ix = *cursor.start();
-                cursor.seek_forward(&VisibleFileCount(ix.0 + 1), SeekBias::Right);
+                cursor.seek_forward(&VisibleFileCount(ix.0 + 1), SeekBias::Right, &());
             }
         }
     }
@@ -1214,7 +1217,7 @@ struct ChildEntriesIter<'a> {
 impl<'a> ChildEntriesIter<'a> {
     fn new(parent_path: &'a Path, snapshot: &'a Snapshot) -> Self {
         let mut cursor = snapshot.entries.cursor();
-        cursor.seek(&PathSearch::Exact(parent_path), SeekBias::Right);
+        cursor.seek(&PathSearch::Exact(parent_path), SeekBias::Right, &());
         Self {
             parent_path,
             cursor,
@@ -1229,7 +1232,7 @@ impl<'a> Iterator for ChildEntriesIter<'a> {
         if let Some(item) = self.cursor.item() {
             if item.path().starts_with(self.parent_path) {
                 self.cursor
-                    .seek_forward(&PathSearch::Successor(item.path()), SeekBias::Left);
+                    .seek_forward(&PathSearch::Successor(item.path()), SeekBias::Left, &());
                 Some(item)
             } else {
                 None

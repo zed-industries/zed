@@ -58,6 +58,14 @@ pub struct TextSummary {
     pub rightmost_point: Point,
 }
 
+impl sum_tree::Summary for TextSummary {
+    type Context = ();
+
+    fn add_summary(&mut self, other: &Self, _: &()) {
+        *self += other;
+    }
+}
+
 impl<'a> std::ops::AddAssign<&'a Self> for TextSummary {
     fn add_assign(&mut self, other: &'a Self) {
         let joined_line_len = self.lines.column + other.first_line_len;
@@ -85,8 +93,8 @@ impl std::ops::AddAssign<Self> for TextSummary {
 }
 
 impl<'a> sum_tree::Dimension<'a, TextSummary> for TextSummary {
-    fn add_summary(&mut self, summary: &TextSummary) {
-        *self += summary;
+    fn add_summary(&mut self, other: &TextSummary) {
+        *self += other;
     }
 }
 
@@ -157,7 +165,7 @@ impl From<Arc<str>> for Text {
         }
 
         let mut tree = SumTree::new();
-        tree.extend(runs);
+        tree.extend(runs, &());
         Text {
             text,
             runs: tree,
@@ -231,13 +239,14 @@ impl Text {
 
     pub fn line_len(&self, row: u32) -> u32 {
         let mut cursor = self.runs.cursor::<usize, Point>();
-        cursor.seek(&self.range.start, SeekBias::Right);
+        cursor.seek(&self.range.start, SeekBias::Right, &());
         let absolute_row = cursor.start().row + row;
 
         let mut cursor = self.runs.cursor::<Point, usize>();
-        cursor.seek(&Point::new(absolute_row, 0), SeekBias::Right);
+        cursor.seek(&Point::new(absolute_row, 0), SeekBias::Right, &());
         let prefix_len = self.range.start.saturating_sub(*cursor.start());
-        let line_len = cursor.summary::<usize>(&Point::new(absolute_row + 1, 0), SeekBias::Left);
+        let line_len =
+            cursor.summary::<usize>(&Point::new(absolute_row + 1, 0), SeekBias::Left, &());
         let suffix_len = cursor.start().saturating_sub(self.range.end);
 
         line_len
@@ -262,14 +271,15 @@ impl Text {
             candidates.push(Point::new(0, self.line_len(0)));
             if lines.row > 1 {
                 let mut cursor = self.runs.cursor::<usize, Point>();
-                cursor.seek(&self.range.start, SeekBias::Right);
+                cursor.seek(&self.range.start, SeekBias::Right, &());
                 let absolute_start_row = cursor.start().row;
 
                 let mut cursor = self.runs.cursor::<Point, usize>();
-                cursor.seek(&Point::new(absolute_start_row + 1, 0), SeekBias::Right);
+                cursor.seek(&Point::new(absolute_start_row + 1, 0), SeekBias::Right, &());
                 let summary = cursor.summary::<TextSummary>(
                     &Point::new(absolute_start_row + lines.row, 0),
                     SeekBias::Left,
+                    &(),
                 );
 
                 candidates.push(Point::new(1, 0) + &summary.rightmost_point);
@@ -287,7 +297,7 @@ impl Text {
     pub fn offset_for_point(&self, point: Point) -> usize {
         let mut cursor = self.runs.cursor::<Point, TextSummary>();
         let abs_point = self.abs_point_for_offset(self.range.start) + &point;
-        cursor.seek(&abs_point, SeekBias::Right);
+        cursor.seek(&abs_point, SeekBias::Right, &());
         let overshoot = abs_point - &cursor.start().lines;
         let abs_offset = cursor.start().chars + overshoot.column as usize;
         abs_offset - self.range.start
@@ -307,14 +317,14 @@ impl Text {
 
     fn abs_point_for_offset(&self, offset: usize) -> Point {
         let mut cursor = self.runs.cursor::<usize, TextSummary>();
-        cursor.seek(&offset, SeekBias::Right);
+        cursor.seek(&offset, SeekBias::Right, &());
         let overshoot = (offset - cursor.start().chars) as u32;
         cursor.start().lines + &Point::new(0, overshoot)
     }
 
     fn abs_byte_offset_for_offset(&self, offset: usize) -> usize {
         let mut cursor = self.runs.cursor::<usize, TextSummary>();
-        cursor.seek(&offset, SeekBias::Right);
+        cursor.seek(&offset, SeekBias::Right, &());
         let overshoot = offset - cursor.start().chars;
         cursor.start().bytes + overshoot * cursor.item().map_or(0, |run| run.char_size()) as usize
     }
