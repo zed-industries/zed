@@ -67,6 +67,10 @@ pub fn init(app: &mut MutableAppContext) {
         Binding::new("down", "buffer:move_down", Some("BufferView")),
         Binding::new("left", "buffer:move_left", Some("BufferView")),
         Binding::new("right", "buffer:move_right", Some("BufferView")),
+        Binding::new("ctrl-p", "buffer:move_up", Some("BufferView")),
+        Binding::new("ctrl-n", "buffer:move_down", Some("BufferView")),
+        Binding::new("ctrl-b", "buffer:move_left", Some("BufferView")),
+        Binding::new("ctrl-f", "buffer:move_right", Some("BufferView")),
         Binding::new(
             "alt-left",
             "buffer:move_to_previous_word_boundary",
