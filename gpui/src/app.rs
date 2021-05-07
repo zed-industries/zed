@@ -734,6 +734,7 @@ impl MutableAppContext {
         self.pending_flushes += 1;
         let window_id = post_inc(&mut self.next_window_id);
         let root_view = self.add_view(window_id, build_root_view);
+
         self.ctx.windows.insert(
             window_id,
             Window {
@@ -743,6 +744,7 @@ impl MutableAppContext {
             },
         );
         self.open_platform_window(window_id);
+        root_view.update(self, |view, ctx| view.on_focus(ctx));
         self.flush_effects();
 
         (window_id, root_view)
@@ -3186,13 +3188,13 @@ mod tests {
 
     #[test]
     fn test_focus() {
-        #[derive(Default)]
         struct View {
-            events: Vec<String>,
+            name: String,
+            events: Arc<Mutex<Vec<String>>>,
         }
 
         impl Entity for View {
-            type Event = String;
+            type Event = ();
         }
 
         impl super::View for View {
@@ -3204,40 +3206,42 @@ mod tests {
                 "View"
             }
 
-            fn on_focus(&mut self, ctx: &mut ViewContext<Self>) {
-                self.events.push("self focused".into());
-                ctx.emit("focused".into());
+            fn on_focus(&mut self, _: &mut ViewContext<Self>) {
+                self.events.lock().push(format!("{} focused", &self.name));
             }
 
-            fn on_blur(&mut self, ctx: &mut ViewContext<Self>) {
-                self.events.push("self blurred".into());
-                ctx.emit("blurred".into());
+            fn on_blur(&mut self, _: &mut ViewContext<Self>) {
+                self.events.lock().push(format!("{} blurred", &self.name));
             }
         }
 
         App::test((), |app| {
-            let (window_id, view_1) = app.add_window(|_| View::default());
-            let view_2 = app.add_view(window_id, |_| View::default());
-
-            view_1.update(app, |_, ctx| {
-                ctx.subscribe_to_view(&view_2, |view_1, _, event, _| {
-                    view_1.events.push(format!("view 2 {}", event));
-                });
-                ctx.focus(&view_2);
+            let events: Arc<Mutex<Vec<String>>> = Default::default();
+            let (window_id, view_1) = app.add_window(|_| View {
+                events: events.clone(),
+                name: "view 1".to_string(),
+            });
+            let view_2 = app.add_view(window_id, |_| View {
+                events: events.clone(),
+                name: "view 2".to_string(),
             });
 
-            view_1.update(app, |_, ctx| {
-                ctx.focus(&view_1);
-            });
+            view_1.update(app, |_, ctx| ctx.focus(&view_2));
+            view_1.update(app, |_, ctx| ctx.focus(&view_1));
+            view_1.update(app, |_, ctx| ctx.focus(&view_2));
+            view_1.update(app, |_, _| drop(view_2));
 
             assert_eq!(
-                view_1.read(app).events,
+                *events.lock(),
                 [
-                    "self focused".to_string(),
-                    "self blurred".to_string(),
+                    "view 1 focused".to_string(),
+                    "view 1 blurred".to_string(),
                     "view 2 focused".to_string(),
-                    "self focused".to_string(),
                     "view 2 blurred".to_string(),
+                    "view 1 focused".to_string(),
+                    "view 1 blurred".to_string(),
+                    "view 2 focused".to_string(),
+                    "view 1 focused".to_string(),
                 ],
             );
         })
