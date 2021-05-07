@@ -434,7 +434,7 @@ impl Workspace {
         let buffer_view =
             ctx.add_view(|ctx| BufferView::for_buffer(buffer.clone(), self.settings.clone(), ctx));
         self.items.push(ItemHandle::downgrade(&buffer));
-        self.add_item(Box::new(buffer_view), ctx);
+        self.add_item_view(Box::new(buffer_view), ctx);
     }
 
     #[must_use]
@@ -452,30 +452,30 @@ impl Workspace {
             return None;
         }
 
-        let window_id = ctx.window_id();
-        let settings = self.settings.clone();
-
         // Otherwise, if this file is already open somewhere in the workspace,
         // then add another view for it.
-        let mut i = 0;
-        while i < self.items.len() {
-            let item = &self.items[i];
+        let settings = self.settings.clone();
+        let mut view_for_existing_item = None;
+        self.items.retain(|item| {
             if item.alive(ctx.as_ref()) {
-                if item
-                    .file(ctx.as_ref())
-                    .map_or(false, |f| f.entry_id() == entry)
+                if view_for_existing_item.is_none()
+                    && item
+                        .file(ctx.as_ref())
+                        .map_or(false, |f| f.entry_id() == entry)
                 {
-                    self.add_item(
-                        item.add_view(window_id, settings.clone(), ctx.as_mut())
+                    view_for_existing_item = Some(
+                        item.add_view(ctx.window_id(), settings.clone(), ctx.as_mut())
                             .unwrap(),
-                        ctx,
                     );
-                    return None;
                 }
-                i += 1;
+                true
             } else {
-                self.items.remove(i);
+                false
             }
+        });
+        if let Some(view) = view_for_existing_item {
+            self.add_item_view(view, ctx);
+            return None;
         }
 
         let (worktree_id, path) = entry.clone();
@@ -528,10 +528,10 @@ impl Workspace {
                     Ok(item) => {
                         let weak_item = item.downgrade();
                         let view = weak_item
-                            .add_view(window_id, settings, ctx.as_mut())
+                            .add_view(ctx.window_id(), settings, ctx.as_mut())
                             .unwrap();
                         me.items.push(weak_item);
-                        me.add_item(view, ctx);
+                        me.add_item_view(view, ctx);
                     }
                     Err(error) => {
                         log::error!("error opening item: {}", error);
@@ -648,7 +648,7 @@ impl Workspace {
         self.activate_pane(new_pane.clone(), ctx);
         if let Some(item) = pane.read(ctx).active_item() {
             if let Some(clone) = item.clone_on_split(ctx.as_mut()) {
-                self.add_item(clone, ctx);
+                self.add_item_view(clone, ctx);
             }
         }
         self.center
@@ -673,7 +673,7 @@ impl Workspace {
         &self.active_pane
     }
 
-    fn add_item(&self, item: Box<dyn ItemViewHandle>, ctx: &mut ViewContext<Self>) {
+    fn add_item_view(&self, item: Box<dyn ItemViewHandle>, ctx: &mut ViewContext<Self>) {
         let active_pane = self.active_pane();
         item.set_parent_pane(&active_pane, ctx.as_mut());
         active_pane.update(ctx, |pane, ctx| {
