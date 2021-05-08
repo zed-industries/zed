@@ -70,6 +70,7 @@ impl Event {
                         key: unmodified_chars.into(),
                     },
                     chars,
+                    is_held: native_event.isARepeat() == YES,
                 })
             }
             NSEventType::NSLeftMouseDown => {

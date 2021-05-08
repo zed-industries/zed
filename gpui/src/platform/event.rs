@@ -5,6 +5,7 @@ pub enum Event {
     KeyDown {
         keystroke: Keystroke,
         chars: String,
+        is_held: bool,
     },
     ScrollWheel {
         position: Vector2F,

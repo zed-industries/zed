@@ -1,6 +1,7 @@
 use crate::{
     executor,
     geometry::vector::Vector2F,
+    keymap::Keystroke,
     platform::{self, Event, WindowContext},
     Scene,
 };
@@ -130,6 +131,7 @@ struct WindowState {
     scene_to_render: Option<Scene>,
     renderer: Renderer,
     command_queue: metal::CommandQueue,
+    last_fresh_keydown: Option<(Keystroke, String)>,
     layer: id,
 }
 
@@ -189,6 +191,7 @@ impl Window {
                 scene_to_render: Default::default(),
                 renderer: Renderer::new(device.clone(), PIXEL_FORMAT, fonts),
                 command_queue: device.new_command_queue(),
+                last_fresh_keydown: None,
                 layer,
             })));
 
@@ -339,7 +342,7 @@ extern "C" fn handle_view_event(this: &Object, _: Sel, native_event: id) {
     let event = unsafe { Event::from_native(native_event, Some(window_state_borrow.size().y())) };
 
     if let Some(event) = event {
-        match event {
+        match &event {
             Event::LeftMouseDragged { position } => {
                 window_state_borrow.synthetic_drag_counter += 1;
                 window_state_borrow
@@ -347,13 +350,31 @@ extern "C" fn handle_view_event(this: &Object, _: Sel, native_event: id) {
                     .spawn(synthetic_drag(
                         weak_window_state,
                         window_state_borrow.synthetic_drag_counter,
-                        position,
+                        *position,
                     ))
                     .detach();
             }
             Event::LeftMouseUp { .. } => {
                 window_state_borrow.synthetic_drag_counter += 1;
             }
+
+            // Ignore events from held-down keys after some of the initially-pressed keys
+            // were released.
+            Event::KeyDown {
+                chars,
+                keystroke,
+                is_held,
+            } => {
+                let keydown = (keystroke.clone(), chars.clone());
+                if *is_held {
+                    if window_state_borrow.last_fresh_keydown.as_ref() != Some(&keydown) {
+                        return;
+                    }
+                } else {
+                    window_state_borrow.last_fresh_keydown = Some(keydown);
+                }
+            }
+
             _ => {}
         }
 
