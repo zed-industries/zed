@@ -380,12 +380,15 @@ extern "C" fn send_event(this: &Object, _: Sel, native_event: id) {
 
 extern "C" fn close_window(this: &Object, _: Sel) {
     unsafe {
-        let window_state = get_window_state(this);
-        let close_callback = window_state
-            .as_ref()
-            .try_borrow_mut()
-            .ok()
-            .and_then(|mut window_state| window_state.close_callback.take());
+        let close_callback = {
+            let window_state = get_window_state(this);
+            window_state
+                .as_ref()
+                .try_borrow_mut()
+                .ok()
+                .and_then(|mut window_state| window_state.close_callback.take())
+        };
+
         if let Some(callback) = close_callback {
             callback();
         }
