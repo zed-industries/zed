@@ -1,6 +1,6 @@
-use crate::watch;
 use anyhow::Result;
 use gpui::font_cache::{FamilyId, FontCache};
+use postage::watch;
 
 #[derive(Clone)]
 pub struct Settings {
@@ -26,5 +26,5 @@ impl Settings {
 pub fn channel(
     font_cache: &FontCache,
 ) -> Result<(watch::Sender<Settings>, watch::Receiver<Settings>)> {
-    Ok(watch::channel(Settings::new(font_cache)?))
+    Ok(watch::channel_with(Settings::new(font_cache)?))
 }

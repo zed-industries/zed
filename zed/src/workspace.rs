@@ -4,7 +4,6 @@ use crate::{
     editor::{Buffer, BufferView},
     settings::Settings,
     time::ReplicaId,
-    watch::{self, Receiver},
     worktree::{FileHandle, Worktree, WorktreeHandle},
 };
 use futures_core::{future::LocalBoxFuture, Future};
@@ -16,6 +15,7 @@ use gpui::{
 use log::error;
 pub use pane::*;
 pub use pane_group::*;
+use postage::watch;
 use smol::prelude::*;
 use std::{collections::HashMap, path::PathBuf};
 use std::{
@@ -43,7 +43,7 @@ pub struct OpenParams {
     pub settings: watch::Receiver<Settings>,
 }
 
-fn open(settings: &Receiver<Settings>, ctx: &mut MutableAppContext) {
+fn open(settings: &watch::Receiver<Settings>, ctx: &mut MutableAppContext) {
     let settings = settings.clone();
     ctx.prompt_for_paths(
         PathPromptOptions {
@@ -182,7 +182,7 @@ impl<T: Item> WeakItemHandle for WeakModelHandle<T> {
     fn add_view(
         &self,
         window_id: usize,
-        settings: Receiver<Settings>,
+        settings: watch::Receiver<Settings>,
         ctx: &mut MutableAppContext,
     ) -> Option<Box<dyn ItemViewHandle>> {
         if let Some(handle) = self.upgrade(ctx.as_ref()) {

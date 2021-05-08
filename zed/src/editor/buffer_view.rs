@@ -2,7 +2,7 @@ use super::{
     buffer, movement, Anchor, Bias, Buffer, BufferElement, DisplayMap, DisplayPoint, Point,
     Selection, SelectionSetId, ToOffset, ToPoint,
 };
-use crate::{settings::Settings, watch, workspace, worktree::FileHandle};
+use crate::{settings::Settings, workspace, worktree::FileHandle};
 use anyhow::Result;
 use futures_core::future::LocalBoxFuture;
 use gpui::{
@@ -11,6 +11,7 @@ use gpui::{
     MutableAppContext, TextLayoutCache, View, ViewContext, WeakViewHandle,
 };
 use parking_lot::Mutex;
+use postage::watch;
 use serde::{Deserialize, Serialize};
 use smallvec::SmallVec;
 use smol::Timer;
@@ -300,15 +301,9 @@ impl BufferView {
         settings: watch::Receiver<Settings>,
         ctx: &mut ViewContext<Self>,
     ) -> Self {
-        settings.notify_view_on_change(ctx);
-
         ctx.observe_model(&buffer, Self::on_buffer_changed);
         ctx.subscribe_to_model(&buffer, Self::on_buffer_event);
-        let display_map = DisplayMap::new(
-            buffer.clone(),
-            smol::block_on(settings.read()).tab_size,
-            ctx.as_ref(),
-        );
+        let display_map = DisplayMap::new(buffer.clone(), settings.borrow().tab_size, ctx.as_ref());
 
         let (selection_set_id, _) = buffer.update(ctx, |buffer, ctx| {
             buffer.add_selection_set(
@@ -1989,31 +1984,31 @@ impl BufferView {
     }
 
     pub fn font_size(&self) -> f32 {
-        smol::block_on(self.settings.read()).buffer_font_size
+        self.settings.borrow().buffer_font_size
     }
 
     pub fn font_ascent(&self, font_cache: &FontCache) -> f32 {
-        let settings = smol::block_on(self.settings.read());
+        let settings = self.settings.borrow();
         let font_id = font_cache.default_font(settings.buffer_font_family);
         let ascent = font_cache.metric(font_id, |m| m.ascent);
         font_cache.scale_metric(ascent, font_id, settings.buffer_font_size)
     }
 
     pub fn font_descent(&self, font_cache: &FontCache) -> f32 {
-        let settings = smol::block_on(self.settings.read());
+        let settings = self.settings.borrow();
         let font_id = font_cache.default_font(settings.buffer_font_family);
         let ascent = font_cache.metric(font_id, |m| m.descent);
         font_cache.scale_metric(ascent, font_id, settings.buffer_font_size)
     }
 
     pub fn line_height(&self, font_cache: &FontCache) -> f32 {
-        let settings = smol::block_on(self.settings.read());
+        let settings = self.settings.borrow();
         let font_id = font_cache.default_font(settings.buffer_font_family);
         font_cache.line_height(font_id, settings.buffer_font_size)
     }
 
     pub fn em_width(&self, font_cache: &FontCache) -> f32 {
-        let settings = smol::block_on(self.settings.read());
+        let settings = self.settings.borrow();
         let font_id = font_cache.default_font(settings.buffer_font_family);
         font_cache.em_width(font_id, settings.buffer_font_size)
     }
@@ -2025,7 +2020,7 @@ impl BufferView {
         layout_cache: &TextLayoutCache,
         app: &AppContext,
     ) -> Result<f32> {
-        let settings = smol::block_on(self.settings.read());
+        let settings = self.settings.borrow();
         let font_size = settings.buffer_font_size;
         let font_id =
             font_cache.select_font(settings.buffer_font_family, &FontProperties::new())?;
@@ -2050,7 +2045,7 @@ impl BufferView {
         layout_cache: &TextLayoutCache,
         ctx: &AppContext,
     ) -> Result<Vec<Arc<text_layout::Line>>> {
-        let settings = smol::block_on(self.settings.read());
+        let settings = self.settings.borrow();
         let font_size = settings.buffer_font_size;
         let font_id =
             font_cache.select_font(settings.buffer_font_family, &FontProperties::new())?;
@@ -2094,7 +2089,7 @@ impl BufferView {
             return Ok(Vec::new());
         }
 
-        let settings = smol::block_on(self.settings.read());
+        let settings = self.settings.borrow();
         let font_id =
             font_cache.select_font(settings.buffer_font_family, &FontProperties::new())?;
         let font_size = settings.buffer_font_size;
@@ -2132,7 +2127,7 @@ impl BufferView {
         layout_cache: &TextLayoutCache,
         app: &AppContext,
     ) -> Result<Arc<text_layout::Line>> {
-        let settings = smol::block_on(self.settings.read());
+        let settings = self.settings.borrow();
         let font_id =
             font_cache.select_font(settings.buffer_font_family, &FontProperties::new())?;
 
@@ -2226,8 +2221,8 @@ impl Entity for BufferView {
 }
 
 impl View for BufferView {
-    fn render<'a>(&self, app: &AppContext) -> ElementBox {
-        BufferElement::new(self.handle.upgrade(app).unwrap()).boxed()
+    fn render<'a>(&self, _: &AppContext) -> ElementBox {
+        BufferElement::new(self.handle.clone()).boxed()
     }
 
     fn ui_name() -> &'static str {

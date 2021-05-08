@@ -9,7 +9,7 @@ use gpui::{
     json::{self, ToJson},
     text_layout::{self, TextLayoutCache},
     AfterLayoutContext, AppContext, Border, Element, Event, EventContext, FontCache, LayoutContext,
-    PaintContext, Quad, Scene, SizeConstraint, ViewHandle,
+    PaintContext, Quad, Scene, SizeConstraint, WeakViewHandle,
 };
 use json::json;
 use smallvec::SmallVec;
@@ -20,12 +20,16 @@ use std::{
 };
 
 pub struct BufferElement {
-    view: ViewHandle<BufferView>,
+    view: WeakViewHandle<BufferView>,
 }
 
 impl BufferElement {
-    pub fn new(view: ViewHandle<BufferView>) -> Self {
+    pub fn new(view: WeakViewHandle<BufferView>) -> Self {
         Self { view }
+    }
+
+    fn view<'a>(&self, ctx: &'a AppContext) -> &'a BufferView {
+        self.view.upgrade(ctx).unwrap().read(ctx)
     }
 
     fn mouse_down(
@@ -37,7 +41,7 @@ impl BufferElement {
         ctx: &mut EventContext,
     ) -> bool {
         if paint.text_bounds.contains_point(position) {
-            let view = self.view.read(ctx.app);
+            let view = self.view(ctx.app);
             let position =
                 paint.point_for_position(view, layout, position, ctx.font_cache, ctx.app);
             ctx.dispatch_action("buffer:select", SelectAction::Begin { position, add: cmd });
@@ -48,7 +52,7 @@ impl BufferElement {
     }
 
     fn mouse_up(&self, _position: Vector2F, ctx: &mut EventContext) -> bool {
-        if self.view.read(ctx.app).is_selecting() {
+        if self.view(ctx.app).is_selecting() {
             ctx.dispatch_action("buffer:select", SelectAction::End);
             true
         } else {
@@ -63,7 +67,7 @@ impl BufferElement {
         paint: &mut PaintState,
         ctx: &mut EventContext,
     ) -> bool {
-        let view = self.view.read(ctx.app);
+        let view = self.view(ctx.app);
 
         if view.is_selecting() {
             let rect = paint.text_bounds;
@@ -116,7 +120,9 @@ impl BufferElement {
     }
 
     fn key_down(&self, chars: &str, ctx: &mut EventContext) -> bool {
-        if self.view.is_focused(ctx.app) {
+        let view = self.view.upgrade(ctx.app).unwrap();
+
+        if view.is_focused(ctx.app) {
             if chars.is_empty() {
                 false
             } else {
@@ -145,7 +151,7 @@ impl BufferElement {
             return false;
         }
 
-        let view = self.view.read(ctx.app);
+        let view = self.view(ctx.app);
         let font_cache = &ctx.font_cache;
         let layout_cache = &ctx.text_layout_cache;
         let max_glyph_width = view.em_width(font_cache);
@@ -167,7 +173,7 @@ impl BufferElement {
     }
 
     fn paint_gutter(&mut self, rect: RectF, layout: &LayoutState, ctx: &mut PaintContext) {
-        let view = self.view.read(ctx.app);
+        let view = self.view(ctx.app);
         let line_height = view.line_height(ctx.font_cache);
         let scroll_top = view.scroll_position().y() * line_height;
 
@@ -197,7 +203,7 @@ impl BufferElement {
     }
 
     fn paint_text(&mut self, bounds: RectF, layout: &LayoutState, ctx: &mut PaintContext) {
-        let view = self.view.read(ctx.app);
+        let view = self.view(ctx.app);
         let line_height = view.line_height(ctx.font_cache);
         let descent = view.font_descent(ctx.font_cache);
         let start_row = view.scroll_position().y() as u32;
@@ -313,14 +319,14 @@ impl Element for BufferElement {
         let app = ctx.app;
         let mut size = constraint.max;
         if size.y().is_infinite() {
-            let view = self.view.read(app);
+            let view = self.view(app);
             size.set_y((view.max_point(app).row() + 1) as f32 * view.line_height(ctx.font_cache));
         }
         if size.x().is_infinite() {
             unimplemented!("we don't yet handle an infinite width constraint on buffer elements");
         }
 
-        let view = self.view.read(app);
+        let view = self.view(app);
         let font_cache = &ctx.font_cache;
         let layout_cache = &ctx.text_layout_cache;
         let line_height = view.line_height(font_cache);
@@ -404,7 +410,7 @@ impl Element for BufferElement {
         if let Some(layout) = layout {
             let app = ctx.app.as_ref();
 
-            let view = self.view.read(app);
+            let view = self.view(app);
             view.clamp_scroll_left(
                 layout
                     .scroll_max(view, ctx.font_cache, ctx.text_layout_cache, app)
@@ -437,7 +443,7 @@ impl Element for BufferElement {
                 layout.text_size,
             );
 
-            if self.view.read(ctx.app).is_gutter_visible() {
+            if self.view(ctx.app).is_gutter_visible() {
                 self.paint_gutter(gutter_bounds, layout, ctx);
             }
             self.paint_text(text_bounds, layout, ctx);

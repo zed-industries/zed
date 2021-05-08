@@ -1,8 +1,9 @@
-use crate::{settings::Settings, watch::Receiver};
+use crate::settings::Settings;
 use gpui::{Menu, MenuItem};
+use postage::watch;
 
 #[cfg(target_os = "macos")]
-pub fn menus(settings: Receiver<Settings>) -> Vec<Menu<'static>> {
+pub fn menus(settings: watch::Receiver<Settings>) -> Vec<Menu<'static>> {
     vec![
         Menu {
             name: "Zed",
