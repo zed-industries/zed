@@ -17,6 +17,7 @@ use smallvec::SmallVec;
 use smol::Timer;
 use std::{
     cmp::{self, Ordering},
+    collections::HashSet,
     fmt::Write,
     iter::FromIterator,
     mem,
@@ -287,6 +288,7 @@ pub struct BufferView {
     selection_set_id: SelectionSetId,
     pending_selection: Option<Selection>,
     next_selection_id: usize,
+    add_selections_state: Option<AddSelectionsState>,
     scroll_position: Mutex<Vector2F>,
     autoscroll_requested: Mutex<bool>,
     settings: watch::Receiver<Settings>,
@@ -295,6 +297,11 @@ pub struct BufferView {
     blink_epoch: usize,
     blinking_paused: bool,
     single_line: bool,
+}
+
+struct AddSelectionsState {
+    above: bool,
+    stack: Vec<HashSet<usize>>,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -340,6 +347,7 @@ impl BufferView {
             selection_set_id,
             pending_selection: None,
             next_selection_id,
+            add_selections_state: None,
             scroll_position: Mutex::new(Vector2F::zero()),
             autoscroll_requested: Mutex::new(false),
             settings,
@@ -1773,110 +1781,103 @@ impl BufferView {
     }
 
     pub fn add_cursor_above(&mut self, _: &(), ctx: &mut ViewContext<Self>) {
-        use super::RangeExt;
-
-        let app = ctx.as_ref();
-        let buffer = self.buffer.read(app);
-
-        let mut new_selections = Vec::new();
-        for selection in self.selections(app) {
-            let range = selection.display_range(&self.display_map, app).sorted();
-
-            let start_column;
-            let end_column;
-            if let SelectionGoal::ColumnRange { start, end } = selection.goal {
-                start_column = start;
-                end_column = end;
-            } else {
-                start_column = cmp::min(range.start.column(), range.end.column());
-                end_column = cmp::max(range.start.column(), range.end.column());
-            }
-            let is_empty = start_column == end_column;
-
-            for row in (0..range.start.row()).rev() {
-                let line_len = self.display_map.line_len(row, app).unwrap();
-                if start_column < line_len || (is_empty && start_column == line_len) {
-                    let start = DisplayPoint::new(row, start_column);
-                    let end = DisplayPoint::new(row, cmp::min(end_column, line_len));
-                    new_selections.push(Selection {
-                        id: post_inc(&mut self.next_selection_id),
-                        start: self
-                            .display_map
-                            .anchor_before(start, Bias::Left, app)
-                            .unwrap(),
-                        end: self
-                            .display_map
-                            .anchor_before(end, Bias::Left, app)
-                            .unwrap(),
-                        reversed: selection.reversed && range.start.row() == range.end.row(),
-                        goal: SelectionGoal::ColumnRange {
-                            start: start_column,
-                            end: end_column,
-                        },
-                    });
-                    break;
-                }
-            }
-
-            new_selections.push(selection.clone());
-        }
-
-        new_selections.sort_unstable_by(|a, b| a.start.cmp(&b.start, buffer).unwrap());
-        self.update_selections(new_selections, true, ctx);
+        self.add_cursor(true, ctx);
     }
 
     pub fn add_cursor_below(&mut self, _: &(), ctx: &mut ViewContext<Self>) {
+        self.add_cursor(false, ctx);
+    }
+
+    pub fn add_cursor(&mut self, above: bool, ctx: &mut ViewContext<Self>) {
         use super::RangeExt;
 
         let app = ctx.as_ref();
         let buffer = self.buffer.read(app);
-        let max_point = self.display_map.max_point(app);
+        let selections = self.selections(app);
+        let mut state = self
+            .add_selections_state
+            .take()
+            .unwrap_or_else(|| AddSelectionsState {
+                above,
+                stack: vec![selections.iter().map(|s| s.id).collect()],
+            });
 
+        let last_added_selections = state.stack.last().unwrap();
         let mut new_selections = Vec::new();
-        for selection in self.selections(app) {
-            let range = selection.display_range(&self.display_map, app).sorted();
+        if above == state.above {
+            let mut added_selections = HashSet::new();
+            for selection in selections {
+                if last_added_selections.contains(&selection.id) {
+                    let range = selection.display_range(&self.display_map, app).sorted();
 
-            let start_column;
-            let end_column;
-            if let SelectionGoal::ColumnRange { start, end } = selection.goal {
-                start_column = start;
-                end_column = end;
-            } else {
-                start_column = cmp::min(range.start.column(), range.end.column());
-                end_column = cmp::max(range.start.column(), range.end.column());
-            }
-            let is_empty = start_column == end_column;
+                    let mut row = range.start.row();
+                    let start_column;
+                    let end_column;
+                    if let SelectionGoal::ColumnRange { start, end } = selection.goal {
+                        start_column = start;
+                        end_column = end;
+                    } else {
+                        start_column = cmp::min(range.start.column(), range.end.column());
+                        end_column = cmp::max(range.start.column(), range.end.column());
+                    }
+                    let is_empty = start_column == end_column;
 
-            for row in range.end.row() + 1..=max_point.row() {
-                let line_len = self.display_map.line_len(row, app).unwrap();
-                if start_column < line_len || (is_empty && start_column == line_len) {
-                    let start = DisplayPoint::new(row, start_column);
-                    let end = DisplayPoint::new(row, cmp::min(end_column, line_len));
-                    new_selections.push(Selection {
-                        id: post_inc(&mut self.next_selection_id),
-                        start: self
-                            .display_map
-                            .anchor_before(start, Bias::Left, app)
-                            .unwrap(),
-                        end: self
-                            .display_map
-                            .anchor_before(end, Bias::Left, app)
-                            .unwrap(),
-                        reversed: selection.reversed && range.start.row() == range.end.row(),
-                        goal: SelectionGoal::ColumnRange {
-                            start: start_column,
-                            end: end_column,
-                        },
-                    });
-                    break;
+                    while row > 0 && row < self.display_map.max_point(app).row() {
+                        if above {
+                            row -= 1;
+                        } else {
+                            row += 1;
+                        }
+
+                        let line_len = self.display_map.line_len(row, app).unwrap();
+                        if start_column < line_len || (is_empty && start_column == line_len) {
+                            let id = post_inc(&mut self.next_selection_id);
+                            let start = DisplayPoint::new(row, start_column);
+                            let end = DisplayPoint::new(row, cmp::min(end_column, line_len));
+                            new_selections.push(Selection {
+                                id,
+                                start: self
+                                    .display_map
+                                    .anchor_before(start, Bias::Left, app)
+                                    .unwrap(),
+                                end: self
+                                    .display_map
+                                    .anchor_before(end, Bias::Left, app)
+                                    .unwrap(),
+                                reversed: selection.reversed
+                                    && range.start.row() == range.end.row(),
+                                goal: SelectionGoal::ColumnRange {
+                                    start: start_column,
+                                    end: end_column,
+                                },
+                            });
+                            added_selections.insert(id);
+                            break;
+                        }
+                    }
                 }
+
+                new_selections.push(selection.clone());
             }
 
-            new_selections.push(selection.clone());
+            if !added_selections.is_empty() {
+                state.stack.push(added_selections);
+            }
+            new_selections.sort_unstable_by(|a, b| a.start.cmp(&b.start, buffer).unwrap());
+        } else {
+            new_selections.extend(
+                selections
+                    .into_iter()
+                    .filter(|s| !last_added_selections.contains(&s.id))
+                    .cloned(),
+            );
+            state.stack.pop();
         }
 
-        new_selections.sort_unstable_by(|a, b| a.start.cmp(&b.start, buffer).unwrap());
         self.update_selections(new_selections, true, ctx);
+        if state.stack.len() > 1 {
+            self.add_selections_state = Some(state);
+        }
     }
 
     pub fn selections_in_range<'a>(
@@ -1967,6 +1968,8 @@ impl BufferView {
             *self.autoscroll_requested.lock() = true;
             ctx.notify();
         }
+
+        self.add_selections_state = None;
     }
 
     fn start_transaction(&self, ctx: &mut ViewContext<Self>) {
