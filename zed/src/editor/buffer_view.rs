@@ -558,7 +558,11 @@ impl BufferView {
                 self.update_selections(vec![pending_selection], true, ctx);
             }
         } else {
-            let oldest_selection = selections.iter().min_by_key(|s| s.id).unwrap().clone();
+            let mut oldest_selection = selections.iter().min_by_key(|s| s.id).unwrap().clone();
+            if selections.len() == 1 {
+                oldest_selection.start = oldest_selection.head().clone();
+                oldest_selection.end = oldest_selection.head().clone();
+            }
             self.update_selections(vec![oldest_selection], true, ctx);
         }
     }
