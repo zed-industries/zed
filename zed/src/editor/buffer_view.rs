@@ -153,12 +153,12 @@ pub fn init(app: &mut MutableAppContext) {
         ),
         Binding::new(
             "ctrl-shift-up",
-            "buffer:add_cursor_above",
+            "buffer:add_selection_above",
             Some("BufferView"),
         ),
         Binding::new(
             "ctrl-shift-down",
-            "buffer:add_cursor_below",
+            "buffer:add_selection_below",
             Some("BufferView"),
         ),
         Binding::new("pageup", "buffer:page_up", Some("BufferView")),
@@ -257,8 +257,14 @@ pub fn init(app: &mut MutableAppContext) {
         "buffer:split_selection_into_lines",
         BufferView::split_selection_into_lines,
     );
-    app.add_action("buffer:add_cursor_above", BufferView::add_cursor_above);
-    app.add_action("buffer:add_cursor_below", BufferView::add_cursor_below);
+    app.add_action(
+        "buffer:add_selection_above",
+        BufferView::add_selection_above,
+    );
+    app.add_action(
+        "buffer:add_selection_below",
+        BufferView::add_selection_below,
+    );
     app.add_action("buffer:page_up", BufferView::page_up);
     app.add_action("buffer:page_down", BufferView::page_down);
     app.add_action("buffer:fold", BufferView::fold);
@@ -1780,15 +1786,15 @@ impl BufferView {
         self.update_selections(new_selections, true, ctx);
     }
 
-    pub fn add_cursor_above(&mut self, _: &(), ctx: &mut ViewContext<Self>) {
-        self.add_cursor(true, ctx);
+    pub fn add_selection_above(&mut self, _: &(), ctx: &mut ViewContext<Self>) {
+        self.add_selection(true, ctx);
     }
 
-    pub fn add_cursor_below(&mut self, _: &(), ctx: &mut ViewContext<Self>) {
-        self.add_cursor(false, ctx);
+    pub fn add_selection_below(&mut self, _: &(), ctx: &mut ViewContext<Self>) {
+        self.add_selection(false, ctx);
     }
 
-    pub fn add_cursor(&mut self, above: bool, ctx: &mut ViewContext<Self>) {
+    pub fn add_selection(&mut self, above: bool, ctx: &mut ViewContext<Self>) {
         use super::RangeExt;
 
         let app = ctx.as_ref();
