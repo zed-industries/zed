@@ -49,3 +49,4 @@ unindent = "0.1.7"
 icon = ["app-icon@2x.png", "app-icon.png"]
 identifier = "dev.zed.Zed"
 name = "Zed"
+osx_minimum_system_version = "10.14"
