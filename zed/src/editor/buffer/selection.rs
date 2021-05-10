@@ -21,6 +21,7 @@ pub enum SelectionGoal {
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct Selection {
+    pub id: usize,
     pub start: Anchor,
     pub end: Anchor,
     pub reversed: bool,
