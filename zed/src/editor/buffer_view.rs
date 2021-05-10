@@ -1,6 +1,6 @@
 use super::{
     buffer, movement, Anchor, Bias, Buffer, BufferElement, DisplayMap, DisplayPoint, Point,
-    Selection, SelectionSetId, ToOffset, ToPoint,
+    Selection, SelectionGoal, SelectionSetId, ToOffset, ToPoint,
 };
 use crate::{settings::Settings, workspace, worktree::FileHandle};
 use anyhow::Result;
@@ -149,6 +149,16 @@ pub fn init(app: &mut MutableAppContext) {
             "buffer:split_selection_into_lines",
             Some("BufferView"),
         ),
+        Binding::new(
+            "ctrl-shift-up",
+            "buffer:add_cursor_above",
+            Some("BufferView"),
+        ),
+        Binding::new(
+            "ctrl-shift-down",
+            "buffer:add_cursor_below",
+            Some("BufferView"),
+        ),
         Binding::new("pageup", "buffer:page_up", Some("BufferView")),
         Binding::new("pagedown", "buffer:page_down", Some("BufferView")),
         Binding::new("alt-cmd-[", "buffer:fold", Some("BufferView")),
@@ -244,6 +254,8 @@ pub fn init(app: &mut MutableAppContext) {
         "buffer:split_selection_into_lines",
         BufferView::split_selection_into_lines,
     );
+    app.add_action("buffer:add_cursor_above", BufferView::add_cursor_above);
+    app.add_action("buffer:add_cursor_below", BufferView::add_cursor_below);
     app.add_action("buffer:page_up", BufferView::page_up);
     app.add_action("buffer:page_down", BufferView::page_down);
     app.add_action("buffer:fold", BufferView::fold);
@@ -311,7 +323,7 @@ impl BufferView {
                     start: buffer.anchor_before(0).unwrap(),
                     end: buffer.anchor_before(0).unwrap(),
                     reversed: false,
-                    goal_column: None,
+                    goal: SelectionGoal::None,
                 }],
                 Some(ctx),
             )
@@ -483,7 +495,7 @@ impl BufferView {
             start: cursor.clone(),
             end: cursor,
             reversed: false,
-            goal_column: None,
+            goal: SelectionGoal::None,
         };
 
         if !add {
@@ -552,7 +564,7 @@ impl BufferView {
                 start: buffer.anchor_before(start).unwrap(),
                 end: buffer.anchor_before(end).unwrap(),
                 reversed,
-                goal_column: None,
+                goal: SelectionGoal::None,
             });
         }
         self.update_selections(selections, autoscroll, ctx);
@@ -582,7 +594,7 @@ impl BufferView {
                     .display_map
                     .anchor_before(end, Bias::Left, ctx.as_ref())?,
                 reversed,
-                goal_column: None,
+                goal: SelectionGoal::None,
             });
         }
         self.update_selections(selections, false, ctx);
@@ -623,7 +635,7 @@ impl BufferView {
                         start: anchor.clone(),
                         end: anchor,
                         reversed: false,
-                        goal_column: None,
+                        goal: SelectionGoal::None,
                     }
                 })
                 .collect();
@@ -662,7 +674,7 @@ impl BufferView {
                         )
                         .unwrap();
                     selection.set_head(&buffer, cursor);
-                    selection.goal_column = None;
+                    selection.goal = SelectionGoal::None;
                 }
             }
         }
@@ -693,7 +705,7 @@ impl BufferView {
                         )
                         .unwrap();
                     selection.set_head(&buffer, cursor);
-                    selection.goal_column = None;
+                    selection.goal = SelectionGoal::None;
                 }
             }
         }
@@ -774,7 +786,7 @@ impl BufferView {
                 start: anchor.clone(),
                 end: anchor,
                 reversed: false,
-                goal_column: None,
+                goal: SelectionGoal::None,
             })
             .collect();
         self.buffer
@@ -1145,7 +1157,7 @@ impl BufferView {
                             start: new_selection_start.clone(),
                             end: new_selection_start,
                             reversed: false,
-                            goal_column: None,
+                            goal: SelectionGoal::None,
                         });
                     });
                 }
@@ -1196,7 +1208,7 @@ impl BufferView {
                     selection.end = cursor;
                 }
                 selection.reversed = false;
-                selection.goal_column = None;
+                selection.goal = SelectionGoal::None;
             }
         }
         self.update_selections(selections, true, ctx);
@@ -1220,7 +1232,7 @@ impl BufferView {
                     )
                     .unwrap();
                 selection.set_head(&buffer, cursor);
-                selection.goal_column = None;
+                selection.goal = SelectionGoal::None;
             }
         }
         self.update_selections(selections, true, ctx);
@@ -1255,7 +1267,7 @@ impl BufferView {
                     selection.end = cursor;
                 }
                 selection.reversed = false;
-                selection.goal_column = None;
+                selection.goal = SelectionGoal::None;
             }
         }
         self.update_selections(selections, true, ctx);
@@ -1280,7 +1292,7 @@ impl BufferView {
                     )
                     .unwrap();
                 selection.set_head(&buffer, cursor);
-                selection.goal_column = None;
+                selection.goal = SelectionGoal::None;
             }
         }
         self.update_selections(selections, true, ctx);
@@ -1303,18 +1315,18 @@ impl BufferView {
                         .to_display_point(&self.display_map, app)
                         .unwrap();
                     if start != end {
-                        selection.goal_column = None;
+                        selection.goal = SelectionGoal::None;
                     }
 
-                    let (start, goal_column) =
-                        movement::up(&self.display_map, start, selection.goal_column, app).unwrap();
+                    let (start, goal) =
+                        movement::up(&self.display_map, start, selection.goal, app).unwrap();
                     let cursor = self
                         .display_map
                         .anchor_before(start, Bias::Left, app)
                         .unwrap();
                     selection.start = cursor.clone();
                     selection.end = cursor;
-                    selection.goal_column = goal_column;
+                    selection.goal = goal;
                     selection.reversed = false;
                 }
             }
@@ -1332,15 +1344,15 @@ impl BufferView {
                     .head()
                     .to_display_point(&self.display_map, app)
                     .unwrap();
-                let (head, goal_column) =
-                    movement::up(&self.display_map, head, selection.goal_column, app).unwrap();
+                let (head, goal) =
+                    movement::up(&self.display_map, head, selection.goal, app).unwrap();
                 selection.set_head(
                     &buffer,
                     self.display_map
                         .anchor_before(head, Bias::Left, app)
                         .unwrap(),
                 );
-                selection.goal_column = goal_column;
+                selection.goal = goal;
             }
         }
         self.update_selections(selections, true, ctx);
@@ -1363,18 +1375,18 @@ impl BufferView {
                         .to_display_point(&self.display_map, app)
                         .unwrap();
                     if start != end {
-                        selection.goal_column = None;
+                        selection.goal = SelectionGoal::None;
                     }
 
-                    let (start, goal_column) =
-                        movement::down(&self.display_map, end, selection.goal_column, app).unwrap();
+                    let (start, goal) =
+                        movement::down(&self.display_map, end, selection.goal, app).unwrap();
                     let cursor = self
                         .display_map
                         .anchor_before(start, Bias::Right, app)
                         .unwrap();
                     selection.start = cursor.clone();
                     selection.end = cursor;
-                    selection.goal_column = goal_column;
+                    selection.goal = goal;
                     selection.reversed = false;
                 }
             }
@@ -1392,15 +1404,15 @@ impl BufferView {
                     .head()
                     .to_display_point(&self.display_map, app)
                     .unwrap();
-                let (head, goal_column) =
-                    movement::down(&self.display_map, head, selection.goal_column, app).unwrap();
+                let (head, goal) =
+                    movement::down(&self.display_map, head, selection.goal, app).unwrap();
                 selection.set_head(
                     &buffer,
                     self.display_map
                         .anchor_before(head, Bias::Right, app)
                         .unwrap(),
                 );
-                selection.goal_column = goal_column;
+                selection.goal = goal;
             }
         }
         self.update_selections(selections, true, ctx);
@@ -1423,7 +1435,7 @@ impl BufferView {
                 selection.start = anchor.clone();
                 selection.end = anchor;
                 selection.reversed = false;
-                selection.goal_column = None;
+                selection.goal = SelectionGoal::None;
             }
         }
         self.update_selections(selections, true, ctx);
@@ -1445,7 +1457,7 @@ impl BufferView {
                     .anchor_before(new_head, Bias::Left, app)
                     .unwrap();
                 selection.set_head(buffer, anchor);
-                selection.goal_column = None;
+                selection.goal = SelectionGoal::None;
             }
         }
         self.update_selections(selections, true, ctx);
@@ -1475,7 +1487,7 @@ impl BufferView {
                 selection.start = anchor.clone();
                 selection.end = anchor;
                 selection.reversed = false;
-                selection.goal_column = None;
+                selection.goal = SelectionGoal::None;
             }
         }
         self.update_selections(selections, true, ctx);
@@ -1497,7 +1509,7 @@ impl BufferView {
                     .anchor_before(new_head, Bias::Left, app)
                     .unwrap();
                 selection.set_head(buffer, anchor);
-                selection.goal_column = None;
+                selection.goal = SelectionGoal::None;
             }
         }
         self.update_selections(selections, true, ctx);
@@ -1528,7 +1540,7 @@ impl BufferView {
                 selection.start = anchor.clone();
                 selection.end = anchor;
                 selection.reversed = false;
-                selection.goal_column = None;
+                selection.goal = SelectionGoal::None;
             }
         }
         self.update_selections(selections, true, ctx);
@@ -1555,7 +1567,7 @@ impl BufferView {
                     .anchor_before(new_head, Bias::Left, app)
                     .unwrap();
                 selection.set_head(buffer, anchor);
-                selection.goal_column = None;
+                selection.goal = SelectionGoal::None;
             }
         }
         self.update_selections(selections, true, ctx);
@@ -1585,7 +1597,7 @@ impl BufferView {
                 selection.start = anchor.clone();
                 selection.end = anchor;
                 selection.reversed = false;
-                selection.goal_column = None;
+                selection.goal = SelectionGoal::None;
             }
         }
         self.update_selections(selections, true, ctx);
@@ -1607,7 +1619,7 @@ impl BufferView {
                     .anchor_before(new_head, Bias::Left, app)
                     .unwrap();
                 selection.set_head(buffer, anchor);
-                selection.goal_column = None;
+                selection.goal = SelectionGoal::None;
             }
         }
         self.update_selections(selections, true, ctx);
@@ -1627,7 +1639,7 @@ impl BufferView {
             start: cursor.clone(),
             end: cursor,
             reversed: false,
-            goal_column: None,
+            goal: SelectionGoal::None,
         };
         self.update_selections(vec![selection], true, ctx);
     }
@@ -1645,7 +1657,7 @@ impl BufferView {
             start: cursor.clone(),
             end: cursor,
             reversed: false,
-            goal_column: None,
+            goal: SelectionGoal::None,
         };
         self.update_selections(vec![selection], true, ctx);
     }
@@ -1661,7 +1673,7 @@ impl BufferView {
             start: Anchor::Start,
             end: Anchor::End,
             reversed: false,
-            goal_column: None,
+            goal: SelectionGoal::None,
         };
         self.update_selections(vec![selection], false, ctx);
     }
@@ -1697,7 +1709,7 @@ impl BufferView {
                     start: selection.start.clone(),
                     end: selection.start.clone(),
                     reversed: false,
-                    goal_column: None,
+                    goal: SelectionGoal::None,
                 });
             }
             for row in range.start.row + 1..range.end.row {
@@ -1708,18 +1720,123 @@ impl BufferView {
                     start: cursor.clone(),
                     end: cursor,
                     reversed: false,
-                    goal_column: None,
+                    goal: SelectionGoal::None,
                 });
             }
             new_selections.push(Selection {
                 start: selection.end.clone(),
                 end: selection.end.clone(),
                 reversed: false,
-                goal_column: None,
+                goal: SelectionGoal::None,
             });
             to_unfold.push(range);
         }
         self.unfold_ranges(to_unfold, ctx);
+        self.update_selections(new_selections, true, ctx);
+    }
+
+    pub fn add_cursor_above(&mut self, _: &(), ctx: &mut ViewContext<Self>) {
+        use super::RangeExt;
+
+        let app = ctx.as_ref();
+        let buffer = self.buffer.read(app);
+
+        let mut new_selections = Vec::new();
+        for selection in self.selections(app) {
+            let range = selection.display_range(&self.display_map, app).sorted();
+
+            let start_column;
+            let end_column;
+            if let SelectionGoal::ColumnRange { start, end } = selection.goal {
+                start_column = start;
+                end_column = end;
+            } else {
+                start_column = cmp::min(range.start.column(), range.end.column());
+                end_column = cmp::max(range.start.column(), range.end.column());
+            }
+            let is_empty = start_column == end_column;
+
+            for row in (0..range.start.row()).rev() {
+                let line_len = self.display_map.line_len(row, app).unwrap();
+                if start_column < line_len || (is_empty && start_column == line_len) {
+                    let start = DisplayPoint::new(row, start_column);
+                    let end = DisplayPoint::new(row, cmp::min(end_column, line_len));
+                    new_selections.push(Selection {
+                        start: self
+                            .display_map
+                            .anchor_before(start, Bias::Left, app)
+                            .unwrap(),
+                        end: self
+                            .display_map
+                            .anchor_before(end, Bias::Left, app)
+                            .unwrap(),
+                        reversed: selection.reversed && range.start.row() == range.end.row(),
+                        goal: SelectionGoal::ColumnRange {
+                            start: start_column,
+                            end: end_column,
+                        },
+                    });
+                    break;
+                }
+            }
+
+            new_selections.push(selection.clone());
+        }
+
+        new_selections.sort_unstable_by(|a, b| a.start.cmp(&b.start, buffer).unwrap());
+        self.update_selections(new_selections, true, ctx);
+    }
+
+    pub fn add_cursor_below(&mut self, _: &(), ctx: &mut ViewContext<Self>) {
+        use super::RangeExt;
+
+        let app = ctx.as_ref();
+        let buffer = self.buffer.read(app);
+        let max_point = self.display_map.max_point(app);
+
+        let mut new_selections = Vec::new();
+        for selection in self.selections(app) {
+            let range = selection.display_range(&self.display_map, app).sorted();
+
+            let start_column;
+            let end_column;
+            if let SelectionGoal::ColumnRange { start, end } = selection.goal {
+                start_column = start;
+                end_column = end;
+            } else {
+                start_column = cmp::min(range.start.column(), range.end.column());
+                end_column = cmp::max(range.start.column(), range.end.column());
+            }
+            let is_empty = start_column == end_column;
+
+            for row in range.end.row() + 1..=max_point.row() {
+                let line_len = self.display_map.line_len(row, app).unwrap();
+                if start_column < line_len || (is_empty && start_column == line_len) {
+                    let start = DisplayPoint::new(row, start_column);
+                    let end = DisplayPoint::new(row, cmp::min(end_column, line_len));
+                    new_selections.push(Selection {
+                        start: self
+                            .display_map
+                            .anchor_before(start, Bias::Left, app)
+                            .unwrap(),
+                        end: self
+                            .display_map
+                            .anchor_before(end, Bias::Left, app)
+                            .unwrap(),
+                        reversed: selection.reversed && range.start.row() == range.end.row(),
+                        goal: SelectionGoal::ColumnRange {
+                            start: start_column,
+                            end: end_column,
+                        },
+                    });
+                    break;
+                }
+            }
+
+            new_selections.push(selection.clone());
+        }
+
+        new_selections.sort_unstable_by(|a, b| a.start.cmp(&b.start, buffer).unwrap());
         self.update_selections(new_selections, true, ctx);
     }
 

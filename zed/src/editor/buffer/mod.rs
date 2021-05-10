@@ -3285,14 +3285,14 @@ mod tests {
                         start: self.anchor_before(range.end)?,
                         end: self.anchor_before(range.start)?,
                         reversed: true,
-                        goal_column: None,
+                        goal: SelectionGoal::None,
                     });
                 } else {
                     selections.push(Selection {
                         start: self.anchor_after(range.start)?,
                         end: self.anchor_before(range.end)?,
                         reversed: false,
-                        goal_column: None,
+                        goal: SelectionGoal::None,
                     });
                 }
             }
