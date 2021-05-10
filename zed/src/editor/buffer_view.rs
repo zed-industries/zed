@@ -17,7 +17,6 @@ use smallvec::SmallVec;
 use smol::Timer;
 use std::{
     cmp::{self, Ordering},
-    collections::HashSet,
     fmt::Write,
     iter::FromIterator,
     mem,
@@ -307,7 +306,7 @@ pub struct BufferView {
 
 struct AddSelectionsState {
     above: bool,
-    stack: Vec<HashSet<usize>>,
+    stack: Vec<usize>,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -1799,24 +1798,34 @@ impl BufferView {
 
         let app = ctx.as_ref();
         let buffer = self.buffer.read(app);
-        let selections = self.selections(app);
-        let mut state = self
-            .add_selections_state
-            .take()
-            .unwrap_or_else(|| AddSelectionsState {
+        let mut selections = self.selections(app);
+        let mut state = if let Some(state) = self.add_selections_state.take() {
+            state
+        } else {
+            let (ix, oldest_selection) = selections
+                .iter()
+                .enumerate()
+                .min_by_key(|(_, s)| s.id)
+                .unwrap();
+            selections = &selections[ix..ix + 1];
+            AddSelectionsState {
                 above,
-                stack: vec![selections.iter().map(|s| s.id).collect()],
-            });
+                stack: vec![oldest_selection.id],
+            }
+        };
 
-        let last_added_selections = state.stack.last().unwrap();
+        let last_added_selection = *state.stack.last().unwrap();
         let mut new_selections = Vec::new();
         if above == state.above {
-            let mut added_selections = HashSet::new();
             for selection in selections {
-                if last_added_selections.contains(&selection.id) {
+                if selection.id == last_added_selection {
                     let range = selection.display_range(&self.display_map, app).sorted();
 
-                    let mut row = range.start.row();
+                    let mut row = if above {
+                        range.start.row()
+                    } else {
+                        range.end.row()
+                    };
                     let start_column;
                     let end_column;
                     if let SelectionGoal::ColumnRange { start, end } = selection.goal {
@@ -1857,7 +1866,7 @@ impl BufferView {
                                     end: end_column,
                                 },
                             });
-                            added_selections.insert(id);
+                            state.stack.push(id);
                             break;
                         }
                     }
@@ -1866,15 +1875,12 @@ impl BufferView {
                 new_selections.push(selection.clone());
             }
 
-            if !added_selections.is_empty() {
-                state.stack.push(added_selections);
-            }
             new_selections.sort_unstable_by(|a, b| a.start.cmp(&b.start, buffer).unwrap());
         } else {
             new_selections.extend(
                 selections
                     .into_iter()
-                    .filter(|s| !last_added_selections.contains(&s.id))
+                    .filter(|s| s.id != last_added_selection)
                     .cloned(),
             );
             state.stack.pop();
