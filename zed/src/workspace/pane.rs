@@ -228,6 +228,7 @@ impl Pane {
                                         line_height - 2.,
                                         mouse_state.hovered,
                                         item.is_dirty(ctx),
+                                        item.has_conflict(ctx),
                                         ctx,
                                     ))
                                     .right()
@@ -296,14 +297,24 @@ impl Pane {
         item_id: usize,
         close_icon_size: f32,
         tab_hovered: bool,
-        is_modified: bool,
+        is_dirty: bool,
+        has_conflict: bool,
         ctx: &AppContext,
     ) -> ElementBox {
         enum TabCloseButton {}
 
-        let modified_color = ColorU::from_u32(0x556de8ff);
-        let mut clicked_color = modified_color;
+        let dirty_color = ColorU::from_u32(0x556de8ff);
+        let conflict_color = ColorU::from_u32(0xe45349ff);
+        let mut clicked_color = dirty_color;
         clicked_color.a = 180;
+
+        let current_color = if has_conflict {
+            Some(conflict_color)
+        } else if is_dirty {
+            Some(dirty_color)
+        } else {
+            None
+        };
 
         let icon = if tab_hovered {
             let mut icon = Svg::new("icons/x.svg");
@@ -314,13 +325,13 @@ impl Pane {
                         .with_background_color(if mouse_state.clicked {
                             clicked_color
                         } else {
-                            modified_color
+                            dirty_color
                         })
                         .with_corner_radius(close_icon_size / 2.)
                         .boxed()
                 } else {
-                    if is_modified {
-                        icon = icon.with_color(modified_color);
+                    if let Some(current_color) = current_color {
+                        icon = icon.with_color(current_color);
                     }
                     icon.boxed()
                 }
@@ -331,11 +342,11 @@ impl Pane {
             let diameter = 8.;
             ConstrainedBox::new(
                 Canvas::new(move |bounds, ctx| {
-                    if is_modified {
+                    if let Some(current_color) = current_color {
                         let square = RectF::new(bounds.origin(), vec2f(diameter, diameter));
                         ctx.scene.push_quad(Quad {
                             bounds: square,
-                            background: Some(modified_color),
+                            background: Some(current_color),
                             border: Default::default(),
                             corner_radius: diameter / 2.,
                         });

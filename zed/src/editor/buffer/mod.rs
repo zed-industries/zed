@@ -390,9 +390,11 @@ impl Buffer {
                             move |this, history, ctx| {
                                 if let (Ok(history), true) = (history, this.version == version) {
                                     let task = this.set_text_via_diff(history.base_text, ctx);
-                                    ctx.spawn(task, |this, ops, _| {
+                                    ctx.spawn(task, move |this, ops, ctx| {
                                         if ops.is_some() {
                                             this.saved_version = this.version.clone();
+                                            this.saved_mtime = file.mtime();
+                                            ctx.emit(Event::Reloaded);
                                         }
                                     })
                                     .detach();
@@ -586,7 +588,7 @@ impl Buffer {
             && self
                 .file
                 .as_ref()
-                .map_or(false, |f| f.mtime() != self.saved_mtime)
+                .map_or(false, |f| f.mtime() > self.saved_mtime)
     }
 
     pub fn version(&self) -> time::Global {
@@ -1931,6 +1933,7 @@ pub enum Event {
     Dirtied,
     Saved,
     FileHandleChanged,
+    Reloaded,
 }
 
 impl Entity for Buffer {

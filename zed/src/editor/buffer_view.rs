@@ -2401,6 +2401,7 @@ impl BufferView {
             buffer::Event::Dirtied => ctx.emit(Event::Dirtied),
             buffer::Event::Saved => ctx.emit(Event::Saved),
             buffer::Event::FileHandleChanged => ctx.emit(Event::FileHandleChanged),
+            buffer::Event::Reloaded => ctx.emit(Event::FileHandleChanged),
         }
     }
 }
@@ -2504,6 +2505,10 @@ impl workspace::ItemView for BufferView {
 
     fn is_dirty(&self, ctx: &AppContext) -> bool {
         self.buffer.read(ctx).is_dirty()
+    }
+
+    fn has_conflict(&self, ctx: &AppContext) -> bool {
+        self.buffer.read(ctx).has_conflict()
     }
 }
 

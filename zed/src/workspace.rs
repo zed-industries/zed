@@ -119,6 +119,9 @@ pub trait ItemView: View {
     fn is_dirty(&self, _: &AppContext) -> bool {
         false
     }
+    fn has_conflict(&self, _: &AppContext) -> bool {
+        false
+    }
     fn save(
         &mut self,
         _: Option<FileHandle>,
@@ -157,6 +160,7 @@ pub trait ItemViewHandle: Send + Sync {
     fn id(&self) -> usize;
     fn to_any(&self) -> AnyViewHandle;
     fn is_dirty(&self, ctx: &AppContext) -> bool;
+    fn has_conflict(&self, ctx: &AppContext) -> bool;
     fn save(
         &self,
         file: Option<FileHandle>,
@@ -245,6 +249,10 @@ impl<T: ItemView> ItemViewHandle for ViewHandle<T> {
 
     fn is_dirty(&self, ctx: &AppContext) -> bool {
         self.read(ctx).is_dirty(ctx)
+    }
+
+    fn has_conflict(&self, ctx: &AppContext) -> bool {
+        self.read(ctx).has_conflict(ctx)
     }
 
     fn id(&self) -> usize {
