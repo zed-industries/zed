@@ -12,12 +12,20 @@ use std::{cmp::Ordering, mem, ops::Range};
 pub type SelectionSetId = time::Lamport;
 pub type SelectionsVersion = usize;
 
+#[derive(Copy, Clone, Debug, Eq, PartialEq)]
+pub enum SelectionGoal {
+    None,
+    Column(u32),
+    ColumnRange { start: u32, end: u32 },
+}
+
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct Selection {
+    pub id: usize,
     pub start: Anchor,
     pub end: Anchor,
     pub reversed: bool,
-    pub goal_column: Option<u32>,
+    pub goal: SelectionGoal,
 }
 
 impl Selection {

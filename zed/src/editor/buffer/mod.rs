@@ -2378,8 +2378,11 @@ mod tests {
     use super::*;
     use cmp::Ordering;
     use gpui::App;
-    use std::collections::BTreeMap;
     use std::{cell::RefCell, rc::Rc};
+    use std::{
+        collections::BTreeMap,
+        sync::atomic::{self, AtomicUsize},
+    };
 
     #[test]
     fn test_edit() {
@@ -3275,6 +3278,8 @@ mod tests {
         where
             I: IntoIterator<Item = Range<usize>>,
         {
+            static NEXT_SELECTION_ID: AtomicUsize = AtomicUsize::new(0);
+
             let mut ranges = ranges.into_iter().collect::<Vec<_>>();
             ranges.sort_unstable_by_key(|range| range.start);
 
@@ -3282,17 +3287,19 @@ mod tests {
             for range in ranges {
                 if range.start > range.end {
                     selections.push(Selection {
+                        id: NEXT_SELECTION_ID.fetch_add(1, atomic::Ordering::SeqCst),
                         start: self.anchor_before(range.end)?,
                         end: self.anchor_before(range.start)?,
                         reversed: true,
-                        goal_column: None,
+                        goal: SelectionGoal::None,
                     });
                 } else {
                     selections.push(Selection {
+                        id: NEXT_SELECTION_ID.fetch_add(1, atomic::Ordering::SeqCst),
                         start: self.anchor_after(range.start)?,
                         end: self.anchor_before(range.end)?,
                         reversed: false,
-                        goal_column: None,
+                        goal: SelectionGoal::None,
                     });
                 }
             }

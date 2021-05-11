@@ -1,8 +1,8 @@
 use super::{
     buffer, movement, Anchor, Bias, Buffer, BufferElement, DisplayMap, DisplayPoint, Point,
-    Selection, SelectionSetId, ToOffset, ToPoint,
+    Selection, SelectionGoal, SelectionSetId, ToOffset, ToPoint,
 };
-use crate::{settings::Settings, workspace, worktree::FileHandle};
+use crate::{settings::Settings, util::post_inc, workspace, worktree::FileHandle};
 use anyhow::Result;
 use futures_core::future::LocalBoxFuture;
 use gpui::{
@@ -30,6 +30,7 @@ const CURSOR_BLINK_INTERVAL: Duration = Duration::from_millis(500);
 
 pub fn init(app: &mut MutableAppContext) {
     app.add_bindings(vec![
+        Binding::new("escape", "buffer:cancel", Some("BufferView")),
         Binding::new("backspace", "buffer:backspace", Some("BufferView")),
         Binding::new("ctrl-h", "buffer:backspace", Some("BufferView")),
         Binding::new("delete", "buffer:delete", Some("BufferView")),
@@ -149,6 +150,16 @@ pub fn init(app: &mut MutableAppContext) {
             "buffer:split_selection_into_lines",
             Some("BufferView"),
         ),
+        Binding::new(
+            "cmd-alt-up",
+            "buffer:add_selection_above",
+            Some("BufferView"),
+        ),
+        Binding::new(
+            "cmd-alt-down",
+            "buffer:add_selection_below",
+            Some("BufferView"),
+        ),
         Binding::new("pageup", "buffer:page_up", Some("BufferView")),
         Binding::new("pagedown", "buffer:page_down", Some("BufferView")),
         Binding::new("alt-cmd-[", "buffer:fold", Some("BufferView")),
@@ -162,6 +173,7 @@ pub fn init(app: &mut MutableAppContext) {
 
     app.add_action("buffer:scroll", BufferView::scroll);
     app.add_action("buffer:select", BufferView::select);
+    app.add_action("buffer:cancel", BufferView::cancel);
     app.add_action("buffer:insert", BufferView::insert);
     app.add_action("buffer:newline", BufferView::newline);
     app.add_action("buffer:backspace", BufferView::backspace);
@@ -244,6 +256,14 @@ pub fn init(app: &mut MutableAppContext) {
         "buffer:split_selection_into_lines",
         BufferView::split_selection_into_lines,
     );
+    app.add_action(
+        "buffer:add_selection_above",
+        BufferView::add_selection_above,
+    );
+    app.add_action(
+        "buffer:add_selection_below",
+        BufferView::add_selection_below,
+    );
     app.add_action("buffer:page_up", BufferView::page_up);
     app.add_action("buffer:page_down", BufferView::page_down);
     app.add_action("buffer:fold", BufferView::fold);
@@ -272,6 +292,8 @@ pub struct BufferView {
     display_map: DisplayMap,
     selection_set_id: SelectionSetId,
     pending_selection: Option<Selection>,
+    next_selection_id: usize,
+    add_selections_state: Option<AddSelectionsState>,
     scroll_position: Mutex<Vector2F>,
     autoscroll_requested: Mutex<bool>,
     settings: watch::Receiver<Settings>,
@@ -280,6 +302,11 @@ pub struct BufferView {
     blink_epoch: usize,
     blinking_paused: bool,
     single_line: bool,
+}
+
+struct AddSelectionsState {
+    above: bool,
+    stack: Vec<usize>,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -305,13 +332,15 @@ impl BufferView {
         ctx.subscribe_to_model(&buffer, Self::on_buffer_event);
         let display_map = DisplayMap::new(buffer.clone(), settings.borrow().tab_size, ctx.as_ref());
 
+        let mut next_selection_id = 0;
         let (selection_set_id, _) = buffer.update(ctx, |buffer, ctx| {
             buffer.add_selection_set(
                 vec![Selection {
+                    id: post_inc(&mut next_selection_id),
                     start: buffer.anchor_before(0).unwrap(),
                     end: buffer.anchor_before(0).unwrap(),
                     reversed: false,
-                    goal_column: None,
+                    goal: SelectionGoal::None,
                 }],
                 Some(ctx),
             )
@@ -322,6 +351,8 @@ impl BufferView {
             display_map,
             selection_set_id,
             pending_selection: None,
+            next_selection_id,
+            add_selections_state: None,
             scroll_position: Mutex::new(Vector2F::zero()),
             autoscroll_requested: Mutex::new(false),
             settings,
@@ -480,10 +511,11 @@ impl BufferView {
             .anchor_before(position, Bias::Left, ctx.as_ref())
             .unwrap();
         let selection = Selection {
+            id: post_inc(&mut self.next_selection_id),
             start: cursor.clone(),
             end: cursor,
             reversed: false,
-            goal_column: None,
+            goal: SelectionGoal::None,
         };
 
         if !add {
@@ -532,6 +564,22 @@ impl BufferView {
         self.pending_selection.is_some()
     }
 
+    pub fn cancel(&mut self, _: &(), ctx: &mut ViewContext<Self>) {
+        let selections = self.selections(ctx.as_ref());
+        if let Some(pending_selection) = self.pending_selection.take() {
+            if selections.is_empty() {
+                self.update_selections(vec![pending_selection], true, ctx);
+            }
+        } else {
+            let mut oldest_selection = selections.iter().min_by_key(|s| s.id).unwrap().clone();
+            if selections.len() == 1 {
+                oldest_selection.start = oldest_selection.head().clone();
+                oldest_selection.end = oldest_selection.head().clone();
+            }
+            self.update_selections(vec![oldest_selection], true, ctx);
+        }
+    }
+
     fn select_ranges<I, T>(&mut self, ranges: I, autoscroll: bool, ctx: &mut ViewContext<Self>)
     where
         I: IntoIterator<Item = Range<T>>,
@@ -549,10 +597,11 @@ impl BufferView {
                 false
             };
             selections.push(Selection {
+                id: post_inc(&mut self.next_selection_id),
                 start: buffer.anchor_before(start).unwrap(),
                 end: buffer.anchor_before(end).unwrap(),
                 reversed,
-                goal_column: None,
+                goal: SelectionGoal::None,
             });
         }
         self.update_selections(selections, autoscroll, ctx);
@@ -575,6 +624,7 @@ impl BufferView {
             };
 
             selections.push(Selection {
+                id: post_inc(&mut self.next_selection_id),
                 start: self
                     .display_map
                     .anchor_before(start, Bias::Left, ctx.as_ref())?,
@@ -582,7 +632,7 @@ impl BufferView {
                     .display_map
                     .anchor_before(end, Bias::Left, ctx.as_ref())?,
                 reversed,
-                goal_column: None,
+                goal: SelectionGoal::None,
             });
         }
         self.update_selections(selections, false, ctx);
@@ -590,28 +640,28 @@ impl BufferView {
     }
 
     pub fn insert(&mut self, text: &String, ctx: &mut ViewContext<Self>) {
-        let mut offset_ranges = SmallVec::<[Range<usize>; 32]>::new();
+        let mut old_selections = SmallVec::<[_; 32]>::new();
         {
             let buffer = self.buffer.read(ctx);
             for selection in self.selections(ctx.as_ref()) {
                 let start = selection.start.to_offset(buffer).unwrap();
                 let end = selection.end.to_offset(buffer).unwrap();
-                offset_ranges.push(start..end);
+                old_selections.push((selection.id, start..end));
             }
         }
 
         self.start_transaction(ctx);
         let mut new_selections = Vec::new();
         self.buffer.update(ctx, |buffer, ctx| {
-            if let Err(error) = buffer.edit(offset_ranges.iter().cloned(), text.as_str(), Some(ctx))
-            {
+            let edit_ranges = old_selections.iter().map(|(_, range)| range.clone());
+            if let Err(error) = buffer.edit(edit_ranges, text.as_str(), Some(ctx)) {
                 log::error!("error inserting text: {}", error);
             };
             let char_count = text.chars().count() as isize;
             let mut delta = 0_isize;
-            new_selections = offset_ranges
+            new_selections = old_selections
                 .into_iter()
-                .map(|range| {
+                .map(|(id, range)| {
                     let start = range.start as isize;
                     let end = range.end as isize;
                     let anchor = buffer
@@ -620,10 +670,11 @@ impl BufferView {
                     let deleted_count = end - start;
                     delta += char_count - deleted_count;
                     Selection {
+                        id,
                         start: anchor.clone(),
                         end: anchor,
                         reversed: false,
-                        goal_column: None,
+                        goal: SelectionGoal::None,
                     }
                 })
                 .collect();
@@ -662,7 +713,7 @@ impl BufferView {
                         )
                         .unwrap();
                     selection.set_head(&buffer, cursor);
-                    selection.goal_column = None;
+                    selection.goal = SelectionGoal::None;
                 }
             }
         }
@@ -693,7 +744,7 @@ impl BufferView {
                         )
                         .unwrap();
                     selection.set_head(&buffer, cursor);
-                    selection.goal_column = None;
+                    selection.goal = SelectionGoal::None;
                 }
             }
         }
@@ -758,23 +809,27 @@ impl BufferView {
                 self.display_map.line_len(cursor.row(), app).unwrap(),
             );
 
-            new_cursors.push(
+            new_cursors.push((
+                selection.id,
                 cursor
                     .to_buffer_point(&self.display_map, Bias::Left, app)
                     .unwrap(),
-            );
+            ));
             edit_ranges.push(edit_start..edit_end);
         }
 
-        new_cursors.sort_unstable();
+        new_cursors.sort_unstable_by_key(|(_, range)| range.clone());
         let new_selections = new_cursors
             .into_iter()
-            .map(|cursor| buffer.anchor_before(cursor).unwrap())
-            .map(|anchor| Selection {
-                start: anchor.clone(),
-                end: anchor,
-                reversed: false,
-                goal_column: None,
+            .map(|(id, cursor)| {
+                let anchor = buffer.anchor_before(cursor).unwrap();
+                Selection {
+                    id,
+                    start: anchor.clone(),
+                    end: anchor,
+                    reversed: false,
+                    goal: SelectionGoal::None,
+                }
             })
             .collect();
         self.buffer
@@ -1142,10 +1197,11 @@ impl BufferView {
 
                         let new_selection_start = new_selection_start.bias_left(buffer).unwrap();
                         new_selections.push(Selection {
+                            id: selection.id,
                             start: new_selection_start.clone(),
                             end: new_selection_start,
                             reversed: false,
-                            goal_column: None,
+                            goal: SelectionGoal::None,
                         });
                     });
                 }
@@ -1196,7 +1252,7 @@ impl BufferView {
                     selection.end = cursor;
                 }
                 selection.reversed = false;
-                selection.goal_column = None;
+                selection.goal = SelectionGoal::None;
             }
         }
         self.update_selections(selections, true, ctx);
@@ -1220,7 +1276,7 @@ impl BufferView {
                     )
                     .unwrap();
                 selection.set_head(&buffer, cursor);
-                selection.goal_column = None;
+                selection.goal = SelectionGoal::None;
             }
         }
         self.update_selections(selections, true, ctx);
@@ -1255,7 +1311,7 @@ impl BufferView {
                     selection.end = cursor;
                 }
                 selection.reversed = false;
-                selection.goal_column = None;
+                selection.goal = SelectionGoal::None;
             }
         }
         self.update_selections(selections, true, ctx);
@@ -1280,7 +1336,7 @@ impl BufferView {
                     )
                     .unwrap();
                 selection.set_head(&buffer, cursor);
-                selection.goal_column = None;
+                selection.goal = SelectionGoal::None;
             }
         }
         self.update_selections(selections, true, ctx);
@@ -1303,18 +1359,18 @@ impl BufferView {
                         .to_display_point(&self.display_map, app)
                         .unwrap();
                     if start != end {
-                        selection.goal_column = None;
+                        selection.goal = SelectionGoal::None;
                     }
 
-                    let (start, goal_column) =
-                        movement::up(&self.display_map, start, selection.goal_column, app).unwrap();
+                    let (start, goal) =
+                        movement::up(&self.display_map, start, selection.goal, app).unwrap();
                     let cursor = self
                         .display_map
                         .anchor_before(start, Bias::Left, app)
                         .unwrap();
                     selection.start = cursor.clone();
                     selection.end = cursor;
-                    selection.goal_column = goal_column;
+                    selection.goal = goal;
                     selection.reversed = false;
                 }
             }
@@ -1332,15 +1388,15 @@ impl BufferView {
                     .head()
                     .to_display_point(&self.display_map, app)
                     .unwrap();
-                let (head, goal_column) =
-                    movement::up(&self.display_map, head, selection.goal_column, app).unwrap();
+                let (head, goal) =
+                    movement::up(&self.display_map, head, selection.goal, app).unwrap();
                 selection.set_head(
                     &buffer,
                     self.display_map
                         .anchor_before(head, Bias::Left, app)
                         .unwrap(),
                 );
-                selection.goal_column = goal_column;
+                selection.goal = goal;
             }
         }
         self.update_selections(selections, true, ctx);
@@ -1363,18 +1419,18 @@ impl BufferView {
                         .to_display_point(&self.display_map, app)
                         .unwrap();
                     if start != end {
-                        selection.goal_column = None;
+                        selection.goal = SelectionGoal::None;
                     }
 
-                    let (start, goal_column) =
-                        movement::down(&self.display_map, end, selection.goal_column, app).unwrap();
+                    let (start, goal) =
+                        movement::down(&self.display_map, end, selection.goal, app).unwrap();
                     let cursor = self
                         .display_map
                         .anchor_before(start, Bias::Right, app)
                         .unwrap();
                     selection.start = cursor.clone();
                     selection.end = cursor;
-                    selection.goal_column = goal_column;
+                    selection.goal = goal;
                     selection.reversed = false;
                 }
             }
@@ -1392,15 +1448,15 @@ impl BufferView {
                     .head()
                     .to_display_point(&self.display_map, app)
                     .unwrap();
-                let (head, goal_column) =
-                    movement::down(&self.display_map, head, selection.goal_column, app).unwrap();
+                let (head, goal) =
+                    movement::down(&self.display_map, head, selection.goal, app).unwrap();
                 selection.set_head(
                     &buffer,
                     self.display_map
                         .anchor_before(head, Bias::Right, app)
                         .unwrap(),
                 );
-                selection.goal_column = goal_column;
+                selection.goal = goal;
             }
         }
         self.update_selections(selections, true, ctx);
@@ -1423,7 +1479,7 @@ impl BufferView {
                 selection.start = anchor.clone();
                 selection.end = anchor;
                 selection.reversed = false;
-                selection.goal_column = None;
+                selection.goal = SelectionGoal::None;
             }
         }
         self.update_selections(selections, true, ctx);
@@ -1445,7 +1501,7 @@ impl BufferView {
                     .anchor_before(new_head, Bias::Left, app)
                     .unwrap();
                 selection.set_head(buffer, anchor);
-                selection.goal_column = None;
+                selection.goal = SelectionGoal::None;
             }
         }
         self.update_selections(selections, true, ctx);
@@ -1475,7 +1531,7 @@ impl BufferView {
                 selection.start = anchor.clone();
                 selection.end = anchor;
                 selection.reversed = false;
-                selection.goal_column = None;
+                selection.goal = SelectionGoal::None;
             }
         }
         self.update_selections(selections, true, ctx);
@@ -1497,7 +1553,7 @@ impl BufferView {
                     .anchor_before(new_head, Bias::Left, app)
                     .unwrap();
                 selection.set_head(buffer, anchor);
-                selection.goal_column = None;
+                selection.goal = SelectionGoal::None;
             }
         }
         self.update_selections(selections, true, ctx);
@@ -1528,7 +1584,7 @@ impl BufferView {
                 selection.start = anchor.clone();
                 selection.end = anchor;
                 selection.reversed = false;
-                selection.goal_column = None;
+                selection.goal = SelectionGoal::None;
             }
         }
         self.update_selections(selections, true, ctx);
@@ -1555,7 +1611,7 @@ impl BufferView {
                     .anchor_before(new_head, Bias::Left, app)
                     .unwrap();
                 selection.set_head(buffer, anchor);
-                selection.goal_column = None;
+                selection.goal = SelectionGoal::None;
             }
         }
         self.update_selections(selections, true, ctx);
@@ -1585,7 +1641,7 @@ impl BufferView {
                 selection.start = anchor.clone();
                 selection.end = anchor;
                 selection.reversed = false;
-                selection.goal_column = None;
+                selection.goal = SelectionGoal::None;
             }
         }
         self.update_selections(selections, true, ctx);
@@ -1607,7 +1663,7 @@ impl BufferView {
                     .anchor_before(new_head, Bias::Left, app)
                     .unwrap();
                 selection.set_head(buffer, anchor);
-                selection.goal_column = None;
+                selection.goal = SelectionGoal::None;
             }
         }
         self.update_selections(selections, true, ctx);
@@ -1624,10 +1680,11 @@ impl BufferView {
         let buffer = self.buffer.read(ctx);
         let cursor = buffer.anchor_before(Point::new(0, 0)).unwrap();
         let selection = Selection {
+            id: post_inc(&mut self.next_selection_id),
             start: cursor.clone(),
             end: cursor,
             reversed: false,
-            goal_column: None,
+            goal: SelectionGoal::None,
         };
         self.update_selections(vec![selection], true, ctx);
     }
@@ -1642,10 +1699,11 @@ impl BufferView {
         let buffer = self.buffer.read(ctx);
         let cursor = buffer.anchor_before(buffer.max_point()).unwrap();
         let selection = Selection {
+            id: post_inc(&mut self.next_selection_id),
             start: cursor.clone(),
             end: cursor,
             reversed: false,
-            goal_column: None,
+            goal: SelectionGoal::None,
         };
         self.update_selections(vec![selection], true, ctx);
     }
@@ -1658,10 +1716,11 @@ impl BufferView {
 
     pub fn select_all(&mut self, _: &(), ctx: &mut ViewContext<Self>) {
         let selection = Selection {
+            id: post_inc(&mut self.next_selection_id),
             start: Anchor::Start,
             end: Anchor::End,
             reversed: false,
-            goal_column: None,
+            goal: SelectionGoal::None,
         };
         self.update_selections(vec![selection], false, ctx);
     }
@@ -1694,10 +1753,11 @@ impl BufferView {
             let range = selection.range(buffer).sorted();
             if range.start.row != range.end.row {
                 new_selections.push(Selection {
+                    id: post_inc(&mut self.next_selection_id),
                     start: selection.start.clone(),
                     end: selection.start.clone(),
                     reversed: false,
-                    goal_column: None,
+                    goal: SelectionGoal::None,
                 });
             }
             for row in range.start.row + 1..range.end.row {
@@ -1705,22 +1765,157 @@ impl BufferView {
                     .anchor_before(Point::new(row, buffer.line_len(row).unwrap()))
                     .unwrap();
                 new_selections.push(Selection {
+                    id: post_inc(&mut self.next_selection_id),
                     start: cursor.clone(),
                     end: cursor,
                     reversed: false,
-                    goal_column: None,
+                    goal: SelectionGoal::None,
                 });
             }
             new_selections.push(Selection {
+                id: selection.id,
                 start: selection.end.clone(),
                 end: selection.end.clone(),
                 reversed: false,
-                goal_column: None,
+                goal: SelectionGoal::None,
             });
             to_unfold.push(range);
         }
         self.unfold_ranges(to_unfold, ctx);
         self.update_selections(new_selections, true, ctx);
+    }
+
+    pub fn add_selection_above(&mut self, _: &(), ctx: &mut ViewContext<Self>) {
+        self.add_selection(true, ctx);
+    }
+
+    pub fn add_selection_below(&mut self, _: &(), ctx: &mut ViewContext<Self>) {
+        self.add_selection(false, ctx);
+    }
+
+    pub fn add_selection(&mut self, above: bool, ctx: &mut ViewContext<Self>) {
+        use super::RangeExt;
+
+        let app = ctx.as_ref();
+
+        let mut selections = self.selections(app).to_vec();
+        let mut state = self.add_selections_state.take().unwrap_or_else(|| {
+            let oldest_selection = selections.iter().min_by_key(|s| s.id).unwrap().clone();
+            let range = oldest_selection
+                .display_range(&self.display_map, app)
+                .sorted();
+            let columns = cmp::min(range.start.column(), range.end.column())
+                ..cmp::max(range.start.column(), range.end.column());
+
+            selections.clear();
+            let mut stack = Vec::new();
+            for row in range.start.row()..=range.end.row() {
+                if let Some(selection) =
+                    self.build_columnar_selection(row, &columns, oldest_selection.reversed, app)
+                {
+                    stack.push(selection.id);
+                    selections.push(selection);
+                }
+            }
+
+            if above {
+                stack.reverse();
+            }
+
+            AddSelectionsState { above, stack }
+        });
+
+        let last_added_selection = *state.stack.last().unwrap();
+        let mut new_selections = Vec::new();
+        if above == state.above {
+            let end_row = if above {
+                0
+            } else {
+                self.display_map.max_point(app).row()
+            };
+
+            'outer: for selection in selections {
+                if selection.id == last_added_selection {
+                    let range = selection.display_range(&self.display_map, app).sorted();
+                    debug_assert_eq!(range.start.row(), range.end.row());
+                    let mut row = range.start.row();
+                    let columns = if let SelectionGoal::ColumnRange { start, end } = selection.goal
+                    {
+                        start..end
+                    } else {
+                        cmp::min(range.start.column(), range.end.column())
+                            ..cmp::max(range.start.column(), range.end.column())
+                    };
+
+                    while row != end_row {
+                        if above {
+                            row -= 1;
+                        } else {
+                            row += 1;
+                        }
+
+                        if let Some(new_selection) =
+                            self.build_columnar_selection(row, &columns, selection.reversed, app)
+                        {
+                            state.stack.push(new_selection.id);
+                            if above {
+                                new_selections.push(new_selection);
+                                new_selections.push(selection);
+                            } else {
+                                new_selections.push(selection);
+                                new_selections.push(new_selection);
+                            }
+
+                            continue 'outer;
+                        }
+                    }
+                }
+
+                new_selections.push(selection);
+            }
+        } else {
+            new_selections = selections;
+            new_selections.retain(|s| s.id != last_added_selection);
+            state.stack.pop();
+        }
+
+        self.update_selections(new_selections, true, ctx);
+        if state.stack.len() > 1 {
+            self.add_selections_state = Some(state);
+        }
+    }
+
+    fn build_columnar_selection(
+        &mut self,
+        row: u32,
+        columns: &Range<u32>,
+        reversed: bool,
+        ctx: &AppContext,
+    ) -> Option<Selection> {
+        let is_empty = columns.start == columns.end;
+        let line_len = self.display_map.line_len(row, ctx).unwrap();
+        if columns.start < line_len || (is_empty && columns.start == line_len) {
+            let start = DisplayPoint::new(row, columns.start);
+            let end = DisplayPoint::new(row, cmp::min(columns.end, line_len));
+            Some(Selection {
+                id: post_inc(&mut self.next_selection_id),
+                start: self
+                    .display_map
+                    .anchor_before(start, Bias::Left, ctx)
+                    .unwrap(),
+                end: self
+                    .display_map
+                    .anchor_before(end, Bias::Left, ctx)
+                    .unwrap(),
+                reversed,
+                goal: SelectionGoal::ColumnRange {
+                    start: columns.start,
+                    end: columns.end,
+                },
+            })
+        } else {
+            None
+        }
     }
 
     pub fn selections_in_range<'a>(
@@ -1811,6 +2006,8 @@ impl BufferView {
             *self.autoscroll_requested.lock() = true;
             ctx.notify();
         }
+
+        self.add_selections_state = None;
     }
 
     fn start_transaction(&self, ctx: &mut ViewContext<Self>) {
@@ -2424,6 +2621,80 @@ mod tests {
             assert_eq!(
                 selections,
                 [DisplayPoint::new(3, 3)..DisplayPoint::new(0, 0)]
+            );
+        });
+    }
+
+    #[test]
+    fn test_canceling_pending_selection() {
+        App::test((), |app| {
+            let buffer =
+                app.add_model(|ctx| Buffer::new(0, "aaaaaa\nbbbbbb\ncccccc\ndddddd\n", ctx));
+            let settings = settings::channel(&app.font_cache()).unwrap().1;
+            let (_, view) = app.add_window(|ctx| BufferView::for_buffer(buffer, settings, ctx));
+
+            view.update(app, |view, ctx| {
+                view.begin_selection(DisplayPoint::new(2, 2), false, ctx);
+            });
+            assert_eq!(
+                view.read(app).selection_ranges(app.as_ref()),
+                [DisplayPoint::new(2, 2)..DisplayPoint::new(2, 2)]
+            );
+
+            view.update(app, |view, ctx| {
+                view.update_selection(DisplayPoint::new(3, 3), Vector2F::zero(), ctx);
+            });
+            assert_eq!(
+                view.read(app).selection_ranges(app.as_ref()),
+                [DisplayPoint::new(2, 2)..DisplayPoint::new(3, 3)]
+            );
+
+            view.update(app, |view, ctx| {
+                view.cancel(&(), ctx);
+                view.update_selection(DisplayPoint::new(1, 1), Vector2F::zero(), ctx);
+            });
+            assert_eq!(
+                view.read(app).selection_ranges(app.as_ref()),
+                [DisplayPoint::new(2, 2)..DisplayPoint::new(3, 3)]
+            );
+        });
+    }
+
+    #[test]
+    fn test_cancel() {
+        App::test((), |app| {
+            let buffer =
+                app.add_model(|ctx| Buffer::new(0, "aaaaaa\nbbbbbb\ncccccc\ndddddd\n", ctx));
+            let settings = settings::channel(&app.font_cache()).unwrap().1;
+            let (_, view) = app.add_window(|ctx| BufferView::for_buffer(buffer, settings, ctx));
+
+            view.update(app, |view, ctx| {
+                view.begin_selection(DisplayPoint::new(3, 4), false, ctx);
+                view.update_selection(DisplayPoint::new(1, 1), Vector2F::zero(), ctx);
+                view.end_selection(ctx);
+
+                view.begin_selection(DisplayPoint::new(0, 1), true, ctx);
+                view.update_selection(DisplayPoint::new(0, 3), Vector2F::zero(), ctx);
+                view.end_selection(ctx);
+            });
+            assert_eq!(
+                view.read(app).selection_ranges(app.as_ref()),
+                [
+                    DisplayPoint::new(0, 1)..DisplayPoint::new(0, 3),
+                    DisplayPoint::new(3, 4)..DisplayPoint::new(1, 1),
+                ]
+            );
+
+            view.update(app, |view, ctx| view.cancel(&(), ctx));
+            assert_eq!(
+                view.read(app).selection_ranges(app.as_ref()),
+                [DisplayPoint::new(3, 4)..DisplayPoint::new(1, 1)]
+            );
+
+            view.update(app, |view, ctx| view.cancel(&(), ctx));
+            assert_eq!(
+                view.read(app).selection_ranges(app.as_ref()),
+                [DisplayPoint::new(1, 1)..DisplayPoint::new(1, 1)]
             );
         });
     }
@@ -3473,6 +3744,167 @@ mod tests {
                     DisplayPoint::new(5, 5)..DisplayPoint::new(5, 5),
                     DisplayPoint::new(6, 5)..DisplayPoint::new(6, 5),
                     DisplayPoint::new(7, 0)..DisplayPoint::new(7, 0)
+                ]
+            );
+        });
+    }
+
+    #[test]
+    fn test_add_selection_above_below() {
+        App::test((), |app| {
+            let settings = settings::channel(&app.font_cache()).unwrap().1;
+            let buffer = app.add_model(|ctx| Buffer::new(0, "abc\ndefghi\n\njk\nlmno\n", ctx));
+            let (_, view) = app.add_window(|ctx| BufferView::for_buffer(buffer, settings, ctx));
+
+            view.update(app, |view, ctx| {
+                view.select_display_ranges(
+                    &[DisplayPoint::new(1, 3)..DisplayPoint::new(1, 3)],
+                    ctx,
+                )
+                .unwrap();
+            });
+            view.update(app, |view, ctx| view.add_selection_above(&(), ctx));
+            assert_eq!(
+                view.read(app).selection_ranges(app.as_ref()),
+                vec![
+                    DisplayPoint::new(0, 3)..DisplayPoint::new(0, 3),
+                    DisplayPoint::new(1, 3)..DisplayPoint::new(1, 3)
+                ]
+            );
+
+            view.update(app, |view, ctx| view.add_selection_above(&(), ctx));
+            assert_eq!(
+                view.read(app).selection_ranges(app.as_ref()),
+                vec![
+                    DisplayPoint::new(0, 3)..DisplayPoint::new(0, 3),
+                    DisplayPoint::new(1, 3)..DisplayPoint::new(1, 3)
+                ]
+            );
+
+            view.update(app, |view, ctx| view.add_selection_below(&(), ctx));
+            assert_eq!(
+                view.read(app).selection_ranges(app.as_ref()),
+                vec![DisplayPoint::new(1, 3)..DisplayPoint::new(1, 3)]
+            );
+
+            view.update(app, |view, ctx| view.add_selection_below(&(), ctx));
+            assert_eq!(
+                view.read(app).selection_ranges(app.as_ref()),
+                vec![
+                    DisplayPoint::new(1, 3)..DisplayPoint::new(1, 3),
+                    DisplayPoint::new(4, 3)..DisplayPoint::new(4, 3)
+                ]
+            );
+
+            view.update(app, |view, ctx| view.add_selection_below(&(), ctx));
+            assert_eq!(
+                view.read(app).selection_ranges(app.as_ref()),
+                vec![
+                    DisplayPoint::new(1, 3)..DisplayPoint::new(1, 3),
+                    DisplayPoint::new(4, 3)..DisplayPoint::new(4, 3)
+                ]
+            );
+
+            view.update(app, |view, ctx| {
+                view.select_display_ranges(
+                    &[DisplayPoint::new(1, 4)..DisplayPoint::new(1, 3)],
+                    ctx,
+                )
+                .unwrap();
+            });
+            view.update(app, |view, ctx| view.add_selection_below(&(), ctx));
+            assert_eq!(
+                view.read(app).selection_ranges(app.as_ref()),
+                vec![
+                    DisplayPoint::new(1, 4)..DisplayPoint::new(1, 3),
+                    DisplayPoint::new(4, 4)..DisplayPoint::new(4, 3)
+                ]
+            );
+
+            view.update(app, |view, ctx| view.add_selection_below(&(), ctx));
+            assert_eq!(
+                view.read(app).selection_ranges(app.as_ref()),
+                vec![
+                    DisplayPoint::new(1, 4)..DisplayPoint::new(1, 3),
+                    DisplayPoint::new(4, 4)..DisplayPoint::new(4, 3)
+                ]
+            );
+
+            view.update(app, |view, ctx| view.add_selection_above(&(), ctx));
+            assert_eq!(
+                view.read(app).selection_ranges(app.as_ref()),
+                vec![DisplayPoint::new(1, 4)..DisplayPoint::new(1, 3)]
+            );
+
+            view.update(app, |view, ctx| view.add_selection_above(&(), ctx));
+            assert_eq!(
+                view.read(app).selection_ranges(app.as_ref()),
+                vec![DisplayPoint::new(1, 4)..DisplayPoint::new(1, 3)]
+            );
+
+            view.update(app, |view, ctx| {
+                view.select_display_ranges(
+                    &[DisplayPoint::new(0, 1)..DisplayPoint::new(1, 4)],
+                    ctx,
+                )
+                .unwrap();
+            });
+            view.update(app, |view, ctx| view.add_selection_below(&(), ctx));
+            assert_eq!(
+                view.read(app).selection_ranges(app.as_ref()),
+                vec![
+                    DisplayPoint::new(0, 1)..DisplayPoint::new(0, 3),
+                    DisplayPoint::new(1, 1)..DisplayPoint::new(1, 4),
+                    DisplayPoint::new(3, 1)..DisplayPoint::new(3, 2),
+                ]
+            );
+
+            view.update(app, |view, ctx| view.add_selection_below(&(), ctx));
+            assert_eq!(
+                view.read(app).selection_ranges(app.as_ref()),
+                vec![
+                    DisplayPoint::new(0, 1)..DisplayPoint::new(0, 3),
+                    DisplayPoint::new(1, 1)..DisplayPoint::new(1, 4),
+                    DisplayPoint::new(3, 1)..DisplayPoint::new(3, 2),
+                    DisplayPoint::new(4, 1)..DisplayPoint::new(4, 4),
+                ]
+            );
+
+            view.update(app, |view, ctx| view.add_selection_above(&(), ctx));
+            assert_eq!(
+                view.read(app).selection_ranges(app.as_ref()),
+                vec![
+                    DisplayPoint::new(0, 1)..DisplayPoint::new(0, 3),
+                    DisplayPoint::new(1, 1)..DisplayPoint::new(1, 4),
+                    DisplayPoint::new(3, 1)..DisplayPoint::new(3, 2),
+                ]
+            );
+
+            view.update(app, |view, ctx| {
+                view.select_display_ranges(
+                    &[DisplayPoint::new(4, 3)..DisplayPoint::new(1, 1)],
+                    ctx,
+                )
+                .unwrap();
+            });
+            view.update(app, |view, ctx| view.add_selection_above(&(), ctx));
+            assert_eq!(
+                view.read(app).selection_ranges(app.as_ref()),
+                vec![
+                    DisplayPoint::new(0, 3)..DisplayPoint::new(0, 1),
+                    DisplayPoint::new(1, 3)..DisplayPoint::new(1, 1),
+                    DisplayPoint::new(3, 2)..DisplayPoint::new(3, 1),
+                    DisplayPoint::new(4, 3)..DisplayPoint::new(4, 1),
+                ]
+            );
+
+            view.update(app, |view, ctx| view.add_selection_below(&(), ctx));
+            assert_eq!(
+                view.read(app).selection_ranges(app.as_ref()),
+                vec![
+                    DisplayPoint::new(1, 3)..DisplayPoint::new(1, 1),
+                    DisplayPoint::new(3, 2)..DisplayPoint::new(3, 1),
+                    DisplayPoint::new(4, 3)..DisplayPoint::new(4, 1),
                 ]
             );
         });
