@@ -509,6 +509,10 @@ impl Buffer {
         self.version > self.saved_version || self.file.as_ref().map_or(false, |f| f.is_deleted())
     }
 
+    pub fn has_conflict(&self) -> bool {
+        false
+    }
+
     pub fn version(&self) -> time::Global {
         self.version.clone()
     }
@@ -2381,7 +2385,10 @@ impl ToPoint for usize {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{test::temp_tree, worktree::Worktree};
+    use crate::{
+        test::temp_tree,
+        worktree::{Worktree, WorktreeHandle},
+    };
     use cmp::Ordering;
     use gpui::App;
     use serde_json::json;
@@ -2989,8 +2996,6 @@ mod tests {
 
     #[test]
     fn test_is_dirty() {
-        use crate::worktree::WorktreeHandle;
-
         App::test_async((), |mut app| async move {
             let dir = temp_tree(json!({
                 "file1": "",
@@ -3102,6 +3107,92 @@ mod tests {
                 .await;
             assert_eq!(*events.borrow(), &[Event::FileHandleChanged]);
             app.read(|ctx| assert!(buffer3.read(ctx).is_dirty()));
+        });
+    }
+
+    #[test]
+    fn test_file_changes_on_disk() {
+        App::test_async((), |mut app| async move {
+            let initial_contents = "aaa\nbbb\nccc\n";
+            let dir = temp_tree(json!({ "the-file": initial_contents }));
+            let tree = app.add_model(|ctx| Worktree::new(dir.path(), ctx));
+            app.read(|ctx| tree.read(ctx).scan_complete()).await;
+
+            let abs_path = dir.path().join("the-file");
+            let file = app.read(|ctx| tree.file("the-file", ctx));
+            let buffer = app.add_model(|ctx| {
+                Buffer::from_history(0, History::new(initial_contents.into()), Some(file), ctx)
+            });
+
+            // Add a cursor at the start of each row.
+            let (selection_set_id, _) = buffer.update(&mut app, |buffer, ctx| {
+                assert!(!buffer.is_dirty());
+                buffer.add_selection_set(
+                    (0..3)
+                        .map(|row| {
+                            let anchor = buffer
+                                .anchor_at(Point::new(row, 0), AnchorBias::Left)
+                                .unwrap();
+                            Selection {
+                                id: row as usize,
+                                start: anchor.clone(),
+                                end: anchor,
+                                reversed: false,
+                                goal: SelectionGoal::None,
+                            }
+                        })
+                        .collect::<Vec<_>>(),
+                    Some(ctx),
+                )
+            });
+
+            // Change the file on disk, adding a new line of text before each existing line.
+            buffer.update(&mut app, |buffer, _| {
+                assert!(!buffer.is_dirty());
+                assert!(!buffer.has_conflict());
+            });
+            tree.flush_fs_events(&app).await;
+            let new_contents = "AAA\naaa\nBBB\nbbb\nCCC\nccc\n";
+            fs::write(&abs_path, new_contents).unwrap();
+
+            // Because the buffer was not modified, it is reloaded from disk. Its
+            // contents are edited according to the diff between the old and new
+            // file contents.
+            buffer
+                .condition(&app, |buffer, _| buffer.text() == new_contents)
+                .await;
+            buffer.update(&mut app, |buffer, _| {
+                let selections = buffer.selections(selection_set_id).unwrap();
+                let cursor_positions = selections
+                    .iter()
+                    .map(|selection| {
+                        assert_eq!(selection.start, selection.end);
+                        selection.start.to_point(&buffer).unwrap()
+                    })
+                    .collect::<Vec<_>>();
+                assert_eq!(
+                    cursor_positions,
+                    &[Point::new(1, 0), Point::new(3, 0), Point::new(5, 0),]
+                );
+            });
+
+            // Modify the buffer
+            buffer.update(&mut app, |buffer, ctx| {
+                assert!(!buffer.is_dirty());
+                assert!(!buffer.has_conflict());
+
+                buffer.edit(vec![0..0], " ", Some(ctx)).unwrap();
+                assert!(buffer.is_dirty());
+            });
+
+            // Change the file on disk again, adding blank lines to the beginning.
+            fs::write(&abs_path, "\n\n\nAAA\naaa\nBBB\nbbb\nCCC\nccc\n").unwrap();
+
+            // Becaues the buffer is modified, it doesn't reload from disk, but is
+            // marked as having a conflict.
+            buffer
+                .condition(&app, |buffer, _| buffer.has_conflict())
+                .await;
         });
     }
 
