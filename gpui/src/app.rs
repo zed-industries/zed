@@ -1620,7 +1620,7 @@ impl<'a, T: Entity> ModelContext<'a, T> {
             });
     }
 
-    fn handle(&self) -> ModelHandle<T> {
+    pub fn handle(&self) -> ModelHandle<T> {
         ModelHandle::new(self.model_id, &self.app.ctx.ref_counts)
     }
 
