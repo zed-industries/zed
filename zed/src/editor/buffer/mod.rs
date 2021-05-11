@@ -3060,7 +3060,8 @@ mod tests {
 
             tree.flush_fs_events(&app).await;
             fs::remove_file(dir.path().join("file1")).unwrap();
-            app.read(|ctx| tree.read(ctx).next_scan_complete()).await;
+            tree.update(&mut app, |tree, ctx| tree.next_scan_complete(ctx))
+                .await;
 
             model.update(&mut app, |buffer, _| {
                 assert_eq!(*events.borrow(), &[Event::FileHandleChanged]);

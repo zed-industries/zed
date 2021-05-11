@@ -114,19 +114,17 @@ impl Worktree {
         }
     }
 
-    pub fn next_scan_complete(&self) -> impl Future<Output = ()> {
-        let mut scan_state_rx = self.scan_state.1.clone();
-        let mut did_scan = matches!(*scan_state_rx.borrow(), ScanState::Scanning);
-        async move {
-            loop {
-                if let ScanState::Scanning = *scan_state_rx.borrow() {
-                    did_scan = true;
-                } else if did_scan {
-                    break;
+    pub fn next_scan_complete(&self, ctx: &mut ModelContext<Self>) -> impl Future<Output = ()> {
+        let scan_id = self.snapshot.scan_id;
+        ctx.spawn_stream(
+            self.scan_state.1.clone(),
+            move |this, _, ctx| {
+                if this.snapshot.scan_id > scan_id {
+                    ctx.halt_stream();
                 }
-                scan_state_rx.recv().await;
-            }
-        }
+            },
+            |_, _| {},
+        )
     }
 
     fn observe_scan_state(&mut self, scan_state: ScanState, ctx: &mut ModelContext<Self>) {
@@ -1495,7 +1493,8 @@ mod tests {
             std::fs::remove_file(dir.path().join("b/c/file5")).unwrap();
             std::fs::rename(dir.path().join("b/c"), dir.path().join("d")).unwrap();
             std::fs::rename(dir.path().join("a/file2"), dir.path().join("a/file2.new")).unwrap();
-            app.read(|ctx| tree.read(ctx).next_scan_complete()).await;
+            tree.update(&mut app, |tree, ctx| tree.next_scan_complete(ctx))
+                .await;
 
             app.read(|ctx| {
                 assert_eq!(
@@ -1557,7 +1556,8 @@ mod tests {
 
             fs::write(dir.path().join("tracked-dir/tracked-file2"), "").unwrap();
             fs::write(dir.path().join("ignored-dir/ignored-file2"), "").unwrap();
-            app.read(|ctx| tree.read(ctx).next_scan_complete()).await;
+            tree.update(&mut app, |tree, ctx| tree.next_scan_complete(ctx))
+                .await;
             app.read(|ctx| {
                 let tree = tree.read(ctx);
                 let dot_git = tree.entry_for_path(".git").unwrap();

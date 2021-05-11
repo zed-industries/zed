@@ -732,7 +732,6 @@ mod tests {
     use gpui::App;
     use serde_json::json;
     use std::collections::HashSet;
-    use std::time;
     use tempdir::TempDir;
 
     #[test]
@@ -986,7 +985,7 @@ mod tests {
                 workspace.add_worktree(dir.path(), ctx);
                 workspace
             });
-            let worktree = app.read(|ctx| {
+            let tree = app.read(|ctx| {
                 workspace
                     .read(ctx)
                     .worktrees()
@@ -995,6 +994,7 @@ mod tests {
                     .unwrap()
                     .clone()
             });
+            tree.flush_fs_events(&app).await;
 
             // Create a new untitled buffer
             let editor = workspace.update(&mut app, |workspace, ctx| {
@@ -1027,15 +1027,12 @@ mod tests {
             });
 
             // When the save completes, the buffer's title is updated.
-            editor
-                .condition(&app, |editor, ctx| !editor.is_dirty(ctx))
+            tree.update(&mut app, |tree, ctx| tree.next_scan_complete(ctx))
                 .await;
-            worktree
-                .condition_with_duration(time::Duration::from_millis(500), &app, |worktree, _| {
-                    worktree.inode_for_path("the-new-name").is_some()
-                })
-                .await;
-            app.read(|ctx| assert_eq!(editor.title(ctx), "the-new-name"));
+            app.read(|ctx| {
+                assert!(!editor.is_dirty(ctx));
+                assert_eq!(editor.title(ctx), "the-new-name");
+            });
 
             // Edit the file and save it again. This time, there is no filename prompt.
             editor.update(&mut app, |editor, ctx| {
@@ -1057,7 +1054,7 @@ mod tests {
                 workspace.open_new_file(&(), ctx);
                 workspace.split_pane(workspace.active_pane().clone(), SplitDirection::Right, ctx);
                 assert!(workspace
-                    .open_entry((worktree.id(), Path::new("the-new-name").into()), ctx)
+                    .open_entry((tree.id(), Path::new("the-new-name").into()), ctx)
                     .is_none());
             });
             let editor2 = workspace.update(&mut app, |workspace, ctx| {
