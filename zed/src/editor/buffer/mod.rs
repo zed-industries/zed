@@ -501,7 +501,7 @@ impl Buffer {
     }
 
     pub fn is_dirty(&self) -> bool {
-        self.version > self.saved_version
+        self.version > self.saved_version || self.file.as_ref().map_or(false, |f| f.is_deleted())
     }
 
     pub fn version(&self) -> time::Global {
@@ -2376,11 +2376,15 @@ impl ToPoint for usize {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::{test::temp_tree, worktree::Worktree};
     use cmp::Ordering;
     use gpui::App;
-    use std::{cell::RefCell, rc::Rc};
+    use serde_json::json;
     use std::{
+        cell::RefCell,
         collections::BTreeMap,
+        fs,
+        rc::Rc,
         sync::atomic::{self, AtomicUsize},
     };
 
@@ -2979,13 +2983,24 @@ mod tests {
     }
 
     #[test]
-    fn test_is_modified() {
-        App::test((), |app| {
-            let model = app.add_model(|ctx| Buffer::new(0, "abc", ctx));
+    fn test_is_dirty() {
+        use crate::worktree::WorktreeHandle;
+
+        App::test_async((), |mut app| async move {
+            let dir = temp_tree(json!({
+                "file1": "",
+            }));
+            let tree = app.add_model(|ctx| Worktree::new(dir.path(), ctx));
+            app.read(|ctx| tree.read(ctx).scan_complete()).await;
+
+            let file = app.read(|ctx| tree.file("file1", ctx));
+            let model = app.add_model(|ctx| {
+                Buffer::from_history(0, History::new("abc".into()), Some(file), ctx)
+            });
             let events = Rc::new(RefCell::new(Vec::new()));
 
             // initially, the buffer isn't dirty.
-            model.update(app, |buffer, ctx| {
+            model.update(&mut app, |buffer, ctx| {
                 ctx.subscribe(&model, {
                     let events = events.clone();
                     move |_, event, _| events.borrow_mut().push(event.clone())
@@ -2998,7 +3013,7 @@ mod tests {
             });
 
             // after the first edit, the buffer is dirty, and emits a dirtied event.
-            model.update(app, |buffer, ctx| {
+            model.update(&mut app, |buffer, ctx| {
                 assert!(buffer.text() == "ac");
                 assert!(buffer.is_dirty());
                 assert_eq!(*events.borrow(), &[Event::Edited, Event::Dirtied]);
@@ -3008,7 +3023,7 @@ mod tests {
             });
 
             // after saving, the buffer is not dirty, and emits a saved event.
-            model.update(app, |buffer, ctx| {
+            model.update(&mut app, |buffer, ctx| {
                 assert!(!buffer.is_dirty());
                 assert_eq!(*events.borrow(), &[Event::Saved]);
                 events.borrow_mut().clear();
@@ -3018,7 +3033,7 @@ mod tests {
             });
 
             // after editing again, the buffer is dirty, and emits another dirty event.
-            model.update(app, |buffer, ctx| {
+            model.update(&mut app, |buffer, ctx| {
                 assert!(buffer.text() == "aBDc");
                 assert!(buffer.is_dirty());
                 assert_eq!(
@@ -3034,8 +3049,22 @@ mod tests {
                 assert!(buffer.is_dirty());
             });
 
-            model.update(app, |_, _| {
-                assert_eq!(*events.borrow(), &[Event::Edited]);
+            assert_eq!(*events.borrow(), &[Event::Edited]);
+
+            // When the file is deleted, the buffer is considered dirty.
+            model.update(&mut app, |buffer, ctx| {
+                buffer.did_save(buffer.version(), None, ctx);
+                assert!(!buffer.is_dirty());
+            });
+            events.borrow_mut().clear();
+
+            tree.flush_fs_events(&app).await;
+            fs::remove_file(dir.path().join("file1")).unwrap();
+            app.read(|ctx| tree.read(ctx).next_scan_complete()).await;
+
+            model.update(&mut app, |buffer, _| {
+                assert_eq!(*events.borrow(), &[Event::FileHandleChanged]);
+                assert!(buffer.is_dirty());
             });
         });
     }
