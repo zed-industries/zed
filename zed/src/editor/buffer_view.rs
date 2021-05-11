@@ -2633,6 +2633,80 @@ mod tests {
     }
 
     #[test]
+    fn test_canceling_pending_selection() {
+        App::test((), |app| {
+            let buffer =
+                app.add_model(|ctx| Buffer::new(0, "aaaaaa\nbbbbbb\ncccccc\ndddddd\n", ctx));
+            let settings = settings::channel(&app.font_cache()).unwrap().1;
+            let (_, view) = app.add_window(|ctx| BufferView::for_buffer(buffer, settings, ctx));
+
+            view.update(app, |view, ctx| {
+                view.begin_selection(DisplayPoint::new(2, 2), false, ctx);
+            });
+            assert_eq!(
+                view.read(app).selection_ranges(app.as_ref()),
+                [DisplayPoint::new(2, 2)..DisplayPoint::new(2, 2)]
+            );
+
+            view.update(app, |view, ctx| {
+                view.update_selection(DisplayPoint::new(3, 3), Vector2F::zero(), ctx);
+            });
+            assert_eq!(
+                view.read(app).selection_ranges(app.as_ref()),
+                [DisplayPoint::new(2, 2)..DisplayPoint::new(3, 3)]
+            );
+
+            view.update(app, |view, ctx| {
+                view.cancel(&(), ctx);
+                view.update_selection(DisplayPoint::new(1, 1), Vector2F::zero(), ctx);
+            });
+            assert_eq!(
+                view.read(app).selection_ranges(app.as_ref()),
+                [DisplayPoint::new(2, 2)..DisplayPoint::new(3, 3)]
+            );
+        });
+    }
+
+    #[test]
+    fn test_cancel() {
+        App::test((), |app| {
+            let buffer =
+                app.add_model(|ctx| Buffer::new(0, "aaaaaa\nbbbbbb\ncccccc\ndddddd\n", ctx));
+            let settings = settings::channel(&app.font_cache()).unwrap().1;
+            let (_, view) = app.add_window(|ctx| BufferView::for_buffer(buffer, settings, ctx));
+
+            view.update(app, |view, ctx| {
+                view.begin_selection(DisplayPoint::new(3, 4), false, ctx);
+                view.update_selection(DisplayPoint::new(1, 1), Vector2F::zero(), ctx);
+                view.end_selection(ctx);
+
+                view.begin_selection(DisplayPoint::new(0, 1), true, ctx);
+                view.update_selection(DisplayPoint::new(0, 3), Vector2F::zero(), ctx);
+                view.end_selection(ctx);
+            });
+            assert_eq!(
+                view.read(app).selection_ranges(app.as_ref()),
+                [
+                    DisplayPoint::new(0, 1)..DisplayPoint::new(0, 3),
+                    DisplayPoint::new(3, 4)..DisplayPoint::new(1, 1),
+                ]
+            );
+
+            view.update(app, |view, ctx| view.cancel(&(), ctx));
+            assert_eq!(
+                view.read(app).selection_ranges(app.as_ref()),
+                [DisplayPoint::new(3, 4)..DisplayPoint::new(1, 1)]
+            );
+
+            view.update(app, |view, ctx| view.cancel(&(), ctx));
+            assert_eq!(
+                view.read(app).selection_ranges(app.as_ref()),
+                [DisplayPoint::new(1, 1)..DisplayPoint::new(1, 1)]
+            );
+        });
+    }
+
+    #[test]
     fn test_layout_line_numbers() {
         App::test((), |app| {
             let layout_cache = TextLayoutCache::new(app.platform().fonts());
