@@ -36,6 +36,7 @@ pub fn init(app: &mut MutableAppContext) {
         Binding::new("delete", "buffer:delete", Some("BufferView")),
         Binding::new("ctrl-d", "buffer:delete", Some("BufferView")),
         Binding::new("enter", "buffer:newline", Some("BufferView")),
+        Binding::new("tab", "buffer:insert", Some("BufferView")).with_arg("\t".to_string()),
         Binding::new("ctrl-shift-K", "buffer:delete_line", Some("BufferView")),
         Binding::new(
             "alt-backspace",

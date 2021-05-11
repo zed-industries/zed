@@ -15,6 +15,7 @@ use std::{ffi::CStr, os::raw::c_char};
 const BACKSPACE_KEY: u16 = 0x7f;
 const ENTER_KEY: u16 = 0x0d;
 const ESCAPE_KEY: u16 = 0x1b;
+const TAB_KEY: u16 = 0x09;
 
 impl Event {
     pub unsafe fn from_native(native_event: id, window_height: Option<f32>) -> Option<Self> {
@@ -49,6 +50,7 @@ impl Event {
                         ENTER_KEY => "enter",
                         DELETE_KEY => "delete",
                         ESCAPE_KEY => "escape",
+                        TAB_KEY => "tab",
                         _ => unmodified_chars,
                     }
                 } else {
