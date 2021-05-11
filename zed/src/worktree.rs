@@ -194,7 +194,9 @@ impl Worktree {
         content: BufferSnapshot,
         ctx: &AppContext,
     ) -> Task<Result<()>> {
-        let abs_path = self.absolutize(path);
+        let handles = self.handles.clone();
+        let path = path.to_path_buf();
+        let abs_path = self.absolutize(&path);
         ctx.background_executor().spawn(async move {
             let buffer_size = content.text_summary().bytes.min(10 * 1024);
             let file = std::fs::File::create(&abs_path)?;
@@ -203,6 +205,11 @@ impl Worktree {
                 writer.write(chunk.as_bytes())?;
             }
             writer.flush()?;
+
+            if let Some(handle) = handles.lock().get(path.as_path()).and_then(Weak::upgrade) {
+                handle.lock().is_deleted = false;
+            }
+
             Ok(())
         })
     }
