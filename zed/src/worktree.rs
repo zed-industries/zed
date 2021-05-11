@@ -166,16 +166,20 @@ impl Worktree {
         path.starts_with(&self.snapshot.abs_path)
     }
 
+    fn absolutize(&self, path: &Path) -> PathBuf {
+        if path.file_name().is_some() {
+            self.snapshot.abs_path.join(path)
+        } else {
+            self.snapshot.abs_path.to_path_buf()
+        }
+    }
+
     pub fn load_history(
         &self,
         path: &Path,
         ctx: &AppContext,
     ) -> impl Future<Output = Result<History>> {
-        let abs_path = if path.file_name().is_some() {
-            self.snapshot.abs_path.join(path)
-        } else {
-            self.snapshot.abs_path.to_path_buf()
-        };
+        let abs_path = self.absolutize(path);
         ctx.background_executor().spawn(async move {
             let mut file = std::fs::File::open(&abs_path)?;
             let mut base_text = String::new();
@@ -190,7 +194,7 @@ impl Worktree {
         content: BufferSnapshot,
         ctx: &AppContext,
     ) -> Task<Result<()>> {
-        let abs_path = self.snapshot.abs_path.join(path);
+        let abs_path = self.absolutize(path);
         ctx.background_executor().spawn(async move {
             let buffer_size = content.text_summary().bytes.min(10 * 1024);
             let file = std::fs::File::create(&abs_path)?;
@@ -1441,6 +1445,31 @@ mod tests {
             app.read(|ctx| {
                 assert_eq!(history.base_text.as_ref(), buffer.read(ctx).text());
             });
+        });
+    }
+
+    #[test]
+    fn test_save_in_single_file_worktree() {
+        App::test_async((), |mut app| async move {
+            let dir = temp_tree(json!({
+                "file1": "the old contents",
+            }));
+
+            let tree = app.add_model(|ctx| Worktree::new(dir.path().join("file1"), ctx));
+            app.read(|ctx| tree.read(ctx).scan_complete()).await;
+            app.read(|ctx| assert_eq!(tree.read(ctx).file_count(), 1));
+
+            let buffer =
+                app.add_model(|ctx| Buffer::new(1, "a line of text.\n".repeat(10 * 1024), ctx));
+
+            let file = app.read(|ctx| tree.file("", ctx));
+            app.update(|ctx| {
+                assert_eq!(file.path().file_name(), None);
+                smol::block_on(file.save(buffer.read(ctx).snapshot(), ctx.as_ref())).unwrap();
+            });
+
+            let history = app.read(|ctx| file.load_history(ctx)).await.unwrap();
+            app.read(|ctx| assert_eq!(history.base_text.as_ref(), buffer.read(ctx).text()));
         });
     }
 
