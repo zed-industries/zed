@@ -377,7 +377,12 @@ impl Buffer {
         ctx: &mut ModelContext<Self>,
     ) -> Self {
         if let Some(file) = file.as_ref() {
-            file.observe_from_model(ctx, |_, _, ctx| ctx.emit(Event::FileHandleChanged));
+            file.observe_from_model(ctx, |this, file, ctx| {
+                if this.version == this.saved_version && file.is_deleted() {
+                    ctx.emit(Event::Dirtied);
+                }
+                ctx.emit(Event::FileHandleChanged);
+            });
         }
 
         let mut insertion_splits = HashMap::default();
@@ -501,7 +506,7 @@ impl Buffer {
     }
 
     pub fn is_dirty(&self) -> bool {
-        self.version > self.saved_version
+        self.version > self.saved_version || self.file.as_ref().map_or(false, |f| f.is_deleted())
     }
 
     pub fn version(&self) -> time::Global {
@@ -2376,11 +2381,15 @@ impl ToPoint for usize {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::{test::temp_tree, worktree::Worktree};
     use cmp::Ordering;
     use gpui::App;
-    use std::{cell::RefCell, rc::Rc};
+    use serde_json::json;
     use std::{
+        cell::RefCell,
         collections::BTreeMap,
+        fs,
+        rc::Rc,
         sync::atomic::{self, AtomicUsize},
     };
 
@@ -2979,14 +2988,27 @@ mod tests {
     }
 
     #[test]
-    fn test_is_modified() {
-        App::test((), |app| {
-            let model = app.add_model(|ctx| Buffer::new(0, "abc", ctx));
+    fn test_is_dirty() {
+        use crate::worktree::WorktreeHandle;
+
+        App::test_async((), |mut app| async move {
+            let dir = temp_tree(json!({
+                "file1": "",
+                "file2": "",
+                "file3": "",
+            }));
+            let tree = app.add_model(|ctx| Worktree::new(dir.path(), ctx));
+            app.read(|ctx| tree.read(ctx).scan_complete()).await;
+
+            let file1 = app.read(|ctx| tree.file("file1", ctx));
+            let buffer1 = app.add_model(|ctx| {
+                Buffer::from_history(0, History::new("abc".into()), Some(file1), ctx)
+            });
             let events = Rc::new(RefCell::new(Vec::new()));
 
             // initially, the buffer isn't dirty.
-            model.update(app, |buffer, ctx| {
-                ctx.subscribe(&model, {
+            buffer1.update(&mut app, |buffer, ctx| {
+                ctx.subscribe(&buffer1, {
                     let events = events.clone();
                     move |_, event, _| events.borrow_mut().push(event.clone())
                 });
@@ -2998,7 +3020,7 @@ mod tests {
             });
 
             // after the first edit, the buffer is dirty, and emits a dirtied event.
-            model.update(app, |buffer, ctx| {
+            buffer1.update(&mut app, |buffer, ctx| {
                 assert!(buffer.text() == "ac");
                 assert!(buffer.is_dirty());
                 assert_eq!(*events.borrow(), &[Event::Edited, Event::Dirtied]);
@@ -3008,7 +3030,7 @@ mod tests {
             });
 
             // after saving, the buffer is not dirty, and emits a saved event.
-            model.update(app, |buffer, ctx| {
+            buffer1.update(&mut app, |buffer, ctx| {
                 assert!(!buffer.is_dirty());
                 assert_eq!(*events.borrow(), &[Event::Saved]);
                 events.borrow_mut().clear();
@@ -3018,7 +3040,7 @@ mod tests {
             });
 
             // after editing again, the buffer is dirty, and emits another dirty event.
-            model.update(app, |buffer, ctx| {
+            buffer1.update(&mut app, |buffer, ctx| {
                 assert!(buffer.text() == "aBDc");
                 assert!(buffer.is_dirty());
                 assert_eq!(
@@ -3034,9 +3056,52 @@ mod tests {
                 assert!(buffer.is_dirty());
             });
 
-            model.update(app, |_, _| {
-                assert_eq!(*events.borrow(), &[Event::Edited]);
+            assert_eq!(*events.borrow(), &[Event::Edited]);
+
+            // When a file is deleted, the buffer is considered dirty.
+            let events = Rc::new(RefCell::new(Vec::new()));
+            let file2 = app.read(|ctx| tree.file("file2", ctx));
+            let buffer2 = app.add_model(|ctx: &mut ModelContext<Buffer>| {
+                ctx.subscribe(&ctx.handle(), {
+                    let events = events.clone();
+                    move |_, event, _| events.borrow_mut().push(event.clone())
+                });
+
+                Buffer::from_history(0, History::new("abc".into()), Some(file2), ctx)
             });
+
+            tree.flush_fs_events(&app).await;
+            fs::remove_file(dir.path().join("file2")).unwrap();
+            tree.update(&mut app, |tree, ctx| tree.next_scan_complete(ctx))
+                .await;
+            assert_eq!(
+                *events.borrow(),
+                &[Event::Dirtied, Event::FileHandleChanged]
+            );
+            app.read(|ctx| assert!(buffer2.read(ctx).is_dirty()));
+
+            // When a file is already dirty when deleted, we don't emit a Dirtied event.
+            let events = Rc::new(RefCell::new(Vec::new()));
+            let file3 = app.read(|ctx| tree.file("file3", ctx));
+            let buffer3 = app.add_model(|ctx: &mut ModelContext<Buffer>| {
+                ctx.subscribe(&ctx.handle(), {
+                    let events = events.clone();
+                    move |_, event, _| events.borrow_mut().push(event.clone())
+                });
+
+                Buffer::from_history(0, History::new("abc".into()), Some(file3), ctx)
+            });
+
+            tree.flush_fs_events(&app).await;
+            buffer3.update(&mut app, |buffer, ctx| {
+                buffer.edit(Some(0..0), "x", Some(ctx)).unwrap();
+            });
+            events.borrow_mut().clear();
+            fs::remove_file(dir.path().join("file3")).unwrap();
+            tree.update(&mut app, |tree, ctx| tree.next_scan_complete(ctx))
+                .await;
+            assert_eq!(*events.borrow(), &[Event::FileHandleChanged]);
+            app.read(|ctx| assert!(buffer3.read(ctx).is_dirty()));
         });
     }
 

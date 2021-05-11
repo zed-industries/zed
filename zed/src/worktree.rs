@@ -114,19 +114,17 @@ impl Worktree {
         }
     }
 
-    pub fn next_scan_complete(&self) -> impl Future<Output = ()> {
-        let mut scan_state_rx = self.scan_state.1.clone();
-        let mut did_scan = matches!(*scan_state_rx.borrow(), ScanState::Scanning);
-        async move {
-            loop {
-                if let ScanState::Scanning = *scan_state_rx.borrow() {
-                    did_scan = true;
-                } else if did_scan {
-                    break;
+    pub fn next_scan_complete(&self, ctx: &mut ModelContext<Self>) -> impl Future<Output = ()> {
+        let scan_id = self.snapshot.scan_id;
+        ctx.spawn_stream(
+            self.scan_state.1.clone(),
+            move |this, scan_state, ctx| {
+                if matches!(scan_state, ScanState::Idle) && this.snapshot.scan_id > scan_id {
+                    ctx.halt_stream();
                 }
-                scan_state_rx.recv().await;
-            }
-        }
+            },
+            |_, _| {},
+        )
     }
 
     fn observe_scan_state(&mut self, scan_state: ScanState, ctx: &mut ModelContext<Self>) {
@@ -168,16 +166,20 @@ impl Worktree {
         path.starts_with(&self.snapshot.abs_path)
     }
 
+    fn absolutize(&self, path: &Path) -> PathBuf {
+        if path.file_name().is_some() {
+            self.snapshot.abs_path.join(path)
+        } else {
+            self.snapshot.abs_path.to_path_buf()
+        }
+    }
+
     pub fn load_history(
         &self,
         path: &Path,
         ctx: &AppContext,
     ) -> impl Future<Output = Result<History>> {
-        let abs_path = if path.file_name().is_some() {
-            self.snapshot.abs_path.join(path)
-        } else {
-            self.snapshot.abs_path.to_path_buf()
-        };
+        let abs_path = self.absolutize(path);
         ctx.background_executor().spawn(async move {
             let mut file = std::fs::File::open(&abs_path)?;
             let mut base_text = String::new();
@@ -192,7 +194,7 @@ impl Worktree {
         content: BufferSnapshot,
         ctx: &AppContext,
     ) -> Task<Result<()>> {
-        let abs_path = self.snapshot.abs_path.join(path);
+        let abs_path = self.absolutize(path);
         ctx.background_executor().spawn(async move {
             let buffer_size = content.text_summary().bytes.min(10 * 1024);
             let file = std::fs::File::create(&abs_path)?;
@@ -271,6 +273,25 @@ impl Snapshot {
     /// a directory.
     pub fn root_name(&self) -> &str {
         &self.root_name
+    }
+
+    fn path_is_pending(&self, path: impl AsRef<Path>) -> bool {
+        if self.entries.is_empty() {
+            return true;
+        }
+        let path = path.as_ref();
+        let mut cursor = self.entries.cursor::<_, ()>();
+        if cursor.seek(&PathSearch::Exact(path), SeekBias::Left, &()) {
+            let entry = cursor.item().unwrap();
+            if entry.path.as_ref() == path {
+                return matches!(entry.kind, EntryKind::PendingDir);
+            }
+        }
+        if let Some(entry) = cursor.prev_item() {
+            matches!(entry.kind, EntryKind::PendingDir) && path.starts_with(entry.path.as_ref())
+        } else {
+            false
+        }
     }
 
     fn entry_for_path(&self, path: impl AsRef<Path>) -> Option<&Entry> {
@@ -766,6 +787,7 @@ impl BackgroundScanner {
             });
         }
 
+        self.mark_deleted_file_handles();
         Ok(())
     }
 
@@ -977,19 +999,7 @@ impl BackgroundScanner {
         });
 
         self.update_ignore_statuses();
-
-        let mut handles = self.handles.lock();
-        let snapshot = self.snapshot.lock();
-        handles.retain(|path, handle_state| {
-            if let Some(handle_state) = Weak::upgrade(&handle_state) {
-                let mut handle_state = handle_state.lock();
-                handle_state.is_deleted = snapshot.entry_for_path(&path).is_none();
-                true
-            } else {
-                false
-            }
-        });
-
+        self.mark_deleted_file_handles();
         true
     }
 
@@ -1079,6 +1089,20 @@ impl BackgroundScanner {
         self.snapshot.lock().entries.edit(edits, &());
     }
 
+    fn mark_deleted_file_handles(&self) {
+        let mut handles = self.handles.lock();
+        let snapshot = self.snapshot.lock();
+        handles.retain(|path, handle_state| {
+            if let Some(handle_state) = Weak::upgrade(&handle_state) {
+                let mut handle_state = handle_state.lock();
+                handle_state.is_deleted = snapshot.entry_for_path(&path).is_none();
+                true
+            } else {
+                false
+            }
+        });
+    }
+
     fn fs_entry_for_path(&self, path: Arc<Path>, abs_path: &Path) -> Result<Option<Entry>> {
         let metadata = match fs::metadata(&abs_path) {
             Err(err) => {
@@ -1137,6 +1161,12 @@ struct UpdateIgnoreStatusJob {
 
 pub trait WorktreeHandle {
     fn file(&self, path: impl AsRef<Path>, app: &AppContext) -> FileHandle;
+
+    #[cfg(test)]
+    fn flush_fs_events<'a>(
+        &self,
+        app: &'a gpui::TestAppContext,
+    ) -> futures_core::future::LocalBoxFuture<'a, ()>;
 }
 
 impl WorktreeHandle for ModelHandle<Worktree> {
@@ -1155,7 +1185,7 @@ impl WorktreeHandle for ModelHandle<Worktree> {
             } else {
                 FileHandleState {
                     path: path.into(),
-                    is_deleted: true,
+                    is_deleted: !tree.path_is_pending(path),
                 }
             };
 
@@ -1168,6 +1198,40 @@ impl WorktreeHandle for ModelHandle<Worktree> {
             worktree: self.clone(),
             state,
         }
+    }
+
+    // When the worktree's FS event stream sometimes delivers "redundant" events for FS changes that
+    // occurred before the worktree was constructed. These events can cause the worktree to perfrom
+    // extra directory scans, and emit extra scan-state notifications.
+    //
+    // This function mutates the worktree's directory and waits for those mutations to be picked up,
+    // to ensure that all redundant FS events have already been processed.
+    #[cfg(test)]
+    fn flush_fs_events<'a>(
+        &self,
+        app: &'a gpui::TestAppContext,
+    ) -> futures_core::future::LocalBoxFuture<'a, ()> {
+        use smol::future::FutureExt;
+
+        let filename = "fs-event-sentinel";
+        let root_path = app.read(|ctx| self.read(ctx).abs_path.clone());
+        let tree = self.clone();
+        async move {
+            fs::write(root_path.join(filename), "").unwrap();
+            tree.condition_with_duration(Duration::from_secs(5), &app, |tree, _| {
+                tree.entry_for_path(filename).is_some()
+            })
+            .await;
+
+            fs::remove_file(root_path.join(filename)).unwrap();
+            tree.condition_with_duration(Duration::from_secs(5), &app, |tree, _| {
+                tree.entry_for_path(filename).is_none()
+            })
+            .await;
+
+            app.read(|ctx| tree.read(ctx).scan_complete()).await;
+        }
+        .boxed_local()
     }
 }
 
@@ -1282,7 +1346,7 @@ mod tests {
     use crate::editor::Buffer;
     use crate::test::*;
     use anyhow::Result;
-    use gpui::{App, TestAppContext};
+    use gpui::App;
     use rand::prelude::*;
     use serde_json::json;
     use std::env;
@@ -1385,6 +1449,31 @@ mod tests {
     }
 
     #[test]
+    fn test_save_in_single_file_worktree() {
+        App::test_async((), |mut app| async move {
+            let dir = temp_tree(json!({
+                "file1": "the old contents",
+            }));
+
+            let tree = app.add_model(|ctx| Worktree::new(dir.path().join("file1"), ctx));
+            app.read(|ctx| tree.read(ctx).scan_complete()).await;
+            app.read(|ctx| assert_eq!(tree.read(ctx).file_count(), 1));
+
+            let buffer =
+                app.add_model(|ctx| Buffer::new(1, "a line of text.\n".repeat(10 * 1024), ctx));
+
+            let file = app.read(|ctx| tree.file("", ctx));
+            app.update(|ctx| {
+                assert_eq!(file.path().file_name(), None);
+                smol::block_on(file.save(buffer.read(ctx).snapshot(), ctx.as_ref())).unwrap();
+            });
+
+            let history = app.read(|ctx| file.load_history(ctx)).await.unwrap();
+            app.read(|ctx| assert_eq!(history.base_text.as_ref(), buffer.read(ctx).text()));
+        });
+    }
+
+    #[test]
     fn test_rescan_simple() {
         App::test_async((), |mut app| async move {
             let dir = temp_tree(json!({
@@ -1402,23 +1491,39 @@ mod tests {
             }));
 
             let tree = app.add_model(|ctx| Worktree::new(dir.path(), ctx));
-            app.read(|ctx| tree.read(ctx).scan_complete()).await;
-            flush_fs_events(&tree, &app).await;
-
-            let (file2, file3, file4, file5) = app.read(|ctx| {
+            let (file2, file3, file4, file5, non_existent_file) = app.read(|ctx| {
                 (
                     tree.file("a/file2", ctx),
                     tree.file("a/file3", ctx),
                     tree.file("b/c/file4", ctx),
                     tree.file("b/c/file5", ctx),
+                    tree.file("a/filex", ctx),
                 )
             });
 
+            // The worktree hasn't scanned the directories containing these paths,
+            // so it can't determine that the paths are deleted.
+            assert!(!file2.is_deleted());
+            assert!(!file3.is_deleted());
+            assert!(!file4.is_deleted());
+            assert!(!file5.is_deleted());
+            assert!(!non_existent_file.is_deleted());
+
+            // After scanning, the worktree knows which files exist and which don't.
+            app.read(|ctx| tree.read(ctx).scan_complete()).await;
+            assert!(!file2.is_deleted());
+            assert!(!file3.is_deleted());
+            assert!(!file4.is_deleted());
+            assert!(!file5.is_deleted());
+            assert!(non_existent_file.is_deleted());
+
+            tree.flush_fs_events(&app).await;
             std::fs::rename(dir.path().join("a/file3"), dir.path().join("b/c/file3")).unwrap();
             std::fs::remove_file(dir.path().join("b/c/file5")).unwrap();
             std::fs::rename(dir.path().join("b/c"), dir.path().join("d")).unwrap();
             std::fs::rename(dir.path().join("a/file2"), dir.path().join("a/file2.new")).unwrap();
-            app.read(|ctx| tree.read(ctx).next_scan_complete()).await;
+            tree.update(&mut app, |tree, ctx| tree.next_scan_complete(ctx))
+                .await;
 
             app.read(|ctx| {
                 assert_eq!(
@@ -1469,7 +1574,7 @@ mod tests {
 
             let tree = app.add_model(|ctx| Worktree::new(dir.path(), ctx));
             app.read(|ctx| tree.read(ctx).scan_complete()).await;
-            flush_fs_events(&tree, &app).await;
+            tree.flush_fs_events(&app).await;
             app.read(|ctx| {
                 let tree = tree.read(ctx);
                 let tracked = tree.entry_for_path("tracked-dir/tracked-file1").unwrap();
@@ -1480,7 +1585,8 @@ mod tests {
 
             fs::write(dir.path().join("tracked-dir/tracked-file2"), "").unwrap();
             fs::write(dir.path().join("ignored-dir/ignored-file2"), "").unwrap();
-            app.read(|ctx| tree.read(ctx).next_scan_complete()).await;
+            tree.update(&mut app, |tree, ctx| tree.next_scan_complete(ctx))
+                .await;
             app.read(|ctx| {
                 let tree = tree.read(ctx);
                 let dot_git = tree.entry_for_path(".git").unwrap();
@@ -1491,6 +1597,59 @@ mod tests {
                 assert_eq!(dot_git.is_ignored(), true);
             });
         });
+    }
+
+    #[test]
+    fn test_path_is_pending() {
+        let mut snapshot = Snapshot {
+            id: 0,
+            scan_id: 0,
+            abs_path: Path::new("").into(),
+            entries: Default::default(),
+            ignores: Default::default(),
+            root_name: Default::default(),
+        };
+
+        snapshot.entries.edit(
+            vec![
+                Edit::Insert(Entry {
+                    path: Path::new("b").into(),
+                    kind: EntryKind::Dir,
+                    inode: 0,
+                    is_ignored: false,
+                    is_symlink: false,
+                }),
+                Edit::Insert(Entry {
+                    path: Path::new("b/a").into(),
+                    kind: EntryKind::Dir,
+                    inode: 0,
+                    is_ignored: false,
+                    is_symlink: false,
+                }),
+                Edit::Insert(Entry {
+                    path: Path::new("b/c").into(),
+                    kind: EntryKind::PendingDir,
+                    inode: 0,
+                    is_ignored: false,
+                    is_symlink: false,
+                }),
+                Edit::Insert(Entry {
+                    path: Path::new("b/e").into(),
+                    kind: EntryKind::Dir,
+                    inode: 0,
+                    is_ignored: false,
+                    is_symlink: false,
+                }),
+            ],
+            &(),
+        );
+
+        assert!(!snapshot.path_is_pending("b/a"));
+        assert!(!snapshot.path_is_pending("b/b"));
+        assert!(snapshot.path_is_pending("b/c"));
+        assert!(snapshot.path_is_pending("b/c/x"));
+        assert!(!snapshot.path_is_pending("b/d"));
+        assert!(!snapshot.path_is_pending("b/e"));
     }
 
     #[test]
@@ -1775,30 +1934,5 @@ mod tests {
             paths.sort_by(|a, b| a.0.cmp(&b.0));
             paths
         }
-    }
-
-    // When the worktree's FS event stream sometimes delivers "redundant" events for FS changes that
-    // occurred before the worktree was constructed. These events can cause the worktree to perfrom
-    // extra directory scans, and emit extra scan-state notifications.
-    //
-    // This function mutates the worktree's directory and waits for those mutations to be picked up,
-    // to ensure that all redundant FS events have already been processed.
-    async fn flush_fs_events(tree: &ModelHandle<Worktree>, app: &TestAppContext) {
-        let filename = "fs-event-sentinel";
-        let root_path = app.read(|ctx| tree.read(ctx).abs_path.clone());
-
-        fs::write(root_path.join(filename), "").unwrap();
-        tree.condition_with_duration(Duration::from_secs(5), &app, |tree, _| {
-            tree.entry_for_path(filename).is_some()
-        })
-        .await;
-
-        fs::remove_file(root_path.join(filename)).unwrap();
-        tree.condition_with_duration(Duration::from_secs(5), &app, |tree, _| {
-            tree.entry_for_path(filename).is_none()
-        })
-        .await;
-
-        app.read(|ctx| tree.read(ctx).scan_complete()).await;
     }
 }

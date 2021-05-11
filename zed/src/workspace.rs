@@ -344,17 +344,17 @@ impl Workspace {
 
     pub fn open_paths(
         &mut self,
-        paths: &[PathBuf],
+        abs_paths: &[PathBuf],
         ctx: &mut ViewContext<Self>,
     ) -> impl Future<Output = ()> {
-        let entries = paths
+        let entries = abs_paths
             .iter()
             .cloned()
             .map(|path| self.file_for_path(&path, ctx))
             .collect::<Vec<_>>();
 
         let bg = ctx.background_executor().clone();
-        let tasks = paths
+        let tasks = abs_paths
             .iter()
             .cloned()
             .zip(entries.into_iter())
@@ -489,11 +489,6 @@ impl Workspace {
         };
 
         let file = worktree.file(path.clone(), ctx.as_ref());
-        if file.is_deleted() {
-            log::error!("path {:?} does not exist", path);
-            return None;
-        }
-
         if let Entry::Vacant(entry) = self.loading_items.entry(entry.clone()) {
             let (mut tx, rx) = postage::watch::channel();
             entry.insert(rx);
@@ -737,7 +732,6 @@ mod tests {
     use gpui::App;
     use serde_json::json;
     use std::collections::HashSet;
-    use std::time;
     use tempdir::TempDir;
 
     #[test]
@@ -935,14 +929,16 @@ mod tests {
             })
             .await;
             app.read(|ctx| {
-                workspace
-                    .read(ctx)
-                    .active_pane()
-                    .read(ctx)
-                    .active_item()
-                    .unwrap()
-                    .title(ctx)
-                    == "a.txt"
+                assert_eq!(
+                    workspace
+                        .read(ctx)
+                        .active_pane()
+                        .read(ctx)
+                        .active_item()
+                        .unwrap()
+                        .title(ctx),
+                    "a.txt"
+                );
             });
 
             // Open a file outside of any existing worktree.
@@ -952,7 +948,7 @@ mod tests {
                 })
             })
             .await;
-            app.update(|ctx| {
+            app.read(|ctx| {
                 let worktree_roots = workspace
                     .read(ctx)
                     .worktrees()
@@ -965,16 +961,16 @@ mod tests {
                         .into_iter()
                         .collect(),
                 );
-            });
-            app.read(|ctx| {
-                workspace
-                    .read(ctx)
-                    .active_pane()
-                    .read(ctx)
-                    .active_item()
-                    .unwrap()
-                    .title(ctx)
-                    == "b.txt"
+                assert_eq!(
+                    workspace
+                        .read(ctx)
+                        .active_pane()
+                        .read(ctx)
+                        .active_item()
+                        .unwrap()
+                        .title(ctx),
+                    "b.txt"
+                );
             });
         });
     }
@@ -989,7 +985,7 @@ mod tests {
                 workspace.add_worktree(dir.path(), ctx);
                 workspace
             });
-            let worktree = app.read(|ctx| {
+            let tree = app.read(|ctx| {
                 workspace
                     .read(ctx)
                     .worktrees()
@@ -998,6 +994,7 @@ mod tests {
                     .unwrap()
                     .clone()
             });
+            tree.flush_fs_events(&app).await;
 
             // Create a new untitled buffer
             let editor = workspace.update(&mut app, |workspace, ctx| {
@@ -1030,15 +1027,12 @@ mod tests {
             });
 
             // When the save completes, the buffer's title is updated.
-            editor
-                .condition(&app, |editor, ctx| !editor.is_dirty(ctx))
+            tree.update(&mut app, |tree, ctx| tree.next_scan_complete(ctx))
                 .await;
-            worktree
-                .condition_with_duration(time::Duration::from_millis(500), &app, |worktree, _| {
-                    worktree.inode_for_path("the-new-name").is_some()
-                })
-                .await;
-            app.read(|ctx| assert_eq!(editor.title(ctx), "the-new-name"));
+            app.read(|ctx| {
+                assert!(!editor.is_dirty(ctx));
+                assert_eq!(editor.title(ctx), "the-new-name");
+            });
 
             // Edit the file and save it again. This time, there is no filename prompt.
             editor.update(&mut app, |editor, ctx| {
@@ -1060,7 +1054,7 @@ mod tests {
                 workspace.open_new_file(&(), ctx);
                 workspace.split_pane(workspace.active_pane().clone(), SplitDirection::Right, ctx);
                 assert!(workspace
-                    .open_entry((worktree.id(), Path::new("the-new-name").into()), ctx)
+                    .open_entry((tree.id(), Path::new("the-new-name").into()), ctx)
                     .is_none());
             });
             let editor2 = workspace.update(&mut app, |workspace, ctx| {
