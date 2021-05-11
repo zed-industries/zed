@@ -1797,98 +1797,131 @@ impl BufferView {
         use super::RangeExt;
 
         let app = ctx.as_ref();
-        let buffer = self.buffer.read(app);
-        let mut selections = self.selections(app);
+
+        let mut selections = self.selections(app).to_vec();
         let mut state = if let Some(state) = self.add_selections_state.take() {
             state
         } else {
-            let (ix, oldest_selection) = selections
-                .iter()
-                .enumerate()
-                .min_by_key(|(_, s)| s.id)
-                .unwrap();
-            selections = &selections[ix..ix + 1];
-            AddSelectionsState {
-                above,
-                stack: vec![oldest_selection.id],
+            let oldest_selection = selections.iter().min_by_key(|s| s.id).unwrap().clone();
+            let range = oldest_selection
+                .display_range(&self.display_map, app)
+                .sorted();
+
+            selections.clear();
+            let mut stack = Vec::new();
+            if range.start.row() == range.end.row() {
+                stack.push(oldest_selection.id);
+                selections.push(oldest_selection);
+            } else {
+                let columns = cmp::min(range.start.column(), range.end.column())
+                    ..cmp::max(range.start.column(), range.end.column());
+                for row in range.start.row()..=range.end.row() {
+                    if let Some(selection) =
+                        self.build_columnar_selection(row, &columns, oldest_selection.reversed, app)
+                    {
+                        stack.push(selection.id);
+                        selections.push(selection);
+                    }
+                }
+
+                if above {
+                    stack.reverse();
+                }
             }
+
+            AddSelectionsState { above, stack }
         };
 
         let last_added_selection = *state.stack.last().unwrap();
         let mut new_selections = Vec::new();
         if above == state.above {
-            for selection in selections {
+            let end_row = if above {
+                0
+            } else {
+                self.display_map.max_point(app).row()
+            };
+
+            'outer: for selection in selections {
                 if selection.id == last_added_selection {
                     let range = selection.display_range(&self.display_map, app).sorted();
-
-                    let mut row = if above {
-                        range.start.row()
+                    debug_assert_eq!(range.start.row(), range.end.row());
+                    let mut row = range.start.row();
+                    let columns = if let SelectionGoal::ColumnRange { start, end } = selection.goal
+                    {
+                        start..end
                     } else {
-                        range.end.row()
+                        cmp::min(range.start.column(), range.end.column())
+                            ..cmp::max(range.start.column(), range.end.column())
                     };
-                    let start_column;
-                    let end_column;
-                    if let SelectionGoal::ColumnRange { start, end } = selection.goal {
-                        start_column = start;
-                        end_column = end;
-                    } else {
-                        start_column = cmp::min(range.start.column(), range.end.column());
-                        end_column = cmp::max(range.start.column(), range.end.column());
-                    }
-                    let is_empty = start_column == end_column;
 
-                    while row > 0 && row < self.display_map.max_point(app).row() {
+                    while row != end_row {
                         if above {
                             row -= 1;
                         } else {
                             row += 1;
                         }
 
-                        let line_len = self.display_map.line_len(row, app).unwrap();
-                        if start_column < line_len || (is_empty && start_column == line_len) {
-                            let id = post_inc(&mut self.next_selection_id);
-                            let start = DisplayPoint::new(row, start_column);
-                            let end = DisplayPoint::new(row, cmp::min(end_column, line_len));
-                            new_selections.push(Selection {
-                                id,
-                                start: self
-                                    .display_map
-                                    .anchor_before(start, Bias::Left, app)
-                                    .unwrap(),
-                                end: self
-                                    .display_map
-                                    .anchor_before(end, Bias::Left, app)
-                                    .unwrap(),
-                                reversed: selection.reversed
-                                    && range.start.row() == range.end.row(),
-                                goal: SelectionGoal::ColumnRange {
-                                    start: start_column,
-                                    end: end_column,
-                                },
-                            });
-                            state.stack.push(id);
-                            break;
+                        if let Some(new_selection) =
+                            self.build_columnar_selection(row, &columns, selection.reversed, app)
+                        {
+                            state.stack.push(new_selection.id);
+                            if above {
+                                new_selections.push(new_selection);
+                                new_selections.push(selection);
+                            } else {
+                                new_selections.push(selection);
+                                new_selections.push(new_selection);
+                            }
+
+                            continue 'outer;
                         }
                     }
                 }
 
-                new_selections.push(selection.clone());
+                new_selections.push(selection);
             }
-
-            new_selections.sort_unstable_by(|a, b| a.start.cmp(&b.start, buffer).unwrap());
         } else {
-            new_selections.extend(
-                selections
-                    .into_iter()
-                    .filter(|s| s.id != last_added_selection)
-                    .cloned(),
-            );
+            new_selections = selections;
+            new_selections.retain(|s| s.id != last_added_selection);
             state.stack.pop();
         }
 
         self.update_selections(new_selections, true, ctx);
         if state.stack.len() > 1 {
             self.add_selections_state = Some(state);
+        }
+    }
+
+    fn build_columnar_selection(
+        &mut self,
+        row: u32,
+        columns: &Range<u32>,
+        reversed: bool,
+        ctx: &AppContext,
+    ) -> Option<Selection> {
+        let is_empty = columns.start == columns.end;
+        let line_len = self.display_map.line_len(row, ctx).unwrap();
+        if columns.start < line_len || (is_empty && columns.start == line_len) {
+            let start = DisplayPoint::new(row, columns.start);
+            let end = DisplayPoint::new(row, cmp::min(columns.end, line_len));
+            Some(Selection {
+                id: post_inc(&mut self.next_selection_id),
+                start: self
+                    .display_map
+                    .anchor_before(start, Bias::Left, ctx)
+                    .unwrap(),
+                end: self
+                    .display_map
+                    .anchor_before(end, Bias::Left, ctx)
+                    .unwrap(),
+                reversed,
+                goal: SelectionGoal::ColumnRange {
+                    start: columns.start,
+                    end: columns.end,
+                },
+            })
+        } else {
+            None
         }
     }
 
