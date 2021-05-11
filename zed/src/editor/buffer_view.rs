@@ -1799,38 +1799,31 @@ impl BufferView {
         let app = ctx.as_ref();
 
         let mut selections = self.selections(app).to_vec();
-        let mut state = if let Some(state) = self.add_selections_state.take() {
-            state
-        } else {
+        let mut state = self.add_selections_state.take().unwrap_or_else(|| {
             let oldest_selection = selections.iter().min_by_key(|s| s.id).unwrap().clone();
             let range = oldest_selection
                 .display_range(&self.display_map, app)
                 .sorted();
+            let columns = cmp::min(range.start.column(), range.end.column())
+                ..cmp::max(range.start.column(), range.end.column());
 
             selections.clear();
             let mut stack = Vec::new();
-            if range.start.row() == range.end.row() {
-                stack.push(oldest_selection.id);
-                selections.push(oldest_selection);
-            } else {
-                let columns = cmp::min(range.start.column(), range.end.column())
-                    ..cmp::max(range.start.column(), range.end.column());
-                for row in range.start.row()..=range.end.row() {
-                    if let Some(selection) =
-                        self.build_columnar_selection(row, &columns, oldest_selection.reversed, app)
-                    {
-                        stack.push(selection.id);
-                        selections.push(selection);
-                    }
-                }
-
-                if above {
-                    stack.reverse();
+            for row in range.start.row()..=range.end.row() {
+                if let Some(selection) =
+                    self.build_columnar_selection(row, &columns, oldest_selection.reversed, app)
+                {
+                    stack.push(selection.id);
+                    selections.push(selection);
                 }
             }
 
+            if above {
+                stack.reverse();
+            }
+
             AddSelectionsState { above, stack }
-        };
+        });
 
         let last_added_selection = *state.stack.last().unwrap();
         let mut new_selections = Vec::new();
