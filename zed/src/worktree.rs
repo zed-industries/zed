@@ -118,8 +118,8 @@ impl Worktree {
         let scan_id = self.snapshot.scan_id;
         ctx.spawn_stream(
             self.scan_state.1.clone(),
-            move |this, _, ctx| {
-                if this.snapshot.scan_id > scan_id {
+            move |this, scan_state, ctx| {
+                if matches!(scan_state, ScanState::Idle) && this.snapshot.scan_id > scan_id {
                     ctx.halt_stream();
                 }
             },
