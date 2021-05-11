@@ -3756,6 +3756,167 @@ mod tests {
         });
     }
 
+    #[test]
+    fn test_add_selection_above_below() {
+        App::test((), |app| {
+            let settings = settings::channel(&app.font_cache()).unwrap().1;
+            let buffer = app.add_model(|ctx| Buffer::new(0, "abc\ndefghi\n\njk\nlmno\n", ctx));
+            let (_, view) = app.add_window(|ctx| BufferView::for_buffer(buffer, settings, ctx));
+
+            view.update(app, |view, ctx| {
+                view.select_display_ranges(
+                    &[DisplayPoint::new(1, 3)..DisplayPoint::new(1, 3)],
+                    ctx,
+                )
+                .unwrap();
+            });
+            view.update(app, |view, ctx| view.add_selection_above(&(), ctx));
+            assert_eq!(
+                view.read(app).selection_ranges(app.as_ref()),
+                vec![
+                    DisplayPoint::new(0, 3)..DisplayPoint::new(0, 3),
+                    DisplayPoint::new(1, 3)..DisplayPoint::new(1, 3)
+                ]
+            );
+
+            view.update(app, |view, ctx| view.add_selection_above(&(), ctx));
+            assert_eq!(
+                view.read(app).selection_ranges(app.as_ref()),
+                vec![
+                    DisplayPoint::new(0, 3)..DisplayPoint::new(0, 3),
+                    DisplayPoint::new(1, 3)..DisplayPoint::new(1, 3)
+                ]
+            );
+
+            view.update(app, |view, ctx| view.add_selection_below(&(), ctx));
+            assert_eq!(
+                view.read(app).selection_ranges(app.as_ref()),
+                vec![DisplayPoint::new(1, 3)..DisplayPoint::new(1, 3)]
+            );
+
+            view.update(app, |view, ctx| view.add_selection_below(&(), ctx));
+            assert_eq!(
+                view.read(app).selection_ranges(app.as_ref()),
+                vec![
+                    DisplayPoint::new(1, 3)..DisplayPoint::new(1, 3),
+                    DisplayPoint::new(4, 3)..DisplayPoint::new(4, 3)
+                ]
+            );
+
+            view.update(app, |view, ctx| view.add_selection_below(&(), ctx));
+            assert_eq!(
+                view.read(app).selection_ranges(app.as_ref()),
+                vec![
+                    DisplayPoint::new(1, 3)..DisplayPoint::new(1, 3),
+                    DisplayPoint::new(4, 3)..DisplayPoint::new(4, 3)
+                ]
+            );
+
+            view.update(app, |view, ctx| {
+                view.select_display_ranges(
+                    &[DisplayPoint::new(1, 4)..DisplayPoint::new(1, 3)],
+                    ctx,
+                )
+                .unwrap();
+            });
+            view.update(app, |view, ctx| view.add_selection_below(&(), ctx));
+            assert_eq!(
+                view.read(app).selection_ranges(app.as_ref()),
+                vec![
+                    DisplayPoint::new(1, 4)..DisplayPoint::new(1, 3),
+                    DisplayPoint::new(4, 4)..DisplayPoint::new(4, 3)
+                ]
+            );
+
+            view.update(app, |view, ctx| view.add_selection_below(&(), ctx));
+            assert_eq!(
+                view.read(app).selection_ranges(app.as_ref()),
+                vec![
+                    DisplayPoint::new(1, 4)..DisplayPoint::new(1, 3),
+                    DisplayPoint::new(4, 4)..DisplayPoint::new(4, 3)
+                ]
+            );
+
+            view.update(app, |view, ctx| view.add_selection_above(&(), ctx));
+            assert_eq!(
+                view.read(app).selection_ranges(app.as_ref()),
+                vec![DisplayPoint::new(1, 4)..DisplayPoint::new(1, 3)]
+            );
+
+            view.update(app, |view, ctx| view.add_selection_above(&(), ctx));
+            assert_eq!(
+                view.read(app).selection_ranges(app.as_ref()),
+                vec![DisplayPoint::new(1, 4)..DisplayPoint::new(1, 3)]
+            );
+
+            view.update(app, |view, ctx| {
+                view.select_display_ranges(
+                    &[DisplayPoint::new(0, 1)..DisplayPoint::new(1, 4)],
+                    ctx,
+                )
+                .unwrap();
+            });
+            view.update(app, |view, ctx| view.add_selection_below(&(), ctx));
+            assert_eq!(
+                view.read(app).selection_ranges(app.as_ref()),
+                vec![
+                    DisplayPoint::new(0, 1)..DisplayPoint::new(0, 3),
+                    DisplayPoint::new(1, 1)..DisplayPoint::new(1, 4),
+                    DisplayPoint::new(3, 1)..DisplayPoint::new(3, 2),
+                ]
+            );
+
+            view.update(app, |view, ctx| view.add_selection_below(&(), ctx));
+            assert_eq!(
+                view.read(app).selection_ranges(app.as_ref()),
+                vec![
+                    DisplayPoint::new(0, 1)..DisplayPoint::new(0, 3),
+                    DisplayPoint::new(1, 1)..DisplayPoint::new(1, 4),
+                    DisplayPoint::new(3, 1)..DisplayPoint::new(3, 2),
+                    DisplayPoint::new(4, 1)..DisplayPoint::new(4, 4),
+                ]
+            );
+
+            view.update(app, |view, ctx| view.add_selection_above(&(), ctx));
+            assert_eq!(
+                view.read(app).selection_ranges(app.as_ref()),
+                vec![
+                    DisplayPoint::new(0, 1)..DisplayPoint::new(0, 3),
+                    DisplayPoint::new(1, 1)..DisplayPoint::new(1, 4),
+                    DisplayPoint::new(3, 1)..DisplayPoint::new(3, 2),
+                ]
+            );
+
+            view.update(app, |view, ctx| {
+                view.select_display_ranges(
+                    &[DisplayPoint::new(4, 3)..DisplayPoint::new(1, 1)],
+                    ctx,
+                )
+                .unwrap();
+            });
+            view.update(app, |view, ctx| view.add_selection_above(&(), ctx));
+            assert_eq!(
+                view.read(app).selection_ranges(app.as_ref()),
+                vec![
+                    DisplayPoint::new(0, 3)..DisplayPoint::new(0, 1),
+                    DisplayPoint::new(1, 3)..DisplayPoint::new(1, 1),
+                    DisplayPoint::new(3, 2)..DisplayPoint::new(3, 1),
+                    DisplayPoint::new(4, 3)..DisplayPoint::new(4, 1),
+                ]
+            );
+
+            view.update(app, |view, ctx| view.add_selection_below(&(), ctx));
+            assert_eq!(
+                view.read(app).selection_ranges(app.as_ref()),
+                vec![
+                    DisplayPoint::new(1, 3)..DisplayPoint::new(1, 1),
+                    DisplayPoint::new(3, 2)..DisplayPoint::new(3, 1),
+                    DisplayPoint::new(4, 3)..DisplayPoint::new(4, 1),
+                ]
+            );
+        });
+    }
+
     impl BufferView {
         fn selection_ranges(&self, app: &AppContext) -> Vec<Range<DisplayPoint>> {
             self.selections_in_range(DisplayPoint::zero()..self.max_point(app), app)
