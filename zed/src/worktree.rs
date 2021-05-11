@@ -28,7 +28,7 @@ use std::{
     os::unix::{ffi::OsStrExt, fs::MetadataExt},
     path::{Path, PathBuf},
     sync::{Arc, Weak},
-    time::Duration,
+    time::{Duration, SystemTime, UNIX_EPOCH},
 };
 
 use self::{char_bag::CharBag, ignore::IgnoreStack};
@@ -63,6 +63,7 @@ pub struct FileHandle {
 struct FileHandleState {
     path: Arc<Path>,
     is_deleted: bool,
+    mtime: SystemTime,
 }
 
 impl Worktree {
@@ -433,6 +434,10 @@ impl FileHandle {
 
     pub fn is_deleted(&self) -> bool {
         self.state.lock().is_deleted
+    }
+
+    pub fn mtime(&self) -> SystemTime {
+        self.state.lock().mtime
     }
 
     pub fn exists(&self) -> bool {
@@ -905,41 +910,63 @@ impl BackgroundScanner {
         };
 
         let mut renamed_paths: HashMap<u64, PathBuf> = HashMap::new();
+        let mut handles = self.handles.lock();
         let mut updated_handles = HashMap::new();
         for event in &events {
+            let path = if let Ok(path) = event.path.strip_prefix(&root_abs_path) {
+                path
+            } else {
+                continue;
+            };
+
+            let metadata = fs::metadata(&event.path);
             if event.flags.contains(fsevent::StreamFlags::ITEM_RENAMED) {
-                if let Ok(path) = event.path.strip_prefix(&root_abs_path) {
-                    if let Some(inode) = snapshot.inode_for_path(path) {
-                        renamed_paths.insert(inode, path.to_path_buf());
-                    } else if let Ok(metadata) = fs::metadata(&event.path) {
-                        let new_path = path;
-                        let mut handles = self.handles.lock();
-                        if let Some(old_path) = renamed_paths.get(&metadata.ino()) {
-                            handles.retain(|handle_path, handle_state| {
-                                if let Ok(path_suffix) = handle_path.strip_prefix(&old_path) {
-                                    let new_handle_path: Arc<Path> =
-                                        if path_suffix.file_name().is_some() {
-                                            new_path.join(path_suffix)
-                                        } else {
-                                            new_path.to_path_buf()
-                                        }
-                                        .into();
-                                    if let Some(handle_state) = Weak::upgrade(&handle_state) {
-                                        handle_state.lock().path = new_handle_path.clone();
-                                        updated_handles
-                                            .insert(new_handle_path, Arc::downgrade(&handle_state));
+                if let Some(inode) = snapshot.inode_for_path(path) {
+                    renamed_paths.insert(inode, path.to_path_buf());
+                } else if let Ok(metadata) = &metadata {
+                    let new_path = path;
+                    if let Some(old_path) = renamed_paths.get(&metadata.ino()) {
+                        handles.retain(|handle_path, handle_state| {
+                            if let Ok(path_suffix) = handle_path.strip_prefix(&old_path) {
+                                let new_handle_path: Arc<Path> =
+                                    if path_suffix.file_name().is_some() {
+                                        new_path.join(path_suffix)
+                                    } else {
+                                        new_path.to_path_buf()
                                     }
-                                    false
-                                } else {
-                                    true
+                                    .into();
+                                if let Some(handle_state) = Weak::upgrade(&handle_state) {
+                                    let mut state = handle_state.lock();
+                                    state.path = new_handle_path.clone();
+                                    updated_handles
+                                        .insert(new_handle_path, Arc::downgrade(&handle_state));
                                 }
-                            });
-                            handles.extend(updated_handles.drain());
+                                false
+                            } else {
+                                true
+                            }
+                        });
+                        handles.extend(updated_handles.drain());
+                    }
+                }
+            }
+
+            for state in handles.values_mut() {
+                if let Some(state) = Weak::upgrade(&state) {
+                    let mut state = state.lock();
+                    if state.path.as_ref() == path {
+                        if let Ok(metadata) = &metadata {
+                            state.mtime = metadata.modified().unwrap();
+                        }
+                    } else if state.path.starts_with(path) {
+                        if let Ok(metadata) = fs::metadata(state.path.as_ref()) {
+                            state.mtime = metadata.modified().unwrap();
                         }
                     }
                 }
             }
         }
+        drop(handles);
 
         events.sort_unstable_by(|a, b| a.path.cmp(&b.path));
         let mut abs_paths = events.into_iter().map(|e| e.path).peekable();
@@ -1188,11 +1215,13 @@ impl WorktreeHandle for ModelHandle<Worktree> {
                 FileHandleState {
                     path: entry.path().clone(),
                     is_deleted: false,
+                    mtime: UNIX_EPOCH,
                 }
             } else {
                 FileHandleState {
                     path: path.into(),
                     is_deleted: !tree.path_is_pending(path),
+                    mtime: UNIX_EPOCH,
                 }
             };
 

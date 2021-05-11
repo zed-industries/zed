@@ -8,6 +8,7 @@ use futures_core::future::LocalBoxFuture;
 pub use point::*;
 use seahash::SeaHasher;
 pub use selection::*;
+use similar::{ChangeTag, TextDiff};
 use smol::future::FutureExt;
 pub use text::*;
 
@@ -19,7 +20,7 @@ use crate::{
     worktree::FileHandle,
 };
 use anyhow::{anyhow, Result};
-use gpui::{Entity, ModelContext};
+use gpui::{Entity, EntityTask, ModelContext};
 use lazy_static::lazy_static;
 use rand::prelude::*;
 use std::{
@@ -29,7 +30,7 @@ use std::{
     ops::{AddAssign, Range},
     str,
     sync::Arc,
-    time::{Duration, Instant},
+    time::{Duration, Instant, SystemTime, UNIX_EPOCH},
 };
 
 const UNDO_GROUP_INTERVAL: Duration = Duration::from_millis(300);
@@ -62,6 +63,7 @@ pub struct Buffer {
     insertion_splits: HashMap<time::Local, SumTree<InsertionSplit>>,
     pub version: time::Global,
     saved_version: time::Global,
+    saved_mtime: SystemTime,
     last_edit: time::Local,
     undo_map: UndoMap,
     history: History,
@@ -378,8 +380,27 @@ impl Buffer {
     ) -> Self {
         if let Some(file) = file.as_ref() {
             file.observe_from_model(ctx, |this, file, ctx| {
-                if this.version == this.saved_version && file.is_deleted() {
-                    ctx.emit(Event::Dirtied);
+                let version = this.version.clone();
+                if this.version == this.saved_version {
+                    if file.is_deleted() {
+                        ctx.emit(Event::Dirtied);
+                    } else {
+                        ctx.spawn(
+                            file.load_history(ctx.as_ref()),
+                            move |this, history, ctx| {
+                                if let (Ok(history), true) = (history, this.version == version) {
+                                    let task = this.set_text_via_diff(history.base_text, ctx);
+                                    ctx.spawn(task, |this, ops, _| {
+                                        if ops.is_some() {
+                                            this.saved_version = this.version.clone();
+                                        }
+                                    })
+                                    .detach();
+                                }
+                            },
+                        )
+                        .detach()
+                    }
                 }
                 ctx.emit(Event::FileHandleChanged);
             });
@@ -447,6 +468,7 @@ impl Buffer {
             insertion_splits,
             version: time::Global::new(),
             saved_version: time::Global::new(),
+            saved_mtime: UNIX_EPOCH,
             last_edit: time::Local::default(),
             undo_map: Default::default(),
             history,
@@ -501,8 +523,58 @@ impl Buffer {
         if file.is_some() {
             self.file = file;
         }
+        if let Some(file) = &self.file {
+            self.saved_mtime = file.mtime();
+        }
         self.saved_version = version;
         ctx.emit(Event::Saved);
+    }
+
+    fn set_text_via_diff(
+        &mut self,
+        new_text: Arc<str>,
+        ctx: &mut ModelContext<Self>,
+    ) -> EntityTask<Option<Vec<Operation>>> {
+        let version = self.version.clone();
+        let old_text = self.text();
+        ctx.spawn(
+            ctx.background_executor().spawn({
+                let new_text = new_text.clone();
+                async move {
+                    TextDiff::from_lines(old_text.as_str(), new_text.as_ref())
+                        .iter_all_changes()
+                        .map(|c| (c.tag(), c.value().len()))
+                        .collect::<Vec<_>>()
+                }
+            }),
+            move |this, diff, ctx| {
+                if this.version == version {
+                    this.start_transaction(None).unwrap();
+                    let mut operations = Vec::new();
+                    let mut offset = 0;
+                    for (tag, len) in diff {
+                        let range = offset..(offset + len);
+                        match tag {
+                            ChangeTag::Equal => offset += len,
+                            ChangeTag::Delete => operations
+                                .extend_from_slice(&this.edit(Some(range), "", Some(ctx)).unwrap()),
+                            ChangeTag::Insert => {
+                                operations.extend_from_slice(
+                                    &this
+                                        .edit(Some(offset..offset), &new_text[range], Some(ctx))
+                                        .unwrap(),
+                                );
+                                offset += len;
+                            }
+                        }
+                    }
+                    this.end_transaction(None, Some(ctx)).unwrap();
+                    Some(operations)
+                } else {
+                    None
+                }
+            },
+        )
     }
 
     pub fn is_dirty(&self) -> bool {
@@ -510,7 +582,11 @@ impl Buffer {
     }
 
     pub fn has_conflict(&self) -> bool {
-        false
+        self.version > self.saved_version
+            && self
+                .file
+                .as_ref()
+                .map_or(false, |f| f.mtime() != self.saved_mtime)
     }
 
     pub fn version(&self) -> time::Global {
@@ -1823,6 +1899,7 @@ impl Clone for Buffer {
             insertion_splits: self.insertion_splits.clone(),
             version: self.version.clone(),
             saved_version: self.saved_version.clone(),
+            saved_mtime: self.saved_mtime,
             last_edit: self.last_edit.clone(),
             undo_map: self.undo_map.clone(),
             history: self.history.clone(),
@@ -3003,6 +3080,7 @@ mod tests {
                 "file3": "",
             }));
             let tree = app.add_model(|ctx| Worktree::new(dir.path(), ctx));
+            tree.flush_fs_events(&app).await;
             app.read(|ctx| tree.read(ctx).scan_complete()).await;
 
             let file1 = app.read(|ctx| tree.file("file1", ctx));
@@ -3075,7 +3153,6 @@ mod tests {
                 Buffer::from_history(0, History::new("abc".into()), Some(file2), ctx)
             });
 
-            tree.flush_fs_events(&app).await;
             fs::remove_file(dir.path().join("file2")).unwrap();
             tree.update(&mut app, |tree, ctx| tree.next_scan_complete(ctx))
                 .await;
@@ -3113,7 +3190,7 @@ mod tests {
     #[test]
     fn test_file_changes_on_disk() {
         App::test_async((), |mut app| async move {
-            let initial_contents = "aaa\nbbb\nccc\n";
+            let initial_contents = "aaa\nbbbbb\nc\n";
             let dir = temp_tree(json!({ "the-file": initial_contents }));
             let tree = app.add_model(|ctx| Worktree::new(dir.path(), ctx));
             app.read(|ctx| tree.read(ctx).scan_complete()).await;
@@ -3131,7 +3208,7 @@ mod tests {
                     (0..3)
                         .map(|row| {
                             let anchor = buffer
-                                .anchor_at(Point::new(row, 0), AnchorBias::Left)
+                                .anchor_at(Point::new(row, 0), AnchorBias::Right)
                                 .unwrap();
                             Selection {
                                 id: row as usize,
@@ -3146,22 +3223,31 @@ mod tests {
                 )
             });
 
-            // Change the file on disk, adding a new line of text before each existing line.
+            // Change the file on disk, adding two new lines of text, and removing
+            // one line.
             buffer.update(&mut app, |buffer, _| {
                 assert!(!buffer.is_dirty());
                 assert!(!buffer.has_conflict());
             });
             tree.flush_fs_events(&app).await;
-            let new_contents = "AAA\naaa\nBBB\nbbb\nCCC\nccc\n";
+            let new_contents = "AAAA\naaa\nBB\nbbbbb\n";
+
             fs::write(&abs_path, new_contents).unwrap();
 
             // Because the buffer was not modified, it is reloaded from disk. Its
             // contents are edited according to the diff between the old and new
             // file contents.
             buffer
-                .condition(&app, |buffer, _| buffer.text() == new_contents)
+                .condition_with_duration(Duration::from_millis(500), &app, |buffer, _| {
+                    buffer.text() != initial_contents
+                })
                 .await;
+
             buffer.update(&mut app, |buffer, _| {
+                assert_eq!(buffer.text(), new_contents);
+                assert!(!buffer.is_dirty());
+                assert!(!buffer.has_conflict());
+
                 let selections = buffer.selections(selection_set_id).unwrap();
                 let cursor_positions = selections
                     .iter()
@@ -3172,27 +3258,44 @@ mod tests {
                     .collect::<Vec<_>>();
                 assert_eq!(
                     cursor_positions,
-                    &[Point::new(1, 0), Point::new(3, 0), Point::new(5, 0),]
+                    &[Point::new(1, 0), Point::new(3, 0), Point::new(4, 0),]
                 );
             });
 
             // Modify the buffer
             buffer.update(&mut app, |buffer, ctx| {
-                assert!(!buffer.is_dirty());
-                assert!(!buffer.has_conflict());
-
                 buffer.edit(vec![0..0], " ", Some(ctx)).unwrap();
                 assert!(buffer.is_dirty());
             });
 
             // Change the file on disk again, adding blank lines to the beginning.
-            fs::write(&abs_path, "\n\n\nAAA\naaa\nBBB\nbbb\nCCC\nccc\n").unwrap();
+            fs::write(&abs_path, "\n\n\nAAAA\naaa\nBB\nbbbbb\n").unwrap();
 
             // Becaues the buffer is modified, it doesn't reload from disk, but is
             // marked as having a conflict.
             buffer
                 .condition(&app, |buffer, _| buffer.has_conflict())
                 .await;
+        });
+    }
+
+    #[test]
+    fn test_set_text_via_diff() {
+        App::test_async((), |mut app| async move {
+            let text = "a\nbb\nccc\ndddd\neeeee\nffffff\n";
+            let buffer = app.add_model(|ctx| Buffer::new(0, text, ctx));
+
+            let text = "a\nccc\ndddd\nffffff\n";
+            buffer
+                .update(&mut app, |b, ctx| b.set_text_via_diff(text.into(), ctx))
+                .await;
+            app.read(|ctx| assert_eq!(buffer.read(ctx).text(), text));
+
+            let text = "a\n1\n\nccc\ndd2dd\nffffff\n";
+            buffer
+                .update(&mut app, |b, ctx| b.set_text_via_diff(text.into(), ctx))
+                .await;
+            app.read(|ctx| assert_eq!(buffer.read(ctx).text(), text));
         });
     }
 
