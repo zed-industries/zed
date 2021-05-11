@@ -151,12 +151,12 @@ pub fn init(app: &mut MutableAppContext) {
             Some("BufferView"),
         ),
         Binding::new(
-            "ctrl-shift-up",
+            "cmd-alt-up",
             "buffer:add_selection_above",
             Some("BufferView"),
         ),
         Binding::new(
-            "ctrl-shift-down",
+            "cmd-alt-down",
             "buffer:add_selection_below",
             Some("BufferView"),
         ),
