@@ -399,7 +399,7 @@ impl FileFinder {
         self.cancel_flag.store(true, atomic::Ordering::Relaxed);
         self.cancel_flag = Arc::new(AtomicBool::new(false));
         let cancel_flag = self.cancel_flag.clone();
-        let task = ctx.background_executor().spawn(async move {
+        let background_task = ctx.background_executor().spawn(async move {
             let include_root_name = snapshots.len() > 1;
             let matches = match_paths(
                 snapshots.iter(),
@@ -415,7 +415,11 @@ impl FileFinder {
             (search_id, did_cancel, query, matches)
         });
 
-        ctx.spawn(task, Self::update_matches).detach();
+        ctx.spawn(|this, mut ctx| async move {
+            let matches = background_task.await;
+            this.update(&mut ctx, |this, ctx| this.update_matches(matches, ctx));
+        })
+        .detach();
 
         Some(())
     }

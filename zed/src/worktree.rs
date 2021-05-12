@@ -16,7 +16,7 @@ use postage::{
     prelude::{Sink, Stream},
     watch,
 };
-use smol::{channel::Sender, Timer};
+use smol::channel::Sender;
 use std::{
     cmp,
     collections::{HashMap, HashSet},
@@ -98,8 +98,27 @@ impl Worktree {
             scanner.run(event_stream)
         });
 
-        ctx.spawn_stream(scan_state_rx, Self::observe_scan_state, |_, _| {})
-            .detach();
+        ctx.spawn(|this, mut ctx| {
+            let this = this.downgrade();
+            async move {
+                while let Ok(scan_state) = scan_state_rx.recv().await {
+                    let alive = ctx.update(|ctx| {
+                        if let Some(handle) = this.upgrade(&ctx) {
+                            handle
+                                .update(ctx, |this, ctx| this.observe_scan_state(scan_state, ctx));
+                            true
+                        } else {
+                            false
+                        }
+                    });
+
+                    if !alive {
+                        break;
+                    }
+                }
+            }
+        })
+        .detach();
 
         tree
     }
@@ -116,15 +135,16 @@ impl Worktree {
 
     pub fn next_scan_complete(&self, ctx: &mut ModelContext<Self>) -> impl Future<Output = ()> {
         let scan_id = self.snapshot.scan_id;
-        ctx.spawn_stream(
-            self.scan_state.1.clone(),
-            move |this, scan_state, ctx| {
-                if matches!(scan_state, ScanState::Idle) && this.snapshot.scan_id > scan_id {
-                    ctx.halt_stream();
+        let mut scan_state = self.scan_state.1.clone();
+        ctx.spawn(|this, ctx| async move {
+            while let Some(scan_state) = scan_state.recv().await {
+                if this.read_with(&ctx, |this, _| {
+                    matches!(scan_state, ScanState::Idle) && this.snapshot.scan_id > scan_id
+                }) {
+                    break;
                 }
-            },
-            |_, _| {},
-        )
+            }
+        })
     }
 
     fn observe_scan_state(&mut self, scan_state: ScanState, ctx: &mut ModelContext<Self>) {
@@ -137,9 +157,11 @@ impl Worktree {
         ctx.notify();
 
         if self.is_scanning() && !self.poll_scheduled {
-            ctx.spawn(Timer::after(Duration::from_millis(100)), |this, _, ctx| {
-                this.poll_scheduled = false;
-                this.poll_entries(ctx);
+            ctx.spawn(|this, mut ctx| async move {
+                this.update(&mut ctx, |this, ctx| {
+                    this.poll_scheduled = false;
+                    this.poll_entries(ctx);
+                })
             })
             .detach();
             self.poll_scheduled = true;

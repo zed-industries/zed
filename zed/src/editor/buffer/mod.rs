@@ -4,11 +4,9 @@ mod selection;
 mod text;
 
 pub use anchor::*;
-use futures_core::future::LocalBoxFuture;
 pub use point::*;
 use seahash::SeaHasher;
 pub use selection::*;
-use smol::future::FutureExt;
 pub use text::*;
 
 use crate::{
@@ -19,7 +17,7 @@ use crate::{
     worktree::FileHandle,
 };
 use anyhow::{anyhow, Result};
-use gpui::{Entity, ModelContext};
+use gpui::{Entity, ModelContext, Task};
 use lazy_static::lazy_static;
 use rand::prelude::*;
 use std::{
@@ -475,21 +473,22 @@ impl Buffer {
         &mut self,
         new_file: Option<FileHandle>,
         ctx: &mut ModelContext<Self>,
-    ) -> LocalBoxFuture<'static, Result<()>> {
+    ) -> Task<Result<()>> {
         let snapshot = self.snapshot();
         let version = self.version.clone();
-        if let Some(file) = new_file.as_ref().or(self.file.as_ref()) {
-            let save_task = file.save(snapshot, ctx.as_ref());
-            ctx.spawn(save_task, |me, save_result, ctx| {
-                if save_result.is_ok() {
-                    me.did_save(version, new_file, ctx);
+        let file = self.file.clone();
+
+        ctx.spawn(|handle, mut ctx| async move {
+            if let Some(file) = new_file.as_ref().or(file.as_ref()) {
+                let result = ctx.read(|ctx| file.save(snapshot, ctx.as_ref())).await;
+                if result.is_ok() {
+                    handle.update(&mut ctx, |me, ctx| me.did_save(version, new_file, ctx));
                 }
-                save_result
-            })
-            .boxed_local()
-        } else {
-            async { Ok(()) }.boxed_local()
-        }
+                result
+            } else {
+                Ok(())
+            }
+        })
     }
 
     fn did_save(

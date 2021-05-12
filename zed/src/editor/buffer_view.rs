@@ -4,11 +4,10 @@ use super::{
 };
 use crate::{settings::Settings, util::post_inc, workspace, worktree::FileHandle};
 use anyhow::Result;
-use futures_core::future::LocalBoxFuture;
 use gpui::{
     fonts::Properties as FontProperties, geometry::vector::Vector2F, keymap::Binding, text_layout,
     AppContext, ClipboardItem, Element, ElementBox, Entity, FontCache, ModelHandle,
-    MutableAppContext, TextLayoutCache, View, ViewContext, WeakViewHandle,
+    MutableAppContext, Task, TextLayoutCache, View, ViewContext, WeakViewHandle,
 };
 use parking_lot::Mutex;
 use postage::watch;
@@ -2348,13 +2347,12 @@ impl BufferView {
         ctx.notify();
 
         let epoch = self.next_blink_epoch();
-        ctx.spawn(
-            async move {
-                Timer::after(CURSOR_BLINK_INTERVAL).await;
-                epoch
-            },
-            Self::resume_cursor_blinking,
-        )
+        ctx.spawn(|this, mut ctx| async move {
+            Timer::after(CURSOR_BLINK_INTERVAL).await;
+            this.update(&mut ctx, |this, ctx| {
+                this.resume_cursor_blinking(epoch, ctx);
+            })
+        })
         .detach();
     }
 
@@ -2371,13 +2369,10 @@ impl BufferView {
             ctx.notify();
 
             let epoch = self.next_blink_epoch();
-            ctx.spawn(
-                async move {
-                    Timer::after(CURSOR_BLINK_INTERVAL).await;
-                    epoch
-                },
-                Self::blink_cursors,
-            )
+            ctx.spawn(|this, mut ctx| async move {
+                Timer::after(CURSOR_BLINK_INTERVAL).await;
+                this.update(&mut ctx, |this, ctx| this.blink_cursors(epoch, ctx));
+            })
             .detach();
         }
     }
@@ -2498,7 +2493,7 @@ impl workspace::ItemView for BufferView {
         &mut self,
         new_file: Option<FileHandle>,
         ctx: &mut ViewContext<Self>,
-    ) -> LocalBoxFuture<'static, Result<()>> {
+    ) -> Task<Result<()>> {
         self.buffer.update(ctx, |b, ctx| b.save(new_file, ctx))
     }
 
