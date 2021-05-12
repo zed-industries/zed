@@ -16,7 +16,7 @@ use postage::{
     prelude::{Sink, Stream},
     watch,
 };
-use smol::{channel::Sender, Timer};
+use smol::channel::Sender;
 use std::{
     cmp,
     collections::{HashMap, HashSet},
@@ -99,8 +99,27 @@ impl Worktree {
             scanner.run(event_stream)
         });
 
-        ctx.spawn_stream(scan_state_rx, Self::observe_scan_state, |_, _| {})
-            .detach();
+        ctx.spawn(|this, mut ctx| {
+            let this = this.downgrade();
+            async move {
+                while let Ok(scan_state) = scan_state_rx.recv().await {
+                    let alive = ctx.update(|ctx| {
+                        if let Some(handle) = this.upgrade(&ctx) {
+                            handle
+                                .update(ctx, |this, ctx| this.observe_scan_state(scan_state, ctx));
+                            true
+                        } else {
+                            false
+                        }
+                    });
+
+                    if !alive {
+                        break;
+                    }
+                }
+            }
+        })
+        .detach();
 
         tree
     }
@@ -117,15 +136,16 @@ impl Worktree {
 
     pub fn next_scan_complete(&self, ctx: &mut ModelContext<Self>) -> impl Future<Output = ()> {
         let scan_id = self.snapshot.scan_id;
-        ctx.spawn_stream(
-            self.scan_state.1.clone(),
-            move |this, scan_state, ctx| {
-                if matches!(scan_state, ScanState::Idle) && this.snapshot.scan_id > scan_id {
-                    ctx.halt_stream();
+        let mut scan_state = self.scan_state.1.clone();
+        ctx.spawn(|this, ctx| async move {
+            while let Some(scan_state) = scan_state.recv().await {
+                if this.read_with(&ctx, |this, _| {
+                    matches!(scan_state, ScanState::Idle) && this.snapshot.scan_id > scan_id
+                }) {
+                    break;
                 }
-            },
-            |_, _| {},
-        )
+            }
+        })
     }
 
     fn observe_scan_state(&mut self, scan_state: ScanState, ctx: &mut ModelContext<Self>) {
@@ -138,9 +158,11 @@ impl Worktree {
         ctx.notify();
 
         if self.is_scanning() && !self.poll_scheduled {
-            ctx.spawn(Timer::after(Duration::from_millis(100)), |this, _, ctx| {
-                this.poll_scheduled = false;
-                this.poll_entries(ctx);
+            ctx.spawn(|this, mut ctx| async move {
+                this.update(&mut ctx, |this, ctx| {
+                    this.poll_scheduled = false;
+                    this.poll_entries(ctx);
+                })
             })
             .detach();
             self.poll_scheduled = true;
@@ -1394,7 +1416,6 @@ mod tests {
     use crate::editor::Buffer;
     use crate::test::*;
     use anyhow::Result;
-    use gpui::App;
     use rand::prelude::*;
     use serde_json::json;
     use std::env;
@@ -1402,248 +1423,237 @@ mod tests {
     use std::os::unix;
     use std::time::{SystemTime, UNIX_EPOCH};
 
-    #[test]
-    fn test_populate_and_search() {
-        App::test_async((), |mut app| async move {
-            let dir = temp_tree(json!({
-                "root": {
-                    "apple": "",
-                    "banana": {
-                        "carrot": {
-                            "date": "",
-                            "endive": "",
-                        }
-                    },
-                    "fennel": {
-                        "grape": "",
+    #[gpui::test]
+    async fn test_populate_and_search(mut app: gpui::TestAppContext) {
+        let dir = temp_tree(json!({
+            "root": {
+                "apple": "",
+                "banana": {
+                    "carrot": {
+                        "date": "",
+                        "endive": "",
                     }
+                },
+                "fennel": {
+                    "grape": "",
                 }
-            }));
+            }
+        }));
 
-            let root_link_path = dir.path().join("root_link");
-            unix::fs::symlink(&dir.path().join("root"), &root_link_path).unwrap();
-            unix::fs::symlink(
-                &dir.path().join("root/fennel"),
-                &dir.path().join("root/finnochio"),
+        let root_link_path = dir.path().join("root_link");
+        unix::fs::symlink(&dir.path().join("root"), &root_link_path).unwrap();
+        unix::fs::symlink(
+            &dir.path().join("root/fennel"),
+            &dir.path().join("root/finnochio"),
+        )
+        .unwrap();
+
+        let tree = app.add_model(|ctx| Worktree::new(root_link_path, ctx));
+
+        app.read(|ctx| tree.read(ctx).scan_complete()).await;
+        app.read(|ctx| {
+            let tree = tree.read(ctx);
+            assert_eq!(tree.file_count(), 5);
+
+            assert_eq!(
+                tree.inode_for_path("fennel/grape"),
+                tree.inode_for_path("finnochio/grape")
+            );
+
+            let results = match_paths(
+                Some(tree.snapshot()).iter(),
+                "bna",
+                false,
+                false,
+                false,
+                10,
+                Default::default(),
+                ctx.thread_pool().clone(),
             )
+            .into_iter()
+            .map(|result| result.path)
+            .collect::<Vec<Arc<Path>>>();
+            assert_eq!(
+                results,
+                vec![
+                    PathBuf::from("banana/carrot/date").into(),
+                    PathBuf::from("banana/carrot/endive").into(),
+                ]
+            );
+        })
+    }
+
+    #[gpui::test]
+    async fn test_save_file(mut app: gpui::TestAppContext) {
+        let dir = temp_tree(json!({
+            "file1": "the old contents",
+        }));
+
+        let tree = app.add_model(|ctx| Worktree::new(dir.path(), ctx));
+        app.read(|ctx| tree.read(ctx).scan_complete()).await;
+        app.read(|ctx| assert_eq!(tree.read(ctx).file_count(), 1));
+
+        let buffer =
+            app.add_model(|ctx| Buffer::new(1, "a line of text.\n".repeat(10 * 1024), ctx));
+
+        let path = tree.update(&mut app, |tree, ctx| {
+            let path = tree.files(0).next().unwrap().path().clone();
+            assert_eq!(path.file_name().unwrap(), "file1");
+            smol::block_on(tree.save(&path, buffer.read(ctx).snapshot(), ctx.as_ref())).unwrap();
+            path
+        });
+
+        let history = app
+            .read(|ctx| tree.read(ctx).load_history(&path, ctx))
+            .await
             .unwrap();
-
-            let tree = app.add_model(|ctx| Worktree::new(root_link_path, ctx));
-
-            app.read(|ctx| tree.read(ctx).scan_complete()).await;
-            app.read(|ctx| {
-                let tree = tree.read(ctx);
-                assert_eq!(tree.file_count(), 5);
-
-                assert_eq!(
-                    tree.inode_for_path("fennel/grape"),
-                    tree.inode_for_path("finnochio/grape")
-                );
-
-                let results = match_paths(
-                    Some(tree.snapshot()).iter(),
-                    "bna",
-                    false,
-                    false,
-                    false,
-                    10,
-                    Default::default(),
-                    ctx.thread_pool().clone(),
-                )
-                .into_iter()
-                .map(|result| result.path)
-                .collect::<Vec<Arc<Path>>>();
-                assert_eq!(
-                    results,
-                    vec![
-                        PathBuf::from("banana/carrot/date").into(),
-                        PathBuf::from("banana/carrot/endive").into(),
-                    ]
-                );
-            })
+        app.read(|ctx| {
+            assert_eq!(history.base_text.as_ref(), buffer.read(ctx).text());
         });
     }
 
-    #[test]
-    fn test_save_file() {
-        App::test_async((), |mut app| async move {
-            let dir = temp_tree(json!({
-                "file1": "the old contents",
-            }));
+    #[gpui::test]
+    async fn test_save_in_single_file_worktree(mut app: gpui::TestAppContext) {
+        let dir = temp_tree(json!({
+            "file1": "the old contents",
+        }));
 
-            let tree = app.add_model(|ctx| Worktree::new(dir.path(), ctx));
-            app.read(|ctx| tree.read(ctx).scan_complete()).await;
-            app.read(|ctx| assert_eq!(tree.read(ctx).file_count(), 1));
+        let tree = app.add_model(|ctx| Worktree::new(dir.path().join("file1"), ctx));
+        app.read(|ctx| tree.read(ctx).scan_complete()).await;
+        app.read(|ctx| assert_eq!(tree.read(ctx).file_count(), 1));
 
-            let buffer =
-                app.add_model(|ctx| Buffer::new(1, "a line of text.\n".repeat(10 * 1024), ctx));
+        let buffer =
+            app.add_model(|ctx| Buffer::new(1, "a line of text.\n".repeat(10 * 1024), ctx));
 
-            let path = tree.update(&mut app, |tree, ctx| {
-                let path = tree.files(0).next().unwrap().path().clone();
-                assert_eq!(path.file_name().unwrap(), "file1");
-                smol::block_on(tree.save(&path, buffer.read(ctx).snapshot(), ctx.as_ref()))
-                    .unwrap();
-                path
-            });
-
-            let history = app
-                .read(|ctx| tree.read(ctx).load_history(&path, ctx))
-                .await
-                .unwrap();
-            app.read(|ctx| {
-                assert_eq!(history.base_text.as_ref(), buffer.read(ctx).text());
-            });
+        let file = app.read(|ctx| tree.file("", ctx));
+        app.update(|ctx| {
+            assert_eq!(file.path().file_name(), None);
+            smol::block_on(file.save(buffer.read(ctx).snapshot(), ctx.as_ref())).unwrap();
         });
+
+        let history = app.read(|ctx| file.load_history(ctx)).await.unwrap();
+        app.read(|ctx| assert_eq!(history.base_text.as_ref(), buffer.read(ctx).text()));
     }
 
-    #[test]
-    fn test_save_in_single_file_worktree() {
-        App::test_async((), |mut app| async move {
-            let dir = temp_tree(json!({
-                "file1": "the old contents",
-            }));
-
-            let tree = app.add_model(|ctx| Worktree::new(dir.path().join("file1"), ctx));
-            app.read(|ctx| tree.read(ctx).scan_complete()).await;
-            app.read(|ctx| assert_eq!(tree.read(ctx).file_count(), 1));
-
-            let buffer =
-                app.add_model(|ctx| Buffer::new(1, "a line of text.\n".repeat(10 * 1024), ctx));
-
-            let file = app.read(|ctx| tree.file("", ctx));
-            app.update(|ctx| {
-                assert_eq!(file.path().file_name(), None);
-                smol::block_on(file.save(buffer.read(ctx).snapshot(), ctx.as_ref())).unwrap();
-            });
-
-            let history = app.read(|ctx| file.load_history(ctx)).await.unwrap();
-            app.read(|ctx| assert_eq!(history.base_text.as_ref(), buffer.read(ctx).text()));
-        });
-    }
-
-    #[test]
-    fn test_rescan_simple() {
-        App::test_async((), |mut app| async move {
-            let dir = temp_tree(json!({
-                "a": {
-                    "file1": "",
-                    "file2": "",
-                    "file3": "",
-                },
-                "b": {
-                    "c": {
-                        "file4": "",
-                        "file5": "",
-                    }
+    #[gpui::test]
+    async fn test_rescan_simple(mut app: gpui::TestAppContext) {
+        let dir = temp_tree(json!({
+            "a": {
+                "file1": "",
+                "file2": "",
+                "file3": "",
+            },
+            "b": {
+                "c": {
+                    "file4": "",
+                    "file5": "",
                 }
-            }));
+            }
+        }));
 
-            let tree = app.add_model(|ctx| Worktree::new(dir.path(), ctx));
-            let (file2, file3, file4, file5, non_existent_file) = app.read(|ctx| {
-                (
-                    tree.file("a/file2", ctx),
-                    tree.file("a/file3", ctx),
-                    tree.file("b/c/file4", ctx),
-                    tree.file("b/c/file5", ctx),
-                    tree.file("a/filex", ctx),
-                )
-            });
+        let tree = app.add_model(|ctx| Worktree::new(dir.path(), ctx));
+        let (file2, file3, file4, file5, non_existent_file) = app.read(|ctx| {
+            (
+                tree.file("a/file2", ctx),
+                tree.file("a/file3", ctx),
+                tree.file("b/c/file4", ctx),
+                tree.file("b/c/file5", ctx),
+                tree.file("a/filex", ctx),
+            )
+        });
 
-            // The worktree hasn't scanned the directories containing these paths,
-            // so it can't determine that the paths are deleted.
+        // The worktree hasn't scanned the directories containing these paths,
+        // so it can't determine that the paths are deleted.
+        assert!(!file2.is_deleted());
+        assert!(!file3.is_deleted());
+        assert!(!file4.is_deleted());
+        assert!(!file5.is_deleted());
+        assert!(!non_existent_file.is_deleted());
+
+        // After scanning, the worktree knows which files exist and which don't.
+        app.read(|ctx| tree.read(ctx).scan_complete()).await;
+        assert!(!file2.is_deleted());
+        assert!(!file3.is_deleted());
+        assert!(!file4.is_deleted());
+        assert!(!file5.is_deleted());
+        assert!(non_existent_file.is_deleted());
+
+        tree.flush_fs_events(&app).await;
+        std::fs::rename(dir.path().join("a/file3"), dir.path().join("b/c/file3")).unwrap();
+        std::fs::remove_file(dir.path().join("b/c/file5")).unwrap();
+        std::fs::rename(dir.path().join("b/c"), dir.path().join("d")).unwrap();
+        std::fs::rename(dir.path().join("a/file2"), dir.path().join("a/file2.new")).unwrap();
+        tree.update(&mut app, |tree, ctx| tree.next_scan_complete(ctx))
+            .await;
+
+        app.read(|ctx| {
+            assert_eq!(
+                tree.read(ctx)
+                    .paths()
+                    .map(|p| p.to_str().unwrap())
+                    .collect::<Vec<_>>(),
+                vec![
+                    "a",
+                    "a/file1",
+                    "a/file2.new",
+                    "b",
+                    "d",
+                    "d/file3",
+                    "d/file4"
+                ]
+            );
+
+            assert_eq!(file2.path().to_str().unwrap(), "a/file2.new");
+            assert_eq!(file4.path().as_ref(), Path::new("d/file4"));
+            assert_eq!(file5.path().as_ref(), Path::new("d/file5"));
             assert!(!file2.is_deleted());
-            assert!(!file3.is_deleted());
             assert!(!file4.is_deleted());
-            assert!(!file5.is_deleted());
-            assert!(!non_existent_file.is_deleted());
+            assert!(file5.is_deleted());
 
-            // After scanning, the worktree knows which files exist and which don't.
-            app.read(|ctx| tree.read(ctx).scan_complete()).await;
-            assert!(!file2.is_deleted());
-            assert!(!file3.is_deleted());
-            assert!(!file4.is_deleted());
-            assert!(!file5.is_deleted());
-            assert!(non_existent_file.is_deleted());
-
-            tree.flush_fs_events(&app).await;
-            fs::rename(dir.path().join("a/file3"), dir.path().join("b/c/file3")).unwrap();
-            fs::remove_file(dir.path().join("b/c/file5")).unwrap();
-            fs::rename(dir.path().join("b/c"), dir.path().join("d")).unwrap();
-            fs::rename(dir.path().join("a/file2"), dir.path().join("a/file2.new")).unwrap();
-            tree.update(&mut app, |tree, ctx| tree.next_scan_complete(ctx))
-                .await;
-
-            app.read(|ctx| {
-                assert_eq!(
-                    tree.read(ctx)
-                        .paths()
-                        .map(|p| p.to_str().unwrap())
-                        .collect::<Vec<_>>(),
-                    vec![
-                        "a",
-                        "a/file1",
-                        "a/file2.new",
-                        "b",
-                        "d",
-                        "d/file3",
-                        "d/file4"
-                    ]
-                );
-
-                assert_eq!(file2.path().to_str().unwrap(), "a/file2.new");
-                assert_eq!(file4.path().as_ref(), Path::new("d/file4"));
-                assert_eq!(file5.path().as_ref(), Path::new("d/file5"));
-                assert!(!file2.is_deleted());
-                assert!(!file4.is_deleted());
-                assert!(file5.is_deleted());
-
-                // Right now, this rename isn't detected because the target path
-                // no longer exists on the file system by the time we process the
-                // rename event.
-                assert_eq!(file3.path().as_ref(), Path::new("a/file3"));
-                assert!(file3.is_deleted());
-            });
+            // Right now, this rename isn't detected because the target path
+            // no longer exists on the file system by the time we process the
+            // rename event.
+            assert_eq!(file3.path().as_ref(), Path::new("a/file3"));
+            assert!(file3.is_deleted());
         });
     }
 
-    #[test]
-    fn test_rescan_with_gitignore() {
-        App::test_async((), |mut app| async move {
-            let dir = temp_tree(json!({
-                ".git": {},
-                ".gitignore": "ignored-dir\n",
-                "tracked-dir": {
-                    "tracked-file1": "tracked contents",
-                },
-                "ignored-dir": {
-                    "ignored-file1": "ignored contents",
-                }
-            }));
+    #[gpui::test]
+    async fn test_rescan_with_gitignore(mut app: gpui::TestAppContext) {
+        let dir = temp_tree(json!({
+            ".git": {},
+            ".gitignore": "ignored-dir\n",
+            "tracked-dir": {
+                "tracked-file1": "tracked contents",
+            },
+            "ignored-dir": {
+                "ignored-file1": "ignored contents",
+            }
+        }));
 
-            let tree = app.add_model(|ctx| Worktree::new(dir.path(), ctx));
-            app.read(|ctx| tree.read(ctx).scan_complete()).await;
-            tree.flush_fs_events(&app).await;
-            app.read(|ctx| {
-                let tree = tree.read(ctx);
-                let tracked = tree.entry_for_path("tracked-dir/tracked-file1").unwrap();
-                let ignored = tree.entry_for_path("ignored-dir/ignored-file1").unwrap();
-                assert_eq!(tracked.is_ignored(), false);
-                assert_eq!(ignored.is_ignored(), true);
-            });
+        let tree = app.add_model(|ctx| Worktree::new(dir.path(), ctx));
+        app.read(|ctx| tree.read(ctx).scan_complete()).await;
+        tree.flush_fs_events(&app).await;
+        app.read(|ctx| {
+            let tree = tree.read(ctx);
+            let tracked = tree.entry_for_path("tracked-dir/tracked-file1").unwrap();
+            let ignored = tree.entry_for_path("ignored-dir/ignored-file1").unwrap();
+            assert_eq!(tracked.is_ignored(), false);
+            assert_eq!(ignored.is_ignored(), true);
+        });
 
-            fs::write(dir.path().join("tracked-dir/tracked-file2"), "").unwrap();
-            fs::write(dir.path().join("ignored-dir/ignored-file2"), "").unwrap();
-            tree.update(&mut app, |tree, ctx| tree.next_scan_complete(ctx))
-                .await;
-            app.read(|ctx| {
-                let tree = tree.read(ctx);
-                let dot_git = tree.entry_for_path(".git").unwrap();
-                let tracked = tree.entry_for_path("tracked-dir/tracked-file2").unwrap();
-                let ignored = tree.entry_for_path("ignored-dir/ignored-file2").unwrap();
-                assert_eq!(tracked.is_ignored(), false);
-                assert_eq!(ignored.is_ignored(), true);
-                assert_eq!(dot_git.is_ignored(), true);
-            });
+        fs::write(dir.path().join("tracked-dir/tracked-file2"), "").unwrap();
+        fs::write(dir.path().join("ignored-dir/ignored-file2"), "").unwrap();
+        tree.update(&mut app, |tree, ctx| tree.next_scan_complete(ctx))
+            .await;
+        app.read(|ctx| {
+            let tree = tree.read(ctx);
+            let dot_git = tree.entry_for_path(".git").unwrap();
+            let tracked = tree.entry_for_path("tracked-dir/tracked-file2").unwrap();
+            let ignored = tree.entry_for_path("ignored-dir/ignored-file2").unwrap();
+            assert_eq!(tracked.is_ignored(), false);
+            assert_eq!(ignored.is_ignored(), true);
+            assert_eq!(dot_git.is_ignored(), true);
         });
     }
 

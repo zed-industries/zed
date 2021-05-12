@@ -1180,6 +1180,7 @@ dependencies = [
  "etagere",
  "font-kit",
  "foreign-types",
+ "gpui_macros",
  "log",
  "metal",
  "num_cpus",
@@ -1203,6 +1204,14 @@ dependencies = [
  "tiny-skia",
  "tree-sitter",
  "usvg",
+]
+
+[[package]]
+name = "gpui_macros"
+version = "0.1.0"
+dependencies = [
+ "quote",
+ "syn",
 ]
 
 [[package]]

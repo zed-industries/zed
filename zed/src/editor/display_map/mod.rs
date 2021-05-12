@@ -339,53 +339,50 @@ pub fn collapse_tabs(
 mod tests {
     use super::*;
     use crate::test::*;
-    use gpui::App;
 
-    #[test]
-    fn test_chars_at() {
-        App::test((), |app| {
-            let text = sample_text(6, 6);
-            let buffer = app.add_model(|ctx| Buffer::new(0, text, ctx));
-            let map = DisplayMap::new(buffer.clone(), 4, app.as_ref());
-            buffer
-                .update(app, |buffer, ctx| {
-                    buffer.edit(
-                        vec![
-                            Point::new(1, 0)..Point::new(1, 0),
-                            Point::new(1, 1)..Point::new(1, 1),
-                            Point::new(2, 1)..Point::new(2, 1),
-                        ],
-                        "\t",
-                        Some(ctx),
-                    )
-                })
-                .unwrap();
+    #[gpui::test]
+    fn test_chars_at(app: &mut gpui::MutableAppContext) {
+        let text = sample_text(6, 6);
+        let buffer = app.add_model(|ctx| Buffer::new(0, text, ctx));
+        let map = DisplayMap::new(buffer.clone(), 4, app.as_ref());
+        buffer
+            .update(app, |buffer, ctx| {
+                buffer.edit(
+                    vec![
+                        Point::new(1, 0)..Point::new(1, 0),
+                        Point::new(1, 1)..Point::new(1, 1),
+                        Point::new(2, 1)..Point::new(2, 1),
+                    ],
+                    "\t",
+                    Some(ctx),
+                )
+            })
+            .unwrap();
 
-            assert_eq!(
-                map.snapshot(app.as_ref())
-                    .chars_at(DisplayPoint::new(1, 0), app.as_ref())
-                    .unwrap()
-                    .take(10)
-                    .collect::<String>(),
-                "    b   bb"
-            );
-            assert_eq!(
-                map.snapshot(app.as_ref())
-                    .chars_at(DisplayPoint::new(1, 2), app.as_ref())
-                    .unwrap()
-                    .take(10)
-                    .collect::<String>(),
-                "  b   bbbb"
-            );
-            assert_eq!(
-                map.snapshot(app.as_ref())
-                    .chars_at(DisplayPoint::new(1, 6), app.as_ref())
-                    .unwrap()
-                    .take(13)
-                    .collect::<String>(),
-                "  bbbbb\nc   c"
-            );
-        });
+        assert_eq!(
+            map.snapshot(app.as_ref())
+                .chars_at(DisplayPoint::new(1, 0), app.as_ref())
+                .unwrap()
+                .take(10)
+                .collect::<String>(),
+            "    b   bb"
+        );
+        assert_eq!(
+            map.snapshot(app.as_ref())
+                .chars_at(DisplayPoint::new(1, 2), app.as_ref())
+                .unwrap()
+                .take(10)
+                .collect::<String>(),
+            "  b   bbbb"
+        );
+        assert_eq!(
+            map.snapshot(app.as_ref())
+                .chars_at(DisplayPoint::new(1, 6), app.as_ref())
+                .unwrap()
+                .take(13)
+                .collect::<String>(),
+            "  bbbbb\nc   c"
+        );
     }
 
     #[test]
@@ -411,12 +408,10 @@ mod tests {
         assert_eq!(collapse_tabs("\ta".chars(), 5, Bias::Right, 4), (2, 0));
     }
 
-    #[test]
-    fn test_max_point() {
-        App::test((), |app| {
-            let buffer = app.add_model(|ctx| Buffer::new(0, "aaa\n\t\tbbb", ctx));
-            let map = DisplayMap::new(buffer.clone(), 4, app.as_ref());
-            assert_eq!(map.max_point(app.as_ref()), DisplayPoint::new(1, 11))
-        });
+    #[gpui::test]
+    fn test_max_point(app: &mut gpui::MutableAppContext) {
+        let buffer = app.add_model(|ctx| Buffer::new(0, "aaa\n\t\tbbb", ctx));
+        let map = DisplayMap::new(buffer.clone(), 4, app.as_ref());
+        assert_eq!(map.max_point(app.as_ref()), DisplayPoint::new(1, 11))
     }
 }
