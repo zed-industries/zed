@@ -3263,7 +3263,9 @@ mod tests {
         // Becaues the buffer is modified, it doesn't reload from disk, but is
         // marked as having a conflict.
         buffer
-            .condition(&app, |buffer, _| buffer.has_conflict())
+            .condition_with_duration(Duration::from_millis(500), &app, |buffer, _| {
+                buffer.has_conflict()
+            })
             .await;
     }
 
