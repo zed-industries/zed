@@ -180,11 +180,14 @@ impl Worktree {
         path: &Path,
         ctx: &AppContext,
     ) -> impl Future<Output = Result<History>> {
-        let abs_path = self.absolutize(path);
+        let handles = self.handles.clone();
+        let path = path.to_path_buf();
+        let abs_path = self.absolutize(&path);
         ctx.background_executor().spawn(async move {
-            let mut file = std::fs::File::open(&abs_path)?;
+            let mut file = fs::File::open(&abs_path)?;
             let mut base_text = String::new();
             file.read_to_string(&mut base_text)?;
+            Self::update_file_handle(&file, &path, &handles)?;
             Ok(History::new(Arc::from(base_text)))
         })
     }
@@ -200,19 +203,28 @@ impl Worktree {
         let abs_path = self.absolutize(&path);
         ctx.background_executor().spawn(async move {
             let buffer_size = content.text_summary().bytes.min(10 * 1024);
-            let file = std::fs::File::create(&abs_path)?;
-            let mut writer = std::io::BufWriter::with_capacity(buffer_size, file);
+            let file = fs::File::create(&abs_path)?;
+            let mut writer = io::BufWriter::with_capacity(buffer_size, &file);
             for chunk in content.fragments() {
                 writer.write(chunk.as_bytes())?;
             }
             writer.flush()?;
-
-            if let Some(handle) = handles.lock().get(path.as_path()).and_then(Weak::upgrade) {
-                handle.lock().is_deleted = false;
-            }
-
+            Self::update_file_handle(&file, &path, &handles)?;
             Ok(())
         })
+    }
+
+    fn update_file_handle(
+        file: &fs::File,
+        path: &Path,
+        handles: &Mutex<HashMap<Arc<Path>, Weak<Mutex<FileHandleState>>>>,
+    ) -> Result<()> {
+        if let Some(handle) = handles.lock().get(path).and_then(Weak::upgrade) {
+            let mut handle = handle.lock();
+            handle.mtime = file.metadata()?.modified()?;
+            handle.is_deleted = false;
+        }
+        Ok(())
     }
 }
 
@@ -1554,10 +1566,10 @@ mod tests {
             assert!(non_existent_file.is_deleted());
 
             tree.flush_fs_events(&app).await;
-            std::fs::rename(dir.path().join("a/file3"), dir.path().join("b/c/file3")).unwrap();
-            std::fs::remove_file(dir.path().join("b/c/file5")).unwrap();
-            std::fs::rename(dir.path().join("b/c"), dir.path().join("d")).unwrap();
-            std::fs::rename(dir.path().join("a/file2"), dir.path().join("a/file2.new")).unwrap();
+            fs::rename(dir.path().join("a/file3"), dir.path().join("b/c/file3")).unwrap();
+            fs::remove_file(dir.path().join("b/c/file5")).unwrap();
+            fs::rename(dir.path().join("b/c"), dir.path().join("d")).unwrap();
+            fs::rename(dir.path().join("a/file2"), dir.path().join("a/file2.new")).unwrap();
             tree.update(&mut app, |tree, ctx| tree.next_scan_complete(ctx))
                 .await;
 
