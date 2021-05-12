@@ -27,6 +27,7 @@ use objc::{
 use pathfinder_geometry::vector::vec2f;
 use smol::Timer;
 use std::{
+    any::Any,
     cell::{Cell, RefCell},
     convert::TryInto,
     ffi::c_void,
@@ -263,6 +264,10 @@ impl Drop for Window {
 }
 
 impl platform::Window for Window {
+    fn as_any_mut(&mut self) -> &mut dyn Any {
+        self
+    }
+
     fn on_event(&mut self, callback: Box<dyn FnMut(Event)>) {
         self.0.as_ref().borrow_mut().event_callback = Some(callback);
     }

@@ -343,6 +343,23 @@ impl TestAppContext {
     pub fn did_prompt_for_new_path(&self) -> bool {
         self.1.as_ref().did_prompt_for_new_path()
     }
+
+    pub fn simulate_prompt_answer(&self, window_id: usize, answer: usize) {
+        let mut state = self.0.borrow_mut();
+        let (_, window) = state
+            .presenters_and_platform_windows
+            .get_mut(&window_id)
+            .unwrap();
+        let test_window = window
+            .as_any_mut()
+            .downcast_mut::<platform::test::Window>()
+            .unwrap();
+        let callback = test_window
+            .last_prompt
+            .take()
+            .expect("prompt was not called");
+        (callback)(answer);
+    }
 }
 
 impl UpdateModel for TestAppContext {

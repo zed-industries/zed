@@ -761,7 +761,7 @@ mod tests {
     use crate::{editor::BufferView, settings, test::temp_tree};
     use gpui::App;
     use serde_json::json;
-    use std::collections::HashSet;
+    use std::{collections::HashSet, fs};
     use tempdir::TempDir;
 
     #[test]
@@ -1098,6 +1098,59 @@ mod tests {
             app.read(|ctx| {
                 assert_eq!(editor2.read(ctx).buffer(), editor.read(ctx).buffer());
             })
+        });
+    }
+
+    #[test]
+    fn test_save_conflicting_item() {
+        App::test_async((), |mut app| async move {
+            let dir = temp_tree(json!({
+                "a.txt": "",
+            }));
+
+            let settings = settings::channel(&app.font_cache()).unwrap().1;
+            let (window_id, workspace) = app.add_window(|ctx| {
+                let mut workspace = Workspace::new(0, settings, ctx);
+                workspace.add_worktree(dir.path(), ctx);
+                workspace
+            });
+            let tree = app.read(|ctx| {
+                let mut trees = workspace.read(ctx).worktrees().iter();
+                trees.next().unwrap().clone()
+            });
+            tree.flush_fs_events(&app).await;
+
+            // Open a file within an existing worktree.
+            app.update(|ctx| {
+                workspace.update(ctx, |view, ctx| {
+                    view.open_paths(&[dir.path().join("a.txt")], ctx)
+                })
+            })
+            .await;
+            let editor = app.read(|ctx| {
+                let pane = workspace.read(ctx).active_pane().read(ctx);
+                let item = pane.active_item().unwrap();
+                item.to_any().downcast::<BufferView>().unwrap()
+            });
+
+            app.update(|ctx| {
+                editor.update(ctx, |editor, ctx| editor.insert(&"x".to_string(), ctx))
+            });
+            fs::write(dir.path().join("a.txt"), "changed").unwrap();
+            tree.flush_fs_events(&app).await;
+            app.read(|ctx| {
+                assert!(editor.is_dirty(ctx));
+                assert!(editor.has_conflict(ctx));
+            });
+
+            app.update(|ctx| workspace.update(ctx, |w, ctx| w.save_active_item(&(), ctx)));
+            app.simulate_prompt_answer(window_id, 0);
+            tree.update(&mut app, |tree, ctx| tree.next_scan_complete(ctx))
+                .await;
+            app.read(|ctx| {
+                assert!(!editor.is_dirty(ctx));
+                assert!(!editor.has_conflict(ctx));
+            });
         });
     }
 
