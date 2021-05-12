@@ -6,10 +6,10 @@ use crate::{
     time::ReplicaId,
     worktree::{FileHandle, Worktree, WorktreeHandle},
 };
-use futures_core::{future::LocalBoxFuture, Future};
+use futures_core::Future;
 use gpui::{
     color::rgbu, elements::*, json::to_string_pretty, keymap::Binding, AnyViewHandle, AppContext,
-    ClipboardItem, Entity, EntityTask, ModelHandle, MutableAppContext, PathPromptOptions, View,
+    ClipboardItem, Entity, ModelHandle, MutableAppContext, PathPromptOptions, Task, View,
     ViewContext, ViewHandle, WeakModelHandle,
 };
 use log::error;
@@ -123,7 +123,7 @@ pub trait ItemView: View {
         &mut self,
         _: Option<FileHandle>,
         _: &mut ViewContext<Self>,
-    ) -> LocalBoxFuture<'static, anyhow::Result<()>>;
+    ) -> Task<anyhow::Result<()>>;
     fn should_activate_item_on_event(_: &Self::Event) -> bool {
         false
     }
@@ -161,7 +161,7 @@ pub trait ItemViewHandle: Send + Sync {
         &self,
         file: Option<FileHandle>,
         ctx: &mut MutableAppContext,
-    ) -> LocalBoxFuture<'static, anyhow::Result<()>>;
+    ) -> Task<anyhow::Result<()>>;
 }
 
 impl<T: Item> ItemHandle for ModelHandle<T> {
@@ -239,7 +239,7 @@ impl<T: ItemView> ItemViewHandle for ViewHandle<T> {
         &self,
         file: Option<FileHandle>,
         ctx: &mut MutableAppContext,
-    ) -> LocalBoxFuture<'static, anyhow::Result<()>> {
+    ) -> Task<anyhow::Result<()>> {
         self.update(ctx, |item, ctx| item.save(file, ctx))
     }
 
@@ -359,16 +359,18 @@ impl Workspace {
             .cloned()
             .zip(entries.into_iter())
             .map(|(abs_path, file)| {
-                ctx.spawn(
-                    bg.spawn(async move { abs_path.is_file() }),
-                    move |me, is_file, ctx| {
+                let handle = ctx.handle();
+                let is_file = bg.spawn(async move { abs_path.is_file() });
+                ctx.spawn(|mut ctx| async move {
+                    let is_file = is_file.await;
+                    handle.update(&mut ctx, |me, ctx| {
                         if is_file {
                             me.open_entry(file.entry_id(), ctx)
                         } else {
                             None
                         }
-                    },
-                )
+                    })
+                })
             })
             .collect::<Vec<_>>();
         async move {
@@ -442,7 +444,7 @@ impl Workspace {
         &mut self,
         entry: (usize, Arc<Path>),
         ctx: &mut ViewContext<Self>,
-    ) -> Option<EntityTask<()>> {
+    ) -> Option<Task<()>> {
         // If the active pane contains a view for this file, then activate
         // that item view.
         if self
@@ -496,28 +498,31 @@ impl Workspace {
             let history = ctx
                 .background_executor()
                 .spawn(file.load_history(ctx.as_ref()));
-            ctx.spawn(history, move |_, history, ctx| {
-                *tx.borrow_mut() = Some(match history {
-                    Ok(history) => Ok(Box::new(ctx.add_model(|ctx| {
-                        Buffer::from_history(replica_id, history, Some(file), ctx)
-                    }))),
-                    Err(error) => Err(Arc::new(error)),
+
+            ctx.as_mut()
+                .spawn(|mut ctx| async move {
+                    *tx.borrow_mut() = Some(match history.await {
+                        Ok(history) => Ok(Box::new(ctx.add_model(|ctx| {
+                            Buffer::from_history(replica_id, history, Some(file), ctx)
+                        }))),
+                        Err(error) => Err(Arc::new(error)),
+                    })
                 })
-            })
-            .detach()
+                .detach();
         }
 
         let mut watch = self.loading_items.get(&entry).unwrap().clone();
-        Some(ctx.spawn(
-            async move {
-                loop {
-                    if let Some(load_result) = watch.borrow().as_ref() {
-                        return load_result.clone();
-                    }
-                    watch.next().await;
+
+        let handle = ctx.handle();
+        Some(ctx.spawn(|mut ctx| async move {
+            let load_result = loop {
+                if let Some(load_result) = watch.borrow().as_ref() {
+                    break load_result.clone();
                 }
-            },
-            move |me, load_result, ctx| {
+                watch.next().await;
+            };
+
+            handle.update(&mut ctx, |me, ctx| {
                 me.loading_items.remove(&entry);
                 match load_result {
                     Ok(item) => {
@@ -532,8 +537,8 @@ impl Workspace {
                         log::error!("error opening item: {}", error);
                     }
                 }
-            },
-        ))
+            })
+        }))
     }
 
     pub fn active_item(&self, ctx: &ViewContext<Self>) -> Option<Box<dyn ItemViewHandle>> {
@@ -552,28 +557,27 @@ impl Workspace {
                     .to_path_buf();
                 ctx.prompt_for_new_path(&start_path, move |path, ctx| {
                     if let Some(path) = path {
-                        handle.update(ctx, move |this, ctx| {
-                            let file = this.file_for_path(&path, ctx);
-                            let task = item.save(Some(file), ctx.as_mut());
-                            ctx.spawn(task, move |_, result, _| {
-                                if let Err(e) = result {
-                                    error!("failed to save item: {:?}, ", e);
-                                }
-                            })
-                            .detach()
+                        ctx.spawn(|mut ctx| async move {
+                            let file =
+                                handle.update(&mut ctx, |me, ctx| me.file_for_path(&path, ctx));
+                            if let Err(error) = ctx.update(|ctx| item.save(Some(file), ctx)).await {
+                                error!("failed to save item: {:?}, ", error);
+                            }
                         })
+                        .detach()
                     }
                 });
                 return;
             }
 
-            let task = item.save(None, ctx.as_mut());
-            ctx.spawn(task, |_, result, _| {
-                if let Err(e) = result {
-                    error!("failed to save item: {:?}, ", e);
-                }
-            })
-            .detach()
+            let save = item.save(None, ctx.as_mut());
+            ctx.foreground()
+                .spawn(async move {
+                    if let Err(e) = save.await {
+                        error!("failed to save item: {:?}, ", e);
+                    }
+                })
+                .detach();
         }
     }
 
