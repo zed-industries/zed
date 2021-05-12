@@ -453,220 +453,208 @@ impl FileFinder {
 mod tests {
     use super::*;
     use crate::{editor, settings, test::temp_tree, workspace::Workspace};
-    use gpui::App;
     use serde_json::json;
     use std::fs;
     use tempdir::TempDir;
 
-    #[test]
-    fn test_matching_paths() {
-        App::test_async((), |mut app| async move {
-            let tmp_dir = TempDir::new("example").unwrap();
-            fs::create_dir(tmp_dir.path().join("a")).unwrap();
-            fs::write(tmp_dir.path().join("a/banana"), "banana").unwrap();
-            fs::write(tmp_dir.path().join("a/bandana"), "bandana").unwrap();
-            app.update(|ctx| {
-                super::init(ctx);
-                editor::init(ctx);
-            });
-
-            let settings = settings::channel(&app.font_cache()).unwrap().1;
-            let (window_id, workspace) = app.add_window(|ctx| {
-                let mut workspace = Workspace::new(0, settings, ctx);
-                workspace.add_worktree(tmp_dir.path(), ctx);
-                workspace
-            });
-            app.read(|ctx| workspace.read(ctx).worktree_scans_complete(ctx))
-                .await;
-            app.dispatch_action(
-                window_id,
-                vec![workspace.id()],
-                "file_finder:toggle".into(),
-                (),
-            );
-
-            let finder = app.read(|ctx| {
-                workspace
-                    .read(ctx)
-                    .modal()
-                    .cloned()
-                    .unwrap()
-                    .downcast::<FileFinder>()
-                    .unwrap()
-            });
-            let query_buffer = app.read(|ctx| finder.read(ctx).query_buffer.clone());
-
-            let chain = vec![finder.id(), query_buffer.id()];
-            app.dispatch_action(window_id, chain.clone(), "buffer:insert", "b".to_string());
-            app.dispatch_action(window_id, chain.clone(), "buffer:insert", "n".to_string());
-            app.dispatch_action(window_id, chain.clone(), "buffer:insert", "a".to_string());
-            finder
-                .condition(&app, |finder, _| finder.matches.len() == 2)
-                .await;
-
-            let active_pane = app.read(|ctx| workspace.read(ctx).active_pane().clone());
-            app.dispatch_action(
-                window_id,
-                vec![workspace.id(), finder.id()],
-                "menu:select_next",
-                (),
-            );
-            app.dispatch_action(
-                window_id,
-                vec![workspace.id(), finder.id()],
-                "file_finder:confirm",
-                (),
-            );
-            active_pane
-                .condition(&app, |pane, _| pane.active_item().is_some())
-                .await;
-            app.read(|ctx| {
-                let active_item = active_pane.read(ctx).active_item().unwrap();
-                assert_eq!(active_item.title(ctx), "bandana");
-            });
+    #[gpui::test]
+    async fn test_matching_paths(mut app: gpui::TestAppContext) {
+        let tmp_dir = TempDir::new("example").unwrap();
+        fs::create_dir(tmp_dir.path().join("a")).unwrap();
+        fs::write(tmp_dir.path().join("a/banana"), "banana").unwrap();
+        fs::write(tmp_dir.path().join("a/bandana"), "bandana").unwrap();
+        app.update(|ctx| {
+            super::init(ctx);
+            editor::init(ctx);
         });
-    }
 
-    #[test]
-    fn test_matching_cancellation() {
-        App::test_async((), |mut app| async move {
-            let tmp_dir = temp_tree(json!({
-                "hello": "",
-                "goodbye": "",
-                "halogen-light": "",
-                "happiness": "",
-                "height": "",
-                "hi": "",
-                "hiccup": "",
-            }));
-            let settings = settings::channel(&app.font_cache()).unwrap().1;
-            let (_, workspace) = app.add_window(|ctx| {
-                let mut workspace = Workspace::new(0, settings.clone(), ctx);
-                workspace.add_worktree(tmp_dir.path(), ctx);
-                workspace
-            });
-            app.read(|ctx| workspace.read(ctx).worktree_scans_complete(ctx))
-                .await;
-            let (_, finder) =
-                app.add_window(|ctx| FileFinder::new(settings, workspace.clone(), ctx));
-
-            let query = "hi".to_string();
-            finder.update(&mut app, |f, ctx| f.spawn_search(query.clone(), ctx));
-            finder.condition(&app, |f, _| f.matches.len() == 5).await;
-
-            finder.update(&mut app, |finder, ctx| {
-                let matches = finder.matches.clone();
-
-                // Simulate a search being cancelled after the time limit,
-                // returning only a subset of the matches that would have been found.
-                finder.spawn_search(query.clone(), ctx);
-                finder.update_matches(
-                    (
-                        finder.latest_search_id,
-                        true, // did-cancel
-                        query.clone(),
-                        vec![matches[1].clone(), matches[3].clone()],
-                    ),
-                    ctx,
-                );
-
-                // Simulate another cancellation.
-                finder.spawn_search(query.clone(), ctx);
-                finder.update_matches(
-                    (
-                        finder.latest_search_id,
-                        true, // did-cancel
-                        query.clone(),
-                        vec![matches[0].clone(), matches[2].clone(), matches[3].clone()],
-                    ),
-                    ctx,
-                );
-
-                assert_eq!(finder.matches, matches[0..4])
-            });
-        });
-    }
-
-    #[test]
-    fn test_single_file_worktrees() {
-        App::test_async((), |mut app| async move {
-            let temp_dir = TempDir::new("test-single-file-worktrees").unwrap();
-            let dir_path = temp_dir.path().join("the-parent-dir");
-            let file_path = dir_path.join("the-file");
-            fs::create_dir(&dir_path).unwrap();
-            fs::write(&file_path, "").unwrap();
-
-            let settings = settings::channel(&app.font_cache()).unwrap().1;
-            let (_, workspace) = app.add_window(|ctx| {
-                let mut workspace = Workspace::new(0, settings.clone(), ctx);
-                workspace.add_worktree(&file_path, ctx);
-                workspace
-            });
-            app.read(|ctx| workspace.read(ctx).worktree_scans_complete(ctx))
-                .await;
-            let (_, finder) =
-                app.add_window(|ctx| FileFinder::new(settings, workspace.clone(), ctx));
-
-            // Even though there is only one worktree, that worktree's filename
-            // is included in the matching, because the worktree is a single file.
-            finder.update(&mut app, |f, ctx| f.spawn_search("thf".into(), ctx));
-            finder.condition(&app, |f, _| f.matches.len() == 1).await;
-
-            app.read(|ctx| {
-                let finder = finder.read(ctx);
-                let (file_name, file_name_positions, full_path, full_path_positions) =
-                    finder.labels_for_match(&finder.matches[0], ctx).unwrap();
-
-                assert_eq!(file_name, "the-file");
-                assert_eq!(file_name_positions, &[0, 1, 4]);
-                assert_eq!(full_path, "the-file");
-                assert_eq!(full_path_positions, &[0, 1, 4]);
-            });
-
-            // Since the worktree root is a file, searching for its name followed by a slash does
-            // not match anything.
-            finder.update(&mut app, |f, ctx| f.spawn_search("thf/".into(), ctx));
-            finder.condition(&app, |f, _| f.matches.len() == 0).await;
-        });
-    }
-
-    #[test]
-    fn test_multiple_matches_with_same_relative_path() {
-        App::test_async((), |mut app| async move {
-            let tmp_dir = temp_tree(json!({
-                "dir1": { "a.txt": "" },
-                "dir2": { "a.txt": "" }
-            }));
-            let settings = settings::channel(&app.font_cache()).unwrap().1;
-
-            let (_, workspace) = app.add_window(|ctx| Workspace::new(0, settings.clone(), ctx));
-
+        let settings = settings::channel(&app.font_cache()).unwrap().1;
+        let (window_id, workspace) = app.add_window(|ctx| {
+            let mut workspace = Workspace::new(0, settings, ctx);
+            workspace.add_worktree(tmp_dir.path(), ctx);
             workspace
-                .update(&mut app, |workspace, ctx| {
-                    workspace.open_paths(
-                        &[tmp_dir.path().join("dir1"), tmp_dir.path().join("dir2")],
-                        ctx,
-                    )
-                })
-                .await;
-            app.read(|ctx| workspace.read(ctx).worktree_scans_complete(ctx))
-                .await;
+        });
+        app.read(|ctx| workspace.read(ctx).worktree_scans_complete(ctx))
+            .await;
+        app.dispatch_action(
+            window_id,
+            vec![workspace.id()],
+            "file_finder:toggle".into(),
+            (),
+        );
 
-            let (_, finder) =
-                app.add_window(|ctx| FileFinder::new(settings, workspace.clone(), ctx));
+        let finder = app.read(|ctx| {
+            workspace
+                .read(ctx)
+                .modal()
+                .cloned()
+                .unwrap()
+                .downcast::<FileFinder>()
+                .unwrap()
+        });
+        let query_buffer = app.read(|ctx| finder.read(ctx).query_buffer.clone());
 
-            // Run a search that matches two files with the same relative path.
-            finder.update(&mut app, |f, ctx| f.spawn_search("a.t".into(), ctx));
-            finder.condition(&app, |f, _| f.matches.len() == 2).await;
+        let chain = vec![finder.id(), query_buffer.id()];
+        app.dispatch_action(window_id, chain.clone(), "buffer:insert", "b".to_string());
+        app.dispatch_action(window_id, chain.clone(), "buffer:insert", "n".to_string());
+        app.dispatch_action(window_id, chain.clone(), "buffer:insert", "a".to_string());
+        finder
+            .condition(&app, |finder, _| finder.matches.len() == 2)
+            .await;
 
-            // Can switch between different matches with the same relative path.
-            finder.update(&mut app, |f, ctx| {
-                assert_eq!(f.selected_index(), 0);
-                f.select_next(&(), ctx);
-                assert_eq!(f.selected_index(), 1);
-                f.select_prev(&(), ctx);
-                assert_eq!(f.selected_index(), 0);
-            });
+        let active_pane = app.read(|ctx| workspace.read(ctx).active_pane().clone());
+        app.dispatch_action(
+            window_id,
+            vec![workspace.id(), finder.id()],
+            "menu:select_next",
+            (),
+        );
+        app.dispatch_action(
+            window_id,
+            vec![workspace.id(), finder.id()],
+            "file_finder:confirm",
+            (),
+        );
+        active_pane
+            .condition(&app, |pane, _| pane.active_item().is_some())
+            .await;
+        app.read(|ctx| {
+            let active_item = active_pane.read(ctx).active_item().unwrap();
+            assert_eq!(active_item.title(ctx), "bandana");
+        });
+    }
+
+    #[gpui::test]
+    async fn test_matching_cancellation(mut app: gpui::TestAppContext) {
+        let tmp_dir = temp_tree(json!({
+            "hello": "",
+            "goodbye": "",
+            "halogen-light": "",
+            "happiness": "",
+            "height": "",
+            "hi": "",
+            "hiccup": "",
+        }));
+        let settings = settings::channel(&app.font_cache()).unwrap().1;
+        let (_, workspace) = app.add_window(|ctx| {
+            let mut workspace = Workspace::new(0, settings.clone(), ctx);
+            workspace.add_worktree(tmp_dir.path(), ctx);
+            workspace
+        });
+        app.read(|ctx| workspace.read(ctx).worktree_scans_complete(ctx))
+            .await;
+        let (_, finder) = app.add_window(|ctx| FileFinder::new(settings, workspace.clone(), ctx));
+
+        let query = "hi".to_string();
+        finder.update(&mut app, |f, ctx| f.spawn_search(query.clone(), ctx));
+        finder.condition(&app, |f, _| f.matches.len() == 5).await;
+
+        finder.update(&mut app, |finder, ctx| {
+            let matches = finder.matches.clone();
+
+            // Simulate a search being cancelled after the time limit,
+            // returning only a subset of the matches that would have been found.
+            finder.spawn_search(query.clone(), ctx);
+            finder.update_matches(
+                (
+                    finder.latest_search_id,
+                    true, // did-cancel
+                    query.clone(),
+                    vec![matches[1].clone(), matches[3].clone()],
+                ),
+                ctx,
+            );
+
+            // Simulate another cancellation.
+            finder.spawn_search(query.clone(), ctx);
+            finder.update_matches(
+                (
+                    finder.latest_search_id,
+                    true, // did-cancel
+                    query.clone(),
+                    vec![matches[0].clone(), matches[2].clone(), matches[3].clone()],
+                ),
+                ctx,
+            );
+
+            assert_eq!(finder.matches, matches[0..4])
+        });
+    }
+
+    #[gpui::test]
+    async fn test_single_file_worktrees(mut app: gpui::TestAppContext) {
+        let temp_dir = TempDir::new("test-single-file-worktrees").unwrap();
+        let dir_path = temp_dir.path().join("the-parent-dir");
+        let file_path = dir_path.join("the-file");
+        fs::create_dir(&dir_path).unwrap();
+        fs::write(&file_path, "").unwrap();
+
+        let settings = settings::channel(&app.font_cache()).unwrap().1;
+        let (_, workspace) = app.add_window(|ctx| {
+            let mut workspace = Workspace::new(0, settings.clone(), ctx);
+            workspace.add_worktree(&file_path, ctx);
+            workspace
+        });
+        app.read(|ctx| workspace.read(ctx).worktree_scans_complete(ctx))
+            .await;
+        let (_, finder) = app.add_window(|ctx| FileFinder::new(settings, workspace.clone(), ctx));
+
+        // Even though there is only one worktree, that worktree's filename
+        // is included in the matching, because the worktree is a single file.
+        finder.update(&mut app, |f, ctx| f.spawn_search("thf".into(), ctx));
+        finder.condition(&app, |f, _| f.matches.len() == 1).await;
+
+        app.read(|ctx| {
+            let finder = finder.read(ctx);
+            let (file_name, file_name_positions, full_path, full_path_positions) =
+                finder.labels_for_match(&finder.matches[0], ctx).unwrap();
+
+            assert_eq!(file_name, "the-file");
+            assert_eq!(file_name_positions, &[0, 1, 4]);
+            assert_eq!(full_path, "the-file");
+            assert_eq!(full_path_positions, &[0, 1, 4]);
+        });
+
+        // Since the worktree root is a file, searching for its name followed by a slash does
+        // not match anything.
+        finder.update(&mut app, |f, ctx| f.spawn_search("thf/".into(), ctx));
+        finder.condition(&app, |f, _| f.matches.len() == 0).await;
+    }
+
+    #[gpui::test]
+    async fn test_multiple_matches_with_same_relative_path(mut app: gpui::TestAppContext) {
+        let tmp_dir = temp_tree(json!({
+            "dir1": { "a.txt": "" },
+            "dir2": { "a.txt": "" }
+        }));
+        let settings = settings::channel(&app.font_cache()).unwrap().1;
+
+        let (_, workspace) = app.add_window(|ctx| Workspace::new(0, settings.clone(), ctx));
+
+        workspace
+            .update(&mut app, |workspace, ctx| {
+                workspace.open_paths(
+                    &[tmp_dir.path().join("dir1"), tmp_dir.path().join("dir2")],
+                    ctx,
+                )
+            })
+            .await;
+        app.read(|ctx| workspace.read(ctx).worktree_scans_complete(ctx))
+            .await;
+
+        let (_, finder) = app.add_window(|ctx| FileFinder::new(settings, workspace.clone(), ctx));
+
+        // Run a search that matches two files with the same relative path.
+        finder.update(&mut app, |f, ctx| f.spawn_search("a.t".into(), ctx));
+        finder.condition(&app, |f, _| f.matches.len() == 2).await;
+
+        // Can switch between different matches with the same relative path.
+        finder.update(&mut app, |f, ctx| {
+            assert_eq!(f.selected_index(), 0);
+            f.select_next(&(), ctx);
+            assert_eq!(f.selected_index(), 1);
+            f.select_prev(&(), ctx);
+            assert_eq!(f.selected_index(), 0);
         });
     }
 }
