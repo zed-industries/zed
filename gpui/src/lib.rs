@@ -24,6 +24,7 @@ pub mod color;
 pub mod json;
 pub mod keymap;
 mod platform;
+pub use gpui_macros::test;
 pub use platform::{Event, PathPromptOptions};
 pub use presenter::{
     AfterLayoutContext, Axis, DebugContext, EventContext, LayoutContext, PaintContext,

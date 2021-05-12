@@ -2797,8 +2797,8 @@ mod tests {
     use crate::elements::*;
     use smol::future::poll_once;
 
-    #[test]
-    fn test_model_handles() {
+    #[crate::test(self)]
+    fn test_model_handles(app: &mut MutableAppContext) {
         struct Model {
             other: Option<ModelHandle<Model>>,
             events: Vec<String>,
@@ -2826,40 +2826,38 @@ mod tests {
             }
         }
 
-        App::test((), |app| {
-            let handle_1 = app.add_model(|ctx| Model::new(None, ctx));
-            let handle_2 = app.add_model(|ctx| Model::new(Some(handle_1.clone()), ctx));
-            assert_eq!(app.ctx.models.len(), 2);
+        let handle_1 = app.add_model(|ctx| Model::new(None, ctx));
+        let handle_2 = app.add_model(|ctx| Model::new(Some(handle_1.clone()), ctx));
+        assert_eq!(app.ctx.models.len(), 2);
 
-            handle_1.update(app, |model, ctx| {
-                model.events.push("updated".into());
-                ctx.emit(1);
-                ctx.notify();
-                ctx.emit(2);
-            });
-            assert_eq!(handle_1.read(app).events, vec!["updated".to_string()]);
-            assert_eq!(
-                handle_2.read(app).events,
-                vec![
-                    "observed event 1".to_string(),
-                    "notified".to_string(),
-                    "observed event 2".to_string(),
-                ]
-            );
-
-            handle_2.update(app, |model, _| {
-                drop(handle_1);
-                model.other.take();
-            });
-
-            assert_eq!(app.ctx.models.len(), 1);
-            assert!(app.subscriptions.is_empty());
-            assert!(app.model_observations.is_empty());
+        handle_1.update(app, |model, ctx| {
+            model.events.push("updated".into());
+            ctx.emit(1);
+            ctx.notify();
+            ctx.emit(2);
         });
+        assert_eq!(handle_1.read(app).events, vec!["updated".to_string()]);
+        assert_eq!(
+            handle_2.read(app).events,
+            vec![
+                "observed event 1".to_string(),
+                "notified".to_string(),
+                "observed event 2".to_string(),
+            ]
+        );
+
+        handle_2.update(app, |model, _| {
+            drop(handle_1);
+            model.other.take();
+        });
+
+        assert_eq!(app.ctx.models.len(), 1);
+        assert!(app.subscriptions.is_empty());
+        assert!(app.model_observations.is_empty());
     }
 
-    #[test]
-    fn test_subscribe_and_emit_from_model() {
+    #[crate::test(self)]
+    fn test_subscribe_and_emit_from_model(app: &mut MutableAppContext) {
         #[derive(Default)]
         struct Model {
             events: Vec<usize>,
@@ -2869,31 +2867,29 @@ mod tests {
             type Event = usize;
         }
 
-        App::test((), |app| {
-            let handle_1 = app.add_model(|_| Model::default());
-            let handle_2 = app.add_model(|_| Model::default());
-            let handle_2b = handle_2.clone();
+        let handle_1 = app.add_model(|_| Model::default());
+        let handle_2 = app.add_model(|_| Model::default());
+        let handle_2b = handle_2.clone();
 
-            handle_1.update(app, |_, c| {
-                c.subscribe(&handle_2, move |model: &mut Model, event, c| {
-                    model.events.push(*event);
+        handle_1.update(app, |_, c| {
+            c.subscribe(&handle_2, move |model: &mut Model, event, c| {
+                model.events.push(*event);
 
-                    c.subscribe(&handle_2b, |model, event, _| {
-                        model.events.push(*event * 2);
-                    });
+                c.subscribe(&handle_2b, |model, event, _| {
+                    model.events.push(*event * 2);
                 });
             });
+        });
 
-            handle_2.update(app, |_, c| c.emit(7));
-            assert_eq!(handle_1.read(app).events, vec![7]);
+        handle_2.update(app, |_, c| c.emit(7));
+        assert_eq!(handle_1.read(app).events, vec![7]);
 
-            handle_2.update(app, |_, c| c.emit(5));
-            assert_eq!(handle_1.read(app).events, vec![7, 10, 5]);
-        })
+        handle_2.update(app, |_, c| c.emit(5));
+        assert_eq!(handle_1.read(app).events, vec![7, 10, 5]);
     }
 
-    #[test]
-    fn test_observe_and_notify_from_model() {
+    #[crate::test(self)]
+    fn test_observe_and_notify_from_model(app: &mut MutableAppContext) {
         #[derive(Default)]
         struct Model {
             count: usize,
@@ -2904,36 +2900,34 @@ mod tests {
             type Event = ();
         }
 
-        App::test((), |app| {
-            let handle_1 = app.add_model(|_| Model::default());
-            let handle_2 = app.add_model(|_| Model::default());
-            let handle_2b = handle_2.clone();
+        let handle_1 = app.add_model(|_| Model::default());
+        let handle_2 = app.add_model(|_| Model::default());
+        let handle_2b = handle_2.clone();
 
-            handle_1.update(app, |_, c| {
-                c.observe(&handle_2, move |model, observed, c| {
-                    model.events.push(observed.read(c).count);
-                    c.observe(&handle_2b, |model, observed, c| {
-                        model.events.push(observed.read(c).count * 2);
-                    });
+        handle_1.update(app, |_, c| {
+            c.observe(&handle_2, move |model, observed, c| {
+                model.events.push(observed.read(c).count);
+                c.observe(&handle_2b, |model, observed, c| {
+                    model.events.push(observed.read(c).count * 2);
                 });
             });
+        });
 
-            handle_2.update(app, |model, c| {
-                model.count = 7;
-                c.notify()
-            });
-            assert_eq!(handle_1.read(app).events, vec![7]);
+        handle_2.update(app, |model, c| {
+            model.count = 7;
+            c.notify()
+        });
+        assert_eq!(handle_1.read(app).events, vec![7]);
 
-            handle_2.update(app, |model, c| {
-                model.count = 5;
-                c.notify()
-            });
-            assert_eq!(handle_1.read(app).events, vec![7, 10, 5])
-        })
+        handle_2.update(app, |model, c| {
+            model.count = 5;
+            c.notify()
+        });
+        assert_eq!(handle_1.read(app).events, vec![7, 10, 5])
     }
 
-    #[test]
-    fn test_spawn_from_model() {
+    #[crate::test(self)]
+    async fn test_spawn_from_model(mut app: TestAppContext) {
         #[derive(Default)]
         struct Model {
             count: usize,
@@ -2943,30 +2937,28 @@ mod tests {
             type Event = ();
         }
 
-        App::test_async((), |mut app| async move {
-            let handle = app.add_model(|_| Model::default());
-            handle
-                .update(&mut app, |_, c| {
-                    c.spawn(async { 7 }, |model, output, _| {
-                        model.count = output;
-                    })
+        let handle = app.add_model(|_| Model::default());
+        handle
+            .update(&mut app, |_, c| {
+                c.spawn(async { 7 }, |model, output, _| {
+                    model.count = output;
                 })
-                .await;
-            app.read(|ctx| assert_eq!(handle.read(ctx).count, 7));
+            })
+            .await;
+        app.read(|ctx| assert_eq!(handle.read(ctx).count, 7));
 
-            handle
-                .update(&mut app, |_, c| {
-                    c.spawn(async { 14 }, |model, output, _| {
-                        model.count = output;
-                    })
+        handle
+            .update(&mut app, |_, c| {
+                c.spawn(async { 14 }, |model, output, _| {
+                    model.count = output;
                 })
-                .await;
-            app.read(|ctx| assert_eq!(handle.read(ctx).count, 14));
-        });
+            })
+            .await;
+        app.read(|ctx| assert_eq!(handle.read(ctx).count, 14));
     }
 
-    #[test]
-    fn test_spawn_stream_local_from_model() {
+    #[crate::test(self)]
+    async fn test_spawn_stream_local_from_model(mut app: TestAppContext) {
         #[derive(Default)]
         struct Model {
             events: Vec<Option<usize>>,
@@ -2976,27 +2968,21 @@ mod tests {
             type Event = ();
         }
 
-        App::test_async((), |mut app| async move {
-            let handle = app.add_model(|_| Model::default());
-            handle
-                .update(&mut app, |_, c| {
-                    c.spawn_stream(
-                        smol::stream::iter(vec![1, 2, 3]),
-                        |model, output, _| {
-                            model.events.push(Some(output));
-                        },
-                        |model, _| {
-                            model.events.push(None);
-                        },
-                    )
-                })
-                .await;
-            app.read(|ctx| assert_eq!(handle.read(ctx).events, [Some(1), Some(2), Some(3), None]));
-        })
+        let handle = app.add_model(|_| Model::default());
+        handle
+            .update(&mut app, |_, c| {
+                c.spawn_stream(
+                    smol::stream::iter(vec![1, 2, 3]),
+                    |model, output, _| model.events.push(Some(output)),
+                    |model, _| model.events.push(None),
+                )
+            })
+            .await;
+        app.read(|ctx| assert_eq!(handle.read(ctx).events, [Some(1), Some(2), Some(3), None]));
     }
 
-    #[test]
-    fn test_view_handles() {
+    #[crate::test(self)]
+    fn test_view_handles(app: &mut MutableAppContext) {
         struct View {
             other: Option<ViewHandle<View>>,
             events: Vec<String>,
@@ -3030,39 +3016,37 @@ mod tests {
             }
         }
 
-        App::test((), |app| {
-            let (window_id, _) = app.add_window(|ctx| View::new(None, ctx));
-            let handle_1 = app.add_view(window_id, |ctx| View::new(None, ctx));
-            let handle_2 = app.add_view(window_id, |ctx| View::new(Some(handle_1.clone()), ctx));
-            assert_eq!(app.ctx.views.len(), 3);
+        let (window_id, _) = app.add_window(|ctx| View::new(None, ctx));
+        let handle_1 = app.add_view(window_id, |ctx| View::new(None, ctx));
+        let handle_2 = app.add_view(window_id, |ctx| View::new(Some(handle_1.clone()), ctx));
+        assert_eq!(app.ctx.views.len(), 3);
 
-            handle_1.update(app, |view, ctx| {
-                view.events.push("updated".into());
-                ctx.emit(1);
-                ctx.emit(2);
-            });
-            assert_eq!(handle_1.read(app).events, vec!["updated".to_string()]);
-            assert_eq!(
-                handle_2.read(app).events,
-                vec![
-                    "observed event 1".to_string(),
-                    "observed event 2".to_string(),
-                ]
-            );
+        handle_1.update(app, |view, ctx| {
+            view.events.push("updated".into());
+            ctx.emit(1);
+            ctx.emit(2);
+        });
+        assert_eq!(handle_1.read(app).events, vec!["updated".to_string()]);
+        assert_eq!(
+            handle_2.read(app).events,
+            vec![
+                "observed event 1".to_string(),
+                "observed event 2".to_string(),
+            ]
+        );
 
-            handle_2.update(app, |view, _| {
-                drop(handle_1);
-                view.other.take();
-            });
+        handle_2.update(app, |view, _| {
+            drop(handle_1);
+            view.other.take();
+        });
 
-            assert_eq!(app.ctx.views.len(), 2);
-            assert!(app.subscriptions.is_empty());
-            assert!(app.model_observations.is_empty());
-        })
+        assert_eq!(app.ctx.views.len(), 2);
+        assert!(app.subscriptions.is_empty());
+        assert!(app.model_observations.is_empty());
     }
 
-    #[test]
-    fn test_subscribe_and_emit_from_view() {
+    #[crate::test(self)]
+    fn test_subscribe_and_emit_from_view(app: &mut MutableAppContext) {
         #[derive(Default)]
         struct View {
             events: Vec<usize>,
@@ -3088,39 +3072,37 @@ mod tests {
             type Event = usize;
         }
 
-        App::test((), |app| {
-            let (window_id, handle_1) = app.add_window(|_| View::default());
-            let handle_2 = app.add_view(window_id, |_| View::default());
-            let handle_2b = handle_2.clone();
-            let handle_3 = app.add_model(|_| Model);
+        let (window_id, handle_1) = app.add_window(|_| View::default());
+        let handle_2 = app.add_view(window_id, |_| View::default());
+        let handle_2b = handle_2.clone();
+        let handle_3 = app.add_model(|_| Model);
 
-            handle_1.update(app, |_, c| {
-                c.subscribe_to_view(&handle_2, move |me, _, event, c| {
-                    me.events.push(*event);
+        handle_1.update(app, |_, c| {
+            c.subscribe_to_view(&handle_2, move |me, _, event, c| {
+                me.events.push(*event);
 
-                    c.subscribe_to_view(&handle_2b, |me, _, event, _| {
-                        me.events.push(*event * 2);
-                    });
+                c.subscribe_to_view(&handle_2b, |me, _, event, _| {
+                    me.events.push(*event * 2);
                 });
-
-                c.subscribe_to_model(&handle_3, |me, _, event, _| {
-                    me.events.push(*event);
-                })
             });
 
-            handle_2.update(app, |_, c| c.emit(7));
-            assert_eq!(handle_1.read(app).events, vec![7]);
+            c.subscribe_to_model(&handle_3, |me, _, event, _| {
+                me.events.push(*event);
+            })
+        });
 
-            handle_2.update(app, |_, c| c.emit(5));
-            assert_eq!(handle_1.read(app).events, vec![7, 10, 5]);
+        handle_2.update(app, |_, c| c.emit(7));
+        assert_eq!(handle_1.read(app).events, vec![7]);
 
-            handle_3.update(app, |_, c| c.emit(9));
-            assert_eq!(handle_1.read(app).events, vec![7, 10, 5, 9]);
-        })
+        handle_2.update(app, |_, c| c.emit(5));
+        assert_eq!(handle_1.read(app).events, vec![7, 10, 5]);
+
+        handle_3.update(app, |_, c| c.emit(9));
+        assert_eq!(handle_1.read(app).events, vec![7, 10, 5, 9]);
     }
 
-    #[test]
-    fn test_dropping_subscribers() {
+    #[crate::test(self)]
+    fn test_dropping_subscribers(app: &mut MutableAppContext) {
         struct View;
 
         impl Entity for View {
@@ -3143,33 +3125,31 @@ mod tests {
             type Event = ();
         }
 
-        App::test((), |app| {
-            let (window_id, _) = app.add_window(|_| View);
-            let observing_view = app.add_view(window_id, |_| View);
-            let emitting_view = app.add_view(window_id, |_| View);
-            let observing_model = app.add_model(|_| Model);
-            let observed_model = app.add_model(|_| Model);
+        let (window_id, _) = app.add_window(|_| View);
+        let observing_view = app.add_view(window_id, |_| View);
+        let emitting_view = app.add_view(window_id, |_| View);
+        let observing_model = app.add_model(|_| Model);
+        let observed_model = app.add_model(|_| Model);
 
-            observing_view.update(app, |_, ctx| {
-                ctx.subscribe_to_view(&emitting_view, |_, _, _, _| {});
-                ctx.subscribe_to_model(&observed_model, |_, _, _, _| {});
-            });
-            observing_model.update(app, |_, ctx| {
-                ctx.subscribe(&observed_model, |_, _, _| {});
-            });
+        observing_view.update(app, |_, ctx| {
+            ctx.subscribe_to_view(&emitting_view, |_, _, _, _| {});
+            ctx.subscribe_to_model(&observed_model, |_, _, _, _| {});
+        });
+        observing_model.update(app, |_, ctx| {
+            ctx.subscribe(&observed_model, |_, _, _| {});
+        });
 
-            app.update(|| {
-                drop(observing_view);
-                drop(observing_model);
-            });
+        app.update(|| {
+            drop(observing_view);
+            drop(observing_model);
+        });
 
-            emitting_view.update(app, |_, ctx| ctx.emit(()));
-            observed_model.update(app, |_, ctx| ctx.emit(()));
-        })
+        emitting_view.update(app, |_, ctx| ctx.emit(()));
+        observed_model.update(app, |_, ctx| ctx.emit(()));
     }
 
-    #[test]
-    fn test_observe_and_notify_from_view() {
+    #[crate::test(self)]
+    fn test_observe_and_notify_from_view(app: &mut MutableAppContext) {
         #[derive(Default)]
         struct View {
             events: Vec<usize>,
@@ -3198,26 +3178,24 @@ mod tests {
             type Event = ();
         }
 
-        App::test((), |app| {
-            let (_, view) = app.add_window(|_| View::default());
-            let model = app.add_model(|_| Model::default());
+        let (_, view) = app.add_window(|_| View::default());
+        let model = app.add_model(|_| Model::default());
 
-            view.update(app, |_, c| {
-                c.observe_model(&model, |me, observed, c| {
-                    me.events.push(observed.read(c).count)
-                });
+        view.update(app, |_, c| {
+            c.observe_model(&model, |me, observed, c| {
+                me.events.push(observed.read(c).count)
             });
+        });
 
-            model.update(app, |model, c| {
-                model.count = 11;
-                c.notify();
-            });
-            assert_eq!(view.read(app).events, vec![11]);
-        })
+        model.update(app, |model, c| {
+            model.count = 11;
+            c.notify();
+        });
+        assert_eq!(view.read(app).events, vec![11]);
     }
 
-    #[test]
-    fn test_dropping_observers() {
+    #[crate::test(self)]
+    fn test_dropping_observers(app: &mut MutableAppContext) {
         struct View;
 
         impl Entity for View {
@@ -3240,30 +3218,28 @@ mod tests {
             type Event = ();
         }
 
-        App::test((), |app| {
-            let (window_id, _) = app.add_window(|_| View);
-            let observing_view = app.add_view(window_id, |_| View);
-            let observing_model = app.add_model(|_| Model);
-            let observed_model = app.add_model(|_| Model);
+        let (window_id, _) = app.add_window(|_| View);
+        let observing_view = app.add_view(window_id, |_| View);
+        let observing_model = app.add_model(|_| Model);
+        let observed_model = app.add_model(|_| Model);
 
-            observing_view.update(app, |_, ctx| {
-                ctx.observe_model(&observed_model, |_, _, _| {});
-            });
-            observing_model.update(app, |_, ctx| {
-                ctx.observe(&observed_model, |_, _, _| {});
-            });
+        observing_view.update(app, |_, ctx| {
+            ctx.observe_model(&observed_model, |_, _, _| {});
+        });
+        observing_model.update(app, |_, ctx| {
+            ctx.observe(&observed_model, |_, _, _| {});
+        });
 
-            app.update(|| {
-                drop(observing_view);
-                drop(observing_model);
-            });
+        app.update(|| {
+            drop(observing_view);
+            drop(observing_model);
+        });
 
-            observed_model.update(app, |_, ctx| ctx.notify());
-        })
+        observed_model.update(app, |_, ctx| ctx.notify());
     }
 
-    #[test]
-    fn test_focus() {
+    #[crate::test(self)]
+    fn test_focus(app: &mut MutableAppContext) {
         struct View {
             name: String,
             events: Arc<Mutex<Vec<String>>>,
@@ -3291,40 +3267,38 @@ mod tests {
             }
         }
 
-        App::test((), |app| {
-            let events: Arc<Mutex<Vec<String>>> = Default::default();
-            let (window_id, view_1) = app.add_window(|_| View {
-                events: events.clone(),
-                name: "view 1".to_string(),
-            });
-            let view_2 = app.add_view(window_id, |_| View {
-                events: events.clone(),
-                name: "view 2".to_string(),
-            });
+        let events: Arc<Mutex<Vec<String>>> = Default::default();
+        let (window_id, view_1) = app.add_window(|_| View {
+            events: events.clone(),
+            name: "view 1".to_string(),
+        });
+        let view_2 = app.add_view(window_id, |_| View {
+            events: events.clone(),
+            name: "view 2".to_string(),
+        });
 
-            view_1.update(app, |_, ctx| ctx.focus(&view_2));
-            view_1.update(app, |_, ctx| ctx.focus(&view_1));
-            view_1.update(app, |_, ctx| ctx.focus(&view_2));
-            view_1.update(app, |_, _| drop(view_2));
+        view_1.update(app, |_, ctx| ctx.focus(&view_2));
+        view_1.update(app, |_, ctx| ctx.focus(&view_1));
+        view_1.update(app, |_, ctx| ctx.focus(&view_2));
+        view_1.update(app, |_, _| drop(view_2));
 
-            assert_eq!(
-                *events.lock(),
-                [
-                    "view 1 focused".to_string(),
-                    "view 1 blurred".to_string(),
-                    "view 2 focused".to_string(),
-                    "view 2 blurred".to_string(),
-                    "view 1 focused".to_string(),
-                    "view 1 blurred".to_string(),
-                    "view 2 focused".to_string(),
-                    "view 1 focused".to_string(),
-                ],
-            );
-        })
+        assert_eq!(
+            *events.lock(),
+            [
+                "view 1 focused".to_string(),
+                "view 1 blurred".to_string(),
+                "view 2 focused".to_string(),
+                "view 2 blurred".to_string(),
+                "view 1 focused".to_string(),
+                "view 1 blurred".to_string(),
+                "view 2 focused".to_string(),
+                "view 1 focused".to_string(),
+            ],
+        );
     }
 
-    #[test]
-    fn test_spawn_from_view() {
+    #[crate::test(self)]
+    async fn test_spawn_from_view(mut app: TestAppContext) {
         #[derive(Default)]
         struct View {
             count: usize,
@@ -3344,29 +3318,27 @@ mod tests {
             }
         }
 
-        App::test_async((), |mut app| async move {
-            let handle = app.add_window(|_| View::default()).1;
-            handle
-                .update(&mut app, |_, c| {
-                    c.spawn(async { 7 }, |me, output, _| {
-                        me.count = output;
-                    })
+        let handle = app.add_window(|_| View::default()).1;
+        handle
+            .update(&mut app, |_, c| {
+                c.spawn(async { 7 }, |me, output, _| {
+                    me.count = output;
                 })
-                .await;
-            app.read(|ctx| assert_eq!(handle.read(ctx).count, 7));
-            handle
-                .update(&mut app, |_, c| {
-                    c.spawn(async { 14 }, |me, output, _| {
-                        me.count = output;
-                    })
+            })
+            .await;
+        app.read(|ctx| assert_eq!(handle.read(ctx).count, 7));
+        handle
+            .update(&mut app, |_, c| {
+                c.spawn(async { 14 }, |me, output, _| {
+                    me.count = output;
                 })
-                .await;
-            app.read(|ctx| assert_eq!(handle.read(ctx).count, 14));
-        });
+            })
+            .await;
+        app.read(|ctx| assert_eq!(handle.read(ctx).count, 14));
     }
 
-    #[test]
-    fn test_spawn_stream_local_from_view() {
+    #[crate::test(self)]
+    async fn test_spawn_stream_local_from_view(mut app: TestAppContext) {
         #[derive(Default)]
         struct View {
             events: Vec<Option<usize>>,
@@ -3386,28 +3358,26 @@ mod tests {
             }
         }
 
-        App::test_async((), |mut app| async move {
-            let (_, handle) = app.add_window(|_| View::default());
-            handle
-                .update(&mut app, |_, c| {
-                    c.spawn_stream(
-                        smol::stream::iter(vec![1_usize, 2, 3]),
-                        |me, output, _| {
-                            me.events.push(Some(output));
-                        },
-                        |me, _| {
-                            me.events.push(None);
-                        },
-                    )
-                })
-                .await;
+        let (_, handle) = app.add_window(|_| View::default());
+        handle
+            .update(&mut app, |_, c| {
+                c.spawn_stream(
+                    smol::stream::iter(vec![1_usize, 2, 3]),
+                    |me, output, _| {
+                        me.events.push(Some(output));
+                    },
+                    |me, _| {
+                        me.events.push(None);
+                    },
+                )
+            })
+            .await;
 
-            app.read(|ctx| assert_eq!(handle.read(ctx).events, [Some(1), Some(2), Some(3), None]))
-        });
+        app.read(|ctx| assert_eq!(handle.read(ctx).events, [Some(1), Some(2), Some(3), None]))
     }
 
-    #[test]
-    fn test_dispatch_action() {
+    #[crate::test(self)]
+    fn test_dispatch_action(app: &mut MutableAppContext) {
         struct ViewA {
             id: usize,
         }
@@ -3448,81 +3418,79 @@ mod tests {
             foo: String,
         }
 
-        App::test((), |app| {
-            let actions = Rc::new(RefCell::new(Vec::new()));
+        let actions = Rc::new(RefCell::new(Vec::new()));
 
-            let actions_clone = actions.clone();
-            app.add_global_action("action", move |_: &ActionArg, _: &mut MutableAppContext| {
-                actions_clone.borrow_mut().push("global a".to_string());
-            });
+        let actions_clone = actions.clone();
+        app.add_global_action("action", move |_: &ActionArg, _: &mut MutableAppContext| {
+            actions_clone.borrow_mut().push("global a".to_string());
+        });
 
-            let actions_clone = actions.clone();
-            app.add_global_action("action", move |_: &ActionArg, _: &mut MutableAppContext| {
-                actions_clone.borrow_mut().push("global b".to_string());
-            });
+        let actions_clone = actions.clone();
+        app.add_global_action("action", move |_: &ActionArg, _: &mut MutableAppContext| {
+            actions_clone.borrow_mut().push("global b".to_string());
+        });
 
-            let actions_clone = actions.clone();
-            app.add_action("action", move |view: &mut ViewA, arg: &ActionArg, ctx| {
-                assert_eq!(arg.foo, "bar");
+        let actions_clone = actions.clone();
+        app.add_action("action", move |view: &mut ViewA, arg: &ActionArg, ctx| {
+            assert_eq!(arg.foo, "bar");
+            ctx.propagate_action();
+            actions_clone.borrow_mut().push(format!("{} a", view.id));
+        });
+
+        let actions_clone = actions.clone();
+        app.add_action("action", move |view: &mut ViewA, _: &ActionArg, ctx| {
+            if view.id != 1 {
                 ctx.propagate_action();
-                actions_clone.borrow_mut().push(format!("{} a", view.id));
-            });
+            }
+            actions_clone.borrow_mut().push(format!("{} b", view.id));
+        });
 
-            let actions_clone = actions.clone();
-            app.add_action("action", move |view: &mut ViewA, _: &ActionArg, ctx| {
-                if view.id != 1 {
-                    ctx.propagate_action();
-                }
-                actions_clone.borrow_mut().push(format!("{} b", view.id));
-            });
+        let actions_clone = actions.clone();
+        app.add_action("action", move |view: &mut ViewB, _: &ActionArg, ctx| {
+            ctx.propagate_action();
+            actions_clone.borrow_mut().push(format!("{} c", view.id));
+        });
 
-            let actions_clone = actions.clone();
-            app.add_action("action", move |view: &mut ViewB, _: &ActionArg, ctx| {
-                ctx.propagate_action();
-                actions_clone.borrow_mut().push(format!("{} c", view.id));
-            });
+        let actions_clone = actions.clone();
+        app.add_action("action", move |view: &mut ViewB, _: &ActionArg, ctx| {
+            ctx.propagate_action();
+            actions_clone.borrow_mut().push(format!("{} d", view.id));
+        });
 
-            let actions_clone = actions.clone();
-            app.add_action("action", move |view: &mut ViewB, _: &ActionArg, ctx| {
-                ctx.propagate_action();
-                actions_clone.borrow_mut().push(format!("{} d", view.id));
-            });
+        let (window_id, view_1) = app.add_window(|_| ViewA { id: 1 });
+        let view_2 = app.add_view(window_id, |_| ViewB { id: 2 });
+        let view_3 = app.add_view(window_id, |_| ViewA { id: 3 });
+        let view_4 = app.add_view(window_id, |_| ViewB { id: 4 });
 
-            let (window_id, view_1) = app.add_window(|_| ViewA { id: 1 });
-            let view_2 = app.add_view(window_id, |_| ViewB { id: 2 });
-            let view_3 = app.add_view(window_id, |_| ViewA { id: 3 });
-            let view_4 = app.add_view(window_id, |_| ViewB { id: 4 });
+        app.dispatch_action(
+            window_id,
+            vec![view_1.id(), view_2.id(), view_3.id(), view_4.id()],
+            "action",
+            ActionArg { foo: "bar".into() },
+        );
 
-            app.dispatch_action(
-                window_id,
-                vec![view_1.id(), view_2.id(), view_3.id(), view_4.id()],
-                "action",
-                ActionArg { foo: "bar".into() },
-            );
+        assert_eq!(
+            *actions.borrow(),
+            vec!["4 d", "4 c", "3 b", "3 a", "2 d", "2 c", "1 b"]
+        );
 
-            assert_eq!(
-                *actions.borrow(),
-                vec!["4 d", "4 c", "3 b", "3 a", "2 d", "2 c", "1 b"]
-            );
+        // Remove view_1, which doesn't propagate the action
+        actions.borrow_mut().clear();
+        app.dispatch_action(
+            window_id,
+            vec![view_2.id(), view_3.id(), view_4.id()],
+            "action",
+            ActionArg { foo: "bar".into() },
+        );
 
-            // Remove view_1, which doesn't propagate the action
-            actions.borrow_mut().clear();
-            app.dispatch_action(
-                window_id,
-                vec![view_2.id(), view_3.id(), view_4.id()],
-                "action",
-                ActionArg { foo: "bar".into() },
-            );
-
-            assert_eq!(
-                *actions.borrow(),
-                vec!["4 d", "4 c", "3 b", "3 a", "2 d", "2 c", "global b", "global a"]
-            );
-        })
+        assert_eq!(
+            *actions.borrow(),
+            vec!["4 d", "4 c", "3 b", "3 a", "2 d", "2 c", "global b", "global a"]
+        );
     }
 
-    #[test]
-    fn test_dispatch_keystroke() {
+    #[crate::test(self)]
+    fn test_dispatch_keystroke(app: &mut MutableAppContext) {
         use std::cell::Cell;
 
         #[derive(Clone)]
@@ -3562,45 +3530,43 @@ mod tests {
             }
         }
 
-        App::test((), |app| {
-            let mut view_1 = View::new(1);
-            let mut view_2 = View::new(2);
-            let mut view_3 = View::new(3);
-            view_1.keymap_context.set.insert("a".into());
-            view_2.keymap_context.set.insert("b".into());
-            view_3.keymap_context.set.insert("c".into());
+        let mut view_1 = View::new(1);
+        let mut view_2 = View::new(2);
+        let mut view_3 = View::new(3);
+        view_1.keymap_context.set.insert("a".into());
+        view_2.keymap_context.set.insert("b".into());
+        view_3.keymap_context.set.insert("c".into());
 
-            let (window_id, view_1) = app.add_window(|_| view_1);
-            let view_2 = app.add_view(window_id, |_| view_2);
-            let view_3 = app.add_view(window_id, |_| view_3);
+        let (window_id, view_1) = app.add_window(|_| view_1);
+        let view_2 = app.add_view(window_id, |_| view_2);
+        let view_3 = app.add_view(window_id, |_| view_3);
 
-            // This keymap's only binding dispatches an action on view 2 because that view will have
-            // "a" and "b" in its context, but not "c".
-            let binding = keymap::Binding::new("a", "action", Some("a && b && !c"))
-                .with_arg(ActionArg { key: "a".into() });
-            app.add_bindings(vec![binding]);
+        // This keymap's only binding dispatches an action on view 2 because that view will have
+        // "a" and "b" in its context, but not "c".
+        let binding = keymap::Binding::new("a", "action", Some("a && b && !c"))
+            .with_arg(ActionArg { key: "a".into() });
+        app.add_bindings(vec![binding]);
 
-            let handled_action = Rc::new(Cell::new(false));
-            let handled_action_clone = handled_action.clone();
-            app.add_action("action", move |view: &mut View, arg: &ActionArg, _ctx| {
-                handled_action_clone.set(true);
-                assert_eq!(view.id, 2);
-                assert_eq!(arg.key, "a");
-            });
-
-            app.dispatch_keystroke(
-                window_id,
-                vec![view_1.id(), view_2.id(), view_3.id()],
-                &Keystroke::parse("a").unwrap(),
-            )
-            .unwrap();
-
-            assert!(handled_action.get());
+        let handled_action = Rc::new(Cell::new(false));
+        let handled_action_clone = handled_action.clone();
+        app.add_action("action", move |view: &mut View, arg: &ActionArg, _ctx| {
+            handled_action_clone.set(true);
+            assert_eq!(view.id, 2);
+            assert_eq!(arg.key, "a");
         });
+
+        app.dispatch_keystroke(
+            window_id,
+            vec![view_1.id(), view_2.id(), view_3.id()],
+            &Keystroke::parse("a").unwrap(),
+        )
+        .unwrap();
+
+        assert!(handled_action.get());
     }
 
-    #[test]
-    fn test_model_condition() {
+    #[crate::test(self)]
+    async fn test_model_condition(mut app: TestAppContext) {
         struct Counter(usize);
 
         impl super::Entity for Counter {
@@ -3614,62 +3580,56 @@ mod tests {
             }
         }
 
-        App::test_async((), |mut app| async move {
-            let model = app.add_model(|_| Counter(0));
+        let model = app.add_model(|_| Counter(0));
 
-            let condition1 = model.condition(&app, |model, _| model.0 == 2);
-            let condition2 = model.condition(&app, |model, _| model.0 == 3);
-            smol::pin!(condition1, condition2);
+        let condition1 = model.condition(&app, |model, _| model.0 == 2);
+        let condition2 = model.condition(&app, |model, _| model.0 == 3);
+        smol::pin!(condition1, condition2);
 
-            model.update(&mut app, |model, ctx| model.inc(ctx));
-            assert_eq!(poll_once(&mut condition1).await, None);
-            assert_eq!(poll_once(&mut condition2).await, None);
+        model.update(&mut app, |model, ctx| model.inc(ctx));
+        assert_eq!(poll_once(&mut condition1).await, None);
+        assert_eq!(poll_once(&mut condition2).await, None);
 
-            model.update(&mut app, |model, ctx| model.inc(ctx));
-            assert_eq!(poll_once(&mut condition1).await, Some(()));
-            assert_eq!(poll_once(&mut condition2).await, None);
+        model.update(&mut app, |model, ctx| model.inc(ctx));
+        assert_eq!(poll_once(&mut condition1).await, Some(()));
+        assert_eq!(poll_once(&mut condition2).await, None);
 
-            model.update(&mut app, |model, ctx| model.inc(ctx));
-            assert_eq!(poll_once(&mut condition2).await, Some(()));
+        model.update(&mut app, |model, ctx| model.inc(ctx));
+        assert_eq!(poll_once(&mut condition2).await, Some(()));
 
-            model.update(&mut app, |_, ctx| ctx.notify());
-        });
+        model.update(&mut app, |_, ctx| ctx.notify());
     }
 
-    #[test]
+    #[crate::test(self)]
     #[should_panic]
-    fn test_model_condition_timeout() {
+    async fn test_model_condition_timeout(mut app: TestAppContext) {
         struct Model;
 
         impl super::Entity for Model {
             type Event = ();
         }
 
-        App::test_async((), |mut app| async move {
-            let model = app.add_model(|_| Model);
-            model.condition(&app, |_, _| false).await;
-        });
+        let model = app.add_model(|_| Model);
+        model.condition(&app, |_, _| false).await;
     }
 
-    #[test]
+    #[crate::test(self)]
     #[should_panic(expected = "model dropped with pending condition")]
-    fn test_model_condition_panic_on_drop() {
+    async fn test_model_condition_panic_on_drop(mut app: TestAppContext) {
         struct Model;
 
         impl super::Entity for Model {
             type Event = ();
         }
 
-        App::test_async((), |mut app| async move {
-            let model = app.add_model(|_| Model);
-            let condition = model.condition(&app, |_, _| false);
-            app.update(|_| drop(model));
-            condition.await;
-        });
+        let model = app.add_model(|_| Model);
+        let condition = model.condition(&app, |_, _| false);
+        app.update(|_| drop(model));
+        condition.await;
     }
 
-    #[test]
-    fn test_view_condition() {
+    #[crate::test(self)]
+    async fn test_view_condition(mut app: TestAppContext) {
         struct Counter(usize);
 
         impl super::Entity for Counter {
@@ -3693,30 +3653,28 @@ mod tests {
             }
         }
 
-        App::test_async((), |mut app| async move {
-            let (_, view) = app.add_window(|_| Counter(0));
+        let (_, view) = app.add_window(|_| Counter(0));
 
-            let condition1 = view.condition(&app, |view, _| view.0 == 2);
-            let condition2 = view.condition(&app, |view, _| view.0 == 3);
-            smol::pin!(condition1, condition2);
+        let condition1 = view.condition(&app, |view, _| view.0 == 2);
+        let condition2 = view.condition(&app, |view, _| view.0 == 3);
+        smol::pin!(condition1, condition2);
 
-            view.update(&mut app, |view, ctx| view.inc(ctx));
-            assert_eq!(poll_once(&mut condition1).await, None);
-            assert_eq!(poll_once(&mut condition2).await, None);
+        view.update(&mut app, |view, ctx| view.inc(ctx));
+        assert_eq!(poll_once(&mut condition1).await, None);
+        assert_eq!(poll_once(&mut condition2).await, None);
 
-            view.update(&mut app, |view, ctx| view.inc(ctx));
-            assert_eq!(poll_once(&mut condition1).await, Some(()));
-            assert_eq!(poll_once(&mut condition2).await, None);
+        view.update(&mut app, |view, ctx| view.inc(ctx));
+        assert_eq!(poll_once(&mut condition1).await, Some(()));
+        assert_eq!(poll_once(&mut condition2).await, None);
 
-            view.update(&mut app, |view, ctx| view.inc(ctx));
-            assert_eq!(poll_once(&mut condition2).await, Some(()));
-            view.update(&mut app, |_, ctx| ctx.notify());
-        });
+        view.update(&mut app, |view, ctx| view.inc(ctx));
+        assert_eq!(poll_once(&mut condition2).await, Some(()));
+        view.update(&mut app, |_, ctx| ctx.notify());
     }
 
-    #[test]
+    #[crate::test(self)]
     #[should_panic]
-    fn test_view_condition_timeout() {
+    async fn test_view_condition_timeout(mut app: TestAppContext) {
         struct View;
 
         impl super::Entity for View {
@@ -3733,15 +3691,13 @@ mod tests {
             }
         }
 
-        App::test_async((), |mut app| async move {
-            let (_, view) = app.add_window(|_| View);
-            view.condition(&app, |_, _| false).await;
-        });
+        let (_, view) = app.add_window(|_| View);
+        view.condition(&app, |_, _| false).await;
     }
 
-    #[test]
+    #[crate::test(self)]
     #[should_panic(expected = "view dropped with pending condition")]
-    fn test_view_condition_panic_on_drop() {
+    async fn test_view_condition_panic_on_drop(mut app: TestAppContext) {
         struct View;
 
         impl super::Entity for View {
@@ -3758,17 +3714,15 @@ mod tests {
             }
         }
 
-        App::test_async((), |mut app| async move {
-            let window_id = app.add_window(|_| View).0;
-            let view = app.add_view(window_id, |_| View);
+        let window_id = app.add_window(|_| View).0;
+        let view = app.add_view(window_id, |_| View);
 
-            let condition = view.condition(&app, |_, _| false);
-            app.update(|_| drop(view));
-            condition.await;
-        });
+        let condition = view.condition(&app, |_, _| false);
+        app.update(|_| drop(view));
+        condition.await;
     }
 
-    // #[test]
+    // #[crate::test(self)]
     // fn test_ui_and_window_updates() {
     //     struct View {
     //         count: usize,
