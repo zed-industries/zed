@@ -415,10 +415,9 @@ impl FileFinder {
             (search_id, did_cancel, query, matches)
         });
 
-        let handle = ctx.handle();
-        ctx.spawn(|mut ctx| async move {
+        ctx.spawn(|this, mut ctx| async move {
             let matches = background_task.await;
-            handle.update(&mut ctx, |this, ctx| this.update_matches(matches, ctx));
+            this.update(&mut ctx, |this, ctx| this.update_matches(matches, ctx));
         })
         .detach();
 

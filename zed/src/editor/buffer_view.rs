@@ -2347,10 +2347,9 @@ impl BufferView {
         ctx.notify();
 
         let epoch = self.next_blink_epoch();
-        let handle = ctx.handle();
-        ctx.spawn(|mut ctx| async move {
+        ctx.spawn(|this, mut ctx| async move {
             Timer::after(CURSOR_BLINK_INTERVAL).await;
-            handle.update(&mut ctx, |this, ctx| {
+            this.update(&mut ctx, |this, ctx| {
                 this.resume_cursor_blinking(epoch, ctx);
             })
         })
@@ -2370,10 +2369,9 @@ impl BufferView {
             ctx.notify();
 
             let epoch = self.next_blink_epoch();
-            let handle = ctx.handle();
-            ctx.spawn(|mut ctx| async move {
+            ctx.spawn(|this, mut ctx| async move {
                 Timer::after(CURSOR_BLINK_INTERVAL).await;
-                handle.update(&mut ctx, |this, ctx| this.blink_cursors(epoch, ctx));
+                this.update(&mut ctx, |this, ctx| this.blink_cursors(epoch, ctx));
             })
             .detach();
         }

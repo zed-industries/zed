@@ -477,9 +477,8 @@ impl Buffer {
         let snapshot = self.snapshot();
         let version = self.version.clone();
         let file = self.file.clone();
-        let handle = ctx.handle();
 
-        ctx.spawn(|mut ctx| async move {
+        ctx.spawn(|handle, mut ctx| async move {
             if let Some(file) = new_file.as_ref().or(file.as_ref()) {
                 let result = ctx.read(|ctx| file.save(snapshot, ctx.as_ref())).await;
                 if result.is_ok() {

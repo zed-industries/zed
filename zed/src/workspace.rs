@@ -359,13 +359,12 @@ impl Workspace {
             .cloned()
             .zip(entries.into_iter())
             .map(|(abs_path, file)| {
-                let handle = ctx.handle();
                 let is_file = bg.spawn(async move { abs_path.is_file() });
-                ctx.spawn(|mut ctx| async move {
+                ctx.spawn(|this, mut ctx| async move {
                     let is_file = is_file.await;
-                    handle.update(&mut ctx, |me, ctx| {
+                    this.update(&mut ctx, |this, ctx| {
                         if is_file {
-                            me.open_entry(file.entry_id(), ctx)
+                            this.open_entry(file.entry_id(), ctx)
                         } else {
                             None
                         }
@@ -513,8 +512,7 @@ impl Workspace {
 
         let mut watch = self.loading_items.get(&entry).unwrap().clone();
 
-        let handle = ctx.handle();
-        Some(ctx.spawn(|mut ctx| async move {
+        Some(ctx.spawn(|this, mut ctx| async move {
             let load_result = loop {
                 if let Some(load_result) = watch.borrow().as_ref() {
                     break load_result.clone();
@@ -522,16 +520,16 @@ impl Workspace {
                 watch.next().await;
             };
 
-            handle.update(&mut ctx, |me, ctx| {
-                me.loading_items.remove(&entry);
+            this.update(&mut ctx, |this, ctx| {
+                this.loading_items.remove(&entry);
                 match load_result {
                     Ok(item) => {
                         let weak_item = item.downgrade();
                         let view = weak_item
                             .add_view(ctx.window_id(), settings, ctx.as_mut())
                             .unwrap();
-                        me.items.push(weak_item);
-                        me.add_item_view(view, ctx);
+                        this.items.push(weak_item);
+                        this.add_item_view(view, ctx);
                     }
                     Err(error) => {
                         log::error!("error opening item: {}", error);

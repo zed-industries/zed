@@ -1654,11 +1654,12 @@ impl<'a, T: Entity> ModelContext<'a, T> {
 
     pub fn spawn<F, Fut, S>(&self, f: F) -> Task<S>
     where
-        F: FnOnce(AsyncAppContext) -> Fut,
+        F: FnOnce(ModelHandle<T>, AsyncAppContext) -> Fut,
         Fut: 'static + Future<Output = S>,
         S: 'static,
     {
-        self.app.spawn(f)
+        let handle = self.handle();
+        self.app.spawn(|ctx| f(handle, ctx))
     }
 }
 
@@ -1909,11 +1910,12 @@ impl<'a, T: View> ViewContext<'a, T> {
 
     pub fn spawn<F, Fut, S>(&self, f: F) -> Task<S>
     where
-        F: FnOnce(AsyncAppContext) -> Fut,
+        F: FnOnce(ViewHandle<T>, AsyncAppContext) -> Fut,
         Fut: 'static + Future<Output = S>,
         S: 'static,
     {
-        self.app.spawn(f)
+        let handle = self.handle();
+        self.app.spawn(|ctx| f(handle, ctx))
     }
 }
 

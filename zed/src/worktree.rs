@@ -98,20 +98,23 @@ impl Worktree {
             scanner.run(event_stream)
         });
 
-        let handle = ctx.handle().downgrade();
-        ctx.spawn(|mut ctx| async move {
-            while let Ok(scan_state) = scan_state_rx.recv().await {
-                let alive = ctx.update(|ctx| {
-                    if let Some(handle) = handle.upgrade(&ctx) {
-                        handle.update(ctx, |this, ctx| this.observe_scan_state(scan_state, ctx));
-                        true
-                    } else {
-                        false
-                    }
-                });
+        ctx.spawn(|this, mut ctx| {
+            let this = this.downgrade();
+            async move {
+                while let Ok(scan_state) = scan_state_rx.recv().await {
+                    let alive = ctx.update(|ctx| {
+                        if let Some(handle) = this.upgrade(&ctx) {
+                            handle
+                                .update(ctx, |this, ctx| this.observe_scan_state(scan_state, ctx));
+                            true
+                        } else {
+                            false
+                        }
+                    });
 
-                if !alive {
-                    break;
+                    if !alive {
+                        break;
+                    }
                 }
             }
         })
@@ -133,10 +136,9 @@ impl Worktree {
     pub fn next_scan_complete(&self, ctx: &mut ModelContext<Self>) -> impl Future<Output = ()> {
         let scan_id = self.snapshot.scan_id;
         let mut scan_state = self.scan_state.1.clone();
-        let handle = ctx.handle();
-        ctx.spawn(|ctx| async move {
+        ctx.spawn(|this, ctx| async move {
             while let Some(scan_state) = scan_state.recv().await {
-                if handle.read_with(&ctx, |this, _| {
+                if this.read_with(&ctx, |this, _| {
                     matches!(scan_state, ScanState::Idle) && this.snapshot.scan_id > scan_id
                 }) {
                     break;
@@ -155,9 +157,8 @@ impl Worktree {
         ctx.notify();
 
         if self.is_scanning() && !self.poll_scheduled {
-            let handle = ctx.handle();
-            ctx.spawn(|mut ctx| async move {
-                handle.update(&mut ctx, |this, ctx| {
+            ctx.spawn(|this, mut ctx| async move {
+                this.update(&mut ctx, |this, ctx| {
                     this.poll_scheduled = false;
                     this.poll_entries(ctx);
                 })
