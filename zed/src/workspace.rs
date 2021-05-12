@@ -734,65 +734,63 @@ mod tests {
     use std::collections::HashSet;
     use tempdir::TempDir;
 
-    #[test]
-    fn test_open_paths_action() {
-        App::test((), |app| {
-            let settings = settings::channel(&app.font_cache()).unwrap().1;
+    #[gpui::test]
+    fn test_open_paths_action(app: &mut gpui::MutableAppContext) {
+        let settings = settings::channel(&app.font_cache()).unwrap().1;
 
-            init(app);
+        init(app);
 
-            let dir = temp_tree(json!({
-                "a": {
-                    "aa": null,
-                    "ab": null,
-                },
-                "b": {
-                    "ba": null,
-                    "bb": null,
-                },
-                "c": {
-                    "ca": null,
-                    "cb": null,
-                },
-            }));
+        let dir = temp_tree(json!({
+            "a": {
+                "aa": null,
+                "ab": null,
+            },
+            "b": {
+                "ba": null,
+                "bb": null,
+            },
+            "c": {
+                "ca": null,
+                "cb": null,
+            },
+        }));
 
-            app.dispatch_global_action(
-                "workspace:open_paths",
-                OpenParams {
-                    paths: vec![
-                        dir.path().join("a").to_path_buf(),
-                        dir.path().join("b").to_path_buf(),
-                    ],
-                    settings: settings.clone(),
-                },
-            );
-            assert_eq!(app.window_ids().count(), 1);
+        app.dispatch_global_action(
+            "workspace:open_paths",
+            OpenParams {
+                paths: vec![
+                    dir.path().join("a").to_path_buf(),
+                    dir.path().join("b").to_path_buf(),
+                ],
+                settings: settings.clone(),
+            },
+        );
+        assert_eq!(app.window_ids().count(), 1);
 
-            app.dispatch_global_action(
-                "workspace:open_paths",
-                OpenParams {
-                    paths: vec![dir.path().join("a").to_path_buf()],
-                    settings: settings.clone(),
-                },
-            );
-            assert_eq!(app.window_ids().count(), 1);
-            let workspace_view_1 = app
-                .root_view::<Workspace>(app.window_ids().next().unwrap())
-                .unwrap();
-            assert_eq!(workspace_view_1.read(app).worktrees().len(), 2);
+        app.dispatch_global_action(
+            "workspace:open_paths",
+            OpenParams {
+                paths: vec![dir.path().join("a").to_path_buf()],
+                settings: settings.clone(),
+            },
+        );
+        assert_eq!(app.window_ids().count(), 1);
+        let workspace_view_1 = app
+            .root_view::<Workspace>(app.window_ids().next().unwrap())
+            .unwrap();
+        assert_eq!(workspace_view_1.read(app).worktrees().len(), 2);
 
-            app.dispatch_global_action(
-                "workspace:open_paths",
-                OpenParams {
-                    paths: vec![
-                        dir.path().join("b").to_path_buf(),
-                        dir.path().join("c").to_path_buf(),
-                    ],
-                    settings: settings.clone(),
-                },
-            );
-            assert_eq!(app.window_ids().count(), 2);
-        });
+        app.dispatch_global_action(
+            "workspace:open_paths",
+            OpenParams {
+                paths: vec![
+                    dir.path().join("b").to_path_buf(),
+                    dir.path().join("c").to_path_buf(),
+                ],
+                settings: settings.clone(),
+            },
+        );
+        assert_eq!(app.window_ids().count(), 2);
     }
 
     #[test]
