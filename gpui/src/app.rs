@@ -578,7 +578,7 @@ impl MutableAppContext {
         self.platform.set_menus(menus);
     }
 
-    pub fn prompt<F>(
+    fn prompt<F>(
         &self,
         window_id: usize,
         level: PromptLevel,
