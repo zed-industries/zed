@@ -2,7 +2,7 @@ use crate::{
     elements::ElementBox,
     executor,
     keymap::{self, Keystroke},
-    platform::{self, WindowOptions},
+    platform::{self, PromptLevel, WindowOptions},
     presenter::Presenter,
     util::{post_inc, timeout},
     AssetCache, AssetSource, ClipboardItem, FontCache, PathPromptOptions, TextLayoutCache,
@@ -576,6 +576,31 @@ impl MutableAppContext {
 
     pub fn set_menus(&self, menus: Vec<Menu>) {
         self.platform.set_menus(menus);
+    }
+
+    pub fn prompt<F>(
+        &self,
+        window_id: usize,
+        level: PromptLevel,
+        msg: &str,
+        answers: &[&str],
+        done_fn: F,
+    ) where
+        F: 'static + FnOnce(usize, &mut MutableAppContext),
+    {
+        let app = self.weak_self.as_ref().unwrap().upgrade().unwrap();
+        let foreground = self.foreground.clone();
+        let (_, window) = &self.presenters_and_platform_windows[&window_id];
+        window.prompt(
+            level,
+            msg,
+            answers,
+            Box::new(move |answer| {
+                foreground
+                    .spawn(async move { (done_fn)(answer, &mut *app.borrow_mut()) })
+                    .detach();
+            }),
+        );
     }
 
     pub fn prompt_for_paths<F>(&self, options: PathPromptOptions, done_fn: F)
@@ -1764,6 +1789,14 @@ impl<'a, T: View> ViewContext<'a, T> {
 
     pub fn background_executor(&self) -> &Arc<executor::Background> {
         &self.app.ctx.background
+    }
+
+    pub fn prompt<F>(&self, level: PromptLevel, msg: &str, answers: &[&str], done_fn: F)
+    where
+        F: 'static + FnOnce(usize, &mut MutableAppContext),
+    {
+        self.app
+            .prompt(self.window_id, level, msg, answers, done_fn)
     }
 
     pub fn prompt_for_paths<F>(&self, options: PathPromptOptions, done_fn: F)

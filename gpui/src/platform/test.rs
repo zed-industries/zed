@@ -163,6 +163,8 @@ impl super::Window for Window {
     fn on_close(&mut self, callback: Box<dyn FnOnce()>) {
         self.close_handlers.push(callback);
     }
+
+    fn prompt(&self, _: crate::PromptLevel, _: &str, _: &[&str], _: Box<dyn FnOnce(usize)>) {}
 }
 
 pub(crate) fn platform() -> Platform {

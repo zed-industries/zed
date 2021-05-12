@@ -9,8 +9,8 @@ use crate::{
 use futures_core::{future::LocalBoxFuture, Future};
 use gpui::{
     color::rgbu, elements::*, json::to_string_pretty, keymap::Binding, AnyViewHandle, AppContext,
-    ClipboardItem, Entity, EntityTask, ModelHandle, MutableAppContext, PathPromptOptions, View,
-    ViewContext, ViewHandle, WeakModelHandle,
+    ClipboardItem, Entity, EntityTask, ModelHandle, MutableAppContext, PathPromptOptions,
+    PromptLevel, View, ViewContext, ViewHandle, WeakModelHandle,
 };
 use log::error;
 pub use pane::*;
@@ -573,15 +573,37 @@ impl Workspace {
                     }
                 });
                 return;
-            }
+            } else if item.has_conflict(ctx.as_ref()) {
+                const CONFLICT_MESSAGE: &'static str = "This file has changed on disk since you started editing it. Do you want to overwrite it?";
 
-            let task = item.save(None, ctx.as_mut());
-            ctx.spawn(task, |_, result, _| {
-                if let Err(e) = result {
-                    error!("failed to save item: {:?}, ", e);
-                }
-            })
-            .detach()
+                let handle = ctx.handle();
+                ctx.prompt(
+                    PromptLevel::Warning,
+                    CONFLICT_MESSAGE,
+                    &["Overwrite", "Cancel"],
+                    move |answer, ctx| {
+                        if answer == 0 {
+                            handle.update(ctx, move |_, ctx| {
+                                let task = item.save(None, ctx.as_mut());
+                                ctx.spawn(task, |_, result, _| {
+                                    if let Err(e) = result {
+                                        error!("failed to save item: {:?}, ", e);
+                                    }
+                                })
+                                .detach();
+                            });
+                        }
+                    },
+                );
+            } else {
+                let task = item.save(None, ctx.as_mut());
+                ctx.spawn(task, |_, result, _| {
+                    if let Err(e) = result {
+                        error!("failed to save item: {:?}, ", e);
+                    }
+                })
+                .detach();
+            }
         }
     }
 

@@ -24,7 +24,7 @@ pub mod color;
 pub mod json;
 pub mod keymap;
 mod platform;
-pub use platform::{Event, PathPromptOptions};
+pub use platform::{Event, PathPromptOptions, PromptLevel};
 pub use presenter::{
     AfterLayoutContext, Axis, DebugContext, EventContext, LayoutContext, PaintContext,
     SizeConstraint, Vector2FExt,
