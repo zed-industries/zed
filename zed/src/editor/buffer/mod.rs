@@ -309,33 +309,56 @@ pub struct TextSummary {
     pub chars: usize,
     pub bytes: usize,
     pub lines: Point,
+    pub first_line_len: u32,
+    pub rightmost_point: Point,
 }
 
 impl<'a> From<RopeSlice<'a>> for TextSummary {
     fn from(slice: RopeSlice<'a>) -> Self {
         let last_row = slice.len_lines() - 1;
         let last_column = slice.line(last_row).len_chars();
+
+        let mut point = Point::default();
+        let mut rightmost_point = point;
+        let mut first_line_len = None;
+        for (i, c) in slice.chars().enumerate() {
+            if c == '\n' {
+                if first_line_len.is_none() {
+                    first_line_len = Some(i as u32);
+                }
+                point.row += 1;
+                point.column = 0;
+            } else {
+                point.column += 1;
+                if point.column > rightmost_point.column {
+                    rightmost_point = point;
+                }
+            }
+        }
+
         Self {
             chars: slice.len_chars(),
             bytes: slice.len_bytes(),
             lines: Point::new(last_row as u32, last_column as u32),
+            first_line_len: first_line_len.unwrap_or(slice.len_chars() as u32),
+            rightmost_point,
         }
     }
 }
 
 impl<'a> std::ops::AddAssign<&'a Self> for TextSummary {
     fn add_assign(&mut self, other: &'a Self) {
-        // let joined_line_len = self.lines.column + other.first_line_len;
-        // if joined_line_len > self.rightmost_point.column {
-        //     self.rightmost_point = Point::new(self.lines.row, joined_line_len);
-        // }
-        // if other.rightmost_point.column > self.rightmost_point.column {
-        //     self.rightmost_point = self.lines + &other.rightmost_point;
-        // }
+        let joined_line_len = self.lines.column + other.first_line_len;
+        if joined_line_len > self.rightmost_point.column {
+            self.rightmost_point = Point::new(self.lines.row, joined_line_len);
+        }
+        if other.rightmost_point.column > self.rightmost_point.column {
+            self.rightmost_point = self.lines + &other.rightmost_point;
+        }
 
-        // if self.lines.row == 0 {
-        //     self.first_line_len += other.first_line_len;
-        // }
+        if self.lines.row == 0 {
+            self.first_line_len += other.first_line_len;
+        }
 
         self.chars += other.chars;
         self.bytes += other.bytes;
@@ -662,35 +685,11 @@ impl Buffer {
     }
 
     pub fn rightmost_point(&self) -> Point {
-        todo!()
-        // self.fragments.summary().text_summary.rightmost_point
+        self.rightmost_point_in_range(0..self.len())
     }
 
     pub fn rightmost_point_in_range(&self, range: Range<usize>) -> Point {
-        todo!()
-        // let mut summary = TextSummary::default();
-
-        // let mut cursor = self.fragments.cursor::<usize, usize>();
-        // cursor.seek(&range.start, SeekBias::Right, &());
-
-        // if let Some(fragment) = cursor.item() {
-        //     let summary_start = cmp::max(*cursor.start(), range.start) - cursor.start();
-        //     let summary_end = cmp::min(range.end - cursor.start(), fragment.len());
-        //     summary += fragment.text.slice(summary_start..summary_end).summary();
-        //     cursor.next();
-        // }
-
-        // if range.end > *cursor.start() {
-        //     summary += cursor.summary::<TextSummary>(&range.end, SeekBias::Right, &());
-
-        //     if let Some(fragment) = cursor.item() {
-        //         let summary_start = cmp::max(*cursor.start(), range.start) - cursor.start();
-        //         let summary_end = cmp::min(range.end - cursor.start(), fragment.len());
-        //         summary += fragment.text.slice(summary_start..summary_end).summary();
-        //     }
-        // }
-
-        // summary.rightmost_point
+        self.text_summary_for_range(range).rightmost_point
     }
 
     pub fn max_point(&self) -> Point {
@@ -2594,9 +2593,9 @@ mod tests {
 
                         let (longest_column, longest_rows) =
                             line_lengths.iter().next_back().unwrap();
-                        // let rightmost_point = buffer.rightmost_point();
-                        // assert_eq!(rightmost_point.column, *longest_column);
-                        // assert!(longest_rows.contains(&rightmost_point.row));
+                        let rightmost_point = buffer.rightmost_point();
+                        assert_eq!(rightmost_point.column, *longest_column);
+                        assert!(longest_rows.contains(&rightmost_point.row));
                     }
 
                     for _ in 0..5 {
@@ -2607,9 +2606,8 @@ mod tests {
                         let (longest_column, longest_rows) =
                             line_lengths.iter().next_back().unwrap();
                         let range_sum = buffer.text_summary_for_range(start..end);
-                        // TODO: re-enable when we have rightmost point again.
-                        // assert_eq!(range_sum.rightmost_point.column, *longest_column);
-                        // assert!(longest_rows.contains(&range_sum.rightmost_point.row));
+                        assert_eq!(range_sum.rightmost_point.column, *longest_column);
+                        assert!(longest_rows.contains(&range_sum.rightmost_point.row));
                         let range_text = &buffer.text()[start..end];
                         assert_eq!(range_sum.chars, range_text.chars().count());
                         assert_eq!(range_sum.bytes, range_text.len());
@@ -2693,7 +2691,9 @@ mod tests {
                 TextSummary {
                     chars: 2,
                     bytes: 2,
-                    lines: Point::new(1, 0)
+                    lines: Point::new(1, 0),
+                    first_line_len: 1,
+                    rightmost_point: Point::new(0, 1),
                 }
             );
             assert_eq!(
@@ -2701,7 +2701,9 @@ mod tests {
                 TextSummary {
                     chars: 11,
                     bytes: 11,
-                    lines: Point::new(3, 0)
+                    lines: Point::new(3, 0),
+                    first_line_len: 1,
+                    rightmost_point: Point::new(2, 4),
                 }
             );
             assert_eq!(
@@ -2709,7 +2711,9 @@ mod tests {
                 TextSummary {
                     chars: 20,
                     bytes: 20,
-                    lines: Point::new(4, 1)
+                    lines: Point::new(4, 1),
+                    first_line_len: 2,
+                    rightmost_point: Point::new(3, 6),
                 }
             );
             assert_eq!(
@@ -2717,7 +2721,9 @@ mod tests {
                 TextSummary {
                     chars: 22,
                     bytes: 22,
-                    lines: Point::new(4, 3)
+                    lines: Point::new(4, 3),
+                    first_line_len: 2,
+                    rightmost_point: Point::new(3, 6),
                 }
             );
             assert_eq!(
@@ -2725,7 +2731,9 @@ mod tests {
                 TextSummary {
                     chars: 15,
                     bytes: 15,
-                    lines: Point::new(2, 3)
+                    lines: Point::new(2, 3),
+                    first_line_len: 4,
+                    rightmost_point: Point::new(1, 6),
                 }
             );
             buffer

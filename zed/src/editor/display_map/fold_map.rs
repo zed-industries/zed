@@ -1,5 +1,5 @@
 use super::{
-    buffer::{self, AnchorRangeExt, TextSummary},
+    buffer::{AnchorRangeExt, TextSummary},
     Anchor, Buffer, DisplayPoint, Edit, Point, ToOffset,
 };
 use crate::{
@@ -72,8 +72,7 @@ impl FoldMap {
     }
 
     pub fn rightmost_point(&self, ctx: &AppContext) -> DisplayPoint {
-        todo!()
-        // DisplayPoint(self.sync(ctx).summary().display.rightmost_point)
+        DisplayPoint(self.sync(ctx).summary().display.rightmost_point)
     }
 
     pub fn folds_in_range<'a, T>(
@@ -353,8 +352,8 @@ impl FoldMap {
                                     chars: 1,
                                     bytes: '…'.len_utf8(),
                                     lines: Point::new(0, 1),
-                                    // first_line_len: 1,
-                                    // rightmost_point: Point::new(0, 1),
+                                    first_line_len: 1,
+                                    rightmost_point: Point::new(0, 1),
                                 },
                                 buffer: buffer.text_summary_for_range(fold.start..fold.end),
                             },
@@ -670,8 +669,8 @@ impl<'a> sum_tree::Dimension<'a, TransformSummary> for usize {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::editor::buffer::ToPoint;
     use crate::test::sample_text;
-    use buffer::ToPoint;
 
     #[gpui::test]
     fn test_basic_folds(app: &mut gpui::MutableAppContext) {
@@ -917,6 +916,7 @@ mod tests {
                     assert_eq!(line_len, line.chars().count() as u32);
                 }
 
+                let rightmost_point = map.rightmost_point(app.as_ref());
                 let mut display_point = DisplayPoint::new(0, 0);
                 let mut display_offset = DisplayOffset(0);
                 for c in expected_text.chars() {
@@ -942,6 +942,12 @@ mod tests {
                         *display_point.column_mut() += 1;
                     }
                     display_offset.0 += 1;
+                    if display_point.column() > rightmost_point.column() {
+                        panic!(
+                            "invalid rightmost point {:?}, found point {:?}",
+                            rightmost_point, display_point
+                        );
+                    }
                 }
 
                 for _ in 0..5 {
