@@ -1064,8 +1064,8 @@ impl MutableAppContext {
                             self.focus(window_id, view_id);
                         }
                     }
-                } else {
                     self.remove_dropped_entities();
+                } else {
                     self.update_windows();
 
                     if self.pending_effects.is_empty() {
