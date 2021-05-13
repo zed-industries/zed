@@ -18,7 +18,7 @@ use smol::prelude::*;
 use std::{
     any::{type_name, Any, TypeId},
     cell::RefCell,
-    collections::{HashMap, HashSet, VecDeque},
+    collections::{hash_map::Entry, HashMap, HashSet, VecDeque},
     fmt::{self, Debug},
     hash::{Hash, Hasher},
     marker::PhantomData,
@@ -1110,6 +1110,7 @@ impl MutableAppContext {
                             self.focus(window_id, view_id);
                         }
                     }
+                    self.remove_dropped_entities();
                 } else {
                     self.remove_dropped_entities();
                     self.update_windows();
@@ -2042,7 +2043,7 @@ pub struct ModelHandle<T> {
 
 impl<T: Entity> ModelHandle<T> {
     fn new(model_id: usize, ref_counts: &Arc<Mutex<RefCounts>>) -> Self {
-        ref_counts.lock().inc_entity(model_id);
+        ref_counts.lock().inc_model(model_id);
         Self {
             model_id,
             model_type: PhantomData,
@@ -2143,7 +2144,7 @@ impl<T: Entity> ModelHandle<T> {
 
 impl<T> Clone for ModelHandle<T> {
     fn clone(&self) -> Self {
-        self.ref_counts.lock().inc_entity(self.model_id);
+        self.ref_counts.lock().inc_model(self.model_id);
         Self {
             model_id: self.model_id,
             model_type: PhantomData,
@@ -2240,7 +2241,7 @@ pub struct ViewHandle<T> {
 
 impl<T: View> ViewHandle<T> {
     fn new(window_id: usize, view_id: usize, ref_counts: &Arc<Mutex<RefCounts>>) -> Self {
-        ref_counts.lock().inc_entity(view_id);
+        ref_counts.lock().inc_view(window_id, view_id);
         Self {
             window_id,
             view_id,
@@ -2352,7 +2353,9 @@ impl<T: View> ViewHandle<T> {
 
 impl<T> Clone for ViewHandle<T> {
     fn clone(&self) -> Self {
-        self.ref_counts.lock().inc_entity(self.view_id);
+        self.ref_counts
+            .lock()
+            .inc_view(self.window_id, self.view_id);
         Self {
             window_id: self.window_id,
             view_id: self.view_id,
@@ -2434,7 +2437,9 @@ impl AnyViewHandle {
 
 impl Clone for AnyViewHandle {
     fn clone(&self) -> Self {
-        self.ref_counts.lock().inc_entity(self.view_id);
+        self.ref_counts
+            .lock()
+            .inc_view(self.window_id, self.view_id);
         Self {
             window_id: self.window_id,
             view_id: self.view_id,
@@ -2446,7 +2451,10 @@ impl Clone for AnyViewHandle {
 
 impl<T: View> From<&ViewHandle<T>> for AnyViewHandle {
     fn from(handle: &ViewHandle<T>) -> Self {
-        handle.ref_counts.lock().inc_entity(handle.view_id);
+        handle
+            .ref_counts
+            .lock()
+            .inc_view(handle.window_id, handle.view_id);
         AnyViewHandle {
             window_id: handle.window_id,
             view_id: handle.view_id,
@@ -2487,7 +2495,7 @@ pub struct AnyModelHandle {
 
 impl<T: Entity> From<ModelHandle<T>> for AnyModelHandle {
     fn from(handle: ModelHandle<T>) -> Self {
-        handle.ref_counts.lock().inc_entity(handle.model_id);
+        handle.ref_counts.lock().inc_model(handle.model_id);
         Self {
             model_id: handle.model_id,
             ref_counts: handle.ref_counts.clone(),
@@ -2596,8 +2604,24 @@ struct RefCounts {
 }
 
 impl RefCounts {
-    fn inc_entity(&mut self, entity_id: usize) {
-        *self.entity_counts.entry(entity_id).or_insert(0) += 1;
+    fn inc_model(&mut self, model_id: usize) {
+        match self.entity_counts.entry(model_id) {
+            Entry::Occupied(mut entry) => *entry.get_mut() += 1,
+            Entry::Vacant(entry) => {
+                entry.insert(1);
+                self.dropped_models.remove(&model_id);
+            }
+        }
+    }
+
+    fn inc_view(&mut self, window_id: usize, view_id: usize) {
+        match self.entity_counts.entry(view_id) {
+            Entry::Occupied(mut entry) => *entry.get_mut() += 1,
+            Entry::Vacant(entry) => {
+                entry.insert(1);
+                self.dropped_views.remove(&(window_id, view_id));
+            }
+        }
     }
 
     fn inc_value(&mut self, tag_type_id: TypeId, id: usize) {
