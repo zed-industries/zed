@@ -9,8 +9,8 @@ use crate::{
 use futures_core::Future;
 use gpui::{
     color::rgbu, elements::*, json::to_string_pretty, keymap::Binding, AnyViewHandle, AppContext,
-    ClipboardItem, Entity, ModelHandle, MutableAppContext, PathPromptOptions, Task, View,
-    ViewContext, ViewHandle, WeakModelHandle,
+    ClipboardItem, Entity, ModelHandle, MutableAppContext, PathPromptOptions, PromptLevel, Task,
+    View, ViewContext, ViewHandle, WeakModelHandle,
 };
 use log::error;
 pub use pane::*;
@@ -119,6 +119,9 @@ pub trait ItemView: View {
     fn is_dirty(&self, _: &AppContext) -> bool {
         false
     }
+    fn has_conflict(&self, _: &AppContext) -> bool {
+        false
+    }
     fn save(
         &mut self,
         _: Option<FileHandle>,
@@ -157,6 +160,7 @@ pub trait ItemViewHandle: Send + Sync {
     fn id(&self) -> usize;
     fn to_any(&self) -> AnyViewHandle;
     fn is_dirty(&self, ctx: &AppContext) -> bool;
+    fn has_conflict(&self, ctx: &AppContext) -> bool;
     fn save(
         &self,
         file: Option<FileHandle>,
@@ -245,6 +249,10 @@ impl<T: ItemView> ItemViewHandle for ViewHandle<T> {
 
     fn is_dirty(&self, ctx: &AppContext) -> bool {
         self.read(ctx).is_dirty(ctx)
+    }
+
+    fn has_conflict(&self, ctx: &AppContext) -> bool {
+        self.read(ctx).has_conflict(ctx)
     }
 
     fn id(&self) -> usize {
@@ -361,6 +369,7 @@ impl Workspace {
             .map(|(abs_path, file)| {
                 let is_file = bg.spawn(async move { abs_path.is_file() });
                 ctx.spawn(|this, mut ctx| async move {
+                    let file = file.await;
                     let is_file = is_file.await;
                     this.update(&mut ctx, |this, ctx| {
                         if is_file {
@@ -381,14 +390,14 @@ impl Workspace {
         }
     }
 
-    fn file_for_path(&mut self, abs_path: &Path, ctx: &mut ViewContext<Self>) -> FileHandle {
+    fn file_for_path(&mut self, abs_path: &Path, ctx: &mut ViewContext<Self>) -> Task<FileHandle> {
         for tree in self.worktrees.iter() {
             if let Ok(relative_path) = abs_path.strip_prefix(tree.read(ctx).abs_path()) {
-                return tree.file(relative_path, ctx.as_ref());
+                return tree.file(relative_path, ctx.as_mut());
             }
         }
         let worktree = self.add_worktree(&abs_path, ctx);
-        worktree.file(Path::new(""), ctx.as_ref())
+        worktree.file(Path::new(""), ctx.as_mut())
     }
 
     pub fn add_worktree(
@@ -489,18 +498,19 @@ impl Workspace {
             }
         };
 
-        let file = worktree.file(path.clone(), ctx.as_ref());
+        let file = worktree.file(path.clone(), ctx.as_mut());
         if let Entry::Vacant(entry) = self.loading_items.entry(entry.clone()) {
             let (mut tx, rx) = postage::watch::channel();
             entry.insert(rx);
             let replica_id = self.replica_id;
-            let history = ctx
-                .background_executor()
-                .spawn(file.load_history(ctx.as_ref()));
 
             ctx.as_mut()
                 .spawn(|mut ctx| async move {
-                    *tx.borrow_mut() = Some(match history.await {
+                    let file = file.await;
+                    let history = ctx.read(|ctx| file.load_history(ctx));
+                    let history = ctx.background_executor().spawn(history).await;
+
+                    *tx.borrow_mut() = Some(match history {
                         Ok(history) => Ok(Box::new(ctx.add_model(|ctx| {
                             Buffer::from_history(replica_id, history, Some(file), ctx)
                         }))),
@@ -545,8 +555,8 @@ impl Workspace {
 
     pub fn save_active_item(&mut self, _: &(), ctx: &mut ViewContext<Self>) {
         if let Some(item) = self.active_item(ctx) {
+            let handle = ctx.handle();
             if item.entry_id(ctx.as_ref()).is_none() {
-                let handle = ctx.handle();
                 let start_path = self
                     .worktrees
                     .iter()
@@ -556,8 +566,9 @@ impl Workspace {
                 ctx.prompt_for_new_path(&start_path, move |path, ctx| {
                     if let Some(path) = path {
                         ctx.spawn(|mut ctx| async move {
-                            let file =
-                                handle.update(&mut ctx, |me, ctx| me.file_for_path(&path, ctx));
+                            let file = handle
+                                .update(&mut ctx, |me, ctx| me.file_for_path(&path, ctx))
+                                .await;
                             if let Err(error) = ctx.update(|ctx| item.save(Some(file), ctx)).await {
                                 error!("failed to save item: {:?}, ", error);
                             }
@@ -566,16 +577,32 @@ impl Workspace {
                     }
                 });
                 return;
-            }
+            } else if item.has_conflict(ctx.as_ref()) {
+                const CONFLICT_MESSAGE: &'static str = "This file has changed on disk since you started editing it. Do you want to overwrite it?";
 
-            let save = item.save(None, ctx.as_mut());
-            ctx.foreground()
-                .spawn(async move {
-                    if let Err(e) = save.await {
-                        error!("failed to save item: {:?}, ", e);
+                ctx.prompt(
+                    PromptLevel::Warning,
+                    CONFLICT_MESSAGE,
+                    &["Overwrite", "Cancel"],
+                    move |answer, ctx| {
+                        if answer == 0 {
+                            ctx.spawn(|mut ctx| async move {
+                                if let Err(error) = ctx.update(|ctx| item.save(None, ctx)).await {
+                                    error!("failed to save item: {:?}, ", error);
+                                }
+                            })
+                            .detach();
+                        }
+                    },
+                );
+            } else {
+                ctx.spawn(|_, mut ctx| async move {
+                    if let Err(error) = ctx.update(|ctx| item.save(None, ctx)).await {
+                        error!("failed to save item: {:?}, ", error);
                     }
                 })
                 .detach();
+            }
         }
     }
 
@@ -732,7 +759,7 @@ mod tests {
     use super::*;
     use crate::{editor::BufferView, settings, test::temp_tree};
     use serde_json::json;
-    use std::collections::HashSet;
+    use std::{collections::HashSet, fs};
     use tempdir::TempDir;
 
     #[gpui::test]
@@ -967,6 +994,55 @@ mod tests {
                     .title(ctx),
                 "b.txt"
             );
+        });
+    }
+
+    #[gpui::test]
+    async fn test_save_conflicting_item(mut app: gpui::TestAppContext) {
+        let dir = temp_tree(json!({
+            "a.txt": "",
+        }));
+
+        let settings = settings::channel(&app.font_cache()).unwrap().1;
+        let (window_id, workspace) = app.add_window(|ctx| {
+            let mut workspace = Workspace::new(0, settings, ctx);
+            workspace.add_worktree(dir.path(), ctx);
+            workspace
+        });
+        let tree = app.read(|ctx| {
+            let mut trees = workspace.read(ctx).worktrees().iter();
+            trees.next().unwrap().clone()
+        });
+        tree.flush_fs_events(&app).await;
+
+        // Open a file within an existing worktree.
+        app.update(|ctx| {
+            workspace.update(ctx, |view, ctx| {
+                view.open_paths(&[dir.path().join("a.txt")], ctx)
+            })
+        })
+        .await;
+        let editor = app.read(|ctx| {
+            let pane = workspace.read(ctx).active_pane().read(ctx);
+            let item = pane.active_item().unwrap();
+            item.to_any().downcast::<BufferView>().unwrap()
+        });
+
+        app.update(|ctx| editor.update(ctx, |editor, ctx| editor.insert(&"x".to_string(), ctx)));
+        fs::write(dir.path().join("a.txt"), "changed").unwrap();
+        tree.flush_fs_events(&app).await;
+        app.read(|ctx| {
+            assert!(editor.is_dirty(ctx));
+            assert!(editor.has_conflict(ctx));
+        });
+
+        app.update(|ctx| workspace.update(ctx, |w, ctx| w.save_active_item(&(), ctx)));
+        app.simulate_prompt_answer(window_id, 0);
+        tree.update(&mut app, |tree, ctx| tree.next_scan_complete(ctx))
+            .await;
+        app.read(|ctx| {
+            assert!(!editor.is_dirty(ctx));
+            assert!(!editor.has_conflict(ctx));
         });
     }
 

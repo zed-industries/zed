@@ -68,9 +68,17 @@ pub trait Dispatcher: Send + Sync {
 }
 
 pub trait Window: WindowContext {
+    fn as_any_mut(&mut self) -> &mut dyn Any;
     fn on_event(&mut self, callback: Box<dyn FnMut(Event)>);
     fn on_resize(&mut self, callback: Box<dyn FnMut(&mut dyn WindowContext)>);
     fn on_close(&mut self, callback: Box<dyn FnOnce()>);
+    fn prompt(
+        &self,
+        level: PromptLevel,
+        msg: &str,
+        answers: &[&str],
+        done_fn: Box<dyn FnOnce(usize)>,
+    );
 }
 
 pub trait WindowContext {
@@ -88,6 +96,12 @@ pub struct PathPromptOptions {
     pub files: bool,
     pub directories: bool,
     pub multiple: bool,
+}
+
+pub enum PromptLevel {
+    Info,
+    Warning,
+    Critical,
 }
 
 pub trait FontSystem: Send + Sync {

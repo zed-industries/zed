@@ -9,7 +9,7 @@ use crate::{
 use ::ignore::gitignore::Gitignore;
 use anyhow::{Context, Result};
 pub use fuzzy::{match_paths, PathMatch};
-use gpui::{scoped_pool, AppContext, Entity, ModelContext, ModelHandle, Task};
+use gpui::{scoped_pool, AppContext, Entity, ModelContext, ModelHandle, MutableAppContext, Task};
 use lazy_static::lazy_static;
 use parking_lot::Mutex;
 use postage::{
@@ -28,7 +28,7 @@ use std::{
     os::unix::{ffi::OsStrExt, fs::MetadataExt},
     path::{Path, PathBuf},
     sync::{Arc, Weak},
-    time::Duration,
+    time::{Duration, SystemTime, UNIX_EPOCH},
 };
 
 use self::{char_bag::CharBag, ignore::IgnoreStack};
@@ -63,6 +63,7 @@ pub struct FileHandle {
 struct FileHandleState {
     path: Arc<Path>,
     is_deleted: bool,
+    mtime: SystemTime,
 }
 
 impl Worktree {
@@ -201,9 +202,10 @@ impl Worktree {
         path: &Path,
         ctx: &AppContext,
     ) -> impl Future<Output = Result<History>> {
-        let abs_path = self.absolutize(path);
+        let path = path.to_path_buf();
+        let abs_path = self.absolutize(&path);
         ctx.background_executor().spawn(async move {
-            let mut file = std::fs::File::open(&abs_path)?;
+            let mut file = fs::File::open(&abs_path)?;
             let mut base_text = String::new();
             file.read_to_string(&mut base_text)?;
             Ok(History::new(Arc::from(base_text)))
@@ -221,19 +223,28 @@ impl Worktree {
         let abs_path = self.absolutize(&path);
         ctx.background_executor().spawn(async move {
             let buffer_size = content.text_summary().bytes.min(10 * 1024);
-            let file = std::fs::File::create(&abs_path)?;
-            let mut writer = std::io::BufWriter::with_capacity(buffer_size, file);
+            let file = fs::File::create(&abs_path)?;
+            let mut writer = io::BufWriter::with_capacity(buffer_size, &file);
             for chunk in content.fragments() {
                 writer.write(chunk.as_bytes())?;
             }
             writer.flush()?;
-
-            if let Some(handle) = handles.lock().get(path.as_path()).and_then(Weak::upgrade) {
-                handle.lock().is_deleted = false;
-            }
-
+            Self::update_file_handle(&file, &path, &handles)?;
             Ok(())
         })
+    }
+
+    fn update_file_handle(
+        file: &fs::File,
+        path: &Path,
+        handles: &Mutex<HashMap<Arc<Path>, Weak<Mutex<FileHandleState>>>>,
+    ) -> Result<()> {
+        if let Some(handle) = handles.lock().get(path).and_then(Weak::upgrade) {
+            let mut handle = handle.lock();
+            handle.mtime = file.metadata()?.modified()?;
+            handle.is_deleted = false;
+        }
+        Ok(())
     }
 }
 
@@ -455,6 +466,10 @@ impl FileHandle {
 
     pub fn is_deleted(&self) -> bool {
         self.state.lock().is_deleted
+    }
+
+    pub fn mtime(&self) -> SystemTime {
+        self.state.lock().mtime
     }
 
     pub fn exists(&self) -> bool {
@@ -927,41 +942,63 @@ impl BackgroundScanner {
         };
 
         let mut renamed_paths: HashMap<u64, PathBuf> = HashMap::new();
+        let mut handles = self.handles.lock();
         let mut updated_handles = HashMap::new();
         for event in &events {
+            let path = if let Ok(path) = event.path.strip_prefix(&root_abs_path) {
+                path
+            } else {
+                continue;
+            };
+
+            let metadata = fs::metadata(&event.path);
             if event.flags.contains(fsevent::StreamFlags::ITEM_RENAMED) {
-                if let Ok(path) = event.path.strip_prefix(&root_abs_path) {
-                    if let Some(inode) = snapshot.inode_for_path(path) {
-                        renamed_paths.insert(inode, path.to_path_buf());
-                    } else if let Ok(metadata) = fs::metadata(&event.path) {
-                        let new_path = path;
-                        let mut handles = self.handles.lock();
-                        if let Some(old_path) = renamed_paths.get(&metadata.ino()) {
-                            handles.retain(|handle_path, handle_state| {
-                                if let Ok(path_suffix) = handle_path.strip_prefix(&old_path) {
-                                    let new_handle_path: Arc<Path> =
-                                        if path_suffix.file_name().is_some() {
-                                            new_path.join(path_suffix)
-                                        } else {
-                                            new_path.to_path_buf()
-                                        }
-                                        .into();
-                                    if let Some(handle_state) = Weak::upgrade(&handle_state) {
-                                        handle_state.lock().path = new_handle_path.clone();
-                                        updated_handles
-                                            .insert(new_handle_path, Arc::downgrade(&handle_state));
+                if let Some(inode) = snapshot.inode_for_path(path) {
+                    renamed_paths.insert(inode, path.to_path_buf());
+                } else if let Ok(metadata) = &metadata {
+                    let new_path = path;
+                    if let Some(old_path) = renamed_paths.get(&metadata.ino()) {
+                        handles.retain(|handle_path, handle_state| {
+                            if let Ok(path_suffix) = handle_path.strip_prefix(&old_path) {
+                                let new_handle_path: Arc<Path> =
+                                    if path_suffix.file_name().is_some() {
+                                        new_path.join(path_suffix)
+                                    } else {
+                                        new_path.to_path_buf()
                                     }
-                                    false
-                                } else {
-                                    true
+                                    .into();
+                                if let Some(handle_state) = Weak::upgrade(&handle_state) {
+                                    let mut state = handle_state.lock();
+                                    state.path = new_handle_path.clone();
+                                    updated_handles
+                                        .insert(new_handle_path, Arc::downgrade(&handle_state));
                                 }
-                            });
-                            handles.extend(updated_handles.drain());
+                                false
+                            } else {
+                                true
+                            }
+                        });
+                        handles.extend(updated_handles.drain());
+                    }
+                }
+            }
+
+            for state in handles.values_mut() {
+                if let Some(state) = Weak::upgrade(&state) {
+                    let mut state = state.lock();
+                    if state.path.as_ref() == path {
+                        if let Ok(metadata) = &metadata {
+                            state.mtime = metadata.modified().unwrap();
+                        }
+                    } else if state.path.starts_with(path) {
+                        if let Ok(metadata) = fs::metadata(state.path.as_ref()) {
+                            state.mtime = metadata.modified().unwrap();
                         }
                     }
                 }
             }
         }
+        drop(handles);
 
         events.sort_unstable_by(|a, b| a.path.cmp(&b.path));
         let mut abs_paths = events.into_iter().map(|e| e.path).peekable();
@@ -1189,7 +1226,7 @@ struct UpdateIgnoreStatusJob {
 }
 
 pub trait WorktreeHandle {
-    fn file(&self, path: impl AsRef<Path>, app: &AppContext) -> FileHandle;
+    fn file(&self, path: impl AsRef<Path>, app: &mut MutableAppContext) -> Task<FileHandle>;
 
     #[cfg(test)]
     fn flush_fs_events<'a>(
@@ -1199,34 +1236,51 @@ pub trait WorktreeHandle {
 }
 
 impl WorktreeHandle for ModelHandle<Worktree> {
-    fn file(&self, path: impl AsRef<Path>, app: &AppContext) -> FileHandle {
-        let path = path.as_ref();
+    fn file(&self, path: impl AsRef<Path>, app: &mut MutableAppContext) -> Task<FileHandle> {
+        let path = Arc::from(path.as_ref());
+        let handle = self.clone();
         let tree = self.read(app);
-        let mut handles = tree.handles.lock();
-        let state = if let Some(state) = handles.get(path).and_then(Weak::upgrade) {
-            state
-        } else {
-            let handle_state = if let Some(entry) = tree.entry_for_path(path) {
-                FileHandleState {
-                    path: entry.path().clone(),
-                    is_deleted: false,
-                }
-            } else {
-                FileHandleState {
-                    path: path.into(),
-                    is_deleted: !tree.path_is_pending(path),
-                }
-            };
+        let abs_path = tree.absolutize(&path);
+        app.spawn(|ctx| async move {
+            let mtime = ctx
+                .background_executor()
+                .spawn(async move {
+                    if let Ok(metadata) = fs::metadata(&abs_path) {
+                        metadata.modified().unwrap()
+                    } else {
+                        UNIX_EPOCH
+                    }
+                })
+                .await;
+            let state = handle.read_with(&ctx, |tree, _| {
+                let mut handles = tree.handles.lock();
+                if let Some(state) = handles.get(&path).and_then(Weak::upgrade) {
+                    state
+                } else {
+                    let handle_state = if let Some(entry) = tree.entry_for_path(&path) {
+                        FileHandleState {
+                            path: entry.path().clone(),
+                            is_deleted: false,
+                            mtime,
+                        }
+                    } else {
+                        FileHandleState {
+                            path: path.clone(),
+                            is_deleted: !tree.path_is_pending(path),
+                            mtime,
+                        }
+                    };
 
-            let state = Arc::new(Mutex::new(handle_state.clone()));
-            handles.insert(handle_state.path, Arc::downgrade(&state));
-            state
-        };
-
-        FileHandle {
-            worktree: self.clone(),
-            state,
-        }
+                    let state = Arc::new(Mutex::new(handle_state.clone()));
+                    handles.insert(handle_state.path, Arc::downgrade(&state));
+                    state
+                }
+            });
+            FileHandle {
+                worktree: handle.clone(),
+                state,
+            }
+        })
     }
 
     // When the worktree's FS event stream sometimes delivers "redundant" events for FS changes that
@@ -1484,7 +1538,7 @@ mod tests {
         let buffer =
             app.add_model(|ctx| Buffer::new(1, "a line of text.\n".repeat(10 * 1024), ctx));
 
-        let file = app.read(|ctx| tree.file("", ctx));
+        let file = app.update(|ctx| tree.file("", ctx)).await;
         app.update(|ctx| {
             assert_eq!(file.path().file_name(), None);
             smol::block_on(file.save(buffer.read(ctx).snapshot(), ctx.as_ref())).unwrap();
@@ -1511,15 +1565,11 @@ mod tests {
         }));
 
         let tree = app.add_model(|ctx| Worktree::new(dir.path(), ctx));
-        let (file2, file3, file4, file5, non_existent_file) = app.read(|ctx| {
-            (
-                tree.file("a/file2", ctx),
-                tree.file("a/file3", ctx),
-                tree.file("b/c/file4", ctx),
-                tree.file("b/c/file5", ctx),
-                tree.file("a/filex", ctx),
-            )
-        });
+        let file2 = app.update(|ctx| tree.file("a/file2", ctx)).await;
+        let file3 = app.update(|ctx| tree.file("a/file3", ctx)).await;
+        let file4 = app.update(|ctx| tree.file("b/c/file4", ctx)).await;
+        let file5 = app.update(|ctx| tree.file("b/c/file5", ctx)).await;
+        let non_existent_file = app.update(|ctx| tree.file("a/file_x", ctx)).await;
 
         // The worktree hasn't scanned the directories containing these paths,
         // so it can't determine that the paths are deleted.

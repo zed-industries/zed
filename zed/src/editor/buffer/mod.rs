@@ -7,6 +7,7 @@ pub use anchor::*;
 pub use point::*;
 use seahash::SeaHasher;
 pub use selection::*;
+use similar::{ChangeTag, TextDiff};
 pub use text::*;
 
 use crate::{
@@ -27,7 +28,7 @@ use std::{
     ops::{AddAssign, Range},
     str,
     sync::Arc,
-    time::{Duration, Instant},
+    time::{Duration, Instant, SystemTime, UNIX_EPOCH},
 };
 
 const UNDO_GROUP_INTERVAL: Duration = Duration::from_millis(300);
@@ -60,6 +61,7 @@ pub struct Buffer {
     insertion_splits: HashMap<time::Local, SumTree<InsertionSplit>>,
     pub version: time::Global,
     saved_version: time::Global,
+    saved_mtime: SystemTime,
     last_edit: time::Local,
     undo_map: UndoMap,
     history: History,
@@ -374,13 +376,42 @@ impl Buffer {
         file: Option<FileHandle>,
         ctx: &mut ModelContext<Self>,
     ) -> Self {
+        let saved_mtime;
         if let Some(file) = file.as_ref() {
+            saved_mtime = file.mtime();
             file.observe_from_model(ctx, |this, file, ctx| {
-                if this.version == this.saved_version && file.is_deleted() {
-                    ctx.emit(Event::Dirtied);
+                let version = this.version.clone();
+                if this.version == this.saved_version {
+                    if file.is_deleted() {
+                        ctx.emit(Event::Dirtied);
+                    } else {
+                        ctx.spawn(|handle, mut ctx| async move {
+                            let (current_version, history) = handle.read_with(&ctx, |this, ctx| {
+                                (this.version.clone(), file.load_history(ctx.as_ref()))
+                            });
+                            if let (Ok(history), true) = (history.await, current_version == version)
+                            {
+                                let operations = handle
+                                    .update(&mut ctx, |this, ctx| {
+                                        this.set_text_via_diff(history.base_text, ctx)
+                                    })
+                                    .await;
+                                if operations.is_some() {
+                                    handle.update(&mut ctx, |this, ctx| {
+                                        this.saved_version = this.version.clone();
+                                        this.saved_mtime = file.mtime();
+                                        ctx.emit(Event::Reloaded);
+                                    });
+                                }
+                            }
+                        })
+                        .detach();
+                    }
                 }
                 ctx.emit(Event::FileHandleChanged);
             });
+        } else {
+            saved_mtime = UNIX_EPOCH;
         }
 
         let mut insertion_splits = HashMap::default();
@@ -449,6 +480,7 @@ impl Buffer {
             undo_map: Default::default(),
             history,
             file,
+            saved_mtime,
             selections: HashMap::default(),
             selections_last_update: 0,
             deferred_ops: OperationQueue::new(),
@@ -500,12 +532,73 @@ impl Buffer {
         if file.is_some() {
             self.file = file;
         }
+        if let Some(file) = &self.file {
+            self.saved_mtime = file.mtime();
+        }
         self.saved_version = version;
         ctx.emit(Event::Saved);
     }
 
+    fn set_text_via_diff(
+        &mut self,
+        new_text: Arc<str>,
+        ctx: &mut ModelContext<Self>,
+    ) -> Task<Option<Vec<Operation>>> {
+        let version = self.version.clone();
+        let old_text = self.text();
+        ctx.spawn(|handle, mut ctx| async move {
+            let diff = ctx
+                .background_executor()
+                .spawn({
+                    let new_text = new_text.clone();
+                    async move {
+                        TextDiff::from_lines(old_text.as_str(), new_text.as_ref())
+                            .iter_all_changes()
+                            .map(|c| (c.tag(), c.value().len()))
+                            .collect::<Vec<_>>()
+                    }
+                })
+                .await;
+            handle.update(&mut ctx, |this, ctx| {
+                if this.version == version {
+                    this.start_transaction(None).unwrap();
+                    let mut operations = Vec::new();
+                    let mut offset = 0;
+                    for (tag, len) in diff {
+                        let range = offset..(offset + len);
+                        match tag {
+                            ChangeTag::Equal => offset += len,
+                            ChangeTag::Delete => operations
+                                .extend_from_slice(&this.edit(Some(range), "", Some(ctx)).unwrap()),
+                            ChangeTag::Insert => {
+                                operations.extend_from_slice(
+                                    &this
+                                        .edit(Some(offset..offset), &new_text[range], Some(ctx))
+                                        .unwrap(),
+                                );
+                                offset += len;
+                            }
+                        }
+                    }
+                    this.end_transaction(None, Some(ctx)).unwrap();
+                    Some(operations)
+                } else {
+                    None
+                }
+            })
+        })
+    }
+
     pub fn is_dirty(&self) -> bool {
         self.version > self.saved_version || self.file.as_ref().map_or(false, |f| f.is_deleted())
+    }
+
+    pub fn has_conflict(&self) -> bool {
+        self.version > self.saved_version
+            && self
+                .file
+                .as_ref()
+                .map_or(false, |f| f.mtime() > self.saved_mtime)
     }
 
     pub fn version(&self) -> time::Global {
@@ -1818,6 +1911,7 @@ impl Clone for Buffer {
             insertion_splits: self.insertion_splits.clone(),
             version: self.version.clone(),
             saved_version: self.saved_version.clone(),
+            saved_mtime: self.saved_mtime,
             last_edit: self.last_edit.clone(),
             undo_map: self.undo_map.clone(),
             history: self.history.clone(),
@@ -1849,6 +1943,7 @@ pub enum Event {
     Dirtied,
     Saved,
     FileHandleChanged,
+    Reloaded,
 }
 
 impl Entity for Buffer {
@@ -2380,7 +2475,10 @@ impl ToPoint for usize {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{test::temp_tree, worktree::Worktree};
+    use crate::{
+        test::temp_tree,
+        worktree::{Worktree, WorktreeHandle},
+    };
     use cmp::Ordering;
     use gpui::App;
     use serde_json::json;
@@ -2969,8 +3067,6 @@ mod tests {
 
     #[test]
     fn test_is_dirty() {
-        use crate::worktree::WorktreeHandle;
-
         App::test_async((), |mut app| async move {
             let dir = temp_tree(json!({
                 "file1": "",
@@ -2978,9 +3074,10 @@ mod tests {
                 "file3": "",
             }));
             let tree = app.add_model(|ctx| Worktree::new(dir.path(), ctx));
+            tree.flush_fs_events(&app).await;
             app.read(|ctx| tree.read(ctx).scan_complete()).await;
 
-            let file1 = app.read(|ctx| tree.file("file1", ctx));
+            let file1 = app.update(|ctx| tree.file("file1", ctx)).await;
             let buffer1 = app.add_model(|ctx| {
                 Buffer::from_history(0, History::new("abc".into()), Some(file1), ctx)
             });
@@ -3040,7 +3137,7 @@ mod tests {
 
             // When a file is deleted, the buffer is considered dirty.
             let events = Rc::new(RefCell::new(Vec::new()));
-            let file2 = app.read(|ctx| tree.file("file2", ctx));
+            let file2 = app.update(|ctx| tree.file("file2", ctx)).await;
             let buffer2 = app.add_model(|ctx: &mut ModelContext<Buffer>| {
                 ctx.subscribe(&ctx.handle(), {
                     let events = events.clone();
@@ -3050,7 +3147,6 @@ mod tests {
                 Buffer::from_history(0, History::new("abc".into()), Some(file2), ctx)
             });
 
-            tree.flush_fs_events(&app).await;
             fs::remove_file(dir.path().join("file2")).unwrap();
             tree.update(&mut app, |tree, ctx| tree.next_scan_complete(ctx))
                 .await;
@@ -3062,7 +3158,7 @@ mod tests {
 
             // When a file is already dirty when deleted, we don't emit a Dirtied event.
             let events = Rc::new(RefCell::new(Vec::new()));
-            let file3 = app.read(|ctx| tree.file("file3", ctx));
+            let file3 = app.update(|ctx| tree.file("file3", ctx)).await;
             let buffer3 = app.add_model(|ctx: &mut ModelContext<Buffer>| {
                 ctx.subscribe(&ctx.handle(), {
                     let events = events.clone();
@@ -3083,6 +3179,116 @@ mod tests {
             assert_eq!(*events.borrow(), &[Event::FileHandleChanged]);
             app.read(|ctx| assert!(buffer3.read(ctx).is_dirty()));
         });
+    }
+
+    #[gpui::test]
+    async fn test_file_changes_on_disk(mut app: gpui::TestAppContext) {
+        let initial_contents = "aaa\nbbbbb\nc\n";
+        let dir = temp_tree(json!({ "the-file": initial_contents }));
+        let tree = app.add_model(|ctx| Worktree::new(dir.path(), ctx));
+        app.read(|ctx| tree.read(ctx).scan_complete()).await;
+
+        let abs_path = dir.path().join("the-file");
+        let file = app.update(|ctx| tree.file("the-file", ctx)).await;
+        let buffer = app.add_model(|ctx| {
+            Buffer::from_history(0, History::new(initial_contents.into()), Some(file), ctx)
+        });
+
+        // Add a cursor at the start of each row.
+        let (selection_set_id, _) = buffer.update(&mut app, |buffer, ctx| {
+            assert!(!buffer.is_dirty());
+            buffer.add_selection_set(
+                (0..3)
+                    .map(|row| {
+                        let anchor = buffer
+                            .anchor_at(Point::new(row, 0), AnchorBias::Right)
+                            .unwrap();
+                        Selection {
+                            id: row as usize,
+                            start: anchor.clone(),
+                            end: anchor,
+                            reversed: false,
+                            goal: SelectionGoal::None,
+                        }
+                    })
+                    .collect::<Vec<_>>(),
+                Some(ctx),
+            )
+        });
+
+        // Change the file on disk, adding two new lines of text, and removing
+        // one line.
+        buffer.update(&mut app, |buffer, _| {
+            assert!(!buffer.is_dirty());
+            assert!(!buffer.has_conflict());
+        });
+        tree.flush_fs_events(&app).await;
+        let new_contents = "AAAA\naaa\nBB\nbbbbb\n";
+
+        fs::write(&abs_path, new_contents).unwrap();
+
+        // Because the buffer was not modified, it is reloaded from disk. Its
+        // contents are edited according to the diff between the old and new
+        // file contents.
+        buffer
+            .condition_with_duration(Duration::from_millis(500), &app, |buffer, _| {
+                buffer.text() != initial_contents
+            })
+            .await;
+
+        buffer.update(&mut app, |buffer, _| {
+            assert_eq!(buffer.text(), new_contents);
+            assert!(!buffer.is_dirty());
+            assert!(!buffer.has_conflict());
+
+            let selections = buffer.selections(selection_set_id).unwrap();
+            let cursor_positions = selections
+                .iter()
+                .map(|selection| {
+                    assert_eq!(selection.start, selection.end);
+                    selection.start.to_point(&buffer).unwrap()
+                })
+                .collect::<Vec<_>>();
+            assert_eq!(
+                cursor_positions,
+                &[Point::new(1, 0), Point::new(3, 0), Point::new(4, 0),]
+            );
+        });
+
+        // Modify the buffer
+        buffer.update(&mut app, |buffer, ctx| {
+            buffer.edit(vec![0..0], " ", Some(ctx)).unwrap();
+            assert!(buffer.is_dirty());
+        });
+
+        // Change the file on disk again, adding blank lines to the beginning.
+        fs::write(&abs_path, "\n\n\nAAAA\naaa\nBB\nbbbbb\n").unwrap();
+
+        // Becaues the buffer is modified, it doesn't reload from disk, but is
+        // marked as having a conflict.
+        buffer
+            .condition_with_duration(Duration::from_millis(500), &app, |buffer, _| {
+                buffer.has_conflict()
+            })
+            .await;
+    }
+
+    #[gpui::test]
+    async fn test_set_text_via_diff(mut app: gpui::TestAppContext) {
+        let text = "a\nbb\nccc\ndddd\neeeee\nffffff\n";
+        let buffer = app.add_model(|ctx| Buffer::new(0, text, ctx));
+
+        let text = "a\nccc\ndddd\nffffff\n";
+        buffer
+            .update(&mut app, |b, ctx| b.set_text_via_diff(text.into(), ctx))
+            .await;
+        app.read(|ctx| assert_eq!(buffer.read(ctx).text(), text));
+
+        let text = "a\n1\n\nccc\ndd2dd\nffffff\n";
+        buffer
+            .update(&mut app, |b, ctx| b.set_text_via_diff(text.into(), ctx))
+            .await;
+        app.read(|ctx| assert_eq!(buffer.read(ctx).text(), text));
     }
 
     #[gpui::test]

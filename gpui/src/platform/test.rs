@@ -24,6 +24,7 @@ pub struct Window {
     event_handlers: Vec<Box<dyn FnMut(super::Event)>>,
     resize_handlers: Vec<Box<dyn FnMut(&mut dyn super::WindowContext)>>,
     close_handlers: Vec<Box<dyn FnOnce()>>,
+    pub(crate) last_prompt: RefCell<Option<Box<dyn FnOnce(usize)>>>,
 }
 
 impl Platform {
@@ -123,6 +124,7 @@ impl Window {
             close_handlers: Vec::new(),
             scale_factor: 1.0,
             current_scene: None,
+            last_prompt: RefCell::new(None),
         }
     }
 }
@@ -152,6 +154,10 @@ impl super::WindowContext for Window {
 }
 
 impl super::Window for Window {
+    fn as_any_mut(&mut self) -> &mut dyn Any {
+        self
+    }
+
     fn on_event(&mut self, callback: Box<dyn FnMut(crate::Event)>) {
         self.event_handlers.push(callback);
     }
@@ -162,6 +168,10 @@ impl super::Window for Window {
 
     fn on_close(&mut self, callback: Box<dyn FnOnce()>) {
         self.close_handlers.push(callback);
+    }
+
+    fn prompt(&self, _: crate::PromptLevel, _: &str, _: &[&str], f: Box<dyn FnOnce(usize)>) {
+        self.last_prompt.replace(Some(f));
     }
 }
 

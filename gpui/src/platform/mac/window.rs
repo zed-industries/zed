@@ -5,6 +5,7 @@ use crate::{
     platform::{self, Event, WindowContext},
     Scene,
 };
+use block::ConcreteBlock;
 use cocoa::{
     appkit::{
         NSApplication, NSBackingStoreBuffered, NSScreen, NSView, NSViewHeightSizable,
@@ -26,7 +27,9 @@ use objc::{
 use pathfinder_geometry::vector::vec2f;
 use smol::Timer;
 use std::{
-    cell::RefCell,
+    any::Any,
+    cell::{Cell, RefCell},
+    convert::TryInto,
     ffi::c_void,
     mem, ptr,
     rc::{Rc, Weak},
@@ -261,6 +264,10 @@ impl Drop for Window {
 }
 
 impl platform::Window for Window {
+    fn as_any_mut(&mut self) -> &mut dyn Any {
+        self
+    }
+
     fn on_event(&mut self, callback: Box<dyn FnMut(Event)>) {
         self.0.as_ref().borrow_mut().event_callback = Some(callback);
     }
@@ -271,6 +278,42 @@ impl platform::Window for Window {
 
     fn on_close(&mut self, callback: Box<dyn FnOnce()>) {
         self.0.as_ref().borrow_mut().close_callback = Some(callback);
+    }
+
+    fn prompt(
+        &self,
+        level: platform::PromptLevel,
+        msg: &str,
+        answers: &[&str],
+        done_fn: Box<dyn FnOnce(usize)>,
+    ) {
+        unsafe {
+            let alert: id = msg_send![class!(NSAlert), alloc];
+            let alert: id = msg_send![alert, init];
+            let alert_style = match level {
+                platform::PromptLevel::Info => 1,
+                platform::PromptLevel::Warning => 0,
+                platform::PromptLevel::Critical => 2,
+            };
+            let _: () = msg_send![alert, setAlertStyle: alert_style];
+            let _: () = msg_send![alert, setMessageText: ns_string(msg)];
+            for (ix, answer) in answers.into_iter().enumerate() {
+                let button: id = msg_send![alert, addButtonWithTitle: ns_string(answer)];
+                let _: () = msg_send![button, setTag: ix as NSInteger];
+            }
+            let done_fn = Cell::new(Some(done_fn));
+            let block = ConcreteBlock::new(move |answer: NSInteger| {
+                if let Some(done_fn) = done_fn.take() {
+                    (done_fn)(answer.try_into().unwrap());
+                }
+            });
+            let block = block.copy();
+            let _: () = msg_send![
+                alert,
+                beginSheetModalForWindow: self.0.borrow().native_window
+                completionHandler: block
+            ];
+        }
     }
 }
 
@@ -514,4 +557,8 @@ async fn synthetic_drag(
             }
         }
     }
+}
+
+unsafe fn ns_string(string: &str) -> id {
+    NSString::alloc(nil).init_str(string).autorelease()
 }
