@@ -229,22 +229,15 @@ impl Worktree {
                 writer.write(chunk.as_bytes())?;
             }
             writer.flush()?;
-            Self::update_file_handle(&file, &path, &handles)?;
+
+            if let Some(handle) = handles.lock().get(&*path).and_then(Weak::upgrade) {
+                let mut handle = handle.lock();
+                handle.mtime = file.metadata()?.modified()?;
+                handle.is_deleted = false;
+            }
+
             Ok(())
         })
-    }
-
-    fn update_file_handle(
-        file: &fs::File,
-        path: &Path,
-        handles: &Mutex<HashMap<Arc<Path>, Weak<Mutex<FileHandleState>>>>,
-    ) -> Result<()> {
-        if let Some(handle) = handles.lock().get(path).and_then(Weak::upgrade) {
-            let mut handle = handle.lock();
-            handle.mtime = file.metadata()?.modified()?;
-            handle.is_deleted = false;
-        }
-        Ok(())
     }
 }
 
@@ -1571,14 +1564,6 @@ mod tests {
         let file5 = app.update(|ctx| tree.file("b/c/file5", ctx)).await;
         let non_existent_file = app.update(|ctx| tree.file("a/file_x", ctx)).await;
 
-        // The worktree hasn't scanned the directories containing these paths,
-        // so it can't determine that the paths are deleted.
-        assert!(!file2.is_deleted());
-        assert!(!file3.is_deleted());
-        assert!(!file4.is_deleted());
-        assert!(!file5.is_deleted());
-        assert!(!non_existent_file.is_deleted());
-
         // After scanning, the worktree knows which files exist and which don't.
         app.read(|ctx| tree.read(ctx).scan_complete()).await;
         assert!(!file2.is_deleted());
@@ -1592,8 +1577,7 @@ mod tests {
         std::fs::remove_file(dir.path().join("b/c/file5")).unwrap();
         std::fs::rename(dir.path().join("b/c"), dir.path().join("d")).unwrap();
         std::fs::rename(dir.path().join("a/file2"), dir.path().join("a/file2.new")).unwrap();
-        tree.update(&mut app, |tree, ctx| tree.next_scan_complete(ctx))
-            .await;
+        tree.flush_fs_events(&app).await;
 
         app.read(|ctx| {
             assert_eq!(
@@ -1653,8 +1637,7 @@ mod tests {
 
         fs::write(dir.path().join("tracked-dir/tracked-file2"), "").unwrap();
         fs::write(dir.path().join("ignored-dir/ignored-file2"), "").unwrap();
-        tree.update(&mut app, |tree, ctx| tree.next_scan_complete(ctx))
-            .await;
+        tree.flush_fs_events(&app).await;
         app.read(|ctx| {
             let tree = tree.read(ctx);
             let dot_git = tree.entry_for_path(".git").unwrap();

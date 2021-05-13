@@ -3148,8 +3148,7 @@ mod tests {
             });
 
             fs::remove_file(dir.path().join("file2")).unwrap();
-            tree.update(&mut app, |tree, ctx| tree.next_scan_complete(ctx))
-                .await;
+            tree.flush_fs_events(&app).await;
             assert_eq!(
                 *events.borrow(),
                 &[Event::Dirtied, Event::FileHandleChanged]
@@ -3174,8 +3173,7 @@ mod tests {
             });
             events.borrow_mut().clear();
             fs::remove_file(dir.path().join("file3")).unwrap();
-            tree.update(&mut app, |tree, ctx| tree.next_scan_complete(ctx))
-                .await;
+            tree.flush_fs_events(&app).await;
             assert_eq!(*events.borrow(), &[Event::FileHandleChanged]);
             app.read(|ctx| assert!(buffer3.read(ctx).is_dirty()));
         });
@@ -3218,14 +3216,13 @@ mod tests {
 
         // Change the file on disk, adding two new lines of text, and removing
         // one line.
-        buffer.update(&mut app, |buffer, _| {
+        buffer.read_with(&app, |buffer, _| {
             assert!(!buffer.is_dirty());
             assert!(!buffer.has_conflict());
         });
-        tree.flush_fs_events(&app).await;
         let new_contents = "AAAA\naaa\nBB\nbbbbb\n";
-
         fs::write(&abs_path, new_contents).unwrap();
+        tree.flush_fs_events(&app).await;
 
         // Because the buffer was not modified, it is reloaded from disk. Its
         // contents are edited according to the diff between the old and new
