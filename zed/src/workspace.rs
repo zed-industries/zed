@@ -1030,20 +1030,17 @@ mod tests {
 
         app.update(|ctx| editor.update(ctx, |editor, ctx| editor.insert(&"x".to_string(), ctx)));
         fs::write(dir.path().join("a.txt"), "changed").unwrap();
-        tree.flush_fs_events(&app).await;
-        app.read(|ctx| {
-            assert!(editor.is_dirty(ctx));
-            assert!(editor.has_conflict(ctx));
-        });
+        editor
+            .condition(&app, |editor, ctx| editor.has_conflict(ctx))
+            .await;
+        app.read(|ctx| assert!(editor.is_dirty(ctx)));
 
         app.update(|ctx| workspace.update(ctx, |w, ctx| w.save_active_item(&(), ctx)));
         app.simulate_prompt_answer(window_id, 0);
-        tree.update(&mut app, |tree, ctx| tree.next_scan_complete(ctx))
+        editor
+            .condition(&app, |editor, ctx| !editor.is_dirty(ctx))
             .await;
-        app.read(|ctx| {
-            assert!(!editor.is_dirty(ctx));
-            assert!(!editor.has_conflict(ctx));
-        });
+        app.read(|ctx| assert!(!editor.has_conflict(ctx)));
     }
 
     #[gpui::test]
@@ -1097,7 +1094,8 @@ mod tests {
         });
 
         // When the save completes, the buffer's title is updated.
-        tree.update(&mut app, |tree, ctx| tree.next_scan_complete(ctx))
+        editor
+            .condition(&app, |editor, ctx| !editor.is_dirty(ctx))
             .await;
         app.read(|ctx| {
             assert!(!editor.is_dirty(ctx));

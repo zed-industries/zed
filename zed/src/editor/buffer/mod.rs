@@ -3148,12 +3148,13 @@ mod tests {
             });
 
             fs::remove_file(dir.path().join("file2")).unwrap();
-            tree.flush_fs_events(&app).await;
+            buffer2
+                .condition(&app, |buffer2, _| buffer2.is_dirty())
+                .await;
             assert_eq!(
                 *events.borrow(),
                 &[Event::Dirtied, Event::FileHandleChanged]
             );
-            app.read(|ctx| assert!(buffer2.read(ctx).is_dirty()));
 
             // When a file is already dirty when deleted, we don't emit a Dirtied event.
             let events = Rc::new(RefCell::new(Vec::new()));
@@ -3173,7 +3174,9 @@ mod tests {
             });
             events.borrow_mut().clear();
             fs::remove_file(dir.path().join("file3")).unwrap();
-            tree.flush_fs_events(&app).await;
+            buffer3
+                .condition(&app, |_, _| !events.borrow().is_empty())
+                .await;
             assert_eq!(*events.borrow(), &[Event::FileHandleChanged]);
             app.read(|ctx| assert!(buffer3.read(ctx).is_dirty()));
         });
@@ -3222,7 +3225,6 @@ mod tests {
         });
         let new_contents = "AAAA\naaa\nBB\nbbbbb\n";
         fs::write(&abs_path, new_contents).unwrap();
-        tree.flush_fs_events(&app).await;
 
         // Because the buffer was not modified, it is reloaded from disk. Its
         // contents are edited according to the diff between the old and new
