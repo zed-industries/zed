@@ -3152,7 +3152,7 @@ mod tests {
 
             fs::remove_file(dir.path().join("file2")).unwrap();
             buffer2
-                .condition(&app, |buffer2, _| buffer2.is_dirty())
+                .condition_with_duration(Duration::from_millis(500), &app, |b, _| b.is_dirty())
                 .await;
             assert_eq!(
                 *events.borrow(),
@@ -3178,7 +3178,9 @@ mod tests {
             events.borrow_mut().clear();
             fs::remove_file(dir.path().join("file3")).unwrap();
             buffer3
-                .condition(&app, |_, _| !events.borrow().is_empty())
+                .condition_with_duration(Duration::from_millis(500), &app, |_, _| {
+                    !events.borrow().is_empty()
+                })
                 .await;
             assert_eq!(*events.borrow(), &[Event::FileHandleChanged]);
             app.read(|ctx| assert!(buffer3.read(ctx).is_dirty()));
