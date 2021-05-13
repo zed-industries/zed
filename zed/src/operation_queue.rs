@@ -48,9 +48,10 @@ impl<T: Operation> OperationQueue<T> {
 }
 
 impl<T: Operation> Item for T {
+    type Context = ();
     type Summary = OperationSummary;
 
-    fn summary(&self) -> Self::Summary {
+    fn summary(&self, _: &()) -> Self::Summary {
         OperationSummary {
             key: OperationKey(self.timestamp()),
             len: 1,

@@ -31,6 +31,7 @@ num_cpus = "1.13.0"
 parking_lot = "0.11.1"
 postage = {version = "0.4.1", features = ["futures-traits"]}
 rand = "0.8.3"
+ropey = "1.2"
 rust-embed = "5.9.0"
 seahash = "4.1"
 serde = {version = "1", features = ["derive"]}

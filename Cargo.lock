@@ -2189,6 +2189,15 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "cabe4fa914dec5870285fa7f71f602645da47c486e68486d2b4ceb4a343e90ac"
 
 [[package]]
+name = "ropey"
+version = "1.2.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "f0f3ef16589fdbb3e8fbce3dca944c08e61f39c7f16064b21a257d68ea911a83"
+dependencies = [
+ "smallvec",
+]
+
+[[package]]
 name = "roxmltree"
 version = "0.14.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2978,6 +2987,7 @@ dependencies = [
  "parking_lot",
  "postage",
  "rand 0.8.3",
+ "ropey",
  "rust-embed",
  "seahash",
  "serde 1.0.125",

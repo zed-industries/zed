@@ -38,6 +38,7 @@ impl FoldMap {
                     display_text: None,
                 },
                 &(),
+                &(),
             )),
             last_sync: Mutex::new(buffer.version()),
         }
@@ -72,7 +73,8 @@ impl FoldMap {
     }
 
     pub fn rightmost_point(&self, ctx: &AppContext) -> DisplayPoint {
-        DisplayPoint(self.sync(ctx).summary().display.rightmost_point)
+        todo!()
+        // DisplayPoint(self.sync(ctx).summary().display.rightmost_point)
     }
 
     pub fn folds_in_range<'a, T>(
@@ -122,7 +124,7 @@ impl FoldMap {
             let mut cursor = self.folds.cursor::<_, ()>();
             for fold in folds {
                 new_tree.push_tree(cursor.slice(&fold, SeekBias::Right, buffer), buffer);
-                new_tree.push(fold, buffer);
+                new_tree.push(fold, &(), buffer);
             }
             new_tree.push_tree(cursor.suffix(buffer), buffer);
             new_tree
@@ -341,6 +343,7 @@ impl FoldMap {
                             display_text: None,
                         },
                         &(),
+                        &(),
                     );
                 }
 
@@ -352,13 +355,14 @@ impl FoldMap {
                                     chars: 1,
                                     bytes: '…'.len_utf8(),
                                     lines: Point::new(0, 1),
-                                    first_line_len: 1,
-                                    rightmost_point: Point::new(0, 1),
+                                    // first_line_len: 1,
+                                    // rightmost_point: Point::new(0, 1),
                                 },
                                 buffer: buffer.text_summary_for_range(fold.start..fold.end),
                             },
                             display_text: Some('…'),
                         },
+                        &(),
                         &(),
                     );
                 }
@@ -377,6 +381,7 @@ impl FoldMap {
                         display_text: None,
                     },
                     &(),
+                    &(),
                 );
             }
         }
@@ -392,6 +397,7 @@ impl FoldMap {
                     },
                     display_text: None,
                 },
+                &(),
                 &(),
             );
         }
@@ -465,9 +471,10 @@ struct TransformSummary {
 }
 
 impl sum_tree::Item for Transform {
+    type Context = ();
     type Summary = TransformSummary;
 
-    fn summary(&self) -> Self::Summary {
+    fn summary(&self, _: &()) -> Self::Summary {
         self.summary.clone()
     }
 }
@@ -497,9 +504,10 @@ impl Default for Fold {
 }
 
 impl sum_tree::Item for Fold {
+    type Context = ();
     type Summary = FoldSummary;
 
-    fn summary(&self) -> Self::Summary {
+    fn summary(&self, _: &()) -> Self::Summary {
         FoldSummary {
             start: self.0.start.clone(),
             end: self.0.end.clone(),

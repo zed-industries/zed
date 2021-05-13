@@ -11,12 +11,13 @@ const TREE_BASE: usize = 2;
 const TREE_BASE: usize = 6;
 
 pub trait Item: Clone + fmt::Debug {
+    type Context;
     type Summary: Summary;
 
-    fn summary(&self) -> Self::Summary;
+    fn summary(&self, ctx: &Self::Context) -> Self::Summary;
 }
 
-pub trait KeyedItem: Item {
+pub trait KeyedItem: Item<Context = ()> {
     type Key: for<'a> Dimension<'a, Self::Summary> + Ord;
 
     fn key(&self) -> Self::Key;
@@ -64,9 +65,13 @@ impl<T: Item> SumTree<T> {
         }))
     }
 
-    pub fn from_item(item: T, ctx: &<T::Summary as Summary>::Context) -> Self {
+    pub fn from_item(
+        item: T,
+        item_ctx: &T::Context,
+        summary_ctx: &<T::Summary as Summary>::Context,
+    ) -> Self {
         let mut tree = Self::new();
-        tree.push(item, ctx);
+        tree.push(item, item_ctx, summary_ctx);
         tree
     }
 
@@ -125,47 +130,13 @@ impl<T: Item> SumTree<T> {
         }
     }
 
-    pub fn extend<I>(&mut self, iter: I, ctx: &<T::Summary as Summary>::Context)
-    where
-        I: IntoIterator<Item = T>,
-    {
-        let mut leaf: Option<Node<T>> = None;
-
-        for item in iter {
-            if leaf.is_some() && leaf.as_ref().unwrap().items().len() == 2 * TREE_BASE {
-                self.push_tree(SumTree(Arc::new(leaf.take().unwrap())), ctx);
-            }
-
-            if leaf.is_none() {
-                leaf = Some(Node::Leaf::<T> {
-                    summary: T::Summary::default(),
-                    items: ArrayVec::new(),
-                    item_summaries: ArrayVec::new(),
-                });
-            }
-
-            if let Some(Node::Leaf {
-                summary,
-                items,
-                item_summaries,
-            }) = leaf.as_mut()
-            {
-                let item_summary = item.summary();
-                summary.add_summary(&item_summary, ctx);
-                items.push(item);
-                item_summaries.push(item_summary);
-            } else {
-                unreachable!()
-            }
-        }
-
-        if leaf.is_some() {
-            self.push_tree(SumTree(Arc::new(leaf.take().unwrap())), ctx);
-        }
-    }
-
-    pub fn push(&mut self, item: T, ctx: &<T::Summary as Summary>::Context) {
-        let summary = item.summary();
+    pub fn push(
+        &mut self,
+        item: T,
+        item_ctx: &T::Context,
+        summary_ctx: &<T::Summary as Summary>::Context,
+    ) {
+        let summary = item.summary(item_ctx);
         self.push_tree(
             SumTree::from_child_trees(
                 vec![SumTree(Arc::new(Node::Leaf {
@@ -173,9 +144,9 @@ impl<T: Item> SumTree<T> {
                     items: ArrayVec::from_iter(Some(item)),
                     item_summaries: ArrayVec::from_iter(Some(summary)),
                 }))],
-                ctx,
+                summary_ctx,
             ),
-            ctx,
+            summary_ctx,
         )
     }
 
@@ -349,13 +320,54 @@ impl<T: Item> SumTree<T> {
     }
 }
 
+impl<T: Item<Context = ()>> SumTree<T> {
+    pub fn extend<I>(&mut self, iter: I, ctx: &<T::Summary as Summary>::Context)
+    where
+        I: IntoIterator<Item = T>,
+    {
+        let mut leaf: Option<Node<T>> = None;
+
+        for item in iter {
+            if leaf.is_some() && leaf.as_ref().unwrap().items().len() == 2 * TREE_BASE {
+                self.push_tree(SumTree(Arc::new(leaf.take().unwrap())), ctx);
+            }
+
+            if leaf.is_none() {
+                leaf = Some(Node::Leaf::<T> {
+                    summary: T::Summary::default(),
+                    items: ArrayVec::new(),
+                    item_summaries: ArrayVec::new(),
+                });
+            }
+
+            if let Some(Node::Leaf {
+                summary,
+                items,
+                item_summaries,
+            }) = leaf.as_mut()
+            {
+                let item_summary = item.summary(&());
+                summary.add_summary(&item_summary, ctx);
+                items.push(item);
+                item_summaries.push(item_summary);
+            } else {
+                unreachable!()
+            }
+        }
+
+        if leaf.is_some() {
+            self.push_tree(SumTree(Arc::new(leaf.take().unwrap())), ctx);
+        }
+    }
+}
+
 impl<T: KeyedItem> SumTree<T> {
     #[allow(unused)]
     pub fn insert(&mut self, item: T, ctx: &<T::Summary as Summary>::Context) {
         *self = {
             let mut cursor = self.cursor::<T::Key, ()>();
             let mut new_tree = cursor.slice(&item.key(), SeekBias::Left, ctx);
-            new_tree.push(item, ctx);
+            new_tree.push(item, &(), ctx);
             new_tree.push_tree(cursor.suffix(ctx), ctx);
             new_tree
         };
@@ -863,9 +875,10 @@ mod tests {
     struct Sum(usize);
 
     impl Item for u8 {
+        type Context = ();
         type Summary = IntegersSummary;
 
-        fn summary(&self) -> Self::Summary {
+        fn summary(&self, _: &()) -> Self::Summary {
             IntegersSummary {
                 count: Count(1),
                 sum: Sum(*self as usize),

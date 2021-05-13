@@ -538,9 +538,10 @@ impl Entry {
 }
 
 impl sum_tree::Item for Entry {
+    type Context = ();
     type Summary = EntrySummary;
 
-    fn summary(&self) -> Self::Summary {
+    fn summary(&self, _: &()) -> Self::Summary {
         let file_count;
         let visible_file_count;
         if self.is_file() {
