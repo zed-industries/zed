@@ -1095,7 +1095,6 @@ impl Buffer {
 
         let start_fragment = cursor.item().unwrap();
         if start_offset == start_fragment.range_in_insertion.end {
-            // TODO: maybe don't recompute this fragment and its summary.
             new_fragments.push(cursor.item().unwrap().clone(), &());
             cursor.next();
         }
@@ -1147,16 +1146,17 @@ impl Buffer {
                 if let Some(mut fragment) = within_range {
                     if fragment.was_visible(&version_in_range, &self.undo_map) {
                         fragment.deletions.insert(local_timestamp);
-                        fragment.visible = false;
-
-                        // TODO: avoid calling to_string on rope slice.
-                        let deleted_start = new_fragments.summary().text.visible;
-                        let deleted_range = deleted_start..deleted_start + fragment.len();
-                        new_deleted_text.insert(
-                            new_fragments.summary().text.deleted,
-                            &new_visible_text.slice(deleted_range.clone()).to_string(),
-                        );
-                        new_visible_text.remove(deleted_range);
+                        if fragment.visible {
+                            fragment.visible = false;
+                            // TODO: avoid calling to_string on rope slice.
+                            let deleted_start = new_fragments.summary().text.visible;
+                            let deleted_range = deleted_start..deleted_start + fragment.len();
+                            new_deleted_text.insert(
+                                new_fragments.summary().text.deleted,
+                                &new_visible_text.slice(deleted_range.clone()).to_string(),
+                            );
+                            new_visible_text.remove(deleted_range);
+                        }
                     }
 
                     new_fragments.push(fragment, &());
@@ -1182,16 +1182,17 @@ impl Buffer {
                     && fragment.was_visible(&version_in_range, &self.undo_map)
                 {
                     fragment.deletions.insert(local_timestamp);
-                    fragment.visible = false;
-
-                    // TODO: avoid calling to_string on rope slice.
-                    let deleted_start = new_fragments.summary().text.visible;
-                    let deleted_range = deleted_start..deleted_start + fragment.len();
-                    new_deleted_text.insert(
-                        new_fragments.summary().text.deleted,
-                        &new_visible_text.slice(deleted_range.clone()).to_string(),
-                    );
-                    new_visible_text.remove(deleted_range);
+                    if fragment.visible {
+                        fragment.visible = false;
+                        // TODO: avoid calling to_string on rope slice.
+                        let deleted_start = new_fragments.summary().text.visible;
+                        let deleted_range = deleted_start..deleted_start + fragment.len();
+                        new_deleted_text.insert(
+                            new_fragments.summary().text.deleted,
+                            &new_visible_text.slice(deleted_range.clone()).to_string(),
+                        );
+                        new_visible_text.remove(deleted_range);
+                    }
                 }
 
                 new_fragments.push(fragment, &());
