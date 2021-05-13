@@ -18,7 +18,7 @@ use crate::{
     worktree::FileHandle,
 };
 use anyhow::{anyhow, Result};
-use gpui::{Entity, ModelContext, Task};
+use gpui::{AppContext, Entity, ModelContext, Task};
 use lazy_static::lazy_static;
 use rand::prelude::*;
 use std::{
@@ -274,6 +274,12 @@ impl Edit {
     }
 }
 
+struct Diff {
+    base_version: time::Global,
+    new_text: Arc<str>,
+    changes: Vec<(ChangeTag, usize)>,
+}
+
 #[derive(Clone, Eq, PartialEq, Debug)]
 pub struct Insertion {
     id: time::Local,
@@ -391,18 +397,16 @@ impl Buffer {
                             });
                             if let (Ok(history), true) = (history.await, current_version == version)
                             {
-                                let operations = handle
-                                    .update(&mut ctx, |this, ctx| {
-                                        this.set_text_via_diff(history.base_text, ctx)
-                                    })
+                                let diff = handle
+                                    .read_with(&ctx, |this, ctx| this.diff(history.base_text, ctx))
                                     .await;
-                                if operations.is_some() {
-                                    handle.update(&mut ctx, |this, ctx| {
+                                handle.update(&mut ctx, |this, ctx| {
+                                    if let Some(_ops) = this.set_text_via_diff(diff, ctx) {
                                         this.saved_version = this.version.clone();
                                         this.saved_mtime = file.mtime();
                                         ctx.emit(Event::Reloaded);
-                                    });
-                                }
+                                    }
+                                });
                             }
                         })
                         .detach();
@@ -539,54 +543,53 @@ impl Buffer {
         ctx.emit(Event::Saved);
     }
 
+    fn diff(&self, new_text: Arc<str>, ctx: &AppContext) -> Task<Diff> {
+        // TODO: it would be nice to not allocate here.
+        let old_text = self.text();
+        let base_version = self.version();
+        ctx.background_executor().spawn(async move {
+            let changes = TextDiff::from_lines(old_text.as_str(), new_text.as_ref())
+                .iter_all_changes()
+                .map(|c| (c.tag(), c.value().len()))
+                .collect::<Vec<_>>();
+            Diff {
+                base_version,
+                new_text,
+                changes,
+            }
+        })
+    }
+
     fn set_text_via_diff(
         &mut self,
-        new_text: Arc<str>,
+        diff: Diff,
         ctx: &mut ModelContext<Self>,
-    ) -> Task<Option<Vec<Operation>>> {
-        let version = self.version.clone();
-        let old_text = self.text();
-        ctx.spawn(|handle, mut ctx| async move {
-            let diff = ctx
-                .background_executor()
-                .spawn({
-                    let new_text = new_text.clone();
-                    async move {
-                        TextDiff::from_lines(old_text.as_str(), new_text.as_ref())
-                            .iter_all_changes()
-                            .map(|c| (c.tag(), c.value().len()))
-                            .collect::<Vec<_>>()
+    ) -> Option<Vec<Operation>> {
+        if self.version == diff.base_version {
+            self.start_transaction(None).unwrap();
+            let mut operations = Vec::new();
+            let mut offset = 0;
+            for (tag, len) in diff.changes {
+                let range = offset..(offset + len);
+                match tag {
+                    ChangeTag::Equal => offset += len,
+                    ChangeTag::Delete => operations
+                        .extend_from_slice(&self.edit(Some(range), "", Some(ctx)).unwrap()),
+                    ChangeTag::Insert => {
+                        operations.extend_from_slice(
+                            &self
+                                .edit(Some(offset..offset), &diff.new_text[range], Some(ctx))
+                                .unwrap(),
+                        );
+                        offset += len;
                     }
-                })
-                .await;
-            handle.update(&mut ctx, |this, ctx| {
-                if this.version == version {
-                    this.start_transaction(None).unwrap();
-                    let mut operations = Vec::new();
-                    let mut offset = 0;
-                    for (tag, len) in diff {
-                        let range = offset..(offset + len);
-                        match tag {
-                            ChangeTag::Equal => offset += len,
-                            ChangeTag::Delete => operations
-                                .extend_from_slice(&this.edit(Some(range), "", Some(ctx)).unwrap()),
-                            ChangeTag::Insert => {
-                                operations.extend_from_slice(
-                                    &this
-                                        .edit(Some(offset..offset), &new_text[range], Some(ctx))
-                                        .unwrap(),
-                                );
-                                offset += len;
-                            }
-                        }
-                    }
-                    this.end_transaction(None, Some(ctx)).unwrap();
-                    Some(operations)
-                } else {
-                    None
                 }
-            })
-        })
+            }
+            self.end_transaction(None, Some(ctx)).unwrap();
+            Some(operations)
+        } else {
+            None
+        }
     }
 
     pub fn is_dirty(&self) -> bool {
@@ -3148,12 +3151,13 @@ mod tests {
             });
 
             fs::remove_file(dir.path().join("file2")).unwrap();
-            tree.flush_fs_events(&app).await;
+            buffer2
+                .condition_with_duration(Duration::from_millis(500), &app, |b, _| b.is_dirty())
+                .await;
             assert_eq!(
                 *events.borrow(),
                 &[Event::Dirtied, Event::FileHandleChanged]
             );
-            app.read(|ctx| assert!(buffer2.read(ctx).is_dirty()));
 
             // When a file is already dirty when deleted, we don't emit a Dirtied event.
             let events = Rc::new(RefCell::new(Vec::new()));
@@ -3173,7 +3177,11 @@ mod tests {
             });
             events.borrow_mut().clear();
             fs::remove_file(dir.path().join("file3")).unwrap();
-            tree.flush_fs_events(&app).await;
+            buffer3
+                .condition_with_duration(Duration::from_millis(500), &app, |_, _| {
+                    !events.borrow().is_empty()
+                })
+                .await;
             assert_eq!(*events.borrow(), &[Event::FileHandleChanged]);
             app.read(|ctx| assert!(buffer3.read(ctx).is_dirty()));
         });
@@ -3222,7 +3230,6 @@ mod tests {
         });
         let new_contents = "AAAA\naaa\nBB\nbbbbb\n";
         fs::write(&abs_path, new_contents).unwrap();
-        tree.flush_fs_events(&app).await;
 
         // Because the buffer was not modified, it is reloaded from disk. Its
         // contents are edited according to the diff between the old and new
@@ -3276,15 +3283,17 @@ mod tests {
         let buffer = app.add_model(|ctx| Buffer::new(0, text, ctx));
 
         let text = "a\nccc\ndddd\nffffff\n";
-        buffer
-            .update(&mut app, |b, ctx| b.set_text_via_diff(text.into(), ctx))
+        let diff = buffer
+            .read_with(&app, |b, ctx| b.diff(text.into(), ctx))
             .await;
+        buffer.update(&mut app, |b, ctx| b.set_text_via_diff(diff, ctx));
         app.read(|ctx| assert_eq!(buffer.read(ctx).text(), text));
 
         let text = "a\n1\n\nccc\ndd2dd\nffffff\n";
-        buffer
-            .update(&mut app, |b, ctx| b.set_text_via_diff(text.into(), ctx))
+        let diff = buffer
+            .read_with(&app, |b, ctx| b.diff(text.into(), ctx))
             .await;
+        buffer.update(&mut app, |b, ctx| b.set_text_via_diff(diff, ctx));
         app.read(|ctx| assert_eq!(buffer.read(ctx).text(), text));
     }
 

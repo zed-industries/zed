@@ -134,20 +134,6 @@ impl Worktree {
         }
     }
 
-    pub fn next_scan_complete(&self, ctx: &mut ModelContext<Self>) -> impl Future<Output = ()> {
-        let scan_id = self.snapshot.scan_id;
-        let mut scan_state = self.scan_state.1.clone();
-        ctx.spawn(|this, ctx| async move {
-            while let Some(scan_state) = scan_state.recv().await {
-                if this.read_with(&ctx, |this, _| {
-                    matches!(scan_state, ScanState::Idle) && this.snapshot.scan_id > scan_id
-                }) {
-                    break;
-                }
-            }
-        })
-    }
-
     fn observe_scan_state(&mut self, scan_state: ScanState, ctx: &mut ModelContext<Self>) {
         let _ = self.scan_state.0.blocking_send(scan_state);
         self.poll_entries(ctx);
