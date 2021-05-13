@@ -1,6 +1,6 @@
 mod fold_map;
 
-use super::{buffer, Anchor, Buffer, Edit, Point, TextSummary, ToOffset, ToPoint};
+use super::{buffer, Anchor, Buffer, Edit, Point, ToOffset, ToPoint};
 use anyhow::Result;
 pub use fold_map::BufferRows;
 use fold_map::{FoldMap, FoldMapSnapshot};

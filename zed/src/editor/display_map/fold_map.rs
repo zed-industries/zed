@@ -1,6 +1,6 @@
 use super::{
-    buffer::{self, AnchorRangeExt},
-    Anchor, Buffer, DisplayPoint, Edit, Point, TextSummary, ToOffset,
+    buffer::{self, AnchorRangeExt, TextSummary},
+    Anchor, Buffer, DisplayPoint, Edit, Point, ToOffset,
 };
 use crate::{
     sum_tree::{self, Cursor, FilterCursor, SeekBias, SumTree},
@@ -37,7 +37,6 @@ impl FoldMap {
                     },
                     display_text: None,
                 },
-                &(),
                 &(),
             )),
             last_sync: Mutex::new(buffer.version()),
@@ -124,7 +123,7 @@ impl FoldMap {
             let mut cursor = self.folds.cursor::<_, ()>();
             for fold in folds {
                 new_tree.push_tree(cursor.slice(&fold, SeekBias::Right, buffer), buffer);
-                new_tree.push(fold, &(), buffer);
+                new_tree.push(fold, buffer);
             }
             new_tree.push_tree(cursor.suffix(buffer), buffer);
             new_tree
@@ -343,7 +342,6 @@ impl FoldMap {
                             display_text: None,
                         },
                         &(),
-                        &(),
                     );
                 }
 
@@ -363,7 +361,6 @@ impl FoldMap {
                             display_text: Some('…'),
                         },
                         &(),
-                        &(),
                     );
                 }
             }
@@ -381,7 +378,6 @@ impl FoldMap {
                         display_text: None,
                     },
                     &(),
-                    &(),
                 );
             }
         }
@@ -397,7 +393,6 @@ impl FoldMap {
                     },
                     display_text: None,
                 },
-                &(),
                 &(),
             );
         }
@@ -471,10 +466,9 @@ struct TransformSummary {
 }
 
 impl sum_tree::Item for Transform {
-    type Context = ();
     type Summary = TransformSummary;
 
-    fn summary(&self, _: &()) -> Self::Summary {
+    fn summary(&self) -> Self::Summary {
         self.summary.clone()
     }
 }
@@ -504,10 +498,9 @@ impl Default for Fold {
 }
 
 impl sum_tree::Item for Fold {
-    type Context = ();
     type Summary = FoldSummary;
 
-    fn summary(&self, _: &()) -> Self::Summary {
+    fn summary(&self) -> Self::Summary {
         FoldSummary {
             start: self.0.start.clone(),
             end: self.0.end.clone(),
@@ -615,7 +608,7 @@ pub struct Chars<'a> {
     cursor: Cursor<'a, Transform, DisplayOffset, TransformSummary>,
     offset: usize,
     buffer: &'a Buffer,
-    buffer_chars: Option<Take<buffer::CharIter<'a>>>,
+    buffer_chars: Option<Take<ropey::iter::Chars<'a>>>,
 }
 
 impl<'a> Iterator for Chars<'a> {
