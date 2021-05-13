@@ -369,6 +369,7 @@ impl Workspace {
             .map(|(abs_path, file)| {
                 let is_file = bg.spawn(async move { abs_path.is_file() });
                 ctx.spawn(|this, mut ctx| async move {
+                    let file = file.await;
                     let is_file = is_file.await;
                     this.update(&mut ctx, |this, ctx| {
                         if is_file {
@@ -389,14 +390,14 @@ impl Workspace {
         }
     }
 
-    fn file_for_path(&mut self, abs_path: &Path, ctx: &mut ViewContext<Self>) -> FileHandle {
+    fn file_for_path(&mut self, abs_path: &Path, ctx: &mut ViewContext<Self>) -> Task<FileHandle> {
         for tree in self.worktrees.iter() {
             if let Ok(relative_path) = abs_path.strip_prefix(tree.read(ctx).abs_path()) {
-                return tree.file(relative_path, ctx.as_ref());
+                return tree.file(relative_path, ctx.as_mut());
             }
         }
         let worktree = self.add_worktree(&abs_path, ctx);
-        worktree.file(Path::new(""), ctx.as_ref())
+        worktree.file(Path::new(""), ctx.as_mut())
     }
 
     pub fn add_worktree(
@@ -497,18 +498,19 @@ impl Workspace {
             }
         };
 
-        let file = worktree.file(path.clone(), ctx.as_ref());
+        let file = worktree.file(path.clone(), ctx.as_mut());
         if let Entry::Vacant(entry) = self.loading_items.entry(entry.clone()) {
             let (mut tx, rx) = postage::watch::channel();
             entry.insert(rx);
             let replica_id = self.replica_id;
-            let history = ctx
-                .background_executor()
-                .spawn(file.load_history(ctx.as_ref()));
 
             ctx.as_mut()
                 .spawn(|mut ctx| async move {
-                    *tx.borrow_mut() = Some(match history.await {
+                    let file = file.await;
+                    let history = ctx.read(|ctx| file.load_history(ctx));
+                    let history = ctx.background_executor().spawn(history).await;
+
+                    *tx.borrow_mut() = Some(match history {
                         Ok(history) => Ok(Box::new(ctx.add_model(|ctx| {
                             Buffer::from_history(replica_id, history, Some(file), ctx)
                         }))),
@@ -564,8 +566,9 @@ impl Workspace {
                 ctx.prompt_for_new_path(&start_path, move |path, ctx| {
                     if let Some(path) = path {
                         ctx.spawn(|mut ctx| async move {
-                            let file =
-                                handle.update(&mut ctx, |me, ctx| me.file_for_path(&path, ctx));
+                            let file = handle
+                                .update(&mut ctx, |me, ctx| me.file_for_path(&path, ctx))
+                                .await;
                             if let Err(error) = ctx.update(|ctx| item.save(Some(file), ctx)).await {
                                 error!("failed to save item: {:?}, ", error);
                             }

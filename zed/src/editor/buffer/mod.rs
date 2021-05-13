@@ -376,7 +376,9 @@ impl Buffer {
         file: Option<FileHandle>,
         ctx: &mut ModelContext<Self>,
     ) -> Self {
+        let saved_mtime;
         if let Some(file) = file.as_ref() {
+            saved_mtime = file.mtime();
             file.observe_from_model(ctx, |this, file, ctx| {
                 let version = this.version.clone();
                 if this.version == this.saved_version {
@@ -408,6 +410,8 @@ impl Buffer {
                 }
                 ctx.emit(Event::FileHandleChanged);
             });
+        } else {
+            saved_mtime = UNIX_EPOCH;
         }
 
         let mut insertion_splits = HashMap::default();
@@ -472,11 +476,11 @@ impl Buffer {
             insertion_splits,
             version: time::Global::new(),
             saved_version: time::Global::new(),
-            saved_mtime: UNIX_EPOCH,
             last_edit: time::Local::default(),
             undo_map: Default::default(),
             history,
             file,
+            saved_mtime,
             selections: HashMap::default(),
             selections_last_update: 0,
             deferred_ops: OperationQueue::new(),
@@ -3073,7 +3077,7 @@ mod tests {
             tree.flush_fs_events(&app).await;
             app.read(|ctx| tree.read(ctx).scan_complete()).await;
 
-            let file1 = app.read(|ctx| tree.file("file1", ctx));
+            let file1 = app.update(|ctx| tree.file("file1", ctx)).await;
             let buffer1 = app.add_model(|ctx| {
                 Buffer::from_history(0, History::new("abc".into()), Some(file1), ctx)
             });
@@ -3133,7 +3137,7 @@ mod tests {
 
             // When a file is deleted, the buffer is considered dirty.
             let events = Rc::new(RefCell::new(Vec::new()));
-            let file2 = app.read(|ctx| tree.file("file2", ctx));
+            let file2 = app.update(|ctx| tree.file("file2", ctx)).await;
             let buffer2 = app.add_model(|ctx: &mut ModelContext<Buffer>| {
                 ctx.subscribe(&ctx.handle(), {
                     let events = events.clone();
@@ -3154,7 +3158,7 @@ mod tests {
 
             // When a file is already dirty when deleted, we don't emit a Dirtied event.
             let events = Rc::new(RefCell::new(Vec::new()));
-            let file3 = app.read(|ctx| tree.file("file3", ctx));
+            let file3 = app.update(|ctx| tree.file("file3", ctx)).await;
             let buffer3 = app.add_model(|ctx: &mut ModelContext<Buffer>| {
                 ctx.subscribe(&ctx.handle(), {
                     let events = events.clone();
@@ -3185,7 +3189,7 @@ mod tests {
         app.read(|ctx| tree.read(ctx).scan_complete()).await;
 
         let abs_path = dir.path().join("the-file");
-        let file = app.read(|ctx| tree.file("the-file", ctx));
+        let file = app.update(|ctx| tree.file("the-file", ctx)).await;
         let buffer = app.add_model(|ctx| {
             Buffer::from_history(0, History::new(initial_contents.into()), Some(file), ctx)
         });

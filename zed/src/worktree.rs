@@ -9,7 +9,7 @@ use crate::{
 use ::ignore::gitignore::Gitignore;
 use anyhow::{Context, Result};
 pub use fuzzy::{match_paths, PathMatch};
-use gpui::{scoped_pool, AppContext, Entity, ModelContext, ModelHandle, Task};
+use gpui::{scoped_pool, AppContext, Entity, ModelContext, ModelHandle, MutableAppContext, Task};
 use lazy_static::lazy_static;
 use parking_lot::Mutex;
 use postage::{
@@ -202,14 +202,12 @@ impl Worktree {
         path: &Path,
         ctx: &AppContext,
     ) -> impl Future<Output = Result<History>> {
-        let handles = self.handles.clone();
         let path = path.to_path_buf();
         let abs_path = self.absolutize(&path);
         ctx.background_executor().spawn(async move {
             let mut file = fs::File::open(&abs_path)?;
             let mut base_text = String::new();
             file.read_to_string(&mut base_text)?;
-            Self::update_file_handle(&file, &path, &handles)?;
             Ok(History::new(Arc::from(base_text)))
         })
     }
@@ -1228,7 +1226,7 @@ struct UpdateIgnoreStatusJob {
 }
 
 pub trait WorktreeHandle {
-    fn file(&self, path: impl AsRef<Path>, app: &AppContext) -> FileHandle;
+    fn file(&self, path: impl AsRef<Path>, app: &mut MutableAppContext) -> Task<FileHandle>;
 
     #[cfg(test)]
     fn flush_fs_events<'a>(
@@ -1238,36 +1236,51 @@ pub trait WorktreeHandle {
 }
 
 impl WorktreeHandle for ModelHandle<Worktree> {
-    fn file(&self, path: impl AsRef<Path>, app: &AppContext) -> FileHandle {
-        let path = path.as_ref();
+    fn file(&self, path: impl AsRef<Path>, app: &mut MutableAppContext) -> Task<FileHandle> {
+        let path = Arc::from(path.as_ref());
+        let handle = self.clone();
         let tree = self.read(app);
-        let mut handles = tree.handles.lock();
-        let state = if let Some(state) = handles.get(path).and_then(Weak::upgrade) {
-            state
-        } else {
-            let handle_state = if let Some(entry) = tree.entry_for_path(path) {
-                FileHandleState {
-                    path: entry.path().clone(),
-                    is_deleted: false,
-                    mtime: UNIX_EPOCH,
-                }
-            } else {
-                FileHandleState {
-                    path: path.into(),
-                    is_deleted: !tree.path_is_pending(path),
-                    mtime: UNIX_EPOCH,
-                }
-            };
+        let abs_path = tree.absolutize(&path);
+        app.spawn(|ctx| async move {
+            let mtime = ctx
+                .background_executor()
+                .spawn(async move {
+                    if let Ok(metadata) = fs::metadata(&abs_path) {
+                        metadata.modified().unwrap()
+                    } else {
+                        UNIX_EPOCH
+                    }
+                })
+                .await;
+            let state = handle.read_with(&ctx, |tree, _| {
+                let mut handles = tree.handles.lock();
+                if let Some(state) = handles.get(&path).and_then(Weak::upgrade) {
+                    state
+                } else {
+                    let handle_state = if let Some(entry) = tree.entry_for_path(&path) {
+                        FileHandleState {
+                            path: entry.path().clone(),
+                            is_deleted: false,
+                            mtime,
+                        }
+                    } else {
+                        FileHandleState {
+                            path: path.clone(),
+                            is_deleted: !tree.path_is_pending(path),
+                            mtime,
+                        }
+                    };
 
-            let state = Arc::new(Mutex::new(handle_state.clone()));
-            handles.insert(handle_state.path, Arc::downgrade(&state));
-            state
-        };
-
-        FileHandle {
-            worktree: self.clone(),
-            state,
-        }
+                    let state = Arc::new(Mutex::new(handle_state.clone()));
+                    handles.insert(handle_state.path, Arc::downgrade(&state));
+                    state
+                }
+            });
+            FileHandle {
+                worktree: handle.clone(),
+                state,
+            }
+        })
     }
 
     // When the worktree's FS event stream sometimes delivers "redundant" events for FS changes that
@@ -1525,7 +1538,7 @@ mod tests {
         let buffer =
             app.add_model(|ctx| Buffer::new(1, "a line of text.\n".repeat(10 * 1024), ctx));
 
-        let file = app.read(|ctx| tree.file("", ctx));
+        let file = app.update(|ctx| tree.file("", ctx)).await;
         app.update(|ctx| {
             assert_eq!(file.path().file_name(), None);
             smol::block_on(file.save(buffer.read(ctx).snapshot(), ctx.as_ref())).unwrap();
@@ -1552,15 +1565,11 @@ mod tests {
         }));
 
         let tree = app.add_model(|ctx| Worktree::new(dir.path(), ctx));
-        let (file2, file3, file4, file5, non_existent_file) = app.read(|ctx| {
-            (
-                tree.file("a/file2", ctx),
-                tree.file("a/file3", ctx),
-                tree.file("b/c/file4", ctx),
-                tree.file("b/c/file5", ctx),
-                tree.file("a/filex", ctx),
-            )
-        });
+        let file2 = app.update(|ctx| tree.file("a/file2", ctx)).await;
+        let file3 = app.update(|ctx| tree.file("a/file3", ctx)).await;
+        let file4 = app.update(|ctx| tree.file("b/c/file4", ctx)).await;
+        let file5 = app.update(|ctx| tree.file("b/c/file5", ctx)).await;
+        let non_existent_file = app.update(|ctx| tree.file("a/file_x", ctx)).await;
 
         // The worktree hasn't scanned the directories containing these paths,
         // so it can't determine that the paths are deleted.
