@@ -1066,6 +1066,7 @@ impl MutableAppContext {
                     }
                     self.remove_dropped_entities();
                 } else {
+                    self.remove_dropped_entities();
                     self.update_windows();
 
                     if self.pending_effects.is_empty() {
