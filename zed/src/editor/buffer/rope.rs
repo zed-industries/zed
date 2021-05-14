@@ -129,7 +129,10 @@ impl Rope {
             let mut cursor = self.chunks.cursor::<usize, TextSummary>();
             cursor.seek(&offset, SeekBias::Left, &());
             let overshoot = offset - cursor.start().chars;
-            Ok(cursor.start().lines + cursor.item().unwrap().to_point(overshoot))
+            Ok(cursor.start().lines
+                + cursor
+                    .item()
+                    .map_or(Point::zero(), |chunk| chunk.to_point(overshoot)))
         } else {
             Err(anyhow!("offset out of bounds"))
         }
@@ -141,7 +144,7 @@ impl Rope {
             let mut cursor = self.chunks.cursor::<Point, TextSummary>();
             cursor.seek(&point, SeekBias::Left, &());
             let overshoot = point - cursor.start().lines;
-            Ok(cursor.start().chars + cursor.item().unwrap().to_offset(overshoot))
+            Ok(cursor.start().chars + cursor.item().map_or(0, |chunk| chunk.to_offset(overshoot)))
         } else {
             Err(anyhow!("offset out of bounds"))
         }
@@ -206,6 +209,10 @@ impl<'a> Cursor<'a> {
 
     pub fn suffix(mut self) -> Rope {
         self.slice(self.rope.chunks.extent())
+    }
+
+    pub fn offset(&self) -> usize {
+        self.offset
     }
 }
 
