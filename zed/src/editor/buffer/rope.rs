@@ -87,16 +87,11 @@ impl Rope {
     fn check_invariants(&self) {
         #[cfg(test)]
         {
+            // Ensure all chunks except maybe the last one are not underflowing.
             let mut chunks = self.chunks.cursor::<(), ()>().peekable();
-            chunks.next();
             while let Some(chunk) = chunks.next() {
                 if chunks.peek().is_some() {
-                    assert!(
-                        chunk.0.len() >= CHUNK_BASE,
-                        "Underflowing chunk: {:?}\nChunks: {:?}",
-                        chunk,
-                        self.chunks.items()
-                    );
+                    assert!(chunk.0.len() >= CHUNK_BASE);
                 }
             }
         }
