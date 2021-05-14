@@ -7,7 +7,7 @@ use std::{cmp, ops::Range, str};
 const CHUNK_BASE: usize = 2;
 
 #[cfg(not(test))]
-const CHUNK_BASE: usize = 8;
+const CHUNK_BASE: usize = 16;
 
 #[derive(Clone, Default, Debug)]
 pub struct Rope {
@@ -20,7 +20,20 @@ impl Rope {
     }
 
     pub fn append(&mut self, rope: Rope) {
-        self.chunks.push_tree(rope.chunks, &());
+        let mut chunks = rope.chunks.cursor::<(), ()>();
+        chunks.next();
+
+        while let Some((last_chunk, first_chunk)) = self.chunks.last().zip(chunks.item()) {
+            if last_chunk.0.len() < CHUNK_BASE || first_chunk.0.len() < CHUNK_BASE {
+                self.push(&first_chunk.0);
+                chunks.next();
+            } else {
+                break;
+            }
+        }
+
+        self.chunks.push_tree(chunks.suffix(&()), &());
+        self.check_invariants();
     }
 
     pub fn push(&mut self, mut text: &str) {
@@ -48,7 +61,7 @@ impl Rope {
 
                         let split = chunk.0.split_at(take_len);
                         suffix.push_str(split.1);
-                        chunk.0 = ArrayString::from(split.0).unwrap();
+                        chunk.0.truncate(take_len);
                     }
                 }
             },
@@ -68,6 +81,25 @@ impl Rope {
             chunks.push(Chunk(chunk));
         }
         self.chunks.extend(chunks, &());
+        self.check_invariants();
+    }
+
+    fn check_invariants(&self) {
+        #[cfg(test)]
+        {
+            let mut chunks = self.chunks.cursor::<(), ()>().peekable();
+            chunks.next();
+            while let Some(chunk) = chunks.next() {
+                if chunks.peek().is_some() {
+                    assert!(
+                        chunk.0.len() >= CHUNK_BASE,
+                        "Underflowing chunk: {:?}\nChunks: {:?}",
+                        chunk,
+                        self.chunks.items()
+                    );
+                }
+            }
+        }
     }
 
     pub fn slice(&self, range: Range<usize>) -> Rope {
@@ -90,7 +122,7 @@ impl Rope {
                 slice.push(&end_chunk.0[..range.end - cursor.start()]);
             }
         }
-
+        slice.check_invariants();
         slice
     }
 
