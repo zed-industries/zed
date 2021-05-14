@@ -2,6 +2,7 @@ use super::Point;
 use crate::sum_tree::{self, SeekBias, SumTree};
 use anyhow::{anyhow, Result};
 use arrayvec::ArrayString;
+use smallvec::SmallVec;
 use std::{cmp, ops::Range, str};
 
 #[cfg(test)]
@@ -37,36 +38,10 @@ impl Rope {
         self.check_invariants();
     }
 
-    pub fn push(&mut self, mut text: &str) {
-        let mut suffix = ArrayString::<[_; CHUNK_BASE]>::new();
-        self.chunks.with_last_mut(
-            |chunk| {
-                if chunk.0.len() + text.len() <= 2 * CHUNK_BASE {
-                    chunk.0.push_str(text);
-                    text = "";
-                } else if chunk.0.len() < CHUNK_BASE {
-                    let mut split_ix = CHUNK_BASE - chunk.0.len();
-                    while !text.is_char_boundary(split_ix) {
-                        split_ix += 1;
-                    }
-                    let split = text.split_at(split_ix);
-                    chunk.0.push_str(split.0);
-                    text = split.1;
-                } else {
-                    let mut split_ix = CHUNK_BASE;
-                    while !chunk.0.is_char_boundary(split_ix) {
-                        split_ix += 1;
-                    }
-                    suffix.push_str(&chunk.0[split_ix..]);
-                    chunk.0.truncate(split_ix);
-                }
-            },
-            &(),
-        );
-
-        let mut chunks = vec![];
+    pub fn push(&mut self, text: &str) {
+        let mut chunks = SmallVec::<[_; 16]>::new();
         let mut chunk = ArrayString::new();
-        for ch in suffix.chars().chain(text.chars()) {
+        for ch in text.chars() {
             if chunk.len() + ch.len_utf8() > 2 * CHUNK_BASE {
                 chunks.push(Chunk(chunk));
                 chunk = ArrayString::new();
@@ -76,7 +51,36 @@ impl Rope {
         if !chunk.is_empty() {
             chunks.push(Chunk(chunk));
         }
-        self.chunks.extend(chunks, &());
+
+        let mut chunks = chunks.into_iter();
+        let mut first_chunk = chunks.next();
+        self.chunks.with_last_mut(
+            |last_chunk| {
+                if let Some(chunk) = first_chunk.as_mut() {
+                    if last_chunk.0.len() + chunk.0.len() <= 2 * CHUNK_BASE {
+                        last_chunk.0.push_str(&first_chunk.take().unwrap().0);
+                    } else {
+                        let mut text = ArrayString::<[_; 4 * CHUNK_BASE]>::new();
+                        text.push_str(&last_chunk.0);
+                        text.push_str(&chunk.0);
+
+                        let mut midpoint = text.len() / 2;
+                        while !text.is_char_boundary(midpoint) {
+                            midpoint += 1;
+                        }
+                        let (left, right) = text.split_at(midpoint);
+                        last_chunk.0.clear();
+                        last_chunk.0.push_str(left);
+                        chunk.0.clear();
+                        chunk.0.push_str(right);
+                    }
+                }
+            },
+            &(),
+        );
+
+        self.chunks
+            .extend(first_chunk.into_iter().chain(chunks), &());
         self.check_invariants();
     }
 
