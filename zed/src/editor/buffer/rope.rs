@@ -24,14 +24,9 @@ impl Rope {
     pub fn append(&mut self, rope: Rope) {
         let mut chunks = rope.chunks.cursor::<(), ()>();
         chunks.next();
-
-        while let Some((last_chunk, first_chunk)) = self.chunks.last().zip(chunks.item()) {
-            if last_chunk.0.len() < CHUNK_BASE || first_chunk.0.len() < CHUNK_BASE {
-                self.push(&first_chunk.0);
-                chunks.next();
-            } else {
-                break;
-            }
+        if let Some(chunk) = chunks.item() {
+            self.push(&chunk.0);
+            chunks.next();
         }
 
         self.chunks.push_tree(chunks.suffix(&()), &());
