@@ -101,6 +101,50 @@ impl<T: Item> SumTree<T> {
         self.rightmost_leaf().0.items().last()
     }
 
+    pub fn with_last_mut(
+        &mut self,
+        f: impl FnOnce(&mut T),
+        ctx: &<T::Summary as Summary>::Context,
+    ) {
+        self.with_last_mut_recursive(f, ctx);
+    }
+
+    fn with_last_mut_recursive(
+        &mut self,
+        f: impl FnOnce(&mut T),
+        ctx: &<T::Summary as Summary>::Context,
+    ) -> Option<T::Summary> {
+        match Arc::make_mut(&mut self.0) {
+            Node::Internal {
+                summary,
+                child_summaries,
+                child_trees,
+                ..
+            } => {
+                let last_summary = child_summaries.last_mut().unwrap();
+                let last_child = child_trees.last_mut().unwrap();
+                *last_summary = last_child.with_last_mut_recursive(f, ctx).unwrap();
+                *summary = sum(child_summaries.iter(), ctx);
+                Some(summary.clone())
+            }
+            Node::Leaf {
+                summary,
+                items,
+                item_summaries,
+            } => {
+                if let Some((item, item_summary)) = items.last_mut().zip(item_summaries.last_mut())
+                {
+                    (f)(item);
+                    *item_summary = item.summary();
+                    *summary = sum(item_summaries.iter(), ctx);
+                    Some(summary.clone())
+                } else {
+                    None
+                }
+            }
+        }
+    }
+
     pub fn extent<'a, D: Dimension<'a, T::Summary>>(&'a self) -> D {
         let mut extent = D::default();
         match self.0.as_ref() {

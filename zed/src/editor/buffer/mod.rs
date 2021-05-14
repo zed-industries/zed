@@ -1,5 +1,6 @@
 mod anchor;
 mod point;
+mod rope;
 mod selection;
 
 pub use anchor::*;
