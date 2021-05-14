@@ -1020,14 +1020,16 @@ impl Buffer {
         let old_visible_text = self.visible_text.clone();
         let old_deleted_text = self.deleted_text.clone();
 
+        let mut builder = RopeBuilder::new(old_visible_text.cursor(0), new_visible_text.cursor(0));
         let mut fragments_cursor = old_fragments.cursor::<FragmentIdRef, FragmentTextSummary>();
-        let mut visible_text_cursor = old_visible_text.cursor(0);
-        let mut deleted_text_cursor = old_deleted_text.cursor(0);
 
         let mut new_fragments =
             fragments_cursor.slice(&FragmentIdRef::new(&start_fragment_id), SeekBias::Left, &());
-        let mut new_visible_text = visible_text_cursor.slice(fragments_cursor.start().visible);
-        let mut new_deleted_text = deleted_text_cursor.slice(fragments_cursor.start().deleted);
+
+        builder.keep_to(
+            new_fragments.summary().text.visible,
+            new_fragments.summary().text.deleted,
+        );
 
         let start_fragment = fragments_cursor.item().unwrap();
         if start_offset == start_fragment.range_in_insertion.end {
@@ -3507,5 +3509,70 @@ mod tests {
             lengths.insert(0, rows);
         }
         lengths
+    }
+}
+
+struct RopeBuilder<'a> {
+    visible_delta: isize,
+    deleted_delta: isize,
+    old_visible_cursor: rope::Cursor<'a>,
+    old_deleted_cursor: rope::Cursor<'a>,
+    new_visible: Rope,
+    new_deleted: Rope,
+}
+
+impl<'a> RopeBuilder<'a> {
+    fn new(old_visible_cursor: rope::Cursor<'a>, old_deleted_cursor: rope::Cursor<'a>) -> Self {
+        Self {
+            visible_delta: 0,
+            deleted_delta: 0,
+            old_visible_cursor,
+            old_deleted_cursor,
+            new_visible: Rope::new(),
+            new_deleted: Rope::new(),
+        }
+    }
+
+    fn keep_to(&mut self, sum: FragmentTextSummary) {
+        self.new_visible.append(
+            self.old_visible_cursor
+                .slice((sum.visible as isize + self.visible_delta) as usize),
+        );
+        self.new_deleted.append(
+            self.old_deleted_cursor
+                .slice((sum.deleted as isize + self.deleted_delta) as usize),
+        );
+    }
+
+    fn delete_to(&mut self, offset: usize) {
+        let deleted = self
+            .old_visible_cursor
+            .slice((offset as isize + self.visible_delta) as usize);
+        let deleted_len = deleted.len();
+        self.new_deleted.append(deleted);
+        self.visible_delta += deleted_len as isize;
+        self.deleted_delta -= deleted_len as isize;
+    }
+
+    fn restore_to(&mut self, offset: usize) {
+        let restored = self
+            .old_deleted_cursor
+            .slice((offset as isize + self.deleted_delta) as usize);
+        let restored_len = restored.len();
+        self.new_visible.append(restored);
+        self.visible_delta -= restored_len as isize;
+        self.deleted_delta += restored_len as isize;
+    }
+
+    fn insert(&mut self, text: &str) {
+        let old_len = self.new_visible.len();
+        self.new_visible.push(text);
+        self.visible_delta -= (self.new_visible.len() - old_len) as isize;
+    }
+
+    fn finish(self) -> (Rope, Rope) {
+        self.new_visible.append(self.old_visible_cursor.suffix());
+        self.new_deleted.append(self.old_deleted_cursor.suffix());
+        (self.new_visible, self.new_deleted)
     }
 }
