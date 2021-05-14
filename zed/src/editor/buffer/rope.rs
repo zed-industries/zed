@@ -138,6 +138,10 @@ impl Rope {
         Chars::new(self, start)
     }
 
+    pub fn chunks<'a>(&'a self) -> impl Iterator<Item = &'a str> {
+        self.chunks.cursor::<(), ()>().map(|c| c.0.as_str())
+    }
+
     fn text(&self) -> String {
         let mut text = String::new();
         for chunk in self.chunks.cursor::<(), ()>() {
