@@ -37,32 +37,27 @@ impl Rope {
     }
 
     pub fn push(&mut self, mut text: &str) {
-        let mut suffix = ArrayString::<[_; 2 * CHUNK_BASE]>::new();
+        let mut suffix = ArrayString::<[_; CHUNK_BASE]>::new();
         self.chunks.with_last_mut(
             |chunk| {
                 if chunk.0.len() + text.len() <= 2 * CHUNK_BASE {
                     chunk.0.push_str(text);
                     text = "";
+                } else if chunk.0.len() < CHUNK_BASE {
+                    let mut split_ix = CHUNK_BASE - chunk.0.len();
+                    while !text.is_char_boundary(split_ix) {
+                        split_ix += 1;
+                    }
+                    let split = text.split_at(split_ix);
+                    chunk.0.push_str(split.0);
+                    text = split.1;
                 } else {
-                    let mut append_len = CHUNK_BASE.saturating_sub(chunk.0.len());
-                    while !text.is_char_boundary(append_len) {
-                        append_len -= 1;
+                    let mut split_ix = CHUNK_BASE;
+                    while !chunk.0.is_char_boundary(split_ix) {
+                        split_ix += 1;
                     }
-
-                    if append_len > 0 {
-                        let split = text.split_at(append_len);
-                        chunk.0.push_str(split.0);
-                        text = split.1;
-                    } else {
-                        let mut take_len = CHUNK_BASE;
-                        while !chunk.0.is_char_boundary(take_len) {
-                            take_len -= 1;
-                        }
-
-                        let split = chunk.0.split_at(take_len);
-                        suffix.push_str(split.1);
-                        chunk.0.truncate(take_len);
-                    }
+                    suffix.push_str(&chunk.0[split_ix..]);
+                    chunk.0.truncate(split_ix);
                 }
             },
             &(),
@@ -71,7 +66,7 @@ impl Rope {
         let mut chunks = vec![];
         let mut chunk = ArrayString::new();
         for ch in suffix.chars().chain(text.chars()) {
-            if chunk.len() + ch.len_utf8() > CHUNK_BASE {
+            if chunk.len() + ch.len_utf8() > 2 * CHUNK_BASE {
                 chunks.push(Chunk(chunk));
                 chunk = ArrayString::new();
             }
@@ -305,7 +300,7 @@ mod tests {
             for _ in 0..operations {
                 let end_ix = rng.gen_range(0..=expected.len());
                 let start_ix = rng.gen_range(0..=end_ix);
-                let len = rng.gen_range(0..=5);
+                let len = rng.gen_range(0..=20);
                 let new_text: String = RandomCharIter::new(&mut rng).take(len).collect();
 
                 let mut new_actual = Rope::new();
