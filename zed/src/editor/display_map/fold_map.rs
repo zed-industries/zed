@@ -1,8 +1,9 @@
 use super::{
-    buffer::{self, AnchorRangeExt},
-    Anchor, Buffer, DisplayPoint, Edit, Point, TextSummary, ToOffset,
+    buffer::{AnchorRangeExt, TextSummary},
+    Anchor, Buffer, DisplayPoint, Edit, Point, ToOffset,
 };
 use crate::{
+    editor::rope,
     sum_tree::{self, Cursor, FilterCursor, SeekBias, SumTree},
     time,
 };
@@ -607,7 +608,7 @@ pub struct Chars<'a> {
     cursor: Cursor<'a, Transform, DisplayOffset, TransformSummary>,
     offset: usize,
     buffer: &'a Buffer,
-    buffer_chars: Option<Take<buffer::CharIter<'a>>>,
+    buffer_chars: Option<Take<rope::Chars<'a>>>,
 }
 
 impl<'a> Iterator for Chars<'a> {
@@ -669,8 +670,8 @@ impl<'a> sum_tree::Dimension<'a, TransformSummary> for usize {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::editor::buffer::ToPoint;
     use crate::test::sample_text;
-    use buffer::ToPoint;
 
     #[gpui::test]
     fn test_basic_folds(app: &mut gpui::MutableAppContext) {
@@ -916,6 +917,7 @@ mod tests {
                     assert_eq!(line_len, line.chars().count() as u32);
                 }
 
+                let rightmost_point = map.rightmost_point(app.as_ref());
                 let mut display_point = DisplayPoint::new(0, 0);
                 let mut display_offset = DisplayOffset(0);
                 for c in expected_text.chars() {
@@ -941,6 +943,12 @@ mod tests {
                         *display_point.column_mut() += 1;
                     }
                     display_offset.0 += 1;
+                    if display_point.column() > rightmost_point.column() {
+                        panic!(
+                            "invalid rightmost point {:?}, found point {:?}",
+                            rightmost_point, display_point
+                        );
+                    }
                 }
 
                 for _ in 0..5 {

@@ -1,18 +1,18 @@
 mod anchor;
 mod point;
+pub mod rope;
 mod selection;
-mod text;
 
 pub use anchor::*;
 pub use point::*;
+pub use rope::{Rope, TextSummary};
 use seahash::SeaHasher;
 pub use selection::*;
 use similar::{ChangeTag, TextDiff};
-pub use text::*;
 
 use crate::{
     operation_queue::{self, OperationQueue},
-    sum_tree::{self, Cursor, FilterCursor, SeekBias, SumTree},
+    sum_tree::{self, FilterCursor, SeekBias, SumTree},
     time::{self, ReplicaId},
     util::RandomCharIter,
     worktree::FileHandle,
@@ -25,7 +25,8 @@ use std::{
     cmp,
     hash::BuildHasher,
     iter::{self, Iterator},
-    ops::{AddAssign, Range},
+    mem,
+    ops::Range,
     str,
     sync::Arc,
     time::{Duration, Instant, SystemTime, UNIX_EPOCH},
@@ -58,6 +59,8 @@ type HashSet<T> = std::collections::HashSet<T>;
 
 pub struct Buffer {
     fragments: SumTree<Fragment>,
+    visible_text: Rope,
+    deleted_text: Rope,
     insertion_splits: HashMap<time::Local, SumTree<InsertionSplit>>,
     pub version: time::Global,
     saved_version: time::Global,
@@ -75,10 +78,6 @@ pub struct Buffer {
     lamport_clock: time::Lamport,
 }
 
-pub struct Snapshot {
-    fragments: SumTree<Fragment>,
-}
-
 #[derive(Clone)]
 struct Transaction {
     start: time::Global,
@@ -92,6 +91,7 @@ struct Transaction {
 
 #[derive(Clone)]
 pub struct History {
+    // TODO: Turn this into a String or Rope, maybe.
     pub base_text: Arc<str>,
     ops: HashMap<time::Local, EditOperation>,
     undo_stack: Vec<Transaction>,
@@ -238,18 +238,6 @@ impl UndoMap {
     }
 }
 
-#[derive(Clone)]
-pub struct CharIter<'a> {
-    fragments_cursor: Cursor<'a, Fragment, usize, usize>,
-    fragment_chars: str::Chars<'a>,
-}
-
-#[derive(Clone)]
-pub struct FragmentIter<'a> {
-    cursor: Cursor<'a, Fragment, usize, usize>,
-    started: bool,
-}
-
 struct Edits<'a, F: Fn(&FragmentSummary) -> bool> {
     cursor: FilterCursor<'a, F, Fragment, usize>,
     undos: &'a UndoMap,
@@ -285,15 +273,14 @@ pub struct Insertion {
     id: time::Local,
     parent_id: time::Local,
     offset_in_parent: usize,
-    text: Text,
     lamport_timestamp: time::Lamport,
 }
 
 #[derive(Eq, PartialEq, Clone, Debug)]
 struct Fragment {
     id: FragmentId,
-    insertion: Insertion,
-    text: Text,
+    insertion: Arc<Insertion>,
+    range_in_insertion: Range<usize>,
     deletions: HashSet<time::Local>,
     max_undos: time::Global,
     visible: bool,
@@ -301,15 +288,22 @@ struct Fragment {
 
 #[derive(Eq, PartialEq, Clone, Debug)]
 pub struct FragmentSummary {
-    text_summary: TextSummary,
+    text: FragmentTextSummary,
     max_fragment_id: FragmentId,
     max_version: time::Global,
 }
 
-#[derive(Eq, PartialEq, Clone, Debug, Ord, PartialOrd)]
-struct FragmentExtent {
-    chars: usize,
-    lines: Point,
+#[derive(Default, Clone, Debug, PartialEq, Eq)]
+struct FragmentTextSummary {
+    visible: usize,
+    deleted: usize,
+}
+
+impl<'a> sum_tree::Dimension<'a, FragmentSummary> for FragmentTextSummary {
+    fn add_summary(&mut self, summary: &'a FragmentSummary) {
+        self.visible += summary.text.visible;
+        self.deleted += summary.text.deleted;
+    }
 }
 
 #[derive(Eq, PartialEq, Clone, Debug)]
@@ -348,7 +342,7 @@ pub struct EditOperation {
     end_id: time::Local,
     end_offset: usize,
     version_in_range: time::Global,
-    new_text: Option<Text>,
+    new_text: Option<String>,
 }
 
 #[derive(Copy, Clone, Debug, Eq, PartialEq)]
@@ -418,16 +412,17 @@ impl Buffer {
             saved_mtime = UNIX_EPOCH;
         }
 
+        let mut visible_text = Rope::new();
         let mut insertion_splits = HashMap::default();
         let mut fragments = SumTree::new();
 
-        let base_insertion = Insertion {
+        let base_text = Rope::from(history.base_text.as_ref());
+        let base_insertion = Arc::new(Insertion {
             id: time::Local::default(),
             parent_id: time::Local::default(),
             offset_in_parent: 0,
-            text: history.base_text.clone().into(),
             lamport_timestamp: time::Lamport::default(),
-        };
+        });
 
         insertion_splits.insert(
             base_insertion.id,
@@ -440,42 +435,36 @@ impl Buffer {
             ),
         );
         fragments.push(
-            Fragment {
-                id: FragmentId::min_value().clone(),
-                insertion: base_insertion.clone(),
-                text: base_insertion.text.slice(0..0),
-                deletions: Default::default(),
-                max_undos: Default::default(),
-                visible: true,
-            },
+            Fragment::new(
+                FragmentId::min_value().clone(),
+                base_insertion.clone(),
+                0..0,
+            ),
             &(),
         );
 
-        if base_insertion.text.len() > 0 {
+        if base_text.len() > 0 {
             let base_fragment_id =
                 FragmentId::between(&FragmentId::min_value(), &FragmentId::max_value());
+            let range_in_insertion = 0..base_text.len();
 
+            visible_text = base_text.clone();
             insertion_splits.get_mut(&base_insertion.id).unwrap().push(
                 InsertionSplit {
                     fragment_id: base_fragment_id.clone(),
-                    extent: base_insertion.text.len(),
+                    extent: range_in_insertion.end,
                 },
                 &(),
             );
             fragments.push(
-                Fragment {
-                    id: base_fragment_id,
-                    text: base_insertion.text.clone(),
-                    insertion: base_insertion,
-                    deletions: Default::default(),
-                    max_undos: Default::default(),
-                    visible: true,
-                },
+                Fragment::new(base_fragment_id, base_insertion, range_in_insertion.clone()),
                 &(),
             );
         }
 
         Self {
+            visible_text,
+            deleted_text: Rope::new(),
             fragments,
             insertion_splits,
             version: time::Global::new(),
@@ -495,10 +484,8 @@ impl Buffer {
         }
     }
 
-    pub fn snapshot(&self) -> Snapshot {
-        Snapshot {
-            fragments: self.fragments.clone(),
-        }
+    pub fn snapshot(&self) -> Rope {
+        self.visible_text.clone()
     }
 
     pub fn file(&self) -> Option<&FileHandle> {
@@ -609,33 +596,12 @@ impl Buffer {
     }
 
     pub fn text_summary(&self) -> TextSummary {
-        self.fragments.extent::<TextSummary>()
+        self.visible_text.summary()
     }
 
     pub fn text_summary_for_range(&self, range: Range<usize>) -> TextSummary {
-        let mut summary = TextSummary::default();
-
-        let mut cursor = self.fragments.cursor::<usize, usize>();
-        cursor.seek(&range.start, SeekBias::Right, &());
-
-        if let Some(fragment) = cursor.item() {
-            let summary_start = cmp::max(*cursor.start(), range.start) - cursor.start();
-            let summary_end = cmp::min(range.end - cursor.start(), fragment.len());
-            summary += fragment.text.slice(summary_start..summary_end).summary();
-            cursor.next();
-        }
-
-        if range.end > *cursor.start() {
-            summary += cursor.summary::<TextSummary>(&range.end, SeekBias::Right, &());
-
-            if let Some(fragment) = cursor.item() {
-                let summary_start = cmp::max(*cursor.start(), range.start) - cursor.start();
-                let summary_end = cmp::min(range.end - cursor.start(), fragment.len());
-                summary += fragment.text.slice(summary_start..summary_end).summary();
-            }
-        }
-
-        summary
+        // TODO: Use a dedicated ::summarize method in Rope.
+        self.visible_text.slice(range).summary()
     }
 
     pub fn len(&self) -> usize {
@@ -654,37 +620,15 @@ impl Buffer {
     }
 
     pub fn rightmost_point(&self) -> Point {
-        self.fragments.summary().text_summary.rightmost_point
+        self.visible_text.summary().rightmost_point
     }
 
     pub fn rightmost_point_in_range(&self, range: Range<usize>) -> Point {
-        let mut summary = TextSummary::default();
-
-        let mut cursor = self.fragments.cursor::<usize, usize>();
-        cursor.seek(&range.start, SeekBias::Right, &());
-
-        if let Some(fragment) = cursor.item() {
-            let summary_start = cmp::max(*cursor.start(), range.start) - cursor.start();
-            let summary_end = cmp::min(range.end - cursor.start(), fragment.len());
-            summary += fragment.text.slice(summary_start..summary_end).summary();
-            cursor.next();
-        }
-
-        if range.end > *cursor.start() {
-            summary += cursor.summary::<TextSummary>(&range.end, SeekBias::Right, &());
-
-            if let Some(fragment) = cursor.item() {
-                let summary_start = cmp::max(*cursor.start(), range.start) - cursor.start();
-                let summary_end = cmp::min(range.end - cursor.start(), fragment.len());
-                summary += fragment.text.slice(summary_start..summary_end).summary();
-            }
-        }
-
-        summary.rightmost_point
+        self.text_summary_for_range(range).rightmost_point
     }
 
     pub fn max_point(&self) -> Point {
-        self.fragments.extent()
+        self.visible_text.max_point()
     }
 
     pub fn line(&self, row: u32) -> Result<String> {
@@ -707,13 +651,13 @@ impl Buffer {
         Ok(self.chars_at(start)?.take(end - start))
     }
 
-    pub fn chars(&self) -> CharIter {
+    pub fn chars(&self) -> rope::Chars {
         self.chars_at(0).unwrap()
     }
 
-    pub fn chars_at<T: ToOffset>(&self, position: T) -> Result<CharIter> {
+    pub fn chars_at<T: ToOffset>(&self, position: T) -> Result<rope::Chars> {
         let offset = position.to_offset(self)?;
-        Ok(CharIter::new(&self.fragments, offset))
+        Ok(self.visible_text.chars_at(offset))
     }
 
     pub fn selections_changed_since(&self, since: SelectionsVersion) -> bool {
@@ -807,7 +751,7 @@ impl Buffer {
     where
         I: IntoIterator<Item = Range<S>>,
         S: ToOffset,
-        T: Into<Text>,
+        T: Into<String>,
     {
         self.start_transaction_at(None, Instant::now())?;
 
@@ -823,11 +767,12 @@ impl Buffer {
             .map(|range| Ok(range.start.to_offset(self)?..range.end.to_offset(self)?))
             .collect::<Result<Vec<Range<usize>>>>()?;
 
+        let has_new_text = new_text.is_some();
         let ops = self.splice_fragments(
             old_ranges
                 .into_iter()
-                .filter(|old_range| new_text.is_some() || old_range.end > old_range.start),
-            new_text.clone(),
+                .filter(|old_range| has_new_text || old_range.end > old_range.start),
+            new_text.into(),
         );
 
         for op in &ops {
@@ -1022,7 +967,7 @@ impl Buffer {
                         edit.start_offset,
                         edit.end_id,
                         edit.end_offset,
-                        edit.new_text.as_ref().cloned(),
+                        edit.new_text.as_deref(),
                         &edit.version_in_range,
                         edit.id,
                         lamport_timestamp,
@@ -1064,29 +1009,38 @@ impl Buffer {
         start_offset: usize,
         end_id: time::Local,
         end_offset: usize,
-        new_text: Option<Text>,
+        mut new_text: Option<&str>,
         version_in_range: &time::Global,
         local_timestamp: time::Local,
         lamport_timestamp: time::Lamport,
     ) -> Result<()> {
-        let mut new_text = new_text.as_ref().cloned();
         let start_fragment_id = self.resolve_fragment_id(start_id, start_offset)?;
         let end_fragment_id = self.resolve_fragment_id(end_id, end_offset)?;
 
-        let old_fragments = self.fragments.clone();
-        let last_id = old_fragments.extent::<FragmentIdRef>().0.unwrap();
-        let last_id_ref = FragmentIdRef::new(&last_id);
+        let mut old_visible_text = Rope::new();
+        let mut old_deleted_text = Rope::new();
+        let mut old_fragments = SumTree::new();
+        mem::swap(&mut old_visible_text, &mut self.visible_text);
+        mem::swap(&mut old_deleted_text, &mut self.deleted_text);
+        mem::swap(&mut old_fragments, &mut self.fragments);
 
-        let mut cursor = old_fragments.cursor::<FragmentIdRef, ()>();
+        let mut fragments_cursor = old_fragments.cursor::<FragmentIdRef, FragmentTextSummary>();
+
         let mut new_fragments =
-            cursor.slice(&FragmentIdRef::new(&start_fragment_id), SeekBias::Left, &());
+            fragments_cursor.slice(&FragmentIdRef::new(&start_fragment_id), SeekBias::Left, &());
+        let mut new_ropes =
+            RopeBuilder::new(old_visible_text.cursor(0), old_deleted_text.cursor(0));
+        new_ropes.push_tree(new_fragments.summary().text);
 
-        if start_offset == cursor.item().unwrap().end_offset() {
-            new_fragments.push(cursor.item().unwrap().clone(), &());
-            cursor.next();
+        let start_fragment = fragments_cursor.item().unwrap();
+        if start_offset == start_fragment.range_in_insertion.end {
+            let fragment = fragments_cursor.item().unwrap().clone();
+            new_ropes.push_fragment(&fragment, fragment.visible);
+            new_fragments.push(fragment, &());
+            fragments_cursor.next();
         }
 
-        while let Some(fragment) = cursor.item() {
+        while let Some(fragment) = fragments_cursor.item() {
             if new_text.is_none() && fragment.id > end_fragment_id {
                 break;
             }
@@ -1097,21 +1051,22 @@ impl Buffer {
                 let split_start = if start_fragment_id == fragment.id {
                     start_offset
                 } else {
-                    fragment.start_offset()
+                    fragment.range_in_insertion.start
                 };
                 let split_end = if end_fragment_id == fragment.id {
                     end_offset
                 } else {
-                    fragment.end_offset()
+                    fragment.range_in_insertion.end
                 };
                 let (before_range, within_range, after_range) = self.split_fragment(
-                    cursor.prev_item().as_ref().unwrap(),
+                    fragments_cursor.prev_item().as_ref().unwrap(),
                     &fragment,
                     split_start..split_end,
                 );
-                let insertion = if let Some(new_text) = new_text.take() {
+                let insertion = if let Some(new_text) = new_text {
+                    let prev_fragment = fragments_cursor.prev_item();
                     Some(self.build_fragment_to_insert(
-                        before_range.as_ref().or(cursor.prev_item()).unwrap(),
+                        before_range.as_ref().or(prev_fragment).unwrap(),
                         within_range.as_ref().or(after_range.as_ref()),
                         new_text,
                         local_timestamp,
@@ -1121,62 +1076,78 @@ impl Buffer {
                     None
                 };
                 if let Some(fragment) = before_range {
+                    new_ropes.push_fragment(&fragment, fragment.visible);
                     new_fragments.push(fragment, &());
                 }
                 if let Some(fragment) = insertion {
+                    new_ropes.push_str(new_text.take().unwrap());
                     new_fragments.push(fragment, &());
                 }
                 if let Some(mut fragment) = within_range {
+                    let fragment_was_visible = fragment.visible;
                     if fragment.was_visible(&version_in_range, &self.undo_map) {
                         fragment.deletions.insert(local_timestamp);
-                        fragment.visible = false;
+                        if fragment.visible {
+                            fragment.visible = false;
+                        }
                     }
+
+                    new_ropes.push_fragment(&fragment, fragment_was_visible);
                     new_fragments.push(fragment, &());
                 }
                 if let Some(fragment) = after_range {
+                    new_ropes.push_fragment(&fragment, fragment.visible);
                     new_fragments.push(fragment, &());
                 }
             } else {
                 if new_text.is_some() && lamport_timestamp > fragment.insertion.lamport_timestamp {
-                    new_fragments.push(
-                        self.build_fragment_to_insert(
-                            cursor.prev_item().as_ref().unwrap(),
-                            Some(&fragment),
-                            new_text.take().unwrap(),
-                            local_timestamp,
-                            lamport_timestamp,
-                        ),
-                        &(),
+                    let new_text = new_text.take().unwrap();
+                    let fragment = self.build_fragment_to_insert(
+                        fragments_cursor.prev_item().as_ref().unwrap(),
+                        Some(&fragment),
+                        new_text,
+                        local_timestamp,
+                        lamport_timestamp,
                     );
+                    new_ropes.push_str(new_text);
+                    new_fragments.push(fragment, &());
                 }
 
+                let fragment_was_visible = fragment.visible;
                 if fragment.id < end_fragment_id
                     && fragment.was_visible(&version_in_range, &self.undo_map)
                 {
                     fragment.deletions.insert(local_timestamp);
-                    fragment.visible = false;
+                    if fragment.visible {
+                        fragment.visible = false;
+                    }
                 }
+
+                new_ropes.push_fragment(&fragment, fragment_was_visible);
                 new_fragments.push(fragment, &());
             }
 
-            cursor.next();
+            fragments_cursor.next();
         }
 
         if let Some(new_text) = new_text {
-            new_fragments.push(
-                self.build_fragment_to_insert(
-                    cursor.prev_item().as_ref().unwrap(),
-                    None,
-                    new_text,
-                    local_timestamp,
-                    lamport_timestamp,
-                ),
-                &(),
+            let fragment = self.build_fragment_to_insert(
+                fragments_cursor.prev_item().as_ref().unwrap(),
+                None,
+                new_text,
+                local_timestamp,
+                lamport_timestamp,
             );
+            new_ropes.push_str(new_text);
+            new_fragments.push(fragment, &());
         }
 
-        new_fragments.push_tree(cursor.slice(&last_id_ref, SeekBias::Right, &()), &());
+        let (visible_text, deleted_text) = new_ropes.finish();
+        new_fragments.push_tree(fragments_cursor.suffix(&()), &());
+
         self.fragments = new_fragments;
+        self.visible_text = visible_text;
+        self.deleted_text = deleted_text;
         self.local_clock.observe(local_timestamp);
         self.lamport_clock.observe(lamport_timestamp);
         Ok(())
@@ -1251,58 +1222,83 @@ impl Buffer {
 
     fn apply_undo(&mut self, undo: UndoOperation) -> Result<()> {
         let mut new_fragments;
+        let mut old_visible_text = Rope::new();
+        let mut old_deleted_text = Rope::new();
+        mem::swap(&mut old_visible_text, &mut self.visible_text);
+        mem::swap(&mut old_deleted_text, &mut self.deleted_text);
+        let mut new_ropes =
+            RopeBuilder::new(old_visible_text.cursor(0), old_deleted_text.cursor(0));
 
         self.undo_map.insert(undo);
         let edit = &self.history.ops[&undo.edit_id];
         let start_fragment_id = self.resolve_fragment_id(edit.start_id, edit.start_offset)?;
         let end_fragment_id = self.resolve_fragment_id(edit.end_id, edit.end_offset)?;
-        let mut cursor = self.fragments.cursor::<FragmentIdRef, ()>();
+
+        let mut fragments_cursor = self.fragments.cursor::<FragmentIdRef, ()>();
 
         if edit.start_id == edit.end_id && edit.start_offset == edit.end_offset {
             let splits = &self.insertion_splits[&undo.edit_id];
             let mut insertion_splits = splits.cursor::<(), ()>().map(|s| &s.fragment_id).peekable();
 
             let first_split_id = insertion_splits.next().unwrap();
-            new_fragments = cursor.slice(&FragmentIdRef::new(first_split_id), SeekBias::Left, &());
+            new_fragments =
+                fragments_cursor.slice(&FragmentIdRef::new(first_split_id), SeekBias::Left, &());
+            new_ropes.push_tree(new_fragments.summary().text);
 
             loop {
-                let mut fragment = cursor.item().unwrap().clone();
+                let mut fragment = fragments_cursor.item().unwrap().clone();
+                let was_visible = fragment.visible;
                 fragment.visible = fragment.is_visible(&self.undo_map);
                 fragment.max_undos.observe(undo.id);
-                new_fragments.push(fragment, &());
-                cursor.next();
+
+                new_ropes.push_fragment(&fragment, was_visible);
+                new_fragments.push(fragment.clone(), &());
+
+                fragments_cursor.next();
                 if let Some(split_id) = insertion_splits.next() {
-                    new_fragments.push_tree(
-                        cursor.slice(&FragmentIdRef::new(split_id), SeekBias::Left, &()),
-                        &(),
-                    );
+                    let slice =
+                        fragments_cursor.slice(&FragmentIdRef::new(split_id), SeekBias::Left, &());
+                    new_ropes.push_tree(slice.summary().text);
+                    new_fragments.push_tree(slice, &());
                 } else {
                     break;
                 }
             }
         } else {
-            new_fragments =
-                cursor.slice(&FragmentIdRef::new(&start_fragment_id), SeekBias::Left, &());
-            while let Some(fragment) = cursor.item() {
+            new_fragments = fragments_cursor.slice(
+                &FragmentIdRef::new(&start_fragment_id),
+                SeekBias::Left,
+                &(),
+            );
+            new_ropes.push_tree(new_fragments.summary().text);
+
+            while let Some(fragment) = fragments_cursor.item() {
                 if fragment.id > end_fragment_id {
                     break;
                 } else {
                     let mut fragment = fragment.clone();
+                    let fragment_was_visible = fragment.visible;
                     if edit.version_in_range.observed(fragment.insertion.id)
                         || fragment.insertion.id == undo.edit_id
                     {
                         fragment.visible = fragment.is_visible(&self.undo_map);
                         fragment.max_undos.observe(undo.id);
                     }
+
+                    new_ropes.push_fragment(&fragment, fragment_was_visible);
                     new_fragments.push(fragment, &());
-                    cursor.next();
+                    fragments_cursor.next();
                 }
             }
         }
 
-        new_fragments.push_tree(cursor.suffix(&()), &());
-        drop(cursor);
+        new_fragments.push_tree(fragments_cursor.suffix(&()), &());
+        let (visible_text, deleted_text) = new_ropes.finish();
+        drop(fragments_cursor);
+
         self.fragments = new_fragments;
+        self.visible_text = visible_text;
+        self.deleted_text = deleted_text;
 
         Ok(())
     }
@@ -1372,7 +1368,7 @@ impl Buffer {
             .clone())
     }
 
-    fn splice_fragments<I>(&mut self, mut old_ranges: I, new_text: Option<Text>) -> Vec<Operation>
+    fn splice_fragments<I>(&mut self, mut old_ranges: I, new_text: Option<String>) -> Vec<Operation>
     where
         I: Iterator<Item = Range<usize>>,
     {
@@ -1383,13 +1379,20 @@ impl Buffer {
 
         let mut ops = Vec::with_capacity(old_ranges.size_hint().0);
 
-        let old_fragments = self.fragments.clone();
-        let mut cursor = old_fragments.cursor::<usize, usize>();
-        let mut new_fragments = SumTree::new();
-        new_fragments.push_tree(
-            cursor.slice(&cur_range.as_ref().unwrap().start, SeekBias::Right, &()),
-            &(),
-        );
+        let mut old_fragments = SumTree::new();
+        let mut old_visible_text = Rope::new();
+        let mut old_deleted_text = Rope::new();
+        mem::swap(&mut old_visible_text, &mut self.visible_text);
+        mem::swap(&mut old_deleted_text, &mut self.deleted_text);
+        mem::swap(&mut old_fragments, &mut self.fragments);
+
+        let mut fragments_cursor = old_fragments.cursor::<usize, usize>();
+        let mut new_fragments =
+            fragments_cursor.slice(&cur_range.as_ref().unwrap().start, SeekBias::Right, &());
+
+        let mut new_ropes =
+            RopeBuilder::new(old_visible_text.cursor(0), old_deleted_text.cursor(0));
+        new_ropes.push_tree(new_fragments.summary().text);
 
         let mut start_id = None;
         let mut start_offset = None;
@@ -1400,11 +1403,12 @@ impl Buffer {
         let mut local_timestamp = self.local_clock.tick();
         let mut lamport_timestamp = self.lamport_clock.tick();
 
-        while cur_range.is_some() && cursor.item().is_some() {
-            let mut fragment = cursor.item().unwrap().clone();
-            let fragment_summary = cursor.item_summary().unwrap();
-            let mut fragment_start = *cursor.start();
+        while cur_range.is_some() && fragments_cursor.item().is_some() {
+            let mut fragment = fragments_cursor.item().unwrap().clone();
+            let fragment_summary = fragments_cursor.item_summary().unwrap();
+            let mut fragment_start = *fragments_cursor.start();
             let mut fragment_end = fragment_start + fragment.visible_len();
+            let fragment_was_visible = fragment.visible;
 
             let old_split_tree = self
                 .insertion_splits
@@ -1412,7 +1416,7 @@ impl Buffer {
                 .unwrap();
             let mut splits_cursor = old_split_tree.cursor::<usize, ()>();
             let mut new_split_tree =
-                splits_cursor.slice(&fragment.start_offset(), SeekBias::Right, &());
+                splits_cursor.slice(&fragment.range_in_insertion.start, SeekBias::Right, &());
 
             // Find all splices that start or end within the current fragment. Then, split the
             // fragment and reassemble it in both trees accounting for the deleted and the newly
@@ -1421,14 +1425,17 @@ impl Buffer {
                 let range = cur_range.clone().unwrap();
                 if range.start > fragment_start {
                     let mut prefix = fragment.clone();
-                    prefix.set_end_offset(prefix.start_offset() + (range.start - fragment_start));
+                    prefix.range_in_insertion.end =
+                        prefix.range_in_insertion.start + (range.start - fragment_start);
                     prefix.id =
                         FragmentId::between(&new_fragments.last().unwrap().id, &fragment.id);
-                    fragment.set_start_offset(prefix.end_offset());
+                    fragment.range_in_insertion.start = prefix.range_in_insertion.end;
+
+                    new_ropes.push_fragment(&prefix, prefix.visible);
                     new_fragments.push(prefix.clone(), &());
                     new_split_tree.push(
                         InsertionSplit {
-                            extent: prefix.end_offset() - prefix.start_offset(),
+                            extent: prefix.range_in_insertion.end - prefix.range_in_insertion.start,
                             fragment_id: prefix.id,
                         },
                         &(),
@@ -1438,24 +1445,26 @@ impl Buffer {
 
                 if range.end == fragment_start {
                     end_id = Some(new_fragments.last().unwrap().insertion.id);
-                    end_offset = Some(new_fragments.last().unwrap().end_offset());
+                    end_offset = Some(new_fragments.last().unwrap().range_in_insertion.end);
                 } else if range.end == fragment_end {
                     end_id = Some(fragment.insertion.id);
-                    end_offset = Some(fragment.end_offset());
+                    end_offset = Some(fragment.range_in_insertion.end);
                 }
 
                 if range.start == fragment_start {
                     start_id = Some(new_fragments.last().unwrap().insertion.id);
-                    start_offset = Some(new_fragments.last().unwrap().end_offset());
+                    start_offset = Some(new_fragments.last().unwrap().range_in_insertion.end);
 
                     if let Some(new_text) = new_text.clone() {
                         let new_fragment = self.build_fragment_to_insert(
                             &new_fragments.last().unwrap(),
                             Some(&fragment),
-                            new_text,
+                            &new_text,
                             local_timestamp,
                             lamport_timestamp,
                         );
+
+                        new_ropes.push_str(&new_text);
                         new_fragments.push(new_fragment, &());
                     }
                 }
@@ -1463,26 +1472,29 @@ impl Buffer {
                 if range.end < fragment_end {
                     if range.end > fragment_start {
                         let mut prefix = fragment.clone();
-                        prefix.set_end_offset(prefix.start_offset() + (range.end - fragment_start));
+                        prefix.range_in_insertion.end =
+                            prefix.range_in_insertion.start + (range.end - fragment_start);
                         prefix.id =
                             FragmentId::between(&new_fragments.last().unwrap().id, &fragment.id);
                         version_in_range.observe_all(&fragment_summary.max_version);
-                        if fragment.visible {
+                        if prefix.visible {
                             prefix.deletions.insert(local_timestamp);
                             prefix.visible = false;
                         }
-                        fragment.set_start_offset(prefix.end_offset());
+                        fragment.range_in_insertion.start = prefix.range_in_insertion.end;
+                        new_ropes.push_fragment(&prefix, fragment_was_visible);
                         new_fragments.push(prefix.clone(), &());
                         new_split_tree.push(
                             InsertionSplit {
-                                extent: prefix.end_offset() - prefix.start_offset(),
+                                extent: prefix.range_in_insertion.end
+                                    - prefix.range_in_insertion.start,
                                 fragment_id: prefix.id,
                             },
                             &(),
                         );
                         fragment_start = range.end;
                         end_id = Some(fragment.insertion.id);
-                        end_offset = Some(fragment.start_offset());
+                        end_offset = Some(fragment.range_in_insertion.start);
                     }
                 } else {
                     version_in_range.observe_all(&fragment_summary.max_version);
@@ -1525,7 +1537,7 @@ impl Buffer {
             }
             new_split_tree.push(
                 InsertionSplit {
-                    extent: fragment.end_offset() - fragment.start_offset(),
+                    extent: fragment.range_in_insertion.end - fragment.range_in_insertion.start,
                     fragment_id: fragment.id.clone(),
                 },
                 &(),
@@ -1537,14 +1549,17 @@ impl Buffer {
             );
             self.insertion_splits
                 .insert(fragment.insertion.id, new_split_tree);
+
+            new_ropes.push_fragment(&fragment, fragment_was_visible);
             new_fragments.push(fragment, &());
 
             // Scan forward until we find a fragment that is not fully contained by the current splice.
-            cursor.next();
+            fragments_cursor.next();
             if let Some(range) = cur_range.clone() {
-                while let Some(fragment) = cursor.item() {
-                    let fragment_summary = cursor.item_summary().unwrap();
-                    fragment_start = *cursor.start();
+                while let Some(fragment) = fragments_cursor.item() {
+                    let fragment_summary = fragments_cursor.item_summary().unwrap();
+                    let fragment_was_visible = fragment.visible;
+                    fragment_start = *fragments_cursor.start();
                     fragment_end = fragment_start + fragment.visible_len();
                     if range.start < fragment_start && range.end >= fragment_end {
                         let mut new_fragment = fragment.clone();
@@ -1553,12 +1568,14 @@ impl Buffer {
                             new_fragment.deletions.insert(local_timestamp);
                             new_fragment.visible = false;
                         }
+
+                        new_ropes.push_fragment(&new_fragment, fragment_was_visible);
                         new_fragments.push(new_fragment, &());
-                        cursor.next();
+                        fragments_cursor.next();
 
                         if range.end == fragment_end {
                             end_id = Some(fragment.insertion.id);
-                            end_offset = Some(fragment.end_offset());
+                            end_offset = Some(fragment.range_in_insertion.end);
                             ops.push(Operation::Edit {
                                 edit: EditOperation {
                                     id: local_timestamp,
@@ -1594,10 +1611,13 @@ impl Buffer {
                 // that the cursor is parked at, we should seek to the next splice's start range
                 // and push all the fragments in between into the new tree.
                 if cur_range.as_ref().map_or(false, |r| r.start > fragment_end) {
-                    new_fragments.push_tree(
-                        cursor.slice(&cur_range.as_ref().unwrap().start, SeekBias::Right, &()),
+                    let slice = fragments_cursor.slice(
+                        &cur_range.as_ref().unwrap().start,
+                        SeekBias::Right,
                         &(),
                     );
+                    new_ropes.push_tree(slice.summary().text);
+                    new_fragments.push_tree(slice, &());
                 }
             }
         }
@@ -1611,10 +1631,11 @@ impl Buffer {
                 edit: EditOperation {
                     id: local_timestamp,
                     start_id: last_fragment.insertion.id,
-                    start_offset: last_fragment.end_offset(),
+                    start_offset: last_fragment.range_in_insertion.end,
                     end_id: last_fragment.insertion.id,
-                    end_offset: last_fragment.end_offset(),
+                    end_offset: last_fragment.range_in_insertion.end,
                     version_in_range: time::Global::new(),
+                    // TODO: avoid cloning the String.
                     new_text: new_text.clone(),
                 },
                 lamport_timestamp,
@@ -1624,20 +1645,22 @@ impl Buffer {
                 let new_fragment = self.build_fragment_to_insert(
                     &last_fragment,
                     None,
-                    new_text,
+                    &new_text,
                     local_timestamp,
                     lamport_timestamp,
                 );
+
+                new_ropes.push_str(&new_text);
                 new_fragments.push(new_fragment, &());
             }
-        } else {
-            new_fragments.push_tree(
-                cursor.slice(&old_fragments.extent::<usize>(), SeekBias::Right, &()),
-                &(),
-            );
         }
 
+        new_fragments.push_tree(fragments_cursor.suffix(&()), &());
+        let (visible_text, deleted_text) = new_ropes.finish();
+
         self.fragments = new_fragments;
+        self.visible_text = visible_text;
+        self.deleted_text = deleted_text;
         ops
     }
 
@@ -1647,24 +1670,26 @@ impl Buffer {
         fragment: &Fragment,
         range: Range<usize>,
     ) -> (Option<Fragment>, Option<Fragment>, Option<Fragment>) {
-        debug_assert!(range.start >= fragment.start_offset());
-        debug_assert!(range.start <= fragment.end_offset());
-        debug_assert!(range.end <= fragment.end_offset());
-        debug_assert!(range.end >= fragment.start_offset());
+        debug_assert!(range.start >= fragment.range_in_insertion.start);
+        debug_assert!(range.start <= fragment.range_in_insertion.end);
+        debug_assert!(range.end <= fragment.range_in_insertion.end);
+        debug_assert!(range.end >= fragment.range_in_insertion.start);
 
-        if range.end == fragment.start_offset() {
+        if range.end == fragment.range_in_insertion.start {
             (None, None, Some(fragment.clone()))
-        } else if range.start == fragment.end_offset() {
+        } else if range.start == fragment.range_in_insertion.end {
             (Some(fragment.clone()), None, None)
-        } else if range.start == fragment.start_offset() && range.end == fragment.end_offset() {
+        } else if range.start == fragment.range_in_insertion.start
+            && range.end == fragment.range_in_insertion.end
+        {
             (None, Some(fragment.clone()), None)
         } else {
             let mut prefix = fragment.clone();
 
-            let after_range = if range.end < fragment.end_offset() {
+            let after_range = if range.end < fragment.range_in_insertion.end {
                 let mut suffix = prefix.clone();
-                suffix.set_start_offset(range.end);
-                prefix.set_end_offset(range.end);
+                suffix.range_in_insertion.start = range.end;
+                prefix.range_in_insertion.end = range.end;
                 prefix.id = FragmentId::between(&prev_fragment.id, &suffix.id);
                 Some(suffix)
             } else {
@@ -1673,15 +1698,15 @@ impl Buffer {
 
             let within_range = if range.start != range.end {
                 let mut suffix = prefix.clone();
-                suffix.set_start_offset(range.start);
-                prefix.set_end_offset(range.start);
+                suffix.range_in_insertion.start = range.start;
+                prefix.range_in_insertion.end = range.start;
                 prefix.id = FragmentId::between(&prev_fragment.id, &suffix.id);
                 Some(suffix)
             } else {
                 None
             };
 
-            let before_range = if range.start > fragment.start_offset() {
+            let before_range = if range.start > fragment.range_in_insertion.start {
                 Some(prefix)
             } else {
                 None
@@ -1692,12 +1717,13 @@ impl Buffer {
                 .remove(&fragment.insertion.id)
                 .unwrap();
             let mut cursor = old_split_tree.cursor::<usize, ()>();
-            let mut new_split_tree = cursor.slice(&fragment.start_offset(), SeekBias::Right, &());
+            let mut new_split_tree =
+                cursor.slice(&fragment.range_in_insertion.start, SeekBias::Right, &());
 
             if let Some(ref fragment) = before_range {
                 new_split_tree.push(
                     InsertionSplit {
-                        extent: range.start - fragment.start_offset(),
+                        extent: range.start - fragment.range_in_insertion.start,
                         fragment_id: fragment.id.clone(),
                     },
                     &(),
@@ -1717,7 +1743,7 @@ impl Buffer {
             if let Some(ref fragment) = after_range {
                 new_split_tree.push(
                     InsertionSplit {
-                        extent: fragment.end_offset() - range.end,
+                        extent: fragment.range_in_insertion.end - range.end,
                         fragment_id: fragment.id.clone(),
                     },
                     &(),
@@ -1741,8 +1767,8 @@ impl Buffer {
         &mut self,
         prev_fragment: &Fragment,
         next_fragment: Option<&Fragment>,
-        text: Text,
-        local_timestamp: time::Local,
+        text: &str,
+        insertion_id: time::Local,
         lamport_timestamp: time::Lamport,
     ) -> Fragment {
         let new_fragment_id = FragmentId::between(
@@ -1752,25 +1778,27 @@ impl Buffer {
                 .unwrap_or(&FragmentId::max_value()),
         );
 
+        // TODO: extent could be expressed in bytes, which would save a linear scan.
+        let range_in_insertion = 0..text.chars().count();
         let mut split_tree = SumTree::new();
         split_tree.push(
             InsertionSplit {
-                extent: text.len(),
+                extent: range_in_insertion.len(),
                 fragment_id: new_fragment_id.clone(),
             },
             &(),
         );
-        self.insertion_splits.insert(local_timestamp, split_tree);
+        self.insertion_splits.insert(insertion_id, split_tree);
 
         Fragment::new(
             new_fragment_id,
-            Insertion {
-                id: local_timestamp,
+            Arc::new(Insertion {
+                id: insertion_id,
                 parent_id: prev_fragment.insertion.id,
-                offset_in_parent: prev_fragment.end_offset(),
-                text,
+                offset_in_parent: prev_fragment.range_in_insertion.end,
                 lamport_timestamp,
-            },
+            }),
+            range_in_insertion,
         )
     }
 
@@ -1811,7 +1839,7 @@ impl Buffer {
         cursor.seek(&offset, seek_bias, &());
         let fragment = cursor.item().unwrap();
         let offset_in_fragment = offset - cursor.start();
-        let offset_in_insertion = fragment.start_offset() + offset_in_fragment;
+        let offset_in_insertion = fragment.range_in_insertion.start + offset_in_fragment;
         let anchor = Anchor::Middle {
             insertion_id: fragment.insertion.id,
             offset: offset_in_insertion,
@@ -1852,7 +1880,7 @@ impl Buffer {
     fn summary_for_anchor(&self, anchor: &Anchor) -> Result<TextSummary> {
         match anchor {
             Anchor::Start => Ok(TextSummary::default()),
-            Anchor::End => Ok(self.fragments.summary().text_summary),
+            Anchor::End => Ok(self.text_summary()),
             Anchor::Middle {
                 insertion_id,
                 offset,
@@ -1873,37 +1901,29 @@ impl Buffer {
                     .item()
                     .ok_or_else(|| anyhow!("split offset is out of range"))?;
 
-                let mut fragments_cursor = self.fragments.cursor::<FragmentIdRef, TextSummary>();
+                let mut fragments_cursor = self
+                    .fragments
+                    .cursor::<FragmentIdRef, FragmentTextSummary>();
                 fragments_cursor.seek(&FragmentIdRef::new(&split.fragment_id), SeekBias::Left, &());
                 let fragment = fragments_cursor
                     .item()
                     .ok_or_else(|| anyhow!("fragment id does not exist"))?;
 
-                let mut summary = fragments_cursor.start().clone();
+                let mut ix = fragments_cursor.start().clone().visible;
                 if fragment.visible {
-                    summary += fragment
-                        .text
-                        .slice(..offset - fragment.start_offset())
-                        .summary();
+                    ix += offset - fragment.range_in_insertion.start;
                 }
-                Ok(summary)
+                Ok(self.text_summary_for_range(0..ix))
             }
         }
     }
 
-    #[allow(dead_code)]
     pub fn point_for_offset(&self, offset: usize) -> Result<Point> {
-        let mut fragments_cursor = self.fragments.cursor::<usize, TextSummary>();
-        fragments_cursor.seek(&offset, SeekBias::Left, &());
-        fragments_cursor
-            .item()
-            .ok_or_else(|| anyhow!("offset is out of range"))
-            .map(|fragment| {
-                let overshoot = fragment
-                    .point_for_offset(offset - &fragments_cursor.start().chars)
-                    .unwrap();
-                fragments_cursor.start().lines + &overshoot
-            })
+        if offset <= self.len() {
+            Ok(self.text_summary_for_range(0..offset).lines)
+        } else {
+            Err(anyhow!("offset out of bounds"))
+        }
     }
 }
 
@@ -1911,6 +1931,8 @@ impl Clone for Buffer {
     fn clone(&self) -> Self {
         Self {
             fragments: self.fragments.clone(),
+            visible_text: self.visible_text.clone(),
+            deleted_text: self.deleted_text.clone(),
             insertion_splits: self.insertion_splits.clone(),
             version: self.version.clone(),
             saved_version: self.saved_version.clone(),
@@ -1930,13 +1952,55 @@ impl Clone for Buffer {
     }
 }
 
-impl Snapshot {
-    pub fn fragments<'a>(&'a self) -> FragmentIter<'a> {
-        FragmentIter::new(&self.fragments)
+struct RopeBuilder<'a> {
+    old_visible_cursor: rope::Cursor<'a>,
+    old_deleted_cursor: rope::Cursor<'a>,
+    new_visible: Rope,
+    new_deleted: Rope,
+}
+
+impl<'a> RopeBuilder<'a> {
+    fn new(old_visible_cursor: rope::Cursor<'a>, old_deleted_cursor: rope::Cursor<'a>) -> Self {
+        Self {
+            old_visible_cursor,
+            old_deleted_cursor,
+            new_visible: Rope::new(),
+            new_deleted: Rope::new(),
+        }
     }
 
-    pub fn text_summary(&self) -> TextSummary {
-        self.fragments.summary().text_summary
+    fn push_tree(&mut self, len: FragmentTextSummary) {
+        self.push(len.visible, true, true);
+        self.push(len.deleted, false, false);
+    }
+
+    fn push_fragment(&mut self, fragment: &Fragment, was_visible: bool) {
+        self.push(fragment.len(), was_visible, fragment.visible)
+    }
+
+    fn push(&mut self, len: usize, was_visible: bool, is_visible: bool) {
+        let text = if was_visible {
+            self.old_visible_cursor
+                .slice(self.old_visible_cursor.offset() + len)
+        } else {
+            self.old_deleted_cursor
+                .slice(self.old_deleted_cursor.offset() + len)
+        };
+        if is_visible {
+            self.new_visible.append(text);
+        } else {
+            self.new_deleted.append(text);
+        }
+    }
+
+    fn push_str(&mut self, text: &str) {
+        self.new_visible.push(text);
+    }
+
+    fn finish(mut self) -> (Rope, Rope) {
+        self.new_visible.append(self.old_visible_cursor.suffix());
+        self.new_deleted.append(self.old_deleted_cursor.suffix());
+        (self.new_visible, self.new_deleted)
     }
 }
 
@@ -1951,81 +2015,6 @@ pub enum Event {
 
 impl Entity for Buffer {
     type Event = Event;
-}
-
-impl<'a> sum_tree::Dimension<'a, FragmentSummary> for Point {
-    fn add_summary(&mut self, summary: &FragmentSummary) {
-        *self += &summary.text_summary.lines;
-    }
-}
-
-impl<'a> CharIter<'a> {
-    fn new(fragments: &'a SumTree<Fragment>, offset: usize) -> Self {
-        let mut fragments_cursor = fragments.cursor::<usize, usize>();
-        fragments_cursor.seek(&offset, SeekBias::Right, &());
-        let fragment_chars = fragments_cursor.item().map_or("".chars(), |fragment| {
-            let offset_in_fragment = offset - fragments_cursor.start();
-            fragment.text[offset_in_fragment..].chars()
-        });
-        Self {
-            fragments_cursor,
-            fragment_chars,
-        }
-    }
-}
-
-impl<'a> Iterator for CharIter<'a> {
-    type Item = char;
-
-    fn next(&mut self) -> Option<Self::Item> {
-        if let Some(char) = self.fragment_chars.next() {
-            Some(char)
-        } else {
-            loop {
-                self.fragments_cursor.next();
-                if let Some(fragment) = self.fragments_cursor.item() {
-                    if fragment.visible {
-                        self.fragment_chars = fragment.text.as_str().chars();
-                        return self.fragment_chars.next();
-                    }
-                } else {
-                    return None;
-                }
-            }
-        }
-    }
-}
-
-impl<'a> FragmentIter<'a> {
-    fn new(fragments: &'a SumTree<Fragment>) -> Self {
-        let mut cursor = fragments.cursor::<usize, usize>();
-        cursor.seek(&0, SeekBias::Right, &());
-        Self {
-            cursor,
-            started: false,
-        }
-    }
-}
-
-impl<'a> Iterator for FragmentIter<'a> {
-    type Item = &'a str;
-
-    fn next(&mut self) -> Option<Self::Item> {
-        loop {
-            if self.started {
-                self.cursor.next();
-            } else {
-                self.started = true;
-            }
-            if let Some(fragment) = self.cursor.item() {
-                if fragment.visible {
-                    return Some(fragment.text.as_str());
-                }
-            } else {
-                return None;
-            }
-        }
-    }
 }
 
 impl<'a, F: Fn(&FragmentSummary) -> bool> Iterator for Edits<'a, F> {
@@ -2205,43 +2194,15 @@ impl<'a> sum_tree::Dimension<'a, FragmentSummary> for FragmentIdRef<'a> {
 }
 
 impl Fragment {
-    fn new(id: FragmentId, insertion: Insertion) -> Self {
+    fn new(id: FragmentId, insertion: Arc<Insertion>, range_in_insertion: Range<usize>) -> Self {
         Self {
             id,
-            text: insertion.text.clone(),
             insertion,
+            range_in_insertion,
             deletions: Default::default(),
             max_undos: Default::default(),
             visible: true,
         }
-    }
-
-    fn start_offset(&self) -> usize {
-        self.text.range().start
-    }
-
-    fn set_start_offset(&mut self, offset: usize) {
-        self.text = self.insertion.text.slice(offset..self.end_offset());
-    }
-
-    fn end_offset(&self) -> usize {
-        self.text.range().end
-    }
-
-    fn set_end_offset(&mut self, offset: usize) {
-        self.text = self.insertion.text.slice(self.start_offset()..offset);
-    }
-
-    fn visible_len(&self) -> usize {
-        if self.visible {
-            self.len()
-        } else {
-            0
-        }
-    }
-
-    fn len(&self) -> usize {
-        self.text.len()
     }
 
     fn is_visible(&self, undos: &UndoMap) -> bool {
@@ -2256,12 +2217,16 @@ impl Fragment {
                 .all(|d| !version.observed(*d) || undos.was_undone(*d, version))
     }
 
-    fn point_for_offset(&self, offset: usize) -> Result<Point> {
-        Ok(self.text.point_for_offset(offset))
+    fn len(&self) -> usize {
+        self.range_in_insertion.len()
     }
 
-    fn offset_for_point(&self, point: Point) -> Result<usize> {
-        Ok(self.text.offset_for_point(point))
+    fn visible_len(&self) -> usize {
+        if self.visible {
+            self.range_in_insertion.len()
+        } else {
+            0
+        }
     }
 }
 
@@ -2278,13 +2243,19 @@ impl sum_tree::Item for Fragment {
 
         if self.visible {
             FragmentSummary {
-                text_summary: self.text.summary(),
+                text: FragmentTextSummary {
+                    visible: self.len(),
+                    deleted: 0,
+                },
                 max_fragment_id: self.id.clone(),
                 max_version,
             }
         } else {
             FragmentSummary {
-                text_summary: TextSummary::default(),
+                text: FragmentTextSummary {
+                    visible: 0,
+                    deleted: self.len(),
+                },
                 max_fragment_id: self.id.clone(),
                 max_version,
             }
@@ -2295,8 +2266,9 @@ impl sum_tree::Item for Fragment {
 impl sum_tree::Summary for FragmentSummary {
     type Context = ();
 
-    fn add_summary(&mut self, other: &Self, _: &()) {
-        self.text_summary += &other.text_summary;
+    fn add_summary(&mut self, other: &Self, _: &Self::Context) {
+        self.text.visible += &other.text.visible;
+        self.text.deleted += &other.text.deleted;
         debug_assert!(self.max_fragment_id <= other.max_fragment_id);
         self.max_fragment_id = other.max_fragment_id.clone();
         self.max_version.observe_all(&other.max_version);
@@ -2306,45 +2278,16 @@ impl sum_tree::Summary for FragmentSummary {
 impl Default for FragmentSummary {
     fn default() -> Self {
         FragmentSummary {
-            text_summary: TextSummary::default(),
+            text: FragmentTextSummary::default(),
             max_fragment_id: FragmentId::min_value().clone(),
             max_version: time::Global::new(),
         }
     }
 }
 
-impl<'a> sum_tree::Dimension<'a, FragmentSummary> for TextSummary {
-    fn add_summary(&mut self, summary: &FragmentSummary) {
-        *self += &summary.text_summary;
-    }
-}
-
-impl<'a> AddAssign<&'a FragmentExtent> for FragmentExtent {
-    fn add_assign(&mut self, other: &Self) {
-        self.chars += other.chars;
-        self.lines += &other.lines;
-    }
-}
-
-impl Default for FragmentExtent {
-    fn default() -> Self {
-        FragmentExtent {
-            lines: Point::zero(),
-            chars: 0,
-        }
-    }
-}
-
-impl<'a> sum_tree::Dimension<'a, FragmentSummary> for FragmentExtent {
-    fn add_summary(&mut self, summary: &FragmentSummary) {
-        self.chars += summary.text_summary.chars;
-        self.lines += &summary.text_summary.lines;
-    }
-}
-
 impl<'a> sum_tree::Dimension<'a, FragmentSummary> for usize {
     fn add_summary(&mut self, summary: &FragmentSummary) {
-        *self += summary.text_summary.chars;
+        *self += summary.text.visible;
     }
 }
 
@@ -2417,17 +2360,7 @@ pub trait ToOffset {
 
 impl ToOffset for Point {
     fn to_offset(&self, buffer: &Buffer) -> Result<usize> {
-        let mut fragments_cursor = buffer.fragments.cursor::<Point, TextSummary>();
-        fragments_cursor.seek(self, SeekBias::Left, &());
-        fragments_cursor
-            .item()
-            .ok_or_else(|| anyhow!("point is out of range"))
-            .map(|fragment| {
-                let overshoot = fragment
-                    .offset_for_point(*self - fragments_cursor.start().lines)
-                    .unwrap();
-                fragments_cursor.start().chars + overshoot
-            })
+        buffer.visible_text.to_offset(*self)
     }
 }
 
@@ -2461,17 +2394,7 @@ impl ToPoint for Anchor {
 
 impl ToPoint for usize {
     fn to_point(&self, buffer: &Buffer) -> Result<Point> {
-        let mut fragments_cursor = buffer.fragments.cursor::<usize, TextSummary>();
-        fragments_cursor.seek(&self, SeekBias::Left, &());
-        fragments_cursor
-            .item()
-            .ok_or_else(|| anyhow!("offset is out of range"))
-            .map(|fragment| {
-                let overshoot = fragment
-                    .point_for_offset(*self - &fragments_cursor.start().chars)
-                    .unwrap();
-                fragments_cursor.start().lines + overshoot
-            })
+        buffer.visible_text.to_point(*self)
     }
 }
 
@@ -2704,26 +2627,55 @@ mod tests {
     fn test_text_summary_for_range(ctx: &mut gpui::MutableAppContext) {
         ctx.add_model(|ctx| {
             let buffer = Buffer::new(0, "ab\nefg\nhklm\nnopqrs\ntuvwxyz", ctx);
-            let text = Text::from(buffer.text());
             assert_eq!(
                 buffer.text_summary_for_range(1..3),
-                text.slice(1..3).summary()
+                TextSummary {
+                    chars: 2,
+                    bytes: 2,
+                    lines: Point::new(1, 0),
+                    first_line_len: 1,
+                    rightmost_point: Point::new(0, 1),
+                }
             );
             assert_eq!(
                 buffer.text_summary_for_range(1..12),
-                text.slice(1..12).summary()
+                TextSummary {
+                    chars: 11,
+                    bytes: 11,
+                    lines: Point::new(3, 0),
+                    first_line_len: 1,
+                    rightmost_point: Point::new(2, 4),
+                }
             );
             assert_eq!(
                 buffer.text_summary_for_range(0..20),
-                text.slice(0..20).summary()
+                TextSummary {
+                    chars: 20,
+                    bytes: 20,
+                    lines: Point::new(4, 1),
+                    first_line_len: 2,
+                    rightmost_point: Point::new(3, 6),
+                }
             );
             assert_eq!(
                 buffer.text_summary_for_range(0..22),
-                text.slice(0..22).summary()
+                TextSummary {
+                    chars: 22,
+                    bytes: 22,
+                    lines: Point::new(4, 3),
+                    first_line_len: 2,
+                    rightmost_point: Point::new(3, 6),
+                }
             );
             assert_eq!(
                 buffer.text_summary_for_range(7..22),
-                text.slice(7..22).summary()
+                TextSummary {
+                    chars: 15,
+                    bytes: 15,
+                    lines: Point::new(2, 3),
+                    first_line_len: 4,
+                    rightmost_point: Point::new(1, 6),
+                }
             );
             buffer
         });
@@ -2732,132 +2684,38 @@ mod tests {
     #[gpui::test]
     fn test_chars_at(ctx: &mut gpui::MutableAppContext) {
         ctx.add_model(|ctx| {
-                let mut buffer = Buffer::new(0, "", ctx);
-                buffer.edit(vec![0..0], "abcd\nefgh\nij", None).unwrap();
-                buffer.edit(vec![12..12], "kl\nmno", None).unwrap();
-                buffer.edit(vec![18..18], "\npqrs", None).unwrap();
-                buffer.edit(vec![18..21], "\nPQ", None).unwrap();
+            let mut buffer = Buffer::new(0, "", ctx);
+            buffer.edit(vec![0..0], "abcd\nefgh\nij", None).unwrap();
+            buffer.edit(vec![12..12], "kl\nmno", None).unwrap();
+            buffer.edit(vec![18..18], "\npqrs", None).unwrap();
+            buffer.edit(vec![18..21], "\nPQ", None).unwrap();
 
-                let chars = buffer.chars_at(Point::new(0, 0)).unwrap();
-                assert_eq!(chars.collect::<String>(), "abcd\nefgh\nijkl\nmno\nPQrs");
+            let chars = buffer.chars_at(Point::new(0, 0)).unwrap();
+            assert_eq!(chars.collect::<String>(), "abcd\nefgh\nijkl\nmno\nPQrs");
 
-                let chars = buffer.chars_at(Point::new(1, 0)).unwrap();
-                assert_eq!(chars.collect::<String>(), "efgh\nijkl\nmno\nPQrs");
+            let chars = buffer.chars_at(Point::new(1, 0)).unwrap();
+            assert_eq!(chars.collect::<String>(), "efgh\nijkl\nmno\nPQrs");
 
-                let chars = buffer.chars_at(Point::new(2, 0)).unwrap();
-                assert_eq!(chars.collect::<String>(), "ijkl\nmno\nPQrs");
+            let chars = buffer.chars_at(Point::new(2, 0)).unwrap();
+            assert_eq!(chars.collect::<String>(), "ijkl\nmno\nPQrs");
 
-                let chars = buffer.chars_at(Point::new(3, 0)).unwrap();
-                assert_eq!(chars.collect::<String>(), "mno\nPQrs");
+            let chars = buffer.chars_at(Point::new(3, 0)).unwrap();
+            assert_eq!(chars.collect::<String>(), "mno\nPQrs");
 
-                let chars = buffer.chars_at(Point::new(4, 0)).unwrap();
-                assert_eq!(chars.collect::<String>(), "PQrs");
+            let chars = buffer.chars_at(Point::new(4, 0)).unwrap();
+            assert_eq!(chars.collect::<String>(), "PQrs");
 
-                // Regression test:
-                let mut buffer = Buffer::new(0, "", ctx);
-                buffer.edit(vec![0..0], "[workspace]\nmembers = [\n    \"xray_core\",\n    \"xray_server\",\n    \"xray_cli\",\n    \"xray_wasm\",\n]\n", None).unwrap();
-                buffer.edit(vec![60..60], "\n", None).unwrap();
+            // Regression test:
+            let mut buffer = Buffer::new(0, "", ctx);
+            buffer.edit(vec![0..0], "[workspace]\nmembers = [\n    \"xray_core\",\n    \"xray_server\",\n    \"xray_cli\",\n    \"xray_wasm\",\n]\n", None).unwrap();
+            buffer.edit(vec![60..60], "\n", None).unwrap();
 
-                let chars = buffer.chars_at(Point::new(6, 0)).unwrap();
-                assert_eq!(chars.collect::<String>(), "    \"xray_wasm\",\n]\n");
+            let chars = buffer.chars_at(Point::new(6, 0)).unwrap();
+            assert_eq!(chars.collect::<String>(), "    \"xray_wasm\",\n]\n");
 
-                buffer
-            });
+            buffer
+        });
     }
-
-    // #[test]
-    // fn test_point_for_offset() -> Result<()> {
-    //     let text = Text::from("abc\ndefgh\nijklm\nopq");
-    //     assert_eq!(text.point_for_offset(0)?, Point { row: 0, column: 0 });
-    //     assert_eq!(text.point_for_offset(1)?, Point { row: 0, column: 1 });
-    //     assert_eq!(text.point_for_offset(2)?, Point { row: 0, column: 2 });
-    //     assert_eq!(text.point_for_offset(3)?, Point { row: 0, column: 3 });
-    //     assert_eq!(text.point_for_offset(4)?, Point { row: 1, column: 0 });
-    //     assert_eq!(text.point_for_offset(5)?, Point { row: 1, column: 1 });
-    //     assert_eq!(text.point_for_offset(9)?, Point { row: 1, column: 5 });
-    //     assert_eq!(text.point_for_offset(10)?, Point { row: 2, column: 0 });
-    //     assert_eq!(text.point_for_offset(14)?, Point { row: 2, column: 4 });
-    //     assert_eq!(text.point_for_offset(15)?, Point { row: 2, column: 5 });
-    //     assert_eq!(text.point_for_offset(16)?, Point { row: 3, column: 0 });
-    //     assert_eq!(text.point_for_offset(17)?, Point { row: 3, column: 1 });
-    //     assert_eq!(text.point_for_offset(19)?, Point { row: 3, column: 3 });
-    //     assert!(text.point_for_offset(20).is_err());
-    //
-    //     let text = Text::from("abc");
-    //     assert_eq!(text.point_for_offset(0)?, Point { row: 0, column: 0 });
-    //     assert_eq!(text.point_for_offset(1)?, Point { row: 0, column: 1 });
-    //     assert_eq!(text.point_for_offset(2)?, Point { row: 0, column: 2 });
-    //     assert_eq!(text.point_for_offset(3)?, Point { row: 0, column: 3 });
-    //     assert!(text.point_for_offset(4).is_err());
-    //     Ok(())
-    // }
-
-    // #[test]
-    // fn test_offset_for_point() -> Result<()> {
-    //     let text = Text::from("abc\ndefgh");
-    //     assert_eq!(text.offset_for_point(Point { row: 0, column: 0 })?, 0);
-    //     assert_eq!(text.offset_for_point(Point { row: 0, column: 1 })?, 1);
-    //     assert_eq!(text.offset_for_point(Point { row: 0, column: 2 })?, 2);
-    //     assert_eq!(text.offset_for_point(Point { row: 0, column: 3 })?, 3);
-    //     assert!(text.offset_for_point(Point { row: 0, column: 4 }).is_err());
-    //     assert_eq!(text.offset_for_point(Point { row: 1, column: 0 })?, 4);
-    //     assert_eq!(text.offset_for_point(Point { row: 1, column: 1 })?, 5);
-    //     assert_eq!(text.offset_for_point(Point { row: 1, column: 5 })?, 9);
-    //     assert!(text.offset_for_point(Point { row: 1, column: 6 }).is_err());
-    //
-    //     let text = Text::from("abc");
-    //     assert_eq!(text.offset_for_point(Point { row: 0, column: 0 })?, 0);
-    //     assert_eq!(text.offset_for_point(Point { row: 0, column: 1 })?, 1);
-    //     assert_eq!(text.offset_for_point(Point { row: 0, column: 2 })?, 2);
-    //     assert_eq!(text.offset_for_point(Point { row: 0, column: 3 })?, 3);
-    //     assert!(text.offset_for_point(Point { row: 0, column: 4 }).is_err());
-    //     Ok(())
-    // }
-
-    // #[test]
-    // fn test_longest_row_in_range() -> Result<()> {
-    //     for seed in 0..100 {
-    //         println!("{:?}", seed);
-    //         let mut rng = &mut StdRng::seed_from_u64(seed);
-    //         let string_len = rng.gen_range(1, 10);
-    //         let string = RandomCharIter(&mut rng)
-    //             .take(string_len)
-    //             .collect::<String>();
-    //         let text = Text::from(string.as_ref());
-    //
-    //         for _i in 0..10 {
-    //             let end = rng.gen_range(1, string.len() + 1);
-    //             let start = rng.gen_range(0, end);
-    //
-    //             let mut cur_row = string[0..start].chars().filter(|c| *c == '\n').count() as u32;
-    //             let mut cur_row_len = 0;
-    //             let mut expected_longest_row = cur_row;
-    //             let mut expected_longest_row_len = cur_row_len;
-    //             for ch in string[start..end].chars() {
-    //                 if ch == '\n' {
-    //                     if cur_row_len > expected_longest_row_len {
-    //                         expected_longest_row = cur_row;
-    //                         expected_longest_row_len = cur_row_len;
-    //                     }
-    //                     cur_row += 1;
-    //                     cur_row_len = 0;
-    //                 } else {
-    //                     cur_row_len += 1;
-    //                 }
-    //             }
-    //             if cur_row_len > expected_longest_row_len {
-    //                 expected_longest_row = cur_row;
-    //                 expected_longest_row_len = cur_row_len;
-    //             }
-    //
-    //             assert_eq!(
-    //                 text.longest_row_in_range(start..end)?,
-    //                 (expected_longest_row, expected_longest_row_len)
-    //             );
-    //         }
-    //     }
-    //     Ok(())
-    // }
 
     #[test]
     fn test_fragment_ids() {

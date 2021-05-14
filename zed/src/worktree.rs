@@ -3,7 +3,7 @@ mod fuzzy;
 mod ignore;
 
 use crate::{
-    editor::{History, Snapshot as BufferSnapshot},
+    editor::{History, Rope},
     sum_tree::{self, Cursor, Edit, SeekBias, SumTree},
 };
 use ::ignore::gitignore::Gitignore;
@@ -198,20 +198,15 @@ impl Worktree {
         })
     }
 
-    pub fn save<'a>(
-        &self,
-        path: &Path,
-        content: BufferSnapshot,
-        ctx: &AppContext,
-    ) -> Task<Result<()>> {
+    pub fn save<'a>(&self, path: &Path, content: Rope, ctx: &AppContext) -> Task<Result<()>> {
         let handles = self.handles.clone();
         let path = path.to_path_buf();
         let abs_path = self.absolutize(&path);
         ctx.background_executor().spawn(async move {
-            let buffer_size = content.text_summary().bytes.min(10 * 1024);
+            let buffer_size = content.summary().bytes.min(10 * 1024);
             let file = fs::File::create(&abs_path)?;
             let mut writer = io::BufWriter::with_capacity(buffer_size, &file);
-            for chunk in content.fragments() {
+            for chunk in content.chunks() {
                 writer.write(chunk.as_bytes())?;
             }
             writer.flush()?;
@@ -459,7 +454,7 @@ impl FileHandle {
         self.worktree.read(ctx).load_history(&self.path(), ctx)
     }
 
-    pub fn save<'a>(&self, content: BufferSnapshot, ctx: &AppContext) -> Task<Result<()>> {
+    pub fn save<'a>(&self, content: Rope, ctx: &AppContext) -> Task<Result<()>> {
         let worktree = self.worktree.read(ctx);
         worktree.save(&self.path(), content, ctx)
     }
