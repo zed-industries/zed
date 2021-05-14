@@ -101,15 +101,11 @@ impl<T: Item> SumTree<T> {
         self.rightmost_leaf().0.items().last()
     }
 
-    pub fn with_last_mut(
-        &mut self,
-        f: impl FnOnce(&mut T),
-        ctx: &<T::Summary as Summary>::Context,
-    ) {
-        self.with_last_mut_recursive(f, ctx);
+    pub fn update_last(&mut self, f: impl FnOnce(&mut T), ctx: &<T::Summary as Summary>::Context) {
+        self.update_last_recursive(f, ctx);
     }
 
-    fn with_last_mut_recursive(
+    fn update_last_recursive(
         &mut self,
         f: impl FnOnce(&mut T),
         ctx: &<T::Summary as Summary>::Context,
@@ -123,7 +119,7 @@ impl<T: Item> SumTree<T> {
             } => {
                 let last_summary = child_summaries.last_mut().unwrap();
                 let last_child = child_trees.last_mut().unwrap();
-                *last_summary = last_child.with_last_mut_recursive(f, ctx).unwrap();
+                *last_summary = last_child.update_last_recursive(f, ctx).unwrap();
                 *summary = sum(child_summaries.iter(), ctx);
                 Some(summary.clone())
             }

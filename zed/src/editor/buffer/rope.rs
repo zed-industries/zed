@@ -34,30 +34,30 @@ impl Rope {
     }
 
     pub fn push(&mut self, text: &str) {
-        let mut chunks = SmallVec::<[_; 16]>::new();
-        let mut chunk = ArrayString::new();
+        let mut new_chunks = SmallVec::<[_; 16]>::new();
+        let mut new_chunk = ArrayString::new();
         for ch in text.chars() {
-            if chunk.len() + ch.len_utf8() > 2 * CHUNK_BASE {
-                chunks.push(Chunk(chunk));
-                chunk = ArrayString::new();
+            if new_chunk.len() + ch.len_utf8() > 2 * CHUNK_BASE {
+                new_chunks.push(Chunk(new_chunk));
+                new_chunk = ArrayString::new();
             }
-            chunk.push(ch);
+            new_chunk.push(ch);
         }
-        if !chunk.is_empty() {
-            chunks.push(Chunk(chunk));
+        if !new_chunk.is_empty() {
+            new_chunks.push(Chunk(new_chunk));
         }
 
-        let mut chunks = chunks.into_iter();
-        let mut first_chunk = chunks.next();
-        self.chunks.with_last_mut(
+        let mut new_chunks = new_chunks.into_iter();
+        let mut first_new_chunk = new_chunks.next();
+        self.chunks.update_last(
             |last_chunk| {
-                if let Some(chunk) = first_chunk.as_mut() {
-                    if last_chunk.0.len() + chunk.0.len() <= 2 * CHUNK_BASE {
-                        last_chunk.0.push_str(&first_chunk.take().unwrap().0);
+                if let Some(first_new_chunk_ref) = first_new_chunk.as_mut() {
+                    if last_chunk.0.len() + first_new_chunk_ref.0.len() <= 2 * CHUNK_BASE {
+                        last_chunk.0.push_str(&first_new_chunk.take().unwrap().0);
                     } else {
                         let mut text = ArrayString::<[_; 4 * CHUNK_BASE]>::new();
                         text.push_str(&last_chunk.0);
-                        text.push_str(&chunk.0);
+                        text.push_str(&first_new_chunk_ref.0);
 
                         let mut midpoint = text.len() / 2;
                         while !text.is_char_boundary(midpoint) {
@@ -66,8 +66,8 @@ impl Rope {
                         let (left, right) = text.split_at(midpoint);
                         last_chunk.0.clear();
                         last_chunk.0.push_str(left);
-                        chunk.0.clear();
-                        chunk.0.push_str(right);
+                        first_new_chunk_ref.0.clear();
+                        first_new_chunk_ref.0.push_str(right);
                     }
                 }
             },
@@ -75,7 +75,7 @@ impl Rope {
         );
 
         self.chunks
-            .extend(first_chunk.into_iter().chain(chunks), &());
+            .extend(first_new_chunk.into_iter().chain(new_chunks), &());
         self.check_invariants();
     }
 
