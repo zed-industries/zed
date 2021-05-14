@@ -1,5 +1,6 @@
 use super::Point;
 use crate::sum_tree::{self, SeekBias, SumTree};
+use anyhow::{anyhow, Result};
 use arrayvec::ArrayString;
 use std::{cmp, ops::Range, str};
 
@@ -140,6 +141,28 @@ impl Rope {
         }
         text
     }
+
+    fn to_point(&self, offset: usize) -> Result<Point> {
+        if offset <= self.summary().chars {
+            let mut cursor = self.chunks.cursor::<usize, TextSummary>();
+            cursor.seek(&offset, SeekBias::Left, &());
+            let overshoot = offset - cursor.start().chars;
+            Ok(cursor.start().lines + cursor.item().unwrap().to_point(overshoot))
+        } else {
+            Err(anyhow!("offset out of bounds"))
+        }
+    }
+
+    fn to_offset(&self, point: Point) -> Result<usize> {
+        if point <= self.summary().lines {
+            let mut cursor = self.chunks.cursor::<Point, TextSummary>();
+            cursor.seek(&point, SeekBias::Left, &());
+            let overshoot = point - cursor.start().lines;
+            Ok(cursor.start().chars + cursor.item().unwrap().to_offset(overshoot))
+        } else {
+            Err(anyhow!("offset out of bounds"))
+        }
+    }
 }
 
 impl<'a> From<&'a str> for Rope {
@@ -152,6 +175,46 @@ impl<'a> From<&'a str> for Rope {
 
 #[derive(Clone, Debug, Default)]
 struct Chunk(ArrayString<[u8; 2 * CHUNK_BASE]>);
+
+impl Chunk {
+    fn to_point(&self, target: usize) -> Point {
+        let mut offset = 0;
+        let mut point = Point::new(0, 0);
+        for ch in self.0.chars() {
+            if offset >= target {
+                break;
+            }
+
+            if ch == '\n' {
+                point.row += 1;
+                point.column = 0;
+            } else {
+                point.column += 1;
+            }
+            offset += 1;
+        }
+        point
+    }
+
+    fn to_offset(&self, target: Point) -> usize {
+        let mut offset = 0;
+        let mut point = Point::new(0, 0);
+        for ch in self.0.chars() {
+            if point >= target {
+                break;
+            }
+
+            if ch == '\n' {
+                point.row += 1;
+                point.column = 0;
+            } else {
+                point.column += 1;
+            }
+            offset += 1;
+        }
+        offset
+    }
+}
 
 impl sum_tree::Item for Chunk {
     type Summary = TextSummary;
@@ -232,9 +295,21 @@ impl std::ops::AddAssign<Self> for TextSummary {
     }
 }
 
+impl<'a> sum_tree::Dimension<'a, TextSummary> for TextSummary {
+    fn add_summary(&mut self, summary: &'a TextSummary) {
+        *self += summary;
+    }
+}
+
 impl<'a> sum_tree::Dimension<'a, TextSummary> for usize {
     fn add_summary(&mut self, summary: &'a TextSummary) {
         *self += summary.chars;
+    }
+}
+
+impl<'a> sum_tree::Dimension<'a, TextSummary> for Point {
+    fn add_summary(&mut self, summary: &'a TextSummary) {
+        *self += &summary.lines;
     }
 }
 
@@ -247,8 +322,14 @@ impl<'a> Chars<'a> {
     pub fn new(rope: &'a Rope, start: usize) -> Self {
         let mut cursor = rope.chunks.cursor::<usize, usize>();
         cursor.slice(&start, SeekBias::Left, &());
-        let chunk = cursor.item().expect("invalid index");
-        let chars = chunk.0[start - cursor.start()..].chars();
+        let chars = if let Some(chunk) = cursor.item() {
+            let ix = start - cursor.start();
+            cursor.next();
+            chunk.0[ix..].chars()
+        } else {
+            "".chars()
+        };
+
         Self { cursor, chars }
     }
 }
@@ -316,6 +397,25 @@ mod tests {
                 expected = new_expected;
 
                 assert_eq!(actual.text(), expected);
+
+                for _ in 0..5 {
+                    let ix = rng.gen_range(0..=expected.len());
+                    assert_eq!(actual.chars_at(ix).collect::<String>(), expected[ix..]);
+                }
+
+                let mut point = Point::new(0, 0);
+                let mut offset = 0;
+                for ch in expected.chars() {
+                    assert_eq!(actual.to_point(offset).unwrap(), point);
+                    assert_eq!(actual.to_offset(point).unwrap(), offset);
+                    if ch == '\n' {
+                        point.row += 1;
+                        point.column = 0
+                    } else {
+                        point.column += 1;
+                    }
+                    offset += 1;
+                }
             }
         }
     }
