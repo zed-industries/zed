@@ -100,6 +100,14 @@ impl Rope {
         self.chunks.summary()
     }
 
+    pub fn len(&self) -> usize {
+        self.chunks.extent()
+    }
+
+    pub fn max_point(&self) -> Point {
+        self.chunks.extent()
+    }
+
     pub fn cursor(&self, offset: usize) -> Cursor {
         Cursor::new(self, offset)
     }
@@ -116,15 +124,7 @@ impl Rope {
         self.chunks.cursor::<(), ()>().map(|c| c.0.as_str())
     }
 
-    fn text(&self) -> String {
-        let mut text = String::new();
-        for chunk in self.chunks.cursor::<(), ()>() {
-            text.push_str(&chunk.0);
-        }
-        text
-    }
-
-    fn to_point(&self, offset: usize) -> Result<Point> {
+    pub fn to_point(&self, offset: usize) -> Result<Point> {
         if offset <= self.summary().chars {
             let mut cursor = self.chunks.cursor::<usize, TextSummary>();
             cursor.seek(&offset, SeekBias::Left, &());
@@ -135,7 +135,8 @@ impl Rope {
         }
     }
 
-    fn to_offset(&self, point: Point) -> Result<usize> {
+    pub fn to_offset(&self, point: Point) -> Result<usize> {
+        // TODO: Verify the point actually exists.
         if point <= self.summary().lines {
             let mut cursor = self.chunks.cursor::<Point, TextSummary>();
             cursor.seek(&point, SeekBias::Left, &());
@@ -162,7 +163,7 @@ pub struct Cursor<'a> {
 }
 
 impl<'a> Cursor<'a> {
-    fn new(rope: &'a Rope, offset: usize) -> Self {
+    pub fn new(rope: &'a Rope, offset: usize) -> Self {
         let mut chunks = rope.chunks.cursor();
         chunks.seek(&offset, SeekBias::Right, &());
         Self {
@@ -172,14 +173,14 @@ impl<'a> Cursor<'a> {
         }
     }
 
-    fn seek_forward(&mut self, end_offset: usize) {
+    pub fn seek_forward(&mut self, end_offset: usize) {
         debug_assert!(end_offset >= self.offset);
 
         self.chunks.seek_forward(&end_offset, SeekBias::Right, &());
         self.offset = end_offset;
     }
 
-    fn slice(&mut self, end_offset: usize) -> Rope {
+    pub fn slice(&mut self, end_offset: usize) -> Rope {
         debug_assert!(end_offset >= self.offset);
 
         let mut slice = Rope::new();
@@ -203,7 +204,7 @@ impl<'a> Cursor<'a> {
         slice
     }
 
-    fn suffix(mut self) -> Rope {
+    pub fn suffix(mut self) -> Rope {
         self.slice(self.rope.chunks.extent())
     }
 }
@@ -454,6 +455,16 @@ mod tests {
                     offset += 1;
                 }
             }
+        }
+    }
+
+    impl Rope {
+        fn text(&self) -> String {
+            let mut text = String::new();
+            for chunk in self.chunks.cursor::<(), ()>() {
+                text.push_str(&chunk.0);
+            }
+            text
         }
     }
 }

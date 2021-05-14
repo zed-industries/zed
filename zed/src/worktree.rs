@@ -3,7 +3,7 @@ mod fuzzy;
 mod ignore;
 
 use crate::{
-    editor::History,
+    editor::{History, Rope},
     sum_tree::{self, Cursor, Edit, SeekBias, SumTree},
 };
 use ::ignore::gitignore::Gitignore;
@@ -16,7 +16,6 @@ use postage::{
     prelude::{Sink, Stream},
     watch,
 };
-use ropey::Rope;
 use smol::channel::Sender;
 use std::{
     cmp,
@@ -204,7 +203,7 @@ impl Worktree {
         let path = path.to_path_buf();
         let abs_path = self.absolutize(&path);
         ctx.background_executor().spawn(async move {
-            let buffer_size = content.len_bytes().min(10 * 1024);
+            let buffer_size = content.summary().bytes.min(10 * 1024);
             let file = fs::File::create(&abs_path)?;
             let mut writer = io::BufWriter::with_capacity(buffer_size, &file);
             for chunk in content.chunks() {

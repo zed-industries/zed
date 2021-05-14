@@ -3,6 +3,7 @@ use super::{
     Anchor, Buffer, DisplayPoint, Edit, Point, ToOffset,
 };
 use crate::{
+    editor::rope,
     sum_tree::{self, Cursor, FilterCursor, SeekBias, SumTree},
     time,
 };
@@ -607,7 +608,7 @@ pub struct Chars<'a> {
     cursor: Cursor<'a, Transform, DisplayOffset, TransformSummary>,
     offset: usize,
     buffer: &'a Buffer,
-    buffer_chars: Option<Take<ropey::iter::Chars<'a>>>,
+    buffer_chars: Option<Take<rope::Chars<'a>>>,
 }
 
 impl<'a> Iterator for Chars<'a> {
