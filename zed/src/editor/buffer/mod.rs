@@ -1252,7 +1252,6 @@ impl Buffer {
             new_fragments =
                 fragments_cursor.slice(&FragmentIdRef::new(first_split_id), SeekBias::Left, &());
             new_ropes.keep(new_fragments.summary().text);
-            assert_eq!(new_ropes.summary(), new_fragments.summary().text);
 
             loop {
                 let mut fragment = fragments_cursor.item().unwrap().clone();
@@ -1269,7 +1268,6 @@ impl Buffer {
                 }
 
                 new_fragments.push(fragment.clone(), &());
-                assert_eq!(new_ropes.summary(), new_fragments.summary().text,);
 
                 fragments_cursor.next();
                 if let Some(split_id) = insertion_splits.next() {
@@ -1288,7 +1286,6 @@ impl Buffer {
                 &(),
             );
             new_ropes.keep(new_fragments.summary().text);
-            assert_eq!(new_ropes.summary(), new_fragments.summary().text);
 
             while let Some(fragment) = fragments_cursor.item() {
                 if fragment.id > end_fragment_id {
@@ -1314,8 +1311,6 @@ impl Buffer {
                     }
 
                     new_fragments.push(fragment, &());
-                    assert_eq!(new_ropes.summary(), new_fragments.summary().text);
-
                     fragments_cursor.next();
                 }
             }
@@ -1422,7 +1417,6 @@ impl Buffer {
         let mut new_ropes =
             RopeBuilder::new(old_visible_text.cursor(0), old_deleted_text.cursor(0));
         new_ropes.keep(new_fragments.summary().text);
-        assert_eq!(new_ropes.summary(), new_fragments.summary().text);
 
         let mut start_id = None;
         let mut start_offset = None;
@@ -1463,8 +1457,6 @@ impl Buffer {
 
                     new_ropes.keep(prefix.summary().text);
                     new_fragments.push(prefix.clone(), &());
-                    assert_eq!(new_ropes.summary(), new_fragments.summary().text);
-
                     new_split_tree.push(
                         InsertionSplit {
                             extent: prefix.range_in_insertion.end - prefix.range_in_insertion.start,
@@ -1498,7 +1490,6 @@ impl Buffer {
 
                         new_ropes.insert(&new_text);
                         new_fragments.push(new_fragment, &());
-                        assert_eq!(new_ropes.summary(), new_fragments.summary().text);
                     }
                 }
 
@@ -1519,8 +1510,6 @@ impl Buffer {
                         }
                         fragment.range_in_insertion.start = prefix.range_in_insertion.end;
                         new_fragments.push(prefix.clone(), &());
-                        assert_eq!(new_ropes.summary(), new_fragments.summary().text);
-
                         new_split_tree.push(
                             InsertionSplit {
                                 extent: prefix.range_in_insertion.end
@@ -1593,7 +1582,6 @@ impl Buffer {
                 new_ropes.keep(fragment.summary().text);
             }
             new_fragments.push(fragment, &());
-            assert_eq!(new_ropes.summary(), new_fragments.summary().text);
 
             // Scan forward until we find a fragment that is not fully contained by the current splice.
             fragments_cursor.next();
