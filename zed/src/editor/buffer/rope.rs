@@ -544,7 +544,7 @@ mod tests {
                     let byte_range = byte_range_for_char_range(&expected, start_ix..end_ix);
                     assert_eq!(
                         actual.cursor(start_ix).summary(end_ix),
-                        TextSummary::from(&expected[byte_range.start..byte_range.end])
+                        TextSummary::from(&expected[byte_range])
                     );
                 }
             }
