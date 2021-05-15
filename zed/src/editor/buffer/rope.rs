@@ -4,7 +4,7 @@ use crate::util::byte_range_for_char_range;
 use anyhow::{anyhow, Result};
 use arrayvec::ArrayString;
 use smallvec::SmallVec;
-use std::{cmp, iter::Skip, ops::Range, str};
+use std::{cmp, iter::Skip, str};
 
 #[cfg(test)]
 const CHUNK_BASE: usize = 6;
@@ -87,10 +87,6 @@ impl Rope {
                 }
             }
         }
-    }
-
-    pub fn slice(&self, range: Range<usize>) -> Rope {
-        self.cursor(range.start).slice(range.end)
     }
 
     pub fn summary(&self) -> TextSummary {
@@ -207,6 +203,30 @@ impl<'a> Cursor<'a> {
         slice
     }
 
+    pub fn summary(&mut self, end_offset: usize) -> TextSummary {
+        debug_assert!(end_offset >= self.offset);
+
+        let mut summary = TextSummary::default();
+        if let Some(start_chunk) = self.chunks.item() {
+            let start_ix = self.offset - self.chunks.start();
+            let end_ix = cmp::min(end_offset, self.chunks.end()) - self.chunks.start();
+            let byte_range = byte_range_for_char_range(start_chunk.0, start_ix..end_ix);
+            summary = TextSummary::from(&start_chunk.0[byte_range]);
+        }
+
+        if end_offset > self.chunks.end() {
+            self.chunks.next();
+            summary += &self.chunks.summary(&end_offset, SeekBias::Right, &());
+            if let Some(end_chunk) = self.chunks.item() {
+                let end_ix = end_offset - self.chunks.start();
+                let byte_range = byte_range_for_char_range(end_chunk.0, 0..end_ix);
+                summary += TextSummary::from(&end_chunk.0[byte_range]);
+            }
+        }
+
+        summary
+    }
+
     pub fn suffix(mut self) -> Rope {
         self.slice(self.rope.chunks.extent())
     }
@@ -263,12 +283,27 @@ impl sum_tree::Item for Chunk {
     type Summary = TextSummary;
 
     fn summary(&self) -> Self::Summary {
+        TextSummary::from(self.0.as_str())
+    }
+}
+
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
+pub struct TextSummary {
+    pub chars: usize,
+    pub bytes: usize,
+    pub lines: Point,
+    pub first_line_len: u32,
+    pub rightmost_point: Point,
+}
+
+impl<'a> From<&'a str> for TextSummary {
+    fn from(text: &'a str) -> Self {
         let mut chars = 0;
         let mut bytes = 0;
         let mut lines = Point::new(0, 0);
         let mut first_line_len = 0;
         let mut rightmost_point = Point::new(0, 0);
-        for c in self.0.chars() {
+        for c in text.chars() {
             chars += 1;
             bytes += c.len_utf8();
             if c == '\n' {
@@ -293,15 +328,6 @@ impl sum_tree::Item for Chunk {
             rightmost_point,
         }
     }
-}
-
-#[derive(Clone, Debug, Default, Eq, PartialEq)]
-pub struct TextSummary {
-    pub chars: usize,
-    pub bytes: usize,
-    pub lines: Point,
-    pub first_line_len: u32,
-    pub rightmost_point: Point,
 }
 
 impl sum_tree::Summary for TextSummary {
@@ -364,7 +390,7 @@ pub struct Chars<'a> {
 impl<'a> Chars<'a> {
     pub fn new(rope: &'a Rope, start: usize) -> Self {
         let mut cursor = rope.chunks.cursor::<usize, usize>();
-        cursor.slice(&start, SeekBias::Left, &());
+        cursor.seek(&start, SeekBias::Left, &());
         let chars = if let Some(chunk) = cursor.item() {
             let ix = start - cursor.start();
             cursor.next();
@@ -472,7 +498,7 @@ mod tests {
                 log::info!("text: {:?}", expected);
 
                 for _ in 0..5 {
-                    let ix = rng.gen_range(0..=expected.len());
+                    let ix = rng.gen_range(0..=expected.chars().count());
                     assert_eq!(
                         actual.chars_at(ix).collect::<String>(),
                         expected.chars().skip(ix).collect::<String>()
@@ -491,6 +517,16 @@ mod tests {
                         point.column += 1;
                     }
                     offset += 1;
+                }
+
+                for _ in 0..5 {
+                    let end_ix = rng.gen_range(0..=expected.chars().count());
+                    let start_ix = rng.gen_range(0..=end_ix);
+                    let byte_range = byte_range_for_char_range(&expected, start_ix..end_ix);
+                    assert_eq!(
+                        actual.cursor(start_ix).summary(end_ix),
+                        TextSummary::from(&expected[byte_range.start..byte_range.end])
+                    );
                 }
             }
         }

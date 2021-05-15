@@ -600,8 +600,7 @@ impl Buffer {
     }
 
     pub fn text_summary_for_range(&self, range: Range<usize>) -> TextSummary {
-        // TODO: Use a dedicated ::summarize method in Rope.
-        self.visible_text.slice(range).summary()
+        self.visible_text.cursor(range.start).summary(range.end)
     }
 
     pub fn len(&self) -> usize {
