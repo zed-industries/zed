@@ -136,12 +136,14 @@ impl Rope {
     }
 
     pub fn to_offset(&self, point: Point) -> Result<usize> {
-        // TODO: Verify the point actually exists.
         if point <= self.summary().lines {
             let mut cursor = self.chunks.cursor::<Point, TextSummary>();
             cursor.seek(&point, SeekBias::Left, &());
             let overshoot = point - cursor.start().lines;
-            Ok(cursor.start().chars + cursor.item().map_or(0, |chunk| chunk.to_offset(overshoot)))
+            Ok(cursor.start().chars
+                + cursor
+                    .item()
+                    .map_or(Ok(0), |chunk| chunk.to_offset(overshoot))?)
         } else {
             Err(anyhow!("offset out of bounds"))
         }
@@ -263,7 +265,7 @@ impl Chunk {
         point
     }
 
-    fn to_offset(&self, target: Point) -> usize {
+    fn to_offset(&self, target: Point) -> Result<usize> {
         let mut offset = 0;
         let mut point = Point::new(0, 0);
         for ch in self.0.chars() {
@@ -279,7 +281,12 @@ impl Chunk {
             }
             offset += 1;
         }
-        offset
+
+        if point == target {
+            Ok(offset)
+        } else {
+            Err(anyhow!("point out of bounds"))
+        }
     }
 }
 
@@ -515,6 +522,10 @@ mod tests {
                     assert_eq!(actual.to_point(offset).unwrap(), point);
                     assert_eq!(actual.to_offset(point).unwrap(), offset);
                     if ch == '\n' {
+                        assert!(actual
+                            .to_offset(Point::new(point.row, point.column + 1))
+                            .is_err());
+
                         point.row += 1;
                         point.column = 0
                     } else {
@@ -522,6 +533,10 @@ mod tests {
                     }
                     offset += 1;
                 }
+                assert_eq!(actual.to_point(offset).unwrap(), point);
+                assert!(actual.to_point(offset + 1).is_err());
+                assert_eq!(actual.to_offset(point).unwrap(), offset);
+                assert!(actual.to_offset(Point::new(point.row + 1, 0)).is_err());
 
                 for _ in 0..5 {
                     let end_ix = rng.gen_range(0..=expected.chars().count());
