@@ -1,12 +1,13 @@
 use super::Point;
 use crate::sum_tree::{self, SeekBias, SumTree};
+use crate::util::byte_range_for_char_range;
 use anyhow::{anyhow, Result};
 use arrayvec::ArrayString;
 use smallvec::SmallVec;
-use std::{cmp, ops::Range, str};
+use std::{cmp, iter::Skip, ops::Range, str};
 
 #[cfg(test)]
-const CHUNK_BASE: usize = 2;
+const CHUNK_BASE: usize = 6;
 
 #[cfg(not(test))]
 const CHUNK_BASE: usize = 16;
@@ -55,10 +56,7 @@ impl Rope {
                     if last_chunk.0.len() + first_new_chunk_ref.0.len() <= 2 * CHUNK_BASE {
                         last_chunk.0.push_str(&first_new_chunk.take().unwrap().0);
                     } else {
-                        let mut text = ArrayString::<[_; 4 * CHUNK_BASE]>::new();
-                        text.push_str(&last_chunk.0);
-                        text.push_str(&first_new_chunk_ref.0);
-
+                        let text = [last_chunk.0, first_new_chunk_ref.0].concat();
                         let mut midpoint = text.len() / 2;
                         while !text.is_char_boundary(midpoint) {
                             midpoint += 1;
@@ -83,10 +81,11 @@ impl Rope {
         #[cfg(test)]
         {
             // Ensure all chunks except maybe the last one are not underflowing.
+            // Allow some wiggle room for multibyte characters at chunk boundaries.
             let mut chunks = self.chunks.cursor::<(), ()>().peekable();
             while let Some(chunk) = chunks.next() {
                 if chunks.peek().is_some() {
-                    assert!(chunk.0.len() >= CHUNK_BASE);
+                    assert!(chunk.0.len() + 3 >= CHUNK_BASE);
                 }
             }
         }
@@ -190,7 +189,8 @@ impl<'a> Cursor<'a> {
         if let Some(start_chunk) = self.chunks.item() {
             let start_ix = self.offset - self.chunks.start();
             let end_ix = cmp::min(end_offset, self.chunks.end()) - self.chunks.start();
-            slice.push(&start_chunk.0[start_ix..end_ix]);
+            let byte_range = byte_range_for_char_range(start_chunk.0, start_ix..end_ix);
+            slice.push(&start_chunk.0[byte_range]);
         }
 
         if end_offset > self.chunks.end() {
@@ -199,7 +199,9 @@ impl<'a> Cursor<'a> {
                 chunks: self.chunks.slice(&end_offset, SeekBias::Right, &()),
             });
             if let Some(end_chunk) = self.chunks.item() {
-                slice.push(&end_chunk.0[..end_offset - self.chunks.start()]);
+                let end_ix = end_offset - self.chunks.start();
+                let byte_range = byte_range_for_char_range(end_chunk.0, 0..end_ix);
+                slice.push(&end_chunk.0[byte_range]);
             }
         }
 
@@ -217,7 +219,7 @@ impl<'a> Cursor<'a> {
 }
 
 #[derive(Clone, Debug, Default)]
-struct Chunk(ArrayString<[u8; 2 * CHUNK_BASE]>);
+struct Chunk(ArrayString<[u8; 4 * CHUNK_BASE]>);
 
 impl Chunk {
     fn to_point(&self, target: usize) -> Point {
@@ -358,7 +360,7 @@ impl<'a> sum_tree::Dimension<'a, TextSummary> for Point {
 
 pub struct Chars<'a> {
     cursor: sum_tree::Cursor<'a, Chunk, usize, usize>,
-    chars: str::Chars<'a>,
+    chars: Skip<str::Chars<'a>>,
 }
 
 impl<'a> Chars<'a> {
@@ -368,9 +370,9 @@ impl<'a> Chars<'a> {
         let chars = if let Some(chunk) = cursor.item() {
             let ix = start - cursor.start();
             cursor.next();
-            chunk.0[ix..].chars()
+            chunk.0.chars().skip(ix)
         } else {
-            "".chars()
+            "".chars().skip(0)
         };
 
         Self { cursor, chars }
@@ -384,7 +386,7 @@ impl<'a> Iterator for Chars<'a> {
         if let Some(ch) = self.chars.next() {
             Some(ch)
         } else if let Some(chunk) = self.cursor.item() {
-            self.chars = chunk.0.chars();
+            self.chars = chunk.0.chars().skip(0);
             self.cursor.next();
             Some(self.chars.next().unwrap())
         } else {
@@ -422,9 +424,9 @@ mod tests {
             let mut expected = String::new();
             let mut actual = Rope::new();
             for _ in 0..operations {
-                let end_ix = rng.gen_range(0..=expected.len());
+                let end_ix = rng.gen_range(0..=expected.chars().count());
                 let start_ix = rng.gen_range(0..=end_ix);
-                let len = rng.gen_range(0..=20);
+                let len = rng.gen_range(0..=64);
                 let new_text: String = RandomCharIter::new(&mut rng).take(len).collect();
 
                 let mut new_actual = Rope::new();
@@ -436,16 +438,20 @@ mod tests {
                 actual = new_actual;
 
                 let mut new_expected = String::new();
-                new_expected.push_str(&expected[..start_ix]);
+                new_expected.extend(expected.chars().take(start_ix));
                 new_expected.push_str(&new_text);
-                new_expected.push_str(&expected[end_ix..]);
+                new_expected.extend(expected.chars().skip(end_ix));
                 expected = new_expected;
 
                 assert_eq!(actual.text(), expected);
+                log::info!("text: {:?}", expected);
 
                 for _ in 0..5 {
                     let ix = rng.gen_range(0..=expected.len());
-                    assert_eq!(actual.chars_at(ix).collect::<String>(), expected[ix..]);
+                    assert_eq!(
+                        actual.chars_at(ix).collect::<String>(),
+                        expected.chars().skip(ix).collect::<String>()
+                    );
                 }
 
                 let mut point = Point::new(0, 0);

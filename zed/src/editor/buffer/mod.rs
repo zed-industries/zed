@@ -2509,12 +2509,12 @@ mod tests {
                 for _i in 0..10 {
                     let (old_ranges, new_text, _) = buffer.randomly_mutate(rng, None);
                     for old_range in old_ranges.iter().rev() {
-                        reference_string = [
-                            &reference_string[0..old_range.start],
-                            new_text.as_str(),
-                            &reference_string[old_range.end..],
-                        ]
-                        .concat();
+                        reference_string = reference_string
+                            .chars()
+                            .take(old_range.start)
+                            .chain(new_text.chars())
+                            .chain(reference_string.chars().skip(old_range.end))
+                            .collect();
                     }
                     assert_eq!(buffer.text(), reference_string);
 
@@ -2549,7 +2549,12 @@ mod tests {
                         let range_sum = buffer.text_summary_for_range(start..end);
                         assert_eq!(range_sum.rightmost_point.column, *longest_column);
                         assert!(longest_rows.contains(&range_sum.rightmost_point.row));
-                        let range_text = &buffer.text()[start..end];
+                        let range_text = buffer
+                            .text()
+                            .chars()
+                            .skip(start)
+                            .take(end - start)
+                            .collect::<String>();
                         assert_eq!(range_sum.chars, range_text.chars().count());
                         assert_eq!(range_sum.bytes, range_text.len());
                     }
@@ -3458,9 +3463,17 @@ mod tests {
 
     fn line_lengths_in_range(buffer: &Buffer, range: Range<usize>) -> BTreeMap<u32, HashSet<u32>> {
         let mut lengths = BTreeMap::new();
-        for (row, line) in buffer.text()[range].lines().enumerate() {
+        for (row, line) in buffer
+            .text()
+            .chars()
+            .skip(range.start)
+            .take(range.len())
+            .collect::<String>()
+            .lines()
+            .enumerate()
+        {
             lengths
-                .entry(line.len() as u32)
+                .entry(line.chars().count() as u32)
                 .or_insert(HashSet::default())
                 .insert(row as u32);
         }
