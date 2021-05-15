@@ -26,8 +26,12 @@ impl Rope {
         let mut chunks = rope.chunks.cursor::<(), ()>();
         chunks.next();
         if let Some(chunk) = chunks.item() {
-            self.push(&chunk.0);
-            chunks.next();
+            if self.chunks.last().map_or(false, |c| c.0.len() < CHUNK_BASE)
+                || chunk.0.len() < CHUNK_BASE
+            {
+                self.push(&chunk.0);
+                chunks.next();
+            }
         }
 
         self.chunks.push_tree(chunks.suffix(&()), &());
