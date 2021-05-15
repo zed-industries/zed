@@ -56,7 +56,9 @@ impl Rope {
                     if last_chunk.0.len() + first_new_chunk_ref.0.len() <= 2 * CHUNK_BASE {
                         last_chunk.0.push_str(&first_new_chunk.take().unwrap().0);
                     } else {
-                        let text = [last_chunk.0, first_new_chunk_ref.0].concat();
+                        let mut text = ArrayString::<[_; 4 * CHUNK_BASE]>::new();
+                        text.push_str(&last_chunk.0);
+                        text.push_str(&first_new_chunk_ref.0);
                         let mut midpoint = text.len() / 2;
                         while !text.is_char_boundary(midpoint) {
                             midpoint += 1;
