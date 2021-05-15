@@ -59,11 +59,7 @@ impl Rope {
                         let mut text = ArrayString::<[_; 4 * CHUNK_BASE]>::new();
                         text.push_str(&last_chunk.0);
                         text.push_str(&first_new_chunk_ref.0);
-                        let mut midpoint = text.len() / 2;
-                        while !text.is_char_boundary(midpoint) {
-                            midpoint += 1;
-                        }
-                        let (left, right) = text.split_at(midpoint);
+                        let (left, right) = text.split_at(find_split_ix(&text));
                         last_chunk.0.clear();
                         last_chunk.0.push_str(left);
                         first_new_chunk_ref.0.clear();
@@ -221,7 +217,7 @@ impl<'a> Cursor<'a> {
 }
 
 #[derive(Clone, Debug, Default)]
-struct Chunk(ArrayString<[u8; 4 * CHUNK_BASE]>);
+struct Chunk(ArrayString<[u8; 2 * CHUNK_BASE]>);
 
 impl Chunk {
     fn to_point(&self, target: usize) -> Point {
@@ -395,6 +391,25 @@ impl<'a> Iterator for Chars<'a> {
             None
         }
     }
+}
+
+fn find_split_ix(text: &str) -> usize {
+    let mut ix = text.len() / 2;
+    while !text.is_char_boundary(ix) {
+        if ix < 2 * CHUNK_BASE {
+            ix += 1;
+        } else {
+            ix = (text.len() / 2) - 1;
+            break;
+        }
+    }
+    while !text.is_char_boundary(ix) {
+        ix -= 1;
+    }
+
+    debug_assert!(ix <= 2 * CHUNK_BASE);
+    debug_assert!(text.len() - ix <= 2 * CHUNK_BASE);
+    ix
 }
 
 #[cfg(test)]
