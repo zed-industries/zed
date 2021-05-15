@@ -404,6 +404,14 @@ mod tests {
     use std::env;
 
     #[test]
+    fn test_all_4_byte_chars() {
+        let mut rope = Rope::new();
+        let text = "🏀".repeat(256);
+        rope.push(&text);
+        assert_eq!(rope.text(), text);
+    }
+
+    #[test]
     fn test_random() {
         let iterations = env::var("ITERATIONS")
             .map(|i| i.parse().expect("invalid `ITERATIONS` variable"))
