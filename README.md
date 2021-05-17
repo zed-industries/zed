@@ -22,21 +22,18 @@ Ship a minimal text editor to investors and other insiders. It should be extreme
 
 Establish basic infrastructure for building the app bundle and uploading an artifact. Once this is released, we should regularly distribute updates as features land.
 
-### Minimal code editor for internal use
+### Collaborative code editor for internal use
 
 [Tracking issue](https://github.com/zed-industries/zed/issues/6)
 
-Turn the minimal text editor into a minimal *code* editor. We define "minimal" as the features that the Zed team needs to use Zed to build Zed without net loss in developer productivity. This includes productivity-critical features such as:
+Turn the minimal text editor into a collaborative *code* editor. This will include the minimal features that the Zed team needs to collaborate in Zed to build Zed without net loss in developer productivity. This includes productivity-critical features such as:
 
 * Syntax highlighting and syntax-aware editing and navigation
+* The ability to see and edit non-local working copies of a repository
 * Language server support for Rust code navigation, refactoring, diagnostics, etc.
 * Project browsing and project-wide search and replace
 
-We don't need to implement everything, just anything stopping us from being productive. For example, maybe we don't implement soft wrap and continue to edit prose in another editor at first.
-
-### Minimal collaborative code editor for internal use
-
-Once we're using Zed every day, our next goal is to *collaborate* in Zed every day. What features do we need to stop pairing over Discord screen sharing, then stop using Discord screen sharing entirely, then spend increasingly less time talking about code in Discord, etc? How much team collaboration can take place inside of Zed with code as its focus?
+We want to tackle collaboration fairly early so that the rest of the design of the product can flow around that assumption. We could probably produce a single-player code editor more quickly, but at the risk of having collaboration feel more "bolted on" when we eventually add it.
 
 ### Private alpha for Rust teams on macOS
 
