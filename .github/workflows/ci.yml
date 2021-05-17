@@ -19,32 +19,15 @@ jobs:
     name: Run tests
     runs-on: self-hosted
     steps:
-      - name: Checkout repo
-        uses: actions/checkout@v2
-
-      # Work around https://github.com/actions/cache/issues/403.
-      - name: Use GNU tar
-        run: |
-          echo PATH="/usr/local/opt/gnu-tar/libexec/gnubin:$PATH" >> $GITHUB_ENV
-
-      - name: Cache artifacts
-        id: cache
-        uses: actions/cache@v2
-        with:
-          path: |
-            ~/.cargo/registry
-            ~/.cargo/git
-            ~/.rustup
-            target
-          key: ${{ runner.os }}-cargo-${{ hashFiles('Cargo.lock') }}
-
       - name: Install Rust
-        if: steps.cache.outputs.cache-hit != 'true'
         uses: actions-rs/toolchain@v1
         with:
           toolchain: stable
           target: x86_64-apple-darwin
           profile: minimal
+
+      - name: Checkout repo
+        uses: actions/checkout@v2
 
       - name: Run tests
         run: cargo test --no-fail-fast
@@ -53,32 +36,15 @@ jobs:
     name: Bundle app
     runs-on: self-hosted
     steps:
-      - name: Checkout repo
-        uses: actions/checkout@v2
-
-      # Work around https://github.com/actions/cache/issues/403.
-      - name: Use GNU tar
-        run: |
-          echo PATH="/usr/local/opt/gnu-tar/libexec/gnubin:$PATH" >> $GITHUB_ENV
-
-      - name: Cache artifacts
-        id: cache
-        uses: actions/cache@v2
-        with:
-          path: |
-            ~/.cargo/registry
-            ~/.cargo/git
-            ~/.rustup
-            target
-          key: ${{ runner.os }}-cargo-${{ hashFiles('Cargo.lock') }}
-
       - name: Install Rust
-        if: steps.cache.outputs.cache-hit != 'true'
         uses: actions-rs/toolchain@v1
         with:
           toolchain: stable
           target: x86_64-apple-darwin
           profile: minimal
+
+      - name: Checkout repo
+        uses: actions/checkout@v2
 
       - name: Create app bundle
         run: script/bundle
