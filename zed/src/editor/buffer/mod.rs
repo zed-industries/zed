@@ -1900,15 +1900,13 @@ impl Buffer {
                     .item()
                     .ok_or_else(|| anyhow!("split offset is out of range"))?;
 
-                let mut fragments_cursor = self
-                    .fragments
-                    .cursor::<FragmentIdRef, FragmentTextSummary>();
+                let mut fragments_cursor = self.fragments.cursor::<FragmentIdRef, usize>();
                 fragments_cursor.seek(&FragmentIdRef::new(&split.fragment_id), SeekBias::Left, &());
                 let fragment = fragments_cursor
                     .item()
                     .ok_or_else(|| anyhow!("fragment id does not exist"))?;
 
-                let mut ix = fragments_cursor.start().clone().visible;
+                let mut ix = *fragments_cursor.start();
                 if fragment.visible {
                     ix += offset - fragment.range_in_insertion.start;
                 }
@@ -2316,7 +2314,7 @@ impl Default for InsertionSplitSummary {
 
 impl<'a> sum_tree::Dimension<'a, InsertionSplitSummary> for usize {
     fn add_summary(&mut self, summary: &InsertionSplitSummary) {
-        *self += &summary.extent;
+        *self += summary.extent;
     }
 }
 
