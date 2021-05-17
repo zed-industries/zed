@@ -207,27 +207,23 @@ impl<T: Item> SumTree<T> {
     pub fn push(&mut self, item: T, ctx: &<T::Summary as Summary>::Context) {
         let summary = item.summary();
         self.push_tree(
-            SumTree::from_child_trees(
-                vec![SumTree(Arc::new(Node::Leaf {
-                    summary: summary.clone(),
-                    items: ArrayVec::from_iter(Some(item)),
-                    item_summaries: ArrayVec::from_iter(Some(summary)),
-                }))],
-                ctx,
-            ),
+            SumTree(Arc::new(Node::Leaf {
+                summary: summary.clone(),
+                items: ArrayVec::from_iter(Some(item)),
+                item_summaries: ArrayVec::from_iter(Some(summary)),
+            })),
             ctx,
-        )
+        );
     }
 
     pub fn push_tree(&mut self, other: Self, ctx: &<T::Summary as Summary>::Context) {
-        let other_node = other.0.clone();
-        if !other_node.is_leaf() || other_node.items().len() > 0 {
-            if self.0.height() < other_node.height() {
-                for tree in other_node.child_trees() {
+        if !other.0.is_leaf() || other.0.items().len() > 0 {
+            if self.0.height() < other.0.height() {
+                for tree in other.0.child_trees() {
                     self.push_tree(tree.clone(), ctx);
                 }
             } else if let Some(split_tree) = self.push_tree_recursive(other, ctx) {
-                *self = Self::from_child_trees(vec![self.clone(), split_tree], ctx);
+                *self = Self::from_child_trees(self.clone(), split_tree, ctx);
             }
         }
     }
@@ -353,20 +349,22 @@ impl<T: Item> SumTree<T> {
     }
 
     fn from_child_trees(
-        child_trees: Vec<SumTree<T>>,
+        left: SumTree<T>,
+        right: SumTree<T>,
         ctx: &<T::Summary as Summary>::Context,
     ) -> Self {
-        let height = child_trees[0].0.height() + 1;
+        let height = left.0.height() + 1;
         let mut child_summaries = ArrayVec::new();
-        for child in &child_trees {
-            child_summaries.push(child.0.summary().clone());
-        }
-        let summary = sum(child_summaries.iter(), ctx);
+        child_summaries.push(left.0.summary().clone());
+        child_summaries.push(right.0.summary().clone());
+        let mut child_trees = ArrayVec::new();
+        child_trees.push(left);
+        child_trees.push(right);
         SumTree(Arc::new(Node::Internal {
             height,
-            summary,
+            summary: sum(child_summaries.iter(), ctx),
             child_summaries,
-            child_trees: ArrayVec::from_iter(child_trees),
+            child_trees,
         }))
     }
 
