@@ -411,7 +411,6 @@ impl BufferView {
             .unwrap()
             .head()
             .to_display_point(&self.display_map, app)
-            .unwrap()
             .row() as f32;
         let last_cursor_bottom = self
             .selections(app)
@@ -419,7 +418,6 @@ impl BufferView {
             .unwrap()
             .head()
             .to_display_point(&self.display_map, app)
-            .unwrap()
             .row() as f32
             + 1.0;
 
@@ -456,13 +454,10 @@ impl BufferView {
         let mut target_left = std::f32::INFINITY;
         let mut target_right = 0.0_f32;
         for selection in self.selections(ctx) {
-            let head = selection
-                .head()
-                .to_display_point(&self.display_map, ctx)
-                .unwrap();
+            let head = selection.head().to_display_point(&self.display_map, ctx);
             let start_column = head.column().saturating_sub(3);
             let end_column = cmp::min(
-                self.display_map.line_len(head.row(), ctx).unwrap(),
+                self.display_map.line_len(head.row(), ctx),
                 head.column() + 3,
             );
             target_left = target_left
@@ -508,8 +503,7 @@ impl BufferView {
 
         let cursor = self
             .display_map
-            .anchor_before(position, Bias::Left, ctx.as_ref())
-            .unwrap();
+            .anchor_before(position, Bias::Left, ctx.as_ref());
         let selection = Selection {
             id: post_inc(&mut self.next_selection_id),
             start: cursor.clone(),
@@ -535,8 +529,7 @@ impl BufferView {
         let buffer = self.buffer.read(ctx);
         let cursor = self
             .display_map
-            .anchor_before(position, Bias::Left, ctx.as_ref())
-            .unwrap();
+            .anchor_before(position, Bias::Left, ctx.as_ref());
         if let Some(selection) = self.pending_selection.as_mut() {
             selection.set_head(buffer, cursor);
         } else {
@@ -627,10 +620,10 @@ impl BufferView {
                 id: post_inc(&mut self.next_selection_id),
                 start: self
                     .display_map
-                    .anchor_before(start, Bias::Left, ctx.as_ref())?,
+                    .anchor_before(start, Bias::Left, ctx.as_ref()),
                 end: self
                     .display_map
-                    .anchor_before(end, Bias::Left, ctx.as_ref())?,
+                    .anchor_before(end, Bias::Left, ctx.as_ref()),
                 reversed,
                 goal: SelectionGoal::None,
             });
@@ -700,16 +693,12 @@ impl BufferView {
                 if range.start == range.end {
                     let head = selection
                         .head()
-                        .to_display_point(&self.display_map, ctx.as_ref())
-                        .unwrap();
-                    let cursor = self
-                        .display_map
-                        .anchor_before(
-                            movement::left(&self.display_map, head, ctx.as_ref()).unwrap(),
-                            Bias::Left,
-                            ctx.as_ref(),
-                        )
-                        .unwrap();
+                        .to_display_point(&self.display_map, ctx.as_ref());
+                    let cursor = self.display_map.anchor_before(
+                        movement::left(&self.display_map, head, ctx.as_ref()).unwrap(),
+                        Bias::Left,
+                        ctx.as_ref(),
+                    );
                     selection.set_head(&buffer, cursor);
                     selection.goal = SelectionGoal::None;
                 }
@@ -731,16 +720,12 @@ impl BufferView {
                 if range.start == range.end {
                     let head = selection
                         .head()
-                        .to_display_point(&self.display_map, ctx.as_ref())
-                        .unwrap();
-                    let cursor = self
-                        .display_map
-                        .anchor_before(
-                            movement::right(&self.display_map, head, ctx.as_ref()).unwrap(),
-                            Bias::Right,
-                            ctx.as_ref(),
-                        )
-                        .unwrap();
+                        .to_display_point(&self.display_map, ctx.as_ref());
+                    let cursor = self.display_map.anchor_before(
+                        movement::right(&self.display_map, head, ctx.as_ref()).unwrap(),
+                        Bias::Right,
+                        ctx.as_ref(),
+                    );
                     selection.set_head(&buffer, cursor);
                     selection.goal = SelectionGoal::None;
                 }
@@ -768,7 +753,6 @@ impl BufferView {
             let goal_display_column = selection
                 .head()
                 .to_display_point(&self.display_map, app)
-                .unwrap()
                 .column();
 
             // Accumulate contiguous regions of rows that we want to delete.
@@ -799,19 +783,16 @@ impl BufferView {
                 cursor_buffer_row = rows.start.saturating_sub(1);
             }
 
-            let mut cursor = Point::new(cursor_buffer_row, 0)
-                .to_display_point(&self.display_map, app)
-                .unwrap();
+            let mut cursor =
+                Point::new(cursor_buffer_row, 0).to_display_point(&self.display_map, app);
             *cursor.column_mut() = cmp::min(
                 goal_display_column,
-                self.display_map.line_len(cursor.row(), app).unwrap(),
+                self.display_map.line_len(cursor.row(), app),
             );
 
             new_cursors.push((
                 selection.id,
-                cursor
-                    .to_buffer_point(&self.display_map, Bias::Left, app)
-                    .unwrap(),
+                cursor.to_buffer_point(&self.display_map, Bias::Left, app),
             ));
             edit_ranges.push(edit_start..edit_end);
         }
@@ -937,9 +918,8 @@ impl BufferView {
                     .to_offset(buffer);
 
                 let prev_row_display_start = DisplayPoint::new(display_rows.start - 1, 0);
-                let prev_row_start = prev_row_display_start
-                    .to_buffer_offset(&self.display_map, Bias::Left, app)
-                    .unwrap();
+                let prev_row_start =
+                    prev_row_display_start.to_buffer_offset(&self.display_map, Bias::Left, app);
 
                 let mut text = String::new();
                 text.extend(buffer.text_for_range(start..end));
@@ -950,7 +930,6 @@ impl BufferView {
                 let row_delta = buffer_rows.start
                     - prev_row_display_start
                         .to_buffer_point(&self.display_map, Bias::Left, app)
-                        .unwrap()
                         .row;
 
                 // Move selections up.
@@ -961,7 +940,7 @@ impl BufferView {
 
                 // Move folds up.
                 old_folds.push(start..end);
-                for fold in self.display_map.folds_in_range(start..end, app).unwrap() {
+                for fold in self.display_map.folds_in_range(start..end, app) {
                     let mut start = fold.start.to_point(buffer);
                     let mut end = fold.end.to_point(buffer);
                     start.row -= row_delta;
@@ -1024,11 +1003,10 @@ impl BufferView {
 
                 let next_row_display_end = DisplayPoint::new(
                     display_rows.end,
-                    self.display_map.line_len(display_rows.end, app).unwrap(),
+                    self.display_map.line_len(display_rows.end, app),
                 );
-                let next_row_end = next_row_display_end
-                    .to_buffer_offset(&self.display_map, Bias::Right, app)
-                    .unwrap();
+                let next_row_end =
+                    next_row_display_end.to_buffer_offset(&self.display_map, Bias::Right, app);
 
                 let mut text = String::new();
                 text.push('\n');
@@ -1038,7 +1016,6 @@ impl BufferView {
 
                 let row_delta = next_row_display_end
                     .to_buffer_point(&self.display_map, Bias::Right, app)
-                    .unwrap()
                     .row
                     - buffer_rows.end
                     + 1;
@@ -1051,7 +1028,7 @@ impl BufferView {
 
                 // Move folds down.
                 old_folds.push(start..end);
-                for fold in self.display_map.folds_in_range(start..end, app).unwrap() {
+                for fold in self.display_map.folds_in_range(start..end, app) {
                     let mut start = fold.start.to_point(buffer);
                     let mut end = fold.end.to_point(buffer);
                     start.row += row_delta;
@@ -1217,26 +1194,17 @@ impl BufferView {
         let mut selections = self.selections(app).to_vec();
         {
             for selection in &mut selections {
-                let start = selection
-                    .start
-                    .to_display_point(&self.display_map, app)
-                    .unwrap();
-                let end = selection
-                    .end
-                    .to_display_point(&self.display_map, app)
-                    .unwrap();
+                let start = selection.start.to_display_point(&self.display_map, app);
+                let end = selection.end.to_display_point(&self.display_map, app);
 
                 if start != end {
                     selection.end = selection.start.clone();
                 } else {
-                    let cursor = self
-                        .display_map
-                        .anchor_before(
-                            movement::left(&self.display_map, start, app).unwrap(),
-                            Bias::Left,
-                            app,
-                        )
-                        .unwrap();
+                    let cursor = self.display_map.anchor_before(
+                        movement::left(&self.display_map, start, app).unwrap(),
+                        Bias::Left,
+                        app,
+                    );
                     selection.start = cursor.clone();
                     selection.end = cursor;
                 }
@@ -1254,16 +1222,12 @@ impl BufferView {
             for selection in &mut selections {
                 let head = selection
                     .head()
-                    .to_display_point(&self.display_map, ctx.as_ref())
-                    .unwrap();
-                let cursor = self
-                    .display_map
-                    .anchor_before(
-                        movement::left(&self.display_map, head, ctx.as_ref()).unwrap(),
-                        Bias::Left,
-                        ctx.as_ref(),
-                    )
-                    .unwrap();
+                    .to_display_point(&self.display_map, ctx.as_ref());
+                let cursor = self.display_map.anchor_before(
+                    movement::left(&self.display_map, head, ctx.as_ref()).unwrap(),
+                    Bias::Left,
+                    ctx.as_ref(),
+                );
                 selection.set_head(&buffer, cursor);
                 selection.goal = SelectionGoal::None;
             }
@@ -1276,26 +1240,17 @@ impl BufferView {
         {
             let app = ctx.as_ref();
             for selection in &mut selections {
-                let start = selection
-                    .start
-                    .to_display_point(&self.display_map, app)
-                    .unwrap();
-                let end = selection
-                    .end
-                    .to_display_point(&self.display_map, app)
-                    .unwrap();
+                let start = selection.start.to_display_point(&self.display_map, app);
+                let end = selection.end.to_display_point(&self.display_map, app);
 
                 if start != end {
                     selection.start = selection.end.clone();
                 } else {
-                    let cursor = self
-                        .display_map
-                        .anchor_before(
-                            movement::right(&self.display_map, end, app).unwrap(),
-                            Bias::Right,
-                            app,
-                        )
-                        .unwrap();
+                    let cursor = self.display_map.anchor_before(
+                        movement::right(&self.display_map, end, app).unwrap(),
+                        Bias::Right,
+                        app,
+                    );
                     selection.start = cursor.clone();
                     selection.end = cursor;
                 }
@@ -1314,16 +1269,12 @@ impl BufferView {
             for selection in &mut selections {
                 let head = selection
                     .head()
-                    .to_display_point(&self.display_map, ctx.as_ref())
-                    .unwrap();
-                let cursor = self
-                    .display_map
-                    .anchor_before(
-                        movement::right(&self.display_map, head, app).unwrap(),
-                        Bias::Right,
-                        app,
-                    )
-                    .unwrap();
+                    .to_display_point(&self.display_map, ctx.as_ref());
+                let cursor = self.display_map.anchor_before(
+                    movement::right(&self.display_map, head, app).unwrap(),
+                    Bias::Right,
+                    app,
+                );
                 selection.set_head(&buffer, cursor);
                 selection.goal = SelectionGoal::None;
             }
@@ -1339,24 +1290,15 @@ impl BufferView {
             {
                 let app = ctx.as_ref();
                 for selection in &mut selections {
-                    let start = selection
-                        .start
-                        .to_display_point(&self.display_map, app)
-                        .unwrap();
-                    let end = selection
-                        .end
-                        .to_display_point(&self.display_map, app)
-                        .unwrap();
+                    let start = selection.start.to_display_point(&self.display_map, app);
+                    let end = selection.end.to_display_point(&self.display_map, app);
                     if start != end {
                         selection.goal = SelectionGoal::None;
                     }
 
                     let (start, goal) =
                         movement::up(&self.display_map, start, selection.goal, app).unwrap();
-                    let cursor = self
-                        .display_map
-                        .anchor_before(start, Bias::Left, app)
-                        .unwrap();
+                    let cursor = self.display_map.anchor_before(start, Bias::Left, app);
                     selection.start = cursor.clone();
                     selection.end = cursor;
                     selection.goal = goal;
@@ -1373,17 +1315,12 @@ impl BufferView {
             let app = ctx.as_ref();
             let buffer = self.buffer.read(app);
             for selection in &mut selections {
-                let head = selection
-                    .head()
-                    .to_display_point(&self.display_map, app)
-                    .unwrap();
+                let head = selection.head().to_display_point(&self.display_map, app);
                 let (head, goal) =
                     movement::up(&self.display_map, head, selection.goal, app).unwrap();
                 selection.set_head(
                     &buffer,
-                    self.display_map
-                        .anchor_before(head, Bias::Left, app)
-                        .unwrap(),
+                    self.display_map.anchor_before(head, Bias::Left, app),
                 );
                 selection.goal = goal;
             }
@@ -1399,24 +1336,15 @@ impl BufferView {
             {
                 let app = ctx.as_ref();
                 for selection in &mut selections {
-                    let start = selection
-                        .start
-                        .to_display_point(&self.display_map, app)
-                        .unwrap();
-                    let end = selection
-                        .end
-                        .to_display_point(&self.display_map, app)
-                        .unwrap();
+                    let start = selection.start.to_display_point(&self.display_map, app);
+                    let end = selection.end.to_display_point(&self.display_map, app);
                     if start != end {
                         selection.goal = SelectionGoal::None;
                     }
 
                     let (start, goal) =
                         movement::down(&self.display_map, end, selection.goal, app).unwrap();
-                    let cursor = self
-                        .display_map
-                        .anchor_before(start, Bias::Right, app)
-                        .unwrap();
+                    let cursor = self.display_map.anchor_before(start, Bias::Right, app);
                     selection.start = cursor.clone();
                     selection.end = cursor;
                     selection.goal = goal;
@@ -1433,17 +1361,12 @@ impl BufferView {
             let app = ctx.as_ref();
             let buffer = self.buffer.read(app);
             for selection in &mut selections {
-                let head = selection
-                    .head()
-                    .to_display_point(&self.display_map, app)
-                    .unwrap();
+                let head = selection.head().to_display_point(&self.display_map, app);
                 let (head, goal) =
                     movement::down(&self.display_map, head, selection.goal, app).unwrap();
                 selection.set_head(
                     &buffer,
-                    self.display_map
-                        .anchor_before(head, Bias::Right, app)
-                        .unwrap(),
+                    self.display_map.anchor_before(head, Bias::Right, app),
                 );
                 selection.goal = goal;
             }
@@ -1456,15 +1379,9 @@ impl BufferView {
         let mut selections = self.selections(app).to_vec();
         {
             for selection in &mut selections {
-                let head = selection
-                    .head()
-                    .to_display_point(&self.display_map, app)
-                    .unwrap();
+                let head = selection.head().to_display_point(&self.display_map, app);
                 let new_head = movement::prev_word_boundary(&self.display_map, head, app).unwrap();
-                let anchor = self
-                    .display_map
-                    .anchor_before(new_head, Bias::Left, app)
-                    .unwrap();
+                let anchor = self.display_map.anchor_before(new_head, Bias::Left, app);
                 selection.start = anchor.clone();
                 selection.end = anchor;
                 selection.reversed = false;
@@ -1480,15 +1397,9 @@ impl BufferView {
         {
             let buffer = self.buffer.read(ctx);
             for selection in &mut selections {
-                let head = selection
-                    .head()
-                    .to_display_point(&self.display_map, app)
-                    .unwrap();
+                let head = selection.head().to_display_point(&self.display_map, app);
                 let new_head = movement::prev_word_boundary(&self.display_map, head, app).unwrap();
-                let anchor = self
-                    .display_map
-                    .anchor_before(new_head, Bias::Left, app)
-                    .unwrap();
+                let anchor = self.display_map.anchor_before(new_head, Bias::Left, app);
                 selection.set_head(buffer, anchor);
                 selection.goal = SelectionGoal::None;
             }
@@ -1508,15 +1419,9 @@ impl BufferView {
         let mut selections = self.selections(app).to_vec();
         {
             for selection in &mut selections {
-                let head = selection
-                    .head()
-                    .to_display_point(&self.display_map, app)
-                    .unwrap();
+                let head = selection.head().to_display_point(&self.display_map, app);
                 let new_head = movement::next_word_boundary(&self.display_map, head, app).unwrap();
-                let anchor = self
-                    .display_map
-                    .anchor_before(new_head, Bias::Left, app)
-                    .unwrap();
+                let anchor = self.display_map.anchor_before(new_head, Bias::Left, app);
                 selection.start = anchor.clone();
                 selection.end = anchor;
                 selection.reversed = false;
@@ -1532,15 +1437,9 @@ impl BufferView {
         {
             let buffer = self.buffer.read(ctx);
             for selection in &mut selections {
-                let head = selection
-                    .head()
-                    .to_display_point(&self.display_map, app)
-                    .unwrap();
+                let head = selection.head().to_display_point(&self.display_map, app);
                 let new_head = movement::next_word_boundary(&self.display_map, head, app).unwrap();
-                let anchor = self
-                    .display_map
-                    .anchor_before(new_head, Bias::Left, app)
-                    .unwrap();
+                let anchor = self.display_map.anchor_before(new_head, Bias::Left, app);
                 selection.set_head(buffer, anchor);
                 selection.goal = SelectionGoal::None;
             }
@@ -1560,16 +1459,10 @@ impl BufferView {
         let mut selections = self.selections(app).to_vec();
         {
             for selection in &mut selections {
-                let head = selection
-                    .head()
-                    .to_display_point(&self.display_map, app)
-                    .unwrap();
+                let head = selection.head().to_display_point(&self.display_map, app);
                 let new_head =
                     movement::line_beginning(&self.display_map, head, true, app).unwrap();
-                let anchor = self
-                    .display_map
-                    .anchor_before(new_head, Bias::Left, app)
-                    .unwrap();
+                let anchor = self.display_map.anchor_before(new_head, Bias::Left, app);
                 selection.start = anchor.clone();
                 selection.end = anchor;
                 selection.reversed = false;
@@ -1589,16 +1482,10 @@ impl BufferView {
         {
             let buffer = self.buffer.read(ctx);
             for selection in &mut selections {
-                let head = selection
-                    .head()
-                    .to_display_point(&self.display_map, app)
-                    .unwrap();
+                let head = selection.head().to_display_point(&self.display_map, app);
                 let new_head =
                     movement::line_beginning(&self.display_map, head, *toggle_indent, app).unwrap();
-                let anchor = self
-                    .display_map
-                    .anchor_before(new_head, Bias::Left, app)
-                    .unwrap();
+                let anchor = self.display_map.anchor_before(new_head, Bias::Left, app);
                 selection.set_head(buffer, anchor);
                 selection.goal = SelectionGoal::None;
             }
@@ -1618,15 +1505,9 @@ impl BufferView {
         let mut selections = self.selections(app).to_vec();
         {
             for selection in &mut selections {
-                let head = selection
-                    .head()
-                    .to_display_point(&self.display_map, app)
-                    .unwrap();
+                let head = selection.head().to_display_point(&self.display_map, app);
                 let new_head = movement::line_end(&self.display_map, head, app).unwrap();
-                let anchor = self
-                    .display_map
-                    .anchor_before(new_head, Bias::Left, app)
-                    .unwrap();
+                let anchor = self.display_map.anchor_before(new_head, Bias::Left, app);
                 selection.start = anchor.clone();
                 selection.end = anchor;
                 selection.reversed = false;
@@ -1642,15 +1523,9 @@ impl BufferView {
         {
             let buffer = self.buffer.read(ctx);
             for selection in &mut selections {
-                let head = selection
-                    .head()
-                    .to_display_point(&self.display_map, app)
-                    .unwrap();
+                let head = selection.head().to_display_point(&self.display_map, app);
                 let new_head = movement::line_end(&self.display_map, head, app).unwrap();
-                let anchor = self
-                    .display_map
-                    .anchor_before(new_head, Bias::Left, app)
-                    .unwrap();
+                let anchor = self.display_map.anchor_before(new_head, Bias::Left, app);
                 selection.set_head(buffer, anchor);
                 selection.goal = SelectionGoal::None;
             }
@@ -1878,20 +1753,14 @@ impl BufferView {
         ctx: &AppContext,
     ) -> Option<Selection> {
         let is_empty = columns.start == columns.end;
-        let line_len = self.display_map.line_len(row, ctx).unwrap();
+        let line_len = self.display_map.line_len(row, ctx);
         if columns.start < line_len || (is_empty && columns.start == line_len) {
             let start = DisplayPoint::new(row, columns.start);
             let end = DisplayPoint::new(row, cmp::min(columns.end, line_len));
             Some(Selection {
                 id: post_inc(&mut self.next_selection_id),
-                start: self
-                    .display_map
-                    .anchor_before(start, Bias::Left, ctx)
-                    .unwrap(),
-                end: self
-                    .display_map
-                    .anchor_before(end, Bias::Left, ctx)
-                    .unwrap(),
+                start: self.display_map.anchor_before(start, Bias::Left, ctx),
+                end: self.display_map.anchor_before(end, Bias::Left, ctx),
                 reversed,
                 goal: SelectionGoal::ColumnRange {
                     start: columns.start,
@@ -1908,10 +1777,7 @@ impl BufferView {
         range: Range<DisplayPoint>,
         app: &'a AppContext,
     ) -> impl 'a + Iterator<Item = Range<DisplayPoint>> {
-        let start = self
-            .display_map
-            .anchor_before(range.start, Bias::Left, app)
-            .unwrap();
+        let start = self.display_map.anchor_before(range.start, Bias::Left, app);
         let start_index = self.selection_insertion_index(&start, app);
         let pending_selection = self.pending_selection.as_ref().and_then(|s| {
             let selection_range = s.display_range(&self.display_map, app);
@@ -2030,14 +1896,13 @@ impl BufferView {
             let buffer_start_row = range
                 .start
                 .to_buffer_point(&self.display_map, Bias::Left, app)
-                .unwrap()
                 .row;
 
             for row in (0..=range.end.row()).rev() {
                 if self.is_line_foldable(row, app)
                     && !self.display_map.is_line_folded(row, ctx.as_ref())
                 {
-                    let fold_range = self.foldable_range_for_line(row, app).unwrap();
+                    let fold_range = self.foldable_range_for_line(row, app);
                     if fold_range.end.row >= buffer_start_row {
                         fold_ranges.push(fold_range);
                         if row <= range.start.row() {
@@ -2063,12 +1928,10 @@ impl BufferView {
                 let range = s.display_range(&self.display_map, app).sorted();
                 let mut start = range
                     .start
-                    .to_buffer_point(&self.display_map, Bias::Left, app)
-                    .unwrap();
+                    .to_buffer_point(&self.display_map, Bias::Left, app);
                 let mut end = range
                     .end
-                    .to_buffer_point(&self.display_map, Bias::Left, app)
-                    .unwrap();
+                    .to_buffer_point(&self.display_map, Bias::Left, app);
                 start.column = 0;
                 end.column = buffer.line_len(end.row);
                 start..end
@@ -2082,13 +1945,12 @@ impl BufferView {
         if display_row >= max_point.row() {
             false
         } else {
-            let (start_indent, is_blank) = self.display_map.line_indent(display_row, app).unwrap();
+            let (start_indent, is_blank) = self.display_map.line_indent(display_row, app);
             if is_blank {
                 false
             } else {
                 for display_row in display_row + 1..=max_point.row() {
-                    let (indent, is_blank) =
-                        self.display_map.line_indent(display_row, app).unwrap();
+                    let (indent, is_blank) = self.display_map.line_indent(display_row, app);
                     if !is_blank {
                         return indent > start_indent;
                     }
@@ -2098,23 +1960,23 @@ impl BufferView {
         }
     }
 
-    fn foldable_range_for_line(&self, start_row: u32, app: &AppContext) -> Result<Range<Point>> {
+    fn foldable_range_for_line(&self, start_row: u32, app: &AppContext) -> Range<Point> {
         let max_point = self.max_point(app);
 
-        let (start_indent, _) = self.display_map.line_indent(start_row, app)?;
-        let start = DisplayPoint::new(start_row, self.line_len(start_row, app)?);
+        let (start_indent, _) = self.display_map.line_indent(start_row, app);
+        let start = DisplayPoint::new(start_row, self.line_len(start_row, app));
         let mut end = None;
         for row in start_row + 1..=max_point.row() {
-            let (indent, is_blank) = self.display_map.line_indent(row, app)?;
+            let (indent, is_blank) = self.display_map.line_indent(row, app);
             if !is_blank && indent <= start_indent {
-                end = Some(DisplayPoint::new(row - 1, self.line_len(row - 1, app)?));
+                end = Some(DisplayPoint::new(row - 1, self.line_len(row - 1, app)));
                 break;
             }
         }
 
         let end = end.unwrap_or(max_point);
-        return Ok(start.to_buffer_point(&self.display_map, Bias::Left, app)?
-            ..end.to_buffer_point(&self.display_map, Bias::Left, app)?);
+        return start.to_buffer_point(&self.display_map, Bias::Left, app)
+            ..end.to_buffer_point(&self.display_map, Bias::Left, app);
     }
 
     pub fn fold_selected_ranges(&mut self, _: &(), ctx: &mut ViewContext<Self>) {
@@ -2131,7 +1993,7 @@ impl BufferView {
 
     fn fold_ranges<T: ToOffset>(&mut self, ranges: Vec<Range<T>>, ctx: &mut ViewContext<Self>) {
         if !ranges.is_empty() {
-            self.display_map.fold(ranges, ctx.as_ref()).unwrap();
+            self.display_map.fold(ranges, ctx.as_ref());
             *self.autoscroll_requested.lock() = true;
             ctx.notify();
         }
@@ -2139,17 +2001,17 @@ impl BufferView {
 
     fn unfold_ranges<T: ToOffset>(&mut self, ranges: Vec<Range<T>>, ctx: &mut ViewContext<Self>) {
         if !ranges.is_empty() {
-            self.display_map.unfold(ranges, ctx.as_ref()).unwrap();
+            self.display_map.unfold(ranges, ctx.as_ref());
             *self.autoscroll_requested.lock() = true;
             ctx.notify();
         }
     }
 
-    pub fn line(&self, display_row: u32, ctx: &AppContext) -> Result<String> {
+    pub fn line(&self, display_row: u32, ctx: &AppContext) -> String {
         self.display_map.line(display_row, ctx)
     }
 
-    pub fn line_len(&self, display_row: u32, ctx: &AppContext) -> Result<u32> {
+    pub fn line_len(&self, display_row: u32, ctx: &AppContext) -> u32 {
         self.display_map.line_len(display_row, ctx)
     }
 
@@ -2244,7 +2106,7 @@ impl BufferView {
         for buffer_row in self
             .display_map
             .snapshot(ctx)
-            .buffer_rows(start_row as u32)?
+            .buffer_rows(start_row as u32)
             .take(line_count)
         {
             line_number.clear();
@@ -2281,9 +2143,7 @@ impl BufferView {
         let mut line_len = 0;
         let mut row = rows.start;
         let snapshot = self.display_map.snapshot(ctx);
-        let chars = snapshot
-            .chars_at(DisplayPoint::new(rows.start, 0), ctx)
-            .unwrap();
+        let chars = snapshot.chars_at(DisplayPoint::new(rows.start, 0), ctx);
         for char in chars.chain(Some('\n')) {
             if char == '\n' {
                 layouts.push(layout_cache.layout_str(&line, font_size, &[(0..line_len, font_id)]));
@@ -2313,12 +2173,12 @@ impl BufferView {
         let font_id =
             font_cache.select_font(settings.buffer_font_family, &FontProperties::new())?;
 
-        let line = self.line(row, app)?;
+        let line = self.line(row, app);
 
         Ok(layout_cache.layout_str(
             &line,
             settings.buffer_font_size,
-            &[(0..self.line_len(row, app)? as usize, font_id)],
+            &[(0..self.line_len(row, app) as usize, font_id)],
         ))
     }
 

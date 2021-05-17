@@ -1,7 +1,6 @@
 mod fold_map;
 
 use super::{buffer, Anchor, Buffer, Edit, Point, ToOffset, ToPoint};
-use anyhow::Result;
 pub use fold_map::BufferRows;
 use fold_map::{FoldMap, FoldMapSnapshot};
 use gpui::{AppContext, ModelHandle};
@@ -39,7 +38,7 @@ impl DisplayMap {
         &'a self,
         range: Range<T>,
         app: &'a AppContext,
-    ) -> Result<impl Iterator<Item = &'a Range<Anchor>>>
+    ) -> impl Iterator<Item = &'a Range<Anchor>>
     where
         T: ToOffset,
     {
@@ -50,7 +49,7 @@ impl DisplayMap {
         &mut self,
         ranges: impl IntoIterator<Item = Range<T>>,
         ctx: &AppContext,
-    ) -> Result<()> {
+    ) {
         self.fold_map.fold(ranges, ctx)
     }
 
@@ -58,7 +57,7 @@ impl DisplayMap {
         &mut self,
         ranges: impl IntoIterator<Item = Range<T>>,
         ctx: &AppContext,
-    ) -> Result<()> {
+    ) {
         self.fold_map.unfold(ranges, ctx)
     }
 
@@ -69,24 +68,22 @@ impl DisplayMap {
     pub fn text(&self, ctx: &AppContext) -> String {
         self.snapshot(ctx)
             .chars_at(DisplayPoint::zero(), ctx)
-            .unwrap()
             .collect()
     }
 
-    pub fn line(&self, display_row: u32, ctx: &AppContext) -> Result<String> {
-        Ok(self
-            .snapshot(ctx)
-            .chars_at(DisplayPoint::new(display_row, 0), ctx)?
+    pub fn line(&self, display_row: u32, ctx: &AppContext) -> String {
+        self.snapshot(ctx)
+            .chars_at(DisplayPoint::new(display_row, 0), ctx)
             .take_while(|c| *c != '\n')
-            .collect())
+            .collect()
     }
 
-    pub fn line_indent(&self, display_row: u32, ctx: &AppContext) -> Result<(u32, bool)> {
+    pub fn line_indent(&self, display_row: u32, ctx: &AppContext) -> (u32, bool) {
         let mut indent = 0;
         let mut is_blank = true;
         for c in self
             .snapshot(ctx)
-            .chars_at(DisplayPoint::new(display_row, 0), ctx)?
+            .chars_at(DisplayPoint::new(display_row, 0), ctx)
         {
             if c == ' ' {
                 indent += 1;
@@ -95,45 +92,33 @@ impl DisplayMap {
                 break;
             }
         }
-        Ok((indent, is_blank))
+        (indent, is_blank)
     }
 
-    pub fn line_len(&self, row: u32, ctx: &AppContext) -> Result<u32> {
-        DisplayPoint::new(row, self.fold_map.line_len(row, ctx)?)
+    pub fn line_len(&self, row: u32, ctx: &AppContext) -> u32 {
+        DisplayPoint::new(row, self.fold_map.line_len(row, ctx))
             .expand_tabs(self, ctx)
-            .map(|point| point.column())
+            .column()
     }
 
     pub fn max_point(&self, ctx: &AppContext) -> DisplayPoint {
-        self.fold_map.max_point(ctx).expand_tabs(self, ctx).unwrap()
+        self.fold_map.max_point(ctx).expand_tabs(self, ctx)
     }
 
     pub fn rightmost_point(&self, ctx: &AppContext) -> DisplayPoint {
         self.fold_map.rightmost_point(ctx)
     }
 
-    pub fn anchor_before(
-        &self,
-        point: DisplayPoint,
-        bias: Bias,
-        app: &AppContext,
-    ) -> Result<Anchor> {
-        Ok(self
-            .buffer
+    pub fn anchor_before(&self, point: DisplayPoint, bias: Bias, app: &AppContext) -> Anchor {
+        self.buffer
             .read(app)
-            .anchor_before(point.to_buffer_point(self, bias, app)?))
+            .anchor_before(point.to_buffer_point(self, bias, app))
     }
 
-    pub fn anchor_after(
-        &self,
-        point: DisplayPoint,
-        bias: Bias,
-        app: &AppContext,
-    ) -> Result<Anchor> {
-        Ok(self
-            .buffer
+    pub fn anchor_after(&self, point: DisplayPoint, bias: Bias, app: &AppContext) -> Anchor {
+        self.buffer
             .read(app)
-            .anchor_after(point.to_buffer_point(self, bias, app)?))
+            .anchor_after(point.to_buffer_point(self, bias, app))
     }
 }
 
@@ -143,33 +128,32 @@ pub struct DisplayMapSnapshot {
 }
 
 impl DisplayMapSnapshot {
-    pub fn buffer_rows(&self, start_row: u32) -> Result<BufferRows> {
+    pub fn buffer_rows(&self, start_row: u32) -> BufferRows {
         self.folds_snapshot.buffer_rows(start_row)
     }
 
-    pub fn chars_at<'a>(&'a self, point: DisplayPoint, app: &'a AppContext) -> Result<Chars<'a>> {
+    pub fn chars_at<'a>(&'a self, point: DisplayPoint, app: &'a AppContext) -> Chars<'a> {
         let column = point.column() as usize;
-        let (point, to_next_stop) = self.collapse_tabs(point, Bias::Left, app)?;
-        let mut fold_chars = self.folds_snapshot.chars_at(point, app)?;
+        let (point, to_next_stop) = self.collapse_tabs(point, Bias::Left, app);
+        let mut fold_chars = self.folds_snapshot.chars_at(point, app);
         if to_next_stop > 0 {
             fold_chars.next();
         }
-
-        Ok(Chars {
+        Chars {
             fold_chars,
             column,
             to_next_stop,
             tab_size: self.tab_size,
-        })
+        }
     }
 
-    fn expand_tabs(&self, mut point: DisplayPoint, ctx: &AppContext) -> Result<DisplayPoint> {
+    fn expand_tabs(&self, mut point: DisplayPoint, ctx: &AppContext) -> DisplayPoint {
         let chars = self
             .folds_snapshot
-            .chars_at(DisplayPoint(Point::new(point.row(), 0)), ctx)?;
+            .chars_at(DisplayPoint(Point::new(point.row(), 0)), ctx);
         let expanded = expand_tabs(chars, point.column() as usize, self.tab_size);
         *point.column_mut() = expanded as u32;
-        Ok(point)
+        point
     }
 
     fn collapse_tabs(
@@ -177,15 +161,15 @@ impl DisplayMapSnapshot {
         mut point: DisplayPoint,
         bias: Bias,
         ctx: &AppContext,
-    ) -> Result<(DisplayPoint, usize)> {
+    ) -> (DisplayPoint, usize) {
         let chars = self
             .folds_snapshot
-            .chars_at(DisplayPoint(Point::new(point.row(), 0)), ctx)?;
+            .chars_at(DisplayPoint(Point::new(point.row(), 0)), ctx);
         let expanded = point.column() as usize;
         let (collapsed, to_next_stop) = collapse_tabs(chars, expanded, bias, self.tab_size);
         *point.column_mut() = collapsed as u32;
 
-        Ok((point, to_next_stop))
+        (point, to_next_stop)
     }
 }
 
@@ -217,45 +201,38 @@ impl DisplayPoint {
         &mut self.0.column
     }
 
-    pub fn to_buffer_point(self, map: &DisplayMap, bias: Bias, ctx: &AppContext) -> Result<Point> {
-        Ok(map
-            .fold_map
-            .to_buffer_point(self.collapse_tabs(map, bias, ctx)?.0, ctx))
+    pub fn to_buffer_point(self, map: &DisplayMap, bias: Bias, ctx: &AppContext) -> Point {
+        map.fold_map
+            .to_buffer_point(self.collapse_tabs(map, bias, ctx).0, ctx)
     }
 
-    pub fn to_buffer_offset(self, map: &DisplayMap, bias: Bias, ctx: &AppContext) -> Result<usize> {
-        Ok(map
-            .fold_map
-            .to_buffer_offset(self.collapse_tabs(&map, bias, ctx)?.0, ctx))
+    pub fn to_buffer_offset(self, map: &DisplayMap, bias: Bias, ctx: &AppContext) -> usize {
+        map.fold_map
+            .to_buffer_offset(self.collapse_tabs(&map, bias, ctx).0, ctx)
     }
 
-    fn expand_tabs(self, map: &DisplayMap, ctx: &AppContext) -> Result<Self> {
+    fn expand_tabs(self, map: &DisplayMap, ctx: &AppContext) -> Self {
         map.snapshot(ctx).expand_tabs(self, ctx)
     }
 
-    fn collapse_tabs(
-        self,
-        map: &DisplayMap,
-        bias: Bias,
-        ctx: &AppContext,
-    ) -> Result<(Self, usize)> {
+    fn collapse_tabs(self, map: &DisplayMap, bias: Bias, ctx: &AppContext) -> (Self, usize) {
         map.snapshot(ctx).collapse_tabs(self, bias, ctx)
     }
 }
 
 impl Point {
-    pub fn to_display_point(self, map: &DisplayMap, ctx: &AppContext) -> Result<DisplayPoint> {
+    pub fn to_display_point(self, map: &DisplayMap, ctx: &AppContext) -> DisplayPoint {
         let mut display_point = map.fold_map.to_display_point(self, ctx);
         let snapshot = map.fold_map.snapshot(ctx);
-        let chars = snapshot.chars_at(DisplayPoint::new(display_point.row(), 0), ctx)?;
+        let chars = snapshot.chars_at(DisplayPoint::new(display_point.row(), 0), ctx);
         *display_point.column_mut() =
             expand_tabs(chars, display_point.column() as usize, map.tab_size) as u32;
-        Ok(display_point)
+        display_point
     }
 }
 
 impl Anchor {
-    pub fn to_display_point(&self, map: &DisplayMap, app: &AppContext) -> Result<DisplayPoint> {
+    pub fn to_display_point(&self, map: &DisplayMap, app: &AppContext) -> DisplayPoint {
         self.to_point(map.buffer.read(app))
             .to_display_point(map, app)
     }
@@ -365,7 +342,6 @@ mod tests {
         assert_eq!(
             map.snapshot(app.as_ref())
                 .chars_at(DisplayPoint::new(1, 0), app.as_ref())
-                .unwrap()
                 .take(10)
                 .collect::<String>(),
             "    b   bb"
@@ -373,7 +349,6 @@ mod tests {
         assert_eq!(
             map.snapshot(app.as_ref())
                 .chars_at(DisplayPoint::new(1, 2), app.as_ref())
-                .unwrap()
                 .take(10)
                 .collect::<String>(),
             "  b   bbbb"
@@ -381,7 +356,6 @@ mod tests {
         assert_eq!(
             map.snapshot(app.as_ref())
                 .chars_at(DisplayPoint::new(1, 6), app.as_ref())
-                .unwrap()
                 .take(13)
                 .collect::<String>(),
             "  bbbbb\nc   c"
