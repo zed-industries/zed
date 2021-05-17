@@ -115,11 +115,11 @@ impl Rope {
         Chars::new(self, start)
     }
 
-    pub fn chunks<'a>(&'a self) -> impl Iterator<Item = &'a str> {
+    pub fn chunks<'a>(&'a self) -> ChunksIter<'a> {
         self.chunks_in_range(0..self.len())
     }
 
-    pub fn chunks_in_range<'a>(&'a self, range: Range<usize>) -> impl Iterator<Item = &'a str> {
+    pub fn chunks_in_range<'a>(&'a self, range: Range<usize>) -> ChunksIter<'a> {
         ChunksIter::new(self, range)
     }
 
@@ -270,21 +270,40 @@ impl<'a> ChunksIter<'a> {
         chunks.seek(&range.start, SeekBias::Right, &());
         Self { chunks, range }
     }
+
+    pub fn offset(&self) -> usize {
+        self.range.start.max(*self.chunks.start())
+    }
+
+    pub fn advance_to(&mut self, offset: usize) {
+        if offset >= self.chunks.end() {
+            self.chunks.seek_forward(&offset, SeekBias::Right, &());
+            self.range.start = offset;
+        }
+    }
+
+    pub fn peek(&self) -> Option<&'a str> {
+        if let Some(chunk) = self.chunks.item() {
+            let offset = *self.chunks.start();
+            if self.range.end > offset {
+                let start = self.range.start.saturating_sub(*self.chunks.start());
+                let end = self.range.end - self.chunks.start();
+                return Some(&chunk.0[start..chunk.0.len().min(end)]);
+            }
+        }
+        None
+    }
 }
 
 impl<'a> Iterator for ChunksIter<'a> {
     type Item = &'a str;
 
     fn next(&mut self) -> Option<Self::Item> {
-        if let Some(chunk) = self.chunks.item() {
-            if self.range.end > *self.chunks.start() {
-                let start = self.range.start.saturating_sub(*self.chunks.start());
-                let end = self.range.end - self.chunks.start();
-                self.chunks.next();
-                return Some(&chunk.0[start..chunk.0.len().min(end)]);
-            }
+        let result = self.peek();
+        if result.is_some() {
+            self.chunks.next();
         }
-        None
+        result
     }
 }
 

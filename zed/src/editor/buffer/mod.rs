@@ -5,7 +5,7 @@ mod selection;
 
 pub use anchor::*;
 pub use point::*;
-pub use rope::{Rope, TextSummary};
+pub use rope::{ChunksIter, Rope, TextSummary};
 use seahash::SeaHasher;
 pub use selection::*;
 use similar::{ChangeTag, TextDiff};
@@ -637,10 +637,7 @@ impl Buffer {
         self.text_for_range(0..self.len()).collect()
     }
 
-    pub fn text_for_range<'a, T: ToOffset>(
-        &'a self,
-        range: Range<T>,
-    ) -> impl 'a + Iterator<Item = &'a str> {
+    pub fn text_for_range<'a, T: ToOffset>(&'a self, range: Range<T>) -> ChunksIter<'a> {
         let start = range.start.to_offset(self);
         let end = range.end.to_offset(self);
         self.visible_text.chunks_in_range(start..end)
