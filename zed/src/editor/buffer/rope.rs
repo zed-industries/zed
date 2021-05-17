@@ -4,7 +4,7 @@ use crate::util::byte_range_for_char_range;
 use anyhow::{anyhow, Result};
 use arrayvec::ArrayString;
 use smallvec::SmallVec;
-use std::{cmp, iter::Skip, str};
+use std::{cmp, iter::Skip, ops::Range, str};
 
 #[cfg(test)]
 const CHUNK_BASE: usize = 6;
@@ -118,7 +118,11 @@ impl Rope {
     }
 
     pub fn chunks<'a>(&'a self) -> impl Iterator<Item = &'a str> {
-        self.chunks.cursor::<(), ()>().map(|c| c.0.as_str())
+        self.chunks_in_range(0..self.len())
+    }
+
+    pub fn chunks_in_range<'a>(&'a self, range: Range<usize>) -> impl Iterator<Item = &'a str> {
+        ChunksIter::new(self, range)
     }
 
     pub fn to_point(&self, offset: usize) -> Result<Point> {
@@ -239,6 +243,37 @@ impl<'a> Cursor<'a> {
 
     pub fn offset(&self) -> usize {
         self.offset
+    }
+}
+
+pub struct ChunksIter<'a> {
+    chunks: sum_tree::Cursor<'a, Chunk, usize, usize>,
+    range: Range<usize>,
+}
+
+impl<'a> ChunksIter<'a> {
+    pub fn new(rope: &'a Rope, range: Range<usize>) -> Self {
+        let mut chunks = rope.chunks.cursor();
+        chunks.seek(&range.start, SeekBias::Right, &());
+        Self { chunks, range }
+    }
+}
+
+impl<'a> Iterator for ChunksIter<'a> {
+    type Item = &'a str;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        if *self.chunks.start() >= self.range.end {
+            None
+        } else if let Some(chunk) = self.chunks.item() {
+            let start = self.range.start.saturating_sub(*self.chunks.start());
+            let end = self.range.end - self.chunks.start();
+            let byte_range = byte_range_for_char_range(&chunk.0, start..end);
+            self.chunks.next();
+            Some(&chunk.0[byte_range])
+        } else {
+            None
+        }
     }
 }
 
@@ -509,10 +544,15 @@ mod tests {
                 log::info!("text: {:?}", expected);
 
                 for _ in 0..5 {
-                    let ix = rng.gen_range(0..=expected.chars().count());
+                    let end_ix = rng.gen_range(0..=expected.chars().count());
+                    let start_ix = rng.gen_range(0..=end_ix);
                     assert_eq!(
-                        actual.chars_at(ix).collect::<String>(),
-                        expected.chars().skip(ix).collect::<String>()
+                        actual.chunks_in_range(start_ix..end_ix).collect::<String>(),
+                        expected
+                            .chars()
+                            .skip(start_ix)
+                            .take(end_ix - start_ix)
+                            .collect::<String>()
                     );
                 }
 
