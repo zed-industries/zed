@@ -1,6 +1,5 @@
 use super::Point;
 use crate::sum_tree::{self, SeekBias, SumTree};
-use crate::util::byte_range_for_char_range;
 use anyhow::{anyhow, Result};
 use arrayvec::ArrayString;
 use smallvec::SmallVec;
@@ -125,31 +124,54 @@ impl Rope {
         ChunksIter::new(self, range)
     }
 
-    pub fn to_point(&self, offset: usize) -> Result<Point> {
-        if offset <= self.summary().chars {
-            let mut cursor = self.chunks.cursor::<usize, TextSummary>();
-            cursor.seek(&offset, SeekBias::Left, &());
-            let overshoot = offset - cursor.start().chars;
-            Ok(cursor.start().lines
-                + cursor
-                    .item()
-                    .map_or(Point::zero(), |chunk| chunk.to_point(overshoot)))
+    pub fn to_point(&self, offset: usize) -> Point {
+        assert!(offset <= self.summary().bytes);
+        let mut cursor = self.chunks.cursor::<usize, TextSummary>();
+        cursor.seek(&offset, SeekBias::Left, &());
+        let overshoot = offset - cursor.start().bytes;
+        cursor.start().lines
+            + cursor
+                .item()
+                .map_or(Point::zero(), |chunk| chunk.to_point(overshoot))
+    }
+
+    pub fn to_offset(&self, point: Point) -> usize {
+        assert!(point <= self.summary().lines);
+        let mut cursor = self.chunks.cursor::<Point, TextSummary>();
+        cursor.seek(&point, SeekBias::Left, &());
+        let overshoot = point - cursor.start().lines;
+        cursor.start().bytes + cursor.item().map_or(0, |chunk| chunk.to_offset(overshoot))
+    }
+
+    pub fn next_char_boundary(&self, mut offset: usize) -> usize {
+        assert!(offset <= self.summary().bytes);
+        let mut cursor = self.chunks.cursor::<usize, usize>();
+        cursor.seek(&offset, SeekBias::Left, &());
+        if let Some(chunk) = cursor.item() {
+            let ix = offset - cursor.start();
+            while !chunk.0.is_char_boundary(ix) {
+                ix += 1;
+                offset += 1;
+            }
+            offset
         } else {
-            Err(anyhow!("offset out of bounds"))
+            offset
         }
     }
 
-    pub fn to_offset(&self, point: Point) -> Result<usize> {
-        if point <= self.summary().lines {
-            let mut cursor = self.chunks.cursor::<Point, TextSummary>();
-            cursor.seek(&point, SeekBias::Left, &());
-            let overshoot = point - cursor.start().lines;
-            Ok(cursor.start().chars
-                + cursor
-                    .item()
-                    .map_or(Ok(0), |chunk| chunk.to_offset(overshoot))?)
+    pub fn prev_char_boundary(&self, offset: usize) -> usize {
+        assert!(offset <= self.summary().bytes);
+        let mut cursor = self.chunks.cursor::<usize, usize>();
+        cursor.seek(&offset, SeekBias::Left, &());
+        if let Some(chunk) = cursor.item() {
+            let ix = offset - cursor.start();
+            while !chunk.0.is_char_boundary(ix) {
+                ix -= 1;
+                offset -= 1;
+            }
+            offset
         } else {
-            Err(anyhow!("offset out of bounds"))
+            offset
         }
     }
 }
@@ -193,8 +215,7 @@ impl<'a> Cursor<'a> {
         if let Some(start_chunk) = self.chunks.item() {
             let start_ix = self.offset - self.chunks.start();
             let end_ix = cmp::min(end_offset, self.chunks.end()) - self.chunks.start();
-            let byte_range = byte_range_for_char_range(start_chunk.0, start_ix..end_ix);
-            slice.push(&start_chunk.0[byte_range]);
+            slice.push(&start_chunk.0[start_ix..end_ix]);
         }
 
         if end_offset > self.chunks.end() {
@@ -204,8 +225,7 @@ impl<'a> Cursor<'a> {
             });
             if let Some(end_chunk) = self.chunks.item() {
                 let end_ix = end_offset - self.chunks.start();
-                let byte_range = byte_range_for_char_range(end_chunk.0, 0..end_ix);
-                slice.push(&end_chunk.0[byte_range]);
+                slice.push(&end_chunk.0[..end_ix]);
             }
         }
 
@@ -220,8 +240,7 @@ impl<'a> Cursor<'a> {
         if let Some(start_chunk) = self.chunks.item() {
             let start_ix = self.offset - self.chunks.start();
             let end_ix = cmp::min(end_offset, self.chunks.end()) - self.chunks.start();
-            let byte_range = byte_range_for_char_range(start_chunk.0, start_ix..end_ix);
-            summary = TextSummary::from(&start_chunk.0[byte_range]);
+            summary = TextSummary::from(&start_chunk.0[start_ix..end_ix]);
         }
 
         if end_offset > self.chunks.end() {
@@ -229,8 +248,7 @@ impl<'a> Cursor<'a> {
             summary += &self.chunks.summary(&end_offset, SeekBias::Right, &());
             if let Some(end_chunk) = self.chunks.item() {
                 let end_ix = end_offset - self.chunks.start();
-                let byte_range = byte_range_for_char_range(end_chunk.0, 0..end_ix);
-                summary += TextSummary::from(&end_chunk.0[byte_range]);
+                summary += TextSummary::from(&end_chunk.0[..end_ix]);
             }
         }
 
@@ -268,9 +286,8 @@ impl<'a> Iterator for ChunksIter<'a> {
         } else if let Some(chunk) = self.chunks.item() {
             let start = self.range.start.saturating_sub(*self.chunks.start());
             let end = self.range.end - self.chunks.start();
-            let byte_range = byte_range_for_char_range(&chunk.0, start..end);
             self.chunks.next();
-            Some(&chunk.0[byte_range])
+            Some(&chunk.0[start..end])
         } else {
             None
         }
@@ -293,14 +310,14 @@ impl Chunk {
                 point.row += 1;
                 point.column = 0;
             } else {
-                point.column += 1;
+                point.column += ch.len_utf8() as u32;
             }
-            offset += 1;
+            offset += ch.len_utf8();
         }
         point
     }
 
-    fn to_offset(&self, target: Point) -> Result<usize> {
+    fn to_offset(&self, target: Point) -> usize {
         let mut offset = 0;
         let mut point = Point::new(0, 0);
         for ch in self.0.chars() {
@@ -312,16 +329,13 @@ impl Chunk {
                 point.row += 1;
                 point.column = 0;
             } else {
-                point.column += 1;
+                point.column += ch.len_utf8() as u32;
             }
-            offset += 1;
+            offset += ch.len_utf8();
         }
 
-        if point == target {
-            Ok(offset)
-        } else {
-            Err(anyhow!("point out of bounds"))
-        }
+        assert_eq!(point, target);
+        offset
     }
 }
 
@@ -335,7 +349,6 @@ impl sum_tree::Item for Chunk {
 
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
 pub struct TextSummary {
-    pub chars: usize,
     pub bytes: usize,
     pub lines: Point,
     pub first_line_len: u32,
@@ -345,18 +358,15 @@ pub struct TextSummary {
 impl<'a> From<&'a str> for TextSummary {
     fn from(text: &'a str) -> Self {
         let mut chars = 0;
-        let mut bytes = 0;
         let mut lines = Point::new(0, 0);
         let mut first_line_len = 0;
         let mut rightmost_point = Point::new(0, 0);
         for c in text.chars() {
-            chars += 1;
-            bytes += c.len_utf8();
             if c == '\n' {
                 lines.row += 1;
                 lines.column = 0;
             } else {
-                lines.column += 1;
+                lines.column += c.len_utf8() as u32;
                 if lines.row == 0 {
                     first_line_len = lines.column;
                 }
@@ -367,8 +377,7 @@ impl<'a> From<&'a str> for TextSummary {
         }
 
         TextSummary {
-            chars,
-            bytes,
+            bytes: text.len(),
             lines,
             first_line_len,
             rightmost_point,
@@ -398,7 +407,6 @@ impl<'a> std::ops::AddAssign<&'a Self> for TextSummary {
             self.first_line_len += other.first_line_len;
         }
 
-        self.chars += other.chars;
         self.bytes += other.bytes;
         self.lines += &other.lines;
     }
@@ -418,7 +426,7 @@ impl<'a> sum_tree::Dimension<'a, TextSummary> for TextSummary {
 
 impl<'a> sum_tree::Dimension<'a, TextSummary> for usize {
     fn add_summary(&mut self, summary: &'a TextSummary) {
-        *self += summary.chars;
+        *self += summary.bytes;
     }
 }
 
@@ -439,6 +447,7 @@ impl<'a> Chars<'a> {
         cursor.seek(&start, SeekBias::Left, &());
         let chars = if let Some(chunk) = cursor.item() {
             let ix = start - cursor.start();
+            assert_char_boundary(&chunk.0, ix);
             cursor.next();
             chunk.0.chars().skip(ix)
         } else {
@@ -484,6 +493,23 @@ fn find_split_ix(text: &str) -> usize {
     ix
 }
 
+#[inline(always)]
+fn assert_char_boundary(s: &str, ix: usize) {
+    if !s.is_char_boundary(ix) {
+        let mut char_start = ix;
+        while !s.is_char_boundary(char_start) {
+            char_start -= 1;
+        }
+
+        let ch = s[char_start..].chars().next().unwrap();
+        let char_range = char_start..char_start + ch.len_utf8();
+        panic!(
+            "byte index {} is not a char boundary; it is inside {:?} (bytes {:?}) of `{}`",
+            ix, ch, char_range, s
+        );
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use crate::util::RandomCharIter;
@@ -521,8 +547,8 @@ mod tests {
             let mut expected = String::new();
             let mut actual = Rope::new();
             for _ in 0..operations {
-                let end_ix = rng.gen_range(0..=expected.chars().count());
-                let start_ix = rng.gen_range(0..=end_ix);
+                let end_ix = actual.next_char_boundary(rng.gen_range(0..=expected.len()));
+                let start_ix = actual.prev_char_boundary(rng.gen_range(0..=end_ix));
                 let len = rng.gen_range(0..=64);
                 let new_text: String = RandomCharIter::new(&mut rng).take(len).collect();
 
@@ -559,8 +585,8 @@ mod tests {
                 let mut point = Point::new(0, 0);
                 let mut offset = 0;
                 for ch in expected.chars() {
-                    assert_eq!(actual.to_point(offset).unwrap(), point);
-                    assert_eq!(actual.to_offset(point).unwrap(), offset);
+                    assert_eq!(actual.to_point(offset), point);
+                    assert_eq!(actual.to_offset(point), offset);
                     if ch == '\n' {
                         assert!(actual
                             .to_offset(Point::new(point.row, point.column + 1))
@@ -581,7 +607,6 @@ mod tests {
                 for _ in 0..5 {
                     let end_ix = rng.gen_range(0..=expected.chars().count());
                     let start_ix = rng.gen_range(0..=end_ix);
-                    let byte_range = byte_range_for_char_range(&expected, start_ix..end_ix);
                     assert_eq!(
                         actual.cursor(start_ix).summary(end_ix),
                         TextSummary::from(&expected[byte_range])

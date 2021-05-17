@@ -1,21 +1,6 @@
 use rand::prelude::*;
 use std::{cmp::Ordering, ops::Range};
 
-pub fn byte_range_for_char_range(text: impl AsRef<str>, char_range: Range<usize>) -> Range<usize> {
-    let text = text.as_ref();
-    let mut result = text.len()..text.len();
-    for (i, (offset, _)) in text.char_indices().enumerate() {
-        if i == char_range.start {
-            result.start = offset;
-        }
-        if i == char_range.end {
-            result.end = offset;
-            break;
-        }
-    }
-    result
-}
-
 pub fn post_inc(value: &mut usize) -> usize {
     let prev = *value;
     *value += 1;
