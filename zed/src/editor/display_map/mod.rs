@@ -118,9 +118,10 @@ impl DisplayMap {
         bias: Bias,
         app: &AppContext,
     ) -> Result<Anchor> {
-        self.buffer
+        Ok(self
+            .buffer
             .read(app)
-            .anchor_before(point.to_buffer_point(self, bias, app)?)
+            .anchor_before(point.to_buffer_point(self, bias, app)?))
     }
 
     pub fn anchor_after(
@@ -129,9 +130,10 @@ impl DisplayMap {
         bias: Bias,
         app: &AppContext,
     ) -> Result<Anchor> {
-        self.buffer
+        Ok(self
+            .buffer
             .read(app)
-            .anchor_after(point.to_buffer_point(self, bias, app)?)
+            .anchor_after(point.to_buffer_point(self, bias, app)?))
     }
 }
 
@@ -222,8 +224,9 @@ impl DisplayPoint {
     }
 
     pub fn to_buffer_offset(self, map: &DisplayMap, bias: Bias, ctx: &AppContext) -> Result<usize> {
-        map.fold_map
-            .to_buffer_offset(self.collapse_tabs(&map, bias, ctx)?.0, ctx)
+        Ok(map
+            .fold_map
+            .to_buffer_offset(self.collapse_tabs(&map, bias, ctx)?.0, ctx))
     }
 
     fn expand_tabs(self, map: &DisplayMap, ctx: &AppContext) -> Result<Self> {
@@ -253,7 +256,7 @@ impl Point {
 
 impl Anchor {
     pub fn to_display_point(&self, map: &DisplayMap, app: &AppContext) -> Result<DisplayPoint> {
-        self.to_point(map.buffer.read(app))?
+        self.to_point(map.buffer.read(app))
             .to_display_point(map, app)
     }
 }

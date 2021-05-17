@@ -1,6 +1,5 @@
 use super::Point;
 use crate::sum_tree::{self, SeekBias, SumTree};
-use anyhow::{anyhow, Result};
 use arrayvec::ArrayString;
 use smallvec::SmallVec;
 use std::{cmp, iter::Skip, ops::Range, str};
@@ -148,31 +147,27 @@ impl Rope {
         let mut cursor = self.chunks.cursor::<usize, usize>();
         cursor.seek(&offset, SeekBias::Left, &());
         if let Some(chunk) = cursor.item() {
-            let ix = offset - cursor.start();
+            let mut ix = offset - cursor.start();
             while !chunk.0.is_char_boundary(ix) {
                 ix += 1;
                 offset += 1;
             }
-            offset
-        } else {
-            offset
         }
+        offset
     }
 
-    pub fn prev_char_boundary(&self, offset: usize) -> usize {
+    pub fn prev_char_boundary(&self, mut offset: usize) -> usize {
         assert!(offset <= self.summary().bytes);
         let mut cursor = self.chunks.cursor::<usize, usize>();
         cursor.seek(&offset, SeekBias::Left, &());
         if let Some(chunk) = cursor.item() {
-            let ix = offset - cursor.start();
+            let mut ix = offset - cursor.start();
             while !chunk.0.is_char_boundary(ix) {
                 ix -= 1;
                 offset -= 1;
             }
-            offset
-        } else {
-            offset
         }
+        offset
     }
 }
 
@@ -281,16 +276,15 @@ impl<'a> Iterator for ChunksIter<'a> {
     type Item = &'a str;
 
     fn next(&mut self) -> Option<Self::Item> {
-        if *self.chunks.start() >= self.range.end {
-            None
-        } else if let Some(chunk) = self.chunks.item() {
-            let start = self.range.start.saturating_sub(*self.chunks.start());
-            let end = self.range.end - self.chunks.start();
-            self.chunks.next();
-            Some(&chunk.0[start..end])
-        } else {
-            None
+        if let Some(chunk) = self.chunks.item() {
+            if self.range.end > *self.chunks.start() {
+                let start = self.range.start.saturating_sub(*self.chunks.start());
+                let end = self.range.end - self.chunks.start();
+                self.chunks.next();
+                return Some(&chunk.0[start..chunk.0.len().min(end)]);
+            }
         }
+        None
     }
 }
 
@@ -357,22 +351,19 @@ pub struct TextSummary {
 
 impl<'a> From<&'a str> for TextSummary {
     fn from(text: &'a str) -> Self {
-        let mut chars = 0;
         let mut lines = Point::new(0, 0);
         let mut first_line_len = 0;
         let mut rightmost_point = Point::new(0, 0);
-        for c in text.chars() {
-            if c == '\n' {
+        for (i, line) in text.split('\n').enumerate() {
+            if i > 0 {
                 lines.row += 1;
-                lines.column = 0;
-            } else {
-                lines.column += c.len_utf8() as u32;
-                if lines.row == 0 {
-                    first_line_len = lines.column;
-                }
-                if lines.column > rightmost_point.column {
-                    rightmost_point = lines;
-                }
+            }
+            lines.column = line.len() as u32;
+            if i == 0 {
+                first_line_len = lines.column;
+            }
+            if lines.column > rightmost_point.column {
+                rightmost_point = lines;
             }
         }
 
@@ -560,56 +551,38 @@ mod tests {
                 new_actual.append(cursor.suffix());
                 actual = new_actual;
 
-                let mut new_expected = String::new();
-                new_expected.extend(expected.chars().take(start_ix));
-                new_expected.push_str(&new_text);
-                new_expected.extend(expected.chars().skip(end_ix));
-                expected = new_expected;
+                expected.replace_range(start_ix..end_ix, &new_text);
 
                 assert_eq!(actual.text(), expected);
                 log::info!("text: {:?}", expected);
 
                 for _ in 0..5 {
-                    let end_ix = rng.gen_range(0..=expected.chars().count());
-                    let start_ix = rng.gen_range(0..=end_ix);
+                    let end_ix = actual.next_char_boundary(rng.gen_range(0..=expected.len()));
+                    let start_ix = actual.prev_char_boundary(rng.gen_range(0..=end_ix));
                     assert_eq!(
                         actual.chunks_in_range(start_ix..end_ix).collect::<String>(),
-                        expected
-                            .chars()
-                            .skip(start_ix)
-                            .take(end_ix - start_ix)
-                            .collect::<String>()
+                        &expected[start_ix..end_ix]
                     );
                 }
 
                 let mut point = Point::new(0, 0);
-                let mut offset = 0;
-                for ch in expected.chars() {
-                    assert_eq!(actual.to_point(offset), point);
-                    assert_eq!(actual.to_offset(point), offset);
+                for (ix, ch) in expected.char_indices().chain(Some((expected.len(), '\0'))) {
+                    assert_eq!(actual.to_point(ix), point, "to_point({})", ix);
+                    assert_eq!(actual.to_offset(point), ix, "to_offset({:?})", point);
                     if ch == '\n' {
-                        assert!(actual
-                            .to_offset(Point::new(point.row, point.column + 1))
-                            .is_err());
-
                         point.row += 1;
                         point.column = 0
                     } else {
-                        point.column += 1;
+                        point.column += ch.len_utf8() as u32;
                     }
-                    offset += 1;
                 }
-                assert_eq!(actual.to_point(offset).unwrap(), point);
-                assert!(actual.to_point(offset + 1).is_err());
-                assert_eq!(actual.to_offset(point).unwrap(), offset);
-                assert!(actual.to_offset(Point::new(point.row + 1, 0)).is_err());
 
                 for _ in 0..5 {
-                    let end_ix = rng.gen_range(0..=expected.chars().count());
-                    let start_ix = rng.gen_range(0..=end_ix);
+                    let end_ix = actual.next_char_boundary(rng.gen_range(0..=expected.len()));
+                    let start_ix = actual.prev_char_boundary(rng.gen_range(0..=end_ix));
                     assert_eq!(
                         actual.cursor(start_ix).summary(end_ix),
-                        TextSummary::from(&expected[byte_range])
+                        TextSummary::from(&expected[start_ix..end_ix])
                     );
                 }
             }

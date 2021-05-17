@@ -62,8 +62,8 @@ impl Selection {
     }
 
     pub fn range(&self, buffer: &Buffer) -> Range<Point> {
-        let start = self.start.to_point(buffer).unwrap();
-        let end = self.end.to_point(buffer).unwrap();
+        let start = self.start.to_point(buffer);
+        let end = self.end.to_point(buffer);
         if self.reversed {
             end..start
         } else {

@@ -14,13 +14,11 @@ use crate::{
     operation_queue::{self, OperationQueue},
     sum_tree::{self, FilterCursor, SeekBias, SumTree},
     time::{self, ReplicaId},
-    util::RandomCharIter,
     worktree::FileHandle,
 };
 use anyhow::{anyhow, Result};
 use gpui::{AppContext, Entity, ModelContext, Task};
 use lazy_static::lazy_static;
-use rand::prelude::*;
 use std::{
     cmp,
     hash::BuildHasher,
@@ -607,15 +605,14 @@ impl Buffer {
         self.fragments.extent::<usize>()
     }
 
-    pub fn line_len(&self, row: u32) -> Result<u32> {
-        let row_start_offset = Point::new(row, 0).to_offset(self)?;
+    pub fn line_len(&self, row: u32) -> u32 {
+        let row_start_offset = Point::new(row, 0).to_offset(self);
         let row_end_offset = if row >= self.max_point().row {
             self.len()
         } else {
-            Point::new(row + 1, 0).to_offset(self)? - 1
+            Point::new(row + 1, 0).to_offset(self) - 1
         };
-
-        Ok((row_end_offset - row_start_offset) as u32)
+        (row_end_offset - row_start_offset) as u32
     }
 
     pub fn rightmost_point(&self) -> Point {
@@ -630,33 +627,32 @@ impl Buffer {
         self.visible_text.max_point()
     }
 
-    pub fn line(&self, row: u32) -> Result<String> {
-        Ok(self
-            .chars_at(Point::new(row, 0))?
+    pub fn line(&self, row: u32) -> String {
+        self.chars_at(Point::new(row, 0))
             .take_while(|c| *c != '\n')
-            .collect())
+            .collect()
     }
 
     pub fn text(&self) -> String {
-        self.chars().collect()
+        self.text_for_range(0..self.len()).collect()
     }
 
     pub fn text_for_range<'a, T: ToOffset>(
         &'a self,
         range: Range<T>,
-    ) -> Result<impl 'a + Iterator<Item = char>> {
-        let start = range.start.to_offset(self)?;
-        let end = range.end.to_offset(self)?;
-        Ok(self.chars_at(start)?.take(end - start))
+    ) -> impl 'a + Iterator<Item = &'a str> {
+        let start = range.start.to_offset(self);
+        let end = range.end.to_offset(self);
+        self.visible_text.chunks_in_range(start..end)
     }
 
     pub fn chars(&self) -> rope::Chars {
-        self.chars_at(0).unwrap()
+        self.chars_at(0)
     }
 
-    pub fn chars_at<T: ToOffset>(&self, position: T) -> Result<rope::Chars> {
-        let offset = position.to_offset(self)?;
-        Ok(self.visible_text.chars_at(offset))
+    pub fn chars_at<T: ToOffset>(&self, position: T) -> rope::Chars {
+        let offset = position.to_offset(self);
+        self.visible_text.chars_at(offset)
     }
 
     pub fn selections_changed_since(&self, since: SelectionsVersion) -> bool {
@@ -763,8 +759,8 @@ impl Buffer {
 
         let old_ranges = old_ranges
             .into_iter()
-            .map(|range| Ok(range.start.to_offset(self)?..range.end.to_offset(self)?))
-            .collect::<Result<Vec<Range<usize>>>>()?;
+            .map(|range| range.start.to_offset(self)..range.end.to_offset(self))
+            .collect::<Vec<Range<usize>>>();
 
         let has_new_text = new_text.is_some();
         let ops = self.splice_fragments(
@@ -800,50 +796,6 @@ impl Buffer {
         if !was_dirty {
             ctx.emit(Event::Dirtied);
         }
-    }
-
-    pub fn simulate_typing<T: Rng>(&mut self, rng: &mut T) {
-        let end = rng.gen_range(0..self.len() + 1);
-        let start = rng.gen_range(0..end + 1);
-        let mut range = start..end;
-
-        let new_text_len = rng.gen_range(0..100);
-        let new_text: String = RandomCharIter::new(&mut *rng).take(new_text_len).collect();
-
-        for char in new_text.chars() {
-            self.edit(Some(range.clone()), char.to_string().as_str(), None)
-                .unwrap();
-            range = range.end + 1..range.end + 1;
-        }
-    }
-
-    pub fn randomly_edit<T>(
-        &mut self,
-        rng: &mut T,
-        old_range_count: usize,
-        ctx: Option<&mut ModelContext<Self>>,
-    ) -> (Vec<Range<usize>>, String, Vec<Operation>)
-    where
-        T: Rng,
-    {
-        let mut old_ranges: Vec<Range<usize>> = Vec::new();
-        for _ in 0..old_range_count {
-            let last_end = old_ranges.last().map_or(0, |last_range| last_range.end + 1);
-            if last_end > self.len() {
-                break;
-            }
-            let end = rng.gen_range(last_end..self.len() + 1);
-            let start = rng.gen_range(last_end..end + 1);
-            old_ranges.push(start..end);
-        }
-        let new_text_len = rng.gen_range(0..10);
-        let new_text: String = RandomCharIter::new(&mut *rng).take(new_text_len).collect();
-
-        let operations = self
-            .edit(old_ranges.iter().cloned(), new_text.as_str(), ctx)
-            .unwrap();
-
-        (old_ranges, new_text, operations)
     }
 
     pub fn add_selection_set(
@@ -1777,8 +1729,7 @@ impl Buffer {
                 .unwrap_or(&FragmentId::max_value()),
         );
 
-        // TODO: extent could be expressed in bytes, which would save a linear scan.
-        let range_in_insertion = 0..text.chars().count();
+        let range_in_insertion = 0..text.len();
         let mut split_tree = SumTree::new();
         split_tree.push(
             InsertionSplit {
@@ -1801,33 +1752,31 @@ impl Buffer {
         )
     }
 
-    pub fn anchor_before<T: ToOffset>(&self, position: T) -> Result<Anchor> {
+    pub fn anchor_before<T: ToOffset>(&self, position: T) -> Anchor {
         self.anchor_at(position, AnchorBias::Left)
     }
 
-    pub fn anchor_after<T: ToOffset>(&self, position: T) -> Result<Anchor> {
+    pub fn anchor_after<T: ToOffset>(&self, position: T) -> Anchor {
         self.anchor_at(position, AnchorBias::Right)
     }
 
-    pub fn anchor_at<T: ToOffset>(&self, position: T, bias: AnchorBias) -> Result<Anchor> {
-        let offset = position.to_offset(self)?;
+    pub fn anchor_at<T: ToOffset>(&self, position: T, bias: AnchorBias) -> Anchor {
+        let offset = position.to_offset(self);
         let max_offset = self.len();
-        if offset > max_offset {
-            return Err(anyhow!("offset is out of range"));
-        }
+        assert!(offset <= max_offset, "offset is out of range");
 
         let seek_bias;
         match bias {
             AnchorBias::Left => {
                 if offset == 0 {
-                    return Ok(Anchor::Start);
+                    return Anchor::Start;
                 } else {
                     seek_bias = SeekBias::Left;
                 }
             }
             AnchorBias::Right => {
                 if offset == max_offset {
-                    return Ok(Anchor::End);
+                    return Anchor::End;
                 } else {
                     seek_bias = SeekBias::Right;
                 }
@@ -1844,7 +1793,7 @@ impl Buffer {
             offset: offset_in_insertion,
             bias,
         };
-        Ok(anchor)
+        anchor
     }
 
     fn fragment_id_for_anchor(&self, anchor: &Anchor) -> Result<&FragmentId> {
@@ -1876,10 +1825,10 @@ impl Buffer {
         }
     }
 
-    fn summary_for_anchor(&self, anchor: &Anchor) -> Result<TextSummary> {
+    fn summary_for_anchor(&self, anchor: &Anchor) -> TextSummary {
         match anchor {
-            Anchor::Start => Ok(TextSummary::default()),
-            Anchor::End => Ok(self.text_summary()),
+            Anchor::Start => TextSummary::default(),
+            Anchor::End => self.text_summary(),
             Anchor::Middle {
                 insertion_id,
                 offset,
@@ -1893,24 +1842,20 @@ impl Buffer {
                 let splits = self
                     .insertion_splits
                     .get(&insertion_id)
-                    .ok_or_else(|| anyhow!("split does not exist for insertion id"))?;
+                    .expect("split does not exist for insertion id");
                 let mut splits_cursor = splits.cursor::<usize, ()>();
                 splits_cursor.seek(offset, seek_bias, &());
-                let split = splits_cursor
-                    .item()
-                    .ok_or_else(|| anyhow!("split offset is out of range"))?;
+                let split = splits_cursor.item().expect("split offset is out of range");
 
                 let mut fragments_cursor = self.fragments.cursor::<FragmentIdRef, usize>();
                 fragments_cursor.seek(&FragmentIdRef::new(&split.fragment_id), SeekBias::Left, &());
-                let fragment = fragments_cursor
-                    .item()
-                    .ok_or_else(|| anyhow!("fragment id does not exist"))?;
+                let fragment = fragments_cursor.item().expect("fragment id does not exist");
 
                 let mut ix = *fragments_cursor.start();
                 if fragment.visible {
                     ix += offset - fragment.range_in_insertion.start;
                 }
-                Ok(self.text_summary_for_range(0..ix))
+                self.text_summary_for_range(0..ix)
             }
         }
     }
@@ -1921,6 +1866,14 @@ impl Buffer {
         } else {
             Err(anyhow!("offset out of bounds"))
         }
+    }
+
+    pub fn next_char_boundary(&self, offset: usize) -> usize {
+        self.visible_text.next_char_boundary(offset)
+    }
+
+    pub fn prev_char_boundary(&self, offset: usize) -> usize {
+        self.visible_text.prev_char_boundary(offset)
     }
 }
 
@@ -2352,45 +2305,45 @@ impl operation_queue::Operation for Operation {
 }
 
 pub trait ToOffset {
-    fn to_offset(&self, buffer: &Buffer) -> Result<usize>;
+    fn to_offset(&self, buffer: &Buffer) -> usize;
 }
 
 impl ToOffset for Point {
-    fn to_offset(&self, buffer: &Buffer) -> Result<usize> {
+    fn to_offset(&self, buffer: &Buffer) -> usize {
         buffer.visible_text.to_offset(*self)
     }
 }
 
 impl ToOffset for usize {
-    fn to_offset(&self, _: &Buffer) -> Result<usize> {
-        Ok(*self)
+    fn to_offset(&self, _: &Buffer) -> usize {
+        *self
     }
 }
 
 impl ToOffset for Anchor {
-    fn to_offset(&self, buffer: &Buffer) -> Result<usize> {
-        Ok(buffer.summary_for_anchor(self)?.chars)
+    fn to_offset(&self, buffer: &Buffer) -> usize {
+        buffer.summary_for_anchor(self).bytes
     }
 }
 
 impl<'a> ToOffset for &'a Anchor {
-    fn to_offset(&self, buffer: &Buffer) -> Result<usize> {
-        Ok(buffer.summary_for_anchor(self)?.chars)
+    fn to_offset(&self, buffer: &Buffer) -> usize {
+        buffer.summary_for_anchor(self).bytes
     }
 }
 
 pub trait ToPoint {
-    fn to_point(&self, buffer: &Buffer) -> Result<Point>;
+    fn to_point(&self, buffer: &Buffer) -> Point;
 }
 
 impl ToPoint for Anchor {
-    fn to_point(&self, buffer: &Buffer) -> Result<Point> {
-        Ok(buffer.summary_for_anchor(self)?.lines)
+    fn to_point(&self, buffer: &Buffer) -> Point {
+        buffer.summary_for_anchor(self).lines
     }
 }
 
 impl ToPoint for usize {
-    fn to_point(&self, buffer: &Buffer) -> Result<Point> {
+    fn to_point(&self, buffer: &Buffer) -> Point {
         buffer.visible_text.to_point(*self)
     }
 }
@@ -2400,13 +2353,15 @@ mod tests {
     use super::*;
     use crate::{
         test::temp_tree,
+        util::RandomCharIter,
         worktree::{Worktree, WorktreeHandle},
     };
-    use cmp::Ordering;
     use gpui::App;
+    use rand::prelude::*;
     use serde_json::json;
     use std::{
         cell::RefCell,
+        cmp::Ordering,
         collections::BTreeMap,
         fs,
         rc::Rc,
@@ -2506,12 +2461,7 @@ mod tests {
                 for _i in 0..10 {
                     let (old_ranges, new_text, _) = buffer.randomly_mutate(rng, None);
                     for old_range in old_ranges.iter().rev() {
-                        reference_string = reference_string
-                            .chars()
-                            .take(old_range.start)
-                            .chain(new_text.chars())
-                            .chain(reference_string.chars().skip(old_range.end))
-                            .collect();
+                        reference_string.replace_range(old_range.clone(), &new_text);
                     }
                     assert_eq!(buffer.text(), reference_string);
 
@@ -2525,7 +2475,7 @@ mod tests {
 
                         for (len, rows) in &line_lengths {
                             for row in rows {
-                                assert_eq!(buffer.line_len(*row).unwrap(), *len);
+                                assert_eq!(buffer.line_len(*row), *len);
                             }
                         }
 
@@ -2537,22 +2487,14 @@ mod tests {
                     }
 
                     for _ in 0..5 {
-                        let end = rng.gen_range(0..buffer.len() + 1);
-                        let start = rng.gen_range(0..end + 1);
-
-                        let line_lengths = line_lengths_in_range(&buffer, start..end);
+                        let range = buffer.random_byte_range(0, rng);
+                        let line_lengths = line_lengths_in_range(&buffer, range.clone());
                         let (longest_column, longest_rows) =
                             line_lengths.iter().next_back().unwrap();
-                        let range_sum = buffer.text_summary_for_range(start..end);
+                        let range_sum = buffer.text_summary_for_range(range.clone());
                         assert_eq!(range_sum.rightmost_point.column, *longest_column);
                         assert!(longest_rows.contains(&range_sum.rightmost_point.row));
-                        let range_text = buffer
-                            .text()
-                            .chars()
-                            .skip(start)
-                            .take(end - start)
-                            .collect::<String>();
-                        assert_eq!(range_sum.chars, range_text.chars().count());
+                        let range_text = &buffer.text()[range];
                         assert_eq!(range_sum.bytes, range_text.len());
                     }
 
@@ -2571,7 +2513,7 @@ mod tests {
                         let old_len = old_range.end - old_range.start;
                         let new_len = new_range.end - new_range.start;
                         let old_start = (old_range.start as isize + delta) as usize;
-                        let new_text: String = buffer.text_for_range(new_range).unwrap().collect();
+                        let new_text: String = buffer.text_for_range(new_range).collect();
                         old_buffer
                             .edit(Some(old_start..old_start + old_len), new_text, None)
                             .unwrap();
@@ -2595,13 +2537,12 @@ mod tests {
             buffer.edit(vec![18..18], "\npqrs\n", None).unwrap();
             buffer.edit(vec![18..21], "\nPQ", None).unwrap();
 
-            assert_eq!(buffer.line_len(0).unwrap(), 4);
-            assert_eq!(buffer.line_len(1).unwrap(), 3);
-            assert_eq!(buffer.line_len(2).unwrap(), 5);
-            assert_eq!(buffer.line_len(3).unwrap(), 3);
-            assert_eq!(buffer.line_len(4).unwrap(), 4);
-            assert_eq!(buffer.line_len(5).unwrap(), 0);
-            assert!(buffer.line_len(6).is_err());
+            assert_eq!(buffer.line_len(0), 4);
+            assert_eq!(buffer.line_len(1), 3);
+            assert_eq!(buffer.line_len(2), 5);
+            assert_eq!(buffer.line_len(3), 3);
+            assert_eq!(buffer.line_len(4), 4);
+            assert_eq!(buffer.line_len(5), 0);
             buffer
         });
     }
@@ -2632,7 +2573,6 @@ mod tests {
             assert_eq!(
                 buffer.text_summary_for_range(1..3),
                 TextSummary {
-                    chars: 2,
                     bytes: 2,
                     lines: Point::new(1, 0),
                     first_line_len: 1,
@@ -2642,7 +2582,6 @@ mod tests {
             assert_eq!(
                 buffer.text_summary_for_range(1..12),
                 TextSummary {
-                    chars: 11,
                     bytes: 11,
                     lines: Point::new(3, 0),
                     first_line_len: 1,
@@ -2652,7 +2591,6 @@ mod tests {
             assert_eq!(
                 buffer.text_summary_for_range(0..20),
                 TextSummary {
-                    chars: 20,
                     bytes: 20,
                     lines: Point::new(4, 1),
                     first_line_len: 2,
@@ -2662,7 +2600,6 @@ mod tests {
             assert_eq!(
                 buffer.text_summary_for_range(0..22),
                 TextSummary {
-                    chars: 22,
                     bytes: 22,
                     lines: Point::new(4, 3),
                     first_line_len: 2,
@@ -2672,7 +2609,6 @@ mod tests {
             assert_eq!(
                 buffer.text_summary_for_range(7..22),
                 TextSummary {
-                    chars: 15,
                     bytes: 15,
                     lines: Point::new(2, 3),
                     first_line_len: 4,
@@ -2692,19 +2628,19 @@ mod tests {
             buffer.edit(vec![18..18], "\npqrs", None).unwrap();
             buffer.edit(vec![18..21], "\nPQ", None).unwrap();
 
-            let chars = buffer.chars_at(Point::new(0, 0)).unwrap();
+            let chars = buffer.chars_at(Point::new(0, 0));
             assert_eq!(chars.collect::<String>(), "abcd\nefgh\nijkl\nmno\nPQrs");
 
-            let chars = buffer.chars_at(Point::new(1, 0)).unwrap();
+            let chars = buffer.chars_at(Point::new(1, 0));
             assert_eq!(chars.collect::<String>(), "efgh\nijkl\nmno\nPQrs");
 
-            let chars = buffer.chars_at(Point::new(2, 0)).unwrap();
+            let chars = buffer.chars_at(Point::new(2, 0));
             assert_eq!(chars.collect::<String>(), "ijkl\nmno\nPQrs");
 
-            let chars = buffer.chars_at(Point::new(3, 0)).unwrap();
+            let chars = buffer.chars_at(Point::new(3, 0));
             assert_eq!(chars.collect::<String>(), "mno\nPQrs");
 
-            let chars = buffer.chars_at(Point::new(4, 0)).unwrap();
+            let chars = buffer.chars_at(Point::new(4, 0));
             assert_eq!(chars.collect::<String>(), "PQrs");
 
             // Regression test:
@@ -2712,7 +2648,7 @@ mod tests {
             buffer.edit(vec![0..0], "[workspace]\nmembers = [\n    \"xray_core\",\n    \"xray_server\",\n    \"xray_cli\",\n    \"xray_wasm\",\n]\n", None).unwrap();
             buffer.edit(vec![60..60], "\n", None).unwrap();
 
-            let chars = buffer.chars_at(Point::new(6, 0)).unwrap();
+            let chars = buffer.chars_at(Point::new(6, 0));
             assert_eq!(chars.collect::<String>(), "    \"xray_wasm\",\n]\n");
 
             buffer
@@ -2744,103 +2680,79 @@ mod tests {
         ctx.add_model(|ctx| {
             let mut buffer = Buffer::new(0, "", ctx);
             buffer.edit(vec![0..0], "abc", None).unwrap();
-            let left_anchor = buffer.anchor_before(2).unwrap();
-            let right_anchor = buffer.anchor_after(2).unwrap();
+            let left_anchor = buffer.anchor_before(2);
+            let right_anchor = buffer.anchor_after(2);
 
             buffer.edit(vec![1..1], "def\n", None).unwrap();
             assert_eq!(buffer.text(), "adef\nbc");
-            assert_eq!(left_anchor.to_offset(&buffer).unwrap(), 6);
-            assert_eq!(right_anchor.to_offset(&buffer).unwrap(), 6);
-            assert_eq!(
-                left_anchor.to_point(&buffer).unwrap(),
-                Point { row: 1, column: 1 }
-            );
-            assert_eq!(
-                right_anchor.to_point(&buffer).unwrap(),
-                Point { row: 1, column: 1 }
-            );
+            assert_eq!(left_anchor.to_offset(&buffer), 6);
+            assert_eq!(right_anchor.to_offset(&buffer), 6);
+            assert_eq!(left_anchor.to_point(&buffer), Point { row: 1, column: 1 });
+            assert_eq!(right_anchor.to_point(&buffer), Point { row: 1, column: 1 });
 
             buffer.edit(vec![2..3], "", None).unwrap();
             assert_eq!(buffer.text(), "adf\nbc");
-            assert_eq!(left_anchor.to_offset(&buffer).unwrap(), 5);
-            assert_eq!(right_anchor.to_offset(&buffer).unwrap(), 5);
-            assert_eq!(
-                left_anchor.to_point(&buffer).unwrap(),
-                Point { row: 1, column: 1 }
-            );
-            assert_eq!(
-                right_anchor.to_point(&buffer).unwrap(),
-                Point { row: 1, column: 1 }
-            );
+            assert_eq!(left_anchor.to_offset(&buffer), 5);
+            assert_eq!(right_anchor.to_offset(&buffer), 5);
+            assert_eq!(left_anchor.to_point(&buffer), Point { row: 1, column: 1 });
+            assert_eq!(right_anchor.to_point(&buffer), Point { row: 1, column: 1 });
 
             buffer.edit(vec![5..5], "ghi\n", None).unwrap();
             assert_eq!(buffer.text(), "adf\nbghi\nc");
-            assert_eq!(left_anchor.to_offset(&buffer).unwrap(), 5);
-            assert_eq!(right_anchor.to_offset(&buffer).unwrap(), 9);
-            assert_eq!(
-                left_anchor.to_point(&buffer).unwrap(),
-                Point { row: 1, column: 1 }
-            );
-            assert_eq!(
-                right_anchor.to_point(&buffer).unwrap(),
-                Point { row: 2, column: 0 }
-            );
+            assert_eq!(left_anchor.to_offset(&buffer), 5);
+            assert_eq!(right_anchor.to_offset(&buffer), 9);
+            assert_eq!(left_anchor.to_point(&buffer), Point { row: 1, column: 1 });
+            assert_eq!(right_anchor.to_point(&buffer), Point { row: 2, column: 0 });
 
             buffer.edit(vec![7..9], "", None).unwrap();
             assert_eq!(buffer.text(), "adf\nbghc");
-            assert_eq!(left_anchor.to_offset(&buffer).unwrap(), 5);
-            assert_eq!(right_anchor.to_offset(&buffer).unwrap(), 7);
-            assert_eq!(
-                left_anchor.to_point(&buffer).unwrap(),
-                Point { row: 1, column: 1 },
-            );
-            assert_eq!(
-                right_anchor.to_point(&buffer).unwrap(),
-                Point { row: 1, column: 3 }
-            );
+            assert_eq!(left_anchor.to_offset(&buffer), 5);
+            assert_eq!(right_anchor.to_offset(&buffer), 7);
+            assert_eq!(left_anchor.to_point(&buffer), Point { row: 1, column: 1 },);
+            assert_eq!(right_anchor.to_point(&buffer), Point { row: 1, column: 3 });
 
             // Ensure anchoring to a point is equivalent to anchoring to an offset.
             assert_eq!(
-                buffer.anchor_before(Point { row: 0, column: 0 }).unwrap(),
-                buffer.anchor_before(0).unwrap()
+                buffer.anchor_before(Point { row: 0, column: 0 }),
+                buffer.anchor_before(0)
             );
             assert_eq!(
-                buffer.anchor_before(Point { row: 0, column: 1 }).unwrap(),
-                buffer.anchor_before(1).unwrap()
+                buffer.anchor_before(Point { row: 0, column: 1 }),
+                buffer.anchor_before(1)
             );
             assert_eq!(
-                buffer.anchor_before(Point { row: 0, column: 2 }).unwrap(),
-                buffer.anchor_before(2).unwrap()
+                buffer.anchor_before(Point { row: 0, column: 2 }),
+                buffer.anchor_before(2)
             );
             assert_eq!(
-                buffer.anchor_before(Point { row: 0, column: 3 }).unwrap(),
-                buffer.anchor_before(3).unwrap()
+                buffer.anchor_before(Point { row: 0, column: 3 }),
+                buffer.anchor_before(3)
             );
             assert_eq!(
-                buffer.anchor_before(Point { row: 1, column: 0 }).unwrap(),
-                buffer.anchor_before(4).unwrap()
+                buffer.anchor_before(Point { row: 1, column: 0 }),
+                buffer.anchor_before(4)
             );
             assert_eq!(
-                buffer.anchor_before(Point { row: 1, column: 1 }).unwrap(),
-                buffer.anchor_before(5).unwrap()
+                buffer.anchor_before(Point { row: 1, column: 1 }),
+                buffer.anchor_before(5)
             );
             assert_eq!(
-                buffer.anchor_before(Point { row: 1, column: 2 }).unwrap(),
-                buffer.anchor_before(6).unwrap()
+                buffer.anchor_before(Point { row: 1, column: 2 }),
+                buffer.anchor_before(6)
             );
             assert_eq!(
-                buffer.anchor_before(Point { row: 1, column: 3 }).unwrap(),
-                buffer.anchor_before(7).unwrap()
+                buffer.anchor_before(Point { row: 1, column: 3 }),
+                buffer.anchor_before(7)
             );
             assert_eq!(
-                buffer.anchor_before(Point { row: 1, column: 4 }).unwrap(),
-                buffer.anchor_before(8).unwrap()
+                buffer.anchor_before(Point { row: 1, column: 4 }),
+                buffer.anchor_before(8)
             );
 
             // Comparison between anchors.
-            let anchor_at_offset_0 = buffer.anchor_before(0).unwrap();
-            let anchor_at_offset_1 = buffer.anchor_before(1).unwrap();
-            let anchor_at_offset_2 = buffer.anchor_before(2).unwrap();
+            let anchor_at_offset_0 = buffer.anchor_before(0);
+            let anchor_at_offset_1 = buffer.anchor_before(1);
+            let anchor_at_offset_2 = buffer.anchor_before(2);
 
             assert_eq!(
                 anchor_at_offset_0
@@ -2906,24 +2818,24 @@ mod tests {
     fn test_anchors_at_start_and_end(ctx: &mut gpui::MutableAppContext) {
         ctx.add_model(|ctx| {
             let mut buffer = Buffer::new(0, "", ctx);
-            let before_start_anchor = buffer.anchor_before(0).unwrap();
-            let after_end_anchor = buffer.anchor_after(0).unwrap();
+            let before_start_anchor = buffer.anchor_before(0);
+            let after_end_anchor = buffer.anchor_after(0);
 
             buffer.edit(vec![0..0], "abc", None).unwrap();
             assert_eq!(buffer.text(), "abc");
-            assert_eq!(before_start_anchor.to_offset(&buffer).unwrap(), 0);
-            assert_eq!(after_end_anchor.to_offset(&buffer).unwrap(), 3);
+            assert_eq!(before_start_anchor.to_offset(&buffer), 0);
+            assert_eq!(after_end_anchor.to_offset(&buffer), 3);
 
-            let after_start_anchor = buffer.anchor_after(0).unwrap();
-            let before_end_anchor = buffer.anchor_before(3).unwrap();
+            let after_start_anchor = buffer.anchor_after(0);
+            let before_end_anchor = buffer.anchor_before(3);
 
             buffer.edit(vec![3..3], "def", None).unwrap();
             buffer.edit(vec![0..0], "ghi", None).unwrap();
             assert_eq!(buffer.text(), "ghiabcdef");
-            assert_eq!(before_start_anchor.to_offset(&buffer).unwrap(), 0);
-            assert_eq!(after_start_anchor.to_offset(&buffer).unwrap(), 3);
-            assert_eq!(before_end_anchor.to_offset(&buffer).unwrap(), 6);
-            assert_eq!(after_end_anchor.to_offset(&buffer).unwrap(), 9);
+            assert_eq!(before_start_anchor.to_offset(&buffer), 0);
+            assert_eq!(after_start_anchor.to_offset(&buffer), 3);
+            assert_eq!(before_end_anchor.to_offset(&buffer), 6);
+            assert_eq!(after_end_anchor.to_offset(&buffer), 9);
             buffer
         });
     }
@@ -3062,9 +2974,7 @@ mod tests {
             buffer.add_selection_set(
                 (0..3)
                     .map(|row| {
-                        let anchor = buffer
-                            .anchor_at(Point::new(row, 0), AnchorBias::Right)
-                            .unwrap();
+                        let anchor = buffer.anchor_at(Point::new(row, 0), AnchorBias::Right);
                         Selection {
                             id: row as usize,
                             start: anchor.clone(),
@@ -3104,7 +3014,7 @@ mod tests {
                 .iter()
                 .map(|selection| {
                     assert_eq!(selection.start, selection.end);
-                    selection.start.to_point(&buffer).unwrap()
+                    selection.start.to_point(&buffer)
                 })
                 .collect::<Vec<_>>();
             assert_eq!(
@@ -3324,6 +3234,39 @@ mod tests {
     }
 
     impl Buffer {
+        fn random_byte_range(&mut self, start_offset: usize, rng: &mut impl Rng) -> Range<usize> {
+            let end = self.next_char_boundary(rng.gen_range(start_offset..=self.len()));
+            let start = self.prev_char_boundary(rng.gen_range(start_offset..=end));
+            start..end
+        }
+
+        pub fn randomly_edit<T>(
+            &mut self,
+            rng: &mut T,
+            old_range_count: usize,
+            ctx: Option<&mut ModelContext<Self>>,
+        ) -> (Vec<Range<usize>>, String, Vec<Operation>)
+        where
+            T: Rng,
+        {
+            let mut old_ranges: Vec<Range<usize>> = Vec::new();
+            for _ in 0..old_range_count {
+                let last_end = old_ranges.last().map_or(0, |last_range| last_range.end + 1);
+                if last_end > self.len() {
+                    break;
+                }
+                old_ranges.push(self.random_byte_range(last_end, rng));
+            }
+            let new_text_len = rng.gen_range(0..10);
+            let new_text: String = RandomCharIter::new(&mut *rng).take(new_text_len).collect();
+
+            let operations = self
+                .edit(old_ranges.iter().cloned(), new_text.as_str(), ctx)
+                .unwrap();
+
+            (old_ranges, new_text, operations)
+        }
+
         pub fn randomly_mutate<T>(
             &mut self,
             rng: &mut T,
@@ -3349,9 +3292,7 @@ mod tests {
             } else {
                 let mut ranges = Vec::new();
                 for _ in 0..5 {
-                    let start = rng.gen_range(0..self.len() + 1);
-                    let end = rng.gen_range(0..self.len() + 1);
-                    ranges.push(start..end);
+                    ranges.push(self.random_byte_range(0, rng));
                 }
                 let new_selections = self.selections_from_ranges(ranges).unwrap();
 
@@ -3391,16 +3332,16 @@ mod tests {
                 if range.start > range.end {
                     selections.push(Selection {
                         id: NEXT_SELECTION_ID.fetch_add(1, atomic::Ordering::SeqCst),
-                        start: self.anchor_before(range.end)?,
-                        end: self.anchor_before(range.start)?,
+                        start: self.anchor_before(range.end),
+                        end: self.anchor_before(range.start),
                         reversed: true,
                         goal: SelectionGoal::None,
                     });
                 } else {
                     selections.push(Selection {
                         id: NEXT_SELECTION_ID.fetch_add(1, atomic::Ordering::SeqCst),
-                        start: self.anchor_after(range.start)?,
-                        end: self.anchor_before(range.end)?,
+                        start: self.anchor_after(range.start),
+                        end: self.anchor_before(range.end),
                         reversed: false,
                         goal: SelectionGoal::None,
                     });
@@ -3414,8 +3355,8 @@ mod tests {
                 .selections(set_id)?
                 .iter()
                 .map(move |selection| {
-                    let start = selection.start.to_offset(self).unwrap();
-                    let end = selection.end.to_offset(self).unwrap();
+                    let start = selection.start.to_offset(self);
+                    let end = selection.end.to_offset(self);
                     if selection.reversed {
                         end..start
                     } else {
@@ -3452,17 +3393,9 @@ mod tests {
 
     fn line_lengths_in_range(buffer: &Buffer, range: Range<usize>) -> BTreeMap<u32, HashSet<u32>> {
         let mut lengths = BTreeMap::new();
-        for (row, line) in buffer
-            .text()
-            .chars()
-            .skip(range.start)
-            .take(range.len())
-            .collect::<String>()
-            .lines()
-            .enumerate()
-        {
+        for (row, line) in buffer.text()[range.start..range.end].lines().enumerate() {
             lengths
-                .entry(line.chars().count() as u32)
+                .entry(line.len() as u32)
                 .or_insert(HashSet::default())
                 .insert(row as u32);
         }

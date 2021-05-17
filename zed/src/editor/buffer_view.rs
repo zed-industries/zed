@@ -337,8 +337,8 @@ impl BufferView {
             buffer.add_selection_set(
                 vec![Selection {
                     id: post_inc(&mut next_selection_id),
-                    start: buffer.anchor_before(0).unwrap(),
-                    end: buffer.anchor_before(0).unwrap(),
+                    start: buffer.anchor_before(0),
+                    end: buffer.anchor_before(0),
                     reversed: false,
                     goal: SelectionGoal::None,
                 }],
@@ -588,8 +588,8 @@ impl BufferView {
         let buffer = self.buffer.read(ctx);
         let mut selections = Vec::new();
         for range in ranges {
-            let mut start = range.start.to_offset(buffer).unwrap();
-            let mut end = range.end.to_offset(buffer).unwrap();
+            let mut start = range.start.to_offset(buffer);
+            let mut end = range.end.to_offset(buffer);
             let reversed = if start > end {
                 mem::swap(&mut start, &mut end);
                 true
@@ -598,8 +598,8 @@ impl BufferView {
             };
             selections.push(Selection {
                 id: post_inc(&mut self.next_selection_id),
-                start: buffer.anchor_before(start).unwrap(),
-                end: buffer.anchor_before(end).unwrap(),
+                start: buffer.anchor_before(start),
+                end: buffer.anchor_before(end),
                 reversed,
                 goal: SelectionGoal::None,
             });
@@ -644,8 +644,8 @@ impl BufferView {
         {
             let buffer = self.buffer.read(ctx);
             for selection in self.selections(ctx.as_ref()) {
-                let start = selection.start.to_offset(buffer).unwrap();
-                let end = selection.end.to_offset(buffer).unwrap();
+                let start = selection.start.to_offset(buffer);
+                let end = selection.end.to_offset(buffer);
                 old_selections.push((selection.id, start..end));
             }
         }
@@ -664,9 +664,7 @@ impl BufferView {
                 .map(|(id, range)| {
                     let start = range.start as isize;
                     let end = range.end as isize;
-                    let anchor = buffer
-                        .anchor_before((start + delta + char_count) as usize)
-                        .unwrap();
+                    let anchor = buffer.anchor_before((start + delta + char_count) as usize);
                     let deleted_count = end - start;
                     delta += char_count - deleted_count;
                     Selection {
@@ -785,13 +783,13 @@ impl BufferView {
                 }
             }
 
-            let mut edit_start = Point::new(rows.start, 0).to_offset(buffer).unwrap();
+            let mut edit_start = Point::new(rows.start, 0).to_offset(buffer);
             let edit_end;
             let cursor_buffer_row;
-            if let Ok(end_offset) = Point::new(rows.end, 0).to_offset(buffer) {
+            if buffer.max_point().row >= rows.end {
                 // If there's a line after the range, delete the \n from the end of the row range
                 // and position the cursor on the next line.
-                edit_end = end_offset;
+                edit_end = Point::new(rows.end, 0).to_offset(buffer);
                 cursor_buffer_row = rows.end;
             } else {
                 // If there isn't a line after the range, delete the \n from the line before the
@@ -822,7 +820,7 @@ impl BufferView {
         let new_selections = new_cursors
             .into_iter()
             .map(|(id, cursor)| {
-                let anchor = buffer.anchor_before(cursor).unwrap();
+                let anchor = buffer.anchor_before(cursor);
                 Selection {
                     id,
                     start: anchor.clone(),
@@ -848,8 +846,8 @@ impl BufferView {
             // when the selections are at the beginning of a line.
             let buffer = self.buffer.read(ctx);
             for selection in &mut selections {
-                selection.start = selection.start.bias_right(buffer).unwrap();
-                selection.end = selection.end.bias_right(buffer).unwrap();
+                selection.start = selection.start.bias_right(buffer);
+                selection.end = selection.end.bias_right(buffer);
             }
         }
         self.update_selections(selections.clone(), false, ctx);
@@ -876,11 +874,10 @@ impl BufferView {
 
             // Copy the text from the selected row region and splice it at the start of the region.
             let start = Point::new(rows.start, 0);
-            let end = Point::new(rows.end - 1, buffer.line_len(rows.end - 1).unwrap());
+            let end = Point::new(rows.end - 1, buffer.line_len(rows.end - 1));
             let text = buffer
                 .text_for_range(start..end)
-                .unwrap()
-                .chain(Some('\n'))
+                .chain(Some("\n"))
                 .collect::<String>();
             edits.push((start, text));
         }
@@ -894,8 +891,8 @@ impl BufferView {
         // Restore bias on selections.
         let buffer = self.buffer.read(ctx);
         for selection in &mut selections {
-            selection.start = selection.start.bias_left(buffer).unwrap();
-            selection.end = selection.end.bias_left(buffer).unwrap();
+            selection.start = selection.start.bias_left(buffer);
+            selection.end = selection.end.bias_left(buffer);
         }
         self.update_selections(selections, true, ctx);
 
@@ -935,13 +932,9 @@ impl BufferView {
 
             // Cut the text from the selected rows and paste it at the start of the previous line.
             if display_rows.start != 0 {
-                let start = Point::new(buffer_rows.start, 0).to_offset(buffer).unwrap();
-                let end = Point::new(
-                    buffer_rows.end - 1,
-                    buffer.line_len(buffer_rows.end - 1).unwrap(),
-                )
-                .to_offset(buffer)
-                .unwrap();
+                let start = Point::new(buffer_rows.start, 0).to_offset(buffer);
+                let end = Point::new(buffer_rows.end - 1, buffer.line_len(buffer_rows.end - 1))
+                    .to_offset(buffer);
 
                 let prev_row_display_start = DisplayPoint::new(display_rows.start - 1, 0);
                 let prev_row_start = prev_row_display_start
@@ -949,7 +942,7 @@ impl BufferView {
                     .unwrap();
 
                 let mut text = String::new();
-                text.extend(buffer.text_for_range(start..end).unwrap());
+                text.extend(buffer.text_for_range(start..end));
                 text.push('\n');
                 edits.push((prev_row_start..prev_row_start, text));
                 edits.push((start - 1..end, String::new()));
@@ -969,8 +962,8 @@ impl BufferView {
                 // Move folds up.
                 old_folds.push(start..end);
                 for fold in self.display_map.folds_in_range(start..end, app).unwrap() {
-                    let mut start = fold.start.to_point(buffer).unwrap();
-                    let mut end = fold.end.to_point(buffer).unwrap();
+                    let mut start = fold.start.to_point(buffer);
+                    let mut end = fold.end.to_point(buffer);
                     start.row -= row_delta;
                     end.row -= row_delta;
                     new_folds.push(start..end);
@@ -1025,13 +1018,9 @@ impl BufferView {
 
             // Cut the text from the selected rows and paste it at the end of the next line.
             if display_rows.end <= self.display_map.max_point(app).row() {
-                let start = Point::new(buffer_rows.start, 0).to_offset(buffer).unwrap();
-                let end = Point::new(
-                    buffer_rows.end - 1,
-                    buffer.line_len(buffer_rows.end - 1).unwrap(),
-                )
-                .to_offset(buffer)
-                .unwrap();
+                let start = Point::new(buffer_rows.start, 0).to_offset(buffer);
+                let end = Point::new(buffer_rows.end - 1, buffer.line_len(buffer_rows.end - 1))
+                    .to_offset(buffer);
 
                 let next_row_display_end = DisplayPoint::new(
                     display_rows.end,
@@ -1043,7 +1032,7 @@ impl BufferView {
 
                 let mut text = String::new();
                 text.push('\n');
-                text.extend(buffer.text_for_range(start..end).unwrap());
+                text.extend(buffer.text_for_range(start..end));
                 edits.push((start..end + 1, String::new()));
                 edits.push((next_row_end..next_row_end, text));
 
@@ -1063,8 +1052,8 @@ impl BufferView {
                 // Move folds down.
                 old_folds.push(start..end);
                 for fold in self.display_map.folds_in_range(start..end, app).unwrap() {
-                    let mut start = fold.start.to_point(buffer).unwrap();
-                    let mut end = fold.end.to_point(buffer).unwrap();
+                    let mut start = fold.start.to_point(buffer);
+                    let mut end = fold.end.to_point(buffer);
                     start.row += row_delta;
                     end.row += row_delta;
                     new_folds.push(start..end);
@@ -1095,19 +1084,19 @@ impl BufferView {
             let buffer = self.buffer.read(ctx);
             let max_point = buffer.max_point();
             for selection in &mut selections {
-                let mut start = selection.start.to_point(buffer).expect("invalid start");
-                let mut end = selection.end.to_point(buffer).expect("invalid end");
+                let mut start = selection.start.to_point(buffer);
+                let mut end = selection.end.to_point(buffer);
                 let is_entire_line = start == end;
                 if is_entire_line {
                     start = Point::new(start.row, 0);
                     end = cmp::min(max_point, Point::new(start.row + 1, 0));
-                    selection.start = buffer.anchor_before(start).unwrap();
-                    selection.end = buffer.anchor_before(end).unwrap();
+                    selection.start = buffer.anchor_before(start);
+                    selection.end = buffer.anchor_before(end);
                 }
                 let mut len = 0;
-                for ch in buffer.text_for_range(start..end).unwrap() {
-                    text.push(ch);
-                    len += 1;
+                for chunk in buffer.text_for_range(start..end) {
+                    text.push_str(chunk);
+                    len += chunk.len();
                 }
                 clipboard_selections.push(ClipboardSelection {
                     len,
@@ -1130,17 +1119,17 @@ impl BufferView {
         let selections = self.selections(ctx.as_ref());
         let mut clipboard_selections = Vec::with_capacity(selections.len());
         for selection in selections {
-            let mut start = selection.start.to_point(buffer).expect("invalid start");
-            let mut end = selection.end.to_point(buffer).expect("invalid end");
+            let mut start = selection.start.to_point(buffer);
+            let mut end = selection.end.to_point(buffer);
             let is_entire_line = start == end;
             if is_entire_line {
                 start = Point::new(start.row, 0);
                 end = cmp::min(max_point, Point::new(start.row + 1, 0));
             }
             let mut len = 0;
-            for ch in buffer.text_for_range(start..end).unwrap() {
-                text.push(ch);
-                len += 1;
+            for chunk in buffer.text_for_range(start..end) {
+                text.push_str(chunk);
+                len += chunk.len();
             }
             clipboard_selections.push(ClipboardSelection {
                 len,
@@ -1176,14 +1165,14 @@ impl BufferView {
                         String::from_iter(clipboard_chars.by_ref().take(clipboard_selection.len));
 
                     self.buffer.update(ctx, |buffer, ctx| {
-                        let selection_start = selection.start.to_point(buffer).unwrap();
-                        let selection_end = selection.end.to_point(buffer).unwrap();
+                        let selection_start = selection.start.to_point(buffer);
+                        let selection_end = selection.end.to_point(buffer);
 
                         // If the corresponding selection was empty when this slice of the
                         // clipboard text was written, then the entire line containing the
                         // selection was copied. If this selection is also currently empty,
                         // then paste the line before the current line of the buffer.
-                        let new_selection_start = selection.end.bias_right(buffer).unwrap();
+                        let new_selection_start = selection.end.bias_right(buffer);
                         if selection_start == selection_end && clipboard_selection.is_entire_line {
                             let line_start = Point::new(selection_start.row, 0);
                             buffer
@@ -1195,7 +1184,7 @@ impl BufferView {
                                 .unwrap();
                         };
 
-                        let new_selection_start = new_selection_start.bias_left(buffer).unwrap();
+                        let new_selection_start = new_selection_start.bias_left(buffer);
                         new_selections.push(Selection {
                             id: selection.id,
                             start: new_selection_start.clone(),
@@ -1678,7 +1667,7 @@ impl BufferView {
 
     pub fn move_to_beginning(&mut self, _: &(), ctx: &mut ViewContext<Self>) {
         let buffer = self.buffer.read(ctx);
-        let cursor = buffer.anchor_before(Point::new(0, 0)).unwrap();
+        let cursor = buffer.anchor_before(Point::new(0, 0));
         let selection = Selection {
             id: post_inc(&mut self.next_selection_id),
             start: cursor.clone(),
@@ -1697,7 +1686,7 @@ impl BufferView {
 
     pub fn move_to_end(&mut self, _: &(), ctx: &mut ViewContext<Self>) {
         let buffer = self.buffer.read(ctx);
-        let cursor = buffer.anchor_before(buffer.max_point()).unwrap();
+        let cursor = buffer.anchor_before(buffer.max_point());
         let selection = Selection {
             id: post_inc(&mut self.next_selection_id),
             start: cursor.clone(),
@@ -1732,10 +1721,8 @@ impl BufferView {
         let max_point = buffer.max_point();
         for selection in &mut selections {
             let (rows, _) = selection.buffer_rows_for_display_rows(true, &self.display_map, app);
-            selection.start = buffer.anchor_before(Point::new(rows.start, 0)).unwrap();
-            selection.end = buffer
-                .anchor_before(cmp::min(max_point, Point::new(rows.end, 0)))
-                .unwrap();
+            selection.start = buffer.anchor_before(Point::new(rows.start, 0));
+            selection.end = buffer.anchor_before(cmp::min(max_point, Point::new(rows.end, 0)));
             selection.reversed = false;
         }
         self.update_selections(selections, true, ctx);
@@ -1761,9 +1748,7 @@ impl BufferView {
                 });
             }
             for row in range.start.row + 1..range.end.row {
-                let cursor = buffer
-                    .anchor_before(Point::new(row, buffer.line_len(row).unwrap()))
-                    .unwrap();
+                let cursor = buffer.anchor_before(Point::new(row, buffer.line_len(row)));
                 new_selections.push(Selection {
                     id: post_inc(&mut self.next_selection_id),
                     start: cursor.clone(),
@@ -2085,7 +2070,7 @@ impl BufferView {
                     .to_buffer_point(&self.display_map, Bias::Left, app)
                     .unwrap();
                 start.column = 0;
-                end.column = buffer.line_len(end.row).unwrap();
+                end.column = buffer.line_len(end.row);
                 start..end
             })
             .collect::<Vec<_>>();

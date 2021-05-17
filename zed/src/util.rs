@@ -1,5 +1,5 @@
 use rand::prelude::*;
-use std::{cmp::Ordering, ops::Range};
+use std::cmp::Ordering;
 
 pub fn post_inc(value: &mut usize) -> usize {
     let prev = *value;
@@ -33,6 +33,7 @@ where
 pub struct RandomCharIter<T: Rng>(T);
 
 impl<T: Rng> RandomCharIter<T> {
+    #[cfg(test)]
     pub fn new(rng: T) -> Self {
         Self(rng)
     }
