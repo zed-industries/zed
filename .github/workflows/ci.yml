@@ -15,22 +15,22 @@ env:
   CARGO_INCREMENTAL: 0
 
 jobs:
-  # tests:
-  #   name: Run tests
-  #   runs-on: self-hosted
-  #   steps:
-  #     - name: Install Rust
-  #       uses: actions-rs/toolchain@v1
-  #       with:
-  #         toolchain: stable
-  #         target: x86_64-apple-darwin
-  #         profile: minimal
+  tests:
+    name: Run tests
+    runs-on: self-hosted
+    steps:
+      - name: Install Rust
+        uses: actions-rs/toolchain@v1
+        with:
+          toolchain: stable
+          target: x86_64-apple-darwin
+          profile: minimal
 
-  #     - name: Checkout repo
-  #       uses: actions/checkout@v2
+      - name: Checkout repo
+        uses: actions/checkout@v2
 
-  #     - name: Run tests
-  #       run: cargo test --no-fail-fast
+      - name: Run tests
+        run: cargo test --no-fail-fast
 
   bundle:
     name: Bundle app
