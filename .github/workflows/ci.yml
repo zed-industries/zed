@@ -64,7 +64,7 @@ jobs:
 
       - uses: svenstaro/upload-release-action@v2
         name: Upload app bundle to release
-        if: ${{ startsWith(github.github.ref, 'refs/tags/v') }}
+        if: ${{ startsWith(github.ref, 'refs/tags/v') }}
         with:
           repo_token: ${{ secrets.GITHUB_TOKEN }}
           file: target/release/Zed.dmg
