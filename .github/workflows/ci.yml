@@ -50,9 +50,6 @@ jobs:
           target: aarch64-apple-darwin
           profile: minimal
 
-      - name: Install cargo bundle
-        run: cargo install cargo-bundle
-
       - name: Checkout repo
         uses: actions/checkout@v2
 
