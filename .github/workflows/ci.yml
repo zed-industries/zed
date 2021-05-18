@@ -28,6 +28,8 @@ jobs:
 
       - name: Checkout repo
         uses: actions/checkout@v2
+        with:
+          clean: false
 
       - name: Run tests
         run: cargo test --no-fail-fast
@@ -52,6 +54,8 @@ jobs:
 
       - name: Checkout repo
         uses: actions/checkout@v2
+        with:
+          clean: false
 
       - name: Create app bundle
         run: script/bundle
