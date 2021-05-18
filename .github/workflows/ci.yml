@@ -36,12 +36,22 @@ jobs:
     name: Bundle app
     runs-on: self-hosted
     steps:
-      - name: Install Rust
+      - name: Install Rust x86_64-apple-darwin target
         uses: actions-rs/toolchain@v1
         with:
           toolchain: stable
           target: x86_64-apple-darwin
           profile: minimal
+
+      - name: Install Rust aarch64-apple-darwin target
+        uses: actions-rs/toolchain@v1
+        with:
+          toolchain: stable
+          target: aarch64-apple-darwin
+          profile: minimal
+
+      - name: Install cargo bundle
+        run: cargo install cargo-bundle
 
       - name: Checkout repo
         uses: actions/checkout@v2
