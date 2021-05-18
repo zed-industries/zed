@@ -2,7 +2,7 @@ use super::Point;
 use crate::sum_tree::{self, SeekBias, SumTree};
 use arrayvec::ArrayString;
 use smallvec::SmallVec;
-use std::{cmp, iter::Skip, ops::Range, str};
+use std::{cmp, ops::Range, str};
 
 #[cfg(test)]
 const CHUNK_BASE: usize = 6;
@@ -107,12 +107,12 @@ impl Rope {
         Cursor::new(self, offset)
     }
 
-    pub fn chars(&self) -> Chars {
+    pub fn chars(&self) -> impl Iterator<Item = char> + '_ {
         self.chars_at(0)
     }
 
-    pub fn chars_at(&self, start: usize) -> Chars {
-        Chars::new(self, start)
+    pub fn chars_at(&self, start: usize) -> impl Iterator<Item = char> + '_ {
+        self.chunks_in_range(start..self.len()).flat_map(str::chars)
     }
 
     pub fn chunks<'a>(&'a self) -> ChunksIter<'a> {
@@ -443,44 +443,6 @@ impl<'a> sum_tree::Dimension<'a, TextSummary> for usize {
 impl<'a> sum_tree::Dimension<'a, TextSummary> for Point {
     fn add_summary(&mut self, summary: &'a TextSummary) {
         *self += &summary.lines;
-    }
-}
-
-pub struct Chars<'a> {
-    cursor: sum_tree::Cursor<'a, Chunk, usize, usize>,
-    chars: Skip<str::Chars<'a>>,
-}
-
-impl<'a> Chars<'a> {
-    pub fn new(rope: &'a Rope, start: usize) -> Self {
-        let mut cursor = rope.chunks.cursor::<usize, usize>();
-        cursor.seek(&start, SeekBias::Left, &());
-        let chars = if let Some(chunk) = cursor.item() {
-            let ix = start - cursor.start();
-            assert_char_boundary(&chunk.0, ix);
-            cursor.next();
-            chunk.0.chars().skip(ix)
-        } else {
-            "".chars().skip(0)
-        };
-
-        Self { cursor, chars }
-    }
-}
-
-impl<'a> Iterator for Chars<'a> {
-    type Item = char;
-
-    fn next(&mut self) -> Option<Self::Item> {
-        if let Some(ch) = self.chars.next() {
-            Some(ch)
-        } else if let Some(chunk) = self.cursor.item() {
-            self.chars = chunk.0.chars().skip(0);
-            self.cursor.next();
-            Some(self.chars.next().unwrap())
-        } else {
-            None
-        }
     }
 }
 

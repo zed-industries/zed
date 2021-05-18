@@ -643,11 +643,11 @@ impl Buffer {
         self.visible_text.chunks_in_range(start..end)
     }
 
-    pub fn chars(&self) -> rope::Chars {
+    pub fn chars(&self) -> impl Iterator<Item = char> + '_ {
         self.chars_at(0)
     }
 
-    pub fn chars_at<T: ToOffset>(&self, position: T) -> rope::Chars {
+    pub fn chars_at<T: ToOffset>(&self, position: T) -> impl Iterator<Item = char> + '_ {
         let offset = position.to_offset(self);
         self.visible_text.chars_at(offset)
     }

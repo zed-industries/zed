@@ -3207,7 +3207,7 @@ mod tests {
                 &[
                     DisplayPoint::new(0, 1)..DisplayPoint::new(0, 1),
                     DisplayPoint::new(3, 1)..DisplayPoint::new(3, 1),
-                    DisplayPoint::new(3, 2)..DisplayPoint::new(4, 2),
+                    DisplayPoint::new(3, 2)..DisplayPoint::new(4, 3),
                     DisplayPoint::new(5, 0)..DisplayPoint::new(5, 2),
                 ],
                 ctx,
@@ -3229,7 +3229,7 @@ mod tests {
             vec![
                 DisplayPoint::new(0, 1)..DisplayPoint::new(0, 1),
                 DisplayPoint::new(2, 1)..DisplayPoint::new(2, 1),
-                DisplayPoint::new(2, 2)..DisplayPoint::new(3, 2),
+                DisplayPoint::new(2, 2)..DisplayPoint::new(3, 3),
                 DisplayPoint::new(4, 0)..DisplayPoint::new(4, 2)
             ]
         );
@@ -3244,7 +3244,7 @@ mod tests {
             vec![
                 DisplayPoint::new(1, 1)..DisplayPoint::new(1, 1),
                 DisplayPoint::new(3, 1)..DisplayPoint::new(3, 1),
-                DisplayPoint::new(3, 2)..DisplayPoint::new(4, 2),
+                DisplayPoint::new(3, 2)..DisplayPoint::new(4, 3),
                 DisplayPoint::new(5, 0)..DisplayPoint::new(5, 2)
             ]
         );
@@ -3259,7 +3259,7 @@ mod tests {
             vec![
                 DisplayPoint::new(2, 1)..DisplayPoint::new(2, 1),
                 DisplayPoint::new(3, 1)..DisplayPoint::new(3, 1),
-                DisplayPoint::new(3, 2)..DisplayPoint::new(4, 2),
+                DisplayPoint::new(3, 2)..DisplayPoint::new(4, 3),
                 DisplayPoint::new(5, 0)..DisplayPoint::new(5, 2)
             ]
         );
@@ -3274,7 +3274,7 @@ mod tests {
             vec![
                 DisplayPoint::new(1, 1)..DisplayPoint::new(1, 1),
                 DisplayPoint::new(2, 1)..DisplayPoint::new(2, 1),
-                DisplayPoint::new(2, 2)..DisplayPoint::new(3, 2),
+                DisplayPoint::new(2, 2)..DisplayPoint::new(3, 3),
                 DisplayPoint::new(4, 0)..DisplayPoint::new(4, 2)
             ]
         );
@@ -3489,7 +3489,7 @@ mod tests {
                     DisplayPoint::new(0, 0)..DisplayPoint::new(0, 1),
                     DisplayPoint::new(0, 2)..DisplayPoint::new(0, 2),
                     DisplayPoint::new(1, 0)..DisplayPoint::new(1, 0),
-                    DisplayPoint::new(4, 2)..DisplayPoint::new(4, 2),
+                    DisplayPoint::new(4, 4)..DisplayPoint::new(4, 4),
                 ],
                 ctx,
             )
@@ -3511,7 +3511,7 @@ mod tests {
                 DisplayPoint::new(0, 1)..DisplayPoint::new(0, 1),
                 DisplayPoint::new(0, 2)..DisplayPoint::new(0, 2),
                 DisplayPoint::new(1, 0)..DisplayPoint::new(1, 0),
-                DisplayPoint::new(4, 2)..DisplayPoint::new(4, 2)
+                DisplayPoint::new(4, 4)..DisplayPoint::new(4, 4)
             ]
         );
 

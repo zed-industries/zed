@@ -143,16 +143,17 @@ impl DisplayMapSnapshot {
     }
 
     pub fn chunks_at<'a>(&'a self, point: DisplayPoint, app: &'a AppContext) -> Chunks<'a> {
-        let column = point.column() as usize;
-        let (point, _) = self.collapse_tabs(point, Bias::Left, app);
+        let (point, expanded_char_column, to_next_stop) =
+            self.collapse_tabs(point, Bias::Left, app);
         let fold_chunks = self
             .folds_snapshot
             .chunks_at(self.folds_snapshot.to_display_offset(point, app), app);
         Chunks {
             fold_chunks,
-            column,
+            column: expanded_char_column,
             tab_size: self.tab_size,
-            chunk: "",
+            chunk: &SPACES[0..to_next_stop],
+            skip_leading_tab: to_next_stop > 0,
         }
     }
 
@@ -178,15 +179,16 @@ impl DisplayMapSnapshot {
         mut point: DisplayPoint,
         bias: Bias,
         ctx: &AppContext,
-    ) -> (DisplayPoint, usize) {
+    ) -> (DisplayPoint, usize, usize) {
         let chars = self
             .folds_snapshot
             .chars_at(DisplayPoint(Point::new(point.row(), 0)), ctx);
         let expanded = point.column() as usize;
-        let (collapsed, to_next_stop) = collapse_tabs(chars, expanded, bias, self.tab_size);
+        let (collapsed, expanded_char_column, to_next_stop) =
+            collapse_tabs(chars, expanded, bias, self.tab_size);
         *point.column_mut() = collapsed as u32;
 
-        (point, to_next_stop)
+        (point, expanded_char_column, to_next_stop)
     }
 }
 
@@ -220,20 +222,20 @@ impl DisplayPoint {
 
     pub fn to_buffer_point(self, map: &DisplayMap, bias: Bias, ctx: &AppContext) -> Point {
         map.fold_map
-            .to_buffer_point(self.collapse_tabs(map, bias, ctx).0, ctx)
+            .to_buffer_point(self.collapse_tabs(map, bias, ctx), ctx)
     }
 
     pub fn to_buffer_offset(self, map: &DisplayMap, bias: Bias, ctx: &AppContext) -> usize {
         map.fold_map
-            .to_buffer_offset(self.collapse_tabs(&map, bias, ctx).0, ctx)
+            .to_buffer_offset(self.collapse_tabs(&map, bias, ctx), ctx)
     }
 
     fn expand_tabs(self, map: &DisplayMap, ctx: &AppContext) -> Self {
         map.snapshot(ctx).expand_tabs(self, ctx)
     }
 
-    fn collapse_tabs(self, map: &DisplayMap, bias: Bias, ctx: &AppContext) -> (Self, usize) {
-        map.snapshot(ctx).collapse_tabs(self, bias, ctx)
+    fn collapse_tabs(self, map: &DisplayMap, bias: Bias, ctx: &AppContext) -> Self {
+        map.snapshot(ctx).collapse_tabs(self, bias, ctx).0
     }
 }
 
@@ -255,23 +257,28 @@ impl Anchor {
     }
 }
 
+// Handles a tab width <= 16
+const SPACES: &'static str = "                ";
+
 pub struct Chunks<'a> {
     fold_chunks: fold_map::Chunks<'a>,
     chunk: &'a str,
     column: usize,
     tab_size: usize,
+    skip_leading_tab: bool,
 }
 
 impl<'a> Iterator for Chunks<'a> {
     type Item = &'a str;
 
     fn next(&mut self) -> Option<Self::Item> {
-        // Handles a tab width <= 16
-        const SPACES: &'static str = "                ";
-
         if self.chunk.is_empty() {
             if let Some(chunk) = self.fold_chunks.next() {
                 self.chunk = chunk;
+                if self.skip_leading_tab {
+                    self.chunk = &self.chunk[1..];
+                    self.skip_leading_tab = false;
+                }
             } else {
                 return None;
             }
@@ -303,15 +310,24 @@ impl<'a> Iterator for Chunks<'a> {
 }
 
 pub fn expand_tabs(chars: impl Iterator<Item = char>, column: usize, tab_size: usize) -> usize {
-    let mut expanded = 0;
-    for c in chars.take(column) {
-        if c == '\t' {
-            expanded += tab_size - expanded % tab_size;
-        } else {
-            expanded += 1;
+    let mut expanded_chars = 0;
+    let mut expanded_bytes = 0;
+    let mut collapsed_bytes = 0;
+    for c in chars {
+        if collapsed_bytes == column {
+            break;
         }
+        if c == '\t' {
+            let tab_len = tab_size - expanded_chars % tab_size;
+            expanded_bytes += tab_len;
+            expanded_chars += tab_len;
+        } else {
+            expanded_bytes += c.len_utf8();
+            expanded_chars += 1;
+        }
+        collapsed_bytes += c.len_utf8();
     }
-    expanded
+    expanded_bytes
 }
 
 pub fn collapse_tabs(
@@ -319,33 +335,39 @@ pub fn collapse_tabs(
     column: usize,
     bias: Bias,
     tab_size: usize,
-) -> (usize, usize) {
-    let mut expanded = 0;
-    let mut collapsed = 0;
+) -> (usize, usize, usize) {
+    let mut expanded_bytes = 0;
+    let mut expanded_chars = 0;
+    let mut collapsed_bytes = 0;
     while let Some(c) = chars.next() {
-        if expanded == column {
+        if expanded_bytes == column {
             break;
         }
 
         if c == '\t' {
-            expanded += tab_size - (expanded % tab_size);
-            if expanded > column {
+            let tab_len = tab_size - (expanded_chars % tab_size);
+            expanded_chars += tab_len;
+            expanded_bytes += tab_len;
+            if expanded_bytes > column {
+                expanded_chars -= expanded_bytes - column;
                 return match bias {
-                    Bias::Left => (collapsed, expanded - column),
-                    Bias::Right => (collapsed + 1, 0),
+                    Bias::Left => (collapsed_bytes, expanded_chars, expanded_bytes - column),
+                    Bias::Right => (collapsed_bytes + 1, expanded_chars, 0),
                 };
             }
-            collapsed += 1;
         } else {
-            expanded += 1;
-            collapsed += 1;
+            expanded_chars += 1;
+            expanded_bytes += c.len_utf8();
         }
+        collapsed_bytes += c.len_utf8();
     }
-    (collapsed, 0)
+    (collapsed_bytes, expanded_chars, 0)
 }
 
 #[cfg(test)]
 mod tests {
+    use gpui::MutableAppContext;
+
     use super::*;
     use crate::test::*;
 
@@ -395,20 +417,58 @@ mod tests {
         assert_eq!(expand_tabs("\ta".chars(), 2, 4), 5);
     }
 
-    #[test]
-    fn test_collapse_tabs() {
-        assert_eq!(collapse_tabs("\t".chars(), 0, Bias::Left, 4), (0, 0));
-        assert_eq!(collapse_tabs("\t".chars(), 0, Bias::Right, 4), (0, 0));
-        assert_eq!(collapse_tabs("\t".chars(), 1, Bias::Left, 4), (0, 3));
-        assert_eq!(collapse_tabs("\t".chars(), 1, Bias::Right, 4), (1, 0));
-        assert_eq!(collapse_tabs("\t".chars(), 2, Bias::Left, 4), (0, 2));
-        assert_eq!(collapse_tabs("\t".chars(), 2, Bias::Right, 4), (1, 0));
-        assert_eq!(collapse_tabs("\t".chars(), 3, Bias::Left, 4), (0, 1));
-        assert_eq!(collapse_tabs("\t".chars(), 3, Bias::Right, 4), (1, 0));
-        assert_eq!(collapse_tabs("\t".chars(), 4, Bias::Left, 4), (1, 0));
-        assert_eq!(collapse_tabs("\t".chars(), 4, Bias::Right, 4), (1, 0));
-        assert_eq!(collapse_tabs("\ta".chars(), 5, Bias::Left, 4), (2, 0));
-        assert_eq!(collapse_tabs("\ta".chars(), 5, Bias::Right, 4), (2, 0));
+    #[gpui::test]
+    fn test_tabs_with_multibyte_chars(app: &mut MutableAppContext) {
+        let text = "✅\t\tx\nα\t\n🏀α\t\ty";
+        let buffer = app.add_model(|ctx| Buffer::new(0, text, ctx));
+        let ctx = app.as_ref();
+        let map = DisplayMap::new(buffer.clone(), 4, ctx);
+        assert_eq!(map.text(ctx), "✅       x\nα   \n🏀α      y");
+
+        let point = Point::new(0, "✅\t\t".len() as u32);
+        let display_point = DisplayPoint::new(0, "✅       ".len() as u32);
+        assert_eq!(point.to_display_point(&map, ctx), display_point);
+        assert_eq!(display_point.to_buffer_point(&map, Bias::Left, ctx), point,);
+
+        let point = Point::new(1, "α\t".len() as u32);
+        let display_point = DisplayPoint::new(1, "α   ".len() as u32);
+        assert_eq!(point.to_display_point(&map, ctx), display_point);
+        assert_eq!(display_point.to_buffer_point(&map, Bias::Left, ctx), point,);
+
+        let point = Point::new(2, "🏀α\t\t".len() as u32);
+        let display_point = DisplayPoint::new(2, "🏀α      ".len() as u32);
+        assert_eq!(point.to_display_point(&map, ctx), display_point);
+        assert_eq!(display_point.to_buffer_point(&map, Bias::Left, ctx), point,);
+
+        // Display points inside of expanded tabs
+        assert_eq!(
+            DisplayPoint::new(0, "✅      ".len() as u32).to_buffer_point(&map, Bias::Right, ctx),
+            Point::new(0, "✅\t\t".len() as u32),
+        );
+        assert_eq!(
+            DisplayPoint::new(0, "✅      ".len() as u32).to_buffer_point(&map, Bias::Left, ctx),
+            Point::new(0, "✅\t".len() as u32),
+        );
+        assert_eq!(
+            map.snapshot(ctx)
+                .chunks_at(DisplayPoint::new(0, "✅      ".len() as u32), ctx)
+                .collect::<String>(),
+            " x\nα   \n🏀α      y"
+        );
+        assert_eq!(
+            DisplayPoint::new(0, "✅ ".len() as u32).to_buffer_point(&map, Bias::Right, ctx),
+            Point::new(0, "✅\t".len() as u32),
+        );
+        assert_eq!(
+            DisplayPoint::new(0, "✅ ".len() as u32).to_buffer_point(&map, Bias::Left, ctx),
+            Point::new(0, "✅".len() as u32),
+        );
+        assert_eq!(
+            map.snapshot(ctx)
+                .chunks_at(DisplayPoint::new(0, "✅ ".len() as u32), ctx)
+                .collect::<String>(),
+            "      x\nα   \n🏀α      y"
+        );
     }
 
     #[gpui::test]
