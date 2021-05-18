@@ -4,6 +4,8 @@ on:
   push:
     branches:
       - master
+    tags:
+      - "v*"
   pull_request:
     branches:
       - "**"
@@ -14,42 +16,63 @@ env:
 
 jobs:
   tests:
-    name: Tests
+    name: Run tests
     runs-on: self-hosted
     steps:
-      - name: Checkout repo
-        uses: actions/checkout@v2
-
-      # Work around https://github.com/actions/cache/issues/403.
-      - name: Use GNU tar
-        run: |
-          echo PATH="/usr/local/opt/gnu-tar/libexec/gnubin:$PATH" >> $GITHUB_ENV
-
-      - name: Cache artifacts
-        id: cache
-        uses: actions/cache@v2
-        with:
-          path: |
-            ~/.cargo/registry
-            ~/.cargo/git
-            ~/.rustup
-            target
-          key: ${{ runner.os }}-cargo-${{ hashFiles('Cargo.lock') }}
-
       - name: Install Rust
-        if: steps.cache.outputs.cache-hit != 'true'
         uses: actions-rs/toolchain@v1
         with:
           toolchain: stable
           target: x86_64-apple-darwin
           profile: minimal
 
+      - name: Checkout repo
+        uses: actions/checkout@v2
+        with:
+          clean: false
+
       - name: Run tests
         run: cargo test --no-fail-fast
 
-      - name: Create and upload app bundle
+  bundle:
+    name: Bundle app
+    runs-on: self-hosted
+    steps:
+      - name: Install Rust x86_64-apple-darwin target
+        uses: actions-rs/toolchain@v1
+        with:
+          toolchain: stable
+          target: x86_64-apple-darwin
+          profile: minimal
+
+      - name: Install Rust aarch64-apple-darwin target
+        uses: actions-rs/toolchain@v1
+        with:
+          toolchain: stable
+          target: aarch64-apple-darwin
+          profile: minimal
+
+      - name: Checkout repo
+        uses: actions/checkout@v2
+        with:
+          clean: false
+
+      - name: Create app bundle
         run: script/bundle
-      - uses: actions/upload-artifact@v2
+
+      - name: Upload app bundle to workflow run
+        uses: actions/upload-artifact@v2
         with:
           name: Zed.dmg
           path: target/release/Zed.dmg
+
+      - uses: svenstaro/upload-release-action@v2
+        name: Upload app bundle to release
+        if: ${{ startsWith(github.ref, 'refs/tags/v') }}
+        with:
+          repo_token: ${{ secrets.GITHUB_TOKEN }}
+          file: target/release/Zed.dmg
+          asset_name: Zed.dmg
+          tag: ${{ github.ref }}
+          overwrite: true
+          body: ""
