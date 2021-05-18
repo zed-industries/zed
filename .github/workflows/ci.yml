@@ -66,13 +66,13 @@ jobs:
           name: Zed.dmg
           path: target/release/Zed.dmg
 
-      - uses: svenstaro/upload-release-action@v2
+      - uses: softprops/action-gh-release@v1
         name: Upload app bundle to release
         if: ${{ startsWith(github.ref, 'refs/tags/v') }}
         with:
-          repo_token: ${{ secrets.GITHUB_TOKEN }}
-          file: target/release/Zed.dmg
-          asset_name: Zed.dmg
-          tag: ${{ github.ref }}
+          draft: true
+          files: target/release/Zed.dmg
           overwrite: true
           body: ""
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
