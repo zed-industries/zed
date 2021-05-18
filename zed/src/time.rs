@@ -1,13 +1,9 @@
+use smallvec::SmallVec;
 use std::cmp::{self, Ordering};
-use std::collections::HashMap;
-use std::mem;
 use std::ops::{Add, AddAssign};
-use std::sync::Arc;
-
-use lazy_static::lazy_static;
 
 pub type ReplicaId = u16;
-pub type Seq = u64;
+pub type Seq = u32;
 
 #[derive(Clone, Copy, Debug, Default, Eq, Hash, PartialEq, Ord, PartialOrd)]
 pub struct Local {
@@ -58,18 +54,8 @@ impl<'a> AddAssign<&'a Local> for Local {
     }
 }
 
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct Global(Arc<HashMap<ReplicaId, u64>>);
-
-lazy_static! {
-    static ref DEFAULT_GLOBAL: Global = Global(Arc::new(HashMap::new()));
-}
-
-impl Default for Global {
-    fn default() -> Self {
-        DEFAULT_GLOBAL.clone()
-    }
-}
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
+pub struct Global(SmallVec<[Local; 3]>);
 
 impl Global {
     pub fn new() -> Self {
@@ -77,21 +63,27 @@ impl Global {
     }
 
     pub fn get(&self, replica_id: ReplicaId) -> Seq {
-        *self.0.get(&replica_id).unwrap_or(&0)
+        self.0
+            .iter()
+            .find(|t| t.replica_id == replica_id)
+            .map_or(0, |t| t.value)
     }
 
     pub fn observe(&mut self, timestamp: Local) {
-        let map = Arc::make_mut(&mut self.0);
-        let value = map.entry(timestamp.replica_id).or_insert(0);
-        *value = cmp::max(*value, timestamp.value);
+        if let Some(entry) = self
+            .0
+            .iter_mut()
+            .find(|t| t.replica_id == timestamp.replica_id)
+        {
+            entry.value = cmp::max(entry.value, timestamp.value);
+        } else {
+            self.0.push(timestamp);
+        }
     }
 
     pub fn observe_all(&mut self, other: &Self) {
-        for (replica_id, value) in other.0.as_ref() {
-            self.observe(Local {
-                replica_id: *replica_id,
-                value: *value,
-            });
+        for timestamp in other.0.iter() {
+            self.observe(*timestamp);
         }
     }
 
@@ -100,9 +92,7 @@ impl Global {
     }
 
     pub fn changed_since(&self, other: &Self) -> bool {
-        self.0
-            .iter()
-            .any(|(replica_id, value)| *value > other.get(*replica_id))
+        self.0.iter().any(|t| t.value > other.get(t.replica_id))
     }
 }
 
@@ -110,8 +100,10 @@ impl PartialOrd for Global {
     fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
         let mut global_ordering = Ordering::Equal;
 
-        for replica_id in self.0.keys().chain(other.0.keys()) {
-            let ordering = self.get(*replica_id).cmp(&other.get(*replica_id));
+        for timestamp in self.0.iter().chain(other.0.iter()) {
+            let ordering = self
+                .get(timestamp.replica_id)
+                .cmp(&other.get(timestamp.replica_id));
             if ordering != Ordering::Equal {
                 if global_ordering == Ordering::Equal {
                     global_ordering = ordering;
@@ -141,13 +133,5 @@ impl Lamport {
 
     pub fn observe(&mut self, timestamp: Self) {
         self.value = cmp::max(self.value, timestamp.value) + 1;
-    }
-
-    pub fn to_bytes(&self) -> [u8; 24] {
-        let mut bytes = [0; 24];
-        bytes[0..8].copy_from_slice(unsafe { &mem::transmute::<u64, [u8; 8]>(self.value.to_be()) });
-        bytes[8..10]
-            .copy_from_slice(unsafe { &mem::transmute::<u16, [u8; 2]>(self.replica_id.to_be()) });
-        bytes
     }
 }

@@ -36,7 +36,7 @@ seahash = "4.1"
 serde = {version = "1", features = ["derive"]}
 similar = "1.3"
 simplelog = "0.9"
-smallvec = "1.6.1"
+smallvec = {version = "1.6", features = ["union"]}
 smol = "1.2.5"
 
 [dev-dependencies]
