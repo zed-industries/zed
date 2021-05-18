@@ -145,6 +145,7 @@ impl Worktree {
 
         if self.is_scanning() && !self.poll_scheduled {
             ctx.spawn(|this, mut ctx| async move {
+                smol::Timer::after(Duration::from_millis(100)).await;
                 this.update(&mut ctx, |this, ctx| {
                     this.poll_scheduled = false;
                     this.poll_entries(ctx);
