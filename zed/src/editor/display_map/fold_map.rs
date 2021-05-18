@@ -830,7 +830,7 @@ mod tests {
     #[gpui::test]
     fn test_random_folds(app: &mut gpui::MutableAppContext) {
         use crate::editor::ToPoint;
-        use crate::util::RandomCharIter;
+        use crate::util::{byte_range_for_char_range, RandomCharIter};
         use rand::prelude::*;
         use std::env;
 
@@ -905,7 +905,10 @@ mod tests {
                     expected_buffer_rows.extend((fold_end.row + 1..=next_row).rev());
                     next_row = fold_start.row;
 
-                    expected_text.replace_range(fold_range.start..fold_range.end, "…");
+                    expected_text.replace_range(
+                        byte_range_for_char_range(&expected_text, fold_range.start..fold_range.end),
+                        "…",
+                    );
                 }
                 expected_buffer_rows.extend((0..=next_row).rev());
                 expected_buffer_rows.reverse();

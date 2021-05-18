@@ -1,5 +1,20 @@
 use rand::prelude::*;
-use std::cmp::Ordering;
+use std::{cmp::Ordering, ops::Range};
+
+pub fn byte_range_for_char_range(text: impl AsRef<str>, char_range: Range<usize>) -> Range<usize> {
+    let text = text.as_ref();
+    let mut result = text.len()..text.len();
+    for (i, (offset, _)) in text.char_indices().enumerate() {
+        if i == char_range.start {
+            result.start = offset;
+        }
+        if i == char_range.end {
+            result.end = offset;
+            break;
+        }
+    }
+    result
+}
 
 pub fn post_inc(value: &mut usize) -> usize {
     let prev = *value;
@@ -44,7 +59,21 @@ impl<T: Rng> Iterator for RandomCharIter<T> {
     fn next(&mut self) -> Option<Self::Item> {
         if self.0.gen_bool(1.0 / 5.0) {
             Some('\n')
-        } else {
+        }
+        // two-byte greek letters
+        else if self.0.gen_bool(1.0 / 8.0) {
+            Some(std::char::from_u32(self.0.gen_range(('α' as u32)..('ω' as u32 + 1))).unwrap())
+        }
+        // three-byte characters
+        else if self.0.gen_bool(1.0 / 10.0) {
+            ['✋', '✅', '❌', '❎', '⭐'].choose(&mut self.0).cloned()
+        }
+        // four-byte characters
+        else if self.0.gen_bool(1.0 / 12.0) {
+            ['🍐', '🏀', '🍗', '🎉'].choose(&mut self.0).cloned()
+        }
+        // ascii letters
+        else {
             Some(self.0.gen_range(b'a'..b'z' + 1).into())
         }
     }
