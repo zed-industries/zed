@@ -36,8 +36,6 @@ jobs:
     name: Bundle app
     runs-on: self-hosted
     steps:
-      - uses: actions/cache@v2
-
       - name: Install Rust x86_64-apple-darwin target
         uses: actions-rs/toolchain@v1
         with:
