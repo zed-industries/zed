@@ -67,15 +67,24 @@ impl DisplayMap {
 
     pub fn text(&self, ctx: &AppContext) -> String {
         self.snapshot(ctx)
-            .chars_at(DisplayPoint::zero(), ctx)
+            .chunks_at(DisplayPoint::zero(), ctx)
             .collect()
     }
 
     pub fn line(&self, display_row: u32, ctx: &AppContext) -> String {
-        self.snapshot(ctx)
-            .chars_at(DisplayPoint::new(display_row, 0), ctx)
-            .take_while(|c| *c != '\n')
-            .collect()
+        let mut result = String::new();
+        for chunk in self
+            .snapshot(ctx)
+            .chunks_at(DisplayPoint::new(display_row, 0), ctx)
+        {
+            if let Some(ix) = chunk.find('\n') {
+                result.push_str(&chunk[0..ix]);
+                break;
+            } else {
+                result.push_str(chunk);
+            }
+        }
+        result
     }
 
     pub fn line_indent(&self, display_row: u32, ctx: &AppContext) -> (u32, bool) {
@@ -83,7 +92,8 @@ impl DisplayMap {
         let mut is_blank = true;
         for c in self
             .snapshot(ctx)
-            .chars_at(DisplayPoint::new(display_row, 0), ctx)
+            .chunks_at(DisplayPoint::new(display_row, 0), ctx)
+            .flat_map(str::chars)
         {
             if c == ' ' {
                 indent += 1;
@@ -132,19 +142,26 @@ impl DisplayMapSnapshot {
         self.folds_snapshot.buffer_rows(start_row)
     }
 
-    pub fn chars_at<'a>(&'a self, point: DisplayPoint, app: &'a AppContext) -> Chars<'a> {
+    pub fn chunks_at<'a>(&'a self, point: DisplayPoint, app: &'a AppContext) -> Chunks<'a> {
         let column = point.column() as usize;
-        let (point, to_next_stop) = self.collapse_tabs(point, Bias::Left, app);
-        let mut fold_chars = self.folds_snapshot.chars_at(point, app);
-        if to_next_stop > 0 {
-            fold_chars.next();
-        }
-        Chars {
-            fold_chars,
+        let (point, _) = self.collapse_tabs(point, Bias::Left, app);
+        let fold_chunks = self
+            .folds_snapshot
+            .chunks_at(self.folds_snapshot.to_display_offset(point, app), app);
+        Chunks {
+            fold_chunks,
             column,
-            to_next_stop,
             tab_size: self.tab_size,
+            chunk: "",
         }
+    }
+
+    pub fn chars_at<'a>(
+        &'a self,
+        point: DisplayPoint,
+        app: &'a AppContext,
+    ) -> impl Iterator<Item = char> + 'a {
+        self.chunks_at(point, app).flat_map(str::chars)
     }
 
     fn expand_tabs(&self, mut point: DisplayPoint, ctx: &AppContext) -> DisplayPoint {
@@ -238,38 +255,50 @@ impl Anchor {
     }
 }
 
-pub struct Chars<'a> {
-    fold_chars: fold_map::Chars<'a>,
+pub struct Chunks<'a> {
+    fold_chunks: fold_map::Chunks<'a>,
+    chunk: &'a str,
     column: usize,
-    to_next_stop: usize,
     tab_size: usize,
 }
 
-impl<'a> Iterator for Chars<'a> {
-    type Item = char;
+impl<'a> Iterator for Chunks<'a> {
+    type Item = &'a str;
 
     fn next(&mut self) -> Option<Self::Item> {
-        if self.to_next_stop > 0 {
-            self.to_next_stop -= 1;
-            self.column += 1;
-            Some(' ')
-        } else {
-            self.fold_chars.next().map(|c| match c {
-                '\t' => {
-                    self.to_next_stop = self.tab_size - self.column % self.tab_size - 1;
-                    self.column += 1;
-                    ' '
-                }
-                '\n' => {
-                    self.column = 0;
-                    c
-                }
-                _ => {
-                    self.column += 1;
-                    c
-                }
-            })
+        // Handles a tab width <= 16
+        const SPACES: &'static str = "                ";
+
+        if self.chunk.is_empty() {
+            if let Some(chunk) = self.fold_chunks.next() {
+                self.chunk = chunk;
+            } else {
+                return None;
+            }
         }
+
+        for (ix, c) in self.chunk.char_indices() {
+            match c {
+                '\t' => {
+                    if ix > 0 {
+                        let (prefix, suffix) = self.chunk.split_at(ix);
+                        self.chunk = suffix;
+                        return Some(prefix);
+                    } else {
+                        self.chunk = &self.chunk[1..];
+                        let len = self.tab_size - self.column % self.tab_size;
+                        self.column += len;
+                        return Some(&SPACES[0..len]);
+                    }
+                }
+                '\n' => self.column = 0,
+                _ => self.column += 1,
+            }
+        }
+
+        let result = Some(self.chunk);
+        self.chunk = "";
+        result
     }
 }
 
@@ -321,7 +350,7 @@ mod tests {
     use crate::test::*;
 
     #[gpui::test]
-    fn test_chars_at(app: &mut gpui::MutableAppContext) {
+    fn test_chunks_at(app: &mut gpui::MutableAppContext) {
         let text = sample_text(6, 6);
         let buffer = app.add_model(|ctx| Buffer::new(0, text, ctx));
         let map = DisplayMap::new(buffer.clone(), 4, app.as_ref());
@@ -340,24 +369,21 @@ mod tests {
             .unwrap();
 
         assert_eq!(
-            map.snapshot(app.as_ref())
-                .chars_at(DisplayPoint::new(1, 0), app.as_ref())
-                .take(10)
-                .collect::<String>(),
+            &map.snapshot(app.as_ref())
+                .chunks_at(DisplayPoint::new(1, 0), app.as_ref())
+                .collect::<String>()[0..10],
             "    b   bb"
         );
         assert_eq!(
-            map.snapshot(app.as_ref())
-                .chars_at(DisplayPoint::new(1, 2), app.as_ref())
-                .take(10)
-                .collect::<String>(),
+            &map.snapshot(app.as_ref())
+                .chunks_at(DisplayPoint::new(1, 2), app.as_ref())
+                .collect::<String>()[0..10],
             "  b   bbbb"
         );
         assert_eq!(
-            map.snapshot(app.as_ref())
-                .chars_at(DisplayPoint::new(1, 6), app.as_ref())
-                .take(13)
-                .collect::<String>(),
+            &map.snapshot(app.as_ref())
+                .chunks_at(DisplayPoint::new(1, 6), app.as_ref())
+                .collect::<String>()[0..13],
             "  bbbbb\nc   c"
         );
     }

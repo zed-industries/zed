@@ -114,7 +114,7 @@ pub fn prev_word_boundary(
             }
 
             prev_c = Some(c);
-            column += 1;
+            column += c.len_utf8() as u32;
         }
         Ok(boundary)
     }
@@ -135,7 +135,7 @@ pub fn next_word_boundary(
             *point.row_mut() += 1;
             *point.column_mut() = 0;
         } else {
-            *point.column_mut() += 1;
+            *point.column_mut() += c.len_utf8() as u32;
         }
         prev_c = Some(c);
     }

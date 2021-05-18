@@ -3,7 +3,7 @@ use super::{
     Anchor, Buffer, DisplayPoint, Edit, Point, ToOffset,
 };
 use crate::{
-    editor::{buffer, rope},
+    editor::buffer,
     sum_tree::{self, Cursor, FilterCursor, SeekBias, SumTree},
     time,
 };
@@ -11,7 +11,6 @@ use gpui::{AppContext, ModelHandle};
 use parking_lot::{Mutex, MutexGuard};
 use std::{
     cmp::{self, Ordering},
-    iter::Take,
     ops::Range,
 };
 
@@ -442,19 +441,16 @@ impl FoldMapSnapshot {
         }
     }
 
-    pub fn chars_at<'a>(&'a self, point: DisplayPoint, ctx: &'a AppContext) -> Chars<'a> {
+    pub fn chars_at<'a>(
+        &'a self,
+        point: DisplayPoint,
+        ctx: &'a AppContext,
+    ) -> impl Iterator<Item = char> + 'a {
         let offset = self.to_display_offset(point, ctx);
-        let mut cursor = self.transforms.cursor();
-        cursor.seek(&offset, SeekBias::Right, &());
-        Chars {
-            cursor,
-            offset: offset.0,
-            buffer: self.buffer.read(ctx),
-            buffer_chars: None,
-        }
+        self.chunks_at(offset, ctx).flat_map(str::chars)
     }
 
-    fn to_display_offset(&self, point: DisplayPoint, ctx: &AppContext) -> DisplayOffset {
+    pub fn to_display_offset(&self, point: DisplayPoint, ctx: &AppContext) -> DisplayOffset {
         let mut cursor = self.transforms.cursor::<DisplayPoint, TransformSummary>();
         cursor.seek(&point, SeekBias::Right, &());
         let overshoot = point.0 - cursor.start().display.lines;
@@ -625,41 +621,6 @@ impl<'a> Iterator for BufferRows<'a> {
         } else {
             None
         }
-    }
-}
-
-pub struct Chars<'a> {
-    cursor: Cursor<'a, Transform, DisplayOffset, TransformSummary>,
-    offset: usize,
-    buffer: &'a Buffer,
-    buffer_chars: Option<Take<rope::Chars<'a>>>,
-}
-
-impl<'a> Iterator for Chars<'a> {
-    type Item = char;
-
-    fn next(&mut self) -> Option<Self::Item> {
-        if let Some(c) = self.buffer_chars.as_mut().and_then(|chars| chars.next()) {
-            self.offset += c.len_utf8();
-            return Some(c);
-        }
-
-        while self.offset == self.cursor.end().display.bytes && self.cursor.item().is_some() {
-            self.cursor.next();
-        }
-
-        self.cursor.item().and_then(|transform| {
-            if let Some(c) = transform.display_text {
-                self.offset += c.len();
-                Some(c.chars().next().unwrap())
-            } else {
-                let overshoot = self.offset - self.cursor.start().display.bytes;
-                let buffer_start = self.cursor.start().buffer.bytes + overshoot;
-                let char_count = self.cursor.end().buffer.bytes - buffer_start;
-                self.buffer_chars = Some(self.buffer.chars_at(buffer_start).take(char_count));
-                self.next()
-            }
-        })
     }
 }
 
