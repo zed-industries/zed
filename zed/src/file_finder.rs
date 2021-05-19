@@ -11,7 +11,7 @@ use gpui::{
     fonts::{Properties, Weight},
     geometry::vector::vec2f,
     keymap::{self, Binding},
-    AppContext, Axis, Border, Entity, MutableAppContext, View, ViewContext, ViewHandle,
+    AppContext, Axis, Border, Entity, MutableAppContext, Task, View, ViewContext, ViewHandle,
     WeakViewHandle,
 };
 use postage::watch;
@@ -310,7 +310,9 @@ impl FileFinder {
     }
 
     fn workspace_updated(&mut self, _: ViewHandle<Workspace>, ctx: &mut ViewContext<Self>) {
-        self.spawn_search(self.query_buffer.read(ctx).text(ctx.as_ref()), ctx);
+        if let Some(task) = self.spawn_search(self.query_buffer.read(ctx).text(ctx.as_ref()), ctx) {
+            task.detach();
+        }
     }
 
     fn on_query_buffer_event(
@@ -328,7 +330,9 @@ impl FileFinder {
                     self.matches.clear();
                     ctx.notify();
                 } else {
-                    self.spawn_search(query, ctx);
+                    if let Some(task) = self.spawn_search(query, ctx) {
+                        task.detach();
+                    }
                 }
             }
             Blurred => ctx.emit(Event::Dismissed),
@@ -385,7 +389,8 @@ impl FileFinder {
         ctx.emit(Event::Selected(*tree_id, path.clone()));
     }
 
-    fn spawn_search(&mut self, query: String, ctx: &mut ViewContext<Self>) -> Option<()> {
+    #[must_use]
+    fn spawn_search(&mut self, query: String, ctx: &mut ViewContext<Self>) -> Option<Task<()>> {
         let snapshots = self
             .workspace
             .upgrade(&ctx)?
@@ -415,13 +420,10 @@ impl FileFinder {
             (search_id, did_cancel, query, matches)
         });
 
-        ctx.spawn(|this, mut ctx| async move {
+        Some(ctx.spawn(|this, mut ctx| async move {
             let matches = background_task.await;
             this.update(&mut ctx, |this, ctx| this.update_matches(matches, ctx));
-        })
-        .detach();
-
-        Some(())
+        }))
     }
 
     fn update_matches(
@@ -550,15 +552,18 @@ mod tests {
         let (_, finder) = app.add_window(|ctx| FileFinder::new(settings, workspace.clone(), ctx));
 
         let query = "hi".to_string();
-        finder.update(&mut app, |f, ctx| f.spawn_search(query.clone(), ctx));
-        finder.condition(&app, |f, _| f.matches.len() == 5).await;
+        finder
+            .update(&mut app, |f, ctx| f.spawn_search(query.clone(), ctx))
+            .unwrap()
+            .await;
+        finder.read_with(&app, |f, _| assert_eq!(f.matches.len(), 5));
 
         finder.update(&mut app, |finder, ctx| {
             let matches = finder.matches.clone();
 
             // Simulate a search being cancelled after the time limit,
             // returning only a subset of the matches that would have been found.
-            finder.spawn_search(query.clone(), ctx);
+            finder.spawn_search(query.clone(), ctx).unwrap().detach();
             finder.update_matches(
                 (
                     finder.latest_search_id,
@@ -570,7 +575,7 @@ mod tests {
             );
 
             // Simulate another cancellation.
-            finder.spawn_search(query.clone(), ctx);
+            finder.spawn_search(query.clone(), ctx).unwrap().detach();
             finder.update_matches(
                 (
                     finder.latest_search_id,
@@ -605,14 +610,16 @@ mod tests {
 
         // Even though there is only one worktree, that worktree's filename
         // is included in the matching, because the worktree is a single file.
-        finder.update(&mut app, |f, ctx| f.spawn_search("thf".into(), ctx));
-        finder.condition(&app, |f, _| f.matches.len() == 1).await;
-
+        finder
+            .update(&mut app, |f, ctx| f.spawn_search("thf".into(), ctx))
+            .unwrap()
+            .await;
         app.read(|ctx| {
             let finder = finder.read(ctx);
+            assert_eq!(finder.matches.len(), 1);
+
             let (file_name, file_name_positions, full_path, full_path_positions) =
                 finder.labels_for_match(&finder.matches[0], ctx).unwrap();
-
             assert_eq!(file_name, "the-file");
             assert_eq!(file_name_positions, &[0, 1, 4]);
             assert_eq!(full_path, "the-file");
@@ -621,8 +628,11 @@ mod tests {
 
         // Since the worktree root is a file, searching for its name followed by a slash does
         // not match anything.
-        finder.update(&mut app, |f, ctx| f.spawn_search("thf/".into(), ctx));
-        finder.condition(&app, |f, _| f.matches.len() == 0).await;
+        finder
+            .update(&mut app, |f, ctx| f.spawn_search("thf/".into(), ctx))
+            .unwrap()
+            .await;
+        finder.read_with(&app, |f, _| assert_eq!(f.matches.len(), 0));
     }
 
     #[gpui::test]
@@ -649,11 +659,14 @@ mod tests {
         let (_, finder) = app.add_window(|ctx| FileFinder::new(settings, workspace.clone(), ctx));
 
         // Run a search that matches two files with the same relative path.
-        finder.update(&mut app, |f, ctx| f.spawn_search("a.t".into(), ctx));
-        finder.condition(&app, |f, _| f.matches.len() == 2).await;
+        finder
+            .update(&mut app, |f, ctx| f.spawn_search("a.t".into(), ctx))
+            .unwrap()
+            .await;
 
         // Can switch between different matches with the same relative path.
         finder.update(&mut app, |f, ctx| {
+            assert_eq!(f.matches.len(), 2);
             assert_eq!(f.selected_index(), 0);
             f.select_next(&(), ctx);
             assert_eq!(f.selected_index(), 1);
