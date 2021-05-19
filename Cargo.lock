@@ -1181,6 +1181,7 @@ dependencies = [
  "font-kit",
  "foreign-types",
  "gpui_macros",
+ "lazy_static",
  "log",
  "metal",
  "num_cpus",

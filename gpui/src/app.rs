@@ -10,6 +10,7 @@ use crate::{
 use anyhow::{anyhow, Result};
 use async_task::Task;
 use keymap::MatchResult;
+use lazy_static::lazy_static;
 use parking_lot::{Mutex, RwLock};
 use pathfinder_geometry::{rect::RectF, vector::vec2f};
 use platform::Event;
@@ -2290,17 +2291,12 @@ impl<T: View> ViewHandle<T> {
     pub fn condition(
         &self,
         ctx: &TestAppContext,
-        predicate: impl FnMut(&T, &AppContext) -> bool,
-    ) -> impl Future<Output = ()> {
-        self.condition_with_duration(Duration::from_millis(500), ctx, predicate)
-    }
-
-    pub fn condition_with_duration(
-        &self,
-        duration: Duration,
-        ctx: &TestAppContext,
         mut predicate: impl FnMut(&T, &AppContext) -> bool,
     ) -> impl Future<Output = ()> {
+        lazy_static! {
+            static ref CI: bool = std::env::var("CI").is_ok();
+        }
+
         let (tx, mut rx) = mpsc::channel(1024);
 
         let mut ctx = ctx.0.borrow_mut();
@@ -2322,6 +2318,11 @@ impl<T: View> ViewHandle<T> {
 
         let ctx = ctx.weak_self.as_ref().unwrap().upgrade().unwrap();
         let handle = self.downgrade();
+        let duration = if *CI {
+            Duration::from_secs(1)
+        } else {
+            Duration::from_millis(500)
+        };
 
         async move {
             timeout(duration, async move {

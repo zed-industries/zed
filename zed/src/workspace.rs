@@ -759,7 +759,7 @@ mod tests {
     use super::*;
     use crate::{editor::BufferView, settings, test::temp_tree};
     use serde_json::json;
-    use std::{collections::HashSet, fs, time::Duration};
+    use std::{collections::HashSet, fs};
     use tempdir::TempDir;
 
     #[gpui::test]
@@ -1031,18 +1031,14 @@ mod tests {
         app.update(|ctx| editor.update(ctx, |editor, ctx| editor.insert(&"x".to_string(), ctx)));
         fs::write(dir.path().join("a.txt"), "changed").unwrap();
         editor
-            .condition_with_duration(Duration::from_millis(500), &app, |editor, ctx| {
-                editor.has_conflict(ctx)
-            })
+            .condition(&app, |editor, ctx| editor.has_conflict(ctx))
             .await;
         app.read(|ctx| assert!(editor.is_dirty(ctx)));
 
         app.update(|ctx| workspace.update(ctx, |w, ctx| w.save_active_item(&(), ctx)));
         app.simulate_prompt_answer(window_id, 0);
         editor
-            .condition_with_duration(Duration::from_millis(500), &app, |editor, ctx| {
-                !editor.is_dirty(ctx)
-            })
+            .condition(&app, |editor, ctx| !editor.is_dirty(ctx))
             .await;
         app.read(|ctx| assert!(!editor.has_conflict(ctx)));
     }
@@ -1099,9 +1095,7 @@ mod tests {
 
         // When the save completes, the buffer's title is updated.
         editor
-            .condition_with_duration(Duration::from_millis(500), &app, |editor, ctx| {
-                !editor.is_dirty(ctx)
-            })
+            .condition(&app, |editor, ctx| !editor.is_dirty(ctx))
             .await;
         app.read(|ctx| {
             assert!(!editor.is_dirty(ctx));
