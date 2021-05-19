@@ -176,7 +176,7 @@ impl DisplayMapSnapshot {
         let mut count = 0;
         let mut column = 0;
         for c in self.chars_at(DisplayPoint::new(display_row, 0), ctx) {
-            if count >= char_count {
+            if c == '\n' || count >= char_count {
                 break;
             }
             count += 1;
@@ -439,6 +439,44 @@ mod tests {
                 .collect::<String>()[0..13],
             "  bbbbb\nc   c"
         );
+    }
+
+    #[gpui::test]
+    fn test_clip_point(app: &mut gpui::MutableAppContext) {
+        use Bias::{Left, Right};
+
+        let text = "\n'a', 'α',\t'✋',\t'❎', '🍐'\n";
+        let display_text = "\n'a', 'α',   '✋',    '❎', '🍐'\n";
+        let buffer = app.add_model(|ctx| Buffer::new(0, text, ctx));
+        let ctx = app.as_ref();
+        let map = DisplayMap::new(buffer.clone(), 4, ctx);
+        assert_eq!(map.text(ctx), display_text);
+
+        let map = map.snapshot(ctx);
+        for (input_column, bias, output_column) in vec![
+            ("'a', '".len(), Left, "'a', '".len()),
+            ("'a', '".len() + 1, Left, "'a', '".len()),
+            ("'a', '".len() + 1, Right, "'a', 'α".len()),
+            ("'a', 'α', ".len(), Left, "'a', 'α',".len()),
+            ("'a', 'α', ".len(), Right, "'a', 'α',   ".len()),
+            ("'a', 'α',   '".len() + 1, Left, "'a', 'α',   '".len()),
+            ("'a', 'α',   '".len() + 1, Right, "'a', 'α',   '✋".len()),
+            ("'a', 'α',   '✋',".len(), Right, "'a', 'α',   '✋',".len()),
+            ("'a', 'α',   '✋', ".len(), Left, "'a', 'α',   '✋',".len()),
+            (
+                "'a', 'α',   '✋', ".len(),
+                Right,
+                "'a', 'α',   '✋',    ".len(),
+            ),
+        ] {
+            assert_eq!(
+                map.clip_point(DisplayPoint::new(1, input_column as u32), bias, ctx),
+                DisplayPoint::new(1, output_column as u32),
+                "clip_point(({}, {}))",
+                1,
+                input_column,
+            );
+        }
     }
 
     #[test]

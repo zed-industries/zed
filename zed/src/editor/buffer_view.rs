@@ -2729,11 +2729,6 @@ mod tests {
         assert_eq!('ⓐ'.len_utf8(), 3);
         assert_eq!('α'.len_utf8(), 2);
 
-        fn empty_range(row: usize, column: usize) -> Range<DisplayPoint> {
-            let point = DisplayPoint::new(row as u32, column as u32);
-            point..point
-        }
-
         view.update(app, |view, ctx| {
             view.fold_ranges(
                 vec![
@@ -2822,6 +2817,53 @@ mod tests {
             assert_eq!(
                 view.selection_ranges(ctx.as_ref()),
                 &[empty_range(0, "ⓐ".len())]
+            );
+        });
+    }
+
+    #[gpui::test]
+    fn test_move_cursor_different_line_lengths(app: &mut gpui::MutableAppContext) {
+        let buffer = app.add_model(|ctx| Buffer::new(0, "ⓐⓑⓒⓓⓔ\nabcd\nαβγ\nabcd\nⓐⓑⓒⓓⓔ\n", ctx));
+        let settings = settings::channel(&app.font_cache()).unwrap().1;
+        let (_, view) = app.add_window(|ctx| BufferView::for_buffer(buffer.clone(), settings, ctx));
+        view.update(app, |view, ctx| {
+            view.select_display_ranges(&[empty_range(0, "ⓐⓑⓒⓓⓔ".len())], ctx)
+                .unwrap();
+
+            view.move_down(&(), ctx);
+            assert_eq!(
+                view.selection_ranges(ctx.as_ref()),
+                &[empty_range(1, "abcd".len())]
+            );
+
+            view.move_down(&(), ctx);
+            assert_eq!(
+                view.selection_ranges(ctx.as_ref()),
+                &[empty_range(2, "αβγ".len())]
+            );
+
+            view.move_down(&(), ctx);
+            assert_eq!(
+                view.selection_ranges(ctx.as_ref()),
+                &[empty_range(3, "abcd".len())]
+            );
+
+            view.move_down(&(), ctx);
+            assert_eq!(
+                view.selection_ranges(ctx.as_ref()),
+                &[empty_range(4, "ⓐⓑⓒⓓⓔ".len())]
+            );
+
+            view.move_up(&(), ctx);
+            assert_eq!(
+                view.selection_ranges(ctx.as_ref()),
+                &[empty_range(3, "abcd".len())]
+            );
+
+            view.move_up(&(), ctx);
+            assert_eq!(
+                view.selection_ranges(ctx.as_ref()),
+                &[empty_range(2, "αβγ".len())]
             );
         });
     }
@@ -3802,5 +3844,10 @@ mod tests {
             self.selections_in_range(DisplayPoint::zero()..self.max_point(app), app)
                 .collect::<Vec<_>>()
         }
+    }
+
+    fn empty_range(row: usize, column: usize) -> Range<DisplayPoint> {
+        let point = DisplayPoint::new(row as u32, column as u32);
+        point..point
     }
 }
