@@ -2315,8 +2315,6 @@ impl<T: View> ViewHandle<T> {
             Duration::from_millis(500)
         };
 
-        log::error!("Duration is {:?}", duration);
-
         async move {
             timeout(duration, async move {
                 loop {
