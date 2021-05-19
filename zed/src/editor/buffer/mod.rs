@@ -3011,9 +3011,7 @@ mod tests {
             });
 
             fs::remove_file(dir.path().join("file2")).unwrap();
-            buffer2
-                .condition_with_duration(Duration::from_millis(500), &app, |b, _| b.is_dirty())
-                .await;
+            buffer2.condition(&app, |b, _| b.is_dirty()).await;
             assert_eq!(
                 *events.borrow(),
                 &[Event::Dirtied, Event::FileHandleChanged]
@@ -3038,9 +3036,7 @@ mod tests {
             events.borrow_mut().clear();
             fs::remove_file(dir.path().join("file3")).unwrap();
             buffer3
-                .condition_with_duration(Duration::from_millis(500), &app, |_, _| {
-                    !events.borrow().is_empty()
-                })
+                .condition(&app, |_, _| !events.borrow().is_empty())
                 .await;
             assert_eq!(*events.borrow(), &[Event::FileHandleChanged]);
             app.read(|ctx| assert!(buffer3.read(ctx).is_dirty()));
@@ -3095,9 +3091,7 @@ mod tests {
         // contents are edited according to the diff between the old and new
         // file contents.
         buffer
-            .condition_with_duration(Duration::from_millis(500), &app, |buffer, _| {
-                buffer.text() != initial_contents
-            })
+            .condition(&app, |buffer, _| buffer.text() != initial_contents)
             .await;
 
         buffer.update(&mut app, |buffer, _| {
@@ -3131,9 +3125,7 @@ mod tests {
         // Becaues the buffer is modified, it doesn't reload from disk, but is
         // marked as having a conflict.
         buffer
-            .condition_with_duration(Duration::from_millis(500), &app, |buffer, _| {
-                buffer.has_conflict()
-            })
+            .condition(&app, |buffer, _| buffer.has_conflict())
             .await;
     }
 
