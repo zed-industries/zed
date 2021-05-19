@@ -307,22 +307,20 @@ mod tests {
             for i in 0..10 {
                 fs::write(path.join(format!("existing-file-{}", i)), "").unwrap();
             }
+            flush_historical_events();
 
             let (tx, rx) = mpsc::channel();
             let (stream, handle) = EventStream::new(&[&path], Duration::from_millis(50));
             thread::spawn(move || stream.run(move |events| tx.send(events.to_vec()).is_ok()));
 
-            // Flush any historical events.
-            rx.recv_timeout(Duration::from_millis(500)).ok();
-
             fs::write(path.join("new-file"), "").unwrap();
-            let events = rx.recv_timeout(Duration::from_millis(500)).unwrap();
+            let events = rx.recv_timeout(Duration::from_secs(2)).unwrap();
             let event = events.last().unwrap();
             assert_eq!(event.path, path.join("new-file"));
             assert!(event.flags.contains(StreamFlags::ITEM_CREATED));
 
             fs::remove_file(path.join("existing-file-5")).unwrap();
-            let events = rx.recv_timeout(Duration::from_millis(500)).unwrap();
+            let events = rx.recv_timeout(Duration::from_secs(2)).unwrap();
             let event = events.last().unwrap();
             assert_eq!(event.path, path.join("existing-file-5"));
             assert!(event.flags.contains(StreamFlags::ITEM_REMOVED));
@@ -338,6 +336,7 @@ mod tests {
             for i in 0..10 {
                 fs::write(path.join(format!("existing-file-{}", i)), "").unwrap();
             }
+            flush_historical_events();
 
             let (tx, rx) = mpsc::channel();
             let (stream, handle) = EventStream::new(&[&path], Duration::from_millis(50));
@@ -350,13 +349,13 @@ mod tests {
             });
 
             fs::write(path.join("new-file"), "").unwrap();
-            let events = rx.recv_timeout(Duration::from_millis(800)).unwrap();
+            let events = rx.recv_timeout(Duration::from_secs(2)).unwrap();
             let event = events.last().unwrap();
             assert_eq!(event.path, path.join("new-file"));
             assert!(event.flags.contains(StreamFlags::ITEM_CREATED));
 
             fs::remove_file(path.join("existing-file-5")).unwrap();
-            let events = rx.recv_timeout(Duration::from_millis(500)).unwrap();
+            let events = rx.recv_timeout(Duration::from_secs(2)).unwrap();
             let event = events.last().unwrap();
             assert_eq!(event.path, path.join("existing-file-5"));
             assert!(event.flags.contains(StreamFlags::ITEM_REMOVED));
@@ -368,6 +367,7 @@ mod tests {
     fn test_event_stream_shutdown_by_dropping_handle() {
         let dir = TempDir::new("test-event-stream").unwrap();
         let path = dir.path().canonicalize().unwrap();
+        flush_historical_events();
 
         let (tx, rx) = mpsc::channel();
         let (stream, handle) = EventStream::new(&[&path], Duration::from_millis(50));
@@ -383,17 +383,11 @@ mod tests {
         });
 
         fs::write(path.join("new-file"), "").unwrap();
-        assert_eq!(
-            rx.recv_timeout(Duration::from_millis(500)).unwrap(),
-            "running"
-        );
+        assert_eq!(rx.recv_timeout(Duration::from_secs(2)).unwrap(), "running");
 
         // Dropping the handle causes `EventStream::run` to return.
         drop(handle);
-        assert_eq!(
-            rx.recv_timeout(Duration::from_millis(500)).unwrap(),
-            "stopped"
-        );
+        assert_eq!(rx.recv_timeout(Duration::from_secs(2)).unwrap(), "stopped");
     }
 
     #[test]
@@ -406,5 +400,14 @@ mod tests {
 
         // This returns immediately because the handle was already dropped.
         stream.run(|_| true);
+    }
+
+    fn flush_historical_events() {
+        let duration = if std::env::var("CI").is_ok() {
+            Duration::from_secs(2)
+        } else {
+            Duration::from_millis(500)
+        };
+        thread::sleep(duration);
     }
 }

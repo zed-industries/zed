@@ -1276,16 +1276,12 @@ impl WorktreeHandle for ModelHandle<Worktree> {
         let tree = self.clone();
         async move {
             fs::write(root_path.join(filename), "").unwrap();
-            tree.condition_with_duration(Duration::from_secs(5), &app, |tree, _| {
-                tree.entry_for_path(filename).is_some()
-            })
-            .await;
+            tree.condition(&app, |tree, _| tree.entry_for_path(filename).is_some())
+                .await;
 
             fs::remove_file(root_path.join(filename)).unwrap();
-            tree.condition_with_duration(Duration::from_secs(5), &app, |tree, _| {
-                tree.entry_for_path(filename).is_none()
-            })
-            .await;
+            tree.condition(&app, |tree, _| tree.entry_for_path(filename).is_none())
+                .await;
 
             app.read(|ctx| tree.read(ctx).scan_complete()).await;
         }
