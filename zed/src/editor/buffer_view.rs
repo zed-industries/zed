@@ -2358,7 +2358,11 @@ impl workspace::ItemView for BufferView {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{editor::Point, settings, test::sample_text};
+    use crate::{
+        editor::Point,
+        settings,
+        test::{multibyte_sample_text, sample_text},
+    };
     use unindent::Unindent;
 
     #[gpui::test]
@@ -2711,6 +2715,70 @@ mod tests {
             assert_eq!(
                 view.selection_ranges(ctx.as_ref()),
                 &[DisplayPoint::new(0, 1)..DisplayPoint::new(5, 6)]
+            );
+        });
+    }
+
+    #[gpui::test]
+    fn test_move_cursor_multibyte(app: &mut gpui::MutableAppContext) {
+        let buffer = app.add_model(|ctx| Buffer::new(0, "ⓐⓑⓒⓓⓔ\nabcde\nαβγδε\n", ctx));
+        let settings = settings::channel(&app.font_cache()).unwrap().1;
+        let (_, view) = app.add_window(|ctx| BufferView::for_buffer(buffer.clone(), settings, ctx));
+
+        assert_eq!('ⓐ'.len_utf8(), 3);
+        assert_eq!('α'.len_utf8(), 2);
+
+        view.update(app, |view, ctx| {
+            view.fold_ranges(
+                vec![
+                    Point::new(0, 6)..Point::new(0, 12),
+                    Point::new(1, 2)..Point::new(1, 4),
+                    Point::new(2, 4)..Point::new(2, 8),
+                ],
+                ctx,
+            );
+            assert_eq!(view.text(ctx.as_ref()), "ⓐⓑ…ⓔ\nab…e\nαβ…ε\n");
+
+            view.move_right(&(), ctx);
+            assert_eq!(
+                view.selection_ranges(ctx.as_ref()),
+                &[DisplayPoint::new(0, 3)..DisplayPoint::new(0, 3)]
+            );
+
+            view.move_down(&(), ctx);
+            assert_eq!(
+                view.selection_ranges(ctx.as_ref()),
+                &[DisplayPoint::new(1, 1)..DisplayPoint::new(1, 1)]
+            );
+
+            view.move_right(&(), ctx);
+            assert_eq!(
+                view.selection_ranges(ctx.as_ref()),
+                &[DisplayPoint::new(1, 2)..DisplayPoint::new(1, 2)]
+            );
+
+            view.move_down(&(), ctx);
+            assert_eq!(
+                view.selection_ranges(ctx.as_ref()),
+                &[DisplayPoint::new(2, 4)..DisplayPoint::new(2, 4)]
+            );
+
+            view.move_left(&(), ctx);
+            assert_eq!(
+                view.selection_ranges(ctx.as_ref()),
+                &[DisplayPoint::new(2, 2)..DisplayPoint::new(2, 2)]
+            );
+
+            view.move_up(&(), ctx);
+            assert_eq!(
+                view.selection_ranges(ctx.as_ref()),
+                &[DisplayPoint::new(1, 1)..DisplayPoint::new(1, 1)]
+            );
+
+            view.move_up(&(), ctx);
+            assert_eq!(
+                view.selection_ranges(ctx.as_ref()),
+                &[DisplayPoint::new(0, 3)..DisplayPoint::new(0, 3)]
             );
         });
     }

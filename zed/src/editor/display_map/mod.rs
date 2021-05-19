@@ -92,8 +92,7 @@ impl DisplayMap {
         let mut is_blank = true;
         for c in self
             .snapshot(ctx)
-            .chunks_at(DisplayPoint::new(display_row, 0), ctx)
-            .flat_map(str::chars)
+            .chars_at(DisplayPoint::new(display_row, 0), ctx)
         {
             if c == ' ' {
                 indent += 1;
@@ -165,6 +164,32 @@ impl DisplayMapSnapshot {
         self.chunks_at(point, app).flat_map(str::chars)
     }
 
+    pub fn column_to_chars(&self, display_row: u32, target: u32, ctx: &AppContext) -> u32 {
+        let mut count = 0;
+        let mut column = 0;
+        for c in self.chars_at(DisplayPoint::new(display_row, 0), ctx) {
+            count += 1;
+            column += c.len_utf8() as u32;
+            if column >= target {
+                break;
+            }
+        }
+        count
+    }
+
+    pub fn column_from_chars(&self, display_row: u32, char_count: u32, ctx: &AppContext) -> u32 {
+        let mut count = 0;
+        let mut column = 0;
+        for c in self.chars_at(DisplayPoint::new(display_row, 0), ctx) {
+            count += 1;
+            column += c.len_utf8() as u32;
+            if count >= char_count {
+                break;
+            }
+        }
+        column
+    }
+
     fn expand_tabs(&self, mut point: DisplayPoint, ctx: &AppContext) -> DisplayPoint {
         let chars = self
             .folds_snapshot
@@ -187,7 +212,6 @@ impl DisplayMapSnapshot {
         let (collapsed, expanded_char_column, to_next_stop) =
             collapse_tabs(chars, expanded, bias, self.tab_size);
         *point.column_mut() = collapsed as u32;
-
         (point, expanded_char_column, to_next_stop)
     }
 }
@@ -360,6 +384,10 @@ pub fn collapse_tabs(
             expanded_bytes += c.len_utf8();
         }
         collapsed_bytes += c.len_utf8();
+
+        if expanded_bytes > column {
+            panic!("column {} is inside of character {:?}", column, c);
+        }
     }
     (collapsed_bytes, expanded_chars, 0)
 }

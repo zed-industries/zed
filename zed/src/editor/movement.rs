@@ -16,7 +16,12 @@ pub fn left(map: &DisplayMap, mut point: DisplayPoint, app: &AppContext) -> Resu
 pub fn right(map: &DisplayMap, mut point: DisplayPoint, app: &AppContext) -> Result<DisplayPoint> {
     let max_column = map.line_len(point.row(), app);
     if point.column() < max_column {
-        *point.column_mut() += 1;
+        *point.column_mut() += map
+            .snapshot(app)
+            .chars_at(point, app)
+            .next()
+            .unwrap()
+            .len_utf8() as u32;
     } else if point.row() < map.max_point(app).row() {
         *point.row_mut() += 1;
         *point.column_mut() = 0;
@@ -35,9 +40,13 @@ pub fn up(
     } else {
         point.column()
     };
+
+    let map = map.snapshot(app);
+    let char_column = map.column_to_chars(point.row(), goal_column, app);
+
     if point.row() > 0 {
         *point.row_mut() -= 1;
-        *point.column_mut() = cmp::min(goal_column, map.line_len(point.row(), app));
+        *point.column_mut() = map.column_from_chars(point.row(), char_column, app);
     } else {
         point = DisplayPoint::new(0, 0);
     }
@@ -56,10 +65,14 @@ pub fn down(
     } else {
         point.column()
     };
+
     let max_point = map.max_point(app);
+    let map = map.snapshot(app);
+    let char_column = map.column_to_chars(point.row(), goal_column, app);
+
     if point.row() < max_point.row() {
         *point.row_mut() += 1;
-        *point.column_mut() = cmp::min(goal_column, map.line_len(point.row(), app))
+        *point.column_mut() = map.column_from_chars(point.row(), char_column, app);
     } else {
         point = max_point;
     }

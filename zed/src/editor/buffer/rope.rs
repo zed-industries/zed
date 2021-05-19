@@ -335,6 +335,9 @@ impl Chunk {
         let mut point = Point::new(0, 0);
         for ch in self.0.chars() {
             if point >= target {
+                if point > target {
+                    panic!("point {:?} is inside of character {:?}", target, ch);
+                }
                 break;
             }
 
@@ -346,8 +349,6 @@ impl Chunk {
             }
             offset += ch.len_utf8();
         }
-
-        assert_eq!(point, target);
         offset
     }
 }
