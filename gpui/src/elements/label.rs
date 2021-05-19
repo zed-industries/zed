@@ -73,7 +73,7 @@ impl Element for Label {
             .font_cache
             .select_font(self.family_id, &self.font_properties)
             .unwrap();
-        let text_len = self.text.chars().count();
+        let text_len = self.text.len();
         let mut styles;
         let mut colors;
         if let Some(highlights) = self.highlights.as_ref() {

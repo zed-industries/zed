@@ -2151,7 +2151,7 @@ impl BufferView {
                 layouts.push(layout_cache.layout_str(
                     &line,
                     font_size,
-                    &[(0..line.chars().count(), font_id)],
+                    &[(0..line.len(), font_id)],
                 ));
                 line.clear();
                 row += 1;

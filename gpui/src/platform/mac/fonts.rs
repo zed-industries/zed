@@ -189,49 +189,60 @@ impl FontSystemState {
     ) -> Line {
         let font_id_attr_name = CFString::from_static_string("zed_font_id");
 
+        let len = text.len();
+        let mut utf8_and_utf16_ixs = text.char_indices().chain(Some((len, '\0'))).map({
+            let mut utf16_ix = 0;
+            move |(utf8_ix, c)| {
+                let result = (utf8_ix, utf16_ix);
+                utf16_ix += c.len_utf16();
+                result
+            }
+        });
+
+        // Construct the attributed string, converting UTF8 ranges to UTF16 ranges.
         let mut string = CFMutableAttributedString::new();
-        string.replace_str(&CFString::new(text), CFRange::init(0, 0));
+        {
+            let mut utf8_and_utf16_ixs = utf8_and_utf16_ixs.clone();
+            string.replace_str(&CFString::new(text), CFRange::init(0, 0));
 
-        let mut utf16_lens = text.chars().map(|c| c.len_utf16());
-        let mut prev_char_ix = 0;
-        let mut prev_utf16_ix = 0;
+            let mut utf8_ix = 0;
+            let mut utf16_ix = 0;
+            for (range, font_id) in runs {
+                while utf8_ix < range.start {
+                    let (next_utf8_ix, next_utf16_ix) = utf8_and_utf16_ixs.next().unwrap();
+                    utf8_ix = next_utf8_ix;
+                    utf16_ix = next_utf16_ix;
+                }
+                let utf16_start = utf16_ix;
+                while utf8_ix < range.end {
+                    let (next_utf8_ix, next_utf16_ix) = utf8_and_utf16_ixs.next().unwrap();
+                    utf8_ix = next_utf8_ix;
+                    utf16_ix = next_utf16_ix;
+                }
 
-        for (range, font_id) in runs {
-            let utf16_start = prev_utf16_ix
-                + utf16_lens
-                    .by_ref()
-                    .take(range.start - prev_char_ix)
-                    .sum::<usize>();
-            let utf16_end = utf16_start
-                + utf16_lens
-                    .by_ref()
-                    .take(range.end - range.start)
-                    .sum::<usize>();
-            prev_char_ix = range.end;
-            prev_utf16_ix = utf16_end;
-
-            let cf_range = CFRange::init(utf16_start as isize, (utf16_end - utf16_start) as isize);
-            let font = &self.fonts[font_id.0];
-            unsafe {
-                string.set_attribute(
-                    cf_range,
-                    kCTFontAttributeName,
-                    &font.native_font().clone_with_font_size(font_size as f64),
-                );
-                string.set_attribute(
-                    cf_range,
-                    font_id_attr_name.as_concrete_TypeRef(),
-                    &CFNumber::from(font_id.0 as i64),
-                );
+                let cf_range =
+                    CFRange::init(utf16_start as isize, (utf16_ix - utf16_start) as isize);
+                let font = &self.fonts[font_id.0];
+                unsafe {
+                    string.set_attribute(
+                        cf_range,
+                        kCTFontAttributeName,
+                        &font.native_font().clone_with_font_size(font_size as f64),
+                    );
+                    string.set_attribute(
+                        cf_range,
+                        font_id_attr_name.as_concrete_TypeRef(),
+                        &CFNumber::from(font_id.0 as i64),
+                    );
+                }
             }
         }
 
+        // Retrieve the glyphs from the shaped line, converting UTF16 offsets to UTF8 offsets.
         let line = CTLine::new_with_attributed_string(string.as_concrete_TypeRef());
 
-        let mut utf16_chars = text.encode_utf16();
-        let mut char_ix = 0;
-        let mut prev_utf16_ix = 0;
-
+        let mut utf8_ix = 0;
+        let mut utf16_ix = 0;
         let mut runs = Vec::new();
         for run in line.glyph_runs().into_iter() {
             let font_id = FontId(
@@ -245,21 +256,22 @@ impl FontSystemState {
             );
 
             let mut glyphs = Vec::new();
-            for ((glyph_id, position), utf16_ix) in run
+            for ((glyph_id, position), glyph_utf16_ix) in run
                 .glyphs()
                 .iter()
                 .zip(run.positions().iter())
                 .zip(run.string_indices().iter())
             {
-                let utf16_ix = usize::try_from(*utf16_ix).unwrap();
-                char_ix +=
-                    char::decode_utf16(utf16_chars.by_ref().take(utf16_ix - prev_utf16_ix)).count();
-                prev_utf16_ix = utf16_ix;
-
+                let glyph_utf16_ix = usize::try_from(*glyph_utf16_ix).unwrap();
+                while utf16_ix < glyph_utf16_ix {
+                    let (next_utf8_ix, next_utf16_ix) = utf8_and_utf16_ixs.next().unwrap();
+                    utf8_ix = next_utf8_ix;
+                    utf16_ix = next_utf16_ix;
+                }
                 glyphs.push(Glyph {
                     id: *glyph_id as GlyphId,
                     position: vec2f(position.x as f32, position.y as f32),
-                    index: char_ix,
+                    index: utf8_ix,
                 });
             }
 
@@ -273,7 +285,7 @@ impl FontSystemState {
             descent: typographic_bounds.descent as f32,
             runs,
             font_size,
-            len: char_ix + 1,
+            len,
         }
     }
 }
@@ -312,7 +324,7 @@ mod tests {
     }
 
     #[test]
-    fn test_char_indices() -> anyhow::Result<()> {
+    fn test_glyph_offsets() -> anyhow::Result<()> {
         let fonts = FontSystem::new();
         let zapfino = fonts.load_family("Zapfino")?;
         let zapfino_regular = fonts.select_font(&zapfino, &Properties::new())?;
@@ -326,7 +338,7 @@ mod tests {
             &[
                 (0..9, zapfino_regular),
                 (9..22, menlo_regular),
-                (22..text.encode_utf16().count(), zapfino_regular),
+                (22..text.len(), zapfino_regular),
             ],
         );
         assert_eq!(
@@ -335,9 +347,7 @@ mod tests {
                 .flat_map(|r| r.glyphs.iter())
                 .map(|g| g.index)
                 .collect::<Vec<_>>(),
-            vec![
-                0, 2, 4, 5, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 30, 31
-            ]
+            vec![0, 2, 4, 5, 7, 8, 9, 10, 14, 15, 16, 17, 21, 22, 23, 24, 26, 27, 28, 29, 36, 37],
         );
         Ok(())
     }
