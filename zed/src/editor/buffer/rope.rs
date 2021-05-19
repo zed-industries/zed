@@ -1,5 +1,8 @@
 use super::Point;
-use crate::sum_tree::{self, SeekBias, SumTree};
+use crate::{
+    editor::Bias,
+    sum_tree::{self, SeekBias, SumTree},
+};
 use arrayvec::ArrayString;
 use smallvec::SmallVec;
 use std::{cmp, ops::Range, str};
@@ -142,32 +145,38 @@ impl Rope {
         cursor.start().bytes + cursor.item().map_or(0, |chunk| chunk.to_offset(overshoot))
     }
 
-    pub fn next_char_boundary(&self, mut offset: usize) -> usize {
-        assert!(offset <= self.summary().bytes);
+    pub fn clip_offset(&self, mut offset: usize, bias: Bias) -> usize {
         let mut cursor = self.chunks.cursor::<usize, usize>();
         cursor.seek(&offset, SeekBias::Left, &());
         if let Some(chunk) = cursor.item() {
             let mut ix = offset - cursor.start();
             while !chunk.0.is_char_boundary(ix) {
-                ix += 1;
-                offset += 1;
+                match bias {
+                    Bias::Left => {
+                        ix -= 1;
+                        offset -= 1;
+                    }
+                    Bias::Right => {
+                        ix += 1;
+                        offset += 1;
+                    }
+                }
             }
+            offset
+        } else {
+            self.summary().bytes
         }
-        offset
     }
 
-    pub fn prev_char_boundary(&self, mut offset: usize) -> usize {
-        assert!(offset <= self.summary().bytes);
-        let mut cursor = self.chunks.cursor::<usize, usize>();
-        cursor.seek(&offset, SeekBias::Left, &());
+    pub fn clip_point(&self, point: Point, bias: Bias) -> Point {
+        let mut cursor = self.chunks.cursor::<Point, Point>();
+        cursor.seek(&point, SeekBias::Right, &());
         if let Some(chunk) = cursor.item() {
-            let mut ix = offset - cursor.start();
-            while !chunk.0.is_char_boundary(ix) {
-                ix -= 1;
-                offset -= 1;
-            }
+            let overshoot = point - cursor.start();
+            *cursor.start() + chunk.clip_point(overshoot, bias)
+        } else {
+            self.summary().lines
         }
-        offset
     }
 }
 
@@ -351,6 +360,22 @@ impl Chunk {
         }
         offset
     }
+
+    fn clip_point(&self, target: Point, bias: Bias) -> Point {
+        for (row, line) in self.0.split('\n').enumerate() {
+            if row == target.row as usize {
+                let mut column = target.column.min(line.len() as u32);
+                while !line.is_char_boundary(column as usize) {
+                    match bias {
+                        Bias::Left => column -= 1,
+                        Bias::Right => column += 1,
+                    }
+                }
+                return Point::new(row as u32, column);
+            }
+        }
+        unreachable!()
+    }
 }
 
 impl sum_tree::Item for Chunk {
@@ -466,30 +491,13 @@ fn find_split_ix(text: &str) -> usize {
     ix
 }
 
-#[inline(always)]
-fn assert_char_boundary(s: &str, ix: usize) {
-    if !s.is_char_boundary(ix) {
-        let mut char_start = ix;
-        while !s.is_char_boundary(char_start) {
-            char_start -= 1;
-        }
-
-        let ch = s[char_start..].chars().next().unwrap();
-        let char_range = char_start..char_start + ch.len_utf8();
-        panic!(
-            "byte index {} is not a char boundary; it is inside {:?} (bytes {:?}) of `{}`",
-            ix, ch, char_range, s
-        );
-    }
-}
-
 #[cfg(test)]
 mod tests {
-    use crate::util::RandomCharIter;
-
     use super::*;
+    use crate::util::RandomCharIter;
     use rand::prelude::*;
     use std::env;
+    use Bias::{Left, Right};
 
     #[test]
     fn test_all_4_byte_chars() {
@@ -520,8 +528,8 @@ mod tests {
             let mut expected = String::new();
             let mut actual = Rope::new();
             for _ in 0..operations {
-                let end_ix = actual.next_char_boundary(rng.gen_range(0..=expected.len()));
-                let start_ix = actual.prev_char_boundary(rng.gen_range(0..=end_ix));
+                let end_ix = clip_offset(&expected, rng.gen_range(0..=expected.len()), Right);
+                let start_ix = clip_offset(&expected, rng.gen_range(0..=end_ix), Left);
                 let len = rng.gen_range(0..=64);
                 let new_text: String = RandomCharIter::new(&mut rng).take(len).collect();
 
@@ -539,8 +547,8 @@ mod tests {
                 log::info!("text: {:?}", expected);
 
                 for _ in 0..5 {
-                    let end_ix = actual.next_char_boundary(rng.gen_range(0..=expected.len()));
-                    let start_ix = actual.prev_char_boundary(rng.gen_range(0..=end_ix));
+                    let end_ix = clip_offset(&expected, rng.gen_range(0..=expected.len()), Right);
+                    let start_ix = clip_offset(&expected, rng.gen_range(0..=end_ix), Left);
                     assert_eq!(
                         actual.chunks_in_range(start_ix..end_ix).collect::<String>(),
                         &expected[start_ix..end_ix]
@@ -560,8 +568,8 @@ mod tests {
                 }
 
                 for _ in 0..5 {
-                    let end_ix = actual.next_char_boundary(rng.gen_range(0..=expected.len()));
-                    let start_ix = actual.prev_char_boundary(rng.gen_range(0..=end_ix));
+                    let end_ix = clip_offset(&expected, rng.gen_range(0..=expected.len()), Right);
+                    let start_ix = clip_offset(&expected, rng.gen_range(0..=end_ix), Left);
                     assert_eq!(
                         actual.cursor(start_ix).summary(end_ix),
                         TextSummary::from(&expected[start_ix..end_ix])
@@ -569,6 +577,16 @@ mod tests {
                 }
             }
         }
+    }
+
+    fn clip_offset(text: &str, mut offset: usize, bias: Bias) -> usize {
+        while !text.is_char_boundary(offset) {
+            match bias {
+                Bias::Left => offset -= 1,
+                Bias::Right => offset += 1,
+            }
+        }
+        offset
     }
 
     impl Rope {

@@ -11,6 +11,12 @@ pub use display_map::DisplayPoint;
 use display_map::*;
 use std::{cmp, ops::Range};
 
+#[derive(Copy, Clone)]
+pub enum Bias {
+    Left,
+    Right,
+}
+
 trait RangeExt<T> {
     fn sorted(&self) -> Range<T>;
 }

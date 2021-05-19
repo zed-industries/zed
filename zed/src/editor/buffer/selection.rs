@@ -1,8 +1,8 @@
 use crate::{
     editor::{
         buffer::{Anchor, Buffer, Point, ToPoint},
-        display_map::{Bias, DisplayMap},
-        DisplayPoint,
+        display_map::DisplayMap,
+        Bias, DisplayPoint,
     },
     time,
 };

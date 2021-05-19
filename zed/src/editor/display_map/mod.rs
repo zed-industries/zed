@@ -1,16 +1,10 @@
 mod fold_map;
 
-use super::{buffer, Anchor, Buffer, Edit, Point, ToOffset, ToPoint};
+use super::{buffer, Anchor, Bias, Buffer, Edit, Point, ToOffset, ToPoint};
 pub use fold_map::BufferRows;
 use fold_map::{FoldMap, FoldMapSnapshot};
 use gpui::{AppContext, ModelHandle};
 use std::ops::Range;
-
-#[derive(Copy, Clone)]
-pub enum Bias {
-    Left,
-    Right,
-}
 
 pub struct DisplayMap {
     buffer: ModelHandle<Buffer>,
@@ -110,6 +104,7 @@ impl DisplayMap {
             .column()
     }
 
+    // TODO - make this delegate to the DisplayMapSnapshot
     pub fn max_point(&self, ctx: &AppContext) -> DisplayPoint {
         self.fold_map.max_point(ctx).expand_tabs(self, ctx)
     }
@@ -168,11 +163,11 @@ impl DisplayMapSnapshot {
         let mut count = 0;
         let mut column = 0;
         for c in self.chars_at(DisplayPoint::new(display_row, 0), ctx) {
-            count += 1;
-            column += c.len_utf8() as u32;
             if column >= target {
                 break;
             }
+            count += 1;
+            column += c.len_utf8() as u32;
         }
         count
     }
@@ -181,13 +176,21 @@ impl DisplayMapSnapshot {
         let mut count = 0;
         let mut column = 0;
         for c in self.chars_at(DisplayPoint::new(display_row, 0), ctx) {
-            count += 1;
-            column += c.len_utf8() as u32;
             if count >= char_count {
                 break;
             }
+            count += 1;
+            column += c.len_utf8() as u32;
         }
         column
+    }
+
+    pub fn clip_point(&self, point: DisplayPoint, bias: Bias, ctx: &AppContext) -> DisplayPoint {
+        self.expand_tabs(
+            self.folds_snapshot
+                .clip_point(self.collapse_tabs(point, bias, ctx).0, bias, ctx),
+            ctx,
+        )
     }
 
     fn expand_tabs(&self, mut point: DisplayPoint, ctx: &AppContext) -> DisplayPoint {
@@ -364,7 +367,7 @@ pub fn collapse_tabs(
     let mut expanded_chars = 0;
     let mut collapsed_bytes = 0;
     while let Some(c) = chars.next() {
-        if expanded_bytes == column {
+        if expanded_bytes >= column {
             break;
         }
 
@@ -383,19 +386,19 @@ pub fn collapse_tabs(
             expanded_chars += 1;
             expanded_bytes += c.len_utf8();
         }
-        collapsed_bytes += c.len_utf8();
 
-        if expanded_bytes > column {
-            panic!("column {} is inside of character {:?}", column, c);
+        if expanded_bytes > column && matches!(bias, Bias::Left) {
+            expanded_chars -= 1;
+            break;
         }
+
+        collapsed_bytes += c.len_utf8();
     }
     (collapsed_bytes, expanded_chars, 0)
 }
 
 #[cfg(test)]
 mod tests {
-    use gpui::MutableAppContext;
-
     use super::*;
     use crate::test::*;
 
@@ -446,25 +449,25 @@ mod tests {
     }
 
     #[gpui::test]
-    fn test_tabs_with_multibyte_chars(app: &mut MutableAppContext) {
-        let text = "✅\t\tx\nα\t\n🏀α\t\ty";
+    fn test_tabs_with_multibyte_chars(app: &mut gpui::MutableAppContext) {
+        let text = "✅\t\tα\nβ\t\n🏀β\t\tγ";
         let buffer = app.add_model(|ctx| Buffer::new(0, text, ctx));
         let ctx = app.as_ref();
         let map = DisplayMap::new(buffer.clone(), 4, ctx);
-        assert_eq!(map.text(ctx), "✅       x\nα   \n🏀α      y");
+        assert_eq!(map.text(ctx), "✅       α\nβ   \n🏀β      γ");
 
         let point = Point::new(0, "✅\t\t".len() as u32);
         let display_point = DisplayPoint::new(0, "✅       ".len() as u32);
         assert_eq!(point.to_display_point(&map, ctx), display_point);
         assert_eq!(display_point.to_buffer_point(&map, Bias::Left, ctx), point,);
 
-        let point = Point::new(1, "α\t".len() as u32);
-        let display_point = DisplayPoint::new(1, "α   ".len() as u32);
+        let point = Point::new(1, "β\t".len() as u32);
+        let display_point = DisplayPoint::new(1, "β   ".len() as u32);
         assert_eq!(point.to_display_point(&map, ctx), display_point);
         assert_eq!(display_point.to_buffer_point(&map, Bias::Left, ctx), point,);
 
-        let point = Point::new(2, "🏀α\t\t".len() as u32);
-        let display_point = DisplayPoint::new(2, "🏀α      ".len() as u32);
+        let point = Point::new(2, "🏀β\t\t".len() as u32);
+        let display_point = DisplayPoint::new(2, "🏀β      ".len() as u32);
         assert_eq!(point.to_display_point(&map, ctx), display_point);
         assert_eq!(display_point.to_buffer_point(&map, Bias::Left, ctx), point,);
 
@@ -481,7 +484,7 @@ mod tests {
             map.snapshot(ctx)
                 .chunks_at(DisplayPoint::new(0, "✅      ".len() as u32), ctx)
                 .collect::<String>(),
-            " x\nα   \n🏀α      y"
+            " α\nβ   \n🏀β      γ"
         );
         assert_eq!(
             DisplayPoint::new(0, "✅ ".len() as u32).to_buffer_point(&map, Bias::Right, ctx),
@@ -495,7 +498,25 @@ mod tests {
             map.snapshot(ctx)
                 .chunks_at(DisplayPoint::new(0, "✅ ".len() as u32), ctx)
                 .collect::<String>(),
-            "      x\nα   \n🏀α      y"
+            "      α\nβ   \n🏀β      γ"
+        );
+
+        // Clipping display points inside of multi-byte characters
+        assert_eq!(
+            map.snapshot(ctx).clip_point(
+                DisplayPoint::new(0, "✅".len() as u32 - 1),
+                Bias::Left,
+                ctx
+            ),
+            DisplayPoint::new(0, 0)
+        );
+        assert_eq!(
+            map.snapshot(ctx).clip_point(
+                DisplayPoint::new(0, "✅".len() as u32 - 1),
+                Bias::Right,
+                ctx
+            ),
+            DisplayPoint::new(0, "✅".len() as u32)
         );
     }
 

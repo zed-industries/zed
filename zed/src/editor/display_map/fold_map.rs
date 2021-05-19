@@ -1,6 +1,6 @@
 use super::{
     buffer::{AnchorRangeExt, TextSummary},
-    Anchor, Buffer, DisplayPoint, Edit, Point, ToOffset,
+    Anchor, Bias, Buffer, DisplayPoint, Edit, Point, ToOffset,
 };
 use crate::{
     editor::buffer,
@@ -233,26 +233,6 @@ impl FoldMap {
         ))
     }
 
-    #[cfg(test)]
-    pub fn prev_char_boundary(&self, offset: DisplayOffset, ctx: &AppContext) -> DisplayOffset {
-        let transforms = self.sync(ctx);
-        let mut cursor = transforms.cursor::<DisplayOffset, TransformSummary>();
-        cursor.seek(&offset, SeekBias::Right, &());
-        if let Some(transform) = cursor.item() {
-            if transform.display_text.is_some() {
-                DisplayOffset(cursor.start().display.bytes)
-            } else {
-                let overshoot = offset.0 - cursor.start().display.bytes;
-                let buffer_offset = cursor.start().buffer.bytes + overshoot;
-                let buffer_boundary_offset =
-                    self.buffer.read(ctx).prev_char_boundary(buffer_offset);
-                DisplayOffset(offset.0 - (buffer_offset - buffer_boundary_offset))
-            }
-        } else {
-            offset
-        }
-    }
-
     fn sync(&self, ctx: &AppContext) -> MutexGuard<SumTree<Transform>> {
         let buffer = self.buffer.read(ctx);
         let mut edits = buffer.edits_since(self.last_sync.lock().clone()).peekable();
@@ -470,6 +450,64 @@ impl FoldMapSnapshot {
         cursor.seek(&point, SeekBias::Right, &());
         let overshoot = point.0 - cursor.start().display.lines;
         (cursor.start().buffer.lines + overshoot).to_offset(self.buffer.read(ctx))
+    }
+
+    #[cfg(test)]
+    pub fn clip_offset(
+        &self,
+        offset: DisplayOffset,
+        bias: Bias,
+        ctx: &AppContext,
+    ) -> DisplayOffset {
+        let mut cursor = self.transforms.cursor::<DisplayOffset, TransformSummary>();
+        cursor.seek(&offset, SeekBias::Right, &());
+        if let Some(transform) = cursor.item() {
+            let transform_start = cursor.start().display.bytes;
+            if transform.display_text.is_some() {
+                if offset.0 == transform_start || matches!(bias, Bias::Left) {
+                    DisplayOffset(transform_start)
+                } else {
+                    DisplayOffset(cursor.end().display.bytes)
+                }
+            } else {
+                let overshoot = offset.0 - transform_start;
+                let buffer_offset = cursor.start().buffer.bytes + overshoot;
+                let clipped_buffer_offset = self.buffer.read(ctx).clip_offset(buffer_offset, bias);
+                DisplayOffset(
+                    (offset.0 as isize + (clipped_buffer_offset as isize - buffer_offset as isize))
+                        as usize,
+                )
+            }
+        } else {
+            DisplayOffset(self.transforms.summary().display.bytes)
+        }
+    }
+
+    pub fn clip_point(&self, point: DisplayPoint, bias: Bias, ctx: &AppContext) -> DisplayPoint {
+        let mut cursor = self.transforms.cursor::<DisplayPoint, TransformSummary>();
+        cursor.seek(&point, SeekBias::Right, &());
+        if let Some(transform) = cursor.item() {
+            let transform_start = cursor.start().display.lines;
+            if transform.display_text.is_some() {
+                if point.0 == transform_start || matches!(bias, Bias::Left) {
+                    DisplayPoint(transform_start)
+                } else {
+                    DisplayPoint(cursor.end().display.lines)
+                }
+            } else {
+                let overshoot = point.0 - transform_start;
+                let buffer_position = cursor.start().buffer.lines + overshoot;
+                let clipped_buffer_position =
+                    self.buffer.read(ctx).clip_point(buffer_position, bias);
+                DisplayPoint::new(
+                    point.row(),
+                    ((point.column() as i32) + clipped_buffer_position.column as i32
+                        - buffer_position.column as i32) as u32,
+                )
+            }
+        } else {
+            DisplayPoint(self.transforms.summary().display.lines)
+        }
     }
 }
 
@@ -864,6 +902,7 @@ mod tests {
         use crate::util::RandomCharIter;
         use rand::prelude::*;
         use std::env;
+        use Bias::{Left, Right};
 
         let iterations = env::var("ITERATIONS")
             .map(|i| i.parse().expect("invalid `ITERATIONS` variable"))
@@ -896,8 +935,8 @@ mod tests {
                         let buffer = buffer.read(app);
                         let mut to_fold = Vec::new();
                         for _ in 0..rng.gen_range(1..=5) {
-                            let end = buffer.next_char_boundary(rng.gen_range(0..=buffer.len()));
-                            let start = buffer.prev_char_boundary(rng.gen_range(0..=end));
+                            let end = buffer.clip_offset(rng.gen_range(0..=buffer.len()), Right);
+                            let start = buffer.clip_offset(rng.gen_range(0..=end), Left);
                             to_fold.push(start..end);
                         }
                         log::info!("folding {:?}", to_fold);
@@ -907,8 +946,8 @@ mod tests {
                         let buffer = buffer.read(app);
                         let mut to_unfold = Vec::new();
                         for _ in 0..rng.gen_range(1..=3) {
-                            let end = buffer.next_char_boundary(rng.gen_range(0..=buffer.len()));
-                            let start = buffer.prev_char_boundary(rng.gen_range(0..=end));
+                            let end = buffer.clip_offset(rng.gen_range(0..=buffer.len()), Right);
+                            let start = buffer.clip_offset(rng.gen_range(0..=end), Left);
                             to_unfold.push(start..end);
                         }
                         log::info!("unfolding {:?}", to_unfold);
@@ -989,8 +1028,9 @@ mod tests {
                 }
 
                 for _ in 0..5 {
-                    let offset = map.prev_char_boundary(
+                    let offset = map.snapshot(app.as_ref()).clip_offset(
                         DisplayOffset(rng.gen_range(0..=map.len(app.as_ref()))),
+                        Bias::Right,
                         app.as_ref(),
                     );
                     assert_eq!(
@@ -1020,8 +1060,8 @@ mod tests {
                 }
 
                 for _ in 0..5 {
-                    let end = buffer.next_char_boundary(rng.gen_range(0..=buffer.len()));
-                    let start = buffer.prev_char_boundary(rng.gen_range(0..=end));
+                    let end = buffer.clip_offset(rng.gen_range(0..=buffer.len()), Right);
+                    let start = buffer.clip_offset(rng.gen_range(0..=end), Left);
                     let expected_folds = map
                         .folds
                         .items()

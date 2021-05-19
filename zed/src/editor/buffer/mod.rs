@@ -11,6 +11,7 @@ pub use selection::*;
 use similar::{ChangeTag, TextDiff};
 
 use crate::{
+    editor::Bias,
     operation_queue::{self, OperationQueue},
     sum_tree::{self, FilterCursor, SeekBias, SumTree},
     time::{self, ReplicaId},
@@ -1865,12 +1866,12 @@ impl Buffer {
         }
     }
 
-    pub fn next_char_boundary(&self, offset: usize) -> usize {
-        self.visible_text.next_char_boundary(offset)
+    pub fn clip_point(&self, point: Point, bias: Bias) -> Point {
+        self.visible_text.clip_point(point, bias)
     }
 
-    pub fn prev_char_boundary(&self, offset: usize) -> usize {
-        self.visible_text.prev_char_boundary(offset)
+    pub fn clip_offset(&self, offset: usize, bias: Bias) -> usize {
+        self.visible_text.clip_offset(offset, bias)
     }
 }
 
@@ -3232,8 +3233,8 @@ mod tests {
 
     impl Buffer {
         fn random_byte_range(&mut self, start_offset: usize, rng: &mut impl Rng) -> Range<usize> {
-            let end = self.next_char_boundary(rng.gen_range(start_offset..=self.len()));
-            let start = self.prev_char_boundary(rng.gen_range(start_offset..=end));
+            let end = self.clip_offset(rng.gen_range(start_offset..=self.len()), Bias::Right);
+            let start = self.clip_offset(rng.gen_range(start_offset..=end), Bias::Left);
             start..end
         }
 

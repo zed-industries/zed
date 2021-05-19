@@ -650,16 +650,16 @@ impl BufferView {
             if let Err(error) = buffer.edit(edit_ranges, text.as_str(), Some(ctx)) {
                 log::error!("error inserting text: {}", error);
             };
-            let char_count = text.chars().count() as isize;
+            let text_len = text.len() as isize;
             let mut delta = 0_isize;
             new_selections = old_selections
                 .into_iter()
                 .map(|(id, range)| {
                     let start = range.start as isize;
                     let end = range.end as isize;
-                    let anchor = buffer.anchor_before((start + delta + char_count) as usize);
+                    let anchor = buffer.anchor_before((start + delta + text_len) as usize);
                     let deleted_count = end - start;
-                    delta += char_count - deleted_count;
+                    delta += text_len - deleted_count;
                     Selection {
                         id,
                         start: anchor.clone(),
@@ -2358,11 +2358,7 @@ impl workspace::ItemView for BufferView {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{
-        editor::Point,
-        settings,
-        test::{multibyte_sample_text, sample_text},
-    };
+    use crate::{editor::Point, settings, test::sample_text};
     use unindent::Unindent;
 
     #[gpui::test]
@@ -2667,6 +2663,11 @@ mod tests {
         });
 
         view.update(app, |view, ctx| {
+            assert_eq!(
+                view.selection_ranges(ctx.as_ref()),
+                &[DisplayPoint::new(0, 0)..DisplayPoint::new(0, 0)]
+            );
+
             view.move_down(&(), ctx);
             assert_eq!(
                 view.selection_ranges(ctx.as_ref()),
@@ -2728,6 +2729,11 @@ mod tests {
         assert_eq!('ⓐ'.len_utf8(), 3);
         assert_eq!('α'.len_utf8(), 2);
 
+        fn empty_range(row: usize, column: usize) -> Range<DisplayPoint> {
+            let point = DisplayPoint::new(row as u32, column as u32);
+            point..point
+        }
+
         view.update(app, |view, ctx| {
             view.fold_ranges(
                 vec![
@@ -2742,43 +2748,80 @@ mod tests {
             view.move_right(&(), ctx);
             assert_eq!(
                 view.selection_ranges(ctx.as_ref()),
-                &[DisplayPoint::new(0, 3)..DisplayPoint::new(0, 3)]
+                &[empty_range(0, "ⓐ".len())]
             );
-
-            view.move_down(&(), ctx);
-            assert_eq!(
-                view.selection_ranges(ctx.as_ref()),
-                &[DisplayPoint::new(1, 1)..DisplayPoint::new(1, 1)]
-            );
-
             view.move_right(&(), ctx);
             assert_eq!(
                 view.selection_ranges(ctx.as_ref()),
-                &[DisplayPoint::new(1, 2)..DisplayPoint::new(1, 2)]
+                &[empty_range(0, "ⓐⓑ".len())]
+            );
+            view.move_right(&(), ctx);
+            assert_eq!(
+                view.selection_ranges(ctx.as_ref()),
+                &[empty_range(0, "ⓐⓑ…".len())]
             );
 
             view.move_down(&(), ctx);
             assert_eq!(
                 view.selection_ranges(ctx.as_ref()),
-                &[DisplayPoint::new(2, 4)..DisplayPoint::new(2, 4)]
+                &[empty_range(1, "ab…".len())]
             );
-
             view.move_left(&(), ctx);
             assert_eq!(
                 view.selection_ranges(ctx.as_ref()),
-                &[DisplayPoint::new(2, 2)..DisplayPoint::new(2, 2)]
+                &[empty_range(1, "ab".len())]
+            );
+            view.move_left(&(), ctx);
+            assert_eq!(
+                view.selection_ranges(ctx.as_ref()),
+                &[empty_range(1, "a".len())]
+            );
+
+            view.move_down(&(), ctx);
+            assert_eq!(
+                view.selection_ranges(ctx.as_ref()),
+                &[empty_range(2, "α".len())]
+            );
+            view.move_right(&(), ctx);
+            assert_eq!(
+                view.selection_ranges(ctx.as_ref()),
+                &[empty_range(2, "αβ".len())]
+            );
+            view.move_right(&(), ctx);
+            assert_eq!(
+                view.selection_ranges(ctx.as_ref()),
+                &[empty_range(2, "αβ…".len())]
+            );
+            view.move_right(&(), ctx);
+            assert_eq!(
+                view.selection_ranges(ctx.as_ref()),
+                &[empty_range(2, "αβ…ε".len())]
             );
 
             view.move_up(&(), ctx);
             assert_eq!(
                 view.selection_ranges(ctx.as_ref()),
-                &[DisplayPoint::new(1, 1)..DisplayPoint::new(1, 1)]
+                &[empty_range(1, "ab…e".len())]
             );
-
             view.move_up(&(), ctx);
             assert_eq!(
                 view.selection_ranges(ctx.as_ref()),
-                &[DisplayPoint::new(0, 3)..DisplayPoint::new(0, 3)]
+                &[empty_range(0, "ⓐⓑ…ⓔ".len())]
+            );
+            view.move_left(&(), ctx);
+            assert_eq!(
+                view.selection_ranges(ctx.as_ref()),
+                &[empty_range(0, "ⓐⓑ…".len())]
+            );
+            view.move_left(&(), ctx);
+            assert_eq!(
+                view.selection_ranges(ctx.as_ref()),
+                &[empty_range(0, "ⓐⓑ".len())]
+            );
+            view.move_left(&(), ctx);
+            assert_eq!(
+                view.selection_ranges(ctx.as_ref()),
+                &[empty_range(0, "ⓐ".len())]
             );
         });
     }

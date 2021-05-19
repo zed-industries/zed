@@ -1,7 +1,6 @@
-use super::{DisplayMap, DisplayPoint, SelectionGoal};
+use super::{Bias, DisplayMap, DisplayPoint, SelectionGoal};
 use anyhow::Result;
 use gpui::AppContext;
-use std::cmp;
 
 pub fn left(map: &DisplayMap, mut point: DisplayPoint, app: &AppContext) -> Result<DisplayPoint> {
     if point.column() > 0 {
@@ -10,23 +9,18 @@ pub fn left(map: &DisplayMap, mut point: DisplayPoint, app: &AppContext) -> Resu
         *point.row_mut() -= 1;
         *point.column_mut() = map.line_len(point.row(), app);
     }
-    Ok(point)
+    Ok(map.snapshot(app).clip_point(point, Bias::Left, app))
 }
 
 pub fn right(map: &DisplayMap, mut point: DisplayPoint, app: &AppContext) -> Result<DisplayPoint> {
     let max_column = map.line_len(point.row(), app);
     if point.column() < max_column {
-        *point.column_mut() += map
-            .snapshot(app)
-            .chars_at(point, app)
-            .next()
-            .unwrap()
-            .len_utf8() as u32;
+        *point.column_mut() += 1;
     } else if point.row() < map.max_point(app).row() {
         *point.row_mut() += 1;
         *point.column_mut() = 0;
     }
-    Ok(point)
+    Ok(map.snapshot(app).clip_point(point, Bias::Right, app))
 }
 
 pub fn up(
@@ -35,18 +29,16 @@ pub fn up(
     goal: SelectionGoal,
     app: &AppContext,
 ) -> Result<(DisplayPoint, SelectionGoal)> {
+    let map = map.snapshot(app);
     let goal_column = if let SelectionGoal::Column(column) = goal {
         column
     } else {
-        point.column()
+        map.column_to_chars(point.row(), point.column(), app)
     };
-
-    let map = map.snapshot(app);
-    let char_column = map.column_to_chars(point.row(), goal_column, app);
 
     if point.row() > 0 {
         *point.row_mut() -= 1;
-        *point.column_mut() = map.column_from_chars(point.row(), char_column, app);
+        *point.column_mut() = map.column_from_chars(point.row(), goal_column, app);
     } else {
         point = DisplayPoint::new(0, 0);
     }
@@ -60,19 +52,17 @@ pub fn down(
     goal: SelectionGoal,
     app: &AppContext,
 ) -> Result<(DisplayPoint, SelectionGoal)> {
+    let max_point = map.max_point(app);
+    let map = map.snapshot(app);
     let goal_column = if let SelectionGoal::Column(column) = goal {
         column
     } else {
-        point.column()
+        map.column_to_chars(point.row(), point.column(), app)
     };
-
-    let max_point = map.max_point(app);
-    let map = map.snapshot(app);
-    let char_column = map.column_to_chars(point.row(), goal_column, app);
 
     if point.row() < max_point.row() {
         *point.row_mut() += 1;
-        *point.column_mut() = map.column_from_chars(point.row(), char_column, app);
+        *point.column_mut() = map.column_from_chars(point.row(), goal_column, app);
     } else {
         point = max_point;
     }
