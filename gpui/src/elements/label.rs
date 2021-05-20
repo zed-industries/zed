@@ -3,15 +3,15 @@ use serde_json::json;
 use crate::{
     color::ColorU,
     font_cache::FamilyId,
-    fonts::Properties,
+    fonts::{FontId, Properties},
     geometry::{
         rect::RectF,
         vector::{vec2f, Vector2F},
     },
     json::{ToJson, Value},
     text_layout::Line,
-    AfterLayoutContext, DebugContext, Element, Event, EventContext, LayoutContext, PaintContext,
-    SizeConstraint,
+    AfterLayoutContext, DebugContext, Element, Event, EventContext, FontCache, LayoutContext,
+    PaintContext, SizeConstraint,
 };
 use std::{ops::Range, sync::Arc};
 
@@ -58,29 +58,19 @@ impl Label {
         });
         self
     }
-}
 
-impl Element for Label {
-    type LayoutState = LayoutState;
-    type PaintState = ();
-
-    fn layout(
-        &mut self,
-        constraint: SizeConstraint,
-        ctx: &mut LayoutContext,
-    ) -> (Vector2F, Self::LayoutState) {
-        let font_id = ctx
-            .font_cache
-            .select_font(self.family_id, &self.font_properties)
-            .unwrap();
+    fn layout_text(
+        &self,
+        font_cache: &FontCache,
+        font_id: FontId,
+    ) -> (Vec<(Range<usize>, FontId)>, Vec<(Range<usize>, ColorU)>) {
         let text_len = self.text.len();
         let mut styles;
         let mut colors;
         if let Some(highlights) = self.highlights.as_ref() {
             styles = Vec::new();
             colors = Vec::new();
-            let highlight_font_id = ctx
-                .font_cache
+            let highlight_font_id = font_cache
                 .select_font(self.family_id, &highlights.font_properties)
                 .unwrap_or(font_id);
             let mut pending_highlight: Option<Range<usize>> = None;
@@ -117,6 +107,24 @@ impl Element for Label {
             colors = vec![(0..text_len, ColorU::black())];
         }
 
+        (styles, colors)
+    }
+}
+
+impl Element for Label {
+    type LayoutState = LayoutState;
+    type PaintState = ();
+
+    fn layout(
+        &mut self,
+        constraint: SizeConstraint,
+        ctx: &mut LayoutContext,
+    ) -> (Vector2F, Self::LayoutState) {
+        let font_id = ctx
+            .font_cache
+            .select_font(self.family_id, &self.font_properties)
+            .unwrap();
+        let (styles, colors) = self.layout_text(&ctx.font_cache, font_id);
         let line =
             ctx.text_layout_cache
                 .layout_str(self.text.as_str(), self.font_size, styles.as_slice());
@@ -183,5 +191,34 @@ impl ToJson for Highlights {
             "indices": self.indices,
             "font_properties": self.font_properties.to_json(),
         })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[crate::test(self)]
+    fn test_layout_label_with_highlights(app: &mut crate::MutableAppContext) {
+        let family_id = app.font_cache().load_family(&["Menlo"]).unwrap();
+        let font_id = app
+            .font_cache()
+            .select_font(family_id, &Properties::new())
+            .unwrap();
+
+        let label = Label::new(".αβγδε.ⓐⓑⓒⓓⓔ.abcde.".to_string(), family_id, 12.0).with_highlights(
+            ColorU::black(),
+            Properties::new(),
+            vec![
+                ".α".len(),
+                ".αβ".len(),
+                ".αβγδ".len(),
+                ".αβγδε.ⓐ".len(),
+                ".αβγδε.ⓐⓑ".len(),
+            ],
+        );
+
+        let (styles, colors) = label.layout_text(app.font_cache().as_ref(), font_id);
+        assert_eq!(styles, &[]);
     }
 }
