@@ -70,24 +70,24 @@ impl Anchor {
         })
     }
 
-    pub fn bias_left(&self, buffer: &Buffer) -> Result<Anchor> {
+    pub fn bias_left(&self, buffer: &Buffer) -> Anchor {
         match self {
             Anchor::Start
             | Anchor::Middle {
                 bias: AnchorBias::Left,
                 ..
-            } => Ok(self.clone()),
+            } => self.clone(),
             _ => buffer.anchor_before(self),
         }
     }
 
-    pub fn bias_right(&self, buffer: &Buffer) -> Result<Anchor> {
+    pub fn bias_right(&self, buffer: &Buffer) -> Anchor {
         match self {
             Anchor::End
             | Anchor::Middle {
                 bias: AnchorBias::Right,
                 ..
-            } => Ok(self.clone()),
+            } => self.clone(),
             _ => buffer.anchor_after(self),
         }
     }

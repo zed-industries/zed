@@ -520,7 +520,7 @@ impl LayoutState {
         layout_cache: &TextLayoutCache,
         app: &AppContext,
     ) -> f32 {
-        let row = view.rightmost_point(app).row();
+        let row = view.rightmost_row(app);
         let longest_line_width = view
             .layout_line(row, font_cache, layout_cache, app)
             .unwrap()
@@ -569,7 +569,7 @@ impl PaintState {
         let column = if x >= 0.0 {
             line.index_for_x(x)
                 .map(|ix| ix as u32)
-                .unwrap_or(view.line_len(row, app).unwrap())
+                .unwrap_or(view.line_len(row, app))
         } else {
             0
         };

@@ -1,18 +1,16 @@
 use super::{
     buffer::{AnchorRangeExt, TextSummary},
-    Anchor, Buffer, DisplayPoint, Edit, Point, ToOffset,
+    Anchor, Bias, Buffer, DisplayPoint, Edit, Point, ToOffset,
 };
 use crate::{
-    editor::rope,
+    editor::buffer,
     sum_tree::{self, Cursor, FilterCursor, SeekBias, SumTree},
     time,
 };
-use anyhow::{anyhow, Result};
 use gpui::{AppContext, ModelHandle};
 use parking_lot::{Mutex, MutexGuard};
 use std::{
     cmp::{self, Ordering},
-    iter::Take,
     ops::Range,
 };
 
@@ -52,56 +50,52 @@ impl FoldMap {
     }
 
     pub fn len(&self, ctx: &AppContext) -> usize {
-        self.sync(ctx).summary().display.chars
+        self.sync(ctx).summary().display.bytes
     }
 
-    pub fn line_len(&self, row: u32, ctx: &AppContext) -> Result<u32> {
-        let line_start = self.to_display_offset(DisplayPoint::new(row, 0), ctx)?.0;
+    pub fn line_len(&self, row: u32, ctx: &AppContext) -> u32 {
+        let line_start = self.to_display_offset(DisplayPoint::new(row, 0), ctx).0;
         let line_end = if row >= self.max_point(ctx).row() {
             self.len(ctx)
         } else {
-            self.to_display_offset(DisplayPoint::new(row + 1, 0), ctx)?
-                .0
-                - 1
+            self.to_display_offset(DisplayPoint::new(row + 1, 0), ctx).0 - 1
         };
-
-        Ok((line_end - line_start) as u32)
+        (line_end - line_start) as u32
     }
 
     pub fn max_point(&self, ctx: &AppContext) -> DisplayPoint {
         DisplayPoint(self.sync(ctx).summary().display.lines)
     }
 
-    pub fn rightmost_point(&self, ctx: &AppContext) -> DisplayPoint {
-        DisplayPoint(self.sync(ctx).summary().display.rightmost_point)
+    pub fn rightmost_row(&self, ctx: &AppContext) -> u32 {
+        self.sync(ctx).summary().display.rightmost_row
     }
 
     pub fn folds_in_range<'a, T>(
         &'a self,
         range: Range<T>,
         ctx: &'a AppContext,
-    ) -> Result<impl Iterator<Item = &'a Range<Anchor>>>
+    ) -> impl Iterator<Item = &'a Range<Anchor>>
     where
         T: ToOffset,
     {
-        Ok(self.intersecting_folds(range, ctx)?.map(|f| &f.0))
+        self.intersecting_folds(range, ctx).map(|f| &f.0)
     }
 
     pub fn fold<T: ToOffset>(
         &mut self,
         ranges: impl IntoIterator<Item = Range<T>>,
         ctx: &AppContext,
-    ) -> Result<()> {
+    ) {
         let _ = self.sync(ctx);
 
         let mut edits = Vec::new();
         let mut folds = Vec::new();
         let buffer = self.buffer.read(ctx);
         for range in ranges.into_iter() {
-            let range = range.start.to_offset(buffer)?..range.end.to_offset(buffer)?;
+            let range = range.start.to_offset(buffer)..range.end.to_offset(buffer);
             if range.start != range.end {
-                let fold =
-                    Fold(buffer.anchor_after(range.start)?..buffer.anchor_before(range.end)?);
+                let fold = Fold(buffer.anchor_after(range.start)..buffer.anchor_before(range.end));
                 folds.push(fold);
                 edits.push(Edit {
                     old_range: range.clone(),
@@ -129,14 +123,13 @@ impl FoldMap {
             new_tree
         };
         self.apply_edits(edits, ctx);
-        Ok(())
     }
 
     pub fn unfold<T: ToOffset>(
         &mut self,
         ranges: impl IntoIterator<Item = Range<T>>,
         ctx: &AppContext,
-    ) -> Result<()> {
+    ) {
         let _ = self.sync(ctx);
 
         let buffer = self.buffer.read(ctx);
@@ -145,10 +138,9 @@ impl FoldMap {
         let mut fold_ixs_to_delete = Vec::new();
         for range in ranges.into_iter() {
             // Remove intersecting folds and add their ranges to edits that are passed to apply_edits.
-            let mut folds_cursor = self.intersecting_folds(range, ctx)?;
+            let mut folds_cursor = self.intersecting_folds(range, ctx);
             while let Some(fold) = folds_cursor.item() {
-                let offset_range =
-                    fold.0.start.to_offset(buffer).unwrap()..fold.0.end.to_offset(buffer).unwrap();
+                let offset_range = fold.0.start.to_offset(buffer)..fold.0.end.to_offset(buffer);
                 edits.push(Edit {
                     old_range: offset_range.clone(),
                     new_range: offset_range,
@@ -178,24 +170,23 @@ impl FoldMap {
             folds
         };
         self.apply_edits(edits, ctx);
-        Ok(())
     }
 
     fn intersecting_folds<'a, T>(
         &self,
         range: Range<T>,
         ctx: &'a AppContext,
-    ) -> Result<FilterCursor<impl 'a + Fn(&FoldSummary) -> bool, Fold, usize>>
+    ) -> FilterCursor<impl 'a + Fn(&FoldSummary) -> bool, Fold, usize>
     where
         T: ToOffset,
     {
         let buffer = self.buffer.read(ctx);
-        let start = buffer.anchor_before(range.start.to_offset(buffer)?)?;
-        let end = buffer.anchor_after(range.end.to_offset(buffer)?)?;
-        Ok(self.folds.filter::<_, usize>(move |summary| {
+        let start = buffer.anchor_before(range.start.to_offset(buffer));
+        let end = buffer.anchor_after(range.end.to_offset(buffer));
+        self.folds.filter::<_, usize>(move |summary| {
             start.cmp(&summary.max_end, buffer).unwrap() == Ordering::Less
                 && end.cmp(&summary.min_start, buffer).unwrap() == Ordering::Greater
-        }))
+        })
     }
 
     pub fn is_line_folded(&self, display_row: u32, ctx: &AppContext) -> bool {
@@ -215,19 +206,11 @@ impl FoldMap {
         false
     }
 
-    pub fn to_buffer_offset(&self, point: DisplayPoint, ctx: &AppContext) -> Result<usize> {
-        let transforms = self.sync(ctx);
-        let mut cursor = transforms.cursor::<DisplayPoint, TransformSummary>();
-        cursor.seek(&point, SeekBias::Right, &());
-        let overshoot = point.0 - cursor.start().display.lines;
-        (cursor.start().buffer.lines + overshoot).to_offset(self.buffer.read(ctx))
+    pub fn to_buffer_offset(&self, point: DisplayPoint, ctx: &AppContext) -> usize {
+        self.snapshot(ctx).to_buffer_offset(point, ctx)
     }
 
-    pub fn to_display_offset(
-        &self,
-        point: DisplayPoint,
-        ctx: &AppContext,
-    ) -> Result<DisplayOffset> {
+    pub fn to_display_offset(&self, point: DisplayPoint, ctx: &AppContext) -> DisplayOffset {
         self.snapshot(ctx).to_display_offset(point, ctx)
     }
 
@@ -305,11 +288,11 @@ impl FoldMap {
             edit.new_range.end =
                 ((edit.new_range.start + edit.old_extent()) as isize + delta) as usize;
 
-            let anchor = buffer.anchor_before(edit.new_range.start).unwrap();
+            let anchor = buffer.anchor_before(edit.new_range.start);
             let mut folds_cursor = self.folds.cursor::<_, ()>();
             folds_cursor.seek(&Fold(anchor..Anchor::End), SeekBias::Left, buffer);
             let mut folds = folds_cursor
-                .map(|f| f.0.start.to_offset(buffer).unwrap()..f.0.end.to_offset(buffer).unwrap())
+                .map(|f| f.0.start.to_offset(buffer)..f.0.end.to_offset(buffer))
                 .peekable();
 
             while folds
@@ -319,7 +302,7 @@ impl FoldMap {
                 let mut fold = folds.next().unwrap();
                 let sum = new_transforms.summary();
 
-                assert!(fold.start >= sum.buffer.chars);
+                assert!(fold.start >= sum.buffer.bytes);
 
                 while folds
                     .peek()
@@ -331,8 +314,8 @@ impl FoldMap {
                     }
                 }
 
-                if fold.start > sum.buffer.chars {
-                    let text_summary = buffer.text_summary_for_range(sum.buffer.chars..fold.start);
+                if fold.start > sum.buffer.bytes {
+                    let text_summary = buffer.text_summary_for_range(sum.buffer.bytes..fold.start);
                     new_transforms.push(
                         Transform {
                             summary: TransformSummary {
@@ -346,19 +329,23 @@ impl FoldMap {
                 }
 
                 if fold.end > fold.start {
+                    let display_text = "…";
+                    let chars = display_text.chars().count() as u32;
+                    let lines = Point::new(0, display_text.len() as u32);
                     new_transforms.push(
                         Transform {
                             summary: TransformSummary {
                                 display: TextSummary {
-                                    chars: 1,
-                                    bytes: '…'.len_utf8(),
-                                    lines: Point::new(0, 1),
-                                    first_line_len: 1,
-                                    rightmost_point: Point::new(0, 1),
+                                    bytes: display_text.len(),
+                                    lines,
+                                    first_line_chars: chars,
+                                    last_line_chars: chars,
+                                    rightmost_row: 0,
+                                    rightmost_row_chars: chars,
                                 },
                                 buffer: buffer.text_summary_for_range(fold.start..fold.end),
                             },
-                            display_text: Some('…'),
+                            display_text: Some(display_text),
                         },
                         &(),
                     );
@@ -366,9 +353,9 @@ impl FoldMap {
             }
 
             let sum = new_transforms.summary();
-            if sum.buffer.chars < edit.new_range.end {
+            if sum.buffer.bytes < edit.new_range.end {
                 let text_summary =
-                    buffer.text_summary_for_range(sum.buffer.chars..edit.new_range.end);
+                    buffer.text_summary_for_range(sum.buffer.bytes..edit.new_range.end);
                 new_transforms.push(
                     Transform {
                         summary: TransformSummary {
@@ -408,55 +395,129 @@ pub struct FoldMapSnapshot {
 }
 
 impl FoldMapSnapshot {
-    pub fn buffer_rows(&self, start_row: u32) -> Result<BufferRows> {
+    pub fn buffer_rows(&self, start_row: u32) -> BufferRows {
         if start_row > self.transforms.summary().display.lines.row {
-            return Err(anyhow!("invalid display row {}", start_row));
+            panic!("invalid display row {}", start_row);
         }
 
         let display_point = Point::new(start_row, 0);
         let mut cursor = self.transforms.cursor();
         cursor.seek(&DisplayPoint(display_point), SeekBias::Left, &());
 
-        Ok(BufferRows {
+        BufferRows {
             display_point,
             cursor,
-        })
+        }
     }
 
-    pub fn chars_at<'a>(&'a self, point: DisplayPoint, ctx: &'a AppContext) -> Result<Chars<'a>> {
-        let offset = self.to_display_offset(point, ctx)?;
-        let mut cursor = self.transforms.cursor();
-        cursor.seek(&offset, SeekBias::Right, &());
-        Ok(Chars {
-            cursor,
-            offset: offset.0,
-            buffer: self.buffer.read(ctx),
-            buffer_chars: None,
-        })
+    pub fn chunks_at<'a>(&'a self, offset: DisplayOffset, ctx: &'a AppContext) -> Chunks<'a> {
+        let mut transform_cursor = self.transforms.cursor::<DisplayOffset, TransformSummary>();
+        transform_cursor.seek(&offset, SeekBias::Right, &());
+        let overshoot = offset.0 - transform_cursor.start().display.bytes;
+        let buffer_offset = transform_cursor.start().buffer.bytes + overshoot;
+        let buffer = self.buffer.read(ctx);
+        let rope_cursor = buffer.text_for_range(buffer_offset..buffer.len());
+        Chunks {
+            transform_cursor,
+            buffer_offset,
+            buffer_chunks: rope_cursor,
+        }
     }
 
-    fn to_display_offset(&self, point: DisplayPoint, ctx: &AppContext) -> Result<DisplayOffset> {
+    pub fn chars_at<'a>(
+        &'a self,
+        point: DisplayPoint,
+        ctx: &'a AppContext,
+    ) -> impl Iterator<Item = char> + 'a {
+        let offset = self.to_display_offset(point, ctx);
+        self.chunks_at(offset, ctx).flat_map(str::chars)
+    }
+
+    pub fn to_display_offset(&self, point: DisplayPoint, ctx: &AppContext) -> DisplayOffset {
         let mut cursor = self.transforms.cursor::<DisplayPoint, TransformSummary>();
         cursor.seek(&point, SeekBias::Right, &());
         let overshoot = point.0 - cursor.start().display.lines;
-        let mut offset = cursor.start().display.chars;
+        let mut offset = cursor.start().display.bytes;
         if !overshoot.is_zero() {
-            let transform = cursor
-                .item()
-                .ok_or_else(|| anyhow!("display point {:?} is out of range", point))?;
+            let transform = cursor.item().expect("display point out of range");
             assert!(transform.display_text.is_none());
             let end_buffer_offset =
-                (cursor.start().buffer.lines + overshoot).to_offset(self.buffer.read(ctx))?;
-            offset += end_buffer_offset - cursor.start().buffer.chars;
+                (cursor.start().buffer.lines + overshoot).to_offset(self.buffer.read(ctx));
+            offset += end_buffer_offset - cursor.start().buffer.bytes;
         }
-        Ok(DisplayOffset(offset))
+        DisplayOffset(offset)
+    }
+
+    pub fn to_buffer_offset(&self, point: DisplayPoint, ctx: &AppContext) -> usize {
+        let mut cursor = self.transforms.cursor::<DisplayPoint, TransformSummary>();
+        cursor.seek(&point, SeekBias::Right, &());
+        let overshoot = point.0 - cursor.start().display.lines;
+        (cursor.start().buffer.lines + overshoot).to_offset(self.buffer.read(ctx))
+    }
+
+    #[cfg(test)]
+    pub fn clip_offset(
+        &self,
+        offset: DisplayOffset,
+        bias: Bias,
+        ctx: &AppContext,
+    ) -> DisplayOffset {
+        let mut cursor = self.transforms.cursor::<DisplayOffset, TransformSummary>();
+        cursor.seek(&offset, SeekBias::Right, &());
+        if let Some(transform) = cursor.item() {
+            let transform_start = cursor.start().display.bytes;
+            if transform.display_text.is_some() {
+                if offset.0 == transform_start || matches!(bias, Bias::Left) {
+                    DisplayOffset(transform_start)
+                } else {
+                    DisplayOffset(cursor.end().display.bytes)
+                }
+            } else {
+                let overshoot = offset.0 - transform_start;
+                let buffer_offset = cursor.start().buffer.bytes + overshoot;
+                let clipped_buffer_offset = self.buffer.read(ctx).clip_offset(buffer_offset, bias);
+                DisplayOffset(
+                    (offset.0 as isize + (clipped_buffer_offset as isize - buffer_offset as isize))
+                        as usize,
+                )
+            }
+        } else {
+            DisplayOffset(self.transforms.summary().display.bytes)
+        }
+    }
+
+    pub fn clip_point(&self, point: DisplayPoint, bias: Bias, ctx: &AppContext) -> DisplayPoint {
+        let mut cursor = self.transforms.cursor::<DisplayPoint, TransformSummary>();
+        cursor.seek(&point, SeekBias::Right, &());
+        if let Some(transform) = cursor.item() {
+            let transform_start = cursor.start().display.lines;
+            if transform.display_text.is_some() {
+                if point.0 == transform_start || matches!(bias, Bias::Left) {
+                    DisplayPoint(transform_start)
+                } else {
+                    DisplayPoint(cursor.end().display.lines)
+                }
+            } else {
+                let overshoot = point.0 - transform_start;
+                let buffer_position = cursor.start().buffer.lines + overshoot;
+                let clipped_buffer_position =
+                    self.buffer.read(ctx).clip_point(buffer_position, bias);
+                DisplayPoint::new(
+                    point.row(),
+                    ((point.column() as i32) + clipped_buffer_position.column as i32
+                        - buffer_position.column as i32) as u32,
+                )
+            }
+        } else {
+            DisplayPoint(self.transforms.summary().display.lines)
+        }
     }
 }
 
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
 struct Transform {
     summary: TransformSummary,
-    display_text: Option<char>,
+    display_text: Option<&'static str>,
 }
 
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
@@ -604,39 +665,56 @@ impl<'a> Iterator for BufferRows<'a> {
     }
 }
 
-pub struct Chars<'a> {
-    cursor: Cursor<'a, Transform, DisplayOffset, TransformSummary>,
-    offset: usize,
-    buffer: &'a Buffer,
-    buffer_chars: Option<Take<rope::Chars<'a>>>,
+pub struct Chunks<'a> {
+    transform_cursor: Cursor<'a, Transform, DisplayOffset, TransformSummary>,
+    buffer_chunks: buffer::ChunksIter<'a>,
+    buffer_offset: usize,
 }
 
-impl<'a> Iterator for Chars<'a> {
-    type Item = char;
+impl<'a> Iterator for Chunks<'a> {
+    type Item = &'a str;
 
     fn next(&mut self) -> Option<Self::Item> {
-        if let Some(c) = self.buffer_chars.as_mut().and_then(|chars| chars.next()) {
-            self.offset += 1;
-            return Some(c);
-        }
+        let transform = if let Some(item) = self.transform_cursor.item() {
+            item
+        } else {
+            return None;
+        };
 
-        while self.offset == self.cursor.end().display.chars && self.cursor.item().is_some() {
-            self.cursor.next();
-        }
+        // If we're in a fold, then return the fold's display text and
+        // advance the transform and buffer cursors to the end of the fold.
+        if let Some(display_text) = transform.display_text {
+            self.buffer_offset += transform.summary.buffer.bytes;
+            self.buffer_chunks.advance_to(self.buffer_offset);
 
-        self.cursor.item().and_then(|transform| {
-            if let Some(c) = transform.display_text {
-                self.offset += 1;
-                Some(c)
-            } else {
-                let overshoot = self.offset - self.cursor.start().display.chars;
-                let buffer_start = self.cursor.start().buffer.chars + overshoot;
-                let char_count = self.cursor.end().buffer.chars - buffer_start;
-                self.buffer_chars =
-                    Some(self.buffer.chars_at(buffer_start).unwrap().take(char_count));
-                self.next()
+            while self.buffer_offset >= self.transform_cursor.end().buffer.bytes
+                && self.transform_cursor.item().is_some()
+            {
+                self.transform_cursor.next();
             }
-        })
+
+            return Some(display_text);
+        }
+
+        // Otherwise, take a chunk from the buffer's text.
+        if let Some(mut chunk) = self.buffer_chunks.peek() {
+            let offset_in_chunk = self.buffer_offset - self.buffer_chunks.offset();
+            chunk = &chunk[offset_in_chunk..];
+
+            // Truncate the chunk so that it ends at the next fold.
+            let region_end = self.transform_cursor.end().buffer.bytes - self.buffer_offset;
+            if chunk.len() >= region_end {
+                chunk = &chunk[0..region_end];
+                self.transform_cursor.next();
+            } else {
+                self.buffer_chunks.next();
+            }
+
+            self.buffer_offset += chunk.len();
+            return Some(chunk);
+        }
+
+        None
     }
 }
 
@@ -651,7 +729,7 @@ pub struct DisplayOffset(usize);
 
 impl<'a> sum_tree::Dimension<'a, TransformSummary> for DisplayOffset {
     fn add_summary(&mut self, summary: &'a TransformSummary) {
-        self.0 += &summary.display.chars;
+        self.0 += &summary.display.bytes;
     }
 }
 
@@ -663,7 +741,7 @@ impl<'a> sum_tree::Dimension<'a, TransformSummary> for Point {
 
 impl<'a> sum_tree::Dimension<'a, TransformSummary> for usize {
     fn add_summary(&mut self, summary: &'a TransformSummary) {
-        *self += &summary.buffer.chars;
+        *self += &summary.buffer.bytes;
     }
 }
 
@@ -684,8 +762,7 @@ mod tests {
                 Point::new(2, 4)..Point::new(4, 1),
             ],
             app.as_ref(),
-        )
-        .unwrap();
+        );
         assert_eq!(map.text(app.as_ref()), "aa…cc…eeeee");
 
         buffer.update(app, |buffer, ctx| {
@@ -711,8 +788,7 @@ mod tests {
         });
         assert_eq!(map.text(app.as_ref()), "123a…c123456eee");
 
-        map.unfold(Some(Point::new(0, 4)..Point::new(0, 5)), app.as_ref())
-            .unwrap();
+        map.unfold(Some(Point::new(0, 4)..Point::new(0, 5)), app.as_ref());
         assert_eq!(map.text(app.as_ref()), "123aaaaa\nbbbbbb\nccc123456eee");
     }
 
@@ -723,17 +799,17 @@ mod tests {
         {
             let mut map = FoldMap::new(buffer.clone(), app.as_ref());
 
-            map.fold(vec![5..8], app.as_ref()).unwrap();
+            map.fold(vec![5..8], app.as_ref());
             map.check_invariants(app.as_ref());
             assert_eq!(map.text(app.as_ref()), "abcde…ijkl");
 
             // Create an fold adjacent to the start of the first fold.
-            map.fold(vec![0..1, 2..5], app.as_ref()).unwrap();
+            map.fold(vec![0..1, 2..5], app.as_ref());
             map.check_invariants(app.as_ref());
             assert_eq!(map.text(app.as_ref()), "…b…ijkl");
 
             // Create an fold adjacent to the end of the first fold.
-            map.fold(vec![11..11, 8..10], app.as_ref()).unwrap();
+            map.fold(vec![11..11, 8..10], app.as_ref());
             map.check_invariants(app.as_ref());
             assert_eq!(map.text(app.as_ref()), "…b…kl");
         }
@@ -742,7 +818,7 @@ mod tests {
             let mut map = FoldMap::new(buffer.clone(), app.as_ref());
 
             // Create two adjacent folds.
-            map.fold(vec![0..2, 2..5], app.as_ref()).unwrap();
+            map.fold(vec![0..2, 2..5], app.as_ref());
             map.check_invariants(app.as_ref());
             assert_eq!(map.text(app.as_ref()), "…fghijkl");
 
@@ -769,8 +845,7 @@ mod tests {
                 Point::new(3, 1)..Point::new(4, 1),
             ],
             app.as_ref(),
-        )
-        .unwrap();
+        );
         assert_eq!(map.text(app.as_ref()), "aa…eeeee");
     }
 
@@ -785,8 +860,7 @@ mod tests {
                 Point::new(3, 1)..Point::new(4, 1),
             ],
             app.as_ref(),
-        )
-        .unwrap();
+        );
         assert_eq!(map.text(app.as_ref()), "aa…cccc\nd…eeeee");
 
         buffer.update(app, |buffer, ctx| {
@@ -811,12 +885,10 @@ mod tests {
                 Point::new(3, 1)..Point::new(4, 1),
             ],
             app.as_ref(),
-        )
-        .unwrap();
+        );
         let fold_ranges = map
             .folds_in_range(Point::new(1, 0)..Point::new(1, 3), app.as_ref())
-            .unwrap()
-            .map(|fold| fold.start.to_point(buffer).unwrap()..fold.end.to_point(buffer).unwrap())
+            .map(|fold| fold.start.to_point(buffer)..fold.end.to_point(buffer))
             .collect::<Vec<_>>();
         assert_eq!(
             fold_ranges,
@@ -830,9 +902,10 @@ mod tests {
     #[gpui::test]
     fn test_random_folds(app: &mut gpui::MutableAppContext) {
         use crate::editor::ToPoint;
-        use crate::util::{byte_range_for_char_range, RandomCharIter};
+        use crate::util::RandomCharIter;
         use rand::prelude::*;
         use std::env;
+        use Bias::{Left, Right};
 
         let iterations = env::var("ITERATIONS")
             .map(|i| i.parse().expect("invalid `ITERATIONS` variable"))
@@ -865,23 +938,23 @@ mod tests {
                         let buffer = buffer.read(app);
                         let mut to_fold = Vec::new();
                         for _ in 0..rng.gen_range(1..=5) {
-                            let end = rng.gen_range(0..=buffer.len());
-                            let start = rng.gen_range(0..=end);
+                            let end = buffer.clip_offset(rng.gen_range(0..=buffer.len()), Right);
+                            let start = buffer.clip_offset(rng.gen_range(0..=end), Left);
                             to_fold.push(start..end);
                         }
                         log::info!("folding {:?}", to_fold);
-                        map.fold(to_fold, app.as_ref()).unwrap();
+                        map.fold(to_fold, app.as_ref());
                     }
                     35..=59 if !map.folds.is_empty() => {
                         let buffer = buffer.read(app);
                         let mut to_unfold = Vec::new();
                         for _ in 0..rng.gen_range(1..=3) {
-                            let end = rng.gen_range(0..=buffer.len());
-                            let start = rng.gen_range(0..=end);
+                            let end = buffer.clip_offset(rng.gen_range(0..=buffer.len()), Right);
+                            let start = buffer.clip_offset(rng.gen_range(0..=end), Left);
                             to_unfold.push(start..end);
                         }
                         log::info!("unfolding {:?}", to_unfold);
-                        map.unfold(to_unfold, app.as_ref()).unwrap();
+                        map.unfold(to_unfold, app.as_ref());
                     }
                     _ => {
                         let edits = buffer.update(app, |buffer, ctx| {
@@ -905,10 +978,7 @@ mod tests {
                     expected_buffer_rows.extend((fold_end.row + 1..=next_row).rev());
                     next_row = fold_start.row;
 
-                    expected_text.replace_range(
-                        byte_range_for_char_range(&expected_text, fold_range.start..fold_range.end),
-                        "…",
-                    );
+                    expected_text.replace_range(fold_range.start..fold_range.end, "…");
                 }
                 expected_buffer_rows.extend((0..=next_row).rev());
                 expected_buffer_rows.reverse();
@@ -916,61 +986,73 @@ mod tests {
                 assert_eq!(map.text(app.as_ref()), expected_text);
 
                 for (display_row, line) in expected_text.lines().enumerate() {
-                    let line_len = map.line_len(display_row as u32, app.as_ref()).unwrap();
-                    assert_eq!(line_len, line.chars().count() as u32);
+                    let line_len = map.line_len(display_row as u32, app.as_ref());
+                    assert_eq!(line_len, line.len() as u32);
                 }
 
-                let rightmost_point = map.rightmost_point(app.as_ref());
+                let rightmost_row = map.rightmost_row(app.as_ref());
+                let rightmost_char_column = expected_text
+                    .split('\n')
+                    .nth(rightmost_row as usize)
+                    .unwrap()
+                    .chars()
+                    .count();
                 let mut display_point = DisplayPoint::new(0, 0);
                 let mut display_offset = DisplayOffset(0);
+                let mut char_column = 0;
                 for c in expected_text.chars() {
                     let buffer_point = map.to_buffer_point(display_point, app.as_ref());
-                    let buffer_offset = buffer_point.to_offset(buffer).unwrap();
+                    let buffer_offset = buffer_point.to_offset(buffer);
                     assert_eq!(
                         map.to_display_point(buffer_point, app.as_ref()),
-                        display_point
+                        display_point,
+                        "to_display_point({:?})",
+                        buffer_point,
                     );
                     assert_eq!(
-                        map.to_buffer_offset(display_point, app.as_ref()).unwrap(),
-                        buffer_offset
+                        map.to_buffer_offset(display_point, app.as_ref()),
+                        buffer_offset,
+                        "to_buffer_offset({:?})",
+                        display_point,
                     );
                     assert_eq!(
-                        map.to_display_offset(display_point, app.as_ref()).unwrap(),
-                        display_offset
+                        map.to_display_offset(display_point, app.as_ref()),
+                        display_offset,
+                        "to_display_offset({:?})",
+                        display_point,
                     );
 
                     if c == '\n' {
                         *display_point.row_mut() += 1;
                         *display_point.column_mut() = 0;
+                        char_column = 0;
                     } else {
-                        *display_point.column_mut() += 1;
+                        *display_point.column_mut() += c.len_utf8() as u32;
+                        char_column += 1;
                     }
-                    display_offset.0 += 1;
-                    if display_point.column() > rightmost_point.column() {
+                    display_offset.0 += c.len_utf8();
+                    if char_column > rightmost_char_column {
                         panic!(
-                            "invalid rightmost point {:?}, found point {:?}",
-                            rightmost_point, display_point
+                            "invalid rightmost row {:?} (chars {}), found row {:?} (chars: {})",
+                            rightmost_row,
+                            rightmost_char_column,
+                            display_point.row(),
+                            char_column
                         );
                     }
                 }
 
                 for _ in 0..5 {
-                    let row = rng.gen_range(0..=map.max_point(app.as_ref()).row());
-                    let column = rng.gen_range(0..=map.line_len(row, app.as_ref()).unwrap());
-                    let point = DisplayPoint::new(row, column);
-                    let offset = map.to_display_offset(point, app.as_ref()).unwrap().0;
-                    let len = rng.gen_range(0..=map.len(app.as_ref()) - offset);
+                    let offset = map.snapshot(app.as_ref()).clip_offset(
+                        DisplayOffset(rng.gen_range(0..=map.len(app.as_ref()))),
+                        Bias::Right,
+                        app.as_ref(),
+                    );
                     assert_eq!(
                         map.snapshot(app.as_ref())
-                            .chars_at(point, app.as_ref())
-                            .unwrap()
-                            .take(len)
+                            .chunks_at(offset, app.as_ref())
                             .collect::<String>(),
-                        expected_text
-                            .chars()
-                            .skip(offset)
-                            .take(len)
-                            .collect::<String>()
+                        &expected_text[offset.0..],
                     );
                 }
 
@@ -981,28 +1063,27 @@ mod tests {
                     assert_eq!(
                         map.snapshot(app.as_ref())
                             .buffer_rows(display_row)
-                            .unwrap()
                             .collect::<Vec<_>>(),
                         expected_buffer_rows[idx..],
                     );
                 }
 
                 for fold_range in map.merged_fold_ranges(app.as_ref()) {
-                    let display_point = map
-                        .to_display_point(fold_range.start.to_point(buffer).unwrap(), app.as_ref());
+                    let display_point =
+                        map.to_display_point(fold_range.start.to_point(buffer), app.as_ref());
                     assert!(map.is_line_folded(display_point.row(), app.as_ref()));
                 }
 
                 for _ in 0..5 {
-                    let end = rng.gen_range(0..=buffer.len());
-                    let start = rng.gen_range(0..=end);
+                    let end = buffer.clip_offset(rng.gen_range(0..=buffer.len()), Right);
+                    let start = buffer.clip_offset(rng.gen_range(0..=end), Left);
                     let expected_folds = map
                         .folds
                         .items()
                         .into_iter()
                         .filter(|fold| {
-                            let start = buffer.anchor_before(start).unwrap();
-                            let end = buffer.anchor_after(end).unwrap();
+                            let start = buffer.anchor_before(start);
+                            let end = buffer.anchor_after(end);
                             start.cmp(&fold.0.end, buffer).unwrap() == Ordering::Less
                                 && end.cmp(&fold.0.start, buffer).unwrap() == Ordering::Greater
                         })
@@ -1011,7 +1092,6 @@ mod tests {
 
                     assert_eq!(
                         map.folds_in_range(start..end, app.as_ref())
-                            .unwrap()
                             .cloned()
                             .collect::<Vec<_>>(),
                         expected_folds
@@ -1034,21 +1114,18 @@ mod tests {
                 Point::new(3, 1)..Point::new(4, 1),
             ],
             app.as_ref(),
-        )
-        .unwrap();
+        );
 
         assert_eq!(map.text(app.as_ref()), "aa…cccc\nd…eeeee\nffffff\n");
         assert_eq!(
             map.snapshot(app.as_ref())
                 .buffer_rows(0)
-                .unwrap()
                 .collect::<Vec<_>>(),
             vec![0, 3, 5, 6]
         );
         assert_eq!(
             map.snapshot(app.as_ref())
                 .buffer_rows(3)
-                .unwrap()
                 .collect::<Vec<_>>(),
             vec![6]
         );
@@ -1057,8 +1134,7 @@ mod tests {
     impl FoldMap {
         fn text(&self, app: &AppContext) -> String {
             self.snapshot(app)
-                .chars_at(DisplayPoint(Point::zero()), app)
-                .unwrap()
+                .chunks_at(DisplayOffset(0), app)
                 .collect()
         }
 
@@ -1069,9 +1145,7 @@ mod tests {
             folds.sort_by(|a, b| a.0.cmp(&b.0, buffer).unwrap());
             let mut fold_ranges = folds
                 .iter()
-                .map(|fold| {
-                    fold.0.start.to_offset(buffer).unwrap()..fold.0.end.to_offset(buffer).unwrap()
-                })
+                .map(|fold| fold.0.start.to_offset(buffer)..fold.0.end.to_offset(buffer))
                 .peekable();
 
             let mut merged_ranges = Vec::new();
@@ -1097,7 +1171,7 @@ mod tests {
             let transforms = self.sync(ctx);
             let buffer = self.buffer.read(ctx);
             assert_eq!(
-                transforms.summary().buffer.chars,
+                transforms.summary().buffer.bytes,
                 buffer.len(),
                 "transform tree does not match buffer's length"
             );
