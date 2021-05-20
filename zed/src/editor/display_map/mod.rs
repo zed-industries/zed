@@ -109,8 +109,8 @@ impl DisplayMap {
         self.fold_map.max_point(ctx).expand_tabs(self, ctx)
     }
 
-    pub fn rightmost_row(&self, ctx: &AppContext) -> u32 {
-        self.fold_map.rightmost_row(ctx)
+    pub fn longest_row(&self, ctx: &AppContext) -> u32 {
+        self.fold_map.longest_row(ctx)
     }
 
     pub fn anchor_before(&self, point: DisplayPoint, bias: Bias, app: &AppContext) -> Anchor {

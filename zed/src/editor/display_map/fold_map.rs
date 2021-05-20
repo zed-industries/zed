@@ -67,8 +67,8 @@ impl FoldMap {
         DisplayPoint(self.sync(ctx).summary().display.lines)
     }
 
-    pub fn rightmost_row(&self, ctx: &AppContext) -> u32 {
-        self.sync(ctx).summary().display.rightmost_row
+    pub fn longest_row(&self, ctx: &AppContext) -> u32 {
+        self.sync(ctx).summary().display.longest_row
     }
 
     pub fn folds_in_range<'a, T>(
@@ -340,8 +340,8 @@ impl FoldMap {
                                     lines,
                                     first_line_chars: chars,
                                     last_line_chars: chars,
-                                    rightmost_row: 0,
-                                    rightmost_row_chars: chars,
+                                    longest_row: 0,
+                                    longest_row_chars: chars,
                                 },
                                 buffer: buffer.text_summary_for_range(fold.start..fold.end),
                             },
@@ -990,10 +990,10 @@ mod tests {
                     assert_eq!(line_len, line.len() as u32);
                 }
 
-                let rightmost_row = map.rightmost_row(app.as_ref());
-                let rightmost_char_column = expected_text
+                let longest_row = map.longest_row(app.as_ref());
+                let longest_char_column = expected_text
                     .split('\n')
-                    .nth(rightmost_row as usize)
+                    .nth(longest_row as usize)
                     .unwrap()
                     .chars()
                     .count();
@@ -1031,11 +1031,11 @@ mod tests {
                         char_column += 1;
                     }
                     display_offset.0 += c.len_utf8();
-                    if char_column > rightmost_char_column {
+                    if char_column > longest_char_column {
                         panic!(
-                            "invalid rightmost row {:?} (chars {}), found row {:?} (chars: {})",
-                            rightmost_row,
-                            rightmost_char_column,
+                            "invalid longest row {:?} (chars {}), found row {:?} (chars: {})",
+                            longest_row,
+                            longest_char_column,
                             display_point.row(),
                             char_column
                         );
