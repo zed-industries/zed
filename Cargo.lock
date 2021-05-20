@@ -1202,7 +1202,7 @@ dependencies = [
  "smallvec",
  "smol",
  "tiny-skia",
- "tree-sitter 0.17.1",
+ "tree-sitter",
  "usvg",
 ]
 
@@ -2704,19 +2704,9 @@ dependencies = [
 
 [[package]]
 name = "tree-sitter"
-version = "0.17.1"
+version = "0.19.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "d18dcb776d3affaba6db04d11d645946d34a69b3172e588af96ce9fecd20faac"
-dependencies = [
- "cc",
- "regex",
-]
-
-[[package]]
-name = "tree-sitter"
-version = "0.19.3"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "1f41201fed3db3b520405a9c01c61773a250d4c3f43e9861c14b2bb232c981ab"
+checksum = "ad726ec26496bf4c083fff0f43d4eb3a2ad1bba305323af5ff91383c0b6ecac0"
 dependencies = [
  "cc",
  "regex",
@@ -2729,7 +2719,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "784f7ef9cdbd4c895dc2d4bb785e95b4a5364a602eec803681db83d1927ddf15"
 dependencies = [
  "cc",
- "tree-sitter 0.19.3",
+ "tree-sitter",
 ]
 
 [[package]]
@@ -3007,7 +2997,7 @@ dependencies = [
  "smallvec",
  "smol",
  "tempdir",
- "tree-sitter 0.19.3",
+ "tree-sitter",
  "tree-sitter-rust",
  "unindent",
 ]
