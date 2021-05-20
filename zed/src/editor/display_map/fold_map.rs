@@ -685,7 +685,7 @@ impl<'a> Iterator for Chunks<'a> {
         // advance the transform and buffer cursors to the end of the fold.
         if let Some(display_text) = transform.display_text {
             self.buffer_offset += transform.summary.buffer.bytes;
-            self.buffer_chunks.advance_to(self.buffer_offset);
+            self.buffer_chunks.seek(self.buffer_offset);
 
             while self.buffer_offset >= self.transform_cursor.end().buffer.bytes
                 && self.transform_cursor.item().is_some()

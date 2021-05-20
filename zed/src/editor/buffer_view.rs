@@ -2246,6 +2246,7 @@ impl BufferView {
             buffer::Event::Saved => ctx.emit(Event::Saved),
             buffer::Event::FileHandleChanged => ctx.emit(Event::FileHandleChanged),
             buffer::Event::Reloaded => ctx.emit(Event::FileHandleChanged),
+            buffer::Event::Reparsed => {}
         }
     }
 }

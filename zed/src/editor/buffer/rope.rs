@@ -284,11 +284,13 @@ impl<'a> ChunksIter<'a> {
         self.range.start.max(*self.chunks.start())
     }
 
-    pub fn advance_to(&mut self, offset: usize) {
+    pub fn seek(&mut self, offset: usize) {
         if offset >= self.chunks.end() {
             self.chunks.seek_forward(&offset, SeekBias::Right, &());
-            self.range.start = offset;
+        } else {
+            self.chunks.seek(&offset, SeekBias::Right, &());
         }
+        self.range.start = offset;
     }
 
     pub fn peek(&self) -> Option<&'a str> {

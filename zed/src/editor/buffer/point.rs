@@ -98,3 +98,21 @@ impl Ord for Point {
         }
     }
 }
+
+impl Into<tree_sitter::Point> for Point {
+    fn into(self) -> tree_sitter::Point {
+        tree_sitter::Point {
+            row: self.row as usize,
+            column: self.column as usize,
+        }
+    }
+}
+
+impl From<tree_sitter::Point> for Point {
+    fn from(point: tree_sitter::Point) -> Self {
+        Self {
+            row: point.row as u32,
+            column: point.column as u32,
+        }
+    }
+}

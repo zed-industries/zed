@@ -9,19 +9,21 @@ pub use rope::{ChunksIter, Rope, TextSummary};
 use seahash::SeaHasher;
 pub use selection::*;
 use similar::{ChangeTag, TextDiff};
+use tree_sitter::{InputEdit, Parser};
 
 use crate::{
     editor::Bias,
-    language::Language,
+    language::{Language, Tree},
     operation_queue::{self, OperationQueue},
     sum_tree::{self, FilterCursor, SeekBias, SumTree},
-    time::{self, ReplicaId},
+    time::{self, Global, ReplicaId},
     worktree::FileHandle,
 };
 use anyhow::{anyhow, Result};
 use gpui::{AppContext, Entity, ModelContext, Task};
 use lazy_static::lazy_static;
 use std::{
+    cell::RefCell,
     cmp,
     hash::BuildHasher,
     iter::{self, Iterator},
@@ -57,6 +59,10 @@ type HashMap<K, V> = std::collections::HashMap<K, V>;
 #[cfg(not(test))]
 type HashSet<T> = std::collections::HashSet<T>;
 
+thread_local! {
+    pub static PARSER: RefCell<Parser> = RefCell::new(Parser::new());
+}
+
 pub struct Buffer {
     fragments: SumTree<Fragment>,
     visible_text: Rope,
@@ -70,6 +76,8 @@ pub struct Buffer {
     history: History,
     file: Option<FileHandle>,
     language: Option<Arc<Language>>,
+    tree: Option<Tree>,
+    is_parsing: bool,
     selections: HashMap<SelectionSetId, Arc<[Selection]>>,
     pub selections_last_update: SelectionsVersion,
     deferred_ops: OperationQueue<Operation>,
@@ -465,7 +473,7 @@ impl Buffer {
             );
         }
 
-        Self {
+        let mut result = Self {
             visible_text,
             deleted_text: Rope::new(),
             fragments,
@@ -476,6 +484,8 @@ impl Buffer {
             undo_map: Default::default(),
             history,
             file,
+            tree: None,
+            is_parsing: false,
             language,
             saved_mtime,
             selections: HashMap::default(),
@@ -485,7 +495,9 @@ impl Buffer {
             replica_id,
             local_clock: time::Local::new(replica_id),
             lamport_clock: time::Lamport::new(replica_id),
-        }
+        };
+        result.reparse(ctx);
+        result
     }
 
     pub fn snapshot(&self) -> Rope {
@@ -532,6 +544,109 @@ impl Buffer {
         }
         self.saved_version = version;
         ctx.emit(Event::Saved);
+    }
+
+    fn reparse(&mut self, ctx: &mut ModelContext<Self>) {
+        // Avoid spawning a new parsing task if the buffer is already being reparsed
+        // due to an earlier edit.
+        if self.is_parsing {
+            return;
+        }
+
+        if let Some(language) = self.language.clone() {
+            self.is_parsing = true;
+            let mut old_text = self.visible_text.clone();
+            let mut old_tree = self.tree.clone();
+            let mut old_version = self.version();
+            let mut had_changes = true;
+            ctx.spawn(|handle, mut ctx| async move {
+                while had_changes {
+                    // Parse the current text in a background thread.
+                    let (mut tree, text) = ctx
+                        .background_executor()
+                        .spawn({
+                            let language = language.clone();
+                            async move {
+                                let tree = Self::parse_text(&old_text, old_tree, &language);
+                                (tree, old_text)
+                            }
+                        })
+                        .await;
+
+                    // When the parsing completes, check if any new changes have occurred since
+                    // this parse began. If so, edit the new tree to reflect these new changes.
+                    let (has_changes, new_text, new_tree, new_version) =
+                        handle.update(&mut ctx, move |this, ctx| {
+                            let mut delta = 0_isize;
+                            let mut has_further_changes = false;
+                            for Edit {
+                                old_range,
+                                new_range,
+                            } in this.edits_since(old_version)
+                            {
+                                let old_len = old_range.end - old_range.start;
+                                let new_len = new_range.end - new_range.start;
+                                let old_start = (old_range.start as isize + delta) as usize;
+                                tree.edit(&InputEdit {
+                                    start_byte: old_start,
+                                    old_end_byte: old_start + old_len,
+                                    new_end_byte: old_start + new_len,
+                                    start_position: text.to_point(old_start).into(),
+                                    old_end_position: text.to_point(old_start + old_len).into(),
+                                    new_end_position: this
+                                        .point_for_offset(old_start + new_len)
+                                        .unwrap()
+                                        .into(),
+                                });
+                                delta += new_len as isize - old_len as isize;
+                                has_further_changes = true;
+                            }
+
+                            this.tree = Some(tree);
+                            ctx.emit(Event::Reparsed);
+
+                            // If there were new changes, then continue the loop, spawning a new
+                            // parsing task. Otherwise, record the fact that parsing is complete.
+                            if has_further_changes {
+                                (
+                                    true,
+                                    this.visible_text.clone(),
+                                    this.tree.clone(),
+                                    this.version(),
+                                )
+                            } else {
+                                this.is_parsing = false;
+                                (false, Rope::new(), None, Global::new())
+                            }
+                        });
+
+                    had_changes = has_changes;
+                    old_text = new_text;
+                    old_tree = new_tree;
+                    old_version = new_version;
+                }
+            })
+            .detach();
+        }
+    }
+
+    fn parse_text(text: &Rope, old_tree: Option<Tree>, language: &Language) -> Tree {
+        PARSER.with(|parser| {
+            let mut parser = parser.borrow_mut();
+            parser
+                .set_language(language.grammar)
+                .expect("incompatible grammar");
+            let mut chunks = text.chunks_in_range(0..text.len());
+            parser
+                .parse_with(
+                    &mut move |offset, _| {
+                        chunks.seek(offset);
+                        chunks.next().map(str::as_bytes).unwrap_or(&[])
+                    },
+                    old_tree.as_ref(),
+                )
+                .unwrap()
+        })
     }
 
     fn diff(&self, new_text: Arc<str>, ctx: &AppContext) -> Task<Diff> {
@@ -725,6 +840,7 @@ impl Buffer {
 
                 if self.edits_since(since).next().is_some() {
                     self.did_edit(was_dirty, ctx);
+                    self.reparse(ctx);
                 }
             }
         }
@@ -746,16 +862,31 @@ impl Buffer {
         self.start_transaction_at(None, Instant::now())?;
 
         let new_text = new_text.into();
+        let old_ranges = old_ranges
+            .into_iter()
+            .map(|range| range.start.to_offset(self)..range.end.to_offset(self))
+            .collect::<Vec<Range<usize>>>();
+
+        if let Some(tree) = self.tree.as_mut() {
+            let new_extent = TextSummary::from(new_text.as_str()).lines;
+            for old_range in old_ranges.iter().rev() {
+                let start_position = self.visible_text.to_point(old_range.start);
+                tree.edit(&InputEdit {
+                    start_byte: old_range.start,
+                    old_end_byte: old_range.end,
+                    new_end_byte: old_range.start + new_text.len(),
+                    start_position: start_position.into(),
+                    old_end_position: self.visible_text.to_point(old_range.end).into(),
+                    new_end_position: (start_position + new_extent).into(),
+                });
+            }
+        }
+
         let new_text = if new_text.len() > 0 {
             Some(new_text)
         } else {
             None
         };
-
-        let old_ranges = old_ranges
-            .into_iter()
-            .map(|range| range.start.to_offset(self)..range.end.to_offset(self))
-            .collect::<Vec<Range<usize>>>();
 
         let has_new_text = new_text.is_some();
         let ops = self.splice_fragments(
@@ -1890,6 +2021,8 @@ impl Clone for Buffer {
             deferred_ops: self.deferred_ops.clone(),
             file: self.file.clone(),
             language: self.language.clone(),
+            tree: self.tree.clone(),
+            is_parsing: false,
             deferred_replicas: self.deferred_replicas.clone(),
             replica_id: self.replica_id,
             local_clock: self.local_clock.clone(),
@@ -1957,6 +2090,7 @@ pub enum Event {
     Saved,
     FileHandleChanged,
     Reloaded,
+    Reparsed,
 }
 
 impl Entity for Buffer {

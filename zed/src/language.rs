@@ -9,9 +9,9 @@ pub use tree_sitter::{Parser, Tree};
 pub struct LanguageDir;
 
 pub struct Language {
-    name: String,
-    grammar: Grammar,
-    highlight_query: Query,
+    pub name: String,
+    pub grammar: Grammar,
+    pub highlight_query: Query,
     path_suffixes: Vec<String>,
 }
 
