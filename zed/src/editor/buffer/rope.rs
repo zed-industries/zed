@@ -390,32 +390,41 @@ impl sum_tree::Item for Chunk {
 pub struct TextSummary {
     pub bytes: usize,
     pub lines: Point,
-    pub first_line_len: u32,
+    pub first_line_chars: u32,
+    pub last_line_chars: u32,
     pub rightmost_point: Point,
 }
 
 impl<'a> From<&'a str> for TextSummary {
     fn from(text: &'a str) -> Self {
         let mut lines = Point::new(0, 0);
-        let mut first_line_len = 0;
+        let mut first_line_chars = 0;
+        let mut last_line_chars = 0;
         let mut rightmost_point = Point::new(0, 0);
-        for (i, line) in text.split('\n').enumerate() {
-            if i > 0 {
+        for c in text.chars() {
+            if c == '\n' {
                 lines.row += 1;
+                lines.column = 0;
+                last_line_chars = 0;
+            } else {
+                lines.column += c.len_utf8() as u32;
+                last_line_chars += 1;
             }
-            lines.column = line.len() as u32;
-            if i == 0 {
-                first_line_len = lines.column;
+
+            if lines.row == 0 {
+                first_line_chars = last_line_chars;
             }
-            if lines.column > rightmost_point.column {
-                rightmost_point = lines;
+
+            if last_line_chars > rightmost_point.column {
+                rightmost_point = Point::new(lines.row, last_line_chars);
             }
         }
 
         TextSummary {
             bytes: text.len(),
             lines,
-            first_line_len,
+            first_line_chars,
+            last_line_chars,
             rightmost_point,
         }
     }
@@ -431,16 +440,22 @@ impl sum_tree::Summary for TextSummary {
 
 impl<'a> std::ops::AddAssign<&'a Self> for TextSummary {
     fn add_assign(&mut self, other: &'a Self) {
-        let joined_line_len = self.lines.column + other.first_line_len;
-        if joined_line_len > self.rightmost_point.column {
-            self.rightmost_point = Point::new(self.lines.row, joined_line_len);
+        let joined_chars = self.last_line_chars + other.first_line_chars;
+        if joined_chars > self.rightmost_point.column {
+            self.rightmost_point = Point::new(self.lines.row, joined_chars);
         }
         if other.rightmost_point.column > self.rightmost_point.column {
-            self.rightmost_point = self.lines + &other.rightmost_point;
+            self.rightmost_point = self.lines + other.rightmost_point;
         }
 
         if self.lines.row == 0 {
-            self.first_line_len += other.first_line_len;
+            self.first_line_chars += other.first_line_chars;
+        }
+
+        if other.lines.row == 0 {
+            self.last_line_chars += other.first_line_chars;
+        } else {
+            self.last_line_chars = other.last_line_chars;
         }
 
         self.bytes += other.bytes;

@@ -616,14 +616,6 @@ impl Buffer {
         (row_end_offset - row_start_offset) as u32
     }
 
-    pub fn rightmost_point(&self) -> Point {
-        self.visible_text.summary().rightmost_point
-    }
-
-    pub fn rightmost_point_in_range(&self, range: Range<usize>) -> Point {
-        self.text_summary_for_range(range).rightmost_point
-    }
-
     pub fn max_point(&self) -> Point {
         self.visible_text.max_point()
     }
@@ -2360,7 +2352,6 @@ mod tests {
     use std::{
         cell::RefCell,
         cmp::Ordering,
-        collections::BTreeMap,
         fs,
         rc::Rc,
         sync::atomic::{self, AtomicUsize},
@@ -2468,33 +2459,11 @@ mod tests {
                         reference_string = buffer.text();
                     }
 
-                    {
-                        let line_lengths = line_lengths_in_range(&buffer, 0..buffer.len());
-
-                        for (len, rows) in &line_lengths {
-                            for row in rows {
-                                assert_eq!(buffer.line_len(*row), *len);
-                            }
-                        }
-
-                        let (longest_column, longest_rows) =
-                            line_lengths.iter().next_back().unwrap();
-                        let rightmost_point = buffer.rightmost_point();
-                        assert_eq!(rightmost_point.column, *longest_column);
-                        assert!(longest_rows.contains(&rightmost_point.row));
-                    }
-
-                    for _ in 0..5 {
-                        let range = buffer.random_byte_range(0, rng);
-                        let line_lengths = line_lengths_in_range(&buffer, range.clone());
-                        let (longest_column, longest_rows) =
-                            line_lengths.iter().next_back().unwrap();
-                        let range_sum = buffer.text_summary_for_range(range.clone());
-                        assert_eq!(range_sum.rightmost_point.column, *longest_column);
-                        assert!(longest_rows.contains(&range_sum.rightmost_point.row));
-                        let range_text = &buffer.text()[range];
-                        assert_eq!(range_sum.bytes, range_text.len());
-                    }
+                    let range = buffer.random_byte_range(0, rng);
+                    assert_eq!(
+                        buffer.text_summary_for_range(range.clone()),
+                        TextSummary::from(&reference_string[range])
+                    );
 
                     if rng.gen_bool(0.3) {
                         buffer_versions.push(buffer.clone());
@@ -2546,25 +2515,6 @@ mod tests {
     }
 
     #[gpui::test]
-    fn test_rightmost_point(ctx: &mut gpui::MutableAppContext) {
-        ctx.add_model(|ctx| {
-            let mut buffer = Buffer::new(0, "", ctx);
-            assert_eq!(buffer.rightmost_point().row, 0);
-            buffer.edit(vec![0..0], "abcd\nefg\nhij", None).unwrap();
-            assert_eq!(buffer.rightmost_point().row, 0);
-            buffer.edit(vec![12..12], "kl\nmno", None).unwrap();
-            assert_eq!(buffer.rightmost_point().row, 2);
-            buffer.edit(vec![18..18], "\npqrs", None).unwrap();
-            assert_eq!(buffer.rightmost_point().row, 2);
-            buffer.edit(vec![10..12], "", None).unwrap();
-            assert_eq!(buffer.rightmost_point().row, 0);
-            buffer.edit(vec![24..24], "tuv", None).unwrap();
-            assert_eq!(buffer.rightmost_point().row, 4);
-            buffer
-        });
-    }
-
-    #[gpui::test]
     fn test_text_summary_for_range(ctx: &mut gpui::MutableAppContext) {
         ctx.add_model(|ctx| {
             let buffer = Buffer::new(0, "ab\nefg\nhklm\nnopqrs\ntuvwxyz", ctx);
@@ -2573,7 +2523,8 @@ mod tests {
                 TextSummary {
                     bytes: 2,
                     lines: Point::new(1, 0),
-                    first_line_len: 1,
+                    first_line_chars: 1,
+                    last_line_chars: 0,
                     rightmost_point: Point::new(0, 1),
                 }
             );
@@ -2582,7 +2533,8 @@ mod tests {
                 TextSummary {
                     bytes: 11,
                     lines: Point::new(3, 0),
-                    first_line_len: 1,
+                    first_line_chars: 1,
+                    last_line_chars: 0,
                     rightmost_point: Point::new(2, 4),
                 }
             );
@@ -2591,7 +2543,8 @@ mod tests {
                 TextSummary {
                     bytes: 20,
                     lines: Point::new(4, 1),
-                    first_line_len: 2,
+                    first_line_chars: 2,
+                    last_line_chars: 1,
                     rightmost_point: Point::new(3, 6),
                 }
             );
@@ -2600,7 +2553,8 @@ mod tests {
                 TextSummary {
                     bytes: 22,
                     lines: Point::new(4, 3),
-                    first_line_len: 2,
+                    first_line_chars: 2,
+                    last_line_chars: 3,
                     rightmost_point: Point::new(3, 6),
                 }
             );
@@ -2609,7 +2563,8 @@ mod tests {
                 TextSummary {
                     bytes: 15,
                     lines: Point::new(2, 3),
-                    first_line_len: 4,
+                    first_line_chars: 4,
+                    last_line_chars: 3,
                     rightmost_point: Point::new(1, 6),
                 }
             );
@@ -3387,21 +3342,5 @@ mod tests {
                 Operation::UpdateSelections { .. } => None,
             }
         }
-    }
-
-    fn line_lengths_in_range(buffer: &Buffer, range: Range<usize>) -> BTreeMap<u32, HashSet<u32>> {
-        let mut lengths = BTreeMap::new();
-        for (row, line) in buffer.text()[range.start..range.end].lines().enumerate() {
-            lengths
-                .entry(line.len() as u32)
-                .or_insert(HashSet::default())
-                .insert(row as u32);
-        }
-        if lengths.is_empty() {
-            let mut rows = HashSet::default();
-            rows.insert(0);
-            lengths.insert(0, rows);
-        }
-        lengths
     }
 }

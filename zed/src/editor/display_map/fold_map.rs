@@ -330,15 +330,17 @@ impl FoldMap {
 
                 if fold.end > fold.start {
                     let display_text = "…";
-                    let extent = Point::new(0, display_text.len() as u32);
+                    let chars = display_text.chars().count() as u32;
+                    let lines = Point::new(0, display_text.len() as u32);
                     new_transforms.push(
                         Transform {
                             summary: TransformSummary {
                                 display: TextSummary {
                                     bytes: display_text.len(),
-                                    lines: extent,
-                                    first_line_len: extent.column,
-                                    rightmost_point: extent,
+                                    lines,
+                                    first_line_chars: chars,
+                                    last_line_chars: chars,
+                                    rightmost_point: Point::new(0, chars),
                                 },
                                 buffer: buffer.text_summary_for_range(fold.start..fold.end),
                             },
@@ -990,6 +992,7 @@ mod tests {
                 let rightmost_point = map.rightmost_point(app.as_ref());
                 let mut display_point = DisplayPoint::new(0, 0);
                 let mut display_offset = DisplayOffset(0);
+                let mut char_column = 0;
                 for c in expected_text.chars() {
                     let buffer_point = map.to_buffer_point(display_point, app.as_ref());
                     let buffer_offset = buffer_point.to_offset(buffer);
@@ -1015,14 +1018,16 @@ mod tests {
                     if c == '\n' {
                         *display_point.row_mut() += 1;
                         *display_point.column_mut() = 0;
+                        char_column = 0;
                     } else {
                         *display_point.column_mut() += c.len_utf8() as u32;
+                        char_column += 1;
                     }
                     display_offset.0 += c.len_utf8();
-                    if display_point.column() > rightmost_point.column() {
+                    if char_column > rightmost_point.column() {
                         panic!(
-                            "invalid rightmost point {:?}, found point {:?}",
-                            rightmost_point, display_point
+                            "invalid rightmost point {:?}, found point {:?} (char column: {})",
+                            rightmost_point, display_point, char_column
                         );
                     }
                 }
