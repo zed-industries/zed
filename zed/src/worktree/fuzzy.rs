@@ -323,9 +323,16 @@ fn score_match(
 
     let path_len = path.len() + prefix.len();
     let mut cur_start = 0;
+    let mut byte_ix = 0;
+    let mut char_ix = 0;
     for i in 0..query.len() {
-        match_positions[i] = best_position_matrix[i * path_len + cur_start];
-        cur_start = match_positions[i] + 1;
+        let match_char_ix = best_position_matrix[i * path_len + cur_start];
+        while char_ix < match_char_ix {
+            byte_ix += path[char_ix].len_utf8();
+            char_ix += 1;
+        }
+        cur_start = match_char_ix + 1;
+        match_positions[i] = byte_ix;
     }
 
     score
@@ -546,6 +553,26 @@ mod tests {
                 ("/this/is/a/test/dir", vec![1, 6, 9, 11, 16]),
                 ("/////ThisIsATestDir", vec![5, 9, 11, 12, 16]),
                 ("thisisatestdir", vec![0, 2, 6, 7, 11]),
+            ]
+        );
+    }
+
+    #[test]
+    fn test_match_multibyte_path_entries() {
+        let paths = vec!["aαbβ/cγdδ", "αβγδ/bcde", "c1️⃣2️⃣3️⃣/d4️⃣5️⃣6️⃣/e7️⃣8️⃣9️⃣/f", "/d/🆒/h"];
+        assert_eq!("1️⃣".len(), 7);
+        assert_eq!(
+            match_query("bcd", false, &paths),
+            vec![
+                ("αβγδ/bcde", vec![9, 10, 11]),
+                ("aαbβ/cγdδ", vec![3, 7, 10]),
+            ]
+        );
+        assert_eq!(
+            match_query("cde", false, &paths),
+            vec![
+                ("αβγδ/bcde", vec![10, 11, 12]),
+                ("c1️⃣2️⃣3️⃣/d4️⃣5️⃣6️⃣/e7️⃣8️⃣9️⃣/f", vec![0, 23, 46]),
             ]
         );
     }
