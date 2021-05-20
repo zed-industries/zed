@@ -196,19 +196,27 @@ impl ToJson for Highlights {
 
 #[cfg(test)]
 mod tests {
+    use font_kit::properties::Weight;
+
     use super::*;
 
     #[crate::test(self)]
     fn test_layout_label_with_highlights(app: &mut crate::MutableAppContext) {
-        let family_id = app.font_cache().load_family(&["Menlo"]).unwrap();
-        let font_id = app
+        let menlo = app.font_cache().load_family(&["Menlo"]).unwrap();
+        let menlo_regular = app
             .font_cache()
-            .select_font(family_id, &Properties::new())
+            .select_font(menlo, &Properties::new())
             .unwrap();
+        let menlo_bold = app
+            .font_cache()
+            .select_font(menlo, Properties::new().weight(Weight::BOLD))
+            .unwrap();
+        let black = ColorU::black();
+        let red = ColorU::new(255, 0, 0, 255);
 
-        let label = Label::new(".αβγδε.ⓐⓑⓒⓓⓔ.abcde.".to_string(), family_id, 12.0).with_highlights(
-            ColorU::black(),
-            Properties::new(),
+        let label = Label::new(".αβγδε.ⓐⓑⓒⓓⓔ.abcde.".to_string(), menlo, 12.0).with_highlights(
+            red,
+            *Properties::new().weight(Weight::BOLD),
             vec![
                 ".α".len(),
                 ".αβ".len(),
@@ -218,7 +226,29 @@ mod tests {
             ],
         );
 
-        let (styles, colors) = label.layout_text(app.font_cache().as_ref(), font_id);
-        assert_eq!(styles, &[]);
+        let (styles, colors) = label.layout_text(app.font_cache().as_ref(), menlo_regular);
+        assert_eq!(styles.len(), colors.len());
+
+        let mut spans = Vec::new();
+        for ((style_range, font_id), (color_range, color)) in styles.into_iter().zip(colors) {
+            assert_eq!(style_range, color_range);
+            spans.push((style_range, font_id, color));
+        }
+        assert_eq!(
+            spans,
+            &[
+                (0..3, menlo_regular, black),
+                (3..4, menlo_bold, red),
+                (4..5, menlo_regular, black),
+                (5..6, menlo_bold, red),
+                (6..9, menlo_regular, black),
+                (9..10, menlo_bold, red),
+                (10..15, menlo_regular, black),
+                (15..16, menlo_bold, red),
+                (16..18, menlo_regular, black),
+                (18..19, menlo_bold, red),
+                (19..34, menlo_regular, black)
+            ]
+        );
     }
 }
