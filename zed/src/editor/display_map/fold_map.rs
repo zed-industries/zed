@@ -68,7 +68,7 @@ impl FoldMap {
     }
 
     pub fn rightmost_row(&self, ctx: &AppContext) -> u32 {
-        self.sync(ctx).summary().display.rightmost_point.row
+        self.sync(ctx).summary().display.rightmost_row
     }
 
     pub fn folds_in_range<'a, T>(
@@ -340,7 +340,8 @@ impl FoldMap {
                                     lines,
                                     first_line_chars: chars,
                                     last_line_chars: chars,
-                                    rightmost_point: Point::new(0, chars),
+                                    rightmost_row: 0,
+                                    rightmost_row_chars: chars,
                                 },
                                 buffer: buffer.text_summary_for_range(fold.start..fold.end),
                             },

@@ -392,7 +392,8 @@ pub struct TextSummary {
     pub lines: Point,
     pub first_line_chars: u32,
     pub last_line_chars: u32,
-    pub rightmost_point: Point,
+    pub rightmost_row: u32,
+    pub rightmost_row_chars: u32,
 }
 
 impl<'a> From<&'a str> for TextSummary {
@@ -400,7 +401,8 @@ impl<'a> From<&'a str> for TextSummary {
         let mut lines = Point::new(0, 0);
         let mut first_line_chars = 0;
         let mut last_line_chars = 0;
-        let mut rightmost_point = Point::new(0, 0);
+        let mut rightmost_row = 0;
+        let mut rightmost_row_chars = 0;
         for c in text.chars() {
             if c == '\n' {
                 lines.row += 1;
@@ -415,8 +417,9 @@ impl<'a> From<&'a str> for TextSummary {
                 first_line_chars = last_line_chars;
             }
 
-            if last_line_chars > rightmost_point.column {
-                rightmost_point = Point::new(lines.row, last_line_chars);
+            if last_line_chars > rightmost_row_chars {
+                rightmost_row = lines.row;
+                rightmost_row_chars = last_line_chars;
             }
         }
 
@@ -425,7 +428,8 @@ impl<'a> From<&'a str> for TextSummary {
             lines,
             first_line_chars,
             last_line_chars,
-            rightmost_point,
+            rightmost_row,
+            rightmost_row_chars,
         }
     }
 }
@@ -441,11 +445,13 @@ impl sum_tree::Summary for TextSummary {
 impl<'a> std::ops::AddAssign<&'a Self> for TextSummary {
     fn add_assign(&mut self, other: &'a Self) {
         let joined_chars = self.last_line_chars + other.first_line_chars;
-        if joined_chars > self.rightmost_point.column {
-            self.rightmost_point = Point::new(self.lines.row, joined_chars);
+        if joined_chars > self.rightmost_row_chars {
+            self.rightmost_row = self.lines.row;
+            self.rightmost_row_chars = joined_chars;
         }
-        if other.rightmost_point.column > self.rightmost_point.column {
-            self.rightmost_point = self.lines + other.rightmost_point;
+        if other.rightmost_row_chars > self.rightmost_row_chars {
+            self.rightmost_row = self.lines.row + other.rightmost_row;
+            self.rightmost_row_chars = other.rightmost_row_chars;
         }
 
         if self.lines.row == 0 {

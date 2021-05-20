@@ -2525,7 +2525,8 @@ mod tests {
                     lines: Point::new(1, 0),
                     first_line_chars: 1,
                     last_line_chars: 0,
-                    rightmost_point: Point::new(0, 1),
+                    rightmost_row: 0,
+                    rightmost_row_chars: 1,
                 }
             );
             assert_eq!(
@@ -2535,7 +2536,8 @@ mod tests {
                     lines: Point::new(3, 0),
                     first_line_chars: 1,
                     last_line_chars: 0,
-                    rightmost_point: Point::new(2, 4),
+                    rightmost_row: 2,
+                    rightmost_row_chars: 4,
                 }
             );
             assert_eq!(
@@ -2545,7 +2547,8 @@ mod tests {
                     lines: Point::new(4, 1),
                     first_line_chars: 2,
                     last_line_chars: 1,
-                    rightmost_point: Point::new(3, 6),
+                    rightmost_row: 3,
+                    rightmost_row_chars: 6,
                 }
             );
             assert_eq!(
@@ -2555,7 +2558,8 @@ mod tests {
                     lines: Point::new(4, 3),
                     first_line_chars: 2,
                     last_line_chars: 3,
-                    rightmost_point: Point::new(3, 6),
+                    rightmost_row: 3,
+                    rightmost_row_chars: 6,
                 }
             );
             assert_eq!(
@@ -2565,7 +2569,8 @@ mod tests {
                     lines: Point::new(2, 3),
                     first_line_chars: 4,
                     last_line_chars: 3,
-                    rightmost_point: Point::new(1, 6),
+                    rightmost_row: 1,
+                    rightmost_row_chars: 6,
                 }
             );
             buffer
