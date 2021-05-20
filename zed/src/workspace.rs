@@ -2,9 +2,11 @@ pub mod pane;
 pub mod pane_group;
 use crate::{
     editor::{Buffer, BufferView},
+    language::LanguageRegistry,
     settings::Settings,
     time::ReplicaId,
     worktree::{FileHandle, Worktree, WorktreeHandle},
+    AppState,
 };
 use futures_core::Future;
 use gpui::{
@@ -40,11 +42,11 @@ pub fn init(app: &mut MutableAppContext) {
 
 pub struct OpenParams {
     pub paths: Vec<PathBuf>,
-    pub settings: watch::Receiver<Settings>,
+    pub app_state: AppState,
 }
 
-fn open(settings: &watch::Receiver<Settings>, ctx: &mut MutableAppContext) {
-    let settings = settings.clone();
+fn open(app_state: &AppState, ctx: &mut MutableAppContext) {
+    let app_state = app_state.clone();
     ctx.prompt_for_paths(
         PathPromptOptions {
             files: true,
@@ -53,7 +55,7 @@ fn open(settings: &watch::Receiver<Settings>, ctx: &mut MutableAppContext) {
         },
         move |paths, ctx| {
             if let Some(paths) = paths {
-                ctx.dispatch_global_action("workspace:open_paths", OpenParams { paths, settings });
+                ctx.dispatch_global_action("workspace:open_paths", OpenParams { paths, app_state });
             }
         },
     );
@@ -84,7 +86,12 @@ fn open_paths(params: &OpenParams, app: &mut MutableAppContext) {
 
     // Add a new workspace if necessary
     app.add_window(|ctx| {
-        let mut view = Workspace::new(0, params.settings.clone(), ctx);
+        let mut view = Workspace::new(
+            0,
+            params.app_state.settings.clone(),
+            params.app_state.language_registry.clone(),
+            ctx,
+        );
         let open_paths = view.open_paths(&params.paths, ctx);
         ctx.foreground().spawn(open_paths).detach();
         view
@@ -284,6 +291,7 @@ pub struct State {
 
 pub struct Workspace {
     pub settings: watch::Receiver<Settings>,
+    language_registry: Arc<LanguageRegistry>,
     modal: Option<AnyViewHandle>,
     center: PaneGroup,
     panes: Vec<ViewHandle<Pane>>,
@@ -301,6 +309,7 @@ impl Workspace {
     pub fn new(
         replica_id: ReplicaId,
         settings: watch::Receiver<Settings>,
+        language_registry: Arc<LanguageRegistry>,
         ctx: &mut ViewContext<Self>,
     ) -> Self {
         let pane = ctx.add_view(|_| Pane::new(settings.clone()));
@@ -316,6 +325,7 @@ impl Workspace {
             panes: vec![pane.clone()],
             active_pane: pane.clone(),
             settings,
+            language_registry,
             replica_id,
             worktrees: Default::default(),
             items: Default::default(),
@@ -503,6 +513,7 @@ impl Workspace {
             let (mut tx, rx) = postage::watch::channel();
             entry.insert(rx);
             let replica_id = self.replica_id;
+            let language_registry = self.language_registry.clone();
 
             ctx.as_mut()
                 .spawn(|mut ctx| async move {
@@ -512,7 +523,14 @@ impl Workspace {
 
                     *tx.borrow_mut() = Some(match history {
                         Ok(history) => Ok(Box::new(ctx.add_model(|ctx| {
-                            Buffer::from_history(replica_id, history, Some(file), ctx)
+                            let language = language_registry.select_language(path);
+                            Buffer::from_history(
+                                replica_id,
+                                history,
+                                Some(file),
+                                language.cloned(),
+                                ctx,
+                            )
                         }))),
                         Err(error) => Err(Arc::new(error)),
                     })
@@ -757,14 +775,17 @@ impl WorkspaceHandle for ViewHandle<Workspace> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{editor::BufferView, settings, test::temp_tree};
+    use crate::{
+        editor::BufferView,
+        test::{build_app_state, temp_tree},
+    };
     use serde_json::json;
     use std::{collections::HashSet, fs};
     use tempdir::TempDir;
 
     #[gpui::test]
     fn test_open_paths_action(app: &mut gpui::MutableAppContext) {
-        let settings = settings::channel(&app.font_cache()).unwrap().1;
+        let app_state = build_app_state(app.as_ref());
 
         init(app);
 
@@ -790,7 +811,7 @@ mod tests {
                     dir.path().join("a").to_path_buf(),
                     dir.path().join("b").to_path_buf(),
                 ],
-                settings: settings.clone(),
+                app_state: app_state.clone(),
             },
         );
         assert_eq!(app.window_ids().count(), 1);
@@ -799,7 +820,7 @@ mod tests {
             "workspace:open_paths",
             OpenParams {
                 paths: vec![dir.path().join("a").to_path_buf()],
-                settings: settings.clone(),
+                app_state: app_state.clone(),
             },
         );
         assert_eq!(app.window_ids().count(), 1);
@@ -815,7 +836,7 @@ mod tests {
                     dir.path().join("b").to_path_buf(),
                     dir.path().join("c").to_path_buf(),
                 ],
-                settings: settings.clone(),
+                app_state: app_state.clone(),
             },
         );
         assert_eq!(app.window_ids().count(), 2);
@@ -831,10 +852,11 @@ mod tests {
             },
         }));
 
-        let settings = settings::channel(&app.font_cache()).unwrap().1;
+        let app_state = app.read(build_app_state);
 
         let (_, workspace) = app.add_window(|ctx| {
-            let mut workspace = Workspace::new(0, settings, ctx);
+            let mut workspace =
+                Workspace::new(0, app_state.settings, app_state.language_registry, ctx);
             workspace.add_worktree(dir.path(), ctx);
             workspace
         });
@@ -935,9 +957,10 @@ mod tests {
             "b.txt": "",
         }));
 
-        let settings = settings::channel(&app.font_cache()).unwrap().1;
+        let app_state = app.read(build_app_state);
         let (_, workspace) = app.add_window(|ctx| {
-            let mut workspace = Workspace::new(0, settings, ctx);
+            let mut workspace =
+                Workspace::new(0, app_state.settings, app_state.language_registry, ctx);
             workspace.add_worktree(dir1.path(), ctx);
             workspace
         });
@@ -1003,9 +1026,10 @@ mod tests {
             "a.txt": "",
         }));
 
-        let settings = settings::channel(&app.font_cache()).unwrap().1;
+        let app_state = app.read(build_app_state);
         let (window_id, workspace) = app.add_window(|ctx| {
-            let mut workspace = Workspace::new(0, settings, ctx);
+            let mut workspace =
+                Workspace::new(0, app_state.settings, app_state.language_registry, ctx);
             workspace.add_worktree(dir.path(), ctx);
             workspace
         });
@@ -1046,9 +1070,10 @@ mod tests {
     #[gpui::test]
     async fn test_open_and_save_new_file(mut app: gpui::TestAppContext) {
         let dir = TempDir::new("test-new-file").unwrap();
-        let settings = settings::channel(&app.font_cache()).unwrap().1;
+        let app_state = app.read(build_app_state);
         let (_, workspace) = app.add_window(|ctx| {
-            let mut workspace = Workspace::new(0, settings, ctx);
+            let mut workspace =
+                Workspace::new(0, app_state.settings, app_state.language_registry, ctx);
             workspace.add_worktree(dir.path(), ctx);
             workspace
         });
@@ -1150,9 +1175,10 @@ mod tests {
             },
         }));
 
-        let settings = settings::channel(&app.font_cache()).unwrap().1;
+        let app_state = app.read(build_app_state);
         let (window_id, workspace) = app.add_window(|ctx| {
-            let mut workspace = Workspace::new(0, settings, ctx);
+            let mut workspace =
+                Workspace::new(0, app_state.settings, app_state.language_registry, ctx);
             workspace.add_worktree(dir.path(), ctx);
             workspace
         });

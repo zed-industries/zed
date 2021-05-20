@@ -4,19 +4,27 @@
 use fs::OpenOptions;
 use log::LevelFilter;
 use simplelog::SimpleLogger;
-use std::{fs, path::PathBuf};
+use std::{fs, path::PathBuf, sync::Arc};
 use zed::{
-    assets, editor, file_finder, menus, settings,
+    assets, editor, file_finder, language, menus, settings,
     workspace::{self, OpenParams},
+    AppState,
 };
 
 fn main() {
     init_logger();
 
     let app = gpui::App::new(assets::Assets).unwrap();
-    let (_, settings_rx) = settings::channel(&app.font_cache()).unwrap();
+
+    let (_, settings) = settings::channel(&app.font_cache()).unwrap();
+    let language_registry = Arc::new(language::LanguageRegistry::new());
+    let app_state = AppState {
+        language_registry,
+        settings,
+    };
+
     app.run(move |ctx| {
-        ctx.set_menus(menus::menus(settings_rx.clone()));
+        ctx.set_menus(menus::menus(app_state.settings.clone()));
         workspace::init(ctx);
         editor::init(ctx);
         file_finder::init(ctx);
@@ -31,7 +39,7 @@ fn main() {
                 "workspace:open_paths",
                 OpenParams {
                     paths,
-                    settings: settings_rx,
+                    app_state: app_state.clone(),
                 },
             );
         }

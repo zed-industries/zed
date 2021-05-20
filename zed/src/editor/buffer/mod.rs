@@ -12,6 +12,7 @@ use similar::{ChangeTag, TextDiff};
 
 use crate::{
     editor::Bias,
+    language::Language,
     operation_queue::{self, OperationQueue},
     sum_tree::{self, FilterCursor, SeekBias, SumTree},
     time::{self, ReplicaId},
@@ -68,6 +69,7 @@ pub struct Buffer {
     undo_map: UndoMap,
     history: History,
     file: Option<FileHandle>,
+    language: Option<Arc<Language>>,
     selections: HashMap<SelectionSetId, Arc<[Selection]>>,
     pub selections_last_update: SelectionsVersion,
     deferred_ops: OperationQueue<Operation>,
@@ -357,22 +359,24 @@ impl Buffer {
         base_text: T,
         ctx: &mut ModelContext<Self>,
     ) -> Self {
-        Self::build(replica_id, History::new(base_text.into()), None, ctx)
+        Self::build(replica_id, History::new(base_text.into()), None, None, ctx)
     }
 
     pub fn from_history(
         replica_id: ReplicaId,
         history: History,
         file: Option<FileHandle>,
+        language: Option<Arc<Language>>,
         ctx: &mut ModelContext<Self>,
     ) -> Self {
-        Self::build(replica_id, history, file, ctx)
+        Self::build(replica_id, history, file, language, ctx)
     }
 
     fn build(
         replica_id: ReplicaId,
         history: History,
         file: Option<FileHandle>,
+        language: Option<Arc<Language>>,
         ctx: &mut ModelContext<Self>,
     ) -> Self {
         let saved_mtime;
@@ -472,6 +476,7 @@ impl Buffer {
             undo_map: Default::default(),
             history,
             file,
+            language,
             saved_mtime,
             selections: HashMap::default(),
             selections_last_update: 0,
@@ -1884,6 +1889,7 @@ impl Clone for Buffer {
             selections_last_update: self.selections_last_update.clone(),
             deferred_ops: self.deferred_ops.clone(),
             file: self.file.clone(),
+            language: self.language.clone(),
             deferred_replicas: self.deferred_replicas.clone(),
             replica_id: self.replica_id,
             local_clock: self.local_clock.clone(),
@@ -2812,7 +2818,7 @@ mod tests {
 
             let file1 = app.update(|ctx| tree.file("file1", ctx)).await;
             let buffer1 = app.add_model(|ctx| {
-                Buffer::from_history(0, History::new("abc".into()), Some(file1), ctx)
+                Buffer::from_history(0, History::new("abc".into()), Some(file1), None, ctx)
             });
             let events = Rc::new(RefCell::new(Vec::new()));
 
@@ -2877,7 +2883,7 @@ mod tests {
                     move |_, event, _| events.borrow_mut().push(event.clone())
                 });
 
-                Buffer::from_history(0, History::new("abc".into()), Some(file2), ctx)
+                Buffer::from_history(0, History::new("abc".into()), Some(file2), None, ctx)
             });
 
             fs::remove_file(dir.path().join("file2")).unwrap();
@@ -2896,7 +2902,7 @@ mod tests {
                     move |_, event, _| events.borrow_mut().push(event.clone())
                 });
 
-                Buffer::from_history(0, History::new("abc".into()), Some(file3), ctx)
+                Buffer::from_history(0, History::new("abc".into()), Some(file3), None, ctx)
             });
 
             tree.flush_fs_events(&app).await;
@@ -2923,7 +2929,13 @@ mod tests {
         let abs_path = dir.path().join("the-file");
         let file = app.update(|ctx| tree.file("the-file", ctx)).await;
         let buffer = app.add_model(|ctx| {
-            Buffer::from_history(0, History::new(initial_contents.into()), Some(file), ctx)
+            Buffer::from_history(
+                0,
+                History::new(initial_contents.into()),
+                Some(file),
+                None,
+                ctx,
+            )
         });
 
         // Add a cursor at the start of each row.
