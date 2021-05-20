@@ -321,14 +321,18 @@ fn score_match(
         return 0.0;
     }
 
-    let path_len = path.len() + prefix.len();
+    let path_len = prefix.len() + path.len();
     let mut cur_start = 0;
     let mut byte_ix = 0;
     let mut char_ix = 0;
     for i in 0..query.len() {
         let match_char_ix = best_position_matrix[i * path_len + cur_start];
         while char_ix < match_char_ix {
-            byte_ix += path[char_ix].len_utf8();
+            let ch = prefix
+                .get(char_ix)
+                .or_else(|| path.get(char_ix - prefix.len()))
+                .unwrap();
+            byte_ix += ch.len_utf8();
             char_ix += 1;
         }
         cur_start = match_char_ix + 1;
