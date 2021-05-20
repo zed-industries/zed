@@ -67,8 +67,8 @@ impl FoldMap {
         DisplayPoint(self.sync(ctx).summary().display.lines)
     }
 
-    pub fn rightmost_point(&self, ctx: &AppContext) -> DisplayPoint {
-        DisplayPoint(self.sync(ctx).summary().display.rightmost_point)
+    pub fn rightmost_row(&self, ctx: &AppContext) -> u32 {
+        self.sync(ctx).summary().display.rightmost_point.row
     }
 
     pub fn folds_in_range<'a, T>(
@@ -989,7 +989,13 @@ mod tests {
                     assert_eq!(line_len, line.len() as u32);
                 }
 
-                let rightmost_point = map.rightmost_point(app.as_ref());
+                let rightmost_row = map.rightmost_row(app.as_ref());
+                let rightmost_char_column = expected_text
+                    .split('\n')
+                    .nth(rightmost_row as usize)
+                    .unwrap()
+                    .chars()
+                    .count();
                 let mut display_point = DisplayPoint::new(0, 0);
                 let mut display_offset = DisplayOffset(0);
                 let mut char_column = 0;
@@ -1024,10 +1030,13 @@ mod tests {
                         char_column += 1;
                     }
                     display_offset.0 += c.len_utf8();
-                    if char_column > rightmost_point.column() {
+                    if char_column > rightmost_char_column {
                         panic!(
-                            "invalid rightmost point {:?}, found point {:?} (char column: {})",
-                            rightmost_point, display_point, char_column
+                            "invalid rightmost row {:?} (chars {}), found row {:?} (chars: {})",
+                            rightmost_row,
+                            rightmost_char_column,
+                            display_point.row(),
+                            char_column
                         );
                     }
                 }

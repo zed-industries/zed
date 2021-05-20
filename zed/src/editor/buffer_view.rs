@@ -2015,8 +2015,8 @@ impl BufferView {
         self.display_map.line_len(display_row, ctx)
     }
 
-    pub fn rightmost_point(&self, ctx: &AppContext) -> DisplayPoint {
-        self.display_map.rightmost_point(ctx)
+    pub fn rightmost_row(&self, ctx: &AppContext) -> u32 {
+        self.display_map.rightmost_row(ctx)
     }
 
     pub fn max_point(&self, ctx: &AppContext) -> DisplayPoint {
