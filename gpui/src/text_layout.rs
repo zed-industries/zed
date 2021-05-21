@@ -200,8 +200,8 @@ impl Line {
         }
     }
 
-    pub fn paint(&self, origin: Vector2F, bounds: RectF, ctx: &mut PaintContext) {
-        let padding_top = (bounds.height() - self.layout.ascent - self.layout.descent) / 2.;
+    pub fn paint(&self, origin: Vector2F, visible_bounds: RectF, ctx: &mut PaintContext) {
+        let padding_top = (visible_bounds.height() - self.layout.ascent - self.layout.descent) / 2.;
         let baseline_origin = vec2f(0., padding_top + self.layout.ascent);
 
         let mut color_runs = self.color_runs.iter();
@@ -217,10 +217,10 @@ impl Line {
             for glyph in &run.glyphs {
                 let glyph_origin = baseline_origin + glyph.position;
 
-                if glyph_origin.x() + max_glyph_width < bounds.origin().x() {
+                if glyph_origin.x() + max_glyph_width < visible_bounds.origin().x() {
                     continue;
                 }
-                if glyph_origin.x() > bounds.upper_right().x() {
+                if glyph_origin.x() > visible_bounds.upper_right().x() {
                     break;
                 }
 
