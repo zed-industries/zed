@@ -4,6 +4,7 @@ pub mod rope;
 mod selection;
 
 pub use anchor::*;
+use parking_lot::Mutex;
 pub use point::*;
 pub use rope::{ChunksIter, Rope, TextSummary};
 use seahash::SeaHasher;
@@ -76,7 +77,7 @@ pub struct Buffer {
     history: History,
     file: Option<FileHandle>,
     language: Option<Arc<Language>>,
-    tree: Option<(Tree, time::Global)>,
+    tree: Mutex<Option<(Tree, time::Global)>>,
     is_parsing: bool,
     selections: HashMap<SelectionSetId, Arc<[Selection]>>,
     pub selections_last_update: SelectionsVersion,
@@ -486,7 +487,7 @@ impl Buffer {
             undo_map: Default::default(),
             history,
             file,
-            tree: None,
+            tree: Mutex::new(None),
             is_parsing: false,
             language,
             saved_mtime,
@@ -548,8 +549,39 @@ impl Buffer {
         ctx.emit(Event::Saved);
     }
 
+    pub fn syntax_tree(&self) -> Option<Tree> {
+        if let Some((tree, tree_version)) = self.tree.lock().as_mut() {
+            let mut delta = 0_isize;
+            for Edit {
+                old_range,
+                new_range,
+                old_lines,
+            } in self.edits_since(tree_version.clone())
+            {
+                let start_offset = (old_range.start as isize + delta) as usize;
+                let start_point = self.visible_text.to_point(start_offset);
+                let old_bytes = old_range.end - old_range.start;
+                let new_bytes = new_range.end - new_range.start;
+                tree.edit(&InputEdit {
+                    start_byte: start_offset,
+                    old_end_byte: start_offset + old_bytes,
+                    new_end_byte: start_offset + new_bytes,
+                    start_position: start_point.into(),
+                    old_end_position: (start_point + old_lines).into(),
+                    new_end_position: self.visible_text.to_point(start_offset + new_bytes).into(),
+                });
+                delta += new_bytes as isize - old_bytes as isize;
+            }
+            *tree_version = self.version();
+            Some(tree.clone())
+        } else {
+            None
+        }
+    }
+
     fn should_reparse(&self) -> bool {
         self.tree
+            .lock()
             .as_ref()
             .map_or(true, |(_, tree_version)| *tree_version != self.version)
     }
@@ -565,40 +597,11 @@ impl Buffer {
             self.is_parsing = true;
             ctx.spawn(|handle, mut ctx| async move {
                 while handle.read_with(&ctx, |this, _| this.should_reparse()) {
-                    // The parse tree is out of date, so we clone it and synchronously splice in all
-                    // the edits that have happened since the last parse.
-                    let (new_version, new_text) = handle
-                        .read_with(&ctx, |this, _| (this.version(), this.visible_text.clone()));
-                    let mut new_tree = None;
-                    handle.update(&mut ctx, |this, _| {
-                        if let Some((mut tree, tree_version)) = this.tree.clone() {
-                            let mut delta = 0_isize;
-                            for Edit {
-                                old_range,
-                                new_range,
-                                old_lines,
-                            } in this.edits_since(tree_version)
-                            {
-                                let start_offset = (old_range.start as isize + delta) as usize;
-                                let start_point = new_text.to_point(start_offset);
-                                let old_bytes = old_range.end - old_range.start;
-                                let new_bytes = new_range.end - new_range.start;
-                                tree.edit(&InputEdit {
-                                    start_byte: start_offset,
-                                    old_end_byte: start_offset + old_bytes,
-                                    new_end_byte: start_offset + new_bytes,
-                                    start_position: start_point.into(),
-                                    old_end_position: (start_point + old_lines).into(),
-                                    new_end_position: new_text
-                                        .to_point(start_offset + new_bytes)
-                                        .into(),
-                                });
-                                delta += new_bytes as isize - old_bytes as isize;
-                            }
-
-                            new_tree = Some(tree);
-                        }
-                    });
+                    // The parse tree is out of date, so grab the syntax tree to synchronously
+                    // splice all the edits that have happened since the last parse.
+                    let new_tree = handle.update(&mut ctx, |this, _| this.syntax_tree());
+                    let (new_text, new_version) = handle
+                        .read_with(&ctx, |this, _| (this.visible_text.clone(), this.version()));
 
                     // Parse the current text in a background thread.
                     let new_tree = ctx
@@ -610,7 +613,7 @@ impl Buffer {
                         .await;
 
                     handle.update(&mut ctx, |this, ctx| {
-                        this.tree = Some((new_tree, new_version));
+                        *this.tree.lock() = Some((new_tree, new_version));
                         ctx.emit(Event::Reparsed);
                     });
                 }
@@ -2001,7 +2004,7 @@ impl Clone for Buffer {
             deferred_ops: self.deferred_ops.clone(),
             file: self.file.clone(),
             language: self.language.clone(),
-            tree: self.tree.clone(),
+            tree: Mutex::new(self.tree.lock().clone()),
             is_parsing: false,
             deferred_replicas: self.deferred_replicas.clone(),
             replica_id: self.replica_id,
@@ -3273,7 +3276,7 @@ mod tests {
 
             let buffer = Buffer::from_history(0, History::new(text.into()), None, rust_lang, ctx);
             assert!(buffer.is_parsing);
-            assert!(buffer.tree.is_none());
+            assert!(buffer.syntax_tree().is_none());
             buffer
         });
 
@@ -3387,7 +3390,7 @@ mod tests {
 
         fn get_tree_sexp(buffer: &ModelHandle<Buffer>, ctx: &gpui::TestAppContext) -> String {
             buffer.read_with(ctx, |buffer, _| {
-                buffer.tree.as_ref().unwrap().0.root_node().to_sexp()
+                buffer.syntax_tree().unwrap().root_node().to_sexp()
             })
         }
     }
