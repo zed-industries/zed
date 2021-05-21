@@ -14,10 +14,7 @@ use gpui::{
 use json::json;
 use smallvec::SmallVec;
 use std::cmp::Ordering;
-use std::{
-    cmp::{self},
-    sync::Arc,
-};
+use std::cmp::{self};
 
 pub struct BufferElement {
     view: WeakViewHandle<BufferView>,
@@ -188,13 +185,12 @@ impl BufferElement {
         for (ix, line) in layout.line_number_layouts.iter().enumerate() {
             let line_origin = rect.origin()
                 + vec2f(
-                    rect.width() - line.width - layout.gutter_padding,
+                    rect.width() - line.width() - layout.gutter_padding,
                     ix as f32 * line_height - (scroll_top % line_height),
                 );
             line.paint(
                 line_origin,
-                RectF::new(vec2f(0., 0.), vec2f(line.width, line_height)),
-                &[(0..line.len, ColorU::black())],
+                RectF::new(vec2f(0., 0.), vec2f(line.width(), line_height)),
                 ctx,
             );
         }
@@ -259,7 +255,7 @@ impl BufferElement {
                                         + line_layout.x_for_index(range_end.column() as usize)
                                         - scroll_left
                                 } else {
-                                    content_origin.x() + line_layout.width + corner_radius * 2.0
+                                    content_origin.x() + line_layout.width() + corner_radius * 2.0
                                         - scroll_left
                                 },
                             }
@@ -292,7 +288,6 @@ impl BufferElement {
             line.paint(
                 content_origin + vec2f(-scroll_left, row as f32 * line_height - scroll_top),
                 RectF::new(vec2f(scroll_left, 0.), vec2f(bounds.width(), line_height)),
-                &[(0..line.len, ColorU::black())],
                 ctx,
             );
         }
@@ -377,8 +372,8 @@ impl Element for BufferElement {
                 }
                 Ok(layouts) => {
                     for line in &layouts {
-                        if line.width > max_visible_line_width {
-                            max_visible_line_width = line.width;
+                        if line.width() > max_visible_line_width {
+                            max_visible_line_width = line.width();
                         }
                     }
 
@@ -506,8 +501,8 @@ pub struct LayoutState {
     gutter_size: Vector2F,
     gutter_padding: f32,
     text_size: Vector2F,
-    line_layouts: Vec<Arc<text_layout::Line>>,
-    line_number_layouts: Vec<Arc<text_layout::Line>>,
+    line_layouts: Vec<text_layout::Line>,
+    line_number_layouts: Vec<text_layout::Line>,
     max_visible_line_width: f32,
     autoscroll_horizontally: bool,
 }
@@ -524,7 +519,7 @@ impl LayoutState {
         let longest_line_width = view
             .layout_line(row, font_cache, layout_cache, app)
             .unwrap()
-            .width;
+            .width();
         longest_line_width.max(self.max_visible_line_width) + view.em_width(font_cache)
     }
 

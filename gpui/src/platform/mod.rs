@@ -8,20 +8,20 @@ pub mod current {
 }
 
 use crate::{
+    color::ColorU,
     executor,
     fonts::{FontId, GlyphId, Metrics as FontMetrics, Properties as FontProperties},
     geometry::{
         rect::{RectF, RectI},
         vector::Vector2F,
     },
-    text_layout::Line,
+    text_layout::LineLayout,
     ClipboardItem, Menu, Scene,
 };
 use async_task::Runnable;
 pub use event::Event;
 use std::{
     any::Any,
-    ops::Range,
     path::{Path, PathBuf},
     rc::Rc,
     sync::Arc,
@@ -122,5 +122,10 @@ pub trait FontSystem: Send + Sync {
         subpixel_shift: Vector2F,
         scale_factor: f32,
     ) -> Option<(RectI, Vec<u8>)>;
-    fn layout_str(&self, text: &str, font_size: f32, runs: &[(Range<usize>, FontId)]) -> Line;
+    fn layout_str(
+        &self,
+        text: &str,
+        font_size: f32,
+        runs: &[(usize, FontId, ColorU)],
+    ) -> LineLayout;
 }

@@ -1,4 +1,5 @@
 use crate::{
+    color::ColorU,
     fonts::{FontId, GlyphId, Metrics, Properties},
     geometry::{
         rect::{RectF, RectI},
@@ -6,7 +7,7 @@ use crate::{
         vector::{vec2f, vec2i, Vector2F},
     },
     platform,
-    text_layout::{Glyph, Line, Run},
+    text_layout::{Glyph, LineLayout, Run},
 };
 use cocoa::appkit::{CGFloat, CGPoint};
 use core_foundation::{
@@ -21,7 +22,7 @@ use core_graphics::{
 use core_text::{line::CTLine, string_attributes::kCTFontAttributeName};
 use font_kit::{canvas::RasterizationOptions, hinting::HintingOptions, source::SystemSource};
 use parking_lot::RwLock;
-use std::{char, convert::TryFrom};
+use std::{cell::RefCell, char, convert::TryFrom};
 
 #[allow(non_upper_case_globals)]
 const kCGImageAlphaOnly: u32 = 7;
@@ -80,8 +81,8 @@ impl platform::FontSystem for FontSystem {
         &self,
         text: &str,
         font_size: f32,
-        runs: &[(std::ops::Range<usize>, FontId)],
-    ) -> Line {
+        runs: &[(usize, FontId, ColorU)],
+    ) -> LineLayout {
         self.0.read().layout_str(text, font_size, runs)
     }
 }
@@ -185,8 +186,8 @@ impl FontSystemState {
         &self,
         text: &str,
         font_size: f32,
-        runs: &[(std::ops::Range<usize>, FontId)],
-    ) -> Line {
+        runs: &[(usize, FontId, ColorU)],
+    ) -> LineLayout {
         let font_id_attr_name = CFString::from_static_string("zed_font_id");
 
         let len = text.len();
@@ -205,16 +206,34 @@ impl FontSystemState {
             let mut utf8_and_utf16_ixs = utf8_and_utf16_ixs.clone();
             string.replace_str(&CFString::new(text), CFRange::init(0, 0));
 
+            let last_run: RefCell<Option<(usize, FontId)>> = Default::default();
+            let font_runs = runs
+                .iter()
+                .filter_map(|(len, font_id, _)| {
+                    let mut last_run = last_run.borrow_mut();
+                    if let Some((last_len, last_font_id)) = last_run.as_mut() {
+                        if font_id == last_font_id {
+                            *last_len += *len;
+                            None
+                        } else {
+                            let result = (*last_len, *last_font_id);
+                            *last_len = *len;
+                            *last_font_id = *font_id;
+                            Some(result)
+                        }
+                    } else {
+                        *last_run = Some((*len, *font_id));
+                        None
+                    }
+                })
+                .chain(std::iter::from_fn(|| last_run.borrow_mut().take()));
+
             let mut utf8_ix = 0;
             let mut utf16_ix = 0;
-            for (range, font_id) in runs {
-                while utf8_ix < range.start {
-                    let (next_utf8_ix, next_utf16_ix) = utf8_and_utf16_ixs.next().unwrap();
-                    utf8_ix = next_utf8_ix;
-                    utf16_ix = next_utf16_ix;
-                }
+            for (run_len, font_id) in font_runs {
+                let utf8_end = utf8_ix + run_len;
                 let utf16_start = utf16_ix;
-                while utf8_ix < range.end {
+                while utf8_ix < utf8_end {
                     let (next_utf8_ix, next_utf16_ix) = utf8_and_utf16_ixs.next().unwrap();
                     utf8_ix = next_utf8_ix;
                     utf16_ix = next_utf16_ix;
@@ -279,7 +298,7 @@ impl FontSystemState {
         }
 
         let typographic_bounds = line.get_typographic_bounds();
-        Line {
+        LineLayout {
             width: typographic_bounds.width as f32,
             ascent: typographic_bounds.ascent as f32,
             descent: typographic_bounds.descent as f32,
@@ -308,9 +327,9 @@ mod tests {
             "hello world",
             16.0,
             &[
-                (0..2, menlo_bold),
-                (2..6, menlo_italic),
-                (6..11, menlo_regular),
+                (2, menlo_bold, Default::default()),
+                (4, menlo_italic, Default::default()),
+                (5, menlo_regular, Default::default()),
             ],
         );
         assert_eq!(line.runs.len(), 3);
@@ -336,9 +355,9 @@ mod tests {
             text,
             16.0,
             &[
-                (0..9, zapfino_regular),
-                (9..22, menlo_regular),
-                (22..text.len(), zapfino_regular),
+                (9, zapfino_regular, ColorU::default()),
+                (13, menlo_regular, ColorU::default()),
+                (text.len() - 22, zapfino_regular, ColorU::default()),
             ],
         );
         assert_eq!(

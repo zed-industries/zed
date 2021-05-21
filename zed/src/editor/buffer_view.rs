@@ -5,9 +5,10 @@ use super::{
 use crate::{settings::Settings, util::post_inc, workspace, worktree::FileHandle};
 use anyhow::Result;
 use gpui::{
-    fonts::Properties as FontProperties, geometry::vector::Vector2F, keymap::Binding, text_layout,
-    AppContext, ClipboardItem, Element, ElementBox, Entity, FontCache, ModelHandle,
-    MutableAppContext, Task, TextLayoutCache, View, ViewContext, WeakViewHandle,
+    color::ColorU, fonts::Properties as FontProperties, geometry::vector::Vector2F,
+    keymap::Binding, text_layout, AppContext, ClipboardItem, Element, ElementBox, Entity,
+    FontCache, ModelHandle, MutableAppContext, Task, TextLayoutCache, View, ViewContext,
+    WeakViewHandle,
 };
 use parking_lot::Mutex;
 use postage::watch;
@@ -448,7 +449,7 @@ impl BufferView {
         viewport_width: f32,
         scroll_width: f32,
         max_glyph_width: f32,
-        layouts: &[Arc<text_layout::Line>],
+        layouts: &[text_layout::Line],
         ctx: &AppContext,
     ) {
         let mut target_left = std::f32::INFINITY;
@@ -2077,9 +2078,9 @@ impl BufferView {
             .layout_str(
                 "1".repeat(digit_count).as_str(),
                 font_size,
-                &[(0..digit_count, font_id)],
+                &[(digit_count, font_id, ColorU::black())],
             )
-            .width)
+            .width())
     }
 
     pub fn layout_line_numbers(
@@ -2088,7 +2089,7 @@ impl BufferView {
         font_cache: &FontCache,
         layout_cache: &TextLayoutCache,
         ctx: &AppContext,
-    ) -> Result<Vec<Arc<text_layout::Line>>> {
+    ) -> Result<Vec<text_layout::Line>> {
         let settings = self.settings.borrow();
         let font_size = settings.buffer_font_size;
         let font_id =
@@ -2114,7 +2115,7 @@ impl BufferView {
             layouts.push(layout_cache.layout_str(
                 &line_number,
                 font_size,
-                &[(0..line_number.len(), font_id)],
+                &[(line_number.len(), font_id, ColorU::black())],
             ));
         }
 
@@ -2127,7 +2128,7 @@ impl BufferView {
         font_cache: &FontCache,
         layout_cache: &TextLayoutCache,
         ctx: &AppContext,
-    ) -> Result<Vec<Arc<text_layout::Line>>> {
+    ) -> Result<Vec<text_layout::Line>> {
         rows.end = cmp::min(rows.end, self.display_map.max_point(ctx).row() + 1);
         if rows.start >= rows.end {
             return Ok(Vec::new());
@@ -2151,7 +2152,7 @@ impl BufferView {
                 layouts.push(layout_cache.layout_str(
                     &line,
                     font_size,
-                    &[(0..line.len(), font_id)],
+                    &[(line.len(), font_id, ColorU::black())],
                 ));
                 line.clear();
                 row += 1;
@@ -2171,7 +2172,7 @@ impl BufferView {
         font_cache: &FontCache,
         layout_cache: &TextLayoutCache,
         app: &AppContext,
-    ) -> Result<Arc<text_layout::Line>> {
+    ) -> Result<text_layout::Line> {
         let settings = self.settings.borrow();
         let font_id =
             font_cache.select_font(settings.buffer_font_family, &FontProperties::new())?;
@@ -2181,7 +2182,7 @@ impl BufferView {
         Ok(layout_cache.layout_str(
             &line,
             settings.buffer_font_size,
-            &[(0..self.line_len(row, app) as usize, font_id)],
+            &[(self.line_len(row, app) as usize, font_id, ColorU::black())],
         ))
     }
 
