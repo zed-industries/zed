@@ -16,7 +16,7 @@ use crate::{
     language::{Language, Tree},
     operation_queue::{self, OperationQueue},
     sum_tree::{self, FilterCursor, SeekBias, SumTree},
-    time::{self, Global, ReplicaId},
+    time::{self, ReplicaId},
     worktree::FileHandle,
 };
 use anyhow::{anyhow, Result};
@@ -76,7 +76,7 @@ pub struct Buffer {
     history: History,
     file: Option<FileHandle>,
     language: Option<Arc<Language>>,
-    tree: Option<Tree>,
+    tree: Option<(Tree, time::Global, Rope)>,
     is_parsing: bool,
     selections: HashMap<SelectionSetId, Arc<[Selection]>>,
     pub selections_last_update: SelectionsVersion,
@@ -546,6 +546,12 @@ impl Buffer {
         ctx.emit(Event::Saved);
     }
 
+    fn should_reparse(&self) -> bool {
+        self.tree
+            .as_ref()
+            .map_or(true, |(_, tree_version, _)| *tree_version != self.version)
+    }
+
     fn reparse(&mut self, ctx: &mut ModelContext<Self>) {
         // Avoid spawning a new parsing task if the buffer is already being reparsed
         // due to an earlier edit.
@@ -555,76 +561,60 @@ impl Buffer {
 
         if let Some(language) = self.language.clone() {
             self.is_parsing = true;
-            let mut old_text = self.visible_text.clone();
-            let mut old_tree = self.tree.clone();
-            let mut old_version = self.version();
-            let mut had_changes = true;
             ctx.spawn(|handle, mut ctx| async move {
-                while had_changes {
-                    // Parse the current text in a background thread.
-                    let (mut tree, text) = ctx
-                        .background_executor()
-                        .spawn({
-                            let language = language.clone();
-                            async move {
-                                let tree = Self::parse_text(&old_text, old_tree, &language);
-                                (tree, old_text)
-                            }
-                        })
-                        .await;
-
-                    // When the parsing completes, check if any new changes have occurred since
-                    // this parse began. If so, edit the new tree to reflect these new changes.
-                    let (has_changes, new_text, new_tree, new_version) =
-                        handle.update(&mut ctx, move |this, ctx| {
+                while handle.read_with(&ctx, |this, _| this.should_reparse()) {
+                    // The parse tree is out of date, so we clone it and synchronously splice in all
+                    // the edits that have happened since the last parse.
+                    let (new_version, new_text) = handle
+                        .read_with(&ctx, |this, _| (this.version(), this.visible_text.clone()));
+                    let mut new_tree = None;
+                    handle.update(&mut ctx, |this, _| {
+                        if let Some((mut tree, tree_version, old_text)) = this.tree.clone() {
                             let mut delta = 0_isize;
-                            let mut has_further_changes = false;
                             for Edit {
                                 old_range,
                                 new_range,
-                            } in this.edits_since(old_version)
+                            } in this.edits_since(tree_version)
                             {
-                                let old_len = old_range.end - old_range.start;
-                                let new_len = new_range.end - new_range.start;
-                                let old_start = (old_range.start as isize + delta) as usize;
+                                let start_offset = (old_range.start as isize + delta) as usize;
+                                let start_point = new_text.to_point(start_offset);
+                                let old_bytes = old_range.end - old_range.start;
+                                let new_bytes = new_range.end - new_range.start;
+                                let old_lines = old_text.to_point(old_range.end)
+                                    - old_text.to_point(old_range.start);
                                 tree.edit(&InputEdit {
-                                    start_byte: old_start,
-                                    old_end_byte: old_start + old_len,
-                                    new_end_byte: old_start + new_len,
-                                    start_position: text.to_point(old_start).into(),
-                                    old_end_position: text.to_point(old_start + old_len).into(),
-                                    new_end_position: this
-                                        .point_for_offset(old_start + new_len)
-                                        .unwrap()
+                                    start_byte: start_offset,
+                                    old_end_byte: start_offset + old_bytes,
+                                    new_end_byte: start_offset + new_bytes,
+                                    start_position: start_point.into(),
+                                    old_end_position: (start_point + old_lines).into(),
+                                    new_end_position: new_text
+                                        .to_point(start_offset + new_bytes)
                                         .into(),
                                 });
-                                delta += new_len as isize - old_len as isize;
-                                has_further_changes = true;
+                                delta += new_bytes as isize - old_bytes as isize;
                             }
 
-                            this.tree = Some(tree);
-                            ctx.emit(Event::Reparsed);
+                            new_tree = Some(tree);
+                        }
+                    });
 
-                            // If there were new changes, then continue the loop, spawning a new
-                            // parsing task. Otherwise, record the fact that parsing is complete.
-                            if has_further_changes {
-                                (
-                                    true,
-                                    this.visible_text.clone(),
-                                    this.tree.clone(),
-                                    this.version(),
-                                )
-                            } else {
-                                this.is_parsing = false;
-                                (false, Rope::new(), None, Global::new())
-                            }
-                        });
+                    // Parse the current text in a background thread.
+                    let new_tree = ctx
+                        .background_executor()
+                        .spawn({
+                            let language = language.clone();
+                            let new_text = new_text.clone();
+                            async move { Self::parse_text(&new_text, new_tree, &language) }
+                        })
+                        .await;
 
-                    had_changes = has_changes;
-                    old_text = new_text;
-                    old_tree = new_tree;
-                    old_version = new_version;
+                    handle.update(&mut ctx, |this, ctx| {
+                        this.tree = Some((new_tree, new_version, new_text));
+                        ctx.emit(Event::Reparsed);
+                    });
                 }
+                handle.update(&mut ctx, |this, _| this.is_parsing = false);
             })
             .detach();
         }
@@ -637,15 +627,16 @@ impl Buffer {
                 .set_language(language.grammar)
                 .expect("incompatible grammar");
             let mut chunks = text.chunks_in_range(0..text.len());
-            parser
+            let tree = parser
                 .parse_with(
                     &mut move |offset, _| {
                         chunks.seek(offset);
-                        chunks.next().map(str::as_bytes).unwrap_or(&[])
+                        chunks.next().unwrap_or("").as_bytes()
                     },
                     old_tree.as_ref(),
                 )
-                .unwrap()
+                .unwrap();
+            tree
         })
     }
 
@@ -866,21 +857,6 @@ impl Buffer {
             .into_iter()
             .map(|range| range.start.to_offset(self)..range.end.to_offset(self))
             .collect::<Vec<Range<usize>>>();
-
-        if let Some(tree) = self.tree.as_mut() {
-            let new_extent = TextSummary::from(new_text.as_str()).lines;
-            for old_range in old_ranges.iter().rev() {
-                let start_position = self.visible_text.to_point(old_range.start);
-                tree.edit(&InputEdit {
-                    start_byte: old_range.start,
-                    old_end_byte: old_range.end,
-                    new_end_byte: old_range.start + new_text.len(),
-                    start_position: start_position.into(),
-                    old_end_position: self.visible_text.to_point(old_range.end).into(),
-                    new_end_position: (start_position + new_extent).into(),
-                });
-            }
-        }
 
         let new_text = if new_text.len() > 0 {
             Some(new_text)
@@ -3432,9 +3408,43 @@ mod tests {
             )
         );
 
+        buffer.update(&mut ctx, |buf, ctx| {
+            buf.undo(Some(ctx));
+            assert_eq!(buf.text(), "fn a() {}");
+            assert!(buf.is_parsing);
+        });
+        buffer.condition(&ctx, |buffer, _| !buffer.is_parsing).await;
+        assert_eq!(
+            get_tree_sexp(&buffer, &ctx),
+            concat!(
+                "(source_file (function_item name: (identifier) ",
+                "parameters: (parameters) ",
+                "body: (block)))"
+            )
+        );
+
+        buffer.update(&mut ctx, |buf, ctx| {
+            buf.redo(Some(ctx));
+            assert_eq!(buf.text(), "fn a(b: C) { d.e::<G>(f); }");
+            assert!(buf.is_parsing);
+        });
+        buffer.condition(&ctx, |buffer, _| !buffer.is_parsing).await;
+        assert_eq!(
+            get_tree_sexp(&buffer, &ctx),
+            concat!(
+                "(source_file (function_item name: (identifier) ",
+                    "parameters: (parameters (parameter pattern: (identifier) type: (type_identifier))) ",
+                    "body: (block (call_expression ",
+                        "function: (generic_function ",
+                            "function: (field_expression value: (identifier) field: (field_identifier)) ",
+                            "type_arguments: (type_arguments (type_identifier))) ",
+                            "arguments: (arguments (identifier))))))",
+            )
+        );
+
         fn get_tree_sexp(buffer: &ModelHandle<Buffer>, ctx: &gpui::TestAppContext) -> String {
             buffer.read_with(ctx, |buffer, _| {
-                buffer.tree.as_ref().unwrap().root_node().to_sexp()
+                buffer.tree.as_ref().unwrap().0.root_node().to_sexp()
             })
         }
     }
