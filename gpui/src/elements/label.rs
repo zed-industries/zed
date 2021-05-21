@@ -220,17 +220,13 @@ mod tests {
         assert_eq!(
             runs.as_slice(),
             &[
-                (3, menlo_regular, black),
-                (1, menlo_bold, red),
-                (1, menlo_regular, black),
-                (1, menlo_bold, red),
-                (3, menlo_regular, black),
-                (1, menlo_bold, red),
-                (5, menlo_regular, black),
-                (1, menlo_bold, red),
-                (2, menlo_regular, black),
-                (1, menlo_bold, red),
-                (15, menlo_regular, black),
+                (".α".len(), menlo_regular, black),
+                ("βγ".len(), menlo_bold, red),
+                ("δ".len(), menlo_regular, black),
+                ("ε".len(), menlo_bold, red),
+                (".ⓐ".len(), menlo_regular, black),
+                ("ⓑⓒ".len(), menlo_bold, red),
+                ("ⓓⓔ.abcde.".len(), menlo_regular, black),
             ]
         );
     }
