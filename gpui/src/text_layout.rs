@@ -14,13 +14,12 @@ use std::{
     borrow::Borrow,
     collections::HashMap,
     hash::{Hash, Hasher},
-    ops::Range,
     sync::Arc,
 };
 
 pub struct TextLayoutCache {
-    prev_frame: Mutex<HashMap<CacheKeyValue, Arc<Line>>>,
-    curr_frame: RwLock<HashMap<CacheKeyValue, Arc<Line>>>,
+    prev_frame: Mutex<HashMap<CacheKeyValue, Arc<LineLayout>>>,
+    curr_frame: RwLock<HashMap<CacheKeyValue, Arc<LineLayout>>>,
     fonts: Arc<dyn platform::FontSystem>,
 }
 
@@ -44,31 +43,31 @@ impl TextLayoutCache {
         &'a self,
         text: &'a str,
         font_size: f32,
-        runs: &'a [(Range<usize>, FontId)],
-    ) -> Arc<Line> {
+        runs: &'a [(usize, FontId, ColorU)],
+    ) -> Line {
         let key = &CacheKeyRef {
             text,
             font_size: OrderedFloat(font_size),
             runs,
         } as &dyn CacheKey;
         let curr_frame = self.curr_frame.upgradable_read();
-        if let Some(line) = curr_frame.get(key) {
-            return line.clone();
+        if let Some(layout) = curr_frame.get(key) {
+            return Line::new(layout.clone(), runs);
         }
 
         let mut curr_frame = RwLockUpgradableReadGuard::upgrade(curr_frame);
-        if let Some((key, line)) = self.prev_frame.lock().remove_entry(key) {
-            curr_frame.insert(key, line.clone());
-            line.clone()
+        if let Some((key, layout)) = self.prev_frame.lock().remove_entry(key) {
+            curr_frame.insert(key, layout.clone());
+            Line::new(layout.clone(), runs)
         } else {
-            let line = Arc::new(self.fonts.layout_str(text, font_size, runs));
+            let layout = Arc::new(self.fonts.layout_str(text, font_size, runs));
             let key = CacheKeyValue {
                 text: text.into(),
                 font_size: OrderedFloat(font_size),
                 runs: SmallVec::from(runs),
             };
-            curr_frame.insert(key, line.clone());
-            line
+            curr_frame.insert(key, layout.clone());
+            Line::new(layout, runs)
         }
     }
 }
@@ -95,7 +94,7 @@ impl<'a> Hash for (dyn CacheKey + 'a) {
 struct CacheKeyValue {
     text: String,
     font_size: OrderedFloat<f32>,
-    runs: SmallVec<[(Range<usize>, FontId); 1]>,
+    runs: SmallVec<[(usize, FontId, ColorU); 1]>,
 }
 
 impl CacheKey for CacheKeyValue {
@@ -124,7 +123,7 @@ impl<'a> Borrow<dyn CacheKey + 'a> for CacheKeyValue {
 struct CacheKeyRef<'a> {
     text: &'a str,
     font_size: OrderedFloat<f32>,
-    runs: &'a [(Range<usize>, FontId)],
+    runs: &'a [(usize, FontId, ColorU)],
 }
 
 impl<'a> CacheKey for CacheKeyRef<'a> {
@@ -135,6 +134,12 @@ impl<'a> CacheKey for CacheKeyRef<'a> {
 
 #[derive(Default, Debug)]
 pub struct Line {
+    layout: Arc<LineLayout>,
+    color_runs: SmallVec<[(u32, ColorU); 32]>,
+}
+
+#[derive(Default, Debug)]
+pub struct LineLayout {
     pub width: f32,
     pub ascent: f32,
     pub descent: f32,
@@ -157,22 +162,34 @@ pub struct Glyph {
 }
 
 impl Line {
+    fn new(layout: Arc<LineLayout>, runs: &[(usize, FontId, ColorU)]) -> Self {
+        let mut color_runs = SmallVec::new();
+        for (len, _, color) in runs {
+            color_runs.push((*len as u32, *color));
+        }
+        Self { layout, color_runs }
+    }
+
+    pub fn width(&self) -> f32 {
+        self.layout.width
+    }
+
     pub fn x_for_index(&self, index: usize) -> f32 {
-        for run in &self.runs {
+        for run in &self.layout.runs {
             for glyph in &run.glyphs {
                 if glyph.index == index {
                     return glyph.position.x();
                 }
             }
         }
-        self.width
+        self.layout.width
     }
 
     pub fn index_for_x(&self, x: f32) -> Option<usize> {
-        if x >= self.width {
+        if x >= self.layout.width {
             None
         } else {
-            for run in self.runs.iter().rev() {
+            for run in self.layout.runs.iter().rev() {
                 for glyph in run.glyphs.iter().rev() {
                     if glyph.position.x() <= x {
                         return Some(glyph.index);
@@ -183,21 +200,19 @@ impl Line {
         }
     }
 
-    pub fn paint(
-        &self,
-        origin: Vector2F,
-        bounds: RectF,
-        colors: &[(Range<usize>, ColorU)],
-        ctx: &mut PaintContext,
-    ) {
-        let mut colors = colors.iter().peekable();
+    pub fn paint(&self, origin: Vector2F, bounds: RectF, ctx: &mut PaintContext) {
+        let padding_top = (bounds.height() - self.layout.ascent - self.layout.descent) / 2.;
+        let baseline_origin = vec2f(0., padding_top + self.layout.ascent);
+
+        let mut color_runs = self.color_runs.iter();
+        let mut color_end = 0;
         let mut color = ColorU::black();
 
-        let padding_top = (bounds.height() - self.ascent - self.descent) / 2.;
-        let baseline_origin = vec2f(0., padding_top + self.ascent);
-
-        for run in &self.runs {
-            let max_glyph_width = ctx.font_cache.bounding_box(run.font_id, self.font_size).x();
+        for run in &self.layout.runs {
+            let max_glyph_width = ctx
+                .font_cache
+                .bounding_box(run.font_id, self.layout.font_size)
+                .x();
 
             for glyph in &run.glyphs {
                 let glyph_origin = baseline_origin + glyph.position;
@@ -209,18 +224,19 @@ impl Line {
                     break;
                 }
 
-                while let Some((range, next_color)) = colors.peek() {
-                    if glyph.index >= range.end {
-                        colors.next();
+                if glyph.index >= color_end {
+                    if let Some(next_run) = color_runs.next() {
+                        color_end += next_run.0 as usize;
+                        color = next_run.1;
                     } else {
-                        color = *next_color;
-                        break;
+                        color_end = self.layout.len;
+                        color = ColorU::black();
                     }
                 }
 
                 ctx.scene.push_glyph(scene::Glyph {
                     font_id: run.font_id,
-                    font_size: self.font_size,
+                    font_size: self.layout.font_size,
                     id: glyph.id,
                     origin: origin + glyph_origin,
                     color,

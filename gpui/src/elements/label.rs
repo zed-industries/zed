@@ -1,4 +1,5 @@
 use serde_json::json;
+use smallvec::{smallvec, SmallVec};
 
 use crate::{
     color::ColorU,
@@ -13,7 +14,6 @@ use crate::{
     AfterLayoutContext, DebugContext, Element, Event, EventContext, FontCache, LayoutContext,
     PaintContext, SizeConstraint,
 };
-use std::{ops::Range, sync::Arc};
 
 pub struct Label {
     text: String,
@@ -21,11 +21,6 @@ pub struct Label {
     font_properties: Properties,
     font_size: f32,
     highlights: Option<Highlights>,
-}
-
-pub struct LayoutState {
-    line: Arc<Line>,
-    colors: Vec<(Range<usize>, ColorU)>,
 }
 
 pub struct Highlights {
@@ -59,60 +54,56 @@ impl Label {
         self
     }
 
-    fn layout_text(
+    fn compute_runs(
         &self,
         font_cache: &FontCache,
         font_id: FontId,
-    ) -> (Vec<(Range<usize>, FontId)>, Vec<(Range<usize>, ColorU)>) {
-        let text_len = self.text.len();
-        let mut styles;
-        let mut colors;
+    ) -> SmallVec<[(usize, FontId, ColorU); 8]> {
         if let Some(highlights) = self.highlights.as_ref() {
-            styles = Vec::new();
-            colors = Vec::new();
             let highlight_font_id = font_cache
                 .select_font(self.family_id, &highlights.font_properties)
                 .unwrap_or(font_id);
-            let mut pending_highlight: Option<Range<usize>> = None;
-            for ix in &highlights.indices {
-                if let Some(pending_highlight) = pending_highlight.as_mut() {
-                    if *ix == pending_highlight.end {
-                        pending_highlight.end += 1;
-                    } else {
-                        styles.push((pending_highlight.clone(), highlight_font_id));
-                        colors.push((pending_highlight.clone(), highlights.color));
-                        styles.push((pending_highlight.end..*ix, font_id));
-                        colors.push((pending_highlight.end..*ix, ColorU::black()));
-                        *pending_highlight = *ix..*ix + 1;
-                    }
-                } else {
-                    styles.push((0..*ix, font_id));
-                    colors.push((0..*ix, ColorU::black()));
-                    pending_highlight = Some(*ix..*ix + 1);
-                }
-            }
-            if let Some(pending_highlight) = pending_highlight.as_mut() {
-                styles.push((pending_highlight.clone(), highlight_font_id));
-                colors.push((pending_highlight.clone(), highlights.color));
-                if text_len > pending_highlight.end {
-                    styles.push((pending_highlight.end..text_len, font_id));
-                    colors.push((pending_highlight.end..text_len, ColorU::black()));
-                }
-            } else {
-                styles.push((0..text_len, font_id));
-                colors.push((0..text_len, ColorU::black()));
-            }
-        } else {
-            styles = vec![(0..text_len, font_id)];
-            colors = vec![(0..text_len, ColorU::black())];
-        }
 
-        (styles, colors)
+            let mut highlight_indices = highlights.indices.iter().copied().peekable();
+            let mut runs = SmallVec::new();
+
+            for (char_ix, c) in self.text.char_indices() {
+                let mut font_id = font_id;
+                let mut color = ColorU::black();
+                if let Some(highlight_ix) = highlight_indices.peek() {
+                    if char_ix == *highlight_ix {
+                        font_id = highlight_font_id;
+                        color = highlights.color;
+                        highlight_indices.next();
+                    }
+                }
+
+                let push_new_run =
+                    if let Some((last_len, last_font_id, last_color)) = runs.last_mut() {
+                        if font_id == *last_font_id && color == *last_color {
+                            *last_len += c.len_utf8();
+                            false
+                        } else {
+                            true
+                        }
+                    } else {
+                        true
+                    };
+
+                if push_new_run {
+                    runs.push((c.len_utf8(), font_id, color));
+                }
+            }
+
+            runs
+        } else {
+            smallvec![(self.text.len(), font_id, ColorU::black())]
+        }
     }
 }
 
 impl Element for Label {
-    type LayoutState = LayoutState;
+    type LayoutState = Line;
     type PaintState = ();
 
     fn layout(
@@ -124,17 +115,17 @@ impl Element for Label {
             .font_cache
             .select_font(self.family_id, &self.font_properties)
             .unwrap();
-        let (styles, colors) = self.layout_text(&ctx.font_cache, font_id);
+        let runs = self.compute_runs(&ctx.font_cache, font_id);
         let line =
             ctx.text_layout_cache
-                .layout_str(self.text.as_str(), self.font_size, styles.as_slice());
+                .layout_str(self.text.as_str(), self.font_size, runs.as_slice());
 
         let size = vec2f(
-            line.width.max(constraint.min.x()).min(constraint.max.x()),
+            line.width().max(constraint.min.x()).min(constraint.max.x()),
             ctx.font_cache.line_height(font_id, self.font_size).ceil(),
         );
 
-        (size, LayoutState { line, colors })
+        (size, line)
     }
 
     fn after_layout(&mut self, _: Vector2F, _: &mut Self::LayoutState, _: &mut AfterLayoutContext) {
@@ -143,13 +134,12 @@ impl Element for Label {
     fn paint(
         &mut self,
         bounds: RectF,
-        layout: &mut Self::LayoutState,
+        line: &mut Self::LayoutState,
         ctx: &mut PaintContext,
     ) -> Self::PaintState {
-        layout.line.paint(
+        line.paint(
             bounds.origin(),
             RectF::new(vec2f(0., 0.), bounds.size()),
-            layout.colors.as_slice(),
             ctx,
         )
     }
@@ -226,28 +216,21 @@ mod tests {
             ],
         );
 
-        let (styles, colors) = label.layout_text(app.font_cache().as_ref(), menlo_regular);
-        assert_eq!(styles.len(), colors.len());
-
-        let mut spans = Vec::new();
-        for ((style_range, font_id), (color_range, color)) in styles.into_iter().zip(colors) {
-            assert_eq!(style_range, color_range);
-            spans.push((style_range, font_id, color));
-        }
+        let runs = label.compute_runs(app.font_cache().as_ref(), menlo_regular);
         assert_eq!(
-            spans,
+            runs.as_slice(),
             &[
-                (0..3, menlo_regular, black),
-                (3..4, menlo_bold, red),
-                (4..5, menlo_regular, black),
-                (5..6, menlo_bold, red),
-                (6..9, menlo_regular, black),
-                (9..10, menlo_bold, red),
-                (10..15, menlo_regular, black),
-                (15..16, menlo_bold, red),
-                (16..18, menlo_regular, black),
-                (18..19, menlo_bold, red),
-                (19..34, menlo_regular, black)
+                (3, menlo_regular, black),
+                (1, menlo_bold, red),
+                (1, menlo_regular, black),
+                (1, menlo_bold, red),
+                (3, menlo_regular, black),
+                (1, menlo_bold, red),
+                (5, menlo_regular, black),
+                (1, menlo_bold, red),
+                (2, menlo_regular, black),
+                (1, menlo_bold, red),
+                (15, menlo_regular, black),
             ]
         );
     }

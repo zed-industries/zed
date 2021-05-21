@@ -82,11 +82,11 @@ impl gpui::Element for TextElement {
             text,
             font_size,
             &[
-                (0..1, normal),
-                (1..2, bold),
-                (2..3, normal),
-                (3..4, bold),
-                (4..text.len(), normal),
+                (1, normal, ColorU::default()),
+                (1, bold, ColorU::default()),
+                (1, normal, ColorU::default()),
+                (1, bold, ColorU::default()),
+                (text.len() - 4, normal, ColorU::default()),
             ],
         );
 
@@ -95,12 +95,7 @@ impl gpui::Element for TextElement {
             background: Some(ColorU::white()),
             ..Default::default()
         });
-        line.paint(
-            bounds.origin(),
-            bounds,
-            &[(0..text.len(), ColorU::black())],
-            ctx,
-        );
+        line.paint(bounds.origin(), bounds, ctx);
     }
 
     fn dispatch_event(
