@@ -2482,11 +2482,11 @@ impl ToPoint for usize {
 mod tests {
     use super::*;
     use crate::{
-        test::temp_tree,
+        test::{build_app_state, temp_tree},
         util::RandomCharIter,
         worktree::{Worktree, WorktreeHandle},
     };
-    use gpui::App;
+    use gpui::{App, ModelHandle};
     use rand::prelude::*;
     use serde_json::json;
     use std::{
@@ -3334,6 +3334,105 @@ mod tests {
                         .collect::<HashMap<_, _>>()
                 );
             }
+        }
+    }
+
+    #[gpui::test]
+    async fn test_reparse(mut ctx: gpui::TestAppContext) {
+        let app_state = ctx.read(build_app_state);
+        let rust_lang = app_state
+            .language_registry
+            .select_language("test.rs")
+            .cloned();
+        assert!(rust_lang.is_some());
+
+        let buffer = ctx.add_model(|ctx| {
+            let text = "fn a() {}";
+
+            let buffer = Buffer::from_history(0, History::new(text.into()), None, rust_lang, ctx);
+            assert!(buffer.is_parsing);
+            assert!(buffer.tree.is_none());
+            buffer
+        });
+
+        // Wait for the initial text to parse
+        buffer.condition(&ctx, |buffer, _| !buffer.is_parsing).await;
+        assert_eq!(
+            get_tree_sexp(&buffer, &ctx),
+            concat!(
+                "(source_file (function_item name: (identifier) ",
+                "parameters: (parameters) ",
+                "body: (block)))"
+            )
+        );
+
+        // Perform some edits (add parameter and variable reference)
+        // Parsing doesn't begin until the transaction is complete
+        buffer.update(&mut ctx, |buf, ctx| {
+            buf.start_transaction(None).unwrap();
+
+            let offset = buf.text().find(")").unwrap();
+            buf.edit(vec![offset..offset], "b: C", Some(ctx)).unwrap();
+            assert!(!buf.is_parsing);
+
+            let offset = buf.text().find("}").unwrap();
+            buf.edit(vec![offset..offset], " d; ", Some(ctx)).unwrap();
+            assert!(!buf.is_parsing);
+
+            buf.end_transaction(None, Some(ctx)).unwrap();
+            assert_eq!(buf.text(), "fn a(b: C) { d; }");
+            assert!(buf.is_parsing);
+        });
+        buffer.condition(&ctx, |buffer, _| !buffer.is_parsing).await;
+        assert_eq!(
+            get_tree_sexp(&buffer, &ctx),
+            concat!(
+                "(source_file (function_item name: (identifier) ",
+                    "parameters: (parameters (parameter pattern: (identifier) type: (type_identifier))) ",
+                    "body: (block (identifier))))"
+            )
+        );
+
+        // Perform a series of edits without waiting for the current parse to complete:
+        // * turn identifier into a field expression
+        // * turn field expression into a method call
+        // * add a turbofish to the method call
+        buffer.update(&mut ctx, |buf, ctx| {
+            let offset = buf.text().find(";").unwrap();
+            buf.edit(vec![offset..offset], ".e", Some(ctx)).unwrap();
+            assert_eq!(buf.text(), "fn a(b: C) { d.e; }");
+            assert!(buf.is_parsing);
+        });
+        buffer.update(&mut ctx, |buf, ctx| {
+            let offset = buf.text().find(";").unwrap();
+            buf.edit(vec![offset..offset], "(f)", Some(ctx)).unwrap();
+            assert_eq!(buf.text(), "fn a(b: C) { d.e(f); }");
+            assert!(buf.is_parsing);
+        });
+        buffer.update(&mut ctx, |buf, ctx| {
+            let offset = buf.text().find("(f)").unwrap();
+            buf.edit(vec![offset..offset], "::<G>", Some(ctx)).unwrap();
+            assert_eq!(buf.text(), "fn a(b: C) { d.e::<G>(f); }");
+            assert!(buf.is_parsing);
+        });
+        buffer.condition(&ctx, |buffer, _| !buffer.is_parsing).await;
+        assert_eq!(
+            get_tree_sexp(&buffer, &ctx),
+            concat!(
+                "(source_file (function_item name: (identifier) ",
+                    "parameters: (parameters (parameter pattern: (identifier) type: (type_identifier))) ",
+                    "body: (block (call_expression ",
+                        "function: (generic_function ",
+                            "function: (field_expression value: (identifier) field: (field_identifier)) ",
+                            "type_arguments: (type_arguments (type_identifier))) ",
+                            "arguments: (arguments (identifier))))))",
+            )
+        );
+
+        fn get_tree_sexp(buffer: &ModelHandle<Buffer>, ctx: &gpui::TestAppContext) -> String {
+            buffer.read_with(ctx, |buffer, _| {
+                buffer.tree.as_ref().unwrap().root_node().to_sexp()
+            })
         }
     }
 
