@@ -1025,6 +1025,7 @@ impl Buffer {
             ctx.notify();
             if self.edits_since(old_version).next().is_some() {
                 self.did_edit(was_dirty, ctx);
+                self.reparse(ctx);
             }
         }
 
@@ -1250,6 +1251,7 @@ impl Buffer {
             ctx.notify();
             if self.edits_since(old_version).next().is_some() {
                 self.did_edit(was_dirty, ctx);
+                self.reparse(ctx);
             }
         }
 
@@ -1276,6 +1278,7 @@ impl Buffer {
             ctx.notify();
             if self.edits_since(old_version).next().is_some() {
                 self.did_edit(was_dirty, ctx);
+                self.reparse(ctx);
             }
         }
 
