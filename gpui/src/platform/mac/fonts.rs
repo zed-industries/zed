@@ -231,7 +231,7 @@ impl FontSystemState {
             let mut utf8_ix = 0;
             let mut utf16_ix = 0;
             for (run_len, font_id) in font_runs {
-                let utf8_end = utf16_ix + run_len;
+                let utf8_end = utf8_ix + run_len;
                 let utf16_start = utf16_ix;
                 while utf8_ix < utf8_end {
                     let (next_utf8_ix, next_utf16_ix) = utf8_and_utf16_ixs.next().unwrap();
