@@ -76,7 +76,7 @@ pub struct Buffer {
     history: History,
     file: Option<FileHandle>,
     language: Option<Arc<Language>>,
-    tree: Option<(Tree, time::Global, Rope)>,
+    tree: Option<(Tree, time::Global)>,
     is_parsing: bool,
     selections: HashMap<SelectionSetId, Arc<[Selection]>>,
     pub selections_last_update: SelectionsVersion,
@@ -248,16 +248,18 @@ impl UndoMap {
 }
 
 struct Edits<'a, F: Fn(&FragmentSummary) -> bool> {
-    cursor: FilterCursor<'a, F, Fragment, usize>,
+    deleted_text: &'a Rope,
+    cursor: FilterCursor<'a, F, Fragment, FragmentTextSummary>,
     undos: &'a UndoMap,
     since: time::Global,
     delta: isize,
 }
 
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
 pub struct Edit {
     pub old_range: Range<usize>,
     pub new_range: Range<usize>,
+    pub old_lines: Point,
 }
 
 impl Edit {
@@ -549,7 +551,7 @@ impl Buffer {
     fn should_reparse(&self) -> bool {
         self.tree
             .as_ref()
-            .map_or(true, |(_, tree_version, _)| *tree_version != self.version)
+            .map_or(true, |(_, tree_version)| *tree_version != self.version)
     }
 
     fn reparse(&mut self, ctx: &mut ModelContext<Self>) {
@@ -569,19 +571,18 @@ impl Buffer {
                         .read_with(&ctx, |this, _| (this.version(), this.visible_text.clone()));
                     let mut new_tree = None;
                     handle.update(&mut ctx, |this, _| {
-                        if let Some((mut tree, tree_version, old_text)) = this.tree.clone() {
+                        if let Some((mut tree, tree_version)) = this.tree.clone() {
                             let mut delta = 0_isize;
                             for Edit {
                                 old_range,
                                 new_range,
+                                old_lines,
                             } in this.edits_since(tree_version)
                             {
                                 let start_offset = (old_range.start as isize + delta) as usize;
                                 let start_point = new_text.to_point(start_offset);
                                 let old_bytes = old_range.end - old_range.start;
                                 let new_bytes = new_range.end - new_range.start;
-                                let old_lines = old_text.to_point(old_range.end)
-                                    - old_text.to_point(old_range.start);
                                 tree.edit(&InputEdit {
                                     start_byte: start_offset,
                                     old_end_byte: start_offset + old_bytes,
@@ -604,13 +605,12 @@ impl Buffer {
                         .background_executor()
                         .spawn({
                             let language = language.clone();
-                            let new_text = new_text.clone();
                             async move { Self::parse_text(&new_text, new_tree, &language) }
                         })
                         .await;
 
                     handle.update(&mut ctx, |this, ctx| {
-                        this.tree = Some((new_tree, new_version, new_text));
+                        this.tree = Some((new_tree, new_version));
                         ctx.emit(Event::Reparsed);
                     });
                 }
@@ -767,6 +767,7 @@ impl Buffer {
             .filter(move |summary| summary.max_version.changed_since(&since_2));
 
         Edits {
+            deleted_text: &self.deleted_text,
             cursor,
             undos: &self.undo_map,
             since,
@@ -2083,7 +2084,7 @@ impl<'a, F: Fn(&FragmentSummary) -> bool> Iterator for Edits<'a, F> {
         let mut change: Option<Edit> = None;
 
         while let Some(fragment) = self.cursor.item() {
-            let new_offset = *self.cursor.start();
+            let new_offset = self.cursor.start().visible;
             let old_offset = (new_offset as isize - self.delta) as usize;
 
             if !fragment.was_visible(&self.since, &self.undos) && fragment.visible {
@@ -2098,13 +2099,18 @@ impl<'a, F: Fn(&FragmentSummary) -> bool> Iterator for Edits<'a, F> {
                     change = Some(Edit {
                         old_range: old_offset..old_offset,
                         new_range: new_offset..new_offset + fragment.len(),
+                        old_lines: Point::zero(),
                     });
                     self.delta += fragment.len() as isize;
                 }
             } else if fragment.was_visible(&self.since, &self.undos) && !fragment.visible {
+                let deleted_start = self.cursor.start().deleted;
+                let old_lines = self.deleted_text.to_point(deleted_start + fragment.len())
+                    - self.deleted_text.to_point(deleted_start);
                 if let Some(ref mut change) = change {
                     if change.new_range.end == new_offset {
                         change.old_range.end += fragment.len();
+                        change.old_lines += &old_lines;
                         self.delta -= fragment.len() as isize;
                     } else {
                         break;
@@ -2113,6 +2119,7 @@ impl<'a, F: Fn(&FragmentSummary) -> bool> Iterator for Edits<'a, F> {
                     change = Some(Edit {
                         old_range: old_offset..old_offset + fragment.len(),
                         new_range: new_offset..new_offset,
+                        old_lines,
                     });
                     self.delta -= fragment.len() as isize;
                 }
@@ -2594,6 +2601,7 @@ mod tests {
                     for Edit {
                         old_range,
                         new_range,
+                        ..
                     } in buffer.edits_since(old_buffer.version.clone())
                     {
                         let old_len = old_range.end - old_range.start;

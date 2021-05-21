@@ -100,6 +100,7 @@ impl FoldMap {
                 edits.push(Edit {
                     old_range: range.clone(),
                     new_range: range.clone(),
+                    ..Default::default()
                 });
             }
         }
@@ -144,6 +145,7 @@ impl FoldMap {
                 edits.push(Edit {
                     old_range: offset_range.clone(),
                     new_range: offset_range,
+                    ..Default::default()
                 });
                 fold_ixs_to_delete.push(*folds_cursor.start());
                 folds_cursor.next();
