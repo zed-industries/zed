@@ -426,6 +426,24 @@ impl FoldMapSnapshot {
         }
     }
 
+    pub fn highlighted_chunks_at<'a>(
+        &'a self,
+        offset: DisplayOffset,
+        ctx: &'a AppContext,
+    ) -> HighlightedChunks<'a> {
+        let mut transform_cursor = self.transforms.cursor::<DisplayOffset, TransformSummary>();
+        transform_cursor.seek(&offset, SeekBias::Right, &());
+        let overshoot = offset.0 - transform_cursor.start().display.bytes;
+        let buffer_offset = transform_cursor.start().buffer.bytes + overshoot;
+        let buffer = self.buffer.read(ctx);
+        HighlightedChunks {
+            transform_cursor,
+            buffer_offset,
+            buffer_chunks: buffer.highlighted_text_for_range(buffer_offset..buffer.len()),
+            buffer_chunk: None,
+        }
+    }
+
     pub fn chars_at<'a>(
         &'a self,
         point: DisplayPoint,
@@ -714,6 +732,66 @@ impl<'a> Iterator for Chunks<'a> {
 
             self.buffer_offset += chunk.len();
             return Some(chunk);
+        }
+
+        None
+    }
+}
+
+pub struct HighlightedChunks<'a> {
+    transform_cursor: Cursor<'a, Transform, DisplayOffset, TransformSummary>,
+    buffer_chunks: buffer::HighlightedChunks<'a>,
+    buffer_chunk: Option<(&'a str, Option<usize>)>,
+    buffer_offset: usize,
+}
+
+impl<'a> Iterator for HighlightedChunks<'a> {
+    type Item = (&'a str, Option<usize>);
+
+    fn next(&mut self) -> Option<Self::Item> {
+        let transform = if let Some(item) = self.transform_cursor.item() {
+            item
+        } else {
+            return None;
+        };
+
+        // If we're in a fold, then return the fold's display text and
+        // advance the transform and buffer cursors to the end of the fold.
+        if let Some(display_text) = transform.display_text {
+            self.buffer_chunk.take();
+            self.buffer_offset += transform.summary.buffer.bytes;
+            self.buffer_chunks.seek(self.buffer_offset);
+
+            while self.buffer_offset >= self.transform_cursor.end().buffer.bytes
+                && self.transform_cursor.item().is_some()
+            {
+                self.transform_cursor.next();
+            }
+
+            return Some((display_text, None));
+        }
+
+        // Retrieve a chunk from the current buffer cursor's location.
+        if self.buffer_chunk.is_none() {
+            self.buffer_chunk = self.buffer_chunks.next();
+        }
+
+        // Otherwise, take a chunk from the buffer's text.
+        if let Some((mut chunk, capture_ix)) = self.buffer_chunk {
+            let offset_in_chunk = self.buffer_offset - self.buffer_chunks.offset();
+            chunk = &chunk[offset_in_chunk..];
+
+            // Truncate the chunk so that it ends at the next fold.
+            let region_end = self.transform_cursor.end().buffer.bytes - self.buffer_offset;
+            if chunk.len() >= region_end {
+                chunk = &chunk[0..region_end];
+                self.transform_cursor.next();
+            } else {
+                self.buffer_chunk.take();
+            }
+
+            self.buffer_offset += chunk.len();
+            return Some((chunk, capture_ix));
         }
 
         None

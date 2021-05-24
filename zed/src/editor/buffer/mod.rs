@@ -752,12 +752,8 @@ impl Buffer {
         self.visible_text.chunks_in_range(start..end)
     }
 
-    pub fn highlighted_text_for_range<'a, T: ToOffset>(
-        &'a self,
-        range: Range<T>,
-    ) -> impl Iterator<Item = (&'a str, Option<usize>)> {
+    pub fn highlighted_text_for_range<T: ToOffset>(&self, range: Range<T>) -> HighlightedChunks {
         if let (Some(language), Some((tree, _))) = (&self.language, self.tree.as_ref()) {
-            let visible_text = &self.visible_text;
             let mut cursor = self
                 .query_cursor
                 .lock()
@@ -771,18 +767,14 @@ impl Buffer {
             let captures = cursor_ref.captures(
                 &language.highlight_query,
                 tree.root_node(),
-                move |node: tree_sitter::Node| {
-                    visible_text
-                        .chunks_in_range(node.byte_range())
-                        .map(str::as_bytes)
-                },
+                TextProvider(&self.visible_text),
             );
 
             HighlightedChunks {
                 captures: captures.peekable(),
                 chunks,
                 stack: Default::default(),
-                offset: start,
+                range: start..end,
                 query_cursor: Some(cursor),
                 buffer: self,
             }
@@ -2177,21 +2169,66 @@ impl<'a, F: Fn(&FragmentSummary) -> bool> Iterator for Edits<'a, F> {
     }
 }
 
-pub struct HighlightedChunks<'a, T: tree_sitter::TextProvider<'a>> {
+struct ByteChunks<'a>(rope::Chunks<'a>);
+
+impl<'a> Iterator for ByteChunks<'a> {
+    type Item = &'a [u8];
+
+    fn next(&mut self) -> Option<Self::Item> {
+        self.0.next().map(str::as_bytes)
+    }
+}
+
+struct TextProvider<'a>(&'a Rope);
+
+impl<'a> tree_sitter::TextProvider<'a> for TextProvider<'a> {
+    type I = ByteChunks<'a>;
+
+    fn text(&mut self, node: tree_sitter::Node) -> Self::I {
+        ByteChunks(self.0.chunks_in_range(node.byte_range()))
+    }
+}
+
+pub struct HighlightedChunks<'a> {
     chunks: Chunks<'a>,
-    captures: iter::Peekable<tree_sitter::QueryCaptures<'a, 'a, T>>,
+    captures: iter::Peekable<tree_sitter::QueryCaptures<'a, 'a, TextProvider<'a>>>,
     stack: Vec<(usize, usize)>,
-    offset: usize,
+    range: Range<usize>,
     query_cursor: Option<QueryCursor>,
     buffer: &'a Buffer,
 }
 
-impl<'a, T: tree_sitter::TextProvider<'a>> Iterator for HighlightedChunks<'a, T> {
+impl<'a> HighlightedChunks<'a> {
+    pub fn seek(&mut self, offset: usize) {
+        let language = self.buffer.language.as_ref().unwrap();
+        let tree = &self.buffer.tree.as_ref().unwrap().0;
+        let mut cursor = self.query_cursor.as_mut().unwrap();
+        let cursor_ref = unsafe { mem::transmute::<_, &'static mut QueryCursor>(&mut cursor) };
+
+        self.stack.clear();
+        self.range.start = offset;
+        self.chunks.seek(offset);
+        cursor.set_byte_range(self.range.start, self.range.end);
+        self.captures = cursor_ref
+            .captures(
+                &language.highlight_query,
+                tree.root_node(),
+                TextProvider(&self.buffer.visible_text),
+            )
+            .peekable();
+    }
+
+    pub fn offset(&self) -> usize {
+        self.range.start
+    }
+}
+
+impl<'a> Iterator for HighlightedChunks<'a> {
     type Item = (&'a str, Option<usize>);
 
     fn next(&mut self) -> Option<Self::Item> {
         while let Some((parent_capture_end, _)) = self.stack.last() {
-            if *parent_capture_end <= self.offset {
+            if *parent_capture_end <= self.range.start {
                 self.stack.pop();
             } else {
                 break;
@@ -2201,7 +2238,7 @@ impl<'a, T: tree_sitter::TextProvider<'a>> Iterator for HighlightedChunks<'a, T>
         let mut next_capture_start = usize::MAX;
         while let Some((mat, capture_ix)) = self.captures.peek() {
             let capture = mat.captures[*capture_ix as usize];
-            if self.offset < capture.node.start_byte() {
+            if self.range.start < capture.node.start_byte() {
                 next_capture_start = capture.node.start_byte();
                 break;
             } else {
@@ -2212,7 +2249,7 @@ impl<'a, T: tree_sitter::TextProvider<'a>> Iterator for HighlightedChunks<'a, T>
         }
 
         if let Some(chunk) = self.chunks.peek() {
-            let chunk_start = self.offset;
+            let chunk_start = self.range.start;
             let mut chunk_end = (self.chunks.offset() + chunk.len()).min(next_capture_start);
             let mut capture_ix = None;
             if let Some((parent_capture_end, parent_capture_ix)) = self.stack.last() {
@@ -2222,8 +2259,8 @@ impl<'a, T: tree_sitter::TextProvider<'a>> Iterator for HighlightedChunks<'a, T>
 
             let slice =
                 &chunk[chunk_start - self.chunks.offset()..chunk_end - self.chunks.offset()];
-            self.offset = chunk_end;
-            if self.offset == self.chunks.offset() + chunk.len() {
+            self.range.start = chunk_end;
+            if self.range.start == self.chunks.offset() + chunk.len() {
                 self.chunks.next().unwrap();
             }
 
@@ -2234,7 +2271,7 @@ impl<'a, T: tree_sitter::TextProvider<'a>> Iterator for HighlightedChunks<'a, T>
     }
 }
 
-impl<'a, T: tree_sitter::TextProvider<'a>> Drop for HighlightedChunks<'a, T> {
+impl<'a> Drop for HighlightedChunks<'a> {
     fn drop(&mut self) {
         let query_cursor = self.query_cursor.take().unwrap();
         let mut buffer_cursor = self.buffer.query_cursor.lock();
