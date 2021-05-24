@@ -778,7 +778,7 @@ impl Buffer {
                 },
             );
 
-            HighlightedChunksIter {
+            HighlightedChunks {
                 captures: captures.peekable(),
                 chunks,
                 stack: Default::default(),
@@ -2177,7 +2177,7 @@ impl<'a, F: Fn(&FragmentSummary) -> bool> Iterator for Edits<'a, F> {
     }
 }
 
-pub struct HighlightedChunksIter<'a, T: tree_sitter::TextProvider<'a>> {
+pub struct HighlightedChunks<'a, T: tree_sitter::TextProvider<'a>> {
     chunks: Chunks<'a>,
     captures: iter::Peekable<tree_sitter::QueryCaptures<'a, 'a, T>>,
     stack: Vec<(usize, usize)>,
@@ -2186,7 +2186,7 @@ pub struct HighlightedChunksIter<'a, T: tree_sitter::TextProvider<'a>> {
     buffer: &'a Buffer,
 }
 
-impl<'a, T: tree_sitter::TextProvider<'a>> Iterator for HighlightedChunksIter<'a, T> {
+impl<'a, T: tree_sitter::TextProvider<'a>> Iterator for HighlightedChunks<'a, T> {
     type Item = (&'a str, Option<usize>);
 
     fn next(&mut self) -> Option<Self::Item> {
@@ -2234,7 +2234,7 @@ impl<'a, T: tree_sitter::TextProvider<'a>> Iterator for HighlightedChunksIter<'a
     }
 }
 
-impl<'a, T: tree_sitter::TextProvider<'a>> Drop for HighlightedChunksIter<'a, T> {
+impl<'a, T: tree_sitter::TextProvider<'a>> Drop for HighlightedChunks<'a, T> {
     fn drop(&mut self) {
         let query_cursor = self.query_cursor.take().unwrap();
         let mut buffer_cursor = self.buffer.query_cursor.lock();
