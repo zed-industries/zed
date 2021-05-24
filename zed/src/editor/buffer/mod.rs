@@ -754,7 +754,7 @@ impl Buffer {
     pub fn highlighted_text_for_range<'a, T: ToOffset>(
         &'a mut self,
         range: Range<T>,
-    ) -> impl Iterator<Item = (&'a str, usize)> {
+    ) -> impl Iterator<Item = (&'a str, Option<usize>)> {
         if let (Some(language), Some((tree, _))) = (&self.language, self.tree.as_ref()) {
             let visible_text = &self.visible_text;
             let start = range.start.to_offset(self);
@@ -772,9 +772,10 @@ impl Buffer {
             );
 
             HighlightedChunksIter {
-                captures,
+                captures: captures.peekable(),
                 chunks,
                 stack: Default::default(),
+                offset: start,
             }
         } else {
             todo!()
@@ -2169,20 +2170,56 @@ impl<'a, F: Fn(&FragmentSummary) -> bool> Iterator for Edits<'a, F> {
 
 pub struct HighlightedChunksIter<'a, T: tree_sitter::TextProvider<'a>> {
     chunks: ChunksIter<'a>,
-    captures: tree_sitter::QueryCaptures<'a, 'a, T>,
+    captures: iter::Peekable<tree_sitter::QueryCaptures<'a, 'a, T>>,
     stack: Vec<(usize, usize)>,
+    offset: usize,
 }
 
 impl<'a, T: tree_sitter::TextProvider<'a>> Iterator for HighlightedChunksIter<'a, T> {
-    type Item = (&'a str, usize);
+    type Item = (&'a str, Option<usize>);
 
     fn next(&mut self) -> Option<Self::Item> {
-        if let Some((mat, capture_ix)) = self.captures.next() {
-            let capture = mat.captures[capture_ix as usize];
-            let range = capture.node.range();
+        while let Some((parent_capture_end, _)) = self.stack.last() {
+            if *parent_capture_end <= self.offset {
+                self.stack.pop();
+            } else {
+                break;
+            }
         }
 
-        todo!()
+        let mut next_capture_start = usize::MAX;
+        while let Some((mat, capture_ix)) = self.captures.peek() {
+            let capture = mat.captures[*capture_ix as usize];
+            if self.offset < capture.node.start_byte() {
+                next_capture_start = capture.node.start_byte();
+                break;
+            } else {
+                self.stack
+                    .push((capture.node.end_byte(), capture.index as usize));
+                self.captures.next().unwrap();
+            }
+        }
+
+        if let Some(chunk) = self.chunks.peek() {
+            let chunk_start = self.offset;
+            let mut chunk_end = (self.chunks.offset() + chunk.len()).min(next_capture_start);
+            let mut capture_ix = None;
+            if let Some((parent_capture_end, parent_capture_ix)) = self.stack.last() {
+                chunk_end = chunk_end.min(*parent_capture_end);
+                capture_ix = Some(*parent_capture_ix);
+            }
+
+            let slice =
+                &chunk[chunk_start - self.chunks.offset()..chunk_end - self.chunks.offset()];
+            self.offset = chunk_end;
+            if self.offset == self.chunks.offset() + chunk.len() {
+                self.chunks.next().unwrap();
+            }
+
+            Some((slice, capture_ix))
+        } else {
+            None
+        }
     }
 }
 
