@@ -4,7 +4,7 @@ use super::{buffer, Anchor, Bias, Buffer, Edit, Point, ToOffset, ToPoint};
 pub use fold_map::BufferRows;
 use fold_map::{FoldMap, FoldMapSnapshot};
 use gpui::{AppContext, ModelHandle};
-use std::ops::Range;
+use std::{mem, ops::Range};
 
 pub struct DisplayMap {
     buffer: ModelHandle<Buffer>,
@@ -148,6 +148,23 @@ impl DisplayMapSnapshot {
             tab_size: self.tab_size,
             chunk: &SPACES[0..to_next_stop],
             skip_leading_tab: to_next_stop > 0,
+        }
+    }
+
+    pub fn highlighted_chunks_at<'a>(
+        &'a self,
+        row: u32,
+        app: &'a AppContext,
+    ) -> HighlightedChunks<'a> {
+        let point = DisplayPoint::new(row, 0);
+        let offset = self.folds_snapshot.to_display_offset(point, app);
+        HighlightedChunks {
+            fold_chunks: self.folds_snapshot.highlighted_chunks_at(offset, app),
+            column: 0,
+            tab_size: self.tab_size,
+            chunk: "",
+            capture_ix: None,
+            skip_leading_tab: false,
         }
     }
 
@@ -333,6 +350,55 @@ impl<'a> Iterator for Chunks<'a> {
         let result = Some(self.chunk);
         self.chunk = "";
         result
+    }
+}
+
+pub struct HighlightedChunks<'a> {
+    fold_chunks: fold_map::HighlightedChunks<'a>,
+    chunk: &'a str,
+    capture_ix: Option<usize>,
+    column: usize,
+    tab_size: usize,
+    skip_leading_tab: bool,
+}
+
+impl<'a> Iterator for HighlightedChunks<'a> {
+    type Item = (&'a str, Option<usize>);
+
+    fn next(&mut self) -> Option<Self::Item> {
+        if self.chunk.is_empty() {
+            if let Some((chunk, capture_ix)) = self.fold_chunks.next() {
+                self.chunk = chunk;
+                self.capture_ix = capture_ix;
+                if self.skip_leading_tab {
+                    self.chunk = &self.chunk[1..];
+                    self.skip_leading_tab = false;
+                }
+            } else {
+                return None;
+            }
+        }
+
+        for (ix, c) in self.chunk.char_indices() {
+            match c {
+                '\t' => {
+                    if ix > 0 {
+                        let (prefix, suffix) = self.chunk.split_at(ix);
+                        self.chunk = suffix;
+                        return Some((prefix, self.capture_ix));
+                    } else {
+                        self.chunk = &self.chunk[1..];
+                        let len = self.tab_size - self.column % self.tab_size;
+                        self.column += len;
+                        return Some((&SPACES[0..len], self.capture_ix));
+                    }
+                }
+                '\n' => self.column = 0,
+                _ => self.column += 1,
+            }
+        }
+
+        Some((mem::take(&mut self.chunk), self.capture_ix.take()))
     }
 }
 
