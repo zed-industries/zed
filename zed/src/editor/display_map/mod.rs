@@ -164,7 +164,6 @@ impl DisplayMapSnapshot {
             tab_size: self.tab_size,
             chunk: "",
             capture_ix: None,
-            skip_leading_tab: false,
         }
     }
 
@@ -359,7 +358,6 @@ pub struct HighlightedChunks<'a> {
     capture_ix: Option<usize>,
     column: usize,
     tab_size: usize,
-    skip_leading_tab: bool,
 }
 
 impl<'a> Iterator for HighlightedChunks<'a> {
@@ -370,10 +368,6 @@ impl<'a> Iterator for HighlightedChunks<'a> {
             if let Some((chunk, capture_ix)) = self.fold_chunks.next() {
                 self.chunk = chunk;
                 self.capture_ix = capture_ix;
-                if self.skip_leading_tab {
-                    self.chunk = &self.chunk[1..];
-                    self.skip_leading_tab = false;
-                }
             } else {
                 return None;
             }

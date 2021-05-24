@@ -2145,8 +2145,9 @@ impl BufferView {
         let mut row = rows.start;
         let snapshot = self.display_map.snapshot(ctx);
         let chunks = snapshot.highlighted_chunks_at(rows.start, ctx);
+
         'outer: for (chunk, capture_ix) in chunks.chain(Some(("\n", None))) {
-            for (ix, chunk_line) in chunk.split('\n').enumerate() {
+            for (ix, line_chunk) in chunk.split('\n').enumerate() {
                 if ix > 0 {
                     layouts.push(layout_cache.layout_str(&line, font_size, &styles));
                     line.clear();
@@ -2157,9 +2158,9 @@ impl BufferView {
                     }
                 }
 
-                if !chunk_line.is_empty() {
-                    line.push_str(chunk_line);
-                    styles.push((chunk_line.len(), font_id, ColorU::black()));
+                if !line_chunk.is_empty() {
+                    line.push_str(line_chunk);
+                    styles.push((line_chunk.len(), font_id, ColorU::black()));
                 }
             }
         }
