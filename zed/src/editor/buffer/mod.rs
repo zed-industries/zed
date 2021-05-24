@@ -753,16 +753,18 @@ impl Buffer {
     }
 
     pub fn highlighted_text_for_range<T: ToOffset>(&self, range: Range<T>) -> HighlightedChunks {
+        let start = range.start.to_offset(self);
+        let end = range.end.to_offset(self);
+        let chunks = self.visible_text.chunks_in_range(start..end);
+
         if let (Some(language), Some((tree, _))) = (&self.language, self.tree.as_ref()) {
             let mut cursor = self
                 .query_cursor
                 .lock()
                 .take()
                 .unwrap_or_else(|| QueryCursor::new());
-            let start = range.start.to_offset(self);
-            let end = range.end.to_offset(self);
+
             cursor.set_byte_range(start, end);
-            let chunks = self.visible_text.chunks_in_range(start..end);
             let cursor_ref = unsafe { mem::transmute::<_, &'static mut QueryCursor>(&mut cursor) };
             let captures = cursor_ref.captures(
                 &language.highlight_query,
@@ -771,15 +773,22 @@ impl Buffer {
             );
 
             HighlightedChunks {
-                captures: captures.peekable(),
-                chunks,
-                stack: Default::default(),
                 range: start..end,
-                query_cursor: Some(cursor),
+                chunks,
+                highlights: Some(Highlights {
+                    captures: captures.peekable(),
+                    stack: Default::default(),
+                    cursor,
+                }),
                 buffer: self,
             }
         } else {
-            todo!()
+            HighlightedChunks {
+                range: start..end,
+                chunks,
+                highlights: None,
+                buffer: self,
+            }
         }
     }
 
@@ -2189,33 +2198,40 @@ impl<'a> tree_sitter::TextProvider<'a> for TextProvider<'a> {
     }
 }
 
-pub struct HighlightedChunks<'a> {
-    chunks: Chunks<'a>,
+struct Highlights<'a> {
     captures: iter::Peekable<tree_sitter::QueryCaptures<'a, 'a, TextProvider<'a>>>,
     stack: Vec<(usize, usize)>,
+    cursor: QueryCursor,
+}
+
+pub struct HighlightedChunks<'a> {
     range: Range<usize>,
-    query_cursor: Option<QueryCursor>,
+    chunks: Chunks<'a>,
+    highlights: Option<Highlights<'a>>,
     buffer: &'a Buffer,
 }
 
 impl<'a> HighlightedChunks<'a> {
     pub fn seek(&mut self, offset: usize) {
-        let language = self.buffer.language.as_ref().unwrap();
-        let tree = &self.buffer.tree.as_ref().unwrap().0;
-        let mut cursor = self.query_cursor.as_mut().unwrap();
-        let cursor_ref = unsafe { mem::transmute::<_, &'static mut QueryCursor>(&mut cursor) };
-
-        self.stack.clear();
         self.range.start = offset;
-        self.chunks.seek(offset);
-        cursor.set_byte_range(self.range.start, self.range.end);
-        self.captures = cursor_ref
-            .captures(
-                &language.highlight_query,
-                tree.root_node(),
-                TextProvider(&self.buffer.visible_text),
-            )
-            .peekable();
+        self.chunks.seek(self.range.start);
+        if let Some(highlights) = self.highlights.as_mut() {
+            let language = self.buffer.language.as_ref().unwrap();
+            let tree = &self.buffer.tree.as_ref().unwrap().0;
+            let cursor_ref =
+                unsafe { mem::transmute::<_, &'static mut QueryCursor>(&mut highlights.cursor) };
+            highlights
+                .cursor
+                .set_byte_range(self.range.start, self.range.end);
+            highlights.stack.clear();
+            highlights.captures = cursor_ref
+                .captures(
+                    &language.highlight_query,
+                    tree.root_node(),
+                    TextProvider(&self.buffer.visible_text),
+                )
+                .peekable();
+        }
     }
 
     pub fn offset(&self) -> usize {
@@ -2227,24 +2243,28 @@ impl<'a> Iterator for HighlightedChunks<'a> {
     type Item = (&'a str, Option<usize>);
 
     fn next(&mut self) -> Option<Self::Item> {
-        while let Some((parent_capture_end, _)) = self.stack.last() {
-            if *parent_capture_end <= self.range.start {
-                self.stack.pop();
-            } else {
-                break;
-            }
-        }
-
         let mut next_capture_start = usize::MAX;
-        while let Some((mat, capture_ix)) = self.captures.peek() {
-            let capture = mat.captures[*capture_ix as usize];
-            if self.range.start < capture.node.start_byte() {
-                next_capture_start = capture.node.start_byte();
-                break;
-            } else {
-                self.stack
-                    .push((capture.node.end_byte(), capture.index as usize));
-                self.captures.next().unwrap();
+
+        if let Some(highlights) = self.highlights.as_mut() {
+            while let Some((parent_capture_end, _)) = highlights.stack.last() {
+                if *parent_capture_end <= self.range.start {
+                    highlights.stack.pop();
+                } else {
+                    break;
+                }
+            }
+
+            while let Some((mat, capture_ix)) = highlights.captures.peek() {
+                let capture = mat.captures[*capture_ix as usize];
+                if self.range.start < capture.node.start_byte() {
+                    next_capture_start = capture.node.start_byte();
+                    break;
+                } else {
+                    highlights
+                        .stack
+                        .push((capture.node.end_byte(), capture.index as usize));
+                    highlights.captures.next().unwrap();
+                }
             }
         }
 
@@ -2252,7 +2272,9 @@ impl<'a> Iterator for HighlightedChunks<'a> {
             let chunk_start = self.range.start;
             let mut chunk_end = (self.chunks.offset() + chunk.len()).min(next_capture_start);
             let mut capture_ix = None;
-            if let Some((parent_capture_end, parent_capture_ix)) = self.stack.last() {
+            if let Some((parent_capture_end, parent_capture_ix)) =
+                self.highlights.as_ref().and_then(|h| h.stack.last())
+            {
                 chunk_end = chunk_end.min(*parent_capture_end);
                 capture_ix = Some(*parent_capture_ix);
             }
@@ -2273,10 +2295,11 @@ impl<'a> Iterator for HighlightedChunks<'a> {
 
 impl<'a> Drop for HighlightedChunks<'a> {
     fn drop(&mut self) {
-        let query_cursor = self.query_cursor.take().unwrap();
-        let mut buffer_cursor = self.buffer.query_cursor.lock();
-        if buffer_cursor.is_none() {
-            *buffer_cursor = Some(query_cursor);
+        if let Some(highlights) = self.highlights.take() {
+            let mut buffer_cursor = self.buffer.query_cursor.lock();
+            if buffer_cursor.is_none() {
+                *buffer_cursor = Some(highlights.cursor);
+            }
         }
     }
 }
