@@ -16,6 +16,7 @@ use crate::{
     editor::Bias,
     language::{Language, Tree},
     operation_queue::{self, OperationQueue},
+    settings::{StyleId, ThemeMap},
     sum_tree::{self, FilterCursor, SeekBias, SumTree},
     time::{self, ReplicaId},
     worktree::FileHandle,
@@ -617,6 +618,7 @@ impl Buffer {
                     handle.update(&mut ctx, |this, ctx| {
                         this.tree = Some((new_tree, new_version));
                         ctx.emit(Event::Reparsed);
+                        ctx.notify();
                     });
                 }
                 handle.update(&mut ctx, |this, _| this.is_parsing = false);
@@ -778,6 +780,7 @@ impl Buffer {
                 highlights: Some(Highlights {
                     captures: captures.peekable(),
                     stack: Default::default(),
+                    theme_mapping: language.theme_mapping(),
                     cursor,
                 }),
                 buffer: self,
@@ -2200,8 +2203,9 @@ impl<'a> tree_sitter::TextProvider<'a> for TextProvider<'a> {
 
 struct Highlights<'a> {
     captures: iter::Peekable<tree_sitter::QueryCaptures<'a, 'a, TextProvider<'a>>>,
-    stack: Vec<(usize, usize)>,
+    stack: Vec<(usize, StyleId)>,
     cursor: QueryCursor,
+    theme_mapping: ThemeMap,
 }
 
 pub struct HighlightedChunks<'a> {
@@ -2240,7 +2244,7 @@ impl<'a> HighlightedChunks<'a> {
 }
 
 impl<'a> Iterator for HighlightedChunks<'a> {
-    type Item = (&'a str, Option<usize>);
+    type Item = (&'a str, StyleId);
 
     fn next(&mut self) -> Option<Self::Item> {
         let mut next_capture_start = usize::MAX;
@@ -2260,9 +2264,8 @@ impl<'a> Iterator for HighlightedChunks<'a> {
                     next_capture_start = capture.node.start_byte();
                     break;
                 } else {
-                    highlights
-                        .stack
-                        .push((capture.node.end_byte(), capture.index as usize));
+                    let style_id = highlights.theme_mapping.get(capture.index);
+                    highlights.stack.push((capture.node.end_byte(), style_id));
                     highlights.captures.next().unwrap();
                 }
             }
@@ -2271,12 +2274,12 @@ impl<'a> Iterator for HighlightedChunks<'a> {
         if let Some(chunk) = self.chunks.peek() {
             let chunk_start = self.range.start;
             let mut chunk_end = (self.chunks.offset() + chunk.len()).min(next_capture_start);
-            let mut capture_ix = None;
-            if let Some((parent_capture_end, parent_capture_ix)) =
+            let mut capture_ix = StyleId::default();
+            if let Some((parent_capture_end, parent_style_id)) =
                 self.highlights.as_ref().and_then(|h| h.stack.last())
             {
                 chunk_end = chunk_end.min(*parent_capture_end);
-                capture_ix = Some(*parent_capture_ix);
+                capture_ix = *parent_style_id;
             }
 
             let slice =

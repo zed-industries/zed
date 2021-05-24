@@ -1,3 +1,5 @@
+use crate::settings::{Theme, ThemeMap};
+use parking_lot::Mutex;
 use rust_embed::RustEmbed;
 use std::{path::Path, sync::Arc};
 use tree_sitter::{Language as Grammar, Query};
@@ -13,10 +15,21 @@ pub struct Language {
     pub grammar: Grammar,
     pub highlight_query: Query,
     path_suffixes: Vec<String>,
+    theme_mapping: Mutex<ThemeMap>,
 }
 
 pub struct LanguageRegistry {
     languages: Vec<Arc<Language>>,
+}
+
+impl Language {
+    pub fn theme_mapping(&self) -> ThemeMap {
+        self.theme_mapping.lock().clone()
+    }
+
+    fn set_theme(&self, theme: &Theme) {
+        *self.theme_mapping.lock() = ThemeMap::new(self.highlight_query.capture_names(), theme);
+    }
 }
 
 impl LanguageRegistry {
@@ -32,10 +45,17 @@ impl LanguageRegistry {
             )
             .unwrap(),
             path_suffixes: vec!["rs".to_string()],
+            theme_mapping: Mutex::new(ThemeMap::default()),
         };
 
         Self {
             languages: vec![Arc::new(rust_language)],
+        }
+    }
+
+    pub fn set_theme(&self, theme: &Theme) {
+        for language in &self.languages {
+            language.set_theme(theme);
         }
     }
 
@@ -67,12 +87,14 @@ mod tests {
                     grammar,
                     highlight_query: Query::new(grammar, "").unwrap(),
                     path_suffixes: vec!["rs".to_string()],
+                    theme_mapping: Default::default(),
                 }),
                 Arc::new(Language {
                     name: "Make".to_string(),
                     grammar,
                     highlight_query: Query::new(grammar, "").unwrap(),
                     path_suffixes: vec!["Makefile".to_string(), "mk".to_string()],
+                    theme_mapping: Default::default(),
                 }),
             ],
         };

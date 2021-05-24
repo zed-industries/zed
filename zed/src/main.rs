@@ -18,6 +18,7 @@ fn main() {
 
     let (_, settings) = settings::channel(&app.font_cache()).unwrap();
     let language_registry = Arc::new(language::LanguageRegistry::new());
+    language_registry.set_theme(&settings.borrow().theme);
     let app_state = AppState {
         language_registry,
         settings,

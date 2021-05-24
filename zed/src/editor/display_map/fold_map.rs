@@ -4,6 +4,7 @@ use super::{
 };
 use crate::{
     editor::buffer,
+    settings::StyleId,
     sum_tree::{self, Cursor, FilterCursor, SeekBias, SumTree},
     time,
 };
@@ -741,12 +742,12 @@ impl<'a> Iterator for Chunks<'a> {
 pub struct HighlightedChunks<'a> {
     transform_cursor: Cursor<'a, Transform, DisplayOffset, TransformSummary>,
     buffer_chunks: buffer::HighlightedChunks<'a>,
-    buffer_chunk: Option<(usize, &'a str, Option<usize>)>,
+    buffer_chunk: Option<(usize, &'a str, StyleId)>,
     buffer_offset: usize,
 }
 
 impl<'a> Iterator for HighlightedChunks<'a> {
-    type Item = (&'a str, Option<usize>);
+    type Item = (&'a str, StyleId);
 
     fn next(&mut self) -> Option<Self::Item> {
         let transform = if let Some(item) = self.transform_cursor.item() {
@@ -768,7 +769,7 @@ impl<'a> Iterator for HighlightedChunks<'a> {
                 self.transform_cursor.next();
             }
 
-            return Some((display_text, None));
+            return Some((display_text, StyleId::default()));
         }
 
         // Retrieve a chunk from the current location in the buffer.

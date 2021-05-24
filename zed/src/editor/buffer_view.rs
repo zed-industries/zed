@@ -2,7 +2,12 @@ use super::{
     buffer, movement, Anchor, Bias, Buffer, BufferElement, DisplayMap, DisplayPoint, Point,
     Selection, SelectionGoal, SelectionSetId, ToOffset, ToPoint,
 };
-use crate::{settings::Settings, util::post_inc, workspace, worktree::FileHandle};
+use crate::{
+    settings::{Settings, StyleId},
+    util::post_inc,
+    workspace,
+    worktree::FileHandle,
+};
 use anyhow::Result;
 use gpui::{
     color::ColorU, fonts::Properties as FontProperties, geometry::vector::Vector2F,
@@ -2145,8 +2150,9 @@ impl BufferView {
         let mut row = rows.start;
         let snapshot = self.display_map.snapshot(ctx);
         let chunks = snapshot.highlighted_chunks_at(rows.start, ctx);
+        let theme = settings.theme.clone();
 
-        'outer: for (chunk, capture_ix) in chunks.chain(Some(("\n", None))) {
+        'outer: for (chunk, style_ix) in chunks.chain(Some(("\n", StyleId::default()))) {
             for (ix, line_chunk) in chunk.split('\n').enumerate() {
                 if ix > 0 {
                     layouts.push(layout_cache.layout_str(&line, font_size, &styles));
@@ -2160,7 +2166,7 @@ impl BufferView {
 
                 if !line_chunk.is_empty() {
                     line.push_str(line_chunk);
-                    styles.push((line_chunk.len(), font_id, ColorU::black()));
+                    styles.push((line_chunk.len(), font_id, theme.syntax_style(style_ix).0));
                 }
             }
         }

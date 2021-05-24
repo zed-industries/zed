@@ -1,5 +1,7 @@
 mod fold_map;
 
+use crate::settings::StyleId;
+
 use super::{buffer, Anchor, Bias, Buffer, Edit, Point, ToOffset, ToPoint};
 pub use fold_map::BufferRows;
 use fold_map::{FoldMap, FoldMapSnapshot};
@@ -163,7 +165,7 @@ impl DisplayMapSnapshot {
             column: 0,
             tab_size: self.tab_size,
             chunk: "",
-            capture_ix: None,
+            style_id: Default::default(),
         }
     }
 
@@ -355,19 +357,19 @@ impl<'a> Iterator for Chunks<'a> {
 pub struct HighlightedChunks<'a> {
     fold_chunks: fold_map::HighlightedChunks<'a>,
     chunk: &'a str,
-    capture_ix: Option<usize>,
+    style_id: StyleId,
     column: usize,
     tab_size: usize,
 }
 
 impl<'a> Iterator for HighlightedChunks<'a> {
-    type Item = (&'a str, Option<usize>);
+    type Item = (&'a str, StyleId);
 
     fn next(&mut self) -> Option<Self::Item> {
         if self.chunk.is_empty() {
-            if let Some((chunk, capture_ix)) = self.fold_chunks.next() {
+            if let Some((chunk, style_id)) = self.fold_chunks.next() {
                 self.chunk = chunk;
-                self.capture_ix = capture_ix;
+                self.style_id = style_id;
             } else {
                 return None;
             }
@@ -379,12 +381,12 @@ impl<'a> Iterator for HighlightedChunks<'a> {
                     if ix > 0 {
                         let (prefix, suffix) = self.chunk.split_at(ix);
                         self.chunk = suffix;
-                        return Some((prefix, self.capture_ix));
+                        return Some((prefix, self.style_id));
                     } else {
                         self.chunk = &self.chunk[1..];
                         let len = self.tab_size - self.column % self.tab_size;
                         self.column += len;
-                        return Some((&SPACES[0..len], self.capture_ix));
+                        return Some((&SPACES[0..len], self.style_id));
                     }
                 }
                 '\n' => self.column = 0,
@@ -392,7 +394,9 @@ impl<'a> Iterator for HighlightedChunks<'a> {
             }
         }
 
-        Some((mem::take(&mut self.chunk), self.capture_ix.take()))
+        let style_id = self.style_id;
+        self.style_id = StyleId::default();
+        Some((mem::take(&mut self.chunk), style_id))
     }
 }
 
