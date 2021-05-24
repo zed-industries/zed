@@ -2141,26 +2141,27 @@ impl BufferView {
 
         let mut layouts = Vec::with_capacity(rows.len());
         let mut line = String::new();
+        let mut styles = Vec::new();
         let mut row = rows.start;
         let snapshot = self.display_map.snapshot(ctx);
-        let chunks = snapshot.chunks_at(DisplayPoint::new(rows.start, 0), ctx);
-        for (chunk_row, chunk_line) in chunks
-            .chain(Some("\n"))
-            .flat_map(|chunk| chunk.split("\n").enumerate())
-        {
-            if chunk_row > 0 {
-                layouts.push(layout_cache.layout_str(
-                    &line,
-                    font_size,
-                    &[(line.len(), font_id, ColorU::black())],
-                ));
-                line.clear();
-                row += 1;
-                if row == rows.end {
-                    break;
+        let chunks = snapshot.highlighted_chunks_at(rows.start, ctx);
+        'outer: for (chunk, capture_ix) in chunks.chain(Some(("\n", None))) {
+            for (ix, chunk_line) in chunk.split('\n').enumerate() {
+                if ix > 0 {
+                    layouts.push(layout_cache.layout_str(&line, font_size, &styles));
+                    line.clear();
+                    styles.clear();
+                    row += 1;
+                    if row == rows.end {
+                        break 'outer;
+                    }
+                }
+
+                if !chunk_line.is_empty() {
+                    line.push_str(chunk_line);
+                    styles.push((chunk_line.len(), font_id, ColorU::black()));
                 }
             }
-            line.push_str(chunk_line);
         }
 
         Ok(layouts)
