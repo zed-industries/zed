@@ -4,13 +4,12 @@ pub mod rope;
 mod selection;
 
 pub use anchor::*;
-use parking_lot::Mutex;
 pub use point::*;
 pub use rope::{ChunksIter, Rope, TextSummary};
 use seahash::SeaHasher;
 pub use selection::*;
 use similar::{ChangeTag, TextDiff};
-use tree_sitter::{InputEdit, Parser};
+use tree_sitter::{InputEdit, Parser, QueryCursor};
 
 use crate::{
     editor::Bias,
@@ -77,9 +76,10 @@ pub struct Buffer {
     history: History,
     file: Option<FileHandle>,
     language: Option<Arc<Language>>,
-    tree: Mutex<Option<(Tree, time::Global)>>,
+    tree: Option<(Tree, time::Global)>,
     is_parsing: bool,
     selections: HashMap<SelectionSetId, Arc<[Selection]>>,
+    cursor: QueryCursor,
     pub selections_last_update: SelectionsVersion,
     deferred_ops: OperationQueue<Operation>,
     deferred_replicas: HashSet<ReplicaId>,
@@ -487,8 +487,9 @@ impl Buffer {
             undo_map: Default::default(),
             history,
             file,
-            tree: Mutex::new(None),
+            tree: None,
             is_parsing: false,
+            cursor: QueryCursor::new(),
             language,
             saved_mtime,
             selections: HashMap::default(),
@@ -549,8 +550,8 @@ impl Buffer {
         ctx.emit(Event::Saved);
     }
 
-    pub fn syntax_tree(&self) -> Option<Tree> {
-        if let Some((tree, tree_version)) = self.tree.lock().as_mut() {
+    pub fn syntax_tree(&mut self) -> Option<Tree> {
+        if let Some((mut tree, tree_version)) = self.tree.take() {
             let mut delta = 0_isize;
             for Edit {
                 old_range,
@@ -572,8 +573,9 @@ impl Buffer {
                 });
                 delta += new_bytes as isize - old_bytes as isize;
             }
-            *tree_version = self.version();
-            Some(tree.clone())
+            let result = tree.clone();
+            self.tree = Some((tree, self.version()));
+            Some(result)
         } else {
             None
         }
@@ -581,7 +583,6 @@ impl Buffer {
 
     fn should_reparse(&self) -> bool {
         self.tree
-            .lock()
             .as_ref()
             .map_or(true, |(_, tree_version)| *tree_version != self.version)
     }
@@ -613,7 +614,7 @@ impl Buffer {
                         .await;
 
                     handle.update(&mut ctx, |this, ctx| {
-                        *this.tree.lock() = Some((new_tree, new_version));
+                        this.tree = Some((new_tree, new_version));
                         ctx.emit(Event::Reparsed);
                     });
                 }
@@ -748,6 +749,36 @@ impl Buffer {
         let start = range.start.to_offset(self);
         let end = range.end.to_offset(self);
         self.visible_text.chunks_in_range(start..end)
+    }
+
+    pub fn highlighted_text_for_range<'a, T: ToOffset>(
+        &'a mut self,
+        range: Range<T>,
+    ) -> impl Iterator<Item = (&'a str, usize)> {
+        if let (Some(language), Some((tree, _))) = (&self.language, self.tree.as_ref()) {
+            let visible_text = &self.visible_text;
+            let start = range.start.to_offset(self);
+            let end = range.end.to_offset(self);
+            self.cursor.set_byte_range(start, end);
+            let chunks = self.visible_text.chunks_in_range(start..end);
+            let captures = self.cursor.captures(
+                &language.highlight_query,
+                tree.root_node(),
+                move |node: tree_sitter::Node| {
+                    visible_text
+                        .chunks_in_range(node.byte_range())
+                        .map(str::as_bytes)
+                },
+            );
+
+            HighlightedChunksIter {
+                captures,
+                chunks,
+                stack: Default::default(),
+            }
+        } else {
+            todo!()
+        }
     }
 
     pub fn chars(&self) -> impl Iterator<Item = char> + '_ {
@@ -2003,8 +2034,9 @@ impl Clone for Buffer {
             selections_last_update: self.selections_last_update.clone(),
             deferred_ops: self.deferred_ops.clone(),
             file: self.file.clone(),
+            cursor: tree_sitter::QueryCursor::new(),
             language: self.language.clone(),
-            tree: Mutex::new(self.tree.lock().clone()),
+            tree: self.tree.clone(),
             is_parsing: false,
             deferred_replicas: self.deferred_replicas.clone(),
             replica_id: self.replica_id,
@@ -2132,6 +2164,25 @@ impl<'a, F: Fn(&FragmentSummary) -> bool> Iterator for Edits<'a, F> {
         }
 
         change
+    }
+}
+
+pub struct HighlightedChunksIter<'a, T: tree_sitter::TextProvider<'a>> {
+    chunks: ChunksIter<'a>,
+    captures: tree_sitter::QueryCaptures<'a, 'a, T>,
+    stack: Vec<(usize, usize)>,
+}
+
+impl<'a, T: tree_sitter::TextProvider<'a>> Iterator for HighlightedChunksIter<'a, T> {
+    type Item = (&'a str, usize);
+
+    fn next(&mut self) -> Option<Self::Item> {
+        if let Some((mat, capture_ix)) = self.captures.next() {
+            let capture = mat.captures[capture_ix as usize];
+            let range = capture.node.range();
+        }
+
+        todo!()
     }
 }
 
@@ -3276,7 +3327,7 @@ mod tests {
 
             let buffer = Buffer::from_history(0, History::new(text.into()), None, rust_lang, ctx);
             assert!(buffer.is_parsing);
-            assert!(buffer.syntax_tree().is_none());
+            assert!(buffer.tree.is_none());
             buffer
         });
 
@@ -3390,7 +3441,7 @@ mod tests {
 
         fn get_tree_sexp(buffer: &ModelHandle<Buffer>, ctx: &gpui::TestAppContext) -> String {
             buffer.read_with(ctx, |buffer, _| {
-                buffer.syntax_tree().unwrap().root_node().to_sexp()
+                buffer.tree.as_ref().unwrap().0.root_node().to_sexp()
             })
         }
     }
