@@ -6,7 +6,7 @@ mod selection;
 pub use anchor::*;
 use parking_lot::Mutex;
 pub use point::*;
-pub use rope::{ChunksIter, Rope, TextSummary};
+pub use rope::{Chunks, Rope, TextSummary};
 use seahash::SeaHasher;
 pub use selection::*;
 use similar::{ChangeTag, TextDiff};
@@ -746,7 +746,7 @@ impl Buffer {
         self.text_for_range(0..self.len()).collect()
     }
 
-    pub fn text_for_range<'a, T: ToOffset>(&'a self, range: Range<T>) -> ChunksIter<'a> {
+    pub fn text_for_range<'a, T: ToOffset>(&'a self, range: Range<T>) -> Chunks<'a> {
         let start = range.start.to_offset(self);
         let end = range.end.to_offset(self);
         self.visible_text.chunks_in_range(start..end)
@@ -2178,7 +2178,7 @@ impl<'a, F: Fn(&FragmentSummary) -> bool> Iterator for Edits<'a, F> {
 }
 
 pub struct HighlightedChunksIter<'a, T: tree_sitter::TextProvider<'a>> {
-    chunks: ChunksIter<'a>,
+    chunks: Chunks<'a>,
     captures: iter::Peekable<tree_sitter::QueryCaptures<'a, 'a, T>>,
     stack: Vec<(usize, usize)>,
     offset: usize,

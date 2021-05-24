@@ -669,7 +669,7 @@ impl<'a> Iterator for BufferRows<'a> {
 
 pub struct Chunks<'a> {
     transform_cursor: Cursor<'a, Transform, DisplayOffset, TransformSummary>,
-    buffer_chunks: buffer::ChunksIter<'a>,
+    buffer_chunks: buffer::Chunks<'a>,
     buffer_offset: usize,
 }
 
