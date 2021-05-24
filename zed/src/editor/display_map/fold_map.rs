@@ -741,7 +741,7 @@ impl<'a> Iterator for Chunks<'a> {
 pub struct HighlightedChunks<'a> {
     transform_cursor: Cursor<'a, Transform, DisplayOffset, TransformSummary>,
     buffer_chunks: buffer::HighlightedChunks<'a>,
-    buffer_chunk: Option<(&'a str, Option<usize>)>,
+    buffer_chunk: Option<(usize, &'a str, Option<usize>)>,
     buffer_offset: usize,
 }
 
@@ -771,14 +771,18 @@ impl<'a> Iterator for HighlightedChunks<'a> {
             return Some((display_text, None));
         }
 
-        // Retrieve a chunk from the current buffer cursor's location.
+        // Retrieve a chunk from the current location in the buffer.
         if self.buffer_chunk.is_none() {
-            self.buffer_chunk = self.buffer_chunks.next();
+            let chunk_offset = self.buffer_chunks.offset();
+            self.buffer_chunk = self
+                .buffer_chunks
+                .next()
+                .map(|(chunk, capture_ix)| (chunk_offset, chunk, capture_ix));
         }
 
         // Otherwise, take a chunk from the buffer's text.
-        if let Some((mut chunk, capture_ix)) = self.buffer_chunk {
-            let offset_in_chunk = self.buffer_offset - self.buffer_chunks.offset();
+        if let Some((chunk_offset, mut chunk, capture_ix)) = self.buffer_chunk {
+            let offset_in_chunk = self.buffer_offset - chunk_offset;
             chunk = &chunk[offset_in_chunk..];
 
             // Truncate the chunk so that it ends at the next fold.
