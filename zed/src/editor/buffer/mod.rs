@@ -4,6 +4,7 @@ pub mod rope;
 mod selection;
 
 pub use anchor::*;
+use parking_lot::Mutex;
 pub use point::*;
 pub use rope::{ChunksIter, Rope, TextSummary};
 use seahash::SeaHasher;
@@ -77,9 +78,9 @@ pub struct Buffer {
     file: Option<FileHandle>,
     language: Option<Arc<Language>>,
     tree: Option<(Tree, time::Global)>,
+    query_cursor: Mutex<Option<tree_sitter::QueryCursor>>,
     is_parsing: bool,
     selections: HashMap<SelectionSetId, Arc<[Selection]>>,
-    cursor: QueryCursor,
     pub selections_last_update: SelectionsVersion,
     deferred_ops: OperationQueue<Operation>,
     deferred_replicas: HashSet<ReplicaId>,
@@ -489,8 +490,8 @@ impl Buffer {
             file,
             tree: None,
             is_parsing: false,
-            cursor: QueryCursor::new(),
             language,
+            query_cursor: Mutex::new(Some(QueryCursor::new())),
             saved_mtime,
             selections: HashMap::default(),
             selections_last_update: 0,
@@ -752,16 +753,22 @@ impl Buffer {
     }
 
     pub fn highlighted_text_for_range<'a, T: ToOffset>(
-        &'a mut self,
+        &'a self,
         range: Range<T>,
     ) -> impl Iterator<Item = (&'a str, Option<usize>)> {
         if let (Some(language), Some((tree, _))) = (&self.language, self.tree.as_ref()) {
             let visible_text = &self.visible_text;
+            let mut cursor = self
+                .query_cursor
+                .lock()
+                .take()
+                .unwrap_or_else(|| QueryCursor::new());
             let start = range.start.to_offset(self);
             let end = range.end.to_offset(self);
-            self.cursor.set_byte_range(start, end);
+            cursor.set_byte_range(start, end);
             let chunks = self.visible_text.chunks_in_range(start..end);
-            let captures = self.cursor.captures(
+            let cursor_ref = unsafe { mem::transmute::<_, &'static mut QueryCursor>(&mut cursor) };
+            let captures = cursor_ref.captures(
                 &language.highlight_query,
                 tree.root_node(),
                 move |node: tree_sitter::Node| {
@@ -776,6 +783,8 @@ impl Buffer {
                 chunks,
                 stack: Default::default(),
                 offset: start,
+                query_cursor: Some(cursor),
+                buffer: self,
             }
         } else {
             todo!()
@@ -2035,10 +2044,10 @@ impl Clone for Buffer {
             selections_last_update: self.selections_last_update.clone(),
             deferred_ops: self.deferred_ops.clone(),
             file: self.file.clone(),
-            cursor: tree_sitter::QueryCursor::new(),
             language: self.language.clone(),
             tree: self.tree.clone(),
             is_parsing: false,
+            query_cursor: Mutex::new(Some(QueryCursor::new())),
             deferred_replicas: self.deferred_replicas.clone(),
             replica_id: self.replica_id,
             local_clock: self.local_clock.clone(),
@@ -2173,6 +2182,8 @@ pub struct HighlightedChunksIter<'a, T: tree_sitter::TextProvider<'a>> {
     captures: iter::Peekable<tree_sitter::QueryCaptures<'a, 'a, T>>,
     stack: Vec<(usize, usize)>,
     offset: usize,
+    query_cursor: Option<QueryCursor>,
+    buffer: &'a Buffer,
 }
 
 impl<'a, T: tree_sitter::TextProvider<'a>> Iterator for HighlightedChunksIter<'a, T> {
@@ -2219,6 +2230,16 @@ impl<'a, T: tree_sitter::TextProvider<'a>> Iterator for HighlightedChunksIter<'a
             Some((slice, capture_ix))
         } else {
             None
+        }
+    }
+}
+
+impl<'a, T: tree_sitter::TextProvider<'a>> Drop for HighlightedChunksIter<'a, T> {
+    fn drop(&mut self) {
+        let query_cursor = self.query_cursor.take().unwrap();
+        let mut buffer_cursor = self.buffer.query_cursor.lock();
+        if buffer_cursor.is_none() {
+            *buffer_cursor = Some(query_cursor);
         }
     }
 }
