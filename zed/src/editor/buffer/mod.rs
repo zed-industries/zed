@@ -62,7 +62,11 @@ type HashMap<K, V> = std::collections::HashMap<K, V>;
 type HashSet<T> = std::collections::HashSet<T>;
 
 thread_local! {
-    pub static PARSER: RefCell<Parser> = RefCell::new(Parser::new());
+    static PARSER: RefCell<Parser> = RefCell::new(Parser::new());
+}
+
+lazy_static! {
+    static ref QUERY_CURSORS: Mutex<Vec<QueryCursor>> = Default::default();
 }
 
 pub struct Buffer {
@@ -78,8 +82,7 @@ pub struct Buffer {
     history: History,
     file: Option<FileHandle>,
     language: Option<Arc<Language>>,
-    tree: Option<(Tree, time::Global)>,
-    query_cursor: Mutex<Option<tree_sitter::QueryCursor>>,
+    tree: Mutex<Option<(Tree, time::Global)>>,
     is_parsing: bool,
     selections: HashMap<SelectionSetId, Arc<[Selection]>>,
     pub selections_last_update: SelectionsVersion,
@@ -489,10 +492,9 @@ impl Buffer {
             undo_map: Default::default(),
             history,
             file,
-            tree: None,
+            tree: Mutex::new(None),
             is_parsing: false,
             language,
-            query_cursor: Mutex::new(Some(QueryCursor::new())),
             saved_mtime,
             selections: HashMap::default(),
             selections_last_update: 0,
@@ -506,8 +508,14 @@ impl Buffer {
         result
     }
 
-    pub fn snapshot(&self) -> Rope {
-        self.visible_text.clone()
+    pub fn snapshot(&self) -> Snapshot {
+        let mut cursors = QUERY_CURSORS.lock();
+        Snapshot {
+            text: self.visible_text.clone(),
+            tree: self.syntax_tree(),
+            language: self.language.clone(),
+            query_cursor: Some(cursors.pop().unwrap_or_else(|| QueryCursor::new())),
+        }
     }
 
     pub fn file(&self) -> Option<&FileHandle> {
@@ -519,13 +527,13 @@ impl Buffer {
         new_file: Option<FileHandle>,
         ctx: &mut ModelContext<Self>,
     ) -> Task<Result<()>> {
-        let snapshot = self.snapshot();
+        let text = self.visible_text.clone();
         let version = self.version.clone();
         let file = self.file.clone();
 
         ctx.spawn(|handle, mut ctx| async move {
             if let Some(file) = new_file.as_ref().or(file.as_ref()) {
-                let result = ctx.read(|ctx| file.save(snapshot, ctx.as_ref())).await;
+                let result = ctx.read(|ctx| file.save(text, ctx.as_ref())).await;
                 if result.is_ok() {
                     handle.update(&mut ctx, |me, ctx| me.did_save(version, new_file, ctx));
                 }
@@ -552,8 +560,8 @@ impl Buffer {
         ctx.emit(Event::Saved);
     }
 
-    pub fn syntax_tree(&mut self) -> Option<Tree> {
-        if let Some((mut tree, tree_version)) = self.tree.take() {
+    pub fn syntax_tree(&self) -> Option<Tree> {
+        if let Some((tree, tree_version)) = self.tree.lock().as_mut() {
             let mut delta = 0_isize;
             for Edit {
                 old_range,
@@ -575,9 +583,8 @@ impl Buffer {
                 });
                 delta += new_bytes as isize - old_bytes as isize;
             }
-            let result = tree.clone();
-            self.tree = Some((tree, self.version()));
-            Some(result)
+            *tree_version = self.version();
+            Some(tree.clone())
         } else {
             None
         }
@@ -585,6 +592,7 @@ impl Buffer {
 
     fn should_reparse(&self) -> bool {
         self.tree
+            .lock()
             .as_ref()
             .map_or(true, |(_, tree_version)| *tree_version != self.version)
     }
@@ -616,7 +624,7 @@ impl Buffer {
                         .await;
 
                     handle.update(&mut ctx, |this, ctx| {
-                        this.tree = Some((new_tree, new_version));
+                        *this.tree.lock() = Some((new_tree, new_version));
                         ctx.emit(Event::Reparsed);
                         ctx.notify();
                     });
@@ -752,47 +760,6 @@ impl Buffer {
         let start = range.start.to_offset(self);
         let end = range.end.to_offset(self);
         self.visible_text.chunks_in_range(start..end)
-    }
-
-    pub fn highlighted_text_for_range<T: ToOffset>(&self, range: Range<T>) -> HighlightedChunks {
-        let start = range.start.to_offset(self);
-        let end = range.end.to_offset(self);
-        let chunks = self.visible_text.chunks_in_range(start..end);
-
-        if let (Some(language), Some((tree, _))) = (&self.language, self.tree.as_ref()) {
-            let mut cursor = self
-                .query_cursor
-                .lock()
-                .take()
-                .unwrap_or_else(|| QueryCursor::new());
-
-            cursor.set_byte_range(start, end);
-            let cursor_ref = unsafe { mem::transmute::<_, &'static mut QueryCursor>(&mut cursor) };
-            let captures = cursor_ref.captures(
-                &language.highlight_query,
-                tree.root_node(),
-                TextProvider(&self.visible_text),
-            );
-
-            HighlightedChunks {
-                range: start..end,
-                chunks,
-                highlights: Some(Highlights {
-                    captures: captures.peekable(),
-                    stack: Default::default(),
-                    theme_mapping: language.theme_mapping(),
-                    cursor,
-                }),
-                buffer: self,
-            }
-        } else {
-            HighlightedChunks {
-                range: start..end,
-                chunks,
-                highlights: None,
-                buffer: self,
-            }
-        }
     }
 
     pub fn chars(&self) -> impl Iterator<Item = char> + '_ {
@@ -2049,14 +2016,86 @@ impl Clone for Buffer {
             deferred_ops: self.deferred_ops.clone(),
             file: self.file.clone(),
             language: self.language.clone(),
-            tree: self.tree.clone(),
+            tree: Mutex::new(self.tree.lock().clone()),
             is_parsing: false,
-            query_cursor: Mutex::new(Some(QueryCursor::new())),
             deferred_replicas: self.deferred_replicas.clone(),
             replica_id: self.replica_id,
             local_clock: self.local_clock.clone(),
             lamport_clock: self.lamport_clock.clone(),
         }
+    }
+}
+
+pub struct Snapshot {
+    text: Rope,
+    tree: Option<Tree>,
+    language: Option<Arc<Language>>,
+    query_cursor: Option<QueryCursor>,
+}
+
+impl Snapshot {
+    pub fn len(&self) -> usize {
+        self.text.len()
+    }
+
+    pub fn text(&self) -> Rope {
+        self.text.clone()
+    }
+
+    pub fn text_for_range(&self, range: Range<usize>) -> Chunks {
+        self.text.chunks_in_range(range)
+    }
+
+    pub fn highlighted_text_for_range(&mut self, range: Range<usize>) -> HighlightedChunks {
+        let chunks = self.text.chunks_in_range(range.clone());
+        if let Some((language, tree)) = self.language.as_ref().zip(self.tree.as_ref()) {
+            let query_cursor = self.query_cursor.as_mut().unwrap();
+            query_cursor.set_byte_range(range.start, range.end);
+            let captures = query_cursor.captures(
+                &language.highlight_query,
+                tree.root_node(),
+                TextProvider(&self.text),
+            );
+
+            HighlightedChunks {
+                range,
+                chunks,
+                highlights: Some(Highlights {
+                    captures,
+                    next_capture: None,
+                    stack: Default::default(),
+                    theme_mapping: language.theme_mapping(),
+                }),
+            }
+        } else {
+            HighlightedChunks {
+                range,
+                chunks,
+                highlights: None,
+            }
+        }
+    }
+
+    pub fn clip_offset(&self, offset: usize, bias: Bias) -> usize {
+        self.text.clip_offset(offset, bias)
+    }
+
+    pub fn clip_point(&self, point: Point, bias: Bias) -> Point {
+        self.text.clip_point(point, bias)
+    }
+
+    pub fn to_offset(&self, point: Point) -> usize {
+        self.text.to_offset(point)
+    }
+
+    pub fn to_point(&self, offset: usize) -> Point {
+        self.text.to_point(offset)
+    }
+}
+
+impl Drop for Snapshot {
+    fn drop(&mut self) {
+        QUERY_CURSORS.lock().push(self.query_cursor.take().unwrap());
     }
 }
 
@@ -2202,9 +2241,9 @@ impl<'a> tree_sitter::TextProvider<'a> for TextProvider<'a> {
 }
 
 struct Highlights<'a> {
-    captures: iter::Peekable<tree_sitter::QueryCaptures<'a, 'a, TextProvider<'a>>>,
+    captures: tree_sitter::QueryCaptures<'a, 'a, TextProvider<'a>>,
+    next_capture: Option<(tree_sitter::QueryMatch<'a, 'a>, usize)>,
     stack: Vec<(usize, StyleId)>,
-    cursor: QueryCursor,
     theme_mapping: ThemeMap,
 }
 
@@ -2212,7 +2251,6 @@ pub struct HighlightedChunks<'a> {
     range: Range<usize>,
     chunks: Chunks<'a>,
     highlights: Option<Highlights<'a>>,
-    buffer: &'a Buffer,
 }
 
 impl<'a> HighlightedChunks<'a> {
@@ -2220,21 +2258,9 @@ impl<'a> HighlightedChunks<'a> {
         self.range.start = offset;
         self.chunks.seek(self.range.start);
         if let Some(highlights) = self.highlights.as_mut() {
-            let language = self.buffer.language.as_ref().unwrap();
-            let tree = &self.buffer.tree.as_ref().unwrap().0;
-            let cursor_ref =
-                unsafe { mem::transmute::<_, &'static mut QueryCursor>(&mut highlights.cursor) };
-            highlights
-                .cursor
-                .set_byte_range(self.range.start, self.range.end);
             highlights.stack.clear();
-            highlights.captures = cursor_ref
-                .captures(
-                    &language.highlight_query,
-                    tree.root_node(),
-                    TextProvider(&self.buffer.visible_text),
-                )
-                .peekable();
+            highlights.next_capture.take();
+            highlights.captures.advance_to_byte(self.range.start);
         }
     }
 
@@ -2258,7 +2284,11 @@ impl<'a> Iterator for HighlightedChunks<'a> {
                 }
             }
 
-            while let Some((mat, capture_ix)) = highlights.captures.peek() {
+            if highlights.next_capture.is_none() {
+                highlights.next_capture = highlights.captures.next();
+            }
+
+            while let Some((mat, capture_ix)) = highlights.next_capture.as_ref() {
                 let capture = mat.captures[*capture_ix as usize];
                 if self.range.start < capture.node.start_byte() {
                     next_capture_start = capture.node.start_byte();
@@ -2266,7 +2296,7 @@ impl<'a> Iterator for HighlightedChunks<'a> {
                 } else {
                     let style_id = highlights.theme_mapping.get(capture.index);
                     highlights.stack.push((capture.node.end_byte(), style_id));
-                    highlights.captures.next().unwrap();
+                    highlights.next_capture = highlights.captures.next();
                 }
             }
         }
@@ -2292,17 +2322,6 @@ impl<'a> Iterator for HighlightedChunks<'a> {
             Some((slice, capture_ix))
         } else {
             None
-        }
-    }
-}
-
-impl<'a> Drop for HighlightedChunks<'a> {
-    fn drop(&mut self) {
-        if let Some(highlights) = self.highlights.take() {
-            let mut buffer_cursor = self.buffer.query_cursor.lock();
-            if buffer_cursor.is_none() {
-                *buffer_cursor = Some(highlights.cursor);
-            }
         }
     }
 }
@@ -3448,7 +3467,7 @@ mod tests {
 
             let buffer = Buffer::from_history(0, History::new(text.into()), None, rust_lang, ctx);
             assert!(buffer.is_parsing);
-            assert!(buffer.tree.is_none());
+            assert!(buffer.syntax_tree().is_none());
             buffer
         });
 
@@ -3562,7 +3581,7 @@ mod tests {
 
         fn get_tree_sexp(buffer: &ModelHandle<Buffer>, ctx: &gpui::TestAppContext) -> String {
             buffer.read_with(ctx, |buffer, _| {
-                buffer.tree.as_ref().unwrap().0.root_node().to_sexp()
+                buffer.syntax_tree().unwrap().root_node().to_sexp()
             })
         }
     }
