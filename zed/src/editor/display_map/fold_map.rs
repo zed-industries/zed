@@ -418,11 +418,10 @@ impl FoldMapSnapshot {
         transform_cursor.seek(&offset, SeekBias::Right, &());
         let overshoot = offset.0 - transform_cursor.start().display.bytes;
         let buffer_offset = transform_cursor.start().buffer.bytes + overshoot;
-        let rope_cursor = self.buffer.text_for_range(buffer_offset..self.buffer.len());
         Chunks {
             transform_cursor,
             buffer_offset,
-            buffer_chunks: rope_cursor,
+            buffer_chunks: self.buffer.text_for_range(buffer_offset..self.buffer.len()),
         }
     }
 

@@ -377,9 +377,7 @@ impl<'a> Iterator for HighlightedChunks<'a> {
             }
         }
 
-        let style_id = self.style_id;
-        self.style_id = StyleId::default();
-        Some((mem::take(&mut self.chunk), style_id))
+        Some((mem::take(&mut self.chunk), mem::take(&mut self.style_id)))
     }
 }
 
