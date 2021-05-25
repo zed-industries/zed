@@ -445,7 +445,9 @@ pub fn collapse_tabs(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::test::*;
+    use crate::{language::Language, settings::Theme, test::*};
+    use buffer::History;
+    use std::sync::Arc;
 
     #[gpui::test]
     fn test_chunks_at(app: &mut gpui::MutableAppContext) {
@@ -484,6 +486,103 @@ mod tests {
                 .collect::<String>()[0..13],
             "  bbbbb\nc   c"
         );
+    }
+
+    #[gpui::test]
+    async fn test_highlighted_chunks_at(mut app: gpui::TestAppContext) {
+        use unindent::Unindent as _;
+
+        let grammar = tree_sitter_rust::language();
+        let text = r#"
+            fn outer() {}
+
+            mod module {
+                fn inner() {}
+            }"#
+        .unindent();
+        let query = tree_sitter::Query::new(
+            grammar,
+            r#"
+            (mod_item name: (identifier) body: _ @mod.body)
+            (function_item name: (identifier) @fn.name)"#,
+        )
+        .unwrap();
+        let theme = Theme::parse(
+            r#"
+            [syntax]
+            "mod.body" = 0xff0000
+            "fn.name" = 0x00ff00"#,
+        )
+        .unwrap();
+        let lang = Arc::new(Language {
+            name: "Test".to_string(),
+            grammar: grammar.clone(),
+            highlight_query: query,
+            path_suffixes: vec![".test".to_string()],
+            theme_mapping: Default::default(),
+        });
+        lang.set_theme(&theme);
+
+        let buffer = app.add_model(|ctx| {
+            Buffer::from_history(0, History::new(text.into()), None, Some(lang), ctx)
+        });
+        buffer.condition(&app, |buf, _| !buf.is_parsing()).await;
+
+        let mut map = app.read(|ctx| DisplayMap::new(buffer, 2, ctx));
+        assert_eq!(
+            app.read(|ctx| highlighted_chunks(0, &map, &theme, ctx)),
+            vec![
+                ("fn ".to_string(), None),
+                ("outer".to_string(), Some("fn.name")),
+                ("() {}\n\nmod module ".to_string(), None),
+                ("{\n    fn ".to_string(), Some("mod.body")),
+                ("inner".to_string(), Some("fn.name")),
+                ("() {}\n}".to_string(), Some("mod.body")),
+            ]
+        );
+        assert_eq!(
+            app.read(|ctx| highlighted_chunks(3, &map, &theme, ctx)),
+            vec![
+                ("    fn ".to_string(), Some("mod.body")),
+                ("inner".to_string(), Some("fn.name")),
+                ("() {}\n}".to_string(), Some("mod.body")),
+            ]
+        );
+
+        app.read(|ctx| map.fold(vec![Point::new(0, 6)..Point::new(3, 2)], ctx));
+        assert_eq!(
+            app.read(|ctx| highlighted_chunks(0, &map, &theme, ctx)),
+            vec![
+                ("fn ".to_string(), None),
+                ("out".to_string(), Some("fn.name")),
+                ("…".to_string(), None),
+                ("  fn ".to_string(), Some("mod.body")),
+                ("inner".to_string(), Some("fn.name")),
+                ("() {}\n}".to_string(), Some("mod.body")),
+            ]
+        );
+
+        fn highlighted_chunks<'a>(
+            row: u32,
+            map: &DisplayMap,
+            theme: &'a Theme,
+            ctx: &AppContext,
+        ) -> Vec<(String, Option<&'a str>)> {
+            let mut chunks: Vec<(String, Option<&str>)> = Vec::new();
+            for (chunk, style_id) in map.snapshot(ctx).highlighted_chunks_at(row) {
+                let style_name = theme.syntax_style_name(style_id);
+                if let Some((last_chunk, last_style_name)) = chunks.last_mut() {
+                    if style_name == *last_style_name {
+                        last_chunk.push_str(chunk);
+                    } else {
+                        chunks.push((chunk.to_string(), style_name));
+                    }
+                } else {
+                    chunks.push((chunk.to_string(), style_name));
+                }
+            }
+            chunks
+        }
     }
 
     #[gpui::test]

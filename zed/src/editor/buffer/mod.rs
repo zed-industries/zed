@@ -600,6 +600,10 @@ impl Buffer {
         }
     }
 
+    pub fn is_parsing(&self) -> bool {
+        self.is_parsing
+    }
+
     fn should_reparse(&self) -> bool {
         if let Some(syntax_tree) = self.syntax_tree.lock().as_ref() {
             !syntax_tree.parsed || syntax_tree.version != self.version
@@ -3481,13 +3485,15 @@ mod tests {
             let text = "fn a() {}";
 
             let buffer = Buffer::from_history(0, History::new(text.into()), None, rust_lang, ctx);
-            assert!(buffer.is_parsing);
+            assert!(buffer.is_parsing());
             assert!(buffer.syntax_tree().is_none());
             buffer
         });
 
         // Wait for the initial text to parse
-        buffer.condition(&ctx, |buffer, _| !buffer.is_parsing).await;
+        buffer
+            .condition(&ctx, |buffer, _| !buffer.is_parsing())
+            .await;
         assert_eq!(
             get_tree_sexp(&buffer, &ctx),
             concat!(
@@ -3504,17 +3510,19 @@ mod tests {
 
             let offset = buf.text().find(")").unwrap();
             buf.edit(vec![offset..offset], "b: C", Some(ctx)).unwrap();
-            assert!(!buf.is_parsing);
+            assert!(!buf.is_parsing());
 
             let offset = buf.text().find("}").unwrap();
             buf.edit(vec![offset..offset], " d; ", Some(ctx)).unwrap();
-            assert!(!buf.is_parsing);
+            assert!(!buf.is_parsing());
 
             buf.end_transaction(None, Some(ctx)).unwrap();
             assert_eq!(buf.text(), "fn a(b: C) { d; }");
-            assert!(buf.is_parsing);
+            assert!(buf.is_parsing());
         });
-        buffer.condition(&ctx, |buffer, _| !buffer.is_parsing).await;
+        buffer
+            .condition(&ctx, |buffer, _| !buffer.is_parsing())
+            .await;
         assert_eq!(
             get_tree_sexp(&buffer, &ctx),
             concat!(
@@ -3532,21 +3540,23 @@ mod tests {
             let offset = buf.text().find(";").unwrap();
             buf.edit(vec![offset..offset], ".e", Some(ctx)).unwrap();
             assert_eq!(buf.text(), "fn a(b: C) { d.e; }");
-            assert!(buf.is_parsing);
+            assert!(buf.is_parsing());
         });
         buffer.update(&mut ctx, |buf, ctx| {
             let offset = buf.text().find(";").unwrap();
             buf.edit(vec![offset..offset], "(f)", Some(ctx)).unwrap();
             assert_eq!(buf.text(), "fn a(b: C) { d.e(f); }");
-            assert!(buf.is_parsing);
+            assert!(buf.is_parsing());
         });
         buffer.update(&mut ctx, |buf, ctx| {
             let offset = buf.text().find("(f)").unwrap();
             buf.edit(vec![offset..offset], "::<G>", Some(ctx)).unwrap();
             assert_eq!(buf.text(), "fn a(b: C) { d.e::<G>(f); }");
-            assert!(buf.is_parsing);
+            assert!(buf.is_parsing());
         });
-        buffer.condition(&ctx, |buffer, _| !buffer.is_parsing).await;
+        buffer
+            .condition(&ctx, |buffer, _| !buffer.is_parsing())
+            .await;
         assert_eq!(
             get_tree_sexp(&buffer, &ctx),
             concat!(
@@ -3563,9 +3573,11 @@ mod tests {
         buffer.update(&mut ctx, |buf, ctx| {
             buf.undo(Some(ctx));
             assert_eq!(buf.text(), "fn a() {}");
-            assert!(buf.is_parsing);
+            assert!(buf.is_parsing());
         });
-        buffer.condition(&ctx, |buffer, _| !buffer.is_parsing).await;
+        buffer
+            .condition(&ctx, |buffer, _| !buffer.is_parsing())
+            .await;
         assert_eq!(
             get_tree_sexp(&buffer, &ctx),
             concat!(
@@ -3578,9 +3590,11 @@ mod tests {
         buffer.update(&mut ctx, |buf, ctx| {
             buf.redo(Some(ctx));
             assert_eq!(buf.text(), "fn a(b: C) { d.e::<G>(f); }");
-            assert!(buf.is_parsing);
+            assert!(buf.is_parsing());
         });
-        buffer.condition(&ctx, |buffer, _| !buffer.is_parsing).await;
+        buffer
+            .condition(&ctx, |buffer, _| !buffer.is_parsing())
+            .await;
         assert_eq!(
             get_tree_sexp(&buffer, &ctx),
             concat!(

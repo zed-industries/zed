@@ -14,8 +14,8 @@ pub struct Language {
     pub name: String,
     pub grammar: Grammar,
     pub highlight_query: Query,
-    path_suffixes: Vec<String>,
-    theme_mapping: Mutex<ThemeMap>,
+    pub path_suffixes: Vec<String>,
+    pub theme_mapping: Mutex<ThemeMap>,
 }
 
 pub struct LanguageRegistry {
@@ -27,7 +27,7 @@ impl Language {
         self.theme_mapping.lock().clone()
     }
 
-    fn set_theme(&self, theme: &Theme) {
+    pub fn set_theme(&self, theme: &Theme) {
         *self.theme_mapping.lock() = ThemeMap::new(self.highlight_query.capture_names(), theme);
     }
 }
