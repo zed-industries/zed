@@ -82,7 +82,7 @@ pub struct Buffer {
     history: History,
     file: Option<FileHandle>,
     language: Option<Arc<Language>>,
-    tree: Mutex<Option<(Tree, time::Global)>>,
+    syntax_tree: Mutex<Option<SyntaxTree>>,
     is_parsing: bool,
     selections: HashMap<SelectionSetId, Arc<[Selection]>>,
     pub selections_last_update: SelectionsVersion,
@@ -91,6 +91,13 @@ pub struct Buffer {
     replica_id: ReplicaId,
     local_clock: time::Local,
     lamport_clock: time::Lamport,
+}
+
+#[derive(Clone)]
+struct SyntaxTree {
+    tree: Tree,
+    parsed: bool,
+    version: time::Global,
 }
 
 #[derive(Clone)]
@@ -492,7 +499,7 @@ impl Buffer {
             undo_map: Default::default(),
             history,
             file,
-            tree: Mutex::new(None),
+            syntax_tree: Mutex::new(None),
             is_parsing: false,
             language,
             saved_mtime,
@@ -561,19 +568,20 @@ impl Buffer {
     }
 
     pub fn syntax_tree(&self) -> Option<Tree> {
-        if let Some((tree, tree_version)) = self.tree.lock().as_mut() {
+        if let Some(syntax_tree) = self.syntax_tree.lock().as_mut() {
+            let mut edited = false;
             let mut delta = 0_isize;
             for Edit {
                 old_range,
                 new_range,
                 old_lines,
-            } in self.edits_since(tree_version.clone())
+            } in self.edits_since(syntax_tree.version.clone())
             {
                 let start_offset = (old_range.start as isize + delta) as usize;
                 let start_point = self.visible_text.to_point(start_offset);
                 let old_bytes = old_range.end - old_range.start;
                 let new_bytes = new_range.end - new_range.start;
-                tree.edit(&InputEdit {
+                syntax_tree.tree.edit(&InputEdit {
                     start_byte: start_offset,
                     old_end_byte: start_offset + old_bytes,
                     new_end_byte: start_offset + new_bytes,
@@ -582,19 +590,22 @@ impl Buffer {
                     new_end_position: self.visible_text.to_point(start_offset + new_bytes).into(),
                 });
                 delta += new_bytes as isize - old_bytes as isize;
+                edited = true;
             }
-            *tree_version = self.version();
-            Some(tree.clone())
+            syntax_tree.parsed &= !edited;
+            syntax_tree.version = self.version();
+            Some(syntax_tree.tree.clone())
         } else {
             None
         }
     }
 
     fn should_reparse(&self) -> bool {
-        self.tree
-            .lock()
-            .as_ref()
-            .map_or(true, |(_, tree_version)| *tree_version != self.version)
+        if let Some(syntax_tree) = self.syntax_tree.lock().as_ref() {
+            !syntax_tree.parsed || syntax_tree.version != self.version
+        } else {
+            self.language.is_some()
+        }
     }
 
     fn reparse(&mut self, ctx: &mut ModelContext<Self>) {
@@ -624,7 +635,11 @@ impl Buffer {
                         .await;
 
                     handle.update(&mut ctx, |this, ctx| {
-                        *this.tree.lock() = Some((new_tree, new_version));
+                        *this.syntax_tree.lock() = Some(SyntaxTree {
+                            tree: new_tree,
+                            parsed: true,
+                            version: new_version,
+                        });
                         ctx.emit(Event::Reparsed);
                         ctx.notify();
                     });
@@ -2016,7 +2031,7 @@ impl Clone for Buffer {
             deferred_ops: self.deferred_ops.clone(),
             file: self.file.clone(),
             language: self.language.clone(),
-            tree: Mutex::new(self.tree.lock().clone()),
+            syntax_tree: Mutex::new(self.syntax_tree.lock().clone()),
             is_parsing: false,
             deferred_replicas: self.deferred_replicas.clone(),
             replica_id: self.replica_id,
