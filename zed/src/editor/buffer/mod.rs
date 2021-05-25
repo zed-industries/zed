@@ -2069,12 +2069,12 @@ impl Snapshot {
         let chunks = self.text.chunks_in_range(range.clone());
         if let Some((language, tree)) = self.language.as_ref().zip(self.tree.as_ref()) {
             let query_cursor = self.query_cursor.as_mut().unwrap();
-            query_cursor.set_byte_range(range.start, range.end);
-            let captures = query_cursor.captures(
+            let mut captures = query_cursor.captures(
                 &language.highlight_query,
                 tree.root_node(),
                 TextProvider(&self.text),
             );
+            captures.set_byte_range(range.start, range.end);
 
             HighlightedChunks {
                 range,
@@ -2277,9 +2277,25 @@ impl<'a> HighlightedChunks<'a> {
         self.range.start = offset;
         self.chunks.seek(self.range.start);
         if let Some(highlights) = self.highlights.as_mut() {
-            highlights.stack.clear();
-            highlights.next_capture.take();
-            highlights.captures.advance_to_byte(self.range.start);
+            highlights
+                .stack
+                .retain(|(end_offset, _)| *end_offset > offset);
+            if let Some((mat, capture_ix)) = &highlights.next_capture {
+                let capture = mat.captures[*capture_ix as usize];
+                if offset >= capture.node.start_byte() {
+                    let next_capture_end = capture.node.end_byte();
+                    if offset < next_capture_end {
+                        highlights.stack.push((
+                            next_capture_end,
+                            highlights.theme_mapping.get(capture.index),
+                        ));
+                    }
+                    highlights.next_capture.take();
+                }
+            }
+            highlights
+                .captures
+                .set_byte_range(self.range.start, self.range.end);
         }
     }
 
@@ -2323,12 +2339,12 @@ impl<'a> Iterator for HighlightedChunks<'a> {
         if let Some(chunk) = self.chunks.peek() {
             let chunk_start = self.range.start;
             let mut chunk_end = (self.chunks.offset() + chunk.len()).min(next_capture_start);
-            let mut capture_ix = StyleId::default();
+            let mut style_id = StyleId::default();
             if let Some((parent_capture_end, parent_style_id)) =
                 self.highlights.as_ref().and_then(|h| h.stack.last())
             {
                 chunk_end = chunk_end.min(*parent_capture_end);
-                capture_ix = *parent_style_id;
+                style_id = *parent_style_id;
             }
 
             let slice =
@@ -2338,7 +2354,7 @@ impl<'a> Iterator for HighlightedChunks<'a> {
                 self.chunks.next().unwrap();
             }
 
-            Some((slice, capture_ix))
+            Some((slice, style_id))
         } else {
             None
         }

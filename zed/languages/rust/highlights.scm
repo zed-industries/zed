@@ -1,5 +1,7 @@
 (type_identifier) @type
 
+(field_identifier) @property
+
 (call_expression
   function: [
     (identifier) @function
@@ -8,8 +10,6 @@
     (field_expression
       field: (field_identifier) @function.method)
   ])
-
-(field_identifier) @property
 
 (function_item
   name: (identifier) @function.definition)

@@ -413,6 +413,10 @@ impl FoldMapSnapshot {
         }
     }
 
+    pub fn max_point(&self) -> DisplayPoint {
+        DisplayPoint(self.transforms.summary().display.lines)
+    }
+
     pub fn chunks_at(&self, offset: DisplayOffset) -> Chunks {
         let mut transform_cursor = self.transforms.cursor::<DisplayOffset, TransformSummary>();
         transform_cursor.seek(&offset, SeekBias::Right, &());
@@ -425,17 +429,23 @@ impl FoldMapSnapshot {
         }
     }
 
-    pub fn highlighted_chunks_at(&mut self, offset: DisplayOffset) -> HighlightedChunks {
+    pub fn highlighted_chunks(&mut self, range: Range<DisplayOffset>) -> HighlightedChunks {
         let mut transform_cursor = self.transforms.cursor::<DisplayOffset, TransformSummary>();
-        transform_cursor.seek(&offset, SeekBias::Right, &());
-        let overshoot = offset.0 - transform_cursor.start().display.bytes;
-        let buffer_offset = transform_cursor.start().buffer.bytes + overshoot;
+
+        transform_cursor.seek(&range.end, SeekBias::Right, &());
+        let overshoot = range.end.0 - transform_cursor.start().display.bytes;
+        let buffer_end = transform_cursor.start().buffer.bytes + overshoot;
+
+        transform_cursor.seek(&range.start, SeekBias::Right, &());
+        let overshoot = range.start.0 - transform_cursor.start().display.bytes;
+        let buffer_start = transform_cursor.start().buffer.bytes + overshoot;
+
         HighlightedChunks {
             transform_cursor,
-            buffer_offset,
+            buffer_offset: buffer_start,
             buffer_chunks: self
                 .buffer
-                .highlighted_text_for_range(buffer_offset..self.buffer.len()),
+                .highlighted_text_for_range(buffer_start..buffer_end),
             buffer_chunk: None,
         }
     }

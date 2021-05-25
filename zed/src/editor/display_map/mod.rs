@@ -104,9 +104,8 @@ impl DisplayMap {
             .column()
     }
 
-    // TODO - make this delegate to the DisplayMapSnapshot
     pub fn max_point(&self, ctx: &AppContext) -> DisplayPoint {
-        self.fold_map.max_point(ctx).expand_tabs(self, ctx)
+        self.snapshot(ctx).max_point().expand_tabs(self, ctx)
     }
 
     pub fn longest_row(&self, ctx: &AppContext) -> u32 {
@@ -136,6 +135,10 @@ impl DisplayMapSnapshot {
         self.folds_snapshot.buffer_rows(start_row)
     }
 
+    pub fn max_point(&self) -> DisplayPoint {
+        self.expand_tabs(self.folds_snapshot.max_point())
+    }
+
     pub fn chunks_at(&self, point: DisplayPoint) -> Chunks {
         let (point, expanded_char_column, to_next_stop) = self.collapse_tabs(point, Bias::Left);
         let fold_chunks = self
@@ -150,11 +153,13 @@ impl DisplayMapSnapshot {
         }
     }
 
-    pub fn highlighted_chunks_at(&mut self, row: u32) -> HighlightedChunks {
-        let point = DisplayPoint::new(row, 0);
-        let offset = self.folds_snapshot.to_display_offset(point);
+    pub fn highlighted_chunks_for_rows(&mut self, rows: Range<u32>) -> HighlightedChunks {
+        let start = DisplayPoint::new(rows.start, 0);
+        let start = self.folds_snapshot.to_display_offset(start);
+        let end = DisplayPoint::new(rows.end, 0).min(self.max_point());
+        let end = self.folds_snapshot.to_display_offset(end);
         HighlightedChunks {
-            fold_chunks: self.folds_snapshot.highlighted_chunks_at(offset),
+            fold_chunks: self.folds_snapshot.highlighted_chunks(start..end),
             column: 0,
             tab_size: self.tab_size,
             chunk: "",
@@ -530,7 +535,7 @@ mod tests {
 
         let mut map = app.read(|ctx| DisplayMap::new(buffer, 2, ctx));
         assert_eq!(
-            app.read(|ctx| highlighted_chunks(0, &map, &theme, ctx)),
+            app.read(|ctx| highlighted_chunks(0..5, &map, &theme, ctx)),
             vec![
                 ("fn ".to_string(), None),
                 ("outer".to_string(), Some("fn.name")),
@@ -541,7 +546,7 @@ mod tests {
             ]
         );
         assert_eq!(
-            app.read(|ctx| highlighted_chunks(3, &map, &theme, ctx)),
+            app.read(|ctx| highlighted_chunks(3..5, &map, &theme, ctx)),
             vec![
                 ("    fn ".to_string(), Some("mod.body")),
                 ("inner".to_string(), Some("fn.name")),
@@ -551,7 +556,7 @@ mod tests {
 
         app.read(|ctx| map.fold(vec![Point::new(0, 6)..Point::new(3, 2)], ctx));
         assert_eq!(
-            app.read(|ctx| highlighted_chunks(0, &map, &theme, ctx)),
+            app.read(|ctx| highlighted_chunks(0..2, &map, &theme, ctx)),
             vec![
                 ("fn ".to_string(), None),
                 ("out".to_string(), Some("fn.name")),
@@ -563,13 +568,13 @@ mod tests {
         );
 
         fn highlighted_chunks<'a>(
-            row: u32,
+            rows: Range<u32>,
             map: &DisplayMap,
             theme: &'a Theme,
             ctx: &AppContext,
         ) -> Vec<(String, Option<&'a str>)> {
             let mut chunks: Vec<(String, Option<&str>)> = Vec::new();
-            for (chunk, style_id) in map.snapshot(ctx).highlighted_chunks_at(row) {
+            for (chunk, style_id) in map.snapshot(ctx).highlighted_chunks_for_rows(rows) {
                 let style_name = theme.syntax_style_name(style_id);
                 if let Some((last_chunk, last_style_name)) = chunks.last_mut() {
                     if style_name == *last_style_name {

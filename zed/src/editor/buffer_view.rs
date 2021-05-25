@@ -2149,7 +2149,7 @@ impl BufferView {
         let mut styles = Vec::new();
         let mut row = rows.start;
         let mut snapshot = self.display_map.snapshot(ctx);
-        let chunks = snapshot.highlighted_chunks_at(rows.start);
+        let chunks = snapshot.highlighted_chunks_for_rows(rows.clone());
         let theme = settings.theme.clone();
 
         'outer: for (chunk, style_ix) in chunks.chain(Some(("\n", StyleId::default()))) {
