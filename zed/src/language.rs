@@ -2,7 +2,7 @@ use crate::settings::{Theme, ThemeMap};
 use parking_lot::Mutex;
 use rust_embed::RustEmbed;
 use serde::Deserialize;
-use std::{path::Path, str, sync::Arc};
+use std::{collections::HashSet, path::Path, str, sync::Arc};
 use tree_sitter::{Language as Grammar, Query};
 pub use tree_sitter::{Parser, Tree};
 
@@ -13,6 +13,8 @@ pub struct LanguageDir;
 #[derive(Default, Deserialize)]
 pub struct LanguageConfig {
     pub name: String,
+    pub indent: usize,
+    pub indent_nodes: HashSet<String>,
     pub path_suffixes: Vec<String>,
 }
 
