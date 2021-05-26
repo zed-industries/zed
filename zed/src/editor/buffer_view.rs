@@ -2074,10 +2074,7 @@ impl BufferView {
         let font_size = settings.buffer_font_size;
         let font_id =
             font_cache.select_font(settings.buffer_font_family, &FontProperties::new())?;
-        let digit_count = ((self.buffer.read(app).max_point().row + 1) as f32)
-            .log10()
-            .floor() as usize
-            + 1;
+        let digit_count = (self.buffer.read(app).row_count() as f32).log10().floor() as usize + 1;
 
         Ok(layout_cache
             .layout_str(

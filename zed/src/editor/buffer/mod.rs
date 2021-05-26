@@ -692,7 +692,6 @@ impl Buffer {
 
     fn autoindent_for_rows(&self, rows: Range<u32>) -> Vec<usize> {
         let mut indents = Vec::new();
-        let mut indent = 2;
         if let Some((language, syntax_tree)) = self.language.as_ref().zip(self.syntax_tree()) {
             let mut stack = Vec::new();
             let mut cursor = syntax_tree.walk();
@@ -853,6 +852,10 @@ impl Buffer {
 
     pub fn max_point(&self) -> Point {
         self.visible_text.max_point()
+    }
+
+    pub fn row_count(&self) -> u32 {
+        self.max_point().row + 1
     }
 
     pub fn text(&self) -> String {
@@ -3757,7 +3760,7 @@ mod tests {
         buffer.condition(&ctx, |buf, _| !buf.is_parsing()).await;
         buffer.read_with(&ctx, |buf, _| {
             assert_eq!(
-                buf.autoindent_for_rows(0..buf.max_point().row + 1),
+                buf.autoindent_for_rows(0..buf.row_count()),
                 vec![0, 0, 0, 0, 0, 0, 3, 3, 0, 0, 0, 0, 0, 0, 0]
             );
             todo!("write assertions to test how indents work with different subset of rows");
