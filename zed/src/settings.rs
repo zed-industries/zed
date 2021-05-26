@@ -3,7 +3,7 @@ use anyhow::{anyhow, Context, Result};
 use gpui::{
     color::ColorU,
     font_cache::{FamilyId, FontCache},
-    fonts::{Properties as FontProperties, Weight},
+    fonts::{Properties as FontProperties, Style as FontStyle, Weight as FontWeight},
 };
 use postage::watch;
 use serde::Deserialize;
@@ -68,6 +68,8 @@ impl Theme {
             Full {
                 color: Option<u32>,
                 weight: Option<toml::Value>,
+                #[serde(default)]
+                italic: bool,
             },
         }
 
@@ -76,14 +78,21 @@ impl Theme {
 
         let mut syntax_styles = Vec::<(String, ColorU, FontProperties)>::new();
         for (key, style) in theme_toml.syntax {
-            let (color, weight) = match style {
-                StyleToml::Color(color) => (color, None),
-                StyleToml::Full { color, weight } => (color.unwrap_or(0), weight),
+            let (color, weight, italic) = match style {
+                StyleToml::Color(color) => (color, None, false),
+                StyleToml::Full {
+                    color,
+                    weight,
+                    italic,
+                } => (color.unwrap_or(0), weight, italic),
             };
             match syntax_styles.binary_search_by_key(&&key, |e| &e.0) {
                 Ok(i) | Err(i) => {
                     let mut properties = FontProperties::new();
                     properties.weight = deserialize_weight(weight)?;
+                    if italic {
+                        properties.style = FontStyle::Italic;
+                    }
                     syntax_styles.insert(i, (key, deserialize_color(color), properties));
                 }
             }
@@ -189,15 +198,15 @@ fn deserialize_color(color: u32) -> ColorU {
     ColorU::from_u32((color << 8) + 0xFF)
 }
 
-fn deserialize_weight(weight: Option<toml::Value>) -> Result<Weight> {
+fn deserialize_weight(weight: Option<toml::Value>) -> Result<FontWeight> {
     match &weight {
-        None => return Ok(Weight::NORMAL),
-        Some(toml::Value::Integer(i)) => return Ok(Weight(*i as f32)),
+        None => return Ok(FontWeight::NORMAL),
+        Some(toml::Value::Integer(i)) => return Ok(FontWeight(*i as f32)),
         Some(toml::Value::String(s)) => match s.as_str() {
-            "normal" => return Ok(Weight::NORMAL),
-            "bold" => return Ok(Weight::BOLD),
-            "light" => return Ok(Weight::LIGHT),
-            "semibold" => return Ok(Weight::SEMIBOLD),
+            "normal" => return Ok(FontWeight::NORMAL),
+            "bold" => return Ok(FontWeight::BOLD),
+            "light" => return Ok(FontWeight::LIGHT),
+            "semibold" => return Ok(FontWeight::SEMIBOLD),
             _ => {}
         },
         _ => {}
@@ -220,7 +229,7 @@ mod tests {
             [syntax]
             "beta.two" = 0xAABBCC
             "alpha.one" = {color = 0x112233, weight = "bold"}
-            "gamma.three" = {weight = "light"}
+            "gamma.three" = {weight = "light", italic = true}
             "#,
         )
         .unwrap();
@@ -233,17 +242,19 @@ mod tests {
                 (
                     "alpha.one".to_string(),
                     ColorU::from_u32(0x112233FF),
-                    *FontProperties::new().weight(Weight::BOLD)
+                    *FontProperties::new().weight(FontWeight::BOLD)
                 ),
                 (
                     "beta.two".to_string(),
                     ColorU::from_u32(0xAABBCCFF),
-                    *FontProperties::new().weight(Weight::NORMAL)
+                    *FontProperties::new().weight(FontWeight::NORMAL)
                 ),
                 (
                     "gamma.three".to_string(),
                     ColorU::from_u32(0x000000FF),
-                    *FontProperties::new().weight(Weight::LIGHT),
+                    *FontProperties::new()
+                        .weight(FontWeight::LIGHT)
+                        .style(FontStyle::Italic),
                 ),
             ]
         );
