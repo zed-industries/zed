@@ -690,54 +690,78 @@ impl Buffer {
         (indent, is_whitespace)
     }
 
-    fn autoindent_for_row(&self, row: u32) -> usize {
-        let mut indent_parent = None;
+    fn autoindent_for_rows(&self, rows: Range<u32>) -> Vec<usize> {
+        let mut indents = Vec::new();
         let mut indent = 2;
         if let Some((language, syntax_tree)) = self.language.as_ref().zip(self.syntax_tree()) {
-            let row_start = Point::new(row, 0).into();
+            let mut stack = Vec::new();
             let mut cursor = syntax_tree.walk();
-            loop {
+            let mut row = rows.start;
+            while row < rows.end {
                 let node = cursor.node();
-                if row_start >= node.end_position() {
+                let row_start = Point::new(row, 0).into();
+
+                if node.end_position() <= row_start {
                     if !cursor.goto_next_sibling() {
-                        break;
+                        if stack.last() == Some(&node) {
+                            stack.pop();
+                        }
+
+                        if !cursor.goto_parent() {
+                            break;
+                        }
                     }
-                } else if node.start_position() > row_start {
-                    break;
+                } else if node.start_position() <= row_start && cursor.goto_first_child() {
+                    if language.config.indent_nodes.contains(node.kind()) {
+                        stack.push(node);
+                    }
                 } else {
-                    if node.start_position().row as u32 != row
-                        && language.config.indent_nodes.contains(node.kind())
-                    {
-                        let parent_ends_at_row = node.end_position().row as u32 == row;
-                        indent_parent =
-                            Some((node.start_position().row as u32, parent_ends_at_row));
+                    let mut indented = false;
+                    for ancestor in stack.iter().rev() {
+                        let ancestor_start_row = ancestor.start_position().row as u32;
+                        if ancestor_start_row < row {
+                            let ancestor_indent = if ancestor_start_row < rows.start {
+                                self.indent_for_row(ancestor_start_row).0
+                            } else {
+                                indents[(ancestor_start_row - rows.start) as usize]
+                            };
+
+                            if ancestor.end_position().row as u32 == row {
+                                indents.push(ancestor_indent);
+                            } else {
+                                indents.push(ancestor_indent + language.config.indent);
+                            }
+
+                            indented = true;
+                            break;
+                        }
                     }
 
-                    if !cursor.goto_first_child() {
-                        break;
+                    if !indented {
+                        let mut indent = 0;
+                        for prev_row in (0..row).rev() {
+                            if prev_row < rows.start {
+                                let (prev_indent, is_whitespace) = self.indent_for_row(prev_row);
+                                if prev_indent != 0 || !is_whitespace {
+                                    indent = prev_indent;
+                                    break;
+                                }
+                            } else {
+                                indent = indents[(prev_row - rows.start) as usize];
+                                break;
+                            }
+                        }
+                        indents.push(indent);
                     }
+
+                    row += 1;
                 }
-            }
-
-            indent = language.config.indent;
-        }
-
-        if let Some((parent_row, parent_ends_at_row)) = indent_parent {
-            let (parent_indent, _) = self.indent_for_row(parent_row);
-            if parent_ends_at_row {
-                parent_indent
-            } else {
-                parent_indent + indent
             }
         } else {
-            for prev_row in (0..row).rev() {
-                let (prev_indent, is_whitespace) = self.indent_for_row(prev_row);
-                if prev_indent != 0 || !is_whitespace {
-                    return prev_indent;
-                }
-            }
-            0
+            panic!()
         }
+
+        indents
     }
 
     fn diff(&self, new_text: Arc<str>, ctx: &AppContext) -> Task<Diff> {
@@ -3712,15 +3736,15 @@ mod tests {
             let text = "
                 fn a() {}
 
-                fn b() {
-                }
+                 fn b() {
+                 }
 
                 fn c() {
                  let badly_indented_line;
 
                 }
 
-                struct D {
+                struct D { // we deliberately don't auto-indent structs for this example
                     x: 1,
 
 
@@ -3732,22 +3756,11 @@ mod tests {
 
         buffer.condition(&ctx, |buf, _| !buf.is_parsing()).await;
         buffer.read_with(&ctx, |buf, _| {
-            assert_eq!(buf.autoindent_for_row(6), 3);
-            assert_eq!(buf.autoindent_for_row(7), 3);
-
-            // Don't autoindent rows that start or end on the same row as the indent node.
-            assert_eq!(buf.autoindent_for_row(0), 0);
-            assert_eq!(buf.autoindent_for_row(2), 0);
-            assert_eq!(buf.autoindent_for_row(3), 0);
-            assert_eq!(buf.autoindent_for_row(4), 0);
-            assert_eq!(buf.autoindent_for_row(8), 0);
-
-            // We didn't find any matching indent node in the language for the struct definition.
-            // Don't autoindent the first line inside of the struct. Instead, align the second and
-            // third line to the first non-whitespace line preceding them.
-            assert_eq!(buf.autoindent_for_row(11), 0);
-            assert_eq!(buf.autoindent_for_row(12), 4);
-            assert_eq!(buf.autoindent_for_row(13), 4);
+            assert_eq!(
+                buf.autoindent_for_rows(0..buf.max_point().row + 1),
+                vec![0, 0, 0, 0, 0, 0, 3, 3, 0, 0, 0, 0, 0, 0, 0]
+            );
+            todo!("write assertions to test how indents work with different subset of rows");
         });
     }
 
