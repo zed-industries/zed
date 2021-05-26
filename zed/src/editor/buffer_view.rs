@@ -2140,9 +2140,12 @@ impl BufferView {
         }
 
         let settings = self.settings.borrow();
-        let font_id =
-            font_cache.select_font(settings.buffer_font_family, &FontProperties::new())?;
         let font_size = settings.buffer_font_size;
+        let font_family = settings.buffer_font_family;
+        let mut prev_font_properties = FontProperties::new();
+        let mut prev_font_id = font_cache
+            .select_font(font_family, &prev_font_properties)
+            .unwrap();
 
         let mut layouts = Vec::with_capacity(rows.len());
         let mut line = String::new();
@@ -2165,8 +2168,17 @@ impl BufferView {
                 }
 
                 if !line_chunk.is_empty() {
+                    let (color, font_properties) = theme.syntax_style(style_ix);
+                    // Avoid a lookup if the font properties match the previous ones.
+                    let font_id = if font_properties == prev_font_properties {
+                        prev_font_id
+                    } else {
+                        font_cache.select_font(font_family, &font_properties)?
+                    };
                     line.push_str(line_chunk);
-                    styles.push((line_chunk.len(), font_id, theme.syntax_style(style_ix).0));
+                    styles.push((line_chunk.len(), font_id, color));
+                    prev_font_id = font_id;
+                    prev_font_properties = font_properties;
                 }
             }
         }

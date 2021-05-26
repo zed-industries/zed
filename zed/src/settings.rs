@@ -3,7 +3,7 @@ use anyhow::{anyhow, Context, Result};
 use gpui::{
     color::ColorU,
     font_cache::{FamilyId, FontCache},
-    fonts::Weight,
+    fonts::{Properties as FontProperties, Weight},
 };
 use postage::watch;
 use serde::Deserialize;
@@ -26,7 +26,7 @@ pub struct Theme {
     pub background_color: ColorU,
     pub line_number_color: ColorU,
     pub default_text_color: ColorU,
-    syntax_styles: Vec<(String, ColorU, Weight)>,
+    syntax_styles: Vec<(String, ColorU, FontProperties)>,
 }
 
 #[derive(Clone, Debug)]
@@ -74,17 +74,18 @@ impl Theme {
         let theme_toml: ThemeToml =
             toml::from_slice(source.as_ref()).context("failed to parse theme TOML")?;
 
-        let mut syntax_styles = Vec::<(String, ColorU, Weight)>::new();
+        let mut syntax_styles = Vec::<(String, ColorU, FontProperties)>::new();
         for (key, style) in theme_toml.syntax {
             let (color, weight) = match style {
                 StyleToml::Color(color) => (color, None),
                 StyleToml::Full { color, weight } => (color.unwrap_or(0), weight),
             };
             match syntax_styles.binary_search_by_key(&&key, |e| &e.0) {
-                Ok(i) | Err(i) => syntax_styles.insert(
-                    i,
-                    (key, deserialize_color(color), deserialize_weight(weight)?),
-                ),
+                Ok(i) | Err(i) => {
+                    let mut properties = FontProperties::new();
+                    properties.weight = deserialize_weight(weight)?;
+                    syntax_styles.insert(i, (key, deserialize_color(color), properties));
+                }
             }
         }
 
@@ -112,10 +113,10 @@ impl Theme {
         })
     }
 
-    pub fn syntax_style(&self, id: StyleId) -> (ColorU, Weight) {
+    pub fn syntax_style(&self, id: StyleId) -> (ColorU, FontProperties) {
         self.syntax_styles
             .get(id.0 as usize)
-            .map_or((self.default_text_color, Weight::NORMAL), |entry| {
+            .map_or((self.default_text_color, FontProperties::new()), |entry| {
                 (entry.1, entry.2)
             })
     }
@@ -232,17 +233,17 @@ mod tests {
                 (
                     "alpha.one".to_string(),
                     ColorU::from_u32(0x112233FF),
-                    Weight::BOLD
+                    *FontProperties::new().weight(Weight::BOLD)
                 ),
                 (
                     "beta.two".to_string(),
                     ColorU::from_u32(0xAABBCCFF),
-                    Weight::NORMAL
+                    *FontProperties::new().weight(Weight::NORMAL)
                 ),
                 (
                     "gamma.three".to_string(),
                     ColorU::from_u32(0x000000FF),
-                    Weight::LIGHT,
+                    *FontProperties::new().weight(Weight::LIGHT),
                 ),
             ]
         );
@@ -268,7 +269,7 @@ mod tests {
                 ("variable", ColorU::from_u32(0x600000ff)),
             ]
             .iter()
-            .map(|e| (e.0.to_string(), e.1, Weight::NORMAL))
+            .map(|e| (e.0.to_string(), e.1, FontProperties::new()))
             .collect(),
         };
 
