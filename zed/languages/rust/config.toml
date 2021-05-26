@@ -1,4 +1,4 @@
 name = "Rust"
 path_suffixes = ["rs"]
 indent = 4
-indent_nodes = ["mod_item", "block"]
+indent_nodes = ["declaration_list", "block"]
