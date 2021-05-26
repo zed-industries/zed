@@ -1,20 +1,25 @@
 use crate::settings::{Theme, ThemeMap};
 use parking_lot::Mutex;
 use rust_embed::RustEmbed;
-use std::{path::Path, sync::Arc};
+use serde::Deserialize;
+use std::{path::Path, str, sync::Arc};
 use tree_sitter::{Language as Grammar, Query};
-
 pub use tree_sitter::{Parser, Tree};
 
 #[derive(RustEmbed)]
 #[folder = "languages"]
 pub struct LanguageDir;
 
-pub struct Language {
+#[derive(Default, Deserialize)]
+pub struct LanguageConfig {
     pub name: String,
+    pub path_suffixes: Vec<String>,
+}
+
+pub struct Language {
+    pub config: LanguageConfig,
     pub grammar: Grammar,
     pub highlight_query: Query,
-    pub path_suffixes: Vec<String>,
     pub theme_mapping: Mutex<ThemeMap>,
 }
 
@@ -35,16 +40,15 @@ impl Language {
 impl LanguageRegistry {
     pub fn new() -> Self {
         let grammar = tree_sitter_rust::language();
+        let rust_config = toml::from_slice(&LanguageDir::get("rust/config.toml").unwrap()).unwrap();
         let rust_language = Language {
-            name: "Rust".to_string(),
+            config: rust_config,
             grammar,
             highlight_query: Query::new(
                 grammar,
-                std::str::from_utf8(LanguageDir::get("rust/highlights.scm").unwrap().as_ref())
-                    .unwrap(),
+                str::from_utf8(LanguageDir::get("rust/highlights.scm").unwrap().as_ref()).unwrap(),
             )
             .unwrap(),
-            path_suffixes: vec!["rs".to_string()],
             theme_mapping: Mutex::new(ThemeMap::default()),
         };
 
@@ -66,6 +70,7 @@ impl LanguageRegistry {
         let path_suffixes = [extension, filename];
         self.languages.iter().find(|language| {
             language
+                .config
                 .path_suffixes
                 .iter()
                 .any(|suffix| path_suffixes.contains(&Some(suffix.as_str())))
@@ -83,17 +88,23 @@ mod tests {
         let registry = LanguageRegistry {
             languages: vec![
                 Arc::new(Language {
-                    name: "Rust".to_string(),
+                    config: LanguageConfig {
+                        name: "Rust".to_string(),
+                        path_suffixes: vec!["rs".to_string()],
+                        ..Default::default()
+                    },
                     grammar,
                     highlight_query: Query::new(grammar, "").unwrap(),
-                    path_suffixes: vec!["rs".to_string()],
                     theme_mapping: Default::default(),
                 }),
                 Arc::new(Language {
-                    name: "Make".to_string(),
+                    config: LanguageConfig {
+                        name: "Make".to_string(),
+                        path_suffixes: vec!["Makefile".to_string(), "mk".to_string()],
+                        ..Default::default()
+                    },
                     grammar,
                     highlight_query: Query::new(grammar, "").unwrap(),
-                    path_suffixes: vec!["Makefile".to_string(), "mk".to_string()],
                     theme_mapping: Default::default(),
                 }),
             ],
@@ -121,7 +132,7 @@ mod tests {
         assert_eq!(registry.select_language("zed/sumk").map(get_name), None);
 
         fn get_name(language: &Arc<Language>) -> &str {
-            language.name.as_str()
+            language.config.name.as_str()
         }
     }
 }

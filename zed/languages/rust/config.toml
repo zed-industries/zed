@@ -1,0 +1,2 @@
+name = "Rust"
+path_suffixes = ["rs"]

@@ -450,7 +450,11 @@ pub fn collapse_tabs(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{language::Language, settings::Theme, test::*};
+    use crate::{
+        language::{Language, LanguageConfig},
+        settings::Theme,
+        test::*,
+    };
     use buffer::History;
     use std::sync::Arc;
 
@@ -520,10 +524,13 @@ mod tests {
         )
         .unwrap();
         let lang = Arc::new(Language {
-            name: "Test".to_string(),
+            config: LanguageConfig {
+                name: "Test".to_string(),
+                path_suffixes: vec![".test".to_string()],
+                ..Default::default()
+            },
             grammar: grammar.clone(),
             highlight_query: query,
-            path_suffixes: vec![".test".to_string()],
             theme_mapping: Default::default(),
         });
         lang.set_theme(&theme);
