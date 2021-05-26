@@ -322,6 +322,9 @@ mod tests {
         let menlo_regular = fonts.select_font(&menlo, &Properties::new())?;
         let menlo_italic = fonts.select_font(&menlo, &Properties::new().style(Style::Italic))?;
         let menlo_bold = fonts.select_font(&menlo, &Properties::new().weight(Weight::BOLD))?;
+        assert_ne!(menlo_regular, menlo_italic);
+        assert_ne!(menlo_regular, menlo_bold);
+        assert_ne!(menlo_italic, menlo_bold);
 
         let line = fonts.layout_str(
             "hello world",
@@ -371,32 +374,33 @@ mod tests {
         Ok(())
     }
 
-    // #[test]
-    // fn test_rasterize_glyph() {
-    //     use std::{fs::File, io::BufWriter, path::Path};
+    #[test]
+    #[ignore]
+    fn test_rasterize_glyph() {
+        use std::{fs::File, io::BufWriter, path::Path};
 
-    //     let fonts = FontSystem::new();
-    //     let font_ids = fonts.load_family("Fira Code").unwrap();
-    //     let font_id = fonts.select_font(&font_ids, &Default::default()).unwrap();
-    //     let glyph_id = fonts.glyph_for_char(font_id, 'G').unwrap();
+        let fonts = FontSystem::new();
+        let font_ids = fonts.load_family("Fira Code").unwrap();
+        let font_id = fonts.select_font(&font_ids, &Default::default()).unwrap();
+        let glyph_id = fonts.glyph_for_char(font_id, 'G').unwrap();
 
-    //     const VARIANTS: usize = 1;
-    //     for i in 0..VARIANTS {
-    //         let variant = i as f32 / VARIANTS as f32;
-    //         let (bounds, bytes) = fonts
-    //             .rasterize_glyph(font_id, 16.0, glyph_id, vec2f(variant, variant), 2.)
-    //             .unwrap();
+        const VARIANTS: usize = 1;
+        for i in 0..VARIANTS {
+            let variant = i as f32 / VARIANTS as f32;
+            let (bounds, bytes) = fonts
+                .rasterize_glyph(font_id, 16.0, glyph_id, vec2f(variant, variant), 2.)
+                .unwrap();
 
-    //         let name = format!("/Users/as-cii/Desktop/twog-{}.png", i);
-    //         let path = Path::new(&name);
-    //         let file = File::create(path).unwrap();
-    //         let ref mut w = BufWriter::new(file);
+            let name = format!("/Users/as-cii/Desktop/twog-{}.png", i);
+            let path = Path::new(&name);
+            let file = File::create(path).unwrap();
+            let ref mut w = BufWriter::new(file);
 
-    //         let mut encoder = png::Encoder::new(w, bounds.width() as u32, bounds.height() as u32);
-    //         encoder.set_color(png::ColorType::Grayscale);
-    //         encoder.set_depth(png::BitDepth::Eight);
-    //         let mut writer = encoder.write_header().unwrap();
-    //         writer.write_image_data(&bytes).unwrap();
-    //     }
-    // }
+            let mut encoder = png::Encoder::new(w, bounds.width() as u32, bounds.height() as u32);
+            encoder.set_color(png::ColorType::Grayscale);
+            encoder.set_depth(png::BitDepth::Eight);
+            let mut writer = encoder.write_header().unwrap();
+            writer.write_image_data(&bytes).unwrap();
+        }
+    }
 }

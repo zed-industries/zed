@@ -161,3 +161,29 @@ impl FontCache {
         metric * font_size / self.metric(font_id, |m| m.units_per_em as f32)
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::{
+        fonts::{Style, Weight},
+        platform::{test, Platform as _},
+    };
+
+    #[test]
+    fn test_select_font() {
+        let platform = test::platform();
+        let fonts = FontCache::new(platform.fonts());
+        let arial = fonts.load_family(&["Arial"]).unwrap();
+        let arial_regular = fonts.select_font(arial, &Properties::new()).unwrap();
+        let arial_italic = fonts
+            .select_font(arial, &Properties::new().style(Style::Italic))
+            .unwrap();
+        let arial_bold = fonts
+            .select_font(arial, &Properties::new().weight(Weight::BOLD))
+            .unwrap();
+        assert_ne!(arial_regular, arial_italic);
+        assert_ne!(arial_regular, arial_bold);
+        assert_ne!(arial_italic, arial_bold);
+    }
+}
