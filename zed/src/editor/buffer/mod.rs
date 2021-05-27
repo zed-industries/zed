@@ -689,7 +689,7 @@ impl Buffer {
         (indent, is_whitespace)
     }
 
-    fn autoindent_for_rows(&self, rows: Range<u32>) -> Vec<usize> {
+    pub fn autoindent_for_rows(&self, rows: Range<u32>) -> Vec<usize> {
         // Find the indentation level of the previous non-whitespace row.
         let mut prev_row = rows.start;
         let prev_indent = loop {
@@ -2237,7 +2237,9 @@ fn acquire_query_cursor() -> QueryCursor {
         .unwrap_or_else(|| QueryCursor::new())
 }
 
-fn release_query_cursor(cursor: QueryCursor) {
+fn release_query_cursor(mut cursor: QueryCursor) {
+    cursor.set_byte_range(0, usize::MAX);
+    cursor.set_point_range(Point::zero().into(), Point::MAX.into());
     QUERY_CURSORS.lock().push(cursor)
 }
 

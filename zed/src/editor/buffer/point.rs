@@ -10,6 +10,11 @@ pub struct Point {
 }
 
 impl Point {
+    pub const MAX: Self = Self {
+        row: u32::MAX,
+        column: u32::MAX,
+    };
+
     pub fn new(row: u32, column: u32) -> Self {
         Point { row, column }
     }
