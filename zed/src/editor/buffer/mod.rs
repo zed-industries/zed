@@ -740,7 +740,7 @@ impl Buffer {
                     let node_end_row = capture.node.end_position().row;
                     let start_ix = (node_start_row + 1).saturating_sub(start_row);
                     let end_ix = (node_end_row + 1).saturating_sub(start_row);
-                    for ix in start_ix..end_ix {
+                    for ix in start_ix..cmp::min(end_ix, indents.len()) {
                         indents[ix] += language.config.indent;
                     }
                 }
@@ -751,7 +751,7 @@ impl Buffer {
                     let node_end_row = capture.node.end_position().row;
                     let start_ix = node_start_row.saturating_sub(start_row);
                     let end_ix = (node_end_row + 1).saturating_sub(start_row);
-                    for ix in start_ix..end_ix {
+                    for ix in start_ix..cmp::min(end_ix, indents.len()) {
                         indents[ix] = indents[ix].saturating_sub(language.config.indent);
                     }
                 }
