@@ -509,7 +509,7 @@ mod tests {
                 fn inner() {}
             }"#
         .unindent();
-        let query = tree_sitter::Query::new(
+        let highlight_query = tree_sitter::Query::new(
             grammar,
             r#"
             (mod_item name: (identifier) body: _ @mod.body)
@@ -530,7 +530,8 @@ mod tests {
                 ..Default::default()
             },
             grammar: grammar.clone(),
-            highlight_query: query,
+            highlight_query,
+            indent_query: tree_sitter::Query::new(grammar, "").unwrap(),
             theme_mapping: Default::default(),
         });
         lang.set_theme(&theme);

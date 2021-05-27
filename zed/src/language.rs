@@ -2,7 +2,7 @@ use crate::settings::{Theme, ThemeMap};
 use parking_lot::Mutex;
 use rust_embed::RustEmbed;
 use serde::Deserialize;
-use std::{collections::HashSet, path::Path, str, sync::Arc};
+use std::{path::Path, str, sync::Arc};
 use tree_sitter::{Language as Grammar, Query};
 pub use tree_sitter::{Parser, Tree};
 
@@ -14,7 +14,6 @@ pub struct LanguageDir;
 pub struct LanguageConfig {
     pub name: String,
     pub indent: usize,
-    pub indent_nodes: HashSet<String>,
     pub path_suffixes: Vec<String>,
 }
 
@@ -22,6 +21,7 @@ pub struct Language {
     pub config: LanguageConfig,
     pub grammar: Grammar,
     pub highlight_query: Query,
+    pub indent_query: Query,
     pub theme_mapping: Mutex<ThemeMap>,
 }
 
@@ -46,11 +46,8 @@ impl LanguageRegistry {
         let rust_language = Language {
             config: rust_config,
             grammar,
-            highlight_query: Query::new(
-                grammar,
-                str::from_utf8(LanguageDir::get("rust/highlights.scm").unwrap().as_ref()).unwrap(),
-            )
-            .unwrap(),
+            highlight_query: Self::load_query(grammar, "rust/highlights.scm"),
+            indent_query: Self::load_query(grammar, "rust/indents.scm"),
             theme_mapping: Mutex::new(ThemeMap::default()),
         };
 
@@ -78,6 +75,14 @@ impl LanguageRegistry {
                 .any(|suffix| path_suffixes.contains(&Some(suffix.as_str())))
         })
     }
+
+    fn load_query(grammar: tree_sitter::Language, path: &str) -> Query {
+        Query::new(
+            grammar,
+            str::from_utf8(LanguageDir::get(path).unwrap().as_ref()).unwrap(),
+        )
+        .unwrap()
+    }
 }
 
 #[cfg(test)]
@@ -97,6 +102,7 @@ mod tests {
                     },
                     grammar,
                     highlight_query: Query::new(grammar, "").unwrap(),
+                    indent_query: Query::new(grammar, "").unwrap(),
                     theme_mapping: Default::default(),
                 }),
                 Arc::new(Language {
@@ -107,6 +113,7 @@ mod tests {
                     },
                     grammar,
                     highlight_query: Query::new(grammar, "").unwrap(),
+                    indent_query: Query::new(grammar, "").unwrap(),
                     theme_mapping: Default::default(),
                 }),
             ],
