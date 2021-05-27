@@ -1,4 +1,12 @@
 name = "Rust"
 path_suffixes = ["rs"]
 indent = 4
-indent_nodes = ["declaration_list", "block"]
+
+idents = [
+    { inside = "let_declaration" },
+    { inside = "field_declaration" },
+    { start = "where_clause", end = ["block", "field_declaration_list"] },
+    { after = "{", before = "}" },
+    { start = "(", end = ")" },
+    { start = "[", end = "]" },
+]

@@ -654,6 +654,7 @@ impl Buffer {
     }
 
     fn parse_text(text: &Rope, old_tree: Option<Tree>, language: &Language) -> Tree {
+        let t0 = std::time::Instant::now();
         PARSER.with(|parser| {
             let mut parser = parser.borrow_mut();
             parser
@@ -669,6 +670,7 @@ impl Buffer {
                     old_tree.as_ref(),
                 )
                 .unwrap();
+            eprintln!("parsed in {:?}", t0.elapsed());
             tree
         })
     }
@@ -689,9 +691,9 @@ impl Buffer {
         (indent, is_whitespace)
     }
 
-    pub fn autoindent_for_rows(&self, rows: Range<u32>) -> Vec<usize> {
+    pub fn autoindent_for_row(&self, row: u32) -> usize {
         // Find the indentation level of the previous non-whitespace row.
-        let mut prev_row = rows.start;
+        let mut prev_row = row;
         let prev_indent = loop {
             if prev_row == 0 {
                 break 0;
@@ -705,87 +707,73 @@ impl Buffer {
 
         let (language, syntax_tree) = match self.language.as_ref().zip(self.syntax_tree()) {
             Some(e) => e,
-            None => return vec![prev_indent; rows.len()],
+            None => return prev_indent,
         };
 
-        // Find the capture indices in the language's indent query that represent increased
-        // and decreased indentation.
-        let mut indent_capture_ix = u32::MAX;
-        let mut outdent_capture_ix = u32::MAX;
+        // Find the capture indices in the language's indent query.
+        let mut indent_inside_capture_ix = u32::MAX;
+        let mut indent_after_capture_ix = u32::MAX;
+        let mut indent_until_capture_ix = u32::MAX;
         for (ix, name) in language.indent_query.capture_names().iter().enumerate() {
-            match name.as_ref() {
-                "indent" => indent_capture_ix = ix as u32,
-                "outdent" => outdent_capture_ix = ix as u32,
+            *match name.as_ref() {
+                "inside" => &mut indent_inside_capture_ix,
+                "after" => &mut indent_after_capture_ix,
+                "until" => &mut indent_until_capture_ix,
                 _ => continue,
-            }
+            } = ix as u32;
         }
 
-        let start_row = rows.start as usize;
-        let mut indents = vec![prev_indent; rows.len()];
+        eprintln!("autoindent for row: {}", row);
 
-        // Find all of the indent and outdent nodes in the given row range.
+        // Find all of the indentation nodes intersecting the previous and current row.
+        let mut does_start_indent = false;
+        let mut start_row_of_most_recent_ending_indent = None;
         let mut cursor = acquire_query_cursor();
         cursor.set_point_range(
             Point::new(prev_row, 0).into(),
-            Point::new(rows.end + 1, 0).into(),
+            Point::new(row + 1, 0).into(),
         );
         for mat in cursor.matches(
             &language.indent_query,
             syntax_tree.root_node(),
             TextProvider(&self.visible_text),
         ) {
+            let mut row_range = 0..self.row_count();
+            eprintln!("  match: {:?}", mat);
+
             for capture in mat.captures {
-                if capture.index == indent_capture_ix {
-                    let node_start_row = capture.node.start_position().row;
-                    let node_end_row = capture.node.end_position().row;
-                    let start_ix = (node_start_row + 1).saturating_sub(start_row);
-                    let end_ix = (node_end_row + 1).saturating_sub(start_row);
-                    for ix in start_ix..cmp::min(end_ix, indents.len()) {
-                        indents[ix] += language.config.indent;
-                    }
+                let node_start_row = capture.node.start_position().row as u32;
+                let node_end_row = capture.node.end_position().row as u32;
+                if capture.index == indent_inside_capture_ix {
+                    row_range.start = row_range.start.max(node_start_row + 1);
+                    row_range.end = row_range.end.min(node_end_row + 1);
+                } else if capture.index == indent_after_capture_ix {
+                    row_range.start = row_range.start.max(node_end_row + 1);
+                } else if capture.index == indent_until_capture_ix {
+                    row_range.end = row_range.end.min(node_start_row);
                 }
             }
-            for capture in mat.captures {
-                if capture.index == outdent_capture_ix {
-                    let node_start_row = capture.node.start_position().row;
-                    let node_end_row = capture.node.end_position().row;
-                    let start_ix = node_start_row.saturating_sub(start_row);
-                    let end_ix = (node_end_row + 1).saturating_sub(start_row);
-                    for ix in start_ix..cmp::min(end_ix, indents.len()) {
-                        indents[ix] = indents[ix].saturating_sub(language.config.indent);
-                    }
-                }
+
+            eprintln!("  row_range: {:?}", row_range);
+
+            if row_range.contains(&row) {
+                does_start_indent = true;
+            } else if !row_range.is_empty() && row_range.end == row {
+                start_row_of_most_recent_ending_indent = Some(
+                    start_row_of_most_recent_ending_indent
+                        .unwrap_or(0)
+                        .max(row_range.start),
+                );
             }
         }
 
-        // Post-process indents to fix doubly-indented lines.
-        struct Indent {
-            initial: usize,
-            adjusted: usize,
+        if does_start_indent {
+            prev_indent + language.config.indent
+        } else if let Some(start_row) = start_row_of_most_recent_ending_indent {
+            self.indent_for_row(start_row).0
+        } else {
+            prev_indent
         }
-        let mut indent_stack = vec![Indent {
-            initial: prev_indent,
-            adjusted: prev_indent,
-        }];
-        for indent in indents.iter_mut() {
-            while *indent < indent_stack.last().unwrap().initial {
-                indent_stack.pop();
-            }
-
-            let cur_indent = indent_stack.last().unwrap();
-            if *indent > cur_indent.initial {
-                let adjusted_indent = cur_indent.adjusted + language.config.indent;
-                indent_stack.push(Indent {
-                    initial: *indent,
-                    adjusted: adjusted_indent,
-                });
-                *indent = adjusted_indent;
-            } else {
-                *indent = cur_indent.adjusted;
-            }
-        }
-
-        indents
     }
 
     fn diff(&self, new_text: Arc<str>, ctx: &AppContext) -> Task<Diff> {
@@ -3771,9 +3759,11 @@ mod tests {
             indent_query: tree_sitter::Query::new(
                 grammar,
                 r#"
-                    (block "}" @outdent) @indent
-                    (_ ")" @outdent) @indent
-                    (where_clause) @indent
+                    (field_expression) @inside
+                    (let_declaration) @inside
+                    ((_ . "where" @after) _ @until)
+                    (_ "{" @after "}" @until)
+                    (_ "(" @after ")" @until)
                 "#,
             )
             .unwrap(),
@@ -3806,7 +3796,10 @@ mod tests {
                 B: E,
                 C: F
             {
-                
+                a
+                    .b
+                    .c
+                    .d
             }
             "
             .unindent(),
@@ -3819,26 +3812,14 @@ mod tests {
             buffer.condition(&ctx, |buf, _| !buf.is_parsing()).await;
 
             buffer.read_with(&ctx, |buffer, _| {
-                let row_range = 0..buffer.row_count();
-                let current_indents = row_range
-                    .clone()
-                    .map(|row| buffer.indent_for_row(row).0)
-                    .collect::<Vec<_>>();
-                let autoindents = buffer.autoindent_for_rows(row_range);
-                assert_eq!(
-                    autoindents.len(),
-                    current_indents.len(),
-                    "wrong number of autoindents returned for example {}",
-                    example_ix
-                );
-                for (row, indent) in autoindents.into_iter().enumerate() {
+                for row in 0..buffer.row_count() {
                     assert_eq!(
-                        indent,
-                        current_indents[row],
+                        buffer.autoindent_for_row(row),
+                        buffer.indent_for_row(row).0,
                         "wrong autoindent for example {}, row {}, line {:?}",
                         example_ix,
                         row,
-                        buffer.text().split('\n').skip(row).next().unwrap(),
+                        buffer.text().split('\n').skip(row as usize).next().unwrap(),
                     );
                 }
             });

@@ -641,7 +641,10 @@ impl BufferView {
 
     pub fn print_autoindents(&mut self, _: &(), ctx: &mut ViewContext<Self>) {
         let buf = self.buffer.read(ctx);
-        dbg!(buf.autoindent_for_rows(0..buf.row_count()));
+        eprintln!("autoindents:");
+        for row in 0..buf.row_count() {
+            eprintln!("  {}: {}", row, buf.autoindent_for_row(row));
+        }
     }
 
     pub fn insert(&mut self, text: &String, ctx: &mut ViewContext<Self>) {

@@ -1,7 +1,8 @@
-(where_clause) @indent
+(field_expression) @inside
+(let_declaration) @inside
 
-(field_expression) @indent
+((_ . "where" @after) _ @until)
 
-(_ "(" ")" @outdent) @indent
-(_ "[" "]" @outdent) @indent
-(_ "{" "}" @outdent) @indent
+(_ "{" @after "}" @until)
+(_ "[" @after "]" @until)
+(_ "(" @after ")" @until)
