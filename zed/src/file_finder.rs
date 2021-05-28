@@ -1,5 +1,5 @@
 use crate::{
-    editor::{buffer_view, BufferView},
+    editor::{self, Editor},
     settings::Settings,
     util,
     workspace::Workspace,
@@ -28,7 +28,7 @@ pub struct FileFinder {
     handle: WeakViewHandle<Self>,
     settings: watch::Receiver<Settings>,
     workspace: WeakViewHandle<Workspace>,
-    query_buffer: ViewHandle<BufferView>,
+    query_buffer: ViewHandle<Editor>,
     search_count: usize,
     latest_search_id: usize,
     latest_search_did_cancel: bool,
@@ -39,15 +39,15 @@ pub struct FileFinder {
     list_state: UniformListState,
 }
 
-pub fn init(app: &mut MutableAppContext) {
-    app.add_action("file_finder:toggle", FileFinder::toggle);
-    app.add_action("file_finder:confirm", FileFinder::confirm);
-    app.add_action("file_finder:select", FileFinder::select);
-    app.add_action("menu:select_prev", FileFinder::select_prev);
-    app.add_action("menu:select_next", FileFinder::select_next);
-    app.add_action("uniform_list:scroll", FileFinder::scroll);
+pub fn init(cx: &mut MutableAppContext) {
+    cx.add_action("file_finder:toggle", FileFinder::toggle);
+    cx.add_action("file_finder:confirm", FileFinder::confirm);
+    cx.add_action("file_finder:select", FileFinder::select);
+    cx.add_action("menu:select_prev", FileFinder::select_prev);
+    cx.add_action("menu:select_next", FileFinder::select_next);
+    cx.add_action("uniform_list:scroll", FileFinder::scroll);
 
-    app.add_bindings(vec![
+    cx.add_bindings(vec![
         Binding::new("cmd-p", "file_finder:toggle", None),
         Binding::new("escape", "file_finder:toggle", Some("FileFinder")),
         Binding::new("enter", "file_finder:confirm", Some("FileFinder")),
@@ -92,14 +92,14 @@ impl View for FileFinder {
         .named("file finder")
     }
 
-    fn on_focus(&mut self, ctx: &mut ViewContext<Self>) {
-        ctx.focus(&self.query_buffer);
+    fn on_focus(&mut self, cx: &mut ViewContext<Self>) {
+        cx.focus(&self.query_buffer);
     }
 
     fn keymap_context(&self, _: &AppContext) -> keymap::Context {
-        let mut ctx = Self::default_keymap_context();
-        ctx.set.insert("menu".into());
-        ctx
+        let mut cx = Self::default_keymap_context();
+        cx.set.insert("menu".into());
+        cx
     }
 }
 
@@ -123,13 +123,13 @@ impl FileFinder {
         let list = UniformList::new(
             self.list_state.clone(),
             self.matches.len(),
-            move |mut range, items, app| {
-                let finder = handle.upgrade(app).unwrap();
-                let finder = finder.read(app);
+            move |mut range, items, cx| {
+                let finder = handle.upgrade(cx).unwrap();
+                let finder = finder.read(cx);
                 let start = range.start;
                 range.end = cmp::min(range.end, finder.matches.len());
                 items.extend(finder.matches[range].iter().enumerate().filter_map(
-                    move |(i, path_match)| finder.render_match(path_match, start + i, app),
+                    move |(i, path_match)| finder.render_match(path_match, start + i, cx),
                 ));
             },
         );
@@ -145,9 +145,9 @@ impl FileFinder {
         &self,
         path_match: &PathMatch,
         index: usize,
-        app: &AppContext,
+        cx: &AppContext,
     ) -> Option<ElementBox> {
-        self.labels_for_match(path_match, app).map(
+        self.labels_for_match(path_match, cx).map(
             |(file_name, file_name_positions, full_path, full_path_positions)| {
                 let settings = self.settings.borrow();
                 let highlight_color = ColorU::from_u32(0x304ee2ff);
@@ -208,8 +208,8 @@ impl FileFinder {
 
                 let entry = (path_match.tree_id, path_match.path.clone());
                 EventHandler::new(container.boxed())
-                    .on_mouse_down(move |ctx| {
-                        ctx.dispatch_action("file_finder:select", entry.clone());
+                    .on_mouse_down(move |cx| {
+                        cx.dispatch_action("file_finder:select", entry.clone());
                         true
                     })
                     .named("match")
@@ -220,9 +220,9 @@ impl FileFinder {
     fn labels_for_match(
         &self,
         path_match: &PathMatch,
-        app: &AppContext,
+        cx: &AppContext,
     ) -> Option<(String, Vec<usize>, String, Vec<usize>)> {
-        self.worktree(path_match.tree_id, app).map(|tree| {
+        self.worktree(path_match.tree_id, cx).map(|tree| {
             let prefix = if path_match.include_root_name {
                 tree.root_name()
             } else {
@@ -254,12 +254,12 @@ impl FileFinder {
         })
     }
 
-    fn toggle(workspace_view: &mut Workspace, _: &(), ctx: &mut ViewContext<Workspace>) {
-        workspace_view.toggle_modal(ctx, |ctx, workspace_view| {
-            let workspace = ctx.handle();
+    fn toggle(workspace_view: &mut Workspace, _: &(), cx: &mut ViewContext<Workspace>) {
+        workspace_view.toggle_modal(cx, |cx, workspace_view| {
+            let workspace = cx.handle();
             let finder =
-                ctx.add_view(|ctx| Self::new(workspace_view.settings.clone(), workspace, ctx));
-            ctx.subscribe_to_view(&finder, Self::on_event);
+                cx.add_view(|cx| Self::new(workspace_view.settings.clone(), workspace, cx));
+            cx.subscribe_to_view(&finder, Self::on_event);
             finder
         });
     }
@@ -268,17 +268,17 @@ impl FileFinder {
         workspace_view: &mut Workspace,
         _: ViewHandle<FileFinder>,
         event: &Event,
-        ctx: &mut ViewContext<Workspace>,
+        cx: &mut ViewContext<Workspace>,
     ) {
         match event {
             Event::Selected(tree_id, path) => {
                 workspace_view
-                    .open_entry((*tree_id, path.clone()), ctx)
+                    .open_entry((*tree_id, path.clone()), cx)
                     .map(|d| d.detach());
-                workspace_view.dismiss_modal(ctx);
+                workspace_view.dismiss_modal(cx);
             }
             Event::Dismissed => {
-                workspace_view.dismiss_modal(ctx);
+                workspace_view.dismiss_modal(cx);
             }
         }
     }
@@ -286,15 +286,15 @@ impl FileFinder {
     pub fn new(
         settings: watch::Receiver<Settings>,
         workspace: ViewHandle<Workspace>,
-        ctx: &mut ViewContext<Self>,
+        cx: &mut ViewContext<Self>,
     ) -> Self {
-        ctx.observe_view(&workspace, Self::workspace_updated);
+        cx.observe_view(&workspace, Self::workspace_updated);
 
-        let query_buffer = ctx.add_view(|ctx| BufferView::single_line(settings.clone(), ctx));
-        ctx.subscribe_to_view(&query_buffer, Self::on_query_buffer_event);
+        let query_buffer = cx.add_view(|cx| Editor::single_line(settings.clone(), cx));
+        cx.subscribe_to_view(&query_buffer, Self::on_query_editor_event);
 
         Self {
-            handle: ctx.handle().downgrade(),
+            handle: cx.handle().downgrade(),
             settings,
             workspace: workspace.downgrade(),
             query_buffer,
@@ -309,33 +309,32 @@ impl FileFinder {
         }
     }
 
-    fn workspace_updated(&mut self, _: ViewHandle<Workspace>, ctx: &mut ViewContext<Self>) {
-        if let Some(task) = self.spawn_search(self.query_buffer.read(ctx).text(ctx.as_ref()), ctx) {
+    fn workspace_updated(&mut self, _: ViewHandle<Workspace>, cx: &mut ViewContext<Self>) {
+        if let Some(task) = self.spawn_search(self.query_buffer.read(cx).text(cx.as_ref()), cx) {
             task.detach();
         }
     }
 
-    fn on_query_buffer_event(
+    fn on_query_editor_event(
         &mut self,
-        _: ViewHandle<BufferView>,
-        event: &buffer_view::Event,
-        ctx: &mut ViewContext<Self>,
+        _: ViewHandle<Editor>,
+        event: &editor::Event,
+        cx: &mut ViewContext<Self>,
     ) {
-        use buffer_view::Event::*;
         match event {
-            Edited => {
-                let query = self.query_buffer.read(ctx).text(ctx.as_ref());
+            editor::Event::Edited => {
+                let query = self.query_buffer.read(cx).text(cx.as_ref());
                 if query.is_empty() {
                     self.latest_search_id = util::post_inc(&mut self.search_count);
                     self.matches.clear();
-                    ctx.notify();
+                    cx.notify();
                 } else {
-                    if let Some(task) = self.spawn_search(query, ctx) {
+                    if let Some(task) = self.spawn_search(query, cx) {
                         task.detach();
                     }
                 }
             }
-            Blurred => ctx.emit(Event::Dismissed),
+            editor::Event::Blurred => cx.emit(Event::Dismissed),
             _ => {}
         }
     }
@@ -353,7 +352,7 @@ impl FileFinder {
         0
     }
 
-    fn select_prev(&mut self, _: &(), ctx: &mut ViewContext<Self>) {
+    fn select_prev(&mut self, _: &(), cx: &mut ViewContext<Self>) {
         let mut selected_index = self.selected_index();
         if selected_index > 0 {
             selected_index -= 1;
@@ -361,10 +360,10 @@ impl FileFinder {
             self.selected = Some((mat.tree_id, mat.path.clone()));
         }
         self.list_state.scroll_to(selected_index);
-        ctx.notify();
+        cx.notify();
     }
 
-    fn select_next(&mut self, _: &(), ctx: &mut ViewContext<Self>) {
+    fn select_next(&mut self, _: &(), cx: &mut ViewContext<Self>) {
         let mut selected_index = self.selected_index();
         if selected_index + 1 < self.matches.len() {
             selected_index += 1;
@@ -372,39 +371,39 @@ impl FileFinder {
             self.selected = Some((mat.tree_id, mat.path.clone()));
         }
         self.list_state.scroll_to(selected_index);
-        ctx.notify();
+        cx.notify();
     }
 
-    fn scroll(&mut self, _: &f32, ctx: &mut ViewContext<Self>) {
-        ctx.notify();
+    fn scroll(&mut self, _: &f32, cx: &mut ViewContext<Self>) {
+        cx.notify();
     }
 
-    fn confirm(&mut self, _: &(), ctx: &mut ViewContext<Self>) {
+    fn confirm(&mut self, _: &(), cx: &mut ViewContext<Self>) {
         if let Some(m) = self.matches.get(self.selected_index()) {
-            ctx.emit(Event::Selected(m.tree_id, m.path.clone()));
+            cx.emit(Event::Selected(m.tree_id, m.path.clone()));
         }
     }
 
-    fn select(&mut self, (tree_id, path): &(usize, Arc<Path>), ctx: &mut ViewContext<Self>) {
-        ctx.emit(Event::Selected(*tree_id, path.clone()));
+    fn select(&mut self, (tree_id, path): &(usize, Arc<Path>), cx: &mut ViewContext<Self>) {
+        cx.emit(Event::Selected(*tree_id, path.clone()));
     }
 
     #[must_use]
-    fn spawn_search(&mut self, query: String, ctx: &mut ViewContext<Self>) -> Option<Task<()>> {
+    fn spawn_search(&mut self, query: String, cx: &mut ViewContext<Self>) -> Option<Task<()>> {
         let snapshots = self
             .workspace
-            .upgrade(&ctx)?
-            .read(ctx)
+            .upgrade(&cx)?
+            .read(cx)
             .worktrees()
             .iter()
-            .map(|tree| tree.read(ctx).snapshot())
+            .map(|tree| tree.read(cx).snapshot())
             .collect::<Vec<_>>();
         let search_id = util::post_inc(&mut self.search_count);
-        let pool = ctx.as_ref().thread_pool().clone();
+        let pool = cx.as_ref().thread_pool().clone();
         self.cancel_flag.store(true, atomic::Ordering::Relaxed);
         self.cancel_flag = Arc::new(AtomicBool::new(false));
         let cancel_flag = self.cancel_flag.clone();
-        let background_task = ctx.background_executor().spawn(async move {
+        let background_task = cx.background_executor().spawn(async move {
             let include_root_name = snapshots.len() > 1;
             let matches = match_paths(
                 snapshots.iter(),
@@ -420,16 +419,16 @@ impl FileFinder {
             (search_id, did_cancel, query, matches)
         });
 
-        Some(ctx.spawn(|this, mut ctx| async move {
+        Some(cx.spawn(|this, mut cx| async move {
             let matches = background_task.await;
-            this.update(&mut ctx, |this, ctx| this.update_matches(matches, ctx));
+            this.update(&mut cx, |this, cx| this.update_matches(matches, cx));
         }))
     }
 
     fn update_matches(
         &mut self,
         (search_id, did_cancel, query, matches): (usize, bool, String, Vec<PathMatch>),
-        ctx: &mut ViewContext<Self>,
+        cx: &mut ViewContext<Self>,
     ) {
         if search_id >= self.latest_search_id {
             self.latest_search_id = search_id;
@@ -441,17 +440,17 @@ impl FileFinder {
             self.latest_search_query = query;
             self.latest_search_did_cancel = did_cancel;
             self.list_state.scroll_to(self.selected_index());
-            ctx.notify();
+            cx.notify();
         }
     }
 
-    fn worktree<'a>(&'a self, tree_id: usize, app: &'a AppContext) -> Option<&'a Worktree> {
+    fn worktree<'a>(&'a self, tree_id: usize, cx: &'a AppContext) -> Option<&'a Worktree> {
         self.workspace
-            .upgrade(app)?
-            .read(app)
+            .upgrade(cx)?
+            .read(cx)
             .worktrees()
             .get(&tree_id)
-            .map(|worktree| worktree.read(app))
+            .map(|worktree| worktree.read(cx))
     }
 }
 
@@ -468,75 +467,75 @@ mod tests {
     use tempdir::TempDir;
 
     #[gpui::test]
-    async fn test_matching_paths(mut app: gpui::TestAppContext) {
+    async fn test_matching_paths(mut cx: gpui::TestAppContext) {
         let tmp_dir = TempDir::new("example").unwrap();
         fs::create_dir(tmp_dir.path().join("a")).unwrap();
         fs::write(tmp_dir.path().join("a/banana"), "banana").unwrap();
         fs::write(tmp_dir.path().join("a/bandana"), "bandana").unwrap();
-        app.update(|ctx| {
-            super::init(ctx);
-            editor::init(ctx);
+        cx.update(|cx| {
+            super::init(cx);
+            editor::init(cx);
         });
 
-        let app_state = app.read(build_app_state);
-        let (window_id, workspace) = app.add_window(|ctx| {
+        let app_state = cx.read(build_app_state);
+        let (window_id, workspace) = cx.add_window(|cx| {
             let mut workspace =
-                Workspace::new(0, app_state.settings, app_state.language_registry, ctx);
-            workspace.add_worktree(tmp_dir.path(), ctx);
+                Workspace::new(0, app_state.settings, app_state.language_registry, cx);
+            workspace.add_worktree(tmp_dir.path(), cx);
             workspace
         });
-        app.read(|ctx| workspace.read(ctx).worktree_scans_complete(ctx))
+        cx.read(|cx| workspace.read(cx).worktree_scans_complete(cx))
             .await;
-        app.dispatch_action(
+        cx.dispatch_action(
             window_id,
             vec![workspace.id()],
             "file_finder:toggle".into(),
             (),
         );
 
-        let finder = app.read(|ctx| {
+        let finder = cx.read(|cx| {
             workspace
-                .read(ctx)
+                .read(cx)
                 .modal()
                 .cloned()
                 .unwrap()
                 .downcast::<FileFinder>()
                 .unwrap()
         });
-        let query_buffer = app.read(|ctx| finder.read(ctx).query_buffer.clone());
+        let query_buffer = cx.read(|cx| finder.read(cx).query_buffer.clone());
 
         let chain = vec![finder.id(), query_buffer.id()];
-        app.dispatch_action(window_id, chain.clone(), "buffer:insert", "b".to_string());
-        app.dispatch_action(window_id, chain.clone(), "buffer:insert", "n".to_string());
-        app.dispatch_action(window_id, chain.clone(), "buffer:insert", "a".to_string());
+        cx.dispatch_action(window_id, chain.clone(), "buffer:insert", "b".to_string());
+        cx.dispatch_action(window_id, chain.clone(), "buffer:insert", "n".to_string());
+        cx.dispatch_action(window_id, chain.clone(), "buffer:insert", "a".to_string());
         finder
-            .condition(&app, |finder, _| finder.matches.len() == 2)
+            .condition(&cx, |finder, _| finder.matches.len() == 2)
             .await;
 
-        let active_pane = app.read(|ctx| workspace.read(ctx).active_pane().clone());
-        app.dispatch_action(
+        let active_pane = cx.read(|cx| workspace.read(cx).active_pane().clone());
+        cx.dispatch_action(
             window_id,
             vec![workspace.id(), finder.id()],
             "menu:select_next",
             (),
         );
-        app.dispatch_action(
+        cx.dispatch_action(
             window_id,
             vec![workspace.id(), finder.id()],
             "file_finder:confirm",
             (),
         );
         active_pane
-            .condition(&app, |pane, _| pane.active_item().is_some())
+            .condition(&cx, |pane, _| pane.active_item().is_some())
             .await;
-        app.read(|ctx| {
-            let active_item = active_pane.read(ctx).active_item().unwrap();
-            assert_eq!(active_item.title(ctx), "bandana");
+        cx.read(|cx| {
+            let active_item = active_pane.read(cx).active_item().unwrap();
+            assert_eq!(active_item.title(cx), "bandana");
         });
     }
 
     #[gpui::test]
-    async fn test_matching_cancellation(mut app: gpui::TestAppContext) {
+    async fn test_matching_cancellation(mut cx: gpui::TestAppContext) {
         let tmp_dir = temp_tree(json!({
             "hello": "",
             "goodbye": "",
@@ -546,35 +545,35 @@ mod tests {
             "hi": "",
             "hiccup": "",
         }));
-        let app_state = app.read(build_app_state);
-        let (_, workspace) = app.add_window(|ctx| {
+        let app_state = cx.read(build_app_state);
+        let (_, workspace) = cx.add_window(|cx| {
             let mut workspace = Workspace::new(
                 0,
                 app_state.settings.clone(),
                 app_state.language_registry.clone(),
-                ctx,
+                cx,
             );
-            workspace.add_worktree(tmp_dir.path(), ctx);
+            workspace.add_worktree(tmp_dir.path(), cx);
             workspace
         });
-        app.read(|ctx| workspace.read(ctx).worktree_scans_complete(ctx))
+        cx.read(|cx| workspace.read(cx).worktree_scans_complete(cx))
             .await;
         let (_, finder) =
-            app.add_window(|ctx| FileFinder::new(app_state.settings, workspace.clone(), ctx));
+            cx.add_window(|cx| FileFinder::new(app_state.settings, workspace.clone(), cx));
 
         let query = "hi".to_string();
         finder
-            .update(&mut app, |f, ctx| f.spawn_search(query.clone(), ctx))
+            .update(&mut cx, |f, cx| f.spawn_search(query.clone(), cx))
             .unwrap()
             .await;
-        finder.read_with(&app, |f, _| assert_eq!(f.matches.len(), 5));
+        finder.read_with(&cx, |f, _| assert_eq!(f.matches.len(), 5));
 
-        finder.update(&mut app, |finder, ctx| {
+        finder.update(&mut cx, |finder, cx| {
             let matches = finder.matches.clone();
 
             // Simulate a search being cancelled after the time limit,
             // returning only a subset of the matches that would have been found.
-            finder.spawn_search(query.clone(), ctx).unwrap().detach();
+            finder.spawn_search(query.clone(), cx).unwrap().detach();
             finder.update_matches(
                 (
                     finder.latest_search_id,
@@ -582,11 +581,11 @@ mod tests {
                     query.clone(),
                     vec![matches[1].clone(), matches[3].clone()],
                 ),
-                ctx,
+                cx,
             );
 
             // Simulate another cancellation.
-            finder.spawn_search(query.clone(), ctx).unwrap().detach();
+            finder.spawn_search(query.clone(), cx).unwrap().detach();
             finder.update_matches(
                 (
                     finder.latest_search_id,
@@ -594,7 +593,7 @@ mod tests {
                     query.clone(),
                     vec![matches[0].clone(), matches[2].clone(), matches[3].clone()],
                 ),
-                ctx,
+                cx,
             );
 
             assert_eq!(finder.matches, matches[0..4])
@@ -602,41 +601,41 @@ mod tests {
     }
 
     #[gpui::test]
-    async fn test_single_file_worktrees(mut app: gpui::TestAppContext) {
+    async fn test_single_file_worktrees(mut cx: gpui::TestAppContext) {
         let temp_dir = TempDir::new("test-single-file-worktrees").unwrap();
         let dir_path = temp_dir.path().join("the-parent-dir");
         let file_path = dir_path.join("the-file");
         fs::create_dir(&dir_path).unwrap();
         fs::write(&file_path, "").unwrap();
 
-        let app_state = app.read(build_app_state);
-        let (_, workspace) = app.add_window(|ctx| {
+        let app_state = cx.read(build_app_state);
+        let (_, workspace) = cx.add_window(|cx| {
             let mut workspace = Workspace::new(
                 0,
                 app_state.settings.clone(),
                 app_state.language_registry.clone(),
-                ctx,
+                cx,
             );
-            workspace.add_worktree(&file_path, ctx);
+            workspace.add_worktree(&file_path, cx);
             workspace
         });
-        app.read(|ctx| workspace.read(ctx).worktree_scans_complete(ctx))
+        cx.read(|cx| workspace.read(cx).worktree_scans_complete(cx))
             .await;
         let (_, finder) =
-            app.add_window(|ctx| FileFinder::new(app_state.settings, workspace.clone(), ctx));
+            cx.add_window(|cx| FileFinder::new(app_state.settings, workspace.clone(), cx));
 
         // Even though there is only one worktree, that worktree's filename
         // is included in the matching, because the worktree is a single file.
         finder
-            .update(&mut app, |f, ctx| f.spawn_search("thf".into(), ctx))
+            .update(&mut cx, |f, cx| f.spawn_search("thf".into(), cx))
             .unwrap()
             .await;
-        app.read(|ctx| {
-            let finder = finder.read(ctx);
+        cx.read(|cx| {
+            let finder = finder.read(cx);
             assert_eq!(finder.matches.len(), 1);
 
             let (file_name, file_name_positions, full_path, full_path_positions) =
-                finder.labels_for_match(&finder.matches[0], ctx).unwrap();
+                finder.labels_for_match(&finder.matches[0], cx).unwrap();
             assert_eq!(file_name, "the-file");
             assert_eq!(file_name_positions, &[0, 1, 4]);
             assert_eq!(full_path, "the-file");
@@ -646,57 +645,57 @@ mod tests {
         // Since the worktree root is a file, searching for its name followed by a slash does
         // not match anything.
         finder
-            .update(&mut app, |f, ctx| f.spawn_search("thf/".into(), ctx))
+            .update(&mut cx, |f, cx| f.spawn_search("thf/".into(), cx))
             .unwrap()
             .await;
-        finder.read_with(&app, |f, _| assert_eq!(f.matches.len(), 0));
+        finder.read_with(&cx, |f, _| assert_eq!(f.matches.len(), 0));
     }
 
     #[gpui::test]
-    async fn test_multiple_matches_with_same_relative_path(mut app: gpui::TestAppContext) {
+    async fn test_multiple_matches_with_same_relative_path(mut cx: gpui::TestAppContext) {
         let tmp_dir = temp_tree(json!({
             "dir1": { "a.txt": "" },
             "dir2": { "a.txt": "" }
         }));
 
-        let app_state = app.read(build_app_state);
+        let app_state = cx.read(build_app_state);
 
-        let (_, workspace) = app.add_window(|ctx| {
+        let (_, workspace) = cx.add_window(|cx| {
             Workspace::new(
                 0,
                 app_state.settings.clone(),
                 app_state.language_registry.clone(),
-                ctx,
+                cx,
             )
         });
 
         workspace
-            .update(&mut app, |workspace, ctx| {
+            .update(&mut cx, |workspace, cx| {
                 workspace.open_paths(
                     &[tmp_dir.path().join("dir1"), tmp_dir.path().join("dir2")],
-                    ctx,
+                    cx,
                 )
             })
             .await;
-        app.read(|ctx| workspace.read(ctx).worktree_scans_complete(ctx))
+        cx.read(|cx| workspace.read(cx).worktree_scans_complete(cx))
             .await;
 
         let (_, finder) =
-            app.add_window(|ctx| FileFinder::new(app_state.settings, workspace.clone(), ctx));
+            cx.add_window(|cx| FileFinder::new(app_state.settings, workspace.clone(), cx));
 
         // Run a search that matches two files with the same relative path.
         finder
-            .update(&mut app, |f, ctx| f.spawn_search("a.t".into(), ctx))
+            .update(&mut cx, |f, cx| f.spawn_search("a.t".into(), cx))
             .unwrap()
             .await;
 
         // Can switch between different matches with the same relative path.
-        finder.update(&mut app, |f, ctx| {
+        finder.update(&mut cx, |f, cx| {
             assert_eq!(f.matches.len(), 2);
             assert_eq!(f.selected_index(), 0);
-            f.select_next(&(), ctx);
+            f.select_next(&(), cx);
             assert_eq!(f.selected_index(), 1);
-            f.select_prev(&(), ctx);
+            f.select_prev(&(), cx);
             assert_eq!(f.selected_index(), 0);
         });
     }

@@ -38,9 +38,9 @@ impl Element for Svg {
     fn layout(
         &mut self,
         constraint: SizeConstraint,
-        ctx: &mut LayoutContext,
+        cx: &mut LayoutContext,
     ) -> (Vector2F, Self::LayoutState) {
-        match ctx.asset_cache.svg(&self.path) {
+        match cx.asset_cache.svg(&self.path) {
             Ok(tree) => {
                 let size = if constraint.max.x().is_infinite() && constraint.max.y().is_infinite() {
                     let rect = from_usvg_rect(tree.svg_node().view_box.rect);
@@ -69,9 +69,9 @@ impl Element for Svg {
     fn after_layout(&mut self, _: Vector2F, _: &mut Self::LayoutState, _: &mut AfterLayoutContext) {
     }
 
-    fn paint(&mut self, bounds: RectF, svg: &mut Self::LayoutState, ctx: &mut PaintContext) {
+    fn paint(&mut self, bounds: RectF, svg: &mut Self::LayoutState, cx: &mut PaintContext) {
         if let Some(svg) = svg.clone() {
-            ctx.scene.push_icon(scene::Icon {
+            cx.scene.push_icon(scene::Icon {
                 bounds,
                 svg,
                 path: self.path.clone(),

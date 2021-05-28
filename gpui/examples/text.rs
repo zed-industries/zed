@@ -10,9 +10,9 @@ use simplelog::SimpleLogger;
 fn main() {
     SimpleLogger::init(LevelFilter::Info, Default::default()).expect("could not initialize logger");
 
-    gpui::App::new(()).unwrap().run(|ctx| {
-        ctx.platform().activate(true);
-        ctx.add_window(|_| TextView);
+    gpui::App::new(()).unwrap().run(|cx| {
+        cx.platform().activate(true);
+        cx.add_window(|_| TextView);
     });
 }
 
@@ -58,15 +58,15 @@ impl gpui::Element for TextElement {
         &mut self,
         bounds: RectF,
         _: &mut Self::LayoutState,
-        ctx: &mut gpui::PaintContext,
+        cx: &mut gpui::PaintContext,
     ) -> Self::PaintState {
         let font_size = 12.;
-        let family = ctx.font_cache.load_family(&["SF Pro Display"]).unwrap();
-        let normal = ctx
+        let family = cx.font_cache.load_family(&["SF Pro Display"]).unwrap();
+        let normal = cx
             .font_cache
             .select_font(family, &Default::default())
             .unwrap();
-        let bold = ctx
+        let bold = cx
             .font_cache
             .select_font(
                 family,
@@ -78,7 +78,7 @@ impl gpui::Element for TextElement {
             .unwrap();
 
         let text = "Hello world!";
-        let line = ctx.text_layout_cache.layout_str(
+        let line = cx.text_layout_cache.layout_str(
             text,
             font_size,
             &[
@@ -90,12 +90,12 @@ impl gpui::Element for TextElement {
             ],
         );
 
-        ctx.scene.push_quad(Quad {
+        cx.scene.push_quad(Quad {
             bounds: bounds,
             background: Some(ColorU::white()),
             ..Default::default()
         });
-        line.paint(bounds.origin(), bounds, ctx);
+        line.paint(bounds.origin(), bounds, cx);
     }
 
     fn dispatch_event(

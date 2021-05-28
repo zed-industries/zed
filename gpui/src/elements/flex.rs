@@ -53,7 +53,7 @@ impl Element for Flex {
     fn layout(
         &mut self,
         constraint: SizeConstraint,
-        ctx: &mut LayoutContext,
+        cx: &mut LayoutContext,
     ) -> (Vector2F, Self::LayoutState) {
         let mut total_flex = 0.0;
         let mut fixed_space = 0.0;
@@ -74,7 +74,7 @@ impl Element for Flex {
                         vec2f(constraint.max.x(), INFINITY),
                     ),
                 };
-                let size = child.layout(child_constraint, ctx);
+                let size = child.layout(child_constraint, cx);
                 fixed_space += size.along(self.axis);
                 cross_axis_max = cross_axis_max.max(size.along(cross_axis));
             }
@@ -105,7 +105,7 @@ impl Element for Flex {
                             vec2f(constraint.max.x(), child_max),
                         ),
                     };
-                    let child_size = child.layout(child_constraint, ctx);
+                    let child_size = child.layout(child_constraint, cx);
                     remaining_space -= child_size.along(self.axis);
                     remaining_flex -= flex;
                     cross_axis_max = cross_axis_max.max(child_size.along(cross_axis));
@@ -138,10 +138,10 @@ impl Element for Flex {
         &mut self,
         _: Vector2F,
         _: &mut Self::LayoutState,
-        ctx: &mut AfterLayoutContext,
+        cx: &mut AfterLayoutContext,
     ) {
         for child in &mut self.children {
-            child.after_layout(ctx);
+            child.after_layout(cx);
         }
     }
 
@@ -149,11 +149,11 @@ impl Element for Flex {
         &mut self,
         bounds: RectF,
         _: &mut Self::LayoutState,
-        ctx: &mut PaintContext,
+        cx: &mut PaintContext,
     ) -> Self::PaintState {
         let mut child_origin = bounds.origin();
         for child in &mut self.children {
-            child.paint(child_origin, ctx);
+            child.paint(child_origin, cx);
             match self.axis {
                 Axis::Horizontal => child_origin += vec2f(child.size().x(), 0.0),
                 Axis::Vertical => child_origin += vec2f(0.0, child.size().y()),
@@ -167,11 +167,11 @@ impl Element for Flex {
         _: RectF,
         _: &mut Self::LayoutState,
         _: &mut Self::PaintState,
-        ctx: &mut EventContext,
+        cx: &mut EventContext,
     ) -> bool {
         let mut handled = false;
         for child in &mut self.children {
-            handled = child.dispatch_event(event, ctx) || handled;
+            handled = child.dispatch_event(event, cx) || handled;
         }
         handled
     }
@@ -181,13 +181,13 @@ impl Element for Flex {
         bounds: RectF,
         _: &Self::LayoutState,
         _: &Self::PaintState,
-        ctx: &DebugContext,
+        cx: &DebugContext,
     ) -> json::Value {
         json!({
             "type": "Flex",
             "bounds": bounds.to_json(),
             "axis": self.axis.to_json(),
-            "children": self.children.iter().map(|child| child.debug(ctx)).collect::<Vec<json::Value>>()
+            "children": self.children.iter().map(|child| child.debug(cx)).collect::<Vec<json::Value>>()
         })
     }
 }
@@ -217,9 +217,9 @@ impl Element for Expanded {
     fn layout(
         &mut self,
         constraint: SizeConstraint,
-        ctx: &mut LayoutContext,
+        cx: &mut LayoutContext,
     ) -> (Vector2F, Self::LayoutState) {
-        let size = self.child.layout(constraint, ctx);
+        let size = self.child.layout(constraint, cx);
         (size, ())
     }
 
@@ -227,18 +227,18 @@ impl Element for Expanded {
         &mut self,
         _: Vector2F,
         _: &mut Self::LayoutState,
-        ctx: &mut AfterLayoutContext,
+        cx: &mut AfterLayoutContext,
     ) {
-        self.child.after_layout(ctx);
+        self.child.after_layout(cx);
     }
 
     fn paint(
         &mut self,
         bounds: RectF,
         _: &mut Self::LayoutState,
-        ctx: &mut PaintContext,
+        cx: &mut PaintContext,
     ) -> Self::PaintState {
-        self.child.paint(bounds.origin(), ctx)
+        self.child.paint(bounds.origin(), cx)
     }
 
     fn dispatch_event(
@@ -247,9 +247,9 @@ impl Element for Expanded {
         _: RectF,
         _: &mut Self::LayoutState,
         _: &mut Self::PaintState,
-        ctx: &mut EventContext,
+        cx: &mut EventContext,
     ) -> bool {
-        self.child.dispatch_event(event, ctx)
+        self.child.dispatch_event(event, cx)
     }
 
     fn metadata(&self) -> Option<&dyn Any> {
@@ -261,12 +261,12 @@ impl Element for Expanded {
         _: RectF,
         _: &Self::LayoutState,
         _: &Self::PaintState,
-        ctx: &DebugContext,
+        cx: &DebugContext,
     ) -> Value {
         json!({
             "type": "Expanded",
             "flex": self.metadata.flex,
-            "child": self.child.debug(ctx)
+            "child": self.child.debug(cx)
         })
     }
 }

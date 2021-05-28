@@ -23,8 +23,8 @@ pub struct FoldMap {
 }
 
 impl FoldMap {
-    pub fn new(buffer_handle: ModelHandle<Buffer>, ctx: &AppContext) -> Self {
-        let buffer = buffer_handle.read(ctx);
+    pub fn new(buffer_handle: ModelHandle<Buffer>, cx: &AppContext) -> Self {
+        let buffer = buffer_handle.read(cx);
         let text_summary = buffer.text_summary();
         Self {
             buffer: buffer_handle,
@@ -43,56 +43,56 @@ impl FoldMap {
         }
     }
 
-    pub fn snapshot(&self, ctx: &AppContext) -> FoldMapSnapshot {
+    pub fn snapshot(&self, cx: &AppContext) -> FoldMapSnapshot {
         FoldMapSnapshot {
-            transforms: self.sync(ctx).clone(),
-            buffer: self.buffer.read(ctx).snapshot(),
+            transforms: self.sync(cx).clone(),
+            buffer: self.buffer.read(cx).snapshot(),
         }
     }
 
-    pub fn len(&self, ctx: &AppContext) -> usize {
-        self.sync(ctx).summary().display.bytes
+    pub fn len(&self, cx: &AppContext) -> usize {
+        self.sync(cx).summary().display.bytes
     }
 
-    pub fn line_len(&self, row: u32, ctx: &AppContext) -> u32 {
-        let line_start = self.to_display_offset(DisplayPoint::new(row, 0), ctx).0;
-        let line_end = if row >= self.max_point(ctx).row() {
-            self.len(ctx)
+    pub fn line_len(&self, row: u32, cx: &AppContext) -> u32 {
+        let line_start = self.to_display_offset(DisplayPoint::new(row, 0), cx).0;
+        let line_end = if row >= self.max_point(cx).row() {
+            self.len(cx)
         } else {
-            self.to_display_offset(DisplayPoint::new(row + 1, 0), ctx).0 - 1
+            self.to_display_offset(DisplayPoint::new(row + 1, 0), cx).0 - 1
         };
         (line_end - line_start) as u32
     }
 
-    pub fn max_point(&self, ctx: &AppContext) -> DisplayPoint {
-        DisplayPoint(self.sync(ctx).summary().display.lines)
+    pub fn max_point(&self, cx: &AppContext) -> DisplayPoint {
+        DisplayPoint(self.sync(cx).summary().display.lines)
     }
 
-    pub fn longest_row(&self, ctx: &AppContext) -> u32 {
-        self.sync(ctx).summary().display.longest_row
+    pub fn longest_row(&self, cx: &AppContext) -> u32 {
+        self.sync(cx).summary().display.longest_row
     }
 
     pub fn folds_in_range<'a, T>(
         &'a self,
         range: Range<T>,
-        ctx: &'a AppContext,
+        cx: &'a AppContext,
     ) -> impl Iterator<Item = &'a Range<Anchor>>
     where
         T: ToOffset,
     {
-        self.intersecting_folds(range, ctx).map(|f| &f.0)
+        self.intersecting_folds(range, cx).map(|f| &f.0)
     }
 
     pub fn fold<T: ToOffset>(
         &mut self,
         ranges: impl IntoIterator<Item = Range<T>>,
-        ctx: &AppContext,
+        cx: &AppContext,
     ) {
-        let _ = self.sync(ctx);
+        let _ = self.sync(cx);
 
         let mut edits = Vec::new();
         let mut folds = Vec::new();
-        let buffer = self.buffer.read(ctx);
+        let buffer = self.buffer.read(cx);
         for range in ranges.into_iter() {
             let range = range.start.to_offset(buffer)..range.end.to_offset(buffer);
             if range.start != range.end {
@@ -124,23 +124,23 @@ impl FoldMap {
             new_tree.push_tree(cursor.suffix(buffer), buffer);
             new_tree
         };
-        self.apply_edits(edits, ctx);
+        self.apply_edits(edits, cx);
     }
 
     pub fn unfold<T: ToOffset>(
         &mut self,
         ranges: impl IntoIterator<Item = Range<T>>,
-        ctx: &AppContext,
+        cx: &AppContext,
     ) {
-        let _ = self.sync(ctx);
+        let _ = self.sync(cx);
 
-        let buffer = self.buffer.read(ctx);
+        let buffer = self.buffer.read(cx);
 
         let mut edits = Vec::new();
         let mut fold_ixs_to_delete = Vec::new();
         for range in ranges.into_iter() {
             // Remove intersecting folds and add their ranges to edits that are passed to apply_edits.
-            let mut folds_cursor = self.intersecting_folds(range, ctx);
+            let mut folds_cursor = self.intersecting_folds(range, cx);
             while let Some(fold) = folds_cursor.item() {
                 let offset_range = fold.0.start.to_offset(buffer)..fold.0.end.to_offset(buffer);
                 edits.push(Edit {
@@ -172,18 +172,18 @@ impl FoldMap {
             folds.push_tree(cursor.suffix(buffer), buffer);
             folds
         };
-        self.apply_edits(edits, ctx);
+        self.apply_edits(edits, cx);
     }
 
     fn intersecting_folds<'a, T>(
         &self,
         range: Range<T>,
-        ctx: &'a AppContext,
+        cx: &'a AppContext,
     ) -> FilterCursor<impl 'a + Fn(&FoldSummary) -> bool, Fold, usize>
     where
         T: ToOffset,
     {
-        let buffer = self.buffer.read(ctx);
+        let buffer = self.buffer.read(cx);
         let start = buffer.anchor_before(range.start.to_offset(buffer));
         let end = buffer.anchor_after(range.end.to_offset(buffer));
         self.folds.filter::<_, usize>(move |summary| {
@@ -192,20 +192,20 @@ impl FoldMap {
         })
     }
 
-    pub fn intersects_fold<T>(&self, offset: T, ctx: &AppContext) -> bool
+    pub fn intersects_fold<T>(&self, offset: T, cx: &AppContext) -> bool
     where
         T: ToOffset,
     {
-        let buffer = self.buffer.read(ctx);
+        let buffer = self.buffer.read(cx);
         let offset = offset.to_offset(buffer);
-        let transforms = self.sync(ctx);
+        let transforms = self.sync(cx);
         let mut cursor = transforms.cursor::<usize, usize>();
         cursor.seek(&offset, SeekBias::Right, &());
         cursor.item().map_or(false, |t| t.display_text.is_some())
     }
 
-    pub fn is_line_folded(&self, display_row: u32, ctx: &AppContext) -> bool {
-        let transforms = self.sync(ctx);
+    pub fn is_line_folded(&self, display_row: u32, cx: &AppContext) -> bool {
+        let transforms = self.sync(cx);
         let mut cursor = transforms.cursor::<DisplayPoint, DisplayPoint>();
         cursor.seek(&DisplayPoint::new(display_row, 0), SeekBias::Right, &());
         while let Some(transform) = cursor.item() {
@@ -221,24 +221,24 @@ impl FoldMap {
         false
     }
 
-    pub fn to_buffer_offset(&self, point: DisplayPoint, ctx: &AppContext) -> usize {
-        self.snapshot(ctx).to_buffer_offset(point)
+    pub fn to_buffer_offset(&self, point: DisplayPoint, cx: &AppContext) -> usize {
+        self.snapshot(cx).to_buffer_offset(point)
     }
 
-    pub fn to_display_offset(&self, point: DisplayPoint, ctx: &AppContext) -> DisplayOffset {
-        self.snapshot(ctx).to_display_offset(point)
+    pub fn to_display_offset(&self, point: DisplayPoint, cx: &AppContext) -> DisplayOffset {
+        self.snapshot(cx).to_display_offset(point)
     }
 
-    pub fn to_buffer_point(&self, display_point: DisplayPoint, ctx: &AppContext) -> Point {
-        let transforms = self.sync(ctx);
+    pub fn to_buffer_point(&self, display_point: DisplayPoint, cx: &AppContext) -> Point {
+        let transforms = self.sync(cx);
         let mut cursor = transforms.cursor::<DisplayPoint, TransformSummary>();
         cursor.seek(&display_point, SeekBias::Right, &());
         let overshoot = display_point.0 - cursor.start().display.lines;
         cursor.start().buffer.lines + overshoot
     }
 
-    pub fn to_display_point(&self, point: Point, ctx: &AppContext) -> DisplayPoint {
-        let transforms = self.sync(ctx);
+    pub fn to_display_point(&self, point: Point, cx: &AppContext) -> DisplayPoint {
+        let transforms = self.sync(cx);
         let mut cursor = transforms.cursor::<Point, TransformSummary>();
         cursor.seek(&point, SeekBias::Right, &());
         let overshoot = point - cursor.start().buffer.lines;
@@ -248,18 +248,18 @@ impl FoldMap {
         ))
     }
 
-    fn sync(&self, ctx: &AppContext) -> MutexGuard<SumTree<Transform>> {
-        let buffer = self.buffer.read(ctx);
+    fn sync(&self, cx: &AppContext) -> MutexGuard<SumTree<Transform>> {
+        let buffer = self.buffer.read(cx);
         let mut edits = buffer.edits_since(self.last_sync.lock().clone()).peekable();
         if edits.peek().is_some() {
-            self.apply_edits(edits, ctx);
+            self.apply_edits(edits, cx);
         }
         *self.last_sync.lock() = buffer.version();
         self.transforms.lock()
     }
 
-    fn apply_edits(&self, edits: impl IntoIterator<Item = Edit>, ctx: &AppContext) {
-        let buffer = self.buffer.read(ctx);
+    fn apply_edits(&self, edits: impl IntoIterator<Item = Edit>, cx: &AppContext) {
+        let buffer = self.buffer.read(cx);
         let mut edits = edits.into_iter().peekable();
 
         let mut new_transforms = SumTree::new();
@@ -846,20 +846,20 @@ mod tests {
     use crate::test::sample_text;
 
     #[gpui::test]
-    fn test_basic_folds(app: &mut gpui::MutableAppContext) {
-        let buffer = app.add_model(|ctx| Buffer::new(0, sample_text(5, 6), ctx));
-        let mut map = FoldMap::new(buffer.clone(), app.as_ref());
+    fn test_basic_folds(cx: &mut gpui::MutableAppContext) {
+        let buffer = cx.add_model(|cx| Buffer::new(0, sample_text(5, 6), cx));
+        let mut map = FoldMap::new(buffer.clone(), cx.as_ref());
 
         map.fold(
             vec![
                 Point::new(0, 2)..Point::new(2, 2),
                 Point::new(2, 4)..Point::new(4, 1),
             ],
-            app.as_ref(),
+            cx.as_ref(),
         );
-        assert_eq!(map.text(app.as_ref()), "aa…cc…eeeee");
+        assert_eq!(map.text(cx.as_ref()), "aa…cc…eeeee");
 
-        buffer.update(app, |buffer, ctx| {
+        buffer.update(cx, |buffer, cx| {
             buffer
                 .edit(
                     vec![
@@ -867,70 +867,70 @@ mod tests {
                         Point::new(2, 3)..Point::new(2, 3),
                     ],
                     "123",
-                    Some(ctx),
+                    Some(cx),
                 )
                 .unwrap();
         });
-        assert_eq!(map.text(app.as_ref()), "123a…c123c…eeeee");
+        assert_eq!(map.text(cx.as_ref()), "123a…c123c…eeeee");
 
-        buffer.update(app, |buffer, ctx| {
+        buffer.update(cx, |buffer, cx| {
             let start_version = buffer.version.clone();
             buffer
-                .edit(Some(Point::new(2, 6)..Point::new(4, 3)), "456", Some(ctx))
+                .edit(Some(Point::new(2, 6)..Point::new(4, 3)), "456", Some(cx))
                 .unwrap();
             buffer.edits_since(start_version).collect::<Vec<_>>()
         });
-        assert_eq!(map.text(app.as_ref()), "123a…c123456eee");
+        assert_eq!(map.text(cx.as_ref()), "123a…c123456eee");
 
-        map.unfold(Some(Point::new(0, 4)..Point::new(0, 5)), app.as_ref());
-        assert_eq!(map.text(app.as_ref()), "123aaaaa\nbbbbbb\nccc123456eee");
+        map.unfold(Some(Point::new(0, 4)..Point::new(0, 5)), cx.as_ref());
+        assert_eq!(map.text(cx.as_ref()), "123aaaaa\nbbbbbb\nccc123456eee");
     }
 
     #[gpui::test]
-    fn test_adjacent_folds(app: &mut gpui::MutableAppContext) {
-        let buffer = app.add_model(|ctx| Buffer::new(0, "abcdefghijkl", ctx));
+    fn test_adjacent_folds(cx: &mut gpui::MutableAppContext) {
+        let buffer = cx.add_model(|cx| Buffer::new(0, "abcdefghijkl", cx));
 
         {
-            let mut map = FoldMap::new(buffer.clone(), app.as_ref());
+            let mut map = FoldMap::new(buffer.clone(), cx.as_ref());
 
-            map.fold(vec![5..8], app.as_ref());
-            map.check_invariants(app.as_ref());
-            assert_eq!(map.text(app.as_ref()), "abcde…ijkl");
+            map.fold(vec![5..8], cx.as_ref());
+            map.check_invariants(cx.as_ref());
+            assert_eq!(map.text(cx.as_ref()), "abcde…ijkl");
 
             // Create an fold adjacent to the start of the first fold.
-            map.fold(vec![0..1, 2..5], app.as_ref());
-            map.check_invariants(app.as_ref());
-            assert_eq!(map.text(app.as_ref()), "…b…ijkl");
+            map.fold(vec![0..1, 2..5], cx.as_ref());
+            map.check_invariants(cx.as_ref());
+            assert_eq!(map.text(cx.as_ref()), "…b…ijkl");
 
             // Create an fold adjacent to the end of the first fold.
-            map.fold(vec![11..11, 8..10], app.as_ref());
-            map.check_invariants(app.as_ref());
-            assert_eq!(map.text(app.as_ref()), "…b…kl");
+            map.fold(vec![11..11, 8..10], cx.as_ref());
+            map.check_invariants(cx.as_ref());
+            assert_eq!(map.text(cx.as_ref()), "…b…kl");
         }
 
         {
-            let mut map = FoldMap::new(buffer.clone(), app.as_ref());
+            let mut map = FoldMap::new(buffer.clone(), cx.as_ref());
 
             // Create two adjacent folds.
-            map.fold(vec![0..2, 2..5], app.as_ref());
-            map.check_invariants(app.as_ref());
-            assert_eq!(map.text(app.as_ref()), "…fghijkl");
+            map.fold(vec![0..2, 2..5], cx.as_ref());
+            map.check_invariants(cx.as_ref());
+            assert_eq!(map.text(cx.as_ref()), "…fghijkl");
 
             // Edit within one of the folds.
-            buffer.update(app, |buffer, ctx| {
+            buffer.update(cx, |buffer, cx| {
                 let version = buffer.version();
-                buffer.edit(vec![0..1], "12345", Some(ctx)).unwrap();
+                buffer.edit(vec![0..1], "12345", Some(cx)).unwrap();
                 buffer.edits_since(version).collect::<Vec<_>>()
             });
-            map.check_invariants(app.as_ref());
-            assert_eq!(map.text(app.as_ref()), "12345…fghijkl");
+            map.check_invariants(cx.as_ref());
+            assert_eq!(map.text(cx.as_ref()), "12345…fghijkl");
         }
     }
 
     #[gpui::test]
-    fn test_overlapping_folds(app: &mut gpui::MutableAppContext) {
-        let buffer = app.add_model(|ctx| Buffer::new(0, sample_text(5, 6), ctx));
-        let mut map = FoldMap::new(buffer.clone(), app.as_ref());
+    fn test_overlapping_folds(cx: &mut gpui::MutableAppContext) {
+        let buffer = cx.add_model(|cx| Buffer::new(0, sample_text(5, 6), cx));
+        let mut map = FoldMap::new(buffer.clone(), cx.as_ref());
         map.fold(
             vec![
                 Point::new(0, 2)..Point::new(2, 2),
@@ -938,38 +938,38 @@ mod tests {
                 Point::new(1, 2)..Point::new(3, 2),
                 Point::new(3, 1)..Point::new(4, 1),
             ],
-            app.as_ref(),
+            cx.as_ref(),
         );
-        assert_eq!(map.text(app.as_ref()), "aa…eeeee");
+        assert_eq!(map.text(cx.as_ref()), "aa…eeeee");
     }
 
     #[gpui::test]
-    fn test_merging_folds_via_edit(app: &mut gpui::MutableAppContext) {
-        let buffer = app.add_model(|ctx| Buffer::new(0, sample_text(5, 6), ctx));
-        let mut map = FoldMap::new(buffer.clone(), app.as_ref());
+    fn test_merging_folds_via_edit(cx: &mut gpui::MutableAppContext) {
+        let buffer = cx.add_model(|cx| Buffer::new(0, sample_text(5, 6), cx));
+        let mut map = FoldMap::new(buffer.clone(), cx.as_ref());
 
         map.fold(
             vec![
                 Point::new(0, 2)..Point::new(2, 2),
                 Point::new(3, 1)..Point::new(4, 1),
             ],
-            app.as_ref(),
+            cx.as_ref(),
         );
-        assert_eq!(map.text(app.as_ref()), "aa…cccc\nd…eeeee");
+        assert_eq!(map.text(cx.as_ref()), "aa…cccc\nd…eeeee");
 
-        buffer.update(app, |buffer, ctx| {
+        buffer.update(cx, |buffer, cx| {
             buffer
-                .edit(Some(Point::new(2, 2)..Point::new(3, 1)), "", Some(ctx))
+                .edit(Some(Point::new(2, 2)..Point::new(3, 1)), "", Some(cx))
                 .unwrap();
         });
-        assert_eq!(map.text(app.as_ref()), "aa…eeeee");
+        assert_eq!(map.text(cx.as_ref()), "aa…eeeee");
     }
 
     #[gpui::test]
-    fn test_folds_in_range(app: &mut gpui::MutableAppContext) {
-        let buffer = app.add_model(|ctx| Buffer::new(0, sample_text(5, 6), ctx));
-        let mut map = FoldMap::new(buffer.clone(), app.as_ref());
-        let buffer = buffer.read(app);
+    fn test_folds_in_range(cx: &mut gpui::MutableAppContext) {
+        let buffer = cx.add_model(|cx| Buffer::new(0, sample_text(5, 6), cx));
+        let mut map = FoldMap::new(buffer.clone(), cx.as_ref());
+        let buffer = buffer.read(cx);
 
         map.fold(
             vec![
@@ -978,10 +978,10 @@ mod tests {
                 Point::new(1, 2)..Point::new(3, 2),
                 Point::new(3, 1)..Point::new(4, 1),
             ],
-            app.as_ref(),
+            cx.as_ref(),
         );
         let fold_ranges = map
-            .folds_in_range(Point::new(1, 0)..Point::new(1, 3), app.as_ref())
+            .folds_in_range(Point::new(1, 0)..Point::new(1, 3), cx.as_ref())
             .map(|fold| fold.start.to_point(buffer)..fold.end.to_point(buffer))
             .collect::<Vec<_>>();
         assert_eq!(
@@ -994,7 +994,7 @@ mod tests {
     }
 
     #[gpui::test]
-    fn test_random_folds(app: &mut gpui::MutableAppContext) {
+    fn test_random_folds(cx: &mut gpui::MutableAppContext) {
         use crate::editor::ToPoint;
         use crate::util::RandomCharIter;
         use rand::prelude::*;
@@ -1018,18 +1018,18 @@ mod tests {
             dbg!(seed);
             let mut rng = StdRng::seed_from_u64(seed);
 
-            let buffer = app.add_model(|ctx| {
+            let buffer = cx.add_model(|cx| {
                 let len = rng.gen_range(0..10);
                 let text = RandomCharIter::new(&mut rng).take(len).collect::<String>();
-                Buffer::new(0, text, ctx)
+                Buffer::new(0, text, cx)
             });
-            let mut map = FoldMap::new(buffer.clone(), app.as_ref());
+            let mut map = FoldMap::new(buffer.clone(), cx.as_ref());
 
             for _ in 0..operations {
-                log::info!("text: {:?}", buffer.read(app).text());
+                log::info!("text: {:?}", buffer.read(cx).text());
                 match rng.gen_range(0..=100) {
                     0..=34 => {
-                        let buffer = buffer.read(app);
+                        let buffer = buffer.read(cx);
                         let mut to_fold = Vec::new();
                         for _ in 0..rng.gen_range(1..=5) {
                             let end = buffer.clip_offset(rng.gen_range(0..=buffer.len()), Right);
@@ -1037,10 +1037,10 @@ mod tests {
                             to_fold.push(start..end);
                         }
                         log::info!("folding {:?}", to_fold);
-                        map.fold(to_fold, app.as_ref());
+                        map.fold(to_fold, cx.as_ref());
                     }
                     35..=59 if !map.folds.is_empty() => {
-                        let buffer = buffer.read(app);
+                        let buffer = buffer.read(cx);
                         let mut to_unfold = Vec::new();
                         for _ in 0..rng.gen_range(1..=3) {
                             let end = buffer.clip_offset(rng.gen_range(0..=buffer.len()), Right);
@@ -1048,25 +1048,25 @@ mod tests {
                             to_unfold.push(start..end);
                         }
                         log::info!("unfolding {:?}", to_unfold);
-                        map.unfold(to_unfold, app.as_ref());
+                        map.unfold(to_unfold, cx.as_ref());
                     }
                     _ => {
-                        let edits = buffer.update(app, |buffer, ctx| {
+                        let edits = buffer.update(cx, |buffer, cx| {
                             let start_version = buffer.version.clone();
                             let edit_count = rng.gen_range(1..=5);
-                            buffer.randomly_edit(&mut rng, edit_count, Some(ctx));
+                            buffer.randomly_edit(&mut rng, edit_count, Some(cx));
                             buffer.edits_since(start_version).collect::<Vec<_>>()
                         });
                         log::info!("editing {:?}", edits);
                     }
                 }
-                map.check_invariants(app.as_ref());
+                map.check_invariants(cx.as_ref());
 
-                let buffer = map.buffer.read(app);
+                let buffer = map.buffer.read(cx);
                 let mut expected_text = buffer.text();
                 let mut expected_buffer_rows = Vec::new();
                 let mut next_row = buffer.max_point().row;
-                for fold_range in map.merged_fold_ranges(app.as_ref()).into_iter().rev() {
+                for fold_range in map.merged_fold_ranges(cx.as_ref()).into_iter().rev() {
                     let fold_start = buffer.point_for_offset(fold_range.start).unwrap();
                     let fold_end = buffer.point_for_offset(fold_range.end).unwrap();
                     expected_buffer_rows.extend((fold_end.row + 1..=next_row).rev());
@@ -1077,14 +1077,14 @@ mod tests {
                 expected_buffer_rows.extend((0..=next_row).rev());
                 expected_buffer_rows.reverse();
 
-                assert_eq!(map.text(app.as_ref()), expected_text);
+                assert_eq!(map.text(cx.as_ref()), expected_text);
 
                 for (display_row, line) in expected_text.lines().enumerate() {
-                    let line_len = map.line_len(display_row as u32, app.as_ref());
+                    let line_len = map.line_len(display_row as u32, cx.as_ref());
                     assert_eq!(line_len, line.len() as u32);
                 }
 
-                let longest_row = map.longest_row(app.as_ref());
+                let longest_row = map.longest_row(cx.as_ref());
                 let longest_char_column = expected_text
                     .split('\n')
                     .nth(longest_row as usize)
@@ -1095,22 +1095,22 @@ mod tests {
                 let mut display_offset = DisplayOffset(0);
                 let mut char_column = 0;
                 for c in expected_text.chars() {
-                    let buffer_point = map.to_buffer_point(display_point, app.as_ref());
+                    let buffer_point = map.to_buffer_point(display_point, cx.as_ref());
                     let buffer_offset = buffer_point.to_offset(buffer);
                     assert_eq!(
-                        map.to_display_point(buffer_point, app.as_ref()),
+                        map.to_display_point(buffer_point, cx.as_ref()),
                         display_point,
                         "to_display_point({:?})",
                         buffer_point,
                     );
                     assert_eq!(
-                        map.to_buffer_offset(display_point, app.as_ref()),
+                        map.to_buffer_offset(display_point, cx.as_ref()),
                         buffer_offset,
                         "to_buffer_offset({:?})",
                         display_point,
                     );
                     assert_eq!(
-                        map.to_display_offset(display_point, app.as_ref()),
+                        map.to_display_offset(display_point, cx.as_ref()),
                         display_offset,
                         "to_display_offset({:?})",
                         display_point,
@@ -1137,12 +1137,12 @@ mod tests {
                 }
 
                 for _ in 0..5 {
-                    let offset = map.snapshot(app.as_ref()).clip_offset(
-                        DisplayOffset(rng.gen_range(0..=map.len(app.as_ref()))),
+                    let offset = map.snapshot(cx.as_ref()).clip_offset(
+                        DisplayOffset(rng.gen_range(0..=map.len(cx.as_ref()))),
                         Bias::Right,
                     );
                     assert_eq!(
-                        map.snapshot(app.as_ref())
+                        map.snapshot(cx.as_ref())
                             .chunks_at(offset)
                             .collect::<String>(),
                         &expected_text[offset.0..],
@@ -1151,20 +1151,20 @@ mod tests {
 
                 for (idx, buffer_row) in expected_buffer_rows.iter().enumerate() {
                     let display_row = map
-                        .to_display_point(Point::new(*buffer_row, 0), app.as_ref())
+                        .to_display_point(Point::new(*buffer_row, 0), cx.as_ref())
                         .row();
                     assert_eq!(
-                        map.snapshot(app.as_ref())
+                        map.snapshot(cx.as_ref())
                             .buffer_rows(display_row)
                             .collect::<Vec<_>>(),
                         expected_buffer_rows[idx..],
                     );
                 }
 
-                for fold_range in map.merged_fold_ranges(app.as_ref()) {
+                for fold_range in map.merged_fold_ranges(cx.as_ref()) {
                     let display_point =
-                        map.to_display_point(fold_range.start.to_point(buffer), app.as_ref());
-                    assert!(map.is_line_folded(display_point.row(), app.as_ref()));
+                        map.to_display_point(fold_range.start.to_point(buffer), cx.as_ref());
+                    assert!(map.is_line_folded(display_point.row(), cx.as_ref()));
                 }
 
                 for _ in 0..5 {
@@ -1184,7 +1184,7 @@ mod tests {
                         .collect::<Vec<_>>();
 
                     assert_eq!(
-                        map.folds_in_range(start..end, app.as_ref())
+                        map.folds_in_range(start..end, cx.as_ref())
                             .cloned()
                             .collect::<Vec<_>>(),
                         expected_folds
@@ -1195,42 +1195,38 @@ mod tests {
     }
 
     #[gpui::test]
-    fn test_buffer_rows(app: &mut gpui::MutableAppContext) {
+    fn test_buffer_rows(cx: &mut gpui::MutableAppContext) {
         let text = sample_text(6, 6) + "\n";
-        let buffer = app.add_model(|ctx| Buffer::new(0, text, ctx));
+        let buffer = cx.add_model(|cx| Buffer::new(0, text, cx));
 
-        let mut map = FoldMap::new(buffer.clone(), app.as_ref());
+        let mut map = FoldMap::new(buffer.clone(), cx.as_ref());
 
         map.fold(
             vec![
                 Point::new(0, 2)..Point::new(2, 2),
                 Point::new(3, 1)..Point::new(4, 1),
             ],
-            app.as_ref(),
+            cx.as_ref(),
         );
 
-        assert_eq!(map.text(app.as_ref()), "aa…cccc\nd…eeeee\nffffff\n");
+        assert_eq!(map.text(cx.as_ref()), "aa…cccc\nd…eeeee\nffffff\n");
         assert_eq!(
-            map.snapshot(app.as_ref())
-                .buffer_rows(0)
-                .collect::<Vec<_>>(),
+            map.snapshot(cx.as_ref()).buffer_rows(0).collect::<Vec<_>>(),
             vec![0, 3, 5, 6]
         );
         assert_eq!(
-            map.snapshot(app.as_ref())
-                .buffer_rows(3)
-                .collect::<Vec<_>>(),
+            map.snapshot(cx.as_ref()).buffer_rows(3).collect::<Vec<_>>(),
             vec![6]
         );
     }
 
     impl FoldMap {
-        fn text(&self, app: &AppContext) -> String {
-            self.snapshot(app).chunks_at(DisplayOffset(0)).collect()
+        fn text(&self, cx: &AppContext) -> String {
+            self.snapshot(cx).chunks_at(DisplayOffset(0)).collect()
         }
 
-        fn merged_fold_ranges(&self, app: &AppContext) -> Vec<Range<usize>> {
-            let buffer = self.buffer.read(app);
+        fn merged_fold_ranges(&self, cx: &AppContext) -> Vec<Range<usize>> {
+            let buffer = self.buffer.read(cx);
             let mut folds = self.folds.items();
             // Ensure sorting doesn't change how folds get merged and displayed.
             folds.sort_by(|a, b| a.0.cmp(&b.0, buffer).unwrap());
@@ -1258,9 +1254,9 @@ mod tests {
             merged_ranges
         }
 
-        fn check_invariants(&self, ctx: &AppContext) {
-            let transforms = self.sync(ctx);
-            let buffer = self.buffer.read(ctx);
+        fn check_invariants(&self, cx: &AppContext) {
+            let transforms = self.sync(cx);
+            let buffer = self.buffer.read(cx);
             assert_eq!(
                 transforms.summary().buffer.bytes,
                 buffer.len(),

@@ -51,9 +51,9 @@ where
         &mut self,
         bounds: RectF,
         _: &mut Self::LayoutState,
-        ctx: &mut PaintContext,
+        cx: &mut PaintContext,
     ) -> Self::PaintState {
-        self.0(bounds, ctx)
+        self.0(bounds, cx)
     }
 
     fn after_layout(

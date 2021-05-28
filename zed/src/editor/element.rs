@@ -1,4 +1,4 @@
-use super::{BufferView, DisplayPoint, SelectAction};
+use super::{DisplayPoint, Editor, SelectAction};
 use gpui::{
     color::{ColorF, ColorU},
     geometry::{
@@ -16,17 +16,17 @@ use smallvec::SmallVec;
 use std::cmp::Ordering;
 use std::cmp::{self};
 
-pub struct BufferElement {
-    view: WeakViewHandle<BufferView>,
+pub struct EditorElement {
+    view: WeakViewHandle<Editor>,
 }
 
-impl BufferElement {
-    pub fn new(view: WeakViewHandle<BufferView>) -> Self {
+impl EditorElement {
+    pub fn new(view: WeakViewHandle<Editor>) -> Self {
         Self { view }
     }
 
-    fn view<'a>(&self, ctx: &'a AppContext) -> &'a BufferView {
-        self.view.upgrade(ctx).unwrap().read(ctx)
+    fn view<'a>(&self, cx: &'a AppContext) -> &'a Editor {
+        self.view.upgrade(cx).unwrap().read(cx)
     }
 
     fn mouse_down(
@@ -35,22 +35,21 @@ impl BufferElement {
         cmd: bool,
         layout: &mut LayoutState,
         paint: &mut PaintState,
-        ctx: &mut EventContext,
+        cx: &mut EventContext,
     ) -> bool {
         if paint.text_bounds.contains_point(position) {
-            let view = self.view(ctx.app);
-            let position =
-                paint.point_for_position(view, layout, position, ctx.font_cache, ctx.app);
-            ctx.dispatch_action("buffer:select", SelectAction::Begin { position, add: cmd });
+            let view = self.view(cx.app);
+            let position = paint.point_for_position(view, layout, position, cx.font_cache, cx.app);
+            cx.dispatch_action("buffer:select", SelectAction::Begin { position, add: cmd });
             true
         } else {
             false
         }
     }
 
-    fn mouse_up(&self, _position: Vector2F, ctx: &mut EventContext) -> bool {
-        if self.view(ctx.app).is_selecting() {
-            ctx.dispatch_action("buffer:select", SelectAction::End);
+    fn mouse_up(&self, _position: Vector2F, cx: &mut EventContext) -> bool {
+        if self.view(cx.app).is_selecting() {
+            cx.dispatch_action("buffer:select", SelectAction::End);
             true
         } else {
             false
@@ -62,15 +61,15 @@ impl BufferElement {
         position: Vector2F,
         layout: &mut LayoutState,
         paint: &mut PaintState,
-        ctx: &mut EventContext,
+        cx: &mut EventContext,
     ) -> bool {
-        let view = self.view(ctx.app);
+        let view = self.view(cx.app);
 
         if view.is_selecting() {
             let rect = paint.text_bounds;
             let mut scroll_delta = Vector2F::zero();
 
-            let vertical_margin = view.line_height(ctx.font_cache).min(rect.height() / 3.0);
+            let vertical_margin = view.line_height(cx.font_cache).min(rect.height() / 3.0);
             let top = rect.origin_y() + vertical_margin;
             let bottom = rect.lower_left().y() - vertical_margin;
             if position.y() < top {
@@ -80,7 +79,7 @@ impl BufferElement {
                 scroll_delta.set_y(scale_vertical_mouse_autoscroll_delta(position.y() - bottom))
             }
 
-            let horizontal_margin = view.line_height(ctx.font_cache).min(rect.width() / 3.0);
+            let horizontal_margin = view.line_height(cx.font_cache).min(rect.width() / 3.0);
             let left = rect.origin_x() + horizontal_margin;
             let right = rect.upper_right().x() - horizontal_margin;
             if position.x() < left {
@@ -94,19 +93,19 @@ impl BufferElement {
                 ))
             }
 
-            ctx.dispatch_action(
+            cx.dispatch_action(
                 "buffer:select",
                 SelectAction::Update {
                     position: paint.point_for_position(
                         view,
                         layout,
                         position,
-                        ctx.font_cache,
-                        ctx.app,
+                        cx.font_cache,
+                        cx.app,
                     ),
                     scroll_position: (view.scroll_position() + scroll_delta).clamp(
                         Vector2F::zero(),
-                        layout.scroll_max(view, ctx.font_cache, ctx.text_layout_cache, ctx.app),
+                        layout.scroll_max(view, cx.font_cache, cx.text_layout_cache, cx.app),
                     ),
                 },
             );
@@ -116,17 +115,17 @@ impl BufferElement {
         }
     }
 
-    fn key_down(&self, chars: &str, ctx: &mut EventContext) -> bool {
-        let view = self.view.upgrade(ctx.app).unwrap();
+    fn key_down(&self, chars: &str, cx: &mut EventContext) -> bool {
+        let view = self.view.upgrade(cx.app).unwrap();
 
-        if view.is_focused(ctx.app) {
+        if view.is_focused(cx.app) {
             if chars.is_empty() {
                 false
             } else {
                 if chars.chars().any(|c| c.is_control()) {
                     false
                 } else {
-                    ctx.dispatch_action("buffer:insert", chars.to_string());
+                    cx.dispatch_action("buffer:insert", chars.to_string());
                     true
                 }
             }
@@ -142,15 +141,15 @@ impl BufferElement {
         precise: bool,
         layout: &mut LayoutState,
         paint: &mut PaintState,
-        ctx: &mut EventContext,
+        cx: &mut EventContext,
     ) -> bool {
         if !paint.bounds.contains_point(position) {
             return false;
         }
 
-        let view = self.view(ctx.app);
-        let font_cache = &ctx.font_cache;
-        let layout_cache = &ctx.text_layout_cache;
+        let view = self.view(cx.app);
+        let font_cache = &cx.font_cache;
+        let layout_cache = &cx.text_layout_cache;
         let max_glyph_width = view.em_width(font_cache);
         let line_height = view.line_height(font_cache);
         if !precise {
@@ -161,21 +160,21 @@ impl BufferElement {
         let y = (view.scroll_position().y() * line_height - delta.y()) / line_height;
         let scroll_position = vec2f(x, y).clamp(
             Vector2F::zero(),
-            layout.scroll_max(view, font_cache, layout_cache, ctx.app),
+            layout.scroll_max(view, font_cache, layout_cache, cx.app),
         );
 
-        ctx.dispatch_action("buffer:scroll", scroll_position);
+        cx.dispatch_action("buffer:scroll", scroll_position);
 
         true
     }
 
-    fn paint_gutter(&mut self, rect: RectF, layout: &LayoutState, ctx: &mut PaintContext) {
-        let view = self.view(ctx.app);
-        let line_height = view.line_height(ctx.font_cache);
+    fn paint_gutter(&mut self, rect: RectF, layout: &LayoutState, cx: &mut PaintContext) {
+        let view = self.view(cx.app);
+        let line_height = view.line_height(cx.font_cache);
         let scroll_top = view.scroll_position().y() * line_height;
 
-        ctx.scene.push_layer(Some(rect));
-        ctx.scene.push_quad(Quad {
+        cx.scene.push_layer(Some(rect));
+        cx.scene.push_quad(Quad {
             bounds: rect,
             background: Some(ColorU::white()),
             border: Border::new(0., ColorU::transparent_black()),
@@ -191,25 +190,25 @@ impl BufferElement {
             line.paint(
                 line_origin,
                 RectF::new(vec2f(0., 0.), vec2f(line.width(), line_height)),
-                ctx,
+                cx,
             );
         }
 
-        ctx.scene.pop_layer();
+        cx.scene.pop_layer();
     }
 
-    fn paint_text(&mut self, bounds: RectF, layout: &LayoutState, ctx: &mut PaintContext) {
-        let view = self.view(ctx.app);
-        let line_height = view.line_height(ctx.font_cache);
-        let descent = view.font_descent(ctx.font_cache);
+    fn paint_text(&mut self, bounds: RectF, layout: &LayoutState, cx: &mut PaintContext) {
+        let view = self.view(cx.app);
+        let line_height = view.line_height(cx.font_cache);
+        let descent = view.font_descent(cx.font_cache);
         let start_row = view.scroll_position().y() as u32;
         let scroll_top = view.scroll_position().y() * line_height;
         let end_row = ((scroll_top + bounds.height()) / line_height).ceil() as u32 + 1; // Add 1 to ensure selections bleed off screen
-        let max_glyph_width = view.em_width(ctx.font_cache);
+        let max_glyph_width = view.em_width(cx.font_cache);
         let scroll_left = view.scroll_position().x() * max_glyph_width;
 
-        ctx.scene.push_layer(Some(bounds));
-        ctx.scene.push_quad(Quad {
+        cx.scene.push_layer(Some(bounds));
+        cx.scene.push_quad(Quad {
             bounds,
             background: Some(ColorU::white()),
             border: Border::new(0., ColorU::transparent_black()),
@@ -224,7 +223,7 @@ impl BufferElement {
 
         for selection in view.selections_in_range(
             DisplayPoint::new(start_row, 0)..DisplayPoint::new(end_row, 0),
-            ctx.app,
+            cx.app,
         ) {
             if selection.start != selection.end {
                 let range_start = cmp::min(selection.start, selection.end);
@@ -263,7 +262,7 @@ impl BufferElement {
                         .collect(),
                 };
 
-                selection.paint(bounds, ctx.scene);
+                selection.paint(bounds, cx.scene);
             }
 
             if view.cursors_visible() {
@@ -288,49 +287,49 @@ impl BufferElement {
             line.paint(
                 content_origin + vec2f(-scroll_left, row as f32 * line_height - scroll_top),
                 RectF::new(vec2f(scroll_left, 0.), vec2f(bounds.width(), line_height)),
-                ctx,
+                cx,
             );
         }
 
-        ctx.scene.push_layer(Some(bounds));
+        cx.scene.push_layer(Some(bounds));
         for cursor in cursors {
-            cursor.paint(ctx);
+            cursor.paint(cx);
         }
-        ctx.scene.pop_layer();
+        cx.scene.pop_layer();
 
-        ctx.scene.pop_layer();
+        cx.scene.pop_layer();
     }
 }
 
-impl Element for BufferElement {
+impl Element for EditorElement {
     type LayoutState = Option<LayoutState>;
     type PaintState = Option<PaintState>;
 
     fn layout(
         &mut self,
         constraint: SizeConstraint,
-        ctx: &mut LayoutContext,
+        cx: &mut LayoutContext,
     ) -> (Vector2F, Self::LayoutState) {
-        let app = ctx.app;
+        let app = cx.app;
         let mut size = constraint.max;
         if size.y().is_infinite() {
             let view = self.view(app);
-            size.set_y((view.max_point(app).row() + 1) as f32 * view.line_height(ctx.font_cache));
+            size.set_y((view.max_point(app).row() + 1) as f32 * view.line_height(cx.font_cache));
         }
         if size.x().is_infinite() {
             unimplemented!("we don't yet handle an infinite width constraint on buffer elements");
         }
 
         let view = self.view(app);
-        let font_cache = &ctx.font_cache;
-        let layout_cache = &ctx.text_layout_cache;
+        let font_cache = &cx.font_cache;
+        let layout_cache = &cx.text_layout_cache;
         let line_height = view.line_height(font_cache);
 
         let gutter_padding;
         let gutter_width;
         if view.is_gutter_visible() {
-            gutter_padding = view.em_width(ctx.font_cache);
-            match view.max_line_number_width(ctx.font_cache, ctx.text_layout_cache, app) {
+            gutter_padding = view.em_width(cx.font_cache);
+            match view.max_line_number_width(cx.font_cache, cx.text_layout_cache, app) {
                 Err(error) => {
                     log::error!("error computing max line number width: {}", error);
                     return (size, None);
@@ -348,7 +347,7 @@ impl Element for BufferElement {
         let autoscroll_horizontally = view.autoscroll_vertically(size.y(), line_height, app);
 
         let line_number_layouts = if view.is_gutter_visible() {
-            match view.layout_line_numbers(size.y(), ctx.font_cache, ctx.text_layout_cache, app) {
+            match view.layout_line_numbers(size.y(), cx.font_cache, cx.text_layout_cache, app) {
                 Err(error) => {
                     log::error!("error laying out line numbers: {}", error);
                     return (size, None);
@@ -400,15 +399,15 @@ impl Element for BufferElement {
         &mut self,
         _: Vector2F,
         layout: &mut Option<LayoutState>,
-        ctx: &mut AfterLayoutContext,
+        cx: &mut AfterLayoutContext,
     ) {
         if let Some(layout) = layout {
-            let app = ctx.app.as_ref();
+            let app = cx.app.as_ref();
 
             let view = self.view(app);
             view.clamp_scroll_left(
                 layout
-                    .scroll_max(view, ctx.font_cache, ctx.text_layout_cache, app)
+                    .scroll_max(view, cx.font_cache, cx.text_layout_cache, app)
                     .x(),
             );
 
@@ -416,8 +415,8 @@ impl Element for BufferElement {
                 view.autoscroll_horizontally(
                     view.scroll_position().y() as u32,
                     layout.text_size.x(),
-                    layout.scroll_width(view, ctx.font_cache, ctx.text_layout_cache, app),
-                    view.em_width(ctx.font_cache),
+                    layout.scroll_width(view, cx.font_cache, cx.text_layout_cache, app),
+                    view.em_width(cx.font_cache),
                     &layout.line_layouts,
                     app,
                 );
@@ -429,7 +428,7 @@ impl Element for BufferElement {
         &mut self,
         bounds: RectF,
         layout: &mut Self::LayoutState,
-        ctx: &mut PaintContext,
+        cx: &mut PaintContext,
     ) -> Self::PaintState {
         if let Some(layout) = layout {
             let gutter_bounds = RectF::new(bounds.origin(), layout.gutter_size);
@@ -438,10 +437,10 @@ impl Element for BufferElement {
                 layout.text_size,
             );
 
-            if self.view(ctx.app).is_gutter_visible() {
-                self.paint_gutter(gutter_bounds, layout, ctx);
+            if self.view(cx.app).is_gutter_visible() {
+                self.paint_gutter(gutter_bounds, layout, cx);
             }
-            self.paint_text(text_bounds, layout, ctx);
+            self.paint_text(text_bounds, layout, cx);
 
             Some(PaintState {
                 bounds,
@@ -458,23 +457,23 @@ impl Element for BufferElement {
         _: RectF,
         layout: &mut Self::LayoutState,
         paint: &mut Self::PaintState,
-        ctx: &mut EventContext,
+        cx: &mut EventContext,
     ) -> bool {
         if let (Some(layout), Some(paint)) = (layout, paint) {
             match event {
                 Event::LeftMouseDown { position, cmd } => {
-                    self.mouse_down(*position, *cmd, layout, paint, ctx)
+                    self.mouse_down(*position, *cmd, layout, paint, cx)
                 }
-                Event::LeftMouseUp { position } => self.mouse_up(*position, ctx),
+                Event::LeftMouseUp { position } => self.mouse_up(*position, cx),
                 Event::LeftMouseDragged { position } => {
-                    self.mouse_dragged(*position, layout, paint, ctx)
+                    self.mouse_dragged(*position, layout, paint, cx)
                 }
                 Event::ScrollWheel {
                     position,
                     delta,
                     precise,
-                } => self.scroll(*position, *delta, *precise, layout, paint, ctx),
-                Event::KeyDown { chars, .. } => self.key_down(chars, ctx),
+                } => self.scroll(*position, *delta, *precise, layout, paint, cx),
+                Event::KeyDown { chars, .. } => self.key_down(chars, cx),
                 _ => false,
             }
         } else {
@@ -510,14 +509,14 @@ pub struct LayoutState {
 impl LayoutState {
     fn scroll_width(
         &self,
-        view: &BufferView,
+        view: &Editor,
         font_cache: &FontCache,
         layout_cache: &TextLayoutCache,
-        app: &AppContext,
+        cx: &AppContext,
     ) -> f32 {
-        let row = view.longest_row(app);
+        let row = view.longest_row(cx);
         let longest_line_width = view
-            .layout_line(row, font_cache, layout_cache, app)
+            .layout_line(row, font_cache, layout_cache, cx)
             .unwrap()
             .width();
         longest_line_width.max(self.max_visible_line_width) + view.em_width(font_cache)
@@ -525,16 +524,16 @@ impl LayoutState {
 
     fn scroll_max(
         &self,
-        view: &BufferView,
+        view: &Editor,
         font_cache: &FontCache,
         layout_cache: &TextLayoutCache,
-        app: &AppContext,
+        cx: &AppContext,
     ) -> Vector2F {
         vec2f(
-            ((self.scroll_width(view, font_cache, layout_cache, app) - self.text_size.x())
+            ((self.scroll_width(view, font_cache, layout_cache, cx) - self.text_size.x())
                 / view.em_width(font_cache))
             .max(0.0),
-            view.max_point(app).row().saturating_sub(1) as f32,
+            view.max_point(cx).row().saturating_sub(1) as f32,
         )
     }
 }
@@ -547,24 +546,24 @@ pub struct PaintState {
 impl PaintState {
     fn point_for_position(
         &self,
-        view: &BufferView,
+        view: &Editor,
         layout: &LayoutState,
         position: Vector2F,
         font_cache: &FontCache,
-        app: &AppContext,
+        cx: &AppContext,
     ) -> DisplayPoint {
         let scroll_position = view.scroll_position();
         let position = position - self.text_bounds.origin();
         let y = position.y().max(0.0).min(layout.size.y());
         let row = ((y / view.line_height(font_cache)) + scroll_position.y()) as u32;
-        let row = cmp::min(row, view.max_point(app).row());
+        let row = cmp::min(row, view.max_point(cx).row());
         let line = &layout.line_layouts[(row - scroll_position.y() as u32) as usize];
         let x = position.x() + (scroll_position.x() * view.em_width(font_cache));
 
         let column = if x >= 0.0 {
             line.index_for_x(x)
                 .map(|ix| ix as u32)
-                .unwrap_or(view.line_len(row, app))
+                .unwrap_or(view.line_len(row, cx))
         } else {
             0
         };
@@ -579,8 +578,8 @@ struct Cursor {
 }
 
 impl Cursor {
-    fn paint(&self, ctx: &mut PaintContext) {
-        ctx.scene.push_quad(Quad {
+    fn paint(&self, cx: &mut PaintContext) {
+        cx.scene.push_quad(Quad {
             bounds: RectF::new(self.origin, vec2f(2.0, self.line_height)),
             background: Some(ColorU::black()),
             border: Border::new(0., ColorU::black()),

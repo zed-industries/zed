@@ -144,8 +144,8 @@ fn write_tree(path: &Path, tree: serde_json::Value) {
     }
 }
 
-pub fn build_app_state(ctx: &AppContext) -> AppState {
-    let settings = settings::channel(&ctx.font_cache()).unwrap().1;
+pub fn build_app_state(cx: &AppContext) -> AppState {
+    let settings = settings::channel(&cx.font_cache()).unwrap().1;
     let language_registry = Arc::new(LanguageRegistry::new());
     AppState {
         settings,

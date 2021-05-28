@@ -1,7 +1,36 @@
+mod align;
+mod canvas;
+mod constrained_box;
+mod container;
+mod empty;
+mod event_handler;
+mod flex;
+mod label;
+mod line_box;
+mod mouse_event_handler;
+mod stack;
+mod svg;
+mod uniform_list;
+
+pub use crate::presenter::ChildView;
+pub use align::*;
+pub use canvas::*;
+pub use constrained_box::*;
+pub use container::*;
+pub use empty::*;
+pub use event_handler::*;
+pub use flex::*;
+pub use label::*;
+pub use line_box::*;
+pub use mouse_event_handler::*;
+pub use stack::*;
+pub use svg::*;
+pub use uniform_list::*;
+
 use crate::{
     geometry::{rect::RectF, vector::Vector2F},
-    json, AfterLayoutContext, DebugContext, Event, EventContext, LayoutContext, PaintContext,
-    SizeConstraint,
+    json, AfterLayoutContext, AppContext, DebugContext, Event, EventContext, LayoutContext,
+    PaintContext, SizeConstraint,
 };
 use core::panic;
 use json::ToJson;
@@ -9,11 +38,11 @@ use replace_with::replace_with_or_abort;
 use std::{any::Any, borrow::Cow};
 
 trait AnyElement {
-    fn layout(&mut self, constraint: SizeConstraint, ctx: &mut LayoutContext) -> Vector2F;
+    fn layout(&mut self, constraint: SizeConstraint, cx: &mut LayoutContext) -> Vector2F;
     fn after_layout(&mut self, _: &mut AfterLayoutContext) {}
-    fn paint(&mut self, origin: Vector2F, ctx: &mut PaintContext);
-    fn dispatch_event(&mut self, event: &Event, ctx: &mut EventContext) -> bool;
-    fn debug(&self, ctx: &DebugContext) -> serde_json::Value;
+    fn paint(&mut self, origin: Vector2F, cx: &mut PaintContext);
+    fn dispatch_event(&mut self, event: &Event, cx: &mut EventContext) -> bool;
+    fn debug(&self, cx: &DebugContext) -> serde_json::Value;
 
     fn size(&self) -> Vector2F;
     fn metadata(&self) -> Option<&dyn Any>;
@@ -26,21 +55,21 @@ pub trait Element {
     fn layout(
         &mut self,
         constraint: SizeConstraint,
-        ctx: &mut LayoutContext,
+        cx: &mut LayoutContext,
     ) -> (Vector2F, Self::LayoutState);
 
     fn after_layout(
         &mut self,
         size: Vector2F,
         layout: &mut Self::LayoutState,
-        ctx: &mut AfterLayoutContext,
+        cx: &mut AfterLayoutContext,
     );
 
     fn paint(
         &mut self,
         bounds: RectF,
         layout: &mut Self::LayoutState,
-        ctx: &mut PaintContext,
+        cx: &mut PaintContext,
     ) -> Self::PaintState;
 
     fn dispatch_event(
@@ -49,7 +78,7 @@ pub trait Element {
         bounds: RectF,
         layout: &mut Self::LayoutState,
         paint: &mut Self::PaintState,
-        ctx: &mut EventContext,
+        cx: &mut EventContext,
     ) -> bool;
 
     fn metadata(&self) -> Option<&dyn Any> {
@@ -61,7 +90,7 @@ pub trait Element {
         bounds: RectF,
         layout: &Self::LayoutState,
         paint: &Self::PaintState,
-        ctx: &DebugContext,
+        cx: &DebugContext,
     ) -> serde_json::Value;
 
     fn boxed(self) -> ElementBox
@@ -109,13 +138,13 @@ pub struct ElementBox {
 }
 
 impl<T: Element> AnyElement for Lifecycle<T> {
-    fn layout(&mut self, constraint: SizeConstraint, ctx: &mut LayoutContext) -> Vector2F {
+    fn layout(&mut self, constraint: SizeConstraint, cx: &mut LayoutContext) -> Vector2F {
         let mut result = None;
         replace_with_or_abort(self, |me| match me {
             Lifecycle::Init { mut element }
             | Lifecycle::PostLayout { mut element, .. }
             | Lifecycle::PostPaint { mut element, .. } => {
-                let (size, layout) = element.layout(constraint, ctx);
+                let (size, layout) = element.layout(constraint, cx);
                 debug_assert!(size.x().is_finite());
                 debug_assert!(size.y().is_finite());
 
@@ -131,7 +160,7 @@ impl<T: Element> AnyElement for Lifecycle<T> {
         result.unwrap()
     }
 
-    fn after_layout(&mut self, ctx: &mut AfterLayoutContext) {
+    fn after_layout(&mut self, cx: &mut AfterLayoutContext) {
         if let Lifecycle::PostLayout {
             element,
             size,
@@ -139,13 +168,13 @@ impl<T: Element> AnyElement for Lifecycle<T> {
             ..
         } = self
         {
-            element.after_layout(*size, layout, ctx);
+            element.after_layout(*size, layout, cx);
         } else {
             panic!("invalid element lifecycle state");
         }
     }
 
-    fn paint(&mut self, origin: Vector2F, ctx: &mut PaintContext) {
+    fn paint(&mut self, origin: Vector2F, cx: &mut PaintContext) {
         replace_with_or_abort(self, |me| {
             if let Lifecycle::PostLayout {
                 mut element,
@@ -155,7 +184,7 @@ impl<T: Element> AnyElement for Lifecycle<T> {
             } = me
             {
                 let bounds = RectF::new(origin, size);
-                let paint = element.paint(bounds, &mut layout, ctx);
+                let paint = element.paint(bounds, &mut layout, cx);
                 Lifecycle::PostPaint {
                     element,
                     constraint,
@@ -169,7 +198,7 @@ impl<T: Element> AnyElement for Lifecycle<T> {
         });
     }
 
-    fn dispatch_event(&mut self, event: &Event, ctx: &mut EventContext) -> bool {
+    fn dispatch_event(&mut self, event: &Event, cx: &mut EventContext) -> bool {
         if let Lifecycle::PostPaint {
             element,
             bounds,
@@ -178,7 +207,7 @@ impl<T: Element> AnyElement for Lifecycle<T> {
             ..
         } = self
         {
-            element.dispatch_event(event, *bounds, layout, paint, ctx)
+            element.dispatch_event(event, *bounds, layout, paint, cx)
         } else {
             panic!("invalid element lifecycle state");
         }
@@ -200,7 +229,7 @@ impl<T: Element> AnyElement for Lifecycle<T> {
         }
     }
 
-    fn debug(&self, ctx: &DebugContext) -> serde_json::Value {
+    fn debug(&self, cx: &DebugContext) -> serde_json::Value {
         match self {
             Lifecycle::PostPaint {
                 element,
@@ -209,7 +238,7 @@ impl<T: Element> AnyElement for Lifecycle<T> {
                 layout,
                 paint,
             } => {
-                let mut value = element.debug(*bounds, layout, paint, ctx);
+                let mut value = element.debug(*bounds, layout, paint, cx);
                 if let json::Value::Object(map) = &mut value {
                     let mut new_map: crate::json::Map<String, serde_json::Value> =
                         Default::default();
@@ -229,20 +258,20 @@ impl<T: Element> AnyElement for Lifecycle<T> {
 }
 
 impl ElementBox {
-    pub fn layout(&mut self, constraint: SizeConstraint, ctx: &mut LayoutContext) -> Vector2F {
-        self.element.layout(constraint, ctx)
+    pub fn layout(&mut self, constraint: SizeConstraint, cx: &mut LayoutContext) -> Vector2F {
+        self.element.layout(constraint, cx)
     }
 
-    pub fn after_layout(&mut self, ctx: &mut AfterLayoutContext) {
-        self.element.after_layout(ctx);
+    pub fn after_layout(&mut self, cx: &mut AfterLayoutContext) {
+        self.element.after_layout(cx);
     }
 
-    pub fn paint(&mut self, origin: Vector2F, ctx: &mut PaintContext) {
-        self.element.paint(origin, ctx);
+    pub fn paint(&mut self, origin: Vector2F, cx: &mut PaintContext) {
+        self.element.paint(origin, cx);
     }
 
-    pub fn dispatch_event(&mut self, event: &Event, ctx: &mut EventContext) -> bool {
-        self.element.dispatch_event(event, ctx)
+    pub fn dispatch_event(&mut self, event: &Event, cx: &mut EventContext) -> bool {
+        self.element.dispatch_event(event, cx)
     }
 
     pub fn size(&self) -> Vector2F {
@@ -253,8 +282,8 @@ impl ElementBox {
         self.element.metadata()
     }
 
-    pub fn debug(&self, ctx: &DebugContext) -> json::Value {
-        let mut value = self.element.debug(ctx);
+    pub fn debug(&self, cx: &DebugContext) -> json::Value {
+        let mut value = self.element.debug(cx);
 
         if let Some(name) = &self.name {
             if let json::Value::Object(map) = &mut value {
@@ -268,3 +297,24 @@ impl ElementBox {
         value
     }
 }
+
+pub trait ParentElement<'a>: Extend<ElementBox> + Sized {
+    fn add_children(&mut self, children: impl IntoIterator<Item = ElementBox>) {
+        self.extend(children);
+    }
+
+    fn add_child(&mut self, child: ElementBox) {
+        self.add_children(Some(child));
+    }
+
+    fn with_children(mut self, children: impl IntoIterator<Item = ElementBox>) -> Self {
+        self.add_children(children);
+        self
+    }
+
+    fn with_child(self, child: ElementBox) -> Self {
+        self.with_children(Some(child))
+    }
+}
+
+impl<'a, T> ParentElement<'a> for T where T: Extend<ElementBox> {}

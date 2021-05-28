@@ -67,10 +67,10 @@ struct FileHandleState {
 }
 
 impl Worktree {
-    pub fn new(path: impl Into<Arc<Path>>, ctx: &mut ModelContext<Self>) -> Self {
+    pub fn new(path: impl Into<Arc<Path>>, cx: &mut ModelContext<Self>) -> Self {
         let abs_path = path.into();
         let (scan_state_tx, scan_state_rx) = smol::channel::unbounded();
-        let id = ctx.model_id();
+        let id = cx.model_id();
         let snapshot = Snapshot {
             id,
             scan_id: 0,
@@ -99,14 +99,13 @@ impl Worktree {
             scanner.run(event_stream)
         });
 
-        ctx.spawn(|this, mut ctx| {
+        cx.spawn(|this, mut cx| {
             let this = this.downgrade();
             async move {
                 while let Ok(scan_state) = scan_state_rx.recv().await {
-                    let alive = ctx.update(|ctx| {
-                        if let Some(handle) = this.upgrade(&ctx) {
-                            handle
-                                .update(ctx, |this, ctx| this.observe_scan_state(scan_state, ctx));
+                    let alive = cx.update(|cx| {
+                        if let Some(handle) = this.upgrade(&cx) {
+                            handle.update(cx, |this, cx| this.observe_scan_state(scan_state, cx));
                             true
                         } else {
                             false
@@ -134,21 +133,21 @@ impl Worktree {
         }
     }
 
-    fn observe_scan_state(&mut self, scan_state: ScanState, ctx: &mut ModelContext<Self>) {
+    fn observe_scan_state(&mut self, scan_state: ScanState, cx: &mut ModelContext<Self>) {
         let _ = self.scan_state.0.blocking_send(scan_state);
-        self.poll_entries(ctx);
+        self.poll_entries(cx);
     }
 
-    fn poll_entries(&mut self, ctx: &mut ModelContext<Self>) {
+    fn poll_entries(&mut self, cx: &mut ModelContext<Self>) {
         self.snapshot = self.background_snapshot.lock().clone();
-        ctx.notify();
+        cx.notify();
 
         if self.is_scanning() && !self.poll_scheduled {
-            ctx.spawn(|this, mut ctx| async move {
+            cx.spawn(|this, mut cx| async move {
                 smol::Timer::after(Duration::from_millis(100)).await;
-                this.update(&mut ctx, |this, ctx| {
+                this.update(&mut cx, |this, cx| {
                     this.poll_scheduled = false;
-                    this.poll_entries(ctx);
+                    this.poll_entries(cx);
                 })
             })
             .detach();
@@ -187,11 +186,11 @@ impl Worktree {
     pub fn load_history(
         &self,
         path: &Path,
-        ctx: &AppContext,
+        cx: &AppContext,
     ) -> impl Future<Output = Result<History>> {
         let path = path.to_path_buf();
         let abs_path = self.absolutize(&path);
-        ctx.background_executor().spawn(async move {
+        cx.background_executor().spawn(async move {
             let mut file = fs::File::open(&abs_path)?;
             let mut base_text = String::new();
             file.read_to_string(&mut base_text)?;
@@ -199,11 +198,11 @@ impl Worktree {
         })
     }
 
-    pub fn save<'a>(&self, path: &Path, content: Rope, ctx: &AppContext) -> Task<Result<()>> {
+    pub fn save<'a>(&self, path: &Path, content: Rope, cx: &AppContext) -> Task<Result<()>> {
         let handles = self.handles.clone();
         let path = path.to_path_buf();
         let abs_path = self.absolutize(&path);
-        ctx.background_executor().spawn(async move {
+        cx.background_executor().spawn(async move {
             let buffer_size = content.summary().bytes.min(10 * 1024);
             let file = fs::File::create(&abs_path)?;
             let mut writer = io::BufWriter::with_capacity(buffer_size, &file);
@@ -430,12 +429,12 @@ impl FileHandle {
 
     /// Returns the last component of this handle's absolute path. If this handle refers to the root
     /// of its worktree, then this method will return the name of the worktree itself.
-    pub fn file_name<'a>(&'a self, ctx: &'a AppContext) -> Option<OsString> {
+    pub fn file_name<'a>(&'a self, cx: &'a AppContext) -> Option<OsString> {
         self.state
             .lock()
             .path
             .file_name()
-            .or_else(|| self.worktree.read(ctx).abs_path().file_name())
+            .or_else(|| self.worktree.read(cx).abs_path().file_name())
             .map(Into::into)
     }
 
@@ -451,13 +450,13 @@ impl FileHandle {
         !self.is_deleted()
     }
 
-    pub fn load_history(&self, ctx: &AppContext) -> impl Future<Output = Result<History>> {
-        self.worktree.read(ctx).load_history(&self.path(), ctx)
+    pub fn load_history(&self, cx: &AppContext) -> impl Future<Output = Result<History>> {
+        self.worktree.read(cx).load_history(&self.path(), cx)
     }
 
-    pub fn save<'a>(&self, content: Rope, ctx: &AppContext) -> Task<Result<()>> {
-        let worktree = self.worktree.read(ctx);
-        worktree.save(&self.path(), content, ctx)
+    pub fn save<'a>(&self, content: Rope, cx: &AppContext) -> Task<Result<()>> {
+        let worktree = self.worktree.read(cx);
+        worktree.save(&self.path(), content, cx)
     }
 
     pub fn worktree_id(&self) -> usize {
@@ -470,12 +469,12 @@ impl FileHandle {
 
     pub fn observe_from_model<T: Entity>(
         &self,
-        ctx: &mut ModelContext<T>,
+        cx: &mut ModelContext<T>,
         mut callback: impl FnMut(&mut T, FileHandle, &mut ModelContext<T>) + 'static,
     ) {
         let mut prev_state = self.state.lock().clone();
         let cur_state = Arc::downgrade(&self.state);
-        ctx.observe(&self.worktree, move |observer, worktree, ctx| {
+        cx.observe(&self.worktree, move |observer, worktree, cx| {
             if let Some(cur_state) = cur_state.upgrade() {
                 let cur_state_unlocked = cur_state.lock();
                 if *cur_state_unlocked != prev_state {
@@ -487,7 +486,7 @@ impl FileHandle {
                             worktree,
                             state: cur_state,
                         },
-                        ctx,
+                        cx,
                     );
                 }
             }
@@ -1201,23 +1200,23 @@ struct UpdateIgnoreStatusJob {
 }
 
 pub trait WorktreeHandle {
-    fn file(&self, path: impl AsRef<Path>, app: &mut MutableAppContext) -> Task<FileHandle>;
+    fn file(&self, path: impl AsRef<Path>, cx: &mut MutableAppContext) -> Task<FileHandle>;
 
     #[cfg(test)]
     fn flush_fs_events<'a>(
         &self,
-        app: &'a gpui::TestAppContext,
+        cx: &'a gpui::TestAppContext,
     ) -> futures_core::future::LocalBoxFuture<'a, ()>;
 }
 
 impl WorktreeHandle for ModelHandle<Worktree> {
-    fn file(&self, path: impl AsRef<Path>, app: &mut MutableAppContext) -> Task<FileHandle> {
+    fn file(&self, path: impl AsRef<Path>, cx: &mut MutableAppContext) -> Task<FileHandle> {
         let path = Arc::from(path.as_ref());
         let handle = self.clone();
-        let tree = self.read(app);
+        let tree = self.read(cx);
         let abs_path = tree.absolutize(&path);
-        app.spawn(|ctx| async move {
-            let mtime = ctx
+        cx.spawn(|cx| async move {
+            let mtime = cx
                 .background_executor()
                 .spawn(async move {
                     if let Ok(metadata) = fs::metadata(&abs_path) {
@@ -1227,7 +1226,7 @@ impl WorktreeHandle for ModelHandle<Worktree> {
                     }
                 })
                 .await;
-            let state = handle.read_with(&ctx, |tree, _| {
+            let state = handle.read_with(&cx, |tree, _| {
                 let mut handles = tree.handles.lock();
                 if let Some(state) = handles.get(&path).and_then(Weak::upgrade) {
                     state
@@ -1267,23 +1266,23 @@ impl WorktreeHandle for ModelHandle<Worktree> {
     #[cfg(test)]
     fn flush_fs_events<'a>(
         &self,
-        app: &'a gpui::TestAppContext,
+        cx: &'a gpui::TestAppContext,
     ) -> futures_core::future::LocalBoxFuture<'a, ()> {
         use smol::future::FutureExt;
 
         let filename = "fs-event-sentinel";
-        let root_path = app.read(|ctx| self.read(ctx).abs_path.clone());
+        let root_path = cx.read(|cx| self.read(cx).abs_path.clone());
         let tree = self.clone();
         async move {
             fs::write(root_path.join(filename), "").unwrap();
-            tree.condition(&app, |tree, _| tree.entry_for_path(filename).is_some())
+            tree.condition(&cx, |tree, _| tree.entry_for_path(filename).is_some())
                 .await;
 
             fs::remove_file(root_path.join(filename)).unwrap();
-            tree.condition(&app, |tree, _| tree.entry_for_path(filename).is_none())
+            tree.condition(&cx, |tree, _| tree.entry_for_path(filename).is_none())
                 .await;
 
-            app.read(|ctx| tree.read(ctx).scan_complete()).await;
+            cx.read(|cx| tree.read(cx).scan_complete()).await;
         }
         .boxed_local()
     }
@@ -1408,7 +1407,7 @@ mod tests {
     use std::time::{SystemTime, UNIX_EPOCH};
 
     #[gpui::test]
-    async fn test_populate_and_search(mut app: gpui::TestAppContext) {
+    async fn test_populate_and_search(mut cx: gpui::TestAppContext) {
         let dir = temp_tree(json!({
             "root": {
                 "apple": "",
@@ -1432,11 +1431,11 @@ mod tests {
         )
         .unwrap();
 
-        let tree = app.add_model(|ctx| Worktree::new(root_link_path, ctx));
+        let tree = cx.add_model(|cx| Worktree::new(root_link_path, cx));
 
-        app.read(|ctx| tree.read(ctx).scan_complete()).await;
-        app.read(|ctx| {
-            let tree = tree.read(ctx);
+        cx.read(|cx| tree.read(cx).scan_complete()).await;
+        cx.read(|cx| {
+            let tree = tree.read(cx);
             assert_eq!(tree.file_count(), 5);
 
             assert_eq!(
@@ -1452,7 +1451,7 @@ mod tests {
                 false,
                 10,
                 Default::default(),
-                ctx.thread_pool().clone(),
+                cx.thread_pool().clone(),
             )
             .into_iter()
             .map(|result| result.path)
@@ -1468,60 +1467,58 @@ mod tests {
     }
 
     #[gpui::test]
-    async fn test_save_file(mut app: gpui::TestAppContext) {
+    async fn test_save_file(mut cx: gpui::TestAppContext) {
         let dir = temp_tree(json!({
             "file1": "the old contents",
         }));
 
-        let tree = app.add_model(|ctx| Worktree::new(dir.path(), ctx));
-        app.read(|ctx| tree.read(ctx).scan_complete()).await;
-        app.read(|ctx| assert_eq!(tree.read(ctx).file_count(), 1));
+        let tree = cx.add_model(|cx| Worktree::new(dir.path(), cx));
+        cx.read(|cx| tree.read(cx).scan_complete()).await;
+        cx.read(|cx| assert_eq!(tree.read(cx).file_count(), 1));
 
-        let buffer =
-            app.add_model(|ctx| Buffer::new(1, "a line of text.\n".repeat(10 * 1024), ctx));
+        let buffer = cx.add_model(|cx| Buffer::new(1, "a line of text.\n".repeat(10 * 1024), cx));
 
-        let path = tree.update(&mut app, |tree, ctx| {
+        let path = tree.update(&mut cx, |tree, cx| {
             let path = tree.files(0).next().unwrap().path().clone();
             assert_eq!(path.file_name().unwrap(), "file1");
-            smol::block_on(tree.save(&path, buffer.read(ctx).snapshot().text(), ctx.as_ref()))
+            smol::block_on(tree.save(&path, buffer.read(cx).snapshot().text(), cx.as_ref()))
                 .unwrap();
             path
         });
 
-        let history = app
-            .read(|ctx| tree.read(ctx).load_history(&path, ctx))
+        let history = cx
+            .read(|cx| tree.read(cx).load_history(&path, cx))
             .await
             .unwrap();
-        app.read(|ctx| {
-            assert_eq!(history.base_text.as_ref(), buffer.read(ctx).text());
+        cx.read(|cx| {
+            assert_eq!(history.base_text.as_ref(), buffer.read(cx).text());
         });
     }
 
     #[gpui::test]
-    async fn test_save_in_single_file_worktree(mut app: gpui::TestAppContext) {
+    async fn test_save_in_single_file_worktree(mut cx: gpui::TestAppContext) {
         let dir = temp_tree(json!({
             "file1": "the old contents",
         }));
 
-        let tree = app.add_model(|ctx| Worktree::new(dir.path().join("file1"), ctx));
-        app.read(|ctx| tree.read(ctx).scan_complete()).await;
-        app.read(|ctx| assert_eq!(tree.read(ctx).file_count(), 1));
+        let tree = cx.add_model(|cx| Worktree::new(dir.path().join("file1"), cx));
+        cx.read(|cx| tree.read(cx).scan_complete()).await;
+        cx.read(|cx| assert_eq!(tree.read(cx).file_count(), 1));
 
-        let buffer =
-            app.add_model(|ctx| Buffer::new(1, "a line of text.\n".repeat(10 * 1024), ctx));
+        let buffer = cx.add_model(|cx| Buffer::new(1, "a line of text.\n".repeat(10 * 1024), cx));
 
-        let file = app.update(|ctx| tree.file("", ctx)).await;
-        app.update(|ctx| {
+        let file = cx.update(|cx| tree.file("", cx)).await;
+        cx.update(|cx| {
             assert_eq!(file.path().file_name(), None);
-            smol::block_on(file.save(buffer.read(ctx).snapshot().text(), ctx.as_ref())).unwrap();
+            smol::block_on(file.save(buffer.read(cx).snapshot().text(), cx.as_ref())).unwrap();
         });
 
-        let history = app.read(|ctx| file.load_history(ctx)).await.unwrap();
-        app.read(|ctx| assert_eq!(history.base_text.as_ref(), buffer.read(ctx).text()));
+        let history = cx.read(|cx| file.load_history(cx)).await.unwrap();
+        cx.read(|cx| assert_eq!(history.base_text.as_ref(), buffer.read(cx).text()));
     }
 
     #[gpui::test]
-    async fn test_rescan_simple(mut app: gpui::TestAppContext) {
+    async fn test_rescan_simple(mut cx: gpui::TestAppContext) {
         let dir = temp_tree(json!({
             "a": {
                 "file1": "",
@@ -1536,31 +1533,31 @@ mod tests {
             }
         }));
 
-        let tree = app.add_model(|ctx| Worktree::new(dir.path(), ctx));
-        let file2 = app.update(|ctx| tree.file("a/file2", ctx)).await;
-        let file3 = app.update(|ctx| tree.file("a/file3", ctx)).await;
-        let file4 = app.update(|ctx| tree.file("b/c/file4", ctx)).await;
-        let file5 = app.update(|ctx| tree.file("b/c/file5", ctx)).await;
-        let non_existent_file = app.update(|ctx| tree.file("a/file_x", ctx)).await;
+        let tree = cx.add_model(|cx| Worktree::new(dir.path(), cx));
+        let file2 = cx.update(|cx| tree.file("a/file2", cx)).await;
+        let file3 = cx.update(|cx| tree.file("a/file3", cx)).await;
+        let file4 = cx.update(|cx| tree.file("b/c/file4", cx)).await;
+        let file5 = cx.update(|cx| tree.file("b/c/file5", cx)).await;
+        let non_existent_file = cx.update(|cx| tree.file("a/file_x", cx)).await;
 
         // After scanning, the worktree knows which files exist and which don't.
-        app.read(|ctx| tree.read(ctx).scan_complete()).await;
+        cx.read(|cx| tree.read(cx).scan_complete()).await;
         assert!(!file2.is_deleted());
         assert!(!file3.is_deleted());
         assert!(!file4.is_deleted());
         assert!(!file5.is_deleted());
         assert!(non_existent_file.is_deleted());
 
-        tree.flush_fs_events(&app).await;
+        tree.flush_fs_events(&cx).await;
         std::fs::rename(dir.path().join("a/file3"), dir.path().join("b/c/file3")).unwrap();
         std::fs::remove_file(dir.path().join("b/c/file5")).unwrap();
         std::fs::rename(dir.path().join("b/c"), dir.path().join("d")).unwrap();
         std::fs::rename(dir.path().join("a/file2"), dir.path().join("a/file2.new")).unwrap();
-        tree.flush_fs_events(&app).await;
+        tree.flush_fs_events(&cx).await;
 
-        app.read(|ctx| {
+        cx.read(|cx| {
             assert_eq!(
-                tree.read(ctx)
+                tree.read(cx)
                     .paths()
                     .map(|p| p.to_str().unwrap())
                     .collect::<Vec<_>>(),
@@ -1591,7 +1588,7 @@ mod tests {
     }
 
     #[gpui::test]
-    async fn test_rescan_with_gitignore(mut app: gpui::TestAppContext) {
+    async fn test_rescan_with_gitignore(mut cx: gpui::TestAppContext) {
         let dir = temp_tree(json!({
             ".git": {},
             ".gitignore": "ignored-dir\n",
@@ -1603,11 +1600,11 @@ mod tests {
             }
         }));
 
-        let tree = app.add_model(|ctx| Worktree::new(dir.path(), ctx));
-        app.read(|ctx| tree.read(ctx).scan_complete()).await;
-        tree.flush_fs_events(&app).await;
-        app.read(|ctx| {
-            let tree = tree.read(ctx);
+        let tree = cx.add_model(|cx| Worktree::new(dir.path(), cx));
+        cx.read(|cx| tree.read(cx).scan_complete()).await;
+        tree.flush_fs_events(&cx).await;
+        cx.read(|cx| {
+            let tree = tree.read(cx);
             let tracked = tree.entry_for_path("tracked-dir/tracked-file1").unwrap();
             let ignored = tree.entry_for_path("ignored-dir/ignored-file1").unwrap();
             assert_eq!(tracked.is_ignored(), false);
@@ -1616,9 +1613,9 @@ mod tests {
 
         fs::write(dir.path().join("tracked-dir/tracked-file2"), "").unwrap();
         fs::write(dir.path().join("ignored-dir/ignored-file2"), "").unwrap();
-        tree.flush_fs_events(&app).await;
-        app.read(|ctx| {
-            let tree = tree.read(ctx);
+        tree.flush_fs_events(&cx).await;
+        cx.read(|cx| {
+            let tree = tree.read(cx);
             let dot_git = tree.entry_for_path(".git").unwrap();
             let tracked = tree.entry_for_path("tracked-dir/tracked-file2").unwrap();
             let ignored = tree.entry_for_path("ignored-dir/ignored-file2").unwrap();

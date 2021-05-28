@@ -141,14 +141,14 @@ impl Element for Container {
     fn layout(
         &mut self,
         constraint: SizeConstraint,
-        ctx: &mut LayoutContext,
+        cx: &mut LayoutContext,
     ) -> (Vector2F, Self::LayoutState) {
         let size_buffer = self.margin_size() + self.padding_size() + self.border_size();
         let child_constraint = SizeConstraint {
             min: (constraint.min - size_buffer).max(Vector2F::zero()),
             max: (constraint.max - size_buffer).max(Vector2F::zero()),
         };
-        let child_size = self.child.layout(child_constraint, ctx);
+        let child_size = self.child.layout(child_constraint, cx);
         (child_size + size_buffer, ())
     }
 
@@ -156,16 +156,16 @@ impl Element for Container {
         &mut self,
         _: Vector2F,
         _: &mut Self::LayoutState,
-        ctx: &mut AfterLayoutContext,
+        cx: &mut AfterLayoutContext,
     ) {
-        self.child.after_layout(ctx);
+        self.child.after_layout(cx);
     }
 
     fn paint(
         &mut self,
         bounds: RectF,
         _: &mut Self::LayoutState,
-        ctx: &mut PaintContext,
+        cx: &mut PaintContext,
     ) -> Self::PaintState {
         let quad_bounds = RectF::from_points(
             bounds.origin() + vec2f(self.margin.left, self.margin.top),
@@ -173,14 +173,14 @@ impl Element for Container {
         );
 
         if let Some(shadow) = self.shadow.as_ref() {
-            ctx.scene.push_shadow(scene::Shadow {
+            cx.scene.push_shadow(scene::Shadow {
                 bounds: quad_bounds + shadow.offset,
                 corner_radius: self.corner_radius,
                 sigma: shadow.blur,
                 color: shadow.color,
             });
         }
-        ctx.scene.push_quad(Quad {
+        cx.scene.push_quad(Quad {
             bounds: quad_bounds,
             background: self.background_color,
             border: self.border,
@@ -190,7 +190,7 @@ impl Element for Container {
         let child_origin = quad_bounds.origin()
             + vec2f(self.padding.left, self.padding.top)
             + vec2f(self.border.left_width(), self.border.top_width());
-        self.child.paint(child_origin, ctx);
+        self.child.paint(child_origin, cx);
     }
 
     fn dispatch_event(
@@ -199,9 +199,9 @@ impl Element for Container {
         _: RectF,
         _: &mut Self::LayoutState,
         _: &mut Self::PaintState,
-        ctx: &mut EventContext,
+        cx: &mut EventContext,
     ) -> bool {
-        self.child.dispatch_event(event, ctx)
+        self.child.dispatch_event(event, cx)
     }
 
     fn debug(
@@ -209,7 +209,7 @@ impl Element for Container {
         bounds: RectF,
         _: &Self::LayoutState,
         _: &Self::PaintState,
-        ctx: &crate::DebugContext,
+        cx: &crate::DebugContext,
     ) -> serde_json::Value {
         json!({
             "type": "Container",
@@ -222,7 +222,7 @@ impl Element for Container {
                 "corner_radius": self.corner_radius,
                 "shadow": self.shadow.to_json(),
             },
-            "child": self.child.debug(ctx),
+            "child": self.child.debug(cx),
         })
     }
 }

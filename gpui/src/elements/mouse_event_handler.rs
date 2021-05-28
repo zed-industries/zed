@@ -18,13 +18,13 @@ pub struct MouseState {
 }
 
 impl MouseEventHandler {
-    pub fn new<Tag, F>(id: usize, ctx: &AppContext, render_child: F) -> Self
+    pub fn new<Tag, F>(id: usize, cx: &AppContext, render_child: F) -> Self
     where
         Tag: 'static,
         F: FnOnce(MouseState) -> ElementBox,
     {
-        let state_handle = ctx.value::<Tag, _>(id);
-        let state = state_handle.read(ctx, |state| *state);
+        let state_handle = cx.value::<Tag, _>(id);
+        let state = state_handle.read(cx, |state| *state);
         let child = render_child(state);
         Self {
             state: state_handle,
@@ -46,27 +46,27 @@ impl Element for MouseEventHandler {
     fn layout(
         &mut self,
         constraint: SizeConstraint,
-        ctx: &mut LayoutContext,
+        cx: &mut LayoutContext,
     ) -> (Vector2F, Self::LayoutState) {
-        (self.child.layout(constraint, ctx), ())
+        (self.child.layout(constraint, cx), ())
     }
 
     fn after_layout(
         &mut self,
         _: Vector2F,
         _: &mut Self::LayoutState,
-        ctx: &mut AfterLayoutContext,
+        cx: &mut AfterLayoutContext,
     ) {
-        self.child.after_layout(ctx);
+        self.child.after_layout(cx);
     }
 
     fn paint(
         &mut self,
         bounds: RectF,
         _: &mut Self::LayoutState,
-        ctx: &mut PaintContext,
+        cx: &mut PaintContext,
     ) -> Self::PaintState {
-        self.child.paint(bounds.origin(), ctx);
+        self.child.paint(bounds.origin(), cx);
     }
 
     fn dispatch_event(
@@ -75,18 +75,18 @@ impl Element for MouseEventHandler {
         bounds: RectF,
         _: &mut Self::LayoutState,
         _: &mut Self::PaintState,
-        ctx: &mut EventContext,
+        cx: &mut EventContext,
     ) -> bool {
         let click_handler = self.click_handler.as_mut();
 
-        let handled_in_child = self.child.dispatch_event(event, ctx);
+        let handled_in_child = self.child.dispatch_event(event, cx);
 
-        self.state.update(ctx.app, |state| match event {
+        self.state.update(cx.app, |state| match event {
             Event::MouseMoved { position } => {
                 let mouse_in = bounds.contains_point(*position);
                 if state.hovered != mouse_in {
                     state.hovered = mouse_in;
-                    ctx.notify();
+                    cx.notify();
                     true
                 } else {
                     handled_in_child
@@ -95,7 +95,7 @@ impl Element for MouseEventHandler {
             Event::LeftMouseDown { position, .. } => {
                 if !handled_in_child && bounds.contains_point(*position) {
                     state.clicked = true;
-                    ctx.notify();
+                    cx.notify();
                     true
                 } else {
                     handled_in_child
@@ -104,10 +104,10 @@ impl Element for MouseEventHandler {
             Event::LeftMouseUp { position, .. } => {
                 if !handled_in_child && state.clicked {
                     state.clicked = false;
-                    ctx.notify();
+                    cx.notify();
                     if let Some(handler) = click_handler {
                         if bounds.contains_point(*position) {
-                            handler(ctx);
+                            handler(cx);
                         }
                     }
                     true
@@ -124,11 +124,11 @@ impl Element for MouseEventHandler {
         _: RectF,
         _: &Self::LayoutState,
         _: &Self::PaintState,
-        ctx: &DebugContext,
+        cx: &DebugContext,
     ) -> serde_json::Value {
         json!({
             "type": "MouseEventHandler",
-            "child": self.child.debug(ctx),
+            "child": self.child.debug(cx),
         })
     }
 }

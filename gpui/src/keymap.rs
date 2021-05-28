@@ -98,12 +98,12 @@ impl Matcher {
         &mut self,
         keystroke: Keystroke,
         view_id: usize,
-        ctx: &Context,
+        cx: &Context,
     ) -> MatchResult {
         let pending = self.pending.entry(view_id).or_default();
 
         if let Some(pending_ctx) = pending.context.as_ref() {
-            if pending_ctx != ctx {
+            if pending_ctx != cx {
                 pending.keystrokes.clear();
             }
         }
@@ -113,11 +113,7 @@ impl Matcher {
         let mut retain_pending = false;
         for binding in self.keymap.0.iter().rev() {
             if binding.keystrokes.starts_with(&pending.keystrokes)
-                && binding
-                    .context
-                    .as_ref()
-                    .map(|c| c.eval(ctx))
-                    .unwrap_or(true)
+                && binding.context.as_ref().map(|c| c.eval(cx)).unwrap_or(true)
             {
                 if binding.keystrokes.len() == pending.keystrokes.len() {
                     self.pending.remove(&view_id);
@@ -127,7 +123,7 @@ impl Matcher {
                     };
                 } else {
                     retain_pending = true;
-                    pending.context = Some(ctx.clone());
+                    pending.context = Some(cx.clone());
                 }
             }
         }
@@ -312,22 +308,20 @@ impl ContextPredicate {
         }
     }
 
-    fn eval(&self, ctx: &Context) -> bool {
+    fn eval(&self, cx: &Context) -> bool {
         match self {
-            Self::Identifier(name) => ctx.set.contains(name.as_str()),
-            Self::Equal(left, right) => ctx
+            Self::Identifier(name) => cx.set.contains(name.as_str()),
+            Self::Equal(left, right) => cx
                 .map
                 .get(left)
                 .map(|value| value == right)
                 .unwrap_or(false),
-            Self::NotEqual(left, right) => ctx
-                .map
-                .get(left)
-                .map(|value| value != right)
-                .unwrap_or(true),
-            Self::Not(pred) => !pred.eval(ctx),
-            Self::And(left, right) => left.eval(ctx) && right.eval(ctx),
-            Self::Or(left, right) => left.eval(ctx) || right.eval(ctx),
+            Self::NotEqual(left, right) => {
+                cx.map.get(left).map(|value| value != right).unwrap_or(true)
+            }
+            Self::Not(pred) => !pred.eval(cx),
+            Self::And(left, right) => left.eval(cx) && right.eval(cx),
+            Self::Or(left, right) => left.eval(cx) || right.eval(cx),
         }
     }
 }
@@ -488,10 +482,10 @@ mod tests {
             &mut self,
             keystroke: &str,
             view_id: usize,
-            ctx: &Context,
+            cx: &Context,
         ) -> Option<(String, Option<A>)> {
             if let MatchResult::Action { name, arg } =
-                self.push_keystroke(Keystroke::parse(keystroke).unwrap(), view_id, ctx)
+                self.push_keystroke(Keystroke::parse(keystroke).unwrap(), view_id, cx)
             {
                 Some((name, arg.and_then(|arg| arg.downcast_ref::<A>().cloned())))
             } else {

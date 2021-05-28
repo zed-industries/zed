@@ -58,12 +58,12 @@ impl Element for ConstrainedBox {
     fn layout(
         &mut self,
         mut constraint: SizeConstraint,
-        ctx: &mut LayoutContext,
+        cx: &mut LayoutContext,
     ) -> (Vector2F, Self::LayoutState) {
         constraint.min = constraint.min.max(self.constraint.min);
         constraint.max = constraint.max.min(self.constraint.max);
         constraint.max = constraint.max.max(constraint.min);
-        let size = self.child.layout(constraint, ctx);
+        let size = self.child.layout(constraint, cx);
         (size, ())
     }
 
@@ -71,18 +71,18 @@ impl Element for ConstrainedBox {
         &mut self,
         _: Vector2F,
         _: &mut Self::LayoutState,
-        ctx: &mut AfterLayoutContext,
+        cx: &mut AfterLayoutContext,
     ) {
-        self.child.after_layout(ctx);
+        self.child.after_layout(cx);
     }
 
     fn paint(
         &mut self,
         bounds: RectF,
         _: &mut Self::LayoutState,
-        ctx: &mut PaintContext,
+        cx: &mut PaintContext,
     ) -> Self::PaintState {
-        self.child.paint(bounds.origin(), ctx);
+        self.child.paint(bounds.origin(), cx);
     }
 
     fn dispatch_event(
@@ -91,9 +91,9 @@ impl Element for ConstrainedBox {
         _: RectF,
         _: &mut Self::LayoutState,
         _: &mut Self::PaintState,
-        ctx: &mut EventContext,
+        cx: &mut EventContext,
     ) -> bool {
-        self.child.dispatch_event(event, ctx)
+        self.child.dispatch_event(event, cx)
     }
 
     fn debug(
@@ -101,8 +101,8 @@ impl Element for ConstrainedBox {
         _: RectF,
         _: &Self::LayoutState,
         _: &Self::PaintState,
-        ctx: &DebugContext,
+        cx: &DebugContext,
     ) -> json::Value {
-        json!({"type": "ConstrainedBox", "set_constraint": self.constraint.to_json(), "child": self.child.debug(ctx)})
+        json!({"type": "ConstrainedBox", "set_constraint": self.constraint.to_json(), "child": self.child.debug(cx)})
     }
 }
