@@ -1,2 +1,8 @@
 name = "Rust"
 path_suffixes = ["rs"]
+bracket_pairs = [
+    { start = "{", end = "}" },
+    { start = "[", end = "]" },
+    { start = "(", end = ")" },
+    { start = "<", end = ">" },
+]

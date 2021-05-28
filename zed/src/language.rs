@@ -14,6 +14,13 @@ pub struct LanguageDir;
 pub struct LanguageConfig {
     pub name: String,
     pub path_suffixes: Vec<String>,
+    pub bracket_pairs: Vec<BracketPair>,
+}
+
+#[derive(Deserialize)]
+pub struct BracketPair {
+    pub start: String,
+    pub end: String,
 }
 
 pub struct Language {
