@@ -30,7 +30,7 @@ use std::{
     hash::BuildHasher,
     iter::{self, Iterator},
     mem,
-    ops::Range,
+    ops::{Deref, DerefMut, Range},
     str,
     sync::Arc,
     time::{Duration, Instant, SystemTime, UNIX_EPOCH},
@@ -67,6 +67,42 @@ thread_local! {
 
 lazy_static! {
     static ref QUERY_CURSORS: Mutex<Vec<QueryCursor>> = Default::default();
+}
+
+struct QueryCursorHandle(Option<QueryCursor>);
+
+impl QueryCursorHandle {
+    fn new() -> Self {
+        QueryCursorHandle(Some(
+            QUERY_CURSORS
+                .lock()
+                .pop()
+                .unwrap_or_else(|| QueryCursor::new()),
+        ))
+    }
+}
+
+impl Deref for QueryCursorHandle {
+    type Target = QueryCursor;
+
+    fn deref(&self) -> &Self::Target {
+        self.0.as_ref().unwrap()
+    }
+}
+
+impl DerefMut for QueryCursorHandle {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        self.0.as_mut().unwrap()
+    }
+}
+
+impl Drop for QueryCursorHandle {
+    fn drop(&mut self) {
+        let mut cursor = self.0.take().unwrap();
+        cursor.set_byte_range(0, usize::MAX);
+        cursor.set_point_range(Point::zero().into(), Point::MAX.into());
+        QUERY_CURSORS.lock().push(cursor)
+    }
 }
 
 pub struct Buffer {
@@ -520,7 +556,7 @@ impl Buffer {
             text: self.visible_text.clone(),
             tree: self.syntax_tree(),
             language: self.language.clone(),
-            query_cursor: Some(acquire_query_cursor()),
+            query_cursor: QueryCursorHandle::new(),
         }
     }
 
@@ -2046,7 +2082,7 @@ pub struct Snapshot {
     text: Rope,
     tree: Option<Tree>,
     language: Option<Arc<Language>>,
-    query_cursor: Option<QueryCursor>,
+    query_cursor: QueryCursorHandle,
 }
 
 impl Snapshot {
@@ -2065,8 +2101,7 @@ impl Snapshot {
     pub fn highlighted_text_for_range(&mut self, range: Range<usize>) -> HighlightedChunks {
         let chunks = self.text.chunks_in_range(range.clone());
         if let Some((language, tree)) = self.language.as_ref().zip(self.tree.as_ref()) {
-            let query_cursor = self.query_cursor.as_mut().unwrap();
-            let mut captures = query_cursor.captures(
+            let mut captures = self.query_cursor.captures(
                 &language.highlight_query,
                 tree.root_node(),
                 TextProvider(&self.text),
@@ -2107,25 +2142,6 @@ impl Snapshot {
     pub fn to_point(&self, offset: usize) -> Point {
         self.text.to_point(offset)
     }
-}
-
-impl Drop for Snapshot {
-    fn drop(&mut self) {
-        release_query_cursor(self.query_cursor.take().unwrap());
-    }
-}
-
-fn acquire_query_cursor() -> QueryCursor {
-    QUERY_CURSORS
-        .lock()
-        .pop()
-        .unwrap_or_else(|| QueryCursor::new())
-}
-
-fn release_query_cursor(mut cursor: QueryCursor) {
-    cursor.set_byte_range(0, usize::MAX);
-    cursor.set_point_range(Point::zero().into(), Point::MAX.into());
-    QUERY_CURSORS.lock().push(cursor)
 }
 
 struct RopeBuilder<'a> {
