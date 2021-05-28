@@ -10,42 +10,39 @@ use gpui::{
 use postage::watch;
 use std::{cmp, path::Path, sync::Arc};
 
-pub fn init(app: &mut MutableAppContext) {
-    app.add_action(
+pub fn init(cx: &mut MutableAppContext) {
+    cx.add_action(
         "pane:activate_item",
-        |pane: &mut Pane, index: &usize, ctx| {
-            pane.activate_item(*index, ctx);
+        |pane: &mut Pane, index: &usize, cx| {
+            pane.activate_item(*index, cx);
         },
     );
-    app.add_action("pane:activate_prev_item", |pane: &mut Pane, _: &(), ctx| {
-        pane.activate_prev_item(ctx);
+    cx.add_action("pane:activate_prev_item", |pane: &mut Pane, _: &(), cx| {
+        pane.activate_prev_item(cx);
     });
-    app.add_action("pane:activate_next_item", |pane: &mut Pane, _: &(), ctx| {
-        pane.activate_next_item(ctx);
+    cx.add_action("pane:activate_next_item", |pane: &mut Pane, _: &(), cx| {
+        pane.activate_next_item(cx);
     });
-    app.add_action("pane:close_active_item", |pane: &mut Pane, _: &(), ctx| {
-        pane.close_active_item(ctx);
+    cx.add_action("pane:close_active_item", |pane: &mut Pane, _: &(), cx| {
+        pane.close_active_item(cx);
     });
-    app.add_action(
-        "pane:close_item",
-        |pane: &mut Pane, item_id: &usize, ctx| {
-            pane.close_item(*item_id, ctx);
-        },
-    );
-    app.add_action("pane:split_up", |pane: &mut Pane, _: &(), ctx| {
-        pane.split(SplitDirection::Up, ctx);
+    cx.add_action("pane:close_item", |pane: &mut Pane, item_id: &usize, cx| {
+        pane.close_item(*item_id, cx);
     });
-    app.add_action("pane:split_down", |pane: &mut Pane, _: &(), ctx| {
-        pane.split(SplitDirection::Down, ctx);
+    cx.add_action("pane:split_up", |pane: &mut Pane, _: &(), cx| {
+        pane.split(SplitDirection::Up, cx);
     });
-    app.add_action("pane:split_left", |pane: &mut Pane, _: &(), ctx| {
-        pane.split(SplitDirection::Left, ctx);
+    cx.add_action("pane:split_down", |pane: &mut Pane, _: &(), cx| {
+        pane.split(SplitDirection::Down, cx);
     });
-    app.add_action("pane:split_right", |pane: &mut Pane, _: &(), ctx| {
-        pane.split(SplitDirection::Right, ctx);
+    cx.add_action("pane:split_left", |pane: &mut Pane, _: &(), cx| {
+        pane.split(SplitDirection::Left, cx);
+    });
+    cx.add_action("pane:split_right", |pane: &mut Pane, _: &(), cx| {
+        pane.split(SplitDirection::Right, cx);
     });
 
-    app.add_bindings(vec![
+    cx.add_bindings(vec![
         Binding::new("shift-cmd-{", "pane:activate_prev_item", Some("Pane")),
         Binding::new("shift-cmd-}", "pane:activate_next_item", Some("Pane")),
         Binding::new("cmd-w", "pane:close_active_item", Some("Pane")),
@@ -88,18 +85,14 @@ impl Pane {
         }
     }
 
-    pub fn activate(&self, ctx: &mut ViewContext<Self>) {
-        ctx.emit(Event::Activate);
+    pub fn activate(&self, cx: &mut ViewContext<Self>) {
+        cx.emit(Event::Activate);
     }
 
-    pub fn add_item(
-        &mut self,
-        item: Box<dyn ItemViewHandle>,
-        ctx: &mut ViewContext<Self>,
-    ) -> usize {
+    pub fn add_item(&mut self, item: Box<dyn ItemViewHandle>, cx: &mut ViewContext<Self>) -> usize {
         let item_idx = cmp::min(self.active_item + 1, self.items.len());
         self.items.insert(item_idx, item);
-        ctx.notify();
+        cx.notify();
         item_idx
     }
 
@@ -115,13 +108,13 @@ impl Pane {
     pub fn activate_entry(
         &mut self,
         entry_id: (usize, Arc<Path>),
-        ctx: &mut ViewContext<Self>,
+        cx: &mut ViewContext<Self>,
     ) -> bool {
         if let Some(index) = self.items.iter().position(|item| {
-            item.entry_id(ctx.as_ref())
+            item.entry_id(cx.as_ref())
                 .map_or(false, |id| id == entry_id)
         }) {
-            self.activate_item(index, ctx);
+            self.activate_item(index, cx);
             true
         } else {
             false
@@ -132,64 +125,64 @@ impl Pane {
         self.items.iter().position(|i| i.id() == item.id())
     }
 
-    pub fn activate_item(&mut self, index: usize, ctx: &mut ViewContext<Self>) {
+    pub fn activate_item(&mut self, index: usize, cx: &mut ViewContext<Self>) {
         if index < self.items.len() {
             self.active_item = index;
-            self.focus_active_item(ctx);
-            ctx.notify();
+            self.focus_active_item(cx);
+            cx.notify();
         }
     }
 
-    pub fn activate_prev_item(&mut self, ctx: &mut ViewContext<Self>) {
+    pub fn activate_prev_item(&mut self, cx: &mut ViewContext<Self>) {
         if self.active_item > 0 {
             self.active_item -= 1;
         } else if self.items.len() > 0 {
             self.active_item = self.items.len() - 1;
         }
-        self.focus_active_item(ctx);
-        ctx.notify();
+        self.focus_active_item(cx);
+        cx.notify();
     }
 
-    pub fn activate_next_item(&mut self, ctx: &mut ViewContext<Self>) {
+    pub fn activate_next_item(&mut self, cx: &mut ViewContext<Self>) {
         if self.active_item + 1 < self.items.len() {
             self.active_item += 1;
         } else {
             self.active_item = 0;
         }
-        self.focus_active_item(ctx);
-        ctx.notify();
+        self.focus_active_item(cx);
+        cx.notify();
     }
 
-    pub fn close_active_item(&mut self, ctx: &mut ViewContext<Self>) {
+    pub fn close_active_item(&mut self, cx: &mut ViewContext<Self>) {
         if !self.items.is_empty() {
-            self.close_item(self.items[self.active_item].id(), ctx)
+            self.close_item(self.items[self.active_item].id(), cx)
         }
     }
 
-    pub fn close_item(&mut self, item_id: usize, ctx: &mut ViewContext<Self>) {
+    pub fn close_item(&mut self, item_id: usize, cx: &mut ViewContext<Self>) {
         self.items.retain(|item| item.id() != item_id);
         self.active_item = cmp::min(self.active_item, self.items.len().saturating_sub(1));
         if self.items.is_empty() {
-            ctx.emit(Event::Remove);
+            cx.emit(Event::Remove);
         }
-        ctx.notify();
+        cx.notify();
     }
 
-    fn focus_active_item(&mut self, ctx: &mut ViewContext<Self>) {
+    fn focus_active_item(&mut self, cx: &mut ViewContext<Self>) {
         if let Some(active_item) = self.active_item() {
-            ctx.focus(active_item.to_any());
+            cx.focus(active_item.to_any());
         }
     }
 
-    pub fn split(&mut self, direction: SplitDirection, ctx: &mut ViewContext<Self>) {
-        ctx.emit(Event::Split(direction));
+    pub fn split(&mut self, direction: SplitDirection, cx: &mut ViewContext<Self>) {
+        cx.emit(Event::Split(direction));
     }
 
-    fn render_tabs(&self, ctx: &AppContext) -> ElementBox {
+    fn render_tabs(&self, cx: &AppContext) -> ElementBox {
         let settings = self.settings.borrow();
         let border_color = ColorU::from_u32(0xdbdbdcff);
-        let line_height = ctx.font_cache().line_height(
-            ctx.font_cache().default_font(settings.ui_font_family),
+        let line_height = cx.font_cache().line_height(
+            cx.font_cache().default_font(settings.ui_font_family),
             settings.ui_font_size,
         );
 
@@ -201,8 +194,8 @@ impl Pane {
             row.add_child(
                 Expanded::new(
                     1.0,
-                    MouseEventHandler::new::<Tab, _>(item.id(), ctx, |mouse_state| {
-                        let title = item.title(ctx);
+                    MouseEventHandler::new::<Tab, _>(item.id(), cx, |mouse_state| {
+                        let title = item.title(cx);
 
                         let mut border = Border::new(1.0, border_color);
                         border.left = ix > 0;
@@ -227,9 +220,9 @@ impl Pane {
                                         item.id(),
                                         line_height - 2.,
                                         mouse_state.hovered,
-                                        item.is_dirty(ctx),
-                                        item.has_conflict(ctx),
-                                        ctx,
+                                        item.is_dirty(cx),
+                                        item.has_conflict(cx),
+                                        cx,
                                     ))
                                     .right()
                                     .boxed(),
@@ -250,8 +243,8 @@ impl Pane {
 
                         ConstrainedBox::new(
                             EventHandler::new(container.boxed())
-                                .on_mouse_down(move |ctx| {
-                                    ctx.dispatch_action("pane:activate_item", ix);
+                                .on_mouse_down(move |cx| {
+                                    cx.dispatch_action("pane:activate_item", ix);
                                     true
                                 })
                                 .boxed(),
@@ -299,7 +292,7 @@ impl Pane {
         tab_hovered: bool,
         is_dirty: bool,
         has_conflict: bool,
-        ctx: &AppContext,
+        cx: &AppContext,
     ) -> ElementBox {
         enum TabCloseButton {}
 
@@ -319,7 +312,7 @@ impl Pane {
         let icon = if tab_hovered {
             let mut icon = Svg::new("icons/x.svg");
 
-            MouseEventHandler::new::<TabCloseButton, _>(item_id, ctx, |mouse_state| {
+            MouseEventHandler::new::<TabCloseButton, _>(item_id, cx, |mouse_state| {
                 if mouse_state.hovered {
                     Container::new(icon.with_color(ColorU::white()).boxed())
                         .with_background_color(if mouse_state.clicked {
@@ -336,15 +329,15 @@ impl Pane {
                     icon.boxed()
                 }
             })
-            .on_click(move |ctx| ctx.dispatch_action("pane:close_item", item_id))
+            .on_click(move |cx| cx.dispatch_action("pane:close_item", item_id))
             .named("close-tab-icon")
         } else {
             let diameter = 8.;
             ConstrainedBox::new(
-                Canvas::new(move |bounds, ctx| {
+                Canvas::new(move |bounds, cx| {
                     if let Some(current_color) = current_color {
                         let square = RectF::new(bounds.origin(), vec2f(diameter, diameter));
-                        ctx.scene.push_quad(Quad {
+                        cx.scene.push_quad(Quad {
                             bounds: square,
                             background: Some(current_color),
                             border: Default::default(),
@@ -374,10 +367,10 @@ impl View for Pane {
         "Pane"
     }
 
-    fn render<'a>(&self, app: &AppContext) -> ElementBox {
+    fn render<'a>(&self, cx: &AppContext) -> ElementBox {
         if let Some(active_item) = self.active_item() {
             Flex::column()
-                .with_child(self.render_tabs(app))
+                .with_child(self.render_tabs(cx))
                 .with_child(Expanded::new(1.0, ChildView::new(active_item.id()).boxed()).boxed())
                 .named("pane")
         } else {
@@ -385,21 +378,7 @@ impl View for Pane {
         }
     }
 
-    fn on_focus(&mut self, ctx: &mut ViewContext<Self>) {
-        self.focus_active_item(ctx);
+    fn on_focus(&mut self, cx: &mut ViewContext<Self>) {
+        self.focus_active_item(cx);
     }
-
-    // fn state(&self, app: &AppContext) -> Self::State {
-    //     State {
-    //         tabs: self
-    //             .items
-    //             .iter()
-    //             .enumerate()
-    //             .map(|(idx, item)| TabState {
-    //                 title: item.title(app),
-    //                 active: idx == self.active_item,
-    //             })
-    //             .collect(),
-    //     }
-    // }
 }
