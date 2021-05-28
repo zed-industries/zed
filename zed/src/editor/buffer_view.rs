@@ -171,6 +171,11 @@ pub fn init(app: &mut MutableAppContext) {
             "buffer:select-larger-syntax-node",
             Some("BufferView"),
         ),
+        Binding::new(
+            "alt-down",
+            "buffer:select-smaller-syntax-node",
+            Some("BufferView"),
+        ),
         Binding::new("pageup", "buffer:page_up", Some("BufferView")),
         Binding::new("pagedown", "buffer:page_down", Some("BufferView")),
         Binding::new("alt-cmd-[", "buffer:fold", Some("BufferView")),
@@ -279,6 +284,10 @@ pub fn init(app: &mut MutableAppContext) {
         "buffer:select-larger-syntax-node",
         BufferView::select_larger_syntax_node,
     );
+    app.add_action(
+        "buffer:select-smaller-syntax-node",
+        BufferView::select_smaller_syntax_node,
+    );
     app.add_action("buffer:page_up", BufferView::page_up);
     app.add_action("buffer:page_down", BufferView::page_down);
     app.add_action("buffer:fold", BufferView::fold);
@@ -309,6 +318,7 @@ pub struct BufferView {
     pending_selection: Option<Selection>,
     next_selection_id: usize,
     add_selections_state: Option<AddSelectionsState>,
+    select_larger_syntax_node_stack: Vec<Vec<Selection>>,
     scroll_position: Mutex<Vector2F>,
     autoscroll_requested: Mutex<bool>,
     settings: watch::Receiver<Settings>,
@@ -368,6 +378,7 @@ impl BufferView {
             pending_selection: None,
             next_selection_id,
             add_selections_state: None,
+            select_larger_syntax_node_stack: Vec::new(),
             scroll_position: Mutex::new(Vector2F::zero()),
             autoscroll_requested: Mutex::new(false),
             settings,
@@ -1763,25 +1774,48 @@ impl BufferView {
     pub fn select_larger_syntax_node(&mut self, _: &(), ctx: &mut ViewContext<Self>) {
         let app = ctx.as_ref();
         let buffer = self.buffer.read(app);
-        let mut selections = self.selections(app).to_vec();
-        for selection in &mut selections {
-            let mut range = selection.start.to_offset(buffer)..selection.end.to_offset(buffer);
+
+        let mut stack = mem::take(&mut self.select_larger_syntax_node_stack);
+        let mut selected_larger_node = false;
+        let old_selections = self.selections(app).to_vec();
+        let mut new_selections = Vec::new();
+        for selection in &old_selections {
+            let old_range = selection.start.to_offset(buffer)..selection.end.to_offset(buffer);
+            let mut new_range = old_range.clone();
             while let Some(containing_range) =
-                buffer.range_for_containing_syntax_node(range.clone())
+                buffer.range_for_containing_syntax_node(new_range.clone())
             {
-                range = containing_range;
-                if !self.display_map.intersects_fold(range.start, app)
-                    && !self.display_map.intersects_fold(range.end, app)
+                new_range = containing_range;
+                if !self.display_map.intersects_fold(new_range.start, app)
+                    && !self.display_map.intersects_fold(new_range.end, app)
                 {
                     break;
                 }
             }
 
-            selection.start = buffer.anchor_before(range.start);
-            selection.end = buffer.anchor_before(range.end);
+            selected_larger_node |= new_range != old_range;
+            new_selections.push(Selection {
+                id: selection.id,
+                start: buffer.anchor_before(new_range.start),
+                end: buffer.anchor_before(new_range.end),
+                reversed: selection.reversed,
+                goal: SelectionGoal::None,
+            });
         }
 
-        self.update_selections(selections, true, ctx);
+        if selected_larger_node {
+            stack.push(old_selections);
+            self.update_selections(new_selections, true, ctx);
+        }
+        self.select_larger_syntax_node_stack = stack;
+    }
+
+    pub fn select_smaller_syntax_node(&mut self, _: &(), ctx: &mut ViewContext<Self>) {
+        let mut stack = mem::take(&mut self.select_larger_syntax_node_stack);
+        if let Some(selections) = stack.pop() {
+            self.update_selections(selections, true, ctx);
+        }
+        self.select_larger_syntax_node_stack = stack;
     }
 
     fn build_columnar_selection(
@@ -1898,6 +1932,7 @@ impl BufferView {
         }
 
         self.add_selections_state = None;
+        self.select_larger_syntax_node_stack.clear();
     }
 
     fn start_transaction(&self, ctx: &mut ViewContext<Self>) {
