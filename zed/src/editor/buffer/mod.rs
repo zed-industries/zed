@@ -709,10 +709,7 @@ impl Buffer {
         })
     }
 
-    pub fn range_for_containing_syntax_node<T: ToOffset>(
-        &self,
-        range: Range<T>,
-    ) -> Option<Range<usize>> {
+    pub fn range_for_syntax_ancestor<T: ToOffset>(&self, range: Range<T>) -> Option<Range<usize>> {
         if let Some(tree) = self.syntax_tree() {
             let root = tree.root_node();
             let range = range.start.to_offset(self)..range.end.to_offset(self);

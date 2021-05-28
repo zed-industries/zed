@@ -1782,9 +1782,7 @@ impl BufferView {
         for selection in &old_selections {
             let old_range = selection.start.to_offset(buffer)..selection.end.to_offset(buffer);
             let mut new_range = old_range.clone();
-            while let Some(containing_range) =
-                buffer.range_for_containing_syntax_node(new_range.clone())
-            {
+            while let Some(containing_range) = buffer.range_for_syntax_ancestor(new_range.clone()) {
                 new_range = containing_range;
                 if !self.display_map.intersects_fold(new_range.start, app)
                     && !self.display_map.intersects_fold(new_range.end, app)
@@ -2445,7 +2443,12 @@ impl workspace::ItemView for BufferView {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{editor::Point, settings, test::sample_text};
+    use crate::{
+        editor::Point,
+        settings,
+        test::{build_app_state, sample_text},
+    };
+    use buffer::History;
     use unindent::Unindent;
 
     #[gpui::test]
@@ -3922,6 +3925,146 @@ mod tests {
                 DisplayPoint::new(1, 3)..DisplayPoint::new(1, 1),
                 DisplayPoint::new(3, 2)..DisplayPoint::new(3, 1),
                 DisplayPoint::new(4, 3)..DisplayPoint::new(4, 1),
+            ]
+        );
+    }
+
+    #[gpui::test]
+    async fn test_select_larger_smaller_syntax_node(mut app: gpui::TestAppContext) {
+        let app_state = app.read(build_app_state);
+        let lang = app_state.language_registry.select_language("z.rs");
+        let text = r#"
+            use mod1::mod2::{mod3, mod4};
+
+            fn fn_1(param1: bool, param2: &str) {
+                let var1 = "text";
+            }
+        "#
+        .unindent();
+        let buffer = app.add_model(|ctx| {
+            let history = History::new(text.into());
+            Buffer::from_history(0, history, None, lang.cloned(), ctx)
+        });
+        let (_, view) =
+            app.add_window(|ctx| BufferView::for_buffer(buffer, app_state.settings, ctx));
+        view.condition(&app, |view, ctx| !view.buffer.read(ctx).is_parsing())
+            .await;
+
+        view.update(&mut app, |view, ctx| {
+            view.select_display_ranges(
+                &[
+                    DisplayPoint::new(0, 25)..DisplayPoint::new(0, 25),
+                    DisplayPoint::new(2, 24)..DisplayPoint::new(2, 12),
+                    DisplayPoint::new(3, 18)..DisplayPoint::new(3, 18),
+                ],
+                ctx,
+            )
+            .unwrap();
+            view.select_larger_syntax_node(&(), ctx);
+        });
+        assert_eq!(
+            view.read_with(&app, |view, ctx| view.selection_ranges(ctx)),
+            &[
+                DisplayPoint::new(0, 23)..DisplayPoint::new(0, 27),
+                DisplayPoint::new(2, 35)..DisplayPoint::new(2, 7),
+                DisplayPoint::new(3, 15)..DisplayPoint::new(3, 21),
+            ]
+        );
+
+        view.update(&mut app, |view, ctx| {
+            view.select_larger_syntax_node(&(), ctx);
+        });
+        assert_eq!(
+            view.read_with(&app, |view, ctx| view.selection_ranges(ctx)),
+            &[
+                DisplayPoint::new(0, 16)..DisplayPoint::new(0, 28),
+                DisplayPoint::new(4, 1)..DisplayPoint::new(2, 0),
+            ]
+        );
+
+        view.update(&mut app, |view, ctx| {
+            view.select_larger_syntax_node(&(), ctx);
+        });
+        assert_eq!(
+            view.read_with(&app, |view, ctx| view.selection_ranges(ctx)),
+            &[DisplayPoint::new(0, 0)..DisplayPoint::new(5, 0)]
+        );
+
+        // Trying to expand the selected syntax node one more time has no effect.
+        view.update(&mut app, |view, ctx| {
+            view.select_larger_syntax_node(&(), ctx);
+        });
+        assert_eq!(
+            view.read_with(&app, |view, ctx| view.selection_ranges(ctx)),
+            &[DisplayPoint::new(0, 0)..DisplayPoint::new(5, 0)]
+        );
+
+        view.update(&mut app, |view, ctx| {
+            view.select_smaller_syntax_node(&(), ctx);
+        });
+        assert_eq!(
+            view.read_with(&app, |view, ctx| view.selection_ranges(ctx)),
+            &[
+                DisplayPoint::new(0, 16)..DisplayPoint::new(0, 28),
+                DisplayPoint::new(4, 1)..DisplayPoint::new(2, 0),
+            ]
+        );
+
+        view.update(&mut app, |view, ctx| {
+            view.select_smaller_syntax_node(&(), ctx);
+        });
+        assert_eq!(
+            view.read_with(&app, |view, ctx| view.selection_ranges(ctx)),
+            &[
+                DisplayPoint::new(0, 23)..DisplayPoint::new(0, 27),
+                DisplayPoint::new(2, 35)..DisplayPoint::new(2, 7),
+                DisplayPoint::new(3, 15)..DisplayPoint::new(3, 21),
+            ]
+        );
+
+        view.update(&mut app, |view, ctx| {
+            view.select_smaller_syntax_node(&(), ctx);
+        });
+        assert_eq!(
+            view.read_with(&app, |view, ctx| view.selection_ranges(ctx)),
+            &[
+                DisplayPoint::new(0, 25)..DisplayPoint::new(0, 25),
+                DisplayPoint::new(2, 24)..DisplayPoint::new(2, 12),
+                DisplayPoint::new(3, 18)..DisplayPoint::new(3, 18),
+            ]
+        );
+
+        // Trying to shrink the selected syntax node one more time has no effect.
+        view.update(&mut app, |view, ctx| {
+            view.select_smaller_syntax_node(&(), ctx);
+        });
+        assert_eq!(
+            view.read_with(&app, |view, ctx| view.selection_ranges(ctx)),
+            &[
+                DisplayPoint::new(0, 25)..DisplayPoint::new(0, 25),
+                DisplayPoint::new(2, 24)..DisplayPoint::new(2, 12),
+                DisplayPoint::new(3, 18)..DisplayPoint::new(3, 18),
+            ]
+        );
+
+        // Ensure that we keep expanding the selection if the larger selection starts or ends within
+        // a fold.
+        view.update(&mut app, |view, ctx| {
+            view.fold_ranges(
+                vec![
+                    Point::new(0, 21)..Point::new(0, 24),
+                    Point::new(3, 20)..Point::new(3, 22),
+                ],
+                ctx,
+            );
+            view.select_larger_syntax_node(&(), ctx);
+        });
+        assert_eq!(
+            view.read_with(&app, |view, ctx| view.selection_ranges(ctx)),
+            &[
+                DisplayPoint::new(0, 16)..DisplayPoint::new(0, 28),
+                DisplayPoint::new(2, 35)..DisplayPoint::new(2, 7),
+                DisplayPoint::new(3, 4)..DisplayPoint::new(3, 23),
             ]
         );
     }
