@@ -1,9 +1,11 @@
-use crate::time::ReplicaId;
+use crate::{language::LanguageRegistry, settings, time::ReplicaId, AppState};
 use ctor::ctor;
+use gpui::AppContext;
 use rand::Rng;
 use std::{
     collections::BTreeMap,
     path::{Path, PathBuf},
+    sync::Arc,
 };
 use tempdir::TempDir;
 
@@ -139,5 +141,14 @@ fn write_tree(path: &Path, tree: serde_json::Value) {
         }
     } else {
         panic!("You must pass a JSON object to this helper")
+    }
+}
+
+pub fn build_app_state(ctx: &AppContext) -> AppState {
+    let settings = settings::channel(&ctx.font_cache()).unwrap().1;
+    let language_registry = Arc::new(LanguageRegistry::new());
+    AppState {
+        settings,
+        language_registry,
     }
 }

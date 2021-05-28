@@ -458,7 +458,11 @@ impl FileFinder {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{editor, settings, test::temp_tree, workspace::Workspace};
+    use crate::{
+        editor,
+        test::{build_app_state, temp_tree},
+        workspace::Workspace,
+    };
     use serde_json::json;
     use std::fs;
     use tempdir::TempDir;
@@ -474,9 +478,10 @@ mod tests {
             editor::init(ctx);
         });
 
-        let settings = settings::channel(&app.font_cache()).unwrap().1;
+        let app_state = app.read(build_app_state);
         let (window_id, workspace) = app.add_window(|ctx| {
-            let mut workspace = Workspace::new(0, settings, ctx);
+            let mut workspace =
+                Workspace::new(0, app_state.settings, app_state.language_registry, ctx);
             workspace.add_worktree(tmp_dir.path(), ctx);
             workspace
         });
@@ -541,15 +546,21 @@ mod tests {
             "hi": "",
             "hiccup": "",
         }));
-        let settings = settings::channel(&app.font_cache()).unwrap().1;
+        let app_state = app.read(build_app_state);
         let (_, workspace) = app.add_window(|ctx| {
-            let mut workspace = Workspace::new(0, settings.clone(), ctx);
+            let mut workspace = Workspace::new(
+                0,
+                app_state.settings.clone(),
+                app_state.language_registry.clone(),
+                ctx,
+            );
             workspace.add_worktree(tmp_dir.path(), ctx);
             workspace
         });
         app.read(|ctx| workspace.read(ctx).worktree_scans_complete(ctx))
             .await;
-        let (_, finder) = app.add_window(|ctx| FileFinder::new(settings, workspace.clone(), ctx));
+        let (_, finder) =
+            app.add_window(|ctx| FileFinder::new(app_state.settings, workspace.clone(), ctx));
 
         let query = "hi".to_string();
         finder
@@ -598,15 +609,21 @@ mod tests {
         fs::create_dir(&dir_path).unwrap();
         fs::write(&file_path, "").unwrap();
 
-        let settings = settings::channel(&app.font_cache()).unwrap().1;
+        let app_state = app.read(build_app_state);
         let (_, workspace) = app.add_window(|ctx| {
-            let mut workspace = Workspace::new(0, settings.clone(), ctx);
+            let mut workspace = Workspace::new(
+                0,
+                app_state.settings.clone(),
+                app_state.language_registry.clone(),
+                ctx,
+            );
             workspace.add_worktree(&file_path, ctx);
             workspace
         });
         app.read(|ctx| workspace.read(ctx).worktree_scans_complete(ctx))
             .await;
-        let (_, finder) = app.add_window(|ctx| FileFinder::new(settings, workspace.clone(), ctx));
+        let (_, finder) =
+            app.add_window(|ctx| FileFinder::new(app_state.settings, workspace.clone(), ctx));
 
         // Even though there is only one worktree, that worktree's filename
         // is included in the matching, because the worktree is a single file.
@@ -641,9 +658,17 @@ mod tests {
             "dir1": { "a.txt": "" },
             "dir2": { "a.txt": "" }
         }));
-        let settings = settings::channel(&app.font_cache()).unwrap().1;
 
-        let (_, workspace) = app.add_window(|ctx| Workspace::new(0, settings.clone(), ctx));
+        let app_state = app.read(build_app_state);
+
+        let (_, workspace) = app.add_window(|ctx| {
+            Workspace::new(
+                0,
+                app_state.settings.clone(),
+                app_state.language_registry.clone(),
+                ctx,
+            )
+        });
 
         workspace
             .update(&mut app, |workspace, ctx| {
@@ -656,7 +681,8 @@ mod tests {
         app.read(|ctx| workspace.read(ctx).worktree_scans_complete(ctx))
             .await;
 
-        let (_, finder) = app.add_window(|ctx| FileFinder::new(settings, workspace.clone(), ctx));
+        let (_, finder) =
+            app.add_window(|ctx| FileFinder::new(app_state.settings, workspace.clone(), ctx));
 
         // Run a search that matches two files with the same relative path.
         finder

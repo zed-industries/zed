@@ -4,15 +4,19 @@ pub mod rope;
 mod selection;
 
 pub use anchor::*;
+use parking_lot::Mutex;
 pub use point::*;
-pub use rope::{ChunksIter, Rope, TextSummary};
+pub use rope::{Chunks, Rope, TextSummary};
 use seahash::SeaHasher;
 pub use selection::*;
 use similar::{ChangeTag, TextDiff};
+use tree_sitter::{InputEdit, Parser, QueryCursor};
 
 use crate::{
     editor::Bias,
+    language::{Language, Tree},
     operation_queue::{self, OperationQueue},
+    settings::{StyleId, ThemeMap},
     sum_tree::{self, FilterCursor, SeekBias, SumTree},
     time::{self, ReplicaId},
     worktree::FileHandle,
@@ -21,11 +25,12 @@ use anyhow::{anyhow, Result};
 use gpui::{AppContext, Entity, ModelContext, Task};
 use lazy_static::lazy_static;
 use std::{
+    cell::RefCell,
     cmp,
     hash::BuildHasher,
     iter::{self, Iterator},
     mem,
-    ops::Range,
+    ops::{Deref, DerefMut, Range},
     str,
     sync::Arc,
     time::{Duration, Instant, SystemTime, UNIX_EPOCH},
@@ -56,6 +61,50 @@ type HashMap<K, V> = std::collections::HashMap<K, V>;
 #[cfg(not(test))]
 type HashSet<T> = std::collections::HashSet<T>;
 
+thread_local! {
+    static PARSER: RefCell<Parser> = RefCell::new(Parser::new());
+}
+
+lazy_static! {
+    static ref QUERY_CURSORS: Mutex<Vec<QueryCursor>> = Default::default();
+}
+
+struct QueryCursorHandle(Option<QueryCursor>);
+
+impl QueryCursorHandle {
+    fn new() -> Self {
+        QueryCursorHandle(Some(
+            QUERY_CURSORS
+                .lock()
+                .pop()
+                .unwrap_or_else(|| QueryCursor::new()),
+        ))
+    }
+}
+
+impl Deref for QueryCursorHandle {
+    type Target = QueryCursor;
+
+    fn deref(&self) -> &Self::Target {
+        self.0.as_ref().unwrap()
+    }
+}
+
+impl DerefMut for QueryCursorHandle {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        self.0.as_mut().unwrap()
+    }
+}
+
+impl Drop for QueryCursorHandle {
+    fn drop(&mut self) {
+        let mut cursor = self.0.take().unwrap();
+        cursor.set_byte_range(0..usize::MAX);
+        cursor.set_point_range(Point::zero().into()..Point::MAX.into());
+        QUERY_CURSORS.lock().push(cursor)
+    }
+}
+
 pub struct Buffer {
     fragments: SumTree<Fragment>,
     visible_text: Rope,
@@ -68,6 +117,9 @@ pub struct Buffer {
     undo_map: UndoMap,
     history: History,
     file: Option<FileHandle>,
+    language: Option<Arc<Language>>,
+    syntax_tree: Mutex<Option<SyntaxTree>>,
+    is_parsing: bool,
     selections: HashMap<SelectionSetId, Arc<[Selection]>>,
     pub selections_last_update: SelectionsVersion,
     deferred_ops: OperationQueue<Operation>,
@@ -75,6 +127,13 @@ pub struct Buffer {
     replica_id: ReplicaId,
     local_clock: time::Local,
     lamport_clock: time::Lamport,
+}
+
+#[derive(Clone)]
+struct SyntaxTree {
+    tree: Tree,
+    parsed: bool,
+    version: time::Global,
 }
 
 #[derive(Clone)]
@@ -238,16 +297,18 @@ impl UndoMap {
 }
 
 struct Edits<'a, F: Fn(&FragmentSummary) -> bool> {
-    cursor: FilterCursor<'a, F, Fragment, usize>,
+    deleted_text: &'a Rope,
+    cursor: FilterCursor<'a, F, Fragment, FragmentTextSummary>,
     undos: &'a UndoMap,
     since: time::Global,
     delta: isize,
 }
 
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
 pub struct Edit {
     pub old_range: Range<usize>,
     pub new_range: Range<usize>,
+    pub old_lines: Point,
 }
 
 impl Edit {
@@ -357,22 +418,24 @@ impl Buffer {
         base_text: T,
         ctx: &mut ModelContext<Self>,
     ) -> Self {
-        Self::build(replica_id, History::new(base_text.into()), None, ctx)
+        Self::build(replica_id, History::new(base_text.into()), None, None, ctx)
     }
 
     pub fn from_history(
         replica_id: ReplicaId,
         history: History,
         file: Option<FileHandle>,
+        language: Option<Arc<Language>>,
         ctx: &mut ModelContext<Self>,
     ) -> Self {
-        Self::build(replica_id, history, file, ctx)
+        Self::build(replica_id, history, file, language, ctx)
     }
 
     fn build(
         replica_id: ReplicaId,
         history: History,
         file: Option<FileHandle>,
+        language: Option<Arc<Language>>,
         ctx: &mut ModelContext<Self>,
     ) -> Self {
         let saved_mtime;
@@ -461,7 +524,7 @@ impl Buffer {
             );
         }
 
-        Self {
+        let mut result = Self {
             visible_text,
             deleted_text: Rope::new(),
             fragments,
@@ -472,6 +535,9 @@ impl Buffer {
             undo_map: Default::default(),
             history,
             file,
+            syntax_tree: Mutex::new(None),
+            is_parsing: false,
+            language,
             saved_mtime,
             selections: HashMap::default(),
             selections_last_update: 0,
@@ -480,11 +546,18 @@ impl Buffer {
             replica_id,
             local_clock: time::Local::new(replica_id),
             lamport_clock: time::Lamport::new(replica_id),
-        }
+        };
+        result.reparse(ctx);
+        result
     }
 
-    pub fn snapshot(&self) -> Rope {
-        self.visible_text.clone()
+    pub fn snapshot(&self) -> Snapshot {
+        Snapshot {
+            text: self.visible_text.clone(),
+            tree: self.syntax_tree(),
+            language: self.language.clone(),
+            query_cursor: QueryCursorHandle::new(),
+        }
     }
 
     pub fn file(&self) -> Option<&FileHandle> {
@@ -496,13 +569,13 @@ impl Buffer {
         new_file: Option<FileHandle>,
         ctx: &mut ModelContext<Self>,
     ) -> Task<Result<()>> {
-        let snapshot = self.snapshot();
+        let text = self.visible_text.clone();
         let version = self.version.clone();
         let file = self.file.clone();
 
         ctx.spawn(|handle, mut ctx| async move {
             if let Some(file) = new_file.as_ref().or(file.as_ref()) {
-                let result = ctx.read(|ctx| file.save(snapshot, ctx.as_ref())).await;
+                let result = ctx.read(|ctx| file.save(text, ctx.as_ref())).await;
                 if result.is_ok() {
                     handle.update(&mut ctx, |me, ctx| me.did_save(version, new_file, ctx));
                 }
@@ -527,6 +600,154 @@ impl Buffer {
         }
         self.saved_version = version;
         ctx.emit(Event::Saved);
+    }
+
+    pub fn syntax_tree(&self) -> Option<Tree> {
+        if let Some(syntax_tree) = self.syntax_tree.lock().as_mut() {
+            let mut edited = false;
+            let mut delta = 0_isize;
+            for Edit {
+                old_range,
+                new_range,
+                old_lines,
+            } in self.edits_since(syntax_tree.version.clone())
+            {
+                let start_offset = (old_range.start as isize + delta) as usize;
+                let start_point = self.visible_text.to_point(start_offset);
+                let old_bytes = old_range.end - old_range.start;
+                let new_bytes = new_range.end - new_range.start;
+                syntax_tree.tree.edit(&InputEdit {
+                    start_byte: start_offset,
+                    old_end_byte: start_offset + old_bytes,
+                    new_end_byte: start_offset + new_bytes,
+                    start_position: start_point.into(),
+                    old_end_position: (start_point + old_lines).into(),
+                    new_end_position: self.visible_text.to_point(start_offset + new_bytes).into(),
+                });
+                delta += new_bytes as isize - old_bytes as isize;
+                edited = true;
+            }
+            syntax_tree.parsed &= !edited;
+            syntax_tree.version = self.version();
+            Some(syntax_tree.tree.clone())
+        } else {
+            None
+        }
+    }
+
+    pub fn is_parsing(&self) -> bool {
+        self.is_parsing
+    }
+
+    fn should_reparse(&self) -> bool {
+        if let Some(syntax_tree) = self.syntax_tree.lock().as_ref() {
+            !syntax_tree.parsed || syntax_tree.version != self.version
+        } else {
+            self.language.is_some()
+        }
+    }
+
+    fn reparse(&mut self, ctx: &mut ModelContext<Self>) {
+        // Avoid spawning a new parsing task if the buffer is already being reparsed
+        // due to an earlier edit.
+        if self.is_parsing {
+            return;
+        }
+
+        if let Some(language) = self.language.clone() {
+            self.is_parsing = true;
+            ctx.spawn(|handle, mut ctx| async move {
+                while handle.read_with(&ctx, |this, _| this.should_reparse()) {
+                    // The parse tree is out of date, so grab the syntax tree to synchronously
+                    // splice all the edits that have happened since the last parse.
+                    let new_tree = handle.update(&mut ctx, |this, _| this.syntax_tree());
+                    let (new_text, new_version) = handle
+                        .read_with(&ctx, |this, _| (this.visible_text.clone(), this.version()));
+
+                    // Parse the current text in a background thread.
+                    let new_tree = ctx
+                        .background_executor()
+                        .spawn({
+                            let language = language.clone();
+                            async move { Self::parse_text(&new_text, new_tree, &language) }
+                        })
+                        .await;
+
+                    handle.update(&mut ctx, |this, ctx| {
+                        *this.syntax_tree.lock() = Some(SyntaxTree {
+                            tree: new_tree,
+                            parsed: true,
+                            version: new_version,
+                        });
+                        ctx.emit(Event::Reparsed);
+                        ctx.notify();
+                    });
+                }
+                handle.update(&mut ctx, |this, _| this.is_parsing = false);
+            })
+            .detach();
+        }
+    }
+
+    fn parse_text(text: &Rope, old_tree: Option<Tree>, language: &Language) -> Tree {
+        PARSER.with(|parser| {
+            let mut parser = parser.borrow_mut();
+            parser
+                .set_language(language.grammar)
+                .expect("incompatible grammar");
+            let mut chunks = text.chunks_in_range(0..text.len());
+            let tree = parser
+                .parse_with(
+                    &mut move |offset, _| {
+                        chunks.seek(offset);
+                        chunks.next().unwrap_or("").as_bytes()
+                    },
+                    old_tree.as_ref(),
+                )
+                .unwrap();
+            tree
+        })
+    }
+
+    pub fn range_for_syntax_ancestor<T: ToOffset>(&self, range: Range<T>) -> Option<Range<usize>> {
+        if let Some(tree) = self.syntax_tree() {
+            let root = tree.root_node();
+            let range = range.start.to_offset(self)..range.end.to_offset(self);
+            let mut node = root.descendant_for_byte_range(range.start, range.end);
+            while node.map_or(false, |n| n.byte_range() == range) {
+                node = node.unwrap().parent();
+            }
+            node.map(|n| n.byte_range())
+        } else {
+            None
+        }
+    }
+
+    pub fn enclosing_bracket_ranges<T: ToOffset>(
+        &self,
+        range: Range<T>,
+    ) -> Option<(Range<usize>, Range<usize>)> {
+        let (lang, tree) = self.language.as_ref().zip(self.syntax_tree())?;
+        let open_capture_ix = lang.brackets_query.capture_index_for_name("open")?;
+        let close_capture_ix = lang.brackets_query.capture_index_for_name("close")?;
+
+        // Find bracket pairs that *inclusively* contain the given range.
+        let range = range.start.to_offset(self).saturating_sub(1)..range.end.to_offset(self) + 1;
+        let mut cursor = QueryCursorHandle::new();
+        let matches = cursor.set_byte_range(range).matches(
+            &lang.brackets_query,
+            tree.root_node(),
+            TextProvider(&self.visible_text),
+        );
+
+        // Get the ranges of the innermost pair of brackets.
+        matches
+            .filter_map(|mat| {
+                let open = mat.nodes_for_capture_index(open_capture_ix).next()?;
+                let close = mat.nodes_for_capture_index(close_capture_ix).next()?;
+                Some((open.byte_range(), close.byte_range()))
+            })
+            .min_by_key(|(open_range, close_range)| close_range.end - open_range.start)
     }
 
     fn diff(&self, new_text: Arc<str>, ctx: &AppContext) -> Task<Diff> {
@@ -620,17 +841,15 @@ impl Buffer {
         self.visible_text.max_point()
     }
 
-    pub fn line(&self, row: u32) -> String {
-        self.chars_at(Point::new(row, 0))
-            .take_while(|c| *c != '\n')
-            .collect()
+    pub fn row_count(&self) -> u32 {
+        self.max_point().row + 1
     }
 
     pub fn text(&self) -> String {
         self.text_for_range(0..self.len()).collect()
     }
 
-    pub fn text_for_range<'a, T: ToOffset>(&'a self, range: Range<T>) -> ChunksIter<'a> {
+    pub fn text_for_range<'a, T: ToOffset>(&'a self, range: Range<T>) -> Chunks<'a> {
         let start = range.start.to_offset(self);
         let end = range.end.to_offset(self);
         self.visible_text.chunks_in_range(start..end)
@@ -656,6 +875,7 @@ impl Buffer {
             .filter(move |summary| summary.max_version.changed_since(&since_2));
 
         Edits {
+            deleted_text: &self.deleted_text,
             cursor,
             undos: &self.undo_map,
             since,
@@ -720,6 +940,7 @@ impl Buffer {
 
                 if self.edits_since(since).next().is_some() {
                     self.did_edit(was_dirty, ctx);
+                    self.reparse(ctx);
                 }
             }
         }
@@ -741,16 +962,16 @@ impl Buffer {
         self.start_transaction_at(None, Instant::now())?;
 
         let new_text = new_text.into();
+        let old_ranges = old_ranges
+            .into_iter()
+            .map(|range| range.start.to_offset(self)..range.end.to_offset(self))
+            .collect::<Vec<Range<usize>>>();
+
         let new_text = if new_text.len() > 0 {
             Some(new_text)
         } else {
             None
         };
-
-        let old_ranges = old_ranges
-            .into_iter()
-            .map(|range| range.start.to_offset(self)..range.end.to_offset(self))
-            .collect::<Vec<Range<usize>>>();
 
         let has_new_text = new_text.is_some();
         let ops = self.splice_fragments(
@@ -889,6 +1110,7 @@ impl Buffer {
             ctx.notify();
             if self.edits_since(old_version).next().is_some() {
                 self.did_edit(was_dirty, ctx);
+                self.reparse(ctx);
             }
         }
 
@@ -1114,6 +1336,7 @@ impl Buffer {
             ctx.notify();
             if self.edits_since(old_version).next().is_some() {
                 self.did_edit(was_dirty, ctx);
+                self.reparse(ctx);
             }
         }
 
@@ -1140,6 +1363,7 @@ impl Buffer {
             ctx.notify();
             if self.edits_since(old_version).next().is_some() {
                 self.did_edit(was_dirty, ctx);
+                self.reparse(ctx);
             }
         }
 
@@ -1884,11 +2108,79 @@ impl Clone for Buffer {
             selections_last_update: self.selections_last_update.clone(),
             deferred_ops: self.deferred_ops.clone(),
             file: self.file.clone(),
+            language: self.language.clone(),
+            syntax_tree: Mutex::new(self.syntax_tree.lock().clone()),
+            is_parsing: false,
             deferred_replicas: self.deferred_replicas.clone(),
             replica_id: self.replica_id,
             local_clock: self.local_clock.clone(),
             lamport_clock: self.lamport_clock.clone(),
         }
+    }
+}
+
+pub struct Snapshot {
+    text: Rope,
+    tree: Option<Tree>,
+    language: Option<Arc<Language>>,
+    query_cursor: QueryCursorHandle,
+}
+
+impl Snapshot {
+    pub fn len(&self) -> usize {
+        self.text.len()
+    }
+
+    pub fn text(&self) -> Rope {
+        self.text.clone()
+    }
+
+    pub fn text_for_range(&self, range: Range<usize>) -> Chunks {
+        self.text.chunks_in_range(range)
+    }
+
+    pub fn highlighted_text_for_range(&mut self, range: Range<usize>) -> HighlightedChunks {
+        let chunks = self.text.chunks_in_range(range.clone());
+        if let Some((language, tree)) = self.language.as_ref().zip(self.tree.as_ref()) {
+            let captures = self.query_cursor.set_byte_range(range.clone()).captures(
+                &language.highlight_query,
+                tree.root_node(),
+                TextProvider(&self.text),
+            );
+
+            HighlightedChunks {
+                range,
+                chunks,
+                highlights: Some(Highlights {
+                    captures,
+                    next_capture: None,
+                    stack: Default::default(),
+                    theme_mapping: language.theme_mapping(),
+                }),
+            }
+        } else {
+            HighlightedChunks {
+                range,
+                chunks,
+                highlights: None,
+            }
+        }
+    }
+
+    pub fn clip_offset(&self, offset: usize, bias: Bias) -> usize {
+        self.text.clip_offset(offset, bias)
+    }
+
+    pub fn clip_point(&self, point: Point, bias: Bias) -> Point {
+        self.text.clip_point(point, bias)
+    }
+
+    pub fn to_offset(&self, point: Point) -> usize {
+        self.text.to_offset(point)
+    }
+
+    pub fn to_point(&self, offset: usize) -> Point {
+        self.text.to_point(offset)
     }
 }
 
@@ -1951,6 +2243,7 @@ pub enum Event {
     Saved,
     FileHandleChanged,
     Reloaded,
+    Reparsed,
 }
 
 impl Entity for Buffer {
@@ -1964,7 +2257,7 @@ impl<'a, F: Fn(&FragmentSummary) -> bool> Iterator for Edits<'a, F> {
         let mut change: Option<Edit> = None;
 
         while let Some(fragment) = self.cursor.item() {
-            let new_offset = *self.cursor.start();
+            let new_offset = self.cursor.start().visible;
             let old_offset = (new_offset as isize - self.delta) as usize;
 
             if !fragment.was_visible(&self.since, &self.undos) && fragment.visible {
@@ -1979,13 +2272,18 @@ impl<'a, F: Fn(&FragmentSummary) -> bool> Iterator for Edits<'a, F> {
                     change = Some(Edit {
                         old_range: old_offset..old_offset,
                         new_range: new_offset..new_offset + fragment.len(),
+                        old_lines: Point::zero(),
                     });
                     self.delta += fragment.len() as isize;
                 }
             } else if fragment.was_visible(&self.since, &self.undos) && !fragment.visible {
+                let deleted_start = self.cursor.start().deleted;
+                let old_lines = self.deleted_text.to_point(deleted_start + fragment.len())
+                    - self.deleted_text.to_point(deleted_start);
                 if let Some(ref mut change) = change {
                     if change.new_range.end == new_offset {
                         change.old_range.end += fragment.len();
+                        change.old_lines += &old_lines;
                         self.delta -= fragment.len() as isize;
                     } else {
                         break;
@@ -1994,6 +2292,7 @@ impl<'a, F: Fn(&FragmentSummary) -> bool> Iterator for Edits<'a, F> {
                     change = Some(Edit {
                         old_range: old_offset..old_offset + fragment.len(),
                         new_range: new_offset..new_offset,
+                        old_lines,
                     });
                     self.delta -= fragment.len() as isize;
                 }
@@ -2006,70 +2305,125 @@ impl<'a, F: Fn(&FragmentSummary) -> bool> Iterator for Edits<'a, F> {
     }
 }
 
-// pub fn diff(a: &[u16], b: &[u16]) -> Vec<Edit> {
-//     struct EditCollector<'a> {
-//         a: &'a [u16],
-//         b: &'a [u16],
-//         position: Point,
-//         changes: Vec<Edit>,
-//     }
-//
-//     impl<'a> diffs::Diff for EditCollector<'a> {
-//         type Error = ();
-//
-//         fn equal(&mut self, old: usize, _: usize, len: usize) -> Result<(), ()> {
-//             self.position += &Text::extent(&self.a[old..old + len]);
-//             Ok(())
-//         }
-//
-//         fn delete(&mut self, old: usize, len: usize) -> Result<(), ()> {
-//             self.changes.push(Edit {
-//                 range: self.position..self.position + &Text::extent(&self.a[old..old + len]),
-//                 chars: Vec::new(),
-//                 new_char_count: Point::zero(),
-//             });
-//             Ok(())
-//         }
-//
-//         fn insert(&mut self, _: usize, new: usize, new_len: usize) -> Result<(), ()> {
-//             let new_char_count = Text::extent(&self.b[new..new + new_len]);
-//             self.changes.push(Edit {
-//                 range: self.position..self.position,
-//                 chars: Vec::from(&self.b[new..new + new_len]),
-//                 new_char_count,
-//             });
-//             self.position += &new_char_count;
-//             Ok(())
-//         }
-//
-//         fn replace(
-//             &mut self,
-//             old: usize,
-//             old_len: usize,
-//             new: usize,
-//             new_len: usize,
-//         ) -> Result<(), ()> {
-//             let old_extent = text::extent(&self.a[old..old + old_len]);
-//             let new_char_count = text::extent(&self.b[new..new + new_len]);
-//             self.changes.push(Edit {
-//                 range: self.position..self.position + &old_extent,
-//                 chars: Vec::from(&self.b[new..new + new_len]),
-//                 new_char_count,
-//             });
-//             self.position += &new_char_count;
-//             Ok(())
-//         }
-//     }
-//
-//     let mut collector = diffs::Replace::new(EditCollector {
-//         a,
-//         b,
-//         position: Point::zero(),
-//         changes: Vec::new(),
-//     });
-//     diffs::myers::diff(&mut collector, a, 0, a.len(), b, 0, b.len()).unwrap();
-//     collector.into_inner().changes
-// }
+struct ByteChunks<'a>(rope::Chunks<'a>);
+
+impl<'a> Iterator for ByteChunks<'a> {
+    type Item = &'a [u8];
+
+    fn next(&mut self) -> Option<Self::Item> {
+        self.0.next().map(str::as_bytes)
+    }
+}
+
+struct TextProvider<'a>(&'a Rope);
+
+impl<'a> tree_sitter::TextProvider<'a> for TextProvider<'a> {
+    type I = ByteChunks<'a>;
+
+    fn text(&mut self, node: tree_sitter::Node) -> Self::I {
+        ByteChunks(self.0.chunks_in_range(node.byte_range()))
+    }
+}
+
+struct Highlights<'a> {
+    captures: tree_sitter::QueryCaptures<'a, 'a, TextProvider<'a>>,
+    next_capture: Option<(tree_sitter::QueryMatch<'a, 'a>, usize)>,
+    stack: Vec<(usize, StyleId)>,
+    theme_mapping: ThemeMap,
+}
+
+pub struct HighlightedChunks<'a> {
+    range: Range<usize>,
+    chunks: Chunks<'a>,
+    highlights: Option<Highlights<'a>>,
+}
+
+impl<'a> HighlightedChunks<'a> {
+    pub fn seek(&mut self, offset: usize) {
+        self.range.start = offset;
+        self.chunks.seek(self.range.start);
+        if let Some(highlights) = self.highlights.as_mut() {
+            highlights
+                .stack
+                .retain(|(end_offset, _)| *end_offset > offset);
+            if let Some((mat, capture_ix)) = &highlights.next_capture {
+                let capture = mat.captures[*capture_ix as usize];
+                if offset >= capture.node.start_byte() {
+                    let next_capture_end = capture.node.end_byte();
+                    if offset < next_capture_end {
+                        highlights.stack.push((
+                            next_capture_end,
+                            highlights.theme_mapping.get(capture.index),
+                        ));
+                    }
+                    highlights.next_capture.take();
+                }
+            }
+            highlights.captures.set_byte_range(self.range.clone());
+        }
+    }
+
+    pub fn offset(&self) -> usize {
+        self.range.start
+    }
+}
+
+impl<'a> Iterator for HighlightedChunks<'a> {
+    type Item = (&'a str, StyleId);
+
+    fn next(&mut self) -> Option<Self::Item> {
+        let mut next_capture_start = usize::MAX;
+
+        if let Some(highlights) = self.highlights.as_mut() {
+            while let Some((parent_capture_end, _)) = highlights.stack.last() {
+                if *parent_capture_end <= self.range.start {
+                    highlights.stack.pop();
+                } else {
+                    break;
+                }
+            }
+
+            if highlights.next_capture.is_none() {
+                highlights.next_capture = highlights.captures.next();
+            }
+
+            while let Some((mat, capture_ix)) = highlights.next_capture.as_ref() {
+                let capture = mat.captures[*capture_ix as usize];
+                if self.range.start < capture.node.start_byte() {
+                    next_capture_start = capture.node.start_byte();
+                    break;
+                } else {
+                    let style_id = highlights.theme_mapping.get(capture.index);
+                    highlights.stack.push((capture.node.end_byte(), style_id));
+                    highlights.next_capture = highlights.captures.next();
+                }
+            }
+        }
+
+        if let Some(chunk) = self.chunks.peek() {
+            let chunk_start = self.range.start;
+            let mut chunk_end = (self.chunks.offset() + chunk.len()).min(next_capture_start);
+            let mut style_id = StyleId::default();
+            if let Some((parent_capture_end, parent_style_id)) =
+                self.highlights.as_ref().and_then(|h| h.stack.last())
+            {
+                chunk_end = chunk_end.min(*parent_capture_end);
+                style_id = *parent_style_id;
+            }
+
+            let slice =
+                &chunk[chunk_start - self.chunks.offset()..chunk_end - self.chunks.offset()];
+            self.range.start = chunk_end;
+            if self.range.start == self.chunks.offset() + chunk.len() {
+                self.chunks.next().unwrap();
+            }
+
+            Some((slice, style_id))
+        } else {
+            None
+        }
+    }
+}
 
 #[derive(Ord, PartialOrd, Eq, PartialEq, Clone, Debug)]
 struct FragmentId(Arc<[u16]>);
@@ -2342,11 +2696,11 @@ impl ToPoint for usize {
 mod tests {
     use super::*;
     use crate::{
-        test::temp_tree,
+        test::{build_app_state, temp_tree},
         util::RandomCharIter,
         worktree::{Worktree, WorktreeHandle},
     };
-    use gpui::App;
+    use gpui::{App, ModelHandle};
     use rand::prelude::*;
     use serde_json::json;
     use std::{
@@ -2475,6 +2829,7 @@ mod tests {
                     for Edit {
                         old_range,
                         new_range,
+                        ..
                     } in buffer.edits_since(old_buffer.version.clone())
                     {
                         let old_len = old_range.end - old_range.start;
@@ -2812,7 +3167,7 @@ mod tests {
 
             let file1 = app.update(|ctx| tree.file("file1", ctx)).await;
             let buffer1 = app.add_model(|ctx| {
-                Buffer::from_history(0, History::new("abc".into()), Some(file1), ctx)
+                Buffer::from_history(0, History::new("abc".into()), Some(file1), None, ctx)
             });
             let events = Rc::new(RefCell::new(Vec::new()));
 
@@ -2877,7 +3232,7 @@ mod tests {
                     move |_, event, _| events.borrow_mut().push(event.clone())
                 });
 
-                Buffer::from_history(0, History::new("abc".into()), Some(file2), ctx)
+                Buffer::from_history(0, History::new("abc".into()), Some(file2), None, ctx)
             });
 
             fs::remove_file(dir.path().join("file2")).unwrap();
@@ -2896,7 +3251,7 @@ mod tests {
                     move |_, event, _| events.borrow_mut().push(event.clone())
                 });
 
-                Buffer::from_history(0, History::new("abc".into()), Some(file3), ctx)
+                Buffer::from_history(0, History::new("abc".into()), Some(file3), None, ctx)
             });
 
             tree.flush_fs_events(&app).await;
@@ -2923,7 +3278,13 @@ mod tests {
         let abs_path = dir.path().join("the-file");
         let file = app.update(|ctx| tree.file("the-file", ctx)).await;
         let buffer = app.add_model(|ctx| {
-            Buffer::from_history(0, History::new(initial_contents.into()), Some(file), ctx)
+            Buffer::from_history(
+                0,
+                History::new(initial_contents.into()),
+                Some(file),
+                None,
+                ctx,
+            )
         });
 
         // Add a cursor at the start of each row.
@@ -3191,6 +3552,193 @@ mod tests {
         }
     }
 
+    #[gpui::test]
+    async fn test_reparse(mut ctx: gpui::TestAppContext) {
+        let app_state = ctx.read(build_app_state);
+        let rust_lang = app_state.language_registry.select_language("test.rs");
+        assert!(rust_lang.is_some());
+
+        let buffer = ctx.add_model(|ctx| {
+            let text = "fn a() {}".into();
+            let buffer = Buffer::from_history(0, History::new(text), None, rust_lang.cloned(), ctx);
+            assert!(buffer.is_parsing());
+            assert!(buffer.syntax_tree().is_none());
+            buffer
+        });
+
+        // Wait for the initial text to parse
+        buffer
+            .condition(&ctx, |buffer, _| !buffer.is_parsing())
+            .await;
+        assert_eq!(
+            get_tree_sexp(&buffer, &ctx),
+            concat!(
+                "(source_file (function_item name: (identifier) ",
+                "parameters: (parameters) ",
+                "body: (block)))"
+            )
+        );
+
+        // Perform some edits (add parameter and variable reference)
+        // Parsing doesn't begin until the transaction is complete
+        buffer.update(&mut ctx, |buf, ctx| {
+            buf.start_transaction(None).unwrap();
+
+            let offset = buf.text().find(")").unwrap();
+            buf.edit(vec![offset..offset], "b: C", Some(ctx)).unwrap();
+            assert!(!buf.is_parsing());
+
+            let offset = buf.text().find("}").unwrap();
+            buf.edit(vec![offset..offset], " d; ", Some(ctx)).unwrap();
+            assert!(!buf.is_parsing());
+
+            buf.end_transaction(None, Some(ctx)).unwrap();
+            assert_eq!(buf.text(), "fn a(b: C) { d; }");
+            assert!(buf.is_parsing());
+        });
+        buffer
+            .condition(&ctx, |buffer, _| !buffer.is_parsing())
+            .await;
+        assert_eq!(
+            get_tree_sexp(&buffer, &ctx),
+            concat!(
+                "(source_file (function_item name: (identifier) ",
+                    "parameters: (parameters (parameter pattern: (identifier) type: (type_identifier))) ",
+                    "body: (block (identifier))))"
+            )
+        );
+
+        // Perform a series of edits without waiting for the current parse to complete:
+        // * turn identifier into a field expression
+        // * turn field expression into a method call
+        // * add a turbofish to the method call
+        buffer.update(&mut ctx, |buf, ctx| {
+            let offset = buf.text().find(";").unwrap();
+            buf.edit(vec![offset..offset], ".e", Some(ctx)).unwrap();
+            assert_eq!(buf.text(), "fn a(b: C) { d.e; }");
+            assert!(buf.is_parsing());
+        });
+        buffer.update(&mut ctx, |buf, ctx| {
+            let offset = buf.text().find(";").unwrap();
+            buf.edit(vec![offset..offset], "(f)", Some(ctx)).unwrap();
+            assert_eq!(buf.text(), "fn a(b: C) { d.e(f); }");
+            assert!(buf.is_parsing());
+        });
+        buffer.update(&mut ctx, |buf, ctx| {
+            let offset = buf.text().find("(f)").unwrap();
+            buf.edit(vec![offset..offset], "::<G>", Some(ctx)).unwrap();
+            assert_eq!(buf.text(), "fn a(b: C) { d.e::<G>(f); }");
+            assert!(buf.is_parsing());
+        });
+        buffer
+            .condition(&ctx, |buffer, _| !buffer.is_parsing())
+            .await;
+        assert_eq!(
+            get_tree_sexp(&buffer, &ctx),
+            concat!(
+                "(source_file (function_item name: (identifier) ",
+                    "parameters: (parameters (parameter pattern: (identifier) type: (type_identifier))) ",
+                    "body: (block (call_expression ",
+                        "function: (generic_function ",
+                            "function: (field_expression value: (identifier) field: (field_identifier)) ",
+                            "type_arguments: (type_arguments (type_identifier))) ",
+                            "arguments: (arguments (identifier))))))",
+            )
+        );
+
+        buffer.update(&mut ctx, |buf, ctx| {
+            buf.undo(Some(ctx));
+            assert_eq!(buf.text(), "fn a() {}");
+            assert!(buf.is_parsing());
+        });
+        buffer
+            .condition(&ctx, |buffer, _| !buffer.is_parsing())
+            .await;
+        assert_eq!(
+            get_tree_sexp(&buffer, &ctx),
+            concat!(
+                "(source_file (function_item name: (identifier) ",
+                "parameters: (parameters) ",
+                "body: (block)))"
+            )
+        );
+
+        buffer.update(&mut ctx, |buf, ctx| {
+            buf.redo(Some(ctx));
+            assert_eq!(buf.text(), "fn a(b: C) { d.e::<G>(f); }");
+            assert!(buf.is_parsing());
+        });
+        buffer
+            .condition(&ctx, |buffer, _| !buffer.is_parsing())
+            .await;
+        assert_eq!(
+            get_tree_sexp(&buffer, &ctx),
+            concat!(
+                "(source_file (function_item name: (identifier) ",
+                    "parameters: (parameters (parameter pattern: (identifier) type: (type_identifier))) ",
+                    "body: (block (call_expression ",
+                        "function: (generic_function ",
+                            "function: (field_expression value: (identifier) field: (field_identifier)) ",
+                            "type_arguments: (type_arguments (type_identifier))) ",
+                            "arguments: (arguments (identifier))))))",
+            )
+        );
+
+        fn get_tree_sexp(buffer: &ModelHandle<Buffer>, ctx: &gpui::TestAppContext) -> String {
+            buffer.read_with(ctx, |buffer, _| {
+                buffer.syntax_tree().unwrap().root_node().to_sexp()
+            })
+        }
+    }
+
+    #[gpui::test]
+    async fn test_enclosing_bracket_ranges(mut ctx: gpui::TestAppContext) {
+        use unindent::Unindent as _;
+
+        let app_state = ctx.read(build_app_state);
+        let rust_lang = app_state.language_registry.select_language("test.rs");
+        assert!(rust_lang.is_some());
+
+        let buffer = ctx.add_model(|ctx| {
+            let text = "
+                mod x {
+                    mod y {
+                        
+                    }
+                }
+            "
+            .unindent()
+            .into();
+            Buffer::from_history(0, History::new(text), None, rust_lang.cloned(), ctx)
+        });
+        buffer
+            .condition(&ctx, |buffer, _| !buffer.is_parsing())
+            .await;
+        buffer.read_with(&ctx, |buf, _| {
+            assert_eq!(
+                buf.enclosing_bracket_point_ranges(Point::new(1, 6)..Point::new(1, 6)),
+                Some((
+                    Point::new(0, 6)..Point::new(0, 7),
+                    Point::new(4, 0)..Point::new(4, 1)
+                ))
+            );
+            assert_eq!(
+                buf.enclosing_bracket_point_ranges(Point::new(1, 10)..Point::new(1, 10)),
+                Some((
+                    Point::new(1, 10)..Point::new(1, 11),
+                    Point::new(3, 4)..Point::new(3, 5)
+                ))
+            );
+            assert_eq!(
+                buf.enclosing_bracket_point_ranges(Point::new(3, 5)..Point::new(3, 5)),
+                Some((
+                    Point::new(1, 10)..Point::new(1, 11),
+                    Point::new(3, 4)..Point::new(3, 5)
+                ))
+            );
+        });
+    }
+
     impl Buffer {
         fn random_byte_range(&mut self, start_offset: usize, rng: &mut impl Rng) -> Range<usize> {
             let end = self.clip_offset(rng.gen_range(start_offset..=self.len()), Bias::Right);
@@ -3336,6 +3884,17 @@ mod tests {
             self.selections
                 .keys()
                 .map(move |set_id| (*set_id, self.selection_ranges(*set_id).unwrap()))
+        }
+
+        pub fn enclosing_bracket_point_ranges<T: ToOffset>(
+            &self,
+            range: Range<T>,
+        ) -> Option<(Range<Point>, Range<Point>)> {
+            self.enclosing_bracket_ranges(range).map(|(start, end)| {
+                let point_start = start.start.to_point(self)..start.end.to_point(self);
+                let point_end = end.start.to_point(self)..end.end.to_point(self);
+                (point_start, point_end)
+            })
         }
     }
 

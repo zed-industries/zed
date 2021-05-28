@@ -4,6 +4,7 @@ use super::{
 };
 use crate::{
     editor::buffer,
+    settings::StyleId,
     sum_tree::{self, Cursor, FilterCursor, SeekBias, SumTree},
     time,
 };
@@ -45,7 +46,7 @@ impl FoldMap {
     pub fn snapshot(&self, ctx: &AppContext) -> FoldMapSnapshot {
         FoldMapSnapshot {
             transforms: self.sync(ctx).clone(),
-            buffer: self.buffer.clone(),
+            buffer: self.buffer.read(ctx).snapshot(),
         }
     }
 
@@ -100,6 +101,7 @@ impl FoldMap {
                 edits.push(Edit {
                     old_range: range.clone(),
                     new_range: range.clone(),
+                    ..Default::default()
                 });
             }
         }
@@ -144,6 +146,7 @@ impl FoldMap {
                 edits.push(Edit {
                     old_range: offset_range.clone(),
                     new_range: offset_range,
+                    ..Default::default()
                 });
                 fold_ixs_to_delete.push(*folds_cursor.start());
                 folds_cursor.next();
@@ -189,6 +192,18 @@ impl FoldMap {
         })
     }
 
+    pub fn intersects_fold<T>(&self, offset: T, ctx: &AppContext) -> bool
+    where
+        T: ToOffset,
+    {
+        let buffer = self.buffer.read(ctx);
+        let offset = offset.to_offset(buffer);
+        let transforms = self.sync(ctx);
+        let mut cursor = transforms.cursor::<usize, usize>();
+        cursor.seek(&offset, SeekBias::Right, &());
+        cursor.item().map_or(false, |t| t.display_text.is_some())
+    }
+
     pub fn is_line_folded(&self, display_row: u32, ctx: &AppContext) -> bool {
         let transforms = self.sync(ctx);
         let mut cursor = transforms.cursor::<DisplayPoint, DisplayPoint>();
@@ -207,11 +222,11 @@ impl FoldMap {
     }
 
     pub fn to_buffer_offset(&self, point: DisplayPoint, ctx: &AppContext) -> usize {
-        self.snapshot(ctx).to_buffer_offset(point, ctx)
+        self.snapshot(ctx).to_buffer_offset(point)
     }
 
     pub fn to_display_offset(&self, point: DisplayPoint, ctx: &AppContext) -> DisplayOffset {
-        self.snapshot(ctx).to_display_offset(point, ctx)
+        self.snapshot(ctx).to_display_offset(point)
     }
 
     pub fn to_buffer_point(&self, display_point: DisplayPoint, ctx: &AppContext) -> Point {
@@ -391,7 +406,7 @@ impl FoldMap {
 
 pub struct FoldMapSnapshot {
     transforms: SumTree<Transform>,
-    buffer: ModelHandle<Buffer>,
+    buffer: buffer::Snapshot,
 }
 
 impl FoldMapSnapshot {
@@ -410,30 +425,49 @@ impl FoldMapSnapshot {
         }
     }
 
-    pub fn chunks_at<'a>(&'a self, offset: DisplayOffset, ctx: &'a AppContext) -> Chunks<'a> {
+    pub fn max_point(&self) -> DisplayPoint {
+        DisplayPoint(self.transforms.summary().display.lines)
+    }
+
+    pub fn chunks_at(&self, offset: DisplayOffset) -> Chunks {
         let mut transform_cursor = self.transforms.cursor::<DisplayOffset, TransformSummary>();
         transform_cursor.seek(&offset, SeekBias::Right, &());
         let overshoot = offset.0 - transform_cursor.start().display.bytes;
         let buffer_offset = transform_cursor.start().buffer.bytes + overshoot;
-        let buffer = self.buffer.read(ctx);
-        let rope_cursor = buffer.text_for_range(buffer_offset..buffer.len());
         Chunks {
             transform_cursor,
             buffer_offset,
-            buffer_chunks: rope_cursor,
+            buffer_chunks: self.buffer.text_for_range(buffer_offset..self.buffer.len()),
         }
     }
 
-    pub fn chars_at<'a>(
-        &'a self,
-        point: DisplayPoint,
-        ctx: &'a AppContext,
-    ) -> impl Iterator<Item = char> + 'a {
-        let offset = self.to_display_offset(point, ctx);
-        self.chunks_at(offset, ctx).flat_map(str::chars)
+    pub fn highlighted_chunks(&mut self, range: Range<DisplayOffset>) -> HighlightedChunks {
+        let mut transform_cursor = self.transforms.cursor::<DisplayOffset, TransformSummary>();
+
+        transform_cursor.seek(&range.end, SeekBias::Right, &());
+        let overshoot = range.end.0 - transform_cursor.start().display.bytes;
+        let buffer_end = transform_cursor.start().buffer.bytes + overshoot;
+
+        transform_cursor.seek(&range.start, SeekBias::Right, &());
+        let overshoot = range.start.0 - transform_cursor.start().display.bytes;
+        let buffer_start = transform_cursor.start().buffer.bytes + overshoot;
+
+        HighlightedChunks {
+            transform_cursor,
+            buffer_offset: buffer_start,
+            buffer_chunks: self
+                .buffer
+                .highlighted_text_for_range(buffer_start..buffer_end),
+            buffer_chunk: None,
+        }
     }
 
-    pub fn to_display_offset(&self, point: DisplayPoint, ctx: &AppContext) -> DisplayOffset {
+    pub fn chars_at<'a>(&'a self, point: DisplayPoint) -> impl Iterator<Item = char> + 'a {
+        let offset = self.to_display_offset(point);
+        self.chunks_at(offset).flat_map(str::chars)
+    }
+
+    pub fn to_display_offset(&self, point: DisplayPoint) -> DisplayOffset {
         let mut cursor = self.transforms.cursor::<DisplayPoint, TransformSummary>();
         cursor.seek(&point, SeekBias::Right, &());
         let overshoot = point.0 - cursor.start().display.lines;
@@ -441,27 +475,24 @@ impl FoldMapSnapshot {
         if !overshoot.is_zero() {
             let transform = cursor.item().expect("display point out of range");
             assert!(transform.display_text.is_none());
-            let end_buffer_offset =
-                (cursor.start().buffer.lines + overshoot).to_offset(self.buffer.read(ctx));
+            let end_buffer_offset = self
+                .buffer
+                .to_offset(cursor.start().buffer.lines + overshoot);
             offset += end_buffer_offset - cursor.start().buffer.bytes;
         }
         DisplayOffset(offset)
     }
 
-    pub fn to_buffer_offset(&self, point: DisplayPoint, ctx: &AppContext) -> usize {
+    pub fn to_buffer_offset(&self, point: DisplayPoint) -> usize {
         let mut cursor = self.transforms.cursor::<DisplayPoint, TransformSummary>();
         cursor.seek(&point, SeekBias::Right, &());
         let overshoot = point.0 - cursor.start().display.lines;
-        (cursor.start().buffer.lines + overshoot).to_offset(self.buffer.read(ctx))
+        self.buffer
+            .to_offset(cursor.start().buffer.lines + overshoot)
     }
 
     #[cfg(test)]
-    pub fn clip_offset(
-        &self,
-        offset: DisplayOffset,
-        bias: Bias,
-        ctx: &AppContext,
-    ) -> DisplayOffset {
+    pub fn clip_offset(&self, offset: DisplayOffset, bias: Bias) -> DisplayOffset {
         let mut cursor = self.transforms.cursor::<DisplayOffset, TransformSummary>();
         cursor.seek(&offset, SeekBias::Right, &());
         if let Some(transform) = cursor.item() {
@@ -475,7 +506,7 @@ impl FoldMapSnapshot {
             } else {
                 let overshoot = offset.0 - transform_start;
                 let buffer_offset = cursor.start().buffer.bytes + overshoot;
-                let clipped_buffer_offset = self.buffer.read(ctx).clip_offset(buffer_offset, bias);
+                let clipped_buffer_offset = self.buffer.clip_offset(buffer_offset, bias);
                 DisplayOffset(
                     (offset.0 as isize + (clipped_buffer_offset as isize - buffer_offset as isize))
                         as usize,
@@ -486,7 +517,7 @@ impl FoldMapSnapshot {
         }
     }
 
-    pub fn clip_point(&self, point: DisplayPoint, bias: Bias, ctx: &AppContext) -> DisplayPoint {
+    pub fn clip_point(&self, point: DisplayPoint, bias: Bias) -> DisplayPoint {
         let mut cursor = self.transforms.cursor::<DisplayPoint, TransformSummary>();
         cursor.seek(&point, SeekBias::Right, &());
         if let Some(transform) = cursor.item() {
@@ -500,8 +531,7 @@ impl FoldMapSnapshot {
             } else {
                 let overshoot = point.0 - transform_start;
                 let buffer_position = cursor.start().buffer.lines + overshoot;
-                let clipped_buffer_position =
-                    self.buffer.read(ctx).clip_point(buffer_position, bias);
+                let clipped_buffer_position = self.buffer.clip_point(buffer_position, bias);
                 DisplayPoint::new(
                     point.row(),
                     ((point.column() as i32) + clipped_buffer_position.column as i32
@@ -667,7 +697,7 @@ impl<'a> Iterator for BufferRows<'a> {
 
 pub struct Chunks<'a> {
     transform_cursor: Cursor<'a, Transform, DisplayOffset, TransformSummary>,
-    buffer_chunks: buffer::ChunksIter<'a>,
+    buffer_chunks: buffer::Chunks<'a>,
     buffer_offset: usize,
 }
 
@@ -685,7 +715,7 @@ impl<'a> Iterator for Chunks<'a> {
         // advance the transform and buffer cursors to the end of the fold.
         if let Some(display_text) = transform.display_text {
             self.buffer_offset += transform.summary.buffer.bytes;
-            self.buffer_chunks.advance_to(self.buffer_offset);
+            self.buffer_chunks.seek(self.buffer_offset);
 
             while self.buffer_offset >= self.transform_cursor.end().buffer.bytes
                 && self.transform_cursor.item().is_some()
@@ -712,6 +742,70 @@ impl<'a> Iterator for Chunks<'a> {
 
             self.buffer_offset += chunk.len();
             return Some(chunk);
+        }
+
+        None
+    }
+}
+
+pub struct HighlightedChunks<'a> {
+    transform_cursor: Cursor<'a, Transform, DisplayOffset, TransformSummary>,
+    buffer_chunks: buffer::HighlightedChunks<'a>,
+    buffer_chunk: Option<(usize, &'a str, StyleId)>,
+    buffer_offset: usize,
+}
+
+impl<'a> Iterator for HighlightedChunks<'a> {
+    type Item = (&'a str, StyleId);
+
+    fn next(&mut self) -> Option<Self::Item> {
+        let transform = if let Some(item) = self.transform_cursor.item() {
+            item
+        } else {
+            return None;
+        };
+
+        // If we're in a fold, then return the fold's display text and
+        // advance the transform and buffer cursors to the end of the fold.
+        if let Some(display_text) = transform.display_text {
+            self.buffer_chunk.take();
+            self.buffer_offset += transform.summary.buffer.bytes;
+            self.buffer_chunks.seek(self.buffer_offset);
+
+            while self.buffer_offset >= self.transform_cursor.end().buffer.bytes
+                && self.transform_cursor.item().is_some()
+            {
+                self.transform_cursor.next();
+            }
+
+            return Some((display_text, StyleId::default()));
+        }
+
+        // Retrieve a chunk from the current location in the buffer.
+        if self.buffer_chunk.is_none() {
+            let chunk_offset = self.buffer_chunks.offset();
+            self.buffer_chunk = self
+                .buffer_chunks
+                .next()
+                .map(|(chunk, capture_ix)| (chunk_offset, chunk, capture_ix));
+        }
+
+        // Otherwise, take a chunk from the buffer's text.
+        if let Some((chunk_offset, mut chunk, capture_ix)) = self.buffer_chunk {
+            let offset_in_chunk = self.buffer_offset - chunk_offset;
+            chunk = &chunk[offset_in_chunk..];
+
+            // Truncate the chunk so that it ends at the next fold.
+            let region_end = self.transform_cursor.end().buffer.bytes - self.buffer_offset;
+            if chunk.len() >= region_end {
+                chunk = &chunk[0..region_end];
+                self.transform_cursor.next();
+            } else {
+                self.buffer_chunk.take();
+            }
+
+            self.buffer_offset += chunk.len();
+            return Some((chunk, capture_ix));
         }
 
         None
@@ -1046,11 +1140,10 @@ mod tests {
                     let offset = map.snapshot(app.as_ref()).clip_offset(
                         DisplayOffset(rng.gen_range(0..=map.len(app.as_ref()))),
                         Bias::Right,
-                        app.as_ref(),
                     );
                     assert_eq!(
                         map.snapshot(app.as_ref())
-                            .chunks_at(offset, app.as_ref())
+                            .chunks_at(offset)
                             .collect::<String>(),
                         &expected_text[offset.0..],
                     );
@@ -1133,9 +1226,7 @@ mod tests {
 
     impl FoldMap {
         fn text(&self, app: &AppContext) -> String {
-            self.snapshot(app)
-                .chunks_at(DisplayOffset(0), app)
-                .collect()
+            self.snapshot(app).chunks_at(DisplayOffset(0)).collect()
         }
 
         fn merged_fold_ranges(&self, app: &AppContext) -> Vec<Range<usize>> {

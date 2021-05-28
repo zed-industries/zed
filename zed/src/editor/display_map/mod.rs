@@ -1,10 +1,12 @@
 mod fold_map;
 
+use crate::settings::StyleId;
+
 use super::{buffer, Anchor, Bias, Buffer, Edit, Point, ToOffset, ToPoint};
 pub use fold_map::BufferRows;
 use fold_map::{FoldMap, FoldMapSnapshot};
 use gpui::{AppContext, ModelHandle};
-use std::ops::Range;
+use std::{mem, ops::Range};
 
 pub struct DisplayMap {
     buffer: ModelHandle<Buffer>,
@@ -55,21 +57,23 @@ impl DisplayMap {
         self.fold_map.unfold(ranges, ctx)
     }
 
+    pub fn intersects_fold<T: ToOffset>(&self, offset: T, ctx: &AppContext) -> bool {
+        self.fold_map.intersects_fold(offset, ctx)
+    }
+
     pub fn is_line_folded(&self, display_row: u32, ctx: &AppContext) -> bool {
         self.fold_map.is_line_folded(display_row, ctx)
     }
 
     pub fn text(&self, ctx: &AppContext) -> String {
-        self.snapshot(ctx)
-            .chunks_at(DisplayPoint::zero(), ctx)
-            .collect()
+        self.snapshot(ctx).chunks_at(DisplayPoint::zero()).collect()
     }
 
     pub fn line(&self, display_row: u32, ctx: &AppContext) -> String {
         let mut result = String::new();
         for chunk in self
             .snapshot(ctx)
-            .chunks_at(DisplayPoint::new(display_row, 0), ctx)
+            .chunks_at(DisplayPoint::new(display_row, 0))
         {
             if let Some(ix) = chunk.find('\n') {
                 result.push_str(&chunk[0..ix]);
@@ -86,7 +90,7 @@ impl DisplayMap {
         let mut is_blank = true;
         for c in self
             .snapshot(ctx)
-            .chars_at(DisplayPoint::new(display_row, 0), ctx)
+            .chars_at(DisplayPoint::new(display_row, 0))
         {
             if c == ' ' {
                 indent += 1;
@@ -104,9 +108,8 @@ impl DisplayMap {
             .column()
     }
 
-    // TODO - make this delegate to the DisplayMapSnapshot
     pub fn max_point(&self, ctx: &AppContext) -> DisplayPoint {
-        self.fold_map.max_point(ctx).expand_tabs(self, ctx)
+        self.snapshot(ctx).max_point().expand_tabs(self, ctx)
     }
 
     pub fn longest_row(&self, ctx: &AppContext) -> u32 {
@@ -136,12 +139,15 @@ impl DisplayMapSnapshot {
         self.folds_snapshot.buffer_rows(start_row)
     }
 
-    pub fn chunks_at<'a>(&'a self, point: DisplayPoint, app: &'a AppContext) -> Chunks<'a> {
-        let (point, expanded_char_column, to_next_stop) =
-            self.collapse_tabs(point, Bias::Left, app);
+    pub fn max_point(&self) -> DisplayPoint {
+        self.expand_tabs(self.folds_snapshot.max_point())
+    }
+
+    pub fn chunks_at(&self, point: DisplayPoint) -> Chunks {
+        let (point, expanded_char_column, to_next_stop) = self.collapse_tabs(point, Bias::Left);
         let fold_chunks = self
             .folds_snapshot
-            .chunks_at(self.folds_snapshot.to_display_offset(point, app), app);
+            .chunks_at(self.folds_snapshot.to_display_offset(point));
         Chunks {
             fold_chunks,
             column: expanded_char_column,
@@ -151,18 +157,28 @@ impl DisplayMapSnapshot {
         }
     }
 
-    pub fn chars_at<'a>(
-        &'a self,
-        point: DisplayPoint,
-        app: &'a AppContext,
-    ) -> impl Iterator<Item = char> + 'a {
-        self.chunks_at(point, app).flat_map(str::chars)
+    pub fn highlighted_chunks_for_rows(&mut self, rows: Range<u32>) -> HighlightedChunks {
+        let start = DisplayPoint::new(rows.start, 0);
+        let start = self.folds_snapshot.to_display_offset(start);
+        let end = DisplayPoint::new(rows.end, 0).min(self.max_point());
+        let end = self.folds_snapshot.to_display_offset(end);
+        HighlightedChunks {
+            fold_chunks: self.folds_snapshot.highlighted_chunks(start..end),
+            column: 0,
+            tab_size: self.tab_size,
+            chunk: "",
+            style_id: Default::default(),
+        }
     }
 
-    pub fn column_to_chars(&self, display_row: u32, target: u32, ctx: &AppContext) -> u32 {
+    pub fn chars_at<'a>(&'a self, point: DisplayPoint) -> impl Iterator<Item = char> + 'a {
+        self.chunks_at(point).flat_map(str::chars)
+    }
+
+    pub fn column_to_chars(&self, display_row: u32, target: u32) -> u32 {
         let mut count = 0;
         let mut column = 0;
-        for c in self.chars_at(DisplayPoint::new(display_row, 0), ctx) {
+        for c in self.chars_at(DisplayPoint::new(display_row, 0)) {
             if column >= target {
                 break;
             }
@@ -172,10 +188,10 @@ impl DisplayMapSnapshot {
         count
     }
 
-    pub fn column_from_chars(&self, display_row: u32, char_count: u32, ctx: &AppContext) -> u32 {
+    pub fn column_from_chars(&self, display_row: u32, char_count: u32) -> u32 {
         let mut count = 0;
         let mut column = 0;
-        for c in self.chars_at(DisplayPoint::new(display_row, 0), ctx) {
+        for c in self.chars_at(DisplayPoint::new(display_row, 0)) {
             if c == '\n' || count >= char_count {
                 break;
             }
@@ -185,32 +201,26 @@ impl DisplayMapSnapshot {
         column
     }
 
-    pub fn clip_point(&self, point: DisplayPoint, bias: Bias, ctx: &AppContext) -> DisplayPoint {
+    pub fn clip_point(&self, point: DisplayPoint, bias: Bias) -> DisplayPoint {
         self.expand_tabs(
             self.folds_snapshot
-                .clip_point(self.collapse_tabs(point, bias, ctx).0, bias, ctx),
-            ctx,
+                .clip_point(self.collapse_tabs(point, bias).0, bias),
         )
     }
 
-    fn expand_tabs(&self, mut point: DisplayPoint, ctx: &AppContext) -> DisplayPoint {
+    fn expand_tabs(&self, mut point: DisplayPoint) -> DisplayPoint {
         let chars = self
             .folds_snapshot
-            .chars_at(DisplayPoint(Point::new(point.row(), 0)), ctx);
+            .chars_at(DisplayPoint(Point::new(point.row(), 0)));
         let expanded = expand_tabs(chars, point.column() as usize, self.tab_size);
         *point.column_mut() = expanded as u32;
         point
     }
 
-    fn collapse_tabs(
-        &self,
-        mut point: DisplayPoint,
-        bias: Bias,
-        ctx: &AppContext,
-    ) -> (DisplayPoint, usize, usize) {
+    fn collapse_tabs(&self, mut point: DisplayPoint, bias: Bias) -> (DisplayPoint, usize, usize) {
         let chars = self
             .folds_snapshot
-            .chars_at(DisplayPoint(Point::new(point.row(), 0)), ctx);
+            .chars_at(DisplayPoint(Point::new(point.row(), 0)));
         let expanded = point.column() as usize;
         let (collapsed, expanded_char_column, to_next_stop) =
             collapse_tabs(chars, expanded, bias, self.tab_size);
@@ -258,11 +268,11 @@ impl DisplayPoint {
     }
 
     fn expand_tabs(self, map: &DisplayMap, ctx: &AppContext) -> Self {
-        map.snapshot(ctx).expand_tabs(self, ctx)
+        map.snapshot(ctx).expand_tabs(self)
     }
 
     fn collapse_tabs(self, map: &DisplayMap, bias: Bias, ctx: &AppContext) -> Self {
-        map.snapshot(ctx).collapse_tabs(self, bias, ctx).0
+        map.snapshot(ctx).collapse_tabs(self, bias).0
     }
 }
 
@@ -270,7 +280,7 @@ impl Point {
     pub fn to_display_point(self, map: &DisplayMap, ctx: &AppContext) -> DisplayPoint {
         let mut display_point = map.fold_map.to_display_point(self, ctx);
         let snapshot = map.fold_map.snapshot(ctx);
-        let chars = snapshot.chars_at(DisplayPoint::new(display_point.row(), 0), ctx);
+        let chars = snapshot.chars_at(DisplayPoint::new(display_point.row(), 0));
         *display_point.column_mut() =
             expand_tabs(chars, display_point.column() as usize, map.tab_size) as u32;
         display_point
@@ -333,6 +343,50 @@ impl<'a> Iterator for Chunks<'a> {
         let result = Some(self.chunk);
         self.chunk = "";
         result
+    }
+}
+
+pub struct HighlightedChunks<'a> {
+    fold_chunks: fold_map::HighlightedChunks<'a>,
+    chunk: &'a str,
+    style_id: StyleId,
+    column: usize,
+    tab_size: usize,
+}
+
+impl<'a> Iterator for HighlightedChunks<'a> {
+    type Item = (&'a str, StyleId);
+
+    fn next(&mut self) -> Option<Self::Item> {
+        if self.chunk.is_empty() {
+            if let Some((chunk, style_id)) = self.fold_chunks.next() {
+                self.chunk = chunk;
+                self.style_id = style_id;
+            } else {
+                return None;
+            }
+        }
+
+        for (ix, c) in self.chunk.char_indices() {
+            match c {
+                '\t' => {
+                    if ix > 0 {
+                        let (prefix, suffix) = self.chunk.split_at(ix);
+                        self.chunk = suffix;
+                        return Some((prefix, self.style_id));
+                    } else {
+                        self.chunk = &self.chunk[1..];
+                        let len = self.tab_size - self.column % self.tab_size;
+                        self.column += len;
+                        return Some((&SPACES[0..len], self.style_id));
+                    }
+                }
+                '\n' => self.column = 0,
+                _ => self.column += 1,
+            }
+        }
+
+        Some((mem::take(&mut self.chunk), mem::take(&mut self.style_id)))
     }
 }
 
@@ -400,7 +454,13 @@ pub fn collapse_tabs(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::test::*;
+    use crate::{
+        language::{Language, LanguageConfig},
+        settings::Theme,
+        test::*,
+    };
+    use buffer::History;
+    use std::sync::Arc;
 
     #[gpui::test]
     fn test_chunks_at(app: &mut gpui::MutableAppContext) {
@@ -423,22 +483,123 @@ mod tests {
 
         assert_eq!(
             &map.snapshot(app.as_ref())
-                .chunks_at(DisplayPoint::new(1, 0), app.as_ref())
+                .chunks_at(DisplayPoint::new(1, 0))
                 .collect::<String>()[0..10],
             "    b   bb"
         );
         assert_eq!(
             &map.snapshot(app.as_ref())
-                .chunks_at(DisplayPoint::new(1, 2), app.as_ref())
+                .chunks_at(DisplayPoint::new(1, 2))
                 .collect::<String>()[0..10],
             "  b   bbbb"
         );
         assert_eq!(
             &map.snapshot(app.as_ref())
-                .chunks_at(DisplayPoint::new(1, 6), app.as_ref())
+                .chunks_at(DisplayPoint::new(1, 6))
                 .collect::<String>()[0..13],
             "  bbbbb\nc   c"
         );
+    }
+
+    #[gpui::test]
+    async fn test_highlighted_chunks_at(mut app: gpui::TestAppContext) {
+        use unindent::Unindent as _;
+
+        let grammar = tree_sitter_rust::language();
+        let text = r#"
+            fn outer() {}
+
+            mod module {
+                fn inner() {}
+            }"#
+        .unindent();
+        let highlight_query = tree_sitter::Query::new(
+            grammar,
+            r#"
+            (mod_item name: (identifier) body: _ @mod.body)
+            (function_item name: (identifier) @fn.name)"#,
+        )
+        .unwrap();
+        let theme = Theme::parse(
+            r#"
+            [syntax]
+            "mod.body" = 0xff0000
+            "fn.name" = 0x00ff00"#,
+        )
+        .unwrap();
+        let lang = Arc::new(Language {
+            config: LanguageConfig {
+                name: "Test".to_string(),
+                path_suffixes: vec![".test".to_string()],
+                ..Default::default()
+            },
+            grammar: grammar.clone(),
+            highlight_query,
+            brackets_query: tree_sitter::Query::new(grammar, "").unwrap(),
+            theme_mapping: Default::default(),
+        });
+        lang.set_theme(&theme);
+
+        let buffer = app.add_model(|ctx| {
+            Buffer::from_history(0, History::new(text.into()), None, Some(lang), ctx)
+        });
+        buffer.condition(&app, |buf, _| !buf.is_parsing()).await;
+
+        let mut map = app.read(|ctx| DisplayMap::new(buffer, 2, ctx));
+        assert_eq!(
+            app.read(|ctx| highlighted_chunks(0..5, &map, &theme, ctx)),
+            vec![
+                ("fn ".to_string(), None),
+                ("outer".to_string(), Some("fn.name")),
+                ("() {}\n\nmod module ".to_string(), None),
+                ("{\n    fn ".to_string(), Some("mod.body")),
+                ("inner".to_string(), Some("fn.name")),
+                ("() {}\n}".to_string(), Some("mod.body")),
+            ]
+        );
+        assert_eq!(
+            app.read(|ctx| highlighted_chunks(3..5, &map, &theme, ctx)),
+            vec![
+                ("    fn ".to_string(), Some("mod.body")),
+                ("inner".to_string(), Some("fn.name")),
+                ("() {}\n}".to_string(), Some("mod.body")),
+            ]
+        );
+
+        app.read(|ctx| map.fold(vec![Point::new(0, 6)..Point::new(3, 2)], ctx));
+        assert_eq!(
+            app.read(|ctx| highlighted_chunks(0..2, &map, &theme, ctx)),
+            vec![
+                ("fn ".to_string(), None),
+                ("out".to_string(), Some("fn.name")),
+                ("…".to_string(), None),
+                ("  fn ".to_string(), Some("mod.body")),
+                ("inner".to_string(), Some("fn.name")),
+                ("() {}\n}".to_string(), Some("mod.body")),
+            ]
+        );
+
+        fn highlighted_chunks<'a>(
+            rows: Range<u32>,
+            map: &DisplayMap,
+            theme: &'a Theme,
+            ctx: &AppContext,
+        ) -> Vec<(String, Option<&'a str>)> {
+            let mut chunks: Vec<(String, Option<&str>)> = Vec::new();
+            for (chunk, style_id) in map.snapshot(ctx).highlighted_chunks_for_rows(rows) {
+                let style_name = theme.syntax_style_name(style_id);
+                if let Some((last_chunk, last_style_name)) = chunks.last_mut() {
+                    if style_name == *last_style_name {
+                        last_chunk.push_str(chunk);
+                    } else {
+                        chunks.push((chunk.to_string(), style_name));
+                    }
+                } else {
+                    chunks.push((chunk.to_string(), style_name));
+                }
+            }
+            chunks
+        }
     }
 
     #[gpui::test]
@@ -470,7 +631,7 @@ mod tests {
             ),
         ] {
             assert_eq!(
-                map.clip_point(DisplayPoint::new(1, input_column as u32), bias, ctx),
+                map.clip_point(DisplayPoint::new(1, input_column as u32), bias),
                 DisplayPoint::new(1, output_column as u32),
                 "clip_point(({}, {}))",
                 1,
@@ -520,7 +681,7 @@ mod tests {
         );
         assert_eq!(
             map.snapshot(ctx)
-                .chunks_at(DisplayPoint::new(0, "✅      ".len() as u32), ctx)
+                .chunks_at(DisplayPoint::new(0, "✅      ".len() as u32))
                 .collect::<String>(),
             " α\nβ   \n🏀β      γ"
         );
@@ -534,26 +695,20 @@ mod tests {
         );
         assert_eq!(
             map.snapshot(ctx)
-                .chunks_at(DisplayPoint::new(0, "✅ ".len() as u32), ctx)
+                .chunks_at(DisplayPoint::new(0, "✅ ".len() as u32))
                 .collect::<String>(),
             "      α\nβ   \n🏀β      γ"
         );
 
         // Clipping display points inside of multi-byte characters
         assert_eq!(
-            map.snapshot(ctx).clip_point(
-                DisplayPoint::new(0, "✅".len() as u32 - 1),
-                Bias::Left,
-                ctx
-            ),
+            map.snapshot(ctx)
+                .clip_point(DisplayPoint::new(0, "✅".len() as u32 - 1), Bias::Left),
             DisplayPoint::new(0, 0)
         );
         assert_eq!(
-            map.snapshot(ctx).clip_point(
-                DisplayPoint::new(0, "✅".len() as u32 - 1),
-                Bias::Right,
-                ctx
-            ),
+            map.snapshot(ctx)
+                .clip_point(DisplayPoint::new(0, "✅".len() as u32 - 1), Bias::Right),
             DisplayPoint::new(0, "✅".len() as u32)
         );
     }

@@ -1483,7 +1483,8 @@ mod tests {
         let path = tree.update(&mut app, |tree, ctx| {
             let path = tree.files(0).next().unwrap().path().clone();
             assert_eq!(path.file_name().unwrap(), "file1");
-            smol::block_on(tree.save(&path, buffer.read(ctx).snapshot(), ctx.as_ref())).unwrap();
+            smol::block_on(tree.save(&path, buffer.read(ctx).snapshot().text(), ctx.as_ref()))
+                .unwrap();
             path
         });
 
@@ -1512,7 +1513,7 @@ mod tests {
         let file = app.update(|ctx| tree.file("", ctx)).await;
         app.update(|ctx| {
             assert_eq!(file.path().file_name(), None);
-            smol::block_on(file.save(buffer.read(ctx).snapshot(), ctx.as_ref())).unwrap();
+            smol::block_on(file.save(buffer.read(ctx).snapshot().text(), ctx.as_ref())).unwrap();
         });
 
         let history = app.read(|ctx| file.load_history(ctx)).await.unwrap();

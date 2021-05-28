@@ -347,7 +347,7 @@ dependencies = [
  "tar",
  "target_build_utils",
  "term",
- "toml",
+ "toml 0.4.10",
  "uuid",
  "walkdir",
 ]
@@ -2703,13 +2703,31 @@ dependencies = [
 ]
 
 [[package]]
-name = "tree-sitter"
-version = "0.17.1"
+name = "toml"
+version = "0.5.8"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "d18dcb776d3affaba6db04d11d645946d34a69b3172e588af96ce9fecd20faac"
+checksum = "a31142970826733df8241ef35dc040ef98c679ab14d7c3e54d827099b3acecaa"
+dependencies = [
+ "serde 1.0.125",
+]
+
+[[package]]
+name = "tree-sitter"
+version = "0.19.5"
+source = "git+https://github.com/tree-sitter/tree-sitter?rev=d72771a19f4143530b1cfd23808e344f1276e176#d72771a19f4143530b1cfd23808e344f1276e176"
 dependencies = [
  "cc",
  "regex",
+]
+
+[[package]]
+name = "tree-sitter-rust"
+version = "0.19.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "784f7ef9cdbd4c895dc2d4bb785e95b4a5364a602eec803681db83d1927ddf15"
+dependencies = [
+ "cc",
+ "tree-sitter",
 ]
 
 [[package]]
@@ -2987,5 +3005,8 @@ dependencies = [
  "smallvec",
  "smol",
  "tempdir",
+ "toml 0.5.8",
+ "tree-sitter",
+ "tree-sitter-rust",
  "unindent",
 ]

@@ -118,12 +118,12 @@ impl Rope {
         self.chunks_in_range(start..self.len()).flat_map(str::chars)
     }
 
-    pub fn chunks<'a>(&'a self) -> ChunksIter<'a> {
+    pub fn chunks<'a>(&'a self) -> Chunks<'a> {
         self.chunks_in_range(0..self.len())
     }
 
-    pub fn chunks_in_range<'a>(&'a self, range: Range<usize>) -> ChunksIter<'a> {
-        ChunksIter::new(self, range)
+    pub fn chunks_in_range<'a>(&'a self, range: Range<usize>) -> Chunks<'a> {
+        Chunks::new(self, range)
     }
 
     pub fn to_point(&self, offset: usize) -> Point {
@@ -268,12 +268,12 @@ impl<'a> Cursor<'a> {
     }
 }
 
-pub struct ChunksIter<'a> {
+pub struct Chunks<'a> {
     chunks: sum_tree::Cursor<'a, Chunk, usize, usize>,
     range: Range<usize>,
 }
 
-impl<'a> ChunksIter<'a> {
+impl<'a> Chunks<'a> {
     pub fn new(rope: &'a Rope, range: Range<usize>) -> Self {
         let mut chunks = rope.chunks.cursor();
         chunks.seek(&range.start, SeekBias::Right, &());
@@ -284,11 +284,13 @@ impl<'a> ChunksIter<'a> {
         self.range.start.max(*self.chunks.start())
     }
 
-    pub fn advance_to(&mut self, offset: usize) {
+    pub fn seek(&mut self, offset: usize) {
         if offset >= self.chunks.end() {
             self.chunks.seek_forward(&offset, SeekBias::Right, &());
-            self.range.start = offset;
+        } else {
+            self.chunks.seek(&offset, SeekBias::Right, &());
         }
+        self.range.start = offset;
     }
 
     pub fn peek(&self) -> Option<&'a str> {
@@ -304,7 +306,7 @@ impl<'a> ChunksIter<'a> {
     }
 }
 
-impl<'a> Iterator for ChunksIter<'a> {
+impl<'a> Iterator for Chunks<'a> {
     type Item = &'a str;
 
     fn next(&mut self) -> Option<Self::Item> {

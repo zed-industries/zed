@@ -2,7 +2,12 @@ use super::{
     buffer, movement, Anchor, Bias, Buffer, BufferElement, DisplayMap, DisplayPoint, Point,
     Selection, SelectionGoal, SelectionSetId, ToOffset, ToPoint,
 };
-use crate::{settings::Settings, util::post_inc, workspace, worktree::FileHandle};
+use crate::{
+    settings::{Settings, StyleId},
+    util::post_inc,
+    workspace,
+    worktree::FileHandle,
+};
 use anyhow::Result;
 use gpui::{
     color::ColorU, fonts::Properties as FontProperties, geometry::vector::Vector2F,
@@ -161,6 +166,21 @@ pub fn init(app: &mut MutableAppContext) {
             "buffer:add_selection_below",
             Some("BufferView"),
         ),
+        Binding::new(
+            "alt-up",
+            "buffer:select_larger_syntax_node",
+            Some("BufferView"),
+        ),
+        Binding::new(
+            "alt-down",
+            "buffer:select_smaller_syntax_node",
+            Some("BufferView"),
+        ),
+        Binding::new(
+            "ctrl-m",
+            "buffer:move_to_enclosing_bracket",
+            Some("BufferView"),
+        ),
         Binding::new("pageup", "buffer:page_up", Some("BufferView")),
         Binding::new("pagedown", "buffer:page_down", Some("BufferView")),
         Binding::new("alt-cmd-[", "buffer:fold", Some("BufferView")),
@@ -265,6 +285,18 @@ pub fn init(app: &mut MutableAppContext) {
         "buffer:add_selection_below",
         BufferView::add_selection_below,
     );
+    app.add_action(
+        "buffer:select_larger_syntax_node",
+        BufferView::select_larger_syntax_node,
+    );
+    app.add_action(
+        "buffer:select_smaller_syntax_node",
+        BufferView::select_smaller_syntax_node,
+    );
+    app.add_action(
+        "buffer:move_to_enclosing_bracket",
+        BufferView::move_to_enclosing_bracket,
+    );
     app.add_action("buffer:page_up", BufferView::page_up);
     app.add_action("buffer:page_down", BufferView::page_down);
     app.add_action("buffer:fold", BufferView::fold);
@@ -295,6 +327,7 @@ pub struct BufferView {
     pending_selection: Option<Selection>,
     next_selection_id: usize,
     add_selections_state: Option<AddSelectionsState>,
+    select_larger_syntax_node_stack: Vec<Vec<Selection>>,
     scroll_position: Mutex<Vector2F>,
     autoscroll_requested: Mutex<bool>,
     settings: watch::Receiver<Settings>,
@@ -354,6 +387,7 @@ impl BufferView {
             pending_selection: None,
             next_selection_id,
             add_selections_state: None,
+            select_larger_syntax_node_stack: Vec::new(),
             scroll_position: Mutex::new(Vector2F::zero()),
             autoscroll_requested: Mutex::new(false),
             settings,
@@ -690,7 +724,7 @@ impl BufferView {
         {
             let buffer = self.buffer.read(ctx);
             for selection in &mut selections {
-                let range = selection.range(buffer);
+                let range = selection.point_range(buffer);
                 if range.start == range.end {
                     let head = selection
                         .head()
@@ -717,7 +751,7 @@ impl BufferView {
         {
             let buffer = self.buffer.read(ctx);
             for selection in &mut selections {
-                let range = selection.range(buffer);
+                let range = selection.point_range(buffer);
                 if range.start == range.end {
                     let head = selection
                         .head()
@@ -896,7 +930,7 @@ impl BufferView {
         let mut contiguous_selections = Vec::new();
         while let Some(selection) = selections.next() {
             // Accumulate contiguous regions of rows that we want to move.
-            contiguous_selections.push(selection.range(buffer));
+            contiguous_selections.push(selection.point_range(buffer));
             let (mut buffer_rows, mut display_rows) =
                 selection.buffer_rows_for_display_rows(false, &self.display_map, app);
             while let Some(next_selection) = selections.peek() {
@@ -905,7 +939,7 @@ impl BufferView {
                 if next_buffer_rows.start <= buffer_rows.end {
                     buffer_rows.end = next_buffer_rows.end;
                     display_rows.end = next_display_rows.end;
-                    contiguous_selections.push(next_selection.range(buffer));
+                    contiguous_selections.push(next_selection.point_range(buffer));
                     selections.next().unwrap();
                 } else {
                     break;
@@ -980,7 +1014,7 @@ impl BufferView {
         let mut contiguous_selections = Vec::new();
         while let Some(selection) = selections.next() {
             // Accumulate contiguous regions of rows that we want to move.
-            contiguous_selections.push(selection.range(buffer));
+            contiguous_selections.push(selection.point_range(buffer));
             let (mut buffer_rows, mut display_rows) =
                 selection.buffer_rows_for_display_rows(false, &self.display_map, app);
             while let Some(next_selection) = selections.peek() {
@@ -989,7 +1023,7 @@ impl BufferView {
                 if next_buffer_rows.start <= buffer_rows.end {
                     buffer_rows.end = next_buffer_rows.end;
                     display_rows.end = next_display_rows.end;
-                    contiguous_selections.push(next_selection.range(buffer));
+                    contiguous_selections.push(next_selection.point_range(buffer));
                     selections.next().unwrap();
                 } else {
                     break;
@@ -1613,7 +1647,7 @@ impl BufferView {
         let mut to_unfold = Vec::new();
         let mut new_selections = Vec::new();
         for selection in self.selections(app) {
-            let range = selection.range(buffer).sorted();
+            let range = selection.point_range(buffer).sorted();
             if range.start.row != range.end.row {
                 new_selections.push(Selection {
                     id: post_inc(&mut self.next_selection_id),
@@ -1654,7 +1688,7 @@ impl BufferView {
         self.add_selection(false, ctx);
     }
 
-    pub fn add_selection(&mut self, above: bool, ctx: &mut ViewContext<Self>) {
+    fn add_selection(&mut self, above: bool, ctx: &mut ViewContext<Self>) {
         use super::RangeExt;
 
         let app = ctx.as_ref();
@@ -1744,6 +1778,77 @@ impl BufferView {
         if state.stack.len() > 1 {
             self.add_selections_state = Some(state);
         }
+    }
+
+    pub fn select_larger_syntax_node(&mut self, _: &(), ctx: &mut ViewContext<Self>) {
+        let app = ctx.as_ref();
+        let buffer = self.buffer.read(app);
+
+        let mut stack = mem::take(&mut self.select_larger_syntax_node_stack);
+        let mut selected_larger_node = false;
+        let old_selections = self.selections(app).to_vec();
+        let mut new_selections = Vec::new();
+        for selection in &old_selections {
+            let old_range = selection.start.to_offset(buffer)..selection.end.to_offset(buffer);
+            let mut new_range = old_range.clone();
+            while let Some(containing_range) = buffer.range_for_syntax_ancestor(new_range.clone()) {
+                new_range = containing_range;
+                if !self.display_map.intersects_fold(new_range.start, app)
+                    && !self.display_map.intersects_fold(new_range.end, app)
+                {
+                    break;
+                }
+            }
+
+            selected_larger_node |= new_range != old_range;
+            new_selections.push(Selection {
+                id: selection.id,
+                start: buffer.anchor_before(new_range.start),
+                end: buffer.anchor_before(new_range.end),
+                reversed: selection.reversed,
+                goal: SelectionGoal::None,
+            });
+        }
+
+        if selected_larger_node {
+            stack.push(old_selections);
+            self.update_selections(new_selections, true, ctx);
+        }
+        self.select_larger_syntax_node_stack = stack;
+    }
+
+    pub fn select_smaller_syntax_node(&mut self, _: &(), ctx: &mut ViewContext<Self>) {
+        let mut stack = mem::take(&mut self.select_larger_syntax_node_stack);
+        if let Some(selections) = stack.pop() {
+            self.update_selections(selections, true, ctx);
+        }
+        self.select_larger_syntax_node_stack = stack;
+    }
+
+    pub fn move_to_enclosing_bracket(&mut self, _: &(), ctx: &mut ViewContext<Self>) {
+        use super::RangeExt as _;
+
+        let buffer = self.buffer.read(ctx.as_ref());
+        let mut selections = self.selections(ctx.as_ref()).to_vec();
+        for selection in &mut selections {
+            let selection_range = selection.offset_range(buffer);
+            if let Some((open_range, close_range)) =
+                buffer.enclosing_bracket_ranges(selection_range.clone())
+            {
+                let close_range = close_range.to_inclusive();
+                let destination = if close_range.contains(&selection_range.start)
+                    && close_range.contains(&selection_range.end)
+                {
+                    open_range.end
+                } else {
+                    *close_range.start()
+                };
+                selection.start = buffer.anchor_before(destination);
+                selection.end = selection.start.clone();
+            }
+        }
+
+        self.update_selections(selections, true, ctx);
     }
 
     fn build_columnar_selection(
@@ -1860,6 +1965,7 @@ impl BufferView {
         }
 
         self.add_selections_state = None;
+        self.select_larger_syntax_node_stack.clear();
     }
 
     fn start_transaction(&self, ctx: &mut ViewContext<Self>) {
@@ -1987,7 +2093,7 @@ impl BufferView {
         let ranges = self
             .selections(ctx.as_ref())
             .iter()
-            .map(|s| s.range(buffer).sorted())
+            .map(|s| s.point_range(buffer).sorted())
             .collect();
         self.fold_ranges(ranges, ctx);
     }
@@ -2069,10 +2175,7 @@ impl BufferView {
         let font_size = settings.buffer_font_size;
         let font_id =
             font_cache.select_font(settings.buffer_font_family, &FontProperties::new())?;
-        let digit_count = ((self.buffer.read(app).max_point().row + 1) as f32)
-            .log10()
-            .floor() as usize
-            + 1;
+        let digit_count = (self.buffer.read(app).row_count() as f32).log10().floor() as usize + 1;
 
         Ok(layout_cache
             .layout_str(
@@ -2135,32 +2238,47 @@ impl BufferView {
         }
 
         let settings = self.settings.borrow();
-        let font_id =
-            font_cache.select_font(settings.buffer_font_family, &FontProperties::new())?;
         let font_size = settings.buffer_font_size;
+        let font_family = settings.buffer_font_family;
+        let mut prev_font_properties = FontProperties::new();
+        let mut prev_font_id = font_cache
+            .select_font(font_family, &prev_font_properties)
+            .unwrap();
 
         let mut layouts = Vec::with_capacity(rows.len());
         let mut line = String::new();
+        let mut styles = Vec::new();
         let mut row = rows.start;
-        let snapshot = self.display_map.snapshot(ctx);
-        let chunks = snapshot.chunks_at(DisplayPoint::new(rows.start, 0), ctx);
-        for (chunk_row, chunk_line) in chunks
-            .chain(Some("\n"))
-            .flat_map(|chunk| chunk.split("\n").enumerate())
-        {
-            if chunk_row > 0 {
-                layouts.push(layout_cache.layout_str(
-                    &line,
-                    font_size,
-                    &[(line.len(), font_id, ColorU::black())],
-                ));
-                line.clear();
-                row += 1;
-                if row == rows.end {
-                    break;
+        let mut snapshot = self.display_map.snapshot(ctx);
+        let chunks = snapshot.highlighted_chunks_for_rows(rows.clone());
+        let theme = settings.theme.clone();
+
+        'outer: for (chunk, style_ix) in chunks.chain(Some(("\n", StyleId::default()))) {
+            for (ix, line_chunk) in chunk.split('\n').enumerate() {
+                if ix > 0 {
+                    layouts.push(layout_cache.layout_str(&line, font_size, &styles));
+                    line.clear();
+                    styles.clear();
+                    row += 1;
+                    if row == rows.end {
+                        break 'outer;
+                    }
+                }
+
+                if !line_chunk.is_empty() {
+                    let (color, font_properties) = theme.syntax_style(style_ix);
+                    // Avoid a lookup if the font properties match the previous ones.
+                    let font_id = if font_properties == prev_font_properties {
+                        prev_font_id
+                    } else {
+                        font_cache.select_font(font_family, &font_properties)?
+                    };
+                    line.push_str(line_chunk);
+                    styles.push((line_chunk.len(), font_id, color));
+                    prev_font_id = font_id;
+                    prev_font_properties = font_properties;
                 }
             }
-            line.push_str(chunk_line);
         }
 
         Ok(layouts)
@@ -2246,6 +2364,7 @@ impl BufferView {
             buffer::Event::Saved => ctx.emit(Event::Saved),
             buffer::Event::FileHandleChanged => ctx.emit(Event::FileHandleChanged),
             buffer::Event::Reloaded => ctx.emit(Event::FileHandleChanged),
+            buffer::Event::Reparsed => {}
         }
     }
 }
@@ -2359,7 +2478,12 @@ impl workspace::ItemView for BufferView {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{editor::Point, settings, test::sample_text};
+    use crate::{
+        editor::Point,
+        settings,
+        test::{build_app_state, sample_text},
+    };
+    use buffer::History;
     use unindent::Unindent;
 
     #[gpui::test]
@@ -3836,6 +3960,146 @@ mod tests {
                 DisplayPoint::new(1, 3)..DisplayPoint::new(1, 1),
                 DisplayPoint::new(3, 2)..DisplayPoint::new(3, 1),
                 DisplayPoint::new(4, 3)..DisplayPoint::new(4, 1),
+            ]
+        );
+    }
+
+    #[gpui::test]
+    async fn test_select_larger_smaller_syntax_node(mut app: gpui::TestAppContext) {
+        let app_state = app.read(build_app_state);
+        let lang = app_state.language_registry.select_language("z.rs");
+        let text = r#"
+            use mod1::mod2::{mod3, mod4};
+
+            fn fn_1(param1: bool, param2: &str) {
+                let var1 = "text";
+            }
+        "#
+        .unindent();
+        let buffer = app.add_model(|ctx| {
+            let history = History::new(text.into());
+            Buffer::from_history(0, history, None, lang.cloned(), ctx)
+        });
+        let (_, view) =
+            app.add_window(|ctx| BufferView::for_buffer(buffer, app_state.settings, ctx));
+        view.condition(&app, |view, ctx| !view.buffer.read(ctx).is_parsing())
+            .await;
+
+        view.update(&mut app, |view, ctx| {
+            view.select_display_ranges(
+                &[
+                    DisplayPoint::new(0, 25)..DisplayPoint::new(0, 25),
+                    DisplayPoint::new(2, 24)..DisplayPoint::new(2, 12),
+                    DisplayPoint::new(3, 18)..DisplayPoint::new(3, 18),
+                ],
+                ctx,
+            )
+            .unwrap();
+            view.select_larger_syntax_node(&(), ctx);
+        });
+        assert_eq!(
+            view.read_with(&app, |view, ctx| view.selection_ranges(ctx)),
+            &[
+                DisplayPoint::new(0, 23)..DisplayPoint::new(0, 27),
+                DisplayPoint::new(2, 35)..DisplayPoint::new(2, 7),
+                DisplayPoint::new(3, 15)..DisplayPoint::new(3, 21),
+            ]
+        );
+
+        view.update(&mut app, |view, ctx| {
+            view.select_larger_syntax_node(&(), ctx);
+        });
+        assert_eq!(
+            view.read_with(&app, |view, ctx| view.selection_ranges(ctx)),
+            &[
+                DisplayPoint::new(0, 16)..DisplayPoint::new(0, 28),
+                DisplayPoint::new(4, 1)..DisplayPoint::new(2, 0),
+            ]
+        );
+
+        view.update(&mut app, |view, ctx| {
+            view.select_larger_syntax_node(&(), ctx);
+        });
+        assert_eq!(
+            view.read_with(&app, |view, ctx| view.selection_ranges(ctx)),
+            &[DisplayPoint::new(0, 0)..DisplayPoint::new(5, 0)]
+        );
+
+        // Trying to expand the selected syntax node one more time has no effect.
+        view.update(&mut app, |view, ctx| {
+            view.select_larger_syntax_node(&(), ctx);
+        });
+        assert_eq!(
+            view.read_with(&app, |view, ctx| view.selection_ranges(ctx)),
+            &[DisplayPoint::new(0, 0)..DisplayPoint::new(5, 0)]
+        );
+
+        view.update(&mut app, |view, ctx| {
+            view.select_smaller_syntax_node(&(), ctx);
+        });
+        assert_eq!(
+            view.read_with(&app, |view, ctx| view.selection_ranges(ctx)),
+            &[
+                DisplayPoint::new(0, 16)..DisplayPoint::new(0, 28),
+                DisplayPoint::new(4, 1)..DisplayPoint::new(2, 0),
+            ]
+        );
+
+        view.update(&mut app, |view, ctx| {
+            view.select_smaller_syntax_node(&(), ctx);
+        });
+        assert_eq!(
+            view.read_with(&app, |view, ctx| view.selection_ranges(ctx)),
+            &[
+                DisplayPoint::new(0, 23)..DisplayPoint::new(0, 27),
+                DisplayPoint::new(2, 35)..DisplayPoint::new(2, 7),
+                DisplayPoint::new(3, 15)..DisplayPoint::new(3, 21),
+            ]
+        );
+
+        view.update(&mut app, |view, ctx| {
+            view.select_smaller_syntax_node(&(), ctx);
+        });
+        assert_eq!(
+            view.read_with(&app, |view, ctx| view.selection_ranges(ctx)),
+            &[
+                DisplayPoint::new(0, 25)..DisplayPoint::new(0, 25),
+                DisplayPoint::new(2, 24)..DisplayPoint::new(2, 12),
+                DisplayPoint::new(3, 18)..DisplayPoint::new(3, 18),
+            ]
+        );
+
+        // Trying to shrink the selected syntax node one more time has no effect.
+        view.update(&mut app, |view, ctx| {
+            view.select_smaller_syntax_node(&(), ctx);
+        });
+        assert_eq!(
+            view.read_with(&app, |view, ctx| view.selection_ranges(ctx)),
+            &[
+                DisplayPoint::new(0, 25)..DisplayPoint::new(0, 25),
+                DisplayPoint::new(2, 24)..DisplayPoint::new(2, 12),
+                DisplayPoint::new(3, 18)..DisplayPoint::new(3, 18),
+            ]
+        );
+
+        // Ensure that we keep expanding the selection if the larger selection starts or ends within
+        // a fold.
+        view.update(&mut app, |view, ctx| {
+            view.fold_ranges(
+                vec![
+                    Point::new(0, 21)..Point::new(0, 24),
+                    Point::new(3, 20)..Point::new(3, 22),
+                ],
+                ctx,
+            );
+            view.select_larger_syntax_node(&(), ctx);
+        });
+        assert_eq!(
+            view.read_with(&app, |view, ctx| view.selection_ranges(ctx)),
+            &[
+                DisplayPoint::new(0, 16)..DisplayPoint::new(0, 28),
+                DisplayPoint::new(2, 35)..DisplayPoint::new(2, 7),
+                DisplayPoint::new(3, 4)..DisplayPoint::new(3, 23),
             ]
         );
     }

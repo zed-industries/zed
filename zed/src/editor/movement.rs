@@ -9,7 +9,7 @@ pub fn left(map: &DisplayMap, mut point: DisplayPoint, app: &AppContext) -> Resu
         *point.row_mut() -= 1;
         *point.column_mut() = map.line_len(point.row(), app);
     }
-    Ok(map.snapshot(app).clip_point(point, Bias::Left, app))
+    Ok(map.snapshot(app).clip_point(point, Bias::Left))
 }
 
 pub fn right(map: &DisplayMap, mut point: DisplayPoint, app: &AppContext) -> Result<DisplayPoint> {
@@ -20,7 +20,7 @@ pub fn right(map: &DisplayMap, mut point: DisplayPoint, app: &AppContext) -> Res
         *point.row_mut() += 1;
         *point.column_mut() = 0;
     }
-    Ok(map.snapshot(app).clip_point(point, Bias::Right, app))
+    Ok(map.snapshot(app).clip_point(point, Bias::Right))
 }
 
 pub fn up(
@@ -33,12 +33,12 @@ pub fn up(
     let goal_column = if let SelectionGoal::Column(column) = goal {
         column
     } else {
-        map.column_to_chars(point.row(), point.column(), app)
+        map.column_to_chars(point.row(), point.column())
     };
 
     if point.row() > 0 {
         *point.row_mut() -= 1;
-        *point.column_mut() = map.column_from_chars(point.row(), goal_column, app);
+        *point.column_mut() = map.column_from_chars(point.row(), goal_column);
     } else {
         point = DisplayPoint::new(0, 0);
     }
@@ -57,12 +57,12 @@ pub fn down(
     let goal_column = if let SelectionGoal::Column(column) = goal {
         column
     } else {
-        map.column_to_chars(point.row(), point.column(), app)
+        map.column_to_chars(point.row(), point.column())
     };
 
     if point.row() < max_point.row() {
         *point.row_mut() += 1;
-        *point.column_mut() = map.column_from_chars(point.row(), goal_column, app);
+        *point.column_mut() = map.column_from_chars(point.row(), goal_column);
     } else {
         point = max_point;
     }
@@ -107,7 +107,7 @@ pub fn prev_word_boundary(
         let mut boundary = DisplayPoint::new(point.row(), 0);
         let mut column = 0;
         let mut prev_c = None;
-        for c in map.snapshot(app).chars_at(boundary, app) {
+        for c in map.snapshot(app).chars_at(boundary) {
             if column >= point.column() {
                 break;
             }
@@ -129,7 +129,7 @@ pub fn next_word_boundary(
     app: &AppContext,
 ) -> Result<DisplayPoint> {
     let mut prev_c = None;
-    for c in map.snapshot(app).chars_at(point, app) {
+    for c in map.snapshot(app).chars_at(point) {
         if prev_c.is_some() && (c == '\n' || char_kind(prev_c.unwrap()) != char_kind(c)) {
             break;
         }

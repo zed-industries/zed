@@ -10,6 +10,11 @@ pub struct Point {
 }
 
 impl Point {
+    pub const MAX: Self = Self {
+        row: u32::MAX,
+        column: u32::MAX,
+    };
+
     pub fn new(row: u32, column: u32) -> Self {
         Point { row, column }
     }
@@ -95,6 +100,24 @@ impl Ord for Point {
         match self.row.cmp(&other.row) {
             Ordering::Equal => self.column.cmp(&other.column),
             comparison @ _ => comparison,
+        }
+    }
+}
+
+impl Into<tree_sitter::Point> for Point {
+    fn into(self) -> tree_sitter::Point {
+        tree_sitter::Point {
+            row: self.row as usize,
+            column: self.column as usize,
+        }
+    }
+}
+
+impl From<tree_sitter::Point> for Point {
+    fn from(point: tree_sitter::Point) -> Self {
+        Self {
+            row: point.row as u32,
+            column: point.column as u32,
         }
     }
 }
