@@ -24,19 +24,19 @@ fn main() {
         settings,
     };
 
-    app.run(move |ctx| {
-        ctx.set_menus(menus::menus(app_state.settings.clone()));
-        workspace::init(ctx);
-        editor::init(ctx);
-        file_finder::init(ctx);
+    app.run(move |cx| {
+        cx.set_menus(menus::menus(app_state.settings.clone()));
+        workspace::init(cx);
+        editor::init(cx);
+        file_finder::init(cx);
 
         if stdout_is_a_pty() {
-            ctx.platform().activate(true);
+            cx.platform().activate(true);
         }
 
         let paths = collect_path_args();
         if !paths.is_empty() {
-            ctx.dispatch_global_action(
+            cx.dispatch_global_action(
                 "workspace:open_paths",
                 OpenParams {
                     paths,
