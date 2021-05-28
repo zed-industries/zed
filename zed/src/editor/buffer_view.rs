@@ -168,12 +168,12 @@ pub fn init(app: &mut MutableAppContext) {
         ),
         Binding::new(
             "alt-up",
-            "buffer:select-larger-syntax-node",
+            "buffer:select_larger_syntax_node",
             Some("BufferView"),
         ),
         Binding::new(
             "alt-down",
-            "buffer:select-smaller-syntax-node",
+            "buffer:select_smaller_syntax_node",
             Some("BufferView"),
         ),
         Binding::new("pageup", "buffer:page_up", Some("BufferView")),
@@ -281,11 +281,11 @@ pub fn init(app: &mut MutableAppContext) {
         BufferView::add_selection_below,
     );
     app.add_action(
-        "buffer:select-larger-syntax-node",
+        "buffer:select_larger_syntax_node",
         BufferView::select_larger_syntax_node,
     );
     app.add_action(
-        "buffer:select-smaller-syntax-node",
+        "buffer:select_smaller_syntax_node",
         BufferView::select_smaller_syntax_node,
     );
     app.add_action("buffer:page_up", BufferView::page_up);
