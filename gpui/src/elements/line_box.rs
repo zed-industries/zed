@@ -35,20 +35,20 @@ impl Element for LineBox {
     fn layout(
         &mut self,
         constraint: SizeConstraint,
-        ctx: &mut LayoutContext,
+        cx: &mut LayoutContext,
     ) -> (Vector2F, Self::LayoutState) {
-        match ctx
+        match cx
             .font_cache
             .select_font(self.family_id, &self.font_properties)
         {
             Ok(font_id) => {
-                let line_height = ctx.font_cache.line_height(font_id, self.font_size);
-                let character_height = ctx.font_cache.ascent(font_id, self.font_size)
-                    + ctx.font_cache.descent(font_id, self.font_size);
+                let line_height = cx.font_cache.line_height(font_id, self.font_size);
+                let character_height = cx.font_cache.ascent(font_id, self.font_size)
+                    + cx.font_cache.descent(font_id, self.font_size);
                 let child_max = vec2f(constraint.max.x(), character_height);
                 let child_size = self.child.layout(
                     SizeConstraint::new(constraint.min.min(child_max), child_max),
-                    ctx,
+                    cx,
                 );
                 let size = vec2f(child_size.x(), line_height);
                 (size, (line_height - character_height) / 2.)
@@ -64,19 +64,19 @@ impl Element for LineBox {
         &mut self,
         _: Vector2F,
         _: &mut Self::LayoutState,
-        ctx: &mut AfterLayoutContext,
+        cx: &mut AfterLayoutContext,
     ) {
-        self.child.after_layout(ctx);
+        self.child.after_layout(cx);
     }
 
     fn paint(
         &mut self,
         bounds: pathfinder_geometry::rect::RectF,
         padding_top: &mut f32,
-        ctx: &mut PaintContext,
+        cx: &mut PaintContext,
     ) -> Self::PaintState {
         self.child
-            .paint(bounds.origin() + vec2f(0., *padding_top), ctx);
+            .paint(bounds.origin() + vec2f(0., *padding_top), cx);
     }
 
     fn dispatch_event(
@@ -85,9 +85,9 @@ impl Element for LineBox {
         _: pathfinder_geometry::rect::RectF,
         _: &mut Self::LayoutState,
         _: &mut Self::PaintState,
-        ctx: &mut EventContext,
+        cx: &mut EventContext,
     ) -> bool {
-        self.child.dispatch_event(event, ctx)
+        self.child.dispatch_event(event, cx)
     }
 
     fn debug(
@@ -95,14 +95,14 @@ impl Element for LineBox {
         bounds: RectF,
         _: &Self::LayoutState,
         _: &Self::PaintState,
-        ctx: &DebugContext,
+        cx: &DebugContext,
     ) -> serde_json::Value {
         json!({
             "bounds": bounds.to_json(),
-            "font_family": ctx.font_cache.family_name(self.family_id).unwrap(),
+            "font_family": cx.font_cache.family_name(self.family_id).unwrap(),
             "font_size": self.font_size,
             "font_properties": self.font_properties.to_json(),
-            "child": self.child.debug(ctx),
+            "child": self.child.debug(cx),
         })
     }
 }

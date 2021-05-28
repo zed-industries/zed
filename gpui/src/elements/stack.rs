@@ -24,11 +24,11 @@ impl Element for Stack {
     fn layout(
         &mut self,
         constraint: SizeConstraint,
-        ctx: &mut LayoutContext,
+        cx: &mut LayoutContext,
     ) -> (Vector2F, Self::LayoutState) {
         let mut size = constraint.min;
         for child in &mut self.children {
-            size = size.max(child.layout(constraint, ctx));
+            size = size.max(child.layout(constraint, cx));
         }
         (size, ())
     }
@@ -37,10 +37,10 @@ impl Element for Stack {
         &mut self,
         _: Vector2F,
         _: &mut Self::LayoutState,
-        ctx: &mut AfterLayoutContext,
+        cx: &mut AfterLayoutContext,
     ) {
         for child in &mut self.children {
-            child.after_layout(ctx);
+            child.after_layout(cx);
         }
     }
 
@@ -48,12 +48,12 @@ impl Element for Stack {
         &mut self,
         bounds: RectF,
         _: &mut Self::LayoutState,
-        ctx: &mut PaintContext,
+        cx: &mut PaintContext,
     ) -> Self::PaintState {
         for child in &mut self.children {
-            ctx.scene.push_layer(None);
-            child.paint(bounds.origin(), ctx);
-            ctx.scene.pop_layer();
+            cx.scene.push_layer(None);
+            child.paint(bounds.origin(), cx);
+            cx.scene.pop_layer();
         }
     }
 
@@ -63,10 +63,10 @@ impl Element for Stack {
         _: RectF,
         _: &mut Self::LayoutState,
         _: &mut Self::PaintState,
-        ctx: &mut EventContext,
+        cx: &mut EventContext,
     ) -> bool {
         for child in self.children.iter_mut().rev() {
-            if child.dispatch_event(event, ctx) {
+            if child.dispatch_event(event, cx) {
                 return true;
             }
         }
@@ -78,12 +78,12 @@ impl Element for Stack {
         bounds: RectF,
         _: &Self::LayoutState,
         _: &Self::PaintState,
-        ctx: &DebugContext,
+        cx: &DebugContext,
     ) -> json::Value {
         json!({
             "type": "Stack",
             "bounds": bounds.to_json(),
-            "children": self.children.iter().map(|child| child.debug(ctx)).collect::<Vec<json::Value>>()
+            "children": self.children.iter().map(|child| child.debug(cx)).collect::<Vec<json::Value>>()
         })
     }
 }

@@ -34,8 +34,8 @@ pub fn test(args: TokenStream, function: TokenStream) -> TokenStream {
             fn #outer_fn_name() {
                 #inner_fn
 
-                #namespace::App::test_async((), move |ctx| async {
-                    #inner_fn_name(ctx).await;
+                #namespace::App::test_async((), move |cx| async {
+                    #inner_fn_name(cx).await;
                 });
             }
         }
@@ -45,8 +45,8 @@ pub fn test(args: TokenStream, function: TokenStream) -> TokenStream {
             fn #outer_fn_name() {
                 #inner_fn
 
-                #namespace::App::test((), |ctx| {
-                    #inner_fn_name(ctx);
+                #namespace::App::test((), |cx| {
+                    #inner_fn_name(cx);
                 });
             }
         }

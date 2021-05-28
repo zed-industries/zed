@@ -35,9 +35,9 @@ impl Element for EventHandler {
     fn layout(
         &mut self,
         constraint: SizeConstraint,
-        ctx: &mut LayoutContext,
+        cx: &mut LayoutContext,
     ) -> (Vector2F, Self::LayoutState) {
-        let size = self.child.layout(constraint, ctx);
+        let size = self.child.layout(constraint, cx);
         (size, ())
     }
 
@@ -45,18 +45,18 @@ impl Element for EventHandler {
         &mut self,
         _: Vector2F,
         _: &mut Self::LayoutState,
-        ctx: &mut AfterLayoutContext,
+        cx: &mut AfterLayoutContext,
     ) {
-        self.child.after_layout(ctx);
+        self.child.after_layout(cx);
     }
 
     fn paint(
         &mut self,
         bounds: RectF,
         _: &mut Self::LayoutState,
-        ctx: &mut PaintContext,
+        cx: &mut PaintContext,
     ) -> Self::PaintState {
-        self.child.paint(bounds.origin(), ctx);
+        self.child.paint(bounds.origin(), cx);
     }
 
     fn dispatch_event(
@@ -65,16 +65,16 @@ impl Element for EventHandler {
         bounds: RectF,
         _: &mut Self::LayoutState,
         _: &mut Self::PaintState,
-        ctx: &mut EventContext,
+        cx: &mut EventContext,
     ) -> bool {
-        if self.child.dispatch_event(event, ctx) {
+        if self.child.dispatch_event(event, cx) {
             true
         } else {
             match event {
                 Event::LeftMouseDown { position, .. } => {
                     if let Some(callback) = self.mouse_down.as_mut() {
                         if bounds.contains_point(*position) {
-                            return callback(ctx);
+                            return callback(cx);
                         }
                     }
                     false
@@ -89,11 +89,11 @@ impl Element for EventHandler {
         _: RectF,
         _: &Self::LayoutState,
         _: &Self::PaintState,
-        ctx: &DebugContext,
+        cx: &DebugContext,
     ) -> serde_json::Value {
         json!({
             "type": "EventHandler",
-            "child": self.child.debug(ctx),
+            "child": self.child.debug(cx),
         })
     }
 }

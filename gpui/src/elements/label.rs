@@ -109,20 +109,20 @@ impl Element for Label {
     fn layout(
         &mut self,
         constraint: SizeConstraint,
-        ctx: &mut LayoutContext,
+        cx: &mut LayoutContext,
     ) -> (Vector2F, Self::LayoutState) {
-        let font_id = ctx
+        let font_id = cx
             .font_cache
             .select_font(self.family_id, &self.font_properties)
             .unwrap();
-        let runs = self.compute_runs(&ctx.font_cache, font_id);
+        let runs = self.compute_runs(&cx.font_cache, font_id);
         let line =
-            ctx.text_layout_cache
+            cx.text_layout_cache
                 .layout_str(self.text.as_str(), self.font_size, runs.as_slice());
 
         let size = vec2f(
             line.width().max(constraint.min.x()).min(constraint.max.x()),
-            ctx.font_cache.line_height(font_id, self.font_size).ceil(),
+            cx.font_cache.line_height(font_id, self.font_size).ceil(),
         );
 
         (size, line)
@@ -135,12 +135,12 @@ impl Element for Label {
         &mut self,
         bounds: RectF,
         line: &mut Self::LayoutState,
-        ctx: &mut PaintContext,
+        cx: &mut PaintContext,
     ) -> Self::PaintState {
         line.paint(
             bounds.origin(),
             RectF::new(vec2f(0., 0.), bounds.size()),
-            ctx,
+            cx,
         )
     }
 
@@ -160,12 +160,12 @@ impl Element for Label {
         bounds: RectF,
         _: &Self::LayoutState,
         _: &Self::PaintState,
-        ctx: &DebugContext,
+        cx: &DebugContext,
     ) -> Value {
         json!({
             "type": "Label",
             "bounds": bounds.to_json(),
-            "font_family": ctx.font_cache.family_name(self.family_id).unwrap(),
+            "font_family": cx.font_cache.family_name(self.family_id).unwrap(),
             "font_size": self.font_size,
             "font_properties": self.font_properties.to_json(),
             "text": &self.text,
@@ -191,13 +191,13 @@ mod tests {
     use super::*;
 
     #[crate::test(self)]
-    fn test_layout_label_with_highlights(app: &mut crate::MutableAppContext) {
-        let menlo = app.font_cache().load_family(&["Menlo"]).unwrap();
-        let menlo_regular = app
+    fn test_layout_label_with_highlights(cx: &mut crate::MutableAppContext) {
+        let menlo = cx.font_cache().load_family(&["Menlo"]).unwrap();
+        let menlo_regular = cx
             .font_cache()
             .select_font(menlo, &Properties::new())
             .unwrap();
-        let menlo_bold = app
+        let menlo_bold = cx
             .font_cache()
             .select_font(menlo, Properties::new().weight(Weight::BOLD))
             .unwrap();
@@ -216,7 +216,7 @@ mod tests {
             ],
         );
 
-        let runs = label.compute_runs(app.font_cache().as_ref(), menlo_regular);
+        let runs = label.compute_runs(cx.font_cache().as_ref(), menlo_regular);
         assert_eq!(
             runs.as_slice(),
             &[

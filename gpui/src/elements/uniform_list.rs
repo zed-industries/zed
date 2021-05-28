@@ -72,7 +72,7 @@ where
         delta: Vector2F,
         precise: bool,
         scroll_max: f32,
-        ctx: &mut EventContext,
+        cx: &mut EventContext,
     ) -> bool {
         if !precise {
             todo!("still need to handle non-precise scroll events from a mouse wheel");
@@ -80,7 +80,7 @@ where
 
         let mut state = self.state.0.lock();
         state.scroll_top = (state.scroll_top - delta.y()).max(0.0).min(scroll_max);
-        ctx.dispatch_action("uniform_list:scroll", state.scroll_top);
+        cx.dispatch_action("uniform_list:scroll", state.scroll_top);
 
         true
     }
@@ -119,7 +119,7 @@ where
     fn layout(
         &mut self,
         constraint: SizeConstraint,
-        ctx: &mut LayoutContext,
+        cx: &mut LayoutContext,
     ) -> (Vector2F, Self::LayoutState) {
         if constraint.max.y().is_infinite() {
             unimplemented!(
@@ -133,9 +133,9 @@ where
         let mut scroll_max = 0.;
 
         let mut items = Vec::new();
-        (self.append_items)(0..1, &mut items, ctx.app);
+        (self.append_items)(0..1, &mut items, cx.app);
         if let Some(first_item) = items.first_mut() {
-            let mut item_size = first_item.layout(item_constraint, ctx);
+            let mut item_size = first_item.layout(item_constraint, cx);
             item_size.set_x(size.x());
             item_constraint.min = item_size;
             item_constraint.max = item_size;
@@ -155,9 +155,9 @@ where
                 self.item_count,
                 start + (size.y() / item_height).ceil() as usize + 1,
             );
-            (self.append_items)(start..end, &mut items, ctx.app);
+            (self.append_items)(start..end, &mut items, cx.app);
             for item in &mut items {
-                item.layout(item_constraint, ctx);
+                item.layout(item_constraint, cx);
             }
         }
 
@@ -175,10 +175,10 @@ where
         &mut self,
         _: Vector2F,
         layout: &mut Self::LayoutState,
-        ctx: &mut AfterLayoutContext,
+        cx: &mut AfterLayoutContext,
     ) {
         for item in &mut layout.items {
-            item.after_layout(ctx);
+            item.after_layout(cx);
         }
     }
 
@@ -186,19 +186,19 @@ where
         &mut self,
         bounds: RectF,
         layout: &mut Self::LayoutState,
-        ctx: &mut PaintContext,
+        cx: &mut PaintContext,
     ) -> Self::PaintState {
-        ctx.scene.push_layer(Some(bounds));
+        cx.scene.push_layer(Some(bounds));
 
         let mut item_origin =
             bounds.origin() - vec2f(0.0, self.state.scroll_top() % layout.item_height);
 
         for item in &mut layout.items {
-            item.paint(item_origin, ctx);
+            item.paint(item_origin, cx);
             item_origin += vec2f(0.0, layout.item_height);
         }
 
-        ctx.scene.pop_layer();
+        cx.scene.pop_layer();
     }
 
     fn dispatch_event(
@@ -207,11 +207,11 @@ where
         bounds: RectF,
         layout: &mut Self::LayoutState,
         _: &mut Self::PaintState,
-        ctx: &mut EventContext,
+        cx: &mut EventContext,
     ) -> bool {
         let mut handled = false;
         for item in &mut layout.items {
-            handled = item.dispatch_event(event, ctx) || handled;
+            handled = item.dispatch_event(event, cx) || handled;
         }
 
         match event {
@@ -221,7 +221,7 @@ where
                 precise,
             } => {
                 if bounds.contains_point(*position) {
-                    if self.scroll(*position, *delta, *precise, layout.scroll_max, ctx) {
+                    if self.scroll(*position, *delta, *precise, layout.scroll_max, cx) {
                         handled = true;
                     }
                 }
@@ -237,14 +237,14 @@ where
         bounds: RectF,
         layout: &Self::LayoutState,
         _: &Self::PaintState,
-        ctx: &crate::DebugContext,
+        cx: &crate::DebugContext,
     ) -> json::Value {
         json!({
             "type": "UniformList",
             "bounds": bounds.to_json(),
             "scroll_max": layout.scroll_max,
             "item_height": layout.item_height,
-            "items": layout.items.iter().map(|item| item.debug(ctx)).collect::<Vec<json::Value>>()
+            "items": layout.items.iter().map(|item| item.debug(cx)).collect::<Vec<json::Value>>()
 
         })
     }

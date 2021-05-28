@@ -37,11 +37,11 @@ impl Element for Align {
     fn layout(
         &mut self,
         mut constraint: SizeConstraint,
-        ctx: &mut LayoutContext,
+        cx: &mut LayoutContext,
     ) -> (Vector2F, Self::LayoutState) {
         let mut size = constraint.max;
         constraint.min = Vector2F::zero();
-        let child_size = self.child.layout(constraint, ctx);
+        let child_size = self.child.layout(constraint, cx);
         if size.x().is_infinite() {
             size.set_x(child_size.x());
         }
@@ -55,16 +55,16 @@ impl Element for Align {
         &mut self,
         _: Vector2F,
         _: &mut Self::LayoutState,
-        ctx: &mut AfterLayoutContext,
+        cx: &mut AfterLayoutContext,
     ) {
-        self.child.after_layout(ctx);
+        self.child.after_layout(cx);
     }
 
     fn paint(
         &mut self,
         bounds: pathfinder_geometry::rect::RectF,
         _: &mut Self::LayoutState,
-        ctx: &mut PaintContext,
+        cx: &mut PaintContext,
     ) -> Self::PaintState {
         let my_center = bounds.size() / 2.;
         let my_target = my_center + my_center * self.alignment;
@@ -73,7 +73,7 @@ impl Element for Align {
         let child_target = child_center + child_center * self.alignment;
 
         self.child
-            .paint(bounds.origin() - (child_target - my_target), ctx);
+            .paint(bounds.origin() - (child_target - my_target), cx);
     }
 
     fn dispatch_event(
@@ -82,9 +82,9 @@ impl Element for Align {
         _: pathfinder_geometry::rect::RectF,
         _: &mut Self::LayoutState,
         _: &mut Self::PaintState,
-        ctx: &mut EventContext,
+        cx: &mut EventContext,
     ) -> bool {
-        self.child.dispatch_event(event, ctx)
+        self.child.dispatch_event(event, cx)
     }
 
     fn debug(
@@ -92,13 +92,13 @@ impl Element for Align {
         bounds: pathfinder_geometry::rect::RectF,
         _: &Self::LayoutState,
         _: &Self::PaintState,
-        ctx: &DebugContext,
+        cx: &DebugContext,
     ) -> json::Value {
         json!({
             "type": "Align",
             "bounds": bounds.to_json(),
             "alignment": self.alignment.to_json(),
-            "child": self.child.debug(ctx),
+            "child": self.child.debug(cx),
         })
     }
 }

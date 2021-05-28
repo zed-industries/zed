@@ -31,11 +31,11 @@ impl Presenter {
         font_cache: Arc<FontCache>,
         text_layout_cache: TextLayoutCache,
         asset_cache: Arc<AssetCache>,
-        app: &MutableAppContext,
+        cx: &MutableAppContext,
     ) -> Self {
         Self {
             window_id,
-            rendered_views: app.render_views(window_id),
+            rendered_views: cx.render_views(window_id),
             parents: HashMap::new(),
             font_cache,
             text_layout_cache,
@@ -55,7 +55,7 @@ impl Presenter {
         path
     }
 
-    pub fn invalidate(&mut self, mut invalidation: WindowInvalidation, app: &AppContext) {
+    pub fn invalidate(&mut self, mut invalidation: WindowInvalidation, cx: &AppContext) {
         for view_id in invalidation.removed {
             invalidation.updated.remove(&view_id);
             self.rendered_views.remove(&view_id);
@@ -63,7 +63,7 @@ impl Presenter {
         }
         for view_id in invalidation.updated {
             self.rendered_views
-                .insert(view_id, app.render_view(self.window_id, view_id).unwrap());
+                .insert(view_id, cx.render_view(self.window_id, view_id).unwrap());
         }
     }
 
@@ -71,25 +71,25 @@ impl Presenter {
         &mut self,
         window_size: Vector2F,
         scale_factor: f32,
-        app: &mut MutableAppContext,
+        cx: &mut MutableAppContext,
     ) -> Scene {
         let mut scene = Scene::new(scale_factor);
 
-        if let Some(root_view_id) = app.root_view_id(self.window_id) {
-            self.layout(window_size, app.as_ref());
-            self.after_layout(app);
-            let mut ctx = PaintContext {
+        if let Some(root_view_id) = cx.root_view_id(self.window_id) {
+            self.layout(window_size, cx.as_ref());
+            self.after_layout(cx);
+            let mut paint_cx = PaintContext {
                 scene: &mut scene,
                 font_cache: &self.font_cache,
                 text_layout_cache: &self.text_layout_cache,
                 rendered_views: &mut self.rendered_views,
-                app: app.as_ref(),
+                app: cx.as_ref(),
             };
-            ctx.paint(root_view_id, Vector2F::zero());
+            paint_cx.paint(root_view_id, Vector2F::zero());
             self.text_layout_cache.finish_frame();
 
             if let Some(event) = self.last_mouse_moved_event.clone() {
-                self.dispatch_event(event, app)
+                self.dispatch_event(event, cx)
             }
         } else {
             log::error!("could not find root_view_id for window {}", self.window_id);
@@ -98,8 +98,8 @@ impl Presenter {
         scene
     }
 
-    fn layout(&mut self, size: Vector2F, app: &AppContext) {
-        if let Some(root_view_id) = app.root_view_id(self.window_id) {
+    fn layout(&mut self, size: Vector2F, cx: &AppContext) {
+        if let Some(root_view_id) = cx.root_view_id(self.window_id) {
             let mut layout_ctx = LayoutContext {
                 rendered_views: &mut self.rendered_views,
                 parents: &mut self.parents,
@@ -107,49 +107,49 @@ impl Presenter {
                 text_layout_cache: &self.text_layout_cache,
                 asset_cache: &self.asset_cache,
                 view_stack: Vec::new(),
-                app,
+                app: cx,
             };
             layout_ctx.layout(root_view_id, SizeConstraint::strict(size));
         }
     }
 
-    fn after_layout(&mut self, app: &mut MutableAppContext) {
-        if let Some(root_view_id) = app.root_view_id(self.window_id) {
-            let mut ctx = AfterLayoutContext {
+    fn after_layout(&mut self, cx: &mut MutableAppContext) {
+        if let Some(root_view_id) = cx.root_view_id(self.window_id) {
+            let mut layout_cx = AfterLayoutContext {
                 rendered_views: &mut self.rendered_views,
                 font_cache: &self.font_cache,
                 text_layout_cache: &self.text_layout_cache,
-                app,
+                app: cx,
             };
-            ctx.after_layout(root_view_id);
+            layout_cx.after_layout(root_view_id);
         }
     }
 
-    pub fn dispatch_event(&mut self, event: Event, app: &mut MutableAppContext) {
-        if let Some(root_view_id) = app.root_view_id(self.window_id) {
+    pub fn dispatch_event(&mut self, event: Event, cx: &mut MutableAppContext) {
+        if let Some(root_view_id) = cx.root_view_id(self.window_id) {
             if matches!(event, Event::MouseMoved { .. }) {
                 self.last_mouse_moved_event = Some(event.clone());
             }
 
-            let mut ctx = EventContext {
+            let mut event_cx = EventContext {
                 rendered_views: &mut self.rendered_views,
                 actions: Default::default(),
                 font_cache: &self.font_cache,
                 text_layout_cache: &self.text_layout_cache,
                 view_stack: Default::default(),
                 invalidated_views: Default::default(),
-                app: app.as_ref(),
+                app: cx.as_ref(),
             };
-            ctx.dispatch_event(root_view_id, &event);
+            event_cx.dispatch_event(root_view_id, &event);
 
-            let invalidated_views = ctx.invalidated_views;
-            let actions = ctx.actions;
+            let invalidated_views = event_cx.invalidated_views;
+            let actions = event_cx.actions;
 
             for view_id in invalidated_views {
-                app.notify_view(self.window_id, view_id);
+                cx.notify_view(self.window_id, view_id);
             }
             for action in actions {
-                app.dispatch_action_any(
+                cx.dispatch_action_any(
                     self.window_id,
                     &action.path,
                     action.name,
@@ -159,14 +159,14 @@ impl Presenter {
         }
     }
 
-    pub fn debug_elements(&self, ctx: &AppContext) -> Option<json::Value> {
-        ctx.root_view_id(self.window_id)
+    pub fn debug_elements(&self, cx: &AppContext) -> Option<json::Value> {
+        cx.root_view_id(self.window_id)
             .and_then(|root_view_id| self.rendered_views.get(&root_view_id))
             .map(|root_element| {
                 root_element.debug(&DebugContext {
                     rendered_views: &self.rendered_views,
                     font_cache: &self.font_cache,
-                    app: ctx,
+                    app: cx,
                 })
             })
     }
@@ -380,9 +380,9 @@ impl Element for ChildView {
     fn layout(
         &mut self,
         constraint: SizeConstraint,
-        ctx: &mut LayoutContext,
+        cx: &mut LayoutContext,
     ) -> (Vector2F, Self::LayoutState) {
-        let size = ctx.layout(self.view_id, constraint);
+        let size = cx.layout(self.view_id, constraint);
         (size, ())
     }
 
@@ -390,18 +390,18 @@ impl Element for ChildView {
         &mut self,
         _: Vector2F,
         _: &mut Self::LayoutState,
-        ctx: &mut AfterLayoutContext,
+        cx: &mut AfterLayoutContext,
     ) {
-        ctx.after_layout(self.view_id);
+        cx.after_layout(self.view_id);
     }
 
     fn paint(
         &mut self,
         bounds: pathfinder_geometry::rect::RectF,
         _: &mut Self::LayoutState,
-        ctx: &mut PaintContext,
+        cx: &mut PaintContext,
     ) -> Self::PaintState {
-        ctx.paint(self.view_id, bounds.origin());
+        cx.paint(self.view_id, bounds.origin());
     }
 
     fn dispatch_event(
@@ -410,9 +410,9 @@ impl Element for ChildView {
         _: pathfinder_geometry::rect::RectF,
         _: &mut Self::LayoutState,
         _: &mut Self::PaintState,
-        ctx: &mut EventContext,
+        cx: &mut EventContext,
     ) -> bool {
-        ctx.dispatch_event(self.view_id, event)
+        cx.dispatch_event(self.view_id, event)
     }
 
     fn debug(
@@ -420,14 +420,14 @@ impl Element for ChildView {
         bounds: pathfinder_geometry::rect::RectF,
         _: &Self::LayoutState,
         _: &Self::PaintState,
-        ctx: &DebugContext,
+        cx: &DebugContext,
     ) -> serde_json::Value {
         json!({
             "type": "ChildView",
             "view_id": self.view_id,
             "bounds": bounds.to_json(),
-            "child": if let Some(view) = ctx.rendered_views.get(&self.view_id) {
-                view.debug(ctx)
+            "child": if let Some(view) = cx.rendered_views.get(&self.view_id) {
+                view.debug(cx)
             } else {
                 json!(null)
             }
@@ -441,9 +441,9 @@ mod tests {
     // fn test_responder_chain() {
     //     let settings = settings_rx(None);
     //     let mut app = App::new().unwrap();
-    //     let workspace = app.add_model(|ctx| Workspace::new(Vec::new(), ctx));
+    //     let workspace = app.add_model(|cx| Workspace::new(Vec::new(), cx));
     //     let (window_id, workspace_view) =
-    //         app.add_window(|ctx| WorkspaceView::new(workspace.clone(), settings, ctx));
+    //         app.add_window(|cx| WorkspaceView::new(workspace.clone(), settings, cx));
 
     //     let invalidations = Rc::new(RefCell::new(Vec::new()));
     //     let invalidations_ = invalidations.clone();
@@ -451,8 +451,8 @@ mod tests {
     //         invalidations_.borrow_mut().push(invalidation)
     //     });
 
-    //     let active_pane_id = workspace_view.update(&mut app, |view, ctx| {
-    //         ctx.focus(view.active_pane());
+    //     let active_pane_id = workspace_view.update(&mut app, |view, cx| {
+    //         cx.focus(view.active_pane());
     //         view.active_pane().id()
     //     });
 
@@ -468,7 +468,7 @@ mod tests {
     //         }
 
     //         assert_eq!(
-    //             presenter.responder_chain(app.ctx()).unwrap(),
+    //             presenter.responder_chain(app.cx()).unwrap(),
     //             vec![workspace_view.id(), active_pane_id]
     //         );
     //     });

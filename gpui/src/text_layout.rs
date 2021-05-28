@@ -200,7 +200,7 @@ impl Line {
         }
     }
 
-    pub fn paint(&self, origin: Vector2F, visible_bounds: RectF, ctx: &mut PaintContext) {
+    pub fn paint(&self, origin: Vector2F, visible_bounds: RectF, cx: &mut PaintContext) {
         let padding_top = (visible_bounds.height() - self.layout.ascent - self.layout.descent) / 2.;
         let baseline_origin = vec2f(0., padding_top + self.layout.ascent);
 
@@ -209,7 +209,7 @@ impl Line {
         let mut color = ColorU::black();
 
         for run in &self.layout.runs {
-            let max_glyph_width = ctx
+            let max_glyph_width = cx
                 .font_cache
                 .bounding_box(run.font_id, self.layout.font_size)
                 .x();
@@ -234,7 +234,7 @@ impl Line {
                     }
                 }
 
-                ctx.scene.push_glyph(scene::Glyph {
+                cx.scene.push_glyph(scene::Glyph {
                     font_id: run.font_id,
                     font_size: self.layout.font_size,
                     id: glyph.id,

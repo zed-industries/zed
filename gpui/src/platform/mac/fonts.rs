@@ -145,7 +145,7 @@ impl FontSystemState {
             // Make room for subpixel variants.
             let bounds = RectI::new(bounds.origin(), bounds.size() + vec2i(1, 1));
             let mut pixels = vec![0; bounds.width() as usize * bounds.height() as usize];
-            let ctx = CGContext::create_bitmap_context(
+            let cx = CGContext::create_bitmap_context(
                 Some(pixels.as_mut_ptr() as *mut _),
                 bounds.width() as usize,
                 bounds.height() as usize,
@@ -157,9 +157,9 @@ impl FontSystemState {
 
             // Move the origin to bottom left and account for scaling, this
             // makes drawing text consistent with the font-kit's raster_bounds.
-            ctx.translate(0.0, bounds.height() as CGFloat);
+            cx.translate(0.0, bounds.height() as CGFloat);
             let transform = scale.translate(-bounds.origin().to_f32());
-            ctx.set_text_matrix(&CGAffineTransform {
+            cx.set_text_matrix(&CGAffineTransform {
                 a: transform.matrix.m11() as CGFloat,
                 b: -transform.matrix.m21() as CGFloat,
                 c: -transform.matrix.m12() as CGFloat,
@@ -168,9 +168,9 @@ impl FontSystemState {
                 ty: -transform.vector.y() as CGFloat,
             });
 
-            ctx.set_font(&font.native_font().copy_to_CGFont());
-            ctx.set_font_size(font_size as CGFloat);
-            ctx.show_glyphs_at_positions(
+            cx.set_font(&font.native_font().copy_to_CGFont());
+            cx.set_font_size(font_size as CGFloat);
+            cx.show_glyphs_at_positions(
                 &[glyph_id as CGGlyph],
                 &[CGPoint::new(
                     (subpixel_shift.x() / scale_factor) as CGFloat,
