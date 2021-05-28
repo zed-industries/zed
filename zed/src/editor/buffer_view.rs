@@ -178,7 +178,7 @@ pub fn init(app: &mut MutableAppContext) {
         ),
         Binding::new(
             "ctrl-m",
-            "buffer:jump_to_enclosing_bracket",
+            "buffer:move_to_enclosing_bracket",
             Some("BufferView"),
         ),
         Binding::new("pageup", "buffer:page_up", Some("BufferView")),
@@ -724,7 +724,7 @@ impl BufferView {
         {
             let buffer = self.buffer.read(ctx);
             for selection in &mut selections {
-                let range = selection.range(buffer);
+                let range = selection.point_range(buffer);
                 if range.start == range.end {
                     let head = selection
                         .head()
@@ -751,7 +751,7 @@ impl BufferView {
         {
             let buffer = self.buffer.read(ctx);
             for selection in &mut selections {
-                let range = selection.range(buffer);
+                let range = selection.point_range(buffer);
                 if range.start == range.end {
                     let head = selection
                         .head()
@@ -930,7 +930,7 @@ impl BufferView {
         let mut contiguous_selections = Vec::new();
         while let Some(selection) = selections.next() {
             // Accumulate contiguous regions of rows that we want to move.
-            contiguous_selections.push(selection.range(buffer));
+            contiguous_selections.push(selection.point_range(buffer));
             let (mut buffer_rows, mut display_rows) =
                 selection.buffer_rows_for_display_rows(false, &self.display_map, app);
             while let Some(next_selection) = selections.peek() {
@@ -939,7 +939,7 @@ impl BufferView {
                 if next_buffer_rows.start <= buffer_rows.end {
                     buffer_rows.end = next_buffer_rows.end;
                     display_rows.end = next_display_rows.end;
-                    contiguous_selections.push(next_selection.range(buffer));
+                    contiguous_selections.push(next_selection.point_range(buffer));
                     selections.next().unwrap();
                 } else {
                     break;
@@ -1014,7 +1014,7 @@ impl BufferView {
         let mut contiguous_selections = Vec::new();
         while let Some(selection) = selections.next() {
             // Accumulate contiguous regions of rows that we want to move.
-            contiguous_selections.push(selection.range(buffer));
+            contiguous_selections.push(selection.point_range(buffer));
             let (mut buffer_rows, mut display_rows) =
                 selection.buffer_rows_for_display_rows(false, &self.display_map, app);
             while let Some(next_selection) = selections.peek() {
@@ -1023,7 +1023,7 @@ impl BufferView {
                 if next_buffer_rows.start <= buffer_rows.end {
                     buffer_rows.end = next_buffer_rows.end;
                     display_rows.end = next_display_rows.end;
-                    contiguous_selections.push(next_selection.range(buffer));
+                    contiguous_selections.push(next_selection.point_range(buffer));
                     selections.next().unwrap();
                 } else {
                     break;
@@ -1647,7 +1647,7 @@ impl BufferView {
         let mut to_unfold = Vec::new();
         let mut new_selections = Vec::new();
         for selection in self.selections(app) {
-            let range = selection.range(buffer).sorted();
+            let range = selection.point_range(buffer).sorted();
             if range.start.row != range.end.row {
                 new_selections.push(Selection {
                     id: post_inc(&mut self.next_selection_id),
@@ -1826,13 +1826,23 @@ impl BufferView {
     }
 
     pub fn move_to_enclosing_bracket(&mut self, _: &(), ctx: &mut ViewContext<Self>) {
-        use super::RangeExt as _;
-
         let buffer = self.buffer.read(ctx.as_ref());
         let mut selections = self.selections(ctx.as_ref()).to_vec();
         for selection in &mut selections {
-            let range = selection.range(buffer).sorted();
-            if let Some((open_range, close_range)) = buffer.enclosing_bracket_ranges(range) {}
+            let selection_range = selection.offset_range(buffer);
+            if let Some((open_range, close_range)) =
+                buffer.enclosing_bracket_ranges(selection_range.clone())
+            {
+                let destination = if close_range.contains(&selection_range.start)
+                    && close_range.contains(&selection_range.end)
+                {
+                    open_range.end
+                } else {
+                    close_range.start
+                };
+                selection.start = buffer.anchor_before(destination);
+                selection.end = selection.start.clone();
+            }
         }
 
         self.update_selections(selections, true, ctx);
@@ -2080,7 +2090,7 @@ impl BufferView {
         let ranges = self
             .selections(ctx.as_ref())
             .iter()
-            .map(|s| s.range(buffer).sorted())
+            .map(|s| s.point_range(buffer).sorted())
             .collect();
         self.fold_ranges(ranges, ctx);
     }
