@@ -1,7 +1,7 @@
 pub mod pane;
 pub mod pane_group;
 use crate::{
-    editor::{Buffer, BufferView},
+    editor::{Buffer, Editor},
     language::LanguageRegistry,
     settings::Settings,
     time::ReplicaId,
@@ -452,7 +452,7 @@ impl Workspace {
     pub fn open_new_file(&mut self, _: &(), ctx: &mut ViewContext<Self>) {
         let buffer = ctx.add_model(|ctx| Buffer::new(self.replica_id, "", ctx));
         let buffer_view =
-            ctx.add_view(|ctx| BufferView::for_buffer(buffer.clone(), self.settings.clone(), ctx));
+            ctx.add_view(|ctx| Editor::for_buffer(buffer.clone(), self.settings.clone(), ctx));
         self.items.push(ItemHandle::downgrade(&buffer));
         self.add_item_view(Box::new(buffer_view), ctx);
     }
@@ -776,7 +776,7 @@ impl WorkspaceHandle for ViewHandle<Workspace> {
 mod tests {
     use super::*;
     use crate::{
-        editor::BufferView,
+        editor::Editor,
         test::{build_app_state, temp_tree},
     };
     use serde_json::json;
@@ -1049,7 +1049,7 @@ mod tests {
         let editor = app.read(|ctx| {
             let pane = workspace.read(ctx).active_pane().read(ctx);
             let item = pane.active_item().unwrap();
-            item.to_any().downcast::<BufferView>().unwrap()
+            item.to_any().downcast::<Editor>().unwrap()
         });
 
         app.update(|ctx| editor.update(ctx, |editor, ctx| editor.insert(&"x".to_string(), ctx)));
@@ -1095,7 +1095,7 @@ mod tests {
                 .active_item(ctx)
                 .unwrap()
                 .to_any()
-                .downcast::<BufferView>()
+                .downcast::<Editor>()
                 .unwrap()
         });
         editor.update(&mut app, |editor, ctx| {
@@ -1155,7 +1155,7 @@ mod tests {
                 .active_item(ctx)
                 .unwrap()
                 .to_any()
-                .downcast::<BufferView>()
+                .downcast::<Editor>()
                 .unwrap()
         });
         app.read(|ctx| {

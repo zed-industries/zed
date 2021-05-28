@@ -1,5 +1,5 @@
 use crate::{
-    editor::{buffer_view, BufferView},
+    editor::{self, Editor},
     settings::Settings,
     util,
     workspace::Workspace,
@@ -28,7 +28,7 @@ pub struct FileFinder {
     handle: WeakViewHandle<Self>,
     settings: watch::Receiver<Settings>,
     workspace: WeakViewHandle<Workspace>,
-    query_buffer: ViewHandle<BufferView>,
+    query_buffer: ViewHandle<Editor>,
     search_count: usize,
     latest_search_id: usize,
     latest_search_did_cancel: bool,
@@ -290,8 +290,8 @@ impl FileFinder {
     ) -> Self {
         ctx.observe_view(&workspace, Self::workspace_updated);
 
-        let query_buffer = ctx.add_view(|ctx| BufferView::single_line(settings.clone(), ctx));
-        ctx.subscribe_to_view(&query_buffer, Self::on_query_buffer_event);
+        let query_buffer = ctx.add_view(|ctx| Editor::single_line(settings.clone(), ctx));
+        ctx.subscribe_to_view(&query_buffer, Self::on_query_editor_event);
 
         Self {
             handle: ctx.handle().downgrade(),
@@ -315,15 +315,14 @@ impl FileFinder {
         }
     }
 
-    fn on_query_buffer_event(
+    fn on_query_editor_event(
         &mut self,
-        _: ViewHandle<BufferView>,
-        event: &buffer_view::Event,
+        _: ViewHandle<Editor>,
+        event: &editor::Event,
         ctx: &mut ViewContext<Self>,
     ) {
-        use buffer_view::Event::*;
         match event {
-            Edited => {
+            editor::Event::Edited => {
                 let query = self.query_buffer.read(ctx).text(ctx.as_ref());
                 if query.is_empty() {
                     self.latest_search_id = util::post_inc(&mut self.search_count);
@@ -335,7 +334,7 @@ impl FileFinder {
                     }
                 }
             }
-            Blurred => ctx.emit(Event::Dismissed),
+            editor::Event::Blurred => ctx.emit(Event::Dismissed),
             _ => {}
         }
     }

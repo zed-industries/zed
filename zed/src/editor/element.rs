@@ -1,4 +1,4 @@
-use super::{BufferView, DisplayPoint, SelectAction};
+use super::{DisplayPoint, Editor, SelectAction};
 use gpui::{
     color::{ColorF, ColorU},
     geometry::{
@@ -16,16 +16,16 @@ use smallvec::SmallVec;
 use std::cmp::Ordering;
 use std::cmp::{self};
 
-pub struct BufferElement {
-    view: WeakViewHandle<BufferView>,
+pub struct EditorElement {
+    view: WeakViewHandle<Editor>,
 }
 
-impl BufferElement {
-    pub fn new(view: WeakViewHandle<BufferView>) -> Self {
+impl EditorElement {
+    pub fn new(view: WeakViewHandle<Editor>) -> Self {
         Self { view }
     }
 
-    fn view<'a>(&self, ctx: &'a AppContext) -> &'a BufferView {
+    fn view<'a>(&self, ctx: &'a AppContext) -> &'a Editor {
         self.view.upgrade(ctx).unwrap().read(ctx)
     }
 
@@ -302,7 +302,7 @@ impl BufferElement {
     }
 }
 
-impl Element for BufferElement {
+impl Element for EditorElement {
     type LayoutState = Option<LayoutState>;
     type PaintState = Option<PaintState>;
 
@@ -510,7 +510,7 @@ pub struct LayoutState {
 impl LayoutState {
     fn scroll_width(
         &self,
-        view: &BufferView,
+        view: &Editor,
         font_cache: &FontCache,
         layout_cache: &TextLayoutCache,
         app: &AppContext,
@@ -525,7 +525,7 @@ impl LayoutState {
 
     fn scroll_max(
         &self,
-        view: &BufferView,
+        view: &Editor,
         font_cache: &FontCache,
         layout_cache: &TextLayoutCache,
         app: &AppContext,
@@ -547,7 +547,7 @@ pub struct PaintState {
 impl PaintState {
     fn point_for_position(
         &self,
-        view: &BufferView,
+        view: &Editor,
         layout: &LayoutState,
         position: Vector2F,
         font_cache: &FontCache,
