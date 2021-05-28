@@ -176,6 +176,11 @@ pub fn init(app: &mut MutableAppContext) {
             "buffer:select_smaller_syntax_node",
             Some("BufferView"),
         ),
+        Binding::new(
+            "ctrl-m",
+            "buffer:jump_to_enclosing_bracket",
+            Some("BufferView"),
+        ),
         Binding::new("pageup", "buffer:page_up", Some("BufferView")),
         Binding::new("pagedown", "buffer:page_down", Some("BufferView")),
         Binding::new("alt-cmd-[", "buffer:fold", Some("BufferView")),
@@ -287,6 +292,10 @@ pub fn init(app: &mut MutableAppContext) {
     app.add_action(
         "buffer:select_smaller_syntax_node",
         BufferView::select_smaller_syntax_node,
+    );
+    app.add_action(
+        "buffer:move_to_enclosing_bracket",
+        BufferView::move_to_enclosing_bracket,
     );
     app.add_action("buffer:page_up", BufferView::page_up);
     app.add_action("buffer:page_down", BufferView::page_down);
@@ -1814,6 +1823,19 @@ impl BufferView {
             self.update_selections(selections, true, ctx);
         }
         self.select_larger_syntax_node_stack = stack;
+    }
+
+    pub fn move_to_enclosing_bracket(&mut self, _: &(), ctx: &mut ViewContext<Self>) {
+        use super::RangeExt as _;
+
+        let buffer = self.buffer.read(ctx.as_ref());
+        let mut selections = self.selections(ctx.as_ref()).to_vec();
+        for selection in &mut selections {
+            let range = selection.range(buffer).sorted();
+            if let Some((open_range, close_range)) = buffer.enclosing_bracket_ranges(range) {}
+        }
+
+        self.update_selections(selections, true, ctx);
     }
 
     fn build_columnar_selection(
