@@ -99,8 +99,8 @@ impl DerefMut for QueryCursorHandle {
 impl Drop for QueryCursorHandle {
     fn drop(&mut self) {
         let mut cursor = self.0.take().unwrap();
-        cursor.set_byte_range(0, usize::MAX);
-        cursor.set_point_range(Point::zero().into(), Point::MAX.into());
+        cursor.set_byte_range(0..usize::MAX);
+        cursor.set_point_range(Point::zero().into()..Point::MAX.into());
         QUERY_CURSORS.lock().push(cursor)
     }
 }
@@ -734,7 +734,7 @@ impl Buffer {
         // Find bracket pairs that *inclusively* contain the given range.
         let range = range.start.to_offset(self).saturating_sub(1)..range.end.to_offset(self) + 1;
         let mut cursor = QueryCursorHandle::new();
-        let matches = cursor.set_byte_range(range.start, range.end).matches(
+        let matches = cursor.set_byte_range(range).matches(
             &lang.brackets_query,
             tree.root_node(),
             TextProvider(&self.visible_text),
@@ -2142,12 +2142,11 @@ impl Snapshot {
     pub fn highlighted_text_for_range(&mut self, range: Range<usize>) -> HighlightedChunks {
         let chunks = self.text.chunks_in_range(range.clone());
         if let Some((language, tree)) = self.language.as_ref().zip(self.tree.as_ref()) {
-            let mut captures = self.query_cursor.captures(
+            let captures = self.query_cursor.set_byte_range(range.clone()).captures(
                 &language.highlight_query,
                 tree.root_node(),
                 TextProvider(&self.text),
             );
-            captures.set_byte_range(range.start, range.end);
 
             HighlightedChunks {
                 range,
@@ -2360,9 +2359,7 @@ impl<'a> HighlightedChunks<'a> {
                     highlights.next_capture.take();
                 }
             }
-            highlights
-                .captures
-                .set_byte_range(self.range.start, self.range.end);
+            highlights.captures.set_byte_range(self.range.clone());
         }
     }
 
