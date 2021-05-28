@@ -25,7 +25,7 @@ fn main() {
     };
 
     app.run(move |cx| {
-        cx.set_menus(menus::menus(app_state.settings.clone()));
+        cx.set_menus(menus::menus(app_state.clone()));
         workspace::init(cx);
         editor::init(cx);
         file_finder::init(cx);

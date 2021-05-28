@@ -1,9 +1,8 @@
-use crate::settings::Settings;
+use crate::AppState;
 use gpui::{Menu, MenuItem};
-use postage::watch;
 
 #[cfg(target_os = "macos")]
-pub fn menus(settings: watch::Receiver<Settings>) -> Vec<Menu<'static>> {
+pub fn menus(state: AppState) -> Vec<Menu<'static>> {
     vec![
         Menu {
             name: "Zed",
@@ -37,7 +36,7 @@ pub fn menus(settings: watch::Receiver<Settings>) -> Vec<Menu<'static>> {
                     name: "Open…",
                     keystroke: Some("cmd-o"),
                     action: "workspace:open",
-                    arg: Some(Box::new(settings)),
+                    arg: Some(Box::new(state)),
                 },
             ],
         },
