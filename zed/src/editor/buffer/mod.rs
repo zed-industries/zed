@@ -654,7 +654,6 @@ impl Buffer {
     }
 
     fn parse_text(text: &Rope, old_tree: Option<Tree>, language: &Language) -> Tree {
-        let t0 = std::time::Instant::now();
         PARSER.with(|parser| {
             let mut parser = parser.borrow_mut();
             parser
@@ -670,110 +669,8 @@ impl Buffer {
                     old_tree.as_ref(),
                 )
                 .unwrap();
-            eprintln!("parsed in {:?}", t0.elapsed());
             tree
         })
-    }
-
-    fn indent_for_row(&self, row: u32) -> (usize, bool) {
-        let mut is_whitespace = true;
-        let mut indent = 0;
-        for c in self.chars_at(Point::new(row, 0)) {
-            match c {
-                ' ' => indent += 1,
-                '\n' => break,
-                _ => {
-                    is_whitespace = false;
-                    break;
-                }
-            }
-        }
-        (indent, is_whitespace)
-    }
-
-    pub fn autoindent_for_row(&self, row: u32) -> usize {
-        // Find the indentation level of the previous non-whitespace row.
-        let mut prev_row = row;
-        let prev_indent = loop {
-            if prev_row == 0 {
-                break 0;
-            }
-            prev_row -= 1;
-            let (indent, is_whitespace) = self.indent_for_row(prev_row);
-            if !is_whitespace {
-                break indent;
-            }
-        };
-
-        let (language, syntax_tree) = match self.language.as_ref().zip(self.syntax_tree()) {
-            Some(e) => e,
-            None => return prev_indent,
-        };
-
-        // Find the capture indices in the language's indent query.
-        let mut indent_inside_capture_ix = u32::MAX;
-        let mut indent_after_capture_ix = u32::MAX;
-        let mut indent_until_capture_ix = u32::MAX;
-        for (ix, name) in language.indent_query.capture_names().iter().enumerate() {
-            *match name.as_ref() {
-                "inside" => &mut indent_inside_capture_ix,
-                "after" => &mut indent_after_capture_ix,
-                "until" => &mut indent_until_capture_ix,
-                _ => continue,
-            } = ix as u32;
-        }
-
-        eprintln!("autoindent for row: {}", row);
-
-        // Find all of the indentation nodes intersecting the previous and current row.
-        let mut does_start_indent = false;
-        let mut start_row_of_most_recent_ending_indent = None;
-        let mut cursor = acquire_query_cursor();
-        cursor.set_point_range(
-            Point::new(prev_row, 0).into(),
-            Point::new(row + 1, 0).into(),
-        );
-        for mat in cursor.matches(
-            &language.indent_query,
-            syntax_tree.root_node(),
-            TextProvider(&self.visible_text),
-        ) {
-            let mut row_range = 0..self.row_count();
-            eprintln!("  match: {:?}", mat);
-
-            for capture in mat.captures {
-                let node_start_row = capture.node.start_position().row as u32;
-                let node_end_row = capture.node.end_position().row as u32;
-                if capture.index == indent_inside_capture_ix {
-                    row_range.start = row_range.start.max(node_start_row + 1);
-                    row_range.end = row_range.end.min(node_end_row + 1);
-                } else if capture.index == indent_after_capture_ix {
-                    row_range.start = row_range.start.max(node_end_row + 1);
-                } else if capture.index == indent_until_capture_ix {
-                    row_range.end = row_range.end.min(node_start_row);
-                }
-            }
-
-            eprintln!("  row_range: {:?}", row_range);
-
-            if row_range.contains(&row) {
-                does_start_indent = true;
-            } else if !row_range.is_empty() && row_range.end == row {
-                start_row_of_most_recent_ending_indent = Some(
-                    start_row_of_most_recent_ending_indent
-                        .unwrap_or(0)
-                        .max(row_range.start),
-                );
-            }
-        }
-
-        if does_start_indent {
-            prev_indent + language.config.indent
-        } else if let Some(start_row) = start_row_of_most_recent_ending_indent {
-            self.indent_for_row(start_row).0
-        } else {
-            prev_indent
-        }
     }
 
     fn diff(&self, new_text: Arc<str>, ctx: &AppContext) -> Task<Diff> {
@@ -2745,7 +2642,6 @@ impl ToPoint for usize {
 mod tests {
     use super::*;
     use crate::{
-        language::LanguageConfig,
         test::{build_app_state, temp_tree},
         util::RandomCharIter,
         worktree::{Worktree, WorktreeHandle},
@@ -2760,7 +2656,6 @@ mod tests {
         rc::Rc,
         sync::atomic::{self, AtomicUsize},
     };
-    use unindent::Unindent as _;
 
     #[gpui::test]
     fn test_edit(ctx: &mut gpui::MutableAppContext) {
@@ -3743,86 +3638,6 @@ mod tests {
             buffer.read_with(ctx, |buffer, _| {
                 buffer.syntax_tree().unwrap().root_node().to_sexp()
             })
-        }
-    }
-
-    #[gpui::test]
-    async fn test_autoindent(mut ctx: gpui::TestAppContext) {
-        let grammar = tree_sitter_rust::language();
-        let lang = Arc::new(Language {
-            config: LanguageConfig {
-                indent: 4,
-                ..Default::default()
-            },
-            grammar: grammar.clone(),
-            highlight_query: tree_sitter::Query::new(grammar, "").unwrap(),
-            indent_query: tree_sitter::Query::new(
-                grammar,
-                r#"
-                    (field_expression) @inside
-                    (let_declaration) @inside
-                    ((_ . "where" @after) _ @until)
-                    (_ "{" @after "}" @until)
-                    (_ "(" @after ")" @until)
-                "#,
-            )
-            .unwrap(),
-            theme_mapping: Default::default(),
-        });
-
-        let examples = vec![
-            "
-            fn a() {
-                b(
-                    c,
-                    d
-                )
-                e(|f| {
-                    g();
-                    h(|| {
-                        i();
-                    })
-                    j();
-                });
-                k();
-            }
-            "
-            .unindent(),
-            "
-            fn a<B, C>(
-                d: e
-            ) -> D
-            where
-                B: E,
-                C: F
-            {
-                a
-                    .b
-                    .c
-                    .d
-            }
-            "
-            .unindent(),
-        ];
-
-        for (example_ix, text) in examples.into_iter().enumerate() {
-            let buffer = ctx.add_model(|ctx| {
-                Buffer::from_history(0, History::new(text.into()), None, Some(lang.clone()), ctx)
-            });
-            buffer.condition(&ctx, |buf, _| !buf.is_parsing()).await;
-
-            buffer.read_with(&ctx, |buffer, _| {
-                for row in 0..buffer.row_count() {
-                    assert_eq!(
-                        buffer.autoindent_for_row(row),
-                        buffer.indent_for_row(row).0,
-                        "wrong autoindent for example {}, row {}, line {:?}",
-                        example_ix,
-                        row,
-                        buffer.text().split('\n').skip(row as usize).next().unwrap(),
-                    );
-                }
-            });
         }
     }
 

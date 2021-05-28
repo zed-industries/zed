@@ -13,7 +13,6 @@ pub struct LanguageDir;
 #[derive(Default, Deserialize)]
 pub struct LanguageConfig {
     pub name: String,
-    pub indent: usize,
     pub path_suffixes: Vec<String>,
 }
 
@@ -21,7 +20,6 @@ pub struct Language {
     pub config: LanguageConfig,
     pub grammar: Grammar,
     pub highlight_query: Query,
-    pub indent_query: Query,
     pub theme_mapping: Mutex<ThemeMap>,
 }
 
@@ -47,7 +45,6 @@ impl LanguageRegistry {
             config: rust_config,
             grammar,
             highlight_query: Self::load_query(grammar, "rust/highlights.scm"),
-            indent_query: Self::load_query(grammar, "rust/indents.scm"),
             theme_mapping: Mutex::new(ThemeMap::default()),
         };
 
@@ -102,7 +99,6 @@ mod tests {
                     },
                     grammar,
                     highlight_query: Query::new(grammar, "").unwrap(),
-                    indent_query: Query::new(grammar, "").unwrap(),
                     theme_mapping: Default::default(),
                 }),
                 Arc::new(Language {
@@ -113,7 +109,6 @@ mod tests {
                     },
                     grammar,
                     highlight_query: Query::new(grammar, "").unwrap(),
-                    indent_query: Query::new(grammar, "").unwrap(),
                     theme_mapping: Default::default(),
                 }),
             ],

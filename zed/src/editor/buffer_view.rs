@@ -41,7 +41,7 @@ pub fn init(app: &mut MutableAppContext) {
         Binding::new("delete", "buffer:delete", Some("BufferView")),
         Binding::new("ctrl-d", "buffer:delete", Some("BufferView")),
         Binding::new("enter", "buffer:newline", Some("BufferView")),
-        Binding::new("tab", "buffer:print_autoindents", Some("BufferView")),
+        Binding::new("tab", "buffer:insert", Some("BufferView")).with_arg("\t".to_string()),
         Binding::new("ctrl-shift-K", "buffer:delete_line", Some("BufferView")),
         Binding::new(
             "alt-backspace",
@@ -177,7 +177,6 @@ pub fn init(app: &mut MutableAppContext) {
         ),
     ]);
 
-    app.add_action("buffer:print_autoindents", BufferView::print_autoindents);
     app.add_action("buffer:scroll", BufferView::scroll);
     app.add_action("buffer:select", BufferView::select);
     app.add_action("buffer:cancel", BufferView::cancel);
@@ -637,14 +636,6 @@ impl BufferView {
         }
         self.update_selections(selections, false, ctx);
         Ok(())
-    }
-
-    pub fn print_autoindents(&mut self, _: &(), ctx: &mut ViewContext<Self>) {
-        let buf = self.buffer.read(ctx);
-        eprintln!("autoindents:");
-        for row in 0..buf.row_count() {
-            eprintln!("  {}: {}", row, buf.autoindent_for_row(row));
-        }
     }
 
     pub fn insert(&mut self, text: &String, ctx: &mut ViewContext<Self>) {
