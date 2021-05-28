@@ -535,6 +535,7 @@ mod tests {
             },
             grammar: grammar.clone(),
             highlight_query,
+            brackets_query: tree_sitter::Query::new(grammar, "").unwrap(),
             theme_mapping: Default::default(),
         });
         lang.set_theme(&theme);

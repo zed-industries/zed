@@ -14,7 +14,6 @@ pub struct LanguageDir;
 pub struct LanguageConfig {
     pub name: String,
     pub path_suffixes: Vec<String>,
-    pub bracket_pairs: Vec<BracketPair>,
 }
 
 #[derive(Deserialize)]
@@ -27,6 +26,7 @@ pub struct Language {
     pub config: LanguageConfig,
     pub grammar: Grammar,
     pub highlight_query: Query,
+    pub brackets_query: Query,
     pub theme_mapping: Mutex<ThemeMap>,
 }
 
@@ -52,6 +52,7 @@ impl LanguageRegistry {
             config: rust_config,
             grammar,
             highlight_query: Self::load_query(grammar, "rust/highlights.scm"),
+            brackets_query: Self::load_query(grammar, "rust/brackets.scm"),
             theme_mapping: Mutex::new(ThemeMap::default()),
         };
 
@@ -106,6 +107,7 @@ mod tests {
                     },
                     grammar,
                     highlight_query: Query::new(grammar, "").unwrap(),
+                    brackets_query: Query::new(grammar, "").unwrap(),
                     theme_mapping: Default::default(),
                 }),
                 Arc::new(Language {
@@ -116,6 +118,7 @@ mod tests {
                     },
                     grammar,
                     highlight_query: Query::new(grammar, "").unwrap(),
+                    brackets_query: Query::new(grammar, "").unwrap(),
                     theme_mapping: Default::default(),
                 }),
             ],

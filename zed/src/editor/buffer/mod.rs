@@ -727,41 +727,27 @@ impl Buffer {
         &self,
         range: Range<T>,
     ) -> Option<(Range<usize>, Range<usize>)> {
-        let mut bracket_ranges = None;
-        if let Some((lang, tree)) = self.language.as_ref().zip(self.syntax_tree()) {
-            let range = range.start.to_offset(self)..range.end.to_offset(self);
-            let mut cursor = tree.root_node().walk();
-            'outer: loop {
-                let node = cursor.node();
-                if node.child_count() >= 2 {
-                    if let Some((first_child, last_child)) =
-                        node.child(0).zip(node.child(node.child_count() - 1))
-                    {
-                        for pair in &lang.config.bracket_pairs {
-                            if pair.start == first_child.kind() && pair.end == last_child.kind() {
-                                bracket_ranges =
-                                    Some((first_child.byte_range(), last_child.byte_range()));
-                            }
-                        }
-                    }
-                }
+        let (lang, tree) = self.language.as_ref().zip(self.syntax_tree())?;
+        let open_capture_ix = lang.brackets_query.capture_index_for_name("open")?;
+        let close_capture_ix = lang.brackets_query.capture_index_for_name("close")?;
 
-                if !cursor.goto_first_child() {
-                    break;
-                }
+        // Find bracket pairs that *inclusively* contain the given range.
+        let range = range.start.to_offset(self).saturating_sub(1)..range.end.to_offset(self) + 1;
+        let mut cursor = QueryCursorHandle::new();
+        let matches = cursor.set_byte_range(range.start, range.end).matches(
+            &lang.brackets_query,
+            tree.root_node(),
+            TextProvider(&self.visible_text),
+        );
 
-                while cursor.node().end_byte() < range.end {
-                    if !cursor.goto_next_sibling() {
-                        break 'outer;
-                    }
-                }
-
-                if cursor.node().start_byte() > range.start {
-                    break;
-                }
-            }
-        }
-        bracket_ranges
+        // Get the ranges of the innermost pair of brackets.
+        matches
+            .filter_map(|mat| {
+                let open = mat.nodes_for_capture_index(open_capture_ix).next()?;
+                let close = mat.nodes_for_capture_index(close_capture_ix).next()?;
+                Some((open.byte_range(), close.byte_range()))
+            })
+            .min_by_key(|(open_range, close_range)| close_range.end - open_range.start)
     }
 
     fn diff(&self, new_text: Arc<str>, ctx: &AppContext) -> Task<Diff> {

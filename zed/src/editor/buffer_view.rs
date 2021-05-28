@@ -1826,6 +1826,8 @@ impl BufferView {
     }
 
     pub fn move_to_enclosing_bracket(&mut self, _: &(), ctx: &mut ViewContext<Self>) {
+        use super::RangeExt as _;
+
         let buffer = self.buffer.read(ctx.as_ref());
         let mut selections = self.selections(ctx.as_ref()).to_vec();
         for selection in &mut selections {
@@ -1833,12 +1835,13 @@ impl BufferView {
             if let Some((open_range, close_range)) =
                 buffer.enclosing_bracket_ranges(selection_range.clone())
             {
+                let close_range = close_range.to_inclusive();
                 let destination = if close_range.contains(&selection_range.start)
                     && close_range.contains(&selection_range.end)
                 {
                     open_range.end
                 } else {
-                    close_range.start
+                    *close_range.start()
                 };
                 selection.start = buffer.anchor_before(destination);
                 selection.end = selection.start.clone();
