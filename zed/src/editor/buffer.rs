@@ -416,9 +416,9 @@ impl Buffer {
     pub fn new<T: Into<Arc<str>>>(
         replica_id: ReplicaId,
         base_text: T,
-        ctx: &mut ModelContext<Self>,
+        cx: &mut ModelContext<Self>,
     ) -> Self {
-        Self::build(replica_id, History::new(base_text.into()), None, None, ctx)
+        Self::build(replica_id, History::new(base_text.into()), None, None, cx)
     }
 
     pub fn from_history(
@@ -426,9 +426,9 @@ impl Buffer {
         history: History,
         file: Option<FileHandle>,
         language: Option<Arc<Language>>,
-        ctx: &mut ModelContext<Self>,
+        cx: &mut ModelContext<Self>,
     ) -> Self {
-        Self::build(replica_id, history, file, language, ctx)
+        Self::build(replica_id, history, file, language, cx)
     }
 
     fn build(
@@ -436,31 +436,31 @@ impl Buffer {
         history: History,
         file: Option<FileHandle>,
         language: Option<Arc<Language>>,
-        ctx: &mut ModelContext<Self>,
+        cx: &mut ModelContext<Self>,
     ) -> Self {
         let saved_mtime;
         if let Some(file) = file.as_ref() {
             saved_mtime = file.mtime();
-            file.observe_from_model(ctx, |this, file, ctx| {
+            file.observe_from_model(cx, |this, file, cx| {
                 let version = this.version.clone();
                 if this.version == this.saved_version {
                     if file.is_deleted() {
-                        ctx.emit(Event::Dirtied);
+                        cx.emit(Event::Dirtied);
                     } else {
-                        ctx.spawn(|handle, mut ctx| async move {
-                            let (current_version, history) = handle.read_with(&ctx, |this, ctx| {
-                                (this.version.clone(), file.load_history(ctx.as_ref()))
+                        cx.spawn(|handle, mut cx| async move {
+                            let (current_version, history) = handle.read_with(&cx, |this, cx| {
+                                (this.version.clone(), file.load_history(cx.as_ref()))
                             });
                             if let (Ok(history), true) = (history.await, current_version == version)
                             {
                                 let diff = handle
-                                    .read_with(&ctx, |this, ctx| this.diff(history.base_text, ctx))
+                                    .read_with(&cx, |this, cx| this.diff(history.base_text, cx))
                                     .await;
-                                handle.update(&mut ctx, |this, ctx| {
-                                    if let Some(_ops) = this.set_text_via_diff(diff, ctx) {
+                                handle.update(&mut cx, |this, cx| {
+                                    if let Some(_ops) = this.set_text_via_diff(diff, cx) {
                                         this.saved_version = this.version.clone();
                                         this.saved_mtime = file.mtime();
-                                        ctx.emit(Event::Reloaded);
+                                        cx.emit(Event::Reloaded);
                                     }
                                 });
                             }
@@ -468,7 +468,7 @@ impl Buffer {
                         .detach();
                     }
                 }
-                ctx.emit(Event::FileHandleChanged);
+                cx.emit(Event::FileHandleChanged);
             });
         } else {
             saved_mtime = UNIX_EPOCH;
@@ -547,7 +547,7 @@ impl Buffer {
             local_clock: time::Local::new(replica_id),
             lamport_clock: time::Lamport::new(replica_id),
         };
-        result.reparse(ctx);
+        result.reparse(cx);
         result
     }
 
@@ -567,17 +567,17 @@ impl Buffer {
     pub fn save(
         &mut self,
         new_file: Option<FileHandle>,
-        ctx: &mut ModelContext<Self>,
+        cx: &mut ModelContext<Self>,
     ) -> Task<Result<()>> {
         let text = self.visible_text.clone();
         let version = self.version.clone();
         let file = self.file.clone();
 
-        ctx.spawn(|handle, mut ctx| async move {
+        cx.spawn(|handle, mut cx| async move {
             if let Some(file) = new_file.as_ref().or(file.as_ref()) {
-                let result = ctx.read(|ctx| file.save(text, ctx.as_ref())).await;
+                let result = cx.read(|cx| file.save(text, cx.as_ref())).await;
                 if result.is_ok() {
-                    handle.update(&mut ctx, |me, ctx| me.did_save(version, new_file, ctx));
+                    handle.update(&mut cx, |me, cx| me.did_save(version, new_file, cx));
                 }
                 result
             } else {
@@ -590,7 +590,7 @@ impl Buffer {
         &mut self,
         version: time::Global,
         file: Option<FileHandle>,
-        ctx: &mut ModelContext<Buffer>,
+        cx: &mut ModelContext<Buffer>,
     ) {
         if file.is_some() {
             self.file = file;
@@ -599,7 +599,7 @@ impl Buffer {
             self.saved_mtime = file.mtime();
         }
         self.saved_version = version;
-        ctx.emit(Event::Saved);
+        cx.emit(Event::Saved);
     }
 
     pub fn syntax_tree(&self) -> Option<Tree> {
@@ -647,7 +647,7 @@ impl Buffer {
         }
     }
 
-    fn reparse(&mut self, ctx: &mut ModelContext<Self>) {
+    fn reparse(&mut self, cx: &mut ModelContext<Self>) {
         // Avoid spawning a new parsing task if the buffer is already being reparsed
         // due to an earlier edit.
         if self.is_parsing {
@@ -656,16 +656,16 @@ impl Buffer {
 
         if let Some(language) = self.language.clone() {
             self.is_parsing = true;
-            ctx.spawn(|handle, mut ctx| async move {
-                while handle.read_with(&ctx, |this, _| this.should_reparse()) {
+            cx.spawn(|handle, mut cx| async move {
+                while handle.read_with(&cx, |this, _| this.should_reparse()) {
                     // The parse tree is out of date, so grab the syntax tree to synchronously
                     // splice all the edits that have happened since the last parse.
-                    let new_tree = handle.update(&mut ctx, |this, _| this.syntax_tree());
+                    let new_tree = handle.update(&mut cx, |this, _| this.syntax_tree());
                     let (new_text, new_version) = handle
-                        .read_with(&ctx, |this, _| (this.visible_text.clone(), this.version()));
+                        .read_with(&cx, |this, _| (this.visible_text.clone(), this.version()));
 
                     // Parse the current text in a background thread.
-                    let new_tree = ctx
+                    let new_tree = cx
                         .background_executor()
                         .spawn({
                             let language = language.clone();
@@ -673,17 +673,17 @@ impl Buffer {
                         })
                         .await;
 
-                    handle.update(&mut ctx, |this, ctx| {
+                    handle.update(&mut cx, |this, cx| {
                         *this.syntax_tree.lock() = Some(SyntaxTree {
                             tree: new_tree,
                             parsed: true,
                             version: new_version,
                         });
-                        ctx.emit(Event::Reparsed);
-                        ctx.notify();
+                        cx.emit(Event::Reparsed);
+                        cx.notify();
                     });
                 }
-                handle.update(&mut ctx, |this, _| this.is_parsing = false);
+                handle.update(&mut cx, |this, _| this.is_parsing = false);
             })
             .detach();
         }
@@ -750,11 +750,11 @@ impl Buffer {
             .min_by_key(|(open_range, close_range)| close_range.end - open_range.start)
     }
 
-    fn diff(&self, new_text: Arc<str>, ctx: &AppContext) -> Task<Diff> {
+    fn diff(&self, new_text: Arc<str>, cx: &AppContext) -> Task<Diff> {
         // TODO: it would be nice to not allocate here.
         let old_text = self.text();
         let base_version = self.version();
-        ctx.background_executor().spawn(async move {
+        cx.background_executor().spawn(async move {
             let changes = TextDiff::from_lines(old_text.as_str(), new_text.as_ref())
                 .iter_all_changes()
                 .map(|c| (c.tag(), c.value().len()))
@@ -770,7 +770,7 @@ impl Buffer {
     fn set_text_via_diff(
         &mut self,
         diff: Diff,
-        ctx: &mut ModelContext<Self>,
+        cx: &mut ModelContext<Self>,
     ) -> Option<Vec<Operation>> {
         if self.version == diff.base_version {
             self.start_transaction(None).unwrap();
@@ -780,19 +780,20 @@ impl Buffer {
                 let range = offset..(offset + len);
                 match tag {
                     ChangeTag::Equal => offset += len,
-                    ChangeTag::Delete => operations
-                        .extend_from_slice(&self.edit(Some(range), "", Some(ctx)).unwrap()),
+                    ChangeTag::Delete => {
+                        operations.extend_from_slice(&self.edit(Some(range), "", Some(cx)).unwrap())
+                    }
                     ChangeTag::Insert => {
                         operations.extend_from_slice(
                             &self
-                                .edit(Some(offset..offset), &diff.new_text[range], Some(ctx))
+                                .edit(Some(offset..offset), &diff.new_text[range], Some(cx))
                                 .unwrap(),
                         );
                         offset += len;
                     }
                 }
             }
-            self.end_transaction(None, Some(ctx)).unwrap();
+            self.end_transaction(None, Some(cx)).unwrap();
             Some(operations)
         } else {
             None
@@ -909,16 +910,16 @@ impl Buffer {
     pub fn end_transaction(
         &mut self,
         set_id: Option<SelectionSetId>,
-        ctx: Option<&mut ModelContext<Self>>,
+        cx: Option<&mut ModelContext<Self>>,
     ) -> Result<()> {
-        self.end_transaction_at(set_id, Instant::now(), ctx)
+        self.end_transaction_at(set_id, Instant::now(), cx)
     }
 
     fn end_transaction_at(
         &mut self,
         set_id: Option<SelectionSetId>,
         now: Instant,
-        ctx: Option<&mut ModelContext<Self>>,
+        cx: Option<&mut ModelContext<Self>>,
     ) -> Result<()> {
         let selections = if let Some(set_id) = set_id {
             let selections = self
@@ -935,12 +936,12 @@ impl Buffer {
             let was_dirty = transaction.buffer_was_dirty;
             self.history.group();
 
-            if let Some(ctx) = ctx {
-                ctx.notify();
+            if let Some(cx) = cx {
+                cx.notify();
 
                 if self.edits_since(since).next().is_some() {
-                    self.did_edit(was_dirty, ctx);
-                    self.reparse(ctx);
+                    self.did_edit(was_dirty, cx);
+                    self.reparse(cx);
                 }
             }
         }
@@ -952,7 +953,7 @@ impl Buffer {
         &mut self,
         old_ranges: I,
         new_text: T,
-        ctx: Option<&mut ModelContext<Self>>,
+        cx: Option<&mut ModelContext<Self>>,
     ) -> Result<Vec<Operation>>
     where
         I: IntoIterator<Item = Range<S>>,
@@ -997,22 +998,22 @@ impl Buffer {
             }
         }
 
-        self.end_transaction_at(None, Instant::now(), ctx)?;
+        self.end_transaction_at(None, Instant::now(), cx)?;
 
         Ok(ops)
     }
 
-    fn did_edit(&self, was_dirty: bool, ctx: &mut ModelContext<Self>) {
-        ctx.emit(Event::Edited);
+    fn did_edit(&self, was_dirty: bool, cx: &mut ModelContext<Self>) {
+        cx.emit(Event::Edited);
         if !was_dirty {
-            ctx.emit(Event::Dirtied);
+            cx.emit(Event::Dirtied);
         }
     }
 
     pub fn add_selection_set(
         &mut self,
         selections: impl Into<Arc<[Selection]>>,
-        ctx: Option<&mut ModelContext<Self>>,
+        cx: Option<&mut ModelContext<Self>>,
     ) -> (SelectionSetId, Operation) {
         let selections = selections.into();
         let lamport_timestamp = self.lamport_clock.tick();
@@ -1020,8 +1021,8 @@ impl Buffer {
             .insert(lamport_timestamp, Arc::clone(&selections));
         self.selections_last_update += 1;
 
-        if let Some(ctx) = ctx {
-            ctx.notify();
+        if let Some(cx) = cx {
+            cx.notify();
         }
 
         (
@@ -1038,7 +1039,7 @@ impl Buffer {
         &mut self,
         set_id: SelectionSetId,
         selections: impl Into<Arc<[Selection]>>,
-        ctx: Option<&mut ModelContext<Self>>,
+        cx: Option<&mut ModelContext<Self>>,
     ) -> Result<Operation> {
         let selections = selections.into();
         self.selections.insert(set_id, selections.clone());
@@ -1046,8 +1047,8 @@ impl Buffer {
         let lamport_timestamp = self.lamport_clock.tick();
         self.selections_last_update += 1;
 
-        if let Some(ctx) = ctx {
-            ctx.notify();
+        if let Some(cx) = cx {
+            cx.notify();
         }
 
         Ok(Operation::UpdateSelections {
@@ -1060,7 +1061,7 @@ impl Buffer {
     pub fn remove_selection_set(
         &mut self,
         set_id: SelectionSetId,
-        ctx: Option<&mut ModelContext<Self>>,
+        cx: Option<&mut ModelContext<Self>>,
     ) -> Result<Operation> {
         self.selections
             .remove(&set_id)
@@ -1068,8 +1069,8 @@ impl Buffer {
         let lamport_timestamp = self.lamport_clock.tick();
         self.selections_last_update += 1;
 
-        if let Some(ctx) = ctx {
-            ctx.notify();
+        if let Some(cx) = cx {
+            cx.notify();
         }
 
         Ok(Operation::UpdateSelections {
@@ -1089,7 +1090,7 @@ impl Buffer {
     pub fn apply_ops<I: IntoIterator<Item = Operation>>(
         &mut self,
         ops: I,
-        ctx: Option<&mut ModelContext<Self>>,
+        cx: Option<&mut ModelContext<Self>>,
     ) -> Result<()> {
         let was_dirty = self.is_dirty();
         let old_version = self.version.clone();
@@ -1106,11 +1107,11 @@ impl Buffer {
         self.deferred_ops.insert(deferred_ops);
         self.flush_deferred_ops()?;
 
-        if let Some(ctx) = ctx {
-            ctx.notify();
+        if let Some(cx) = cx {
+            cx.notify();
             if self.edits_since(old_version).next().is_some() {
-                self.did_edit(was_dirty, ctx);
-                self.reparse(ctx);
+                self.did_edit(was_dirty, cx);
+                self.reparse(cx);
             }
         }
 
@@ -1316,7 +1317,7 @@ impl Buffer {
         Ok(())
     }
 
-    pub fn undo(&mut self, mut ctx: Option<&mut ModelContext<Self>>) -> Vec<Operation> {
+    pub fn undo(&mut self, mut cx: Option<&mut ModelContext<Self>>) -> Vec<Operation> {
         let was_dirty = self.is_dirty();
         let old_version = self.version.clone();
 
@@ -1328,22 +1329,22 @@ impl Buffer {
             }
 
             if let Some((set_id, selections)) = selections {
-                let _ = self.update_selection_set(set_id, selections, ctx.as_deref_mut());
+                let _ = self.update_selection_set(set_id, selections, cx.as_deref_mut());
             }
         }
 
-        if let Some(ctx) = ctx {
-            ctx.notify();
+        if let Some(cx) = cx {
+            cx.notify();
             if self.edits_since(old_version).next().is_some() {
-                self.did_edit(was_dirty, ctx);
-                self.reparse(ctx);
+                self.did_edit(was_dirty, cx);
+                self.reparse(cx);
             }
         }
 
         ops
     }
 
-    pub fn redo(&mut self, mut ctx: Option<&mut ModelContext<Self>>) -> Vec<Operation> {
+    pub fn redo(&mut self, mut cx: Option<&mut ModelContext<Self>>) -> Vec<Operation> {
         let was_dirty = self.is_dirty();
         let old_version = self.version.clone();
 
@@ -1355,15 +1356,15 @@ impl Buffer {
             }
 
             if let Some((set_id, selections)) = selections {
-                let _ = self.update_selection_set(set_id, selections, ctx.as_deref_mut());
+                let _ = self.update_selection_set(set_id, selections, cx.as_deref_mut());
             }
         }
 
-        if let Some(ctx) = ctx {
-            ctx.notify();
+        if let Some(cx) = cx {
+            cx.notify();
             if self.edits_since(old_version).next().is_some() {
-                self.did_edit(was_dirty, ctx);
-                self.reparse(ctx);
+                self.did_edit(was_dirty, cx);
+                self.reparse(cx);
             }
         }
 
@@ -2712,9 +2713,9 @@ mod tests {
     };
 
     #[gpui::test]
-    fn test_edit(ctx: &mut gpui::MutableAppContext) {
-        ctx.add_model(|ctx| {
-            let mut buffer = Buffer::new(0, "abc", ctx);
+    fn test_edit(cx: &mut gpui::MutableAppContext) {
+        cx.add_model(|cx| {
+            let mut buffer = Buffer::new(0, "abc", cx);
             assert_eq!(buffer.text(), "abc");
             buffer.edit(vec![3..3], "def", None).unwrap();
             assert_eq!(buffer.text(), "abcdef");
@@ -2731,51 +2732,51 @@ mod tests {
     }
 
     #[gpui::test]
-    fn test_edit_events(app: &mut gpui::MutableAppContext) {
+    fn test_edit_events(cx: &mut gpui::MutableAppContext) {
         let mut now = Instant::now();
         let buffer_1_events = Rc::new(RefCell::new(Vec::new()));
         let buffer_2_events = Rc::new(RefCell::new(Vec::new()));
 
-        let buffer1 = app.add_model(|ctx| Buffer::new(0, "abcdef", ctx));
-        let buffer2 = app.add_model(|ctx| Buffer::new(1, "abcdef", ctx));
+        let buffer1 = cx.add_model(|cx| Buffer::new(0, "abcdef", cx));
+        let buffer2 = cx.add_model(|cx| Buffer::new(1, "abcdef", cx));
         let mut buffer_ops = Vec::new();
-        buffer1.update(app, |buffer, ctx| {
+        buffer1.update(cx, |buffer, cx| {
             let buffer_1_events = buffer_1_events.clone();
-            ctx.subscribe(&buffer1, move |_, event, _| {
+            cx.subscribe(&buffer1, move |_, event, _| {
                 buffer_1_events.borrow_mut().push(event.clone())
             });
             let buffer_2_events = buffer_2_events.clone();
-            ctx.subscribe(&buffer2, move |_, event, _| {
+            cx.subscribe(&buffer2, move |_, event, _| {
                 buffer_2_events.borrow_mut().push(event.clone())
             });
 
             // An edit emits an edited event, followed by a dirtied event,
             // since the buffer was previously in a clean state.
-            let ops = buffer.edit(Some(2..4), "XYZ", Some(ctx)).unwrap();
+            let ops = buffer.edit(Some(2..4), "XYZ", Some(cx)).unwrap();
             buffer_ops.extend_from_slice(&ops);
 
             // An empty transaction does not emit any events.
             buffer.start_transaction(None).unwrap();
-            buffer.end_transaction(None, Some(ctx)).unwrap();
+            buffer.end_transaction(None, Some(cx)).unwrap();
 
             // A transaction containing two edits emits one edited event.
             now += Duration::from_secs(1);
             buffer.start_transaction_at(None, now).unwrap();
-            let ops = buffer.edit(Some(5..5), "u", Some(ctx)).unwrap();
+            let ops = buffer.edit(Some(5..5), "u", Some(cx)).unwrap();
             buffer_ops.extend_from_slice(&ops);
-            let ops = buffer.edit(Some(6..6), "w", Some(ctx)).unwrap();
+            let ops = buffer.edit(Some(6..6), "w", Some(cx)).unwrap();
             buffer_ops.extend_from_slice(&ops);
-            buffer.end_transaction_at(None, now, Some(ctx)).unwrap();
+            buffer.end_transaction_at(None, now, Some(cx)).unwrap();
 
             // Undoing a transaction emits one edited event.
-            let ops = buffer.undo(Some(ctx));
+            let ops = buffer.undo(Some(cx));
             buffer_ops.extend_from_slice(&ops);
         });
 
         // Incorporating a set of remote ops emits a single edited event,
         // followed by a dirtied event.
-        buffer2.update(app, |buffer, ctx| {
-            buffer.apply_ops(buffer_ops, Some(ctx)).unwrap();
+        buffer2.update(cx, |buffer, cx| {
+            buffer.apply_ops(buffer_ops, Some(cx)).unwrap();
         });
 
         let buffer_1_events = buffer_1_events.borrow();
@@ -2789,7 +2790,7 @@ mod tests {
     }
 
     #[gpui::test]
-    fn test_random_edits(ctx: &mut gpui::MutableAppContext) {
+    fn test_random_edits(cx: &mut gpui::MutableAppContext) {
         for seed in 0..100 {
             println!("{:?}", seed);
             let mut rng = &mut StdRng::seed_from_u64(seed);
@@ -2798,8 +2799,8 @@ mod tests {
             let mut reference_string = RandomCharIter::new(&mut rng)
                 .take(reference_string_len)
                 .collect::<String>();
-            ctx.add_model(|ctx| {
-                let mut buffer = Buffer::new(0, reference_string.as_str(), ctx);
+            cx.add_model(|cx| {
+                let mut buffer = Buffer::new(0, reference_string.as_str(), cx);
                 let mut buffer_versions = Vec::new();
                 for _i in 0..10 {
                     let (old_ranges, new_text, _) = buffer.randomly_mutate(rng, None);
@@ -2851,9 +2852,9 @@ mod tests {
     }
 
     #[gpui::test]
-    fn test_line_len(ctx: &mut gpui::MutableAppContext) {
-        ctx.add_model(|ctx| {
-            let mut buffer = Buffer::new(0, "", ctx);
+    fn test_line_len(cx: &mut gpui::MutableAppContext) {
+        cx.add_model(|cx| {
+            let mut buffer = Buffer::new(0, "", cx);
             buffer.edit(vec![0..0], "abcd\nefg\nhij", None).unwrap();
             buffer.edit(vec![12..12], "kl\nmno", None).unwrap();
             buffer.edit(vec![18..18], "\npqrs\n", None).unwrap();
@@ -2870,9 +2871,9 @@ mod tests {
     }
 
     #[gpui::test]
-    fn test_text_summary_for_range(ctx: &mut gpui::MutableAppContext) {
-        ctx.add_model(|ctx| {
-            let buffer = Buffer::new(0, "ab\nefg\nhklm\nnopqrs\ntuvwxyz", ctx);
+    fn test_text_summary_for_range(cx: &mut gpui::MutableAppContext) {
+        cx.add_model(|cx| {
+            let buffer = Buffer::new(0, "ab\nefg\nhklm\nnopqrs\ntuvwxyz", cx);
             assert_eq!(
                 buffer.text_summary_for_range(1..3),
                 TextSummary {
@@ -2933,9 +2934,9 @@ mod tests {
     }
 
     #[gpui::test]
-    fn test_chars_at(ctx: &mut gpui::MutableAppContext) {
-        ctx.add_model(|ctx| {
-            let mut buffer = Buffer::new(0, "", ctx);
+    fn test_chars_at(cx: &mut gpui::MutableAppContext) {
+        cx.add_model(|cx| {
+            let mut buffer = Buffer::new(0, "", cx);
             buffer.edit(vec![0..0], "abcd\nefgh\nij", None).unwrap();
             buffer.edit(vec![12..12], "kl\nmno", None).unwrap();
             buffer.edit(vec![18..18], "\npqrs", None).unwrap();
@@ -2957,7 +2958,7 @@ mod tests {
             assert_eq!(chars.collect::<String>(), "PQrs");
 
             // Regression test:
-            let mut buffer = Buffer::new(0, "", ctx);
+            let mut buffer = Buffer::new(0, "", cx);
             buffer.edit(vec![0..0], "[workspace]\nmembers = [\n    \"xray_core\",\n    \"xray_server\",\n    \"xray_cli\",\n    \"xray_wasm\",\n]\n", None).unwrap();
             buffer.edit(vec![60..60], "\n", None).unwrap();
 
@@ -2989,9 +2990,9 @@ mod tests {
     }
 
     #[gpui::test]
-    fn test_anchors(ctx: &mut gpui::MutableAppContext) {
-        ctx.add_model(|ctx| {
-            let mut buffer = Buffer::new(0, "", ctx);
+    fn test_anchors(cx: &mut gpui::MutableAppContext) {
+        cx.add_model(|cx| {
+            let mut buffer = Buffer::new(0, "", cx);
             buffer.edit(vec![0..0], "abc", None).unwrap();
             let left_anchor = buffer.anchor_before(2);
             let right_anchor = buffer.anchor_after(2);
@@ -3128,9 +3129,9 @@ mod tests {
     }
 
     #[gpui::test]
-    fn test_anchors_at_start_and_end(ctx: &mut gpui::MutableAppContext) {
-        ctx.add_model(|ctx| {
-            let mut buffer = Buffer::new(0, "", ctx);
+    fn test_anchors_at_start_and_end(cx: &mut gpui::MutableAppContext) {
+        cx.add_model(|cx| {
+            let mut buffer = Buffer::new(0, "", cx);
             let before_start_anchor = buffer.anchor_before(0);
             let after_end_anchor = buffer.anchor_after(0);
 
@@ -3155,25 +3156,25 @@ mod tests {
 
     #[test]
     fn test_is_dirty() {
-        App::test_async((), |mut app| async move {
+        App::test_async((), |mut cx| async move {
             let dir = temp_tree(json!({
                 "file1": "",
                 "file2": "",
                 "file3": "",
             }));
-            let tree = app.add_model(|ctx| Worktree::new(dir.path(), ctx));
-            tree.flush_fs_events(&app).await;
-            app.read(|ctx| tree.read(ctx).scan_complete()).await;
+            let tree = cx.add_model(|cx| Worktree::new(dir.path(), cx));
+            tree.flush_fs_events(&cx).await;
+            cx.read(|cx| tree.read(cx).scan_complete()).await;
 
-            let file1 = app.update(|ctx| tree.file("file1", ctx)).await;
-            let buffer1 = app.add_model(|ctx| {
-                Buffer::from_history(0, History::new("abc".into()), Some(file1), None, ctx)
+            let file1 = cx.update(|cx| tree.file("file1", cx)).await;
+            let buffer1 = cx.add_model(|cx| {
+                Buffer::from_history(0, History::new("abc".into()), Some(file1), None, cx)
             });
             let events = Rc::new(RefCell::new(Vec::new()));
 
             // initially, the buffer isn't dirty.
-            buffer1.update(&mut app, |buffer, ctx| {
-                ctx.subscribe(&buffer1, {
+            buffer1.update(&mut cx, |buffer, cx| {
+                cx.subscribe(&buffer1, {
                     let events = events.clone();
                     move |_, event, _| events.borrow_mut().push(event.clone())
                 });
@@ -3181,31 +3182,31 @@ mod tests {
                 assert!(!buffer.is_dirty());
                 assert!(events.borrow().is_empty());
 
-                buffer.edit(vec![1..2], "", Some(ctx)).unwrap();
+                buffer.edit(vec![1..2], "", Some(cx)).unwrap();
             });
 
             // after the first edit, the buffer is dirty, and emits a dirtied event.
-            buffer1.update(&mut app, |buffer, ctx| {
+            buffer1.update(&mut cx, |buffer, cx| {
                 assert!(buffer.text() == "ac");
                 assert!(buffer.is_dirty());
                 assert_eq!(*events.borrow(), &[Event::Edited, Event::Dirtied]);
                 events.borrow_mut().clear();
 
-                buffer.did_save(buffer.version(), None, ctx);
+                buffer.did_save(buffer.version(), None, cx);
             });
 
             // after saving, the buffer is not dirty, and emits a saved event.
-            buffer1.update(&mut app, |buffer, ctx| {
+            buffer1.update(&mut cx, |buffer, cx| {
                 assert!(!buffer.is_dirty());
                 assert_eq!(*events.borrow(), &[Event::Saved]);
                 events.borrow_mut().clear();
 
-                buffer.edit(vec![1..1], "B", Some(ctx)).unwrap();
-                buffer.edit(vec![2..2], "D", Some(ctx)).unwrap();
+                buffer.edit(vec![1..1], "B", Some(cx)).unwrap();
+                buffer.edit(vec![2..2], "D", Some(cx)).unwrap();
             });
 
             // after editing again, the buffer is dirty, and emits another dirty event.
-            buffer1.update(&mut app, |buffer, ctx| {
+            buffer1.update(&mut cx, |buffer, cx| {
                 assert!(buffer.text() == "aBDc");
                 assert!(buffer.is_dirty());
                 assert_eq!(
@@ -3216,7 +3217,7 @@ mod tests {
 
                 // TODO - currently, after restoring the buffer to its
                 // previously-saved state, the is still considered dirty.
-                buffer.edit(vec![1..3], "", Some(ctx)).unwrap();
+                buffer.edit(vec![1..3], "", Some(cx)).unwrap();
                 assert!(buffer.text() == "ac");
                 assert!(buffer.is_dirty());
             });
@@ -3225,18 +3226,18 @@ mod tests {
 
             // When a file is deleted, the buffer is considered dirty.
             let events = Rc::new(RefCell::new(Vec::new()));
-            let file2 = app.update(|ctx| tree.file("file2", ctx)).await;
-            let buffer2 = app.add_model(|ctx: &mut ModelContext<Buffer>| {
-                ctx.subscribe(&ctx.handle(), {
+            let file2 = cx.update(|cx| tree.file("file2", cx)).await;
+            let buffer2 = cx.add_model(|cx: &mut ModelContext<Buffer>| {
+                cx.subscribe(&cx.handle(), {
                     let events = events.clone();
                     move |_, event, _| events.borrow_mut().push(event.clone())
                 });
 
-                Buffer::from_history(0, History::new("abc".into()), Some(file2), None, ctx)
+                Buffer::from_history(0, History::new("abc".into()), Some(file2), None, cx)
             });
 
             fs::remove_file(dir.path().join("file2")).unwrap();
-            buffer2.condition(&app, |b, _| b.is_dirty()).await;
+            buffer2.condition(&cx, |b, _| b.is_dirty()).await;
             assert_eq!(
                 *events.borrow(),
                 &[Event::Dirtied, Event::FileHandleChanged]
@@ -3244,51 +3245,51 @@ mod tests {
 
             // When a file is already dirty when deleted, we don't emit a Dirtied event.
             let events = Rc::new(RefCell::new(Vec::new()));
-            let file3 = app.update(|ctx| tree.file("file3", ctx)).await;
-            let buffer3 = app.add_model(|ctx: &mut ModelContext<Buffer>| {
-                ctx.subscribe(&ctx.handle(), {
+            let file3 = cx.update(|cx| tree.file("file3", cx)).await;
+            let buffer3 = cx.add_model(|cx: &mut ModelContext<Buffer>| {
+                cx.subscribe(&cx.handle(), {
                     let events = events.clone();
                     move |_, event, _| events.borrow_mut().push(event.clone())
                 });
 
-                Buffer::from_history(0, History::new("abc".into()), Some(file3), None, ctx)
+                Buffer::from_history(0, History::new("abc".into()), Some(file3), None, cx)
             });
 
-            tree.flush_fs_events(&app).await;
-            buffer3.update(&mut app, |buffer, ctx| {
-                buffer.edit(Some(0..0), "x", Some(ctx)).unwrap();
+            tree.flush_fs_events(&cx).await;
+            buffer3.update(&mut cx, |buffer, cx| {
+                buffer.edit(Some(0..0), "x", Some(cx)).unwrap();
             });
             events.borrow_mut().clear();
             fs::remove_file(dir.path().join("file3")).unwrap();
             buffer3
-                .condition(&app, |_, _| !events.borrow().is_empty())
+                .condition(&cx, |_, _| !events.borrow().is_empty())
                 .await;
             assert_eq!(*events.borrow(), &[Event::FileHandleChanged]);
-            app.read(|ctx| assert!(buffer3.read(ctx).is_dirty()));
+            cx.read(|cx| assert!(buffer3.read(cx).is_dirty()));
         });
     }
 
     #[gpui::test]
-    async fn test_file_changes_on_disk(mut app: gpui::TestAppContext) {
+    async fn test_file_changes_on_disk(mut cx: gpui::TestAppContext) {
         let initial_contents = "aaa\nbbbbb\nc\n";
         let dir = temp_tree(json!({ "the-file": initial_contents }));
-        let tree = app.add_model(|ctx| Worktree::new(dir.path(), ctx));
-        app.read(|ctx| tree.read(ctx).scan_complete()).await;
+        let tree = cx.add_model(|cx| Worktree::new(dir.path(), cx));
+        cx.read(|cx| tree.read(cx).scan_complete()).await;
 
         let abs_path = dir.path().join("the-file");
-        let file = app.update(|ctx| tree.file("the-file", ctx)).await;
-        let buffer = app.add_model(|ctx| {
+        let file = cx.update(|cx| tree.file("the-file", cx)).await;
+        let buffer = cx.add_model(|cx| {
             Buffer::from_history(
                 0,
                 History::new(initial_contents.into()),
                 Some(file),
                 None,
-                ctx,
+                cx,
             )
         });
 
         // Add a cursor at the start of each row.
-        let (selection_set_id, _) = buffer.update(&mut app, |buffer, ctx| {
+        let (selection_set_id, _) = buffer.update(&mut cx, |buffer, cx| {
             assert!(!buffer.is_dirty());
             buffer.add_selection_set(
                 (0..3)
@@ -3303,13 +3304,13 @@ mod tests {
                         }
                     })
                     .collect::<Vec<_>>(),
-                Some(ctx),
+                Some(cx),
             )
         });
 
         // Change the file on disk, adding two new lines of text, and removing
         // one line.
-        buffer.read_with(&app, |buffer, _| {
+        buffer.read_with(&cx, |buffer, _| {
             assert!(!buffer.is_dirty());
             assert!(!buffer.has_conflict());
         });
@@ -3320,10 +3321,10 @@ mod tests {
         // contents are edited according to the diff between the old and new
         // file contents.
         buffer
-            .condition(&app, |buffer, _| buffer.text() != initial_contents)
+            .condition(&cx, |buffer, _| buffer.text() != initial_contents)
             .await;
 
-        buffer.update(&mut app, |buffer, _| {
+        buffer.update(&mut cx, |buffer, _| {
             assert_eq!(buffer.text(), new_contents);
             assert!(!buffer.is_dirty());
             assert!(!buffer.has_conflict());
@@ -3343,8 +3344,8 @@ mod tests {
         });
 
         // Modify the buffer
-        buffer.update(&mut app, |buffer, ctx| {
-            buffer.edit(vec![0..0], " ", Some(ctx)).unwrap();
+        buffer.update(&mut cx, |buffer, cx| {
+            buffer.edit(vec![0..0], " ", Some(cx)).unwrap();
             assert!(buffer.is_dirty());
         });
 
@@ -3354,34 +3355,30 @@ mod tests {
         // Becaues the buffer is modified, it doesn't reload from disk, but is
         // marked as having a conflict.
         buffer
-            .condition(&app, |buffer, _| buffer.has_conflict())
+            .condition(&cx, |buffer, _| buffer.has_conflict())
             .await;
     }
 
     #[gpui::test]
-    async fn test_set_text_via_diff(mut app: gpui::TestAppContext) {
+    async fn test_set_text_via_diff(mut cx: gpui::TestAppContext) {
         let text = "a\nbb\nccc\ndddd\neeeee\nffffff\n";
-        let buffer = app.add_model(|ctx| Buffer::new(0, text, ctx));
+        let buffer = cx.add_model(|cx| Buffer::new(0, text, cx));
 
         let text = "a\nccc\ndddd\nffffff\n";
-        let diff = buffer
-            .read_with(&app, |b, ctx| b.diff(text.into(), ctx))
-            .await;
-        buffer.update(&mut app, |b, ctx| b.set_text_via_diff(diff, ctx));
-        app.read(|ctx| assert_eq!(buffer.read(ctx).text(), text));
+        let diff = buffer.read_with(&cx, |b, cx| b.diff(text.into(), cx)).await;
+        buffer.update(&mut cx, |b, cx| b.set_text_via_diff(diff, cx));
+        cx.read(|cx| assert_eq!(buffer.read(cx).text(), text));
 
         let text = "a\n1\n\nccc\ndd2dd\nffffff\n";
-        let diff = buffer
-            .read_with(&app, |b, ctx| b.diff(text.into(), ctx))
-            .await;
-        buffer.update(&mut app, |b, ctx| b.set_text_via_diff(diff, ctx));
-        app.read(|ctx| assert_eq!(buffer.read(ctx).text(), text));
+        let diff = buffer.read_with(&cx, |b, cx| b.diff(text.into(), cx)).await;
+        buffer.update(&mut cx, |b, cx| b.set_text_via_diff(diff, cx));
+        cx.read(|cx| assert_eq!(buffer.read(cx).text(), text));
     }
 
     #[gpui::test]
-    fn test_undo_redo(app: &mut gpui::MutableAppContext) {
-        app.add_model(|ctx| {
-            let mut buffer = Buffer::new(0, "1234", ctx);
+    fn test_undo_redo(cx: &mut gpui::MutableAppContext) {
+        cx.add_model(|cx| {
+            let mut buffer = Buffer::new(0, "1234", cx);
 
             let edit1 = buffer.edit(vec![1..1], "abx", None).unwrap();
             let edit2 = buffer.edit(vec![3..4], "yzef", None).unwrap();
@@ -3414,10 +3411,10 @@ mod tests {
     }
 
     #[gpui::test]
-    fn test_history(app: &mut gpui::MutableAppContext) {
-        app.add_model(|ctx| {
+    fn test_history(cx: &mut gpui::MutableAppContext) {
+        cx.add_model(|cx| {
             let mut now = Instant::now();
-            let mut buffer = Buffer::new(0, "123456", ctx);
+            let mut buffer = Buffer::new(0, "123456", cx);
 
             let (set_id, _) =
                 buffer.add_selection_set(buffer.selections_from_ranges(vec![4..4]).unwrap(), None);
@@ -3482,7 +3479,7 @@ mod tests {
     }
 
     #[gpui::test]
-    fn test_random_concurrent_edits(ctx: &mut gpui::MutableAppContext) {
+    fn test_random_concurrent_edits(cx: &mut gpui::MutableAppContext) {
         use crate::test::Network;
 
         const PEERS: usize = 5;
@@ -3499,8 +3496,7 @@ mod tests {
             let mut buffers = Vec::new();
             let mut network = Network::new();
             for i in 0..PEERS {
-                let buffer =
-                    ctx.add_model(|ctx| Buffer::new(i as ReplicaId, base_text.as_str(), ctx));
+                let buffer = cx.add_model(|cx| Buffer::new(i as ReplicaId, base_text.as_str(), cx));
                 buffers.push(buffer);
                 replica_ids.push(i as u16);
                 network.add_peer(i as u16);
@@ -3510,7 +3506,7 @@ mod tests {
             loop {
                 let replica_index = rng.gen_range(0..PEERS);
                 let replica_id = replica_ids[replica_index];
-                buffers[replica_index].update(ctx, |buffer, _| match rng.gen_range(0..=100) {
+                buffers[replica_index].update(cx, |buffer, _| match rng.gen_range(0..=100) {
                     0..=50 if mutation_count != 0 => {
                         let (_, _, ops) = buffer.randomly_mutate(&mut rng, None);
                         network.broadcast(replica_id, ops, &mut rng);
@@ -3534,9 +3530,9 @@ mod tests {
                 }
             }
 
-            let first_buffer = buffers[0].read(ctx);
+            let first_buffer = buffers[0].read(cx);
             for buffer in &buffers[1..] {
-                let buffer = buffer.read(ctx);
+                let buffer = buffer.read(cx);
                 assert_eq!(buffer.text(), first_buffer.text());
                 assert_eq!(
                     buffer.all_selections().collect::<HashMap<_, _>>(),
@@ -3553,14 +3549,14 @@ mod tests {
     }
 
     #[gpui::test]
-    async fn test_reparse(mut ctx: gpui::TestAppContext) {
-        let app_state = ctx.read(build_app_state);
+    async fn test_reparse(mut cx: gpui::TestAppContext) {
+        let app_state = cx.read(build_app_state);
         let rust_lang = app_state.language_registry.select_language("test.rs");
         assert!(rust_lang.is_some());
 
-        let buffer = ctx.add_model(|ctx| {
+        let buffer = cx.add_model(|cx| {
             let text = "fn a() {}".into();
-            let buffer = Buffer::from_history(0, History::new(text), None, rust_lang.cloned(), ctx);
+            let buffer = Buffer::from_history(0, History::new(text), None, rust_lang.cloned(), cx);
             assert!(buffer.is_parsing());
             assert!(buffer.syntax_tree().is_none());
             buffer
@@ -3568,10 +3564,10 @@ mod tests {
 
         // Wait for the initial text to parse
         buffer
-            .condition(&ctx, |buffer, _| !buffer.is_parsing())
+            .condition(&cx, |buffer, _| !buffer.is_parsing())
             .await;
         assert_eq!(
-            get_tree_sexp(&buffer, &ctx),
+            get_tree_sexp(&buffer, &cx),
             concat!(
                 "(source_file (function_item name: (identifier) ",
                 "parameters: (parameters) ",
@@ -3581,26 +3577,26 @@ mod tests {
 
         // Perform some edits (add parameter and variable reference)
         // Parsing doesn't begin until the transaction is complete
-        buffer.update(&mut ctx, |buf, ctx| {
+        buffer.update(&mut cx, |buf, cx| {
             buf.start_transaction(None).unwrap();
 
             let offset = buf.text().find(")").unwrap();
-            buf.edit(vec![offset..offset], "b: C", Some(ctx)).unwrap();
+            buf.edit(vec![offset..offset], "b: C", Some(cx)).unwrap();
             assert!(!buf.is_parsing());
 
             let offset = buf.text().find("}").unwrap();
-            buf.edit(vec![offset..offset], " d; ", Some(ctx)).unwrap();
+            buf.edit(vec![offset..offset], " d; ", Some(cx)).unwrap();
             assert!(!buf.is_parsing());
 
-            buf.end_transaction(None, Some(ctx)).unwrap();
+            buf.end_transaction(None, Some(cx)).unwrap();
             assert_eq!(buf.text(), "fn a(b: C) { d; }");
             assert!(buf.is_parsing());
         });
         buffer
-            .condition(&ctx, |buffer, _| !buffer.is_parsing())
+            .condition(&cx, |buffer, _| !buffer.is_parsing())
             .await;
         assert_eq!(
-            get_tree_sexp(&buffer, &ctx),
+            get_tree_sexp(&buffer, &cx),
             concat!(
                 "(source_file (function_item name: (identifier) ",
                     "parameters: (parameters (parameter pattern: (identifier) type: (type_identifier))) ",
@@ -3612,29 +3608,29 @@ mod tests {
         // * turn identifier into a field expression
         // * turn field expression into a method call
         // * add a turbofish to the method call
-        buffer.update(&mut ctx, |buf, ctx| {
+        buffer.update(&mut cx, |buf, cx| {
             let offset = buf.text().find(";").unwrap();
-            buf.edit(vec![offset..offset], ".e", Some(ctx)).unwrap();
+            buf.edit(vec![offset..offset], ".e", Some(cx)).unwrap();
             assert_eq!(buf.text(), "fn a(b: C) { d.e; }");
             assert!(buf.is_parsing());
         });
-        buffer.update(&mut ctx, |buf, ctx| {
+        buffer.update(&mut cx, |buf, cx| {
             let offset = buf.text().find(";").unwrap();
-            buf.edit(vec![offset..offset], "(f)", Some(ctx)).unwrap();
+            buf.edit(vec![offset..offset], "(f)", Some(cx)).unwrap();
             assert_eq!(buf.text(), "fn a(b: C) { d.e(f); }");
             assert!(buf.is_parsing());
         });
-        buffer.update(&mut ctx, |buf, ctx| {
+        buffer.update(&mut cx, |buf, cx| {
             let offset = buf.text().find("(f)").unwrap();
-            buf.edit(vec![offset..offset], "::<G>", Some(ctx)).unwrap();
+            buf.edit(vec![offset..offset], "::<G>", Some(cx)).unwrap();
             assert_eq!(buf.text(), "fn a(b: C) { d.e::<G>(f); }");
             assert!(buf.is_parsing());
         });
         buffer
-            .condition(&ctx, |buffer, _| !buffer.is_parsing())
+            .condition(&cx, |buffer, _| !buffer.is_parsing())
             .await;
         assert_eq!(
-            get_tree_sexp(&buffer, &ctx),
+            get_tree_sexp(&buffer, &cx),
             concat!(
                 "(source_file (function_item name: (identifier) ",
                     "parameters: (parameters (parameter pattern: (identifier) type: (type_identifier))) ",
@@ -3646,16 +3642,16 @@ mod tests {
             )
         );
 
-        buffer.update(&mut ctx, |buf, ctx| {
-            buf.undo(Some(ctx));
+        buffer.update(&mut cx, |buf, cx| {
+            buf.undo(Some(cx));
             assert_eq!(buf.text(), "fn a() {}");
             assert!(buf.is_parsing());
         });
         buffer
-            .condition(&ctx, |buffer, _| !buffer.is_parsing())
+            .condition(&cx, |buffer, _| !buffer.is_parsing())
             .await;
         assert_eq!(
-            get_tree_sexp(&buffer, &ctx),
+            get_tree_sexp(&buffer, &cx),
             concat!(
                 "(source_file (function_item name: (identifier) ",
                 "parameters: (parameters) ",
@@ -3663,16 +3659,16 @@ mod tests {
             )
         );
 
-        buffer.update(&mut ctx, |buf, ctx| {
-            buf.redo(Some(ctx));
+        buffer.update(&mut cx, |buf, cx| {
+            buf.redo(Some(cx));
             assert_eq!(buf.text(), "fn a(b: C) { d.e::<G>(f); }");
             assert!(buf.is_parsing());
         });
         buffer
-            .condition(&ctx, |buffer, _| !buffer.is_parsing())
+            .condition(&cx, |buffer, _| !buffer.is_parsing())
             .await;
         assert_eq!(
-            get_tree_sexp(&buffer, &ctx),
+            get_tree_sexp(&buffer, &cx),
             concat!(
                 "(source_file (function_item name: (identifier) ",
                     "parameters: (parameters (parameter pattern: (identifier) type: (type_identifier))) ",
@@ -3684,22 +3680,22 @@ mod tests {
             )
         );
 
-        fn get_tree_sexp(buffer: &ModelHandle<Buffer>, ctx: &gpui::TestAppContext) -> String {
-            buffer.read_with(ctx, |buffer, _| {
+        fn get_tree_sexp(buffer: &ModelHandle<Buffer>, cx: &gpui::TestAppContext) -> String {
+            buffer.read_with(cx, |buffer, _| {
                 buffer.syntax_tree().unwrap().root_node().to_sexp()
             })
         }
     }
 
     #[gpui::test]
-    async fn test_enclosing_bracket_ranges(mut ctx: gpui::TestAppContext) {
+    async fn test_enclosing_bracket_ranges(mut cx: gpui::TestAppContext) {
         use unindent::Unindent as _;
 
-        let app_state = ctx.read(build_app_state);
+        let app_state = cx.read(build_app_state);
         let rust_lang = app_state.language_registry.select_language("test.rs");
         assert!(rust_lang.is_some());
 
-        let buffer = ctx.add_model(|ctx| {
+        let buffer = cx.add_model(|cx| {
             let text = "
                 mod x {
                     mod y {
@@ -3709,12 +3705,12 @@ mod tests {
             "
             .unindent()
             .into();
-            Buffer::from_history(0, History::new(text), None, rust_lang.cloned(), ctx)
+            Buffer::from_history(0, History::new(text), None, rust_lang.cloned(), cx)
         });
         buffer
-            .condition(&ctx, |buffer, _| !buffer.is_parsing())
+            .condition(&cx, |buffer, _| !buffer.is_parsing())
             .await;
-        buffer.read_with(&ctx, |buf, _| {
+        buffer.read_with(&cx, |buf, _| {
             assert_eq!(
                 buf.enclosing_bracket_point_ranges(Point::new(1, 6)..Point::new(1, 6)),
                 Some((
@@ -3750,7 +3746,7 @@ mod tests {
             &mut self,
             rng: &mut T,
             old_range_count: usize,
-            ctx: Option<&mut ModelContext<Self>>,
+            cx: Option<&mut ModelContext<Self>>,
         ) -> (Vec<Range<usize>>, String, Vec<Operation>)
         where
             T: Rng,
@@ -3767,7 +3763,7 @@ mod tests {
             let new_text: String = RandomCharIter::new(&mut *rng).take(new_text_len).collect();
 
             let operations = self
-                .edit(old_ranges.iter().cloned(), new_text.as_str(), ctx)
+                .edit(old_ranges.iter().cloned(), new_text.as_str(), cx)
                 .unwrap();
 
             (old_ranges, new_text, operations)
@@ -3776,14 +3772,14 @@ mod tests {
         pub fn randomly_mutate<T>(
             &mut self,
             rng: &mut T,
-            mut ctx: Option<&mut ModelContext<Self>>,
+            mut cx: Option<&mut ModelContext<Self>>,
         ) -> (Vec<Range<usize>>, String, Vec<Operation>)
         where
             T: Rng,
         {
             // Randomly edit
             let (old_ranges, new_text, mut operations) =
-                self.randomly_edit(rng, 5, ctx.as_deref_mut());
+                self.randomly_edit(rng, 5, cx.as_deref_mut());
 
             // Randomly add, remove or mutate selection sets.
             let replica_selection_sets = &self
