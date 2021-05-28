@@ -81,9 +81,9 @@ impl Selection {
         }
     }
 
-    pub fn display_range(&self, map: &DisplayMap, app: &AppContext) -> Range<DisplayPoint> {
-        let start = self.start.to_display_point(map, app);
-        let end = self.end.to_display_point(map, app);
+    pub fn display_range(&self, map: &DisplayMap, cx: &AppContext) -> Range<DisplayPoint> {
+        let start = self.start.to_display_point(map, cx);
+        let end = self.end.to_display_point(map, cx);
         if self.reversed {
             end..start
         } else {
@@ -95,22 +95,22 @@ impl Selection {
         &self,
         include_end_if_at_line_start: bool,
         map: &DisplayMap,
-        ctx: &AppContext,
+        cx: &AppContext,
     ) -> (Range<u32>, Range<u32>) {
-        let display_start = self.start.to_display_point(map, ctx);
+        let display_start = self.start.to_display_point(map, cx);
         let buffer_start =
-            DisplayPoint::new(display_start.row(), 0).to_buffer_point(map, Bias::Left, ctx);
+            DisplayPoint::new(display_start.row(), 0).to_buffer_point(map, Bias::Left, cx);
 
-        let mut display_end = self.end.to_display_point(map, ctx);
+        let mut display_end = self.end.to_display_point(map, cx);
         if !include_end_if_at_line_start
-            && display_end.row() != map.max_point(ctx).row()
+            && display_end.row() != map.max_point(cx).row()
             && display_start.row() != display_end.row()
             && display_end.column() == 0
         {
             *display_end.row_mut() -= 1;
         }
-        let buffer_end = DisplayPoint::new(display_end.row(), map.line_len(display_end.row(), ctx))
-            .to_buffer_point(map, Bias::Left, ctx);
+        let buffer_end = DisplayPoint::new(display_end.row(), map.line_len(display_end.row(), cx))
+            .to_buffer_point(map, Bias::Left, cx);
 
         (
             buffer_start.row..buffer_end.row + 1,
