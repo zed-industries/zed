@@ -57,6 +57,10 @@ impl DisplayMap {
         self.fold_map.unfold(ranges, ctx)
     }
 
+    pub fn intersects_fold<T: ToOffset>(&self, offset: T, ctx: &AppContext) -> bool {
+        self.fold_map.intersects_fold(offset, ctx)
+    }
+
     pub fn is_line_folded(&self, display_row: u32, ctx: &AppContext) -> bool {
         self.fold_map.is_line_folded(display_row, ctx)
     }

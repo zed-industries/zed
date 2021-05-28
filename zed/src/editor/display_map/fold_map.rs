@@ -192,6 +192,18 @@ impl FoldMap {
         })
     }
 
+    pub fn intersects_fold<T>(&self, offset: T, ctx: &AppContext) -> bool
+    where
+        T: ToOffset,
+    {
+        let buffer = self.buffer.read(ctx);
+        let offset = offset.to_offset(buffer);
+        let transforms = self.sync(ctx);
+        let mut cursor = transforms.cursor::<usize, usize>();
+        cursor.seek(&offset, SeekBias::Right, &());
+        cursor.item().map_or(false, |t| t.display_text.is_some())
+    }
+
     pub fn is_line_folded(&self, display_row: u32, ctx: &AppContext) -> bool {
         let transforms = self.sync(ctx);
         let mut cursor = transforms.cursor::<DisplayPoint, DisplayPoint>();

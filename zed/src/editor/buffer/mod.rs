@@ -709,6 +709,23 @@ impl Buffer {
         })
     }
 
+    pub fn range_for_containing_syntax_node<T: ToOffset>(
+        &self,
+        range: Range<T>,
+    ) -> Option<Range<usize>> {
+        if let Some(tree) = self.syntax_tree() {
+            let root = tree.root_node();
+            let range = range.start.to_offset(self)..range.end.to_offset(self);
+            let mut node = root.descendant_for_byte_range(range.start, range.end);
+            while node.map_or(false, |n| n.byte_range() == range) {
+                node = node.unwrap().parent();
+            }
+            node.map(|n| n.byte_range())
+        } else {
+            None
+        }
+    }
+
     fn diff(&self, new_text: Arc<str>, ctx: &AppContext) -> Task<Diff> {
         // TODO: it would be nice to not allocate here.
         let old_text = self.text();

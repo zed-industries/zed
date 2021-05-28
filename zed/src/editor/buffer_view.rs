@@ -166,6 +166,11 @@ pub fn init(app: &mut MutableAppContext) {
             "buffer:add_selection_below",
             Some("BufferView"),
         ),
+        Binding::new(
+            "alt-up",
+            "buffer:select-larger-syntax-node",
+            Some("BufferView"),
+        ),
         Binding::new("pageup", "buffer:page_up", Some("BufferView")),
         Binding::new("pagedown", "buffer:page_down", Some("BufferView")),
         Binding::new("alt-cmd-[", "buffer:fold", Some("BufferView")),
@@ -269,6 +274,10 @@ pub fn init(app: &mut MutableAppContext) {
     app.add_action(
         "buffer:add_selection_below",
         BufferView::add_selection_below,
+    );
+    app.add_action(
+        "buffer:select-larger-syntax-node",
+        BufferView::select_larger_syntax_node,
     );
     app.add_action("buffer:page_up", BufferView::page_up);
     app.add_action("buffer:page_down", BufferView::page_down);
@@ -1659,7 +1668,7 @@ impl BufferView {
         self.add_selection(false, ctx);
     }
 
-    pub fn add_selection(&mut self, above: bool, ctx: &mut ViewContext<Self>) {
+    fn add_selection(&mut self, above: bool, ctx: &mut ViewContext<Self>) {
         use super::RangeExt;
 
         let app = ctx.as_ref();
@@ -1749,6 +1758,30 @@ impl BufferView {
         if state.stack.len() > 1 {
             self.add_selections_state = Some(state);
         }
+    }
+
+    pub fn select_larger_syntax_node(&mut self, _: &(), ctx: &mut ViewContext<Self>) {
+        let app = ctx.as_ref();
+        let buffer = self.buffer.read(app);
+        let mut selections = self.selections(app).to_vec();
+        for selection in &mut selections {
+            let mut range = selection.start.to_offset(buffer)..selection.end.to_offset(buffer);
+            while let Some(containing_range) =
+                buffer.range_for_containing_syntax_node(range.clone())
+            {
+                range = containing_range;
+                if !self.display_map.intersects_fold(range.start, app)
+                    && !self.display_map.intersects_fold(range.end, app)
+                {
+                    break;
+                }
+            }
+
+            selection.start = buffer.anchor_before(range.start);
+            selection.end = buffer.anchor_before(range.end);
+        }
+
+        self.update_selections(selections, true, ctx);
     }
 
     fn build_columnar_selection(
