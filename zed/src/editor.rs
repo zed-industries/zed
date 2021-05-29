@@ -54,7 +54,17 @@ pub fn init(cx: &mut MutableAppContext) {
             Some("BufferView"),
         ),
         Binding::new(
+            "alt-h",
+            "buffer:delete_to_previous_word_boundary",
+            Some("BufferView"),
+        ),
+        Binding::new(
             "alt-delete",
+            "buffer:delete_to_next_word_boundary",
+            Some("BufferView"),
+        ),
+        Binding::new(
+            "alt-d",
             "buffer:delete_to_next_word_boundary",
             Some("BufferView"),
         ),
@@ -68,6 +78,7 @@ pub fn init(cx: &mut MutableAppContext) {
             "buffer:delete_to_end_of_line",
             Some("BufferView"),
         ),
+        Binding::new("ctrl-k", "buffer:cut_to_end_of_line", Some("BufferView")),
         Binding::new("cmd-shift-D", "buffer:duplicate_line", Some("BufferView")),
         Binding::new("ctrl-cmd-up", "buffer:move_line_up", Some("BufferView")),
         Binding::new("ctrl-cmd-down", "buffer:move_line_down", Some("BufferView")),
@@ -90,7 +101,17 @@ pub fn init(cx: &mut MutableAppContext) {
             Some("BufferView"),
         ),
         Binding::new(
+            "alt-b",
+            "buffer:move_to_previous_word_boundary",
+            Some("BufferView"),
+        ),
+        Binding::new(
             "alt-right",
+            "buffer:move_to_next_word_boundary",
+            Some("BufferView"),
+        ),
+        Binding::new(
+            "alt-f",
             "buffer:move_to_next_word_boundary",
             Some("BufferView"),
         ),
@@ -113,16 +134,30 @@ pub fn init(cx: &mut MutableAppContext) {
         Binding::new("cmd-up", "buffer:move_to_beginning", Some("BufferView")),
         Binding::new("cmd-down", "buffer:move_to_end", Some("BufferView")),
         Binding::new("shift-up", "buffer:select_up", Some("BufferView")),
+        Binding::new("ctrl-shift-P", "buffer:select_up", Some("BufferView")),
         Binding::new("shift-down", "buffer:select_down", Some("BufferView")),
+        Binding::new("ctrl-shift-N", "buffer:select_down", Some("BufferView")),
         Binding::new("shift-left", "buffer:select_left", Some("BufferView")),
+        Binding::new("ctrl-shift-B", "buffer:select_left", Some("BufferView")),
         Binding::new("shift-right", "buffer:select_right", Some("BufferView")),
+        Binding::new("ctrl-shift-F", "buffer:select_right", Some("BufferView")),
         Binding::new(
             "alt-shift-left",
             "buffer:select_to_previous_word_boundary",
             Some("BufferView"),
         ),
         Binding::new(
+            "alt-shift-B",
+            "buffer:select_to_previous_word_boundary",
+            Some("BufferView"),
+        ),
+        Binding::new(
             "alt-shift-right",
+            "buffer:select_to_next_word_boundary",
+            Some("BufferView"),
+        ),
+        Binding::new(
+            "alt-shift-F",
             "buffer:select_to_next_word_boundary",
             Some("BufferView"),
         ),
@@ -167,7 +202,17 @@ pub fn init(cx: &mut MutableAppContext) {
             Some("BufferView"),
         ),
         Binding::new(
+            "cmd-ctrl-p",
+            "buffer:add_selection_above",
+            Some("BufferView"),
+        ),
+        Binding::new(
             "cmd-alt-down",
+            "buffer:add_selection_below",
+            Some("BufferView"),
+        ),
+        Binding::new(
+            "cmd-ctrl-n",
             "buffer:add_selection_below",
             Some("BufferView"),
         ),
@@ -177,7 +222,17 @@ pub fn init(cx: &mut MutableAppContext) {
             Some("BufferView"),
         ),
         Binding::new(
+            "ctrl-w",
+            "buffer:select_larger_syntax_node",
+            Some("BufferView"),
+        ),
+        Binding::new(
             "alt-down",
+            "buffer:select_smaller_syntax_node",
+            Some("BufferView"),
+        ),
+        Binding::new(
+            "ctrl-shift-W",
             "buffer:select_smaller_syntax_node",
             Some("BufferView"),
         ),
@@ -221,6 +276,7 @@ pub fn init(cx: &mut MutableAppContext) {
         "buffer:delete_to_end_of_line",
         Editor::delete_to_end_of_line,
     );
+    cx.add_action("buffer:cut_to_end_of_line", Editor::cut_to_end_of_line);
     cx.add_action("buffer:duplicate_line", Editor::duplicate_line);
     cx.add_action("buffer:move_line_up", Editor::move_line_up);
     cx.add_action("buffer:move_line_down", Editor::move_line_down);
@@ -1555,6 +1611,13 @@ impl Editor {
         self.start_transaction(cx);
         self.select_to_end_of_line(&(), cx);
         self.delete(&(), cx);
+        self.end_transaction(cx);
+    }
+
+    pub fn cut_to_end_of_line(&mut self, _: &(), cx: &mut ViewContext<Self>) {
+        self.start_transaction(cx);
+        self.select_to_end_of_line(&(), cx);
+        self.cut(&(), cx);
         self.end_transaction(cx);
     }
 
