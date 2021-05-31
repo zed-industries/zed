@@ -4044,7 +4044,7 @@ mod tests {
         });
         assert_eq!(
             view.read_with(&cx, |view, cx| view.selection_ranges(cx)),
-            &[DisplayPoint::new(0, 0)..DisplayPoint::new(5, 0)]
+            &[DisplayPoint::new(5, 0)..DisplayPoint::new(0, 0)]
         );
 
         // Trying to expand the selected syntax node one more time has no effect.
@@ -4053,7 +4053,7 @@ mod tests {
         });
         assert_eq!(
             view.read_with(&cx, |view, cx| view.selection_ranges(cx)),
-            &[DisplayPoint::new(0, 0)..DisplayPoint::new(5, 0)]
+            &[DisplayPoint::new(5, 0)..DisplayPoint::new(0, 0)]
         );
 
         view.update(&mut cx, |view, cx| {
