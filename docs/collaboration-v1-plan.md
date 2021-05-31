@@ -1,6 +1,7 @@
 # Collaboration V1
 
-### Sharing UI
+
+## Sharing UI
 
 * For each worktree that I edit in Zed, there is a *Share* button that I can click to turn *sharing*
   on or off for that worktree.
@@ -15,7 +16,7 @@
       changes that have occured outside of Zed, and avoid auto-sharing on startup when that has
       happened?
 
-### Sharing Semantics
+## Sharing Semantics
 
 * While sharing, the entire state of my worktree is replicated and stored forever on the Zed server.
   Other collaborators can freely read the last state of my worktree, even after I've quit Zed.
@@ -54,3 +55,60 @@
   avoid uploading entire snapshots of files that have changes since our last sharing session.
   Instead, the server can report that last version vector that it has seen for a file,
   and we can use that to construct a diff based on our history.
+
+## RPC implementation details
+
+Every client will have a single TCP connection to `zed.dev`.
+
+The API will consist of resources named with URL-like paths, for example: `/worktrees/1`.
+
+You'll be able to communicate with any resource in the following ways:
+
+* `send`: A "fire-and-forget" message with no reply. (We may not need this)
+* `request`: A message that expects a reply message that is tagged with the same sequence number as the request.
+* `request_stream`: A message that expects a series of reply messages that are tagged with the same sequence number as the request. Unsure if this is needed beyond `subscribe`.
+* `subscribe`: Returns a stream that allows the resource to emit messages at any time in the future. When the stream is dropped, we unsubscribe automatically.
+
+Any resource you can subscribe to is considered a *channel*, and all of its processing needs to occur on a single machine. We'll recognize channels based on their URL pattern and handle them specially in our frontend servers. For any channel, the frontend will perform a lookup for the machine on which that channel exists. If no machine exists, we'll select one. Maybe it's always the frontend itself?. If a channel already exists on another server, we'll proxy the connection through the frontend and relay and broadcasts from this channel to the client.
+
+The client will interact with the server via a `api::Client` object. Model objects with remote behavior will interact directly with this client to communicate with the server. For example, `Worktree` will be changed to an enum type with `Local` and `Remote` variants. The local variant will have an optional `client` in order to stream local changes to the server when sharing. The remote variant will always have a client and implement all worktree operations in terms of it.
+
+```rs
+enum Worktree {
+    Local {
+        remote: Option<Client>,
+    }
+    Remote {
+        remote: Client,
+    }
+}
+
+impl Worktree {
+    async fn remote(client, id, cx) -> anyhow::Result<Self> {
+        // Subscribe to the stream of all worktree events going forward
+        let events = client.subscribe::<WorktreeEvent>(format!("/worktrees/{}", worktree_id)).await?;
+        // Stream the entries of the worktree
+        let entry_chunks = client.request_stream()
+
+        // In the background, populate all worktree entries in the initial stream and process any change events.
+        // This is similar to what we do 
+        let _handle = thread::spawn(smol::block_on(async move {
+            for chunk in entry_chunks {
+                // Grab the lock and fill in the new entries
+            }
+
+            while let Some() = events.recv_next() {
+                // Update the tree
+            }
+        }))
+
+        // The _handle depicted here won't actually work, but we need to terminate the thread and drop the subscription
+        // when the Worktree is dropped... maybe we use a similar approach to how we handle local worktrees.
+
+        Self::Remote {
+            _handle,
+            client,
+        }
+    }
+}
+```
