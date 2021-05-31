@@ -54,7 +54,7 @@ impl<'a> AddAssign<&'a Local> for Local {
     }
 }
 
-#[derive(Clone, Debug, Default, Eq, PartialEq)]
+#[derive(Clone, Debug, Default, Hash, Eq, PartialEq)]
 pub struct Global(SmallVec<[Local; 3]>);
 
 impl Global {

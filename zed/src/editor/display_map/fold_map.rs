@@ -1027,11 +1027,34 @@ mod tests {
 
             for _ in 0..operations {
                 log::info!("text: {:?}", buffer.read(cx).text());
+                {
+                    let buffer = buffer.read(cx);
+                    let mut cursor = map.folds.cursor::<(), ()>();
+                    cursor.next(buffer);
+                    let mut prev_fold: Option<&Fold> = None;
+                    while let Some(fold) = cursor.item() {
+                        if let Some(prev_fold) = prev_fold {
+                            let prev_fold = prev_fold.0.start.to_offset(buffer)
+                                ..prev_fold.0.end.to_offset(buffer);
+                            let fold = fold.0.start.to_offset(buffer)..fold.0.end.to_offset(buffer);
+                            assert!(
+                                fold.start > prev_fold.start
+                                    || (fold.start == prev_fold.start && fold.end <= prev_fold.end),
+                                "prev fold {:?}\ncurr fold {:?}",
+                                prev_fold,
+                                fold
+                            );
+                        }
+
+                        prev_fold = Some(fold);
+                        cursor.next(buffer);
+                    }
+                }
                 match rng.gen_range(0..=100) {
                     0..=34 => {
                         let buffer = buffer.read(cx);
                         let mut to_fold = Vec::new();
-                        for _ in 0..rng.gen_range(1..=5) {
+                        for _ in 0..rng.gen_range(1..=2) {
                             let end = buffer.clip_offset(rng.gen_range(0..=buffer.len()), Right);
                             let start = buffer.clip_offset(rng.gen_range(0..=end), Left);
                             to_fold.push(start..end);

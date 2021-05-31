@@ -1,17 +1,16 @@
-use super::Buffer;
+use super::{Buffer, ToOffset};
 use crate::time;
 use anyhow::Result;
-use std::cmp::Ordering;
-use std::ops::Range;
+use std::{cmp::Ordering, ops::Range};
 
 #[derive(Clone, Eq, PartialEq, Debug, Hash)]
 pub enum Anchor {
     Start,
     End,
     Middle {
-        insertion_id: time::Local,
         offset: usize,
         bias: AnchorBias,
+        version: time::Global,
     },
 }
 
@@ -55,18 +54,22 @@ impl Anchor {
                 Anchor::Middle {
                     offset: self_offset,
                     bias: self_bias,
-                    ..
+                    version: self_version,
                 },
                 Anchor::Middle {
                     offset: other_offset,
                     bias: other_bias,
-                    ..
+                    version: other_version,
                 },
-            ) => buffer
-                .fragment_id_for_anchor(self)?
-                .cmp(buffer.fragment_id_for_anchor(other)?)
-                .then_with(|| self_offset.cmp(other_offset))
-                .then_with(|| self_bias.cmp(other_bias)),
+            ) => {
+                let offset_comparison = if self_version == other_version {
+                    self_offset.cmp(other_offset)
+                } else {
+                    self.to_offset(buffer).cmp(&other.to_offset(buffer))
+                };
+
+                offset_comparison.then_with(|| self_bias.cmp(other_bias))
+            }
         })
     }
 

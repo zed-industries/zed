@@ -1498,16 +1498,12 @@ impl Buffer {
                 Operation::UpdateSelections { selections, .. } => {
                     if let Some(selections) = selections {
                         selections.iter().all(|selection| {
-                            let contains_start = match selection.start {
-                                Anchor::Middle { insertion_id, .. } => {
-                                    self.version.observed(insertion_id)
-                                }
+                            let contains_start = match &selection.start {
+                                Anchor::Middle { version, .. } => self.version >= *version,
                                 _ => true,
                             };
-                            let contains_end = match selection.end {
-                                Anchor::Middle { insertion_id, .. } => {
-                                    self.version.observed(insertion_id)
-                                }
+                            let contains_end = match &selection.end {
+                                Anchor::Middle { version, .. } => self.version >= *version,
                                 _ => true,
                             };
                             contains_start && contains_end
@@ -1980,62 +1976,15 @@ impl Buffer {
         let max_offset = self.len();
         assert!(offset <= max_offset, "offset is out of range");
 
-        let seek_bias;
-        match bias {
-            AnchorBias::Left => {
-                if offset == 0 {
-                    return Anchor::Start;
-                } else {
-                    seek_bias = SeekBias::Left;
-                }
-            }
-            AnchorBias::Right => {
-                if offset == max_offset {
-                    return Anchor::End;
-                } else {
-                    seek_bias = SeekBias::Right;
-                }
-            }
-        };
-
-        let mut cursor = self.fragments.cursor::<usize, usize>();
-        cursor.seek(&offset, seek_bias, &());
-        let fragment = cursor.item().unwrap();
-        let offset_in_fragment = offset - cursor.start();
-        let offset_in_insertion = fragment.range_in_insertion.start + offset_in_fragment;
-        let anchor = Anchor::Middle {
-            insertion_id: fragment.insertion.id,
-            offset: offset_in_insertion,
-            bias,
-        };
-        anchor
-    }
-
-    fn fragment_id_for_anchor(&self, anchor: &Anchor) -> Result<&FragmentId> {
-        match anchor {
-            Anchor::Start => Ok(FragmentId::max_value()),
-            Anchor::End => Ok(FragmentId::min_value()),
+        if offset == 0 && bias == AnchorBias::Left {
+            Anchor::Start
+        } else if offset == max_offset && bias == AnchorBias::Right {
+            Anchor::End
+        } else {
             Anchor::Middle {
-                insertion_id,
                 offset,
                 bias,
-                ..
-            } => {
-                let seek_bias = match bias {
-                    AnchorBias::Left => SeekBias::Left,
-                    AnchorBias::Right => SeekBias::Right,
-                };
-
-                let splits = self
-                    .insertion_splits
-                    .get(&insertion_id)
-                    .ok_or_else(|| anyhow!("split does not exist for insertion id"))?;
-                let mut splits_cursor = splits.cursor::<usize, ()>();
-                splits_cursor.seek(offset, seek_bias, &());
-                splits_cursor
-                    .item()
-                    .ok_or_else(|| anyhow!("split offset is out of range"))
-                    .map(|split| &split.fragment_id)
+                version: self.version(),
             }
         }
     }
@@ -2045,31 +1994,44 @@ impl Buffer {
             Anchor::Start => TextSummary::default(),
             Anchor::End => self.text_summary(),
             Anchor::Middle {
-                insertion_id,
                 offset,
                 bias,
+                version,
             } => {
-                let seek_bias = match bias {
-                    AnchorBias::Left => SeekBias::Left,
-                    AnchorBias::Right => SeekBias::Right,
-                };
+                let mut cursor = self
+                    .fragments
+                    .filter::<_, usize>(|summary| !(*version >= summary.max_version), &());
 
-                let splits = self
-                    .insertion_splits
-                    .get(&insertion_id)
-                    .expect("split does not exist for insertion id");
-                let mut splits_cursor = splits.cursor::<usize, ()>();
-                splits_cursor.seek(offset, seek_bias, &());
-                let split = splits_cursor.item().expect("split offset is out of range");
+                let mut old_offset = 0;
+                let mut new_offset = 0;
+                while let Some(fragment) = cursor.item() {
+                    let bytes_since_last_fragment = *cursor.start() - new_offset;
+                    let comparison = offset.cmp(&(old_offset + bytes_since_last_fragment));
+                    if comparison == cmp::Ordering::Greater
+                        || (comparison == cmp::Ordering::Equal && *bias == AnchorBias::Right)
+                    {
+                        old_offset += bytes_since_last_fragment;
+                        new_offset += bytes_since_last_fragment;
 
-                let mut fragments_cursor = self.fragments.cursor::<FragmentIdRef, usize>();
-                fragments_cursor.seek(&FragmentIdRef::new(&split.fragment_id), SeekBias::Left, &());
-                let fragment = fragments_cursor.item().expect("fragment id does not exist");
-
-                let mut ix = *fragments_cursor.start();
-                if fragment.visible {
-                    ix += offset - fragment.range_in_insertion.start;
+                        if fragment.was_visible(version, &self.undo_map) {
+                            let comparison = offset.cmp(&(old_offset + fragment.visible_len()));
+                            if comparison == cmp::Ordering::Greater
+                                || (comparison == cmp::Ordering::Equal
+                                    && *bias == AnchorBias::Right)
+                            {
+                                old_offset += fragment.len();
+                            } else {
+                                break;
+                            }
+                        }
+                        new_offset += fragment.visible_len();
+                        cursor.next(&());
+                    } else {
+                        break;
+                    }
                 }
+
+                let ix = new_offset + offset.saturating_sub(old_offset);
                 self.text_summary_for_range(0..ix)
             }
         }
