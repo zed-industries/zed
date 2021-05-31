@@ -1829,7 +1829,7 @@ impl Editor {
         let mut stack = mem::take(&mut self.select_larger_syntax_node_stack);
         let mut selected_larger_node = false;
         let old_selections = self.selections(app).to_vec();
-        let mut new_selections = Vec::new();
+        let mut new_selection_ranges = Vec::new();
         for selection in &old_selections {
             let old_range = selection.start.to_offset(buffer)..selection.end.to_offset(buffer);
             let mut new_range = old_range.clone();
@@ -1843,17 +1843,22 @@ impl Editor {
             }
 
             selected_larger_node |= new_range != old_range;
-            new_selections.push(Selection {
-                id: selection.id,
-                start: buffer.anchor_before(new_range.start),
-                end: buffer.anchor_before(new_range.end),
-                reversed: selection.reversed,
-                goal: SelectionGoal::None,
-            });
+            new_selection_ranges.push((selection.id, new_range, selection.reversed));
         }
 
         if selected_larger_node {
             stack.push(old_selections);
+            new_selection_ranges.sort_unstable_by_key(|(_, range, _)| range.start.clone());
+            let new_selections = new_selection_ranges
+                .into_iter()
+                .map(|(id, range, reversed)| Selection {
+                    id,
+                    start: buffer.anchor_before(range.start),
+                    end: buffer.anchor_before(range.end),
+                    reversed,
+                    goal: SelectionGoal::None,
+                })
+                .collect();
             self.update_selections(new_selections, true, cx);
         }
         self.select_larger_syntax_node_stack = stack;
