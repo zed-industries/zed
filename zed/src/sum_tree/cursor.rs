@@ -434,7 +434,7 @@ where
                                 if comparison == Ordering::Greater
                                     || (comparison == Ordering::Equal && bias == SeekBias::Right)
                                 {
-                                    self.seek_dimension.add_summary(child_summary);
+                                    self.seek_dimension = child_end;
                                     self.sum_dimension.add_summary(child_summary);
                                     match aggregate {
                                         SeekAggregate::None => {}
@@ -469,14 +469,14 @@ where
                                 .iter()
                                 .zip(&item_summaries[entry.index..])
                             {
-                                let mut item_end = self.seek_dimension.clone();
-                                item_end.add_summary(item_summary);
+                                let mut child_end = self.seek_dimension.clone();
+                                child_end.add_summary(item_summary);
 
-                                let comparison = target.cmp(&item_end, cx);
+                                let comparison = target.cmp(&child_end, cx);
                                 if comparison == Ordering::Greater
                                     || (comparison == Ordering::Equal && bias == SeekBias::Right)
                                 {
-                                    self.seek_dimension.add_summary(item_summary);
+                                    self.seek_dimension = child_end;
                                     self.sum_dimension.add_summary(item_summary);
                                     match aggregate {
                                         SeekAggregate::None => {}
@@ -550,7 +550,7 @@ where
                             if comparison == Ordering::Greater
                                 || (comparison == Ordering::Equal && bias == SeekBias::Right)
                             {
-                                self.seek_dimension.add_summary(child_summary);
+                                self.seek_dimension = child_end;
                                 self.sum_dimension.add_summary(child_summary);
                                 match aggregate {
                                     SeekAggregate::None => {}
@@ -596,7 +596,7 @@ where
                             if comparison == Ordering::Greater
                                 || (comparison == Ordering::Equal && bias == SeekBias::Right)
                             {
-                                self.seek_dimension.add_summary(item_summary);
+                                self.seek_dimension = child_end;
                                 self.sum_dimension.add_summary(item_summary);
                                 match aggregate {
                                     SeekAggregate::None => {}
