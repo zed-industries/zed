@@ -1,4 +1,4 @@
-use super::{Buffer, ToOffset};
+use super::Buffer;
 use crate::{sum_tree, time};
 use anyhow::Result;
 use std::{cmp::Ordering, ops::Range};
@@ -61,30 +61,15 @@ impl Anchor {
             (Anchor::End, _) | (_, Anchor::Start) => Ordering::Greater,
             (
                 Anchor::Middle {
-                    offset: self_offset,
-                    bias: self_bias,
-                    ..
+                    bias: self_bias, ..
                 },
                 Anchor::Middle {
-                    offset: other_offset,
-                    bias: other_bias,
-                    ..
+                    bias: other_bias, ..
                 },
-            ) => {
-                dbg!(
-                    self,
-                    other,
-                    self_offset,
-                    other_offset,
-                    buffer.fragment_ix_for_anchor(self),
-                    buffer.fragment_ix_for_anchor(other)
-                );
-                buffer
-                    .fragment_ix_for_anchor(self)
-                    .cmp(&buffer.fragment_ix_for_anchor(other))
-                    .then_with(|| self_offset.cmp(&other_offset))
-                    .then_with(|| self_bias.cmp(other_bias))
-            }
+            ) => buffer
+                .fragment_ix_for_anchor(self)
+                .cmp(&buffer.fragment_ix_for_anchor(other))
+                .then_with(|| self_bias.cmp(&other_bias)),
         })
     }
 

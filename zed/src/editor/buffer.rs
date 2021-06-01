@@ -2030,22 +2030,28 @@ impl Buffer {
         }
     }
 
-    fn fragment_ix_for_anchor(&self, anchor: &Anchor) -> usize {
+    fn fragment_ix_for_anchor(&self, anchor: &Anchor) -> (usize, usize) {
         match anchor {
-            Anchor::Start => 0,
-            Anchor::End => self.fragments.extent::<FragmentCount>(&None).0,
+            Anchor::Start => (0, 0),
+            Anchor::End => (
+                self.fragments.extent::<FragmentCount>(&None).0,
+                self.fragments.last().map_or(0, |f| f.visible_len()),
+            ),
             Anchor::Middle {
                 offset,
                 bias,
                 version,
             } => {
-                let mut cursor = self.fragments.cursor::<VersionedOffset, FragmentCount>();
+                let mut cursor = self
+                    .fragments
+                    .cursor::<VersionedOffset, (VersionedOffset, FragmentCount)>();
                 cursor.seek(
                     &VersionedOffset::Offset(*offset),
                     bias.to_seek_bias(),
                     &Some(version.clone()),
                 );
-                cursor.start().0
+                let count = cursor.start().1;
+                (count.0, offset - cursor.start().0.offset())
             }
         }
     }
@@ -2663,6 +2669,13 @@ impl<'a> sum_tree::Dimension<'a, FragmentSummary> for (VersionedOffset, usize) {
     fn add_summary(&mut self, summary: &'a FragmentSummary, cx: &Option<time::Global>) {
         self.0.add_summary(summary, cx);
         self.1 += summary.text.visible;
+    }
+}
+
+impl<'a> sum_tree::Dimension<'a, FragmentSummary> for (VersionedOffset, FragmentCount) {
+    fn add_summary(&mut self, summary: &'a FragmentSummary, cx: &Option<time::Global>) {
+        self.0.add_summary(summary, cx);
+        self.1 .0 += summary.count;
     }
 }
 
