@@ -2001,64 +2001,6 @@ impl Buffer {
     }
 
     fn summary_for_anchor(&self, anchor: &Anchor) -> TextSummary {
-        #[derive(Copy, Clone, Debug, Eq, PartialEq)]
-        enum VersionedOffset {
-            Offset(usize),
-            InvalidVersion,
-        }
-
-        impl VersionedOffset {
-            fn offset(&self) -> usize {
-                if let Self::Offset(offset) = self {
-                    *offset
-                } else {
-                    panic!("invalid version")
-                }
-            }
-        }
-
-        impl Default for VersionedOffset {
-            fn default() -> Self {
-                Self::Offset(0)
-            }
-        }
-
-        impl<'a> sum_tree::Dimension<'a, FragmentSummary> for VersionedOffset {
-            fn add_summary(&mut self, summary: &'a FragmentSummary, cx: &Option<time::Global>) {
-                if let Self::Offset(offset) = self {
-                    let version = cx.as_ref().unwrap();
-                    if *version >= summary.max_insertion_version {
-                        *offset += summary.text.visible + summary.text.deleted;
-                    } else if !summary
-                        .min_insertion_version
-                        .iter()
-                        .all(|t| !version.observed(*t))
-                    {
-                        *self = Self::InvalidVersion;
-                    }
-                } else {
-                    unreachable!();
-                }
-            }
-        }
-
-        impl<'a> sum_tree::SeekDimension<'a, FragmentSummary> for VersionedOffset {
-            fn cmp(&self, other: &Self, _: &Option<time::Global>) -> cmp::Ordering {
-                match (self, other) {
-                    (Self::Offset(a), Self::Offset(b)) => Ord::cmp(a, b),
-                    (Self::Offset(_), Self::InvalidVersion) => cmp::Ordering::Less,
-                    (Self::InvalidVersion, _) => unreachable!(),
-                }
-            }
-        }
-
-        impl<'a> sum_tree::Dimension<'a, FragmentSummary> for (VersionedOffset, usize) {
-            fn add_summary(&mut self, summary: &'a FragmentSummary, cx: &Option<time::Global>) {
-                self.0.add_summary(summary, cx);
-                self.1 += summary.text.visible;
-            }
-        }
-
         match anchor {
             Anchor::Start => TextSummary::default(),
             Anchor::End => self.text_summary(),
@@ -2638,6 +2580,64 @@ impl Default for InsertionSplitSummary {
 impl<'a> sum_tree::Dimension<'a, InsertionSplitSummary> for usize {
     fn add_summary(&mut self, summary: &InsertionSplitSummary, _: &()) {
         *self += summary.extent;
+    }
+}
+
+#[derive(Copy, Clone, Debug, Eq, PartialEq)]
+enum VersionedOffset {
+    Offset(usize),
+    InvalidVersion,
+}
+
+impl VersionedOffset {
+    fn offset(&self) -> usize {
+        if let Self::Offset(offset) = self {
+            *offset
+        } else {
+            panic!("invalid version")
+        }
+    }
+}
+
+impl Default for VersionedOffset {
+    fn default() -> Self {
+        Self::Offset(0)
+    }
+}
+
+impl<'a> sum_tree::Dimension<'a, FragmentSummary> for VersionedOffset {
+    fn add_summary(&mut self, summary: &'a FragmentSummary, cx: &Option<time::Global>) {
+        if let Self::Offset(offset) = self {
+            let version = cx.as_ref().unwrap();
+            if *version >= summary.max_insertion_version {
+                *offset += summary.text.visible + summary.text.deleted;
+            } else if !summary
+                .min_insertion_version
+                .iter()
+                .all(|t| !version.observed(*t))
+            {
+                *self = Self::InvalidVersion;
+            }
+        } else {
+            unreachable!();
+        }
+    }
+}
+
+impl<'a> sum_tree::SeekDimension<'a, FragmentSummary> for VersionedOffset {
+    fn cmp(&self, other: &Self, _: &Option<time::Global>) -> cmp::Ordering {
+        match (self, other) {
+            (Self::Offset(a), Self::Offset(b)) => Ord::cmp(a, b),
+            (Self::Offset(_), Self::InvalidVersion) => cmp::Ordering::Less,
+            (Self::InvalidVersion, _) => unreachable!(),
+        }
+    }
+}
+
+impl<'a> sum_tree::Dimension<'a, FragmentSummary> for (VersionedOffset, usize) {
+    fn add_summary(&mut self, summary: &'a FragmentSummary, cx: &Option<time::Global>) {
+        self.0.add_summary(summary, cx);
+        self.1 += summary.text.visible;
     }
 }
 
