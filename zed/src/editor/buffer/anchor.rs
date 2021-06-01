@@ -1,5 +1,5 @@
 use super::{Buffer, ToOffset};
-use crate::time;
+use crate::{sum_tree, time};
 use anyhow::Result;
 use std::{cmp::Ordering, ops::Range};
 
@@ -14,10 +14,19 @@ pub enum Anchor {
     },
 }
 
-#[derive(Clone, Eq, PartialEq, Debug, Hash)]
+#[derive(Copy, Clone, Eq, PartialEq, Debug, Hash)]
 pub enum AnchorBias {
     Left,
     Right,
+}
+
+impl AnchorBias {
+    pub fn to_seek_bias(self) -> sum_tree::SeekBias {
+        match self {
+            AnchorBias::Left => sum_tree::SeekBias::Left,
+            AnchorBias::Right => sum_tree::SeekBias::Right,
+        }
+    }
 }
 
 impl PartialOrd for AnchorBias {

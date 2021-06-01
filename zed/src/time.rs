@@ -81,9 +81,23 @@ impl Global {
         }
     }
 
-    pub fn observe_all(&mut self, other: &Self) {
+    pub fn join(&mut self, other: &Self) {
         for timestamp in other.0.iter() {
             self.observe(*timestamp);
+        }
+    }
+
+    pub fn meet(&mut self, other: &Self) {
+        for timestamp in other.0.iter() {
+            if let Some(entry) = self
+                .0
+                .iter_mut()
+                .find(|t| t.replica_id == timestamp.replica_id)
+            {
+                entry.value = cmp::min(entry.value, timestamp.value);
+            } else {
+                self.0.push(*timestamp);
+            }
         }
     }
 

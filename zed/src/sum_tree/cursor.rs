@@ -415,220 +415,108 @@ where
         D: Dimension<'a, T::Summary>,
     {
         debug_assert!(target.cmp(&self.seek_dimension, cx) >= Ordering::Equal);
-        let mut containing_subtree = None;
 
-        if self.did_seek {
-            'outer: while let Some(entry) = self.stack.last_mut() {
-                {
-                    match *entry.tree.0 {
-                        Node::Internal {
-                            ref child_summaries,
-                            ref child_trees,
-                            ..
-                        } => {
+        if !self.did_seek {
+            self.did_seek = true;
+            self.stack.push(StackEntry {
+                tree: self.tree,
+                index: 0,
+                seek_dimension: Default::default(),
+                sum_dimension: Default::default(),
+            });
+        }
+
+        let mut ascending = false;
+        'outer: while let Some(entry) = self.stack.last_mut() {
+            match *entry.tree.0 {
+                Node::Internal {
+                    ref child_summaries,
+                    ref child_trees,
+                    ..
+                } => {
+                    if ascending {
+                        entry.index += 1;
+                    }
+
+                    for (child_tree, child_summary) in child_trees[entry.index..]
+                        .iter()
+                        .zip(&child_summaries[entry.index..])
+                    {
+                        let mut child_end = self.seek_dimension.clone();
+                        child_end.add_summary(&child_summary, cx);
+
+                        let comparison = target.cmp(&child_end, cx);
+                        if comparison == Ordering::Greater
+                            || (comparison == Ordering::Equal && bias == SeekBias::Right)
+                        {
+                            self.seek_dimension = child_end;
+                            self.sum_dimension.add_summary(child_summary, cx);
+                            match aggregate {
+                                SeekAggregate::None => {}
+                                SeekAggregate::Slice(slice) => {
+                                    slice.push_tree(child_tree.clone(), cx);
+                                }
+                                SeekAggregate::Summary(summary) => {
+                                    summary.add_summary(child_summary, cx);
+                                }
+                            }
                             entry.index += 1;
-                            for (child_tree, child_summary) in child_trees[entry.index..]
-                                .iter()
-                                .zip(&child_summaries[entry.index..])
-                            {
-                                let mut child_end = self.seek_dimension.clone();
-                                child_end.add_summary(&child_summary, cx);
-
-                                let comparison = target.cmp(&child_end, cx);
-                                if comparison == Ordering::Greater
-                                    || (comparison == Ordering::Equal && bias == SeekBias::Right)
-                                {
-                                    self.seek_dimension = child_end;
-                                    self.sum_dimension.add_summary(child_summary, cx);
-                                    match aggregate {
-                                        SeekAggregate::None => {}
-                                        SeekAggregate::Slice(slice) => {
-                                            slice.push_tree(child_tree.clone(), cx);
-                                        }
-                                        SeekAggregate::Summary(summary) => {
-                                            summary.add_summary(child_summary, cx);
-                                        }
-                                    }
-                                    entry.index += 1;
-                                } else {
-                                    containing_subtree = Some(child_tree);
-                                    break 'outer;
-                                }
-                            }
-                        }
-                        Node::Leaf {
-                            ref items,
-                            ref item_summaries,
-                            ..
-                        } => {
-                            let mut slice_items = ArrayVec::<[T; 2 * TREE_BASE]>::new();
-                            let mut slice_item_summaries =
-                                ArrayVec::<[T::Summary; 2 * TREE_BASE]>::new();
-                            let mut slice_items_summary = match aggregate {
-                                SeekAggregate::Slice(_) => Some(T::Summary::default()),
-                                _ => None,
-                            };
-
-                            for (item, item_summary) in items[entry.index..]
-                                .iter()
-                                .zip(&item_summaries[entry.index..])
-                            {
-                                let mut child_end = self.seek_dimension.clone();
-                                child_end.add_summary(item_summary, cx);
-
-                                let comparison = target.cmp(&child_end, cx);
-                                if comparison == Ordering::Greater
-                                    || (comparison == Ordering::Equal && bias == SeekBias::Right)
-                                {
-                                    self.seek_dimension = child_end;
-                                    self.sum_dimension.add_summary(item_summary, cx);
-                                    match aggregate {
-                                        SeekAggregate::None => {}
-                                        SeekAggregate::Slice(_) => {
-                                            slice_items.push(item.clone());
-                                            slice_item_summaries.push(item_summary.clone());
-                                            slice_items_summary
-                                                .as_mut()
-                                                .unwrap()
-                                                .add_summary(item_summary, cx);
-                                        }
-                                        SeekAggregate::Summary(summary) => {
-                                            summary.add_summary(item_summary, cx);
-                                        }
-                                    }
-                                    entry.index += 1;
-                                } else {
-                                    if let SeekAggregate::Slice(slice) = aggregate {
-                                        slice.push_tree(
-                                            SumTree(Arc::new(Node::Leaf {
-                                                summary: slice_items_summary.unwrap(),
-                                                items: slice_items,
-                                                item_summaries: slice_item_summaries,
-                                            })),
-                                            cx,
-                                        );
-                                    }
-                                    break 'outer;
-                                }
-                            }
-
-                            if let SeekAggregate::Slice(slice) = aggregate {
-                                if !slice_items.is_empty() {
-                                    slice.push_tree(
-                                        SumTree(Arc::new(Node::Leaf {
-                                            summary: slice_items_summary.unwrap(),
-                                            items: slice_items,
-                                            item_summaries: slice_item_summaries,
-                                        })),
-                                        cx,
-                                    );
-                                }
-                            }
+                            entry.seek_dimension = self.seek_dimension.clone();
+                            entry.sum_dimension = self.sum_dimension.clone();
+                        } else {
+                            self.stack.push(StackEntry {
+                                tree: child_tree,
+                                index: 0,
+                                seek_dimension: self.seek_dimension.clone(),
+                                sum_dimension: self.sum_dimension.clone(),
+                            });
+                            ascending = false;
+                            continue 'outer;
                         }
                     }
                 }
+                Node::Leaf {
+                    ref items,
+                    ref item_summaries,
+                    ..
+                } => {
+                    let mut slice_items = ArrayVec::<[T; 2 * TREE_BASE]>::new();
+                    let mut slice_item_summaries = ArrayVec::<[T::Summary; 2 * TREE_BASE]>::new();
+                    let mut slice_items_summary = match aggregate {
+                        SeekAggregate::Slice(_) => Some(T::Summary::default()),
+                        _ => None,
+                    };
 
-                self.stack.pop();
-            }
-        } else {
-            self.did_seek = true;
-            containing_subtree = Some(self.tree);
-        }
+                    for (item, item_summary) in items[entry.index..]
+                        .iter()
+                        .zip(&item_summaries[entry.index..])
+                    {
+                        let mut child_end = self.seek_dimension.clone();
+                        child_end.add_summary(item_summary, cx);
 
-        if let Some(mut subtree) = containing_subtree {
-            loop {
-                let mut next_subtree = None;
-                match *subtree.0 {
-                    Node::Internal {
-                        ref child_summaries,
-                        ref child_trees,
-                        ..
-                    } => {
-                        for (index, (child_tree, child_summary)) in
-                            child_trees.iter().zip(child_summaries).enumerate()
+                        let comparison = target.cmp(&child_end, cx);
+                        if comparison == Ordering::Greater
+                            || (comparison == Ordering::Equal && bias == SeekBias::Right)
                         {
-                            let mut child_end = self.seek_dimension.clone();
-                            child_end.add_summary(child_summary, cx);
-
-                            let comparison = target.cmp(&child_end, cx);
-                            if comparison == Ordering::Greater
-                                || (comparison == Ordering::Equal && bias == SeekBias::Right)
-                            {
-                                self.seek_dimension = child_end;
-                                self.sum_dimension.add_summary(child_summary, cx);
-                                match aggregate {
-                                    SeekAggregate::None => {}
-                                    SeekAggregate::Slice(slice) => {
-                                        slice.push_tree(child_trees[index].clone(), cx);
-                                    }
-                                    SeekAggregate::Summary(summary) => {
-                                        summary.add_summary(child_summary, cx);
-                                    }
+                            self.seek_dimension = child_end;
+                            self.sum_dimension.add_summary(item_summary, cx);
+                            match aggregate {
+                                SeekAggregate::None => {}
+                                SeekAggregate::Slice(_) => {
+                                    slice_items.push(item.clone());
+                                    slice_item_summaries.push(item_summary.clone());
+                                    slice_items_summary
+                                        .as_mut()
+                                        .unwrap()
+                                        .add_summary(item_summary, cx);
                                 }
-                            } else {
-                                self.stack.push(StackEntry {
-                                    tree: subtree,
-                                    index,
-                                    seek_dimension: self.seek_dimension.clone(),
-                                    sum_dimension: self.sum_dimension.clone(),
-                                });
-                                next_subtree = Some(child_tree);
-                                break;
-                            }
-                        }
-                    }
-                    Node::Leaf {
-                        ref items,
-                        ref item_summaries,
-                        ..
-                    } => {
-                        let mut slice_items = ArrayVec::<[T; 2 * TREE_BASE]>::new();
-                        let mut slice_item_summaries =
-                            ArrayVec::<[T::Summary; 2 * TREE_BASE]>::new();
-                        let mut slice_items_summary = match aggregate {
-                            SeekAggregate::Slice(_) => Some(T::Summary::default()),
-                            _ => None,
-                        };
-
-                        for (index, (item, item_summary)) in
-                            items.iter().zip(item_summaries).enumerate()
-                        {
-                            let mut child_end = self.seek_dimension.clone();
-                            child_end.add_summary(item_summary, cx);
-
-                            let comparison = target.cmp(&child_end, cx);
-                            if comparison == Ordering::Greater
-                                || (comparison == Ordering::Equal && bias == SeekBias::Right)
-                            {
-                                self.seek_dimension = child_end;
-                                self.sum_dimension.add_summary(item_summary, cx);
-                                match aggregate {
-                                    SeekAggregate::None => {}
-                                    SeekAggregate::Slice(_) => {
-                                        slice_items.push(item.clone());
-                                        slice_items_summary
-                                            .as_mut()
-                                            .unwrap()
-                                            .add_summary(item_summary, cx);
-                                        slice_item_summaries.push(item_summary.clone());
-                                    }
-                                    SeekAggregate::Summary(summary) => {
-                                        summary.add_summary(item_summary, cx);
-                                    }
+                                SeekAggregate::Summary(summary) => {
+                                    summary.add_summary(item_summary, cx);
                                 }
-                            } else {
-                                self.stack.push(StackEntry {
-                                    tree: subtree,
-                                    index,
-                                    seek_dimension: self.seek_dimension.clone(),
-                                    sum_dimension: self.sum_dimension.clone(),
-                                });
-                                break;
                             }
-                        }
-
-                        if let SeekAggregate::Slice(slice) = aggregate {
-                            if !slice_items.is_empty() {
+                            entry.index += 1;
+                        } else {
+                            if let SeekAggregate::Slice(slice) = aggregate {
                                 slice.push_tree(
                                     SumTree(Arc::new(Node::Leaf {
                                         summary: slice_items_summary.unwrap(),
@@ -638,16 +526,27 @@ where
                                     cx,
                                 );
                             }
+                            break 'outer;
                         }
                     }
-                };
 
-                if let Some(next_subtree) = next_subtree {
-                    subtree = next_subtree;
-                } else {
-                    break;
+                    if let SeekAggregate::Slice(slice) = aggregate {
+                        if !slice_items.is_empty() {
+                            slice.push_tree(
+                                SumTree(Arc::new(Node::Leaf {
+                                    summary: slice_items_summary.unwrap(),
+                                    items: slice_items,
+                                    item_summaries: slice_item_summaries,
+                                })),
+                                cx,
+                            );
+                        }
+                    }
                 }
             }
+
+            self.stack.pop();
+            ascending = true;
         }
 
         self.at_end = self.stack.is_empty();
