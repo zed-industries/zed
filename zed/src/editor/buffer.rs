@@ -781,12 +781,11 @@ impl Buffer {
                 match tag {
                     ChangeTag::Equal => offset += len,
                     ChangeTag::Delete => {
-                        operations.extend_from_slice(&self.edit(Some(range), "", Some(cx)).unwrap())
+                        operations.push(self.edit(Some(range), "", Some(cx)).unwrap())
                     }
                     ChangeTag::Insert => {
-                        operations.extend_from_slice(
-                            &self
-                                .edit(Some(offset..offset), &diff.new_text[range], Some(cx))
+                        operations.push(
+                            self.edit(Some(offset..offset), &diff.new_text[range], Some(cx))
                                 .unwrap(),
                         );
                         offset += len;
@@ -952,10 +951,10 @@ impl Buffer {
 
     pub fn edit<I, S, T>(
         &mut self,
-        old_ranges: I,
+        ranges: I,
         new_text: T,
         cx: Option<&mut ModelContext<Self>>,
-    ) -> Result<Vec<Operation>>
+    ) -> Result<Operation>
     where
         I: IntoIterator<Item = Range<S>>,
         S: ToOffset,
@@ -964,44 +963,45 @@ impl Buffer {
         self.start_transaction_at(None, Instant::now())?;
 
         let new_text = new_text.into();
-        let old_ranges = old_ranges
-            .into_iter()
-            .map(|range| range.start.to_offset(self)..range.end.to_offset(self))
-            .collect::<Vec<Range<usize>>>();
-
         let new_text = if new_text.len() > 0 {
             Some(new_text)
         } else {
             None
         };
-
         let has_new_text = new_text.is_some();
-        let ops = self.splice_fragments(
-            old_ranges
-                .into_iter()
-                .filter(|old_range| has_new_text || old_range.end > old_range.start),
-            new_text.into(),
-        );
+        let ranges = ranges
+            .into_iter()
+            .filter_map(|range| {
+                let range = range.start.to_offset(self)..range.end.to_offset(self);
+                if has_new_text || !range.is_empty() {
+                    Some(range)
+                } else {
+                    None
+                }
+            })
+            .collect::<Vec<Range<usize>>>();
 
-        for op in &ops {
-            if let Operation::Edit { edit, .. } = op {
-                self.history.push(edit.clone());
-                self.history.push_undo(edit.id);
-            }
-        }
+        let edit_id = self.local_clock.tick();
+        let lamport_timestamp = self.lamport_clock.tick();
+        self.splice_fragments(&ranges, new_text.clone(), edit_id, lamport_timestamp);
 
-        if let Some(op) = ops.last() {
-            if let Operation::Edit { edit, .. } = op {
-                self.last_edit = edit.id;
-                self.version.observe(edit.id);
-            } else {
-                unreachable!()
-            }
-        }
+        let edit = EditOperation {
+            id: edit_id,
+            version: self.version.clone(),
+            ranges,
+            new_text,
+        };
+        self.history.push(edit.clone());
+        self.history.push_undo(edit.id);
+        self.last_edit = edit.id;
+        self.version.observe(edit.id);
 
         self.end_transaction_at(None, Instant::now(), cx)?;
 
-        Ok(ops)
+        Ok(Operation::Edit {
+            edit,
+            lamport_timestamp,
+        })
     }
 
     fn did_edit(&self, was_dirty: bool, cx: &mut ModelContext<Self>) {
@@ -1128,8 +1128,8 @@ impl Buffer {
             } => {
                 if !self.version.observed(edit.id) {
                     self.apply_edit(
-                        edit.version,
-                        edit.ranges,
+                        &edit.version,
+                        &edit.ranges,
                         edit.new_text.as_deref(),
                         edit.id,
                         lamport_timestamp,
@@ -1167,73 +1167,180 @@ impl Buffer {
 
     fn apply_edit(
         &mut self,
-        version: time::Global,
-        ranges: Vec<Range<usize>>,
-        mut new_text: Option<&str>,
+        version: &time::Global,
+        ranges: &[Range<usize>],
+        new_text: Option<&str>,
         local_timestamp: time::Local,
         lamport_timestamp: time::Lamport,
     ) -> Result<()> {
-        let mut old_visible_text = mem::take(&mut self.visible_text);
-        let mut old_deleted_text = mem::take(&mut self.deleted_text);
-        let mut old_fragments = mem::take(&mut self.fragments);
+        let old_visible_text = mem::take(&mut self.visible_text);
+        let old_deleted_text = mem::take(&mut self.deleted_text);
+        let old_fragments = mem::take(&mut self.fragments);
         let mut old_fragments = old_fragments.cursor::<VersionedOffset, VersionedOffset>();
-
-        let version = Some(version);
+        let old_fragments_cx = Some(version.clone());
 
         let mut new_fragments = SumTree::new();
         let mut new_ropes =
             RopeBuilder::new(old_visible_text.cursor(0), old_deleted_text.cursor(0));
-        let mut pending_fragment = None;
-        let mut pending_fragment_start_offset = 0;
+        let mut ranges = ranges.iter().peekable();
+        let mut fragment_start_offset = 0;
 
-        for range in ranges {
-            let preceding_fragments = old_fragments.slice(
-                &VersionedOffset::Offset(range.start),
+        // Push the fragments that precede the first edit and park the cursor over the fragment
+        // containing the start of the first edit.
+        if let Some(first_range) = ranges.peek() {
+            let prefix_fragments = old_fragments.slice(
+                &VersionedOffset::Offset(first_range.start),
                 SeekBias::Right,
-                &version,
+                &old_fragments_cx,
             );
-            new_fragments.push_tree(preceding_fragments, &None);
-            new_ropes.push_tree(new_fragments.summary().text);
+            new_ropes.push_tree(prefix_fragments.summary().text);
+            new_fragments.push_tree(prefix_fragments, &None);
+            fragment_start_offset = old_fragments.start().offset();
+        }
 
-            let mut fragment_start_offset = old_fragments.start().offset();
-            let mut fragment_end_offset = old_fragments.end(&version).offset();
-            let mut fragment = if let Some(fragment) = old_fragments.item() {
-                fragment.clone()
+        while let Some(range) = ranges.peek() {
+            let fragment = old_fragments.item();
+            let fragment_end_offset = old_fragments.end(&old_fragments_cx).offset();
+
+            if let Some(fragment) = fragment {
+                // Was this fragment visible in the edit's base version? If not, push it into
+                // the new fragments, skip it, and continue the loop.
+                if !version.observed(fragment.insertion.id) {
+                    new_ropes.push_fragment(fragment, fragment.visible);
+                    new_fragments.push(fragment.clone(), &None);
+                    old_fragments.next(&old_fragments_cx);
+                    continue;
+                }
+
+                // If the current fragment doesn't intersect the current range, push the remainder
+                // of the fragment and then slice to the fragment containing the start of the
+                // current range.
+                if range.start > fragment_end_offset {
+                    if fragment_end_offset > fragment_start_offset {
+                        let suffix = Fragment {
+                            len: fragment_end_offset - fragment_start_offset,
+                            deletions: fragment.deletions.clone(),
+                            max_undos: fragment.max_undos.clone(),
+                            visible: fragment.visible,
+                            // DELETE
+                            id: Default::default(),
+                            insertion: fragment.insertion.clone(),
+                            range_in_insertion: Default::default(),
+                        };
+                        new_ropes.push_fragment(&suffix, fragment.visible);
+                        new_fragments.push(suffix, &None);
+                    }
+
+                    let prefix_fragments = old_fragments.slice(
+                        &VersionedOffset::Offset(range.start),
+                        SeekBias::Right,
+                        &old_fragments_cx,
+                    );
+                    new_ropes.push_tree(prefix_fragments.summary().text);
+                    new_fragments.push_tree(prefix_fragments, &None);
+                    fragment_start_offset = old_fragments.start().offset();
+                }
+
+                // Now the current range intersects the current fragment.
+                // If there is a piece of the fragment preceding the current range, consume it.
+                if range.start > fragment_start_offset {
+                    let prefix = Fragment {
+                        len: range.start - fragment_start_offset,
+                        deletions: fragment.deletions.clone(),
+                        max_undos: fragment.max_undos.clone(),
+                        visible: fragment.visible,
+
+                        // TODO: Delete these
+                        id: Default::default(),
+                        insertion: fragment.insertion.clone(),
+                        range_in_insertion: Default::default(),
+                    };
+                    fragment_start_offset += prefix.len;
+                    new_ropes.push_fragment(&prefix, fragment.visible);
+                    new_fragments.push(prefix, &None);
+                }
+
+                // Push the portion of the current fragment that intersects the current range,
+                // marking it as deleted.
+                if range.end > range.start {
+                    let deleted_end = cmp::min(range.end, fragment_end_offset);
+
+                    let mut deletions = fragment.deletions.clone();
+                    deletions.insert(local_timestamp);
+
+                    let deleted = Fragment {
+                        len: deleted_end - fragment_start_offset,
+                        deletions,
+                        max_undos: fragment.max_undos.clone(),
+                        visible: false,
+
+                        // TODO: Delete these
+                        id: Default::default(),
+                        insertion: fragment.insertion.clone(),
+                        range_in_insertion: Default::default(),
+                    };
+                    fragment_start_offset += deleted.len;
+                    new_ropes.push_fragment(&deleted, fragment.visible);
+                    new_fragments.push(deleted, &None);
+                }
+
+                // Push any new text
+                if let Some(new_next) = new_text {
+                    new_ropes.push_str(new_next);
+                    new_fragments.push(
+                        Fragment {
+                            len: new_next.len(),
+                            deletions: Default::default(),
+                            max_undos: Default::default(), // TODO: Is this right?
+                            visible: true,
+
+                            // TODO: Delete these
+                            id: Default::default(),
+                            insertion: fragment.insertion.clone(),
+                            range_in_insertion: Default::default(),
+                        },
+                        &None,
+                    );
+                }
+
+                // Which ends first? The current fragment or the current range? If the current range
+                // ends before the current fragment, advance to the next range and preserve the
+                // current fragment. Otherwise, advance to next fragment and preserve the current
+                // range.
+                if range.end < fragment_end_offset {
+                    ranges.next();
+                } else {
+                    old_fragments.next(&old_fragments_cx);
+                    fragment_start_offset = fragment_end_offset;
+                }
             } else {
-                todo!()
-            };
+                // Push a fragment containing the new text
+            }
+        }
 
-            if fragment_start_offset < range.start {
-                let prefix_fragment = Fragment {
-                    len: range.start - fragment_start_offset,
-                    visible: fragment.visible,
+        if let Some(fragment) = old_fragments.item() {
+            let fragment_end_offset = old_fragments.end(&old_fragments_cx).offset();
+            if fragment_end_offset > fragment_start_offset {
+                let suffix = Fragment {
+                    len: fragment_end_offset - fragment_start_offset,
                     deletions: fragment.deletions.clone(),
                     max_undos: fragment.max_undos.clone(),
-
-                    // TODO - remove
-                    id: fragment.id.clone(),
+                    visible: fragment.visible,
+                    // DELETE
+                    id: Default::default(),
                     insertion: fragment.insertion.clone(),
                     range_in_insertion: Default::default(),
                 };
-
-                new_ropes.push_fragment(&prefix_fragment, prefix_fragment.visible);
-                new_fragments.push(prefix_fragment, &None);
-                fragment.len -= prefix_fragment.len;
+                new_ropes.push_fragment(&suffix, fragment.visible);
+                new_fragments.push(suffix, &None);
             }
 
-            let suffix_fragment = if fragment_end_offset > range.end {
-                fragment.visible = false;
-
-                //
-
-                Some(Fragment {});
-            } else {
-                None
-            };
+            let suffix_fragments = old_fragments.suffix(&None);
+            new_ropes.push_tree(suffix_fragments.summary().text);
+            new_fragments.push_tree(suffix_fragments, &None);
         }
 
         let (visible_text, deleted_text) = new_ropes.finish();
-        new_fragments.push_tree(old_fragments.suffix(&None), &None);
 
         self.fragments = new_fragments;
         self.visible_text = visible_text;
@@ -1242,134 +1349,6 @@ impl Buffer {
         self.lamport_clock.observe(lamport_timestamp);
         Ok(())
     }
-
-    //     let mut new_fragments = fragments_cursor.slice(
-    //     &VersionedOffset::Offset(range.start),
-    //     SeekBias::Left,
-    //     &version_cx,
-    // );
-    // new_ropes.push_tree(new_fragments.summary().text);
-
-    // if range.start == fragments_cursor.end(&version_cx).offset() {
-    //     let fragment = fragments_cursor.item().unwrap().clone();
-    //     new_ropes.push_fragment(&fragment, fragment.visible);
-    //     new_fragments.push(fragment, &None);
-    //     fragments_cursor.next(&None);
-    // }
-
-    // while let Some(fragment) = fragments_cursor.item() {
-    //     let fragment_start_offset = fragments_cursor.start().offset();
-    //     let fragment_end_offset = fragments_cursor.end(&version_cx).offset();
-
-    //     if new_text.is_none() && fragment_start_offset > range.end {
-    //         break;
-    //     }
-
-    //     if fragment_start_offset
-
-    // if cursor_start_offset < range.start || cursor_end_offset > range.end {
-    //     let split_start = if start_fragment_id == fragment.id {
-    //         start_offset
-    //     } else {
-    //         fragment.range_in_insertion.start
-    //     };
-    //     let split_end = if end_fragment_id == fragment.id {
-    //         end_offset
-    //     } else {
-    //         fragment.range_in_insertion.end
-    //     };
-    //     let (before_range, within_range, after_range) = self.split_fragment(
-    //         fragments_cursor.prev_item().as_ref().unwrap(),
-    //         &fragment,
-    //         split_start..split_end,
-    //     );
-    //     let insertion = if let Some(new_text) = new_text {
-    //         let prev_fragment = fragments_cursor.prev_item();
-    //         Some(self.build_fragment_to_insert(
-    //             before_range.as_ref().or(prev_fragment).unwrap(),
-    //             within_range.as_ref().or(after_range.as_ref()),
-    //             new_text,
-    //             local_timestamp,
-    //             lamport_timestamp,
-    //         ))
-    //     } else {
-    //         None
-    //     };
-    //     if let Some(fragment) = before_range {
-    //         new_ropes.push_fragment(&fragment, fragment.visible);
-    //         new_fragments.push(fragment, &None);
-    //     }
-    //     if let Some(fragment) = insertion {
-    //         new_ropes.push_str(new_text.take().unwrap());
-    //         new_fragments.push(fragment, &None);
-    //     }
-    //     if let Some(mut fragment) = within_range {
-    //         let fragment_was_visible = fragment.visible;
-    //         if fragment.was_visible(&version_in_range, &self.undo_map) {
-    //             fragment.deletions.insert(local_timestamp);
-    //             if fragment.visible {
-    //                 fragment.visible = false;
-    //             }
-    //         }
-    //         new_ropes.push_fragment(&fragment, fragment_was_visible);
-    //         new_fragments.push(fragment, &None);
-    //     }
-    //     if let Some(fragment) = after_range {
-    //         new_ropes.push_fragment(&fragment, fragment.visible);
-    //         new_fragments.push(fragment, &None);
-    //     }
-    // } else {
-    //     if new_text.is_some() && lamport_timestamp > fragment.insertion.lamport_timestamp {
-    //         let new_text = new_text.take().unwrap();
-    //         let fragment = self.build_fragment_to_insert(
-    //             fragments_cursor.prev_item().as_ref().unwrap(),
-    //             Some(&fragment),
-    //             new_text,
-    //             local_timestamp,
-    //             lamport_timestamp,
-    //         );
-    //         new_ropes.push_str(new_text);
-    //         new_fragments.push(fragment, &None);
-    //     }
-
-    //     let fragment_was_visible = fragment.visible;
-    //     if fragment.id < end_fragment_id
-    //         && fragment.was_visible(&version_in_range, &self.undo_map)
-    //     {
-    //         fragment.deletions.insert(local_timestamp);
-    //         if fragment.visible {
-    //             fragment.visible = false;
-    //         }
-    //     }
-
-    //     new_ropes.push_fragment(&fragment, fragment_was_visible);
-    //     new_fragments.push(fragment, &None);
-    // }
-    // fragments_cursor.next(&None);
-    // }
-
-    // if let Some(new_text) = new_text {
-    //     let fragment = self.build_fragment_to_insert(
-    //         fragments_cursor.prev_item().as_ref().unwrap(),
-    //         None,
-    //         new_text,
-    //         local_timestamp,
-    //         lamport_timestamp,
-    //     );
-    //     new_ropes.push_str(new_text);
-    //     new_fragments.push(fragment, &None);
-    // }
-
-    // let (visible_text, deleted_text) = new_ropes.finish();
-    // new_fragments.push_tree(fragments_cursor.suffix(&None), &None);
-
-    // self.fragments = new_fragments;
-    // self.visible_text = visible_text;
-    // self.deleted_text = deleted_text;
-    // self.local_clock.observe(local_timestamp);
-    // self.lamport_clock.observe(lamport_timestamp);
-    // Ok(())
-    // }
 
     pub fn undo(&mut self, mut cx: Option<&mut ModelContext<Self>>) -> Vec<Operation> {
         let was_dirty = self.is_dirty();
@@ -1441,90 +1420,94 @@ impl Buffer {
     }
 
     fn apply_undo(&mut self, undo: UndoOperation) -> Result<()> {
-        let mut new_fragments;
-        let mut old_visible_text = Rope::new();
-        let mut old_deleted_text = Rope::new();
-        mem::swap(&mut old_visible_text, &mut self.visible_text);
-        mem::swap(&mut old_deleted_text, &mut self.deleted_text);
-        let mut new_ropes =
-            RopeBuilder::new(old_visible_text.cursor(0), old_deleted_text.cursor(0));
-
-        self.undo_map.insert(undo);
-        let edit = &self.history.ops[&undo.edit_id];
-        let start_fragment_id = self.resolve_fragment_id(edit.start_id, edit.start_offset)?;
-        let end_fragment_id = self.resolve_fragment_id(edit.end_id, edit.end_offset)?;
-
-        let mut fragments_cursor = self.fragments.cursor::<FragmentIdRef, ()>();
-
-        if edit.start_id == edit.end_id && edit.start_offset == edit.end_offset {
-            let splits = &self.insertion_splits[&undo.edit_id];
-            let mut insertion_splits = splits.cursor::<(), ()>().map(|s| &s.fragment_id).peekable();
-
-            let first_split_id = insertion_splits.next().unwrap();
-            new_fragments =
-                fragments_cursor.slice(&FragmentIdRef::new(first_split_id), SeekBias::Left, &None);
-            new_ropes.push_tree(new_fragments.summary().text);
-
-            loop {
-                let mut fragment = fragments_cursor.item().unwrap().clone();
-                let was_visible = fragment.visible;
-                fragment.visible = fragment.is_visible(&self.undo_map);
-                fragment.max_undos.observe(undo.id);
-
-                new_ropes.push_fragment(&fragment, was_visible);
-                new_fragments.push(fragment.clone(), &None);
-
-                fragments_cursor.next(&None);
-                if let Some(split_id) = insertion_splits.next() {
-                    let slice = fragments_cursor.slice(
-                        &FragmentIdRef::new(split_id),
-                        SeekBias::Left,
-                        &None,
-                    );
-                    new_ropes.push_tree(slice.summary().text);
-                    new_fragments.push_tree(slice, &None);
-                } else {
-                    break;
-                }
-            }
-        } else {
-            new_fragments = fragments_cursor.slice(
-                &FragmentIdRef::new(&start_fragment_id),
-                SeekBias::Left,
-                &None,
-            );
-            new_ropes.push_tree(new_fragments.summary().text);
-
-            while let Some(fragment) = fragments_cursor.item() {
-                if fragment.id > end_fragment_id {
-                    break;
-                } else {
-                    let mut fragment = fragment.clone();
-                    let fragment_was_visible = fragment.visible;
-                    if edit.version_in_range.observed(fragment.insertion.id)
-                        || fragment.insertion.id == undo.edit_id
-                    {
-                        fragment.visible = fragment.is_visible(&self.undo_map);
-                        fragment.max_undos.observe(undo.id);
-                    }
-
-                    new_ropes.push_fragment(&fragment, fragment_was_visible);
-                    new_fragments.push(fragment, &None);
-                    fragments_cursor.next(&None);
-                }
-            }
-        }
-
-        new_fragments.push_tree(fragments_cursor.suffix(&None), &None);
-        let (visible_text, deleted_text) = new_ropes.finish();
-        drop(fragments_cursor);
-
-        self.fragments = new_fragments;
-        self.visible_text = visible_text;
-        self.deleted_text = deleted_text;
-
         Ok(())
     }
+
+    // {
+    //     let mut new_fragments;
+    //     let mut old_visible_text = Rope::new();
+    //     let mut old_deleted_text = Rope::new();
+    //     mem::swap(&mut old_visible_text, &mut self.visible_text);
+    //     mem::swap(&mut old_deleted_text, &mut self.deleted_text);
+    //     let mut new_ropes =
+    //         RopeBuilder::new(old_visible_text.cursor(0), old_deleted_text.cursor(0));
+
+    //     self.undo_map.insert(undo);
+    //     let edit = &self.history.ops[&undo.edit_id];
+    //     let start_fragment_id = self.resolve_fragment_id(edit.start_id, edit.start_offset)?;
+    //     let end_fragment_id = self.resolve_fragment_id(edit.end_id, edit.end_offset)?;
+
+    //     let mut fragments_cursor = self.fragments.cursor::<FragmentIdRef, ()>();
+
+    //     if edit.start_id == edit.end_id && edit.start_offset == edit.end_offset {
+    //         let splits = &self.insertion_splits[&undo.edit_id];
+    //         let mut insertion_splits = splits.cursor::<(), ()>().map(|s| &s.fragment_id).peekable();
+
+    //         let first_split_id = insertion_splits.next().unwrap();
+    //         new_fragments =
+    //             fragments_cursor.slice(&FragmentIdRef::new(first_split_id), SeekBias::Left, &None);
+    //         new_ropes.push_tree(new_fragments.summary().text);
+
+    //         loop {
+    //             let mut fragment = fragments_cursor.item().unwrap().clone();
+    //             let was_visible = fragment.visible;
+    //             fragment.visible = fragment.is_visible(&self.undo_map);
+    //             fragment.max_undos.observe(undo.id);
+
+    //             new_ropes.push_fragment(&fragment, was_visible);
+    //             new_fragments.push(fragment.clone(), &None);
+
+    //             fragments_cursor.next(&None);
+    //             if let Some(split_id) = insertion_splits.next() {
+    //                 let slice = fragments_cursor.slice(
+    //                     &FragmentIdRef::new(split_id),
+    //                     SeekBias::Left,
+    //                     &None,
+    //                 );
+    //                 new_ropes.push_tree(slice.summary().text);
+    //                 new_fragments.push_tree(slice, &None);
+    //             } else {
+    //                 break;
+    //             }
+    //         }
+    //     } else {
+    //         new_fragments = fragments_cursor.slice(
+    //             &FragmentIdRef::new(&start_fragment_id),
+    //             SeekBias::Left,
+    //             &None,
+    //         );
+    //         new_ropes.push_tree(new_fragments.summary().text);
+
+    //         while let Some(fragment) = fragments_cursor.item() {
+    //             if fragment.id > end_fragment_id {
+    //                 break;
+    //             } else {
+    //                 let mut fragment = fragment.clone();
+    //                 let fragment_was_visible = fragment.visible;
+    //                 if edit.version_in_range.observed(fragment.insertion.id)
+    //                     || fragment.insertion.id == undo.edit_id
+    //                 {
+    //                     fragment.visible = fragment.is_visible(&self.undo_map);
+    //                     fragment.max_undos.observe(undo.id);
+    //                 }
+
+    //                 new_ropes.push_fragment(&fragment, fragment_was_visible);
+    //                 new_fragments.push(fragment, &None);
+    //                 fragments_cursor.next(&None);
+    //             }
+    //         }
+    //     }
+
+    //     new_fragments.push_tree(fragments_cursor.suffix(&None), &None);
+    //     let (visible_text, deleted_text) = new_ropes.finish();
+    //     drop(fragments_cursor);
+
+    //     self.fragments = new_fragments;
+    //     self.visible_text = visible_text;
+    //     self.deleted_text = deleted_text;
+
+    //     Ok(())
+    // }
 
     fn flush_deferred_ops(&mut self) -> Result<()> {
         self.deferred_replicas.clear();
@@ -1542,69 +1525,54 @@ impl Buffer {
     }
 
     fn can_apply_op(&self, op: &Operation) -> bool {
-        if self.deferred_replicas.contains(&op.replica_id()) {
-            false
-        } else {
-            match op {
-                Operation::Edit { edit, .. } => {
-                    self.version.observed(edit.start_id)
-                        && self.version.observed(edit.end_id)
-                        && edit.version_in_range <= self.version
-                }
-                Operation::Undo { undo, .. } => self.version.observed(undo.edit_id),
-                Operation::UpdateSelections { selections, .. } => {
-                    if let Some(selections) = selections {
-                        selections.iter().all(|selection| {
-                            let contains_start = match &selection.start {
-                                Anchor::Middle { version, .. } => self.version >= *version,
-                                _ => true,
-                            };
-                            let contains_end = match &selection.end {
-                                Anchor::Middle { version, .. } => self.version >= *version,
-                                _ => true,
-                            };
-                            contains_start && contains_end
-                        })
-                    } else {
-                        true
-                    }
-                }
-            }
-        }
+        true
+        // if self.deferred_replicas.contains(&op.replica_id()) {
+        //     false
+        // } else {
+        //     match op {
+        //         Operation::Edit { edit, .. } => {
+        //             self.version.observed(edit.start_id)
+        //                 && self.version.observed(edit.end_id)
+        //                 && edit.version_in_range <= self.version
+        //         }
+        //         Operation::Undo { undo, .. } => self.version.observed(undo.edit_id),
+        //         Operation::UpdateSelections { selections, .. } => {
+        //             if let Some(selections) = selections {
+        //                 selections.iter().all(|selection| {
+        //                     let contains_start = match &selection.start {
+        //                         Anchor::Middle { version, .. } => self.version >= *version,
+        //                         _ => true,
+        //                     };
+        //                     let contains_end = match &selection.end {
+        //                         Anchor::Middle { version, .. } => self.version >= *version,
+        //                         _ => true,
+        //                     };
+        //                     contains_start && contains_end
+        //                 })
+        //             } else {
+        //                 true
+        //             }
+        //         }
+        //     }
+        // }
     }
 
-    fn resolve_fragment_id(&self, edit_id: time::Local, offset: usize) -> Result<FragmentId> {
-        let split_tree = self
-            .insertion_splits
-            .get(&edit_id)
-            .ok_or_else(|| anyhow!("invalid operation"))?;
-        let mut cursor = split_tree.cursor::<usize, ()>();
-        cursor.seek(&offset, SeekBias::Left, &());
-        Ok(cursor
-            .item()
-            .ok_or_else(|| anyhow!("invalid operation"))?
-            .fragment_id
-            .clone())
-    }
-
-    fn splice_fragments<I>(&mut self, mut old_ranges: I, new_text: Option<String>) -> Vec<Operation>
-    where
-        I: Iterator<Item = Range<usize>>,
-    {
+    fn splice_fragments(
+        &mut self,
+        old_ranges: &[Range<usize>],
+        new_text: Option<String>,
+        edit_id: time::Local,
+        lamport_timestamp: time::Lamport,
+    ) {
+        let mut old_ranges = old_ranges.iter();
         let mut cur_range = old_ranges.next();
         if cur_range.is_none() {
-            return Vec::new();
+            return;
         }
 
-        let version = &self.version;
-        let mut ops = Vec::with_capacity(old_ranges.size_hint().0);
-
-        let mut old_fragments = SumTree::new();
-        let mut old_visible_text = Rope::new();
-        let mut old_deleted_text = Rope::new();
-        mem::swap(&mut old_visible_text, &mut self.visible_text);
-        mem::swap(&mut old_deleted_text, &mut self.deleted_text);
-        mem::swap(&mut old_fragments, &mut self.fragments);
+        let old_fragments = mem::take(&mut self.fragments);
+        let old_visible_text = mem::take(&mut self.visible_text);
+        let old_deleted_text = mem::take(&mut self.deleted_text);
 
         let mut fragments_cursor = old_fragments.cursor::<usize, usize>();
         let mut new_fragments =
@@ -1614,18 +1582,8 @@ impl Buffer {
             RopeBuilder::new(old_visible_text.cursor(0), old_deleted_text.cursor(0));
         new_ropes.push_tree(new_fragments.summary().text);
 
-        let mut start_id = None;
-        let mut start_offset = None;
-        let mut end_id = None;
-        let mut end_offset = None;
-        let mut version_in_range = time::Global::new();
-
-        let mut local_timestamp = self.local_clock.tick();
-        let mut lamport_timestamp = self.lamport_clock.tick();
-
         while cur_range.is_some() && fragments_cursor.item().is_some() {
             let mut fragment = fragments_cursor.item().unwrap().clone();
-            let fragment_summary = fragments_cursor.item_summary().unwrap();
             let mut fragment_start = *fragments_cursor.start();
             let mut fragment_end = fragment_start + fragment.visible_len();
             let fragment_was_visible = fragment.visible;
@@ -1663,24 +1621,13 @@ impl Buffer {
                     fragment_start = range.start;
                 }
 
-                if range.end == fragment_start {
-                    end_id = Some(new_fragments.last().unwrap().insertion.id);
-                    end_offset = Some(new_fragments.last().unwrap().range_in_insertion.end);
-                } else if range.end == fragment_end {
-                    end_id = Some(fragment.insertion.id);
-                    end_offset = Some(fragment.range_in_insertion.end);
-                }
-
                 if range.start == fragment_start {
-                    start_id = Some(new_fragments.last().unwrap().insertion.id);
-                    start_offset = Some(new_fragments.last().unwrap().range_in_insertion.end);
-
                     if let Some(new_text) = new_text.clone() {
                         let new_fragment = self.build_fragment_to_insert(
                             &new_fragments.last().unwrap(),
                             Some(&fragment),
                             &new_text,
-                            local_timestamp,
+                            edit_id,
                             lamport_timestamp,
                         );
 
@@ -1696,9 +1643,8 @@ impl Buffer {
                             prefix.range_in_insertion.start + (range.end - fragment_start);
                         prefix.id =
                             FragmentId::between(&new_fragments.last().unwrap().id, &fragment.id);
-                        version_in_range.join(&fragment_summary.max_version);
                         if prefix.visible {
-                            prefix.deletions.insert(local_timestamp);
+                            prefix.deletions.insert(edit_id);
                             prefix.visible = false;
                         }
                         fragment.range_in_insertion.start = prefix.range_in_insertion.end;
@@ -1713,13 +1659,10 @@ impl Buffer {
                             &(),
                         );
                         fragment_start = range.end;
-                        end_id = Some(fragment.insertion.id);
-                        end_offset = Some(fragment.range_in_insertion.start);
                     }
                 } else {
-                    version_in_range.join(&fragment_summary.max_version);
                     if fragment.visible {
-                        fragment.deletions.insert(local_timestamp);
+                        fragment.deletions.insert(edit_id);
                         fragment.visible = false;
                     }
                 }
@@ -1728,26 +1671,7 @@ impl Buffer {
                 // check if it also intersects the current fragment. Otherwise we break out of the
                 // loop and find the first fragment that the splice does not contain fully.
                 if range.end <= fragment_end {
-                    ops.push(Operation::Edit {
-                        edit: EditOperation {
-                            id: local_timestamp,
-                            version,
-                            range,
-                            new_text: new_text.clone(),
-                        },
-                        lamport_timestamp,
-                    });
-
-                    start_id = None;
-                    start_offset = None;
-                    end_id = None;
-                    end_offset = None;
-                    version_in_range = time::Global::new();
                     cur_range = old_ranges.next();
-                    if cur_range.is_some() {
-                        local_timestamp = self.local_clock.tick();
-                        lamport_timestamp = self.lamport_clock.tick();
-                    }
                 } else {
                     break;
                 }
@@ -1774,15 +1698,13 @@ impl Buffer {
             fragments_cursor.next(&None);
             if let Some(range) = cur_range.clone() {
                 while let Some(fragment) = fragments_cursor.item() {
-                    let fragment_summary = fragments_cursor.item_summary().unwrap();
                     let fragment_was_visible = fragment.visible;
                     fragment_start = *fragments_cursor.start();
                     fragment_end = fragment_start + fragment.visible_len();
                     if range.start < fragment_start && range.end >= fragment_end {
                         let mut new_fragment = fragment.clone();
-                        version_in_range.join(&fragment_summary.max_version);
                         if new_fragment.visible {
-                            new_fragment.deletions.insert(local_timestamp);
+                            new_fragment.deletions.insert(edit_id);
                             new_fragment.visible = false;
                         }
 
@@ -1791,32 +1713,7 @@ impl Buffer {
                         fragments_cursor.next(&None);
 
                         if range.end == fragment_end {
-                            end_id = Some(fragment.insertion.id);
-                            end_offset = Some(fragment.range_in_insertion.end);
-                            ops.push(Operation::Edit {
-                                edit: EditOperation {
-                                    id: local_timestamp,
-                                    start_id: start_id.unwrap(),
-                                    start_offset: start_offset.unwrap(),
-                                    end_id: end_id.unwrap(),
-                                    end_offset: end_offset.unwrap(),
-                                    version_in_range,
-                                    new_text: new_text.clone(),
-                                },
-                                lamport_timestamp,
-                            });
-
-                            start_id = None;
-                            start_offset = None;
-                            end_id = None;
-                            end_offset = None;
-                            version_in_range = time::Global::new();
-
                             cur_range = old_ranges.next();
-                            if cur_range.is_some() {
-                                local_timestamp = self.local_clock.tick();
-                                lamport_timestamp = self.lamport_clock.tick();
-                            }
                             break;
                         }
                     } else {
@@ -1844,26 +1741,13 @@ impl Buffer {
         if cur_range.is_some() {
             debug_assert_eq!(old_ranges.next(), None);
             let last_fragment = new_fragments.last().unwrap();
-            ops.push(Operation::Edit {
-                edit: EditOperation {
-                    id: local_timestamp,
-                    start_id: last_fragment.insertion.id,
-                    start_offset: last_fragment.range_in_insertion.end,
-                    end_id: last_fragment.insertion.id,
-                    end_offset: last_fragment.range_in_insertion.end,
-                    version_in_range: time::Global::new(),
-                    // TODO: avoid cloning the String.
-                    new_text: new_text.clone(),
-                },
-                lamport_timestamp,
-            });
 
             if let Some(new_text) = new_text {
                 let new_fragment = self.build_fragment_to_insert(
                     &last_fragment,
                     None,
                     &new_text,
-                    local_timestamp,
+                    edit_id,
                     lamport_timestamp,
                 );
 
@@ -1878,106 +1762,6 @@ impl Buffer {
         self.fragments = new_fragments;
         self.visible_text = visible_text;
         self.deleted_text = deleted_text;
-        ops
-    }
-
-    fn split_fragment(
-        &mut self,
-        prev_fragment: &Fragment,
-        fragment: &Fragment,
-        range: Range<usize>,
-    ) -> (Option<Fragment>, Option<Fragment>, Option<Fragment>) {
-        debug_assert!(range.start >= fragment.range_in_insertion.start);
-        debug_assert!(range.start <= fragment.range_in_insertion.end);
-        debug_assert!(range.end <= fragment.range_in_insertion.end);
-        debug_assert!(range.end >= fragment.range_in_insertion.start);
-
-        if range.end == fragment.range_in_insertion.start {
-            (None, None, Some(fragment.clone()))
-        } else if range.start == fragment.range_in_insertion.end {
-            (Some(fragment.clone()), None, None)
-        } else if range.start == fragment.range_in_insertion.start
-            && range.end == fragment.range_in_insertion.end
-        {
-            (None, Some(fragment.clone()), None)
-        } else {
-            let mut prefix = fragment.clone();
-
-            let after_range = if range.end < fragment.range_in_insertion.end {
-                let mut suffix = prefix.clone();
-                suffix.range_in_insertion.start = range.end;
-                prefix.range_in_insertion.end = range.end;
-                prefix.id = FragmentId::between(&prev_fragment.id, &suffix.id);
-                Some(suffix)
-            } else {
-                None
-            };
-
-            let within_range = if range.start != range.end {
-                let mut suffix = prefix.clone();
-                suffix.range_in_insertion.start = range.start;
-                prefix.range_in_insertion.end = range.start;
-                prefix.id = FragmentId::between(&prev_fragment.id, &suffix.id);
-                Some(suffix)
-            } else {
-                None
-            };
-
-            let before_range = if range.start > fragment.range_in_insertion.start {
-                Some(prefix)
-            } else {
-                None
-            };
-
-            let old_split_tree = self
-                .insertion_splits
-                .remove(&fragment.insertion.id)
-                .unwrap();
-            let mut cursor = old_split_tree.cursor::<usize, ()>();
-            let mut new_split_tree =
-                cursor.slice(&fragment.range_in_insertion.start, SeekBias::Right, &());
-
-            if let Some(ref fragment) = before_range {
-                new_split_tree.push(
-                    InsertionSplit {
-                        extent: range.start - fragment.range_in_insertion.start,
-                        fragment_id: fragment.id.clone(),
-                    },
-                    &(),
-                );
-            }
-
-            if let Some(ref fragment) = within_range {
-                new_split_tree.push(
-                    InsertionSplit {
-                        extent: range.end - range.start,
-                        fragment_id: fragment.id.clone(),
-                    },
-                    &(),
-                );
-            }
-
-            if let Some(ref fragment) = after_range {
-                new_split_tree.push(
-                    InsertionSplit {
-                        extent: fragment.range_in_insertion.end - range.end,
-                        fragment_id: fragment.id.clone(),
-                    },
-                    &(),
-                );
-            }
-
-            cursor.next(&());
-            new_split_tree.push_tree(
-                cursor.slice(&old_split_tree.extent::<usize>(&()), SeekBias::Right, &()),
-                &(),
-            );
-
-            self.insertion_splits
-                .insert(fragment.insertion.id, new_split_tree);
-
-            (before_range, within_range, after_range)
-        }
     }
 
     fn build_fragment_to_insert(
@@ -2496,26 +2280,12 @@ impl FragmentId {
     }
 }
 
-#[derive(Ord, PartialOrd, Eq, PartialEq, Clone, Debug, Default)]
-struct FragmentIdRef<'a>(Option<&'a FragmentId>);
-
-impl<'a> FragmentIdRef<'a> {
-    fn new(id: &'a FragmentId) -> Self {
-        Self(Some(id))
-    }
-}
-
-impl<'a> sum_tree::Dimension<'a, FragmentSummary> for FragmentIdRef<'a> {
-    fn add_summary(&mut self, summary: &'a FragmentSummary, _: &Option<time::Global>) {
-        self.0 = Some(&summary.max_fragment_id)
-    }
-}
-
 impl Fragment {
     fn new(id: FragmentId, insertion: Arc<Insertion>, range_in_insertion: Range<usize>) -> Self {
         Self {
             id,
             insertion,
+            len: range_in_insertion.len(),
             range_in_insertion,
             deletions: Default::default(),
             max_undos: Default::default(),
@@ -2862,8 +2632,8 @@ mod tests {
 
             // An edit emits an edited event, followed by a dirtied event,
             // since the buffer was previously in a clean state.
-            let ops = buffer.edit(Some(2..4), "XYZ", Some(cx)).unwrap();
-            buffer_ops.extend_from_slice(&ops);
+            let op = buffer.edit(Some(2..4), "XYZ", Some(cx)).unwrap();
+            buffer_ops.push(op);
 
             // An empty transaction does not emit any events.
             buffer.start_transaction(None).unwrap();
@@ -2872,10 +2642,8 @@ mod tests {
             // A transaction containing two edits emits one edited event.
             now += Duration::from_secs(1);
             buffer.start_transaction_at(None, now).unwrap();
-            let ops = buffer.edit(Some(5..5), "u", Some(cx)).unwrap();
-            buffer_ops.extend_from_slice(&ops);
-            let ops = buffer.edit(Some(6..6), "w", Some(cx)).unwrap();
-            buffer_ops.extend_from_slice(&ops);
+            buffer_ops.push(buffer.edit(Some(5..5), "u", Some(cx)).unwrap());
+            buffer_ops.push(buffer.edit(Some(6..6), "w", Some(cx)).unwrap());
             buffer.end_transaction_at(None, now, Some(cx)).unwrap();
 
             // Undoing a transaction emits one edited event.
@@ -3495,25 +3263,25 @@ mod tests {
             let edit3 = buffer.edit(vec![3..5], "cd", None).unwrap();
             assert_eq!(buffer.text(), "1abcdef234");
 
-            buffer.undo_or_redo(edit1[0].edit_id().unwrap()).unwrap();
+            buffer.undo_or_redo(edit1.edit_id().unwrap()).unwrap();
             assert_eq!(buffer.text(), "1cdef234");
-            buffer.undo_or_redo(edit1[0].edit_id().unwrap()).unwrap();
+            buffer.undo_or_redo(edit1.edit_id().unwrap()).unwrap();
             assert_eq!(buffer.text(), "1abcdef234");
 
-            buffer.undo_or_redo(edit2[0].edit_id().unwrap()).unwrap();
+            buffer.undo_or_redo(edit2.edit_id().unwrap()).unwrap();
             assert_eq!(buffer.text(), "1abcdx234");
-            buffer.undo_or_redo(edit3[0].edit_id().unwrap()).unwrap();
+            buffer.undo_or_redo(edit3.edit_id().unwrap()).unwrap();
             assert_eq!(buffer.text(), "1abx234");
-            buffer.undo_or_redo(edit2[0].edit_id().unwrap()).unwrap();
+            buffer.undo_or_redo(edit2.edit_id().unwrap()).unwrap();
             assert_eq!(buffer.text(), "1abyzef234");
-            buffer.undo_or_redo(edit3[0].edit_id().unwrap()).unwrap();
+            buffer.undo_or_redo(edit3.edit_id().unwrap()).unwrap();
             assert_eq!(buffer.text(), "1abcdef234");
 
-            buffer.undo_or_redo(edit3[0].edit_id().unwrap()).unwrap();
+            buffer.undo_or_redo(edit3.edit_id().unwrap()).unwrap();
             assert_eq!(buffer.text(), "1abyzef234");
-            buffer.undo_or_redo(edit1[0].edit_id().unwrap()).unwrap();
+            buffer.undo_or_redo(edit1.edit_id().unwrap()).unwrap();
             assert_eq!(buffer.text(), "1yzef234");
-            buffer.undo_or_redo(edit2[0].edit_id().unwrap()).unwrap();
+            buffer.undo_or_redo(edit2.edit_id().unwrap()).unwrap();
             assert_eq!(buffer.text(), "1234");
 
             buffer
@@ -3871,7 +3639,7 @@ mod tests {
             rng: &mut T,
             old_range_count: usize,
             cx: Option<&mut ModelContext<Self>>,
-        ) -> (Vec<Range<usize>>, String, Vec<Operation>)
+        ) -> (Vec<Range<usize>>, String, Operation)
         where
             T: Rng,
         {
@@ -3886,11 +3654,11 @@ mod tests {
             let new_text_len = rng.gen_range(0..10);
             let new_text: String = RandomCharIter::new(&mut *rng).take(new_text_len).collect();
 
-            let operations = self
+            let operation = self
                 .edit(old_ranges.iter().cloned(), new_text.as_str(), cx)
                 .unwrap();
 
-            (old_ranges, new_text, operations)
+            (old_ranges, new_text, operation)
         }
 
         pub fn randomly_mutate<T>(
@@ -3901,9 +3669,9 @@ mod tests {
         where
             T: Rng,
         {
-            // Randomly edit
-            let (old_ranges, new_text, mut operations) =
-                self.randomly_edit(rng, 5, cx.as_deref_mut());
+            let (old_ranges, new_text, operation) = self.randomly_edit(rng, 5, cx.as_deref_mut());
+            let mut operations = vec![operation];
+
             log::info!("Mutating buffer at {:?}: {:?}", old_ranges, new_text);
 
             // Randomly add, remove or mutate selection sets.
