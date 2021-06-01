@@ -1,6 +1,7 @@
 use smallvec::SmallVec;
 use std::cmp::{self, Ordering};
 use std::ops::{Add, AddAssign};
+use std::slice;
 
 pub type ReplicaId = u16;
 pub type Seq = u32;
@@ -107,6 +108,10 @@ impl Global {
 
     pub fn changed_since(&self, other: &Self) -> bool {
         self.0.iter().any(|t| t.value > other.get(t.replica_id))
+    }
+
+    pub fn iter(&self) -> slice::Iter<Local> {
+        self.0.iter()
     }
 }
 

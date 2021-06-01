@@ -2029,11 +2029,15 @@ impl Buffer {
                     let version = cx.as_ref().unwrap();
                     if *version >= summary.max_insertion_version {
                         *offset += summary.text.visible + summary.text.deleted;
-                    } else if *version < summary.min_insertion_version {
-                        // Every insertion in this subtree is causally after the context's version.
-                    } else {
-                        *self = VersionedOffset::InvalidVersion;
+                    } else if !summary
+                        .min_insertion_version
+                        .iter()
+                        .all(|t| !version.observed(*t))
+                    {
+                        *self = Self::InvalidVersion;
                     }
+                } else {
+                    unreachable!();
                 }
             }
         }
@@ -2728,7 +2732,7 @@ mod tests {
     use std::{
         cell::RefCell,
         cmp::Ordering,
-        fs,
+        env, fs,
         rc::Rc,
         sync::atomic::{self, AtomicUsize},
     };
@@ -3503,10 +3507,24 @@ mod tests {
     fn test_random_concurrent_edits(cx: &mut gpui::MutableAppContext) {
         use crate::test::Network;
 
-        const PEERS: usize = 5;
+        let peers = env::var("PEERS")
+            .map(|i| i.parse().expect("invalid `PEERS` variable"))
+            .unwrap_or(5);
+        let iterations = env::var("ITERATIONS")
+            .map(|i| i.parse().expect("invalid `ITERATIONS` variable"))
+            .unwrap_or(100);
+        let operations = env::var("OPERATIONS")
+            .map(|i| i.parse().expect("invalid `OPERATIONS` variable"))
+            .unwrap_or(10);
+        let seed_range = if let Ok(seed) = env::var("SEED") {
+            let seed = seed.parse().expect("invalid `SEED` variable");
+            seed..seed + 1
+        } else {
+            0..iterations
+        };
 
-        for seed in 0..100 {
-            println!("{:?}", seed);
+        for seed in seed_range {
+            dbg!(seed);
             let mut rng = &mut StdRng::seed_from_u64(seed);
 
             let base_text_len = rng.gen_range(0..10);
@@ -3516,16 +3534,16 @@ mod tests {
             let mut replica_ids = Vec::new();
             let mut buffers = Vec::new();
             let mut network = Network::new();
-            for i in 0..PEERS {
+            for i in 0..peers {
                 let buffer = cx.add_model(|cx| Buffer::new(i as ReplicaId, base_text.as_str(), cx));
                 buffers.push(buffer);
                 replica_ids.push(i as u16);
                 network.add_peer(i as u16);
             }
 
-            let mut mutation_count = 10;
+            let mut mutation_count = operations;
             loop {
-                let replica_index = rng.gen_range(0..PEERS);
+                let replica_index = rng.gen_range(0..peers);
                 let replica_id = replica_ids[replica_index];
                 buffers[replica_index].update(cx, |buffer, _| match rng.gen_range(0..=100) {
                     0..=50 if mutation_count != 0 => {
@@ -3801,6 +3819,7 @@ mod tests {
             // Randomly edit
             let (old_ranges, new_text, mut operations) =
                 self.randomly_edit(rng, 5, cx.as_deref_mut());
+            log::info!("Mutating buffer at {:?}: {:?}", old_ranges, new_text);
 
             // Randomly add, remove or mutate selection sets.
             let replica_selection_sets = &self
