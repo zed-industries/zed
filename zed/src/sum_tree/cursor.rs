@@ -49,10 +49,10 @@ where
         &self.sum_dimension
     }
 
-    pub fn end(&self) -> U {
+    pub fn end(&self, cx: &<T::Summary as Summary>::Context) -> U {
         if let Some(item_summary) = self.item_summary() {
             let mut end = self.start().clone();
-            end.add_summary(item_summary);
+            end.add_summary(item_summary, cx);
             end
         } else {
             self.start().clone()
@@ -134,13 +134,13 @@ where
     }
 
     #[allow(unused)]
-    pub fn prev(&mut self) {
+    pub fn prev(&mut self, cx: &<T::Summary as Summary>::Context) {
         assert!(self.did_seek, "Must seek before calling this method");
 
         if self.at_end {
             self.seek_dimension = S::default();
             self.sum_dimension = U::default();
-            self.descend_to_last_item(self.tree);
+            self.descend_to_last_item(self.tree, cx);
             self.at_end = false;
         } else {
             while let Some(entry) = self.stack.pop() {
@@ -167,8 +167,8 @@ where
                             ..
                         } => {
                             for summary in &child_summaries[0..new_index] {
-                                self.seek_dimension.add_summary(summary);
-                                self.sum_dimension.add_summary(summary);
+                                self.seek_dimension.add_summary(summary, cx);
+                                self.sum_dimension.add_summary(summary, cx);
                             }
                             self.stack.push(StackEntry {
                                 tree: entry.tree,
@@ -176,12 +176,12 @@ where
                                 seek_dimension: self.seek_dimension.clone(),
                                 sum_dimension: self.sum_dimension.clone(),
                             });
-                            self.descend_to_last_item(&child_trees[new_index]);
+                            self.descend_to_last_item(&child_trees[new_index], cx);
                         }
                         Node::Leaf { item_summaries, .. } => {
                             for item_summary in &item_summaries[0..new_index] {
-                                self.seek_dimension.add_summary(item_summary);
-                                self.sum_dimension.add_summary(item_summary);
+                                self.seek_dimension.add_summary(item_summary, cx);
+                                self.sum_dimension.add_summary(item_summary, cx);
                             }
                             self.stack.push(StackEntry {
                                 tree: entry.tree,
@@ -198,11 +198,11 @@ where
         }
     }
 
-    pub fn next(&mut self) {
-        self.next_internal(|_| true)
+    pub fn next(&mut self, cx: &<T::Summary as Summary>::Context) {
+        self.next_internal(|_| true, cx)
     }
 
-    fn next_internal<F>(&mut self, filter_node: F)
+    fn next_internal<F>(&mut self, filter_node: F, cx: &<T::Summary as Summary>::Context)
     where
         F: Fn(&T::Summary) -> bool,
     {
@@ -230,8 +230,8 @@ where
                     } => {
                         if !descend {
                             let summary = &child_summaries[entry.index];
-                            entry.seek_dimension.add_summary(summary);
-                            entry.sum_dimension.add_summary(summary);
+                            entry.seek_dimension.add_summary(summary, cx);
+                            entry.sum_dimension.add_summary(summary, cx);
                             entry.index += 1;
                         }
 
@@ -240,8 +240,8 @@ where
                             if filter_node(next_summary) {
                                 break;
                             } else {
-                                self.seek_dimension.add_summary(next_summary);
-                                self.sum_dimension.add_summary(next_summary);
+                                self.seek_dimension.add_summary(next_summary, cx);
+                                self.sum_dimension.add_summary(next_summary, cx);
                             }
                             entry.index += 1;
                         }
@@ -251,10 +251,10 @@ where
                     Node::Leaf { item_summaries, .. } => {
                         if !descend {
                             let item_summary = &item_summaries[entry.index];
-                            self.seek_dimension.add_summary(item_summary);
-                            entry.seek_dimension.add_summary(item_summary);
-                            self.sum_dimension.add_summary(item_summary);
-                            entry.sum_dimension.add_summary(item_summary);
+                            self.seek_dimension.add_summary(item_summary, cx);
+                            entry.seek_dimension.add_summary(item_summary, cx);
+                            self.sum_dimension.add_summary(item_summary, cx);
+                            entry.sum_dimension.add_summary(item_summary, cx);
                             entry.index += 1;
                         }
 
@@ -263,10 +263,10 @@ where
                                 if filter_node(next_item_summary) {
                                     return;
                                 } else {
-                                    self.seek_dimension.add_summary(next_item_summary);
-                                    entry.seek_dimension.add_summary(next_item_summary);
-                                    self.sum_dimension.add_summary(next_item_summary);
-                                    entry.sum_dimension.add_summary(next_item_summary);
+                                    self.seek_dimension.add_summary(next_item_summary, cx);
+                                    entry.seek_dimension.add_summary(next_item_summary, cx);
+                                    self.sum_dimension.add_summary(next_item_summary, cx);
+                                    entry.sum_dimension.add_summary(next_item_summary, cx);
                                     entry.index += 1;
                                 }
                             } else {
@@ -295,7 +295,11 @@ where
         debug_assert!(self.stack.is_empty() || self.stack.last().unwrap().tree.0.is_leaf());
     }
 
-    fn descend_to_last_item(&mut self, mut subtree: &'a SumTree<T>) {
+    fn descend_to_last_item(
+        &mut self,
+        mut subtree: &'a SumTree<T>,
+        cx: &<T::Summary as Summary>::Context,
+    ) {
         self.did_seek = true;
         loop {
             match subtree.0.as_ref() {
@@ -305,8 +309,8 @@ where
                     ..
                 } => {
                     for summary in &child_summaries[0..child_summaries.len() - 1] {
-                        self.seek_dimension.add_summary(summary);
-                        self.sum_dimension.add_summary(summary);
+                        self.seek_dimension.add_summary(summary, cx);
+                        self.sum_dimension.add_summary(summary, cx);
                     }
 
                     self.stack.push(StackEntry {
@@ -320,8 +324,8 @@ where
                 Node::Leaf { item_summaries, .. } => {
                     let last_index = item_summaries.len().saturating_sub(1);
                     for item_summary in &item_summaries[0..last_index] {
-                        self.seek_dimension.add_summary(item_summary);
-                        self.sum_dimension.add_summary(item_summary);
+                        self.seek_dimension.add_summary(item_summary, cx);
+                        self.sum_dimension.add_summary(item_summary, cx);
                     }
                     self.stack.push(StackEntry {
                         tree: subtree,
@@ -372,7 +376,7 @@ where
     }
 
     pub fn suffix(&mut self, cx: &<T::Summary as Summary>::Context) -> SumTree<T> {
-        let extent = self.tree.extent::<S>();
+        let extent = self.tree.extent::<S>(cx);
         let mut slice = SeekAggregate::Slice(SumTree::new());
         self.seek_internal::<()>(&extent, SeekBias::Right, &mut slice, cx);
         if let SeekAggregate::Slice(slice) = slice {
@@ -428,21 +432,21 @@ where
                                 .zip(&child_summaries[entry.index..])
                             {
                                 let mut child_end = self.seek_dimension.clone();
-                                child_end.add_summary(&child_summary);
+                                child_end.add_summary(&child_summary, cx);
 
                                 let comparison = target.cmp(&child_end, cx);
                                 if comparison == Ordering::Greater
                                     || (comparison == Ordering::Equal && bias == SeekBias::Right)
                                 {
                                     self.seek_dimension = child_end;
-                                    self.sum_dimension.add_summary(child_summary);
+                                    self.sum_dimension.add_summary(child_summary, cx);
                                     match aggregate {
                                         SeekAggregate::None => {}
                                         SeekAggregate::Slice(slice) => {
                                             slice.push_tree(child_tree.clone(), cx);
                                         }
                                         SeekAggregate::Summary(summary) => {
-                                            summary.add_summary(child_summary);
+                                            summary.add_summary(child_summary, cx);
                                         }
                                     }
                                     entry.index += 1;
@@ -470,14 +474,14 @@ where
                                 .zip(&item_summaries[entry.index..])
                             {
                                 let mut child_end = self.seek_dimension.clone();
-                                child_end.add_summary(item_summary);
+                                child_end.add_summary(item_summary, cx);
 
                                 let comparison = target.cmp(&child_end, cx);
                                 if comparison == Ordering::Greater
                                     || (comparison == Ordering::Equal && bias == SeekBias::Right)
                                 {
                                     self.seek_dimension = child_end;
-                                    self.sum_dimension.add_summary(item_summary);
+                                    self.sum_dimension.add_summary(item_summary, cx);
                                     match aggregate {
                                         SeekAggregate::None => {}
                                         SeekAggregate::Slice(_) => {
@@ -489,7 +493,7 @@ where
                                                 .add_summary(item_summary, cx);
                                         }
                                         SeekAggregate::Summary(summary) => {
-                                            summary.add_summary(item_summary);
+                                            summary.add_summary(item_summary, cx);
                                         }
                                     }
                                     entry.index += 1;
@@ -544,21 +548,21 @@ where
                             child_trees.iter().zip(child_summaries).enumerate()
                         {
                             let mut child_end = self.seek_dimension.clone();
-                            child_end.add_summary(child_summary);
+                            child_end.add_summary(child_summary, cx);
 
                             let comparison = target.cmp(&child_end, cx);
                             if comparison == Ordering::Greater
                                 || (comparison == Ordering::Equal && bias == SeekBias::Right)
                             {
                                 self.seek_dimension = child_end;
-                                self.sum_dimension.add_summary(child_summary);
+                                self.sum_dimension.add_summary(child_summary, cx);
                                 match aggregate {
                                     SeekAggregate::None => {}
                                     SeekAggregate::Slice(slice) => {
                                         slice.push_tree(child_trees[index].clone(), cx);
                                     }
                                     SeekAggregate::Summary(summary) => {
-                                        summary.add_summary(child_summary);
+                                        summary.add_summary(child_summary, cx);
                                     }
                                 }
                             } else {
@@ -590,14 +594,14 @@ where
                             items.iter().zip(item_summaries).enumerate()
                         {
                             let mut child_end = self.seek_dimension.clone();
-                            child_end.add_summary(item_summary);
+                            child_end.add_summary(item_summary, cx);
 
                             let comparison = target.cmp(&child_end, cx);
                             if comparison == Ordering::Greater
                                 || (comparison == Ordering::Equal && bias == SeekBias::Right)
                             {
                                 self.seek_dimension = child_end;
-                                self.sum_dimension.add_summary(item_summary);
+                                self.sum_dimension.add_summary(item_summary, cx);
                                 match aggregate {
                                     SeekAggregate::None => {}
                                     SeekAggregate::Slice(_) => {
@@ -609,7 +613,7 @@ where
                                         slice_item_summaries.push(item_summary.clone());
                                     }
                                     SeekAggregate::Summary(summary) => {
-                                        summary.add_summary(item_summary);
+                                        summary.add_summary(item_summary, cx);
                                     }
                                 }
                             } else {
@@ -651,7 +655,7 @@ where
         if bias == SeekBias::Left {
             let mut end = self.seek_dimension.clone();
             if let Some(summary) = self.item_summary() {
-                end.add_summary(summary);
+                end.add_summary(summary, cx);
             }
             target.cmp(&end, cx) == Ordering::Equal
         } else {
@@ -660,21 +664,22 @@ where
     }
 }
 
-impl<'a, T, S, U> Iterator for Cursor<'a, T, S, U>
+impl<'a, T, S, Seek, Sum> Iterator for Cursor<'a, T, Seek, Sum>
 where
-    T: Item,
-    S: Dimension<'a, T::Summary>,
-    U: Dimension<'a, T::Summary>,
+    T: Item<Summary = S>,
+    S: Summary<Context = ()>,
+    Seek: Dimension<'a, T::Summary>,
+    Sum: Dimension<'a, T::Summary>,
 {
     type Item = &'a T;
 
     fn next(&mut self) -> Option<Self::Item> {
         if !self.did_seek {
-            self.next();
+            self.next(&());
         }
 
         if let Some(item) = self.item() {
-            self.next();
+            self.next(&());
             Some(item)
         } else {
             None
@@ -693,9 +698,13 @@ where
     T: Item,
     U: Dimension<'a, T::Summary>,
 {
-    pub fn new(tree: &'a SumTree<T>, filter_node: F) -> Self {
+    pub fn new(
+        tree: &'a SumTree<T>,
+        filter_node: F,
+        cx: &<T::Summary as Summary>::Context,
+    ) -> Self {
         let mut cursor = tree.cursor::<(), U>();
-        cursor.next_internal(&filter_node);
+        cursor.next_internal(&filter_node, cx);
         Self {
             cursor,
             filter_node,
@@ -710,22 +719,23 @@ where
         self.cursor.item()
     }
 
-    pub fn next(&mut self) {
-        self.cursor.next_internal(&self.filter_node);
+    pub fn next(&mut self, cx: &<T::Summary as Summary>::Context) {
+        self.cursor.next_internal(&self.filter_node, cx);
     }
 }
 
-impl<'a, F, T, U> Iterator for FilterCursor<'a, F, T, U>
+impl<'a, F, T, S, U> Iterator for FilterCursor<'a, F, T, U>
 where
     F: Fn(&T::Summary) -> bool,
-    T: Item,
+    T: Item<Summary = S>,
+    S: Summary<Context = ()>,
     U: Dimension<'a, T::Summary>,
 {
     type Item = &'a T;
 
     fn next(&mut self) -> Option<Self::Item> {
         if let Some(item) = self.item() {
-            self.cursor.next_internal(&self.filter_node);
+            self.cursor.next_internal(&self.filter_node, &());
             Some(item)
         } else {
             None

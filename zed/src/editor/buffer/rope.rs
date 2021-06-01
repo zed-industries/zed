@@ -25,13 +25,13 @@ impl Rope {
 
     pub fn append(&mut self, rope: Rope) {
         let mut chunks = rope.chunks.cursor::<(), ()>();
-        chunks.next();
+        chunks.next(&());
         if let Some(chunk) = chunks.item() {
             if self.chunks.last().map_or(false, |c| c.0.len() < CHUNK_BASE)
                 || chunk.0.len() < CHUNK_BASE
             {
                 self.push(&chunk.0);
-                chunks.next();
+                chunks.next(&());
             }
         }
 
@@ -99,11 +99,11 @@ impl Rope {
     }
 
     pub fn len(&self) -> usize {
-        self.chunks.extent()
+        self.chunks.extent(&())
     }
 
     pub fn max_point(&self) -> Point {
-        self.chunks.extent()
+        self.chunks.extent(&())
     }
 
     pub fn cursor(&self, offset: usize) -> Cursor {
@@ -218,12 +218,12 @@ impl<'a> Cursor<'a> {
         let mut slice = Rope::new();
         if let Some(start_chunk) = self.chunks.item() {
             let start_ix = self.offset - self.chunks.start();
-            let end_ix = cmp::min(end_offset, self.chunks.end()) - self.chunks.start();
+            let end_ix = cmp::min(end_offset, self.chunks.end(&())) - self.chunks.start();
             slice.push(&start_chunk.0[start_ix..end_ix]);
         }
 
-        if end_offset > self.chunks.end() {
-            self.chunks.next();
+        if end_offset > self.chunks.end(&()) {
+            self.chunks.next(&());
             slice.append(Rope {
                 chunks: self.chunks.slice(&end_offset, SeekBias::Right, &()),
             });
@@ -243,12 +243,12 @@ impl<'a> Cursor<'a> {
         let mut summary = TextSummary::default();
         if let Some(start_chunk) = self.chunks.item() {
             let start_ix = self.offset - self.chunks.start();
-            let end_ix = cmp::min(end_offset, self.chunks.end()) - self.chunks.start();
+            let end_ix = cmp::min(end_offset, self.chunks.end(&())) - self.chunks.start();
             summary = TextSummary::from(&start_chunk.0[start_ix..end_ix]);
         }
 
-        if end_offset > self.chunks.end() {
-            self.chunks.next();
+        if end_offset > self.chunks.end(&()) {
+            self.chunks.next(&());
             summary += &self.chunks.summary(&end_offset, SeekBias::Right, &());
             if let Some(end_chunk) = self.chunks.item() {
                 let end_ix = end_offset - self.chunks.start();
@@ -260,7 +260,7 @@ impl<'a> Cursor<'a> {
     }
 
     pub fn suffix(mut self) -> Rope {
-        self.slice(self.rope.chunks.extent())
+        self.slice(self.rope.chunks.extent(&()))
     }
 
     pub fn offset(&self) -> usize {
@@ -285,7 +285,7 @@ impl<'a> Chunks<'a> {
     }
 
     pub fn seek(&mut self, offset: usize) {
-        if offset >= self.chunks.end() {
+        if offset >= self.chunks.end(&()) {
             self.chunks.seek_forward(&offset, SeekBias::Right, &());
         } else {
             self.chunks.seek(&offset, SeekBias::Right, &());
@@ -312,7 +312,7 @@ impl<'a> Iterator for Chunks<'a> {
     fn next(&mut self) -> Option<Self::Item> {
         let result = self.peek();
         if result.is_some() {
-            self.chunks.next();
+            self.chunks.next(&());
         }
         result
     }
@@ -478,19 +478,19 @@ impl std::ops::AddAssign<Self> for TextSummary {
 }
 
 impl<'a> sum_tree::Dimension<'a, TextSummary> for TextSummary {
-    fn add_summary(&mut self, summary: &'a TextSummary) {
+    fn add_summary(&mut self, summary: &'a TextSummary, _: &()) {
         *self += summary;
     }
 }
 
 impl<'a> sum_tree::Dimension<'a, TextSummary> for usize {
-    fn add_summary(&mut self, summary: &'a TextSummary) {
+    fn add_summary(&mut self, summary: &'a TextSummary, _: &()) {
         *self += summary.bytes;
     }
 }
 
 impl<'a> sum_tree::Dimension<'a, TextSummary> for Point {
-    fn add_summary(&mut self, summary: &'a TextSummary) {
+    fn add_summary(&mut self, summary: &'a TextSummary, _: &()) {
         *self += &summary.lines;
     }
 }

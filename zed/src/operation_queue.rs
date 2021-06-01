@@ -89,7 +89,7 @@ impl<'a> Add<&'a Self> for OperationSummary {
 }
 
 impl<'a> Dimension<'a, OperationSummary> for OperationKey {
-    fn add_summary(&mut self, summary: &OperationSummary) {
+    fn add_summary(&mut self, summary: &OperationSummary, _: &()) {
         assert!(*self <= summary.key);
         *self = summary.key;
     }

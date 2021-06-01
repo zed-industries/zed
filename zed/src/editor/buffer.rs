@@ -360,7 +360,7 @@ struct FragmentTextSummary {
 }
 
 impl<'a> sum_tree::Dimension<'a, FragmentSummary> for FragmentTextSummary {
-    fn add_summary(&mut self, summary: &'a FragmentSummary) {
+    fn add_summary(&mut self, summary: &'a FragmentSummary, _: &()) {
         self.visible += summary.text.visible;
         self.deleted += summary.text.deleted;
     }
@@ -825,7 +825,7 @@ impl Buffer {
     }
 
     pub fn len(&self) -> usize {
-        self.fragments.extent::<usize>()
+        self.fragments.extent::<usize>(&())
     }
 
     pub fn line_len(&self, row: u32) -> u32 {
@@ -871,9 +871,10 @@ impl Buffer {
 
     pub fn edits_since<'a>(&'a self, since: time::Global) -> impl 'a + Iterator<Item = Edit> {
         let since_2 = since.clone();
-        let cursor = self
-            .fragments
-            .filter(move |summary| summary.max_version.changed_since(&since_2));
+        let cursor = self.fragments.filter(
+            move |summary| summary.max_version.changed_since(&since_2),
+            &(),
+        );
 
         Edits {
             deleted_text: &self.deleted_text,
@@ -1201,7 +1202,7 @@ impl Buffer {
             let fragment = fragments_cursor.item().unwrap().clone();
             new_ropes.push_fragment(&fragment, fragment.visible);
             new_fragments.push(fragment, &());
-            fragments_cursor.next();
+            fragments_cursor.next(&());
         }
 
         while let Some(fragment) = fragments_cursor.item() {
@@ -1291,7 +1292,7 @@ impl Buffer {
                 new_fragments.push(fragment, &());
             }
 
-            fragments_cursor.next();
+            fragments_cursor.next(&());
         }
 
         if let Some(new_text) = new_text {
@@ -1420,7 +1421,7 @@ impl Buffer {
                 new_ropes.push_fragment(&fragment, was_visible);
                 new_fragments.push(fragment.clone(), &());
 
-                fragments_cursor.next();
+                fragments_cursor.next(&());
                 if let Some(split_id) = insertion_splits.next() {
                     let slice =
                         fragments_cursor.slice(&FragmentIdRef::new(split_id), SeekBias::Left, &());
@@ -1453,7 +1454,7 @@ impl Buffer {
 
                     new_ropes.push_fragment(&fragment, fragment_was_visible);
                     new_fragments.push(fragment, &());
-                    fragments_cursor.next();
+                    fragments_cursor.next(&());
                 }
             }
         }
@@ -1704,9 +1705,9 @@ impl Buffer {
                 },
                 &(),
             );
-            splits_cursor.next();
+            splits_cursor.next(&());
             new_split_tree.push_tree(
-                splits_cursor.slice(&old_split_tree.extent::<usize>(), SeekBias::Right, &()),
+                splits_cursor.slice(&old_split_tree.extent::<usize>(&()), SeekBias::Right, &()),
                 &(),
             );
             self.insertion_splits
@@ -1716,7 +1717,7 @@ impl Buffer {
             new_fragments.push(fragment, &());
 
             // Scan forward until we find a fragment that is not fully contained by the current splice.
-            fragments_cursor.next();
+            fragments_cursor.next(&());
             if let Some(range) = cur_range.clone() {
                 while let Some(fragment) = fragments_cursor.item() {
                     let fragment_summary = fragments_cursor.item_summary().unwrap();
@@ -1733,7 +1734,7 @@ impl Buffer {
 
                         new_ropes.push_fragment(&new_fragment, fragment_was_visible);
                         new_fragments.push(new_fragment, &());
-                        fragments_cursor.next();
+                        fragments_cursor.next(&());
 
                         if range.end == fragment_end {
                             end_id = Some(fragment.insertion.id);
@@ -1912,9 +1913,9 @@ impl Buffer {
                 );
             }
 
-            cursor.next();
+            cursor.next(&());
             new_split_tree.push_tree(
-                cursor.slice(&old_split_tree.extent::<usize>(), SeekBias::Right, &()),
+                cursor.slice(&old_split_tree.extent::<usize>(&()), SeekBias::Right, &()),
                 &(),
             );
 
@@ -2261,7 +2262,7 @@ impl<'a, F: Fn(&FragmentSummary) -> bool> Iterator for Edits<'a, F> {
                 }
             }
 
-            self.cursor.next();
+            self.cursor.next(&());
         }
 
         change
@@ -2445,7 +2446,7 @@ impl<'a> FragmentIdRef<'a> {
 }
 
 impl<'a> sum_tree::Dimension<'a, FragmentSummary> for FragmentIdRef<'a> {
-    fn add_summary(&mut self, summary: &'a FragmentSummary) {
+    fn add_summary(&mut self, summary: &'a FragmentSummary, _: &()) {
         self.0 = Some(&summary.max_fragment_id)
     }
 }
@@ -2543,7 +2544,7 @@ impl Default for FragmentSummary {
 }
 
 impl<'a> sum_tree::Dimension<'a, FragmentSummary> for usize {
-    fn add_summary(&mut self, summary: &FragmentSummary) {
+    fn add_summary(&mut self, summary: &FragmentSummary, _: &()) {
         *self += summary.text.visible;
     }
 }
@@ -2573,7 +2574,7 @@ impl Default for InsertionSplitSummary {
 }
 
 impl<'a> sum_tree::Dimension<'a, InsertionSplitSummary> for usize {
-    fn add_summary(&mut self, summary: &InsertionSplitSummary) {
+    fn add_summary(&mut self, summary: &InsertionSplitSummary, _: &()) {
         *self += summary.extent;
     }
 }
@@ -3661,7 +3662,7 @@ mod tests {
             let text = "
                 mod x {
                     mod y {
-                        
+
                     }
                 }
             "

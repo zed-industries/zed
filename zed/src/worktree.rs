@@ -603,7 +603,7 @@ impl Default for PathKey {
 }
 
 impl<'a> sum_tree::Dimension<'a, EntrySummary> for PathKey {
-    fn add_summary(&mut self, summary: &'a EntrySummary) {
+    fn add_summary(&mut self, summary: &'a EntrySummary, _: &()) {
         self.0 = summary.max_path.clone();
     }
 }
@@ -643,7 +643,7 @@ impl<'a> Default for PathSearch<'a> {
 }
 
 impl<'a: 'b, 'b> sum_tree::Dimension<'a, EntrySummary> for PathSearch<'b> {
-    fn add_summary(&mut self, summary: &'a EntrySummary) {
+    fn add_summary(&mut self, summary: &'a EntrySummary, _: &()) {
         *self = Self::Exact(summary.max_path.as_ref());
     }
 }
@@ -652,7 +652,7 @@ impl<'a: 'b, 'b> sum_tree::Dimension<'a, EntrySummary> for PathSearch<'b> {
 pub struct FileCount(usize);
 
 impl<'a> sum_tree::Dimension<'a, EntrySummary> for FileCount {
-    fn add_summary(&mut self, summary: &'a EntrySummary) {
+    fn add_summary(&mut self, summary: &'a EntrySummary, _: &()) {
         self.0 += summary.file_count;
     }
 }
@@ -661,7 +661,7 @@ impl<'a> sum_tree::Dimension<'a, EntrySummary> for FileCount {
 pub struct VisibleFileCount(usize);
 
 impl<'a> sum_tree::Dimension<'a, EntrySummary> for VisibleFileCount {
-    fn add_summary(&mut self, summary: &'a EntrySummary) {
+    fn add_summary(&mut self, summary: &'a EntrySummary, _: &()) {
         self.0 += summary.visible_file_count;
     }
 }
