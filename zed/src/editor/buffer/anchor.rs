@@ -67,8 +67,8 @@ impl Anchor {
                     bias: other_bias, ..
                 },
             ) => buffer
-                .fragment_ix_for_anchor(self)
-                .cmp(&buffer.fragment_ix_for_anchor(other))
+                .full_offset_for_anchor(self)
+                .cmp(&buffer.full_offset_for_anchor(other))
                 .then_with(|| self_bias.cmp(&other_bias)),
         })
     }
