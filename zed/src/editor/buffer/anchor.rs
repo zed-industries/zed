@@ -63,21 +63,27 @@ impl Anchor {
                 Anchor::Middle {
                     offset: self_offset,
                     bias: self_bias,
-                    version: self_version,
+                    ..
                 },
                 Anchor::Middle {
                     offset: other_offset,
                     bias: other_bias,
-                    version: other_version,
+                    ..
                 },
             ) => {
-                let offset_comparison = if self_version == other_version {
-                    self_offset.cmp(other_offset)
-                } else {
-                    self.to_offset(buffer).cmp(&other.to_offset(buffer))
-                };
-
-                offset_comparison.then_with(|| self_bias.cmp(other_bias))
+                dbg!(
+                    self,
+                    other,
+                    self_offset,
+                    other_offset,
+                    buffer.fragment_ix_for_anchor(self),
+                    buffer.fragment_ix_for_anchor(other)
+                );
+                buffer
+                    .fragment_ix_for_anchor(self)
+                    .cmp(&buffer.fragment_ix_for_anchor(other))
+                    .then_with(|| self_offset.cmp(&other_offset))
+                    .then_with(|| self_bias.cmp(other_bias))
             }
         })
     }

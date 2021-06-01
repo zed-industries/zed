@@ -353,6 +353,7 @@ pub struct FragmentSummary {
     max_version: time::Global,
     min_insertion_version: time::Global,
     max_insertion_version: time::Global,
+    count: usize,
 }
 
 #[derive(Default, Clone, Debug, PartialEq, Eq)]
@@ -2029,6 +2030,26 @@ impl Buffer {
         }
     }
 
+    fn fragment_ix_for_anchor(&self, anchor: &Anchor) -> usize {
+        match anchor {
+            Anchor::Start => 0,
+            Anchor::End => self.fragments.extent::<FragmentCount>(&None).0,
+            Anchor::Middle {
+                offset,
+                bias,
+                version,
+            } => {
+                let mut cursor = self.fragments.cursor::<VersionedOffset, FragmentCount>();
+                cursor.seek(
+                    &VersionedOffset::Offset(*offset),
+                    bias.to_seek_bias(),
+                    &Some(version.clone()),
+                );
+                cursor.start().0
+            }
+        }
+    }
+
     pub fn point_for_offset(&self, offset: usize) -> Result<Point> {
         if offset <= self.len() {
             Ok(self.text_summary_for_range(0..offset).lines)
@@ -2503,6 +2524,7 @@ impl sum_tree::Item for Fragment {
                 max_version,
                 min_insertion_version,
                 max_insertion_version,
+                count: 1,
             }
         } else {
             FragmentSummary {
@@ -2514,6 +2536,7 @@ impl sum_tree::Item for Fragment {
                 max_version,
                 min_insertion_version,
                 max_insertion_version,
+                count: 1,
             }
         }
     }
@@ -2532,6 +2555,7 @@ impl sum_tree::Summary for FragmentSummary {
             .meet(&other.min_insertion_version);
         self.max_insertion_version
             .join(&other.max_insertion_version);
+        self.count += other.count;
     }
 }
 
@@ -2543,6 +2567,7 @@ impl Default for FragmentSummary {
             max_version: time::Global::new(),
             min_insertion_version: time::Global::new(),
             max_insertion_version: time::Global::new(),
+            count: 0,
         }
     }
 }
@@ -2638,6 +2663,15 @@ impl<'a> sum_tree::Dimension<'a, FragmentSummary> for (VersionedOffset, usize) {
     fn add_summary(&mut self, summary: &'a FragmentSummary, cx: &Option<time::Global>) {
         self.0.add_summary(summary, cx);
         self.1 += summary.text.visible;
+    }
+}
+
+#[derive(Copy, Clone, Default, Debug, Eq, PartialEq, Ord, PartialOrd)]
+struct FragmentCount(usize);
+
+impl<'a> sum_tree::Dimension<'a, FragmentSummary> for FragmentCount {
+    fn add_summary(&mut self, summary: &'a FragmentSummary, _: &Option<time::Global>) {
+        self.0 += summary.count;
     }
 }
 
