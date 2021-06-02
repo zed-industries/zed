@@ -2258,17 +2258,14 @@ impl<'a> sum_tree::SeekDimension<'a, FragmentSummary> for VersionedOffset {
     }
 }
 
-impl<'a> sum_tree::Dimension<'a, FragmentSummary> for (VersionedOffset, usize) {
+impl<'a, T, U> sum_tree::Dimension<'a, FragmentSummary> for (T, U)
+where
+    T: sum_tree::Dimension<'a, FragmentSummary>,
+    U: sum_tree::Dimension<'a, FragmentSummary>,
+{
     fn add_summary(&mut self, summary: &'a FragmentSummary, cx: &Option<time::Global>) {
         self.0.add_summary(summary, cx);
-        self.1 += summary.text.visible;
-    }
-}
-
-impl<'a> sum_tree::Dimension<'a, FragmentSummary> for (VersionedOffset, FullOffset) {
-    fn add_summary(&mut self, summary: &'a FragmentSummary, cx: &Option<time::Global>) {
-        self.0.add_summary(summary, cx);
-        self.1 .0 += summary.text.visible + summary.text.deleted;
+        self.1.add_summary(summary, cx);
     }
 }
 
