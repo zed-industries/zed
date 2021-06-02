@@ -1346,44 +1346,55 @@ impl Buffer {
     }
 
     fn apply_undo(&mut self, undo: UndoOperation) -> Result<()> {
+        self.undo_map.insert(undo);
+        let edit = &self.history.ops[&undo.edit_id];
+        let version = Some(edit.version.clone());
+
         let mut old_fragments = self.fragments.cursor::<VersionedOffset, VersionedOffset>();
+        old_fragments.seek(&VersionedOffset::Offset(0), SeekBias::Left, &version);
 
         let mut new_fragments = SumTree::new();
         let mut new_ropes =
             RopeBuilder::new(self.visible_text.cursor(0), self.deleted_text.cursor(0));
 
-        self.undo_map.insert(undo);
-        let edit = &self.history.ops[&undo.edit_id];
+        let mut version_after_edit = edit.version.clone();
+        version_after_edit.observe(edit.id);
 
-        let version = Some(edit.version.clone());
         for range in &edit.ranges {
-            let preceding_fragments = old_fragments.slice(
-                &VersionedOffset::Offset(range.start),
-                SeekBias::Right,
-                &version,
-            );
-            new_ropes.push_tree(preceding_fragments.summary().text);
-            new_fragments.push_tree(preceding_fragments, &None);
+            let mut end_offset = old_fragments.end(&version).offset();
 
-            while old_fragments.end(&version).offset() < range.end {
+            if end_offset < range.start {
+                let preceding_fragments = old_fragments.slice(
+                    &VersionedOffset::Offset(range.start),
+                    SeekBias::Left,
+                    &version,
+                );
+                new_ropes.push_tree(preceding_fragments.summary().text);
+                new_fragments.push_tree(preceding_fragments, &None);
+            }
+
+            while end_offset <= range.end {
                 if let Some(fragment) = old_fragments.item() {
                     let mut fragment = fragment.clone();
                     let fragment_was_visible = fragment.visible;
-                    if edit.version.observed(fragment.insertion_id) {
+                    if version_after_edit.observed(fragment.insertion_id) {
                         fragment.visible = fragment.is_visible(&self.undo_map);
                         fragment.max_undos.observe(undo.id);
                     }
                     new_ropes.push_fragment(&fragment, fragment_was_visible);
                     new_fragments.push(fragment, &None);
 
+                    old_fragments.next(&version);
+                    end_offset = old_fragments.end(&version).offset();
+
                     // Skip over any fragments that were not present when the edit occurred.
-                    let newer_fragments = old_fragments.slice(
-                        &old_fragments.end(&version),
-                        SeekBias::Right,
-                        &version,
-                    );
-                    new_ropes.push_tree(newer_fragments.summary().text);
-                    new_fragments.push_tree(newer_fragments, &None);
+                    // let newer_fragments = old_fragments.slice(
+                    //     &old_fragments.end(&version),
+                    //     SeekBias::Right,
+                    //     &version,
+                    // );
+                    // new_ropes.push_tree(newer_fragments.summary().text);
+                    // new_fragments.push_tree(newer_fragments, &None);
                 } else {
                     break;
                 }
@@ -1399,73 +1410,6 @@ impl Buffer {
         self.fragments = new_fragments;
         self.visible_text = visible_text;
         self.deleted_text = deleted_text;
-
-        // if edit.start_id == edit.end_id && edit.start_offset == edit.end_offset {
-        //     let splits = &self.insertion_splits[&undo.edit_id];
-        //     let mut insertion_splits = splits.cursor::<(), ()>().map(|s| &s.fragment_id).peekable();
-
-        //     let first_split_id = insertion_splits.next().unwrap();
-        //     new_fragments =
-        //         fragments_cursor.slice(&FragmentIdRef::new(first_split_id), SeekBias::Left, &None);
-        //     new_ropes.push_tree(new_fragments.summary().text);
-
-        //     loop {
-        //         let mut fragment = fragments_cursor.item().unwrap().clone();
-        //         let was_visible = fragment.visible;
-        //         fragment.visible = fragment.is_visible(&self.undo_map);
-        //         fragment.max_undos.observe(undo.id);
-
-        //         new_ropes.push_fragment(&fragment, was_visible);
-        //         new_fragments.push(fragment.clone(), &None);
-
-        //         fragments_cursor.next(&None);
-        //         if let Some(split_id) = insertion_splits.next() {
-        //             let slice = fragments_cursor.slice(
-        //                 &FragmentIdRef::new(split_id),
-        //                 SeekBias::Left,
-        //                 &None,
-        //             );
-        //             new_ropes.push_tree(slice.summary().text);
-        //             new_fragments.push_tree(slice, &None);
-        //         } else {
-        //             break;
-        //         }
-        //     }
-        // } else {
-        //     new_fragments = fragments_cursor.slice(
-        //         &FragmentIdRef::new(&edit.),
-        //         SeekBias::Left,
-        //         &None,
-        //     );
-        //     new_ropes.push_tree(new_fragments.summary().text);
-
-        //     while let Some(fragment) = fragments_cursor.item() {
-        //         if fragment.id > end_fragment_id {
-        //             break;
-        //         } else {
-        //             let mut fragment = fragment.clone();
-        //             let fragment_was_visible = fragment.visible;
-        //             if edit.version_in_range.observed(fragment.insertion.id)
-        //                 || fragment.insertion.id == undo.edit_id
-        //             {
-        //                 fragment.visible = fragment.is_visible(&self.undo_map);
-        //                 fragment.max_undos.observe(undo.id);
-        //             }
-
-        //             new_ropes.push_fragment(&fragment, fragment_was_visible);
-        //             new_fragments.push(fragment, &None);
-        //             fragments_cursor.next(&None);
-        //         }
-        //     }
-        // }
-
-        // new_fragments.push_tree(fragments_cursor.suffix(&None), &None);
-        // let (visible_text, deleted_text) = new_ropes.finish();
-        // drop(fragments_cursor);
-        // self.fragments = new_fragments;
-        // self.visible_text = visible_text;
-        // self.deleted_text = deleted_text;
-
         Ok(())
     }
 
@@ -2259,8 +2203,6 @@ impl<'a> sum_tree::Dimension<'a, FragmentSummary> for VersionedOffset {
             {
                 *self = Self::InvalidVersion;
             }
-        } else {
-            unreachable!();
         }
     }
 }
