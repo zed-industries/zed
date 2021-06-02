@@ -229,9 +229,8 @@ where
                         ..
                     } => {
                         if !descend {
-                            let summary = &child_summaries[entry.index];
-                            entry.seek_dimension.add_summary(summary, cx);
-                            entry.sum_dimension.add_summary(summary, cx);
+                            entry.seek_dimension = self.seek_dimension.clone();
+                            entry.sum_dimension = self.sum_dimension.clone();
                             entry.index += 1;
                         }
 
