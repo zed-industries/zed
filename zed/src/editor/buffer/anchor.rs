@@ -61,15 +61,26 @@ impl Anchor {
             (Anchor::End, _) | (_, Anchor::Start) => Ordering::Greater,
             (
                 Anchor::Middle {
-                    bias: self_bias, ..
+                    offset: self_offset,
+                    bias: self_bias,
+                    version: self_version,
                 },
                 Anchor::Middle {
-                    bias: other_bias, ..
+                    offset: other_offset,
+                    bias: other_bias,
+                    version: other_version,
                 },
-            ) => buffer
-                .full_offset_for_anchor(self)
-                .cmp(&buffer.full_offset_for_anchor(other))
-                .then_with(|| self_bias.cmp(&other_bias)),
+            ) => {
+                let offset_comparison = if self_version == other_version {
+                    self_offset.cmp(other_offset)
+                } else {
+                    buffer
+                        .full_offset_for_anchor(self)
+                        .cmp(&buffer.full_offset_for_anchor(other))
+                };
+
+                offset_comparison.then_with(|| self_bias.cmp(&other_bias))
+            }
         })
     }
 
