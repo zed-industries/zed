@@ -413,7 +413,12 @@ where
         D: Dimension<'a, T::Summary>,
     {
         if let Some(target) = target {
-            debug_assert!(target.cmp(&self.seek_dimension, cx) >= Ordering::Equal);
+            debug_assert!(
+                target.cmp(&self.seek_dimension, cx) >= Ordering::Equal,
+                "cannot seek backward from {:?} to {:?}",
+                self.seek_dimension,
+                target
+            );
         }
 
         if !self.did_seek {
