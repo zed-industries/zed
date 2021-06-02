@@ -462,12 +462,10 @@ impl Buffer {
         let mut fragments = SumTree::new();
 
         let visible_text = Rope::from(history.base_text.as_ref());
-        let mut local_clock = time::Local::new(replica_id);
-
         if visible_text.len() > 0 {
             fragments.push(
                 Fragment {
-                    insertion_id: local_clock.tick(),
+                    insertion_id: Default::default(),
                     len: visible_text.len(),
                     deletions: Default::default(),
                     max_undos: Default::default(),
@@ -496,7 +494,7 @@ impl Buffer {
             deferred_ops: OperationQueue::new(),
             deferred_replicas: HashSet::default(),
             replica_id,
-            local_clock,
+            local_clock: time::Local::new(replica_id),
             lamport_clock: time::Lamport::new(replica_id),
         };
         result.reparse(cx);
