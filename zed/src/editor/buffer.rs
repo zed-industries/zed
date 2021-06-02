@@ -933,14 +933,8 @@ impl Buffer {
 
         let edit_id = self.local_clock.tick();
         let lamport_timestamp = self.lamport_clock.tick();
-        self.splice_fragments(&ranges, new_text.clone(), edit_id, lamport_timestamp);
+        let edit = self.splice_fragments(&ranges, new_text, edit_id, lamport_timestamp);
 
-        let edit = EditOperation {
-            id: edit_id,
-            version: self.version.clone(),
-            ranges,
-            new_text,
-        };
         self.history.push(edit.clone());
         self.history.push_undo(edit.id);
         self.last_edit = edit.id;
@@ -1529,18 +1523,25 @@ impl Buffer {
         new_text: Option<String>,
         edit_id: time::Local,
         lamport_timestamp: time::Lamport,
-    ) {
+    ) -> EditOperation {
+        let mut edit = EditOperation {
+            id: edit_id,
+            version: self.version.clone(),
+            ranges: Vec::with_capacity(old_ranges.len()),
+            new_text: new_text.clone(),
+        };
+
         let mut old_ranges = old_ranges.iter();
         let mut cur_range = old_ranges.next();
         if cur_range.is_none() {
-            return;
+            return edit;
         }
 
         let old_fragments = mem::take(&mut self.fragments);
         let old_visible_text = mem::take(&mut self.visible_text);
         let old_deleted_text = mem::take(&mut self.deleted_text);
 
-        let mut fragments_cursor = old_fragments.cursor::<usize, usize>();
+        let mut fragments_cursor = old_fragments.cursor::<usize, (usize, FullOffset)>();
         let mut new_fragments =
             fragments_cursor.slice(&cur_range.as_ref().unwrap().start, SeekBias::Right, &None);
 
@@ -1550,8 +1551,9 @@ impl Buffer {
 
         while cur_range.is_some() && fragments_cursor.item().is_some() {
             let mut fragment = fragments_cursor.item().unwrap().clone();
-            let mut fragment_start = *fragments_cursor.start();
+            let mut fragment_start = fragments_cursor.start().0;
             let mut fragment_end = fragment_start + fragment.visible_len();
+            let mut full_range = 0..0;
             let fragment_was_visible = fragment.visible;
 
             // Find all splices that start or end within the current fragment. Then, split the
@@ -1559,17 +1561,21 @@ impl Buffer {
             // inserted text.
             while cur_range.as_ref().map_or(false, |r| r.start < fragment_end) {
                 let range = cur_range.clone().unwrap();
-                if range.start > fragment_start {
-                    let mut prefix = fragment.clone();
-                    prefix.len = range.start - fragment_start;
-                    fragment.len -= prefix.len;
 
-                    new_ropes.push_fragment(&prefix, prefix.visible);
-                    new_fragments.push(prefix.clone(), &None);
-                    fragment_start = range.start;
-                }
+                if range.start >= fragment_start {
+                    full_range.start =
+                        fragments_cursor.start().1 .0 + (range.start - fragments_cursor.start().0);
 
-                if range.start == fragment_start {
+                    if range.start > fragment_start {
+                        let mut prefix = fragment.clone();
+                        prefix.len = range.start - fragment_start;
+                        fragment.len -= prefix.len;
+
+                        new_ropes.push_fragment(&prefix, prefix.visible);
+                        new_fragments.push(prefix.clone(), &None);
+                        fragment_start = range.start;
+                    }
+
                     if let Some(new_text) = new_text.clone() {
                         let new_fragment = Fragment {
                             len: new_text.len(),
@@ -1608,6 +1614,9 @@ impl Buffer {
                 // check if it also intersects the current fragment. Otherwise we break out of the
                 // loop and find the first fragment that the splice does not contain fully.
                 if range.end <= fragment_end {
+                    full_range.end =
+                        fragments_cursor.start().1 .0 + (range.end - fragments_cursor.start().0);
+                    edit.ranges.push(full_range.clone());
                     cur_range = old_ranges.next();
                 } else {
                     break;
@@ -1622,7 +1631,10 @@ impl Buffer {
             if let Some(range) = cur_range.clone() {
                 while let Some(fragment) = fragments_cursor.item() {
                     let fragment_was_visible = fragment.visible;
-                    fragment_start = *fragments_cursor.start();
+                    fragment_start = fragments_cursor.start().0;
+                    full_range.end =
+                        fragments_cursor.start().1 .0 + (range.end - fragments_cursor.start().0);
+
                     fragment_end = fragment_start + fragment.visible_len();
                     if range.start < fragment_start && range.end >= fragment_end {
                         let mut new_fragment = fragment.clone();
@@ -1636,6 +1648,7 @@ impl Buffer {
                         fragments_cursor.next(&None);
 
                         if range.end == fragment_end {
+                            edit.ranges.push(full_range.clone());
                             cur_range = old_ranges.next();
                             break;
                         }
@@ -1664,6 +1677,9 @@ impl Buffer {
         if cur_range.is_some() {
             debug_assert_eq!(old_ranges.next(), None);
 
+            let full_offset = fragments_cursor.end(&None).1 .0;
+            edit.ranges.push(full_offset..full_offset);
+
             if let Some(new_text) = new_text {
                 let new_fragment = Fragment {
                     len: new_text.len(),
@@ -1684,6 +1700,7 @@ impl Buffer {
         self.fragments = new_fragments;
         self.visible_text = visible_text;
         self.deleted_text = deleted_text;
+        edit
     }
 
     pub fn anchor_before<T: ToOffset>(&self, position: T) -> Anchor {
