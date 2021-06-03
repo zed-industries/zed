@@ -1455,11 +1455,14 @@ impl Buffer {
         let mut fragment_start = old_fragments.start().visible;
         for range in ranges {
             if range.start > old_fragments.end(&None).visible {
-                if old_fragments.end(&None).visible > fragment_start {
-                    let mut suffix = old_fragments.item().unwrap().clone();
-                    suffix.len = old_fragments.end(&None).visible - fragment_start;
-                    new_ropes.push_fragment(&suffix, suffix.visible);
-                    new_fragments.push(suffix, &None);
+                if fragment_start > old_fragments.start().visible {
+                    let fragment_end = old_fragments.end(&None).visible;
+                    if fragment_end > fragment_start {
+                        let mut suffix = old_fragments.item().unwrap().clone();
+                        suffix.len = fragment_end - fragment_start;
+                        new_ropes.push_fragment(&suffix, suffix.visible);
+                        new_fragments.push(suffix, &None);
+                    }
                     old_fragments.next(&None);
                 }
 
@@ -1517,24 +1520,24 @@ impl Buffer {
             edit.ranges.push(full_range_start..full_range_end);
         }
 
-        let fragment_end = old_fragments.end(&None).visible;
-        if fragment_end > fragment_start {
-            let mut suffix = old_fragments.item().unwrap().clone();
-            suffix.len = fragment_end - fragment_start;
-            new_ropes.push_fragment(&suffix, suffix.visible);
-            new_fragments.push(suffix, &None);
-        }
-        if old_fragments.item().is_some() {
+        if fragment_start > old_fragments.start().visible {
+            let fragment_end = old_fragments.end(&None).visible;
+            if fragment_end > fragment_start {
+                let mut suffix = old_fragments.item().unwrap().clone();
+                suffix.len = fragment_end - fragment_start;
+                new_ropes.push_fragment(&suffix, suffix.visible);
+                new_fragments.push(suffix, &None);
+            }
             old_fragments.next(&None);
         }
 
         let suffix = old_fragments.suffix(&None);
         new_ropes.push_tree(suffix.summary().text);
         new_fragments.push_tree(suffix, &None);
-        let (visible_text, deleted_text) = new_ropes.finish();
-        drop(old_fragments);
 
+        drop(old_fragments);
         self.fragments = new_fragments;
+        let (visible_text, deleted_text) = new_ropes.finish();
         self.visible_text = visible_text;
         self.deleted_text = deleted_text;
         edit
