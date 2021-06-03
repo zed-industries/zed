@@ -723,9 +723,7 @@ impl Editor {
         let mut new_selections = Vec::new();
         self.buffer.update(cx, |buffer, cx| {
             let edit_ranges = old_selections.iter().map(|(_, range)| range.clone());
-            if let Err(error) = buffer.edit(edit_ranges, text.as_str(), Some(cx)) {
-                log::error!("error inserting text: {}", error);
-            };
+            buffer.edit(edit_ranges, text.as_str(), Some(cx));
             let text_len = text.len() as isize;
             let mut delta = 0_isize;
             new_selections = old_selections
