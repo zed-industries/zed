@@ -15,7 +15,7 @@ pub struct Local {
     pub value: Seq,
 }
 
-#[derive(Clone, Copy, Default, Eq, Hash, Ord, PartialEq, PartialOrd)]
+#[derive(Clone, Copy, Default, Eq, Hash, PartialEq)]
 pub struct Lamport {
     pub replica_id: ReplicaId,
     pub value: Seq,
@@ -136,6 +136,21 @@ impl PartialOrd for Global {
         }
 
         Some(global_ordering)
+    }
+}
+
+impl Ord for Lamport {
+    fn cmp(&self, other: &Self) -> Ordering {
+        // Use the replica id to break ties between concurrent events.
+        self.value
+            .cmp(&other.value)
+            .then_with(|| self.replica_id.cmp(&other.replica_id))
+    }
+}
+
+impl PartialOrd for Lamport {
+    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
+        Some(self.cmp(other))
     }
 }
 
