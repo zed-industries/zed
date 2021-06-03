@@ -3131,9 +3131,13 @@ mod tests {
                         mutation_count -= 1;
                     }
                     71..=100 if network.has_unreceived(replica_id) => {
-                        buffer
-                            .apply_ops(network.receive(replica_id, &mut rng), None)
-                            .unwrap();
+                        let ops = network.receive(replica_id, &mut rng);
+                        log::info!(
+                            "Peer {} applying {} ops from the network.",
+                            replica_id,
+                            ops.len()
+                        );
+                        buffer.apply_ops(ops, None).unwrap();
                     }
                     _ => {}
                 });
@@ -3393,7 +3397,12 @@ mod tests {
             let (old_ranges, new_text, operation) = self.randomly_edit(rng, 5, cx.as_deref_mut());
             let mut operations = vec![operation];
 
-            log::info!("Mutating buffer at {:?}: {:?}", old_ranges, new_text);
+            log::info!(
+                "Mutating buffer {} at {:?}: {:?}",
+                self.replica_id,
+                old_ranges,
+                new_text
+            );
 
             // Randomly add, remove or mutate selection sets.
             let replica_selection_sets = &self
@@ -3428,6 +3437,7 @@ mod tests {
             let mut ops = Vec::new();
             for _ in 0..rng.gen_range(1..5) {
                 if let Some(edit_id) = self.history.ops.keys().choose(rng).copied() {
+                    log::info!("Undoing buffer {} operation {:?}", self.replica_id, edit_id);
                     ops.push(self.undo_or_redo(edit_id).unwrap());
                 }
             }
