@@ -336,12 +336,12 @@ pub struct Insertion {
 
 #[derive(Eq, PartialEq, Clone, Debug)]
 struct Fragment {
+    len: usize,
+    visible: bool,
     insertion_id: time::Local,
     lamport_timestamp: time::Lamport,
-    len: usize,
     deletions: HashSet<time::Local>,
     max_undos: time::Global,
-    visible: bool,
 }
 
 #[derive(Eq, PartialEq, Clone, Debug)]
@@ -2309,9 +2309,6 @@ mod tests {
             0..iterations
         };
 
-        // let seed_range = 0..1;
-        // let operations = 1;
-
         for seed in seed_range {
             println!("{:?}", seed);
             let mut rng = &mut StdRng::seed_from_u64(seed);
@@ -2323,12 +2320,23 @@ mod tests {
             cx.add_model(|cx| {
                 let mut buffer = Buffer::new(0, reference_string.as_str(), cx);
                 let mut buffer_versions = Vec::new();
+                log::info!(
+                    "buffer text {:?}, version: {:?}",
+                    buffer.text(),
+                    buffer.version()
+                );
+
                 for _i in 0..operations {
                     let (old_ranges, new_text, _) = buffer.randomly_mutate(rng, None);
                     for old_range in old_ranges.iter().rev() {
                         reference_string.replace_range(old_range.clone(), &new_text);
                     }
                     assert_eq!(buffer.text(), reference_string);
+                    log::info!(
+                        "buffer text {:?}, version: {:?}",
+                        buffer.text(),
+                        buffer.version()
+                    );
 
                     if rng.gen_bool(0.25) {
                         buffer.randomly_undo_redo(rng);
@@ -2347,20 +2355,29 @@ mod tests {
                 }
 
                 for mut old_buffer in buffer_versions {
+                    let edits = buffer
+                        .edits_since(old_buffer.version.clone())
+                        .collect::<Vec<_>>();
+
+                    log::info!(
+                        "mutating old buffer version {:?}, text: {:?}, edits since: {:?}",
+                        old_buffer.version(),
+                        old_buffer.text(),
+                        edits,
+                    );
+
                     let mut delta = 0_isize;
                     for Edit {
                         old_range,
                         new_range,
                         ..
-                    } in buffer.edits_since(old_buffer.version.clone())
+                    } in edits
                     {
                         let old_len = old_range.end - old_range.start;
                         let new_len = new_range.end - new_range.start;
                         let old_start = (old_range.start as isize + delta) as usize;
                         let new_text: String = buffer.text_for_range(new_range).collect();
-                        old_buffer
-                            .edit(Some(old_start..old_start + old_len), new_text, None)
-                            .unwrap();
+                        old_buffer.edit(Some(old_start..old_start + old_len), new_text, None);
 
                         delta += new_len as isize - old_len as isize;
                     }
@@ -3328,7 +3345,7 @@ mod tests {
             let new_text_len = rng.gen_range(0..10);
             let new_text: String = RandomCharIter::new(&mut *rng).take(new_text_len).collect();
             log::info!(
-                "Mutating buffer {} at {:?}: {:?}",
+                "mutating buffer {} at {:?}: {:?}",
                 self.replica_id,
                 old_ranges,
                 new_text
@@ -3345,7 +3362,7 @@ mod tests {
         where
             T: Rng,
         {
-            let (old_ranges, new_text, operation) = self.randomly_edit(rng, 2, cx.as_deref_mut());
+            let (old_ranges, new_text, operation) = self.randomly_edit(rng, 5, cx.as_deref_mut());
             let mut operations = Vec::from_iter(operation);
 
             // Randomly add, remove or mutate selection sets.
@@ -3381,7 +3398,7 @@ mod tests {
             let mut ops = Vec::new();
             for _ in 0..rng.gen_range(1..5) {
                 if let Some(edit_id) = self.history.ops.keys().choose(rng).copied() {
-                    log::info!("Undoing buffer {} operation {:?}", self.replica_id, edit_id);
+                    log::info!("undoing buffer {} operation {:?}", self.replica_id, edit_id);
                     ops.push(self.undo_or_redo(edit_id).unwrap());
                 }
             }
