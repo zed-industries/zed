@@ -1,21 +1,24 @@
 use smallvec::SmallVec;
-use std::cmp::{self, Ordering};
-use std::ops::{Add, AddAssign};
-use std::slice;
+use std::{
+    cmp::{self, Ordering},
+    fmt,
+    ops::{Add, AddAssign},
+    slice,
+};
 
 pub type ReplicaId = u16;
 pub type Seq = u32;
 
-#[derive(Clone, Copy, Debug, Default, Eq, Hash, PartialEq, Ord, PartialOrd)]
+#[derive(Clone, Copy, Default, Eq, Hash, PartialEq, Ord, PartialOrd)]
 pub struct Local {
     pub replica_id: ReplicaId,
     pub value: Seq,
 }
 
-#[derive(Clone, Copy, Debug, Default, Eq, Hash, Ord, PartialEq, PartialOrd)]
+#[derive(Clone, Copy, Default, Eq, Hash, Ord, PartialEq, PartialOrd)]
 pub struct Lamport {
-    pub value: Seq,
     pub replica_id: ReplicaId,
+    pub value: Seq,
 }
 
 impl Local {
@@ -55,7 +58,7 @@ impl<'a> AddAssign<&'a Local> for Local {
     }
 }
 
-#[derive(Clone, Debug, Default, Hash, Eq, PartialEq)]
+#[derive(Clone, Default, Hash, Eq, PartialEq)]
 pub struct Global(SmallVec<[Local; 3]>);
 
 impl Global {
@@ -152,5 +155,30 @@ impl Lamport {
 
     pub fn observe(&mut self, timestamp: Self) {
         self.value = cmp::max(self.value, timestamp.value) + 1;
+    }
+}
+
+impl fmt::Debug for Local {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "Local {{{}: {}}}", self.replica_id, self.value)
+    }
+}
+
+impl fmt::Debug for Lamport {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "Lamport {{{}: {}}}", self.replica_id, self.value)
+    }
+}
+
+impl fmt::Debug for Global {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "Global {{")?;
+        for (i, element) in self.0.iter().enumerate() {
+            if i > 0 {
+                write!(f, ", ")?;
+            }
+            write!(f, "{}: {}", element.replica_id, element.value)?;
+        }
+        write!(f, "}}")
     }
 }
