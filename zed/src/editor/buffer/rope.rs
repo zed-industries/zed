@@ -213,7 +213,12 @@ impl<'a> Cursor<'a> {
     }
 
     pub fn slice(&mut self, end_offset: usize) -> Rope {
-        debug_assert!(end_offset >= self.offset);
+        debug_assert!(
+            end_offset >= self.offset,
+            "cannot slice backwards from {} to {}",
+            self.offset,
+            end_offset
+        );
 
         let mut slice = Rope::new();
         if let Some(start_chunk) = self.chunks.item() {
