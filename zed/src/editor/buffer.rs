@@ -2305,14 +2305,10 @@ mod tests {
         let operations = env::var("OPERATIONS")
             .map(|i| i.parse().expect("invalid `OPERATIONS` variable"))
             .unwrap_or(10);
-        let seed_range = if let Ok(seed) = env::var("SEED") {
-            let seed = seed.parse().expect("invalid `SEED` variable");
-            seed..seed + 1
-        } else {
-            0..iterations
-        };
+        let start_seed =
+            env::var("SEED").map_or(0, |seed| seed.parse().expect("invalid `SEED` variable"));
 
-        for seed in seed_range {
+        for seed in start_seed..start_seed + iterations {
             println!("{:?}", seed);
             let mut rng = &mut StdRng::seed_from_u64(seed);
 
@@ -3054,14 +3050,10 @@ mod tests {
         let operations = env::var("OPERATIONS")
             .map(|i| i.parse().expect("invalid `OPERATIONS` variable"))
             .unwrap_or(10);
-        let seed_range = if let Ok(seed) = env::var("SEED") {
-            let seed = seed.parse().expect("invalid `SEED` variable");
-            seed..seed + 1
-        } else {
-            0..iterations
-        };
+        let start_seed =
+            env::var("SEED").map_or(0, |seed| seed.parse().expect("invalid `SEED` variable"));
 
-        for seed in seed_range {
+        for seed in start_seed..start_seed + iterations {
             dbg!(seed);
             let mut rng = &mut StdRng::seed_from_u64(seed);
 
@@ -3079,6 +3071,8 @@ mod tests {
                 network.add_peer(i as u16);
             }
 
+            log::info!("initial text: {:?}", base_text);
+
             let mut mutation_count = operations;
             loop {
                 let replica_index = rng.gen_range(0..peers);
@@ -3086,6 +3080,7 @@ mod tests {
                 buffers[replica_index].update(cx, |buffer, _| match rng.gen_range(0..=100) {
                     0..=50 if mutation_count != 0 => {
                         let (_, _, ops) = buffer.randomly_mutate(&mut rng, None);
+                        log::info!("buffer {} text: {:?}", buffer.replica_id, buffer.text());
                         network.broadcast(replica_id, ops, &mut rng);
                         mutation_count -= 1;
                     }
@@ -3096,12 +3091,14 @@ mod tests {
                     }
                     71..=100 if network.has_unreceived(replica_id) => {
                         let ops = network.receive(replica_id, &mut rng);
-                        log::info!(
-                            "Peer {} applying {} ops from the network.",
-                            replica_id,
-                            ops.len()
-                        );
-                        buffer.apply_ops(ops, None).unwrap();
+                        if !ops.is_empty() {
+                            log::info!(
+                                "peer {} applying {} ops from the network.",
+                                replica_id,
+                                ops.len()
+                            );
+                            buffer.apply_ops(ops, None).unwrap();
+                        }
                     }
                     _ => {}
                 });
