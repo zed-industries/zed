@@ -3078,6 +3078,48 @@ mod tests {
     }
 
     #[gpui::test]
+    fn test_concurrent_edits(cx: &mut gpui::MutableAppContext) {
+        let text = "abcdef";
+
+        let buffer1 = cx.add_model(|cx| Buffer::new(1, text, cx));
+        let buffer2 = cx.add_model(|cx| Buffer::new(2, text, cx));
+        let buffer3 = cx.add_model(|cx| Buffer::new(3, text, cx));
+
+        let buf1_op = buffer1.update(cx, |buffer, cx| {
+            let op = buffer.edit(vec![1..2], "12", Some(cx)).unwrap();
+            assert_eq!(buffer.text(), "a12cdef");
+            op
+        });
+        let buf2_op = buffer2.update(cx, |buffer, cx| {
+            let op = buffer.edit(vec![3..4], "34", Some(cx)).unwrap();
+            assert_eq!(buffer.text(), "abc34ef");
+            op
+        });
+        let buf3_op = buffer3.update(cx, |buffer, cx| {
+            let op = buffer.edit(vec![5..6], "56", Some(cx)).unwrap();
+            assert_eq!(buffer.text(), "abcde56");
+            op
+        });
+
+        buffer1.update(cx, |buffer, _| {
+            buffer.apply_op(buf2_op.clone()).unwrap();
+            buffer.apply_op(buf3_op.clone()).unwrap();
+        });
+        buffer2.update(cx, |buffer, _| {
+            buffer.apply_op(buf1_op.clone()).unwrap();
+            buffer.apply_op(buf3_op.clone()).unwrap();
+        });
+        buffer3.update(cx, |buffer, _| {
+            buffer.apply_op(buf1_op.clone()).unwrap();
+            buffer.apply_op(buf2_op.clone()).unwrap();
+        });
+
+        assert_eq!(buffer1.read(cx).text(), "a12c34e56");
+        assert_eq!(buffer2.read(cx).text(), "a12c34e56");
+        assert_eq!(buffer3.read(cx).text(), "a12c34e56");
+    }
+
+    #[gpui::test]
     fn test_random_concurrent_edits(cx: &mut gpui::MutableAppContext) {
         use crate::test::Network;
 
