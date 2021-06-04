@@ -902,7 +902,7 @@ impl Buffer {
 
     pub fn edit<I, S, T>(
         &mut self,
-        ranges: I,
+        ranges_iter: I,
         new_text: T,
         cx: Option<&mut ModelContext<Self>>,
     ) -> Option<Operation>
@@ -918,17 +918,23 @@ impl Buffer {
             None
         };
         let has_new_text = new_text.is_some();
-        let ranges = ranges
-            .into_iter()
-            .filter_map(|range| {
-                let range = range.start.to_offset(self)..range.end.to_offset(self);
-                if has_new_text || !range.is_empty() {
-                    Some(range)
+
+        // Skip invalid ranges and coalesce contiguous ones.
+        let mut ranges: Vec<Range<usize>> = Vec::new();
+        for range in ranges_iter {
+            let range = range.start.to_offset(self)..range.end.to_offset(self);
+            if has_new_text || !range.is_empty() {
+                if let Some(prev_range) = ranges.last_mut() {
+                    if prev_range.end >= range.start {
+                        prev_range.end = cmp::max(prev_range.end, range.end);
+                    } else {
+                        ranges.push(range);
+                    }
                 } else {
-                    None
+                    ranges.push(range);
                 }
-            })
-            .collect::<Vec<Range<usize>>>();
+            }
+        }
 
         if ranges.is_empty() {
             None
@@ -3344,7 +3350,7 @@ mod tests {
     impl Buffer {
         fn random_byte_range(&mut self, start_offset: usize, rng: &mut impl Rng) -> Range<usize> {
             let end = self.clip_offset(rng.gen_range(start_offset..=self.len()), Bias::Right);
-            let start = self.clip_offset(rng.gen_range(start_offset..=end), Bias::Left);
+            let start = self.clip_offset(rng.gen_range(start_offset..=end), Bias::Right);
             start..end
         }
 
