@@ -3108,9 +3108,9 @@ mod tests {
                         mutation_count -= 1;
                     }
                     51..=70 if mutation_count != 0 => {
-                        // let ops = buffer.randomly_undo_redo(&mut rng);
-                        // network.broadcast(replica_id, ops, &mut rng);
-                        // mutation_count -= 1;
+                        let ops = buffer.randomly_undo_redo(&mut rng);
+                        network.broadcast(replica_id, ops, &mut rng);
+                        mutation_count -= 1;
                     }
                     71..=100 if network.has_unreceived(replica_id) => {
                         let ops = network.receive(replica_id, &mut rng);
