@@ -169,7 +169,7 @@ impl History {
     }
 
     fn push(&mut self, op: EditOperation) {
-        self.ops.insert(op.id, op);
+        self.ops.insert(op.timestamp.local(), op);
     }
 
     fn start_transaction(
@@ -326,12 +326,34 @@ struct Diff {
     changes: Vec<(ChangeTag, usize)>,
 }
 
+#[derive(Copy, Clone, Debug, Default, Eq, PartialEq)]
+struct InsertionTimestamp {
+    replica_id: ReplicaId,
+    local: time::Seq,
+    lamport: time::Seq,
+}
+
+impl InsertionTimestamp {
+    fn local(&self) -> time::Local {
+        time::Local {
+            replica_id: self.replica_id,
+            value: self.local,
+        }
+    }
+
+    fn lamport(&self) -> time::Lamport {
+        time::Lamport {
+            replica_id: self.replica_id,
+            value: self.lamport,
+        }
+    }
+}
+
 #[derive(Eq, PartialEq, Clone, Debug)]
 struct Fragment {
+    timestamp: InsertionTimestamp,
     len: usize,
     visible: bool,
-    insertion_id: time::Local,
-    lamport_timestamp: time::Lamport,
     deletions: HashSet<time::Local>,
     max_undos: time::Global,
 }
@@ -359,10 +381,7 @@ impl<'a> sum_tree::Dimension<'a, FragmentSummary> for FragmentTextSummary {
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum Operation {
-    Edit {
-        edit: EditOperation,
-        lamport_timestamp: time::Lamport,
-    },
+    Edit(EditOperation),
     Undo {
         undo: UndoOperation,
         lamport_timestamp: time::Lamport,
@@ -376,7 +395,7 @@ pub enum Operation {
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct EditOperation {
-    id: time::Local,
+    timestamp: InsertionTimestamp,
     version: time::Global,
     ranges: Vec<Range<usize>>,
     new_text: Option<String>,
@@ -457,12 +476,11 @@ impl Buffer {
         if visible_text.len() > 0 {
             fragments.push(
                 Fragment {
-                    insertion_id: Default::default(),
-                    lamport_timestamp: Default::default(),
+                    timestamp: Default::default(),
                     len: visible_text.len(),
+                    visible: true,
                     deletions: Default::default(),
                     max_undos: Default::default(),
-                    visible: true,
                 },
                 &None,
             );
@@ -932,21 +950,21 @@ impl Buffer {
             None
         } else {
             self.start_transaction_at(None, Instant::now()).unwrap();
-            let edit_id = self.local_clock.tick();
-            let lamport_timestamp = self.lamport_clock.tick();
-            let edit = self.apply_local_edit(&ranges, new_text, edit_id, lamport_timestamp);
+            let timestamp = InsertionTimestamp {
+                replica_id: self.replica_id,
+                local: self.local_clock.tick().value,
+                lamport: self.lamport_clock.tick().value,
+            };
+            let edit = self.apply_local_edit(&ranges, new_text, timestamp);
 
             self.history.push(edit.clone());
-            self.history.push_undo(edit.id);
-            self.last_edit = edit.id;
-            self.version.observe(edit.id);
+            self.history.push_undo(edit.timestamp.local());
+            self.last_edit = edit.timestamp.local();
+            self.version.observe(edit.timestamp.local());
 
             self.end_transaction_at(None, Instant::now(), cx).unwrap();
 
-            Some(Operation::Edit {
-                edit,
-                lamport_timestamp,
-            })
+            Some(Operation::Edit(edit))
         }
     }
 
@@ -1067,20 +1085,15 @@ impl Buffer {
 
     fn apply_op(&mut self, op: Operation) -> Result<()> {
         match op {
-            Operation::Edit {
-                edit,
-                lamport_timestamp,
-                ..
-            } => {
-                if !self.version.observed(edit.id) {
+            Operation::Edit(edit) => {
+                if !self.version.observed(edit.timestamp.local()) {
                     self.apply_remote_edit(
                         &edit.version,
                         &edit.ranges,
                         edit.new_text.as_deref(),
-                        edit.id,
-                        lamport_timestamp,
+                        edit.timestamp,
                     );
-                    self.version.observe(edit.id);
+                    self.version.observe(edit.timestamp.local());
                     self.history.push(edit);
                 }
             }
@@ -1116,8 +1129,7 @@ impl Buffer {
         version: &time::Global,
         ranges: &[Range<usize>],
         new_text: Option<&str>,
-        local_timestamp: time::Local,
-        lamport_timestamp: time::Lamport,
+        timestamp: InsertionTimestamp,
     ) {
         if ranges.is_empty() {
             return;
@@ -1171,7 +1183,9 @@ impl Buffer {
             // Skip over insertions that are concurrent to this edit, but have a lower lamport
             // timestamp.
             while let Some(fragment) = old_fragments.item() {
-                if fragment_start == range.start && fragment.lamport_timestamp > lamport_timestamp {
+                if fragment_start == range.start
+                    && fragment.timestamp.lamport() > timestamp.lamport()
+                {
                     new_ropes.push_fragment(fragment, fragment.visible);
                     new_fragments.push(fragment.clone(), &None);
                     old_fragments.next(&cx);
@@ -1196,8 +1210,7 @@ impl Buffer {
                 new_ropes.push_str(new_text);
                 new_fragments.push(
                     Fragment {
-                        insertion_id: local_timestamp,
-                        lamport_timestamp,
+                        timestamp,
                         len: new_text.len(),
                         deletions: Default::default(),
                         max_undos: Default::default(),
@@ -1216,7 +1229,7 @@ impl Buffer {
                 let intersection_end = cmp::min(range.end, fragment_end);
                 if fragment.was_visible(version, &self.undo_map) {
                     intersection.len = intersection_end - fragment_start;
-                    intersection.deletions.insert(local_timestamp);
+                    intersection.deletions.insert(timestamp.local());
                     intersection.visible = false;
                 }
                 if intersection.len > 0 {
@@ -1252,8 +1265,8 @@ impl Buffer {
         self.fragments = new_fragments;
         self.visible_text = visible_text;
         self.deleted_text = deleted_text;
-        self.local_clock.observe(local_timestamp);
-        self.lamport_clock.observe(lamport_timestamp);
+        self.local_clock.observe(timestamp.local());
+        self.lamport_clock.observe(timestamp.lamport());
     }
 
     pub fn undo(&mut self, mut cx: Option<&mut ModelContext<Self>>) -> Vec<Operation> {
@@ -1355,7 +1368,7 @@ impl Buffer {
                     let mut fragment = fragment.clone();
                     let fragment_was_visible = fragment.visible;
                     if fragment.was_visible(&edit.version, &self.undo_map)
-                        || fragment.insertion_id == edit.id
+                        || fragment.timestamp.local() == edit.timestamp.local()
                     {
                         fragment.visible = fragment.is_visible(&self.undo_map);
                         fragment.max_undos.observe(undo.id);
@@ -1403,7 +1416,7 @@ impl Buffer {
             false
         } else {
             match op {
-                Operation::Edit { edit, .. } => self.version >= edit.version,
+                Operation::Edit(edit) => self.version >= edit.version,
                 Operation::Undo { undo, .. } => self.version.observed(undo.edit_id),
                 Operation::UpdateSelections { selections, .. } => {
                     if let Some(selections) = selections {
@@ -1430,11 +1443,10 @@ impl Buffer {
         &mut self,
         ranges: &[Range<usize>],
         new_text: Option<String>,
-        local_timestamp: time::Local,
-        lamport_timestamp: time::Lamport,
+        timestamp: InsertionTimestamp,
     ) -> EditOperation {
         let mut edit = EditOperation {
-            id: local_timestamp,
+            timestamp,
             version: self.version(),
             ranges: Vec::with_capacity(ranges.len()),
             new_text: None,
@@ -1487,8 +1499,7 @@ impl Buffer {
                 new_ropes.push_str(new_text);
                 new_fragments.push(
                     Fragment {
-                        insertion_id: local_timestamp,
-                        lamport_timestamp,
+                        timestamp,
                         len: new_text.len(),
                         deletions: Default::default(),
                         max_undos: Default::default(),
@@ -1507,7 +1518,7 @@ impl Buffer {
                 let intersection_end = cmp::min(range.end, fragment_end);
                 if fragment.visible {
                     intersection.len = intersection_end - fragment_start;
-                    intersection.deletions.insert(local_timestamp);
+                    intersection.deletions.insert(timestamp.local());
                     intersection.visible = false;
                 }
                 if intersection.len > 0 {
@@ -1987,11 +1998,13 @@ impl<'a> Iterator for HighlightedChunks<'a> {
 
 impl Fragment {
     fn is_visible(&self, undos: &UndoMap) -> bool {
-        !undos.is_undone(self.insertion_id) && self.deletions.iter().all(|d| undos.is_undone(*d))
+        !undos.is_undone(self.timestamp.local())
+            && self.deletions.iter().all(|d| undos.is_undone(*d))
     }
 
     fn was_visible(&self, version: &time::Global, undos: &UndoMap) -> bool {
-        (version.observed(self.insertion_id) && !undos.was_undone(self.insertion_id, version))
+        (version.observed(self.timestamp.local())
+            && !undos.was_undone(self.timestamp.local(), version))
             && self
                 .deletions
                 .iter()
@@ -2004,14 +2017,14 @@ impl sum_tree::Item for Fragment {
 
     fn summary(&self) -> Self::Summary {
         let mut max_version = time::Global::new();
-        max_version.observe(self.insertion_id);
+        max_version.observe(self.timestamp.local());
         for deletion in &self.deletions {
             max_version.observe(*deletion);
         }
         max_version.join(&self.max_undos);
 
         let mut min_insertion_version = time::Global::new();
-        min_insertion_version.observe(self.insertion_id);
+        min_insertion_version.observe(self.timestamp.local());
         let max_insertion_version = min_insertion_version.clone();
         if self.visible {
             FragmentSummary {
@@ -2124,9 +2137,7 @@ impl Operation {
 
     fn lamport_timestamp(&self) -> time::Lamport {
         match self {
-            Operation::Edit {
-                lamport_timestamp, ..
-            } => *lamport_timestamp,
+            Operation::Edit(edit) => edit.timestamp.lamport(),
             Operation::Undo {
                 lamport_timestamp, ..
             } => *lamport_timestamp,
@@ -3474,7 +3485,7 @@ mod tests {
     impl Operation {
         fn edit_id(&self) -> Option<time::Local> {
             match self {
-                Operation::Edit { edit, .. } => Some(edit.id),
+                Operation::Edit(edit) => Some(edit.timestamp.local()),
                 Operation::Undo { undo, .. } => Some(undo.edit_id),
                 Operation::UpdateSelections { .. } => None,
             }
