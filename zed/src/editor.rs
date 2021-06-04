@@ -5,7 +5,7 @@ pub mod movement;
 
 use crate::{
     settings::{Settings, StyleId},
-    util::post_inc,
+    util::{post_inc, Bias},
     workspace,
     worktree::FileHandle,
 };
@@ -4135,12 +4135,6 @@ mod tests {
         let point = DisplayPoint::new(row as u32, column as u32);
         point..point
     }
-}
-
-#[derive(Copy, Clone)]
-pub enum Bias {
-    Left,
-    Right,
 }
 
 trait RangeExt<T> {

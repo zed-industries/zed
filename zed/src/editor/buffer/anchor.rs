@@ -1,5 +1,5 @@
 use super::Buffer;
-use crate::{sum_tree, time};
+use crate::{time, util::Bias};
 use anyhow::Result;
 use std::{cmp::Ordering, ops::Range};
 
@@ -9,45 +9,9 @@ pub enum Anchor {
     End,
     Middle {
         offset: usize,
-        bias: AnchorBias,
+        bias: Bias,
         version: time::Global,
     },
-}
-
-#[derive(Copy, Clone, Eq, PartialEq, Debug, Hash)]
-pub enum AnchorBias {
-    Left,
-    Right,
-}
-
-impl AnchorBias {
-    pub fn to_seek_bias(self) -> sum_tree::SeekBias {
-        match self {
-            AnchorBias::Left => sum_tree::SeekBias::Left,
-            AnchorBias::Right => sum_tree::SeekBias::Right,
-        }
-    }
-}
-
-impl PartialOrd for AnchorBias {
-    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
-        Some(self.cmp(other))
-    }
-}
-
-impl Ord for AnchorBias {
-    fn cmp(&self, other: &Self) -> Ordering {
-        use AnchorBias::*;
-
-        if self == other {
-            return Ordering::Equal;
-        }
-
-        match (self, other) {
-            (Left, _) => Ordering::Less,
-            (Right, _) => Ordering::Greater,
-        }
-    }
 }
 
 impl Anchor {
@@ -88,8 +52,7 @@ impl Anchor {
         match self {
             Anchor::Start
             | Anchor::Middle {
-                bias: AnchorBias::Left,
-                ..
+                bias: Bias::Left, ..
             } => self.clone(),
             _ => buffer.anchor_before(self),
         }
@@ -99,8 +62,7 @@ impl Anchor {
         match self {
             Anchor::End
             | Anchor::Middle {
-                bias: AnchorBias::Right,
-                ..
+                bias: Bias::Right, ..
             } => self.clone(),
             _ => buffer.anchor_after(self),
         }

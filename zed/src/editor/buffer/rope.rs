@@ -1,7 +1,7 @@
 use super::Point;
 use crate::{
-    editor::Bias,
-    sum_tree::{self, SeekBias, SumTree},
+    sum_tree::{self, SumTree},
+    util::Bias,
 };
 use arrayvec::ArrayString;
 use smallvec::SmallVec;
@@ -129,7 +129,7 @@ impl Rope {
     pub fn to_point(&self, offset: usize) -> Point {
         assert!(offset <= self.summary().bytes);
         let mut cursor = self.chunks.cursor::<usize, TextSummary>();
-        cursor.seek(&offset, SeekBias::Left, &());
+        cursor.seek(&offset, Bias::Left, &());
         let overshoot = offset - cursor.start().bytes;
         cursor.start().lines
             + cursor
@@ -140,14 +140,14 @@ impl Rope {
     pub fn to_offset(&self, point: Point) -> usize {
         assert!(point <= self.summary().lines);
         let mut cursor = self.chunks.cursor::<Point, TextSummary>();
-        cursor.seek(&point, SeekBias::Left, &());
+        cursor.seek(&point, Bias::Left, &());
         let overshoot = point - cursor.start().lines;
         cursor.start().bytes + cursor.item().map_or(0, |chunk| chunk.to_offset(overshoot))
     }
 
     pub fn clip_offset(&self, mut offset: usize, bias: Bias) -> usize {
         let mut cursor = self.chunks.cursor::<usize, usize>();
-        cursor.seek(&offset, SeekBias::Left, &());
+        cursor.seek(&offset, Bias::Left, &());
         if let Some(chunk) = cursor.item() {
             let mut ix = offset - cursor.start();
             while !chunk.0.is_char_boundary(ix) {
@@ -170,7 +170,7 @@ impl Rope {
 
     pub fn clip_point(&self, point: Point, bias: Bias) -> Point {
         let mut cursor = self.chunks.cursor::<Point, Point>();
-        cursor.seek(&point, SeekBias::Right, &());
+        cursor.seek(&point, Bias::Right, &());
         if let Some(chunk) = cursor.item() {
             let overshoot = point - cursor.start();
             *cursor.start() + chunk.clip_point(overshoot, bias)
@@ -197,7 +197,7 @@ pub struct Cursor<'a> {
 impl<'a> Cursor<'a> {
     pub fn new(rope: &'a Rope, offset: usize) -> Self {
         let mut chunks = rope.chunks.cursor();
-        chunks.seek(&offset, SeekBias::Right, &());
+        chunks.seek(&offset, Bias::Right, &());
         Self {
             rope,
             chunks,
@@ -208,7 +208,7 @@ impl<'a> Cursor<'a> {
     pub fn seek_forward(&mut self, end_offset: usize) {
         debug_assert!(end_offset >= self.offset);
 
-        self.chunks.seek_forward(&end_offset, SeekBias::Right, &());
+        self.chunks.seek_forward(&end_offset, Bias::Right, &());
         self.offset = end_offset;
     }
 
@@ -230,7 +230,7 @@ impl<'a> Cursor<'a> {
         if end_offset > self.chunks.end(&()) {
             self.chunks.next(&());
             slice.append(Rope {
-                chunks: self.chunks.slice(&end_offset, SeekBias::Right, &()),
+                chunks: self.chunks.slice(&end_offset, Bias::Right, &()),
             });
             if let Some(end_chunk) = self.chunks.item() {
                 let end_ix = end_offset - self.chunks.start();
@@ -254,7 +254,7 @@ impl<'a> Cursor<'a> {
 
         if end_offset > self.chunks.end(&()) {
             self.chunks.next(&());
-            summary += &self.chunks.summary(&end_offset, SeekBias::Right, &());
+            summary += &self.chunks.summary(&end_offset, Bias::Right, &());
             if let Some(end_chunk) = self.chunks.item() {
                 let end_ix = end_offset - self.chunks.start();
                 summary += TextSummary::from(&end_chunk.0[..end_ix]);
@@ -281,7 +281,7 @@ pub struct Chunks<'a> {
 impl<'a> Chunks<'a> {
     pub fn new(rope: &'a Rope, range: Range<usize>) -> Self {
         let mut chunks = rope.chunks.cursor();
-        chunks.seek(&range.start, SeekBias::Right, &());
+        chunks.seek(&range.start, Bias::Right, &());
         Self { chunks, range }
     }
 
@@ -291,9 +291,9 @@ impl<'a> Chunks<'a> {
 
     pub fn seek(&mut self, offset: usize) {
         if offset >= self.chunks.end(&()) {
-            self.chunks.seek_forward(&offset, SeekBias::Right, &());
+            self.chunks.seek_forward(&offset, Bias::Right, &());
         } else {
-            self.chunks.seek(&offset, SeekBias::Right, &());
+            self.chunks.seek(&offset, Bias::Right, &());
         }
         self.range.start = offset;
     }

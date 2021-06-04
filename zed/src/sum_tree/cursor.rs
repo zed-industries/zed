@@ -345,7 +345,7 @@ where
     S: SeekDimension<'a, T::Summary>,
     U: Dimension<'a, T::Summary>,
 {
-    pub fn seek(&mut self, pos: &S, bias: SeekBias, cx: &<T::Summary as Summary>::Context) -> bool {
+    pub fn seek(&mut self, pos: &S, bias: Bias, cx: &<T::Summary as Summary>::Context) -> bool {
         self.reset();
         self.seek_internal::<()>(Some(pos), bias, &mut SeekAggregate::None, cx)
     }
@@ -353,7 +353,7 @@ where
     pub fn seek_forward(
         &mut self,
         pos: &S,
-        bias: SeekBias,
+        bias: Bias,
         cx: &<T::Summary as Summary>::Context,
     ) -> bool {
         self.seek_internal::<()>(Some(pos), bias, &mut SeekAggregate::None, cx)
@@ -362,7 +362,7 @@ where
     pub fn slice(
         &mut self,
         end: &S,
-        bias: SeekBias,
+        bias: Bias,
         cx: &<T::Summary as Summary>::Context,
     ) -> SumTree<T> {
         let mut slice = SeekAggregate::Slice(SumTree::new());
@@ -376,7 +376,7 @@ where
 
     pub fn suffix(&mut self, cx: &<T::Summary as Summary>::Context) -> SumTree<T> {
         let mut slice = SeekAggregate::Slice(SumTree::new());
-        self.seek_internal::<()>(None, SeekBias::Right, &mut slice, cx);
+        self.seek_internal::<()>(None, Bias::Right, &mut slice, cx);
         if let SeekAggregate::Slice(slice) = slice {
             slice
         } else {
@@ -384,12 +384,7 @@ where
         }
     }
 
-    pub fn summary<D>(
-        &mut self,
-        end: &S,
-        bias: SeekBias,
-        cx: &<T::Summary as Summary>::Context,
-    ) -> D
+    pub fn summary<D>(&mut self, end: &S, bias: Bias, cx: &<T::Summary as Summary>::Context) -> D
     where
         D: Dimension<'a, T::Summary>,
     {
@@ -405,7 +400,7 @@ where
     fn seek_internal<D>(
         &mut self,
         target: Option<&S>,
-        bias: SeekBias,
+        bias: Bias,
         aggregate: &mut SeekAggregate<T, D>,
         cx: &<T::Summary as Summary>::Context,
     ) -> bool
@@ -453,7 +448,7 @@ where
                         let comparison =
                             target.map_or(Ordering::Greater, |t| t.cmp(&child_end, cx));
                         if comparison == Ordering::Greater
-                            || (comparison == Ordering::Equal && bias == SeekBias::Right)
+                            || (comparison == Ordering::Equal && bias == Bias::Right)
                         {
                             self.seek_dimension = child_end;
                             self.sum_dimension.add_summary(child_summary, cx);
@@ -503,7 +498,7 @@ where
                         let comparison =
                             target.map_or(Ordering::Greater, |t| t.cmp(&child_end, cx));
                         if comparison == Ordering::Greater
-                            || (comparison == Ordering::Equal && bias == SeekBias::Right)
+                            || (comparison == Ordering::Equal && bias == Bias::Right)
                         {
                             self.seek_dimension = child_end;
                             self.sum_dimension.add_summary(item_summary, cx);
@@ -560,7 +555,7 @@ where
         debug_assert!(self.stack.is_empty() || self.stack.last().unwrap().tree.0.is_leaf());
 
         let mut end = self.seek_dimension.clone();
-        if bias == SeekBias::Left {
+        if bias == Bias::Left {
             if let Some(summary) = self.item_summary() {
                 end.add_summary(summary, cx);
             }

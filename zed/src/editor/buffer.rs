@@ -13,12 +13,12 @@ use similar::{ChangeTag, TextDiff};
 use tree_sitter::{InputEdit, Parser, QueryCursor};
 
 use crate::{
-    editor::Bias,
     language::{Language, Tree},
     operation_queue::{self, OperationQueue},
     settings::{StyleId, ThemeMap},
-    sum_tree::{self, FilterCursor, SeekBias, SumTree},
+    sum_tree::{self, FilterCursor, SumTree},
     time::{self, ReplicaId},
+    util::Bias,
     worktree::FileHandle,
 };
 use anyhow::{anyhow, Result};
@@ -1135,11 +1135,8 @@ impl Buffer {
         let mut new_ropes =
             RopeBuilder::new(self.visible_text.cursor(0), self.deleted_text.cursor(0));
         let mut old_fragments = self.fragments.cursor::<VersionedOffset, VersionedOffset>();
-        let mut new_fragments = old_fragments.slice(
-            &VersionedOffset::Offset(ranges[0].start),
-            SeekBias::Left,
-            &cx,
-        );
+        let mut new_fragments =
+            old_fragments.slice(&VersionedOffset::Offset(ranges[0].start), Bias::Left, &cx);
         new_ropes.push_tree(new_fragments.summary().text);
 
         let mut fragment_start = old_fragments.start().offset();
@@ -1162,7 +1159,7 @@ impl Buffer {
                 }
 
                 let slice =
-                    old_fragments.slice(&VersionedOffset::Offset(range.start), SeekBias::Left, &cx);
+                    old_fragments.slice(&VersionedOffset::Offset(range.start), Bias::Left, &cx);
                 new_ropes.push_tree(slice.summary().text);
                 new_fragments.push_tree(slice, &None);
                 fragment_start = old_fragments.start().offset();
@@ -1342,7 +1339,7 @@ impl Buffer {
         let version = Some(edit.version.clone());
 
         let mut old_fragments = self.fragments.cursor::<VersionedOffset, VersionedOffset>();
-        old_fragments.seek(&VersionedOffset::Offset(0), SeekBias::Left, &version);
+        old_fragments.seek(&VersionedOffset::Offset(0), Bias::Left, &version);
 
         let mut new_fragments = SumTree::new();
         let mut new_ropes =
@@ -1354,7 +1351,7 @@ impl Buffer {
             if end_offset < range.start {
                 let preceding_fragments = old_fragments.slice(
                     &VersionedOffset::Offset(range.start),
-                    SeekBias::Left,
+                    Bias::Left,
                     &version,
                 );
                 new_ropes.push_tree(preceding_fragments.summary().text);
@@ -1455,7 +1452,7 @@ impl Buffer {
         let mut new_ropes =
             RopeBuilder::new(self.visible_text.cursor(0), self.deleted_text.cursor(0));
         let mut old_fragments = self.fragments.cursor::<usize, FragmentTextSummary>();
-        let mut new_fragments = old_fragments.slice(&ranges[0].start, SeekBias::Right, &None);
+        let mut new_fragments = old_fragments.slice(&ranges[0].start, Bias::Right, &None);
         new_ropes.push_tree(new_fragments.summary().text);
 
         let mut fragment_start = old_fragments.start().visible;
@@ -1477,7 +1474,7 @@ impl Buffer {
                     old_fragments.next(&None);
                 }
 
-                let slice = old_fragments.slice(&range.start, SeekBias::Right, &None);
+                let slice = old_fragments.slice(&range.start, Bias::Right, &None);
                 new_ropes.push_tree(slice.summary().text);
                 new_fragments.push_tree(slice, &None);
                 fragment_start = old_fragments.start().visible;
@@ -1562,25 +1559,25 @@ impl Buffer {
     }
 
     pub fn anchor_before<T: ToOffset>(&self, position: T) -> Anchor {
-        self.anchor_at(position, AnchorBias::Left)
+        self.anchor_at(position, Bias::Left)
     }
 
     pub fn anchor_after<T: ToOffset>(&self, position: T) -> Anchor {
-        self.anchor_at(position, AnchorBias::Right)
+        self.anchor_at(position, Bias::Right)
     }
 
-    pub fn anchor_at<T: ToOffset>(&self, position: T, bias: AnchorBias) -> Anchor {
+    pub fn anchor_at<T: ToOffset>(&self, position: T, bias: Bias) -> Anchor {
         let offset = position.to_offset(self);
         let max_offset = self.len();
         assert!(offset <= max_offset, "offset is out of range");
 
-        if offset == 0 && bias == AnchorBias::Left {
+        if offset == 0 && bias == Bias::Left {
             Anchor::Start
-        } else if offset == max_offset && bias == AnchorBias::Right {
+        } else if offset == max_offset && bias == Bias::Right {
             Anchor::End
         } else {
             let mut cursor = self.fragments.cursor::<usize, FragmentTextSummary>();
-            cursor.seek(&offset, bias.to_seek_bias(), &None);
+            cursor.seek(&offset, bias, &None);
             Anchor::Middle {
                 offset: offset + cursor.start().deleted,
                 bias,
@@ -1603,7 +1600,7 @@ impl Buffer {
                     .cursor::<VersionedOffset, (VersionedOffset, usize)>();
                 cursor.seek(
                     &VersionedOffset::Offset(*offset),
-                    bias.to_seek_bias(),
+                    *bias,
                     &Some(version.clone()),
                 );
                 let fragment = cursor.item().unwrap();
@@ -1635,7 +1632,7 @@ impl Buffer {
                     .cursor::<VersionedOffset, (VersionedOffset, FragmentTextSummary)>();
                 cursor.seek(
                     &VersionedOffset::Offset(*offset),
-                    bias.to_seek_bias(),
+                    *bias,
                     &Some(version.clone()),
                 );
                 let overshoot = offset - cursor.start().0.offset();
@@ -2814,7 +2811,7 @@ mod tests {
             buffer.add_selection_set(
                 (0..3)
                     .map(|row| {
-                        let anchor = buffer.anchor_at(Point::new(row, 0), AnchorBias::Right);
+                        let anchor = buffer.anchor_at(Point::new(row, 0), Bias::Right);
                         Selection {
                             id: row as usize,
                             start: anchor.clone(),

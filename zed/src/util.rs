@@ -1,6 +1,29 @@
 use rand::prelude::*;
 use std::cmp::Ordering;
 
+#[derive(Copy, Clone, Eq, PartialEq, Debug, Hash)]
+pub enum Bias {
+    Left,
+    Right,
+}
+
+impl PartialOrd for Bias {
+    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
+        Some(self.cmp(other))
+    }
+}
+
+impl Ord for Bias {
+    fn cmp(&self, other: &Self) -> Ordering {
+        match (self, other) {
+            (Self::Left, Self::Left) => Ordering::Equal,
+            (Self::Left, Self::Right) => Ordering::Less,
+            (Self::Right, Self::Right) => Ordering::Equal,
+            (Self::Right, Self::Left) => Ordering::Greater,
+        }
+    }
+}
+
 pub fn post_inc(value: &mut usize) -> usize {
     let prev = *value;
     *value += 1;
