@@ -1376,15 +1376,6 @@ impl Buffer {
 
                     old_fragments.next(&version);
                     end_offset = old_fragments.end(&version).offset();
-
-                    // Skip over any fragments that were not present when the edit occurred.
-                    // let newer_fragments = old_fragments.slice(
-                    //     &old_fragments.end(&version),
-                    //     SeekBias::Right,
-                    //     &version,
-                    // );
-                    // new_ropes.push_tree(newer_fragments.summary().text);
-                    // new_fragments.push_tree(newer_fragments, &None);
                 } else {
                     break;
                 }
