@@ -1138,12 +1138,20 @@ impl Buffer {
 
         let mut fragment_start = old_fragments.start().offset();
         for range in ranges {
-            if range.start > old_fragments.end(&cx).offset() {
-                if old_fragments.end(&cx).offset() > fragment_start {
-                    let mut suffix = old_fragments.item().unwrap().clone();
-                    suffix.len = old_fragments.end(&cx).offset() - fragment_start;
-                    new_ropes.push_fragment(&suffix, suffix.visible);
-                    new_fragments.push(suffix, &None);
+            let fragment_end = old_fragments.end(&cx).offset();
+
+            // If the current fragment ends before this range, then jump ahead to the first fragment
+            // that extends past the start of this range, reusing any intervening fragments.
+            if fragment_end < range.start {
+                // If the current fragment has been partially consumed, then consume the rest of it
+                // and advance to the next fragment before slicing.
+                if fragment_start > old_fragments.start().offset() {
+                    if fragment_end > fragment_start {
+                        let mut suffix = old_fragments.item().unwrap().clone();
+                        suffix.len = fragment_end - fragment_start;
+                        new_ropes.push_fragment(&suffix, suffix.visible);
+                        new_fragments.push(suffix, &None);
+                    }
                     old_fragments.next(&cx);
                 }
 
@@ -1155,22 +1163,20 @@ impl Buffer {
             }
 
             // If we are at the end of a non-concurrent fragment, advance to the next one.
-            if let Some(fragment) = old_fragments.item() {
-                let fragment_end = old_fragments.end(&cx).offset();
-                if range.start == fragment_end && fragment_end > fragment_start {
-                    let mut fragment = fragment.clone();
-                    fragment.len = fragment_end - fragment_start;
-                    new_ropes.push_fragment(&fragment, fragment.visible);
-                    new_fragments.push(fragment, &None);
-                    old_fragments.next(&cx);
-                    fragment_start = old_fragments.start().offset();
-                }
+            let fragment_end = old_fragments.end(&cx).offset();
+            if fragment_end == range.start && fragment_end > fragment_start {
+                let mut fragment = old_fragments.item().unwrap().clone();
+                fragment.len = fragment_end - fragment_start;
+                new_ropes.push_fragment(&fragment, fragment.visible);
+                new_fragments.push(fragment, &None);
+                old_fragments.next(&cx);
+                fragment_start = old_fragments.start().offset();
             }
 
             // Skip over insertions that are concurrent to this edit, but have a lower lamport
             // timestamp.
             while let Some(fragment) = old_fragments.item() {
-                if range.start == fragment_start && fragment.lamport_timestamp > lamport_timestamp {
+                if fragment_start == range.start && fragment.lamport_timestamp > lamport_timestamp {
                     new_ropes.push_fragment(fragment, fragment.visible);
                     new_fragments.push(fragment.clone(), &None);
                     old_fragments.next(&cx);
@@ -1181,7 +1187,8 @@ impl Buffer {
             }
             debug_assert!(fragment_start <= range.start);
 
-            if range.start > fragment_start {
+            // Preserve any portion of the current fragment that precedes this range.
+            if fragment_start < range.start {
                 let mut prefix = old_fragments.item().unwrap().clone();
                 prefix.len = range.start - fragment_start;
                 fragment_start = range.start;
@@ -1189,6 +1196,7 @@ impl Buffer {
                 new_fragments.push(prefix, &None);
             }
 
+            // Insert the new text before any existing fragments within the range.
             if let Some(new_text) = new_text {
                 new_ropes.push_str(new_text);
                 new_fragments.push(
@@ -1204,30 +1212,32 @@ impl Buffer {
                 );
             }
 
-            while range.end > fragment_start {
+            // Advance through every fragment that intersects this range, marking the intersecting
+            // portions as deleted.
+            while fragment_start < range.end {
                 let fragment = old_fragments.item().unwrap();
                 let fragment_end = old_fragments.end(&cx).offset();
                 let mut intersection = fragment.clone();
-                if intersection.was_visible(&version, &self.undo_map) {
-                    let intersection_end = cmp::min(range.end, fragment_end);
+                let intersection_end = cmp::min(range.end, fragment_end);
+                if fragment_end > old_fragments.start().offset() {
                     intersection.len = intersection_end - fragment_start;
                     intersection.deletions.insert(local_timestamp);
                     intersection.visible = false;
+                }
+                if intersection.len > 0 {
+                    new_ropes.push_fragment(&intersection, fragment.visible);
+                    new_fragments.push(intersection, &None);
                     fragment_start = intersection_end;
                 }
-                new_ropes.push_fragment(&intersection, fragment.visible);
-                new_fragments.push(intersection, &None);
-
-                if range.end >= fragment_end {
+                if fragment_end <= range.end {
                     old_fragments.next(&cx);
                 }
             }
         }
 
-        if old_fragments
-            .item()
-            .map_or(false, |f| version.observed(f.insertion_id))
-        {
+        // If the current fragment has been partially consumed, then consume the rest of it
+        // and advance to the next fragment before slicing.
+        if fragment_start > old_fragments.start().offset() {
             let fragment_end = old_fragments.end(&cx).offset();
             if fragment_end > fragment_start {
                 let mut suffix = old_fragments.item().unwrap().clone();
@@ -1454,9 +1464,14 @@ impl Buffer {
 
         let mut fragment_start = old_fragments.start().visible;
         for range in ranges {
-            if range.start > old_fragments.end(&None).visible {
+            let fragment_end = old_fragments.end(&None).visible;
+
+            // If the current fragment ends before this range, then jump ahead to the first fragment
+            // that extends past the start of this range, reusing any intervening fragments.
+            if fragment_end < range.start {
+                // If the current fragment has been partially consumed, then consume the rest of it
+                // and advance to the next fragment before slicing.
                 if fragment_start > old_fragments.start().visible {
-                    let fragment_end = old_fragments.end(&None).visible;
                     if fragment_end > fragment_start {
                         let mut suffix = old_fragments.item().unwrap().clone();
                         suffix.len = fragment_end - fragment_start;
@@ -1474,14 +1489,16 @@ impl Buffer {
 
             let full_range_start = range.start + old_fragments.start().deleted;
 
-            if range.start > fragment_start {
+            // Preserve any portion of the current fragment that precedes this range.
+            if fragment_start < range.start {
                 let mut prefix = old_fragments.item().unwrap().clone();
                 prefix.len = range.start - fragment_start;
-                fragment_start = range.start;
                 new_ropes.push_fragment(&prefix, prefix.visible);
                 new_fragments.push(prefix, &None);
+                fragment_start = range.start;
             }
 
+            // Insert the new text before any existing fragments within the range.
             if let Some(new_text) = new_text.as_deref() {
                 new_ropes.push_str(new_text);
                 new_fragments.push(
@@ -1497,21 +1514,24 @@ impl Buffer {
                 );
             }
 
-            while range.end > fragment_start {
+            // Advance through every fragment that intersects this range, marking the intersecting
+            // portions as deleted.
+            while fragment_start < range.end {
                 let fragment = old_fragments.item().unwrap();
                 let fragment_end = old_fragments.end(&None).visible;
                 let mut intersection = fragment.clone();
-                if intersection.visible {
-                    let intersection_end = cmp::min(range.end, fragment_end);
+                let intersection_end = cmp::min(range.end, fragment_end);
+                if fragment_end > old_fragments.start().visible {
                     intersection.len = intersection_end - fragment_start;
                     intersection.deletions.insert(local_timestamp);
                     intersection.visible = false;
+                }
+                if intersection.len > 0 {
+                    new_ropes.push_fragment(&intersection, fragment.visible);
+                    new_fragments.push(intersection, &None);
                     fragment_start = intersection_end;
                 }
-                new_ropes.push_fragment(&intersection, fragment.visible);
-                new_fragments.push(intersection, &None);
-
-                if range.end >= fragment_end {
+                if fragment_end <= range.end {
                     old_fragments.next(&None);
                 }
             }
@@ -1520,6 +1540,8 @@ impl Buffer {
             edit.ranges.push(full_range_start..full_range_end);
         }
 
+        // If the current fragment has been partially consumed, then consume the rest of it
+        // and advance to the next fragment before slicing.
         if fragment_start > old_fragments.start().visible {
             let fragment_end = old_fragments.end(&None).visible;
             if fragment_end > fragment_start {
@@ -1534,10 +1556,10 @@ impl Buffer {
         let suffix = old_fragments.suffix(&None);
         new_ropes.push_tree(suffix.summary().text);
         new_fragments.push_tree(suffix, &None);
-
-        drop(old_fragments);
-        self.fragments = new_fragments;
         let (visible_text, deleted_text) = new_ropes.finish();
+        drop(old_fragments);
+
+        self.fragments = new_fragments;
         self.visible_text = visible_text;
         self.deleted_text = deleted_text;
         edit
@@ -1755,6 +1777,7 @@ impl<'a> RopeBuilder<'a> {
     }
 
     fn push_fragment(&mut self, fragment: &Fragment, was_visible: bool) {
+        debug_assert!(fragment.len > 0);
         self.push(fragment.len, was_visible, fragment.visible)
     }
 
@@ -3085,9 +3108,9 @@ mod tests {
                         mutation_count -= 1;
                     }
                     51..=70 if mutation_count != 0 => {
-                        let ops = buffer.randomly_undo_redo(&mut rng);
-                        network.broadcast(replica_id, ops, &mut rng);
-                        mutation_count -= 1;
+                        // let ops = buffer.randomly_undo_redo(&mut rng);
+                        // network.broadcast(replica_id, ops, &mut rng);
+                        // mutation_count -= 1;
                     }
                     71..=100 if network.has_unreceived(replica_id) => {
                         let ops = network.receive(replica_id, &mut rng);
