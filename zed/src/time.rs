@@ -1,20 +1,24 @@
 use smallvec::SmallVec;
-use std::cmp::{self, Ordering};
-use std::ops::{Add, AddAssign};
+use std::{
+    cmp::{self, Ordering},
+    fmt,
+    ops::{Add, AddAssign},
+    slice,
+};
 
 pub type ReplicaId = u16;
 pub type Seq = u32;
 
-#[derive(Clone, Copy, Debug, Default, Eq, Hash, PartialEq, Ord, PartialOrd)]
+#[derive(Clone, Copy, Default, Eq, Hash, PartialEq, Ord, PartialOrd)]
 pub struct Local {
     pub replica_id: ReplicaId,
     pub value: Seq,
 }
 
-#[derive(Clone, Copy, Debug, Default, Eq, Hash, Ord, PartialEq, PartialOrd)]
+#[derive(Clone, Copy, Default, Eq, Hash, PartialEq)]
 pub struct Lamport {
-    pub value: Seq,
     pub replica_id: ReplicaId,
+    pub value: Seq,
 }
 
 impl Local {
@@ -54,7 +58,7 @@ impl<'a> AddAssign<&'a Local> for Local {
     }
 }
 
-#[derive(Clone, Debug, Default, Eq, PartialEq)]
+#[derive(Clone, Default, Hash, Eq, PartialEq)]
 pub struct Global(SmallVec<[Local; 3]>);
 
 impl Global {
@@ -81,9 +85,23 @@ impl Global {
         }
     }
 
-    pub fn observe_all(&mut self, other: &Self) {
+    pub fn join(&mut self, other: &Self) {
         for timestamp in other.0.iter() {
             self.observe(*timestamp);
+        }
+    }
+
+    pub fn meet(&mut self, other: &Self) {
+        for timestamp in other.0.iter() {
+            if let Some(entry) = self
+                .0
+                .iter_mut()
+                .find(|t| t.replica_id == timestamp.replica_id)
+            {
+                entry.value = cmp::min(entry.value, timestamp.value);
+            } else {
+                self.0.push(*timestamp);
+            }
         }
     }
 
@@ -93,6 +111,10 @@ impl Global {
 
     pub fn changed_since(&self, other: &Self) -> bool {
         self.0.iter().any(|t| t.value > other.get(t.replica_id))
+    }
+
+    pub fn iter(&self) -> slice::Iter<Local> {
+        self.0.iter()
     }
 }
 
@@ -117,6 +139,21 @@ impl PartialOrd for Global {
     }
 }
 
+impl Ord for Lamport {
+    fn cmp(&self, other: &Self) -> Ordering {
+        // Use the replica id to break ties between concurrent events.
+        self.value
+            .cmp(&other.value)
+            .then_with(|| self.replica_id.cmp(&other.replica_id))
+    }
+}
+
+impl PartialOrd for Lamport {
+    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
+        Some(self.cmp(other))
+    }
+}
+
 impl Lamport {
     pub fn new(replica_id: ReplicaId) -> Self {
         Self {
@@ -133,5 +170,30 @@ impl Lamport {
 
     pub fn observe(&mut self, timestamp: Self) {
         self.value = cmp::max(self.value, timestamp.value) + 1;
+    }
+}
+
+impl fmt::Debug for Local {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "Local {{{}: {}}}", self.replica_id, self.value)
+    }
+}
+
+impl fmt::Debug for Lamport {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "Lamport {{{}: {}}}", self.replica_id, self.value)
+    }
+}
+
+impl fmt::Debug for Global {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "Global {{")?;
+        for (i, element) in self.0.iter().enumerate() {
+            if i > 0 {
+                write!(f, ", ")?;
+            }
+            write!(f, "{}: {}", element.replica_id, element.value)?;
+        }
+        write!(f, "}}")
     }
 }

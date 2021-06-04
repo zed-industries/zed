@@ -1,45 +1,17 @@
 use super::Buffer;
-use crate::time;
+use crate::{time, util::Bias};
 use anyhow::Result;
-use std::cmp::Ordering;
-use std::ops::Range;
+use std::{cmp::Ordering, ops::Range};
 
 #[derive(Clone, Eq, PartialEq, Debug, Hash)]
 pub enum Anchor {
     Start,
     End,
     Middle {
-        insertion_id: time::Local,
         offset: usize,
-        bias: AnchorBias,
+        bias: Bias,
+        version: time::Global,
     },
-}
-
-#[derive(Clone, Eq, PartialEq, Debug, Hash)]
-pub enum AnchorBias {
-    Left,
-    Right,
-}
-
-impl PartialOrd for AnchorBias {
-    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
-        Some(self.cmp(other))
-    }
-}
-
-impl Ord for AnchorBias {
-    fn cmp(&self, other: &Self) -> Ordering {
-        use AnchorBias::*;
-
-        if self == other {
-            return Ordering::Equal;
-        }
-
-        match (self, other) {
-            (Left, _) => Ordering::Less,
-            (Right, _) => Ordering::Greater,
-        }
-    }
 }
 
 impl Anchor {
@@ -55,18 +27,24 @@ impl Anchor {
                 Anchor::Middle {
                     offset: self_offset,
                     bias: self_bias,
-                    ..
+                    version: self_version,
                 },
                 Anchor::Middle {
                     offset: other_offset,
                     bias: other_bias,
-                    ..
+                    version: other_version,
                 },
-            ) => buffer
-                .fragment_id_for_anchor(self)?
-                .cmp(buffer.fragment_id_for_anchor(other)?)
-                .then_with(|| self_offset.cmp(other_offset))
-                .then_with(|| self_bias.cmp(other_bias)),
+            ) => {
+                let offset_comparison = if self_version == other_version {
+                    self_offset.cmp(other_offset)
+                } else {
+                    buffer
+                        .full_offset_for_anchor(self)
+                        .cmp(&buffer.full_offset_for_anchor(other))
+                };
+
+                offset_comparison.then_with(|| self_bias.cmp(&other_bias))
+            }
         })
     }
 
@@ -74,8 +52,7 @@ impl Anchor {
         match self {
             Anchor::Start
             | Anchor::Middle {
-                bias: AnchorBias::Left,
-                ..
+                bias: Bias::Left, ..
             } => self.clone(),
             _ => buffer.anchor_before(self),
         }
@@ -85,8 +62,7 @@ impl Anchor {
         match self {
             Anchor::End
             | Anchor::Middle {
-                bias: AnchorBias::Right,
-                ..
+                bias: Bias::Right, ..
             } => self.clone(),
             _ => buffer.anchor_after(self),
         }

@@ -5,7 +5,7 @@ pub mod movement;
 
 use crate::{
     settings::{Settings, StyleId},
-    util::post_inc,
+    util::{post_inc, Bias},
     workspace,
     worktree::FileHandle,
 };
@@ -723,9 +723,7 @@ impl Editor {
         let mut new_selections = Vec::new();
         self.buffer.update(cx, |buffer, cx| {
             let edit_ranges = old_selections.iter().map(|(_, range)| range.clone());
-            if let Err(error) = buffer.edit(edit_ranges, text.as_str(), Some(cx)) {
-                log::error!("error inserting text: {}", error);
-            };
+            buffer.edit(edit_ranges, text.as_str(), Some(cx));
             let text_len = text.len() as isize;
             let mut delta = 0_isize;
             new_selections = old_selections
@@ -4137,12 +4135,6 @@ mod tests {
         let point = DisplayPoint::new(row as u32, column as u32);
         point..point
     }
-}
-
-#[derive(Copy, Clone)]
-pub enum Bias {
-    Left,
-    Right,
 }
 
 trait RangeExt<T> {
