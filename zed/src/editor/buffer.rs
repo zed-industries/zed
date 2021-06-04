@@ -352,7 +352,7 @@ pub struct FragmentSummary {
     max_insertion_version: time::Global,
 }
 
-#[derive(Default, Clone, Debug, PartialEq, Eq)]
+#[derive(Copy, Default, Clone, Debug, PartialEq, Eq)]
 struct FragmentTextSummary {
     visible: usize,
     deleted: usize,
@@ -1621,7 +1621,10 @@ impl Buffer {
     fn full_offset_for_anchor(&self, anchor: &Anchor) -> usize {
         match anchor {
             Anchor::Start => 0,
-            Anchor::End => self.fragments.extent::<FullOffset>(&None).0,
+            Anchor::End => {
+                let summary = self.fragments.summary();
+                summary.text.visible + summary.text.deleted
+            }
             Anchor::Middle {
                 offset,
                 bias,
@@ -1629,14 +1632,15 @@ impl Buffer {
             } => {
                 let mut cursor = self
                     .fragments
-                    .cursor::<VersionedOffset, (VersionedOffset, FullOffset)>();
+                    .cursor::<VersionedOffset, (VersionedOffset, FragmentTextSummary)>();
                 cursor.seek(
                     &VersionedOffset::Offset(*offset),
                     bias.to_seek_bias(),
                     &Some(version.clone()),
                 );
-                let full_offset = cursor.start().1;
-                full_offset.0 + offset - cursor.start().0.offset()
+                let overshoot = offset - cursor.start().0.offset();
+                let summary = cursor.start().1;
+                summary.visible + summary.deleted + overshoot
             }
         }
     }
@@ -2132,15 +2136,6 @@ where
     fn add_summary(&mut self, summary: &'a FragmentSummary, cx: &Option<time::Global>) {
         self.0.add_summary(summary, cx);
         self.1.add_summary(summary, cx);
-    }
-}
-
-#[derive(Clone, Copy, Debug, Default)]
-struct FullOffset(usize);
-
-impl<'a> sum_tree::Dimension<'a, FragmentSummary> for FullOffset {
-    fn add_summary(&mut self, summary: &'a FragmentSummary, _: &Option<time::Global>) {
-        self.0 += summary.text.visible + summary.text.deleted;
     }
 }
 
