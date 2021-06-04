@@ -1225,7 +1225,7 @@ impl Buffer {
                 let fragment_end = old_fragments.end(&cx).offset();
                 let mut intersection = fragment.clone();
                 let intersection_end = cmp::min(range.end, fragment_end);
-                if fragment_end > old_fragments.start().offset() {
+                if fragment.was_visible(version, &self.undo_map) {
                     intersection.len = intersection_end - fragment_start;
                     intersection.deletions.insert(local_timestamp);
                     intersection.visible = false;
@@ -1348,9 +1348,6 @@ impl Buffer {
         let mut new_ropes =
             RopeBuilder::new(self.visible_text.cursor(0), self.deleted_text.cursor(0));
 
-        let mut version_after_edit = edit.version.clone();
-        version_after_edit.observe(edit.id);
-
         for range in &edit.ranges {
             let mut end_offset = old_fragments.end(&version).offset();
 
@@ -1368,7 +1365,9 @@ impl Buffer {
                 if let Some(fragment) = old_fragments.item() {
                     let mut fragment = fragment.clone();
                     let fragment_was_visible = fragment.visible;
-                    if version_after_edit.observed(fragment.insertion_id) {
+                    if fragment.was_visible(&edit.version, &self.undo_map)
+                        || fragment.insertion_id == edit.id
+                    {
                         fragment.visible = fragment.is_visible(&self.undo_map);
                         fragment.max_undos.observe(undo.id);
                     }
@@ -1527,7 +1526,7 @@ impl Buffer {
                 let fragment_end = old_fragments.end(&None).visible;
                 let mut intersection = fragment.clone();
                 let intersection_end = cmp::min(range.end, fragment_end);
-                if fragment_end > old_fragments.start().visible {
+                if fragment.visible {
                     intersection.len = intersection_end - fragment_start;
                     intersection.deletions.insert(local_timestamp);
                     intersection.visible = false;
@@ -3425,7 +3424,7 @@ mod tests {
 
         pub fn randomly_undo_redo(&mut self, rng: &mut impl Rng) -> Vec<Operation> {
             let mut ops = Vec::new();
-            for _ in 0..rng.gen_range(1..5) {
+            for _ in 0..rng.gen_range(1..=5) {
                 if let Some(edit_id) = self.history.ops.keys().choose(rng).copied() {
                     log::info!("undoing buffer {} operation {:?}", self.replica_id, edit_id);
                     ops.push(self.undo_or_redo(edit_id).unwrap());
