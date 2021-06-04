@@ -1445,8 +1445,7 @@ impl Buffer {
             id: local_timestamp,
             version: self.version(),
             ranges: Vec::with_capacity(ranges.len()),
-            // TODO: avoid cloning here
-            new_text: new_text.clone(),
+            new_text: None,
         };
 
         let mut new_ropes =
@@ -1555,6 +1554,7 @@ impl Buffer {
         self.fragments = new_fragments;
         self.visible_text = visible_text;
         self.deleted_text = deleted_text;
+        edit.new_text = new_text;
         edit
     }
 
