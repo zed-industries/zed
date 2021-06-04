@@ -326,14 +326,6 @@ struct Diff {
     changes: Vec<(ChangeTag, usize)>,
 }
 
-#[derive(Clone, Eq, PartialEq, Debug)]
-pub struct Insertion {
-    id: time::Local,
-    parent_id: time::Local,
-    offset_in_parent: usize,
-    lamport_timestamp: time::Lamport,
-}
-
 #[derive(Eq, PartialEq, Clone, Debug)]
 struct Fragment {
     len: usize,
