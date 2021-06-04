@@ -2128,17 +2128,6 @@ impl<'a> sum_tree::SeekDimension<'a, FragmentSummary> for VersionedOffset {
     }
 }
 
-impl<'a, T, U> sum_tree::Dimension<'a, FragmentSummary> for (T, U)
-where
-    T: sum_tree::Dimension<'a, FragmentSummary>,
-    U: sum_tree::Dimension<'a, FragmentSummary>,
-{
-    fn add_summary(&mut self, summary: &'a FragmentSummary, cx: &Option<time::Global>) {
-        self.0.add_summary(summary, cx);
-        self.1.add_summary(summary, cx);
-    }
-}
-
 impl Operation {
     fn replica_id(&self) -> ReplicaId {
         self.lamport_timestamp().replica_id
