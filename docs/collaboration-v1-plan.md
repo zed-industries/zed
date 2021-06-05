@@ -1,5 +1,43 @@
 # Collaboration V1
 
+## Logging In
+
+Zed needs to know the identities of the people who are collaborating on a worktree. The first
+time that I share a worktree (or try to join someone else's worktree), Zed must prompt me to
+log in to the `zed.dev` server.
+
+* For simplicity, I can begin sharing by clicking `File > Share` in the application menu.
+* To initiate the share, Zed needs a user id and auth token that identifies me.
+* Zed checks if it has stored credentials in the file `~/Library/Application\ Support/Zed/auth.toml`
+
+If there is *no* stored credentials, then the user needs to log in. For now, we'll do this through
+the `zed.dev` website, for two reasons:
+  * To avoid building complex login UI in Zed (for now)
+  * So that we can use web-based Oauth flows.
+
+* Zed needs a way to track that the user has logged in using their web browser. To do this,
+  it makes an API request to the `zed.dev` server for a new "login token" (`POST zed.dev/api/login-tokens`).
+* The server generates a unique 40-character `login_token` and stores it in its database.
+* The server responds with this `login_token`, and Zed stores it in memory.
+* Zed opens a new tab in my browser. The URL is `zed.dev/login`, and the `login_token` is included as a URL
+  query parameter. Meanwhile, in the application, Zed displays a modal dialog that says "Please log in".
+* For now, `zed.dev` only supports login via GitHub. So this web page will redirect immediately to the first
+  step of GitHub's [Web-application flow](https://docs.github.com/en/developers/apps/building-oauth-apps/authorizing-oauth-apps#web-application-flow).
+* When I complete the GitHub authorization process, GitHub redirects my browser to a `zed.dev` URL that
+  includes the same `login_token` from before, providing a secret `code`. Zed.dev completes the Oauth flow, exchanging this `code` for a GitHub `access_token`. It updates its database:
+    * Creating or updating a user record for me with the given GitHub data and GitHub `access_token`
+    * Marking the `login_token` as complete, and associating it with my user record.
+* In Zed, I dismiss the "Please log in" dialog.
+* Zed asks the server what happened with the login (`GET zed.dev/api/login-tokens`)
+* The server responds with my user credentials
+* Zed stores these credentials in `~/Library/Application\ Support/Zed/auth.toml`
+
+Once Zed has my credentials, I can begin collaborating.
+
+## Sharing
+
+I may or may not have shared this worktree before. If I have shared it before, Zed will have saved a `worktree_id` for this
+worktree in `~/Library/Application\ Support/Zed/worktrees.toml` (or something like that).
 
 ## Sharing UI
 
