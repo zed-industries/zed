@@ -1340,33 +1340,42 @@ impl Buffer {
 
     fn apply_undo(&mut self, undo: UndoOperation) -> Result<()> {
         self.undo_map.insert(undo);
+
         let edit = &self.history.ops[&undo.edit_id];
-        let version = Some(edit.version.clone());
+        let mut cx = edit.version.clone();
+        cx.observe(undo.edit_id);
+        let cx = Some(cx);
 
         let mut old_fragments = self.fragments.cursor::<VersionedOffset, VersionedOffset>();
-        old_fragments.seek(&VersionedOffset::Offset(0), Bias::Left, &version);
-
-        let mut new_fragments = SumTree::new();
+        let mut new_fragments = old_fragments.slice(
+            &VersionedOffset::Offset(edit.ranges[0].start),
+            Bias::Right,
+            &cx,
+        );
         let mut new_ropes =
             RopeBuilder::new(self.visible_text.cursor(0), self.deleted_text.cursor(0));
+        new_ropes.push_tree(new_fragments.summary().text);
 
-        for range in &edit.ranges {
-            let mut end_offset = old_fragments.end(&version).offset();
+        let insertion_len = edit.new_text.as_ref().map_or(0, |i| i.len());
+        for (ix, range) in edit.ranges.iter().enumerate() {
+            let delta = ix * insertion_len;
+            let mut end_offset = old_fragments.end(&cx).offset();
 
-            if end_offset < range.start {
+            if end_offset < range.start + delta {
                 let preceding_fragments = old_fragments.slice(
-                    &VersionedOffset::Offset(range.start),
-                    Bias::Left,
-                    &version,
+                    &VersionedOffset::Offset(range.start + delta),
+                    Bias::Right,
+                    &cx,
                 );
                 new_ropes.push_tree(preceding_fragments.summary().text);
                 new_fragments.push_tree(preceding_fragments, &None);
             }
 
-            while end_offset <= range.end {
+            while end_offset <= delta + range.end + insertion_len {
                 if let Some(fragment) = old_fragments.item() {
                     let mut fragment = fragment.clone();
                     let fragment_was_visible = fragment.visible;
+
                     if fragment.was_visible(&edit.version, &self.undo_map)
                         || fragment.timestamp.local() == edit.timestamp.local()
                     {
@@ -1376,15 +1385,24 @@ impl Buffer {
                     new_ropes.push_fragment(&fragment, fragment_was_visible);
                     new_fragments.push(fragment, &None);
 
-                    old_fragments.next(&version);
-                    end_offset = old_fragments.end(&version).offset();
+                    old_fragments.next(&cx);
+                    if end_offset == old_fragments.end(&cx).offset() {
+                        let unseen_fragments = old_fragments.slice(
+                            &VersionedOffset::Offset(end_offset),
+                            Bias::Right,
+                            &cx,
+                        );
+                        new_ropes.push_tree(unseen_fragments.summary().text);
+                        new_fragments.push_tree(unseen_fragments, &None);
+                    }
+                    end_offset = old_fragments.end(&cx).offset();
                 } else {
                     break;
                 }
             }
         }
 
-        let suffix = old_fragments.suffix(&version);
+        let suffix = old_fragments.suffix(&cx);
         new_ropes.push_tree(suffix.summary().text);
         new_fragments.push_tree(suffix, &None);
 
