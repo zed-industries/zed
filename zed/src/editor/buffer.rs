@@ -137,6 +137,7 @@ struct SyntaxTree {
 #[derive(Clone)]
 struct Transaction {
     start: time::Global,
+    end: time::Global,
     buffer_was_dirty: bool,
     edits: Vec<time::Local>,
     selections_before: Option<(SelectionSetId, Arc<[Selection]>)>,
@@ -182,7 +183,8 @@ impl History {
         self.transaction_depth += 1;
         if self.transaction_depth == 1 {
             self.undo_stack.push(Transaction {
-                start,
+                start: start.clone(),
+                end: start,
                 buffer_was_dirty,
                 edits: Vec::new(),
                 selections_before: selections,
@@ -217,10 +219,12 @@ impl History {
         if let Some(mut transaction) = transactions.next_back() {
             for prev_transaction in transactions.next_back() {
                 if transaction.first_edit_at - prev_transaction.last_edit_at <= self.group_interval
+                    && transaction.start == prev_transaction.end
                 {
                     prev_transaction.edits.append(&mut transaction.edits);
                     prev_transaction.last_edit_at = transaction.last_edit_at;
                     prev_transaction.selections_after = transaction.selections_after.take();
+                    prev_transaction.end = transaction.end.clone();
                     transaction = prev_transaction;
                     new_len -= 1;
                 } else {
@@ -234,7 +238,9 @@ impl History {
 
     fn push_undo(&mut self, edit_id: time::Local) {
         assert_ne!(self.transaction_depth, 0);
-        self.undo_stack.last_mut().unwrap().edits.push(edit_id);
+        let last_transaction = self.undo_stack.last_mut().unwrap();
+        last_transaction.edits.push(edit_id);
+        last_transaction.end.observe(edit_id);
     }
 
     fn pop_undo(&mut self) -> Option<&Transaction> {
