@@ -183,19 +183,8 @@ impl platform::MainThreadPlatform for MacMainThreadPlatform {
         self.0.borrow_mut().event = Some(callback);
     }
 
-    fn on_menu_command(&self, callback: Box<dyn FnMut(&str, Option<&dyn Any>)>) {
-        self.0.borrow_mut().menu_command = Some(callback);
-    }
-
     fn on_open_files(&self, callback: Box<dyn FnMut(Vec<PathBuf>)>) {
         self.0.borrow_mut().open_files = Some(callback);
-    }
-
-    fn set_menus(&self, menus: Vec<Menu>) {
-        unsafe {
-            let app: id = msg_send![APP_CLASS, sharedApplication];
-            app.setMainMenu_(self.create_menu_bar(menus));
-        }
     }
 
     fn run(&self, on_finish_launching: Box<dyn FnOnce() -> ()>) {
@@ -218,63 +207,16 @@ impl platform::MainThreadPlatform for MacMainThreadPlatform {
             (*app.delegate()).set_ivar(MAC_PLATFORM_IVAR, null_mut::<c_void>());
         }
     }
-}
 
-pub struct MacPlatform {
-    dispatcher: Arc<Dispatcher>,
-    fonts: Arc<FontSystem>,
-    pasteboard: id,
-    text_hash_pasteboard_type: id,
-    metadata_pasteboard_type: id,
-}
-
-impl MacPlatform {
-    pub fn new() -> Self {
-        Self {
-            dispatcher: Arc::new(Dispatcher),
-            fonts: Arc::new(FontSystem::new()),
-            pasteboard: unsafe { NSPasteboard::generalPasteboard(nil) },
-            text_hash_pasteboard_type: unsafe { ns_string("zed-text-hash") },
-            metadata_pasteboard_type: unsafe { ns_string("zed-metadata") },
-        }
+    fn on_menu_command(&self, callback: Box<dyn FnMut(&str, Option<&dyn Any>)>) {
+        self.0.borrow_mut().menu_command = Some(callback);
     }
 
-    unsafe fn read_from_pasteboard(&self, kind: id) -> Option<&[u8]> {
-        let data = self.pasteboard.dataForType(kind);
-        if data == nil {
-            None
-        } else {
-            Some(slice::from_raw_parts(
-                data.bytes() as *mut u8,
-                data.length() as usize,
-            ))
-        }
-    }
-}
-
-impl platform::Platform for MacPlatform {
-    fn dispatcher(&self) -> Arc<dyn platform::Dispatcher> {
-        self.dispatcher.clone()
-    }
-
-    fn activate(&self, ignoring_other_apps: bool) {
+    fn set_menus(&self, menus: Vec<Menu>) {
         unsafe {
-            let app = NSApplication::sharedApplication(nil);
-            app.activateIgnoringOtherApps_(ignoring_other_apps.to_objc());
+            let app: id = msg_send![APP_CLASS, sharedApplication];
+            app.setMainMenu_(self.create_menu_bar(menus));
         }
-    }
-
-    fn open_window(
-        &self,
-        id: usize,
-        options: platform::WindowOptions,
-        executor: Rc<executor::Foreground>,
-    ) -> Box<dyn platform::Window> {
-        Box::new(Window::open(id, options, executor, self.fonts()))
-    }
-
-    fn key_window_id(&self) -> Option<usize> {
-        Window::key_window_id()
     }
 
     fn prompt_for_paths(
@@ -352,6 +294,64 @@ impl platform::Platform for MacPlatform {
             let block = block.copy();
             let _: () = msg_send![panel, beginWithCompletionHandler: block];
         }
+    }
+}
+
+pub struct MacPlatform {
+    dispatcher: Arc<Dispatcher>,
+    fonts: Arc<FontSystem>,
+    pasteboard: id,
+    text_hash_pasteboard_type: id,
+    metadata_pasteboard_type: id,
+}
+
+impl MacPlatform {
+    pub fn new() -> Self {
+        Self {
+            dispatcher: Arc::new(Dispatcher),
+            fonts: Arc::new(FontSystem::new()),
+            pasteboard: unsafe { NSPasteboard::generalPasteboard(nil) },
+            text_hash_pasteboard_type: unsafe { ns_string("zed-text-hash") },
+            metadata_pasteboard_type: unsafe { ns_string("zed-metadata") },
+        }
+    }
+
+    unsafe fn read_from_pasteboard(&self, kind: id) -> Option<&[u8]> {
+        let data = self.pasteboard.dataForType(kind);
+        if data == nil {
+            None
+        } else {
+            Some(slice::from_raw_parts(
+                data.bytes() as *mut u8,
+                data.length() as usize,
+            ))
+        }
+    }
+}
+
+impl platform::Platform for MacPlatform {
+    fn dispatcher(&self) -> Arc<dyn platform::Dispatcher> {
+        self.dispatcher.clone()
+    }
+
+    fn activate(&self, ignoring_other_apps: bool) {
+        unsafe {
+            let app = NSApplication::sharedApplication(nil);
+            app.activateIgnoringOtherApps_(ignoring_other_apps.to_objc());
+        }
+    }
+
+    fn open_window(
+        &self,
+        id: usize,
+        options: platform::WindowOptions,
+        executor: Rc<executor::Foreground>,
+    ) -> Box<dyn platform::Window> {
+        Box::new(Window::open(id, options, executor, self.fonts()))
+    }
+
+    fn key_window_id(&self) -> Option<usize> {
+        Window::key_window_id()
     }
 
     fn fonts(&self) -> Arc<dyn platform::FontSystem> {

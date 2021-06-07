@@ -28,13 +28,24 @@ use std::{
 };
 
 pub(crate) trait MainThreadPlatform {
-    fn on_menu_command(&self, callback: Box<dyn FnMut(&str, Option<&dyn Any>)>);
     fn on_become_active(&self, callback: Box<dyn FnMut()>);
     fn on_resign_active(&self, callback: Box<dyn FnMut()>);
     fn on_event(&self, callback: Box<dyn FnMut(Event) -> bool>);
     fn on_open_files(&self, callback: Box<dyn FnMut(Vec<PathBuf>)>);
-    fn set_menus(&self, menus: Vec<Menu>);
     fn run(&self, on_finish_launching: Box<dyn FnOnce() -> ()>);
+
+    fn on_menu_command(&self, callback: Box<dyn FnMut(&str, Option<&dyn Any>)>);
+    fn set_menus(&self, menus: Vec<Menu>);
+    fn prompt_for_paths(
+        &self,
+        options: PathPromptOptions,
+        done_fn: Box<dyn FnOnce(Option<Vec<std::path::PathBuf>>)>,
+    );
+    fn prompt_for_new_path(
+        &self,
+        directory: &Path,
+        done_fn: Box<dyn FnOnce(Option<std::path::PathBuf>)>,
+    );
 }
 
 pub trait Platform {
@@ -49,16 +60,6 @@ pub trait Platform {
         executor: Rc<executor::Foreground>,
     ) -> Box<dyn Window>;
     fn key_window_id(&self) -> Option<usize>;
-    fn prompt_for_paths(
-        &self,
-        options: PathPromptOptions,
-        done_fn: Box<dyn FnOnce(Option<Vec<std::path::PathBuf>>)>,
-    );
-    fn prompt_for_new_path(
-        &self,
-        directory: &Path,
-        done_fn: Box<dyn FnOnce(Option<std::path::PathBuf>)>,
-    );
     fn quit(&self);
     fn write_to_clipboard(&self, item: ClipboardItem);
     fn read_from_clipboard(&self) -> Option<ClipboardItem>;

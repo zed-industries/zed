@@ -105,7 +105,10 @@ pub struct App(Rc<RefCell<MutableAppContext>>);
 pub struct AsyncAppContext(Rc<RefCell<MutableAppContext>>);
 
 #[derive(Clone)]
-pub struct TestAppContext(Rc<RefCell<MutableAppContext>>, Rc<platform::test::Platform>);
+pub struct TestAppContext {
+    cx: Rc<RefCell<MutableAppContext>>,
+    main_thread_platform: Rc<platform::test::MainThreadPlatform>,
+}
 
 impl App {
     pub fn test<T, A: AssetSource, F: FnOnce(&mut MutableAppContext) -> T>(
@@ -134,16 +137,16 @@ impl App {
         let platform = Rc::new(platform::test::platform());
         let main_thread_platform = Rc::new(platform::test::main_thread_platform());
         let foreground = Rc::new(executor::Foreground::test());
-        let cx = TestAppContext(
-            Rc::new(RefCell::new(MutableAppContext::new(
+        let cx = TestAppContext {
+            cx: Rc::new(RefCell::new(MutableAppContext::new(
                 foreground.clone(),
-                platform.clone(),
-                main_thread_platform,
+                platform,
+                main_thread_platform.clone(),
                 asset_source,
             ))),
-            platform,
-        );
-        cx.0.borrow_mut().weak_self = Some(Rc::downgrade(&cx.0));
+            main_thread_platform,
+        };
+        cx.cx.borrow_mut().weak_self = Some(Rc::downgrade(&cx.cx));
 
         let future = f(cx);
         smol::block_on(foreground.run(future))
@@ -265,7 +268,7 @@ impl TestAppContext {
         name: &str,
         arg: T,
     ) {
-        self.0.borrow_mut().dispatch_action_any(
+        self.cx.borrow_mut().dispatch_action_any(
             window_id,
             &responder_chain,
             name,
@@ -279,7 +282,7 @@ impl TestAppContext {
         responder_chain: Vec<usize>,
         keystroke: &Keystroke,
     ) -> Result<bool> {
-        let mut state = self.0.borrow_mut();
+        let mut state = self.cx.borrow_mut();
         state.dispatch_keystroke(window_id, responder_chain, keystroke)
     }
 
@@ -288,7 +291,7 @@ impl TestAppContext {
         T: Entity,
         F: FnOnce(&mut ModelContext<T>) -> T,
     {
-        let mut state = self.0.borrow_mut();
+        let mut state = self.cx.borrow_mut();
         state.pending_flushes += 1;
         let handle = state.add_model(build_model);
         state.flush_effects();
@@ -300,15 +303,15 @@ impl TestAppContext {
         T: View,
         F: FnOnce(&mut ViewContext<T>) -> T,
     {
-        self.0.borrow_mut().add_window(build_root_view)
+        self.cx.borrow_mut().add_window(build_root_view)
     }
 
     pub fn window_ids(&self) -> Vec<usize> {
-        self.0.borrow().window_ids().collect()
+        self.cx.borrow().window_ids().collect()
     }
 
     pub fn root_view<T: View>(&self, window_id: usize) -> Option<ViewHandle<T>> {
-        self.0.borrow().root_view(window_id)
+        self.cx.borrow().root_view(window_id)
     }
 
     pub fn add_view<T, F>(&mut self, window_id: usize, build_view: F) -> ViewHandle<T>
@@ -316,7 +319,7 @@ impl TestAppContext {
         T: View,
         F: FnOnce(&mut ViewContext<T>) -> T,
     {
-        let mut state = self.0.borrow_mut();
+        let mut state = self.cx.borrow_mut();
         state.pending_flushes += 1;
         let handle = state.add_view(window_id, build_view);
         state.flush_effects();
@@ -332,7 +335,7 @@ impl TestAppContext {
         T: View,
         F: FnOnce(&mut ViewContext<T>) -> Option<T>,
     {
-        let mut state = self.0.borrow_mut();
+        let mut state = self.cx.borrow_mut();
         state.pending_flushes += 1;
         let handle = state.add_option_view(window_id, build_view);
         state.flush_effects();
@@ -340,11 +343,11 @@ impl TestAppContext {
     }
 
     pub fn read<T, F: FnOnce(&AppContext) -> T>(&self, callback: F) -> T {
-        callback(self.0.borrow().as_ref())
+        callback(self.cx.borrow().as_ref())
     }
 
     pub fn update<T, F: FnOnce(&mut MutableAppContext) -> T>(&mut self, callback: F) -> T {
-        let mut state = self.0.borrow_mut();
+        let mut state = self.cx.borrow_mut();
         // Don't increment pending flushes in order to effects to be flushed before the callback
         // completes, which is helpful in tests.
         let result = callback(&mut *state);
@@ -355,23 +358,24 @@ impl TestAppContext {
     }
 
     pub fn font_cache(&self) -> Arc<FontCache> {
-        self.0.borrow().cx.font_cache.clone()
+        self.cx.borrow().cx.font_cache.clone()
     }
 
     pub fn platform(&self) -> Rc<dyn platform::Platform> {
-        self.0.borrow().platform.clone()
+        self.cx.borrow().platform.clone()
     }
 
     pub fn simulate_new_path_selection(&self, result: impl FnOnce(PathBuf) -> Option<PathBuf>) {
-        self.1.as_ref().simulate_new_path_selection(result);
+        self.main_thread_platform
+            .simulate_new_path_selection(result);
     }
 
     pub fn did_prompt_for_new_path(&self) -> bool {
-        self.1.as_ref().did_prompt_for_new_path()
+        self.main_thread_platform.as_ref().did_prompt_for_new_path()
     }
 
     pub fn simulate_prompt_answer(&self, window_id: usize, answer: usize) {
-        let mut state = self.0.borrow_mut();
+        let mut state = self.cx.borrow_mut();
         let (_, window) = state
             .presenters_and_platform_windows
             .get_mut(&window_id)
@@ -472,7 +476,7 @@ impl UpdateModel for TestAppContext {
         T: Entity,
         F: FnOnce(&mut T, &mut ModelContext<T>) -> S,
     {
-        let mut state = self.0.borrow_mut();
+        let mut state = self.cx.borrow_mut();
         state.pending_flushes += 1;
         let result = state.update_model(handle, update);
         state.flush_effects();
@@ -486,7 +490,7 @@ impl ReadModelWith for TestAppContext {
         handle: &ModelHandle<E>,
         read: F,
     ) -> T {
-        let cx = self.0.borrow();
+        let cx = self.cx.borrow();
         let cx = cx.as_ref();
         read(handle.read(cx), cx)
     }
@@ -498,7 +502,7 @@ impl UpdateView for TestAppContext {
         T: View,
         F: FnOnce(&mut T, &mut ViewContext<T>) -> S,
     {
-        let mut state = self.0.borrow_mut();
+        let mut state = self.cx.borrow_mut();
         state.pending_flushes += 1;
         let result = state.update_view(handle, update);
         state.flush_effects();
@@ -512,7 +516,7 @@ impl ReadViewWith for TestAppContext {
         V: View,
         F: FnOnce(&V, &AppContext) -> T,
     {
-        let cx = self.0.borrow();
+        let cx = self.cx.borrow();
         let cx = cx.as_ref();
         read(handle.read(cx), cx)
     }
@@ -751,7 +755,7 @@ impl MutableAppContext {
     {
         let app = self.weak_self.as_ref().unwrap().upgrade().unwrap();
         let foreground = self.foreground.clone();
-        self.platform().prompt_for_paths(
+        self.main_thread_platform.prompt_for_paths(
             options,
             Box::new(move |paths| {
                 foreground
@@ -767,7 +771,7 @@ impl MutableAppContext {
     {
         let app = self.weak_self.as_ref().unwrap().upgrade().unwrap();
         let foreground = self.foreground.clone();
-        self.platform().prompt_for_new_path(
+        self.main_thread_platform.prompt_for_new_path(
             directory,
             Box::new(move |path| {
                 foreground
@@ -2097,7 +2101,7 @@ impl<T: Entity> ModelHandle<T> {
     ) -> impl Future<Output = ()> {
         let (tx, mut rx) = mpsc::channel(1024);
 
-        let mut cx = cx.0.borrow_mut();
+        let mut cx = cx.cx.borrow_mut();
         self.update(&mut *cx, |_, cx| {
             cx.observe(self, {
                 let mut tx = tx.clone();
@@ -2301,7 +2305,7 @@ impl<T: View> ViewHandle<T> {
     ) -> impl Future<Output = ()> {
         let (tx, mut rx) = mpsc::channel(1024);
 
-        let mut cx = cx.0.borrow_mut();
+        let mut cx = cx.cx.borrow_mut();
         self.update(&mut *cx, |_, cx| {
             cx.observe_view(self, {
                 let mut tx = tx.clone();

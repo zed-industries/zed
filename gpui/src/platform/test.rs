@@ -12,10 +12,12 @@ pub(crate) struct Platform {
     dispatcher: Arc<dyn super::Dispatcher>,
     fonts: Arc<dyn super::FontSystem>,
     current_clipboard_item: RefCell<Option<ClipboardItem>>,
-    last_prompt_for_new_path_args: RefCell<Option<(PathBuf, Box<dyn FnOnce(Option<PathBuf>)>)>>,
 }
 
-pub(crate) struct MainThreadPlatform;
+#[derive(Default)]
+pub(crate) struct MainThreadPlatform {
+    last_prompt_for_new_path_args: RefCell<Option<(PathBuf, Box<dyn FnOnce(Option<PathBuf>)>)>>,
+}
 
 struct Dispatcher;
 
@@ -29,34 +31,7 @@ pub struct Window {
     pub(crate) last_prompt: RefCell<Option<Box<dyn FnOnce(usize)>>>,
 }
 
-impl super::MainThreadPlatform for MainThreadPlatform {
-    fn on_menu_command(&self, _: Box<dyn FnMut(&str, Option<&dyn Any>)>) {}
-
-    fn on_become_active(&self, _: Box<dyn FnMut()>) {}
-
-    fn on_resign_active(&self, _: Box<dyn FnMut()>) {}
-
-    fn on_event(&self, _: Box<dyn FnMut(crate::Event) -> bool>) {}
-
-    fn on_open_files(&self, _: Box<dyn FnMut(Vec<std::path::PathBuf>)>) {}
-
-    fn set_menus(&self, _: Vec<crate::Menu>) {}
-
-    fn run(&self, _on_finish_launching: Box<dyn FnOnce() -> ()>) {
-        unimplemented!()
-    }
-}
-
-impl Platform {
-    fn new() -> Self {
-        Self {
-            dispatcher: Arc::new(Dispatcher),
-            fonts: Arc::new(super::current::FontSystem::new()),
-            current_clipboard_item: Default::default(),
-            last_prompt_for_new_path_args: Default::default(),
-        }
-    }
-
+impl MainThreadPlatform {
     pub(crate) fn simulate_new_path_selection(
         &self,
         result: impl FnOnce(PathBuf) -> Option<PathBuf>,
@@ -70,6 +45,45 @@ impl Platform {
 
     pub(crate) fn did_prompt_for_new_path(&self) -> bool {
         self.last_prompt_for_new_path_args.borrow().is_some()
+    }
+}
+
+impl super::MainThreadPlatform for MainThreadPlatform {
+    fn on_become_active(&self, _: Box<dyn FnMut()>) {}
+
+    fn on_resign_active(&self, _: Box<dyn FnMut()>) {}
+
+    fn on_event(&self, _: Box<dyn FnMut(crate::Event) -> bool>) {}
+
+    fn on_open_files(&self, _: Box<dyn FnMut(Vec<std::path::PathBuf>)>) {}
+
+    fn run(&self, _on_finish_launching: Box<dyn FnOnce() -> ()>) {
+        unimplemented!()
+    }
+
+    fn on_menu_command(&self, _: Box<dyn FnMut(&str, Option<&dyn Any>)>) {}
+
+    fn set_menus(&self, _: Vec<crate::Menu>) {}
+
+    fn prompt_for_paths(
+        &self,
+        _: super::PathPromptOptions,
+        _: Box<dyn FnOnce(Option<Vec<std::path::PathBuf>>)>,
+    ) {
+    }
+
+    fn prompt_for_new_path(&self, path: &Path, f: Box<dyn FnOnce(Option<std::path::PathBuf>)>) {
+        *self.last_prompt_for_new_path_args.borrow_mut() = Some((path.to_path_buf(), f));
+    }
+}
+
+impl Platform {
+    fn new() -> Self {
+        Self {
+            dispatcher: Arc::new(Dispatcher),
+            fonts: Arc::new(super::current::FontSystem::new()),
+            current_clipboard_item: Default::default(),
+        }
     }
 }
 
@@ -98,17 +112,6 @@ impl super::Platform for Platform {
     }
 
     fn quit(&self) {}
-
-    fn prompt_for_paths(
-        &self,
-        _: super::PathPromptOptions,
-        _: Box<dyn FnOnce(Option<Vec<std::path::PathBuf>>)>,
-    ) {
-    }
-
-    fn prompt_for_new_path(&self, path: &Path, f: Box<dyn FnOnce(Option<std::path::PathBuf>)>) {
-        *self.last_prompt_for_new_path_args.borrow_mut() = Some((path.to_path_buf(), f));
-    }
 
     fn write_to_clipboard(&self, item: ClipboardItem) {
         *self.current_clipboard_item.borrow_mut() = Some(item);
@@ -180,7 +183,7 @@ impl super::Window for Window {
 }
 
 pub(crate) fn main_thread_platform() -> MainThreadPlatform {
-    MainThreadPlatform
+    MainThreadPlatform::default()
 }
 
 pub(crate) fn platform() -> Platform {
