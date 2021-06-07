@@ -16,7 +16,7 @@ pub(crate) struct Platform {
 }
 
 #[derive(Default)]
-pub(crate) struct MainThreadPlatform {
+pub(crate) struct ForegroundPlatform {
     last_prompt_for_new_path_args: RefCell<Option<(PathBuf, Box<dyn FnOnce(Option<PathBuf>)>)>>,
 }
 
@@ -32,7 +32,7 @@ pub struct Window {
     pub(crate) last_prompt: RefCell<Option<Box<dyn FnOnce(usize)>>>,
 }
 
-impl MainThreadPlatform {
+impl ForegroundPlatform {
     pub(crate) fn simulate_new_path_selection(
         &self,
         result: impl FnOnce(PathBuf) -> Option<PathBuf>,
@@ -49,7 +49,7 @@ impl MainThreadPlatform {
     }
 }
 
-impl super::MainThreadPlatform for MainThreadPlatform {
+impl super::ForegroundPlatform for ForegroundPlatform {
     fn on_become_active(&self, _: Box<dyn FnMut()>) {}
 
     fn on_resign_active(&self, _: Box<dyn FnMut()>) {}
@@ -183,10 +183,10 @@ impl super::Window for Window {
     }
 }
 
-pub(crate) fn main_thread_platform() -> MainThreadPlatform {
-    MainThreadPlatform::default()
-}
-
 pub(crate) fn platform() -> Platform {
     Platform::new()
+}
+
+pub(crate) fn foreground_platform() -> ForegroundPlatform {
+    ForegroundPlatform::default()
 }

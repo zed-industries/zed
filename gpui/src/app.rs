@@ -107,7 +107,7 @@ pub struct AsyncAppContext(Rc<RefCell<MutableAppContext>>);
 #[derive(Clone)]
 pub struct TestAppContext {
     cx: Rc<RefCell<MutableAppContext>>,
-    main_thread_platform: Rc<platform::test::MainThreadPlatform>,
+    foreground_platform: Rc<platform::test::ForegroundPlatform>,
 }
 
 impl App {
@@ -115,13 +115,13 @@ impl App {
         asset_source: A,
         f: F,
     ) -> T {
-        let main_thread_platform = platform::test::main_thread_platform();
+        let foreground_platform = platform::test::foreground_platform();
         let platform = platform::test::platform();
         let foreground = Rc::new(executor::Foreground::test());
         let cx = Rc::new(RefCell::new(MutableAppContext::new(
             foreground,
             Arc::new(platform),
-            Rc::new(main_thread_platform),
+            Rc::new(foreground_platform),
             asset_source,
         )));
         cx.borrow_mut().weak_self = Some(Rc::downgrade(&cx));
@@ -135,16 +135,16 @@ impl App {
         F: Future<Output = T>,
     {
         let platform = Arc::new(platform::test::platform());
-        let main_thread_platform = Rc::new(platform::test::main_thread_platform());
+        let foreground_platform = Rc::new(platform::test::foreground_platform());
         let foreground = Rc::new(executor::Foreground::test());
         let cx = TestAppContext {
             cx: Rc::new(RefCell::new(MutableAppContext::new(
                 foreground.clone(),
                 platform,
-                main_thread_platform.clone(),
+                foreground_platform.clone(),
                 asset_source,
             ))),
-            main_thread_platform,
+            foreground_platform,
         };
         cx.cx.borrow_mut().weak_self = Some(Rc::downgrade(&cx.cx));
 
@@ -154,17 +154,17 @@ impl App {
 
     pub fn new(asset_source: impl AssetSource) -> Result<Self> {
         let platform = platform::current::platform();
-        let main_thread_platform = platform::current::main_thread_platform();
+        let foreground_platform = platform::current::foreground_platform();
         let foreground = Rc::new(executor::Foreground::platform(platform.dispatcher())?);
         let app = Self(Rc::new(RefCell::new(MutableAppContext::new(
             foreground,
             platform.clone(),
-            main_thread_platform.clone(),
+            foreground_platform.clone(),
             asset_source,
         ))));
 
         let cx = app.0.clone();
-        main_thread_platform.on_menu_command(Box::new(move |command, arg| {
+        foreground_platform.on_menu_command(Box::new(move |command, arg| {
             let mut cx = cx.borrow_mut();
             if let Some(key_window_id) = cx.platform.key_window_id() {
                 if let Some((presenter, _)) = cx.presenters_and_platform_windows.get(&key_window_id)
@@ -191,7 +191,7 @@ impl App {
         let cx = self.0.clone();
         self.0
             .borrow_mut()
-            .main_thread_platform
+            .foreground_platform
             .on_become_active(Box::new(move || callback(&mut *cx.borrow_mut())));
         self
     }
@@ -203,7 +203,7 @@ impl App {
         let cx = self.0.clone();
         self.0
             .borrow_mut()
-            .main_thread_platform
+            .foreground_platform
             .on_resign_active(Box::new(move || callback(&mut *cx.borrow_mut())));
         self
     }
@@ -215,7 +215,7 @@ impl App {
         let cx = self.0.clone();
         self.0
             .borrow_mut()
-            .main_thread_platform
+            .foreground_platform
             .on_event(Box::new(move |event| {
                 callback(event, &mut *cx.borrow_mut())
             }));
@@ -229,7 +229,7 @@ impl App {
         let cx = self.0.clone();
         self.0
             .borrow_mut()
-            .main_thread_platform
+            .foreground_platform
             .on_open_files(Box::new(move |paths| {
                 callback(paths, &mut *cx.borrow_mut())
             }));
@@ -240,7 +240,7 @@ impl App {
     where
         F: 'static + FnOnce(&mut MutableAppContext),
     {
-        let platform = self.0.borrow().main_thread_platform.clone();
+        let platform = self.0.borrow().foreground_platform.clone();
         platform.run(Box::new(move || {
             let mut cx = self.0.borrow_mut();
             on_finish_launching(&mut *cx);
@@ -366,12 +366,11 @@ impl TestAppContext {
     }
 
     pub fn simulate_new_path_selection(&self, result: impl FnOnce(PathBuf) -> Option<PathBuf>) {
-        self.main_thread_platform
-            .simulate_new_path_selection(result);
+        self.foreground_platform.simulate_new_path_selection(result);
     }
 
     pub fn did_prompt_for_new_path(&self) -> bool {
-        self.main_thread_platform.as_ref().did_prompt_for_new_path()
+        self.foreground_platform.as_ref().did_prompt_for_new_path()
     }
 
     pub fn simulate_prompt_answer(&self, window_id: usize, answer: usize) {
@@ -529,7 +528,7 @@ type GlobalActionCallback = dyn FnMut(&dyn Any, &mut MutableAppContext);
 
 pub struct MutableAppContext {
     weak_self: Option<rc::Weak<RefCell<Self>>>,
-    main_thread_platform: Rc<dyn platform::MainThreadPlatform>,
+    foreground_platform: Rc<dyn platform::ForegroundPlatform>,
     platform: Arc<dyn platform::Platform>,
     assets: Arc<AssetCache>,
     cx: AppContext,
@@ -554,13 +553,13 @@ impl MutableAppContext {
     fn new(
         foreground: Rc<executor::Foreground>,
         platform: Arc<dyn platform::Platform>,
-        main_thread_platform: Rc<dyn platform::MainThreadPlatform>,
+        foreground_platform: Rc<dyn platform::ForegroundPlatform>,
         asset_source: impl AssetSource,
     ) -> Self {
         let fonts = platform.fonts();
         Self {
             weak_self: None,
-            main_thread_platform,
+            foreground_platform,
             platform,
             assets: Arc::new(AssetCache::new(asset_source)),
             cx: AppContext {
@@ -721,7 +720,7 @@ impl MutableAppContext {
     }
 
     pub fn set_menus(&mut self, menus: Vec<Menu>) {
-        self.main_thread_platform.set_menus(menus);
+        self.foreground_platform.set_menus(menus);
     }
 
     fn prompt<F>(
@@ -755,7 +754,7 @@ impl MutableAppContext {
     {
         let app = self.weak_self.as_ref().unwrap().upgrade().unwrap();
         let foreground = self.foreground.clone();
-        self.main_thread_platform.prompt_for_paths(
+        self.foreground_platform.prompt_for_paths(
             options,
             Box::new(move |paths| {
                 foreground
@@ -771,7 +770,7 @@ impl MutableAppContext {
     {
         let app = self.weak_self.as_ref().unwrap().upgrade().unwrap();
         let foreground = self.foreground.clone();
-        self.main_thread_platform.prompt_for_new_path(
+        self.foreground_platform.prompt_for_new_path(
             directory,
             Box::new(move |path| {
                 foreground

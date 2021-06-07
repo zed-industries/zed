@@ -11,16 +11,16 @@ mod window;
 use cocoa::base::{BOOL, NO, YES};
 pub use dispatcher::Dispatcher;
 pub use fonts::FontSystem;
-use platform::{MacMainThreadPlatform, MacPlatform};
+use platform::{MacForegroundPlatform, MacPlatform};
 use std::{rc::Rc, sync::Arc};
 use window::Window;
 
-pub(crate) fn main_thread_platform() -> Rc<dyn super::MainThreadPlatform> {
-    Rc::new(MacMainThreadPlatform::default())
-}
-
 pub(crate) fn platform() -> Arc<dyn super::Platform> {
     Arc::new(MacPlatform::new())
+}
+
+pub(crate) fn foreground_platform() -> Rc<dyn super::ForegroundPlatform> {
+    Rc::new(MacForegroundPlatform::default())
 }
 
 trait BoolExt {

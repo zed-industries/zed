@@ -76,10 +76,10 @@ unsafe fn build_classes() {
 }
 
 #[derive(Default)]
-pub struct MacMainThreadPlatform(RefCell<MacMainThreadPlatformState>);
+pub struct MacForegroundPlatform(RefCell<MacForegroundPlatformState>);
 
 #[derive(Default)]
-pub struct MacMainThreadPlatformState {
+pub struct MacForegroundPlatformState {
     become_active: Option<Box<dyn FnMut()>>,
     resign_active: Option<Box<dyn FnMut()>>,
     event: Option<Box<dyn FnMut(crate::Event) -> bool>>,
@@ -89,7 +89,7 @@ pub struct MacMainThreadPlatformState {
     menu_actions: Vec<(String, Option<Box<dyn Any>>)>,
 }
 
-impl MacMainThreadPlatform {
+impl MacForegroundPlatform {
     unsafe fn create_menu_bar(&self, menus: Vec<Menu>) -> id {
         let menu_bar = NSMenu::new(nil).autorelease();
         let mut state = self.0.borrow_mut();
@@ -170,7 +170,7 @@ impl MacMainThreadPlatform {
     }
 }
 
-impl platform::MainThreadPlatform for MacMainThreadPlatform {
+impl platform::ForegroundPlatform for MacForegroundPlatform {
     fn on_become_active(&self, callback: Box<dyn FnMut()>) {
         self.0.borrow_mut().become_active = Some(callback);
     }
@@ -451,16 +451,16 @@ impl platform::Platform for MacPlatform {
     }
 }
 
-unsafe fn get_main_thread_platform(object: &mut Object) -> &MacMainThreadPlatform {
+unsafe fn get_foreground_platform(object: &mut Object) -> &MacForegroundPlatform {
     let platform_ptr: *mut c_void = *object.get_ivar(MAC_PLATFORM_IVAR);
     assert!(!platform_ptr.is_null());
-    &*(platform_ptr as *const MacMainThreadPlatform)
+    &*(platform_ptr as *const MacForegroundPlatform)
 }
 
 extern "C" fn send_event(this: &mut Object, _sel: Sel, native_event: id) {
     unsafe {
         if let Some(event) = Event::from_native(native_event, None) {
-            let platform = get_main_thread_platform(this);
+            let platform = get_foreground_platform(this);
             if let Some(callback) = platform.0.borrow_mut().event.as_mut() {
                 if callback(event) {
                     return;
@@ -477,7 +477,7 @@ extern "C" fn did_finish_launching(this: &mut Object, _: Sel, _: id) {
         let app: id = msg_send![APP_CLASS, sharedApplication];
         app.setActivationPolicy_(NSApplicationActivationPolicyRegular);
 
-        let platform = get_main_thread_platform(this);
+        let platform = get_foreground_platform(this);
         let callback = platform.0.borrow_mut().finish_launching.take();
         if let Some(callback) = callback {
             callback();
@@ -486,14 +486,14 @@ extern "C" fn did_finish_launching(this: &mut Object, _: Sel, _: id) {
 }
 
 extern "C" fn did_become_active(this: &mut Object, _: Sel, _: id) {
-    let platform = unsafe { get_main_thread_platform(this) };
+    let platform = unsafe { get_foreground_platform(this) };
     if let Some(callback) = platform.0.borrow_mut().become_active.as_mut() {
         callback();
     }
 }
 
 extern "C" fn did_resign_active(this: &mut Object, _: Sel, _: id) {
-    let platform = unsafe { get_main_thread_platform(this) };
+    let platform = unsafe { get_foreground_platform(this) };
     if let Some(callback) = platform.0.borrow_mut().resign_active.as_mut() {
         callback();
     }
@@ -515,7 +515,7 @@ extern "C" fn open_files(this: &mut Object, _: Sel, _: id, paths: id) {
             })
             .collect::<Vec<_>>()
     };
-    let platform = unsafe { get_main_thread_platform(this) };
+    let platform = unsafe { get_foreground_platform(this) };
     if let Some(callback) = platform.0.borrow_mut().open_files.as_mut() {
         callback(paths);
     }
@@ -523,13 +523,15 @@ extern "C" fn open_files(this: &mut Object, _: Sel, _: id, paths: id) {
 
 extern "C" fn handle_menu_item(this: &mut Object, _: Sel, item: id) {
     unsafe {
-        let platform = get_main_thread_platform(this);
-        if let Some(callback) = platform.0.borrow_mut().menu_command.as_mut() {
+        let platform = get_foreground_platform(this);
+        let mut platform = platform.0.borrow_mut();
+        if let Some(mut callback) = platform.menu_command.take() {
             let tag: NSInteger = msg_send![item, tag];
             let index = tag as usize;
-            if let Some((action, arg)) = platform.0.borrow_mut().menu_actions.get(index) {
+            if let Some((action, arg)) = platform.menu_actions.get(index) {
                 callback(action, arg.as_ref().map(Box::as_ref));
             }
+            platform.menu_command = Some(callback);
         }
     }
 }

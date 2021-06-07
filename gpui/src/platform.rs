@@ -27,7 +27,24 @@ use std::{
     sync::Arc,
 };
 
-pub(crate) trait MainThreadPlatform {
+pub trait Platform: Send + Sync {
+    fn dispatcher(&self) -> Arc<dyn Dispatcher>;
+    fn fonts(&self) -> Arc<dyn FontSystem>;
+
+    fn activate(&self, ignoring_other_apps: bool);
+    fn open_window(
+        &self,
+        id: usize,
+        options: WindowOptions,
+        executor: Rc<executor::Foreground>,
+    ) -> Box<dyn Window>;
+    fn key_window_id(&self) -> Option<usize>;
+    fn quit(&self);
+    fn write_to_clipboard(&self, item: ClipboardItem);
+    fn read_from_clipboard(&self) -> Option<ClipboardItem>;
+}
+
+pub(crate) trait ForegroundPlatform {
     fn on_become_active(&self, callback: Box<dyn FnMut()>);
     fn on_resign_active(&self, callback: Box<dyn FnMut()>);
     fn on_event(&self, callback: Box<dyn FnMut(Event) -> bool>);
@@ -46,23 +63,6 @@ pub(crate) trait MainThreadPlatform {
         directory: &Path,
         done_fn: Box<dyn FnOnce(Option<std::path::PathBuf>)>,
     );
-}
-
-pub trait Platform: Send + Sync {
-    fn dispatcher(&self) -> Arc<dyn Dispatcher>;
-    fn fonts(&self) -> Arc<dyn FontSystem>;
-
-    fn activate(&self, ignoring_other_apps: bool);
-    fn open_window(
-        &self,
-        id: usize,
-        options: WindowOptions,
-        executor: Rc<executor::Foreground>,
-    ) -> Box<dyn Window>;
-    fn key_window_id(&self) -> Option<usize>;
-    fn quit(&self);
-    fn write_to_clipboard(&self, item: ClipboardItem);
-    fn read_from_clipboard(&self) -> Option<ClipboardItem>;
 }
 
 pub trait Dispatcher: Send + Sync {
