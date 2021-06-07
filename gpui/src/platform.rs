@@ -27,7 +27,7 @@ use std::{
     sync::Arc,
 };
 
-pub(crate) trait Lifecycle {
+pub(crate) trait MainThreadPlatform {
     fn on_menu_command(&self, callback: Box<dyn FnMut(&str, Option<&dyn Any>)>);
     fn on_become_active(&self, callback: Box<dyn FnMut()>);
     fn on_resign_active(&self, callback: Box<dyn FnMut()>);

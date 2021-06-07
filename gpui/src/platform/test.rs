@@ -8,14 +8,14 @@ use std::{
     sync::Arc,
 };
 
-pub(crate) struct Lifecycle;
-
 pub(crate) struct Platform {
     dispatcher: Arc<dyn super::Dispatcher>,
     fonts: Arc<dyn super::FontSystem>,
     current_clipboard_item: RefCell<Option<ClipboardItem>>,
     last_prompt_for_new_path_args: RefCell<Option<(PathBuf, Box<dyn FnOnce(Option<PathBuf>)>)>>,
 }
+
+pub(crate) struct MainThreadPlatform;
 
 struct Dispatcher;
 
@@ -29,7 +29,7 @@ pub struct Window {
     pub(crate) last_prompt: RefCell<Option<Box<dyn FnOnce(usize)>>>,
 }
 
-impl super::Lifecycle for Lifecycle {
+impl super::MainThreadPlatform for MainThreadPlatform {
     fn on_menu_command(&self, _: Box<dyn FnMut(&str, Option<&dyn Any>)>) {}
 
     fn on_become_active(&self, _: Box<dyn FnMut()>) {}
@@ -179,8 +179,8 @@ impl super::Window for Window {
     }
 }
 
-pub(crate) fn lifecycle() -> Lifecycle {
-    Lifecycle
+pub(crate) fn main_thread_platform() -> MainThreadPlatform {
+    MainThreadPlatform
 }
 
 pub(crate) fn platform() -> Platform {

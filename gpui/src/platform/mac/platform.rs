@@ -32,7 +32,7 @@ use std::{
     sync::Arc,
 };
 
-const MAC_LIFECYCLE_IVAR: &'static str = "lifecycle";
+const MAC_PLATFORM_IVAR: &'static str = "platform";
 static mut APP_CLASS: *const Class = ptr::null();
 static mut APP_DELEGATE_CLASS: *const Class = ptr::null();
 
@@ -40,7 +40,7 @@ static mut APP_DELEGATE_CLASS: *const Class = ptr::null();
 unsafe fn build_classes() {
     APP_CLASS = {
         let mut decl = ClassDecl::new("GPUIApplication", class!(NSApplication)).unwrap();
-        decl.add_ivar::<*mut c_void>(MAC_LIFECYCLE_IVAR);
+        decl.add_ivar::<*mut c_void>(MAC_PLATFORM_IVAR);
         decl.add_method(
             sel!(sendEvent:),
             send_event as extern "C" fn(&mut Object, Sel, id),
@@ -50,7 +50,7 @@ unsafe fn build_classes() {
 
     APP_DELEGATE_CLASS = {
         let mut decl = ClassDecl::new("GPUIApplicationDelegate", class!(NSResponder)).unwrap();
-        decl.add_ivar::<*mut c_void>(MAC_LIFECYCLE_IVAR);
+        decl.add_ivar::<*mut c_void>(MAC_PLATFORM_IVAR);
         decl.add_method(
             sel!(applicationDidFinishLaunching:),
             did_finish_launching as extern "C" fn(&mut Object, Sel, id),
@@ -76,10 +76,10 @@ unsafe fn build_classes() {
 }
 
 #[derive(Default)]
-pub struct MacLifecycle(RefCell<MacLifecycleState>);
+pub struct MacMainThreadPlatform(RefCell<MacMainThreadPlatformState>);
 
 #[derive(Default)]
-pub struct MacLifecycleState {
+pub struct MacMainThreadPlatformState {
     become_active: Option<Box<dyn FnMut()>>,
     resign_active: Option<Box<dyn FnMut()>>,
     event: Option<Box<dyn FnMut(crate::Event) -> bool>>,
@@ -89,7 +89,7 @@ pub struct MacLifecycleState {
     menu_actions: Vec<(String, Option<Box<dyn Any>>)>,
 }
 
-impl MacLifecycle {
+impl MacMainThreadPlatform {
     unsafe fn create_menu_bar(&self, menus: Vec<Menu>) -> id {
         let menu_bar = NSMenu::new(nil).autorelease();
         let mut state = self.0.borrow_mut();
@@ -170,7 +170,7 @@ impl MacLifecycle {
     }
 }
 
-impl platform::Lifecycle for MacLifecycle {
+impl platform::MainThreadPlatform for MacMainThreadPlatform {
     fn on_become_active(&self, callback: Box<dyn FnMut()>) {
         self.0.borrow_mut().become_active = Some(callback);
     }
@@ -207,15 +207,15 @@ impl platform::Lifecycle for MacLifecycle {
             app.setDelegate_(app_delegate);
 
             let self_ptr = self as *const Self as *const c_void;
-            (*app).set_ivar(MAC_LIFECYCLE_IVAR, self_ptr);
-            (*app_delegate).set_ivar(MAC_LIFECYCLE_IVAR, self_ptr);
+            (*app).set_ivar(MAC_PLATFORM_IVAR, self_ptr);
+            (*app_delegate).set_ivar(MAC_PLATFORM_IVAR, self_ptr);
 
             let pool = NSAutoreleasePool::new(nil);
             app.run();
             pool.drain();
 
-            (*app).set_ivar(MAC_LIFECYCLE_IVAR, null_mut::<c_void>());
-            (*app.delegate()).set_ivar(MAC_LIFECYCLE_IVAR, null_mut::<c_void>());
+            (*app).set_ivar(MAC_PLATFORM_IVAR, null_mut::<c_void>());
+            (*app.delegate()).set_ivar(MAC_PLATFORM_IVAR, null_mut::<c_void>());
         }
     }
 }
@@ -448,16 +448,16 @@ impl platform::Platform for MacPlatform {
     }
 }
 
-unsafe fn get_lifecycle(object: &mut Object) -> &MacLifecycle {
-    let platform_ptr: *mut c_void = *object.get_ivar(MAC_LIFECYCLE_IVAR);
+unsafe fn get_main_thread_platform(object: &mut Object) -> &MacMainThreadPlatform {
+    let platform_ptr: *mut c_void = *object.get_ivar(MAC_PLATFORM_IVAR);
     assert!(!platform_ptr.is_null());
-    &*(platform_ptr as *const MacLifecycle)
+    &*(platform_ptr as *const MacMainThreadPlatform)
 }
 
 extern "C" fn send_event(this: &mut Object, _sel: Sel, native_event: id) {
     unsafe {
         if let Some(event) = Event::from_native(native_event, None) {
-            let platform = get_lifecycle(this);
+            let platform = get_main_thread_platform(this);
             if let Some(callback) = platform.0.borrow_mut().event.as_mut() {
                 if callback(event) {
                     return;
@@ -474,7 +474,7 @@ extern "C" fn did_finish_launching(this: &mut Object, _: Sel, _: id) {
         let app: id = msg_send![APP_CLASS, sharedApplication];
         app.setActivationPolicy_(NSApplicationActivationPolicyRegular);
 
-        let platform = get_lifecycle(this);
+        let platform = get_main_thread_platform(this);
         let callback = platform.0.borrow_mut().finish_launching.take();
         if let Some(callback) = callback {
             callback();
@@ -483,14 +483,14 @@ extern "C" fn did_finish_launching(this: &mut Object, _: Sel, _: id) {
 }
 
 extern "C" fn did_become_active(this: &mut Object, _: Sel, _: id) {
-    let platform = unsafe { get_lifecycle(this) };
+    let platform = unsafe { get_main_thread_platform(this) };
     if let Some(callback) = platform.0.borrow_mut().become_active.as_mut() {
         callback();
     }
 }
 
 extern "C" fn did_resign_active(this: &mut Object, _: Sel, _: id) {
-    let platform = unsafe { get_lifecycle(this) };
+    let platform = unsafe { get_main_thread_platform(this) };
     if let Some(callback) = platform.0.borrow_mut().resign_active.as_mut() {
         callback();
     }
@@ -512,7 +512,7 @@ extern "C" fn open_files(this: &mut Object, _: Sel, _: id, paths: id) {
             })
             .collect::<Vec<_>>()
     };
-    let platform = unsafe { get_lifecycle(this) };
+    let platform = unsafe { get_main_thread_platform(this) };
     if let Some(callback) = platform.0.borrow_mut().open_files.as_mut() {
         callback(paths);
     }
@@ -520,7 +520,7 @@ extern "C" fn open_files(this: &mut Object, _: Sel, _: id, paths: id) {
 
 extern "C" fn handle_menu_item(this: &mut Object, _: Sel, item: id) {
     unsafe {
-        let platform = get_lifecycle(this);
+        let platform = get_main_thread_platform(this);
         if let Some(callback) = platform.0.borrow_mut().menu_command.as_mut() {
             let tag: NSInteger = msg_send![item, tag];
             let index = tag as usize;
