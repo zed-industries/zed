@@ -48,7 +48,7 @@ pub(crate) trait MainThreadPlatform {
     );
 }
 
-pub trait Platform {
+pub trait Platform: Send + Sync {
     fn dispatcher(&self) -> Arc<dyn Dispatcher>;
     fn fonts(&self) -> Arc<dyn FontSystem>;
 

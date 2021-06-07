@@ -1,4 +1,5 @@
 use crate::ClipboardItem;
+use parking_lot::Mutex;
 use pathfinder_geometry::vector::Vector2F;
 use std::{
     any::Any,
@@ -11,7 +12,7 @@ use std::{
 pub(crate) struct Platform {
     dispatcher: Arc<dyn super::Dispatcher>,
     fonts: Arc<dyn super::FontSystem>,
-    current_clipboard_item: RefCell<Option<ClipboardItem>>,
+    current_clipboard_item: Mutex<Option<ClipboardItem>>,
 }
 
 #[derive(Default)]
@@ -114,11 +115,11 @@ impl super::Platform for Platform {
     fn quit(&self) {}
 
     fn write_to_clipboard(&self, item: ClipboardItem) {
-        *self.current_clipboard_item.borrow_mut() = Some(item);
+        *self.current_clipboard_item.lock() = Some(item);
     }
 
     fn read_from_clipboard(&self) -> Option<ClipboardItem> {
-        self.current_clipboard_item.borrow().clone()
+        self.current_clipboard_item.lock().clone()
     }
 }
 

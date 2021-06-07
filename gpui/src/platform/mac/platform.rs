@@ -329,6 +329,9 @@ impl MacPlatform {
     }
 }
 
+unsafe impl Send for MacPlatform {}
+unsafe impl Sync for MacPlatform {}
+
 impl platform::Platform for MacPlatform {
     fn dispatcher(&self) -> Arc<dyn platform::Dispatcher> {
         self.dispatcher.clone()

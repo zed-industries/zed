@@ -120,7 +120,7 @@ impl App {
         let foreground = Rc::new(executor::Foreground::test());
         let cx = Rc::new(RefCell::new(MutableAppContext::new(
             foreground,
-            Rc::new(platform),
+            Arc::new(platform),
             Rc::new(main_thread_platform),
             asset_source,
         )));
@@ -134,7 +134,7 @@ impl App {
         Fn: FnOnce(TestAppContext) -> F,
         F: Future<Output = T>,
     {
-        let platform = Rc::new(platform::test::platform());
+        let platform = Arc::new(platform::test::platform());
         let main_thread_platform = Rc::new(platform::test::main_thread_platform());
         let foreground = Rc::new(executor::Foreground::test());
         let cx = TestAppContext {
@@ -361,7 +361,7 @@ impl TestAppContext {
         self.cx.borrow().cx.font_cache.clone()
     }
 
-    pub fn platform(&self) -> Rc<dyn platform::Platform> {
+    pub fn platform(&self) -> Arc<dyn platform::Platform> {
         self.cx.borrow().platform.clone()
     }
 
@@ -530,7 +530,7 @@ type GlobalActionCallback = dyn FnMut(&dyn Any, &mut MutableAppContext);
 pub struct MutableAppContext {
     weak_self: Option<rc::Weak<RefCell<Self>>>,
     main_thread_platform: Rc<dyn platform::MainThreadPlatform>,
-    platform: Rc<dyn platform::Platform>,
+    platform: Arc<dyn platform::Platform>,
     assets: Arc<AssetCache>,
     cx: AppContext,
     actions: HashMap<TypeId, HashMap<String, Vec<Box<ActionCallback>>>>,
@@ -553,7 +553,7 @@ pub struct MutableAppContext {
 impl MutableAppContext {
     fn new(
         foreground: Rc<executor::Foreground>,
-        platform: Rc<dyn platform::Platform>,
+        platform: Arc<dyn platform::Platform>,
         main_thread_platform: Rc<dyn platform::MainThreadPlatform>,
         asset_source: impl AssetSource,
     ) -> Self {
@@ -594,7 +594,7 @@ impl MutableAppContext {
         App(self.weak_self.as_ref().unwrap().upgrade().unwrap())
     }
 
-    pub fn platform(&self) -> Rc<dyn platform::Platform> {
+    pub fn platform(&self) -> Arc<dyn platform::Platform> {
         self.platform.clone()
     }
 
