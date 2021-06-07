@@ -2,19 +2,17 @@
 
 ## Logging In
 
-Zed needs to know the identities of the people who are collaborating on a worktree. The first
-time that I share a worktree (or try to join someone else's worktree), Zed must prompt me to
-log in to the `zed.dev` server.
+Zed needs to know the identities of the people who are collaborating on a worktree. So the first
+time that I share a worktree (or try to join someone else's worktree), Zed will prompt me to
+log in to `zed.dev`.
 
 * For simplicity, I can begin sharing by clicking `File > Share` in the application menu.
 * To initiate the share, Zed needs a user id and auth token that identifies me.
-* Zed checks if it has stored credentials in the file `~/Library/Application\ Support/Zed/auth.toml`
-
-If there is *no* stored credentials, then the user needs to log in. For now, we'll do this through
-the `zed.dev` website, for two reasons:
-  * To avoid building complex login UI in Zed (for now)
-  * So that we can use web-based Oauth flows.
-
+* Zed checks if it has stored credentials in the file `~/Library/Application Support/Zed/auth.toml`.
+  If there is *no* stored credentials, then the user needs to log in. For now, we'll do this through
+  the `zed.dev` website, for two reasons:
+  - To avoid building complex login UI in Zed (for now)
+  - So that Zed users can take advantage of being logged into GitHub in their browser.
 * Zed needs a way to track that the user has logged in using their web browser. To do this,
   it makes an API request to the `zed.dev` server for a new "login token" (`POST zed.dev/api/login-tokens`).
 * The server generates a unique 40-character `login_token` and stores it in its database.
@@ -24,13 +22,13 @@ the `zed.dev` website, for two reasons:
 * For now, `zed.dev` only supports login via GitHub. So this web page will redirect immediately to the first
   step of GitHub's [Web-application flow](https://docs.github.com/en/developers/apps/building-oauth-apps/authorizing-oauth-apps#web-application-flow).
 * When I complete the GitHub authorization process, GitHub redirects my browser to a `zed.dev` URL that
-  includes the same `login_token` from before, providing a secret `code`. Zed.dev completes the Oauth flow, exchanging this `code` for a GitHub `access_token`. It updates its database:
+  includes the same `login_token` from before, providing a secret `code`. The Zed server completes the Oauth flow, exchanging this `code` for a GitHub `access_token`. It updates its database:
     * Creating or updating a user record for me with the given GitHub data and GitHub `access_token`
     * Marking the `login_token` as complete, and associating it with my user record.
 * In Zed, I dismiss the "Please log in" dialog.
-* Zed asks the server what happened with the login (`GET zed.dev/api/login-tokens`)
+* Zed asks the server what happened with the login (`GET zed.dev/api/login-tokens/<the-token>`)
 * The server responds with my user credentials
-* Zed stores these credentials in `~/Library/Application\ Support/Zed/auth.toml`
+* Zed stores these credentials in `~/Library/Application Support/Zed/auth.toml`
 
 Once Zed has my credentials, I can begin collaborating.
 
@@ -47,10 +45,8 @@ worktree in `~/Library/Application\ Support/Zed/worktrees.toml` (or something li
   collaboratively edit that worktree.
 * __Question__ - Does the sharing on/off state of each worktree persist across application restart?
   When I close Zed while sharing a worktree, should I resume sharing when I reopen Zed?
-    Pros:
-    * This would remove friction from teams collaborating continuously.
-    Cons:
-    * I might have added something secret to the worktree since I last opened Zed. Could we detect
+    * **Pro** - This would remove friction from teams collaborating continuously.
+    * **Cons** - I might have added something secret to the worktree since I last opened Zed. Could we detect
       changes that have occured outside of Zed, and avoid auto-sharing on startup when that has
       happened?
 
