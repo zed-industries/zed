@@ -112,10 +112,12 @@ impl App {
         asset_source: A,
         f: F,
     ) -> T {
+        let lifecycle = platform::test::lifecycle();
         let platform = platform::test::platform();
         let foreground = Rc::new(executor::Foreground::test());
         let cx = Rc::new(RefCell::new(MutableAppContext::new(
             foreground,
+            Rc::new(lifecycle),
             Rc::new(platform),
             asset_source,
         )));
@@ -129,11 +131,13 @@ impl App {
         Fn: FnOnce(TestAppContext) -> F,
         F: Future<Output = T>,
     {
+        let lifecycle = Rc::new(platform::test::lifecycle());
         let platform = Rc::new(platform::test::platform());
         let foreground = Rc::new(executor::Foreground::test());
         let cx = TestAppContext(
             Rc::new(RefCell::new(MutableAppContext::new(
                 foreground.clone(),
+                lifecycle,
                 platform.clone(),
                 asset_source,
             ))),
@@ -146,16 +150,18 @@ impl App {
     }
 
     pub fn new(asset_source: impl AssetSource) -> Result<Self> {
+        let lifecycle = platform::current::lifecycle();
         let platform = platform::current::platform();
         let foreground = Rc::new(executor::Foreground::platform(platform.dispatcher())?);
         let app = Self(Rc::new(RefCell::new(MutableAppContext::new(
             foreground,
+            lifecycle.clone(),
             platform.clone(),
             asset_source,
         ))));
 
         let cx = app.0.clone();
-        platform.on_menu_command(Box::new(move |command, arg| {
+        lifecycle.on_menu_command(Box::new(move |command, arg| {
             let mut cx = cx.borrow_mut();
             if let Some(key_window_id) = cx.platform.key_window_id() {
                 if let Some((presenter, _)) = cx.presenters_and_platform_windows.get(&key_window_id)
@@ -181,8 +187,8 @@ impl App {
     {
         let cx = self.0.clone();
         self.0
-            .borrow()
-            .platform
+            .borrow_mut()
+            .lifecycle
             .on_become_active(Box::new(move || callback(&mut *cx.borrow_mut())));
         self
     }
@@ -193,8 +199,8 @@ impl App {
     {
         let cx = self.0.clone();
         self.0
-            .borrow()
-            .platform
+            .borrow_mut()
+            .lifecycle
             .on_resign_active(Box::new(move || callback(&mut *cx.borrow_mut())));
         self
     }
@@ -204,9 +210,12 @@ impl App {
         F: 'static + FnMut(Event, &mut MutableAppContext) -> bool,
     {
         let cx = self.0.clone();
-        self.0.borrow().platform.on_event(Box::new(move |event| {
-            callback(event, &mut *cx.borrow_mut())
-        }));
+        self.0
+            .borrow_mut()
+            .lifecycle
+            .on_event(Box::new(move |event| {
+                callback(event, &mut *cx.borrow_mut())
+            }));
         self
     }
 
@@ -216,8 +225,8 @@ impl App {
     {
         let cx = self.0.clone();
         self.0
-            .borrow()
-            .platform
+            .borrow_mut()
+            .lifecycle
             .on_open_files(Box::new(move |paths| {
                 callback(paths, &mut *cx.borrow_mut())
             }));
@@ -228,8 +237,8 @@ impl App {
     where
         F: 'static + FnOnce(&mut MutableAppContext),
     {
-        let platform = self.0.borrow().platform.clone();
-        platform.run(Box::new(move || {
+        let lifecycle = self.0.borrow().lifecycle.clone();
+        lifecycle.run(Box::new(move || {
             let mut cx = self.0.borrow_mut();
             on_finish_launching(&mut *cx);
         }))
@@ -516,6 +525,7 @@ type GlobalActionCallback = dyn FnMut(&dyn Any, &mut MutableAppContext);
 
 pub struct MutableAppContext {
     weak_self: Option<rc::Weak<RefCell<Self>>>,
+    lifecycle: Rc<dyn platform::Lifecycle>,
     platform: Rc<dyn platform::Platform>,
     assets: Arc<AssetCache>,
     cx: AppContext,
@@ -537,14 +547,16 @@ pub struct MutableAppContext {
 }
 
 impl MutableAppContext {
-    pub fn new(
+    fn new(
         foreground: Rc<executor::Foreground>,
+        lifecycle: Rc<dyn platform::Lifecycle>,
         platform: Rc<dyn platform::Platform>,
         asset_source: impl AssetSource,
     ) -> Self {
         let fonts = platform.fonts();
         Self {
             weak_self: None,
+            lifecycle,
             platform,
             assets: Arc::new(AssetCache::new(asset_source)),
             cx: AppContext {
@@ -704,8 +716,8 @@ impl MutableAppContext {
         result
     }
 
-    pub fn set_menus(&self, menus: Vec<Menu>) {
-        self.platform.set_menus(menus);
+    pub fn set_menus(&mut self, menus: Vec<Menu>) {
+        self.lifecycle.set_menus(menus);
     }
 
     fn prompt<F>(

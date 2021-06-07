@@ -8,6 +8,8 @@ use std::{
     sync::Arc,
 };
 
+pub(crate) struct Lifecycle;
+
 pub(crate) struct Platform {
     dispatcher: Arc<dyn super::Dispatcher>,
     fonts: Arc<dyn super::FontSystem>,
@@ -25,6 +27,24 @@ pub struct Window {
     resize_handlers: Vec<Box<dyn FnMut(&mut dyn super::WindowContext)>>,
     close_handlers: Vec<Box<dyn FnOnce()>>,
     pub(crate) last_prompt: RefCell<Option<Box<dyn FnOnce(usize)>>>,
+}
+
+impl super::Lifecycle for Lifecycle {
+    fn on_menu_command(&self, _: Box<dyn FnMut(&str, Option<&dyn Any>)>) {}
+
+    fn on_become_active(&self, _: Box<dyn FnMut()>) {}
+
+    fn on_resign_active(&self, _: Box<dyn FnMut()>) {}
+
+    fn on_event(&self, _: Box<dyn FnMut(crate::Event) -> bool>) {}
+
+    fn on_open_files(&self, _: Box<dyn FnMut(Vec<std::path::PathBuf>)>) {}
+
+    fn set_menus(&self, _: Vec<crate::Menu>) {}
+
+    fn run(&self, _on_finish_launching: Box<dyn FnOnce() -> ()>) {
+        unimplemented!()
+    }
 }
 
 impl Platform {
@@ -54,20 +74,6 @@ impl Platform {
 }
 
 impl super::Platform for Platform {
-    fn on_menu_command(&self, _: Box<dyn FnMut(&str, Option<&dyn Any>)>) {}
-
-    fn on_become_active(&self, _: Box<dyn FnMut()>) {}
-
-    fn on_resign_active(&self, _: Box<dyn FnMut()>) {}
-
-    fn on_event(&self, _: Box<dyn FnMut(crate::Event) -> bool>) {}
-
-    fn on_open_files(&self, _: Box<dyn FnMut(Vec<std::path::PathBuf>)>) {}
-
-    fn run(&self, _on_finish_launching: Box<dyn FnOnce() -> ()>) {
-        unimplemented!()
-    }
-
     fn dispatcher(&self) -> Arc<dyn super::Dispatcher> {
         self.dispatcher.clone()
     }
@@ -90,8 +96,6 @@ impl super::Platform for Platform {
     fn key_window_id(&self) -> Option<usize> {
         None
     }
-
-    fn set_menus(&self, _menus: Vec<crate::Menu>) {}
 
     fn quit(&self) {}
 
@@ -173,6 +177,10 @@ impl super::Window for Window {
     fn prompt(&self, _: crate::PromptLevel, _: &str, _: &[&str], f: Box<dyn FnOnce(usize)>) {
         self.last_prompt.replace(Some(f));
     }
+}
+
+pub(crate) fn lifecycle() -> Lifecycle {
+    Lifecycle
 }
 
 pub(crate) fn platform() -> Platform {

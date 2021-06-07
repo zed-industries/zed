@@ -11,11 +11,15 @@ mod window;
 use cocoa::base::{BOOL, NO, YES};
 pub use dispatcher::Dispatcher;
 pub use fonts::FontSystem;
-use platform::MacPlatform;
+use platform::{MacLifecycle, MacPlatform};
 use std::rc::Rc;
 use window::Window;
 
-pub fn platform() -> Rc<dyn super::Platform> {
+pub(crate) fn lifecycle() -> Rc<dyn super::Lifecycle> {
+    Rc::new(MacLifecycle::default())
+}
+
+pub(crate) fn platform() -> Rc<dyn super::Platform> {
     Rc::new(MacPlatform::new())
 }
 

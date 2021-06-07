@@ -32,7 +32,7 @@ use std::{
     sync::Arc,
 };
 
-const MAC_PLATFORM_IVAR: &'static str = "platform";
+const MAC_LIFECYCLE_IVAR: &'static str = "lifecycle";
 static mut APP_CLASS: *const Class = ptr::null();
 static mut APP_DELEGATE_CLASS: *const Class = ptr::null();
 
@@ -40,7 +40,7 @@ static mut APP_DELEGATE_CLASS: *const Class = ptr::null();
 unsafe fn build_classes() {
     APP_CLASS = {
         let mut decl = ClassDecl::new("GPUIApplication", class!(NSApplication)).unwrap();
-        decl.add_ivar::<*mut c_void>(MAC_PLATFORM_IVAR);
+        decl.add_ivar::<*mut c_void>(MAC_LIFECYCLE_IVAR);
         decl.add_method(
             sel!(sendEvent:),
             send_event as extern "C" fn(&mut Object, Sel, id),
@@ -50,7 +50,7 @@ unsafe fn build_classes() {
 
     APP_DELEGATE_CLASS = {
         let mut decl = ClassDecl::new("GPUIApplicationDelegate", class!(NSResponder)).unwrap();
-        decl.add_ivar::<*mut c_void>(MAC_PLATFORM_IVAR);
+        decl.add_ivar::<*mut c_void>(MAC_LIFECYCLE_IVAR);
         decl.add_method(
             sel!(applicationDidFinishLaunching:),
             did_finish_launching as extern "C" fn(&mut Object, Sel, id),
@@ -75,43 +75,26 @@ unsafe fn build_classes() {
     }
 }
 
-pub struct MacPlatform {
-    dispatcher: Arc<Dispatcher>,
-    fonts: Arc<FontSystem>,
-    callbacks: RefCell<Callbacks>,
-    menu_item_actions: RefCell<Vec<(String, Option<Box<dyn Any>>)>>,
-    pasteboard: id,
-    text_hash_pasteboard_type: id,
-    metadata_pasteboard_type: id,
-}
+#[derive(Default)]
+pub struct MacLifecycle(RefCell<MacLifecycleState>);
 
 #[derive(Default)]
-struct Callbacks {
+pub struct MacLifecycleState {
     become_active: Option<Box<dyn FnMut()>>,
     resign_active: Option<Box<dyn FnMut()>>,
     event: Option<Box<dyn FnMut(crate::Event) -> bool>>,
     menu_command: Option<Box<dyn FnMut(&str, Option<&dyn Any>)>>,
     open_files: Option<Box<dyn FnMut(Vec<PathBuf>)>>,
     finish_launching: Option<Box<dyn FnOnce() -> ()>>,
+    menu_actions: Vec<(String, Option<Box<dyn Any>>)>,
 }
 
-impl MacPlatform {
-    pub fn new() -> Self {
-        Self {
-            dispatcher: Arc::new(Dispatcher),
-            fonts: Arc::new(FontSystem::new()),
-            callbacks: Default::default(),
-            menu_item_actions: Default::default(),
-            pasteboard: unsafe { NSPasteboard::generalPasteboard(nil) },
-            text_hash_pasteboard_type: unsafe { ns_string("zed-text-hash") },
-            metadata_pasteboard_type: unsafe { ns_string("zed-metadata") },
-        }
-    }
-
+impl MacLifecycle {
     unsafe fn create_menu_bar(&self, menus: Vec<Menu>) -> id {
         let menu_bar = NSMenu::new(nil).autorelease();
-        let mut menu_item_actions = self.menu_item_actions.borrow_mut();
-        menu_item_actions.clear();
+        let mut state = self.0.borrow_mut();
+
+        state.menu_actions.clear();
 
         for menu_config in menus {
             let menu_bar_item = NSMenuItem::new(nil).autorelease();
@@ -170,9 +153,9 @@ impl MacPlatform {
                                 .autorelease();
                         }
 
-                        let tag = menu_item_actions.len() as NSInteger;
+                        let tag = state.menu_actions.len() as NSInteger;
                         let _: () = msg_send![item, setTag: tag];
-                        menu_item_actions.push((action.to_string(), arg));
+                        state.menu_actions.push((action.to_string(), arg));
                     }
                 }
 
@@ -184,6 +167,76 @@ impl MacPlatform {
         }
 
         menu_bar
+    }
+}
+
+impl platform::Lifecycle for MacLifecycle {
+    fn on_become_active(&self, callback: Box<dyn FnMut()>) {
+        self.0.borrow_mut().become_active = Some(callback);
+    }
+
+    fn on_resign_active(&self, callback: Box<dyn FnMut()>) {
+        self.0.borrow_mut().resign_active = Some(callback);
+    }
+
+    fn on_event(&self, callback: Box<dyn FnMut(crate::Event) -> bool>) {
+        self.0.borrow_mut().event = Some(callback);
+    }
+
+    fn on_menu_command(&self, callback: Box<dyn FnMut(&str, Option<&dyn Any>)>) {
+        self.0.borrow_mut().menu_command = Some(callback);
+    }
+
+    fn on_open_files(&self, callback: Box<dyn FnMut(Vec<PathBuf>)>) {
+        self.0.borrow_mut().open_files = Some(callback);
+    }
+
+    fn set_menus(&self, menus: Vec<Menu>) {
+        unsafe {
+            let app: id = msg_send![APP_CLASS, sharedApplication];
+            app.setMainMenu_(self.create_menu_bar(menus));
+        }
+    }
+
+    fn run(&self, on_finish_launching: Box<dyn FnOnce() -> ()>) {
+        self.0.borrow_mut().finish_launching = Some(on_finish_launching);
+
+        unsafe {
+            let app: id = msg_send![APP_CLASS, sharedApplication];
+            let app_delegate: id = msg_send![APP_DELEGATE_CLASS, new];
+            app.setDelegate_(app_delegate);
+
+            let self_ptr = self as *const Self as *const c_void;
+            (*app).set_ivar(MAC_LIFECYCLE_IVAR, self_ptr);
+            (*app_delegate).set_ivar(MAC_LIFECYCLE_IVAR, self_ptr);
+
+            let pool = NSAutoreleasePool::new(nil);
+            app.run();
+            pool.drain();
+
+            (*app).set_ivar(MAC_LIFECYCLE_IVAR, null_mut::<c_void>());
+            (*app.delegate()).set_ivar(MAC_LIFECYCLE_IVAR, null_mut::<c_void>());
+        }
+    }
+}
+
+pub struct MacPlatform {
+    dispatcher: Arc<Dispatcher>,
+    fonts: Arc<FontSystem>,
+    pasteboard: id,
+    text_hash_pasteboard_type: id,
+    metadata_pasteboard_type: id,
+}
+
+impl MacPlatform {
+    pub fn new() -> Self {
+        Self {
+            dispatcher: Arc::new(Dispatcher),
+            fonts: Arc::new(FontSystem::new()),
+            pasteboard: unsafe { NSPasteboard::generalPasteboard(nil) },
+            text_hash_pasteboard_type: unsafe { ns_string("zed-text-hash") },
+            metadata_pasteboard_type: unsafe { ns_string("zed-metadata") },
+        }
     }
 
     unsafe fn read_from_pasteboard(&self, kind: id) -> Option<&[u8]> {
@@ -200,47 +253,6 @@ impl MacPlatform {
 }
 
 impl platform::Platform for MacPlatform {
-    fn on_become_active(&self, callback: Box<dyn FnMut()>) {
-        self.callbacks.borrow_mut().become_active = Some(callback);
-    }
-
-    fn on_resign_active(&self, callback: Box<dyn FnMut()>) {
-        self.callbacks.borrow_mut().resign_active = Some(callback);
-    }
-
-    fn on_event(&self, callback: Box<dyn FnMut(crate::Event) -> bool>) {
-        self.callbacks.borrow_mut().event = Some(callback);
-    }
-
-    fn on_menu_command(&self, callback: Box<dyn FnMut(&str, Option<&dyn Any>)>) {
-        self.callbacks.borrow_mut().menu_command = Some(callback);
-    }
-
-    fn on_open_files(&self, callback: Box<dyn FnMut(Vec<PathBuf>)>) {
-        self.callbacks.borrow_mut().open_files = Some(callback);
-    }
-
-    fn run(&self, on_finish_launching: Box<dyn FnOnce() -> ()>) {
-        self.callbacks.borrow_mut().finish_launching = Some(on_finish_launching);
-
-        unsafe {
-            let app: id = msg_send![APP_CLASS, sharedApplication];
-            let app_delegate: id = msg_send![APP_DELEGATE_CLASS, new];
-            app.setDelegate_(app_delegate);
-
-            let self_ptr = self as *const Self as *const c_void;
-            (*app).set_ivar(MAC_PLATFORM_IVAR, self_ptr);
-            (*app_delegate).set_ivar(MAC_PLATFORM_IVAR, self_ptr);
-
-            let pool = NSAutoreleasePool::new(nil);
-            app.run();
-            pool.drain();
-
-            (*app).set_ivar(MAC_PLATFORM_IVAR, null_mut::<c_void>());
-            (*app.delegate()).set_ivar(MAC_PLATFORM_IVAR, null_mut::<c_void>());
-        }
-    }
-
     fn dispatcher(&self) -> Arc<dyn platform::Dispatcher> {
         self.dispatcher.clone()
     }
@@ -434,26 +446,19 @@ impl platform::Platform for MacPlatform {
             }
         }
     }
-
-    fn set_menus(&self, menus: Vec<Menu>) {
-        unsafe {
-            let app: id = msg_send![APP_CLASS, sharedApplication];
-            app.setMainMenu_(self.create_menu_bar(menus));
-        }
-    }
 }
 
-unsafe fn get_platform(object: &mut Object) -> &MacPlatform {
-    let platform_ptr: *mut c_void = *object.get_ivar(MAC_PLATFORM_IVAR);
+unsafe fn get_lifecycle(object: &mut Object) -> &MacLifecycle {
+    let platform_ptr: *mut c_void = *object.get_ivar(MAC_LIFECYCLE_IVAR);
     assert!(!platform_ptr.is_null());
-    &*(platform_ptr as *const MacPlatform)
+    &*(platform_ptr as *const MacLifecycle)
 }
 
 extern "C" fn send_event(this: &mut Object, _sel: Sel, native_event: id) {
     unsafe {
         if let Some(event) = Event::from_native(native_event, None) {
-            let platform = get_platform(this);
-            if let Some(callback) = platform.callbacks.borrow_mut().event.as_mut() {
+            let platform = get_lifecycle(this);
+            if let Some(callback) = platform.0.borrow_mut().event.as_mut() {
                 if callback(event) {
                     return;
                 }
@@ -469,23 +474,24 @@ extern "C" fn did_finish_launching(this: &mut Object, _: Sel, _: id) {
         let app: id = msg_send![APP_CLASS, sharedApplication];
         app.setActivationPolicy_(NSApplicationActivationPolicyRegular);
 
-        let platform = get_platform(this);
-        if let Some(callback) = platform.callbacks.borrow_mut().finish_launching.take() {
+        let platform = get_lifecycle(this);
+        let callback = platform.0.borrow_mut().finish_launching.take();
+        if let Some(callback) = callback {
             callback();
         }
     }
 }
 
 extern "C" fn did_become_active(this: &mut Object, _: Sel, _: id) {
-    let platform = unsafe { get_platform(this) };
-    if let Some(callback) = platform.callbacks.borrow_mut().become_active.as_mut() {
+    let platform = unsafe { get_lifecycle(this) };
+    if let Some(callback) = platform.0.borrow_mut().become_active.as_mut() {
         callback();
     }
 }
 
 extern "C" fn did_resign_active(this: &mut Object, _: Sel, _: id) {
-    let platform = unsafe { get_platform(this) };
-    if let Some(callback) = platform.callbacks.borrow_mut().resign_active.as_mut() {
+    let platform = unsafe { get_lifecycle(this) };
+    if let Some(callback) = platform.0.borrow_mut().resign_active.as_mut() {
         callback();
     }
 }
@@ -506,19 +512,19 @@ extern "C" fn open_files(this: &mut Object, _: Sel, _: id, paths: id) {
             })
             .collect::<Vec<_>>()
     };
-    let platform = unsafe { get_platform(this) };
-    if let Some(callback) = platform.callbacks.borrow_mut().open_files.as_mut() {
+    let platform = unsafe { get_lifecycle(this) };
+    if let Some(callback) = platform.0.borrow_mut().open_files.as_mut() {
         callback(paths);
     }
 }
 
 extern "C" fn handle_menu_item(this: &mut Object, _: Sel, item: id) {
     unsafe {
-        let platform = get_platform(this);
-        if let Some(callback) = platform.callbacks.borrow_mut().menu_command.as_mut() {
+        let platform = get_lifecycle(this);
+        if let Some(callback) = platform.0.borrow_mut().menu_command.as_mut() {
             let tag: NSInteger = msg_send![item, tag];
             let index = tag as usize;
-            if let Some((action, arg)) = platform.menu_item_actions.borrow().get(index) {
+            if let Some((action, arg)) = platform.0.borrow_mut().menu_actions.get(index) {
                 callback(action, arg.as_ref().map(Box::as_ref));
             }
         }

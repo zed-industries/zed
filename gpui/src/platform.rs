@@ -27,14 +27,17 @@ use std::{
     sync::Arc,
 };
 
-pub trait Platform {
+pub(crate) trait Lifecycle {
     fn on_menu_command(&self, callback: Box<dyn FnMut(&str, Option<&dyn Any>)>);
     fn on_become_active(&self, callback: Box<dyn FnMut()>);
     fn on_resign_active(&self, callback: Box<dyn FnMut()>);
     fn on_event(&self, callback: Box<dyn FnMut(Event) -> bool>);
     fn on_open_files(&self, callback: Box<dyn FnMut(Vec<PathBuf>)>);
+    fn set_menus(&self, menus: Vec<Menu>);
     fn run(&self, on_finish_launching: Box<dyn FnOnce() -> ()>);
+}
 
+pub trait Platform {
     fn dispatcher(&self) -> Arc<dyn Dispatcher>;
     fn fonts(&self) -> Arc<dyn FontSystem>;
 
@@ -59,7 +62,6 @@ pub trait Platform {
     fn quit(&self);
     fn write_to_clipboard(&self, item: ClipboardItem);
     fn read_from_clipboard(&self) -> Option<ClipboardItem>;
-    fn set_menus(&self, menus: Vec<Menu>);
 }
 
 pub trait Dispatcher: Send + Sync {
