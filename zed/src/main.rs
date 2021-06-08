@@ -6,7 +6,7 @@ use log::LevelFilter;
 use simplelog::SimpleLogger;
 use std::{fs, path::PathBuf, sync::Arc};
 use zed::{
-    assets, editor, file_finder, language, menus, settings,
+    self, assets, editor, file_finder, language, menus, settings,
     workspace::{self, OpenParams},
     AppState,
 };
@@ -26,6 +26,8 @@ fn main() {
 
     app.run(move |cx| {
         cx.set_menus(menus::menus(app_state.clone()));
+
+        zed::init(cx);
         workspace::init(cx);
         editor::init(cx);
         file_finder::init(cx);

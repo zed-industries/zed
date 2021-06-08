@@ -121,6 +121,8 @@ impl super::Platform for Platform {
     fn read_from_clipboard(&self) -> Option<ClipboardItem> {
         self.current_clipboard_item.lock().clone()
     }
+
+    fn open_url(&self, _: &str) {}
 }
 
 impl Window {

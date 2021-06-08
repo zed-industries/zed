@@ -449,6 +449,16 @@ impl platform::Platform for MacPlatform {
             }
         }
     }
+
+    fn open_url(&self, url: &str) {
+        unsafe {
+            let url = NSURL::alloc(nil)
+                .initWithString_(ns_string(url))
+                .autorelease();
+            let workspace: id = msg_send![class!(NSWorkspace), sharedWorkspace];
+            msg_send![workspace, openURL: url]
+        }
+    }
 }
 
 unsafe fn get_foreground_platform(object: &mut Object) -> &MacForegroundPlatform {

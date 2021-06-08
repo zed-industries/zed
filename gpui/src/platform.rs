@@ -42,6 +42,7 @@ pub trait Platform: Send + Sync {
     fn quit(&self);
     fn write_to_clipboard(&self, item: ClipboardItem);
     fn read_from_clipboard(&self) -> Option<ClipboardItem>;
+    fn open_url(&self, url: &str);
 }
 
 pub(crate) trait ForegroundPlatform {

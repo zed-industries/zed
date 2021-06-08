@@ -29,7 +29,6 @@ use std::{
 pub fn init(cx: &mut MutableAppContext) {
     cx.add_global_action("workspace:open", open);
     cx.add_global_action("workspace:open_paths", open_paths);
-    cx.add_global_action("app:quit", quit);
     cx.add_action("workspace:save", Workspace::save_active_item);
     cx.add_action("workspace:debug_elements", Workspace::debug_elements);
     cx.add_action("workspace:new_file", Workspace::open_new_file);
@@ -96,10 +95,6 @@ fn open_paths(params: &OpenParams, cx: &mut MutableAppContext) {
         cx.foreground().spawn(open_paths).detach();
         view
     });
-}
-
-fn quit(_: &(), cx: &mut MutableAppContext) {
-    cx.platform().quit();
 }
 
 pub trait Item: Entity + Sized {

@@ -15,6 +15,12 @@ pub fn menus(state: AppState) -> Vec<Menu<'static>> {
                 },
                 MenuItem::Separator,
                 MenuItem::Action {
+                    name: "Log In",
+                    keystroke: None,
+                    action: "app:authenticate",
+                    arg: None,
+                },
+                MenuItem::Action {
                     name: "Quit",
                     keystroke: Some("cmd-q"),
                     action: "app:quit",
