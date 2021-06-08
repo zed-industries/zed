@@ -228,11 +228,7 @@ impl History {
         now: Instant,
     ) {
         self.transaction_depth += 1;
-        if self.transaction_depth == 1
-            && self.undo_stack.last().map_or(true, |transaction| {
-                transaction.end != start || (now - transaction.last_edit_at) > self.group_interval
-            })
-        {
+        if self.transaction_depth == 1 {
             self.undo_stack.push(Transaction {
                 start: start.clone(),
                 end: start,
@@ -262,6 +258,41 @@ impl History {
         } else {
             None
         }
+    }
+
+    fn group(&mut self) {
+        let mut new_len = self.undo_stack.len();
+        let mut transactions = self.undo_stack.iter_mut();
+
+        if let Some(mut transaction) = transactions.next_back() {
+            while let Some(prev_transaction) = transactions.next_back() {
+                if transaction.first_edit_at - prev_transaction.last_edit_at <= self.group_interval
+                    && transaction.start == prev_transaction.end
+                {
+                    transaction = prev_transaction;
+                    new_len -= 1;
+                } else {
+                    break;
+                }
+            }
+        }
+
+        let (transactions_to_keep, transactions_to_merge) = self.undo_stack.split_at_mut(new_len);
+        if let Some(last_transaction) = transactions_to_keep.last_mut() {
+            for transaction in &*transactions_to_merge {
+                for edit_id in &transaction.edits {
+                    last_transaction.push_edit(&self.ops[edit_id]);
+                }
+            }
+
+            if let Some(transaction) = transactions_to_merge.last_mut() {
+                last_transaction.last_edit_at = transaction.last_edit_at;
+                last_transaction.selections_after = transaction.selections_after.take();
+                last_transaction.end = transaction.end.clone();
+            }
+        }
+
+        self.undo_stack.truncate(new_len);
     }
 
     fn push_undo(&mut self, edit_id: time::Local) {
@@ -931,6 +962,7 @@ impl Buffer {
         if let Some(transaction) = self.history.end_transaction(selections, now) {
             let since = transaction.start.clone();
             let was_dirty = transaction.buffer_was_dirty;
+            self.history.group();
 
             if let Some(cx) = cx {
                 cx.notify();
