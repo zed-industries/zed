@@ -2307,14 +2307,6 @@ mod tests {
     };
 
     #[gpui::test]
-    fn test_transaction_push_edit(cx: &mut gpui::MutableAppContext) {
-        let buffer = cx.add_model(|cx| Buffer::new(0, "", cx));
-        buffer.update(cx, |buf, cx| buf.edit(Some(0..0), "a", Some(cx)));
-        buffer.update(cx, |buf, cx| buf.edit(Some(1..1), "b", Some(cx)));
-        buffer.update(cx, |buf, cx| buf.edit(Some(2..2), "c", Some(cx)));
-    }
-
-    #[gpui::test]
     fn test_edit(cx: &mut gpui::MutableAppContext) {
         cx.add_model(|cx| {
             let mut buffer = Buffer::new(0, "abc", cx);
