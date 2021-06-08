@@ -1,0 +1,11 @@
+[package]
+name = "zed-rpc"
+description = "Shared logic for communication between the Zed app and the zed.dev server"
+edition = "2018"
+version = "0.1.0"
+
+[dependencies]
+anyhow = "1.0"
+base64 = "0.13"
+rsa = "0.4"
+rand = "0.8"

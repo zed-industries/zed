@@ -1,3 +1,5 @@
+use std::convert::TryInto;
+
 use anyhow::{anyhow, Context};
 use gpui::MutableAppContext;
 use smol::io::{AsyncBufReadExt, AsyncWriteExt};
@@ -33,15 +35,18 @@ fn authenticate(_: &(), cx: &mut MutableAppContext) {
     let zed_url = std::env::var("ZED_SERVER_URL").unwrap_or("https://zed.dev".to_string());
     let platform = cx.platform().clone();
 
-    dbg!(&zed_url);
-
     let task = cx.background_executor().spawn(async move {
         let listener = smol::net::TcpListener::bind("127.0.0.1:0").await?;
         let port = listener.local_addr()?.port();
 
+        let (public_key, private_key) =
+            zed_rpc::auth::keypair().expect("failed to generate keypair for auth");
+
+        let public_key_string: String = public_key.try_into().unwrap();
+
         platform.open_url(&format!(
-            "{}/sign_in?native_app_port={}&native_app_public_key=unused-for-now",
-            zed_url, port,
+            "{}/sign_in?native_app_port={}&native_app_public_key={}",
+            zed_url, port, public_key_string
         ));
 
         let (mut stream, _) = listener.accept().await?;
@@ -54,13 +59,13 @@ fn authenticate(_: &(), cx: &mut MutableAppContext) {
             if let Some(path) = parts.next() {
                 let url = Url::parse(&format!("http://example.com{}", path))
                     .context("failed to parse login notification url")?;
+                let mut user_id = None;
                 let mut access_token = None;
-                let mut public_key = None;
                 for (key, value) in url.query_pairs() {
                     if key == "access_token" {
                         access_token = Some(value);
-                    } else if key == "public_key" {
-                        public_key = Some(value);
+                    } else if key == "user_id" {
+                        user_id = Some(value);
                     }
                 }
                 stream
@@ -69,10 +74,13 @@ fn authenticate(_: &(), cx: &mut MutableAppContext) {
                     .context("failed to write login response")?;
                 stream.flush().await.context("failed to flush tcp stream")?;
 
-                eprintln!(
-                    "logged in. access_token: {:?}, public_key: {:?}",
-                    access_token, public_key
-                );
+                if let Some((user_id, access_token)) = user_id.zip(access_token) {
+                    let access_token = private_key.decrypt_string(&access_token);
+                    eprintln!(
+                        "logged in. user_id: {}, access_token: {:?}",
+                        user_id, access_token
+                    );
+                }
 
                 platform.activate(true);
                 return Ok(());
