@@ -319,7 +319,14 @@ mod tests {
     fn test_layout_str() -> anyhow::Result<()> {
         let fonts = FontSystem::new();
         let menlo = fonts.load_family("Menlo")?;
-        let menlo_regular = fonts.select_font(&menlo, &Properties::new())?;
+
+        // Added to investigate flaky tests we're seeing on CI. https://github.com/zed-industries/zed/issues/85
+        assert_eq!(menlo.len(), 4);
+        for font_id in &menlo {
+            assert_eq!(fonts.0.write().fonts[font_id.0].family_name(), "Menlo");
+        }
+
+        let menlo_regular = fonts.select_font(&menlo, &Properties::default())?;
         let menlo_italic = fonts.select_font(&menlo, &Properties::new().style(Style::Italic))?;
         let menlo_bold = fonts.select_font(&menlo, &Properties::new().weight(Weight::BOLD))?;
         assert_ne!(menlo_regular, menlo_italic);
