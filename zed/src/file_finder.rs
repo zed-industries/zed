@@ -677,8 +677,19 @@ mod tests {
                 )
             })
             .await;
-        cx.read(|cx| workspace.read(cx).worktree_scans_complete(cx))
+
+        workspace
+            .read_with(&cx, |workspace, cx| workspace.worktree_scans_complete(cx))
             .await;
+
+        // Added to investigate flaky tests we're seeing on CI. https://github.com/zed-industries/zed/issues/87
+        workspace.read_with(&cx, |workspace, cx| {
+            let worktrees = workspace.worktrees();
+            assert_eq!(worktrees.len(), 2);
+            for worktree in worktrees {
+                assert_eq!(worktree.read(cx).file_count(), 1);
+            }
+        });
 
         let (_, finder) =
             cx.add_window(|cx| FileFinder::new(app_state.settings, workspace.clone(), cx));
