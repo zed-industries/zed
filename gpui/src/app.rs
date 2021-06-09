@@ -264,6 +264,12 @@ impl TestAppContext {
         );
     }
 
+    pub fn dispatch_global_action<T: 'static + Any>(&self, name: &str, arg: T) {
+        self.0
+            .borrow_mut()
+            .dispatch_global_action(name, arg);
+    }
+
     pub fn dispatch_keystroke(
         &self,
         window_id: usize,
