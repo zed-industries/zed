@@ -3461,7 +3461,7 @@ mod tests {
         where
             T: Rng,
         {
-            let (old_ranges, new_text, operation) = self.randomly_edit(rng, 2, cx.as_deref_mut());
+            let (old_ranges, new_text, operation) = self.randomly_edit(rng, 5, cx.as_deref_mut());
             let mut operations = Vec::from_iter(operation);
 
             // Randomly add, remove or mutate selection sets.
