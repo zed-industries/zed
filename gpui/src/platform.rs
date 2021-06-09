@@ -40,9 +40,13 @@ pub trait Platform: Send + Sync {
     ) -> Box<dyn Window>;
     fn key_window_id(&self) -> Option<usize>;
     fn quit(&self);
+
     fn write_to_clipboard(&self, item: ClipboardItem);
     fn read_from_clipboard(&self) -> Option<ClipboardItem>;
     fn open_url(&self, url: &str);
+
+    fn write_credentials(&self, url: &str, username: &str, password: &[u8]);
+    fn read_credentials(&self, url: &str) -> Option<(String, Vec<u8>)>;
 }
 
 pub(crate) trait ForegroundPlatform {

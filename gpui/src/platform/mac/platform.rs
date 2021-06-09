@@ -10,6 +10,13 @@ use cocoa::{
     base::{id, nil, selector},
     foundation::{NSArray, NSAutoreleasePool, NSData, NSInteger, NSString, NSURL},
 };
+use core_foundation::{
+    base::{CFType, CFTypeRef, OSStatus, TCFType as _},
+    boolean::CFBoolean,
+    data::CFData,
+    dictionary::{CFDictionary, CFDictionaryRef, CFMutableDictionary},
+    string::{CFString, CFStringRef},
+};
 use ctor::ctor;
 use objc::{
     class,
@@ -459,6 +466,86 @@ impl platform::Platform for MacPlatform {
             msg_send![workspace, openURL: url]
         }
     }
+
+    fn write_credentials(&self, url: &str, username: &str, password: &[u8]) {
+        let url = CFString::from(url);
+        let username = CFString::from(username);
+        let password = CFData::from_buffer(password);
+
+        unsafe {
+            use security::*;
+
+            // First, check if there are already credentials for the given server. If so, then
+            // update the username and password.
+            let mut verb = "updating";
+            let mut query_attrs = CFMutableDictionary::with_capacity(2);
+            query_attrs.set(kSecClass as *const _, kSecClassInternetPassword as *const _);
+            query_attrs.set(kSecAttrServer as *const _, url.as_CFTypeRef());
+
+            let mut attrs = CFMutableDictionary::with_capacity(4);
+            attrs.set(kSecClass as *const _, kSecClassInternetPassword as *const _);
+            attrs.set(kSecAttrServer as *const _, url.as_CFTypeRef());
+            attrs.set(kSecAttrAccount as *const _, username.as_CFTypeRef());
+            attrs.set(kSecValueData as *const _, password.as_CFTypeRef());
+
+            let mut status = SecItemUpdate(
+                query_attrs.as_concrete_TypeRef(),
+                attrs.as_concrete_TypeRef(),
+            );
+
+            // If there were no existing credentials for the given server, then create them.
+            if status == errSecItemNotFound {
+                verb = "creating";
+                status = SecItemAdd(attrs.as_concrete_TypeRef(), ptr::null_mut());
+            }
+
+            if status != errSecSuccess {
+                panic!("{} password failed: {}", verb, status);
+            }
+        }
+    }
+
+    fn read_credentials(&self, url: &str) -> Option<(String, Vec<u8>)> {
+        let url = CFString::from(url);
+        let cf_true = CFBoolean::true_value().as_CFTypeRef();
+
+        unsafe {
+            use security::*;
+
+            // Find any credentials for the given server URL.
+            let mut attrs = CFMutableDictionary::with_capacity(5);
+            attrs.set(kSecClass as *const _, kSecClassInternetPassword as *const _);
+            attrs.set(kSecAttrServer as *const _, url.as_CFTypeRef());
+            attrs.set(kSecReturnAttributes as *const _, cf_true);
+            attrs.set(kSecReturnData as *const _, cf_true);
+
+            let mut result = CFTypeRef::from(ptr::null_mut());
+            let status = SecItemCopyMatching(attrs.as_concrete_TypeRef(), &mut result);
+            match status {
+                security::errSecSuccess => {}
+                security::errSecItemNotFound => return None,
+                _ => panic!("reading password failed: {}", status),
+            }
+
+            let result = CFType::wrap_under_create_rule(result)
+                .downcast::<CFDictionary>()
+                .expect("keychain item was not a dictionary");
+            let username = result
+                .find(kSecAttrAccount as *const _)
+                .expect("account was missing from keychain item");
+            let username = CFType::wrap_under_get_rule(*username)
+                .downcast::<CFString>()
+                .expect("account was not a string");
+            let password = result
+                .find(kSecValueData as *const _)
+                .expect("password was missing from keychain item");
+            let password = CFType::wrap_under_get_rule(*password)
+                .downcast::<CFData>()
+                .expect("password was not a string");
+
+            Some((username.to_string(), password.bytes().to_vec()))
+        }
+    }
 }
 
 unsafe fn get_foreground_platform(object: &mut Object) -> &MacForegroundPlatform {
@@ -548,6 +635,29 @@ extern "C" fn handle_menu_item(this: &mut Object, _: Sel, item: id) {
 
 unsafe fn ns_string(string: &str) -> id {
     NSString::alloc(nil).init_str(string).autorelease()
+}
+
+mod security {
+    #![allow(non_upper_case_globals)]
+    use super::*;
+
+    #[link(name = "Security", kind = "framework")]
+    extern "C" {
+        pub static kSecClass: CFStringRef;
+        pub static kSecClassInternetPassword: CFStringRef;
+        pub static kSecAttrServer: CFStringRef;
+        pub static kSecAttrAccount: CFStringRef;
+        pub static kSecValueData: CFStringRef;
+        pub static kSecReturnAttributes: CFStringRef;
+        pub static kSecReturnData: CFStringRef;
+
+        pub fn SecItemAdd(attributes: CFDictionaryRef, result: *mut CFTypeRef) -> OSStatus;
+        pub fn SecItemUpdate(query: CFDictionaryRef, attributes: CFDictionaryRef) -> OSStatus;
+        pub fn SecItemCopyMatching(query: CFDictionaryRef, result: *mut CFTypeRef) -> OSStatus;
+    }
+
+    pub const errSecSuccess: OSStatus = 0;
+    pub const errSecItemNotFound: OSStatus = -25300;
 }
 
 #[cfg(test)]

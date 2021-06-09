@@ -123,6 +123,12 @@ impl super::Platform for Platform {
     }
 
     fn open_url(&self, _: &str) {}
+
+    fn write_credentials(&self, _: &str, _: &str, _: &[u8]) {}
+
+    fn read_credentials(&self, _: &str) -> Option<(String, Vec<u8>)> {
+        None
+    }
 }
 
 impl Window {
