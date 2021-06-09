@@ -29,7 +29,7 @@ pub fn menus(state: AppState) -> Vec<Menu<'static>> {
                     name: "New",
                     keystroke: Some("cmd-n"),
                     action: "workspace:new_file",
-                    arg: None,
+                    arg: Some(Box::new(state.clone())),
                 },
                 MenuItem::Separator,
                 MenuItem::Action {

@@ -29,6 +29,7 @@ use std::{
 pub fn init(cx: &mut MutableAppContext) {
     cx.add_global_action("workspace:open", open);
     cx.add_global_action("workspace:open_paths", open_paths);
+    cx.add_global_action("workspace:new_file", open_new);
     cx.add_global_action("app:quit", quit);
     cx.add_action("workspace:save", Workspace::save_active_item);
     cx.add_action("workspace:debug_elements", Workspace::debug_elements);
@@ -94,6 +95,19 @@ fn open_paths(params: &OpenParams, cx: &mut MutableAppContext) {
         );
         let open_paths = view.open_paths(&params.paths, cx);
         cx.foreground().spawn(open_paths).detach();
+        view
+    });
+}
+
+fn open_new(app_state: &AppState, cx: &mut MutableAppContext) {
+    cx.add_window(|cx| {
+        let mut view = Workspace::new(
+            0,
+            app_state.settings.clone(),
+            app_state.language_registry.clone(),
+            cx,
+        );
+        view.open_new_file(&app_state, cx);
         view
     });
 }
@@ -449,7 +463,7 @@ impl Workspace {
         }
     }
 
-    pub fn open_new_file(&mut self, _: &(), cx: &mut ViewContext<Self>) {
+    pub fn open_new_file(&mut self, _: &AppState, cx: &mut ViewContext<Self>) {
         let buffer = cx.add_model(|cx| Buffer::new(self.replica_id, "", cx));
         let buffer_view =
             cx.add_view(|cx| Editor::for_buffer(buffer.clone(), self.settings.clone(), cx));
