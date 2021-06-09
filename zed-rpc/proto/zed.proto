@@ -1,0 +1,27 @@
+syntax = "proto3";
+package zed.messages;
+
+message FromClient {
+    int32 id = 1;
+
+    oneof variant {
+        Auth auth = 2;
+    }
+
+    message Auth {
+        int32 user_id = 1;
+        string access_token = 2;
+    }
+}
+
+message FromServer {
+    optional int32 request_id = 1;
+
+    oneof variant {
+        Ack ack = 2;
+    }
+
+    message Ack {
+        optional string error_message = 1;
+    }
+}
