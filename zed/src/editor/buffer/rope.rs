@@ -131,7 +131,7 @@ impl Rope {
         let mut cursor = self.chunks.cursor::<usize, Point>();
         cursor.seek(&offset, Bias::Left, &());
         let overshoot = offset - cursor.seek_start();
-        *cursor.start()
+        *cursor.sum_start()
             + cursor
                 .item()
                 .map_or(Point::zero(), |chunk| chunk.to_point(overshoot))
@@ -142,7 +142,7 @@ impl Rope {
         let mut cursor = self.chunks.cursor::<Point, usize>();
         cursor.seek(&point, Bias::Left, &());
         let overshoot = point - cursor.seek_start();
-        cursor.start() + cursor.item().map_or(0, |chunk| chunk.to_offset(overshoot))
+        cursor.sum_start() + cursor.item().map_or(0, |chunk| chunk.to_offset(overshoot))
     }
 
     pub fn clip_offset(&self, mut offset: usize, bias: Bias) -> usize {

@@ -59,17 +59,17 @@ where
         }
     }
 
-    pub fn start(&self) -> &U {
+    pub fn sum_start(&self) -> &U {
         &self.sum_dimension
     }
 
     pub fn end(&self, cx: &<T::Summary as Summary>::Context) -> U {
         if let Some(item_summary) = self.item_summary() {
-            let mut end = self.start().clone();
+            let mut end = self.sum_start().clone();
             end.add_summary(item_summary, cx);
             end
         } else {
-            self.start().clone()
+            self.sum_start().clone()
         }
     }
 
@@ -627,7 +627,7 @@ where
     }
 
     pub fn start(&self) -> &U {
-        self.cursor.start()
+        self.cursor.sum_start()
     }
 
     pub fn item(&self) -> Option<&'a T> {

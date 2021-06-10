@@ -245,7 +245,7 @@ impl FoldMap {
         let mut cursor = transforms.cursor::<DisplayPoint, Point>();
         cursor.seek(&display_point, Bias::Right, &());
         let overshoot = display_point.0 - cursor.seek_start().0;
-        *cursor.start() + overshoot
+        *cursor.sum_start() + overshoot
     }
 
     pub fn to_display_point(&self, point: Point, cx: &AppContext) -> DisplayPoint {
@@ -253,7 +253,10 @@ impl FoldMap {
         let mut cursor = transforms.cursor::<Point, DisplayPoint>();
         cursor.seek(&point, Bias::Right, &());
         let overshoot = point - cursor.seek_start();
-        DisplayPoint(cmp::min(cursor.start().0 + overshoot, cursor.end(&()).0))
+        DisplayPoint(cmp::min(
+            cursor.sum_start().0 + overshoot,
+            cursor.end(&()).0,
+        ))
     }
 
     fn sync(&self, cx: &AppContext) -> MutexGuard<SumTree<Transform>> {
@@ -443,7 +446,7 @@ impl FoldMapSnapshot {
         let mut transform_cursor = self.transforms.cursor::<DisplayOffset, usize>();
         transform_cursor.seek(&offset, Bias::Right, &());
         let overshoot = offset.0 - transform_cursor.seek_start().0;
-        let buffer_offset = transform_cursor.start() + overshoot;
+        let buffer_offset = transform_cursor.sum_start() + overshoot;
         Chunks {
             transform_cursor,
             buffer_offset,
@@ -456,11 +459,11 @@ impl FoldMapSnapshot {
 
         transform_cursor.seek(&range.end, Bias::Right, &());
         let overshoot = range.end.0 - transform_cursor.seek_start().0;
-        let buffer_end = transform_cursor.start() + overshoot;
+        let buffer_end = transform_cursor.sum_start() + overshoot;
 
         transform_cursor.seek(&range.start, Bias::Right, &());
         let overshoot = range.start.0 - transform_cursor.seek_start().0;
-        let buffer_start = transform_cursor.start() + overshoot;
+        let buffer_start = transform_cursor.sum_start() + overshoot;
 
         HighlightedChunks {
             transform_cursor,
@@ -480,15 +483,15 @@ impl FoldMapSnapshot {
     pub fn to_display_offset(&self, point: DisplayPoint) -> DisplayOffset {
         let mut cursor = self.transforms.cursor::<DisplayPoint, TransformSummary>();
         cursor.seek(&point, Bias::Right, &());
-        let overshoot = point.0 - cursor.start().display.lines;
-        let mut offset = cursor.start().display.bytes;
+        let overshoot = point.0 - cursor.sum_start().display.lines;
+        let mut offset = cursor.sum_start().display.bytes;
         if !overshoot.is_zero() {
             let transform = cursor.item().expect("display point out of range");
             assert!(transform.display_text.is_none());
             let end_buffer_offset = self
                 .buffer
-                .to_offset(cursor.start().buffer.lines + overshoot);
-            offset += end_buffer_offset - cursor.start().buffer.bytes;
+                .to_offset(cursor.sum_start().buffer.lines + overshoot);
+            offset += end_buffer_offset - cursor.sum_start().buffer.bytes;
         }
         DisplayOffset(offset)
     }
@@ -497,7 +500,7 @@ impl FoldMapSnapshot {
         let mut cursor = self.transforms.cursor::<DisplayPoint, Point>();
         cursor.seek(&point, Bias::Right, &());
         let overshoot = point.0 - cursor.seek_start().0;
-        self.buffer.to_offset(*cursor.start() + overshoot)
+        self.buffer.to_offset(*cursor.sum_start() + overshoot)
     }
 
     #[cfg(test)]
@@ -514,7 +517,7 @@ impl FoldMapSnapshot {
                 }
             } else {
                 let overshoot = offset.0 - transform_start;
-                let buffer_offset = cursor.start() + overshoot;
+                let buffer_offset = cursor.sum_start() + overshoot;
                 let clipped_buffer_offset = self.buffer.clip_offset(buffer_offset, bias);
                 DisplayOffset(
                     (offset.0 as isize + (clipped_buffer_offset as isize - buffer_offset as isize))
@@ -539,7 +542,7 @@ impl FoldMapSnapshot {
                 }
             } else {
                 let overshoot = point.0 - transform_start;
-                let buffer_position = *cursor.start() + overshoot;
+                let buffer_position = *cursor.sum_start() + overshoot;
                 let clipped_buffer_position = self.buffer.clip_point(buffer_position, bias);
                 DisplayPoint::new(
                     point.row(),
@@ -695,7 +698,7 @@ impl<'a> Iterator for BufferRows<'a> {
 
         if self.cursor.item().is_some() {
             let overshoot = self.display_point - self.cursor.seek_start().0;
-            let buffer_point = *self.cursor.start() + overshoot;
+            let buffer_point = *self.cursor.sum_start() + overshoot;
             self.display_point.row += 1;
             Some(buffer_point.row)
         } else {
