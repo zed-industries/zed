@@ -37,18 +37,6 @@ impl<'a, T: Summary> Dimension<'a, T> for () {
     fn add_summary(&mut self, _: &'a T, _: &T::Context) {}
 }
 
-impl<'a, S, D1, D2> Dimension<'a, S> for (D1, D2)
-where
-    S: Summary,
-    D1: Dimension<'a, S>,
-    D2: Dimension<'a, S>,
-{
-    fn add_summary(&mut self, summary: &'a S, cx: &S::Context) {
-        self.0.add_summary(summary, cx);
-        self.1.add_summary(summary, cx);
-    }
-}
-
 pub trait SeekDimension<'a, T: Summary>: Dimension<'a, T> {
     fn cmp(&self, other: &Self, cx: &T::Context) -> Ordering;
 }

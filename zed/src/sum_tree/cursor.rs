@@ -45,6 +45,10 @@ where
         self.sum_dimension = U::default();
     }
 
+    pub fn seek_start(&self) -> &S {
+        &self.seek_dimension
+    }
+
     pub fn start(&self) -> &U {
         &self.sum_dimension
     }

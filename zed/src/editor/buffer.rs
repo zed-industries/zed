@@ -1679,9 +1679,7 @@ impl Buffer {
                 bias,
                 version,
             } => {
-                let mut cursor = self
-                    .fragments
-                    .cursor::<VersionedOffset, (VersionedOffset, usize)>();
+                let mut cursor = self.fragments.cursor::<VersionedOffset, usize>();
                 cursor.seek(
                     &VersionedOffset::Offset(*offset),
                     *bias,
@@ -1689,12 +1687,12 @@ impl Buffer {
                 );
                 let fragment = cursor.item().unwrap();
                 let overshoot = if fragment.visible {
-                    offset - cursor.start().0.offset()
+                    offset - cursor.seek_start().offset()
                 } else {
                     0
                 };
 
-                self.text_summary_for_range(0..cursor.start().1 + overshoot)
+                self.text_summary_for_range(0..cursor.start() + overshoot)
             }
         }
     }
@@ -1713,14 +1711,14 @@ impl Buffer {
             } => {
                 let mut cursor = self
                     .fragments
-                    .cursor::<VersionedOffset, (VersionedOffset, FragmentTextSummary)>();
+                    .cursor::<VersionedOffset, FragmentTextSummary>();
                 cursor.seek(
                     &VersionedOffset::Offset(*offset),
                     *bias,
                     &Some(version.clone()),
                 );
-                let overshoot = offset - cursor.start().0.offset();
-                let summary = cursor.start().1;
+                let overshoot = offset - cursor.seek_start().offset();
+                let summary = cursor.start();
                 summary.visible + summary.deleted + overshoot
             }
         }
