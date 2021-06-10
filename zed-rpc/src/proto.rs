@@ -5,13 +5,24 @@ use std::io;
 
 include!(concat!(env!("OUT_DIR"), "/zed.messages.rs"));
 
+use from_client as client;
+use from_server as server;
+
 pub trait Request {
     type Response;
 }
 
-impl Request for from_client::Auth {
-    type Response = from_server::Ack;
+macro_rules! request_response {
+    ($req:path, $resp:path) => {
+        impl Request for $req {
+            type Response = $resp;
+        }
+    };
 }
+
+request_response!(client::Auth, server::AuthResponse);
+request_response!(client::NewWorktree, server::NewWorktreeResponse);
+request_response!(client::ShareWorktree, server::ShareWorktreeResponse);
 
 /// A stream of protobuf messages.
 pub struct MessageStream<T> {

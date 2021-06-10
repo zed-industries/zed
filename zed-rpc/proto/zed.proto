@@ -6,11 +6,31 @@ message FromClient {
 
     oneof variant {
         Auth auth = 2;
+        NewWorktree new_worktree = 3;
+        ShareWorktree share_worktree = 4;
+        UploadFile upload_file = 5;
     }
 
     message Auth {
         int32 user_id = 1;
         string access_token = 2;
+    }
+
+    message NewWorktree {}
+
+    message ShareWorktree {
+        uint64 worktree_id = 1;
+        repeated PathAndDigest files = 2;
+    }
+
+    message PathAndDigest {
+        bytes path = 1;
+        bytes digest = 2;
+    }
+
+    message UploadFile {
+        bytes path = 1;
+        bytes content = 2;
     }
 }
 
@@ -18,10 +38,20 @@ message FromServer {
     optional int32 request_id = 1;
 
     oneof variant {
-        Ack ack = 2;
+        AuthResponse auth_response = 2;
+        NewWorktreeResponse new_worktree_response = 3;
+        ShareWorktreeResponse share_worktree_response = 4;
     }
 
-    message Ack {
-        optional string error_message = 1;
+    message AuthResponse {
+        bool credentials_valid = 1;
+    }
+
+    message NewWorktreeResponse {
+        uint64 worktree_id = 1;
+    }
+
+    message ShareWorktreeResponse {
+        repeated int32 needed_file_indices = 1;
     }
 }
