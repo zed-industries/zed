@@ -1,0 +1,19 @@
+@startuml
+
+participant "Zed App" as app
+participant "Zed HTTP server" as server
+participant "Zed RPC server" as rpc_server
+
+app -> server: POST worktrees\n(user id, access token)
+server -> app: OK\n(worktree id, RPC server address)
+
+app -> rpc_server: Connect to the given RPC server address
+app -> rpc_server: **Auth**\n(user id, access token)
+rnote over rpc_server: Load access token hashes for user.\nVerify that one matches the given access token.
+rpc_server -> app: **AuthResponse**\n(credentials valid)
+
+app -> rpc_server: **ShareWorktree**\n(worktree_id, file paths, file digests)
+rnote over rpc_server: Load existing files.\nIdentify which are needed.
+rpc_server -> app: **ShareWorktreeResponse**\n(needed path indices)
+
+@enduml

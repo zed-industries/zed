@@ -1,0 +1,17 @@
+@startuml
+
+participant "Zed App" as app
+participant "Browser" as browser
+participant "Zed HTTP server" as server
+
+rnote over app: Generate encryption keypair.\nListen on an open TCP port.
+app -> browser: Open sign-in page\n(public key, TCP port)
+browser -> server: Sign in\n(app's public key, app's TCP port)
+
+rnote over server: Generate access token.\nEncrypt it with app's public key.
+server -> browser: Redirect to loopback with app's port\n(user id, encrypted access token)
+browser -> app: Follow redirect\n(user id, encrypted access token)
+
+rnote over app: Decrypt access token with private key.\nSave credentials to keychain.
+
+@enduml
