@@ -523,7 +523,7 @@ impl platform::Platform for MacPlatform {
             let status = SecItemCopyMatching(attrs.as_concrete_TypeRef(), &mut result);
             match status {
                 security::errSecSuccess => {}
-                security::errSecItemNotFound => return None,
+                security::errSecItemNotFound | security::errSecUserCanceled => return None,
                 _ => panic!("reading password failed: {}", status),
             }
 
@@ -657,6 +657,7 @@ mod security {
     }
 
     pub const errSecSuccess: OSStatus = 0;
+    pub const errSecUserCanceled: OSStatus = -128;
     pub const errSecItemNotFound: OSStatus = -25300;
 }
 
