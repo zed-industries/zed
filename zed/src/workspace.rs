@@ -29,6 +29,7 @@ use std::{
 pub fn init(cx: &mut MutableAppContext) {
     cx.add_global_action("workspace:open", open);
     cx.add_global_action("workspace:open_paths", open_paths);
+    cx.add_global_action("workspace:new_file", open_new);
     cx.add_global_action("app:quit", quit);
     cx.add_action("workspace:save", Workspace::save_active_item);
     cx.add_action("workspace:debug_elements", Workspace::debug_elements);
@@ -94,6 +95,19 @@ fn open_paths(params: &OpenParams, cx: &mut MutableAppContext) {
         );
         let open_paths = view.open_paths(&params.paths, cx);
         cx.foreground().spawn(open_paths).detach();
+        view
+    });
+}
+
+fn open_new(app_state: &AppState, cx: &mut MutableAppContext) {
+    cx.add_window(|cx| {
+        let mut view = Workspace::new(
+            0,
+            app_state.settings.clone(),
+            app_state.language_registry.clone(),
+            cx,
+        );
+        view.open_new_file(&app_state, cx);
         view
     });
 }
@@ -449,7 +463,7 @@ impl Workspace {
         }
     }
 
-    pub fn open_new_file(&mut self, _: &(), cx: &mut ViewContext<Self>) {
+    pub fn open_new_file(&mut self, _: &AppState, cx: &mut ViewContext<Self>) {
         let buffer = cx.add_model(|cx| Buffer::new(self.replica_id, "", cx));
         let buffer_view =
             cx.add_view(|cx| Editor::for_buffer(buffer.clone(), self.settings.clone(), cx));
@@ -1071,9 +1085,10 @@ mod tests {
     async fn test_open_and_save_new_file(mut cx: gpui::TestAppContext) {
         let dir = TempDir::new("test-new-file").unwrap();
         let app_state = cx.read(build_app_state);
+        let app_state2 = app_state.clone();
         let (_, workspace) = cx.add_window(|cx| {
             let mut workspace =
-                Workspace::new(0, app_state.settings, app_state.language_registry, cx);
+                Workspace::new(0, app_state2.settings, app_state2.language_registry, cx);
             workspace.add_worktree(dir.path(), cx);
             workspace
         });
@@ -1089,8 +1104,9 @@ mod tests {
         tree.flush_fs_events(&cx).await;
 
         // Create a new untitled buffer
+        let app_state2 = app_state.clone();
         let editor = workspace.update(&mut cx, |workspace, cx| {
-            workspace.open_new_file(&(), cx);
+            workspace.open_new_file(&app_state2, cx);
             workspace
                 .active_item(cx)
                 .unwrap()
@@ -1098,6 +1114,7 @@ mod tests {
                 .downcast::<Editor>()
                 .unwrap()
         });
+
         editor.update(&mut cx, |editor, cx| {
             assert!(!editor.is_dirty(cx.as_ref()));
             assert_eq!(editor.title(cx.as_ref()), "untitled");
@@ -1140,7 +1157,7 @@ mod tests {
         // Open the same newly-created file in another pane item. The new editor should reuse
         // the same buffer.
         workspace.update(&mut cx, |workspace, cx| {
-            workspace.open_new_file(&(), cx);
+            workspace.open_new_file(&app_state, cx);
             workspace.split_pane(workspace.active_pane().clone(), SplitDirection::Right, cx);
             assert!(workspace
                 .open_entry((tree.id(), Path::new("the-new-name").into()), cx)
@@ -1157,6 +1174,25 @@ mod tests {
         cx.read(|cx| {
             assert_eq!(editor2.read(cx).buffer(), editor.read(cx).buffer());
         })
+    }
+
+    #[gpui::test]
+    async fn test_new_empty_workspace(mut cx: gpui::TestAppContext) {
+        cx.update(init);
+
+        let app_state = cx.read(build_app_state);
+        cx.dispatch_global_action("workspace:new_file", app_state);
+        let window_id = *cx.window_ids().first().unwrap();
+        let workspace = cx.root_view::<Workspace>(window_id).unwrap();
+        workspace.update(&mut cx, |workspace, cx| {
+            let editor = workspace
+                .active_item(cx)
+                .unwrap()
+                .to_any()
+                .downcast::<Editor>()
+                .unwrap();
+            assert!(editor.read(cx).text(cx.as_ref()).is_empty());
+        });
     }
 
     #[gpui::test]
