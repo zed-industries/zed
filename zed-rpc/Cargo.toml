@@ -12,6 +12,7 @@ futures-lite = "1"
 prost = "0.7"
 rsa = "0.4"
 rand = "0.8"
+serde = { version = "1", features = ["derive"] }
 
 [build-dependencies]
 prost-build = { git = "https://github.com/sfackler/prost", rev = "082f3e65874fe91382e72482863896b7b4db3728" }

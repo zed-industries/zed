@@ -2,7 +2,7 @@ use crate::{
     elements::ElementBox,
     executor,
     keymap::{self, Keystroke},
-    platform::{self, PromptLevel, WindowOptions},
+    platform::{self, Platform, PromptLevel, WindowOptions},
     presenter::Presenter,
     util::{post_inc, timeout},
     AssetCache, AssetSource, ClipboardItem, FontCache, PathPromptOptions, TextLayoutCache,
@@ -410,6 +410,10 @@ impl AsyncAppContext {
         F: FnOnce(&mut ModelContext<T>) -> T,
     {
         self.update(|cx| cx.add_model(build_model))
+    }
+
+    pub fn platform(&self) -> Arc<dyn Platform> {
+        self.0.borrow().platform()
     }
 
     pub fn background_executor(&self) -> Arc<executor::Background> {
