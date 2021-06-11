@@ -34,7 +34,7 @@ pub fn init(cx: &mut MutableAppContext) {
 fn share_worktree(_: &(), cx: &mut MutableAppContext) {
     let zed_url = std::env::var("ZED_SERVER_URL").unwrap_or("https://zed.dev".to_string());
     cx.spawn::<_, _, surf::Result<()>>(|cx| async move {
-        let (user_id, access_token) = login(zed_url.clone(), cx).await?;
+        let (user_id, access_token) = login(zed_url.clone(), &cx).await?;
 
         let mut response = surf::post(format!("{}/api/worktrees", &zed_url))
             .header(
@@ -70,7 +70,7 @@ fn share_worktree(_: &(), cx: &mut MutableAppContext) {
     .detach();
 }
 
-fn login(zed_url: String, cx: AsyncAppContext) -> Task<Result<(String, String)>> {
+fn login(zed_url: String, cx: &AsyncAppContext) -> Task<Result<(String, String)>> {
     let platform = cx.platform();
     cx.background_executor().spawn(async move {
         if let Some((user_id, access_token)) = platform.read_credentials(&zed_url) {
