@@ -5,24 +5,72 @@ use std::io;
 
 include!(concat!(env!("OUT_DIR"), "/zed.messages.rs"));
 
-use from_client as client;
-use from_server as server;
-
-pub trait Request {
-    type Response;
+/// A message that the client can send to the server.
+pub trait ClientMessage: Sized {
+    fn to_variant(self) -> from_client::Variant;
+    fn from_variant(variant: from_client::Variant) -> Option<Self>;
 }
 
-macro_rules! request_response {
-    ($req:path, $resp:path) => {
-        impl Request for $req {
-            type Response = $resp;
+/// A message that the server can send to the client.
+pub trait ServerMessage: Sized {
+    fn to_variant(self) -> from_server::Variant;
+    fn from_variant(variant: from_server::Variant) -> Option<Self>;
+}
+
+/// A message that the client can send to the server, where the server must respond with a single
+/// message of a certain type.
+pub trait RequestMessage: ClientMessage {
+    type Response: ServerMessage;
+}
+
+/// A message that the client can send to the server, where the server must respond with a series of
+/// messages of a certain type.
+pub trait SubscribeMessage: ClientMessage {
+    type Event: ServerMessage;
+}
+
+/// A message that the client can send to the server, where the server will not respond.
+pub trait SendMessage: ClientMessage {}
+
+macro_rules! directed_message {
+    ($name:ident, $direction_trait:ident, $direction_module:ident) => {
+        impl $direction_trait for $direction_module::$name {
+            fn to_variant(self) -> $direction_module::Variant {
+                $direction_module::Variant::$name(self)
+            }
+
+            fn from_variant(variant: $direction_module::Variant) -> Option<Self> {
+                if let $direction_module::Variant::$name(msg) = variant {
+                    Some(msg)
+                } else {
+                    None
+                }
+            }
         }
     };
 }
 
-request_response!(client::Auth, server::AuthResponse);
-request_response!(client::NewWorktree, server::NewWorktreeResponse);
-request_response!(client::ShareWorktree, server::ShareWorktreeResponse);
+macro_rules! request_message {
+    ($req:ident, $resp:ident) => {
+        directed_message!($req, ClientMessage, from_client);
+        directed_message!($resp, ServerMessage, from_server);
+        impl RequestMessage for from_client::$req {
+            type Response = from_server::$resp;
+        }
+    };
+}
+
+macro_rules! send_message {
+    ($msg:ident) => {
+        directed_message!($msg, ClientMessage, from_client);
+        impl SendMessage for from_client::$msg {}
+    };
+}
+
+request_message!(Auth, AuthResponse);
+request_message!(NewWorktree, NewWorktreeResponse);
+request_message!(ShareWorktree, ShareWorktreeResponse);
+send_message!(UploadFile);
 
 /// A stream of protobuf messages.
 pub struct MessageStream<T> {
@@ -36,6 +84,10 @@ impl<T> MessageStream<T> {
             byte_stream,
             buffer: Default::default(),
         }
+    }
+
+    pub fn inner_mut(&mut self) -> &mut T {
+        &mut self.byte_stream
     }
 }
 
@@ -59,7 +111,6 @@ where
     pub async fn read_message<M: Message + Default>(&mut self) -> futures_io::Result<M> {
         // Ensure the buffer is large enough to hold the maximum delimiter length
         const MAX_DELIMITER_LEN: usize = 10;
-        self.buffer.clear();
         self.buffer.resize(MAX_DELIMITER_LEN, 0);
 
         // Read until a complete length delimiter can be decoded.

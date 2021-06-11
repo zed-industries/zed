@@ -60,6 +60,12 @@ Any resource you can subscribe to is considered a *channel*, and all of its proc
 The client will interact with the server via a `api::Client` object. Model objects with remote behavior will interact directly with this client to communicate with the server. For example, `Worktree` will be changed to an enum type with `Local` and `Remote` variants. The local variant will have an optional `client` in order to stream local changes to the server when sharing. The remote variant will always have a client and implement all worktree operations in terms of it.
 
 ```rs
+let mut client = Client::new(conn, cx.background_executor());
+let stream = client.subscribe(from_client::Variant::Auth(from_client::));
+client.close();
+```
+
+```rs
 enum Worktree {
     Local {
         remote: Option<Client>,

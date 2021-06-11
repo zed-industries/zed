@@ -1,9 +1,11 @@
 use anyhow::{anyhow, Context, Result};
 use gpui::{AsyncAppContext, MutableAppContext, Task};
-use std::{convert::TryFrom, time::Duration};
+use rpc_client::RpcClient;
+use std::{convert::TryFrom, net::Shutdown, time::Duration};
 use tiny_http::{Header, Response, Server};
 use url::Url;
 use util::SurfResultExt;
+use zed_rpc::{proto, rest::CreateWorktreeResponse};
 
 pub mod assets;
 pub mod editor;
@@ -11,6 +13,7 @@ pub mod file_finder;
 pub mod language;
 pub mod menus;
 mod operation_queue;
+mod rpc_client;
 pub mod settings;
 mod sum_tree;
 #[cfg(test)]
@@ -33,7 +36,9 @@ pub fn init(cx: &mut MutableAppContext) {
 
 fn share_worktree(_: &(), cx: &mut MutableAppContext) {
     let zed_url = std::env::var("ZED_SERVER_URL").unwrap_or("https://zed.dev".to_string());
-    cx.spawn::<_, _, surf::Result<()>>(|cx| async move {
+    let executor = cx.background_executor().clone();
+
+    let task = cx.spawn::<_, _, surf::Result<()>>(|cx| async move {
         let (user_id, access_token) = login(zed_url.clone(), &cx).await?;
 
         let mut response = surf::post(format!("{}/api/worktrees", &zed_url))
@@ -44,28 +49,47 @@ fn share_worktree(_: &(), cx: &mut MutableAppContext) {
             .await
             .context("")?;
 
-        let body = response
-            .body_json::<zed_rpc::rest::CreateWorktreeResponse>()
-            .await?;
+        let CreateWorktreeResponse {
+            worktree_id,
+            rpc_address,
+        } = response.body_json().await?;
+
+        eprintln!("got worktree response: {:?} {:?}", worktree_id, rpc_address);
 
         // TODO - If the `ZED_SERVER_URL` uses https, then wrap this stream in
         // a TLS stream using `native-tls`.
-        let stream = smol::net::TcpStream::connect(body.rpc_address).await?;
+        let stream = smol::net::TcpStream::connect(rpc_address).await?;
 
-        let mut message_stream = zed_rpc::proto::MessageStream::new(stream);
-        message_stream
-            .write_message(&zed_rpc::proto::FromClient {
-                id: 0,
-                variant: Some(zed_rpc::proto::from_client::Variant::Auth(
-                    zed_rpc::proto::from_client::Auth {
-                        user_id: user_id.parse::<i32>()?,
-                        access_token,
-                    },
-                )),
+        let mut rpc_client = RpcClient::new(stream, executor, |stream| {
+            stream.shutdown(Shutdown::Read).ok();
+        });
+
+        let auth_response = rpc_client
+            .request(proto::from_client::Auth {
+                user_id: user_id.parse::<i32>()?,
+                access_token,
+            })
+            .await?;
+        if !auth_response.credentials_valid {
+            Err(anyhow!("failed to authenticate with RPC server"))?;
+        }
+
+        let share_response = rpc_client
+            .request(proto::from_client::ShareWorktree {
+                worktree_id: worktree_id as u64,
+                files: Vec::new(),
             })
             .await?;
 
+        log::info!("sharing worktree {:?}", share_response);
+
         Ok(())
+    });
+
+    cx.spawn(|_| async move {
+        if let Err(e) = task.await {
+            log::error!("sharing failed: {}", e);
+        }
     })
     .detach();
 }
