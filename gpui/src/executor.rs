@@ -79,9 +79,10 @@ impl Background {
         }
     }
 
-    pub fn spawn<T>(&self, future: impl Send + Future<Output = T> + 'static) -> Task<T>
+    pub fn spawn<T, F>(&self, future: F) -> Task<T>
     where
         T: 'static + Send,
+        F: Send + Future<Output = T> + 'static,
     {
         self.executor.spawn(future)
     }

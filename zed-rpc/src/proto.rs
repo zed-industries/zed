@@ -116,8 +116,6 @@ mod tests {
                 chunk_size: 3,
             };
 
-            // In reality there will never be both `FromClient` and `FromServer` messages
-            // sent in the same direction on the same stream.
             let message1 = FromClient {
                 id: 3,
                 variant: Some(from_client::Variant::Auth(from_client::Auth {
@@ -125,16 +123,15 @@ mod tests {
                     access_token: "the-access-token".into(),
                 })),
             };
-            let message2 = FromServer {
-                request_id: Some(4),
-                variant: Some(from_server::Variant::Ack(from_server::Ack {
-                    error_message: Some(
-                        format!(
-                            "a {}long error message that requires a two-byte length delimiter",
-                            "very ".repeat(60)
-                        )
-                        .into(),
-                    ),
+            let message2 = FromClient {
+                id: 4,
+                variant: Some(from_client::Variant::UploadFile(from_client::UploadFile {
+                    path: Vec::new(),
+                    content: format!(
+                        "a {}long error message that requires a two-byte length delimiter",
+                        "very ".repeat(60)
+                    )
+                    .into(),
                 })),
             };
 
@@ -142,7 +139,7 @@ mod tests {
             message_stream.write_message(&message1).await.unwrap();
             message_stream.write_message(&message2).await.unwrap();
             let decoded_message1 = message_stream.read_message::<FromClient>().await.unwrap();
-            let decoded_message2 = message_stream.read_message::<FromServer>().await.unwrap();
+            let decoded_message2 = message_stream.read_message::<FromClient>().await.unwrap();
             assert_eq!(decoded_message1, message1);
             assert_eq!(decoded_message2, message2);
         });
@@ -159,17 +156,18 @@ mod tests {
 
             // This message is so long that its length delimiter requires three bytes,
             // so it won't be delivered in a single read from the chunked byte stream.
-            let message = FromServer {
-                request_id: Some(4),
-                variant: Some(from_server::Variant::Ack(from_server::Ack {
-                    error_message: Some("long ".repeat(256 * 256).into()),
+            let message = FromClient {
+                id: 4,
+                variant: Some(from_client::Variant::UploadFile(from_client::UploadFile {
+                    path: Vec::new(),
+                    content: "long ".repeat(256 * 256).into(),
                 })),
             };
             assert!(prost::length_delimiter_len(message.encoded_len()) > byte_stream.chunk_size);
 
             let mut message_stream = MessageStream::new(byte_stream);
             message_stream.write_message(&message).await.unwrap();
-            let decoded_message = message_stream.read_message::<FromServer>().await.unwrap();
+            let decoded_message = message_stream.read_message::<FromClient>().await.unwrap();
             assert_eq!(decoded_message, message);
         });
     }
@@ -177,7 +175,7 @@ mod tests {
     #[test]
     fn test_protobuf_parse_error() {
         smol::block_on(async {
-            let byte_stream = ChunkedStream {
+            let mut byte_stream = ChunkedStream {
                 bytes: Vec::new(),
                 read_offset: 0,
                 chunk_size: 2,
@@ -191,12 +189,13 @@ mod tests {
                 })),
             };
 
+            byte_stream.write_all(b"omg").await.unwrap();
             let mut message_stream = MessageStream::new(byte_stream);
             message_stream.write_message(&message).await.unwrap();
 
             // Read the wrong type of message from the stream.
             let result = message_stream.read_message::<FromServer>().await;
-            assert_eq!(result.unwrap_err().kind(), io::ErrorKind::InvalidData);
+            assert!(result.is_err());
         });
     }
 
