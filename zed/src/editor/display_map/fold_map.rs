@@ -210,20 +210,20 @@ impl FoldMap {
         let buffer = self.buffer.read(cx);
         let offset = offset.to_offset(buffer);
         let transforms = self.sync(cx);
-        let mut cursor = transforms.cursor::<usize, usize>();
+        let mut cursor = transforms.cursor::<usize, ()>();
         cursor.seek(&offset, Bias::Right, &());
         cursor.item().map_or(false, |t| t.display_text.is_some())
     }
 
     pub fn is_line_folded(&self, display_row: u32, cx: &AppContext) -> bool {
         let transforms = self.sync(cx);
-        let mut cursor = transforms.cursor::<DisplayPoint, DisplayPoint>();
+        let mut cursor = transforms.cursor::<DisplayPoint, ()>();
         cursor.seek(&DisplayPoint::new(display_row, 0), Bias::Right, &());
         while let Some(transform) = cursor.item() {
             if transform.display_text.is_some() {
                 return true;
             }
-            if cursor.end(&()).row() == display_row {
+            if cursor.seek_end(&()).row() == display_row {
                 cursor.next(&())
             } else {
                 break;
@@ -242,20 +242,20 @@ impl FoldMap {
 
     pub fn to_buffer_point(&self, display_point: DisplayPoint, cx: &AppContext) -> Point {
         let transforms = self.sync(cx);
-        let mut cursor = transforms.cursor::<DisplayPoint, TransformSummary>();
+        let mut cursor = transforms.cursor::<DisplayPoint, Point>();
         cursor.seek(&display_point, Bias::Right, &());
-        let overshoot = display_point.0 - cursor.start().display.lines;
-        cursor.start().buffer.lines + overshoot
+        let overshoot = display_point.0 - cursor.seek_start().0;
+        *cursor.sum_start() + overshoot
     }
 
     pub fn to_display_point(&self, point: Point, cx: &AppContext) -> DisplayPoint {
         let transforms = self.sync(cx);
-        let mut cursor = transforms.cursor::<Point, TransformSummary>();
+        let mut cursor = transforms.cursor::<Point, DisplayPoint>();
         cursor.seek(&point, Bias::Right, &());
-        let overshoot = point - cursor.start().buffer.lines;
+        let overshoot = point - cursor.seek_start();
         DisplayPoint(cmp::min(
-            cursor.start().display.lines + overshoot,
-            cursor.end(&()).display.lines,
+            cursor.sum_start().0 + overshoot,
+            cursor.end(&()).0,
         ))
     }
 
@@ -275,20 +275,20 @@ impl FoldMap {
 
         let mut new_transforms = SumTree::new();
         let mut transforms = self.transforms.lock();
-        let mut cursor = transforms.cursor::<usize, usize>();
+        let mut cursor = transforms.cursor::<usize, ()>();
         cursor.seek(&0, Bias::Right, &());
 
         while let Some(mut edit) = edits.next() {
             new_transforms.push_tree(cursor.slice(&edit.old_range.start, Bias::Left, &()), &());
-            edit.new_range.start -= edit.old_range.start - cursor.start();
-            edit.old_range.start = *cursor.start();
+            edit.new_range.start -= edit.old_range.start - cursor.seek_start();
+            edit.old_range.start = *cursor.seek_start();
 
             cursor.seek(&edit.old_range.end, Bias::Right, &());
             cursor.next(&());
 
             let mut delta = edit.delta();
             loop {
-                edit.old_range.end = *cursor.start();
+                edit.old_range.end = *cursor.seek_start();
 
                 if let Some(next_edit) = edits.peek() {
                     if next_edit.old_range.start > edit.old_range.end {
@@ -443,10 +443,10 @@ impl FoldMapSnapshot {
     }
 
     pub fn chunks_at(&self, offset: DisplayOffset) -> Chunks {
-        let mut transform_cursor = self.transforms.cursor::<DisplayOffset, TransformSummary>();
+        let mut transform_cursor = self.transforms.cursor::<DisplayOffset, usize>();
         transform_cursor.seek(&offset, Bias::Right, &());
-        let overshoot = offset.0 - transform_cursor.start().display.bytes;
-        let buffer_offset = transform_cursor.start().buffer.bytes + overshoot;
+        let overshoot = offset.0 - transform_cursor.seek_start().0;
+        let buffer_offset = transform_cursor.sum_start() + overshoot;
         Chunks {
             transform_cursor,
             buffer_offset,
@@ -455,15 +455,15 @@ impl FoldMapSnapshot {
     }
 
     pub fn highlighted_chunks(&mut self, range: Range<DisplayOffset>) -> HighlightedChunks {
-        let mut transform_cursor = self.transforms.cursor::<DisplayOffset, TransformSummary>();
+        let mut transform_cursor = self.transforms.cursor::<DisplayOffset, usize>();
 
         transform_cursor.seek(&range.end, Bias::Right, &());
-        let overshoot = range.end.0 - transform_cursor.start().display.bytes;
-        let buffer_end = transform_cursor.start().buffer.bytes + overshoot;
+        let overshoot = range.end.0 - transform_cursor.seek_start().0;
+        let buffer_end = transform_cursor.sum_start() + overshoot;
 
         transform_cursor.seek(&range.start, Bias::Right, &());
-        let overshoot = range.start.0 - transform_cursor.start().display.bytes;
-        let buffer_start = transform_cursor.start().buffer.bytes + overshoot;
+        let overshoot = range.start.0 - transform_cursor.seek_start().0;
+        let buffer_start = transform_cursor.sum_start() + overshoot;
 
         HighlightedChunks {
             transform_cursor,
@@ -483,42 +483,41 @@ impl FoldMapSnapshot {
     pub fn to_display_offset(&self, point: DisplayPoint) -> DisplayOffset {
         let mut cursor = self.transforms.cursor::<DisplayPoint, TransformSummary>();
         cursor.seek(&point, Bias::Right, &());
-        let overshoot = point.0 - cursor.start().display.lines;
-        let mut offset = cursor.start().display.bytes;
+        let overshoot = point.0 - cursor.sum_start().display.lines;
+        let mut offset = cursor.sum_start().display.bytes;
         if !overshoot.is_zero() {
             let transform = cursor.item().expect("display point out of range");
             assert!(transform.display_text.is_none());
             let end_buffer_offset = self
                 .buffer
-                .to_offset(cursor.start().buffer.lines + overshoot);
-            offset += end_buffer_offset - cursor.start().buffer.bytes;
+                .to_offset(cursor.sum_start().buffer.lines + overshoot);
+            offset += end_buffer_offset - cursor.sum_start().buffer.bytes;
         }
         DisplayOffset(offset)
     }
 
     pub fn to_buffer_offset(&self, point: DisplayPoint) -> usize {
-        let mut cursor = self.transforms.cursor::<DisplayPoint, TransformSummary>();
+        let mut cursor = self.transforms.cursor::<DisplayPoint, Point>();
         cursor.seek(&point, Bias::Right, &());
-        let overshoot = point.0 - cursor.start().display.lines;
-        self.buffer
-            .to_offset(cursor.start().buffer.lines + overshoot)
+        let overshoot = point.0 - cursor.seek_start().0;
+        self.buffer.to_offset(*cursor.sum_start() + overshoot)
     }
 
     #[cfg(test)]
     pub fn clip_offset(&self, offset: DisplayOffset, bias: Bias) -> DisplayOffset {
-        let mut cursor = self.transforms.cursor::<DisplayOffset, TransformSummary>();
+        let mut cursor = self.transforms.cursor::<DisplayOffset, usize>();
         cursor.seek(&offset, Bias::Right, &());
         if let Some(transform) = cursor.item() {
-            let transform_start = cursor.start().display.bytes;
+            let transform_start = cursor.seek_start().0;
             if transform.display_text.is_some() {
                 if offset.0 == transform_start || matches!(bias, Bias::Left) {
                     DisplayOffset(transform_start)
                 } else {
-                    DisplayOffset(cursor.end(&()).display.bytes)
+                    DisplayOffset(cursor.seek_end(&()).0)
                 }
             } else {
                 let overshoot = offset.0 - transform_start;
-                let buffer_offset = cursor.start().buffer.bytes + overshoot;
+                let buffer_offset = cursor.sum_start() + overshoot;
                 let clipped_buffer_offset = self.buffer.clip_offset(buffer_offset, bias);
                 DisplayOffset(
                     (offset.0 as isize + (clipped_buffer_offset as isize - buffer_offset as isize))
@@ -531,19 +530,19 @@ impl FoldMapSnapshot {
     }
 
     pub fn clip_point(&self, point: DisplayPoint, bias: Bias) -> DisplayPoint {
-        let mut cursor = self.transforms.cursor::<DisplayPoint, TransformSummary>();
+        let mut cursor = self.transforms.cursor::<DisplayPoint, Point>();
         cursor.seek(&point, Bias::Right, &());
         if let Some(transform) = cursor.item() {
-            let transform_start = cursor.start().display.lines;
+            let transform_start = cursor.seek_start().0;
             if transform.display_text.is_some() {
                 if point.0 == transform_start || matches!(bias, Bias::Left) {
                     DisplayPoint(transform_start)
                 } else {
-                    DisplayPoint(cursor.end(&()).display.lines)
+                    DisplayPoint(cursor.seek_end(&()).0)
                 }
             } else {
                 let overshoot = point.0 - transform_start;
-                let buffer_position = cursor.start().buffer.lines + overshoot;
+                let buffer_position = *cursor.sum_start() + overshoot;
                 let clipped_buffer_position = self.buffer.clip_point(buffer_position, bias);
                 DisplayPoint::new(
                     point.row(),
@@ -681,7 +680,7 @@ impl<'a> sum_tree::Dimension<'a, FoldSummary> for usize {
 }
 
 pub struct BufferRows<'a> {
-    cursor: Cursor<'a, Transform, DisplayPoint, TransformSummary>,
+    cursor: Cursor<'a, Transform, DisplayPoint, Point>,
     display_point: Point,
 }
 
@@ -689,7 +688,7 @@ impl<'a> Iterator for BufferRows<'a> {
     type Item = u32;
 
     fn next(&mut self) -> Option<Self::Item> {
-        while self.display_point > self.cursor.end(&()).display.lines {
+        while self.display_point > self.cursor.seek_end(&()).0 {
             self.cursor.next(&());
             if self.cursor.item().is_none() {
                 // TODO: Return a bool from next?
@@ -698,8 +697,8 @@ impl<'a> Iterator for BufferRows<'a> {
         }
 
         if self.cursor.item().is_some() {
-            let overshoot = self.display_point - self.cursor.start().display.lines;
-            let buffer_point = self.cursor.start().buffer.lines + overshoot;
+            let overshoot = self.display_point - self.cursor.seek_start().0;
+            let buffer_point = *self.cursor.sum_start() + overshoot;
             self.display_point.row += 1;
             Some(buffer_point.row)
         } else {
@@ -709,7 +708,7 @@ impl<'a> Iterator for BufferRows<'a> {
 }
 
 pub struct Chunks<'a> {
-    transform_cursor: Cursor<'a, Transform, DisplayOffset, TransformSummary>,
+    transform_cursor: Cursor<'a, Transform, DisplayOffset, usize>,
     buffer_chunks: buffer::Chunks<'a>,
     buffer_offset: usize,
 }
@@ -730,7 +729,7 @@ impl<'a> Iterator for Chunks<'a> {
             self.buffer_offset += transform.summary.buffer.bytes;
             self.buffer_chunks.seek(self.buffer_offset);
 
-            while self.buffer_offset >= self.transform_cursor.end(&()).buffer.bytes
+            while self.buffer_offset >= self.transform_cursor.end(&())
                 && self.transform_cursor.item().is_some()
             {
                 self.transform_cursor.next(&());
@@ -745,7 +744,7 @@ impl<'a> Iterator for Chunks<'a> {
             chunk = &chunk[offset_in_chunk..];
 
             // Truncate the chunk so that it ends at the next fold.
-            let region_end = self.transform_cursor.end(&()).buffer.bytes - self.buffer_offset;
+            let region_end = self.transform_cursor.end(&()) - self.buffer_offset;
             if chunk.len() >= region_end {
                 chunk = &chunk[0..region_end];
                 self.transform_cursor.next(&());
@@ -762,7 +761,7 @@ impl<'a> Iterator for Chunks<'a> {
 }
 
 pub struct HighlightedChunks<'a> {
-    transform_cursor: Cursor<'a, Transform, DisplayOffset, TransformSummary>,
+    transform_cursor: Cursor<'a, Transform, DisplayOffset, usize>,
     buffer_chunks: buffer::HighlightedChunks<'a>,
     buffer_chunk: Option<(usize, &'a str, StyleId)>,
     buffer_offset: usize,
@@ -785,7 +784,7 @@ impl<'a> Iterator for HighlightedChunks<'a> {
             self.buffer_offset += transform.summary.buffer.bytes;
             self.buffer_chunks.seek(self.buffer_offset);
 
-            while self.buffer_offset >= self.transform_cursor.end(&()).buffer.bytes
+            while self.buffer_offset >= self.transform_cursor.end(&())
                 && self.transform_cursor.item().is_some()
             {
                 self.transform_cursor.next(&());
@@ -809,7 +808,7 @@ impl<'a> Iterator for HighlightedChunks<'a> {
             chunk = &chunk[offset_in_chunk..];
 
             // Truncate the chunk so that it ends at the next fold.
-            let region_end = self.transform_cursor.end(&()).buffer.bytes - self.buffer_offset;
+            let region_end = self.transform_cursor.end(&()) - self.buffer_offset;
             if chunk.len() >= region_end {
                 chunk = &chunk[0..region_end];
                 self.transform_cursor.next(&());
