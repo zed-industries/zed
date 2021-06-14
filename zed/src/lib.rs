@@ -1,7 +1,7 @@
 use anyhow::{anyhow, Context, Result};
 use gpui::{AsyncAppContext, MutableAppContext, Task};
 use rpc_client::RpcClient;
-use std::{convert::TryFrom, net::Shutdown, time::Duration};
+use std::{convert::TryFrom, time::Duration};
 use tiny_http::{Header, Response, Server};
 use url::Url;
 use util::SurfResultExt;
@@ -60,9 +60,7 @@ fn share_worktree(_: &(), cx: &mut MutableAppContext) {
         // a TLS stream using `native-tls`.
         let stream = smol::net::TcpStream::connect(rpc_address).await?;
 
-        let mut rpc_client = RpcClient::new(stream, executor, |stream| {
-            stream.shutdown(Shutdown::Read).ok();
-        });
+        let mut rpc_client = RpcClient::new(stream, executor);
 
         let auth_response = rpc_client
             .request(proto::from_client::Auth {
