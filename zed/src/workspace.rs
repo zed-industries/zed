@@ -8,7 +8,6 @@ use crate::{
     worktree::{FileHandle, Worktree, WorktreeHandle},
     AppState,
 };
-use futures_core::Future;
 use gpui::{
     color::rgbu, elements::*, json::to_string_pretty, keymap::Binding, AnyViewHandle, AppContext,
     ClipboardItem, Entity, ModelHandle, MutableAppContext, PathPromptOptions, PromptLevel, Task,
@@ -19,10 +18,10 @@ pub use pane::*;
 pub use pane_group::*;
 use postage::watch;
 use smol::prelude::*;
-use std::{collections::HashMap, path::PathBuf};
 use std::{
-    collections::{hash_map::Entry, HashSet},
-    path::Path,
+    collections::{hash_map::Entry, HashMap, HashSet},
+    future::Future,
+    path::{Path, PathBuf},
     sync::Arc,
 };
 

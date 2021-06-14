@@ -1,106 +1,112 @@
 use anyhow::{anyhow, Result};
+use futures::FutureExt;
 use gpui::executor::Background;
 use parking_lot::Mutex;
 use postage::{
-    mpsc, oneshot,
+    mpsc,
     prelude::{Sink, Stream},
 };
-use smol::{
-    future::FutureExt,
-    io::WriteHalf,
-    prelude::{AsyncRead, AsyncWrite},
+use smol::prelude::{AsyncRead, AsyncWrite};
+use std::{
+    collections::HashMap,
+    io,
+    sync::{
+        atomic::{self, AtomicI32},
+        Arc,
+    },
 };
-use std::{collections::HashMap, sync::Arc};
 use zed_rpc::proto::{
     self, MessageStream, RequestMessage, SendMessage, ServerMessage, SubscribeMessage,
 };
 
-pub struct RpcClient<Conn> {
-    stream: MessageStream<WriteHalf<Conn>>,
+pub struct RpcClient {
     response_channels: Arc<Mutex<HashMap<i32, (mpsc::Sender<proto::from_server::Variant>, bool)>>>,
-    next_message_id: i32,
-    _drop_tx: oneshot::Sender<()>,
+    outgoing_tx: mpsc::Sender<proto::FromClient>,
+    next_message_id: AtomicI32,
 }
 
-impl<Conn> RpcClient<Conn>
-where
-    Conn: Clone + AsyncRead + AsyncWrite + Unpin + Send + 'static,
-{
-    pub fn new(conn: Conn, executor: Arc<Background>) -> Self {
-        let (conn_rx, conn_tx) = smol::io::split(conn);
-        let (drop_tx, mut drop_rx) = oneshot::channel();
+impl RpcClient {
+    pub fn new<Conn>(conn: Conn, executor: Arc<Background>) -> Self
+    where
+        Conn: AsyncRead + AsyncWrite + Unpin + Send + 'static,
+    {
         let response_channels = Arc::new(Mutex::new(HashMap::new()));
-        let client = Self {
-            next_message_id: 0,
-            stream: MessageStream::new(conn_tx),
-            response_channels: response_channels.clone(),
-            _drop_tx: drop_tx,
-        };
+        let (outgoing_tx, mut outgoing_rx) = mpsc::channel(32);
 
-        executor
-            .spawn::<Result<()>, _>(async move {
-                enum Message {
-                    Message(proto::FromServer),
-                    ClientDropped,
-                }
-
-                let mut stream = MessageStream::new(conn_rx);
-                let client_dropped = async move {
-                    assert!(drop_rx.recv().await.is_none());
-                    Ok(Message::ClientDropped) as Result<_>
-                };
-                smol::pin!(client_dropped);
-                loop {
-                    let message = async {
-                        Ok(Message::Message(
-                            stream.read_message::<proto::FromServer>().await?,
-                        ))
-                    };
-
-                    match message.race(&mut client_dropped).await? {
-                        Message::Message(message) => {
-                            if let Some(variant) = message.variant {
-                                if let Some(request_id) = message.request_id {
-                                    let channel = response_channels.lock().remove(&request_id);
-                                    if let Some((mut tx, oneshot)) = channel {
-                                        if tx.send(variant).await.is_ok() {
-                                            if !oneshot {
-                                                response_channels
-                                                    .lock()
-                                                    .insert(request_id, (tx, false));
-                                            }
-                                        }
-                                    } else {
-                                        log::warn!(
-                                            "received RPC response to unknown request id {}",
-                                            request_id
-                                        );
-                                    }
+        {
+            let response_channels = response_channels.clone();
+            executor
+                .spawn(async move {
+                    let (conn_rx, conn_tx) = smol::io::split(conn);
+                    let mut stream_tx = MessageStream::new(conn_tx);
+                    let mut stream_rx = MessageStream::new(conn_rx);
+                    loop {
+                        futures::select! {
+                            incoming = stream_rx.read_message::<proto::FromServer>().fuse() => {
+                                Self::handle_incoming(incoming, &response_channels).await;
+                            }
+                            outgoing = outgoing_rx.recv().fuse() => {
+                                if let Some(outgoing) = outgoing {
+                                    stream_tx.write_message(&outgoing).await;
+                                } else {
+                                    break;
                                 }
-                            } else {
-                                log::warn!("received RPC message with no content");
                             }
                         }
-                        Message::ClientDropped => break Ok(()),
                     }
-                }
-            })
-            .detach();
+                })
+                .detach();
+        }
 
-        client
+        Self {
+            response_channels,
+            outgoing_tx,
+            next_message_id: AtomicI32::new(0),
+        }
     }
 
-    pub async fn request<T: RequestMessage>(&mut self, req: T) -> Result<T::Response> {
-        let message_id = self.next_message_id;
-        self.next_message_id += 1;
+    async fn handle_incoming(
+        incoming: io::Result<proto::FromServer>,
+        response_channels: &Mutex<HashMap<i32, (mpsc::Sender<proto::from_server::Variant>, bool)>>,
+    ) {
+        match incoming {
+            Ok(incoming) => {
+                if let Some(variant) = incoming.variant {
+                    if let Some(request_id) = incoming.request_id {
+                        let channel = response_channels.lock().remove(&request_id);
+                        if let Some((mut tx, oneshot)) = channel {
+                            if tx.send(variant).await.is_ok() {
+                                if !oneshot {
+                                    response_channels.lock().insert(request_id, (tx, false));
+                                }
+                            }
+                        } else {
+                            log::warn!(
+                                "received RPC response to unknown request id {}",
+                                request_id
+                            );
+                        }
+                    }
+                } else {
+                    log::warn!("received RPC message with no content");
+                }
+            }
+            Err(error) => log::warn!("invalid incoming RPC message {:?}", error),
+        }
+    }
+
+    pub async fn request<T: RequestMessage>(&self, req: T) -> Result<T::Response> {
+        let message_id = self.next_message_id.fetch_add(1, atomic::Ordering::SeqCst);
         let (tx, mut rx) = mpsc::channel(1);
         self.response_channels.lock().insert(message_id, (tx, true));
-        self.stream
-            .write_message(&proto::FromClient {
+        self.outgoing_tx
+            .clone()
+            .send(proto::FromClient {
                 id: message_id,
                 variant: Some(req.to_variant()),
             })
-            .await?;
+            .await
+            .unwrap();
         let response = rx
             .recv()
             .await
@@ -109,15 +115,16 @@ where
             .ok_or_else(|| anyhow!("received response of the wrong t"))
     }
 
-    pub async fn send<T: SendMessage>(&mut self, message: T) -> Result<()> {
-        let message_id = self.next_message_id;
-        self.next_message_id += 1;
-        self.stream
-            .write_message(&proto::FromClient {
+    pub async fn send<T: SendMessage>(&self, message: T) -> Result<()> {
+        let message_id = self.next_message_id.fetch_add(1, atomic::Ordering::SeqCst);
+        self.outgoing_tx
+            .clone()
+            .send(proto::FromClient {
                 id: message_id,
                 variant: Some(message.to_variant()),
             })
-            .await?;
+            .await
+            .unwrap();
         Ok(())
     }
 
@@ -125,19 +132,19 @@ where
         &mut self,
         subscription: T,
     ) -> Result<impl Stream<Item = Result<T::Event>>> {
-        let message_id = self.next_message_id;
-        self.next_message_id += 1;
+        let message_id = self.next_message_id.fetch_add(1, atomic::Ordering::SeqCst);
         let (tx, rx) = mpsc::channel(256);
         self.response_channels
             .lock()
             .insert(message_id, (tx, false));
-        self.stream
-            .write_message(&proto::FromClient {
+        self.outgoing_tx
+            .clone()
+            .send(proto::FromClient {
                 id: message_id,
                 variant: Some(subscription.to_variant()),
             })
-            .await?;
-
+            .await
+            .unwrap();
         Ok(rx.map(|event| {
             T::Event::from_variant(event).ok_or_else(|| anyhow!("invalid event {:?}"))
         }))
@@ -165,7 +172,7 @@ mod tests {
         let (server_conn, _) = listener.accept().await.unwrap();
 
         let mut server_stream = MessageStream::new(server_conn);
-        let mut client = RpcClient::new(client_conn, executor.clone());
+        let client = RpcClient::new(client_conn, executor.clone());
 
         let client_req = client.request(proto::from_client::Auth {
             user_id: 42,

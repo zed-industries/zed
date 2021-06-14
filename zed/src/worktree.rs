@@ -1207,7 +1207,7 @@ pub trait WorktreeHandle {
     fn flush_fs_events<'a>(
         &self,
         cx: &'a gpui::TestAppContext,
-    ) -> futures_core::future::LocalBoxFuture<'a, ()>;
+    ) -> futures::future::LocalBoxFuture<'a, ()>;
 }
 
 impl WorktreeHandle for ModelHandle<Worktree> {
@@ -1268,7 +1268,7 @@ impl WorktreeHandle for ModelHandle<Worktree> {
     fn flush_fs_events<'a>(
         &self,
         cx: &'a gpui::TestAppContext,
-    ) -> futures_core::future::LocalBoxFuture<'a, ()> {
+    ) -> futures::future::LocalBoxFuture<'a, ()> {
         use smol::future::FutureExt;
 
         let filename = "fs-event-sentinel";
