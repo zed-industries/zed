@@ -184,13 +184,16 @@ mod tests {
         drop(client);
 
         // Try sending an empty payload over and over, until the client is dropped and hangs up.
-        let error = loop {
-            match server_conn.write(&[0]).await {
-                Ok(_) => continue,
-                Err(err) => break err,
+        loop {
+            match server_conn.write(&[]).await {
+                Ok(_) => {}
+                Err(err) => {
+                    if err.kind() == io::ErrorKind::BrokenPipe {
+                        break;
+                    }
+                }
             }
-        };
-        assert_eq!(error.kind(), io::ErrorKind::BrokenPipe);
+        }
     }
 
     async fn send_recv<S, R, O>(mut sender: S, receiver: R) -> O
