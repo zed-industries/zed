@@ -60,7 +60,7 @@ fn share_worktree(_: &(), cx: &mut MutableAppContext) {
         // a TLS stream using `native-tls`.
         let stream = smol::net::TcpStream::connect(rpc_address).await?;
 
-        let mut rpc_client = RpcClient::new(stream, executor);
+        let rpc_client = RpcClient::new(stream, executor);
 
         let auth_response = rpc_client
             .request(proto::from_client::Auth {
