@@ -103,8 +103,16 @@ where
             .ok_or_else(|| anyhow!("received response of the wrong t"))
     }
 
-    pub async fn send<T: SendMessage>(_: T) -> Result<()> {
-        todo!()
+    pub async fn send<T: SendMessage>(&mut self, message: T) -> Result<()> {
+        let message_id = self.next_message_id;
+        self.next_message_id += 1;
+        self.stream
+            .write_message(&proto::FromClient {
+                id: message_id,
+                variant: Some(message.to_variant()),
+            })
+            .await?;
+        Ok(())
     }
 }
 
@@ -152,6 +160,18 @@ mod tests {
             ))
         );
 
+        // Respond to another request to ensure requests are properly matched up.
+        server_stream
+            .write_message(&proto::FromServer {
+                request_id: Some(999),
+                variant: Some(proto::from_server::Variant::AuthResponse(
+                    proto::from_server::AuthResponse {
+                        credentials_valid: false,
+                    },
+                )),
+            })
+            .await
+            .unwrap();
         server_stream
             .write_message(&proto::FromServer {
                 request_id: Some(server_req.id),
