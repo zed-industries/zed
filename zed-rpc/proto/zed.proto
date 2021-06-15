@@ -9,6 +9,7 @@ message FromClient {
         NewWorktree new_worktree = 3;
         ShareWorktree share_worktree = 4;
         UploadFile upload_file = 5;
+        SubscribeToPathRequests subscribe_to_path_requests = 6;
     }
 
     message Auth {
@@ -32,6 +33,8 @@ message FromClient {
         bytes path = 1;
         bytes content = 2;
     }
+
+    message SubscribeToPathRequests {}
 }
 
 message FromServer {
@@ -41,6 +44,7 @@ message FromServer {
         AuthResponse auth_response = 2;
         NewWorktreeResponse new_worktree_response = 3;
         ShareWorktreeResponse share_worktree_response = 4;
+        PathRequest path_request = 5;
     }
 
     message AuthResponse {
@@ -53,5 +57,9 @@ message FromServer {
 
     message ShareWorktreeResponse {
         repeated int32 needed_file_indices = 1;
+    }
+
+    message PathRequest {
+        bytes path = 1;
     }
 }

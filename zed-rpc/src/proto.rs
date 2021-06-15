@@ -67,10 +67,21 @@ macro_rules! send_message {
     };
 }
 
+macro_rules! subscribe_message {
+    ($subscription:ident, $event:ident) => {
+        directed_message!($subscription, ClientMessage, from_client);
+        directed_message!($event, ServerMessage, from_server);
+        impl SubscribeMessage for from_client::$subscription {
+            type Event = from_server::$event;
+        }
+    };
+}
+
 request_message!(Auth, AuthResponse);
 request_message!(NewWorktree, NewWorktreeResponse);
 request_message!(ShareWorktree, ShareWorktreeResponse);
 send_message!(UploadFile);
+subscribe_message!(SubscribeToPathRequests, PathRequest);
 
 /// A stream of protobuf messages.
 pub struct MessageStream<T> {
