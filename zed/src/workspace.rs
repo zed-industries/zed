@@ -671,7 +671,8 @@ impl Workspace {
             let stream = smol::net::TcpStream::connect(rpc_address).await?;
 
             let rpc_client = RpcClient::new();
-            let connection_id = rpc_client.connect(stream, executor).await;
+            let (connection_id, handler) = rpc_client.add_connection(stream).await;
+            executor.spawn(handler).detach();
 
             let auth_response = rpc_client
                 .request(
