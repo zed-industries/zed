@@ -17,7 +17,7 @@ pub fn menus(state: AppState) -> Vec<Menu<'static>> {
                 MenuItem::Action {
                     name: "Share",
                     keystroke: None,
-                    action: "app:share_worktree",
+                    action: "workspace:share_worktree",
                     arg: None,
                 },
                 MenuItem::Action {
