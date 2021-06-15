@@ -208,7 +208,7 @@ impl Worktree {
             let file = fs::File::create(&abs_path)?;
             let mut writer = io::BufWriter::with_capacity(buffer_size, &file);
             for chunk in content.chunks() {
-                writer.write(chunk.as_bytes())?;
+                writer.write_all(chunk.as_bytes())?;
             }
             writer.flush()?;
 
