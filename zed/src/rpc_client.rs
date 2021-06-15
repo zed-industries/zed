@@ -60,13 +60,15 @@ where
             Mutex<HashMap<i32, (mpsc::Sender<proto::from_server::Variant>, bool)>>,
         >,
     ) {
+        let dropped = drop_rx.recv();
+        smol::pin!(dropped);
+
         let mut stream = MessageStream::new(conn);
         loop {
             let read_message = stream.read_message::<proto::FromServer>();
-            let dropped = drop_rx.recv();
-            smol::pin!(read_message, dropped);
+            smol::pin!(read_message);
 
-            match futures::future::select(&mut read_message, &mut dropped).await {
+            match futures::future::select(read_message, &mut dropped).await {
                 Either::Left((Ok(incoming), _)) => {
                     if let Some(variant) = incoming.variant {
                         if let Some(request_id) = incoming.request_id {
