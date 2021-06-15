@@ -4,6 +4,7 @@ mod ignore;
 
 use crate::{
     editor::{History, Rope},
+    rpc_client::RpcClient,
     sum_tree::{self, Cursor, Edit, SumTree},
     util::Bias,
 };
@@ -31,6 +32,7 @@ use std::{
     sync::{Arc, Weak},
     time::{Duration, SystemTime, UNIX_EPOCH},
 };
+use zed_rpc::proto::{self, from_client::PathAndDigest};
 
 use self::{char_bag::CharBag, ignore::IgnoreStack};
 
@@ -52,6 +54,7 @@ pub struct Worktree {
     scan_state: (watch::Sender<ScanState>, watch::Receiver<ScanState>),
     _event_stream_handle: fsevent::Handle,
     poll_scheduled: bool,
+    rpc_client: Option<Arc<RpcClient>>,
 }
 
 #[derive(Clone, Debug)]
@@ -93,6 +96,7 @@ impl Worktree {
             scan_state: watch::channel_with(ScanState::Scanning),
             _event_stream_handle: event_stream_handle,
             poll_scheduled: false,
+            rpc_client: None,
         };
 
         std::thread::spawn(move || {
@@ -221,6 +225,39 @@ impl Worktree {
             Ok(())
         })
     }
+
+    pub fn share(
+        &mut self,
+        client: Arc<RpcClient>,
+        cx: &mut ModelContext<Self>,
+    ) -> Task<anyhow::Result<()>> {
+        self.rpc_client = Some(client.clone());
+        let snapshot = self.snapshot();
+        cx.spawn(|_this, cx| async move {
+            let files = cx
+                .background_executor()
+                .spawn(async move {
+                    snapshot
+                        .paths()
+                        .map(|path| PathAndDigest {
+                            path: path.as_os_str().as_bytes().to_vec(),
+                            digest: Default::default(),
+                        })
+                        .collect()
+                })
+                .await;
+
+            let share_response = client
+                .request(proto::from_client::ShareWorktree {
+                    worktree_id: 0,
+                    files,
+                })
+                .await?;
+
+            log::info!("sharing worktree {:?}", share_response);
+            Ok(())
+        })
+    }
 }
 
 impl Entity for Worktree {
@@ -264,7 +301,6 @@ impl Snapshot {
         FileIter::all(self, start)
     }
 
-    #[cfg(test)]
     pub fn paths(&self) -> impl Iterator<Item = &Arc<Path>> {
         self.entries
             .cursor::<(), ()>()

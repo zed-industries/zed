@@ -647,7 +647,7 @@ impl Workspace {
         let zed_url = std::env::var("ZED_SERVER_URL").unwrap_or("https://zed.dev".to_string());
         let executor = cx.background_executor().clone();
 
-        let task = cx.spawn::<_, _, surf::Result<()>>(|_this, cx| async move {
+        let task = cx.spawn::<_, _, surf::Result<()>>(|this, mut cx| async move {
             let (user_id, access_token) =
                 login(zed_url.clone(), cx.platform(), cx.background_executor()).await?;
 
@@ -682,15 +682,14 @@ impl Workspace {
                 Err(anyhow!("failed to authenticate with RPC server"))?;
             }
 
-            let share_response = rpc_client
-                .request(proto::from_client::ShareWorktree {
-                    worktree_id: worktree_id as u64,
-                    files: Vec::new(),
-                })
-                .await?;
+            let share_task = this.update(&mut cx, |this, cx| {
+                let worktree = this.worktrees.iter().next()?;
+                Some(worktree.update(cx, |worktree, cx| worktree.share(rpc_client, cx)))
+            });
 
-            log::info!("sharing worktree {:?}", share_response);
-
+            if let Some(share_task) = share_task {
+                share_task.await?;
+            }
             Ok(())
         });
 
