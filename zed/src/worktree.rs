@@ -4,7 +4,7 @@ mod ignore;
 
 use crate::{
     editor::{History, Rope},
-    rpc_client::RpcClient,
+    rpc_client::{ConnectionId, RpcClient},
     sum_tree::{self, Cursor, Edit, SumTree},
     util::Bias,
 };
@@ -229,6 +229,7 @@ impl Worktree {
     pub fn share(
         &mut self,
         client: Arc<RpcClient>,
+        connection_id: ConnectionId,
         cx: &mut ModelContext<Self>,
     ) -> Task<anyhow::Result<()>> {
         self.rpc_client = Some(client.clone());
@@ -245,9 +246,12 @@ impl Worktree {
                 .await;
 
             let share_response = client
-                .request(proto::ShareWorktree {
-                    worktree: Some(proto::Worktree { paths }),
-                })
+                .request(
+                    connection_id,
+                    proto::ShareWorktree {
+                        worktree: Some(proto::Worktree { paths }),
+                    },
+                )
                 .await?;
 
             log::info!("sharing worktree {:?}", share_response);

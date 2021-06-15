@@ -5,7 +5,7 @@ use std::{convert::TryInto, io};
 
 include!(concat!(env!("OUT_DIR"), "/zed.messages.rs"));
 
-pub trait EnvelopedMessage: Sized {
+pub trait EnvelopedMessage: Sized + Send + 'static {
     fn into_envelope(self, id: u32, responding_to: Option<u32>) -> Envelope;
     fn from_envelope(envelope: Envelope) -> Option<Self>;
 }

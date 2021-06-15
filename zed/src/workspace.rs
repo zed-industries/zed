@@ -670,13 +670,17 @@ impl Workspace {
             // a TLS stream using `native-tls`.
             let stream = smol::net::TcpStream::connect(rpc_address).await?;
 
-            let rpc_client = RpcClient::new(stream, executor);
+            let rpc_client = RpcClient::new();
+            let connection_id = rpc_client.connect(stream, executor).await;
 
             let auth_response = rpc_client
-                .request(proto::Auth {
-                    user_id: user_id.parse::<u64>()?,
-                    access_token,
-                })
+                .request(
+                    connection_id,
+                    proto::Auth {
+                        user_id: user_id.parse::<u64>()?,
+                        access_token,
+                    },
+                )
                 .await?;
             if !auth_response.credentials_valid {
                 Err(anyhow!("failed to authenticate with RPC server"))?;
@@ -684,7 +688,9 @@ impl Workspace {
 
             let share_task = this.update(&mut cx, |this, cx| {
                 let worktree = this.worktrees.iter().next()?;
-                Some(worktree.update(cx, |worktree, cx| worktree.share(rpc_client, cx)))
+                Some(worktree.update(cx, |worktree, cx| {
+                    worktree.share(rpc_client, connection_id, cx)
+                }))
             });
 
             if let Some(share_task) = share_task {
