@@ -2,7 +2,7 @@ use anyhow::{anyhow, Result};
 use futures::future::Either;
 use gpui::executor::Background;
 use postage::{
-    barrier, mpsc,
+    barrier, oneshot,
     prelude::{Sink, Stream},
 };
 use smol::{
@@ -14,18 +14,16 @@ use std::{
     collections::HashMap,
     future::Future,
     sync::{
-        atomic::{self, AtomicI32},
+        atomic::{self, AtomicU32},
         Arc,
     },
 };
-use zed_rpc::proto::{
-    self, MessageStream, RequestMessage, SendMessage, ServerMessage, SubscribeMessage,
-};
+use zed_rpc::proto::{self, EnvelopedMessage, MessageStream, RequestMessage};
 
 pub struct RpcClient {
-    response_channels: Arc<Mutex<HashMap<i32, (mpsc::Sender<proto::from_server::Variant>, bool)>>>,
+    response_channels: Arc<Mutex<HashMap<u32, oneshot::Sender<proto::Envelope>>>>,
     outgoing: Mutex<MessageStream<BoxedWriter>>,
-    next_message_id: AtomicI32,
+    next_message_id: AtomicU32,
     _drop_tx: barrier::Sender,
 }
 
@@ -50,16 +48,14 @@ impl RpcClient {
             response_channels,
             outgoing: Mutex::new(MessageStream::new(Box::pin(conn_tx))),
             _drop_tx,
-            next_message_id: AtomicI32::new(0),
+            next_message_id: AtomicU32::new(0),
         })
     }
 
     async fn handle_incoming<Conn>(
         conn: ReadHalf<Conn>,
         mut drop_rx: barrier::Receiver,
-        response_channels: Arc<
-            Mutex<HashMap<i32, (mpsc::Sender<proto::from_server::Variant>, bool)>>,
-        >,
+        response_channels: Arc<Mutex<HashMap<u32, oneshot::Sender<proto::Envelope>>>>,
     ) where
         Conn: AsyncRead + Unpin,
     {
@@ -68,36 +64,27 @@ impl RpcClient {
 
         let mut stream = MessageStream::new(conn);
         loop {
-            let read_message = stream.read_message::<proto::FromServer>();
+            let read_message = stream.read_message();
             smol::pin!(read_message);
 
             match futures::future::select(read_message, &mut dropped).await {
                 Either::Left((Ok(incoming), _)) => {
-                    if let Some(variant) = incoming.variant {
-                        if let Some(request_id) = incoming.request_id {
-                            let channel = response_channels.lock().await.remove(&request_id);
-                            if let Some((mut tx, oneshot)) = channel {
-                                if tx.send(variant).await.is_ok() {
-                                    if !oneshot {
-                                        response_channels
-                                            .lock()
-                                            .await
-                                            .insert(request_id, (tx, false));
-                                    }
-                                }
-                            } else {
-                                log::warn!(
-                                    "received RPC response to unknown request id {}",
-                                    request_id
-                                );
-                            }
+                    if let Some(responding_to) = incoming.responding_to {
+                        let channel = response_channels.lock().await.remove(&responding_to);
+                        if let Some(mut tx) = channel {
+                            tx.send(incoming).await.ok();
+                        } else {
+                            log::warn!(
+                                "received RPC response to unknown request {}",
+                                responding_to
+                            );
                         }
                     } else {
-                        log::warn!("received RPC message with no content");
+                        // unprompted message from server
                     }
                 }
                 Either::Left((Err(error), _)) => {
-                    log::warn!("invalid incoming RPC message {:?}", error);
+                    log::warn!("received invalid RPC message {:?}", error);
                 }
                 Either::Right(_) => break,
             }
@@ -111,67 +98,35 @@ impl RpcClient {
         let this = self.clone();
         async move {
             let message_id = this.next_message_id.fetch_add(1, atomic::Ordering::SeqCst);
-            let (tx, mut rx) = mpsc::channel(1);
-            this.response_channels
-                .lock()
-                .await
-                .insert(message_id, (tx, true));
+            let (tx, mut rx) = oneshot::channel();
+            this.response_channels.lock().await.insert(message_id, tx);
             this.outgoing
                 .lock()
                 .await
-                .write_message(&proto::FromClient {
-                    id: message_id,
-                    variant: Some(req.to_variant()),
-                })
+                .write_message(&req.into_envelope(message_id, None))
                 .await?;
             let response = rx
                 .recv()
                 .await
                 .expect("response channel was unexpectedly dropped");
-            T::Response::from_variant(response)
+            T::Response::from_envelope(response)
                 .ok_or_else(|| anyhow!("received response of the wrong t"))
         }
     }
 
-    pub fn send<T: SendMessage>(self: &Arc<Self>, message: T) -> impl Future<Output = Result<()>> {
+    pub fn send<T: EnvelopedMessage>(
+        self: &Arc<Self>,
+        message: T,
+    ) -> impl Future<Output = Result<()>> {
         let this = self.clone();
         async move {
             let message_id = this.next_message_id.fetch_add(1, atomic::Ordering::SeqCst);
             this.outgoing
                 .lock()
                 .await
-                .write_message(&proto::FromClient {
-                    id: message_id,
-                    variant: Some(message.to_variant()),
-                })
+                .write_message(&message.into_envelope(message_id, None))
                 .await?;
             Ok(())
-        }
-    }
-
-    pub fn subscribe<T: SubscribeMessage>(
-        self: &Arc<Self>,
-        subscription: T,
-    ) -> impl Future<Output = Result<impl Stream<Item = Result<T::Event>>>> {
-        let this = self.clone();
-        async move {
-            let message_id = this.next_message_id.fetch_add(1, atomic::Ordering::SeqCst);
-            let (tx, rx) = mpsc::channel(256);
-            this.response_channels
-                .lock()
-                .await
-                .insert(message_id, (tx, false));
-            this.outgoing
-                .lock()
-                .await
-                .write_message(&proto::FromClient {
-                    id: message_id,
-                    variant: Some(subscription.to_variant()),
-                })
-                .await?;
-            Ok(rx.map(|event| {
-                T::Event::from_variant(event).ok_or_else(|| anyhow!("invalid event {:?}"))
-            }))
         }
     }
 }
@@ -199,129 +154,45 @@ mod tests {
         let mut server_stream = MessageStream::new(server_conn);
         let client = RpcClient::new(client_conn, executor.clone());
 
-        let client_req = client.request(proto::from_client::Auth {
+        let client_req = client.request(proto::Auth {
             user_id: 42,
             access_token: "token".to_string(),
         });
         smol::pin!(client_req);
-        let server_req = send_recv(
-            &mut client_req,
-            server_stream.read_message::<proto::FromClient>(),
-        )
-        .await
-        .unwrap();
+        let server_req = send_recv(&mut client_req, server_stream.read_message())
+            .await
+            .unwrap();
         assert_eq!(
-            server_req.variant,
-            Some(proto::from_client::Variant::Auth(
-                proto::from_client::Auth {
-                    user_id: 42,
-                    access_token: "token".to_string()
-                }
-            ))
+            server_req.payload,
+            Some(proto::envelope::Payload::Auth(proto::Auth {
+                user_id: 42,
+                access_token: "token".to_string()
+            }))
         );
 
         // Respond to another request to ensure requests are properly matched up.
         server_stream
-            .write_message(&proto::FromServer {
-                request_id: Some(999),
-                variant: Some(proto::from_server::Variant::AuthResponse(
-                    proto::from_server::AuthResponse {
-                        credentials_valid: false,
-                    },
-                )),
-            })
+            .write_message(
+                &proto::AuthResponse {
+                    credentials_valid: false,
+                }
+                .into_envelope(1000, Some(999)),
+            )
             .await
             .unwrap();
         server_stream
-            .write_message(&proto::FromServer {
-                request_id: Some(server_req.id),
-                variant: Some(proto::from_server::Variant::AuthResponse(
-                    proto::from_server::AuthResponse {
-                        credentials_valid: true,
-                    },
-                )),
-            })
+            .write_message(
+                &proto::AuthResponse {
+                    credentials_valid: true,
+                }
+                .into_envelope(1001, Some(server_req.id)),
+            )
             .await
             .unwrap();
         assert_eq!(
             client_req.await.unwrap(),
-            proto::from_server::AuthResponse {
+            proto::AuthResponse {
                 credentials_valid: true
-            }
-        );
-    }
-
-    #[gpui::test]
-    async fn test_subscribe(cx: gpui::TestAppContext) {
-        let executor = cx.read(|app| app.background_executor().clone());
-        let socket_dir_path = TempDir::new("subscribe").unwrap();
-        let socket_path = socket_dir_path.path().join(".sock");
-        let listener = UnixListener::bind(&socket_path).unwrap();
-        let client_conn = UnixStream::connect(&socket_path).await.unwrap();
-        let (server_conn, _) = listener.accept().await.unwrap();
-
-        let mut server_stream = MessageStream::new(server_conn);
-        let client = RpcClient::new(client_conn, executor.clone());
-
-        let mut events = client
-            .subscribe(proto::from_client::SubscribeToPathRequests {})
-            .await
-            .unwrap();
-
-        let subscription = server_stream
-            .read_message::<proto::FromClient>()
-            .await
-            .unwrap();
-        assert_eq!(
-            subscription.variant,
-            Some(proto::from_client::Variant::SubscribeToPathRequests(
-                proto::from_client::SubscribeToPathRequests {}
-            ))
-        );
-        server_stream
-            .write_message(&proto::FromServer {
-                request_id: Some(subscription.id),
-                variant: Some(proto::from_server::Variant::PathRequest(
-                    proto::from_server::PathRequest {
-                        path: b"path-1".to_vec(),
-                    },
-                )),
-            })
-            .await
-            .unwrap();
-        server_stream
-            .write_message(&proto::FromServer {
-                request_id: Some(99999),
-                variant: Some(proto::from_server::Variant::PathRequest(
-                    proto::from_server::PathRequest {
-                        path: b"path-2".to_vec(),
-                    },
-                )),
-            })
-            .await
-            .unwrap();
-        server_stream
-            .write_message(&proto::FromServer {
-                request_id: Some(subscription.id),
-                variant: Some(proto::from_server::Variant::PathRequest(
-                    proto::from_server::PathRequest {
-                        path: b"path-3".to_vec(),
-                    },
-                )),
-            })
-            .await
-            .unwrap();
-
-        assert_eq!(
-            events.recv().await.unwrap().unwrap(),
-            proto::from_server::PathRequest {
-                path: b"path-1".to_vec()
-            }
-        );
-        assert_eq!(
-            events.recv().await.unwrap().unwrap(),
-            proto::from_server::PathRequest {
-                path: b"path-3".to_vec()
             }
         );
     }
@@ -362,7 +233,7 @@ mod tests {
 
         let client = RpcClient::new(client_conn, executor.clone());
         let err = client
-            .request(proto::from_client::Auth {
+            .request(proto::Auth {
                 user_id: 42,
                 access_token: "token".to_string(),
             })

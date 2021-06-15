@@ -673,8 +673,8 @@ impl Workspace {
             let rpc_client = RpcClient::new(stream, executor);
 
             let auth_response = rpc_client
-                .request(proto::from_client::Auth {
-                    user_id: user_id.parse::<i32>()?,
+                .request(proto::Auth {
+                    user_id: user_id.parse::<u64>()?,
                     access_token,
                 })
                 .await?;

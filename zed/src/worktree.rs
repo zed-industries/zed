@@ -32,7 +32,7 @@ use std::{
     sync::{Arc, Weak},
     time::{Duration, SystemTime, UNIX_EPOCH},
 };
-use zed_rpc::proto::{self, from_client::PathAndDigest};
+use zed_rpc::proto;
 
 use self::{char_bag::CharBag, ignore::IgnoreStack};
 
@@ -234,23 +234,19 @@ impl Worktree {
         self.rpc_client = Some(client.clone());
         let snapshot = self.snapshot();
         cx.spawn(|_this, cx| async move {
-            let files = cx
+            let paths = cx
                 .background_executor()
                 .spawn(async move {
                     snapshot
                         .paths()
-                        .map(|path| PathAndDigest {
-                            path: path.as_os_str().as_bytes().to_vec(),
-                            digest: Default::default(),
-                        })
+                        .map(|path| path.as_os_str().as_bytes().to_vec())
                         .collect()
                 })
                 .await;
 
             let share_response = client
-                .request(proto::from_client::ShareWorktree {
-                    worktree_id: 0,
-                    files,
+                .request(proto::ShareWorktree {
+                    worktree: Some(proto::Worktree { paths }),
                 })
                 .await?;
 
