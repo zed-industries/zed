@@ -14,8 +14,8 @@ use crate::{
 use anyhow::{anyhow, Context as _};
 use gpui::{
     color::rgbu, elements::*, json::to_string_pretty, keymap::Binding, AnyViewHandle, AppContext,
-    ClipboardItem, Entity, ModelHandle, MutableAppContext, PathPromptOptions, PromptLevel, Task,
-    View, ViewContext, ViewHandle, WeakModelHandle,
+    AsyncAppContext, ClipboardItem, Entity, ModelHandle, MutableAppContext, PathPromptOptions,
+    PromptLevel, Task, View, ViewContext, ViewHandle, WeakModelHandle,
 };
 use log::error;
 pub use pane::*;
@@ -33,7 +33,7 @@ use std::{
 use surf::Url;
 use zed_rpc::{proto, rest::CreateWorktreeResponse};
 
-pub fn init(cx: &mut MutableAppContext) {
+pub fn init(cx: &mut MutableAppContext, rpc_client: &mut RpcClient) {
     cx.add_global_action("workspace:open", open);
     cx.add_global_action("workspace:open_paths", open_paths);
     cx.add_action("workspace:save", Workspace::save_active_item);
@@ -45,6 +45,9 @@ pub fn init(cx: &mut MutableAppContext) {
         Binding::new("cmd-alt-i", "workspace:debug_elements", None),
     ]);
     pane::init(cx);
+
+    let cx = cx.to_async();
+    rpc_client.on_request(move |req| handle_open_buffer(req, cx));
 }
 
 pub struct OpenParams {
@@ -103,6 +106,10 @@ fn open_paths(params: &OpenParams, cx: &mut MutableAppContext) {
         cx.foreground().spawn(open_paths).detach();
         view
     });
+}
+
+fn handle_open_buffer(request: zed_rpc::proto::OpenBuffer, cx: AsyncAppContext) {
+    //
 }
 
 pub trait Item: Entity + Sized {
@@ -670,7 +677,7 @@ impl Workspace {
             // a TLS stream using `native-tls`.
             let stream = smol::net::TcpStream::connect(rpc_address).await?;
 
-            let rpc_client = RpcClient::new();
+            let rpc_client = Arc::new(RpcClient::new());
             let (connection_id, handler) = rpc_client.add_connection(stream).await;
             executor.spawn(handler).detach();
 

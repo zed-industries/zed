@@ -6,7 +6,9 @@ use log::LevelFilter;
 use simplelog::SimpleLogger;
 use std::{fs, path::PathBuf, sync::Arc};
 use zed::{
-    self, assets, editor, file_finder, language, menus, settings,
+    self, assets, editor, file_finder, language, menus,
+    rpc_client::RpcClient,
+    settings,
     workspace::{self, OpenParams},
     AppState,
 };
@@ -19,16 +21,17 @@ fn main() {
     let (_, settings) = settings::channel(&app.font_cache()).unwrap();
     let language_registry = Arc::new(language::LanguageRegistry::new());
     language_registry.set_theme(&settings.borrow().theme);
+
     let app_state = AppState {
         language_registry,
         settings,
+        rpc_client: Arc::new(RpcClient::new()),
     };
 
     app.run(move |cx| {
         cx.set_menus(menus::menus(app_state.clone()));
-
         zed::init(cx);
-        workspace::init(cx);
+        workspace::init(cx, &app_state);
         editor::init(cx);
         file_finder::init(cx);
 

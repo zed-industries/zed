@@ -7,6 +7,7 @@ include!(concat!(env!("OUT_DIR"), "/zed.messages.rs"));
 
 pub trait EnvelopedMessage: Sized + Send + 'static {
     fn into_envelope(self, id: u32, responding_to: Option<u32>) -> Envelope;
+    fn matches_envelope(envelope: &Envelope) -> bool;
     fn from_envelope(envelope: Envelope) -> Option<Self>;
 }
 
@@ -23,6 +24,10 @@ macro_rules! message {
                     responding_to,
                     payload: Some(envelope::Payload::$name(self)),
                 }
+            }
+
+            fn matches_envelope(envelope: &Envelope) -> bool {
+                matches!(&envelope.payload, Some(envelope::Payload::$name(_)))
             }
 
             fn from_envelope(envelope: Envelope) -> Option<Self> {

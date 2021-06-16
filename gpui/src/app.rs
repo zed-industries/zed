@@ -1340,8 +1340,16 @@ impl MutableAppContext {
         Fut: 'static + Future<Output = T>,
         T: 'static,
     {
-        let cx = AsyncAppContext(self.weak_self.as_ref().unwrap().upgrade().unwrap());
+        let cx = self.to_async();
         self.foreground.spawn(f(cx))
+    }
+
+    pub fn to_async(&self) -> AsyncAppContext {
+        AsyncAppContext(self.weak_self.as_ref().unwrap().upgrade().unwrap())
+    }
+
+    pub fn to_background(&self) -> BackgroundAppContext {
+        //
     }
 
     pub fn write_to_clipboard(&self, item: ClipboardItem) {
