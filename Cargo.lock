@@ -197,9 +197,9 @@ dependencies = [
 
 [[package]]
 name = "async-lock"
-version = "2.3.0"
+version = "2.4.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "1996609732bde4a9988bc42125f55f2af5f3c36370e27c778d5191a4a1b63bfb"
+checksum = "e6a8ea61bf9947a1007c5cada31e647dbc77b103c679858150003ba697ea798b"
 dependencies = [
  "event-listener",
 ]
@@ -4353,9 +4353,11 @@ name = "zed-rpc"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "async-lock",
  "base64 0.13.0",
- "futures-io",
- "futures-lite",
+ "futures",
+ "log",
+ "postage",
  "prost 0.7.0 (registry+https://github.com/rust-lang/crates.io-index)",
  "prost-build",
  "rand 0.8.3",

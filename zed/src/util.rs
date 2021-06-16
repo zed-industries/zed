@@ -1,8 +1,7 @@
-use crate::rpc_client::{RpcClient, TypedEnvelope};
 use postage::prelude::Stream;
 use rand::prelude::*;
 use std::{cmp::Ordering, future::Future, sync::Arc};
-use zed_rpc::proto;
+use zed_rpc::{proto, Peer, TypedEnvelope};
 
 #[derive(Copy, Clone, Eq, PartialEq, Debug, Hash)]
 pub enum Bias {
@@ -62,7 +61,7 @@ pub trait MessageHandler<'a, M: proto::EnvelopedMessage> {
     fn handle(
         &self,
         message: TypedEnvelope<M>,
-        client: Arc<RpcClient>,
+        rpc: Arc<Peer>,
         cx: &'a mut gpui::AsyncAppContext,
     ) -> Self::Output;
 }
@@ -70,7 +69,7 @@ pub trait MessageHandler<'a, M: proto::EnvelopedMessage> {
 impl<'a, M, F, Fut> MessageHandler<'a, M> for F
 where
     M: proto::EnvelopedMessage,
-    F: Fn(TypedEnvelope<M>, Arc<RpcClient>, &'a mut gpui::AsyncAppContext) -> Fut,
+    F: Fn(TypedEnvelope<M>, Arc<Peer>, &'a mut gpui::AsyncAppContext) -> Fut,
     Fut: 'a + Future<Output = anyhow::Result<()>>,
 {
     type Output = Fut;
@@ -78,23 +77,23 @@ where
     fn handle(
         &self,
         message: TypedEnvelope<M>,
-        client: Arc<RpcClient>,
+        rpc: Arc<Peer>,
         cx: &'a mut gpui::AsyncAppContext,
     ) -> Self::Output {
-        (self)(message, client, cx)
+        (self)(message, rpc, cx)
     }
 }
 
-pub fn handle_messages<H, M>(handler: H, client: &Arc<RpcClient>, cx: &mut gpui::MutableAppContext)
+pub fn handle_messages<H, M>(handler: H, rpc: &Arc<Peer>, cx: &mut gpui::MutableAppContext)
 where
     H: 'static + for<'a> MessageHandler<'a, M>,
     M: proto::EnvelopedMessage,
 {
-    let client = client.clone();
-    let mut messages = smol::block_on(client.add_message_handler::<M>());
+    let rpc = rpc.clone();
+    let mut messages = smol::block_on(rpc.add_message_handler::<M>());
     cx.spawn(|mut cx| async move {
         while let Some(message) = messages.recv().await {
-            if let Err(err) = handler.handle(message, client.clone(), &mut cx).await {
+            if let Err(err) = handler.handle(message, rpc.clone(), &mut cx).await {
                 log::error!("error handling message: {:?}", err);
             }
         }

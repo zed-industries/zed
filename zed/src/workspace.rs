@@ -4,7 +4,6 @@ pub mod pane_group;
 use crate::{
     editor::{Buffer, Editor},
     language::LanguageRegistry,
-    rpc_client::{RpcClient, TypedEnvelope},
     settings::Settings,
     time::ReplicaId,
     util::{self, SurfResultExt as _},
@@ -31,9 +30,9 @@ use std::{
     time::Duration,
 };
 use surf::Url;
-use zed_rpc::{proto, rest::CreateWorktreeResponse};
+use zed_rpc::{proto, rest::CreateWorktreeResponse, Peer, TypedEnvelope};
 
-pub fn init(cx: &mut MutableAppContext, rpc_client: Arc<RpcClient>) {
+pub fn init(cx: &mut MutableAppContext, rpc: Arc<Peer>) {
     cx.add_global_action("workspace:open", open);
     cx.add_global_action("workspace:open_paths", open_paths);
     cx.add_action("workspace:save", Workspace::save_active_item);
@@ -46,7 +45,7 @@ pub fn init(cx: &mut MutableAppContext, rpc_client: Arc<RpcClient>) {
     ]);
     pane::init(cx);
 
-    util::handle_messages(handle_open_buffer, &rpc_client, cx);
+    util::handle_messages(handle_open_buffer, &rpc, cx);
 }
 
 pub struct OpenParams {
@@ -99,7 +98,7 @@ fn open_paths(params: &OpenParams, cx: &mut MutableAppContext) {
             0,
             params.app_state.settings.clone(),
             params.app_state.language_registry.clone(),
-            params.app_state.rpc_client.clone(),
+            params.app_state.rpc.clone(),
             cx,
         );
         let open_paths = view.open_paths(&params.paths, cx);
@@ -110,13 +109,12 @@ fn open_paths(params: &OpenParams, cx: &mut MutableAppContext) {
 
 async fn handle_open_buffer(
     request: TypedEnvelope<proto::OpenBuffer>,
-    rpc_client: Arc<RpcClient>,
+    rpc: Arc<Peer>,
     cx: &mut AsyncAppContext,
 ) -> anyhow::Result<()> {
     let payload = request.payload();
     dbg!(&payload.path);
-    rpc_client
-        .respond(request, proto::OpenBufferResponse { buffer: None })
+    rpc.respond(request, proto::OpenBufferResponse { buffer: None })
         .await?;
 
     dbg!(cx.read(|app| app.root_view_id(1)));
@@ -313,7 +311,7 @@ pub struct State {
 pub struct Workspace {
     pub settings: watch::Receiver<Settings>,
     language_registry: Arc<LanguageRegistry>,
-    rpc_client: Arc<RpcClient>,
+    rpc: Arc<Peer>,
     modal: Option<AnyViewHandle>,
     center: PaneGroup,
     panes: Vec<ViewHandle<Pane>>,
@@ -332,7 +330,7 @@ impl Workspace {
         replica_id: ReplicaId,
         settings: watch::Receiver<Settings>,
         language_registry: Arc<LanguageRegistry>,
-        rpc_client: Arc<RpcClient>,
+        rpc: Arc<Peer>,
         cx: &mut ViewContext<Self>,
     ) -> Self {
         let pane = cx.add_view(|_| Pane::new(settings.clone()));
@@ -349,7 +347,7 @@ impl Workspace {
             active_pane: pane.clone(),
             settings,
             language_registry,
-            rpc_client,
+            rpc,
             replica_id,
             worktrees: Default::default(),
             items: Default::default(),
@@ -665,7 +663,7 @@ impl Workspace {
     }
 
     fn share_worktree(&mut self, _: &(), cx: &mut ViewContext<Self>) {
-        let rpc_client = self.rpc_client.clone();
+        let rpc = self.rpc.clone();
         let zed_url = std::env::var("ZED_SERVER_URL").unwrap_or("https://zed.dev".to_string());
         let executor = cx.background_executor().clone();
 
@@ -692,10 +690,10 @@ impl Workspace {
             // a TLS stream using `native-tls`.
             let stream = smol::net::TcpStream::connect(rpc_address).await?;
 
-            let (connection_id, handler) = rpc_client.add_connection(stream).await;
+            let (connection_id, handler) = rpc.add_connection(stream).await;
             executor.spawn(handler).detach();
 
-            let auth_response = rpc_client
+            let auth_response = rpc
                 .request(
                     connection_id,
                     proto::Auth {
@@ -710,9 +708,7 @@ impl Workspace {
 
             let share_task = this.update(&mut cx, |this, cx| {
                 let worktree = this.worktrees.iter().next()?;
-                Some(worktree.update(cx, |worktree, cx| {
-                    worktree.share(rpc_client, connection_id, cx)
-                }))
+                Some(worktree.update(cx, |worktree, cx| worktree.share(rpc, connection_id, cx)))
             });
 
             if let Some(share_task) = share_task {
@@ -956,7 +952,7 @@ mod tests {
     fn test_open_paths_action(cx: &mut gpui::MutableAppContext) {
         let app_state = build_app_state(cx.as_ref());
 
-        init(cx, app_state.rpc_client.clone());
+        init(cx, app_state.rpc.clone());
 
         let dir = temp_tree(json!({
             "a": {
@@ -1028,7 +1024,7 @@ mod tests {
                 0,
                 app_state.settings,
                 app_state.language_registry,
-                app_state.rpc_client,
+                app_state.rpc,
                 cx,
             );
             workspace.add_worktree(dir.path(), cx);
@@ -1137,7 +1133,7 @@ mod tests {
                 0,
                 app_state.settings,
                 app_state.language_registry,
-                app_state.rpc_client,
+                app_state.rpc,
                 cx,
             );
             workspace.add_worktree(dir1.path(), cx);
@@ -1211,7 +1207,7 @@ mod tests {
                 0,
                 app_state.settings,
                 app_state.language_registry,
-                app_state.rpc_client,
+                app_state.rpc,
                 cx,
             );
             workspace.add_worktree(dir.path(), cx);
@@ -1260,7 +1256,7 @@ mod tests {
                 0,
                 app_state.settings,
                 app_state.language_registry,
-                app_state.rpc_client,
+                app_state.rpc,
                 cx,
             );
             workspace.add_worktree(dir.path(), cx);
@@ -1366,7 +1362,7 @@ mod tests {
                 0,
                 app_state.settings,
                 app_state.language_registry,
-                app_state.rpc_client,
+                app_state.rpc,
                 cx,
             );
             workspace.add_worktree(dir.path(), cx);

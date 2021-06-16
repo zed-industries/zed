@@ -483,7 +483,7 @@ mod tests {
                 0,
                 app_state.settings,
                 app_state.language_registry,
-                app_state.rpc_client,
+                app_state.rpc,
                 cx,
             );
             workspace.add_worktree(tmp_dir.path(), cx);
@@ -556,7 +556,7 @@ mod tests {
                 0,
                 app_state.settings.clone(),
                 app_state.language_registry.clone(),
-                app_state.rpc_client.clone(),
+                app_state.rpc.clone(),
                 cx,
             );
             workspace.add_worktree(tmp_dir.path(), cx);
@@ -620,7 +620,7 @@ mod tests {
                 0,
                 app_state.settings.clone(),
                 app_state.language_registry.clone(),
-                app_state.rpc_client.clone(),
+                app_state.rpc.clone(),
                 cx,
             );
             workspace.add_worktree(&file_path, cx);
@@ -672,7 +672,7 @@ mod tests {
                 0,
                 app_state.settings.clone(),
                 app_state.language_registry.clone(),
-                app_state.rpc_client.clone(),
+                app_state.rpc.clone(),
                 cx,
             )
         });

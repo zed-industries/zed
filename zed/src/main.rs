@@ -6,9 +6,7 @@ use log::LevelFilter;
 use simplelog::SimpleLogger;
 use std::{fs, path::PathBuf, sync::Arc};
 use zed::{
-    self, assets, editor, file_finder, language, menus,
-    rpc_client::RpcClient,
-    settings,
+    self, assets, editor, file_finder, language, menus, settings,
     workspace::{self, OpenParams},
     AppState,
 };
@@ -25,13 +23,13 @@ fn main() {
     let app_state = AppState {
         language_registry,
         settings,
-        rpc_client: RpcClient::new(),
+        rpc: zed_rpc::Peer::new(),
     };
 
     app.run(move |cx| {
         cx.set_menus(menus::menus(app_state.clone()));
         zed::init(cx);
-        workspace::init(cx, app_state.rpc_client.clone());
+        workspace::init(cx, app_state.rpc.clone());
         editor::init(cx);
         file_finder::init(cx);
 

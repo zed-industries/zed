@@ -1,5 +1,4 @@
-use futures_io::{AsyncRead, AsyncWrite};
-use futures_lite::{AsyncReadExt, AsyncWriteExt as _};
+use futures::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt as _};
 use prost::Message;
 use std::{convert::TryInto, io};
 
@@ -97,7 +96,7 @@ where
     T: AsyncRead + Unpin,
 {
     /// Read a protobuf message of the given type from the stream.
-    pub async fn read_message(&mut self) -> futures_io::Result<Envelope> {
+    pub async fn read_message(&mut self) -> io::Result<Envelope> {
         let mut delimiter_buf = [0; 4];
         self.byte_stream.read_exact(&mut delimiter_buf).await?;
         let message_len = u32::from_be_bytes(delimiter_buf) as usize;
