@@ -1,5 +1,8 @@
 use anyhow::{anyhow, Result};
-use futures::future::Either;
+use futures::{
+    future::{BoxFuture, Either},
+    FutureExt,
+};
 use postage::{
     barrier, mpsc, oneshot,
     prelude::{Sink, Stream},
@@ -31,67 +34,27 @@ struct RpcConnection {
 }
 
 type MessageHandler =
-    Box<dyn Send + Sync + Fn(&mut Option<proto::Envelope>, ConnectionId) -> Option<ErasedMessage>>;
+    Box<dyn Send + Sync + Fn(&mut Option<proto::Envelope>, ConnectionId) -> Option<BoxFuture<()>>>;
 
-struct ErasedMessage {
+pub struct TypedEnvelope<T> {
     id: u32,
     connection_id: ConnectionId,
-    body: proto::Envelope,
+    payload: T,
 }
 
-pub struct Message<T: EnvelopedMessage> {
-    connection_id: ConnectionId,
-    body: Option<T>,
-}
-
-impl<T: EnvelopedMessage> From<ErasedMessage> for Message<T> {
-    fn from(message: ErasedMessage) -> Self {
-        Self {
-            connection_id: message.connection_id,
-            body: T::from_envelope(message.body),
-        }
-    }
-}
-
-impl<T: EnvelopedMessage> Message<T> {
+impl<T> TypedEnvelope<T> {
     pub fn connection_id(&self) -> ConnectionId {
         self.connection_id
     }
 
-    pub fn body(&mut self) -> T {
-        self.body.take().expect("body already taken")
-    }
-}
-
-pub struct Request<T: RequestMessage> {
-    id: u32,
-    connection_id: ConnectionId,
-    body: Option<T>,
-}
-
-impl<T: RequestMessage> From<ErasedMessage> for Request<T> {
-    fn from(message: ErasedMessage) -> Self {
-        Self {
-            id: message.id,
-            connection_id: message.connection_id,
-            body: T::from_envelope(message.body),
-        }
-    }
-}
-
-impl<T: RequestMessage> Request<T> {
-    pub fn connection_id(&self) -> ConnectionId {
-        self.connection_id
-    }
-
-    pub fn body(&mut self) -> T {
-        self.body.take().expect("body already taken")
+    pub fn payload(&self) -> &T {
+        &self.payload
     }
 }
 
 pub struct RpcClient {
     connections: RwLock<HashMap<ConnectionId, Arc<RpcConnection>>>,
-    message_handlers: RwLock<Vec<(mpsc::Sender<ErasedMessage>, MessageHandler)>>,
+    message_handlers: RwLock<Vec<MessageHandler>>,
     handler_types: Mutex<HashSet<TypeId>>,
     next_connection_id: AtomicU32,
 }
@@ -106,52 +69,37 @@ impl RpcClient {
         })
     }
 
-    pub async fn add_request_handler<T: RequestMessage>(&self) -> impl Stream<Item = Request<T>> {
+    pub async fn add_message_handler<T: EnvelopedMessage>(
+        &self,
+    ) -> mpsc::Receiver<TypedEnvelope<T>> {
         if !self.handler_types.lock().await.insert(TypeId::of::<T>()) {
             panic!("duplicate handler type");
         }
 
         let (tx, rx) = mpsc::channel(256);
-        self.message_handlers.write().await.push((
-            tx,
-            Box::new(move |envelope, connection_id| {
+        self.message_handlers
+            .write()
+            .await
+            .push(Box::new(move |envelope, connection_id| {
                 if envelope.as_ref().map_or(false, T::matches_envelope) {
                     let envelope = Option::take(envelope).unwrap();
-                    Some(ErasedMessage {
-                        id: envelope.id,
-                        connection_id,
-                        body: envelope,
-                    })
+                    let mut tx = tx.clone();
+                    Some(
+                        async move {
+                            tx.send(TypedEnvelope {
+                                id: envelope.id,
+                                connection_id,
+                                payload: T::from_envelope(envelope).unwrap(),
+                            })
+                            .await;
+                        }
+                        .boxed(),
+                    )
                 } else {
                     None
                 }
-            }),
-        ));
-        rx.map(Request::from)
-    }
-
-    pub async fn add_message_handler<T: EnvelopedMessage>(&self) -> impl Stream<Item = Message<T>> {
-        if !self.handler_types.lock().await.insert(TypeId::of::<T>()) {
-            panic!("duplicate handler type");
-        }
-
-        let (tx, rx) = mpsc::channel(256);
-        self.message_handlers.write().await.push((
-            tx,
-            Box::new(move |envelope, connection_id| {
-                if envelope.as_ref().map_or(false, T::matches_envelope) {
-                    let envelope = Option::take(envelope).unwrap();
-                    Some(ErasedMessage {
-                        id: envelope.id,
-                        connection_id,
-                        body: envelope,
-                    })
-                } else {
-                    None
-                }
-            }),
-        ));
-        rx.map(Message::from)
+            }));
+        rx
     }
 
     pub async fn add_connection<Conn>(
@@ -208,9 +156,9 @@ impl RpcClient {
                         } else {
                             let mut handled = false;
                             let mut envelope = Some(incoming);
-                            for (tx, handler) in this.message_handlers.read().await.iter() {
-                                if let Some(message) = handler(&mut envelope, connection_id) {
-                                    let _ = tx.clone().send(message).await;
+                            for handler in this.message_handlers.read().await.iter() {
+                                if let Some(future) = handler(&mut envelope, connection_id) {
+                                    future.await;
                                     handled = true;
                                     break;
                                 }
@@ -303,7 +251,7 @@ impl RpcClient {
 
     pub fn respond<T: RequestMessage>(
         self: &Arc<Self>,
-        request: Request<T>,
+        request: TypedEnvelope<T>,
         response: T::Response,
     ) -> impl Future<Output = Result<()>> {
         let this = self.clone();

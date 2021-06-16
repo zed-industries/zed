@@ -1,4 +1,4 @@
-use crate::rpc_client::{Message, Request, RpcClient};
+use crate::rpc_client::{RpcClient, TypedEnvelope};
 use postage::prelude::Stream;
 use rand::prelude::*;
 use std::{cmp::Ordering, future::Future, sync::Arc};
@@ -56,41 +56,12 @@ where
     }
 }
 
-pub trait RequestHandler<'a, R: proto::RequestMessage> {
-    type Output: 'a + Future<Output = anyhow::Result<()>>;
-
-    fn handle(
-        &self,
-        request: Request<R>,
-        client: Arc<RpcClient>,
-        cx: &'a mut gpui::AsyncAppContext,
-    ) -> Self::Output;
-}
-
-impl<'a, R, F, Fut> RequestHandler<'a, R> for F
-where
-    R: proto::RequestMessage,
-    F: Fn(Request<R>, Arc<RpcClient>, &'a mut gpui::AsyncAppContext) -> Fut,
-    Fut: 'a + Future<Output = anyhow::Result<()>>,
-{
-    type Output = Fut;
-
-    fn handle(
-        &self,
-        request: Request<R>,
-        client: Arc<RpcClient>,
-        cx: &'a mut gpui::AsyncAppContext,
-    ) -> Self::Output {
-        (self)(request, client, cx)
-    }
-}
-
 pub trait MessageHandler<'a, M: proto::EnvelopedMessage> {
     type Output: 'a + Future<Output = anyhow::Result<()>>;
 
     fn handle(
         &self,
-        message: Message<M>,
+        message: TypedEnvelope<M>,
         client: Arc<RpcClient>,
         cx: &'a mut gpui::AsyncAppContext,
     ) -> Self::Output;
@@ -99,14 +70,14 @@ pub trait MessageHandler<'a, M: proto::EnvelopedMessage> {
 impl<'a, M, F, Fut> MessageHandler<'a, M> for F
 where
     M: proto::EnvelopedMessage,
-    F: Fn(Message<M>, Arc<RpcClient>, &'a mut gpui::AsyncAppContext) -> Fut,
+    F: Fn(TypedEnvelope<M>, Arc<RpcClient>, &'a mut gpui::AsyncAppContext) -> Fut,
     Fut: 'a + Future<Output = anyhow::Result<()>>,
 {
     type Output = Fut;
 
     fn handle(
         &self,
-        message: Message<M>,
+        message: TypedEnvelope<M>,
         client: Arc<RpcClient>,
         cx: &'a mut gpui::AsyncAppContext,
     ) -> Self::Output {
@@ -114,31 +85,8 @@ where
     }
 }
 
-pub fn spawn_request_handler<H, R>(
-    handler: H,
-    client: &Arc<RpcClient>,
-    cx: &mut gpui::MutableAppContext,
-) where
-    H: 'static + for<'a> RequestHandler<'a, R>,
-    R: proto::RequestMessage,
-{
-    let client = client.clone();
-    let mut requests = smol::block_on(client.add_request_handler::<R>());
-    cx.spawn(|mut cx| async move {
-        while let Some(request) = requests.recv().await {
-            if let Err(err) = handler.handle(request, client.clone(), &mut cx).await {
-                log::error!("error handling request: {:?}", err);
-            }
-        }
-    })
-    .detach();
-}
-
-pub fn spawn_message_handler<H, M>(
-    handler: H,
-    client: &Arc<RpcClient>,
-    cx: &mut gpui::MutableAppContext,
-) where
+pub fn handle_messages<H, M>(handler: H, client: &Arc<RpcClient>, cx: &mut gpui::MutableAppContext)
+where
     H: 'static + for<'a> MessageHandler<'a, M>,
     M: proto::EnvelopedMessage,
 {
