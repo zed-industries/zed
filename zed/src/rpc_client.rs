@@ -1,7 +1,7 @@
 use anyhow::{anyhow, Result};
-use futures::future::{BoxFuture, Either, FutureExt};
+use futures::future::Either;
 use postage::{
-    barrier, oneshot,
+    barrier, mpsc, oneshot,
     prelude::{Sink, Stream},
 };
 use smol::{
@@ -30,87 +30,128 @@ struct RpcConnection {
     _close_barrier: barrier::Sender,
 }
 
-type RequestHandler = Box<
-    dyn Send
-        + Sync
-        + Fn(&mut Option<proto::Envelope>, &AtomicU32) -> Option<BoxFuture<'static, proto::Envelope>>,
->;
 type MessageHandler =
-    Box<dyn Send + Sync + Fn(&mut Option<proto::Envelope>) -> Option<BoxFuture<'static, ()>>>;
+    Box<dyn Send + Sync + Fn(&mut Option<proto::Envelope>, ConnectionId) -> Option<ErasedMessage>>;
+
+struct ErasedMessage {
+    id: u32,
+    connection_id: ConnectionId,
+    body: proto::Envelope,
+}
+
+pub struct Message<T: EnvelopedMessage> {
+    connection_id: ConnectionId,
+    body: Option<T>,
+}
+
+impl<T: EnvelopedMessage> From<ErasedMessage> for Message<T> {
+    fn from(message: ErasedMessage) -> Self {
+        Self {
+            connection_id: message.connection_id,
+            body: T::from_envelope(message.body),
+        }
+    }
+}
+
+impl<T: EnvelopedMessage> Message<T> {
+    pub fn connection_id(&self) -> ConnectionId {
+        self.connection_id
+    }
+
+    pub fn body(&mut self) -> T {
+        self.body.take().expect("body already taken")
+    }
+}
+
+pub struct Request<T: RequestMessage> {
+    id: u32,
+    connection_id: ConnectionId,
+    body: Option<T>,
+}
+
+impl<T: RequestMessage> From<ErasedMessage> for Request<T> {
+    fn from(message: ErasedMessage) -> Self {
+        Self {
+            id: message.id,
+            connection_id: message.connection_id,
+            body: T::from_envelope(message.body),
+        }
+    }
+}
+
+impl<T: RequestMessage> Request<T> {
+    pub fn connection_id(&self) -> ConnectionId {
+        self.connection_id
+    }
+
+    pub fn body(&mut self) -> T {
+        self.body.take().expect("body already taken")
+    }
+}
 
 pub struct RpcClient {
     connections: RwLock<HashMap<ConnectionId, Arc<RpcConnection>>>,
-    request_handlers: RwLock<Vec<RequestHandler>>,
-    message_handlers: RwLock<Vec<MessageHandler>>,
-    handler_types: RwLock<HashSet<TypeId>>,
+    message_handlers: RwLock<Vec<(mpsc::Sender<ErasedMessage>, MessageHandler)>>,
+    handler_types: Mutex<HashSet<TypeId>>,
     next_connection_id: AtomicU32,
 }
 
 impl RpcClient {
-    pub fn new() -> Self {
-        Self {
-            request_handlers: Default::default(),
+    pub fn new() -> Arc<Self> {
+        Arc::new(Self {
+            connections: Default::default(),
             message_handlers: Default::default(),
             handler_types: Default::default(),
-            connections: Default::default(),
             next_connection_id: Default::default(),
-        }
+        })
     }
 
-    pub async fn on_request<Req, F, Fut>(&self, handler: F)
-    where
-        Req: RequestMessage,
-        F: 'static + Send + Sync + Fn(Req) -> Fut,
-        Fut: 'static + Send + Sync + Future<Output = Req::Response>,
-    {
-        if !self.handler_types.write().await.insert(TypeId::of::<Req>()) {
-            panic!("duplicate request handler type");
+    pub async fn add_request_handler<T: RequestMessage>(&self) -> impl Stream<Item = Request<T>> {
+        if !self.handler_types.lock().await.insert(TypeId::of::<T>()) {
+            panic!("duplicate handler type");
         }
 
-        self.request_handlers
-            .write()
-            .await
-            .push(Box::new(move |envelope, next_message_id| {
-                if envelope.as_ref().map_or(false, Req::matches_envelope) {
+        let (tx, rx) = mpsc::channel(256);
+        self.message_handlers.write().await.push((
+            tx,
+            Box::new(move |envelope, connection_id| {
+                if envelope.as_ref().map_or(false, T::matches_envelope) {
                     let envelope = Option::take(envelope).unwrap();
-                    let message_id = next_message_id.fetch_add(1, atomic::Ordering::SeqCst);
-                    let responding_to = envelope.id;
-                    let request = Req::from_envelope(envelope).unwrap();
-                    Some(
-                        handler(request)
-                            .map(move |response| {
-                                response.into_envelope(message_id, Some(responding_to))
-                            })
-                            .boxed(),
-                    )
+                    Some(ErasedMessage {
+                        id: envelope.id,
+                        connection_id,
+                        body: envelope,
+                    })
                 } else {
                     None
                 }
-            }));
+            }),
+        ));
+        rx.map(Request::from)
     }
 
-    pub async fn on_message<M, F, Fut>(&self, handler: F)
-    where
-        M: EnvelopedMessage,
-        F: 'static + Send + Sync + Fn(M) -> Fut,
-        Fut: 'static + Send + Sync + Future<Output = ()>,
-    {
-        if !self.handler_types.write().await.insert(TypeId::of::<M>()) {
-            panic!("duplicate request handler type");
+    pub async fn add_message_handler<T: EnvelopedMessage>(&self) -> impl Stream<Item = Message<T>> {
+        if !self.handler_types.lock().await.insert(TypeId::of::<T>()) {
+            panic!("duplicate handler type");
         }
 
-        self.message_handlers
-            .write()
-            .await
-            .push(Box::new(move |envelope| {
-                if envelope.as_ref().map_or(false, M::matches_envelope) {
+        let (tx, rx) = mpsc::channel(256);
+        self.message_handlers.write().await.push((
+            tx,
+            Box::new(move |envelope, connection_id| {
+                if envelope.as_ref().map_or(false, T::matches_envelope) {
                     let envelope = Option::take(envelope).unwrap();
-                    let request = M::from_envelope(envelope).unwrap();
-                    Some(handler(request).boxed())
+                    Some(ErasedMessage {
+                        id: envelope.id,
+                        connection_id,
+                        body: envelope,
+                    })
                 } else {
                     None
                 }
-            }));
+            }),
+        ));
+        rx.map(Message::from)
     }
 
     pub async fn add_connection<Conn>(
@@ -167,33 +208,11 @@ impl RpcClient {
                         } else {
                             let mut handled = false;
                             let mut envelope = Some(incoming);
-                            for handler in this.request_handlers.iter() {
-                                if let Some(future) =
-                                    handler(&mut envelope, &connection.next_message_id)
-                                {
-                                    let response = future.await;
-                                    if let Err(error) = connection
-                                        .writer
-                                        .lock()
-                                        .await
-                                        .write_message(&response)
-                                        .await
-                                    {
-                                        log::warn!("failed to write response: {}", error);
-                                        return;
-                                    }
+                            for (tx, handler) in this.message_handlers.read().await.iter() {
+                                if let Some(message) = handler(&mut envelope, connection_id) {
+                                    let _ = tx.clone().send(message).await;
                                     handled = true;
                                     break;
-                                }
-                            }
-
-                            if !handled {
-                                for handler in this.message_handlers.iter() {
-                                    if let Some(future) = handler(&mut envelope) {
-                                        future.await;
-                                        handled = true;
-                                        break;
-                                    }
                                 }
                             }
 
@@ -281,6 +300,33 @@ impl RpcClient {
             Ok(())
         }
     }
+
+    pub fn respond<T: RequestMessage>(
+        self: &Arc<Self>,
+        request: Request<T>,
+        response: T::Response,
+    ) -> impl Future<Output = Result<()>> {
+        let this = self.clone();
+        async move {
+            let connection = this
+                .connections
+                .read()
+                .await
+                .get(&request.connection_id)
+                .ok_or_else(|| anyhow!("unknown connection: {}", request.connection_id.0))?
+                .clone();
+            let message_id = connection
+                .next_message_id
+                .fetch_add(1, atomic::Ordering::SeqCst);
+            connection
+                .writer
+                .lock()
+                .await
+                .write_message(&response.into_envelope(message_id, Some(request.id)))
+                .await?;
+            Ok(())
+        }
+    }
 }
 
 #[cfg(test)]
@@ -304,7 +350,7 @@ mod tests {
         let (server_conn, _) = listener.accept().await.unwrap();
 
         let mut server_stream = MessageStream::new(server_conn);
-        let client = Arc::new(RpcClient::new());
+        let client = RpcClient::new();
         let (connection_id, handler) = client.add_connection(client_conn).await;
         executor.spawn(handler).detach();
 
@@ -363,7 +409,7 @@ mod tests {
         let client_conn = UnixStream::connect(&socket_path).await.unwrap();
         let (mut server_conn, _) = listener.accept().await.unwrap();
 
-        let client = Arc::new(RpcClient::new());
+        let client = RpcClient::new();
         let (connection_id, handler) = client.add_connection(client_conn).await;
         executor.spawn(handler).detach();
         client.disconnect(connection_id).await;
@@ -390,7 +436,7 @@ mod tests {
         let mut client_conn = UnixStream::connect(&socket_path).await.unwrap();
         client_conn.close().await.unwrap();
 
-        let client = Arc::new(RpcClient::new());
+        let client = RpcClient::new();
         let (connection_id, handler) = client.add_connection(client_conn).await;
         executor.spawn(handler).detach();
         let err = client

@@ -1348,10 +1348,6 @@ impl MutableAppContext {
         AsyncAppContext(self.weak_self.as_ref().unwrap().upgrade().unwrap())
     }
 
-    pub fn to_background(&self) -> BackgroundAppContext {
-        //
-    }
-
     pub fn write_to_clipboard(&self, item: ClipboardItem) {
         self.platform.write_to_clipboard(item);
     }

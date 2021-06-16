@@ -25,13 +25,13 @@ fn main() {
     let app_state = AppState {
         language_registry,
         settings,
-        rpc_client: Arc::new(RpcClient::new()),
+        rpc_client: RpcClient::new(),
     };
 
     app.run(move |cx| {
         cx.set_menus(menus::menus(app_state.clone()));
         zed::init(cx);
-        workspace::init(cx, &app_state);
+        workspace::init(cx, app_state.rpc_client.clone());
         editor::init(cx);
         file_finder::init(cx);
 

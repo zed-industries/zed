@@ -1,4 +1,6 @@
-use crate::{language::LanguageRegistry, settings, time::ReplicaId, AppState};
+use crate::{
+    language::LanguageRegistry, rpc_client::RpcClient, settings, time::ReplicaId, AppState,
+};
 use ctor::ctor;
 use gpui::AppContext;
 use rand::Rng;
@@ -150,5 +152,6 @@ pub fn build_app_state(cx: &AppContext) -> AppState {
     AppState {
         settings,
         language_registry,
+        rpc_client: RpcClient::new(),
     }
 }

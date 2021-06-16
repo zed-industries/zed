@@ -479,8 +479,13 @@ mod tests {
 
         let app_state = cx.read(build_app_state);
         let (window_id, workspace) = cx.add_window(|cx| {
-            let mut workspace =
-                Workspace::new(0, app_state.settings, app_state.language_registry, cx);
+            let mut workspace = Workspace::new(
+                0,
+                app_state.settings,
+                app_state.language_registry,
+                app_state.rpc_client,
+                cx,
+            );
             workspace.add_worktree(tmp_dir.path(), cx);
             workspace
         });
@@ -551,6 +556,7 @@ mod tests {
                 0,
                 app_state.settings.clone(),
                 app_state.language_registry.clone(),
+                app_state.rpc_client.clone(),
                 cx,
             );
             workspace.add_worktree(tmp_dir.path(), cx);
@@ -614,6 +620,7 @@ mod tests {
                 0,
                 app_state.settings.clone(),
                 app_state.language_registry.clone(),
+                app_state.rpc_client.clone(),
                 cx,
             );
             workspace.add_worktree(&file_path, cx);
@@ -665,6 +672,7 @@ mod tests {
                 0,
                 app_state.settings.clone(),
                 app_state.language_registry.clone(),
+                app_state.rpc_client.clone(),
                 cx,
             )
         });

@@ -4,10 +4,10 @@ pub mod pane_group;
 use crate::{
     editor::{Buffer, Editor},
     language::LanguageRegistry,
-    rpc_client::RpcClient,
+    rpc_client::{Request, RpcClient},
     settings::Settings,
     time::ReplicaId,
-    util::SurfResultExt as _,
+    util::{self, SurfResultExt as _},
     worktree::{FileHandle, Worktree, WorktreeHandle},
     AppState,
 };
@@ -33,7 +33,7 @@ use std::{
 use surf::Url;
 use zed_rpc::{proto, rest::CreateWorktreeResponse};
 
-pub fn init(cx: &mut MutableAppContext, rpc_client: &mut RpcClient) {
+pub fn init(cx: &mut MutableAppContext, rpc_client: Arc<RpcClient>) {
     cx.add_global_action("workspace:open", open);
     cx.add_global_action("workspace:open_paths", open_paths);
     cx.add_action("workspace:save", Workspace::save_active_item);
@@ -46,8 +46,7 @@ pub fn init(cx: &mut MutableAppContext, rpc_client: &mut RpcClient) {
     ]);
     pane::init(cx);
 
-    let cx = cx.to_async();
-    rpc_client.on_request(move |req| handle_open_buffer(req, cx));
+    util::spawn_request_handler(handle_open_buffer, &rpc_client, cx);
 }
 
 pub struct OpenParams {
@@ -100,6 +99,7 @@ fn open_paths(params: &OpenParams, cx: &mut MutableAppContext) {
             0,
             params.app_state.settings.clone(),
             params.app_state.language_registry.clone(),
+            params.app_state.rpc_client.clone(),
             cx,
         );
         let open_paths = view.open_paths(&params.paths, cx);
@@ -108,8 +108,19 @@ fn open_paths(params: &OpenParams, cx: &mut MutableAppContext) {
     });
 }
 
-fn handle_open_buffer(request: zed_rpc::proto::OpenBuffer, cx: AsyncAppContext) {
-    //
+async fn handle_open_buffer(
+    mut request: Request<proto::OpenBuffer>,
+    rpc_client: Arc<RpcClient>,
+    cx: &mut AsyncAppContext,
+) -> anyhow::Result<()> {
+    let body = request.body();
+    dbg!(body.path);
+    rpc_client
+        .respond(request, proto::OpenBufferResponse { buffer: None })
+        .await?;
+
+    dbg!(cx.read(|app| app.root_view_id(1)));
+    Ok(())
 }
 
 pub trait Item: Entity + Sized {
@@ -302,6 +313,7 @@ pub struct State {
 pub struct Workspace {
     pub settings: watch::Receiver<Settings>,
     language_registry: Arc<LanguageRegistry>,
+    rpc_client: Arc<RpcClient>,
     modal: Option<AnyViewHandle>,
     center: PaneGroup,
     panes: Vec<ViewHandle<Pane>>,
@@ -320,6 +332,7 @@ impl Workspace {
         replica_id: ReplicaId,
         settings: watch::Receiver<Settings>,
         language_registry: Arc<LanguageRegistry>,
+        rpc_client: Arc<RpcClient>,
         cx: &mut ViewContext<Self>,
     ) -> Self {
         let pane = cx.add_view(|_| Pane::new(settings.clone()));
@@ -336,6 +349,7 @@ impl Workspace {
             active_pane: pane.clone(),
             settings,
             language_registry,
+            rpc_client,
             replica_id,
             worktrees: Default::default(),
             items: Default::default(),
@@ -651,6 +665,7 @@ impl Workspace {
     }
 
     fn share_worktree(&mut self, _: &(), cx: &mut ViewContext<Self>) {
+        let rpc_client = self.rpc_client.clone();
         let zed_url = std::env::var("ZED_SERVER_URL").unwrap_or("https://zed.dev".to_string());
         let executor = cx.background_executor().clone();
 
@@ -677,7 +692,6 @@ impl Workspace {
             // a TLS stream using `native-tls`.
             let stream = smol::net::TcpStream::connect(rpc_address).await?;
 
-            let rpc_client = Arc::new(RpcClient::new());
             let (connection_id, handler) = rpc_client.add_connection(stream).await;
             executor.spawn(handler).detach();
 
@@ -942,7 +956,7 @@ mod tests {
     fn test_open_paths_action(cx: &mut gpui::MutableAppContext) {
         let app_state = build_app_state(cx.as_ref());
 
-        init(cx);
+        init(cx, app_state.rpc_client.clone());
 
         let dir = temp_tree(json!({
             "a": {
@@ -1010,8 +1024,13 @@ mod tests {
         let app_state = cx.read(build_app_state);
 
         let (_, workspace) = cx.add_window(|cx| {
-            let mut workspace =
-                Workspace::new(0, app_state.settings, app_state.language_registry, cx);
+            let mut workspace = Workspace::new(
+                0,
+                app_state.settings,
+                app_state.language_registry,
+                app_state.rpc_client,
+                cx,
+            );
             workspace.add_worktree(dir.path(), cx);
             workspace
         });
@@ -1114,8 +1133,13 @@ mod tests {
 
         let app_state = cx.read(build_app_state);
         let (_, workspace) = cx.add_window(|cx| {
-            let mut workspace =
-                Workspace::new(0, app_state.settings, app_state.language_registry, cx);
+            let mut workspace = Workspace::new(
+                0,
+                app_state.settings,
+                app_state.language_registry,
+                app_state.rpc_client,
+                cx,
+            );
             workspace.add_worktree(dir1.path(), cx);
             workspace
         });
@@ -1183,8 +1207,13 @@ mod tests {
 
         let app_state = cx.read(build_app_state);
         let (window_id, workspace) = cx.add_window(|cx| {
-            let mut workspace =
-                Workspace::new(0, app_state.settings, app_state.language_registry, cx);
+            let mut workspace = Workspace::new(
+                0,
+                app_state.settings,
+                app_state.language_registry,
+                app_state.rpc_client,
+                cx,
+            );
             workspace.add_worktree(dir.path(), cx);
             workspace
         });
@@ -1227,8 +1256,13 @@ mod tests {
         let dir = TempDir::new("test-new-file").unwrap();
         let app_state = cx.read(build_app_state);
         let (_, workspace) = cx.add_window(|cx| {
-            let mut workspace =
-                Workspace::new(0, app_state.settings, app_state.language_registry, cx);
+            let mut workspace = Workspace::new(
+                0,
+                app_state.settings,
+                app_state.language_registry,
+                app_state.rpc_client,
+                cx,
+            );
             workspace.add_worktree(dir.path(), cx);
             workspace
         });
@@ -1328,8 +1362,13 @@ mod tests {
 
         let app_state = cx.read(build_app_state);
         let (window_id, workspace) = cx.add_window(|cx| {
-            let mut workspace =
-                Workspace::new(0, app_state.settings, app_state.language_registry, cx);
+            let mut workspace = Workspace::new(
+                0,
+                app_state.settings,
+                app_state.language_registry,
+                app_state.rpc_client,
+                cx,
+            );
             workspace.add_worktree(dir.path(), cx);
             workspace
         });
