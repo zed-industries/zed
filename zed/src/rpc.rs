@@ -32,14 +32,14 @@ where
 }
 
 pub trait PeerExt {
-    fn handle_messages<H, M>(&self, handler: H, cx: &mut gpui::MutableAppContext)
+    fn on_message<H, M>(&self, handler: H, cx: &mut gpui::MutableAppContext)
     where
         H: 'static + for<'a> MessageHandler<'a, M>,
         M: proto::EnvelopedMessage;
 }
 
 impl PeerExt for Arc<Peer> {
-    fn handle_messages<H, M>(&self, handler: H, cx: &mut gpui::MutableAppContext)
+    fn on_message<H, M>(&self, handler: H, cx: &mut gpui::MutableAppContext)
     where
         H: 'static + for<'a> MessageHandler<'a, M>,
         M: proto::EnvelopedMessage,

@@ -46,7 +46,7 @@ pub fn init(cx: &mut MutableAppContext, rpc: Arc<Peer>) {
     ]);
     pane::init(cx);
 
-    rpc.handle_messages(handle_open_buffer, cx);
+    rpc.on_message(handle_open_buffer, cx);
 }
 
 pub struct OpenParams {
