@@ -691,8 +691,8 @@ impl Workspace {
             // a TLS stream using `native-tls`.
             let stream = smol::net::TcpStream::connect(rpc_address).await?;
 
-            let (connection_id, handler) = rpc.add_connection(stream).await;
-            executor.spawn(handler).detach();
+            let connection_id = rpc.add_connection(stream).await;
+            executor.spawn(rpc.handle_messages(connection_id)).detach();
 
             let auth_response = rpc
                 .request(
