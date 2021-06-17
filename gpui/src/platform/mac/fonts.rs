@@ -322,9 +322,15 @@ mod tests {
 
         // Added to investigate flaky tests we're seeing on CI. https://github.com/zed-industries/zed/issues/85
         assert_eq!(menlo.len(), 4);
+        let mut loaded_bold = false;
         for font_id in &menlo {
-            assert_eq!(fonts.0.write().fonts[font_id.0].family_name(), "Menlo");
+            let font = &fonts.0.write().fonts[font_id.0];
+            assert_eq!(font.family_name(), "Menlo");
+            if font.style_name() == "Bold" {
+                loaded_bold = true;
+            }
         }
+        assert!(loaded_bold, "bold was never loaded");
 
         let menlo_regular = fonts.select_font(&menlo, &Properties::default())?;
         let menlo_italic = fonts.select_font(&menlo, &Properties::new().style(Style::Italic))?;
