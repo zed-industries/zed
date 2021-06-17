@@ -20,6 +20,7 @@ fn generate_dispatch_bindings() {
         .whitelist_var("_dispatch_main_q")
         .whitelist_function("dispatch_async_f")
         .parse_callbacks(Box::new(bindgen::CargoCallbacks))
+        .layout_tests(false)
         .generate()
         .expect("unable to generate bindings");
 
@@ -96,6 +97,7 @@ fn generate_shader_bindings() {
         .header(SHADER_HEADER_PATH)
         .whitelist_type("GPUI.*")
         .parse_callbacks(Box::new(bindgen::CargoCallbacks))
+        .layout_tests(false)
         .generate()
         .expect("unable to generate bindings");
 
