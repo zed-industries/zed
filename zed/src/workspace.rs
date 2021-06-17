@@ -4,9 +4,10 @@ pub mod pane_group;
 use crate::{
     editor::{Buffer, Editor},
     language::LanguageRegistry,
+    rpc::PeerExt as _,
     settings::Settings,
     time::ReplicaId,
-    util::{self, SurfResultExt as _},
+    util::SurfResultExt as _,
     worktree::{FileHandle, Worktree, WorktreeHandle},
     AppState,
 };
@@ -45,7 +46,7 @@ pub fn init(cx: &mut MutableAppContext, rpc: Arc<Peer>) {
     ]);
     pane::init(cx);
 
-    util::handle_messages(handle_open_buffer, &rpc, cx);
+    rpc.handle_messages(handle_open_buffer, cx);
 }
 
 pub struct OpenParams {
@@ -109,7 +110,7 @@ fn open_paths(params: &OpenParams, cx: &mut MutableAppContext) {
 
 async fn handle_open_buffer(
     request: TypedEnvelope<proto::OpenBuffer>,
-    rpc: Arc<Peer>,
+    rpc: &Arc<Peer>,
     cx: &mut AsyncAppContext,
 ) -> anyhow::Result<()> {
     let payload = request.payload();

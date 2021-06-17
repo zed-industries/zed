@@ -6,6 +6,7 @@ pub mod file_finder;
 pub mod language;
 pub mod menus;
 mod operation_queue;
+mod rpc;
 pub mod settings;
 mod sum_tree;
 #[cfg(test)]
