@@ -31,7 +31,7 @@ use std::{
     time::Duration,
 };
 use surf::Url;
-use zed_rpc::{proto, rest::CreateWorktreeResponse, Peer, TypedEnvelope};
+use zed_rpc::{proto, rest, Peer, TypedEnvelope};
 
 pub fn init(cx: &mut MutableAppContext, rpc: Arc<Peer>) {
     cx.add_global_action("workspace:open", open);
@@ -672,24 +672,23 @@ impl Workspace {
             let (user_id, access_token) =
                 login(zed_url.clone(), cx.platform(), cx.background_executor()).await?;
 
-            let mut response = surf::post(format!("{}/api/worktrees", &zed_url))
+            let mut response = surf::get(format!("{}{}", &zed_url, &rest::GET_RPC_ADDRESS_PATH))
                 .header(
                     "Authorization",
                     http_auth_basic::Credentials::new(&user_id, &access_token).as_http_header(),
                 )
                 .await
-                .context("")?;
+                .context("rpc address request failed")?;
 
-            let CreateWorktreeResponse {
-                worktree_id,
-                rpc_address,
-            } = response.body_json().await?;
-
-            eprintln!("got worktree response: {:?} {:?}", worktree_id, rpc_address);
+            let rest::GetRpcAddressResponse { address } = response
+                .body_json()
+                .await
+                .context("failed to parse rpc address response")?;
 
             // TODO - If the `ZED_SERVER_URL` uses https, then wrap this stream in
             // a TLS stream using `native-tls`.
-            let stream = smol::net::TcpStream::connect(rpc_address).await?;
+            let stream = smol::net::TcpStream::connect(&address).await?;
+            log::info!("connected to rpc address {}", address);
 
             let connection_id = rpc.add_connection(stream).await;
             executor.spawn(rpc.handle_messages(connection_id)).detach();
@@ -702,7 +701,8 @@ impl Workspace {
                         access_token,
                     },
                 )
-                .await?;
+                .await
+                .context("rpc auth request failed")?;
             if !auth_response.credentials_valid {
                 Err(anyhow!("failed to authenticate with RPC server"))?;
             }
