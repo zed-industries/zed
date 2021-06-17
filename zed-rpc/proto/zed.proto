@@ -17,7 +17,7 @@ message Envelope {
 }
 
 message Auth {
-    uint64 user_id = 1;
+    int32 user_id = 1;
     string access_token = 2;
 }
 

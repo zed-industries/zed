@@ -697,7 +697,7 @@ impl Workspace {
                 .request(
                     connection_id,
                     proto::Auth {
-                        user_id: user_id.parse::<u64>()?,
+                        user_id: user_id.parse()?,
                         access_token,
                     },
                 )
