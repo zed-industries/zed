@@ -461,7 +461,7 @@ mod tests {
                 barrier::channel();
             let handle_messages = client.handle_messages(connection_id);
             smol::spawn(async move {
-                handle_messages.await.unwrap();
+                handle_messages.await.ok();
                 incoming_messages_ended_tx.send(()).await.unwrap();
             })
             .detach();
