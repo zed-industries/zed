@@ -4364,6 +4364,7 @@ dependencies = [
  "rsa",
  "serde 1.0.125",
  "smol",
+ "tempdir",
 ]
 
 [[package]]

@@ -21,3 +21,4 @@ prost-build = { git="https://github.com/sfackler/prost", rev="082f3e65874fe91382
 
 [dev-dependencies]
 smol = "1.2.5"
+tempdir = "0.3.7"
