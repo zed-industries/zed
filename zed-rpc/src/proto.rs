@@ -131,7 +131,7 @@ mod tests {
 
             let message2 = ShareWorktree {
                 worktree: Some(Worktree {
-                    paths: vec![b"ok".to_vec()],
+                    paths: vec!["ok".to_string()],
                 }),
             }
             .into_envelope(5, None);

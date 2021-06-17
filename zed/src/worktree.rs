@@ -239,7 +239,7 @@ impl Worktree {
                 .spawn(async move {
                     snapshot
                         .paths()
-                        .map(|path| path.as_os_str().as_bytes().to_vec())
+                        .map(|path| path.to_string_lossy().to_string())
                         .collect()
                 })
                 .await;

@@ -45,7 +45,7 @@ message OpenWorktreeResponse {
 
 message OpenBuffer {
     uint64 worktree_id = 1;
-    bytes path = 2;
+    string path = 2;
 }
 
 message OpenBufferResponse {
@@ -53,13 +53,13 @@ message OpenBufferResponse {
 }
 
 message Worktree {
-    repeated bytes paths = 1;
+    repeated string paths = 1;
 }
 
 message Buffer {
     uint64 id = 1;
-    bytes path = 2;
-    bytes content = 3;
+    string path = 2;
+    string content = 3;
     repeated Operation history = 4;
 }
 

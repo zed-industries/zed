@@ -340,7 +340,7 @@ mod tests {
             };
             let response1 = proto::OpenWorktreeResponse {
                 worktree: Some(proto::Worktree {
-                    paths: vec![b"path/one".to_vec()],
+                    paths: vec!["path/one".to_string()],
                 }),
             };
             let request2 = proto::OpenWorktree {
@@ -349,30 +349,30 @@ mod tests {
             };
             let response2 = proto::OpenWorktreeResponse {
                 worktree: Some(proto::Worktree {
-                    paths: vec![b"path/two".to_vec(), b"path/three".to_vec()],
+                    paths: vec!["path/two".to_string(), "path/three".to_string()],
                 }),
             };
             let request3 = proto::OpenBuffer {
                 worktree_id: 102,
-                path: b"path/two".to_vec(),
+                path: "path/two".to_string(),
             };
             let response3 = proto::OpenBufferResponse {
                 buffer: Some(proto::Buffer {
                     id: 1001,
-                    path: b"path/two".to_vec(),
-                    content: b"path/two content".to_vec(),
+                    path: "path/two".to_string(),
+                    content: "path/two content".to_string(),
                     history: vec![],
                 }),
             };
             let request4 = proto::OpenBuffer {
                 worktree_id: 101,
-                path: b"path/one".to_vec(),
+                path: "path/one".to_string(),
             };
             let response4 = proto::OpenBufferResponse {
                 buffer: Some(proto::Buffer {
                     id: 1002,
-                    path: b"path/one".to_vec(),
-                    content: b"path/one content".to_vec(),
+                    path: "path/one".to_string(),
+                    content: "path/one content".to_string(),
                     history: vec![],
                 }),
             };
