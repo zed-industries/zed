@@ -113,7 +113,7 @@ async fn handle_open_buffer(
     rpc: &Arc<Peer>,
     cx: &mut AsyncAppContext,
 ) -> anyhow::Result<()> {
-    let payload = request.payload();
+    let payload = &request.payload;
     dbg!(&payload.path);
     rpc.respond(request, proto::OpenBufferResponse { buffer: None })
         .await?;

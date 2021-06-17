@@ -38,19 +38,9 @@ type MessageHandler = Box<
 >;
 
 pub struct TypedEnvelope<T> {
-    id: u32,
-    connection_id: ConnectionId,
-    payload: T,
-}
-
-impl<T> TypedEnvelope<T> {
-    pub fn connection_id(&self) -> ConnectionId {
-        self.connection_id
-    }
-
-    pub fn payload(&self) -> &T {
-        &self.payload
-    }
+    pub id: u32,
+    pub connection_id: ConnectionId,
+    pub payload: T,
 }
 
 pub struct Peer {
