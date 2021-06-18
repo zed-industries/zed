@@ -12,6 +12,7 @@ use postage::{
 use std::{
     any::TypeId,
     collections::{HashMap, HashSet},
+    fmt,
     future::Future,
     pin::Pin,
     sync::{
@@ -291,6 +292,12 @@ impl Peer {
             .get(&id)
             .ok_or_else(|| anyhow!("unknown connection: {}", id.0))?
             .clone())
+    }
+}
+
+impl fmt::Display for ConnectionId {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        self.0.fmt(f)
     }
 }
 
