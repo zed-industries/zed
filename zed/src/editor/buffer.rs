@@ -2682,9 +2682,10 @@ mod tests {
                 "file2": "",
                 "file3": "",
             }));
-            let tree = cx.add_model(|cx| Worktree::new(dir.path(), cx));
+            let tree = cx.add_model(|cx| Worktree::local(dir.path(), cx));
             tree.flush_fs_events(&cx).await;
-            cx.read(|cx| tree.read(cx).scan_complete()).await;
+            cx.read(|cx| tree.read(cx).as_local().unwrap().scan_complete())
+                .await;
 
             let file1 = cx.update(|cx| tree.file("file1", cx)).await;
             let buffer1 = cx.add_model(|cx| {
@@ -2793,8 +2794,9 @@ mod tests {
     async fn test_file_changes_on_disk(mut cx: gpui::TestAppContext) {
         let initial_contents = "aaa\nbbbbb\nc\n";
         let dir = temp_tree(json!({ "the-file": initial_contents }));
-        let tree = cx.add_model(|cx| Worktree::new(dir.path(), cx));
-        cx.read(|cx| tree.read(cx).scan_complete()).await;
+        let tree = cx.add_model(|cx| Worktree::local(dir.path(), cx));
+        cx.read(|cx| tree.read(cx).as_local().unwrap().scan_complete())
+            .await;
 
         let abs_path = dir.path().join("the-file");
         let file = cx.update(|cx| tree.file("the-file", cx)).await;

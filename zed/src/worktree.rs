@@ -46,7 +46,74 @@ enum ScanState {
     Err(Arc<io::Error>),
 }
 
-pub struct Worktree {
+pub enum Worktree {
+    Local(LocalWorktree),
+}
+
+impl Entity for Worktree {
+    type Event = ();
+}
+
+impl Worktree {
+    pub fn local(path: impl Into<Arc<Path>>, cx: &mut ModelContext<Worktree>) -> Self {
+        Worktree::Local(LocalWorktree::new(path, cx))
+    }
+
+    pub fn as_local(&self) -> Option<&LocalWorktree> {
+        if let Worktree::Local(worktree) = self {
+            Some(worktree)
+        } else {
+            None
+        }
+    }
+
+    pub fn as_local_mut(&mut self) -> Option<&mut LocalWorktree> {
+        if let Worktree::Local(worktree) = self {
+            Some(worktree)
+        } else {
+            None
+        }
+    }
+
+    pub fn snapshot(&self) -> Snapshot {
+        match self {
+            Worktree::Local(worktree) => worktree.snapshot(),
+        }
+    }
+
+    pub fn load_history(
+        &self,
+        path: &Path,
+        cx: &AppContext,
+    ) -> impl Future<Output = Result<History>> {
+        match self {
+            Worktree::Local(worktree) => worktree.load_history(path, cx),
+        }
+    }
+
+    pub fn save(
+        &self,
+        path: &Path,
+        content: Rope,
+        cx: &AppContext,
+    ) -> impl Future<Output = Result<()>> {
+        match self {
+            Worktree::Local(worktree) => worktree.save(path, content, cx),
+        }
+    }
+}
+
+impl Deref for Worktree {
+    type Target = Snapshot;
+
+    fn deref(&self) -> &Self::Target {
+        match self {
+            Worktree::Local(worktree) => &worktree.snapshot,
+        }
+    }
+}
+
+pub struct LocalWorktree {
     snapshot: Snapshot,
     background_snapshot: Arc<Mutex<Snapshot>>,
     handles: Arc<Mutex<HashMap<Arc<Path>, Weak<Mutex<FileHandleState>>>>>,
@@ -69,8 +136,8 @@ struct FileHandleState {
     mtime: SystemTime,
 }
 
-impl Worktree {
-    pub fn new(path: impl Into<Arc<Path>>, cx: &mut ModelContext<Self>) -> Self {
+impl LocalWorktree {
+    pub fn new(path: impl Into<Arc<Path>>, cx: &mut ModelContext<Worktree>) -> Self {
         let abs_path = path.into();
         let (scan_state_tx, scan_state_rx) = smol::channel::unbounded();
         let id = cx.model_id();
@@ -109,7 +176,13 @@ impl Worktree {
                 while let Ok(scan_state) = scan_state_rx.recv().await {
                     let alive = cx.update(|cx| {
                         if let Some(handle) = this.upgrade(&cx) {
-                            handle.update(cx, |this, cx| this.observe_scan_state(scan_state, cx));
+                            handle.update(cx, |this, cx| {
+                                if let Worktree::Local(worktree) = this {
+                                    worktree.observe_scan_state(scan_state, cx)
+                                } else {
+                                    unreachable!()
+                                }
+                            });
                             true
                         } else {
                             false
@@ -137,12 +210,12 @@ impl Worktree {
         }
     }
 
-    fn observe_scan_state(&mut self, scan_state: ScanState, cx: &mut ModelContext<Self>) {
+    fn observe_scan_state(&mut self, scan_state: ScanState, cx: &mut ModelContext<Worktree>) {
         let _ = self.scan_state.0.blocking_send(scan_state);
         self.poll_entries(cx);
     }
 
-    fn poll_entries(&mut self, cx: &mut ModelContext<Self>) {
+    fn poll_entries(&mut self, cx: &mut ModelContext<Worktree>) {
         self.snapshot = self.background_snapshot.lock().clone();
         cx.notify();
 
@@ -150,8 +223,12 @@ impl Worktree {
             cx.spawn(|this, mut cx| async move {
                 smol::Timer::after(Duration::from_millis(100)).await;
                 this.update(&mut cx, |this, cx| {
-                    this.poll_scheduled = false;
-                    this.poll_entries(cx);
+                    if let Worktree::Local(worktree) = this {
+                        worktree.poll_scheduled = false;
+                        worktree.poll_entries(cx);
+                    } else {
+                        unreachable!()
+                    }
                 })
             })
             .detach();
@@ -202,7 +279,7 @@ impl Worktree {
         })
     }
 
-    pub fn save<'a>(&self, path: &Path, content: Rope, cx: &AppContext) -> Task<Result<()>> {
+    pub fn save(&self, path: &Path, content: Rope, cx: &AppContext) -> Task<Result<()>> {
         let handles = self.handles.clone();
         let path = path.to_path_buf();
         let abs_path = self.absolutize(&path);
@@ -229,7 +306,7 @@ impl Worktree {
         &mut self,
         client: rpc::Client,
         connection_id: ConnectionId,
-        cx: &mut ModelContext<Self>,
+        cx: &mut ModelContext<Worktree>,
     ) -> Task<anyhow::Result<(u64, String)>> {
         self.rpc = Some(client.clone());
         let snapshot = self.snapshot();
@@ -259,11 +336,7 @@ impl Worktree {
     }
 }
 
-impl Entity for Worktree {
-    type Event = ();
-}
-
-impl Deref for Worktree {
+impl Deref for LocalWorktree {
     type Target = Snapshot;
 
     fn deref(&self) -> &Self::Target {
@@ -271,7 +344,7 @@ impl Deref for Worktree {
     }
 }
 
-impl fmt::Debug for Worktree {
+impl fmt::Debug for LocalWorktree {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         self.snapshot.fmt(f)
     }
@@ -470,7 +543,7 @@ impl FileHandle {
             .lock()
             .path
             .file_name()
-            .or_else(|| self.worktree.read(cx).abs_path().file_name())
+            .or_else(|| Some(OsStr::new(self.worktree.read(cx).root_name())))
             .map(Into::into)
     }
 
@@ -490,7 +563,7 @@ impl FileHandle {
         self.worktree.read(cx).load_history(&self.path(), cx)
     }
 
-    pub fn save<'a>(&self, content: Rope, cx: &AppContext) -> Task<Result<()>> {
+    pub fn save(&self, content: Rope, cx: &AppContext) -> impl Future<Output = Result<()>> {
         let worktree = self.worktree.read(cx);
         worktree.save(&self.path(), content, cx)
     }
@@ -1250,47 +1323,51 @@ impl WorktreeHandle for ModelHandle<Worktree> {
         let path = Arc::from(path.as_ref());
         let handle = self.clone();
         let tree = self.read(cx);
-        let abs_path = tree.absolutize(&path);
-        cx.spawn(|cx| async move {
-            let mtime = cx
-                .background_executor()
-                .spawn(async move {
-                    if let Ok(metadata) = fs::metadata(&abs_path) {
-                        metadata.modified().unwrap()
-                    } else {
-                        UNIX_EPOCH
+        match tree {
+            Worktree::Local(tree) => {
+                let abs_path = tree.absolutize(&path);
+                cx.spawn(|cx| async move {
+                    let mtime = cx
+                        .background_executor()
+                        .spawn(async move {
+                            if let Ok(metadata) = fs::metadata(&abs_path) {
+                                metadata.modified().unwrap()
+                            } else {
+                                UNIX_EPOCH
+                            }
+                        })
+                        .await;
+                    let state = handle.read_with(&cx, |tree, _| {
+                        let mut handles = tree.as_local().unwrap().handles.lock();
+                        if let Some(state) = handles.get(&path).and_then(Weak::upgrade) {
+                            state
+                        } else {
+                            let handle_state = if let Some(entry) = tree.entry_for_path(&path) {
+                                FileHandleState {
+                                    path: entry.path().clone(),
+                                    is_deleted: false,
+                                    mtime,
+                                }
+                            } else {
+                                FileHandleState {
+                                    path: path.clone(),
+                                    is_deleted: !tree.path_is_pending(path),
+                                    mtime,
+                                }
+                            };
+
+                            let state = Arc::new(Mutex::new(handle_state.clone()));
+                            handles.insert(handle_state.path, Arc::downgrade(&state));
+                            state
+                        }
+                    });
+                    FileHandle {
+                        worktree: handle.clone(),
+                        state,
                     }
                 })
-                .await;
-            let state = handle.read_with(&cx, |tree, _| {
-                let mut handles = tree.handles.lock();
-                if let Some(state) = handles.get(&path).and_then(Weak::upgrade) {
-                    state
-                } else {
-                    let handle_state = if let Some(entry) = tree.entry_for_path(&path) {
-                        FileHandleState {
-                            path: entry.path().clone(),
-                            is_deleted: false,
-                            mtime,
-                        }
-                    } else {
-                        FileHandleState {
-                            path: path.clone(),
-                            is_deleted: !tree.path_is_pending(path),
-                            mtime,
-                        }
-                    };
-
-                    let state = Arc::new(Mutex::new(handle_state.clone()));
-                    handles.insert(handle_state.path, Arc::downgrade(&state));
-                    state
-                }
-            });
-            FileHandle {
-                worktree: handle.clone(),
-                state,
             }
-        })
+        }
     }
 
     // When the worktree's FS event stream sometimes delivers "redundant" events for FS changes that
@@ -1318,7 +1395,8 @@ impl WorktreeHandle for ModelHandle<Worktree> {
             tree.condition(&cx, |tree, _| tree.entry_for_path(filename).is_none())
                 .await;
 
-            cx.read(|cx| tree.read(cx).scan_complete()).await;
+            cx.read(|cx| tree.read(cx).as_local().unwrap().scan_complete())
+                .await;
         }
         .boxed_local()
     }
@@ -1467,9 +1545,10 @@ mod tests {
         )
         .unwrap();
 
-        let tree = cx.add_model(|cx| Worktree::new(root_link_path, cx));
+        let tree = cx.add_model(|cx| Worktree::local(root_link_path, cx));
 
-        cx.read(|cx| tree.read(cx).scan_complete()).await;
+        cx.read(|cx| tree.read(cx).as_local().unwrap().scan_complete())
+            .await;
         cx.read(|cx| {
             let tree = tree.read(cx);
             assert_eq!(tree.file_count(), 5);
@@ -1508,8 +1587,9 @@ mod tests {
             "file1": "the old contents",
         }));
 
-        let tree = cx.add_model(|cx| Worktree::new(dir.path(), cx));
-        cx.read(|cx| tree.read(cx).scan_complete()).await;
+        let tree = cx.add_model(|cx| Worktree::local(dir.path(), cx));
+        cx.read(|cx| tree.read(cx).as_local().unwrap().scan_complete())
+            .await;
         cx.read(|cx| assert_eq!(tree.read(cx).file_count(), 1));
 
         let buffer = cx.add_model(|cx| Buffer::new(1, "a line of text.\n".repeat(10 * 1024), cx));
@@ -1537,8 +1617,9 @@ mod tests {
             "file1": "the old contents",
         }));
 
-        let tree = cx.add_model(|cx| Worktree::new(dir.path().join("file1"), cx));
-        cx.read(|cx| tree.read(cx).scan_complete()).await;
+        let tree = cx.add_model(|cx| Worktree::local(dir.path().join("file1"), cx));
+        cx.read(|cx| tree.read(cx).as_local().unwrap().scan_complete())
+            .await;
         cx.read(|cx| assert_eq!(tree.read(cx).file_count(), 1));
 
         let buffer = cx.add_model(|cx| Buffer::new(1, "a line of text.\n".repeat(10 * 1024), cx));
@@ -1569,7 +1650,7 @@ mod tests {
             }
         }));
 
-        let tree = cx.add_model(|cx| Worktree::new(dir.path(), cx));
+        let tree = cx.add_model(|cx| Worktree::local(dir.path(), cx));
         let file2 = cx.update(|cx| tree.file("a/file2", cx)).await;
         let file3 = cx.update(|cx| tree.file("a/file3", cx)).await;
         let file4 = cx.update(|cx| tree.file("b/c/file4", cx)).await;
@@ -1577,7 +1658,8 @@ mod tests {
         let non_existent_file = cx.update(|cx| tree.file("a/file_x", cx)).await;
 
         // After scanning, the worktree knows which files exist and which don't.
-        cx.read(|cx| tree.read(cx).scan_complete()).await;
+        cx.read(|cx| tree.read(cx).as_local().unwrap().scan_complete())
+            .await;
         assert!(!file2.is_deleted());
         assert!(!file3.is_deleted());
         assert!(!file4.is_deleted());
@@ -1636,8 +1718,9 @@ mod tests {
             }
         }));
 
-        let tree = cx.add_model(|cx| Worktree::new(dir.path(), cx));
-        cx.read(|cx| tree.read(cx).scan_complete()).await;
+        let tree = cx.add_model(|cx| Worktree::local(dir.path(), cx));
+        cx.read(|cx| tree.read(cx).as_local().unwrap().scan_complete())
+            .await;
         tree.flush_fs_events(&cx).await;
         cx.read(|cx| {
             let tree = tree.read(cx);

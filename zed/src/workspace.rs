@@ -362,16 +362,21 @@ impl Workspace {
     }
 
     pub fn contains_path(&self, path: &Path, cx: &AppContext) -> bool {
-        self.worktrees
-            .iter()
-            .any(|worktree| worktree.read(cx).contains_abs_path(path))
+        for worktree in &self.worktrees {
+            let worktree = worktree.read(cx).as_local();
+            if worktree.map_or(false, |w| w.contains_abs_path(path)) {
+                return true;
+            }
+        }
+        false
     }
 
     pub fn worktree_scans_complete(&self, cx: &AppContext) -> impl Future<Output = ()> + 'static {
         let futures = self
             .worktrees
             .iter()
-            .map(|worktree| worktree.read(cx).scan_complete())
+            .filter_map(|worktree| worktree.read(cx).as_local())
+            .map(|worktree| worktree.scan_complete())
             .collect::<Vec<_>>();
         async move {
             for future in futures {
@@ -422,7 +427,11 @@ impl Workspace {
 
     fn file_for_path(&mut self, abs_path: &Path, cx: &mut ViewContext<Self>) -> Task<FileHandle> {
         for tree in self.worktrees.iter() {
-            if let Ok(relative_path) = abs_path.strip_prefix(tree.read(cx).abs_path()) {
+            if let Some(relative_path) = tree
+                .read(cx)
+                .as_local()
+                .and_then(|t| abs_path.strip_prefix(t.abs_path()).ok())
+            {
                 return tree.file(relative_path, cx.as_mut());
             }
         }
@@ -435,7 +444,7 @@ impl Workspace {
         path: &Path,
         cx: &mut ViewContext<Self>,
     ) -> ModelHandle<Worktree> {
-        let worktree = cx.add_model(|cx| Worktree::new(path, cx));
+        let worktree = cx.add_model(|cx| Worktree::local(path, cx));
         cx.observe_model(&worktree, |_, _, cx| cx.notify());
         self.worktrees.insert(worktree.clone());
         cx.notify();
@@ -595,11 +604,10 @@ impl Workspace {
         if let Some(item) = self.active_item(cx) {
             let handle = cx.handle();
             if item.entry_id(cx.as_ref()).is_none() {
-                let start_path = self
-                    .worktrees
-                    .iter()
-                    .next()
-                    .map_or(Path::new(""), |h| h.read(cx).abs_path())
+                let worktree = self.worktrees.iter().next();
+                let start_path = worktree
+                    .and_then(|w| w.read(cx).as_local())
+                    .map_or(Path::new(""), |w| w.abs_path())
                     .to_path_buf();
                 cx.prompt_for_new_path(&start_path, move |path, cx| {
                     if let Some(path) = path {
@@ -670,7 +678,10 @@ impl Workspace {
 
             let share_task = this.update(&mut cx, |this, cx| {
                 let worktree = this.worktrees.iter().next()?;
-                Some(worktree.update(cx, |worktree, cx| worktree.share(rpc, connection_id, cx)))
+                worktree.update(cx, |worktree, cx| {
+                    let worktree = worktree.as_local_mut()?;
+                    Some(worktree.share(rpc, connection_id, cx))
+                })
             });
 
             if let Some(share_task) = share_task {
@@ -721,7 +732,7 @@ impl Workspace {
 
         cx.spawn(|_, _| async move {
             if let Err(e) = task.await {
-                log::error!("joing failed: {}", e);
+                log::error!("joining failed: {}", e);
             }
         })
         .detach();
@@ -1096,7 +1107,7 @@ mod tests {
                 .read(cx)
                 .worktrees()
                 .iter()
-                .map(|w| w.read(cx).abs_path())
+                .map(|w| w.read(cx).as_local().unwrap().abs_path())
                 .collect::<HashSet<_>>();
             assert_eq!(
                 worktree_roots,
