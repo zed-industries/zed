@@ -2687,7 +2687,7 @@ mod tests {
             cx.read(|cx| tree.read(cx).as_local().unwrap().scan_complete())
                 .await;
 
-            let file1 = cx.update(|cx| tree.file("file1", cx)).await;
+            let file1 = cx.update(|cx| tree.file("file1", cx)).await.unwrap();
             let buffer1 = cx.add_model(|cx| {
                 Buffer::from_history(0, History::new("abc".into()), Some(file1), None, cx)
             });
@@ -2747,7 +2747,7 @@ mod tests {
 
             // When a file is deleted, the buffer is considered dirty.
             let events = Rc::new(RefCell::new(Vec::new()));
-            let file2 = cx.update(|cx| tree.file("file2", cx)).await;
+            let file2 = cx.update(|cx| tree.file("file2", cx)).await.unwrap();
             let buffer2 = cx.add_model(|cx: &mut ModelContext<Buffer>| {
                 cx.subscribe(&cx.handle(), {
                     let events = events.clone();
@@ -2766,7 +2766,7 @@ mod tests {
 
             // When a file is already dirty when deleted, we don't emit a Dirtied event.
             let events = Rc::new(RefCell::new(Vec::new()));
-            let file3 = cx.update(|cx| tree.file("file3", cx)).await;
+            let file3 = cx.update(|cx| tree.file("file3", cx)).await.unwrap();
             let buffer3 = cx.add_model(|cx: &mut ModelContext<Buffer>| {
                 cx.subscribe(&cx.handle(), {
                     let events = events.clone();
@@ -2799,7 +2799,7 @@ mod tests {
             .await;
 
         let abs_path = dir.path().join("the-file");
-        let file = cx.update(|cx| tree.file("the-file", cx)).await;
+        let file = cx.update(|cx| tree.file("the-file", cx)).await.unwrap();
         let buffer = cx.add_model(|cx| {
             Buffer::from_history(
                 0,

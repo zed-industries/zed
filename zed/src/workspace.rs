@@ -10,7 +10,7 @@ use crate::{
     worktree::{FileHandle, Worktree, WorktreeHandle},
     AppState,
 };
-use anyhow::anyhow;
+use anyhow::{anyhow, Result};
 use gpui::{
     color::rgbu, elements::*, json::to_string_pretty, keymap::Binding, AnyViewHandle, AppContext,
     AsyncAppContext, ClipboardItem, Entity, ModelHandle, MutableAppContext, PathPromptOptions,
@@ -23,6 +23,7 @@ use postage::watch;
 use smol::prelude::*;
 use std::{
     collections::{hash_map::Entry, HashMap, HashSet},
+    convert::TryInto,
     future::Future,
     path::{Path, PathBuf},
     sync::Arc,
@@ -404,15 +405,13 @@ impl Workspace {
             .map(|(abs_path, file)| {
                 let is_file = bg.spawn(async move { abs_path.is_file() });
                 cx.spawn(|this, mut cx| async move {
-                    let file = file.await;
-                    let is_file = is_file.await;
-                    this.update(&mut cx, |this, cx| {
-                        if is_file {
-                            this.open_entry(file.entry_id(), cx)
-                        } else {
-                            None
+                    if let Ok(file) = file.await {
+                        if is_file.await {
+                            return this
+                                .update(&mut cx, |this, cx| this.open_entry(file.entry_id(), cx));
                         }
-                    })
+                    }
+                    None
                 })
             })
             .collect::<Vec<_>>();
@@ -425,7 +424,11 @@ impl Workspace {
         }
     }
 
-    fn file_for_path(&mut self, abs_path: &Path, cx: &mut ViewContext<Self>) -> Task<FileHandle> {
+    fn file_for_path(
+        &mut self,
+        abs_path: &Path,
+        cx: &mut ViewContext<Self>,
+    ) -> Task<Result<FileHandle>> {
         for tree in self.worktrees.iter() {
             if let Some(relative_path) = tree
                 .read(cx)
@@ -546,12 +549,11 @@ impl Workspace {
 
             cx.as_mut()
                 .spawn(|mut cx| async move {
-                    let file = file.await;
-                    let history = cx.read(|cx| file.load_history(cx));
-                    let history = cx.background_executor().spawn(history).await;
-
-                    *tx.borrow_mut() = Some(match history {
-                        Ok(history) => Ok(Box::new(cx.add_model(|cx| {
+                    let buffer = async move {
+                        let file = file.await?;
+                        let history = cx.read(|cx| file.load_history(cx));
+                        let history = cx.background_executor().spawn(history).await?;
+                        let buffer = cx.add_model(|cx| {
                             let language = language_registry.select_language(path);
                             Buffer::from_history(
                                 replica_id,
@@ -560,9 +562,11 @@ impl Workspace {
                                 language.cloned(),
                                 cx,
                             )
-                        }))),
-                        Err(error) => Err(Arc::new(error)),
-                    })
+                        });
+                        Ok(Box::new(buffer) as Box<dyn ItemHandle>)
+                    }
+                    .await;
+                    *tx.borrow_mut() = Some(buffer.map_err(Arc::new));
                 })
                 .detach();
         }
@@ -612,10 +616,14 @@ impl Workspace {
                 cx.prompt_for_new_path(&start_path, move |path, cx| {
                     if let Some(path) = path {
                         cx.spawn(|mut cx| async move {
-                            let file = handle
-                                .update(&mut cx, |me, cx| me.file_for_path(&path, cx))
-                                .await;
-                            if let Err(error) = cx.update(|cx| item.save(Some(file), cx)).await {
+                            let result = async move {
+                                let file = handle
+                                    .update(&mut cx, |me, cx| me.file_for_path(&path, cx))
+                                    .await?;
+                                cx.update(|cx| item.save(Some(file), cx)).await
+                            }
+                            .await;
+                            if let Err(error) = result {
                                 error!("failed to save item: {:?}, ", error);
                             }
                         })
@@ -728,6 +736,8 @@ impl Workspace {
             let worktree = open_worktree_response
                 .worktree
                 .ok_or_else(|| anyhow!("empty worktree"))?;
+
+            let worktree_id = worktree_id.try_into().unwrap();
             this.update(&mut cx, |workspace, cx| {
                 let worktree = cx.add_model(|cx| {
                     Worktree::remote(worktree_id, worktree, rpc, connection_id, cx)
