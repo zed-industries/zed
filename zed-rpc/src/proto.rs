@@ -56,6 +56,8 @@ macro_rules! request_message {
 request_message!(Auth, AuthResponse);
 request_message!(ShareWorktree, ShareWorktreeResponse);
 request_message!(OpenWorktree, OpenWorktreeResponse);
+request_message!(OpenFile, OpenFileResponse);
+message!(CloseFile);
 request_message!(OpenBuffer, OpenBufferResponse);
 
 /// A stream of protobuf messages.

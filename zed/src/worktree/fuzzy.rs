@@ -22,7 +22,7 @@ pub struct MatchCandidate<'a> {
 pub struct PathMatch {
     pub score: f64,
     pub positions: Vec<usize>,
-    pub tree_id: usize,
+    pub tree_id: u64,
     pub path: Arc<Path>,
     pub include_root_name: bool,
 }

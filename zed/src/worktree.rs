@@ -60,8 +60,14 @@ impl Worktree {
         Worktree::Local(LocalWorktree::new(path, cx))
     }
 
-    pub fn remote(worktree: proto::Worktree, cx: &mut ModelContext<Worktree>) -> Self {
-        Worktree::Remote(RemoteWorktree::new(worktree, cx))
+    pub fn remote(
+        id: u64,
+        worktree: proto::Worktree,
+        rpc: rpc::Client,
+        connection_id: ConnectionId,
+        cx: &mut ModelContext<Worktree>,
+    ) -> Self {
+        Worktree::Remote(RemoteWorktree::new(id, worktree, rpc, connection_id, cx))
     }
 
     pub fn as_local(&self) -> Option<&LocalWorktree> {
@@ -149,7 +155,7 @@ impl LocalWorktree {
     fn new(path: impl Into<Arc<Path>>, cx: &mut ModelContext<Worktree>) -> Self {
         let abs_path = path.into();
         let (scan_state_tx, scan_state_rx) = smol::channel::unbounded();
-        let id = cx.model_id();
+        let id = cx.model_id() as u64;
         let snapshot = Snapshot {
             id,
             scan_id: 0,
@@ -368,12 +374,21 @@ impl fmt::Debug for LocalWorktree {
 }
 
 pub struct RemoteWorktree {
+    id: u64,
     snapshot: Snapshot,
+    handles: Arc<Mutex<HashMap<Arc<Path>, Weak<Mutex<FileHandleState>>>>>,
+    rpc: rpc::Client,
+    connection_id: ConnectionId,
 }
 
 impl RemoteWorktree {
-    fn new(worktree: proto::Worktree, cx: &mut ModelContext<Worktree>) -> Self {
-        let id = cx.model_id();
+    fn new(
+        id: u64,
+        worktree: proto::Worktree,
+        rpc: rpc::Client,
+        connection_id: ConnectionId,
+        cx: &mut ModelContext<Worktree>,
+    ) -> Self {
         let root_char_bag: CharBag = worktree
             .root_name
             .chars()
@@ -407,13 +422,19 @@ impl RemoteWorktree {
             ignores: Default::default(),
             entries,
         };
-        Self { snapshot }
+        Self {
+            id,
+            snapshot,
+            handles: Default::default(),
+            rpc,
+            connection_id,
+        }
     }
 }
 
 #[derive(Clone)]
 pub struct Snapshot {
-    id: usize,
+    id: u64,
     scan_id: usize,
     abs_path: Arc<Path>,
     root_name: String,
@@ -850,7 +871,7 @@ impl BackgroundScanner {
         snapshot: Arc<Mutex<Snapshot>>,
         handles: Arc<Mutex<HashMap<Arc<Path>, Weak<Mutex<FileHandleState>>>>>,
         notify: Sender<ScanState>,
-        worktree_id: usize,
+        worktree_id: u64,
     ) -> Self {
         let mut scanner = Self {
             root_char_bag: Default::default(),
@@ -1370,7 +1391,7 @@ struct UpdateIgnoreStatusJob {
 }
 
 pub trait WorktreeHandle {
-    fn file(&self, path: impl AsRef<Path>, cx: &mut MutableAppContext) -> Task<FileHandle>;
+    fn file(&self, path: impl AsRef<Path>, cx: &mut MutableAppContext) -> Task<Result<FileHandle>>;
 
     #[cfg(test)]
     fn flush_fs_events<'a>(
@@ -1380,7 +1401,7 @@ pub trait WorktreeHandle {
 }
 
 impl WorktreeHandle for ModelHandle<Worktree> {
-    fn file(&self, path: impl AsRef<Path>, cx: &mut MutableAppContext) -> Task<FileHandle> {
+    fn file(&self, path: impl AsRef<Path>, cx: &mut MutableAppContext) -> Task<Result<FileHandle>> {
         let path = Arc::from(path.as_ref());
         let handle = self.clone();
         let tree = self.read(cx);
@@ -1422,13 +1443,30 @@ impl WorktreeHandle for ModelHandle<Worktree> {
                             state
                         }
                     });
-                    FileHandle {
+                    Ok(FileHandle {
                         worktree: handle.clone(),
                         state,
-                    }
+                    })
                 })
             }
-            Worktree::Remote(tree) => todo!(),
+            Worktree::Remote(tree) => {
+                let worktree_id = tree.id;
+                let connection_id = tree.connection_id;
+                let rpc = tree.rpc.clone();
+                cx.spawn(|cx| async move {
+                    let response = rpc
+                        .request(
+                            connection_id,
+                            proto::OpenFile {
+                                worktree_id,
+                                path: path.to_string_lossy().to_string(),
+                            },
+                        )
+                        .await?;
+
+                    todo!()
+                })
+            }
         }
     }
 

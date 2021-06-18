@@ -11,8 +11,11 @@ message Envelope {
         ShareWorktreeResponse share_worktree_response = 6;
         OpenWorktree open_worktree = 7;
         OpenWorktreeResponse open_worktree_response = 8;
-        OpenBuffer open_buffer = 9;
-        OpenBufferResponse open_buffer_response = 10;
+        OpenFile open_file = 9;
+        OpenFileResponse open_file_response = 10;
+        CloseFile close_file = 11;
+        OpenBuffer open_buffer = 12;
+        OpenBufferResponse open_buffer_response = 13;
     }
 }
 
@@ -41,6 +44,20 @@ message OpenWorktree {
 
 message OpenWorktreeResponse {
     Worktree worktree = 1;
+}
+
+message OpenFile {
+    uint64 worktree_id = 1;
+    string path = 2;
+}
+
+message OpenFileResponse {
+    uint64 id = 1;
+    uint64 mtime = 2;
+}
+
+message CloseFile {
+    uint64 id = 1;
 }
 
 message OpenBuffer {

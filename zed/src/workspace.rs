@@ -729,7 +729,9 @@ impl Workspace {
                 .worktree
                 .ok_or_else(|| anyhow!("empty worktree"))?;
             this.update(&mut cx, |workspace, cx| {
-                let worktree = cx.add_model(|cx| Worktree::remote(worktree, cx));
+                let worktree = cx.add_model(|cx| {
+                    Worktree::remote(worktree_id, worktree, rpc, connection_id, cx)
+                });
                 cx.observe_model(&worktree, |_, _, cx| cx.notify());
                 workspace.worktrees.insert(worktree);
                 cx.notify();
