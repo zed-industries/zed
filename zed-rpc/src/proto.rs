@@ -5,6 +5,7 @@ use std::{convert::TryInto, io};
 include!(concat!(env!("OUT_DIR"), "/zed.messages.rs"));
 
 pub trait EnvelopedMessage: Sized + Send + 'static {
+    const NAME: &'static str;
     fn into_envelope(self, id: u32, responding_to: Option<u32>) -> Envelope;
     fn matches_envelope(envelope: &Envelope) -> bool;
     fn from_envelope(envelope: Envelope) -> Option<Self>;
@@ -17,6 +18,8 @@ pub trait RequestMessage: EnvelopedMessage {
 macro_rules! message {
     ($name:ident) => {
         impl EnvelopedMessage for $name {
+            const NAME: &'static str = std::stringify!($name);
+
             fn into_envelope(self, id: u32, responding_to: Option<u32>) -> Envelope {
                 Envelope {
                     id,
