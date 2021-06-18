@@ -4,6 +4,7 @@ mod ignore;
 
 use crate::{
     editor::{History, Rope},
+    rpc::{self, proto, ConnectionId},
     sum_tree::{self, Cursor, Edit, SumTree},
     util::Bias,
 };
@@ -31,7 +32,6 @@ use std::{
     sync::{Arc, Weak},
     time::{Duration, SystemTime, UNIX_EPOCH},
 };
-use zed_rpc::{proto, ConnectionId, Peer};
 
 use self::{char_bag::CharBag, ignore::IgnoreStack};
 
@@ -53,7 +53,7 @@ pub struct Worktree {
     scan_state: (watch::Sender<ScanState>, watch::Receiver<ScanState>),
     _event_stream_handle: fsevent::Handle,
     poll_scheduled: bool,
-    rpc: Option<Arc<Peer>>,
+    rpc: Option<rpc::Client>,
 }
 
 #[derive(Clone, Debug)]
@@ -227,10 +227,10 @@ impl Worktree {
 
     pub fn share(
         &mut self,
-        client: Arc<Peer>,
+        client: rpc::Client,
         connection_id: ConnectionId,
         cx: &mut ModelContext<Self>,
-    ) -> Task<anyhow::Result<()>> {
+    ) -> Task<anyhow::Result<(u64, String)>> {
         self.rpc = Some(client.clone());
         let snapshot = self.snapshot();
         cx.spawn(|_this, cx| async move {
@@ -254,7 +254,7 @@ impl Worktree {
                 .await?;
 
             log::info!("sharing worktree {:?}", share_response);
-            Ok(())
+            Ok((share_response.worktree_id, share_response.access_token))
         })
     }
 }

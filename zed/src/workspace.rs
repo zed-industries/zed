@@ -4,14 +4,13 @@ pub mod pane_group;
 use crate::{
     editor::{Buffer, Editor},
     language::LanguageRegistry,
-    rpc::PeerExt as _,
+    rpc,
     settings::Settings,
     time::ReplicaId,
-    util::SurfResultExt as _,
     worktree::{FileHandle, Worktree, WorktreeHandle},
     AppState,
 };
-use anyhow::{anyhow, Context as _};
+use anyhow::anyhow;
 use gpui::{
     color::rgbu, elements::*, json::to_string_pretty, keymap::Binding, AnyViewHandle, AppContext,
     AsyncAppContext, ClipboardItem, Entity, ModelHandle, MutableAppContext, PathPromptOptions,
@@ -24,22 +23,20 @@ use postage::watch;
 use smol::prelude::*;
 use std::{
     collections::{hash_map::Entry, HashMap, HashSet},
-    convert::TryFrom,
     future::Future,
     path::{Path, PathBuf},
     sync::Arc,
-    time::Duration,
 };
-use surf::Url;
-use zed_rpc::{proto, rest, Peer, TypedEnvelope};
+use zed_rpc::{proto, Peer, TypedEnvelope};
 
-pub fn init(cx: &mut MutableAppContext, rpc: Arc<Peer>) {
+pub fn init(cx: &mut MutableAppContext, rpc: rpc::Client) {
     cx.add_global_action("workspace:open", open);
     cx.add_global_action("workspace:open_paths", open_paths);
     cx.add_action("workspace:save", Workspace::save_active_item);
     cx.add_action("workspace:debug_elements", Workspace::debug_elements);
     cx.add_action("workspace:new_file", Workspace::open_new_file);
     cx.add_action("workspace:share_worktree", Workspace::share_worktree);
+    cx.add_action("workspace:join_worktree", Workspace::join_worktree);
     cx.add_bindings(vec![
         Binding::new("cmd-s", "workspace:save", None),
         Binding::new("cmd-alt-i", "workspace:debug_elements", None),
@@ -312,7 +309,7 @@ pub struct State {
 pub struct Workspace {
     pub settings: watch::Receiver<Settings>,
     language_registry: Arc<LanguageRegistry>,
-    rpc: Arc<Peer>,
+    rpc: rpc::Client,
     modal: Option<AnyViewHandle>,
     center: PaneGroup,
     panes: Vec<ViewHandle<Pane>>,
@@ -331,7 +328,7 @@ impl Workspace {
         replica_id: ReplicaId,
         settings: watch::Receiver<Settings>,
         language_registry: Arc<LanguageRegistry>,
-        rpc: Arc<Peer>,
+        rpc: rpc::Client,
         cx: &mut ViewContext<Self>,
     ) -> Self {
         let pane = cx.add_view(|_| Pane::new(settings.clone()));
@@ -665,47 +662,11 @@ impl Workspace {
 
     fn share_worktree(&mut self, _: &(), cx: &mut ViewContext<Self>) {
         let rpc = self.rpc.clone();
-        let zed_url = std::env::var("ZED_SERVER_URL").unwrap_or("https://zed.dev".to_string());
         let executor = cx.background_executor().clone();
+        let platform = cx.platform();
 
-        let task = cx.spawn::<_, _, surf::Result<()>>(|this, mut cx| async move {
-            let (user_id, access_token) =
-                login(zed_url.clone(), cx.platform(), cx.background_executor()).await?;
-
-            let mut response = surf::get(format!("{}{}", &zed_url, &rest::GET_RPC_ADDRESS_PATH))
-                .header(
-                    "Authorization",
-                    http_auth_basic::Credentials::new(&user_id, &access_token).as_http_header(),
-                )
-                .await
-                .context("rpc address request failed")?;
-
-            let rest::GetRpcAddressResponse { address } = response
-                .body_json()
-                .await
-                .context("failed to parse rpc address response")?;
-
-            // TODO - If the `ZED_SERVER_URL` uses https, then wrap this stream in
-            // a TLS stream using `native-tls`.
-            let stream = smol::net::TcpStream::connect(&address).await?;
-            log::info!("connected to rpc address {}", address);
-
-            let connection_id = rpc.add_connection(stream).await;
-            executor.spawn(rpc.handle_messages(connection_id)).detach();
-
-            let auth_response = rpc
-                .request(
-                    connection_id,
-                    proto::Auth {
-                        user_id: user_id.parse()?,
-                        access_token,
-                    },
-                )
-                .await
-                .context("rpc auth request failed")?;
-            if !auth_response.credentials_valid {
-                Err(anyhow!("failed to authenticate with RPC server"))?;
-            }
+        let task = cx.spawn(|this, mut cx| async move {
+            let connection_id = rpc.connect_to_server(&cx, &executor).await?;
 
             let share_task = this.update(&mut cx, |this, cx| {
                 let worktree = this.worktrees.iter().next()?;
@@ -713,14 +674,54 @@ impl Workspace {
             });
 
             if let Some(share_task) = share_task {
-                share_task.await?;
+                let (worktree_id, access_token) = share_task.await?;
+                let worktree_url = rpc::encode_worktree_url(worktree_id, &access_token);
+                log::info!("wrote worktree url to clipboard: {}", worktree_url);
+                platform.write_to_clipboard(ClipboardItem::new(worktree_url));
             }
-            Ok(())
+            surf::Result::Ok(())
         });
 
         cx.spawn(|_, _| async move {
             if let Err(e) = task.await {
                 log::error!("sharing failed: {}", e);
+            }
+        })
+        .detach();
+    }
+
+    fn join_worktree(&mut self, _: &(), cx: &mut ViewContext<Self>) {
+        let rpc = self.rpc.clone();
+        let executor = cx.background_executor().clone();
+
+        let task = cx.spawn(|_, cx| async move {
+            let connection_id = rpc.connect_to_server(&cx, &executor).await?;
+
+            let worktree_url = cx
+                .platform()
+                .read_from_clipboard()
+                .ok_or_else(|| anyhow!("failed to read url from clipboard"))?;
+            let (worktree_id, access_token) = rpc::decode_worktree_url(worktree_url.text())
+                .ok_or_else(|| anyhow!("failed to decode worktree url"))?;
+            log::info!("read worktree url from clipboard: {}", worktree_url.text());
+
+            let open_worktree_response = rpc
+                .request(
+                    connection_id,
+                    proto::OpenWorktree {
+                        worktree_id,
+                        access_token,
+                    },
+                )
+                .await?;
+            log::info!("joined worktree: {:?}", open_worktree_response);
+
+            surf::Result::Ok(())
+        });
+
+        cx.spawn(|_, _| async move {
+            if let Err(e) = task.await {
+                log::error!("joing failed: {}", e);
             }
         })
         .detach();
@@ -857,86 +858,6 @@ impl WorkspaceHandle for ViewHandle<Workspace> {
             .collect::<Vec<_>>()
     }
 }
-
-fn login(
-    zed_url: String,
-    platform: Arc<dyn gpui::Platform>,
-    executor: Arc<gpui::executor::Background>,
-) -> Task<anyhow::Result<(String, String)>> {
-    executor.clone().spawn(async move {
-        if let Some((user_id, access_token)) = platform.read_credentials(&zed_url) {
-            log::info!("already signed in. user_id: {}", user_id);
-            return Ok((user_id, String::from_utf8(access_token).unwrap()));
-        }
-
-        // Generate a pair of asymmetric encryption keys. The public key will be used by the
-        // zed server to encrypt the user's access token, so that it can'be intercepted by
-        // any other app running on the user's device.
-        let (public_key, private_key) =
-            zed_rpc::auth::keypair().expect("failed to generate keypair for auth");
-        let public_key_string =
-            String::try_from(public_key).expect("failed to serialize public key for auth");
-
-        // Start an HTTP server to receive the redirect from Zed's sign-in page.
-        let server = tiny_http::Server::http("127.0.0.1:0").expect("failed to find open port");
-        let port = server.server_addr().port();
-
-        // Open the Zed sign-in page in the user's browser, with query parameters that indicate
-        // that the user is signing in from a Zed app running on the same device.
-        platform.open_url(&format!(
-            "{}/sign_in?native_app_port={}&native_app_public_key={}",
-            zed_url, port, public_key_string
-        ));
-
-        // Receive the HTTP request from the user's browser. Retrieve the user id and encrypted
-        // access token from the query params.
-        //
-        // TODO - Avoid ever starting more than one HTTP server. Maybe switch to using a
-        // custom URL scheme instead of this local HTTP server.
-        let (user_id, access_token) = executor
-            .spawn::<anyhow::Result<_>, _>(async move {
-                if let Some(req) = server.recv_timeout(Duration::from_secs(10 * 60))? {
-                    let path = req.url();
-                    let mut user_id = None;
-                    let mut access_token = None;
-                    let url = Url::parse(&format!("http://example.com{}", path))
-                        .context("failed to parse login notification url")?;
-                    for (key, value) in url.query_pairs() {
-                        if key == "access_token" {
-                            access_token = Some(value.to_string());
-                        } else if key == "user_id" {
-                            user_id = Some(value.to_string());
-                        }
-                    }
-                    req.respond(
-                        tiny_http::Response::from_string(LOGIN_RESPONSE).with_header(
-                            tiny_http::Header::from_bytes("Content-Type", "text/html").unwrap(),
-                        ),
-                    )
-                    .context("failed to respond to login http request")?;
-                    Ok(user_id.zip(access_token))
-                } else {
-                    Ok(None)
-                }
-            })
-            .await?
-            .ok_or_else(|| anyhow!(""))?;
-
-        let access_token = private_key
-            .decrypt_string(&access_token)
-            .context("failed to decrypt access token")?;
-        platform.activate(true);
-        platform.write_credentials(&zed_url, &user_id, access_token.as_bytes());
-        Ok((user_id.to_string(), access_token))
-    })
-}
-
-const LOGIN_RESPONSE: &'static str = "
-<!DOCTYPE html>
-<html>
-<script>window.close();</script>
-</html>
-";
 
 #[cfg(test)]
 mod tests {

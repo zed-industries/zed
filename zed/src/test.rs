@@ -1,4 +1,4 @@
-use crate::{language::LanguageRegistry, settings, time::ReplicaId, AppState};
+use crate::{AppState, language::LanguageRegistry, rpc, settings, time::ReplicaId};
 use ctor::ctor;
 use gpui::AppContext;
 use rand::Rng;
@@ -150,6 +150,6 @@ pub fn build_app_state(cx: &AppContext) -> AppState {
     AppState {
         settings,
         language_registry,
-        rpc: zed_rpc::Peer::new(),
+        rpc: rpc::Client::new(),
     }
 }

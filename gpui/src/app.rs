@@ -1799,6 +1799,10 @@ impl<'a, T: View> ViewContext<'a, T> {
         &self.app.cx.background
     }
 
+    pub fn platform(&self) -> Arc<dyn Platform> {
+        self.app.platform()
+    }
+
     pub fn prompt<F>(&self, level: PromptLevel, msg: &str, answers: &[&str], done_fn: F)
     where
         F: 'static + FnOnce(usize, &mut MutableAppContext),

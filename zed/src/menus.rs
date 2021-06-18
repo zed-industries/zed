@@ -21,6 +21,12 @@ pub fn menus(state: AppState) -> Vec<Menu<'static>> {
                     arg: None,
                 },
                 MenuItem::Action {
+                    name: "Join",
+                    keystroke: None,
+                    action: "workspace:join_worktree",
+                    arg: None,
+                },
+                MenuItem::Action {
                     name: "Quit",
                     keystroke: Some("cmd-q"),
                     action: "app:quit",
