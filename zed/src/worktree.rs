@@ -48,6 +48,7 @@ enum ScanState {
 
 pub enum Worktree {
     Local(LocalWorktree),
+    Remote(RemoteWorktree),
 }
 
 impl Entity for Worktree {
@@ -57,6 +58,10 @@ impl Entity for Worktree {
 impl Worktree {
     pub fn local(path: impl Into<Arc<Path>>, cx: &mut ModelContext<Worktree>) -> Self {
         Worktree::Local(LocalWorktree::new(path, cx))
+    }
+
+    pub fn remote(worktree: proto::Worktree, cx: &mut ModelContext<Worktree>) -> Self {
+        Worktree::Remote(RemoteWorktree::new(worktree, cx))
     }
 
     pub fn as_local(&self) -> Option<&LocalWorktree> {
@@ -78,6 +83,7 @@ impl Worktree {
     pub fn snapshot(&self) -> Snapshot {
         match self {
             Worktree::Local(worktree) => worktree.snapshot(),
+            Worktree::Remote(worktree) => worktree.snapshot.clone(),
         }
     }
 
@@ -88,6 +94,7 @@ impl Worktree {
     ) -> impl Future<Output = Result<History>> {
         match self {
             Worktree::Local(worktree) => worktree.load_history(path, cx),
+            Worktree::Remote(worktree) => todo!(),
         }
     }
 
@@ -99,6 +106,7 @@ impl Worktree {
     ) -> impl Future<Output = Result<()>> {
         match self {
             Worktree::Local(worktree) => worktree.save(path, content, cx),
+            Worktree::Remote(worktree) => todo!(),
         }
     }
 }
@@ -109,6 +117,7 @@ impl Deref for Worktree {
     fn deref(&self) -> &Self::Target {
         match self {
             Worktree::Local(worktree) => &worktree.snapshot,
+            Worktree::Remote(worktree) => &worktree.snapshot,
         }
     }
 }
@@ -137,7 +146,7 @@ struct FileHandleState {
 }
 
 impl LocalWorktree {
-    pub fn new(path: impl Into<Arc<Path>>, cx: &mut ModelContext<Worktree>) -> Self {
+    fn new(path: impl Into<Arc<Path>>, cx: &mut ModelContext<Worktree>) -> Self {
         let abs_path = path.into();
         let (scan_state_tx, scan_state_rx) = smol::channel::unbounded();
         let id = cx.model_id();
@@ -309,14 +318,22 @@ impl LocalWorktree {
         cx: &mut ModelContext<Worktree>,
     ) -> Task<anyhow::Result<(u64, String)>> {
         self.rpc = Some(client.clone());
+        let root_name = self.root_name.clone();
         let snapshot = self.snapshot();
         cx.spawn(|_this, cx| async move {
-            let paths = cx
+            let entries = cx
                 .background_executor()
                 .spawn(async move {
                     snapshot
-                        .paths()
-                        .map(|path| path.to_string_lossy().to_string())
+                        .entries
+                        .cursor::<(), ()>()
+                        .map(|entry| proto::Entry {
+                            is_dir: entry.is_dir(),
+                            path: entry.path.to_string_lossy().to_string(),
+                            inode: entry.inode,
+                            is_symlink: entry.is_symlink,
+                            is_ignored: entry.is_ignored,
+                        })
                         .collect()
                 })
                 .await;
@@ -325,7 +342,7 @@ impl LocalWorktree {
                 .request(
                     connection_id,
                     proto::ShareWorktree {
-                        worktree: Some(proto::Worktree { paths }),
+                        worktree: Some(proto::Worktree { root_name, entries }),
                     },
                 )
                 .await?;
@@ -347,6 +364,50 @@ impl Deref for LocalWorktree {
 impl fmt::Debug for LocalWorktree {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         self.snapshot.fmt(f)
+    }
+}
+
+pub struct RemoteWorktree {
+    snapshot: Snapshot,
+}
+
+impl RemoteWorktree {
+    fn new(worktree: proto::Worktree, cx: &mut ModelContext<Worktree>) -> Self {
+        let id = cx.model_id();
+        let root_char_bag: CharBag = worktree
+            .root_name
+            .chars()
+            .map(|c| c.to_ascii_lowercase())
+            .collect();
+        let mut entries = SumTree::new();
+        entries.extend(
+            worktree.entries.into_iter().map(|entry| {
+                let kind = if entry.is_dir {
+                    EntryKind::Dir
+                } else {
+                    let mut char_bag = root_char_bag.clone();
+                    char_bag.extend(entry.path.chars().map(|c| c.to_ascii_lowercase()));
+                    EntryKind::File(char_bag)
+                };
+                Entry {
+                    kind,
+                    path: Path::new(&entry.path).into(),
+                    inode: entry.inode,
+                    is_symlink: entry.is_symlink,
+                    is_ignored: entry.is_ignored,
+                }
+            }),
+            &(),
+        );
+        let snapshot = Snapshot {
+            id,
+            scan_id: 0,
+            abs_path: Path::new("").into(),
+            root_name: worktree.root_name,
+            ignores: Default::default(),
+            entries,
+        };
+        Self { snapshot }
     }
 }
 
@@ -1367,6 +1428,7 @@ impl WorktreeHandle for ModelHandle<Worktree> {
                     }
                 })
             }
+            Worktree::Remote(tree) => todo!(),
         }
     }
 

@@ -705,7 +705,7 @@ impl Workspace {
         let rpc = self.rpc.clone();
         let executor = cx.background_executor().clone();
 
-        let task = cx.spawn(|_, cx| async move {
+        let task = cx.spawn(|this, mut cx| async move {
             let connection_id = rpc.connect_to_server(&cx, &executor).await?;
 
             let worktree_url = cx
@@ -725,7 +725,15 @@ impl Workspace {
                     },
                 )
                 .await?;
-            log::info!("joined worktree: {:?}", open_worktree_response);
+            let worktree = open_worktree_response
+                .worktree
+                .ok_or_else(|| anyhow!("empty worktree"))?;
+            this.update(&mut cx, |workspace, cx| {
+                let worktree = cx.add_model(|cx| Worktree::remote(worktree, cx));
+                cx.observe_model(&worktree, |_, _, cx| cx.notify());
+                workspace.worktrees.insert(worktree);
+                cx.notify();
+            });
 
             surf::Result::Ok(())
         });

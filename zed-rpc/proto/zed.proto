@@ -53,7 +53,16 @@ message OpenBufferResponse {
 }
 
 message Worktree {
-    repeated string paths = 1;
+    string root_name = 1;
+    repeated Entry entries = 2;
+}
+
+message Entry {
+    bool is_dir = 1;
+    string path = 2;
+    uint64 inode = 3;
+    bool is_symlink = 4;
+    bool is_ignored = 5;
 }
 
 message Buffer {

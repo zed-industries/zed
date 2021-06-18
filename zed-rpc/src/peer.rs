@@ -341,23 +341,19 @@ mod tests {
             smol::spawn(server.handle_messages(server_conn_id2)).detach();
 
             // define the expected requests and responses
-            let request1 = proto::OpenWorktree {
-                worktree_id: 101,
-                access_token: "first-worktree-access-token".to_string(),
+            let request1 = proto::Auth {
+                user_id: 1,
+                access_token: "token-1".to_string(),
             };
-            let response1 = proto::OpenWorktreeResponse {
-                worktree: Some(proto::Worktree {
-                    paths: vec!["path/one".to_string()],
-                }),
+            let response1 = proto::AuthResponse {
+                credentials_valid: true,
             };
-            let request2 = proto::OpenWorktree {
-                worktree_id: 102,
-                access_token: "second-worktree-access-token".to_string(),
+            let request2 = proto::Auth {
+                user_id: 2,
+                access_token: "token-2".to_string(),
             };
-            let response2 = proto::OpenWorktreeResponse {
-                worktree: Some(proto::Worktree {
-                    paths: vec!["path/two".to_string(), "path/three".to_string()],
-                }),
+            let response2 = proto::AuthResponse {
+                credentials_valid: false,
             };
             let request3 = proto::OpenBuffer {
                 worktree_id: 102,
@@ -386,7 +382,7 @@ mod tests {
 
             // on the server, respond to two requests for each client
             let mut open_buffer_rx = server.add_message_handler::<proto::OpenBuffer>().await;
-            let mut open_worktree_rx = server.add_message_handler::<proto::OpenWorktree>().await;
+            let mut auth_rx = server.add_message_handler::<proto::Auth>().await;
             let (mut server_done_tx, mut server_done_rx) = oneshot::channel::<()>();
             smol::spawn({
                 let request1 = request1.clone();
@@ -398,11 +394,11 @@ mod tests {
                 let response3 = response3.clone();
                 let response4 = response4.clone();
                 async move {
-                    let msg = open_worktree_rx.recv().await.unwrap();
+                    let msg = auth_rx.recv().await.unwrap();
                     assert_eq!(msg.payload, request1);
                     server.respond(msg, response1.clone()).await.unwrap();
 
-                    let msg = open_worktree_rx.recv().await.unwrap();
+                    let msg = auth_rx.recv().await.unwrap();
                     assert_eq!(msg.payload, request2.clone());
                     server.respond(msg, response2.clone()).await.unwrap();
 

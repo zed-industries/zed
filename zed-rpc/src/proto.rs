@@ -132,10 +132,9 @@ mod tests {
             }
             .into_envelope(3, None);
 
-            let message2 = ShareWorktree {
-                worktree: Some(Worktree {
-                    paths: vec!["ok".to_string()],
-                }),
+            let message2 = OpenBuffer {
+                worktree_id: 1,
+                path: "path".to_string(),
             }
             .into_envelope(5, None);
 
