@@ -6,7 +6,12 @@ include!(concat!(env!("OUT_DIR"), "/zed.messages.rs"));
 
 pub trait EnvelopedMessage: Sized + Send + 'static {
     const NAME: &'static str;
-    fn into_envelope(self, id: u32, responding_to: Option<u32>) -> Envelope;
+    fn into_envelope(
+        self,
+        id: u32,
+        responding_to: Option<u32>,
+        original_sender_id: Option<u32>,
+    ) -> Envelope;
     fn matches_envelope(envelope: &Envelope) -> bool;
     fn from_envelope(envelope: Envelope) -> Option<Self>;
 }
@@ -20,10 +25,16 @@ macro_rules! message {
         impl EnvelopedMessage for $name {
             const NAME: &'static str = std::stringify!($name);
 
-            fn into_envelope(self, id: u32, responding_to: Option<u32>) -> Envelope {
+            fn into_envelope(
+                self,
+                id: u32,
+                responding_to: Option<u32>,
+                original_sender_id: Option<u32>,
+            ) -> Envelope {
                 Envelope {
                     id,
                     responding_to,
+                    original_sender_id,
                     payload: Some(envelope::Payload::$name(self)),
                 }
             }
@@ -132,13 +143,13 @@ mod tests {
                 user_id: 5,
                 access_token: "the-access-token".into(),
             }
-            .into_envelope(3, None);
+            .into_envelope(3, None, None);
 
             let message2 = OpenBuffer {
                 worktree_id: 1,
                 path: "path".to_string(),
             }
-            .into_envelope(5, None);
+            .into_envelope(5, None, None);
 
             let mut message_stream = MessageStream::new(byte_stream);
             message_stream.write_message(&message1).await.unwrap();

@@ -2,6 +2,7 @@ mod char_bag;
 mod fuzzy;
 mod ignore;
 
+use self::{char_bag::CharBag, ignore::IgnoreStack};
 use crate::{
     editor::{History, Rope},
     rpc::{self, proto, ConnectionId},
@@ -25,15 +26,17 @@ use std::{
     ffi::{CStr, OsStr, OsString},
     fmt, fs,
     future::Future,
+    hash::Hash,
     io::{self, Read, Write},
     ops::Deref,
     os::unix::{ffi::OsStrExt, fs::MetadataExt},
     path::{Path, PathBuf},
-    sync::{Arc, Weak},
+    sync::{
+        atomic::{AtomicUsize, Ordering::SeqCst},
+        Arc, Weak,
+    },
     time::{Duration, SystemTime},
 };
-
-use self::{char_bag::CharBag, ignore::IgnoreStack};
 
 lazy_static! {
     static ref GITIGNORE: &'static OsStr = OsStr::new(".gitignore");
@@ -132,6 +135,7 @@ pub struct LocalWorktree {
     snapshot: Snapshot,
     background_snapshot: Arc<Mutex<Snapshot>>,
     handles: Arc<Mutex<HashMap<Arc<Path>, Weak<Mutex<FileHandleState>>>>>,
+    next_handle_id: AtomicUsize,
     scan_state: (watch::Sender<ScanState>, watch::Receiver<ScanState>),
     _event_stream_handle: fsevent::Handle,
     poll_scheduled: bool,
@@ -149,6 +153,7 @@ struct FileHandleState {
     path: Arc<Path>,
     is_deleted: bool,
     mtime: SystemTime,
+    id: usize,
 }
 
 impl LocalWorktree {
@@ -174,6 +179,7 @@ impl LocalWorktree {
             snapshot,
             background_snapshot: background_snapshot.clone(),
             handles: handles.clone(),
+            next_handle_id: Default::default(),
             scan_state: watch::channel_with(ScanState::Scanning),
             _event_stream_handle: event_stream_handle,
             poll_scheduled: false,
@@ -326,6 +332,7 @@ impl LocalWorktree {
         self.rpc = Some(client.clone());
         let root_name = self.root_name.clone();
         let snapshot = self.snapshot();
+        let handle = cx.handle();
         cx.spawn(|_this, cx| async move {
             let entries = cx
                 .background_executor()
@@ -352,6 +359,8 @@ impl LocalWorktree {
                     },
                 )
                 .await?;
+
+            client.state.lock().await.shared_worktrees.insert(handle);
 
             log::info!("sharing worktree {:?}", share_response);
             Ok((share_response.worktree_id, share_response.access_token))
@@ -682,6 +691,21 @@ impl FileHandle {
                 }
             }
         });
+    }
+}
+
+impl PartialEq for FileHandle {
+    fn eq(&self, other: &Self) -> bool {
+        self.worktree == other.worktree && self.state.lock().id == other.state.lock().id
+    }
+}
+
+impl Eq for FileHandle {}
+
+impl Hash for FileHandle {
+    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+        self.state.lock().id.hash(state);
+        self.worktree.hash(state);
     }
 }
 
@@ -1420,17 +1444,21 @@ impl WorktreeHandle for ModelHandle<Worktree> {
                             .get(&path)
                             .and_then(Weak::upgrade)
                             .unwrap_or_else(|| {
+                                let id =
+                                    tree.as_local().unwrap().next_handle_id.fetch_add(1, SeqCst);
                                 let handle_state = if let Some(entry) = tree.entry_for_path(&path) {
                                     FileHandleState {
                                         path: entry.path().clone(),
                                         is_deleted: false,
                                         mtime,
+                                        id,
                                     }
                                 } else {
                                     FileHandleState {
                                         path: path.clone(),
                                         is_deleted: !tree.path_is_pending(path),
                                         mtime,
+                                        id,
                                     }
                                 };
 

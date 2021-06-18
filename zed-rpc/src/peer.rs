@@ -14,6 +14,7 @@ use std::{
     collections::{HashMap, HashSet},
     fmt,
     future::Future,
+    marker::PhantomData,
     pin::Pin,
     sync::{
         atomic::{self, AtomicU32},
@@ -27,6 +28,9 @@ type BoxedReader = Pin<Box<dyn AsyncRead + 'static + Send>>;
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
 pub struct ConnectionId(u32);
 
+#[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
+pub struct PeerId(u32);
+
 struct Connection {
     writer: Mutex<MessageStream<BoxedWriter>>,
     reader: Mutex<MessageStream<BoxedReader>>,
@@ -38,10 +42,28 @@ type MessageHandler = Box<
     dyn Send + Sync + Fn(&mut Option<proto::Envelope>, ConnectionId) -> Option<BoxFuture<bool>>,
 >;
 
+#[derive(Clone, Copy)]
+pub struct Receipt<T> {
+    sender_id: ConnectionId,
+    message_id: u32,
+    payload_type: PhantomData<T>,
+}
+
 pub struct TypedEnvelope<T> {
-    pub id: u32,
-    pub connection_id: ConnectionId,
+    pub sender_id: ConnectionId,
+    pub original_sender_id: Option<PeerId>,
+    pub message_id: u32,
     pub payload: T,
+}
+
+impl<T: RequestMessage> TypedEnvelope<T> {
+    pub fn receipt(&self) -> Receipt<T> {
+        Receipt {
+            sender_id: self.sender_id,
+            message_id: self.message_id,
+            payload_type: PhantomData,
+        }
+    }
 }
 
 pub struct Peer {
@@ -81,8 +103,9 @@ impl Peer {
                     Some(
                         async move {
                             tx.send(TypedEnvelope {
-                                id: envelope.id,
-                                connection_id,
+                                sender_id: connection_id,
+                                original_sender_id: envelope.original_sender_id.map(PeerId),
+                                message_id: envelope.id,
                                 payload: T::from_envelope(envelope).unwrap(),
                             })
                             .await
@@ -200,25 +223,45 @@ impl Peer {
     ) -> Result<TypedEnvelope<M>> {
         let connection = self.connection(connection_id).await?;
         let envelope = connection.reader.lock().await.read_message().await?;
-        let id = envelope.id;
+        let original_sender_id = envelope.original_sender_id;
+        let message_id = envelope.id;
         let payload =
             M::from_envelope(envelope).ok_or_else(|| anyhow!("unexpected message type"))?;
         Ok(TypedEnvelope {
-            id,
-            connection_id,
+            sender_id: connection_id,
+            original_sender_id: original_sender_id.map(PeerId),
+            message_id,
             payload,
         })
     }
 
     pub fn request<T: RequestMessage>(
         self: &Arc<Self>,
-        connection_id: ConnectionId,
-        req: T,
+        receiver_id: ConnectionId,
+        request: T,
+    ) -> impl Future<Output = Result<T::Response>> {
+        self.request_internal(None, receiver_id, request)
+    }
+
+    pub fn forward_request<T: RequestMessage>(
+        self: &Arc<Self>,
+        sender_id: ConnectionId,
+        receiver_id: ConnectionId,
+        request: T,
+    ) -> impl Future<Output = Result<T::Response>> {
+        self.request_internal(Some(sender_id), receiver_id, request)
+    }
+
+    pub fn request_internal<T: RequestMessage>(
+        self: &Arc<Self>,
+        original_sender_id: Option<ConnectionId>,
+        receiver_id: ConnectionId,
+        request: T,
     ) -> impl Future<Output = Result<T::Response>> {
         let this = self.clone();
         let (tx, mut rx) = oneshot::channel();
         async move {
-            let connection = this.connection(connection_id).await?;
+            let connection = this.connection(receiver_id).await?;
             let message_id = connection
                 .next_message_id
                 .fetch_add(1, atomic::Ordering::SeqCst);
@@ -231,7 +274,11 @@ impl Peer {
                 .writer
                 .lock()
                 .await
-                .write_message(&req.into_envelope(message_id, None))
+                .write_message(&request.into_envelope(
+                    message_id,
+                    None,
+                    original_sender_id.map(|id| id.0),
+                ))
                 .await?;
             let response = rx
                 .recv()
@@ -257,7 +304,7 @@ impl Peer {
                 .writer
                 .lock()
                 .await
-                .write_message(&message.into_envelope(message_id, None))
+                .write_message(&message.into_envelope(message_id, None, None))
                 .await?;
             Ok(())
         }
@@ -265,12 +312,12 @@ impl Peer {
 
     pub fn respond<T: RequestMessage>(
         self: &Arc<Self>,
-        request: TypedEnvelope<T>,
+        receipt: Receipt<T>,
         response: T::Response,
     ) -> impl Future<Output = Result<()>> {
         let this = self.clone();
         async move {
-            let connection = this.connection(request.connection_id).await?;
+            let connection = this.connection(receipt.sender_id).await?;
             let message_id = connection
                 .next_message_id
                 .fetch_add(1, atomic::Ordering::SeqCst);
@@ -278,7 +325,7 @@ impl Peer {
                 .writer
                 .lock()
                 .await
-                .write_message(&response.into_envelope(message_id, Some(request.id)))
+                .write_message(&response.into_envelope(message_id, Some(receipt.message_id), None))
                 .await?;
             Ok(())
         }
@@ -296,6 +343,12 @@ impl Peer {
 }
 
 impl fmt::Display for ConnectionId {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        self.0.fmt(f)
+    }
+}
+
+impl fmt::Display for PeerId {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         self.0.fmt(f)
     }
@@ -396,19 +449,31 @@ mod tests {
                 async move {
                     let msg = auth_rx.recv().await.unwrap();
                     assert_eq!(msg.payload, request1);
-                    server.respond(msg, response1.clone()).await.unwrap();
+                    server
+                        .respond(msg.receipt(), response1.clone())
+                        .await
+                        .unwrap();
 
                     let msg = auth_rx.recv().await.unwrap();
                     assert_eq!(msg.payload, request2.clone());
-                    server.respond(msg, response2.clone()).await.unwrap();
+                    server
+                        .respond(msg.receipt(), response2.clone())
+                        .await
+                        .unwrap();
 
                     let msg = open_buffer_rx.recv().await.unwrap();
                     assert_eq!(msg.payload, request3.clone());
-                    server.respond(msg, response3.clone()).await.unwrap();
+                    server
+                        .respond(msg.receipt(), response3.clone())
+                        .await
+                        .unwrap();
 
                     let msg = open_buffer_rx.recv().await.unwrap();
                     assert_eq!(msg.payload, request4.clone());
-                    server.respond(msg, response4.clone()).await.unwrap();
+                    server
+                        .respond(msg.receipt(), response4.clone())
+                        .await
+                        .unwrap();
 
                     server_done_tx.send(()).await.unwrap();
                 }

@@ -4,18 +4,19 @@ package zed.messages;
 message Envelope {
     uint32 id = 1;
     optional uint32 responding_to = 2;
+    optional uint32 original_sender_id = 3;
     oneof payload {
-        Auth auth = 3;
-        AuthResponse auth_response = 4;
-        ShareWorktree share_worktree = 5;
-        ShareWorktreeResponse share_worktree_response = 6;
-        OpenWorktree open_worktree = 7;
-        OpenWorktreeResponse open_worktree_response = 8;
-        OpenFile open_file = 9;
-        OpenFileResponse open_file_response = 10;
-        CloseFile close_file = 11;
-        OpenBuffer open_buffer = 12;
-        OpenBufferResponse open_buffer_response = 13;
+        Auth auth = 4;
+        AuthResponse auth_response = 5;
+        ShareWorktree share_worktree = 6;
+        ShareWorktreeResponse share_worktree_response = 7;
+        OpenWorktree open_worktree = 8;
+        OpenWorktreeResponse open_worktree_response = 9;
+        OpenFile open_file = 10;
+        OpenFileResponse open_file_response = 11;
+        CloseFile close_file = 12;
+        OpenBuffer open_buffer = 13;
+        OpenBufferResponse open_buffer_response = 14;
     }
 }
 
@@ -46,6 +47,15 @@ message OpenWorktreeResponse {
     Worktree worktree = 1;
 }
 
+message AddGuest {
+    uint64 worktree_id = 1;
+    User user = 2;
+}
+
+message RemoveGuest {
+    uint64 worktree_id = 1;
+}
+
 message OpenFile {
     uint64 worktree_id = 1;
     string path = 2;
@@ -67,6 +77,12 @@ message OpenBuffer {
 
 message OpenBufferResponse {
     Buffer buffer = 1;
+}
+
+message User {
+    string github_login = 1;
+    string avatar_url = 2;
+    uint64 id = 3;
 }
 
 message Worktree {

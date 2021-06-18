@@ -28,7 +28,7 @@ use std::{
     path::{Path, PathBuf},
     sync::Arc,
 };
-use zed_rpc::{proto, Peer, TypedEnvelope};
+use zed_rpc::{proto, TypedEnvelope};
 
 pub fn init(cx: &mut MutableAppContext, rpc: rpc::Client) {
     cx.add_global_action("workspace:open", open);
@@ -44,7 +44,8 @@ pub fn init(cx: &mut MutableAppContext, rpc: rpc::Client) {
     ]);
     pane::init(cx);
 
-    rpc.on_message(handle_open_buffer, cx);
+    rpc.on_message(remote::open_file, cx);
+    rpc.on_message(remote::open_buffer, cx);
 }
 
 pub struct OpenParams {
@@ -106,18 +107,57 @@ fn open_paths(params: &OpenParams, cx: &mut MutableAppContext) {
     });
 }
 
-async fn handle_open_buffer(
-    request: TypedEnvelope<proto::OpenBuffer>,
-    rpc: &Arc<Peer>,
-    cx: &mut AsyncAppContext,
-) -> anyhow::Result<()> {
-    let payload = &request.payload;
-    dbg!(&payload.path);
-    rpc.respond(request, proto::OpenBufferResponse { buffer: None })
+mod remote {
+    use super::*;
+
+    pub async fn open_file(
+        request: TypedEnvelope<proto::OpenFile>,
+        rpc: &rpc::Client,
+        cx: &mut AsyncAppContext,
+    ) -> anyhow::Result<()> {
+        let message = &request.payload;
+        let mut state = rpc.state.lock().await;
+
+        let worktree = state
+            .shared_worktrees
+            .get(&(message.worktree_id as usize))
+            .ok_or_else(|| anyhow!("worktree {} not found", message.worktree_id))?
+            .clone();
+
+        let peer_id = request
+            .original_sender_id
+            .ok_or_else(|| anyhow!("missing original sender id"))?;
+
+        let file = cx.update(|cx| worktree.file(&message.path, cx)).await?;
+
+        let file_entry = state.shared_files.entry(file);
+        if matches!(file_entry, Entry::Vacant(_)) {
+            worktree.update(cx, |worktree, cx| {});
+        }
+        *file_entry
+            .or_insert(Default::default())
+            .entry(peer_id)
+            .or_insert(0) += 1;
+
+        todo!()
+    }
+
+    pub async fn open_buffer(
+        request: TypedEnvelope<proto::OpenBuffer>,
+        rpc: &rpc::Client,
+        cx: &mut AsyncAppContext,
+    ) -> anyhow::Result<()> {
+        let payload = &request.payload;
+        dbg!(&payload.path);
+        rpc.respond(
+            request.receipt(),
+            proto::OpenBufferResponse { buffer: None },
+        )
         .await?;
 
-    dbg!(cx.read(|app| app.root_view_id(1)));
-    Ok(())
+        dbg!(cx.read(|app| app.root_view_id(1)));
+        Ok(())
+    }
 }
 
 pub trait Item: Entity + Sized {

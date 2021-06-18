@@ -3,4 +3,4 @@ mod peer;
 pub mod proto;
 pub mod rest;
 
-pub use peer::{ConnectionId, Peer, TypedEnvelope};
+pub use peer::*;

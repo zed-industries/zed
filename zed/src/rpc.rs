@@ -1,14 +1,18 @@
+use crate::worktree::{FileHandle, Worktree};
+
 use super::util::SurfResultExt as _;
 use anyhow::{anyhow, Context, Result};
 use gpui::executor::Background;
-use gpui::{AsyncAppContext, Task};
+use gpui::{AsyncAppContext, ModelHandle, Task};
 use lazy_static::lazy_static;
 use postage::prelude::Stream;
 use smol::lock::Mutex;
+use std::collections::{HashMap, HashSet};
 use std::time::Duration;
 use std::{convert::TryFrom, future::Future, sync::Arc};
 use surf::Url;
 use zed_rpc::{proto::RequestMessage, rest, Peer, TypedEnvelope};
+use zed_rpc::{PeerId, Receipt};
 
 pub use zed_rpc::{proto, ConnectionId};
 
@@ -20,13 +24,14 @@ lazy_static! {
 #[derive(Clone)]
 pub struct Client {
     peer: Arc<Peer>,
-    state: Arc<Mutex<ClientState>>,
+    pub state: Arc<Mutex<ClientState>>,
 }
 
 #[derive(Default)]
-struct ClientState {
-    // TODO - allow multiple connections
+pub struct ClientState {
     connection_id: Option<ConnectionId>,
+    pub shared_worktrees: HashSet<ModelHandle<Worktree>>,
+    pub shared_files: HashMap<FileHandle, HashMap<PeerId, usize>>,
 }
 
 impl Client {
@@ -42,11 +47,11 @@ impl Client {
         H: 'static + for<'a> MessageHandler<'a, M>,
         M: proto::EnvelopedMessage,
     {
-        let peer = self.peer.clone();
-        let mut messages = smol::block_on(peer.add_message_handler::<M>());
+        let this = self.clone();
+        let mut messages = smol::block_on(this.peer.add_message_handler::<M>());
         cx.spawn(|mut cx| async move {
             while let Some(message) = messages.recv().await {
-                if let Err(err) = handler.handle(message, &peer, &mut cx).await {
+                if let Err(err) = handler.handle(message, &this, &mut cx).await {
                     log::error!("error handling message: {:?}", err);
                 }
             }
@@ -189,9 +194,17 @@ impl Client {
     pub fn request<T: RequestMessage>(
         &self,
         connection_id: ConnectionId,
-        req: T,
+        request: T,
     ) -> impl Future<Output = Result<T::Response>> {
-        self.peer.request(connection_id, req)
+        self.peer.request(connection_id, request)
+    }
+
+    pub fn respond<T: RequestMessage>(
+        &self,
+        receipt: Receipt<T>,
+        response: T::Response,
+    ) -> impl Future<Output = Result<()>> {
+        self.peer.respond(receipt, response)
     }
 }
 
@@ -201,7 +214,7 @@ pub trait MessageHandler<'a, M: proto::EnvelopedMessage> {
     fn handle(
         &self,
         message: TypedEnvelope<M>,
-        rpc: &'a Arc<Peer>,
+        rpc: &'a Client,
         cx: &'a mut gpui::AsyncAppContext,
     ) -> Self::Output;
 }
@@ -209,7 +222,7 @@ pub trait MessageHandler<'a, M: proto::EnvelopedMessage> {
 impl<'a, M, F, Fut> MessageHandler<'a, M> for F
 where
     M: proto::EnvelopedMessage,
-    F: Fn(TypedEnvelope<M>, &'a Arc<Peer>, &'a mut gpui::AsyncAppContext) -> Fut,
+    F: Fn(TypedEnvelope<M>, &'a Client, &'a mut gpui::AsyncAppContext) -> Fut,
     Fut: 'a + Future<Output = anyhow::Result<()>>,
 {
     type Output = Fut;
@@ -217,7 +230,7 @@ where
     fn handle(
         &self,
         message: TypedEnvelope<M>,
-        rpc: &'a Arc<Peer>,
+        rpc: &'a Client,
         cx: &'a mut gpui::AsyncAppContext,
     ) -> Self::Output {
         (self)(message, rpc, cx)
