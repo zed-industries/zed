@@ -127,7 +127,7 @@ pub struct LocalWorktree {
     next_handle_id: AtomicU64,
     scan_state: (watch::Sender<ScanState>, watch::Receiver<ScanState>),
     _event_stream_handle: fsevent::Handle,
-    poll_scheduled: bool,
+    polling_snapshot: bool,
     rpc: Option<rpc::Client>,
 }
 
@@ -191,7 +191,7 @@ impl LocalWorktree {
             next_handle_id: Default::default(),
             scan_state: watch::channel_with(ScanState::Scanning),
             _event_stream_handle: event_stream_handle,
-            poll_scheduled: false,
+            polling_snapshot: false,
             rpc: None,
         };
 
@@ -242,28 +242,43 @@ impl LocalWorktree {
 
     fn observe_scan_state(&mut self, scan_state: ScanState, cx: &mut ModelContext<Worktree>) {
         let _ = self.scan_state.0.blocking_send(scan_state);
-        self.poll_entries(cx);
+        if !self.polling_snapshot {
+            self.poll_snapshot(cx);
+        }
     }
 
-    fn poll_entries(&mut self, cx: &mut ModelContext<Worktree>) {
-        self.snapshot = self.background_snapshot.lock().clone();
-        cx.notify();
+    fn poll_snapshot(&mut self, cx: &mut ModelContext<Worktree>) {
+        let poll_again = self.is_scanning();
+        if poll_again {
+            self.polling_snapshot = true;
+        }
 
-        if self.is_scanning() && !self.poll_scheduled {
-            cx.spawn(|this, mut cx| async move {
+        // let prev_snapshot = self.snapshot.clone();
+        let background_snapshot = self.background_snapshot.clone();
+        let next_snapshot = cx.background_executor().spawn(async move {
+            let next_snapshot = background_snapshot.lock().clone();
+            // TODO: Diff with next and prev snapshots
+            next_snapshot
+        });
+
+        cx.spawn(|this, mut cx| async move {
+            let next_snapshot = next_snapshot.await;
+            this.update(&mut cx, |this, cx| {
+                let worktree = this.as_local_mut().unwrap();
+                worktree.snapshot = next_snapshot;
+                cx.notify();
+            });
+
+            if poll_again {
                 smol::Timer::after(Duration::from_millis(100)).await;
                 this.update(&mut cx, |this, cx| {
-                    if let Worktree::Local(worktree) = this {
-                        worktree.poll_scheduled = false;
-                        worktree.poll_entries(cx);
-                    } else {
-                        unreachable!()
-                    }
+                    let worktree = this.as_local_mut().unwrap();
+                    worktree.polling_snapshot = false;
+                    worktree.poll_snapshot(cx);
                 })
-            })
-            .detach();
-            self.poll_scheduled = true;
-        }
+            }
+        })
+        .detach();
     }
 
     fn is_scanning(&self) -> bool {
