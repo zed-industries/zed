@@ -22,7 +22,7 @@ use postage::{
 use smol::{channel::Sender, lock::Mutex as AsyncMutex};
 use std::{
     cmp,
-    collections::HashMap,
+    collections::{HashMap, HashSet},
     ffi::{OsStr, OsString},
     fmt, fs,
     future::Future,
@@ -621,6 +621,57 @@ impl Snapshot {
 
         ignore_stack
     }
+
+    fn diff(&self, old: &Self) -> Diff {
+        let mut new = self.entries.cursor::<(), ()>().peekable();
+        let mut old = old.entries.cursor::<(), ()>().peekable();
+
+        let mut diff = Diff::default();
+        let mut removed_inodes = HashMap::new();
+        let mut added_inodes = HashMap::new();
+
+        loop {
+            match (new.peek(), old.peek()) {
+                (Some(new_entry), Some(old_entry)) => match new_entry.path.cmp(&old_entry.path) {
+                    cmp::Ordering::Equal => {
+                        new.next();
+                        old.next();
+                    }
+                    cmp::Ordering::Less => {
+                        added_inodes.insert(new_entry.inode, new_entry.path.clone());
+                        diff.added.insert(new_entry.path.clone());
+                        new.next();
+                    }
+                    cmp::Ordering::Greater => {
+                        removed_inodes.insert(old_entry.path.clone(), old_entry.inode);
+                        diff.removed.insert(old_entry.path.clone());
+                        old.next();
+                    }
+                },
+                (Some(new_entry), None) => {
+                    added_inodes.insert(new_entry.inode, new_entry.path.clone());
+                    diff.added.insert(new_entry.path.clone());
+                    new.next();
+                }
+                (None, Some(old_entry)) => {
+                    removed_inodes.insert(old_entry.path.clone(), old_entry.inode);
+                    diff.removed.insert(old_entry.path.clone());
+                    old.next();
+                }
+                (None, None) => break,
+            }
+        }
+
+        for (removed_path, inode) in removed_inodes {
+            if let Some(added_path) = added_inodes.remove(&inode) {
+                diff.removed.remove(&removed_path);
+                diff.added.remove(&added_path);
+                diff.moved.insert(removed_path, added_path);
+            }
+        }
+
+        diff
+    }
 }
 
 impl fmt::Debug for Snapshot {
@@ -633,6 +684,14 @@ impl fmt::Debug for Snapshot {
         }
         Ok(())
     }
+}
+
+#[derive(Default)]
+struct Diff {
+    moved: HashMap<Arc<Path>, Arc<Path>>,
+    removed: HashSet<Arc<Path>>,
+    added: HashSet<Arc<Path>>,
+    modified: HashSet<Arc<Path>>,
 }
 
 impl FileHandle {
