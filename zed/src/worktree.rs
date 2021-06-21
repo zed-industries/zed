@@ -142,7 +142,7 @@ struct FileHandleState {
     path: Arc<Path>,
     is_deleted: bool,
     mtime: Duration,
-    remote_worktree_id: usize,
+    worktree_id: usize,
     id: u64,
     rpc: Option<(ConnectionId, rpc::Client)>,
 }
@@ -151,7 +151,7 @@ impl Drop for FileHandleState {
     fn drop(&mut self) {
         if let Some((connection_id, rpc)) = self.rpc.take() {
             let id = self.id;
-            let worktree_id = self.remote_worktree_id as u64;
+            let worktree_id = self.worktree_id as u64;
             smol::spawn(async move {
                 if let Err(error) = rpc
                     .send(connection_id, proto::CloseFile { worktree_id, id })
@@ -733,8 +733,7 @@ impl PartialEq for FileHandle {
         } else {
             let self_state = self.state.lock();
             let other_state = other.state.lock();
-            self_state.remote_worktree_id == other_state.remote_worktree_id
-                && self_state.id == other_state.id
+            self_state.worktree_id == other_state.worktree_id && self_state.id == other_state.id
         }
     }
 }
@@ -1500,7 +1499,7 @@ impl WorktreeHandle for ModelHandle<Worktree> {
                                         path: entry.path().clone(),
                                         is_deleted: false,
                                         mtime,
-                                        remote_worktree_id: worktree_id,
+                                        worktree_id,
                                         id,
                                         rpc: None,
                                     }
@@ -1509,7 +1508,7 @@ impl WorktreeHandle for ModelHandle<Worktree> {
                                         path: path.clone(),
                                         is_deleted: !tree.path_is_pending(&path),
                                         mtime,
-                                        remote_worktree_id: worktree_id,
+                                        worktree_id,
                                         id,
                                         rpc: None,
                                     }
@@ -1561,7 +1560,7 @@ impl WorktreeHandle for ModelHandle<Worktree> {
                             path,
                             is_deleted,
                             mtime: Duration::from_secs(response.mtime),
-                            remote_worktree_id,
+                            worktree_id: remote_worktree_id,
                             id: response.id,
                             rpc: Some((connection_id, rpc)),
                         }));
