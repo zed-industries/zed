@@ -32,7 +32,7 @@ use std::{
     ops::{Deref, DerefMut, Range},
     str,
     sync::Arc,
-    time::{Duration, Instant, SystemTime, UNIX_EPOCH},
+    time::{Duration, Instant},
 };
 
 const UNDO_GROUP_INTERVAL: Duration = Duration::from_millis(300);
@@ -110,7 +110,7 @@ pub struct Buffer {
     deleted_text: Rope,
     pub version: time::Global,
     saved_version: time::Global,
-    saved_mtime: SystemTime,
+    saved_mtime: Duration,
     last_edit: time::Local,
     undo_map: UndoMap,
     history: History,
@@ -467,7 +467,7 @@ impl Buffer {
                 cx.emit(Event::FileHandleChanged);
             });
         } else {
-            saved_mtime = UNIX_EPOCH;
+            saved_mtime = Duration::ZERO;
         }
 
         let mut fragments = SumTree::new();

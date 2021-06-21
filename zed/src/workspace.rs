@@ -27,7 +27,6 @@ use std::{
     future::Future,
     path::{Path, PathBuf},
     sync::Arc,
-    time::UNIX_EPOCH,
 };
 use zed_rpc::{proto, TypedEnvelope};
 
@@ -131,7 +130,7 @@ mod remote {
 
         let file = cx.update(|cx| worktree.file(&message.path, cx)).await?;
         let id = file.id() as u64;
-        let mtime = file.mtime().duration_since(UNIX_EPOCH).unwrap().as_secs();
+        let mtime = file.mtime().as_secs();
 
         *state
             .shared_files

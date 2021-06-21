@@ -11,6 +11,7 @@ use std::collections::{HashMap, HashSet};
 use std::time::Duration;
 use std::{convert::TryFrom, future::Future, sync::Arc};
 use surf::Url;
+use zed_rpc::proto::EnvelopedMessage;
 use zed_rpc::{proto::RequestMessage, rest, Peer, TypedEnvelope};
 use zed_rpc::{PeerId, Receipt};
 
@@ -189,6 +190,14 @@ impl Client {
             platform.write_credentials(&ZED_SERVER_URL, &user_id, access_token.as_bytes());
             Ok((user_id.to_string(), access_token))
         })
+    }
+
+    pub fn send<T: EnvelopedMessage>(
+        &self,
+        connection_id: ConnectionId,
+        message: T,
+    ) -> impl Future<Output = Result<()>> {
+        self.peer.send(connection_id, message)
     }
 
     pub fn request<T: RequestMessage>(
