@@ -430,14 +430,20 @@ mod tests {
             let response2 = proto::AuthResponse {
                 credentials_valid: false,
             };
-            let request3 = proto::OpenBuffer { id: 2 };
+            let request3 = proto::OpenBuffer {
+                worktree_id: 1,
+                id: 2,
+            };
             let response3 = proto::OpenBufferResponse {
                 buffer: Some(proto::Buffer {
                     content: "path/two content".to_string(),
                     history: vec![],
                 }),
             };
-            let request4 = proto::OpenBuffer { id: 1 };
+            let request4 = proto::OpenBuffer {
+                worktree_id: 2,
+                id: 1,
+            };
             let response4 = proto::OpenBufferResponse {
                 buffer: Some(proto::Buffer {
                     content: "path/one content".to_string(),

@@ -142,7 +142,7 @@ struct FileHandleState {
     path: Arc<Path>,
     is_deleted: bool,
     mtime: Duration,
-    worktree_id: usize,
+    remote_worktree_id: usize,
     id: u64,
     rpc: Option<(ConnectionId, rpc::Client)>,
 }
@@ -151,7 +151,7 @@ impl Drop for FileHandleState {
     fn drop(&mut self) {
         if let Some((connection_id, rpc)) = self.rpc.take() {
             let id = self.id;
-            let worktree_id = self.worktree_id as u64;
+            let worktree_id = self.remote_worktree_id as u64;
             smol::spawn(async move {
                 if let Err(error) = rpc
                     .send(connection_id, proto::CloseFile { worktree_id, id })
@@ -354,7 +354,12 @@ impl LocalWorktree {
                 )
                 .await?;
 
-            client.state.lock().await.shared_worktrees.insert(handle);
+            client
+                .state
+                .lock()
+                .await
+                .shared_worktrees
+                .insert(share_response.worktree_id, handle);
 
             log::info!("sharing worktree {:?}", share_response);
             Ok((share_response.worktree_id, share_response.access_token))
@@ -377,7 +382,7 @@ impl fmt::Debug for LocalWorktree {
 }
 
 pub struct RemoteWorktree {
-    id: usize,
+    remote_id: usize,
     snapshot: Snapshot,
     handles: Arc<Mutex<HashMap<Arc<Path>, Arc<AsyncMutex<Weak<Mutex<FileHandleState>>>>>>>,
     rpc: rpc::Client,
@@ -386,7 +391,7 @@ pub struct RemoteWorktree {
 
 impl RemoteWorktree {
     fn new(
-        id: usize,
+        remote_id: usize,
         worktree: proto::Worktree,
         rpc: rpc::Client,
         connection_id: ConnectionId,
@@ -418,7 +423,7 @@ impl RemoteWorktree {
             &(),
         );
         let snapshot = Snapshot {
-            id,
+            id: cx.model_id(),
             scan_id: 0,
             abs_path: Path::new("").into(),
             root_name: worktree.root_name,
@@ -426,7 +431,7 @@ impl RemoteWorktree {
             entries,
         };
         Self {
-            id,
+            remote_id,
             snapshot,
             handles: Default::default(),
             rpc,
@@ -663,7 +668,7 @@ impl FileHandle {
             Worktree::Remote(worktree) => {
                 let state = self.state.lock();
                 let id = state.id;
-                let worktree_id = worktree.id as u64;
+                let worktree_id = worktree.remote_id as u64;
                 let (connection_id, rpc) = state.rpc.clone().unwrap();
                 cx.background_executor().spawn(async move {
                     let response = rpc
@@ -723,7 +728,14 @@ impl FileHandle {
 
 impl PartialEq for FileHandle {
     fn eq(&self, other: &Self) -> bool {
-        self.worktree == other.worktree && self.state.lock().id == other.state.lock().id
+        if Arc::ptr_eq(&self.state, &other.state) {
+            true
+        } else {
+            let self_state = self.state.lock();
+            let other_state = other.state.lock();
+            self_state.remote_worktree_id == other_state.remote_worktree_id
+                && self_state.id == other_state.id
+        }
     }
 }
 
@@ -1488,7 +1500,7 @@ impl WorktreeHandle for ModelHandle<Worktree> {
                                         path: entry.path().clone(),
                                         is_deleted: false,
                                         mtime,
-                                        worktree_id,
+                                        remote_worktree_id: worktree_id,
                                         id,
                                         rpc: None,
                                     }
@@ -1497,7 +1509,7 @@ impl WorktreeHandle for ModelHandle<Worktree> {
                                         path: path.clone(),
                                         is_deleted: !tree.path_is_pending(&path),
                                         mtime,
-                                        worktree_id,
+                                        remote_worktree_id: worktree_id,
                                         id,
                                         rpc: None,
                                     }
@@ -1515,7 +1527,7 @@ impl WorktreeHandle for ModelHandle<Worktree> {
                 })
             }
             Worktree::Remote(tree) => {
-                let worktree_id = tree.id;
+                let remote_worktree_id = tree.remote_id;
                 let connection_id = tree.connection_id;
                 let rpc = tree.rpc.clone();
                 let handles = tree.handles.clone();
@@ -1537,19 +1549,19 @@ impl WorktreeHandle for ModelHandle<Worktree> {
                             .request(
                                 connection_id,
                                 proto::OpenFile {
-                                    worktree_id: worktree_id as u64,
+                                    worktree_id: remote_worktree_id as u64,
                                     path: path.to_string_lossy().to_string(),
                                 },
                             )
                             .await?;
                         let is_deleted = handle.read_with(&cx, |tree, _| {
-                            tree.entry_for_path(&path).is_some() || !tree.path_is_pending(&path)
+                            tree.entry_for_path(&path).is_none() && !tree.path_is_pending(&path)
                         });
                         let new_state = Arc::new(Mutex::new(FileHandleState {
                             path,
                             is_deleted,
                             mtime: Duration::from_secs(response.mtime),
-                            worktree_id,
+                            remote_worktree_id,
                             id: response.id,
                             rpc: Some((connection_id, rpc)),
                         }));

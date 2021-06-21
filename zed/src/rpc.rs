@@ -7,7 +7,7 @@ use gpui::{AsyncAppContext, ModelHandle, Task};
 use lazy_static::lazy_static;
 use postage::prelude::Stream;
 use smol::lock::Mutex;
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 use std::time::Duration;
 use std::{convert::TryFrom, future::Future, sync::Arc};
 use surf::Url;
@@ -31,7 +31,7 @@ pub struct Client {
 #[derive(Default)]
 pub struct ClientState {
     connection_id: Option<ConnectionId>,
-    pub shared_worktrees: HashSet<ModelHandle<Worktree>>,
+    pub shared_worktrees: HashMap<u64, ModelHandle<Worktree>>,
     pub shared_files: HashMap<FileHandle, HashMap<PeerId, usize>>,
 }
 

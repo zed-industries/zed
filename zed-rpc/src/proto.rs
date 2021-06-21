@@ -145,7 +145,11 @@ mod tests {
             }
             .into_envelope(3, None, None);
 
-            let message2 = OpenBuffer { id: 1 }.into_envelope(5, None, None);
+            let message2 = OpenBuffer {
+                worktree_id: 0,
+                id: 1,
+            }
+            .into_envelope(5, None, None);
 
             let mut message_stream = MessageStream::new(byte_stream);
             message_stream.write_message(&message1).await.unwrap();

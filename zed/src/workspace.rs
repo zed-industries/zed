@@ -124,7 +124,7 @@ mod remote {
         let mut state = rpc.state.lock().await;
         let worktree = state
             .shared_worktrees
-            .get(&(message.worktree_id as usize))
+            .get(&message.worktree_id)
             .ok_or_else(|| anyhow!("worktree {} not found", message.worktree_id))?
             .clone();
 
@@ -158,7 +158,7 @@ mod remote {
         if let Some((_, ref_counts)) = state
             .shared_files
             .iter_mut()
-            .find(|(file, _)| file.id() as u64 == message.id)
+            .find(|(file, _)| file.id() == message.id)
         {
             if let Some(count) = ref_counts.get_mut(&peer_id) {
                 *count -= 1;
@@ -176,11 +176,25 @@ mod remote {
         rpc: &rpc::Client,
         cx: &mut AsyncAppContext,
     ) -> anyhow::Result<()> {
-        rpc.respond(
-            request.receipt(),
-            proto::OpenBufferResponse { buffer: None },
-        )
-        .await?;
+        let message = &request.payload;
+        let handle = {
+            let state = rpc.state.lock().await;
+            let mut files = state.shared_files.keys();
+            files.find(|file| file.id() == message.id).cloned()
+        };
+        let buffer = if let Some(handle) = handle {
+            let history = cx.read(|cx| handle.load_history(cx)).await?;
+            Some(proto::Buffer {
+                content: history.base_text.to_string(),
+                history: Vec::new(),
+            })
+        } else {
+            None
+        };
+
+        rpc.respond(request.receipt(), proto::OpenBufferResponse { buffer })
+            .await?;
+
         Ok(())
     }
 }
