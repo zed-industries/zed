@@ -27,6 +27,7 @@ use std::{
     future::Future,
     path::{Path, PathBuf},
     sync::Arc,
+    time::UNIX_EPOCH,
 };
 use zed_rpc::{proto, TypedEnvelope};
 
@@ -45,6 +46,7 @@ pub fn init(cx: &mut MutableAppContext, rpc: rpc::Client) {
     pane::init(cx);
 
     rpc.on_message(remote::open_file, cx);
+    rpc.on_message(remote::close_file, cx);
     rpc.on_message(remote::open_buffer, cx);
 }
 
@@ -116,30 +118,58 @@ mod remote {
         cx: &mut AsyncAppContext,
     ) -> anyhow::Result<()> {
         let message = &request.payload;
-        let mut state = rpc.state.lock().await;
+        let peer_id = request
+            .original_sender_id
+            .ok_or_else(|| anyhow!("missing original sender id"))?;
 
+        let mut state = rpc.state.lock().await;
         let worktree = state
             .shared_worktrees
             .get(&(message.worktree_id as usize))
             .ok_or_else(|| anyhow!("worktree {} not found", message.worktree_id))?
             .clone();
 
-        let peer_id = request
-            .original_sender_id
-            .ok_or_else(|| anyhow!("missing original sender id"))?;
-
         let file = cx.update(|cx| worktree.file(&message.path, cx)).await?;
+        let id = file.id() as u64;
+        let mtime = file.mtime().duration_since(UNIX_EPOCH).unwrap().as_secs();
 
-        let file_entry = state.shared_files.entry(file);
-        if matches!(file_entry, Entry::Vacant(_)) {
-            worktree.update(cx, |worktree, cx| {});
-        }
-        *file_entry
+        *state
+            .shared_files
+            .entry(file)
             .or_insert(Default::default())
             .entry(peer_id)
             .or_insert(0) += 1;
 
-        todo!()
+        rpc.respond(request.receipt(), proto::OpenFileResponse { id, mtime })
+            .await?;
+        Ok(())
+    }
+
+    pub async fn close_file(
+        request: TypedEnvelope<proto::CloseFile>,
+        rpc: &rpc::Client,
+        _: &mut AsyncAppContext,
+    ) -> anyhow::Result<()> {
+        let message = &request.payload;
+        let peer_id = request
+            .original_sender_id
+            .ok_or_else(|| anyhow!("missing original sender id"))?;
+
+        let mut state = rpc.state.lock().await;
+        if let Some((_, ref_counts)) = state
+            .shared_files
+            .iter_mut()
+            .find(|(file, _)| file.id() as u64 == message.id)
+        {
+            if let Some(count) = ref_counts.get_mut(&peer_id) {
+                *count -= 1;
+                if *count == 0 {
+                    ref_counts.remove(&peer_id);
+                }
+            }
+        }
+
+        Ok(())
     }
 
     pub async fn open_buffer(

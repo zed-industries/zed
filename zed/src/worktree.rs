@@ -622,6 +622,10 @@ impl fmt::Debug for Snapshot {
 }
 
 impl FileHandle {
+    pub fn id(&self) -> usize {
+        self.state.lock().id
+    }
+
     /// Returns this file's path relative to the root of its worktree.
     pub fn path(&self) -> Arc<Path> {
         self.state.lock().path.clone()
