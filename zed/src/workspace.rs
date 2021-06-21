@@ -176,15 +176,11 @@ mod remote {
         rpc: &rpc::Client,
         cx: &mut AsyncAppContext,
     ) -> anyhow::Result<()> {
-        let payload = &request.payload;
-        dbg!(&payload.path);
         rpc.respond(
             request.receipt(),
             proto::OpenBufferResponse { buffer: None },
         )
         .await?;
-
-        dbg!(cx.read(|app| app.root_view_id(1)));
         Ok(())
     }
 }

@@ -10,7 +10,7 @@ use crate::{
     util::Bias,
 };
 use ::ignore::gitignore::Gitignore;
-use anyhow::{Context, Result};
+use anyhow::{anyhow, Context, Result};
 pub use fuzzy::{match_paths, PathMatch};
 use gpui::{scoped_pool, AppContext, Entity, ModelContext, ModelHandle, MutableAppContext, Task};
 use lazy_static::lazy_static;
@@ -93,17 +93,6 @@ impl Worktree {
         match self {
             Worktree::Local(worktree) => worktree.snapshot(),
             Worktree::Remote(worktree) => worktree.snapshot.clone(),
-        }
-    }
-
-    pub fn load_history(
-        &self,
-        path: &Path,
-        cx: &AppContext,
-    ) -> impl Future<Output = Result<History>> {
-        match self {
-            Worktree::Local(worktree) => worktree.load_history(path, cx),
-            Worktree::Remote(worktree) => todo!(),
         }
     }
 
@@ -298,21 +287,6 @@ impl LocalWorktree {
         } else {
             self.snapshot.abs_path.to_path_buf()
         }
-    }
-
-    pub fn load_history(
-        &self,
-        path: &Path,
-        cx: &AppContext,
-    ) -> impl Future<Output = Result<History>> {
-        let path = path.to_path_buf();
-        let abs_path = self.absolutize(&path);
-        cx.background_executor().spawn(async move {
-            let mut file = fs::File::open(&abs_path)?;
-            let mut base_text = String::new();
-            file.read_to_string(&mut base_text)?;
-            Ok(History::new(Arc::from(base_text)))
-        })
     }
 
     pub fn save(&self, path: &Path, content: Rope, cx: &AppContext) -> Task<Result<()>> {
@@ -669,8 +643,32 @@ impl FileHandle {
         !self.is_deleted()
     }
 
-    pub fn load_history(&self, cx: &AppContext) -> impl Future<Output = Result<History>> {
-        self.worktree.read(cx).load_history(&self.path(), cx)
+    pub fn load_history(&self, cx: &AppContext) -> Task<Result<History>> {
+        match self.worktree.read(cx) {
+            Worktree::Local(worktree) => {
+                let path = self.state.lock().path.to_path_buf();
+                let abs_path = worktree.absolutize(&path);
+                cx.background_executor().spawn(async move {
+                    let mut file = fs::File::open(&abs_path)?;
+                    let mut base_text = String::new();
+                    file.read_to_string(&mut base_text)?;
+                    Ok(History::new(Arc::from(base_text)))
+                })
+            }
+            Worktree::Remote(worktree) => {
+                let state = self.state.lock();
+                let id = state.id;
+                let (connection_id, rpc) = state.rpc.clone().unwrap();
+                cx.background_executor().spawn(async move {
+                    let response = rpc.request(connection_id, proto::OpenBuffer { id }).await?;
+                    let buffer = response
+                        .buffer
+                        .ok_or_else(|| anyhow!("buffer must be present"))?;
+                    let mut history = History::new(buffer.content.into());
+                    Ok(history)
+                })
+            }
+        }
     }
 
     pub fn save(&self, content: Rope, cx: &AppContext) -> impl Future<Output = Result<()>> {
@@ -1786,10 +1784,8 @@ mod tests {
             path
         });
 
-        let history = cx
-            .read(|cx| tree.read(cx).load_history(&path, cx))
-            .await
-            .unwrap();
+        let file = cx.update(|cx| tree.file(&path, cx)).await.unwrap();
+        let history = cx.read(|cx| file.load_history(cx)).await.unwrap();
         cx.read(|cx| {
             assert_eq!(history.base_text.as_ref(), buffer.read(cx).text());
         });

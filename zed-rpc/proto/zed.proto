@@ -71,8 +71,7 @@ message CloseFile {
 }
 
 message OpenBuffer {
-    uint64 worktree_id = 1;
-    string path = 2;
+    uint64 id = 1;
 }
 
 message OpenBufferResponse {
@@ -99,10 +98,8 @@ message Entry {
 }
 
 message Buffer {
-    uint64 id = 1;
-    string path = 2;
-    string content = 3;
-    repeated Operation history = 4;
+    string content = 1;
+    repeated Operation history = 2;
 }
 
 message Operation {
