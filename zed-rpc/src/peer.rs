@@ -310,6 +310,28 @@ impl Peer {
         }
     }
 
+    pub fn forward_send<T: EnvelopedMessage>(
+        self: &Arc<Self>,
+        sender_id: ConnectionId,
+        receiver_id: ConnectionId,
+        message: T,
+    ) -> impl Future<Output = Result<()>> {
+        let this = self.clone();
+        async move {
+            let connection = this.connection(receiver_id).await?;
+            let message_id = connection
+                .next_message_id
+                .fetch_add(1, atomic::Ordering::SeqCst);
+            connection
+                .writer
+                .lock()
+                .await
+                .write_message(&message.into_envelope(message_id, None, Some(sender_id.0)))
+                .await?;
+            Ok(())
+        }
+    }
+
     pub fn respond<T: RequestMessage>(
         self: &Arc<Self>,
         receipt: Receipt<T>,

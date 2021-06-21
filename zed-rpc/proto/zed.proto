@@ -67,11 +67,13 @@ message OpenFileResponse {
 }
 
 message CloseFile {
-    uint64 id = 1;
+    uint64 worktree_id = 1;
+    uint64 id = 2;
 }
 
 message OpenBuffer {
-    uint64 id = 1;
+    uint64 worktree_id = 1;
+    uint64 id = 2;
 }
 
 message OpenBufferResponse {

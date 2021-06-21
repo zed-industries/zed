@@ -142,6 +142,7 @@ struct FileHandleState {
     path: Arc<Path>,
     is_deleted: bool,
     mtime: Duration,
+    worktree_id: usize,
     id: u64,
     rpc: Option<(ConnectionId, rpc::Client)>,
 }
@@ -150,8 +151,12 @@ impl Drop for FileHandleState {
     fn drop(&mut self) {
         if let Some((connection_id, rpc)) = self.rpc.take() {
             let id = self.id;
+            let worktree_id = self.worktree_id as u64;
             smol::spawn(async move {
-                if let Err(error) = rpc.send(connection_id, proto::CloseFile { id }).await {
+                if let Err(error) = rpc
+                    .send(connection_id, proto::CloseFile { worktree_id, id })
+                    .await
+                {
                     log::warn!("error closing file {}: {}", id, error);
                 }
             })
@@ -658,9 +663,12 @@ impl FileHandle {
             Worktree::Remote(worktree) => {
                 let state = self.state.lock();
                 let id = state.id;
+                let worktree_id = worktree.id as u64;
                 let (connection_id, rpc) = state.rpc.clone().unwrap();
                 cx.background_executor().spawn(async move {
-                    let response = rpc.request(connection_id, proto::OpenBuffer { id }).await?;
+                    let response = rpc
+                        .request(connection_id, proto::OpenBuffer { worktree_id, id })
+                        .await?;
                     let buffer = response
                         .buffer
                         .ok_or_else(|| anyhow!("buffer must be present"))?;
@@ -1458,6 +1466,7 @@ impl WorktreeHandle for ModelHandle<Worktree> {
         let tree = self.read(cx);
         match tree {
             Worktree::Local(tree) => {
+                let worktree_id = handle.id();
                 let abs_path = tree.absolutize(&path);
                 cx.spawn(|cx| async move {
                     let mtime = cx
@@ -1479,6 +1488,7 @@ impl WorktreeHandle for ModelHandle<Worktree> {
                                         path: entry.path().clone(),
                                         is_deleted: false,
                                         mtime,
+                                        worktree_id,
                                         id,
                                         rpc: None,
                                     }
@@ -1487,6 +1497,7 @@ impl WorktreeHandle for ModelHandle<Worktree> {
                                         path: path.clone(),
                                         is_deleted: !tree.path_is_pending(&path),
                                         mtime,
+                                        worktree_id,
                                         id,
                                         rpc: None,
                                     }
@@ -1538,6 +1549,7 @@ impl WorktreeHandle for ModelHandle<Worktree> {
                             path,
                             is_deleted,
                             mtime: Duration::from_secs(response.mtime),
+                            worktree_id,
                             id: response.id,
                             rpc: Some((connection_id, rpc)),
                         }));
