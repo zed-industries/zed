@@ -22,14 +22,14 @@ use postage::{
 use smol::{channel::Sender, lock::Mutex as AsyncMutex};
 use std::{
     cmp,
-    collections::{HashMap, HashSet},
-    ffi::{CStr, OsStr, OsString},
+    collections::HashMap,
+    ffi::{OsStr, OsString},
     fmt, fs,
     future::Future,
     hash::Hash,
     io::{self, Read, Write},
     ops::Deref,
-    os::unix::{ffi::OsStrExt, fs::MetadataExt},
+    os::unix::fs::MetadataExt,
     path::{Path, PathBuf},
     sync::{
         atomic::{AtomicU64, Ordering::SeqCst},
@@ -677,7 +677,7 @@ impl FileHandle {
                     let buffer = response
                         .buffer
                         .ok_or_else(|| anyhow!("buffer must be present"))?;
-                    let mut history = History::new(buffer.content.into());
+                    let history = History::new(buffer.content.into());
                     Ok(history)
                 })
             }
@@ -923,7 +923,6 @@ struct BackgroundScanner {
     snapshot: Arc<Mutex<Snapshot>>,
     notify: Sender<ScanState>,
     handles: Arc<Mutex<HashMap<Arc<Path>, Weak<Mutex<FileHandleState>>>>>,
-    other_mount_paths: HashSet<PathBuf>,
     thread_pool: scoped_pool::Pool,
     root_char_bag: CharBag,
 }
@@ -935,26 +934,13 @@ impl BackgroundScanner {
         notify: Sender<ScanState>,
         worktree_id: usize,
     ) -> Self {
-        let mut scanner = Self {
+        Self {
             root_char_bag: Default::default(),
             snapshot,
             notify,
             handles,
-            other_mount_paths: Default::default(),
             thread_pool: scoped_pool::Pool::new(16, format!("worktree-{}-scanner", worktree_id)),
-        };
-        scanner.update_other_mount_paths();
-        scanner
-    }
-
-    fn update_other_mount_paths(&mut self) {
-        let path = self.snapshot.lock().abs_path.clone();
-        self.other_mount_paths.clear();
-        self.other_mount_paths.extend(
-            mounted_volume_paths()
-                .into_iter()
-                .filter(|mount_path| !path.starts_with(mount_path)),
-        );
+        }
     }
 
     fn abs_path(&self) -> Arc<Path> {
@@ -1083,11 +1069,6 @@ impl BackgroundScanner {
 
             let child_inode = child_metadata.ino();
 
-            // Disallow mount points outside the file system containing the root of this worktree
-            if self.other_mount_paths.contains(&child_abs_path) {
-                continue;
-            }
-
             // If we find a .gitignore, add it to the stack of ignores used to determine which paths are ignored
             if child_name == *GITIGNORE {
                 let (ignore, err) = Gitignore::new(&child_abs_path);
@@ -1157,8 +1138,6 @@ impl BackgroundScanner {
     }
 
     fn process_events(&mut self, mut events: Vec<fsevent::Event>) -> bool {
-        self.update_other_mount_paths();
-
         let mut snapshot = self.snapshot();
         snapshot.scan_id += 1;
 
@@ -1693,25 +1672,6 @@ impl<'a> Iterator for ChildEntriesIter<'a> {
     }
 }
 
-fn mounted_volume_paths() -> Vec<PathBuf> {
-    unsafe {
-        let mut stat_ptr: *mut libc::statfs = std::ptr::null_mut();
-        let count = libc::getmntinfo(&mut stat_ptr as *mut _, libc::MNT_WAIT);
-        if count >= 0 {
-            std::slice::from_raw_parts(stat_ptr, count as usize)
-                .iter()
-                .map(|stat| {
-                    PathBuf::from(OsStr::from_bytes(
-                        CStr::from_ptr(&stat.f_mntonname[0]).to_bytes(),
-                    ))
-                })
-                .collect()
-        } else {
-            panic!("failed to run getmntinfo");
-        }
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1998,12 +1958,6 @@ mod tests {
         assert!(snapshot.path_is_pending("b/c/x"));
         assert!(!snapshot.path_is_pending("b/d"));
         assert!(!snapshot.path_is_pending("b/e"));
-    }
-
-    #[test]
-    fn test_mounted_volume_paths() {
-        let paths = mounted_volume_paths();
-        assert!(paths.contains(&"/".into()));
     }
 
     #[test]
