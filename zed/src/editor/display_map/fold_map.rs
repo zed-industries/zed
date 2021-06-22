@@ -880,7 +880,7 @@ mod tests {
                         Point::new(2, 3)..Point::new(2, 3),
                     ],
                     "123",
-                    Some(cx),
+                    cx,
                 )
                 .unwrap();
         });
@@ -889,7 +889,7 @@ mod tests {
         buffer.update(cx, |buffer, cx| {
             let start_version = buffer.version.clone();
             buffer
-                .edit(Some(Point::new(2, 6)..Point::new(4, 3)), "456", Some(cx))
+                .edit(Some(Point::new(2, 6)..Point::new(4, 3)), "456", cx)
                 .unwrap();
             buffer.edits_since(start_version).collect::<Vec<_>>()
         });
@@ -932,7 +932,7 @@ mod tests {
             // Edit within one of the folds.
             buffer.update(cx, |buffer, cx| {
                 let version = buffer.version();
-                buffer.edit(vec![0..1], "12345", Some(cx)).unwrap();
+                buffer.edit(vec![0..1], "12345", cx).unwrap();
                 buffer.edits_since(version).collect::<Vec<_>>()
             });
             map.check_invariants(cx.as_ref());
@@ -972,7 +972,7 @@ mod tests {
 
         buffer.update(cx, |buffer, cx| {
             buffer
-                .edit(Some(Point::new(2, 2)..Point::new(3, 1)), "", Some(cx))
+                .edit(Some(Point::new(2, 2)..Point::new(3, 1)), "", cx)
                 .unwrap();
         });
         assert_eq!(map.text(cx.as_ref()), "aa…eeeee");
@@ -1067,7 +1067,7 @@ mod tests {
                         let edits = buffer.update(cx, |buffer, cx| {
                             let start_version = buffer.version.clone();
                             let edit_count = rng.gen_range(1..=5);
-                            buffer.randomly_edit(&mut rng, edit_count, Some(cx));
+                            buffer.randomly_edit(&mut rng, edit_count, cx);
                             buffer.edits_since(start_version).collect::<Vec<_>>()
                         });
                         log::info!("editing {:?}", edits);

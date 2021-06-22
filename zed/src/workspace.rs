@@ -7,7 +7,7 @@ use crate::{
     rpc,
     settings::Settings,
     time::ReplicaId,
-    worktree::{FileHandle, Worktree, WorktreeHandle},
+    worktree::{File, Worktree, WorktreeHandle},
     AppState,
 };
 use anyhow::{anyhow, Result};
@@ -116,31 +116,31 @@ mod remote {
         rpc: &rpc::Client,
         cx: &mut AsyncAppContext,
     ) -> anyhow::Result<()> {
-        let message = &request.payload;
-        let peer_id = request
-            .original_sender_id
-            .ok_or_else(|| anyhow!("missing original sender id"))?;
+        // let message = &request.payload;
+        // let peer_id = request
+        //     .original_sender_id
+        //     .ok_or_else(|| anyhow!("missing original sender id"))?;
 
-        let mut state = rpc.state.lock().await;
-        let worktree = state
-            .shared_worktrees
-            .get(&message.worktree_id)
-            .ok_or_else(|| anyhow!("worktree {} not found", message.worktree_id))?
-            .clone();
+        // let mut state = rpc.state.lock().await;
+        // let worktree = state
+        //     .shared_worktrees
+        //     .get(&message.worktree_id)
+        //     .ok_or_else(|| anyhow!("worktree {} not found", message.worktree_id))?
+        //     .clone();
 
-        let file = cx.update(|cx| worktree.file(&message.path, cx)).await?;
-        let id = file.id() as u64;
-        let mtime = file.mtime().as_secs();
+        // let file = worktree.file(&message.path);
+        // let id = file.id() as u64;
+        // let mtime = file.mtime().as_secs();
 
-        *state
-            .shared_files
-            .entry(file)
-            .or_insert(Default::default())
-            .entry(peer_id)
-            .or_insert(0) += 1;
+        // *state
+        //     .shared_files
+        //     .entry(file)
+        //     .or_insert(Default::default())
+        //     .entry(peer_id)
+        //     .or_insert(0) += 1;
 
-        rpc.respond(request.receipt(), proto::OpenFileResponse { id, mtime })
-            .await?;
+        // rpc.respond(request.receipt(), proto::OpenFileResponse { id, mtime })
+        //     .await?;
         Ok(())
     }
 
@@ -154,19 +154,19 @@ mod remote {
             .original_sender_id
             .ok_or_else(|| anyhow!("missing original sender id"))?;
 
-        let mut state = rpc.state.lock().await;
-        if let Some((_, ref_counts)) = state
-            .shared_files
-            .iter_mut()
-            .find(|(file, _)| file.id() == message.id)
-        {
-            if let Some(count) = ref_counts.get_mut(&peer_id) {
-                *count -= 1;
-                if *count == 0 {
-                    ref_counts.remove(&peer_id);
-                }
-            }
-        }
+        // let mut state = rpc.state.lock().await;
+        // if let Some((_, ref_counts)) = state
+        //     .shared_files
+        //     .iter_mut()
+        //     .find(|(file, _)| file.id() == message.id)
+        // {
+        //     if let Some(count) = ref_counts.get_mut(&peer_id) {
+        //         *count -= 1;
+        //         if *count == 0 {
+        //             ref_counts.remove(&peer_id);
+        //         }
+        //     }
+        // }
 
         Ok(())
     }
@@ -176,24 +176,24 @@ mod remote {
         rpc: &rpc::Client,
         cx: &mut AsyncAppContext,
     ) -> anyhow::Result<()> {
-        let message = &request.payload;
-        let handle = {
-            let state = rpc.state.lock().await;
-            let mut files = state.shared_files.keys();
-            files.find(|file| file.id() == message.id).cloned()
-        };
-        let buffer = if let Some(handle) = handle {
-            let history = cx.read(|cx| handle.load_history(cx)).await?;
-            Some(proto::Buffer {
-                content: history.base_text.to_string(),
-                history: Vec::new(),
-            })
-        } else {
-            None
-        };
+        // let message = &request.payload;
+        // let handle = {
+        //     let state = rpc.state.lock().await;
+        //     let mut files = state.shared_files.keys();
+        //     files.find(|file| file.id() == message.id).cloned()
+        // };
+        // let buffer = if let Some(handle) = handle {
+        //     let history = cx.read(|cx| handle.load_history(cx)).await?;
+        //     Some(proto::Buffer {
+        //         content: history.base_text.to_string(),
+        //         history: Vec::new(),
+        //     })
+        // } else {
+        //     None
+        // };
 
-        rpc.respond(request.receipt(), proto::OpenBufferResponse { buffer })
-            .await?;
+        // rpc.respond(request.receipt(), proto::OpenBufferResponse { buffer })
+        //     .await?;
 
         Ok(())
     }
@@ -208,7 +208,7 @@ pub trait Item: Entity + Sized {
         cx: &mut ViewContext<Self::View>,
     ) -> Self::View;
 
-    fn file(&self) -> Option<&FileHandle>;
+    fn file(&self) -> Option<&ModelHandle<File>>;
 }
 
 pub trait ItemView: View {
@@ -228,7 +228,7 @@ pub trait ItemView: View {
     }
     fn save(
         &mut self,
-        _: Option<FileHandle>,
+        _: Option<ModelHandle<File>>,
         _: &mut ViewContext<Self>,
     ) -> Task<anyhow::Result<()>>;
     fn should_activate_item_on_event(_: &Self::Event) -> bool {
@@ -245,7 +245,7 @@ pub trait ItemHandle: Send + Sync {
 }
 
 pub trait WeakItemHandle: Send + Sync {
-    fn file<'a>(&'a self, cx: &'a AppContext) -> Option<&'a FileHandle>;
+    fn file<'a>(&'a self, cx: &'a AppContext) -> Option<&'a ModelHandle<File>>;
     fn add_view(
         &self,
         window_id: usize,
@@ -267,7 +267,7 @@ pub trait ItemViewHandle: Send + Sync {
     fn has_conflict(&self, cx: &AppContext) -> bool;
     fn save(
         &self,
-        file: Option<FileHandle>,
+        file: Option<ModelHandle<File>>,
         cx: &mut MutableAppContext,
     ) -> Task<anyhow::Result<()>>;
 }
@@ -283,7 +283,7 @@ impl<T: Item> ItemHandle for ModelHandle<T> {
 }
 
 impl<T: Item> WeakItemHandle for WeakModelHandle<T> {
-    fn file<'a>(&'a self, cx: &'a AppContext) -> Option<&'a FileHandle> {
+    fn file<'a>(&'a self, cx: &'a AppContext) -> Option<&'a ModelHandle<File>> {
         self.upgrade(cx).and_then(|h| h.read(cx).file())
     }
 
@@ -345,7 +345,7 @@ impl<T: ItemView> ItemViewHandle for ViewHandle<T> {
 
     fn save(
         &self,
-        file: Option<FileHandle>,
+        file: Option<ModelHandle<File>>,
         cx: &mut MutableAppContext,
     ) -> Task<anyhow::Result<()>> {
         self.update(cx, |item, cx| item.save(file, cx))
@@ -484,13 +484,13 @@ impl Workspace {
             .map(|(abs_path, file)| {
                 let is_file = bg.spawn(async move { abs_path.is_file() });
                 cx.spawn(|this, mut cx| async move {
-                    if let Ok(file) = file.await {
-                        if is_file.await {
-                            return this
-                                .update(&mut cx, |this, cx| this.open_entry(file.entry_id(), cx));
-                        }
+                    if is_file.await {
+                        return this.update(&mut cx, |this, cx| {
+                            this.open_entry(file.read(cx).entry_id(), cx)
+                        });
+                    } else {
+                        None
                     }
-                    None
                 })
             })
             .collect::<Vec<_>>();
@@ -503,11 +503,7 @@ impl Workspace {
         }
     }
 
-    fn file_for_path(
-        &mut self,
-        abs_path: &Path,
-        cx: &mut ViewContext<Self>,
-    ) -> Task<Result<FileHandle>> {
+    fn file_for_path(&mut self, abs_path: &Path, cx: &mut ViewContext<Self>) -> ModelHandle<File> {
         for tree in self.worktrees.iter() {
             if let Some(relative_path) = tree
                 .read(cx)
@@ -592,7 +588,7 @@ impl Workspace {
                 if view_for_existing_item.is_none()
                     && item
                         .file(cx.as_ref())
-                        .map_or(false, |f| f.entry_id() == entry)
+                        .map_or(false, |file| file.read(cx).entry_id() == entry)
                 {
                     view_for_existing_item = Some(
                         item.add_view(cx.window_id(), settings.clone(), cx.as_mut())
@@ -629,8 +625,7 @@ impl Workspace {
             cx.as_mut()
                 .spawn(|mut cx| async move {
                     let buffer = async move {
-                        let file = file.await?;
-                        let history = cx.read(|cx| file.load_history(cx));
+                        let history = cx.read(|cx| file.read(cx).load_history(cx));
                         let history = cx.background_executor().spawn(history).await?;
                         let buffer = cx.add_model(|cx| {
                             let language = language_registry.select_language(path);
@@ -696,9 +691,8 @@ impl Workspace {
                     if let Some(path) = path {
                         cx.spawn(|mut cx| async move {
                             let result = async move {
-                                let file = handle
-                                    .update(&mut cx, |me, cx| me.file_for_path(&path, cx))
-                                    .await?;
+                                let file =
+                                    handle.update(&mut cx, |me, cx| me.file_for_path(&path, cx));
                                 cx.update(|cx| item.save(Some(file), cx)).await
                             }
                             .await;

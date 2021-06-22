@@ -10,7 +10,7 @@ use crate::{
     util::Bias,
 };
 use ::ignore::gitignore::Gitignore;
-use anyhow::{anyhow, Context, Result};
+use anyhow::{Context, Result};
 pub use fuzzy::{match_paths, PathMatch};
 use gpui::{scoped_pool, AppContext, Entity, ModelContext, ModelHandle, MutableAppContext, Task};
 use lazy_static::lazy_static;
@@ -19,22 +19,18 @@ use postage::{
     prelude::{Sink, Stream},
     watch,
 };
-use smol::{channel::Sender, lock::Mutex as AsyncMutex};
+use smol::channel::Sender;
 use std::{
     cmp,
     collections::{HashMap, HashSet},
     ffi::{OsStr, OsString},
     fmt, fs,
     future::Future,
-    hash::Hash,
     io::{self, Read, Write},
     ops::Deref,
     os::unix::fs::MetadataExt,
     path::{Path, PathBuf},
-    sync::{
-        atomic::{AtomicU64, Ordering::SeqCst},
-        Arc, Weak,
-    },
+    sync::{atomic::AtomicU64, Arc},
     time::{Duration, SystemTime, UNIX_EPOCH},
 };
 
@@ -123,46 +119,11 @@ impl Deref for Worktree {
 pub struct LocalWorktree {
     snapshot: Snapshot,
     background_snapshot: Arc<Mutex<Snapshot>>,
-    handles: Arc<Mutex<HashMap<Arc<Path>, Weak<Mutex<FileHandleState>>>>>,
     next_handle_id: AtomicU64,
     scan_state: (watch::Sender<ScanState>, watch::Receiver<ScanState>),
     _event_stream_handle: fsevent::Handle,
     poll_scheduled: bool,
     rpc: Option<rpc::Client>,
-}
-
-#[derive(Clone)]
-pub struct FileHandle {
-    worktree: ModelHandle<Worktree>,
-    state: Arc<Mutex<FileHandleState>>,
-}
-
-#[derive(Clone)]
-struct FileHandleState {
-    path: Arc<Path>,
-    is_deleted: bool,
-    mtime: Duration,
-    worktree_id: usize,
-    id: u64,
-    rpc: Option<(ConnectionId, rpc::Client)>,
-}
-
-impl Drop for FileHandleState {
-    fn drop(&mut self) {
-        if let Some((connection_id, rpc)) = self.rpc.take() {
-            let id = self.id;
-            let worktree_id = self.worktree_id as u64;
-            smol::spawn(async move {
-                if let Err(error) = rpc
-                    .send(connection_id, proto::CloseFile { worktree_id, id })
-                    .await
-                {
-                    log::warn!("error closing file {}: {}", id, error);
-                }
-            })
-            .detach();
-        }
-    }
 }
 
 impl LocalWorktree {
@@ -182,12 +143,10 @@ impl LocalWorktree {
             fsevent::EventStream::new(&[snapshot.abs_path.as_ref()], Duration::from_millis(100));
 
         let background_snapshot = Arc::new(Mutex::new(snapshot.clone()));
-        let handles = Arc::new(Mutex::new(Default::default()));
 
         let tree = Self {
             snapshot,
             background_snapshot: background_snapshot.clone(),
-            handles: handles.clone(),
             next_handle_id: Default::default(),
             scan_state: watch::channel_with(ScanState::Scanning),
             _event_stream_handle: event_stream_handle,
@@ -196,7 +155,7 @@ impl LocalWorktree {
         };
 
         std::thread::spawn(move || {
-            let scanner = BackgroundScanner::new(background_snapshot, handles, scan_state_tx, id);
+            let scanner = BackgroundScanner::new(background_snapshot, scan_state_tx, id);
             scanner.run(event_stream)
         });
 
@@ -297,7 +256,6 @@ impl LocalWorktree {
     }
 
     pub fn save(&self, path: &Path, content: Rope, cx: &AppContext) -> Task<Result<()>> {
-        let handles = self.handles.clone();
         let path = path.to_path_buf();
         let abs_path = self.absolutize(&path);
         cx.background_executor().spawn(async move {
@@ -308,13 +266,6 @@ impl LocalWorktree {
                 writer.write(chunk.as_bytes())?;
             }
             writer.flush()?;
-
-            if let Some(handle) = handles.lock().get(&*path).and_then(Weak::upgrade) {
-                let mut handle = handle.lock();
-                handle.mtime = file.metadata()?.modified()?.duration_since(UNIX_EPOCH)?;
-                handle.is_deleted = false;
-            }
-
             Ok(())
         })
     }
@@ -387,7 +338,6 @@ impl fmt::Debug for LocalWorktree {
 pub struct RemoteWorktree {
     remote_id: usize,
     snapshot: Snapshot,
-    handles: Arc<Mutex<HashMap<Arc<Path>, Arc<AsyncMutex<Weak<Mutex<FileHandleState>>>>>>>,
     rpc: rpc::Client,
     connection_id: ConnectionId,
 }
@@ -442,7 +392,6 @@ impl RemoteWorktree {
         Self {
             remote_id,
             snapshot,
-            handles: Default::default(),
             rpc,
             connection_id,
         }
@@ -695,44 +644,74 @@ pub struct Diff {
     pub modified: HashSet<Arc<Path>>,
 }
 
-impl FileHandle {
-    pub fn id(&self) -> u64 {
-        self.state.lock().id
+#[derive(Clone, PartialEq)]
+pub struct File {
+    worktree: ModelHandle<Worktree>,
+    path: Arc<Path>,
+}
+
+impl Entity for File {
+    type Event = ();
+}
+
+impl File {
+    pub fn new(
+        worktree: ModelHandle<Worktree>,
+        path: Arc<Path>,
+        cx: &mut ModelContext<Self>,
+    ) -> Self {
+        cx.subscribe(&worktree, Self::handle_worktree_update);
+        Self { worktree, path }
+    }
+
+    fn handle_worktree_update(&mut self, diff: &Diff, cx: &mut ModelContext<Self>) {
+        if let Some(new_path) = diff.moved.get(&self.path) {
+            self.path = new_path.clone();
+            cx.notify();
+        } else if diff.added.contains(&self.path)
+            || diff.removed.contains(&self.path)
+            || diff.modified.contains(&self.path)
+        {
+            cx.notify();
+        }
     }
 
     /// Returns this file's path relative to the root of its worktree.
     pub fn path(&self) -> Arc<Path> {
-        self.state.lock().path.clone()
+        self.path.clone()
     }
 
     /// Returns the last component of this handle's absolute path. If this handle refers to the root
     /// of its worktree, then this method will return the name of the worktree itself.
     pub fn file_name<'a>(&'a self, cx: &'a AppContext) -> Option<OsString> {
-        self.state
-            .lock()
-            .path
+        self.path
             .file_name()
             .or_else(|| Some(OsStr::new(self.worktree.read(cx).root_name())))
             .map(Into::into)
     }
 
-    pub fn is_deleted(&self) -> bool {
-        self.state.lock().is_deleted
+    pub fn is_deleted(&self, cx: &AppContext) -> bool {
+        let snapshot = self.worktree.read(cx).snapshot();
+        snapshot.entry_for_path(&self.path).is_none() && !snapshot.path_is_pending(&self.path)
     }
 
-    pub fn mtime(&self) -> Duration {
-        self.state.lock().mtime
+    pub fn exists(&self, cx: &AppContext) -> bool {
+        !self.is_deleted(cx)
     }
 
-    pub fn exists(&self) -> bool {
-        !self.is_deleted()
+    pub fn mtime(&self, cx: &AppContext) -> Duration {
+        let snapshot = self.worktree.read(cx).snapshot();
+        snapshot
+            .entry_for_path(&self.path)
+            .map_or(Duration::ZERO, |entry| {
+                entry.mtime.duration_since(UNIX_EPOCH).unwrap()
+            })
     }
 
     pub fn load_history(&self, cx: &AppContext) -> Task<Result<History>> {
         match self.worktree.read(cx) {
             Worktree::Local(worktree) => {
-                let path = self.state.lock().path.to_path_buf();
-                let abs_path = worktree.absolutize(&path);
+                let abs_path = worktree.absolutize(&self.path);
                 cx.background_executor().spawn(async move {
                     let mut file = fs::File::open(&abs_path)?;
                     let mut base_text = String::new();
@@ -741,20 +720,21 @@ impl FileHandle {
                 })
             }
             Worktree::Remote(worktree) => {
-                let state = self.state.lock();
-                let id = state.id;
-                let worktree_id = worktree.remote_id as u64;
-                let (connection_id, rpc) = state.rpc.clone().unwrap();
-                cx.background_executor().spawn(async move {
-                    let response = rpc
-                        .request(connection_id, proto::OpenBuffer { worktree_id, id })
-                        .await?;
-                    let buffer = response
-                        .buffer
-                        .ok_or_else(|| anyhow!("buffer must be present"))?;
-                    let history = History::new(buffer.content.into());
-                    Ok(history)
-                })
+                todo!()
+                // let state = self.state.lock();
+                // let id = state.id;
+                // let worktree_id = worktree.remote_id as u64;
+                // let (connection_id, rpc) = state.rpc.clone().unwrap();
+                // cx.background_executor().spawn(async move {
+                //     let response = rpc
+                //         .request(connection_id, proto::OpenBuffer { worktree_id, id })
+                //         .await?;
+                //     let buffer = response
+                //         .buffer
+                //         .ok_or_else(|| anyhow!("buffer must be present"))?;
+                //     let history = History::new(buffer.content.into());
+                //     Ok(history)
+                // })
             }
         }
     }
@@ -770,55 +750,6 @@ impl FileHandle {
 
     pub fn entry_id(&self) -> (usize, Arc<Path>) {
         (self.worktree.id(), self.path())
-    }
-
-    pub fn observe_from_model<T: Entity>(
-        &self,
-        cx: &mut ModelContext<T>,
-        mut callback: impl FnMut(&mut T, FileHandle, &mut ModelContext<T>) + 'static,
-    ) {
-        let mut prev_state = self.state.lock().clone();
-        let cur_state = Arc::downgrade(&self.state);
-        cx.observe(&self.worktree, move |observer, worktree, cx| {
-            if let Some(cur_state) = cur_state.upgrade() {
-                let cur_state_unlocked = cur_state.lock();
-                if cur_state_unlocked.mtime != prev_state.mtime
-                    || cur_state_unlocked.path != prev_state.path
-                {
-                    prev_state = cur_state_unlocked.clone();
-                    drop(cur_state_unlocked);
-                    callback(
-                        observer,
-                        FileHandle {
-                            worktree,
-                            state: cur_state,
-                        },
-                        cx,
-                    );
-                }
-            }
-        });
-    }
-}
-
-impl PartialEq for FileHandle {
-    fn eq(&self, other: &Self) -> bool {
-        if Arc::ptr_eq(&self.state, &other.state) {
-            true
-        } else {
-            let self_state = self.state.lock();
-            let other_state = other.state.lock();
-            self_state.worktree_id == other_state.worktree_id && self_state.id == other_state.id
-        }
-    }
-}
-
-impl Eq for FileHandle {}
-
-impl Hash for FileHandle {
-    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
-        self.state.lock().id.hash(state);
-        self.worktree.hash(state);
     }
 }
 
@@ -998,23 +929,16 @@ impl<'a> sum_tree::Dimension<'a, EntrySummary> for VisibleFileCount {
 struct BackgroundScanner {
     snapshot: Arc<Mutex<Snapshot>>,
     notify: Sender<ScanState>,
-    handles: Arc<Mutex<HashMap<Arc<Path>, Weak<Mutex<FileHandleState>>>>>,
     thread_pool: scoped_pool::Pool,
     root_char_bag: CharBag,
 }
 
 impl BackgroundScanner {
-    fn new(
-        snapshot: Arc<Mutex<Snapshot>>,
-        handles: Arc<Mutex<HashMap<Arc<Path>, Weak<Mutex<FileHandleState>>>>>,
-        notify: Sender<ScanState>,
-        worktree_id: usize,
-    ) -> Self {
+    fn new(snapshot: Arc<Mutex<Snapshot>>, notify: Sender<ScanState>, worktree_id: usize) -> Self {
         Self {
             root_char_bag: Default::default(),
             snapshot,
             notify,
-            handles,
             thread_pool: scoped_pool::Pool::new(16, format!("worktree-{}-scanner", worktree_id)),
         }
     }
@@ -1125,7 +1049,6 @@ impl BackgroundScanner {
             });
         }
 
-        self.mark_deleted_file_handles();
         Ok(())
     }
 
@@ -1231,73 +1154,6 @@ impl BackgroundScanner {
             return false;
         };
 
-        let mut renamed_paths: HashMap<u64, PathBuf> = HashMap::new();
-        let mut handles = self.handles.lock();
-        let mut updated_handles = HashMap::new();
-        for event in &events {
-            let path = if let Ok(path) = event.path.strip_prefix(&root_abs_path) {
-                path
-            } else {
-                continue;
-            };
-
-            let metadata = fs::metadata(&event.path);
-            if event.flags.contains(fsevent::StreamFlags::ITEM_RENAMED) {
-                if let Some(inode) = snapshot.inode_for_path(path) {
-                    renamed_paths.insert(inode, path.to_path_buf());
-                } else if let Ok(metadata) = &metadata {
-                    let new_path = path;
-                    if let Some(old_path) = renamed_paths.get(&metadata.ino()) {
-                        handles.retain(|handle_path, handle_state| {
-                            if let Ok(path_suffix) = handle_path.strip_prefix(&old_path) {
-                                let new_handle_path: Arc<Path> =
-                                    if path_suffix.file_name().is_some() {
-                                        new_path.join(path_suffix)
-                                    } else {
-                                        new_path.to_path_buf()
-                                    }
-                                    .into();
-                                if let Some(handle_state) = Weak::upgrade(&handle_state) {
-                                    let mut state = handle_state.lock();
-                                    state.path = new_handle_path.clone();
-                                    updated_handles
-                                        .insert(new_handle_path, Arc::downgrade(&handle_state));
-                                }
-                                false
-                            } else {
-                                true
-                            }
-                        });
-                        handles.extend(updated_handles.drain());
-                    }
-                }
-            }
-
-            for state in handles.values_mut() {
-                if let Some(state) = Weak::upgrade(&state) {
-                    let mut state = state.lock();
-                    if state.path.as_ref() == path {
-                        if let Ok(metadata) = &metadata {
-                            state.mtime = metadata
-                                .modified()
-                                .unwrap()
-                                .duration_since(UNIX_EPOCH)
-                                .unwrap();
-                        }
-                    } else if state.path.starts_with(path) {
-                        if let Ok(metadata) = fs::metadata(state.path.as_ref()) {
-                            state.mtime = metadata
-                                .modified()
-                                .unwrap()
-                                .duration_since(UNIX_EPOCH)
-                                .unwrap();
-                        }
-                    }
-                }
-            }
-        }
-        drop(handles);
-
         events.sort_unstable_by(|a, b| a.path.cmp(&b.path));
         let mut abs_paths = events.into_iter().map(|e| e.path).peekable();
         let (scan_queue_tx, scan_queue_rx) = crossbeam_channel::unbounded();
@@ -1363,7 +1219,6 @@ impl BackgroundScanner {
         });
 
         self.update_ignore_statuses();
-        self.mark_deleted_file_handles();
         true
     }
 
@@ -1453,20 +1308,6 @@ impl BackgroundScanner {
         self.snapshot.lock().entries.edit(edits, &());
     }
 
-    fn mark_deleted_file_handles(&self) {
-        let mut handles = self.handles.lock();
-        let snapshot = self.snapshot.lock();
-        handles.retain(|path, handle_state| {
-            if let Some(handle_state) = Weak::upgrade(&handle_state) {
-                let mut handle_state = handle_state.lock();
-                handle_state.is_deleted = snapshot.entry_for_path(&path).is_none();
-                true
-            } else {
-                false
-            }
-        });
-    }
-
     fn fs_entry_for_path(&self, path: Arc<Path>, abs_path: &Path) -> Result<Option<Entry>> {
         let metadata = match fs::metadata(&abs_path) {
             Err(err) => {
@@ -1526,7 +1367,7 @@ struct UpdateIgnoreStatusJob {
 }
 
 pub trait WorktreeHandle {
-    fn file(&self, path: impl AsRef<Path>, cx: &mut MutableAppContext) -> Task<Result<FileHandle>>;
+    fn file(&self, path: impl AsRef<Path>, cx: &mut MutableAppContext) -> ModelHandle<File>;
 
     #[cfg(test)]
     fn flush_fs_events<'a>(
@@ -1536,108 +1377,10 @@ pub trait WorktreeHandle {
 }
 
 impl WorktreeHandle for ModelHandle<Worktree> {
-    fn file(&self, path: impl AsRef<Path>, cx: &mut MutableAppContext) -> Task<Result<FileHandle>> {
+    fn file(&self, path: impl AsRef<Path>, cx: &mut MutableAppContext) -> ModelHandle<File> {
         let path = Arc::from(path.as_ref());
         let handle = self.clone();
-        let tree = self.read(cx);
-        match tree {
-            Worktree::Local(tree) => {
-                let worktree_id = handle.id();
-                let abs_path = tree.absolutize(&path);
-                cx.spawn(|cx| async move {
-                    let mtime = cx
-                        .background_executor()
-                        .spawn(async move { fs::metadata(&abs_path) })
-                        .await?
-                        .modified()?
-                        .duration_since(UNIX_EPOCH)?;
-                    let state = handle.read_with(&cx, |tree, _| {
-                        let mut handles = tree.as_local().unwrap().handles.lock();
-                        handles
-                            .get(&path)
-                            .and_then(Weak::upgrade)
-                            .unwrap_or_else(|| {
-                                let id =
-                                    tree.as_local().unwrap().next_handle_id.fetch_add(1, SeqCst);
-                                let handle_state = if let Some(entry) = tree.entry_for_path(&path) {
-                                    FileHandleState {
-                                        path: entry.path().clone(),
-                                        is_deleted: false,
-                                        mtime,
-                                        worktree_id,
-                                        id,
-                                        rpc: None,
-                                    }
-                                } else {
-                                    FileHandleState {
-                                        path: path.clone(),
-                                        is_deleted: !tree.path_is_pending(&path),
-                                        mtime,
-                                        worktree_id,
-                                        id,
-                                        rpc: None,
-                                    }
-                                };
-
-                                let state = Arc::new(Mutex::new(handle_state.clone()));
-                                handles.insert(path, Arc::downgrade(&state));
-                                state
-                            })
-                    });
-                    Ok(FileHandle {
-                        worktree: handle.clone(),
-                        state,
-                    })
-                })
-            }
-            Worktree::Remote(tree) => {
-                let remote_worktree_id = tree.remote_id;
-                let connection_id = tree.connection_id;
-                let rpc = tree.rpc.clone();
-                let handles = tree.handles.clone();
-                cx.spawn(|cx| async move {
-                    let state = handles
-                        .lock()
-                        .entry(path.clone())
-                        .or_insert_with(|| Arc::new(AsyncMutex::new(Weak::new())))
-                        .clone();
-
-                    let mut state = state.lock().await;
-                    if let Some(state) = Weak::upgrade(&state) {
-                        Ok(FileHandle {
-                            worktree: handle,
-                            state,
-                        })
-                    } else {
-                        let response = rpc
-                            .request(
-                                connection_id,
-                                proto::OpenFile {
-                                    worktree_id: remote_worktree_id as u64,
-                                    path: path.to_string_lossy().to_string(),
-                                },
-                            )
-                            .await?;
-                        let is_deleted = handle.read_with(&cx, |tree, _| {
-                            tree.entry_for_path(&path).is_none() && !tree.path_is_pending(&path)
-                        });
-                        let new_state = Arc::new(Mutex::new(FileHandleState {
-                            path,
-                            is_deleted,
-                            mtime: Duration::from_secs(response.mtime),
-                            worktree_id: remote_worktree_id,
-                            id: response.id,
-                            rpc: Some((connection_id, rpc)),
-                        }));
-                        *state = Arc::downgrade(&new_state);
-                        Ok(FileHandle {
-                            worktree: handle,
-                            state: new_state,
-                        })
-                    }
-                })
-            }
-        }
+        cx.add_model(|cx| File::new(handle, path, cx))
     }
 
     // When the worktree's FS event stream sometimes delivers "redundant" events for FS changes that
@@ -1850,8 +1593,10 @@ mod tests {
             path
         });
 
-        let file = cx.update(|cx| tree.file(&path, cx)).await.unwrap();
-        let history = cx.read(|cx| file.load_history(cx)).await.unwrap();
+        let history = cx
+            .update(|cx| tree.file(&path, cx).read(cx).load_history(cx.as_ref()))
+            .await
+            .unwrap();
         cx.read(|cx| {
             assert_eq!(history.base_text.as_ref(), buffer.read(cx).text());
         });
@@ -1869,14 +1614,17 @@ mod tests {
         cx.read(|cx| assert_eq!(tree.read(cx).file_count(), 1));
 
         let buffer = cx.add_model(|cx| Buffer::new(1, "a line of text.\n".repeat(10 * 1024), cx));
+        let file = cx.update(|cx| tree.file("", cx));
 
-        let file = cx.update(|cx| tree.file("", cx)).await.unwrap();
-        cx.update(|cx| {
-            assert_eq!(file.path().file_name(), None);
-            smol::block_on(file.save(buffer.read(cx).snapshot().text(), cx.as_ref())).unwrap();
-        });
+        let history = file
+            .read_with(&cx, |file, cx| {
+                assert_eq!(file.path().file_name(), None);
+                smol::block_on(file.save(buffer.read(cx).snapshot().text(), cx.as_ref())).unwrap();
+                file.load_history(cx)
+            })
+            .await
+            .unwrap();
 
-        let history = cx.read(|cx| file.load_history(cx)).await.unwrap();
         cx.read(|cx| assert_eq!(history.base_text.as_ref(), buffer.read(cx).text()));
     }
 
@@ -1897,20 +1645,23 @@ mod tests {
         }));
 
         let tree = cx.add_model(|cx| Worktree::local(dir.path(), cx));
-        let file2 = cx.update(|cx| tree.file("a/file2", cx)).await.unwrap();
-        let file3 = cx.update(|cx| tree.file("a/file3", cx)).await.unwrap();
-        let file4 = cx.update(|cx| tree.file("b/c/file4", cx)).await.unwrap();
-        let file5 = cx.update(|cx| tree.file("b/c/file5", cx)).await.unwrap();
-        let non_existent_file = cx.update(|cx| tree.file("a/file_x", cx)).await.unwrap();
+        let file2 = cx.update(|cx| tree.file("a/file2", cx));
+        let file3 = cx.update(|cx| tree.file("a/file3", cx));
+        let file4 = cx.update(|cx| tree.file("b/c/file4", cx));
+        let file5 = cx.update(|cx| tree.file("b/c/file5", cx));
+        let non_existent_file = cx.update(|cx| tree.file("a/file_x", cx));
 
         // After scanning, the worktree knows which files exist and which don't.
         cx.read(|cx| tree.read(cx).as_local().unwrap().scan_complete())
             .await;
-        assert!(!file2.is_deleted());
-        assert!(!file3.is_deleted());
-        assert!(!file4.is_deleted());
-        assert!(!file5.is_deleted());
-        assert!(non_existent_file.is_deleted());
+
+        cx.read(|cx| {
+            assert!(!file2.read(cx).is_deleted(cx));
+            assert!(!file3.read(cx).is_deleted(cx));
+            assert!(!file4.read(cx).is_deleted(cx));
+            assert!(!file5.read(cx).is_deleted(cx));
+            assert!(non_existent_file.read(cx).is_deleted(cx));
+        });
 
         tree.flush_fs_events(&cx).await;
         std::fs::rename(dir.path().join("a/file3"), dir.path().join("b/c/file3")).unwrap();
@@ -1936,18 +1687,14 @@ mod tests {
                 ]
             );
 
-            assert_eq!(file2.path().to_str().unwrap(), "a/file2.new");
-            assert_eq!(file4.path().as_ref(), Path::new("d/file4"));
-            assert_eq!(file5.path().as_ref(), Path::new("d/file5"));
-            assert!(!file2.is_deleted());
-            assert!(!file4.is_deleted());
-            assert!(file5.is_deleted());
-
-            // Right now, this rename isn't detected because the target path
-            // no longer exists on the file system by the time we process the
-            // rename event.
-            assert_eq!(file3.path().as_ref(), Path::new("a/file3"));
-            assert!(file3.is_deleted());
+            assert_eq!(file2.read(cx).path().as_ref(), Path::new("a/file2.new"));
+            assert_eq!(file3.read(cx).path().as_ref(), Path::new("d/file3"));
+            assert_eq!(file4.read(cx).path().as_ref(), Path::new("d/file4"));
+            assert_eq!(file5.read(cx).path().as_ref(), Path::new("b/c/file5"));
+            assert!(!file2.read(cx).is_deleted(cx));
+            assert!(!file3.read(cx).is_deleted(cx));
+            assert!(!file4.read(cx).is_deleted(cx));
+            assert!(file5.read(cx).is_deleted(cx));
         });
     }
 
@@ -2158,7 +1905,6 @@ mod tests {
                     ignores: Default::default(),
                     root_name: Default::default(),
                 })),
-                Arc::new(Mutex::new(Default::default())),
                 notify_tx,
                 0,
             );
@@ -2193,7 +1939,6 @@ mod tests {
                     ignores: Default::default(),
                     root_name: Default::default(),
                 })),
-                Arc::new(Mutex::new(Default::default())),
                 notify_tx,
                 1,
             );

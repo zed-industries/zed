@@ -19,10 +19,10 @@ use crate::{
     sum_tree::{self, FilterCursor, SumTree},
     time::{self, ReplicaId},
     util::Bias,
-    worktree::FileHandle,
+    worktree::File,
 };
 use anyhow::{anyhow, Result};
-use gpui::{AppContext, Entity, ModelContext, Task};
+use gpui::{AppContext, Entity, ModelContext, ModelHandle, Task};
 use lazy_static::lazy_static;
 use std::{
     cell::RefCell,
@@ -114,7 +114,7 @@ pub struct Buffer {
     last_edit: time::Local,
     undo_map: UndoMap,
     history: History,
-    file: Option<FileHandle>,
+    file: Option<ModelHandle<File>>,
     language: Option<Arc<Language>>,
     syntax_tree: Mutex<Option<SyntaxTree>>,
     is_parsing: bool,
@@ -420,7 +420,7 @@ impl Buffer {
     pub fn from_history(
         replica_id: ReplicaId,
         history: History,
-        file: Option<FileHandle>,
+        file: Option<ModelHandle<File>>,
         language: Option<Arc<Language>>,
         cx: &mut ModelContext<Self>,
     ) -> Self {
@@ -430,42 +430,13 @@ impl Buffer {
     fn build(
         replica_id: ReplicaId,
         history: History,
-        file: Option<FileHandle>,
+        file: Option<ModelHandle<File>>,
         language: Option<Arc<Language>>,
         cx: &mut ModelContext<Self>,
     ) -> Self {
         let saved_mtime;
         if let Some(file) = file.as_ref() {
-            saved_mtime = file.mtime();
-            file.observe_from_model(cx, |this, file, cx| {
-                let version = this.version.clone();
-                if this.version == this.saved_version {
-                    if file.is_deleted() {
-                        cx.emit(Event::Dirtied);
-                    } else {
-                        cx.spawn(|handle, mut cx| async move {
-                            let (current_version, history) = handle.read_with(&cx, |this, cx| {
-                                (this.version.clone(), file.load_history(cx.as_ref()))
-                            });
-                            if let (Ok(history), true) = (history.await, current_version == version)
-                            {
-                                let diff = handle
-                                    .read_with(&cx, |this, cx| this.diff(history.base_text, cx))
-                                    .await;
-                                handle.update(&mut cx, |this, cx| {
-                                    if let Some(_ops) = this.set_text_via_diff(diff, cx) {
-                                        this.saved_version = this.version.clone();
-                                        this.saved_mtime = file.mtime();
-                                        cx.emit(Event::Reloaded);
-                                    }
-                                });
-                            }
-                        })
-                        .detach();
-                    }
-                }
-                cx.emit(Event::FileHandleChanged);
-            });
+            saved_mtime = file.read(cx).mtime(cx.as_ref());
         } else {
             saved_mtime = Duration::ZERO;
         }
@@ -495,7 +466,7 @@ impl Buffer {
             last_edit: time::Local::default(),
             undo_map: Default::default(),
             history,
-            file,
+            file: None,
             syntax_tree: Mutex::new(None),
             is_parsing: false,
             language,
@@ -508,6 +479,7 @@ impl Buffer {
             local_clock: time::Local::new(replica_id),
             lamport_clock: time::Lamport::new(replica_id),
         };
+        result.set_file(file, cx);
         result.reparse(cx);
         result
     }
@@ -521,13 +493,13 @@ impl Buffer {
         }
     }
 
-    pub fn file(&self) -> Option<&FileHandle> {
+    pub fn file(&self) -> Option<&ModelHandle<File>> {
         self.file.as_ref()
     }
 
     pub fn save(
         &mut self,
-        new_file: Option<FileHandle>,
+        new_file: Option<ModelHandle<File>>,
         cx: &mut ModelContext<Self>,
     ) -> Task<Result<()>> {
         let text = self.visible_text.clone();
@@ -536,7 +508,7 @@ impl Buffer {
 
         cx.spawn(|handle, mut cx| async move {
             if let Some(file) = new_file.as_ref().or(file.as_ref()) {
-                let result = cx.read(|cx| file.save(text, cx.as_ref())).await;
+                let result = file.read_with(&cx, |file, cx| file.save(text, cx)).await;
                 if result.is_ok() {
                     handle.update(&mut cx, |me, cx| me.did_save(version, new_file, cx));
                 }
@@ -550,17 +522,55 @@ impl Buffer {
     fn did_save(
         &mut self,
         version: time::Global,
-        file: Option<FileHandle>,
-        cx: &mut ModelContext<Buffer>,
+        file: Option<ModelHandle<File>>,
+        cx: &mut ModelContext<Self>,
     ) {
         if file.is_some() {
-            self.file = file;
+            self.set_file(file, cx);
         }
         if let Some(file) = &self.file {
-            self.saved_mtime = file.mtime();
+            self.saved_mtime = file.read(cx).mtime(cx.as_ref());
         }
         self.saved_version = version;
         cx.emit(Event::Saved);
+    }
+
+    fn set_file(&mut self, file: Option<ModelHandle<File>>, cx: &mut ModelContext<Self>) {
+        self.file = file;
+        if let Some(file) = &self.file {
+            cx.observe(file, |this, file, cx| {
+                let version = this.version.clone();
+                if this.version == this.saved_version {
+                    if file.read(cx).is_deleted(cx.as_ref()) {
+                        cx.emit(Event::Dirtied);
+                    } else {
+                        cx.spawn(|this, mut cx| async move {
+                            let (current_version, history) = this.read_with(&cx, |this, cx| {
+                                (
+                                    this.version.clone(),
+                                    file.read(cx).load_history(cx.as_ref()),
+                                )
+                            });
+                            if let (Ok(history), true) = (history.await, current_version == version)
+                            {
+                                let diff = this
+                                    .read_with(&cx, |this, cx| this.diff(history.base_text, cx))
+                                    .await;
+                                this.update(&mut cx, |this, cx| {
+                                    if let Some(_ops) = this.set_text_via_diff(diff, cx) {
+                                        this.saved_version = this.version.clone();
+                                        this.saved_mtime = file.read(cx).mtime(cx.as_ref());
+                                        cx.emit(Event::Reloaded);
+                                    }
+                                });
+                            }
+                        })
+                        .detach();
+                    }
+                }
+                cx.emit(Event::FileHandleChanged);
+            });
+        }
     }
 
     pub fn syntax_tree(&self) -> Option<Tree> {
@@ -734,42 +744,44 @@ impl Buffer {
         cx: &mut ModelContext<Self>,
     ) -> Option<Vec<Operation>> {
         if self.version == diff.base_version {
-            self.start_transaction(None).unwrap();
+            self.start_transaction(None, cx).unwrap();
             let mut operations = Vec::new();
             let mut offset = 0;
             for (tag, len) in diff.changes {
                 let range = offset..(offset + len);
                 match tag {
                     ChangeTag::Equal => offset += len,
-                    ChangeTag::Delete => {
-                        operations.push(self.edit(Some(range), "", Some(cx)).unwrap())
-                    }
+                    ChangeTag::Delete => operations.push(self.edit(Some(range), "", cx).unwrap()),
                     ChangeTag::Insert => {
                         operations.push(
-                            self.edit(Some(offset..offset), &diff.new_text[range], Some(cx))
+                            self.edit(Some(offset..offset), &diff.new_text[range], cx)
                                 .unwrap(),
                         );
                         offset += len;
                     }
                 }
             }
-            self.end_transaction(None, Some(cx)).unwrap();
+            self.end_transaction(None, cx).unwrap();
             Some(operations)
         } else {
             None
         }
     }
 
-    pub fn is_dirty(&self) -> bool {
-        self.version > self.saved_version || self.file.as_ref().map_or(false, |f| f.is_deleted())
+    pub fn is_dirty(&self, cx: &AppContext) -> bool {
+        self.version > self.saved_version
+            || self
+                .file
+                .as_ref()
+                .map_or(false, |file| file.read(cx).is_deleted(cx))
     }
 
-    pub fn has_conflict(&self) -> bool {
+    pub fn has_conflict(&self, cx: &AppContext) -> bool {
         self.version > self.saved_version
             && self
                 .file
                 .as_ref()
-                .map_or(false, |f| f.mtime() > self.saved_mtime)
+                .map_or(false, |file| file.read(cx).mtime(cx) > self.saved_mtime)
     }
 
     pub fn version(&self) -> time::Global {
@@ -849,11 +861,20 @@ impl Buffer {
         self.deferred_ops.len()
     }
 
-    pub fn start_transaction(&mut self, set_id: Option<SelectionSetId>) -> Result<()> {
-        self.start_transaction_at(set_id, Instant::now())
+    pub fn start_transaction(
+        &mut self,
+        set_id: Option<SelectionSetId>,
+        cx: &mut ModelContext<Self>,
+    ) -> Result<()> {
+        self.start_transaction_at(set_id, Instant::now(), cx)
     }
 
-    fn start_transaction_at(&mut self, set_id: Option<SelectionSetId>, now: Instant) -> Result<()> {
+    fn start_transaction_at(
+        &mut self,
+        set_id: Option<SelectionSetId>,
+        now: Instant,
+        cx: &mut ModelContext<Self>,
+    ) -> Result<()> {
         let selections = if let Some(set_id) = set_id {
             let selections = self
                 .selections
@@ -863,15 +884,19 @@ impl Buffer {
         } else {
             None
         };
-        self.history
-            .start_transaction(self.version.clone(), self.is_dirty(), selections, now);
+        self.history.start_transaction(
+            self.version.clone(),
+            self.is_dirty(cx.as_ref()),
+            selections,
+            now,
+        );
         Ok(())
     }
 
     pub fn end_transaction(
         &mut self,
         set_id: Option<SelectionSetId>,
-        cx: Option<&mut ModelContext<Self>>,
+        cx: &mut ModelContext<Self>,
     ) -> Result<()> {
         self.end_transaction_at(set_id, Instant::now(), cx)
     }
@@ -880,7 +905,7 @@ impl Buffer {
         &mut self,
         set_id: Option<SelectionSetId>,
         now: Instant,
-        cx: Option<&mut ModelContext<Self>>,
+        cx: &mut ModelContext<Self>,
     ) -> Result<()> {
         let selections = if let Some(set_id) = set_id {
             let selections = self
@@ -897,13 +922,10 @@ impl Buffer {
             let was_dirty = transaction.buffer_was_dirty;
             self.history.group();
 
-            if let Some(cx) = cx {
-                cx.notify();
-
-                if self.edits_since(since).next().is_some() {
-                    self.did_edit(was_dirty, cx);
-                    self.reparse(cx);
-                }
+            cx.notify();
+            if self.edits_since(since).next().is_some() {
+                self.did_edit(was_dirty, cx);
+                self.reparse(cx);
             }
         }
 
@@ -914,7 +936,7 @@ impl Buffer {
         &mut self,
         ranges_iter: I,
         new_text: T,
-        cx: Option<&mut ModelContext<Self>>,
+        cx: &mut ModelContext<Self>,
     ) -> Option<Operation>
     where
         I: IntoIterator<Item = Range<S>>,
@@ -949,7 +971,7 @@ impl Buffer {
         if ranges.is_empty() {
             None
         } else {
-            self.start_transaction_at(None, Instant::now()).unwrap();
+            self.start_transaction_at(None, Instant::now(), cx).unwrap();
             let timestamp = InsertionTimestamp {
                 replica_id: self.replica_id,
                 local: self.local_clock.tick().value,
@@ -978,7 +1000,7 @@ impl Buffer {
     pub fn add_selection_set(
         &mut self,
         selections: impl Into<Arc<[Selection]>>,
-        cx: Option<&mut ModelContext<Self>>,
+        cx: &mut ModelContext<Self>,
     ) -> (SelectionSetId, Operation) {
         let selections = selections.into();
         let lamport_timestamp = self.lamport_clock.tick();
@@ -986,9 +1008,7 @@ impl Buffer {
             .insert(lamport_timestamp, Arc::clone(&selections));
         self.selections_last_update += 1;
 
-        if let Some(cx) = cx {
-            cx.notify();
-        }
+        cx.notify();
 
         (
             lamport_timestamp,
@@ -1004,7 +1024,7 @@ impl Buffer {
         &mut self,
         set_id: SelectionSetId,
         selections: impl Into<Arc<[Selection]>>,
-        cx: Option<&mut ModelContext<Self>>,
+        cx: &mut ModelContext<Self>,
     ) -> Result<Operation> {
         let selections = selections.into();
         self.selections.insert(set_id, selections.clone());
@@ -1012,9 +1032,7 @@ impl Buffer {
         let lamport_timestamp = self.lamport_clock.tick();
         self.selections_last_update += 1;
 
-        if let Some(cx) = cx {
-            cx.notify();
-        }
+        cx.notify();
 
         Ok(Operation::UpdateSelections {
             set_id,
@@ -1026,7 +1044,7 @@ impl Buffer {
     pub fn remove_selection_set(
         &mut self,
         set_id: SelectionSetId,
-        cx: Option<&mut ModelContext<Self>>,
+        cx: &mut ModelContext<Self>,
     ) -> Result<Operation> {
         self.selections
             .remove(&set_id)
@@ -1034,9 +1052,7 @@ impl Buffer {
         let lamport_timestamp = self.lamport_clock.tick();
         self.selections_last_update += 1;
 
-        if let Some(cx) = cx {
-            cx.notify();
-        }
+        cx.notify();
 
         Ok(Operation::UpdateSelections {
             set_id,
@@ -1055,9 +1071,9 @@ impl Buffer {
     pub fn apply_ops<I: IntoIterator<Item = Operation>>(
         &mut self,
         ops: I,
-        cx: Option<&mut ModelContext<Self>>,
+        cx: &mut ModelContext<Self>,
     ) -> Result<()> {
-        let was_dirty = self.is_dirty();
+        let was_dirty = self.is_dirty(cx.as_ref());
         let old_version = self.version.clone();
 
         let mut deferred_ops = Vec::new();
@@ -1072,12 +1088,10 @@ impl Buffer {
         self.deferred_ops.insert(deferred_ops);
         self.flush_deferred_ops()?;
 
-        if let Some(cx) = cx {
-            cx.notify();
-            if self.edits_since(old_version).next().is_some() {
-                self.did_edit(was_dirty, cx);
-                self.reparse(cx);
-            }
+        cx.notify();
+        if self.edits_since(old_version).next().is_some() {
+            self.did_edit(was_dirty, cx);
+            self.reparse(cx);
         }
 
         Ok(())
@@ -1269,8 +1283,8 @@ impl Buffer {
         self.lamport_clock.observe(timestamp.lamport());
     }
 
-    pub fn undo(&mut self, mut cx: Option<&mut ModelContext<Self>>) -> Vec<Operation> {
-        let was_dirty = self.is_dirty();
+    pub fn undo(&mut self, cx: &mut ModelContext<Self>) -> Vec<Operation> {
+        let was_dirty = self.is_dirty(cx.as_ref());
         let old_version = self.version.clone();
 
         let mut ops = Vec::new();
@@ -1281,23 +1295,21 @@ impl Buffer {
             }
 
             if let Some((set_id, selections)) = selections {
-                let _ = self.update_selection_set(set_id, selections, cx.as_deref_mut());
+                let _ = self.update_selection_set(set_id, selections, cx);
             }
         }
 
-        if let Some(cx) = cx {
-            cx.notify();
-            if self.edits_since(old_version).next().is_some() {
-                self.did_edit(was_dirty, cx);
-                self.reparse(cx);
-            }
+        cx.notify();
+        if self.edits_since(old_version).next().is_some() {
+            self.did_edit(was_dirty, cx);
+            self.reparse(cx);
         }
 
         ops
     }
 
-    pub fn redo(&mut self, mut cx: Option<&mut ModelContext<Self>>) -> Vec<Operation> {
-        let was_dirty = self.is_dirty();
+    pub fn redo(&mut self, cx: &mut ModelContext<Self>) -> Vec<Operation> {
+        let was_dirty = self.is_dirty(cx.as_ref());
         let old_version = self.version.clone();
 
         let mut ops = Vec::new();
@@ -1308,16 +1320,14 @@ impl Buffer {
             }
 
             if let Some((set_id, selections)) = selections {
-                let _ = self.update_selection_set(set_id, selections, cx.as_deref_mut());
+                let _ = self.update_selection_set(set_id, selections, cx);
             }
         }
 
-        if let Some(cx) = cx {
-            cx.notify();
-            if self.edits_since(old_version).next().is_some() {
-                self.did_edit(was_dirty, cx);
-                self.reparse(cx);
-            }
+        cx.notify();
+        if self.edits_since(old_version).next().is_some() {
+            self.did_edit(was_dirty, cx);
+            self.reparse(cx);
         }
 
         ops
@@ -2230,15 +2240,15 @@ mod tests {
         cx.add_model(|cx| {
             let mut buffer = Buffer::new(0, "abc", cx);
             assert_eq!(buffer.text(), "abc");
-            buffer.edit(vec![3..3], "def", None).unwrap();
+            buffer.edit(vec![3..3], "def", cx).unwrap();
             assert_eq!(buffer.text(), "abcdef");
-            buffer.edit(vec![0..0], "ghi", None).unwrap();
+            buffer.edit(vec![0..0], "ghi", cx).unwrap();
             assert_eq!(buffer.text(), "ghiabcdef");
-            buffer.edit(vec![5..5], "jkl", None).unwrap();
+            buffer.edit(vec![5..5], "jkl", cx).unwrap();
             assert_eq!(buffer.text(), "ghiabjklcdef");
-            buffer.edit(vec![6..7], "", None).unwrap();
+            buffer.edit(vec![6..7], "", cx).unwrap();
             assert_eq!(buffer.text(), "ghiabjlcdef");
-            buffer.edit(vec![4..9], "mno", None).unwrap();
+            buffer.edit(vec![4..9], "mno", cx).unwrap();
             assert_eq!(buffer.text(), "ghiamnoef");
             buffer
         });
@@ -2265,29 +2275,29 @@ mod tests {
 
             // An edit emits an edited event, followed by a dirtied event,
             // since the buffer was previously in a clean state.
-            let op = buffer.edit(Some(2..4), "XYZ", Some(cx)).unwrap();
+            let op = buffer.edit(Some(2..4), "XYZ", cx).unwrap();
             buffer_ops.push(op);
 
             // An empty transaction does not emit any events.
-            buffer.start_transaction(None).unwrap();
-            buffer.end_transaction(None, Some(cx)).unwrap();
+            buffer.start_transaction(None, cx).unwrap();
+            buffer.end_transaction(None, cx).unwrap();
 
             // A transaction containing two edits emits one edited event.
             now += Duration::from_secs(1);
-            buffer.start_transaction_at(None, now).unwrap();
-            buffer_ops.push(buffer.edit(Some(5..5), "u", Some(cx)).unwrap());
-            buffer_ops.push(buffer.edit(Some(6..6), "w", Some(cx)).unwrap());
-            buffer.end_transaction_at(None, now, Some(cx)).unwrap();
+            buffer.start_transaction_at(None, now, cx).unwrap();
+            buffer_ops.push(buffer.edit(Some(5..5), "u", cx).unwrap());
+            buffer_ops.push(buffer.edit(Some(6..6), "w", cx).unwrap());
+            buffer.end_transaction_at(None, now, cx).unwrap();
 
             // Undoing a transaction emits one edited event.
-            let ops = buffer.undo(Some(cx));
+            let ops = buffer.undo(cx);
             buffer_ops.extend_from_slice(&ops);
         });
 
         // Incorporating a set of remote ops emits a single edited event,
         // followed by a dirtied event.
         buffer2.update(cx, |buffer, cx| {
-            buffer.apply_ops(buffer_ops, Some(cx)).unwrap();
+            buffer.apply_ops(buffer_ops, cx).unwrap();
         });
 
         let buffer_1_events = buffer_1_events.borrow();
@@ -2329,7 +2339,7 @@ mod tests {
                 );
 
                 for _i in 0..operations {
-                    let (old_ranges, new_text, _) = buffer.randomly_mutate(rng, None);
+                    let (old_ranges, new_text, _) = buffer.randomly_mutate(rng, cx);
                     for old_range in old_ranges.iter().rev() {
                         reference_string.replace_range(old_range.clone(), &new_text);
                     }
@@ -2379,7 +2389,7 @@ mod tests {
                         let new_len = new_range.end - new_range.start;
                         let old_start = (old_range.start as isize + delta) as usize;
                         let new_text: String = buffer.text_for_range(new_range).collect();
-                        old_buffer.edit(Some(old_start..old_start + old_len), new_text, None);
+                        old_buffer.edit(Some(old_start..old_start + old_len), new_text, cx);
 
                         delta += new_len as isize - old_len as isize;
                     }
@@ -2395,10 +2405,10 @@ mod tests {
     fn test_line_len(cx: &mut gpui::MutableAppContext) {
         cx.add_model(|cx| {
             let mut buffer = Buffer::new(0, "", cx);
-            buffer.edit(vec![0..0], "abcd\nefg\nhij", None).unwrap();
-            buffer.edit(vec![12..12], "kl\nmno", None).unwrap();
-            buffer.edit(vec![18..18], "\npqrs\n", None).unwrap();
-            buffer.edit(vec![18..21], "\nPQ", None).unwrap();
+            buffer.edit(vec![0..0], "abcd\nefg\nhij", cx).unwrap();
+            buffer.edit(vec![12..12], "kl\nmno", cx).unwrap();
+            buffer.edit(vec![18..18], "\npqrs\n", cx).unwrap();
+            buffer.edit(vec![18..21], "\nPQ", cx).unwrap();
 
             assert_eq!(buffer.line_len(0), 4);
             assert_eq!(buffer.line_len(1), 3);
@@ -2477,10 +2487,10 @@ mod tests {
     fn test_chars_at(cx: &mut gpui::MutableAppContext) {
         cx.add_model(|cx| {
             let mut buffer = Buffer::new(0, "", cx);
-            buffer.edit(vec![0..0], "abcd\nefgh\nij", None).unwrap();
-            buffer.edit(vec![12..12], "kl\nmno", None).unwrap();
-            buffer.edit(vec![18..18], "\npqrs", None).unwrap();
-            buffer.edit(vec![18..21], "\nPQ", None).unwrap();
+            buffer.edit(vec![0..0], "abcd\nefgh\nij", cx).unwrap();
+            buffer.edit(vec![12..12], "kl\nmno", cx).unwrap();
+            buffer.edit(vec![18..18], "\npqrs", cx).unwrap();
+            buffer.edit(vec![18..21], "\nPQ", cx).unwrap();
 
             let chars = buffer.chars_at(Point::new(0, 0));
             assert_eq!(chars.collect::<String>(), "abcd\nefgh\nijkl\nmno\nPQrs");
@@ -2499,8 +2509,8 @@ mod tests {
 
             // Regression test:
             let mut buffer = Buffer::new(0, "", cx);
-            buffer.edit(vec![0..0], "[workspace]\nmembers = [\n    \"xray_core\",\n    \"xray_server\",\n    \"xray_cli\",\n    \"xray_wasm\",\n]\n", None).unwrap();
-            buffer.edit(vec![60..60], "\n", None).unwrap();
+            buffer.edit(vec![0..0], "[workspace]\nmembers = [\n    \"xray_core\",\n    \"xray_server\",\n    \"xray_cli\",\n    \"xray_wasm\",\n]\n", cx).unwrap();
+            buffer.edit(vec![60..60], "\n", cx).unwrap();
 
             let chars = buffer.chars_at(Point::new(6, 0));
             assert_eq!(chars.collect::<String>(), "    \"xray_wasm\",\n]\n");
@@ -2513,32 +2523,32 @@ mod tests {
     fn test_anchors(cx: &mut gpui::MutableAppContext) {
         cx.add_model(|cx| {
             let mut buffer = Buffer::new(0, "", cx);
-            buffer.edit(vec![0..0], "abc", None).unwrap();
+            buffer.edit(vec![0..0], "abc", cx).unwrap();
             let left_anchor = buffer.anchor_before(2);
             let right_anchor = buffer.anchor_after(2);
 
-            buffer.edit(vec![1..1], "def\n", None).unwrap();
+            buffer.edit(vec![1..1], "def\n", cx).unwrap();
             assert_eq!(buffer.text(), "adef\nbc");
             assert_eq!(left_anchor.to_offset(&buffer), 6);
             assert_eq!(right_anchor.to_offset(&buffer), 6);
             assert_eq!(left_anchor.to_point(&buffer), Point { row: 1, column: 1 });
             assert_eq!(right_anchor.to_point(&buffer), Point { row: 1, column: 1 });
 
-            buffer.edit(vec![2..3], "", None).unwrap();
+            buffer.edit(vec![2..3], "", cx).unwrap();
             assert_eq!(buffer.text(), "adf\nbc");
             assert_eq!(left_anchor.to_offset(&buffer), 5);
             assert_eq!(right_anchor.to_offset(&buffer), 5);
             assert_eq!(left_anchor.to_point(&buffer), Point { row: 1, column: 1 });
             assert_eq!(right_anchor.to_point(&buffer), Point { row: 1, column: 1 });
 
-            buffer.edit(vec![5..5], "ghi\n", None).unwrap();
+            buffer.edit(vec![5..5], "ghi\n", cx).unwrap();
             assert_eq!(buffer.text(), "adf\nbghi\nc");
             assert_eq!(left_anchor.to_offset(&buffer), 5);
             assert_eq!(right_anchor.to_offset(&buffer), 9);
             assert_eq!(left_anchor.to_point(&buffer), Point { row: 1, column: 1 });
             assert_eq!(right_anchor.to_point(&buffer), Point { row: 2, column: 0 });
 
-            buffer.edit(vec![7..9], "", None).unwrap();
+            buffer.edit(vec![7..9], "", cx).unwrap();
             assert_eq!(buffer.text(), "adf\nbghc");
             assert_eq!(left_anchor.to_offset(&buffer), 5);
             assert_eq!(right_anchor.to_offset(&buffer), 7);
@@ -2655,7 +2665,7 @@ mod tests {
             let before_start_anchor = buffer.anchor_before(0);
             let after_end_anchor = buffer.anchor_after(0);
 
-            buffer.edit(vec![0..0], "abc", None).unwrap();
+            buffer.edit(vec![0..0], "abc", cx).unwrap();
             assert_eq!(buffer.text(), "abc");
             assert_eq!(before_start_anchor.to_offset(&buffer), 0);
             assert_eq!(after_end_anchor.to_offset(&buffer), 3);
@@ -2663,8 +2673,8 @@ mod tests {
             let after_start_anchor = buffer.anchor_after(0);
             let before_end_anchor = buffer.anchor_before(3);
 
-            buffer.edit(vec![3..3], "def", None).unwrap();
-            buffer.edit(vec![0..0], "ghi", None).unwrap();
+            buffer.edit(vec![3..3], "def", cx).unwrap();
+            buffer.edit(vec![0..0], "ghi", cx).unwrap();
             assert_eq!(buffer.text(), "ghiabcdef");
             assert_eq!(before_start_anchor.to_offset(&buffer), 0);
             assert_eq!(after_start_anchor.to_offset(&buffer), 3);
@@ -2687,7 +2697,7 @@ mod tests {
             cx.read(|cx| tree.read(cx).as_local().unwrap().scan_complete())
                 .await;
 
-            let file1 = cx.update(|cx| tree.file("file1", cx)).await.unwrap();
+            let file1 = cx.update(|cx| tree.file("file1", cx));
             let buffer1 = cx.add_model(|cx| {
                 Buffer::from_history(0, History::new("abc".into()), Some(file1), None, cx)
             });
@@ -2700,16 +2710,16 @@ mod tests {
                     move |_, event, _| events.borrow_mut().push(event.clone())
                 });
 
-                assert!(!buffer.is_dirty());
+                assert!(!buffer.is_dirty(cx.as_ref()));
                 assert!(events.borrow().is_empty());
 
-                buffer.edit(vec![1..2], "", Some(cx)).unwrap();
+                buffer.edit(vec![1..2], "", cx).unwrap();
             });
 
             // after the first edit, the buffer is dirty, and emits a dirtied event.
             buffer1.update(&mut cx, |buffer, cx| {
                 assert!(buffer.text() == "ac");
-                assert!(buffer.is_dirty());
+                assert!(buffer.is_dirty(cx.as_ref()));
                 assert_eq!(*events.borrow(), &[Event::Edited, Event::Dirtied]);
                 events.borrow_mut().clear();
 
@@ -2718,18 +2728,18 @@ mod tests {
 
             // after saving, the buffer is not dirty, and emits a saved event.
             buffer1.update(&mut cx, |buffer, cx| {
-                assert!(!buffer.is_dirty());
+                assert!(!buffer.is_dirty(cx.as_ref()));
                 assert_eq!(*events.borrow(), &[Event::Saved]);
                 events.borrow_mut().clear();
 
-                buffer.edit(vec![1..1], "B", Some(cx)).unwrap();
-                buffer.edit(vec![2..2], "D", Some(cx)).unwrap();
+                buffer.edit(vec![1..1], "B", cx).unwrap();
+                buffer.edit(vec![2..2], "D", cx).unwrap();
             });
 
             // after editing again, the buffer is dirty, and emits another dirty event.
             buffer1.update(&mut cx, |buffer, cx| {
                 assert!(buffer.text() == "aBDc");
-                assert!(buffer.is_dirty());
+                assert!(buffer.is_dirty(cx.as_ref()));
                 assert_eq!(
                     *events.borrow(),
                     &[Event::Edited, Event::Dirtied, Event::Edited],
@@ -2738,16 +2748,16 @@ mod tests {
 
                 // TODO - currently, after restoring the buffer to its
                 // previously-saved state, the is still considered dirty.
-                buffer.edit(vec![1..3], "", Some(cx)).unwrap();
+                buffer.edit(vec![1..3], "", cx).unwrap();
                 assert!(buffer.text() == "ac");
-                assert!(buffer.is_dirty());
+                assert!(buffer.is_dirty(cx.as_ref()));
             });
 
             assert_eq!(*events.borrow(), &[Event::Edited]);
 
             // When a file is deleted, the buffer is considered dirty.
             let events = Rc::new(RefCell::new(Vec::new()));
-            let file2 = cx.update(|cx| tree.file("file2", cx)).await.unwrap();
+            let file2 = cx.update(|cx| tree.file("file2", cx));
             let buffer2 = cx.add_model(|cx: &mut ModelContext<Buffer>| {
                 cx.subscribe(&cx.handle(), {
                     let events = events.clone();
@@ -2758,7 +2768,9 @@ mod tests {
             });
 
             fs::remove_file(dir.path().join("file2")).unwrap();
-            buffer2.condition(&cx, |b, _| b.is_dirty()).await;
+            buffer2
+                .condition(&cx, |b, cx| b.is_dirty(cx.as_ref()))
+                .await;
             assert_eq!(
                 *events.borrow(),
                 &[Event::Dirtied, Event::FileHandleChanged]
@@ -2766,7 +2778,7 @@ mod tests {
 
             // When a file is already dirty when deleted, we don't emit a Dirtied event.
             let events = Rc::new(RefCell::new(Vec::new()));
-            let file3 = cx.update(|cx| tree.file("file3", cx)).await.unwrap();
+            let file3 = cx.update(|cx| tree.file("file3", cx));
             let buffer3 = cx.add_model(|cx: &mut ModelContext<Buffer>| {
                 cx.subscribe(&cx.handle(), {
                     let events = events.clone();
@@ -2778,7 +2790,7 @@ mod tests {
 
             tree.flush_fs_events(&cx).await;
             buffer3.update(&mut cx, |buffer, cx| {
-                buffer.edit(Some(0..0), "x", Some(cx)).unwrap();
+                buffer.edit(Some(0..0), "x", cx).unwrap();
             });
             events.borrow_mut().clear();
             fs::remove_file(dir.path().join("file3")).unwrap();
@@ -2786,7 +2798,7 @@ mod tests {
                 .condition(&cx, |_, _| !events.borrow().is_empty())
                 .await;
             assert_eq!(*events.borrow(), &[Event::FileHandleChanged]);
-            cx.read(|cx| assert!(buffer3.read(cx).is_dirty()));
+            cx.read(|cx| assert!(buffer3.read(cx).is_dirty(cx)));
         });
     }
 
@@ -2799,7 +2811,7 @@ mod tests {
             .await;
 
         let abs_path = dir.path().join("the-file");
-        let file = cx.update(|cx| tree.file("the-file", cx)).await.unwrap();
+        let file = cx.update(|cx| tree.file("the-file", cx));
         let buffer = cx.add_model(|cx| {
             Buffer::from_history(
                 0,
@@ -2812,7 +2824,7 @@ mod tests {
 
         // Add a cursor at the start of each row.
         let (selection_set_id, _) = buffer.update(&mut cx, |buffer, cx| {
-            assert!(!buffer.is_dirty());
+            assert!(!buffer.is_dirty(cx.as_ref()));
             buffer.add_selection_set(
                 (0..3)
                     .map(|row| {
@@ -2826,15 +2838,15 @@ mod tests {
                         }
                     })
                     .collect::<Vec<_>>(),
-                Some(cx),
+                cx,
             )
         });
 
         // Change the file on disk, adding two new lines of text, and removing
         // one line.
-        buffer.read_with(&cx, |buffer, _| {
-            assert!(!buffer.is_dirty());
-            assert!(!buffer.has_conflict());
+        buffer.read_with(&cx, |buffer, cx| {
+            assert!(!buffer.is_dirty(cx.as_ref()));
+            assert!(!buffer.has_conflict(cx.as_ref()));
         });
         let new_contents = "AAAA\naaa\nBB\nbbbbb\n";
         fs::write(&abs_path, new_contents).unwrap();
@@ -2846,10 +2858,10 @@ mod tests {
             .condition(&cx, |buffer, _| buffer.text() != initial_contents)
             .await;
 
-        buffer.update(&mut cx, |buffer, _| {
+        buffer.update(&mut cx, |buffer, cx| {
             assert_eq!(buffer.text(), new_contents);
-            assert!(!buffer.is_dirty());
-            assert!(!buffer.has_conflict());
+            assert!(!buffer.is_dirty(cx.as_ref()));
+            assert!(!buffer.has_conflict(cx.as_ref()));
 
             let selections = buffer.selections(selection_set_id).unwrap();
             let cursor_positions = selections
@@ -2867,8 +2879,8 @@ mod tests {
 
         // Modify the buffer
         buffer.update(&mut cx, |buffer, cx| {
-            buffer.edit(vec![0..0], " ", Some(cx)).unwrap();
-            assert!(buffer.is_dirty());
+            buffer.edit(vec![0..0], " ", cx).unwrap();
+            assert!(buffer.is_dirty(cx.as_ref()));
         });
 
         // Change the file on disk again, adding blank lines to the beginning.
@@ -2877,7 +2889,7 @@ mod tests {
         // Becaues the buffer is modified, it doesn't reload from disk, but is
         // marked as having a conflict.
         buffer
-            .condition(&cx, |buffer, _| buffer.has_conflict())
+            .condition(&cx, |buffer, cx| buffer.has_conflict(cx.as_ref()))
             .await;
     }
 
@@ -2902,9 +2914,9 @@ mod tests {
         cx.add_model(|cx| {
             let mut buffer = Buffer::new(0, "1234", cx);
 
-            let edit1 = buffer.edit(vec![1..1], "abx", None).unwrap();
-            let edit2 = buffer.edit(vec![3..4], "yzef", None).unwrap();
-            let edit3 = buffer.edit(vec![3..5], "cd", None).unwrap();
+            let edit1 = buffer.edit(vec![1..1], "abx", cx).unwrap();
+            let edit2 = buffer.edit(vec![3..4], "yzef", cx).unwrap();
+            let edit3 = buffer.edit(vec![3..5], "cd", cx).unwrap();
             assert_eq!(buffer.text(), "1abcdef234");
 
             buffer.undo_or_redo(edit1.edit_id().unwrap()).unwrap();
@@ -2939,60 +2951,60 @@ mod tests {
             let mut buffer = Buffer::new(0, "123456", cx);
 
             let (set_id, _) =
-                buffer.add_selection_set(buffer.selections_from_ranges(vec![4..4]).unwrap(), None);
-            buffer.start_transaction_at(Some(set_id), now).unwrap();
-            buffer.edit(vec![2..4], "cd", None).unwrap();
-            buffer.end_transaction_at(Some(set_id), now, None).unwrap();
+                buffer.add_selection_set(buffer.selections_from_ranges(vec![4..4]).unwrap(), cx);
+            buffer.start_transaction_at(Some(set_id), now, cx).unwrap();
+            buffer.edit(vec![2..4], "cd", cx).unwrap();
+            buffer.end_transaction_at(Some(set_id), now, cx).unwrap();
             assert_eq!(buffer.text(), "12cd56");
             assert_eq!(buffer.selection_ranges(set_id).unwrap(), vec![4..4]);
 
-            buffer.start_transaction_at(Some(set_id), now).unwrap();
+            buffer.start_transaction_at(Some(set_id), now, cx).unwrap();
             buffer
                 .update_selection_set(
                     set_id,
                     buffer.selections_from_ranges(vec![1..3]).unwrap(),
-                    None,
+                    cx,
                 )
                 .unwrap();
-            buffer.edit(vec![4..5], "e", None).unwrap();
-            buffer.end_transaction_at(Some(set_id), now, None).unwrap();
+            buffer.edit(vec![4..5], "e", cx).unwrap();
+            buffer.end_transaction_at(Some(set_id), now, cx).unwrap();
             assert_eq!(buffer.text(), "12cde6");
             assert_eq!(buffer.selection_ranges(set_id).unwrap(), vec![1..3]);
 
             now += UNDO_GROUP_INTERVAL + Duration::from_millis(1);
-            buffer.start_transaction_at(Some(set_id), now).unwrap();
+            buffer.start_transaction_at(Some(set_id), now, cx).unwrap();
             buffer
                 .update_selection_set(
                     set_id,
                     buffer.selections_from_ranges(vec![2..2]).unwrap(),
-                    None,
+                    cx,
                 )
                 .unwrap();
-            buffer.edit(vec![0..1], "a", None).unwrap();
-            buffer.edit(vec![1..1], "b", None).unwrap();
-            buffer.end_transaction_at(Some(set_id), now, None).unwrap();
+            buffer.edit(vec![0..1], "a", cx).unwrap();
+            buffer.edit(vec![1..1], "b", cx).unwrap();
+            buffer.end_transaction_at(Some(set_id), now, cx).unwrap();
             assert_eq!(buffer.text(), "ab2cde6");
             assert_eq!(buffer.selection_ranges(set_id).unwrap(), vec![3..3]);
 
             // Last transaction happened past the group interval, undo it on its
             // own.
-            buffer.undo(None);
+            buffer.undo(cx);
             assert_eq!(buffer.text(), "12cde6");
             assert_eq!(buffer.selection_ranges(set_id).unwrap(), vec![1..3]);
 
             // First two transactions happened within the group interval, undo them
             // together.
-            buffer.undo(None);
+            buffer.undo(cx);
             assert_eq!(buffer.text(), "123456");
             assert_eq!(buffer.selection_ranges(set_id).unwrap(), vec![4..4]);
 
             // Redo the first two transactions together.
-            buffer.redo(None);
+            buffer.redo(cx);
             assert_eq!(buffer.text(), "12cde6");
             assert_eq!(buffer.selection_ranges(set_id).unwrap(), vec![1..3]);
 
             // Redo the last transaction on its own.
-            buffer.redo(None);
+            buffer.redo(cx);
             assert_eq!(buffer.text(), "ab2cde6");
             assert_eq!(buffer.selection_ranges(set_id).unwrap(), vec![3..3]);
 
@@ -3009,17 +3021,17 @@ mod tests {
         let buffer3 = cx.add_model(|cx| Buffer::new(3, text, cx));
 
         let buf1_op = buffer1.update(cx, |buffer, cx| {
-            let op = buffer.edit(vec![1..2], "12", Some(cx)).unwrap();
+            let op = buffer.edit(vec![1..2], "12", cx).unwrap();
             assert_eq!(buffer.text(), "a12cdef");
             op
         });
         let buf2_op = buffer2.update(cx, |buffer, cx| {
-            let op = buffer.edit(vec![3..4], "34", Some(cx)).unwrap();
+            let op = buffer.edit(vec![3..4], "34", cx).unwrap();
             assert_eq!(buffer.text(), "abc34ef");
             op
         });
         let buf3_op = buffer3.update(cx, |buffer, cx| {
-            let op = buffer.edit(vec![5..6], "56", Some(cx)).unwrap();
+            let op = buffer.edit(vec![5..6], "56", cx).unwrap();
             assert_eq!(buffer.text(), "abcde56");
             op
         });
@@ -3082,9 +3094,9 @@ mod tests {
             loop {
                 let replica_index = rng.gen_range(0..peers);
                 let replica_id = replica_ids[replica_index];
-                buffers[replica_index].update(cx, |buffer, _| match rng.gen_range(0..=100) {
+                buffers[replica_index].update(cx, |buffer, cx| match rng.gen_range(0..=100) {
                     0..=50 if mutation_count != 0 => {
-                        let (_, _, ops) = buffer.randomly_mutate(&mut rng, None);
+                        let (_, _, ops) = buffer.randomly_mutate(&mut rng, cx);
                         log::info!("buffer {} text: {:?}", buffer.replica_id, buffer.text());
                         network.broadcast(replica_id, ops, &mut rng);
                         mutation_count -= 1;
@@ -3102,7 +3114,7 @@ mod tests {
                                 replica_id,
                                 ops.len()
                             );
-                            buffer.apply_ops(ops, None).unwrap();
+                            buffer.apply_ops(ops, cx).unwrap();
                         }
                     }
                     _ => {}
@@ -3166,17 +3178,17 @@ mod tests {
         // Perform some edits (add parameter and variable reference)
         // Parsing doesn't begin until the transaction is complete
         buffer.update(&mut cx, |buf, cx| {
-            buf.start_transaction(None).unwrap();
+            buf.start_transaction(None, cx).unwrap();
 
             let offset = buf.text().find(")").unwrap();
-            buf.edit(vec![offset..offset], "b: C", Some(cx)).unwrap();
+            buf.edit(vec![offset..offset], "b: C", cx).unwrap();
             assert!(!buf.is_parsing());
 
             let offset = buf.text().find("}").unwrap();
-            buf.edit(vec![offset..offset], " d; ", Some(cx)).unwrap();
+            buf.edit(vec![offset..offset], " d; ", cx).unwrap();
             assert!(!buf.is_parsing());
 
-            buf.end_transaction(None, Some(cx)).unwrap();
+            buf.end_transaction(None, cx).unwrap();
             assert_eq!(buf.text(), "fn a(b: C) { d; }");
             assert!(buf.is_parsing());
         });
@@ -3198,19 +3210,19 @@ mod tests {
         // * add a turbofish to the method call
         buffer.update(&mut cx, |buf, cx| {
             let offset = buf.text().find(";").unwrap();
-            buf.edit(vec![offset..offset], ".e", Some(cx)).unwrap();
+            buf.edit(vec![offset..offset], ".e", cx).unwrap();
             assert_eq!(buf.text(), "fn a(b: C) { d.e; }");
             assert!(buf.is_parsing());
         });
         buffer.update(&mut cx, |buf, cx| {
             let offset = buf.text().find(";").unwrap();
-            buf.edit(vec![offset..offset], "(f)", Some(cx)).unwrap();
+            buf.edit(vec![offset..offset], "(f)", cx).unwrap();
             assert_eq!(buf.text(), "fn a(b: C) { d.e(f); }");
             assert!(buf.is_parsing());
         });
         buffer.update(&mut cx, |buf, cx| {
             let offset = buf.text().find("(f)").unwrap();
-            buf.edit(vec![offset..offset], "::<G>", Some(cx)).unwrap();
+            buf.edit(vec![offset..offset], "::<G>", cx).unwrap();
             assert_eq!(buf.text(), "fn a(b: C) { d.e::<G>(f); }");
             assert!(buf.is_parsing());
         });
@@ -3231,7 +3243,7 @@ mod tests {
         );
 
         buffer.update(&mut cx, |buf, cx| {
-            buf.undo(Some(cx));
+            buf.undo(cx);
             assert_eq!(buf.text(), "fn a() {}");
             assert!(buf.is_parsing());
         });
@@ -3248,7 +3260,7 @@ mod tests {
         );
 
         buffer.update(&mut cx, |buf, cx| {
-            buf.redo(Some(cx));
+            buf.redo(cx);
             assert_eq!(buf.text(), "fn a(b: C) { d.e::<G>(f); }");
             assert!(buf.is_parsing());
         });
@@ -3334,7 +3346,7 @@ mod tests {
             &mut self,
             rng: &mut T,
             old_range_count: usize,
-            cx: Option<&mut ModelContext<Self>>,
+            cx: &mut ModelContext<Self>,
         ) -> (Vec<Range<usize>>, String, Option<Operation>)
         where
             T: Rng,
@@ -3362,12 +3374,12 @@ mod tests {
         pub fn randomly_mutate<T>(
             &mut self,
             rng: &mut T,
-            mut cx: Option<&mut ModelContext<Self>>,
+            cx: &mut ModelContext<Self>,
         ) -> (Vec<Range<usize>>, String, Vec<Operation>)
         where
             T: Rng,
         {
-            let (old_ranges, new_text, operation) = self.randomly_edit(rng, 5, cx.as_deref_mut());
+            let (old_ranges, new_text, operation) = self.randomly_edit(rng, 5, cx);
             let mut operations = Vec::from_iter(operation);
 
             // Randomly add, remove or mutate selection sets.
@@ -3378,7 +3390,7 @@ mod tests {
                 .collect::<Vec<_>>();
             let set_id = replica_selection_sets.choose(rng);
             if set_id.is_some() && rng.gen_bool(1.0 / 6.0) {
-                let op = self.remove_selection_set(*set_id.unwrap(), None).unwrap();
+                let op = self.remove_selection_set(*set_id.unwrap(), cx).unwrap();
                 operations.push(op);
             } else {
                 let mut ranges = Vec::new();
@@ -3388,9 +3400,9 @@ mod tests {
                 let new_selections = self.selections_from_ranges(ranges).unwrap();
 
                 let op = if set_id.is_none() || rng.gen_bool(1.0 / 5.0) {
-                    self.add_selection_set(new_selections, None).1
+                    self.add_selection_set(new_selections, cx).1
                 } else {
-                    self.update_selection_set(*set_id.unwrap(), new_selections, None)
+                    self.update_selection_set(*set_id.unwrap(), new_selections, cx)
                         .unwrap()
                 };
                 operations.push(op);

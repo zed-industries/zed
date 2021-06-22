@@ -475,7 +475,7 @@ mod tests {
                         Point::new(2, 1)..Point::new(2, 1),
                     ],
                     "\t",
-                    Some(cx),
+                    cx,
                 )
             })
             .unwrap();

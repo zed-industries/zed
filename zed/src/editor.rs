@@ -7,7 +7,7 @@ use crate::{
     settings::{Settings, StyleId},
     util::{post_inc, Bias},
     workspace,
-    worktree::FileHandle,
+    worktree::File,
 };
 use anyhow::Result;
 pub use buffer::*;
@@ -422,7 +422,7 @@ impl Editor {
                     reversed: false,
                     goal: SelectionGoal::None,
                 }],
-                Some(cx),
+                cx,
             )
         });
         Self {
@@ -723,7 +723,7 @@ impl Editor {
         let mut new_selections = Vec::new();
         self.buffer.update(cx, |buffer, cx| {
             let edit_ranges = old_selections.iter().map(|(_, range)| range.clone());
-            buffer.edit(edit_ranges, text.as_str(), Some(cx));
+            buffer.edit(edit_ranges, text.as_str(), cx);
             let text_len = text.len() as isize;
             let mut delta = 0_isize;
             new_selections = old_selections
@@ -886,7 +886,7 @@ impl Editor {
             })
             .collect();
         self.buffer
-            .update(cx, |buffer, cx| buffer.edit(edit_ranges, "", Some(cx)))
+            .update(cx, |buffer, cx| buffer.edit(edit_ranges, "", cx))
             .unwrap();
         self.update_selections(new_selections, true, cx);
         self.end_transaction(cx);
@@ -939,7 +939,7 @@ impl Editor {
 
         self.buffer.update(cx, |buffer, cx| {
             for (offset, text) in edits.into_iter().rev() {
-                buffer.edit(Some(offset..offset), text, Some(cx)).unwrap();
+                buffer.edit(Some(offset..offset), text, cx).unwrap();
             }
         });
 
@@ -1029,7 +1029,7 @@ impl Editor {
         self.unfold_ranges(old_folds, cx);
         self.buffer.update(cx, |buffer, cx| {
             for (range, text) in edits.into_iter().rev() {
-                buffer.edit(Some(range), text, Some(cx)).unwrap();
+                buffer.edit(Some(range), text, cx).unwrap();
             }
         });
         self.fold_ranges(new_folds, cx);
@@ -1117,7 +1117,7 @@ impl Editor {
         self.unfold_ranges(old_folds, cx);
         self.buffer.update(cx, |buffer, cx| {
             for (range, text) in edits.into_iter().rev() {
-                buffer.edit(Some(range), text, Some(cx)).unwrap();
+                buffer.edit(Some(range), text, cx).unwrap();
             }
         });
         self.fold_ranges(new_folds, cx);
@@ -1227,11 +1227,11 @@ impl Editor {
                         if selection_start == selection_end && clipboard_selection.is_entire_line {
                             let line_start = Point::new(selection_start.row, 0);
                             buffer
-                                .edit(Some(line_start..line_start), to_insert, Some(cx))
+                                .edit(Some(line_start..line_start), to_insert, cx)
                                 .unwrap();
                         } else {
                             buffer
-                                .edit(Some(&selection.start..&selection.end), to_insert, Some(cx))
+                                .edit(Some(&selection.start..&selection.end), to_insert, cx)
                                 .unwrap();
                         };
 
@@ -1254,11 +1254,11 @@ impl Editor {
     }
 
     pub fn undo(&mut self, _: &(), cx: &mut ViewContext<Self>) {
-        self.buffer.update(cx, |buffer, cx| buffer.undo(Some(cx)));
+        self.buffer.update(cx, |buffer, cx| buffer.undo(cx));
     }
 
     pub fn redo(&mut self, _: &(), cx: &mut ViewContext<Self>) {
-        self.buffer.update(cx, |buffer, cx| buffer.redo(Some(cx)));
+        self.buffer.update(cx, |buffer, cx| buffer.redo(cx));
     }
 
     pub fn move_left(&mut self, _: &(), cx: &mut ViewContext<Self>) {
@@ -1997,7 +1997,7 @@ impl Editor {
 
         self.buffer.update(cx, |buffer, cx| {
             buffer
-                .update_selection_set(self.selection_set_id, selections, Some(cx))
+                .update_selection_set(self.selection_set_id, selections, cx)
                 .unwrap()
         });
         self.pause_cursor_blinking(cx);
@@ -2012,9 +2012,9 @@ impl Editor {
     }
 
     fn start_transaction(&self, cx: &mut ViewContext<Self>) {
-        self.buffer.update(cx, |buffer, _| {
+        self.buffer.update(cx, |buffer, cx| {
             buffer
-                .start_transaction(Some(self.selection_set_id))
+                .start_transaction(Some(self.selection_set_id), cx)
                 .unwrap()
         });
     }
@@ -2022,7 +2022,7 @@ impl Editor {
     fn end_transaction(&self, cx: &mut ViewContext<Self>) {
         self.buffer.update(cx, |buffer, cx| {
             buffer
-                .end_transaction(Some(self.selection_set_id), Some(cx))
+                .end_transaction(Some(self.selection_set_id), cx)
                 .unwrap()
         });
     }
@@ -2444,7 +2444,7 @@ impl View for Editor {
 impl workspace::Item for Buffer {
     type View = Editor;
 
-    fn file(&self) -> Option<&FileHandle> {
+    fn file(&self) -> Option<&ModelHandle<File>> {
         self.file()
     }
 
@@ -2474,7 +2474,7 @@ impl workspace::ItemView for Editor {
             .buffer
             .read(cx)
             .file()
-            .and_then(|file| file.file_name(cx));
+            .and_then(|file| file.read(cx).file_name(cx));
         if let Some(name) = filename {
             name.to_string_lossy().into()
         } else {
@@ -2483,7 +2483,10 @@ impl workspace::ItemView for Editor {
     }
 
     fn entry_id(&self, cx: &AppContext) -> Option<(usize, Arc<Path>)> {
-        self.buffer.read(cx).file().map(|file| file.entry_id())
+        self.buffer
+            .read(cx)
+            .file()
+            .map(|file| file.read(cx).entry_id())
     }
 
     fn clone_on_split(&self, cx: &mut ViewContext<Self>) -> Option<Self>
@@ -2497,18 +2500,18 @@ impl workspace::ItemView for Editor {
 
     fn save(
         &mut self,
-        new_file: Option<FileHandle>,
+        new_file: Option<ModelHandle<File>>,
         cx: &mut ViewContext<Self>,
     ) -> Task<Result<()>> {
         self.buffer.update(cx, |b, cx| b.save(new_file, cx))
     }
 
     fn is_dirty(&self, cx: &AppContext) -> bool {
-        self.buffer.read(cx).is_dirty()
+        self.buffer.read(cx).is_dirty(cx)
     }
 
     fn has_conflict(&self, cx: &AppContext) -> bool {
-        self.buffer.read(cx).has_conflict()
+        self.buffer.read(cx).has_conflict(cx)
     }
 }
 
@@ -2819,7 +2822,7 @@ mod tests {
                         Point::new(1, 1)..Point::new(1, 1),
                     ],
                     "\t",
-                    Some(cx),
+                    cx,
                 )
                 .unwrap();
         });

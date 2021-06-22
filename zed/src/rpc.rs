@@ -1,4 +1,4 @@
-use crate::worktree::{FileHandle, Worktree};
+use crate::worktree::{File, Worktree};
 
 use super::util::SurfResultExt as _;
 use anyhow::{anyhow, Context, Result};
@@ -32,7 +32,7 @@ pub struct Client {
 pub struct ClientState {
     connection_id: Option<ConnectionId>,
     pub shared_worktrees: HashMap<u64, ModelHandle<Worktree>>,
-    pub shared_files: HashMap<FileHandle, HashMap<PeerId, usize>>,
+    pub shared_files: HashMap<File, HashMap<PeerId, usize>>,
 }
 
 impl Client {
