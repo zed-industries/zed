@@ -6,13 +6,13 @@ use self::{char_bag::CharBag, ignore::IgnoreStack};
 use crate::{
     editor::{Buffer, History, Rope},
     language::LanguageRegistry,
-    rpc::{self, proto, ConnectionId, PeerId},
+    rpc::{self, proto, ConnectionId},
     sum_tree::{self, Cursor, Edit, SumTree},
     time::ReplicaId,
     util::Bias,
 };
 use ::ignore::gitignore::Gitignore;
-use anyhow::{Context, Result};
+use anyhow::{anyhow, Context, Result};
 pub use fuzzy::{match_paths, PathMatch};
 use gpui::{
     scoped_pool, AppContext, Entity, ModelContext, ModelHandle, MutableAppContext, Task,
@@ -107,12 +107,12 @@ impl Worktree {
 
     pub fn open_buffer(
         &mut self,
-        path: &Path,
+        path: impl AsRef<Path>,
         language_registry: Arc<LanguageRegistry>,
         cx: &mut ModelContext<Self>,
-    ) -> Task<Result<ModelHandle<Buffer>>> {
+    ) -> impl Future<Output = Result<ModelHandle<Buffer>>> + 'static {
         match self {
-            Worktree::Local(worktree) => worktree.open_buffer(path, language_registry, cx),
+            Worktree::Local(worktree) => worktree.open_buffer(path.as_ref(), language_registry, cx),
             Worktree::Remote(_) => todo!(),
         }
     }
@@ -121,7 +121,7 @@ impl Worktree {
         &self,
         path: &Path,
         content: Rope,
-        cx: &AppContext,
+        cx: &mut ModelContext<Self>,
     ) -> impl Future<Output = Result<()>> {
         match self {
             Worktree::Local(worktree) => worktree.save(path, content, cx),
@@ -161,6 +161,7 @@ impl LocalWorktree {
             scan_id: 0,
             abs_path,
             root_name: Default::default(),
+            root_char_bag: Default::default(),
             ignores: Default::default(),
             entries: Default::default(),
         };
@@ -219,7 +220,7 @@ impl LocalWorktree {
         path: &Path,
         language_registry: Arc<LanguageRegistry>,
         cx: &mut ModelContext<Worktree>,
-    ) -> Task<Result<ModelHandle<Buffer>>> {
+    ) -> impl Future<Output = Result<ModelHandle<Buffer>>> + 'static {
         let handle = cx.handle();
 
         // If there is already a buffer for the given path, then return it.
@@ -227,7 +228,6 @@ impl LocalWorktree {
         self.open_buffers.retain(|buffer| {
             if let Some(buffer) = buffer.upgrade(cx.as_ref()) {
                 if let Some(file) = buffer.read(cx.as_ref()).file() {
-                    let file = file.read(cx.as_ref());
                     if file.worktree_id() == handle.id() && file.path.as_ref() == path {
                         existing_buffer = Some(buffer);
                     }
@@ -238,21 +238,32 @@ impl LocalWorktree {
             }
         });
 
-        let path = Arc::from(path);
-        let contents = self.load(&path, cx.as_ref());
-        cx.spawn(|this, mut cx| async move {
-            let contents = contents.await?;
-            let language = language_registry.select_language(&path).cloned();
-            let file = cx.add_model(|cx| File::new(handle, path.into(), cx));
-            let buffer = cx.add_model(|cx| {
-                Buffer::from_history(0, History::new(contents.into()), Some(file), language, cx)
-            });
-            this.update(&mut cx, |this, _| {
-                let this = this.as_local_mut().unwrap();
-                this.open_buffers.insert(buffer.downgrade());
-            });
-            Ok(buffer)
-        })
+        let mut new_buffer = None;
+        if existing_buffer.is_none() {
+            let path = Arc::from(path);
+            let contents = self.load(&path, cx.as_ref());
+            new_buffer = Some(cx.spawn(|this, mut cx| async move {
+                let contents = contents.await?;
+                let language = language_registry.select_language(&path).cloned();
+                let file = File::new(handle, path.into());
+                let buffer = cx.add_model(|cx| {
+                    Buffer::from_history(0, History::new(contents.into()), Some(file), language, cx)
+                });
+                this.update(&mut cx, |this, _| {
+                    let this = this.as_local_mut().unwrap();
+                    this.open_buffers.insert(buffer.downgrade());
+                });
+                Ok(buffer)
+            }));
+        }
+
+        async move {
+            if let Some(existing_buffer) = existing_buffer {
+                Ok(existing_buffer)
+            } else {
+                new_buffer.unwrap().await
+            }
+        }
     }
 
     pub fn scan_complete(&self) -> impl Future<Output = ()> {
@@ -274,53 +285,57 @@ impl LocalWorktree {
 
         self.scan_state.0.blocking_send(scan_state).ok();
         self.poll_snapshot(cx);
-
         if let Some(diff) = diff {
-            let handle = cx.handle();
-            self.open_buffers.retain(|buffer| {
-                if let Some(buffer) = buffer.upgrade(cx.as_ref()) {
-                    buffer.update(cx, |buffer, cx| {
-                        let handle = handle.clone();
-                        if let Some(file) = buffer.file() {
-                            let path = file.read(cx.as_ref()).path.clone();
-                            if diff.added.contains(&path) {
-                                cx.notify();
-                            }
-                            // Notify any buffers whose files were deleted.
-                            else if diff.removed.contains(&path) {
-                                buffer.file_was_deleted(cx);
-                            }
-                            // Notify any buffers whose files were modified.
-                            else if diff.modified.contains(&path) {
-                                cx.spawn(|buffer, mut cx| async move {
-                                    let new_contents = handle
-                                        .read_with(&cx, |this, cx| {
-                                            let this = this.as_local().unwrap();
-                                            this.load(&path, cx)
-                                        })
-                                        .await?;
-                                    let mtime = handle.read_with(&cx, |this, _| {
-                                        let this = this.as_local().unwrap();
-                                        this.entry_for_path(&path).map(|entry| entry.mtime)
-                                    });
-                                    if let Some(mtime) = mtime {
-                                        buffer.update(&mut cx, |buffer, cx| {
-                                            buffer.file_was_modified(new_contents, mtime, cx)
-                                        });
-                                    }
-                                    Result::<_, anyhow::Error>::Ok(())
-                                })
-                                .detach();
-                            }
-                        }
-                    });
-                    true
-                } else {
-                    false
-                }
-            });
-            cx.emit(diff);
+            self.observe_snapshot_diff(diff, cx);
         }
+    }
+
+    fn observe_snapshot_diff(&mut self, diff: Diff, cx: &mut ModelContext<Worktree>) {
+        let handle = cx.handle();
+        self.open_buffers.retain(|buffer| {
+            if let Some(buffer) = buffer.upgrade(cx.as_ref()) {
+                buffer.update(cx, |buffer, cx| {
+                    let handle = handle.clone();
+                    if let Some(file) = buffer.file() {
+                        let mut path = file.path.clone();
+                        if let Some(new_path) = diff.moved.get(&path) {
+                            buffer.file_was_moved(new_path.clone(), cx);
+                            path = new_path.clone();
+                        } else if diff.added.contains(&path) {
+                            buffer.file_was_added(cx);
+                        } else if diff.removed.contains(&path) {
+                            buffer.file_was_deleted(cx);
+                        }
+
+                        if diff.modified.contains(&path) {
+                            cx.spawn(|buffer, mut cx| async move {
+                                let new_contents = handle
+                                    .read_with(&cx, |this, cx| {
+                                        let this = this.as_local().unwrap();
+                                        this.load(&path, cx)
+                                    })
+                                    .await?;
+                                let mtime = handle.read_with(&cx, |this, _| {
+                                    let this = this.as_local().unwrap();
+                                    this.entry_for_path(&path).map(|entry| entry.mtime)
+                                });
+                                if let Some(mtime) = mtime {
+                                    buffer.update(&mut cx, |buffer, cx| {
+                                        buffer.file_was_modified(new_contents, mtime, cx)
+                                    });
+                                }
+                                Result::<_, anyhow::Error>::Ok(())
+                            })
+                            .detach();
+                        }
+                    }
+                });
+                true
+            } else {
+                false
+            }
+        });
+        cx.emit(diff);
     }
 
     fn poll_snapshot(&mut self, cx: &mut ModelContext<Worktree>) {
@@ -379,17 +394,48 @@ impl LocalWorktree {
         })
     }
 
-    pub fn save(&self, path: &Path, content: Rope, cx: &AppContext) -> Task<Result<()>> {
-        let path = path.to_path_buf();
+    pub fn save(
+        &self,
+        path: impl Into<Arc<Path>>,
+        content: Rope,
+        cx: &mut ModelContext<Worktree>,
+    ) -> Task<Result<()>> {
+        let path = path.into();
         let abs_path = self.absolutize(&path);
-        cx.background_executor().spawn(async move {
-            let buffer_size = content.summary().bytes.min(10 * 1024);
-            let file = fs::File::create(&abs_path)?;
-            let mut writer = io::BufWriter::with_capacity(buffer_size, &file);
-            for chunk in content.chunks() {
-                writer.write(chunk.as_bytes())?;
-            }
-            writer.flush()?;
+        let background_snapshot = self.background_snapshot.clone();
+        let save = {
+            let path = path.clone();
+            cx.background_executor().spawn(async move {
+                let buffer_size = content.summary().bytes.min(10 * 1024);
+                let file = fs::File::create(&abs_path)?;
+                let mut writer = io::BufWriter::with_capacity(buffer_size, &file);
+                for chunk in content.chunks() {
+                    writer.write(chunk.as_bytes())?;
+                }
+                writer.flush()?;
+
+                // Eagerly populate the snapshot with an updated entry for the saved file
+                let root_char_bag = background_snapshot.lock().root_char_bag;
+                let entry = fs_entry_for_path(root_char_bag, path, &abs_path)?
+                    .ok_or_else(|| anyhow!("could not read saved file metadata"))?;
+                let added = background_snapshot.lock().entries.replace(entry, &());
+
+                Ok::<bool, anyhow::Error>(added)
+            })
+        };
+
+        cx.spawn(|worktree, mut cx| async move {
+            let added = save.await?;
+            worktree.update(&mut cx, |worktree, cx| {
+                let worktree = worktree.as_local_mut().unwrap();
+                worktree.poll_snapshot(cx);
+                let mut diff = Diff::default();
+                if added {
+                    diff.added.insert(path.clone());
+                }
+                diff.modified.insert(path);
+                worktree.observe_snapshot_diff(diff, cx)
+            });
             Ok(())
         })
     }
@@ -512,6 +558,7 @@ impl RemoteWorktree {
             scan_id: 0,
             abs_path: Path::new("").into(),
             root_name: worktree.root_name,
+            root_char_bag,
             ignores: Default::default(),
             entries,
         };
@@ -531,6 +578,7 @@ pub struct Snapshot {
     scan_id: usize,
     abs_path: Arc<Path>,
     root_name: String,
+    root_char_bag: CharBag,
     ignores: HashMap<Arc<Path>, (Arc<Gitignore>, usize)>,
     entries: SumTree<Entry>,
 }
@@ -774,33 +822,20 @@ pub struct Diff {
 #[derive(Clone, PartialEq)]
 pub struct File {
     worktree: ModelHandle<Worktree>,
-    path: Arc<Path>,
-}
-
-impl Entity for File {
-    type Event = ();
+    pub path: Arc<Path>,
 }
 
 impl File {
-    pub fn new(
-        worktree: ModelHandle<Worktree>,
-        path: Arc<Path>,
-        cx: &mut ModelContext<Self>,
-    ) -> Self {
-        cx.subscribe(&worktree, Self::handle_worktree_update);
+    pub fn new(worktree: ModelHandle<Worktree>, path: Arc<Path>) -> Self {
         Self { worktree, path }
     }
 
-    fn handle_worktree_update(&mut self, diff: &Diff, cx: &mut ModelContext<Self>) {
-        if let Some(new_path) = diff.moved.get(&self.path) {
-            self.path = new_path.clone();
-            cx.notify();
-        } else if diff.added.contains(&self.path)
-            || diff.removed.contains(&self.path)
-            || diff.modified.contains(&self.path)
-        {
-            cx.notify();
-        }
+    pub fn saved_buffer(&self, buffer: ModelHandle<Buffer>, cx: &mut MutableAppContext) {
+        self.worktree.update(cx, |worktree, _| {
+            if let Worktree::Local(worktree) = worktree {
+                worktree.open_buffers.insert(buffer.downgrade());
+            }
+        })
     }
 
     /// Returns this file's path relative to the root of its worktree.
@@ -833,9 +868,13 @@ impl File {
             .map_or(UNIX_EPOCH, |entry| entry.mtime)
     }
 
-    pub fn save(&self, content: Rope, cx: &AppContext) -> impl Future<Output = Result<()>> {
-        let worktree = self.worktree.read(cx);
-        worktree.save(&self.path(), content, cx)
+    pub fn save(
+        &self,
+        content: Rope,
+        cx: &mut MutableAppContext,
+    ) -> impl Future<Output = Result<()>> {
+        self.worktree
+            .update(cx, |worktree, cx| worktree.save(&self.path(), content, cx))
     }
 
     pub fn worktree_id(&self) -> usize {
@@ -1024,13 +1063,11 @@ struct BackgroundScanner {
     snapshot: Arc<Mutex<Snapshot>>,
     notify: Sender<ScanState>,
     thread_pool: scoped_pool::Pool,
-    root_char_bag: CharBag,
 }
 
 impl BackgroundScanner {
     fn new(snapshot: Arc<Mutex<Snapshot>>, notify: Sender<ScanState>, worktree_id: usize) -> Self {
         Self {
-            root_char_bag: Default::default(),
             snapshot,
             notify,
             thread_pool: scoped_pool::Pool::new(16, format!("worktree-{}-scanner", worktree_id)),
@@ -1098,8 +1135,13 @@ impl BackgroundScanner {
         if is_dir {
             root_name.push('/');
         }
-        self.root_char_bag = root_name.chars().map(|c| c.to_ascii_lowercase()).collect();
-        self.snapshot.lock().root_name = root_name;
+
+        let root_char_bag = root_name.chars().map(|c| c.to_ascii_lowercase()).collect();
+        {
+            let mut snapshot = self.snapshot.lock();
+            snapshot.root_name = root_name;
+            snapshot.root_char_bag = root_char_bag;
+        }
 
         if is_dir {
             self.snapshot.lock().insert_entry(Entry {
@@ -1125,7 +1167,7 @@ impl BackgroundScanner {
                 for _ in 0..self.thread_pool.thread_count() {
                     pool.execute(|| {
                         while let Ok(job) = rx.recv() {
-                            if let Err(err) = self.scan_dir(&job) {
+                            if let Err(err) = self.scan_dir(root_char_bag, &job) {
                                 log::error!("error scanning {:?}: {}", job.abs_path, err);
                             }
                         }
@@ -1134,7 +1176,7 @@ impl BackgroundScanner {
             });
         } else {
             self.snapshot.lock().insert_entry(Entry {
-                kind: EntryKind::File(self.char_bag(&path)),
+                kind: EntryKind::File(char_bag_for_path(root_char_bag, &path)),
                 path,
                 inode,
                 mtime,
@@ -1146,7 +1188,7 @@ impl BackgroundScanner {
         Ok(())
     }
 
-    fn scan_dir(&self, job: &ScanJob) -> io::Result<()> {
+    fn scan_dir(&self, root_char_bag: CharBag, job: &ScanJob) -> io::Result<()> {
         let mut new_entries: Vec<Entry> = Vec::new();
         let mut new_jobs: Vec<ScanJob> = Vec::new();
         let mut ignore_stack = job.ignore_stack.clone();
@@ -1218,7 +1260,7 @@ impl BackgroundScanner {
             } else {
                 let is_ignored = ignore_stack.is_path_ignored(&child_path, false);
                 new_entries.push(Entry {
-                    kind: EntryKind::File(self.char_bag(&child_path)),
+                    kind: EntryKind::File(char_bag_for_path(root_char_bag, &child_path)),
                     path: child_path,
                     inode: child_inode,
                     mtime: child_mtime,
@@ -1247,6 +1289,7 @@ impl BackgroundScanner {
         } else {
             return false;
         };
+        let root_char_bag = snapshot.root_char_bag;
 
         events.sort_unstable_by(|a, b| a.path.cmp(&b.path));
         let mut abs_paths = events.into_iter().map(|e| e.path).peekable();
@@ -1271,7 +1314,7 @@ impl BackgroundScanner {
 
             snapshot.remove_path(&path);
 
-            match self.fs_entry_for_path(path.clone(), &abs_path) {
+            match fs_entry_for_path(snapshot.root_char_bag, path.clone(), &abs_path) {
                 Ok(Some(mut fs_entry)) => {
                     let is_dir = fs_entry.is_dir();
                     let ignore_stack = snapshot.ignore_stack_for_path(&path, is_dir);
@@ -1304,7 +1347,7 @@ impl BackgroundScanner {
             for _ in 0..self.thread_pool.thread_count() {
                 pool.execute(|| {
                     while let Ok(job) = scan_queue_rx.recv() {
-                        if let Err(err) = self.scan_dir(&job) {
+                        if let Err(err) = self.scan_dir(root_char_bag, &job) {
                             log::error!("error scanning {:?}: {}", job.abs_path, err);
                         }
                     }
@@ -1401,50 +1444,54 @@ impl BackgroundScanner {
         }
         self.snapshot.lock().entries.edit(edits, &());
     }
+}
 
-    fn fs_entry_for_path(&self, path: Arc<Path>, abs_path: &Path) -> Result<Option<Entry>> {
-        let metadata = match fs::metadata(&abs_path) {
-            Err(err) => {
-                return match (err.kind(), err.raw_os_error()) {
-                    (io::ErrorKind::NotFound, _) => Ok(None),
-                    (io::ErrorKind::Other, Some(libc::ENOTDIR)) => Ok(None),
-                    _ => Err(anyhow::Error::new(err)),
-                }
+fn fs_entry_for_path(
+    root_char_bag: CharBag,
+    path: Arc<Path>,
+    abs_path: &Path,
+) -> Result<Option<Entry>> {
+    let metadata = match fs::metadata(&abs_path) {
+        Err(err) => {
+            return match (err.kind(), err.raw_os_error()) {
+                (io::ErrorKind::NotFound, _) => Ok(None),
+                (io::ErrorKind::Other, Some(libc::ENOTDIR)) => Ok(None),
+                _ => Err(anyhow::Error::new(err)),
             }
-            Ok(metadata) => metadata,
-        };
-        let inode = metadata.ino();
-        let mtime = metadata.modified()?;
-        let is_symlink = fs::symlink_metadata(&abs_path)
-            .context("failed to read symlink metadata")?
-            .file_type()
-            .is_symlink();
+        }
+        Ok(metadata) => metadata,
+    };
+    let inode = metadata.ino();
+    let mtime = metadata.modified()?;
+    let is_symlink = fs::symlink_metadata(&abs_path)
+        .context("failed to read symlink metadata")?
+        .file_type()
+        .is_symlink();
 
-        let entry = Entry {
-            kind: if metadata.file_type().is_dir() {
-                EntryKind::PendingDir
-            } else {
-                EntryKind::File(self.char_bag(&path))
-            },
-            path,
-            inode,
-            mtime,
-            is_symlink,
-            is_ignored: false,
-        };
+    let entry = Entry {
+        kind: if metadata.file_type().is_dir() {
+            EntryKind::PendingDir
+        } else {
+            EntryKind::File(char_bag_for_path(root_char_bag, &path))
+        },
+        path: Arc::from(path),
+        inode,
+        mtime,
+        is_symlink,
+        is_ignored: false,
+    };
 
-        Ok(Some(entry))
-    }
+    Ok(Some(entry))
+}
 
-    fn char_bag(&self, path: &Path) -> CharBag {
-        let mut result = self.root_char_bag;
-        result.extend(
-            path.to_string_lossy()
-                .chars()
-                .map(|c| c.to_ascii_lowercase()),
-        );
-        result
-    }
+fn char_bag_for_path(root_char_bag: CharBag, path: &Path) -> CharBag {
+    let mut result = root_char_bag;
+    result.extend(
+        path.to_string_lossy()
+            .chars()
+            .map(|c| c.to_ascii_lowercase()),
+    );
+    result
 }
 
 struct ScanJob {
@@ -1461,7 +1508,7 @@ struct UpdateIgnoreStatusJob {
 }
 
 pub trait WorktreeHandle {
-    fn file(&self, path: impl AsRef<Path>, cx: &mut MutableAppContext) -> ModelHandle<File>;
+    fn file(&self, path: impl AsRef<Path>) -> File;
 
     #[cfg(test)]
     fn flush_fs_events<'a>(
@@ -1471,10 +1518,10 @@ pub trait WorktreeHandle {
 }
 
 impl WorktreeHandle for ModelHandle<Worktree> {
-    fn file(&self, path: impl AsRef<Path>, cx: &mut MutableAppContext) -> ModelHandle<File> {
+    fn file(&self, path: impl AsRef<Path>) -> File {
         let path = Arc::from(path.as_ref());
         let handle = self.clone();
-        cx.add_model(|cx| File::new(handle, path, cx))
+        File::new(handle, path)
     }
 
     // When the worktree's FS event stream sometimes delivers "redundant" events for FS changes that
@@ -1681,14 +1728,20 @@ mod tests {
         });
         assert_eq!(path.file_name().unwrap(), "file1");
 
+        let buffer = cx.add_model(|cx| Buffer::new(1, "a line of text.\n".repeat(10 * 1024), cx));
+
         tree.update(&mut cx, |tree, cx| {
-            let buffer =
-                cx.add_model(|cx| Buffer::new(1, "a line of text.\n".repeat(10 * 1024), cx));
             let text = buffer.read(cx).snapshot().text();
-            smol::block_on(tree.save(&path, text, cx.as_ref())).unwrap();
-            let new_contents = fs::read_to_string(dir.path().join(path)).unwrap();
-            assert_eq!(new_contents, buffer.read(cx).text());
-        });
+            tree.save(&path, text, cx)
+        })
+        .await
+        .unwrap();
+
+        let new_contents = fs::read_to_string(dir.path().join(path)).unwrap();
+        assert_eq!(
+            new_contents,
+            buffer.read_with(&cx, |buffer, _| buffer.text())
+        );
     }
 
     #[gpui::test]
@@ -1704,15 +1757,21 @@ mod tests {
         cx.read(|cx| assert_eq!(tree.read(cx).file_count(), 1));
 
         let buffer = cx.add_model(|cx| Buffer::new(1, "a line of text.\n".repeat(10 * 1024), cx));
-        let file = cx.update(|cx| tree.file("", cx));
+        let file = tree.file("");
 
-        file.read_with(&cx, |file, cx| {
+        cx.update(|cx| {
             assert_eq!(file.path().file_name(), None);
             let text = buffer.read(cx).snapshot().text();
-            smol::block_on(file.save(text, cx.as_ref())).unwrap();
-            let new_contents = fs::read_to_string(file_path).unwrap();
-            assert_eq!(new_contents, buffer.read(cx).text());
-        });
+            file.save(text, cx)
+        })
+        .await
+        .unwrap();
+
+        let new_contents = fs::read_to_string(file_path).unwrap();
+        assert_eq!(
+            new_contents,
+            buffer.read_with(&cx, |buffer, _| buffer.text())
+        );
     }
 
     #[gpui::test]
@@ -1731,23 +1790,31 @@ mod tests {
             }
         }));
 
+        let language_registry = Arc::new(LanguageRegistry::new());
+
         let tree = cx.add_model(|cx| Worktree::local(dir.path(), cx));
-        let file2 = cx.update(|cx| tree.file("a/file2", cx));
-        let file3 = cx.update(|cx| tree.file("a/file3", cx));
-        let file4 = cx.update(|cx| tree.file("b/c/file4", cx));
-        let file5 = cx.update(|cx| tree.file("b/c/file5", cx));
-        let non_existent_file = cx.update(|cx| tree.file("a/file_x", cx));
+
+        let mut buffer_for_path = |path: &'static str| {
+            let buffer = tree.update(&mut cx, |tree, cx| {
+                tree.open_buffer(path, language_registry.clone(), cx)
+            });
+            async move { buffer.await.unwrap() }
+        };
+
+        let buffer2 = buffer_for_path("a/file2").await;
+        let buffer3 = buffer_for_path("a/file3").await;
+        let buffer4 = buffer_for_path("b/c/file4").await;
+        let buffer5 = buffer_for_path("b/c/file5").await;
 
         // After scanning, the worktree knows which files exist and which don't.
         cx.read(|cx| tree.read(cx).as_local().unwrap().scan_complete())
             .await;
 
         cx.read(|cx| {
-            assert!(!file2.read(cx).is_deleted(cx));
-            assert!(!file3.read(cx).is_deleted(cx));
-            assert!(!file4.read(cx).is_deleted(cx));
-            assert!(!file5.read(cx).is_deleted(cx));
-            assert!(non_existent_file.read(cx).is_deleted(cx));
+            assert!(!buffer2.read(cx).is_dirty(cx));
+            assert!(!buffer3.read(cx).is_dirty(cx));
+            assert!(!buffer4.read(cx).is_dirty(cx));
+            assert!(!buffer5.read(cx).is_dirty(cx));
         });
 
         tree.flush_fs_events(&cx).await;
@@ -1774,14 +1841,27 @@ mod tests {
                 ]
             );
 
-            assert_eq!(file2.read(cx).path().as_ref(), Path::new("a/file2.new"));
-            assert_eq!(file3.read(cx).path().as_ref(), Path::new("d/file3"));
-            assert_eq!(file4.read(cx).path().as_ref(), Path::new("d/file4"));
-            assert_eq!(file5.read(cx).path().as_ref(), Path::new("b/c/file5"));
-            assert!(!file2.read(cx).is_deleted(cx));
-            assert!(!file3.read(cx).is_deleted(cx));
-            assert!(!file4.read(cx).is_deleted(cx));
-            assert!(file5.read(cx).is_deleted(cx));
+            assert_eq!(
+                buffer2.read(cx).file().unwrap().path().as_ref(),
+                Path::new("a/file2.new")
+            );
+            assert_eq!(
+                buffer3.read(cx).file().unwrap().path().as_ref(),
+                Path::new("d/file3")
+            );
+            assert_eq!(
+                buffer4.read(cx).file().unwrap().path().as_ref(),
+                Path::new("d/file4")
+            );
+            assert_eq!(
+                buffer5.read(cx).file().unwrap().path().as_ref(),
+                Path::new("b/c/file5")
+            );
+
+            assert!(!buffer2.read(cx).file().unwrap().is_deleted(cx));
+            assert!(!buffer3.read(cx).file().unwrap().is_deleted(cx));
+            assert!(!buffer4.read(cx).file().unwrap().is_deleted(cx));
+            assert!(buffer5.read(cx).file().unwrap().is_deleted(cx));
         });
     }
 
@@ -1833,6 +1913,7 @@ mod tests {
             entries: Default::default(),
             ignores: Default::default(),
             root_name: Default::default(),
+            root_char_bag: Default::default(),
         };
 
         snapshot.entries.edit(
@@ -1991,6 +2072,7 @@ mod tests {
                     entries: Default::default(),
                     ignores: Default::default(),
                     root_name: Default::default(),
+                    root_char_bag: Default::default(),
                 })),
                 notify_tx,
                 0,
@@ -2025,6 +2107,7 @@ mod tests {
                     entries: Default::default(),
                     ignores: Default::default(),
                     root_name: Default::default(),
+                    root_char_bag: Default::default(),
                 })),
                 notify_tx,
                 1,

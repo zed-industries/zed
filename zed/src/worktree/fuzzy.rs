@@ -619,6 +619,7 @@ mod tests {
                 ignores: Default::default(),
                 entries: Default::default(),
                 root_name: Default::default(),
+                root_char_bag: Default::default(),
             },
             false,
             path_entries.into_iter(),

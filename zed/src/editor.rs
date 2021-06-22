@@ -2444,7 +2444,7 @@ impl View for Editor {
 impl workspace::Item for Buffer {
     type View = Editor;
 
-    fn file(&self) -> Option<&ModelHandle<File>> {
+    fn file(&self) -> Option<&File> {
         self.file()
     }
 
@@ -2474,7 +2474,7 @@ impl workspace::ItemView for Editor {
             .buffer
             .read(cx)
             .file()
-            .and_then(|file| file.read(cx).file_name(cx));
+            .and_then(|file| file.file_name(cx));
         if let Some(name) = filename {
             name.to_string_lossy().into()
         } else {
@@ -2483,10 +2483,7 @@ impl workspace::ItemView for Editor {
     }
 
     fn entry_id(&self, cx: &AppContext) -> Option<(usize, Arc<Path>)> {
-        self.buffer
-            .read(cx)
-            .file()
-            .map(|file| file.read(cx).entry_id())
+        self.buffer.read(cx).file().map(|file| file.entry_id())
     }
 
     fn clone_on_split(&self, cx: &mut ViewContext<Self>) -> Option<Self>
@@ -2498,11 +2495,7 @@ impl workspace::ItemView for Editor {
         Some(clone)
     }
 
-    fn save(
-        &mut self,
-        new_file: Option<ModelHandle<File>>,
-        cx: &mut ViewContext<Self>,
-    ) -> Task<Result<()>> {
+    fn save(&mut self, new_file: Option<File>, cx: &mut ViewContext<Self>) -> Task<Result<()>> {
         self.buffer.update(cx, |b, cx| b.save(new_file, cx))
     }
 

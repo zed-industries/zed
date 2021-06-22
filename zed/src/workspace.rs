@@ -207,7 +207,7 @@ pub trait Item: Entity + Sized {
         cx: &mut ViewContext<Self::View>,
     ) -> Self::View;
 
-    fn file(&self) -> Option<&ModelHandle<File>>;
+    fn file(&self) -> Option<&File>;
 }
 
 pub trait ItemView: View {
@@ -225,11 +225,7 @@ pub trait ItemView: View {
     fn has_conflict(&self, _: &AppContext) -> bool {
         false
     }
-    fn save(
-        &mut self,
-        _: Option<ModelHandle<File>>,
-        _: &mut ViewContext<Self>,
-    ) -> Task<anyhow::Result<()>>;
+    fn save(&mut self, _: Option<File>, _: &mut ViewContext<Self>) -> Task<anyhow::Result<()>>;
     fn should_activate_item_on_event(_: &Self::Event) -> bool {
         false
     }
@@ -244,7 +240,7 @@ pub trait ItemHandle: Send + Sync {
 }
 
 pub trait WeakItemHandle: Send + Sync {
-    fn file<'a>(&'a self, cx: &'a AppContext) -> Option<&'a ModelHandle<File>>;
+    fn file<'a>(&'a self, cx: &'a AppContext) -> Option<&'a File>;
     fn add_view(
         &self,
         window_id: usize,
@@ -264,11 +260,7 @@ pub trait ItemViewHandle: Send + Sync {
     fn to_any(&self) -> AnyViewHandle;
     fn is_dirty(&self, cx: &AppContext) -> bool;
     fn has_conflict(&self, cx: &AppContext) -> bool;
-    fn save(
-        &self,
-        file: Option<ModelHandle<File>>,
-        cx: &mut MutableAppContext,
-    ) -> Task<anyhow::Result<()>>;
+    fn save(&self, file: Option<File>, cx: &mut MutableAppContext) -> Task<anyhow::Result<()>>;
 }
 
 impl<T: Item> ItemHandle for ModelHandle<T> {
@@ -282,7 +274,7 @@ impl<T: Item> ItemHandle for ModelHandle<T> {
 }
 
 impl<T: Item> WeakItemHandle for WeakModelHandle<T> {
-    fn file<'a>(&'a self, cx: &'a AppContext) -> Option<&'a ModelHandle<File>> {
+    fn file<'a>(&'a self, cx: &'a AppContext) -> Option<&'a File> {
         self.upgrade(cx).and_then(|h| h.read(cx).file())
     }
 
@@ -342,11 +334,7 @@ impl<T: ItemView> ItemViewHandle for ViewHandle<T> {
         })
     }
 
-    fn save(
-        &self,
-        file: Option<ModelHandle<File>>,
-        cx: &mut MutableAppContext,
-    ) -> Task<anyhow::Result<()>> {
+    fn save(&self, file: Option<File>, cx: &mut MutableAppContext) -> Task<anyhow::Result<()>> {
         self.update(cx, |item, cx| item.save(file, cx))
     }
 
@@ -481,9 +469,8 @@ impl Workspace {
                 let is_file = bg.spawn(async move { abs_path.is_file() });
                 cx.spawn(|this, mut cx| async move {
                     if is_file.await {
-                        return this.update(&mut cx, |this, cx| {
-                            this.open_entry(file.read(cx).entry_id(), cx)
-                        });
+                        return this
+                            .update(&mut cx, |this, cx| this.open_entry(file.entry_id(), cx));
                     } else {
                         None
                     }
@@ -499,18 +486,18 @@ impl Workspace {
         }
     }
 
-    fn file_for_path(&mut self, abs_path: &Path, cx: &mut ViewContext<Self>) -> ModelHandle<File> {
+    fn file_for_path(&mut self, abs_path: &Path, cx: &mut ViewContext<Self>) -> File {
         for tree in self.worktrees.iter() {
             if let Some(relative_path) = tree
                 .read(cx)
                 .as_local()
                 .and_then(|t| abs_path.strip_prefix(t.abs_path()).ok())
             {
-                return tree.file(relative_path, cx.as_mut());
+                return tree.file(relative_path);
             }
         }
         let worktree = self.add_worktree(&abs_path, cx);
-        worktree.file(Path::new(""), cx.as_mut())
+        worktree.file(Path::new(""))
     }
 
     pub fn add_worktree(
@@ -584,7 +571,7 @@ impl Workspace {
                 if view_for_existing_item.is_none()
                     && item
                         .file(cx.as_ref())
-                        .map_or(false, |file| file.read(cx).entry_id() == entry)
+                        .map_or(false, |file| file.entry_id() == entry)
                 {
                     view_for_existing_item = Some(
                         item.add_view(cx.window_id(), settings.clone(), cx.as_mut())

@@ -419,6 +419,22 @@ impl<T: KeyedItem> SumTree<T> {
         };
     }
 
+    pub fn replace(&mut self, item: T, cx: &<T::Summary as Summary>::Context) -> bool {
+        let mut replaced = false;
+        *self = {
+            let mut cursor = self.cursor::<T::Key, ()>();
+            let mut new_tree = cursor.slice(&item.key(), Bias::Left, cx);
+            if cursor.item().map_or(false, |item| item.key() == item.key()) {
+                cursor.next(cx);
+                replaced = true;
+            }
+            new_tree.push(item, cx);
+            new_tree.push_tree(cursor.suffix(cx), cx);
+            new_tree
+        };
+        replaced
+    }
+
     pub fn edit(
         &mut self,
         mut edits: Vec<Edit<T>>,

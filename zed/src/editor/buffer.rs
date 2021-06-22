@@ -22,7 +22,7 @@ use crate::{
     worktree::File,
 };
 use anyhow::{anyhow, Result};
-use gpui::{AppContext, Entity, ModelContext, ModelHandle, Task};
+use gpui::{AppContext, Entity, ModelContext, Task};
 use lazy_static::lazy_static;
 use std::{
     cell::RefCell,
@@ -30,6 +30,7 @@ use std::{
     hash::BuildHasher,
     iter::Iterator,
     ops::{Deref, DerefMut, Range},
+    path::Path,
     str,
     sync::Arc,
     time::{Duration, Instant, SystemTime, UNIX_EPOCH},
@@ -114,7 +115,7 @@ pub struct Buffer {
     last_edit: time::Local,
     undo_map: UndoMap,
     history: History,
-    file: Option<ModelHandle<File>>,
+    file: Option<File>,
     language: Option<Arc<Language>>,
     syntax_tree: Mutex<Option<SyntaxTree>>,
     is_parsing: bool,
@@ -420,7 +421,7 @@ impl Buffer {
     pub fn from_history(
         replica_id: ReplicaId,
         history: History,
-        file: Option<ModelHandle<File>>,
+        file: Option<File>,
         language: Option<Arc<Language>>,
         cx: &mut ModelContext<Self>,
     ) -> Self {
@@ -430,13 +431,13 @@ impl Buffer {
     fn build(
         replica_id: ReplicaId,
         history: History,
-        file: Option<ModelHandle<File>>,
+        file: Option<File>,
         language: Option<Arc<Language>>,
         cx: &mut ModelContext<Self>,
     ) -> Self {
         let saved_mtime;
         if let Some(file) = file.as_ref() {
-            saved_mtime = file.read(cx).mtime(cx.as_ref());
+            saved_mtime = file.mtime(cx.as_ref());
         } else {
             saved_mtime = UNIX_EPOCH;
         }
@@ -492,13 +493,13 @@ impl Buffer {
         }
     }
 
-    pub fn file(&self) -> Option<&ModelHandle<File>> {
+    pub fn file(&self) -> Option<&File> {
         self.file.as_ref()
     }
 
     pub fn save(
         &mut self,
-        new_file: Option<ModelHandle<File>>,
+        new_file: Option<File>,
         cx: &mut ModelContext<Self>,
     ) -> Task<Result<()>> {
         let text = self.visible_text.clone();
@@ -507,7 +508,7 @@ impl Buffer {
 
         cx.spawn(|handle, mut cx| async move {
             if let Some(file) = new_file.as_ref().or(file.as_ref()) {
-                let result = file.read_with(&cx, |file, cx| file.save(text, cx)).await;
+                let result = cx.update(|cx| file.save(text, cx)).await;
                 if result.is_ok() {
                     handle.update(&mut cx, |me, cx| me.did_save(version, new_file, cx));
                 }
@@ -521,21 +522,35 @@ impl Buffer {
     fn did_save(
         &mut self,
         version: time::Global,
-        file: Option<ModelHandle<File>>,
+        new_file: Option<File>,
         cx: &mut ModelContext<Self>,
     ) {
-        if file.is_some() {
-            self.file = file;
+        if let Some(new_file) = new_file {
+            let buffer = cx.handle();
+            new_file.saved_buffer(buffer, cx.as_mut());
+            self.file = Some(new_file);
         }
         if let Some(file) = &self.file {
-            self.saved_mtime = file.read(cx).mtime(cx.as_ref());
+            self.saved_mtime = file.mtime(cx.as_ref());
         }
         self.saved_version = version;
         cx.emit(Event::Saved);
     }
 
+    pub fn file_was_moved(&mut self, new_path: Arc<Path>, cx: &mut ModelContext<Self>) {
+        self.file.as_mut().unwrap().path = new_path;
+        cx.emit(Event::FileHandleChanged);
+    }
+
+    pub fn file_was_added(&mut self, cx: &mut ModelContext<Self>) {
+        cx.emit(Event::FileHandleChanged);
+    }
+
     pub fn file_was_deleted(&mut self, cx: &mut ModelContext<Self>) {
-        cx.emit(Event::Dirtied);
+        if self.version == self.saved_version {
+            cx.emit(Event::Dirtied);
+        }
+        cx.emit(Event::FileHandleChanged);
     }
 
     pub fn file_was_modified(
@@ -759,10 +774,7 @@ impl Buffer {
 
     pub fn is_dirty(&self, cx: &AppContext) -> bool {
         self.version > self.saved_version
-            || self
-                .file
-                .as_ref()
-                .map_or(false, |file| file.read(cx).is_deleted(cx))
+            || self.file.as_ref().map_or(false, |file| file.is_deleted(cx))
     }
 
     pub fn has_conflict(&self, cx: &AppContext) -> bool {
@@ -770,7 +782,7 @@ impl Buffer {
             && self
                 .file
                 .as_ref()
-                .map_or(false, |file| file.read(cx).mtime(cx) > self.saved_mtime)
+                .map_or(false, |file| file.mtime(cx) > self.saved_mtime)
     }
 
     pub fn version(&self) -> time::Global {
@@ -2208,6 +2220,7 @@ impl ToPoint for usize {
 mod tests {
     use super::*;
     use crate::{
+        language::LanguageRegistry,
         test::{build_app_state, temp_tree},
         util::RandomCharIter,
         worktree::{Worktree, WorktreeHandle},
@@ -2220,6 +2233,7 @@ mod tests {
         cmp::Ordering,
         env, fs,
         iter::FromIterator,
+        path::Path,
         rc::Rc,
         sync::atomic::{self, AtomicUsize},
     };
@@ -2676,20 +2690,24 @@ mod tests {
     #[test]
     fn test_is_dirty() {
         App::test_async((), |mut cx| async move {
+            let language_registry = Arc::new(LanguageRegistry::new());
+
             let dir = temp_tree(json!({
-                "file1": "",
-                "file2": "",
-                "file3": "",
+                "file1": "abc",
+                "file2": "def",
+                "file3": "ghi",
             }));
             let tree = cx.add_model(|cx| Worktree::local(dir.path(), cx));
             tree.flush_fs_events(&cx).await;
             cx.read(|cx| tree.read(cx).as_local().unwrap().scan_complete())
                 .await;
 
-            let file1 = cx.update(|cx| tree.file("file1", cx));
-            let buffer1 = cx.add_model(|cx| {
-                Buffer::from_history(0, History::new("abc".into()), Some(file1), None, cx)
-            });
+            let buffer1 = tree
+                .update(&mut cx, |tree, cx| {
+                    tree.open_buffer("file1", language_registry.clone(), cx)
+                })
+                .await
+                .unwrap();
             let events = Rc::new(RefCell::new(Vec::new()));
 
             // initially, the buffer isn't dirty.
@@ -2746,14 +2764,17 @@ mod tests {
 
             // When a file is deleted, the buffer is considered dirty.
             let events = Rc::new(RefCell::new(Vec::new()));
-            let file2 = cx.update(|cx| tree.file("file2", cx));
-            let buffer2 = cx.add_model(|cx: &mut ModelContext<Buffer>| {
-                cx.subscribe(&cx.handle(), {
+            let buffer2 = tree
+                .update(&mut cx, |tree, cx| {
+                    tree.open_buffer("file2", language_registry.clone(), cx)
+                })
+                .await
+                .unwrap();
+            buffer2.update(&mut cx, |_, cx| {
+                cx.subscribe(&buffer2, {
                     let events = events.clone();
                     move |_, event, _| events.borrow_mut().push(event.clone())
                 });
-
-                Buffer::from_history(0, History::new("abc".into()), Some(file2), None, cx)
             });
 
             fs::remove_file(dir.path().join("file2")).unwrap();
@@ -2767,14 +2788,17 @@ mod tests {
 
             // When a file is already dirty when deleted, we don't emit a Dirtied event.
             let events = Rc::new(RefCell::new(Vec::new()));
-            let file3 = cx.update(|cx| tree.file("file3", cx));
-            let buffer3 = cx.add_model(|cx: &mut ModelContext<Buffer>| {
-                cx.subscribe(&cx.handle(), {
+            let buffer3 = tree
+                .update(&mut cx, |tree, cx| {
+                    tree.open_buffer("file3", language_registry.clone(), cx)
+                })
+                .await
+                .unwrap();
+            buffer3.update(&mut cx, |_, cx| {
+                cx.subscribe(&buffer3, {
                     let events = events.clone();
                     move |_, event, _| events.borrow_mut().push(event.clone())
                 });
-
-                Buffer::from_history(0, History::new("abc".into()), Some(file3), None, cx)
             });
 
             tree.flush_fs_events(&cx).await;
@@ -2800,16 +2824,12 @@ mod tests {
             .await;
 
         let abs_path = dir.path().join("the-file");
-        let file = cx.update(|cx| tree.file("the-file", cx));
-        let buffer = cx.add_model(|cx| {
-            Buffer::from_history(
-                0,
-                History::new(initial_contents.into()),
-                Some(file),
-                None,
-                cx,
-            )
-        });
+        let buffer = tree
+            .update(&mut cx, |tree, cx| {
+                tree.open_buffer(Path::new("the-file"), Arc::new(LanguageRegistry::new()), cx)
+            })
+            .await
+            .unwrap();
 
         // Add a cursor at the start of each row.
         let (selection_set_id, _) = buffer.update(&mut cx, |buffer, cx| {
