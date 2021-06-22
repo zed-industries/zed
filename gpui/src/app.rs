@@ -2131,9 +2131,9 @@ impl<T: Entity> ModelHandle<T> {
         let cx = cx.weak_self.as_ref().unwrap().upgrade().unwrap();
         let handle = self.downgrade();
         let duration = if std::env::var("CI").is_ok() {
-            Duration::from_secs(2)
+            Duration::from_secs(5)
         } else {
-            Duration::from_millis(500)
+            Duration::from_secs(1)
         };
 
         async move {

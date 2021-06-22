@@ -95,8 +95,9 @@ message Entry {
     bool is_dir = 1;
     string path = 2;
     uint64 inode = 3;
-    bool is_symlink = 4;
-    bool is_ignored = 5;
+    Timestamp mtime = 4;
+    bool is_symlink = 5;
+    bool is_ignored = 6;
 }
 
 message Buffer {
@@ -120,4 +121,9 @@ message Operation {
         uint32 replica_id = 1;
         uint32 timestamp = 2;
     }
+}
+
+message Timestamp {
+    uint64 seconds = 1;
+    uint32 nanos = 2;
 }

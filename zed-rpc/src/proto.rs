@@ -1,6 +1,10 @@
 use futures::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt as _};
 use prost::Message;
-use std::{convert::TryInto, io};
+use std::{
+    convert::TryInto,
+    io,
+    time::{Duration, SystemTime, UNIX_EPOCH},
+};
 
 include!(concat!(env!("OUT_DIR"), "/zed.messages.rs"));
 
@@ -119,6 +123,24 @@ where
         self.buffer.resize(message_len, 0);
         self.byte_stream.read_exact(&mut self.buffer).await?;
         Ok(Envelope::decode(self.buffer.as_slice())?)
+    }
+}
+
+impl Into<SystemTime> for Timestamp {
+    fn into(self) -> SystemTime {
+        UNIX_EPOCH
+            .checked_add(Duration::new(self.seconds, self.nanos))
+            .unwrap()
+    }
+}
+
+impl From<SystemTime> for Timestamp {
+    fn from(time: SystemTime) -> Self {
+        let duration = time.duration_since(UNIX_EPOCH).unwrap();
+        Self {
+            seconds: duration.as_secs(),
+            nanos: duration.subsec_nanos(),
+        }
     }
 }
 
