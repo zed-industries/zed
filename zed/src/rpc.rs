@@ -11,11 +11,12 @@ use std::collections::HashMap;
 use std::time::Duration;
 use std::{convert::TryFrom, future::Future, sync::Arc};
 use surf::Url;
-use zed_rpc::proto::EnvelopedMessage;
-use zed_rpc::{proto::RequestMessage, rest, Peer, TypedEnvelope};
-use zed_rpc::{PeerId, Receipt};
+use zed_rpc::{
+    proto::{EnvelopedMessage, RequestMessage},
+    rest, Peer, Receipt, TypedEnvelope,
+};
 
-pub use zed_rpc::{proto, ConnectionId};
+pub use zed_rpc::{proto, ConnectionId, PeerId};
 
 lazy_static! {
     static ref ZED_SERVER_URL: String =

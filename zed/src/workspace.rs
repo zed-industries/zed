@@ -96,7 +96,6 @@ fn open_paths(params: &OpenParams, cx: &mut MutableAppContext) {
     // Add a new workspace if necessary
     cx.add_window(|cx| {
         let mut view = Workspace::new(
-            0,
             params.app_state.settings.clone(),
             params.app_state.language_registry.clone(),
             params.app_state.rpc.clone(),
@@ -394,7 +393,6 @@ pub struct Workspace {
     center: PaneGroup,
     panes: Vec<ViewHandle<Pane>>,
     active_pane: ViewHandle<Pane>,
-    replica_id: ReplicaId,
     worktrees: HashSet<ModelHandle<Worktree>>,
     items: Vec<Box<dyn WeakItemHandle>>,
     loading_items: HashMap<
@@ -405,7 +403,6 @@ pub struct Workspace {
 
 impl Workspace {
     pub fn new(
-        replica_id: ReplicaId,
         settings: watch::Receiver<Settings>,
         language_registry: Arc<LanguageRegistry>,
         rpc: rpc::Client,
@@ -426,7 +423,6 @@ impl Workspace {
             settings,
             language_registry,
             rpc,
-            replica_id,
             worktrees: Default::default(),
             items: Default::default(),
             loading_items: Default::default(),
@@ -557,7 +553,7 @@ impl Workspace {
     }
 
     pub fn open_new_file(&mut self, _: &(), cx: &mut ViewContext<Self>) {
-        let buffer = cx.add_model(|cx| Buffer::new(self.replica_id, "", cx));
+        let buffer = cx.add_model(|cx| Buffer::new(0, "", cx));
         let buffer_view =
             cx.add_view(|cx| Editor::for_buffer(buffer.clone(), self.settings.clone(), cx));
         self.items.push(ItemHandle::downgrade(&buffer));
@@ -615,32 +611,23 @@ impl Workspace {
             }
         };
 
-        let file = worktree.file(path.clone(), cx.as_mut());
         if let Entry::Vacant(entry) = self.loading_items.entry(entry.clone()) {
             let (mut tx, rx) = postage::watch::channel();
             entry.insert(rx);
-            let replica_id = self.replica_id;
             let language_registry = self.language_registry.clone();
 
             cx.as_mut()
                 .spawn(|mut cx| async move {
-                    let buffer = async move {
-                        let history = cx.read(|cx| file.read(cx).load_history(cx));
-                        let history = cx.background_executor().spawn(history).await?;
-                        let buffer = cx.add_model(|cx| {
-                            let language = language_registry.select_language(path);
-                            Buffer::from_history(
-                                replica_id,
-                                history,
-                                Some(file),
-                                language.cloned(),
-                                cx,
-                            )
-                        });
-                        Ok(Box::new(buffer) as Box<dyn ItemHandle>)
-                    }
-                    .await;
-                    *tx.borrow_mut() = Some(buffer.map_err(Arc::new));
+                    let buffer = worktree
+                        .update(&mut cx, |worktree, cx| {
+                            worktree.open_buffer(path.as_ref(), language_registry, cx)
+                        })
+                        .await;
+                    *tx.borrow_mut() = Some(
+                        buffer
+                            .map(|buffer| Box::new(buffer) as Box<dyn ItemHandle>)
+                            .map_err(Arc::new),
+                    );
                 })
                 .detach();
         }
@@ -809,11 +796,12 @@ impl Workspace {
             let worktree = open_worktree_response
                 .worktree
                 .ok_or_else(|| anyhow!("empty worktree"))?;
+            let replica_id = open_worktree_response.replica_id as ReplicaId;
 
             let worktree_id = worktree_id.try_into().unwrap();
             this.update(&mut cx, |workspace, cx| {
                 let worktree = cx.add_model(|cx| {
-                    Worktree::remote(worktree_id, worktree, rpc, connection_id, cx)
+                    Worktree::remote(worktree_id, worktree, rpc, connection_id, replica_id, cx)
                 });
                 cx.observe_model(&worktree, |_, _, cx| cx.notify());
                 workspace.worktrees.insert(worktree);
@@ -1047,7 +1035,6 @@ mod tests {
 
         let (_, workspace) = cx.add_window(|cx| {
             let mut workspace = Workspace::new(
-                0,
                 app_state.settings,
                 app_state.language_registry,
                 app_state.rpc,
@@ -1156,7 +1143,6 @@ mod tests {
         let app_state = cx.read(build_app_state);
         let (_, workspace) = cx.add_window(|cx| {
             let mut workspace = Workspace::new(
-                0,
                 app_state.settings,
                 app_state.language_registry,
                 app_state.rpc,
@@ -1230,7 +1216,6 @@ mod tests {
         let app_state = cx.read(build_app_state);
         let (window_id, workspace) = cx.add_window(|cx| {
             let mut workspace = Workspace::new(
-                0,
                 app_state.settings,
                 app_state.language_registry,
                 app_state.rpc,
@@ -1279,7 +1264,6 @@ mod tests {
         let app_state = cx.read(build_app_state);
         let (_, workspace) = cx.add_window(|cx| {
             let mut workspace = Workspace::new(
-                0,
                 app_state.settings,
                 app_state.language_registry,
                 app_state.rpc,
@@ -1385,7 +1369,6 @@ mod tests {
         let app_state = cx.read(build_app_state);
         let (window_id, workspace) = cx.add_window(|cx| {
             let mut workspace = Workspace::new(
-                0,
                 app_state.settings,
                 app_state.language_registry,
                 app_state.rpc,

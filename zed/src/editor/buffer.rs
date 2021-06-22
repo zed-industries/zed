@@ -32,7 +32,7 @@ use std::{
     ops::{Deref, DerefMut, Range},
     str,
     sync::Arc,
-    time::{Duration, Instant},
+    time::{Duration, Instant, SystemTime, UNIX_EPOCH},
 };
 
 const UNDO_GROUP_INTERVAL: Duration = Duration::from_millis(300);
@@ -110,7 +110,7 @@ pub struct Buffer {
     deleted_text: Rope,
     pub version: time::Global,
     saved_version: time::Global,
-    saved_mtime: Duration,
+    saved_mtime: SystemTime,
     last_edit: time::Local,
     undo_map: UndoMap,
     history: History,
@@ -438,7 +438,7 @@ impl Buffer {
         if let Some(file) = file.as_ref() {
             saved_mtime = file.read(cx).mtime(cx.as_ref());
         } else {
-            saved_mtime = Duration::ZERO;
+            saved_mtime = UNIX_EPOCH;
         }
 
         let mut fragments = SumTree::new();
@@ -466,7 +466,7 @@ impl Buffer {
             last_edit: time::Local::default(),
             undo_map: Default::default(),
             history,
-            file: None,
+            file,
             syntax_tree: Mutex::new(None),
             is_parsing: false,
             language,
@@ -479,7 +479,6 @@ impl Buffer {
             local_clock: time::Local::new(replica_id),
             lamport_clock: time::Lamport::new(replica_id),
         };
-        result.set_file(file, cx);
         result.reparse(cx);
         result
     }
@@ -526,7 +525,7 @@ impl Buffer {
         cx: &mut ModelContext<Self>,
     ) {
         if file.is_some() {
-            self.set_file(file, cx);
+            self.file = file;
         }
         if let Some(file) = &self.file {
             self.saved_mtime = file.read(cx).mtime(cx.as_ref());
@@ -535,42 +534,32 @@ impl Buffer {
         cx.emit(Event::Saved);
     }
 
-    fn set_file(&mut self, file: Option<ModelHandle<File>>, cx: &mut ModelContext<Self>) {
-        self.file = file;
-        if let Some(file) = &self.file {
-            cx.observe(file, |this, file, cx| {
-                let version = this.version.clone();
-                if this.version == this.saved_version {
-                    if file.read(cx).is_deleted(cx.as_ref()) {
-                        cx.emit(Event::Dirtied);
-                    } else {
-                        cx.spawn(|this, mut cx| async move {
-                            let (current_version, history) = this.read_with(&cx, |this, cx| {
-                                (
-                                    this.version.clone(),
-                                    file.read(cx).load_history(cx.as_ref()),
-                                )
-                            });
-                            if let (Ok(history), true) = (history.await, current_version == version)
-                            {
-                                let diff = this
-                                    .read_with(&cx, |this, cx| this.diff(history.base_text, cx))
-                                    .await;
-                                this.update(&mut cx, |this, cx| {
-                                    if let Some(_ops) = this.set_text_via_diff(diff, cx) {
-                                        this.saved_version = this.version.clone();
-                                        this.saved_mtime = file.read(cx).mtime(cx.as_ref());
-                                        cx.emit(Event::Reloaded);
-                                    }
-                                });
-                            }
-                        })
-                        .detach();
+    pub fn file_was_deleted(&mut self, cx: &mut ModelContext<Self>) {
+        cx.emit(Event::Dirtied);
+    }
+
+    pub fn file_was_modified(
+        &mut self,
+        new_text: String,
+        mtime: SystemTime,
+        cx: &mut ModelContext<Self>,
+    ) {
+        if self.version == self.saved_version {
+            cx.spawn(|this, mut cx| async move {
+                let diff = this
+                    .read_with(&cx, |this, cx| this.diff(new_text.into(), cx))
+                    .await;
+                this.update(&mut cx, |this, cx| {
+                    if let Some(_ops) = this.set_text_via_diff(diff, cx) {
+                        this.saved_version = this.version.clone();
+                        this.saved_mtime = mtime;
+                        cx.emit(Event::Reloaded);
                     }
-                }
-                cx.emit(Event::FileHandleChanged);
-            });
+                });
+            })
+            .detach();
         }
+        cx.emit(Event::FileHandleChanged);
     }
 
     pub fn syntax_tree(&self) -> Option<Tree> {

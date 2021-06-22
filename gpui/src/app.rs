@@ -2245,6 +2245,20 @@ impl<T: Entity> WeakModelHandle<T> {
     }
 }
 
+impl<T> Hash for WeakModelHandle<T> {
+    fn hash<H: Hasher>(&self, state: &mut H) {
+        self.model_id.hash(state)
+    }
+}
+
+impl<T> PartialEq for WeakModelHandle<T> {
+    fn eq(&self, other: &Self) -> bool {
+        self.model_id == other.model_id
+    }
+}
+
+impl<T> Eq for WeakModelHandle<T> {}
+
 impl<T> Clone for WeakModelHandle<T> {
     fn clone(&self) -> Self {
         Self {
