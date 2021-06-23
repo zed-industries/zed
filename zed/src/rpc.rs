@@ -65,16 +65,12 @@ impl Client {
         .detach();
     }
 
-    pub async fn connect_to_server(
-        &self,
-        cx: &AsyncAppContext,
-        executor: &Arc<Background>,
-    ) -> surf::Result<ConnectionId> {
+    pub async fn log_in_and_connect(&self, cx: &AsyncAppContext) -> surf::Result<ConnectionId> {
         if let Some(connection_id) = self.state.lock().await.connection_id {
             return Ok(connection_id);
         }
 
-        let (user_id, access_token) = Self::login(cx.platform(), executor).await?;
+        let (user_id, access_token) = Self::login(cx.platform(), &cx.background_executor()).await?;
 
         let mut response = surf::get(format!(
             "{}{}",
@@ -93,6 +89,22 @@ impl Client {
             .await
             .context("failed to parse rpc address response")?;
 
+        self.connect(
+            &address,
+            user_id.parse()?,
+            access_token,
+            &cx.background_executor(),
+        )
+        .await
+    }
+
+    pub async fn connect(
+        &self,
+        address: &str,
+        user_id: i32,
+        access_token: String,
+        executor: &Arc<Background>,
+    ) -> surf::Result<ConnectionId> {
         // TODO - If the `ZED_SERVER_URL` uses https, then wrap this stream in
         // a TLS stream using `native-tls`.
         let stream = smol::net::TcpStream::connect(&address).await?;
@@ -108,7 +120,7 @@ impl Client {
             .request(
                 connection_id,
                 proto::Auth {
-                    user_id: user_id.parse()?,
+                    user_id,
                     access_token,
                 },
             )

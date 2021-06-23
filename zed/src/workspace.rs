@@ -708,11 +708,10 @@ impl Workspace {
 
     fn share_worktree(&mut self, _: &(), cx: &mut ViewContext<Self>) {
         let rpc = self.rpc.clone();
-        let executor = cx.background_executor().clone();
         let platform = cx.platform();
 
         let task = cx.spawn(|this, mut cx| async move {
-            let connection_id = rpc.connect_to_server(&cx, &executor).await?;
+            let connection_id = rpc.log_in_and_connect(&cx).await?;
 
             let share_task = this.update(&mut cx, |this, cx| {
                 let worktree = this.worktrees.iter().next()?;
@@ -741,10 +740,9 @@ impl Workspace {
 
     fn join_worktree(&mut self, _: &(), cx: &mut ViewContext<Self>) {
         let rpc = self.rpc.clone();
-        let executor = cx.background_executor().clone();
 
         let task = cx.spawn(|this, mut cx| async move {
-            let connection_id = rpc.connect_to_server(&cx, &executor).await?;
+            let connection_id = rpc.log_in_and_connect(&cx).await?;
 
             let worktree_url = cx
                 .platform()

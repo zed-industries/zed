@@ -366,6 +366,14 @@ impl TestAppContext {
         self.cx.borrow().platform.clone()
     }
 
+    pub fn foreground(&self) -> Rc<executor::Foreground> {
+        self.cx.borrow().foreground().clone()
+    }
+
+    pub fn background_executor(&self) -> Arc<executor::Background> {
+        self.cx.borrow().background_executor().clone()
+    }
+
     pub fn simulate_new_path_selection(&self, result: impl FnOnce(PathBuf) -> Option<PathBuf>) {
         self.foreground_platform.simulate_new_path_selection(result);
     }
@@ -606,7 +614,7 @@ impl MutableAppContext {
         &self.cx.font_cache
     }
 
-    pub fn foreground_executor(&self) -> &Rc<executor::Foreground> {
+    pub fn foreground(&self) -> &Rc<executor::Foreground> {
         &self.foreground
     }
 
@@ -1793,7 +1801,7 @@ impl<'a, T: View> ViewContext<'a, T> {
     }
 
     pub fn foreground(&self) -> &Rc<executor::Foreground> {
-        self.app.foreground_executor()
+        self.app.foreground()
     }
 
     pub fn background_executor(&self) -> &Arc<executor::Background> {
