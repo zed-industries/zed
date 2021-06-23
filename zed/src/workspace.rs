@@ -766,12 +766,21 @@ impl Workspace {
             let worktree = open_worktree_response
                 .worktree
                 .ok_or_else(|| anyhow!("empty worktree"))?;
-            let replica_id = open_worktree_response.replica_id as ReplicaId;
+            let replica_id = open_worktree_response
+                .replica_id
+                .ok_or_else(|| anyhow!("empty replica id"))?;
 
             let worktree_id = worktree_id.try_into().unwrap();
             this.update(&mut cx, |workspace, cx| {
                 let worktree = cx.add_model(|cx| {
-                    Worktree::remote(worktree_id, worktree, rpc, connection_id, replica_id, cx)
+                    Worktree::remote(
+                        worktree_id,
+                        worktree,
+                        rpc,
+                        connection_id,
+                        replica_id as ReplicaId,
+                        cx,
+                    )
                 });
                 cx.observe_model(&worktree, |_, _, cx| cx.notify());
                 workspace.worktrees.insert(worktree);

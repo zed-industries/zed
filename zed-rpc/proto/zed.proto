@@ -43,7 +43,7 @@ message OpenWorktree {
 
 message OpenWorktreeResponse {
     Worktree worktree = 1;
-    uint32 replica_id = 2;
+    optional uint32 replica_id = 2;
 }
 
 message AddGuest {
