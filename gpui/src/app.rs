@@ -111,10 +111,7 @@ pub struct TestAppContext {
 }
 
 impl App {
-    pub fn test<T, A: AssetSource, F: FnOnce(&mut MutableAppContext) -> T>(
-        asset_source: A,
-        f: F,
-    ) -> T {
+    pub fn test<T, F: FnOnce(&mut MutableAppContext) -> T>(f: F) -> T {
         let foreground_platform = platform::test::foreground_platform();
         let platform = platform::test::platform();
         let foreground = Rc::new(executor::Foreground::test());
@@ -122,32 +119,20 @@ impl App {
             foreground,
             Arc::new(platform),
             Rc::new(foreground_platform),
-            asset_source,
+            (),
         )));
         cx.borrow_mut().weak_self = Some(Rc::downgrade(&cx));
         let mut cx = cx.borrow_mut();
         f(&mut *cx)
     }
 
-    pub fn test_async<T, F, A: AssetSource, Fn>(asset_source: A, f: Fn) -> T
+    pub fn test_async<T, F, Fn>(f: Fn) -> T
     where
         Fn: FnOnce(TestAppContext) -> F,
         F: Future<Output = T>,
     {
-        let platform = Arc::new(platform::test::platform());
-        let foreground_platform = Rc::new(platform::test::foreground_platform());
         let foreground = Rc::new(executor::Foreground::test());
-        let cx = TestAppContext {
-            cx: Rc::new(RefCell::new(MutableAppContext::new(
-                foreground.clone(),
-                platform,
-                foreground_platform.clone(),
-                asset_source,
-            ))),
-            foreground_platform,
-        };
-        cx.cx.borrow_mut().weak_self = Some(Rc::downgrade(&cx.cx));
-
+        let cx = TestAppContext::new(foreground.clone());
         let future = f(cx);
         smol::block_on(foreground.run(future))
     }
@@ -261,6 +246,22 @@ impl App {
 }
 
 impl TestAppContext {
+    pub fn new(foreground: Rc<executor::Foreground>) -> Self {
+        let platform = Arc::new(platform::test::platform());
+        let foreground_platform = Rc::new(platform::test::foreground_platform());
+        let cx = TestAppContext {
+            cx: Rc::new(RefCell::new(MutableAppContext::new(
+                foreground.clone(),
+                platform,
+                foreground_platform.clone(),
+                (),
+            ))),
+            foreground_platform,
+        };
+        cx.cx.borrow_mut().weak_self = Some(Rc::downgrade(&cx.cx));
+        cx
+    }
+
     pub fn dispatch_action<T: 'static + Any>(
         &self,
         window_id: usize,
