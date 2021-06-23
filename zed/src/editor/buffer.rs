@@ -2314,7 +2314,7 @@ mod tests {
         util::RandomCharIter,
         worktree::{Worktree, WorktreeHandle},
     };
-    use gpui::{App, ModelHandle};
+    use gpui::ModelHandle;
     use rand::prelude::*;
     use serde_json::json;
     use std::{
@@ -2776,132 +2776,130 @@ mod tests {
         });
     }
 
-    #[test]
-    fn test_is_dirty() {
-        App::test_async((), |mut cx| async move {
-            let language_registry = Arc::new(LanguageRegistry::new());
+    #[gpui::test]
+    async fn test_is_dirty(mut cx: gpui::TestAppContext) {
+        let language_registry = Arc::new(LanguageRegistry::new());
 
-            let dir = temp_tree(json!({
-                "file1": "abc",
-                "file2": "def",
-                "file3": "ghi",
-            }));
-            let tree = cx.add_model(|cx| Worktree::local(dir.path(), cx));
-            tree.flush_fs_events(&cx).await;
-            cx.read(|cx| tree.read(cx).as_local().unwrap().scan_complete())
-                .await;
+        let dir = temp_tree(json!({
+            "file1": "abc",
+            "file2": "def",
+            "file3": "ghi",
+        }));
+        let tree = cx.add_model(|cx| Worktree::local(dir.path(), cx));
+        tree.flush_fs_events(&cx).await;
+        cx.read(|cx| tree.read(cx).as_local().unwrap().scan_complete())
+            .await;
 
-            let buffer1 = tree
-                .update(&mut cx, |tree, cx| {
-                    tree.open_buffer("file1", language_registry.clone(), cx)
-                })
-                .await
-                .unwrap();
-            let events = Rc::new(RefCell::new(Vec::new()));
+        let buffer1 = tree
+            .update(&mut cx, |tree, cx| {
+                tree.open_buffer("file1", language_registry.clone(), cx)
+            })
+            .await
+            .unwrap();
+        let events = Rc::new(RefCell::new(Vec::new()));
 
-            // initially, the buffer isn't dirty.
-            buffer1.update(&mut cx, |buffer, cx| {
-                cx.subscribe(&buffer1, {
-                    let events = events.clone();
-                    move |_, event, _| events.borrow_mut().push(event.clone())
-                });
-
-                assert!(!buffer.is_dirty(cx.as_ref()));
-                assert!(events.borrow().is_empty());
-
-                buffer.edit(vec![1..2], "", cx).unwrap();
+        // initially, the buffer isn't dirty.
+        buffer1.update(&mut cx, |buffer, cx| {
+            cx.subscribe(&buffer1, {
+                let events = events.clone();
+                move |_, event, _| events.borrow_mut().push(event.clone())
             });
 
-            // after the first edit, the buffer is dirty, and emits a dirtied event.
-            buffer1.update(&mut cx, |buffer, cx| {
-                assert!(buffer.text() == "ac");
-                assert!(buffer.is_dirty(cx.as_ref()));
-                assert_eq!(*events.borrow(), &[Event::Edited, Event::Dirtied]);
-                events.borrow_mut().clear();
+            assert!(!buffer.is_dirty(cx.as_ref()));
+            assert!(events.borrow().is_empty());
 
-                buffer.did_save(buffer.version(), None, cx);
-            });
+            buffer.edit(vec![1..2], "", cx).unwrap();
+        });
 
-            // after saving, the buffer is not dirty, and emits a saved event.
-            buffer1.update(&mut cx, |buffer, cx| {
-                assert!(!buffer.is_dirty(cx.as_ref()));
-                assert_eq!(*events.borrow(), &[Event::Saved]);
-                events.borrow_mut().clear();
+        // after the first edit, the buffer is dirty, and emits a dirtied event.
+        buffer1.update(&mut cx, |buffer, cx| {
+            assert!(buffer.text() == "ac");
+            assert!(buffer.is_dirty(cx.as_ref()));
+            assert_eq!(*events.borrow(), &[Event::Edited, Event::Dirtied]);
+            events.borrow_mut().clear();
 
-                buffer.edit(vec![1..1], "B", cx).unwrap();
-                buffer.edit(vec![2..2], "D", cx).unwrap();
-            });
+            buffer.did_save(buffer.version(), None, cx);
+        });
 
-            // after editing again, the buffer is dirty, and emits another dirty event.
-            buffer1.update(&mut cx, |buffer, cx| {
-                assert!(buffer.text() == "aBDc");
-                assert!(buffer.is_dirty(cx.as_ref()));
-                assert_eq!(
-                    *events.borrow(),
-                    &[Event::Edited, Event::Dirtied, Event::Edited],
-                );
-                events.borrow_mut().clear();
+        // after saving, the buffer is not dirty, and emits a saved event.
+        buffer1.update(&mut cx, |buffer, cx| {
+            assert!(!buffer.is_dirty(cx.as_ref()));
+            assert_eq!(*events.borrow(), &[Event::Saved]);
+            events.borrow_mut().clear();
 
-                // TODO - currently, after restoring the buffer to its
-                // previously-saved state, the is still considered dirty.
-                buffer.edit(vec![1..3], "", cx).unwrap();
-                assert!(buffer.text() == "ac");
-                assert!(buffer.is_dirty(cx.as_ref()));
-            });
+            buffer.edit(vec![1..1], "B", cx).unwrap();
+            buffer.edit(vec![2..2], "D", cx).unwrap();
+        });
 
-            assert_eq!(*events.borrow(), &[Event::Edited]);
-
-            // When a file is deleted, the buffer is considered dirty.
-            let events = Rc::new(RefCell::new(Vec::new()));
-            let buffer2 = tree
-                .update(&mut cx, |tree, cx| {
-                    tree.open_buffer("file2", language_registry.clone(), cx)
-                })
-                .await
-                .unwrap();
-            buffer2.update(&mut cx, |_, cx| {
-                cx.subscribe(&buffer2, {
-                    let events = events.clone();
-                    move |_, event, _| events.borrow_mut().push(event.clone())
-                });
-            });
-
-            fs::remove_file(dir.path().join("file2")).unwrap();
-            buffer2
-                .condition(&cx, |b, cx| b.is_dirty(cx.as_ref()))
-                .await;
+        // after editing again, the buffer is dirty, and emits another dirty event.
+        buffer1.update(&mut cx, |buffer, cx| {
+            assert!(buffer.text() == "aBDc");
+            assert!(buffer.is_dirty(cx.as_ref()));
             assert_eq!(
                 *events.borrow(),
-                &[Event::Dirtied, Event::FileHandleChanged]
+                &[Event::Edited, Event::Dirtied, Event::Edited],
             );
-
-            // When a file is already dirty when deleted, we don't emit a Dirtied event.
-            let events = Rc::new(RefCell::new(Vec::new()));
-            let buffer3 = tree
-                .update(&mut cx, |tree, cx| {
-                    tree.open_buffer("file3", language_registry.clone(), cx)
-                })
-                .await
-                .unwrap();
-            buffer3.update(&mut cx, |_, cx| {
-                cx.subscribe(&buffer3, {
-                    let events = events.clone();
-                    move |_, event, _| events.borrow_mut().push(event.clone())
-                });
-            });
-
-            tree.flush_fs_events(&cx).await;
-            buffer3.update(&mut cx, |buffer, cx| {
-                buffer.edit(Some(0..0), "x", cx).unwrap();
-            });
             events.borrow_mut().clear();
-            fs::remove_file(dir.path().join("file3")).unwrap();
-            buffer3
-                .condition(&cx, |_, _| !events.borrow().is_empty())
-                .await;
-            assert_eq!(*events.borrow(), &[Event::FileHandleChanged]);
-            cx.read(|cx| assert!(buffer3.read(cx).is_dirty(cx)));
+
+            // TODO - currently, after restoring the buffer to its
+            // previously-saved state, the is still considered dirty.
+            buffer.edit(vec![1..3], "", cx).unwrap();
+            assert!(buffer.text() == "ac");
+            assert!(buffer.is_dirty(cx.as_ref()));
         });
+
+        assert_eq!(*events.borrow(), &[Event::Edited]);
+
+        // When a file is deleted, the buffer is considered dirty.
+        let events = Rc::new(RefCell::new(Vec::new()));
+        let buffer2 = tree
+            .update(&mut cx, |tree, cx| {
+                tree.open_buffer("file2", language_registry.clone(), cx)
+            })
+            .await
+            .unwrap();
+        buffer2.update(&mut cx, |_, cx| {
+            cx.subscribe(&buffer2, {
+                let events = events.clone();
+                move |_, event, _| events.borrow_mut().push(event.clone())
+            });
+        });
+
+        fs::remove_file(dir.path().join("file2")).unwrap();
+        buffer2
+            .condition(&cx, |b, cx| b.is_dirty(cx.as_ref()))
+            .await;
+        assert_eq!(
+            *events.borrow(),
+            &[Event::Dirtied, Event::FileHandleChanged]
+        );
+
+        // When a file is already dirty when deleted, we don't emit a Dirtied event.
+        let events = Rc::new(RefCell::new(Vec::new()));
+        let buffer3 = tree
+            .update(&mut cx, |tree, cx| {
+                tree.open_buffer("file3", language_registry.clone(), cx)
+            })
+            .await
+            .unwrap();
+        buffer3.update(&mut cx, |_, cx| {
+            cx.subscribe(&buffer3, {
+                let events = events.clone();
+                move |_, event, _| events.borrow_mut().push(event.clone())
+            });
+        });
+
+        tree.flush_fs_events(&cx).await;
+        buffer3.update(&mut cx, |buffer, cx| {
+            buffer.edit(Some(0..0), "x", cx).unwrap();
+        });
+        events.borrow_mut().clear();
+        fs::remove_file(dir.path().join("file3")).unwrap();
+        buffer3
+            .condition(&cx, |_, _| !events.borrow().is_empty())
+            .await;
+        assert_eq!(*events.borrow(), &[Event::FileHandleChanged]);
+        cx.read(|cx| assert!(buffer3.read(cx).is_dirty(cx)));
     }
 
     #[gpui::test]
