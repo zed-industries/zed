@@ -1,15 +1,13 @@
 use crate::{language::LanguageRegistry, rpc, settings, time::ReplicaId, AppState};
-use ctor::ctor;
 use gpui::AppContext;
-use rand::Rng;
 use std::{
-    collections::BTreeMap,
     path::{Path, PathBuf},
     sync::Arc,
 };
 use tempdir::TempDir;
 
-#[ctor]
+#[cfg(test)]
+#[ctor::ctor]
 fn init_logger() {
     env_logger::init();
 }
@@ -20,15 +18,17 @@ struct Envelope<T: Clone> {
     sender: ReplicaId,
 }
 
+#[cfg(test)]
 pub(crate) struct Network<T: Clone> {
-    inboxes: BTreeMap<ReplicaId, Vec<Envelope<T>>>,
+    inboxes: std::collections::BTreeMap<ReplicaId, Vec<Envelope<T>>>,
     all_messages: Vec<T>,
 }
 
+#[cfg(test)]
 impl<T: Clone> Network<T> {
     pub fn new() -> Self {
         Network {
-            inboxes: BTreeMap::new(),
+            inboxes: Default::default(),
             all_messages: Vec::new(),
         }
     }
@@ -41,10 +41,7 @@ impl<T: Clone> Network<T> {
         self.inboxes.values().all(|i| i.is_empty())
     }
 
-    pub fn broadcast<R>(&mut self, sender: ReplicaId, messages: Vec<T>, rng: &mut R)
-    where
-        R: Rng,
-    {
+    pub fn broadcast<R: rand::Rng>(&mut self, sender: ReplicaId, messages: Vec<T>, rng: &mut R) {
         for (replica, inbox) in self.inboxes.iter_mut() {
             if *replica != sender {
                 for message in &messages {
@@ -83,10 +80,7 @@ impl<T: Clone> Network<T> {
         !self.inboxes[&receiver].is_empty()
     }
 
-    pub fn receive<R>(&mut self, receiver: ReplicaId, rng: &mut R) -> Vec<T>
-    where
-        R: Rng,
-    {
+    pub fn receive<R: rand::Rng>(&mut self, receiver: ReplicaId, rng: &mut R) -> Vec<T> {
         let inbox = self.inboxes.get_mut(&receiver).unwrap();
         let count = rng.gen_range(0..inbox.len() + 1);
         inbox

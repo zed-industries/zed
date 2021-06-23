@@ -7,12 +7,12 @@ mod operation_queue;
 pub mod rpc;
 pub mod settings;
 mod sum_tree;
-#[cfg(test)]
-mod test;
+#[cfg(any(test, feature = "test-support"))]
+pub mod test;
 mod time;
 mod util;
 pub mod workspace;
-mod worktree;
+pub mod worktree;
 
 #[derive(Clone)]
 pub struct AppState {
