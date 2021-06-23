@@ -21,9 +21,9 @@ fn main() {
     language_registry.set_theme(&settings.borrow().theme);
 
     let app_state = AppState {
-        language_registry,
+        language_registry: language_registry.clone(),
         settings,
-        rpc: rpc::Client::new(),
+        rpc: rpc::Client::new(language_registry),
     };
 
     app.run(move |cx| {

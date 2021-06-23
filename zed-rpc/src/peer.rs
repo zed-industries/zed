@@ -432,9 +432,10 @@ mod tests {
             };
             let request3 = proto::OpenBuffer {
                 worktree_id: 1,
-                id: 2,
+                path: "path/two".to_string(),
             };
             let response3 = proto::OpenBufferResponse {
+                buffer_id: 2,
                 buffer: Some(proto::Buffer {
                     content: "path/two content".to_string(),
                     history: vec![],
@@ -442,9 +443,10 @@ mod tests {
             };
             let request4 = proto::OpenBuffer {
                 worktree_id: 2,
-                id: 1,
+                path: "path/one".to_string(),
             };
             let response4 = proto::OpenBufferResponse {
+                buffer_id: 1,
                 buffer: Some(proto::Buffer {
                     content: "path/one content".to_string(),
                     history: vec![],

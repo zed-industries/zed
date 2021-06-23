@@ -1,6 +1,5 @@
-use crate::worktree::{File, Worktree};
-
 use super::util::SurfResultExt as _;
+use crate::{editor::Buffer, language::LanguageRegistry, worktree::Worktree};
 use anyhow::{anyhow, Context, Result};
 use gpui::executor::Background;
 use gpui::{AsyncAppContext, ModelHandle, Task};
@@ -29,18 +28,23 @@ pub struct Client {
     pub state: Arc<Mutex<ClientState>>,
 }
 
-#[derive(Default)]
 pub struct ClientState {
     connection_id: Option<ConnectionId>,
     pub shared_worktrees: HashMap<u64, ModelHandle<Worktree>>,
-    pub shared_files: HashMap<File, HashMap<PeerId, usize>>,
+    pub shared_buffers: HashMap<PeerId, HashMap<usize, ModelHandle<Buffer>>>,
+    pub language_registry: Arc<LanguageRegistry>,
 }
 
 impl Client {
-    pub fn new() -> Self {
+    pub fn new(language_registry: Arc<LanguageRegistry>) -> Self {
         Self {
             peer: Peer::new(),
-            state: Default::default(),
+            state: Arc::new(Mutex::new(ClientState {
+                connection_id: None,
+                shared_worktrees: Default::default(),
+                shared_buffers: Default::default(),
+                language_registry,
+            })),
         }
     }
 

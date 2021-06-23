@@ -11,6 +11,7 @@ use seahash::SeaHasher;
 pub use selection::*;
 use similar::{ChangeTag, TextDiff};
 use tree_sitter::{InputEdit, Parser, QueryCursor};
+use zed_rpc::proto;
 
 use crate::{
     language::{Language, Tree},
@@ -490,6 +491,94 @@ impl Buffer {
             tree: self.syntax_tree(),
             language: self.language.clone(),
             query_cursor: QueryCursorHandle::new(),
+        }
+    }
+
+    pub fn from_proto(
+        replica_id: ReplicaId,
+        remote_buffer: proto::Buffer,
+        file: Option<File>,
+        language: Option<Arc<Language>>,
+        cx: &mut ModelContext<Self>,
+    ) -> Result<Self> {
+        let mut buffer = Buffer::build(
+            replica_id,
+            History::new(remote_buffer.content.into()),
+            file,
+            language,
+            cx,
+        );
+        let ops = remote_buffer
+            .history
+            .into_iter()
+            .filter_map(|op| op.variant)
+            .map(|op| match op {
+                proto::operation::Variant::Edit(edit) => {
+                    let mut version = time::Global::new();
+                    for entry in edit.version {
+                        version.observe(time::Local {
+                            replica_id: entry.replica_id as ReplicaId,
+                            value: entry.timestamp,
+                        });
+                    }
+                    let ranges = edit
+                        .ranges
+                        .into_iter()
+                        .map(|range| range.start as usize..range.end as usize)
+                        .collect();
+                    Operation::Edit(EditOperation {
+                        timestamp: InsertionTimestamp {
+                            replica_id: edit.replica_id as ReplicaId,
+                            local: edit.local_timestamp,
+                            lamport: edit.lamport_timestamp,
+                        },
+                        version,
+                        ranges,
+                        new_text: edit.new_text,
+                    })
+                }
+            });
+        buffer.apply_ops(ops, cx)?;
+        Ok(buffer)
+    }
+
+    pub fn to_proto(&self) -> proto::Buffer {
+        let ops = self
+            .history
+            .ops
+            .values()
+            .map(|op| {
+                let version = op
+                    .version
+                    .iter()
+                    .map(|entry| proto::VectorClockEntry {
+                        replica_id: entry.replica_id as u32,
+                        timestamp: entry.value,
+                    })
+                    .collect();
+                let ranges = op
+                    .ranges
+                    .iter()
+                    .map(|range| proto::Range {
+                        start: range.start as u64,
+                        end: range.end as u64,
+                    })
+                    .collect();
+                proto::Operation {
+                    variant: Some(proto::operation::Variant::Edit(proto::operation::Edit {
+                        replica_id: op.timestamp.replica_id as u32,
+                        local_timestamp: op.timestamp.local,
+                        lamport_timestamp: op.timestamp.lamport,
+                        version,
+                        ranges,
+                        new_text: op.new_text.clone(),
+                    })),
+                }
+            })
+            .collect();
+        proto::Buffer {
+            content: self.history.base_text.to_string(),
+            history: ops,
         }
     }
 

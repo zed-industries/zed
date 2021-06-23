@@ -1,4 +1,4 @@
-use crate::{AppState, language::LanguageRegistry, rpc, settings, time::ReplicaId};
+use crate::{language::LanguageRegistry, rpc, settings, time::ReplicaId, AppState};
 use ctor::ctor;
 use gpui::AppContext;
 use rand::Rng;
@@ -149,7 +149,7 @@ pub fn build_app_state(cx: &AppContext) -> AppState {
     let language_registry = Arc::new(LanguageRegistry::new());
     AppState {
         settings,
-        language_registry,
-        rpc: rpc::Client::new(),
+        language_registry: language_registry.clone(),
+        rpc: rpc::Client::new(language_registry),
     }
 }

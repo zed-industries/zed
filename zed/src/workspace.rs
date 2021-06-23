@@ -44,9 +44,8 @@ pub fn init(cx: &mut MutableAppContext, rpc: rpc::Client) {
     ]);
     pane::init(cx);
 
-    rpc.on_message(remote::open_file, cx);
-    rpc.on_message(remote::close_file, cx);
     rpc.on_message(remote::open_buffer, cx);
+    rpc.on_message(remote::close_buffer, cx);
 }
 
 pub struct OpenParams {
@@ -110,41 +109,52 @@ fn open_paths(params: &OpenParams, cx: &mut MutableAppContext) {
 mod remote {
     use super::*;
 
-    pub async fn open_file(
-        request: TypedEnvelope<proto::OpenFile>,
+    pub async fn open_buffer(
+        request: TypedEnvelope<proto::OpenBuffer>,
         rpc: &rpc::Client,
         cx: &mut AsyncAppContext,
     ) -> anyhow::Result<()> {
-        // let message = &request.payload;
-        // let peer_id = request
-        //     .original_sender_id
-        //     .ok_or_else(|| anyhow!("missing original sender id"))?;
+        let message = &request.payload;
+        let peer_id = request
+            .original_sender_id
+            .ok_or_else(|| anyhow!("missing original sender id"))?;
 
-        // let mut state = rpc.state.lock().await;
-        // let worktree = state
-        //     .shared_worktrees
-        //     .get(&message.worktree_id)
-        //     .ok_or_else(|| anyhow!("worktree {} not found", message.worktree_id))?
-        //     .clone();
+        let mut state = rpc.state.lock().await;
+        let worktree = state
+            .shared_worktrees
+            .get(&message.worktree_id)
+            .ok_or_else(|| anyhow!("worktree {} not found", message.worktree_id))?
+            .clone();
 
-        // let file = worktree.file(&message.path);
-        // let id = file.id() as u64;
-        // let mtime = file.mtime().as_secs();
+        let buffer = worktree
+            .update(cx, |worktree, cx| {
+                worktree.open_buffer(
+                    Path::new(&message.path),
+                    state.language_registry.clone(),
+                    cx,
+                )
+            })
+            .await?;
+        state
+            .shared_buffers
+            .entry(peer_id)
+            .or_default()
+            .insert(buffer.id(), buffer.clone());
 
-        // *state
-        //     .shared_files
-        //     .entry(file)
-        //     .or_insert(Default::default())
-        //     .entry(peer_id)
-        //     .or_insert(0) += 1;
+        rpc.respond(
+            request.receipt(),
+            proto::OpenBufferResponse {
+                buffer_id: buffer.id() as u64,
+                buffer: Some(buffer.read_with(cx, |buf, _| buf.to_proto())),
+            },
+        )
+        .await?;
 
-        // rpc.respond(request.receipt(), proto::OpenFileResponse { id, mtime })
-        //     .await?;
         Ok(())
     }
 
-    pub async fn close_file(
-        request: TypedEnvelope<proto::CloseFile>,
+    pub async fn close_buffer(
+        request: TypedEnvelope<proto::CloseBuffer>,
         rpc: &rpc::Client,
         _: &mut AsyncAppContext,
     ) -> anyhow::Result<()> {
@@ -166,33 +176,6 @@ mod remote {
         //         }
         //     }
         // }
-
-        Ok(())
-    }
-
-    pub async fn open_buffer(
-        request: TypedEnvelope<proto::OpenBuffer>,
-        rpc: &rpc::Client,
-        cx: &mut AsyncAppContext,
-    ) -> anyhow::Result<()> {
-        // let message = &request.payload;
-        // let handle = {
-        //     let state = rpc.state.lock().await;
-        //     let mut files = state.shared_files.keys();
-        //     files.find(|file| file.id() == message.id).cloned()
-        // };
-        // let buffer = if let Some(handle) = handle {
-        //     let history = cx.read(|cx| handle.load_history(cx)).await?;
-        //     Some(proto::Buffer {
-        //         content: history.base_text.to_string(),
-        //         history: Vec::new(),
-        //     })
-        // } else {
-        //     None
-        // };
-
-        // rpc.respond(request.receipt(), proto::OpenBufferResponse { buffer })
-        //     .await?;
 
         Ok(())
     }

@@ -65,7 +65,7 @@ impl Worktree {
     }
 
     pub fn remote(
-        id: usize,
+        id: u64,
         worktree: proto::Worktree,
         rpc: rpc::Client,
         connection_id: ConnectionId,
@@ -98,6 +98,14 @@ impl Worktree {
         }
     }
 
+    pub fn as_remote_mut(&mut self) -> Option<&mut RemoteWorktree> {
+        if let Worktree::Remote(worktree) = self {
+            Some(worktree)
+        } else {
+            None
+        }
+    }
+
     pub fn snapshot(&self) -> Snapshot {
         match self {
             Worktree::Local(worktree) => worktree.snapshot(),
@@ -110,10 +118,12 @@ impl Worktree {
         path: impl AsRef<Path>,
         language_registry: Arc<LanguageRegistry>,
         cx: &mut ModelContext<Self>,
-    ) -> impl Future<Output = Result<ModelHandle<Buffer>>> + 'static {
+    ) -> Task<Result<ModelHandle<Buffer>>> {
         match self {
             Worktree::Local(worktree) => worktree.open_buffer(path.as_ref(), language_registry, cx),
-            Worktree::Remote(_) => todo!(),
+            Worktree::Remote(worktree) => {
+                worktree.open_buffer(path.as_ref(), language_registry, cx)
+            }
         }
     }
 
@@ -148,7 +158,7 @@ pub struct LocalWorktree {
     _event_stream_handle: fsevent::Handle,
     poll_scheduled: bool,
     rpc: Option<rpc::Client>,
-    open_buffers: HashSet<WeakModelHandle<Buffer>>,
+    open_buffers: HashMap<usize, WeakModelHandle<Buffer>>,
 }
 
 impl LocalWorktree {
@@ -220,12 +230,12 @@ impl LocalWorktree {
         path: &Path,
         language_registry: Arc<LanguageRegistry>,
         cx: &mut ModelContext<Worktree>,
-    ) -> impl Future<Output = Result<ModelHandle<Buffer>>> + 'static {
+    ) -> Task<Result<ModelHandle<Buffer>>> {
         let handle = cx.handle();
 
         // If there is already a buffer for the given path, then return it.
         let mut existing_buffer = None;
-        self.open_buffers.retain(|buffer| {
+        self.open_buffers.retain(|_buffer_id, buffer| {
             if let Some(buffer) = buffer.upgrade(cx.as_ref()) {
                 if let Some(file) = buffer.read(cx.as_ref()).file() {
                     if file.worktree_id() == handle.id() && file.path.as_ref() == path {
@@ -238,12 +248,16 @@ impl LocalWorktree {
             }
         });
 
-        let mut new_buffer = None;
-        if existing_buffer.is_none() {
-            let path = Arc::from(path);
-            let contents = self.load(&path, cx.as_ref());
-            new_buffer = Some(cx.spawn(|this, mut cx| async move {
-                let contents = contents.await?;
+        let path = Arc::from(path);
+        cx.spawn(|this, mut cx| async move {
+            if let Some(existing_buffer) = existing_buffer {
+                Ok(existing_buffer)
+            } else {
+                let contents = this
+                    .read_with(&cx, |this, cx| {
+                        this.as_local().unwrap().load(&path, cx.as_ref())
+                    })
+                    .await?;
                 let language = language_registry.select_language(&path).cloned();
                 let file = File::new(handle, path.into());
                 let buffer = cx.add_model(|cx| {
@@ -251,19 +265,11 @@ impl LocalWorktree {
                 });
                 this.update(&mut cx, |this, _| {
                     let this = this.as_local_mut().unwrap();
-                    this.open_buffers.insert(buffer.downgrade());
+                    this.open_buffers.insert(buffer.id(), buffer.downgrade());
                 });
                 Ok(buffer)
-            }));
-        }
-
-        async move {
-            if let Some(existing_buffer) = existing_buffer {
-                Ok(existing_buffer)
-            } else {
-                new_buffer.unwrap().await
             }
-        }
+        })
     }
 
     pub fn scan_complete(&self) -> impl Future<Output = ()> {
@@ -292,7 +298,7 @@ impl LocalWorktree {
 
     fn observe_snapshot_diff(&mut self, diff: Diff, cx: &mut ModelContext<Worktree>) {
         let handle = cx.handle();
-        self.open_buffers.retain(|buffer| {
+        self.open_buffers.retain(|_buffer_id, buffer| {
             if let Some(buffer) = buffer.upgrade(cx.as_ref()) {
                 buffer.update(cx, |buffer, cx| {
                     let handle = handle.clone();
@@ -506,16 +512,17 @@ impl fmt::Debug for LocalWorktree {
 }
 
 pub struct RemoteWorktree {
-    remote_id: usize,
+    remote_id: u64,
     snapshot: Snapshot,
     rpc: rpc::Client,
     connection_id: ConnectionId,
     replica_id: ReplicaId,
+    open_buffers: HashMap<u64, WeakModelHandle<Buffer>>,
 }
 
 impl RemoteWorktree {
     fn new(
-        remote_id: usize,
+        remote_id: u64,
         worktree: proto::Worktree,
         rpc: rpc::Client,
         connection_id: ConnectionId,
@@ -568,7 +575,63 @@ impl RemoteWorktree {
             rpc,
             connection_id,
             replica_id,
+            open_buffers: Default::default(),
         }
+    }
+
+    pub fn open_buffer(
+        &mut self,
+        path: &Path,
+        language_registry: Arc<LanguageRegistry>,
+        cx: &mut ModelContext<Worktree>,
+    ) -> Task<Result<ModelHandle<Buffer>>> {
+        let handle = cx.handle();
+        let mut existing_buffer = None;
+        self.open_buffers.retain(|_buffer_id, buffer| {
+            if let Some(buffer) = buffer.upgrade(cx.as_ref()) {
+                if let Some(file) = buffer.read(cx.as_ref()).file() {
+                    if file.worktree_id() == handle.id() && file.path.as_ref() == path {
+                        existing_buffer = Some(buffer);
+                    }
+                }
+                true
+            } else {
+                false
+            }
+        });
+
+        let rpc = self.rpc.clone();
+        let replica_id = self.replica_id;
+        let connection_id = self.connection_id;
+        let remote_worktree_id = self.remote_id;
+        let path = path.to_string_lossy().to_string();
+        cx.spawn(|this, mut cx| async move {
+            if let Some(existing_buffer) = existing_buffer {
+                Ok(existing_buffer)
+            } else {
+                let file = File::new(handle, Path::new(&path).into());
+                let language = language_registry.select_language(&path).cloned();
+                let response = rpc
+                    .request(
+                        connection_id,
+                        proto::OpenBuffer {
+                            worktree_id: remote_worktree_id as u64,
+                            path,
+                        },
+                    )
+                    .await?;
+                let buffer_id = response.buffer_id;
+                let remote_buffer = response.buffer.ok_or_else(|| anyhow!("empty buffer"))?;
+                let buffer = cx.add_model(|cx| {
+                    Buffer::from_proto(replica_id, remote_buffer, Some(file), language, cx).unwrap()
+                });
+                this.update(&mut cx, |this, _| {
+                    let this = this.as_remote_mut().unwrap();
+                    this.open_buffers.insert(buffer_id, buffer.downgrade());
+                });
+                Ok(buffer)
+            }
+        })
     }
 }
 
@@ -833,7 +896,9 @@ impl File {
     pub fn saved_buffer(&self, buffer: ModelHandle<Buffer>, cx: &mut MutableAppContext) {
         self.worktree.update(cx, |worktree, _| {
             if let Worktree::Local(worktree) = worktree {
-                worktree.open_buffers.insert(buffer.downgrade());
+                worktree
+                    .open_buffers
+                    .insert(buffer.id(), buffer.downgrade());
             }
         })
     }
