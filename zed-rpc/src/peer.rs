@@ -148,6 +148,13 @@ impl Peer {
             .remove(&connection_id);
     }
 
+    pub async fn reset(&self) {
+        self.connections.write().await.clear();
+        self.connection_close_barriers.write().await.clear();
+        self.handler_types.lock().await.clear();
+        self.message_handlers.write().await.clear();
+    }
+
     pub fn handle_messages(
         self: &Arc<Self>,
         connection_id: ConnectionId,
