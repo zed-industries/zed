@@ -15,8 +15,8 @@ use ::ignore::gitignore::Gitignore;
 use anyhow::{anyhow, Context, Result};
 pub use fuzzy::{match_paths, PathMatch};
 use gpui::{
-    scoped_pool, AppContext, Entity, ModelContext, ModelHandle, MutableAppContext, Task,
-    WeakModelHandle,
+    scoped_pool, AppContext, AsyncAppContext, Entity, ModelContext, ModelHandle, MutableAppContext,
+    Task, WeakModelHandle,
 };
 use lazy_static::lazy_static;
 use parking_lot::Mutex;
@@ -64,22 +64,40 @@ impl Worktree {
         Worktree::Local(LocalWorktree::new(path, cx))
     }
 
-    pub fn remote(
-        id: u64,
-        worktree: proto::Worktree,
+    pub async fn remote(
         rpc: rpc::Client,
         connection_id: ConnectionId,
-        replica_id: ReplicaId,
-        cx: &mut ModelContext<Worktree>,
-    ) -> Self {
-        Worktree::Remote(RemoteWorktree::new(
-            id,
-            worktree,
-            rpc,
-            connection_id,
-            replica_id,
-            cx,
-        ))
+        id: u64,
+        access_token: String,
+        cx: &mut AsyncAppContext,
+    ) -> Result<ModelHandle<Self>> {
+        let open_worktree_response = rpc
+            .request(
+                connection_id,
+                proto::OpenWorktree {
+                    worktree_id: id,
+                    access_token,
+                },
+            )
+            .await?;
+        let worktree_message = open_worktree_response
+            .worktree
+            .ok_or_else(|| anyhow!("empty worktree"))?;
+        let replica_id = open_worktree_response
+            .replica_id
+            .ok_or_else(|| anyhow!("empty replica id"))?;
+        Ok(cx.update(|cx| {
+            cx.add_model(|cx| {
+                Worktree::Remote(RemoteWorktree::new(
+                    id,
+                    worktree_message,
+                    rpc,
+                    connection_id,
+                    replica_id as ReplicaId,
+                    cx,
+                ))
+            })
+        }))
     }
 
     pub fn as_local(&self) -> Option<&LocalWorktree> {

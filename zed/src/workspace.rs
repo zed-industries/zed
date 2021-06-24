@@ -6,7 +6,6 @@ use crate::{
     language::LanguageRegistry,
     rpc,
     settings::Settings,
-    time::ReplicaId,
     worktree::{File, Worktree, WorktreeHandle},
     AppState,
 };
@@ -23,7 +22,6 @@ use postage::watch;
 use smol::prelude::*;
 use std::{
     collections::{hash_map::Entry, HashMap, HashSet},
-    convert::TryInto,
     future::Future,
     path::{Path, PathBuf},
     sync::Arc,
@@ -154,15 +152,14 @@ mod remote {
     }
 
     pub async fn close_buffer(
-        request: TypedEnvelope<proto::CloseBuffer>,
-        rpc: &rpc::Client,
-        _: &mut AsyncAppContext,
+        _request: TypedEnvelope<proto::CloseBuffer>,
+        _rpc: &rpc::Client,
+        _cx: &mut AsyncAppContext,
     ) -> anyhow::Result<()> {
-        let message = &request.payload;
-        let peer_id = request
-            .original_sender_id
-            .ok_or_else(|| anyhow!("missing original sender id"))?;
-
+        // let message = &request.payload;
+        // let peer_id = request
+        //     .original_sender_id
+        //     .ok_or_else(|| anyhow!("missing original sender id"))?;
         // let mut state = rpc.state.lock().await;
         // if let Some((_, ref_counts)) = state
         //     .shared_files
@@ -752,34 +749,15 @@ impl Workspace {
                 .ok_or_else(|| anyhow!("failed to decode worktree url"))?;
             log::info!("read worktree url from clipboard: {}", worktree_url.text());
 
-            let open_worktree_response = rpc
-                .request(
-                    connection_id,
-                    proto::OpenWorktree {
-                        worktree_id,
-                        access_token,
-                    },
-                )
-                .await?;
-            let worktree = open_worktree_response
-                .worktree
-                .ok_or_else(|| anyhow!("empty worktree"))?;
-            let replica_id = open_worktree_response
-                .replica_id
-                .ok_or_else(|| anyhow!("empty replica id"))?;
-
-            let worktree_id = worktree_id.try_into().unwrap();
+            let worktree = Worktree::remote(
+                rpc.clone(),
+                connection_id,
+                worktree_id,
+                access_token,
+                &mut cx,
+            )
+            .await?;
             this.update(&mut cx, |workspace, cx| {
-                let worktree = cx.add_model(|cx| {
-                    Worktree::remote(
-                        worktree_id,
-                        worktree,
-                        rpc,
-                        connection_id,
-                        replica_id as ReplicaId,
-                        cx,
-                    )
-                });
                 cx.observe_model(&worktree, |_, _, cx| cx.notify());
                 workspace.worktrees.insert(worktree);
                 cx.notify();

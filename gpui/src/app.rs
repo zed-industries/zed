@@ -358,6 +358,10 @@ impl TestAppContext {
         result
     }
 
+    pub fn to_async(&self) -> AsyncAppContext {
+        AsyncAppContext(self.cx.clone())
+    }
+
     pub fn font_cache(&self) -> Arc<FontCache> {
         self.cx.borrow().cx.font_cache.clone()
     }
