@@ -651,7 +651,7 @@ mod tests {
         finder.read_with(&cx, |f, _| assert_eq!(f.matches.len(), 0));
     }
 
-    #[gpui::test]
+    #[gpui::test(retries = 5)]
     async fn test_multiple_matches_with_same_relative_path(mut cx: gpui::TestAppContext) {
         let tmp_dir = temp_tree(json!({
             "dir1": { "a.txt": "" },
