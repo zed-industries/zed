@@ -73,6 +73,7 @@ request_message!(ShareWorktree, ShareWorktreeResponse);
 request_message!(OpenWorktree, OpenWorktreeResponse);
 request_message!(OpenBuffer, OpenBufferResponse);
 message!(CloseBuffer);
+message!(UpdateBuffer);
 
 /// A stream of protobuf messages.
 pub struct MessageStream<T> {

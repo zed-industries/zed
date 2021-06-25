@@ -15,7 +15,7 @@ message Envelope {
         OpenBuffer open_buffer = 10;
         OpenBufferResponse open_buffer_response = 11;
         CloseBuffer close_buffer = 12;
-        EditBuffer edit_buffer = 13;
+        UpdateBuffer update_buffer = 13;
     }
 }
 
@@ -70,7 +70,7 @@ message CloseBuffer {
     uint64 buffer_id = 2;
 }
 
-message EditBuffer {
+message UpdateBuffer {
     uint64 worktree_id = 1;
     uint64 buffer_id = 2;
     repeated Operation operations = 3;
@@ -99,13 +99,31 @@ message Entry {
 message Buffer {
     uint64 id = 1;
     string content = 2;
-    repeated Operation history = 3;
+    repeated Operation.Edit history = 3;
+}
+
+message Selection {
+    uint64 id = 1;
+    Anchor start = 2;
+    Anchor end = 3;
+    bool reversed = 4;
+}
+
+message Anchor {
+    repeated VectorClockEntry version = 1;
+    uint64 offset = 2;
+    Bias bias = 3;
+    enum Bias {
+        LEFT = 0;
+        Right = 1;
+    }
 }
 
 message Operation {
     oneof variant {
         Edit edit = 1;
         Undo undo = 2;
+        UpdateSelections update_selections = 3;
     }
 
     message Edit {
@@ -124,6 +142,13 @@ message Operation {
         uint32 edit_replica_id = 4;
         uint32 edit_local_timestamp = 5;
         uint32 count = 6;
+    }
+
+    message UpdateSelections {
+        uint32 replica_id = 1;
+        uint32 local_timestamp = 2;
+        uint32 lamport_timestamp = 3;
+        repeated Selection selections = 4;
     }
 }
 

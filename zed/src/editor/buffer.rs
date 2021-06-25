@@ -16,7 +16,6 @@ use zed_rpc::proto;
 use crate::{
     language::{Language, Tree},
     operation_queue::{self, OperationQueue},
-    rpc,
     settings::{StyleId, ThemeMap},
     sum_tree::{self, FilterCursor, SumTree},
     time::{self, ReplicaId},
@@ -29,6 +28,7 @@ use lazy_static::lazy_static;
 use std::{
     cell::RefCell,
     cmp,
+    convert::{TryFrom, TryInto},
     hash::BuildHasher,
     iter::Iterator,
     ops::{Deref, DerefMut, Range},
@@ -118,7 +118,6 @@ pub struct Buffer {
     undo_map: UndoMap,
     history: History,
     file: Option<File>,
-    rpc: Option<rpc::Client>,
     language: Option<Arc<Language>>,
     syntax_tree: Mutex<Option<SyntaxTree>>,
     is_parsing: bool,
@@ -127,14 +126,12 @@ pub struct Buffer {
     deferred_ops: OperationQueue<Operation>,
     deferred_replicas: HashSet<ReplicaId>,
     replica_id: ReplicaId,
-    remote_id: Option<u64>,
+    remote_id: u64,
     local_clock: time::Local,
     lamport_clock: time::Lamport,
-    operation_callback: Option<OperationCallback>,
+    #[cfg(test)]
+    operations: Vec<Operation>,
 }
-
-type OperationCallback =
-    Box<dyn 'static + Send + Sync + FnMut(Operation, &mut ModelContext<Buffer>)>;
 
 #[derive(Clone)]
 struct SyntaxTree {
@@ -427,8 +424,7 @@ impl Buffer {
             replica_id,
             History::new(base_text.into()),
             None,
-            None,
-            None,
+            cx.model_id() as u64,
             None,
             cx,
         )
@@ -441,15 +437,21 @@ impl Buffer {
         language: Option<Arc<Language>>,
         cx: &mut ModelContext<Self>,
     ) -> Self {
-        Self::build(replica_id, history, file, None, None, language, cx)
+        Self::build(
+            replica_id,
+            history,
+            file,
+            cx.model_id() as u64,
+            language,
+            cx,
+        )
     }
 
     fn build(
         replica_id: ReplicaId,
         history: History,
         file: Option<File>,
-        rpc: Option<rpc::Client>,
-        remote_id: Option<u64>,
+        remote_id: u64,
         language: Option<Arc<Language>>,
         cx: &mut ModelContext<Self>,
     ) -> Self {
@@ -486,7 +488,6 @@ impl Buffer {
             undo_map: Default::default(),
             history,
             file,
-            rpc,
             syntax_tree: Mutex::new(None),
             is_parsing: false,
             language,
@@ -497,9 +498,11 @@ impl Buffer {
             deferred_replicas: HashSet::default(),
             replica_id,
             remote_id,
-            operation_callback: None,
             local_clock: time::Local::new(replica_id),
             lamport_clock: time::Lamport::new(replica_id),
+
+            #[cfg(test)]
+            operations: Default::default(),
         };
         result.reparse(cx);
         result
@@ -518,7 +521,6 @@ impl Buffer {
         replica_id: ReplicaId,
         message: proto::Buffer,
         file: Option<File>,
-        rpc: rpc::Client,
         language: Option<Arc<Language>>,
         cx: &mut ModelContext<Self>,
     ) -> Result<Self> {
@@ -526,96 +528,20 @@ impl Buffer {
             replica_id,
             History::new(message.content.into()),
             file,
-            Some(rpc),
-            Some(message.id),
+            message.id,
             language,
             cx,
         );
         let ops = message
             .history
             .into_iter()
-            .filter_map(|op| op.variant)
-            .map(|op| match op {
-                proto::operation::Variant::Edit(edit) => {
-                    let mut version = time::Global::new();
-                    for entry in edit.version {
-                        version.observe(time::Local {
-                            replica_id: entry.replica_id as ReplicaId,
-                            value: entry.timestamp,
-                        });
-                    }
-                    let ranges = edit
-                        .ranges
-                        .into_iter()
-                        .map(|range| range.start as usize..range.end as usize)
-                        .collect();
-                    Operation::Edit(EditOperation {
-                        timestamp: InsertionTimestamp {
-                            replica_id: edit.replica_id as ReplicaId,
-                            local: edit.local_timestamp,
-                            lamport: edit.lamport_timestamp,
-                        },
-                        version,
-                        ranges,
-                        new_text: edit.new_text,
-                    })
-                }
-                proto::operation::Variant::Undo(undo) => Operation::Undo {
-                    lamport_timestamp: time::Lamport {
-                        replica_id: undo.replica_id as ReplicaId,
-                        value: undo.lamport_timestamp,
-                    },
-                    undo: UndoOperation {
-                        id: time::Local {
-                            replica_id: undo.replica_id as ReplicaId,
-                            value: undo.local_timestamp,
-                        },
-                        edit_id: time::Local {
-                            replica_id: undo.edit_replica_id as ReplicaId,
-                            value: undo.edit_local_timestamp,
-                        },
-                        count: undo.count,
-                    },
-                },
-            });
+            .map(|op| Operation::Edit(op.into()));
         buffer.apply_ops(ops, cx)?;
         Ok(buffer)
     }
 
     pub fn to_proto(&self, cx: &mut ModelContext<Self>) -> proto::Buffer {
-        let ops = self
-            .history
-            .ops
-            .values()
-            .map(|op| {
-                let version = op
-                    .version
-                    .iter()
-                    .map(|entry| proto::VectorClockEntry {
-                        replica_id: entry.replica_id as u32,
-                        timestamp: entry.value,
-                    })
-                    .collect();
-                let ranges = op
-                    .ranges
-                    .iter()
-                    .map(|range| proto::Range {
-                        start: range.start as u64,
-                        end: range.end as u64,
-                    })
-                    .collect();
-                proto::Operation {
-                    variant: Some(proto::operation::Variant::Edit(proto::operation::Edit {
-                        replica_id: op.timestamp.replica_id as u32,
-                        local_timestamp: op.timestamp.local,
-                        lamport_timestamp: op.timestamp.lamport,
-                        version,
-                        ranges,
-                        new_text: op.new_text.clone(),
-                    })),
-                }
-            })
-            .collect();
+        let ops = self.history.ops.values().map(Into::into).collect();
         proto::Buffer {
             id: cx.model_id() as u64,
             content: self.history.base_text.to_string(),
@@ -657,7 +583,7 @@ impl Buffer {
     ) {
         if let Some(new_file) = new_file {
             let buffer = cx.handle();
-            new_file.saved_buffer(buffer, cx.as_mut());
+            new_file.buffer_added(buffer, cx.as_mut());
             self.file = Some(new_file);
         }
         if let Some(file) = &self.file {
@@ -905,6 +831,10 @@ impl Buffer {
                 .file
                 .as_ref()
                 .map_or(false, |file| file.mtime(cx) > self.saved_mtime)
+    }
+
+    pub fn remote_id(&self) -> u64 {
+        self.remote_id
     }
 
     pub fn version(&self) -> time::Global {
@@ -1406,17 +1336,16 @@ impl Buffer {
         self.lamport_clock.observe(timestamp.lamport());
     }
 
+    #[cfg(not(test))]
     pub fn send_operation(&mut self, operation: Operation, cx: &mut ModelContext<Self>) {
-        if let Some(operation_callback) = self.operation_callback.as_mut() {
-            operation_callback(operation, cx);
+        if let Some(file) = &self.file {
+            file.buffer_updated(cx.handle(), operation, cx.as_mut());
         }
     }
 
-    pub fn on_operation(
-        &mut self,
-        callback: impl FnMut(Operation, &mut ModelContext<Self>) + Send + Sync + 'static,
-    ) {
-        self.operation_callback = Some(Box::new(callback));
+    #[cfg(test)]
+    pub fn send_operation(&mut self, operation: Operation, _: &mut ModelContext<Self>) {
+        self.operations.push(operation);
     }
 
     pub fn undo(&mut self, cx: &mut ModelContext<Self>) {
@@ -1821,16 +1750,17 @@ impl Clone for Buffer {
             selections_last_update: self.selections_last_update.clone(),
             deferred_ops: self.deferred_ops.clone(),
             file: self.file.clone(),
-            rpc: self.rpc.clone(),
             language: self.language.clone(),
             syntax_tree: Mutex::new(self.syntax_tree.lock().clone()),
             is_parsing: false,
             deferred_replicas: self.deferred_replicas.clone(),
             replica_id: self.replica_id,
-            operation_callback: None,
             remote_id: self.remote_id.clone(),
             local_clock: self.local_clock.clone(),
             lamport_clock: self.lamport_clock.clone(),
+
+            #[cfg(test)]
+            operations: self.operations.clone(),
         }
     }
 }
@@ -1967,22 +1897,8 @@ impl Entity for Buffer {
     type Event = Event;
 
     fn release(&mut self, cx: &mut gpui::MutableAppContext) {
-        if let (Some(buffer_id), Some(file)) = (self.remote_id, self.file.as_ref()) {
-            let rpc = self.rpc.clone().unwrap();
-            let worktree_id = file.worktree_id() as u64;
-            cx.background()
-                .spawn(async move {
-                    if let Err(error) = rpc
-                        .send(proto::CloseBuffer {
-                            worktree_id,
-                            buffer_id,
-                        })
-                        .await
-                    {
-                        log::error!("error closing remote buffer: {}", error);
-                    };
-                })
-                .detach();
+        if let Some(file) = self.file.as_ref() {
+            file.buffer_removed(self.remote_id, cx);
         }
     }
 }
@@ -2321,6 +2237,232 @@ impl Operation {
     }
 }
 
+impl<'a> Into<proto::Operation> for &'a Operation {
+    fn into(self) -> proto::Operation {
+        proto::Operation {
+            variant: Some(match self {
+                Operation::Edit(edit) => proto::operation::Variant::Edit(edit.into()),
+                Operation::Undo {
+                    undo,
+                    lamport_timestamp,
+                } => proto::operation::Variant::Undo(proto::operation::Undo {
+                    replica_id: undo.id.replica_id as u32,
+                    local_timestamp: undo.id.value,
+                    lamport_timestamp: lamport_timestamp.value,
+                    edit_replica_id: undo.edit_id.replica_id as u32,
+                    edit_local_timestamp: undo.edit_id.value,
+                    count: undo.count,
+                }),
+                Operation::UpdateSelections {
+                    set_id,
+                    selections,
+                    lamport_timestamp,
+                } => proto::operation::Variant::UpdateSelections(
+                    proto::operation::UpdateSelections {
+                        replica_id: set_id.replica_id as u32,
+                        local_timestamp: set_id.value,
+                        lamport_timestamp: lamport_timestamp.value,
+                        selections: selections.as_ref().map_or(Vec::new(), |selections| {
+                            selections
+                                .iter()
+                                .map(|selection| proto::Selection {
+                                    id: selection.id as u64,
+                                    start: Some((&selection.start).into()),
+                                    end: Some((&selection.end).into()),
+                                    reversed: selection.reversed,
+                                })
+                                .collect()
+                        }),
+                    },
+                ),
+            }),
+        }
+    }
+}
+
+impl<'a> Into<proto::operation::Edit> for &'a EditOperation {
+    fn into(self) -> proto::operation::Edit {
+        let version = self
+            .version
+            .iter()
+            .map(|entry| proto::VectorClockEntry {
+                replica_id: entry.replica_id as u32,
+                timestamp: entry.value,
+            })
+            .collect();
+        let ranges = self
+            .ranges
+            .iter()
+            .map(|range| proto::Range {
+                start: range.start as u64,
+                end: range.end as u64,
+            })
+            .collect();
+        proto::operation::Edit {
+            replica_id: self.timestamp.replica_id as u32,
+            local_timestamp: self.timestamp.local,
+            lamport_timestamp: self.timestamp.lamport,
+            version,
+            ranges,
+            new_text: self.new_text.clone(),
+        }
+    }
+}
+
+impl<'a> Into<proto::Anchor> for &'a Anchor {
+    fn into(self) -> proto::Anchor {
+        match self {
+            Anchor::Middle {
+                offset,
+                bias,
+                version,
+            } => proto::Anchor {
+                version: version
+                    .iter()
+                    .map(|entry| proto::VectorClockEntry {
+                        replica_id: entry.replica_id as u32,
+                        timestamp: entry.value,
+                    })
+                    .collect(),
+                offset: *offset as u64,
+                bias: match bias {
+                    Bias::Left => proto::anchor::Bias::Left as i32,
+                    Bias::Right => proto::anchor::Bias::Right as i32,
+                },
+            },
+            Anchor::Start => proto::Anchor {
+                version: Vec::new(),
+                bias: proto::anchor::Bias::Left as i32,
+                offset: 0,
+            },
+            Anchor::End => proto::Anchor {
+                version: Vec::new(),
+                bias: proto::anchor::Bias::Right as i32,
+                offset: u64::MAX,
+            },
+        }
+    }
+}
+
+impl TryFrom<proto::Operation> for Operation {
+    type Error = anyhow::Error;
+
+    fn try_from(message: proto::Operation) -> Result<Self, Self::Error> {
+        Ok(
+            match message
+                .variant
+                .ok_or_else(|| anyhow!("missing operation variant"))?
+            {
+                proto::operation::Variant::Edit(edit) => Operation::Edit(edit.into()),
+                proto::operation::Variant::Undo(undo) => Operation::Undo {
+                    lamport_timestamp: time::Lamport {
+                        replica_id: undo.replica_id as ReplicaId,
+                        value: undo.lamport_timestamp,
+                    },
+                    undo: UndoOperation {
+                        id: time::Local {
+                            replica_id: undo.replica_id as ReplicaId,
+                            value: undo.local_timestamp,
+                        },
+                        edit_id: time::Local {
+                            replica_id: undo.edit_replica_id as ReplicaId,
+                            value: undo.edit_local_timestamp,
+                        },
+                        count: undo.count,
+                    },
+                },
+                proto::operation::Variant::UpdateSelections(message) => {
+                    Operation::UpdateSelections {
+                        set_id: time::Lamport {
+                            replica_id: message.replica_id as ReplicaId,
+                            value: message.local_timestamp,
+                        },
+                        lamport_timestamp: time::Lamport {
+                            replica_id: message.replica_id as ReplicaId,
+                            value: message.lamport_timestamp,
+                        },
+                        selections: Some(
+                            message
+                                .selections
+                                .into_iter()
+                                .map(|selection| {
+                                    Ok(Selection {
+                                        id: selection.id as usize,
+                                        start: selection
+                                            .start
+                                            .ok_or_else(|| anyhow!("missing selection start"))?
+                                            .try_into()?,
+                                        end: selection
+                                            .end
+                                            .ok_or_else(|| anyhow!("missing selection end"))?
+                                            .try_into()?,
+                                        reversed: selection.reversed,
+                                        goal: SelectionGoal::None,
+                                    })
+                                })
+                                .collect::<Result<Vec<_>, anyhow::Error>>()?
+                                .into(),
+                        ),
+                    }
+                }
+            },
+        )
+    }
+}
+
+impl From<proto::operation::Edit> for EditOperation {
+    fn from(edit: proto::operation::Edit) -> Self {
+        let mut version = time::Global::new();
+        for entry in edit.version {
+            version.observe(time::Local {
+                replica_id: entry.replica_id as ReplicaId,
+                value: entry.timestamp,
+            });
+        }
+        let ranges = edit
+            .ranges
+            .into_iter()
+            .map(|range| range.start as usize..range.end as usize)
+            .collect();
+        EditOperation {
+            timestamp: InsertionTimestamp {
+                replica_id: edit.replica_id as ReplicaId,
+                local: edit.local_timestamp,
+                lamport: edit.lamport_timestamp,
+            },
+            version,
+            ranges,
+            new_text: edit.new_text,
+        }
+    }
+}
+
+impl TryFrom<proto::Anchor> for Anchor {
+    type Error = anyhow::Error;
+
+    fn try_from(message: proto::Anchor) -> Result<Self, Self::Error> {
+        let mut version = time::Global::new();
+        for entry in message.version {
+            version.observe(time::Local {
+                replica_id: entry.replica_id as ReplicaId,
+                value: entry.timestamp,
+            });
+        }
+
+        Ok(Self::Middle {
+            offset: message.offset as usize,
+            bias: if message.bias == proto::anchor::Bias::Left as i32 {
+                Bias::Left
+            } else if message.bias == proto::anchor::Bias::Right as i32 {
+                Bias::Right
+            } else {
+                Err(anyhow!("invalid anchor bias {}", message.bias))?
+            },
+            version,
+        })
+    }
+}
+
 impl operation_queue::Operation for Operation {
     fn timestamp(&self) -> time::Lamport {
         self.lamport_timestamp()
@@ -2419,13 +2561,7 @@ mod tests {
 
         let buffer1 = cx.add_model(|cx| Buffer::new(0, "abcdef", cx));
         let buffer2 = cx.add_model(|cx| Buffer::new(1, "abcdef", cx));
-        let buffer_ops = Arc::new(Mutex::new(Vec::new()));
-        buffer1.update(cx, |buffer, cx| {
-            buffer.on_operation({
-                let buffer_ops = buffer_ops.clone();
-                move |op, _| buffer_ops.lock().push(op)
-            });
-
+        let buffer_ops = buffer1.update(cx, |buffer, cx| {
             let buffer_1_events = buffer_1_events.clone();
             cx.subscribe(&buffer1, move |_, event, _| {
                 buffer_1_events.borrow_mut().push(event.clone())
@@ -2452,14 +2588,14 @@ mod tests {
 
             // Undoing a transaction emits one edited event.
             buffer.undo(cx);
+
+            buffer.operations.clone()
         });
 
         // Incorporating a set of remote ops emits a single edited event,
         // followed by a dirtied event.
         buffer2.update(cx, |buffer, cx| {
-            buffer
-                .apply_ops::<Vec<_>>(mem::take(buffer_ops.lock().as_mut()), cx)
-                .unwrap();
+            buffer.apply_ops(buffer_ops, cx).unwrap();
         });
 
         let buffer_1_events = buffer_1_events.borrow();
@@ -3080,22 +3216,14 @@ mod tests {
         cx.add_model(|cx| {
             let mut buffer = Buffer::new(0, "1234", cx);
 
-            let operations = Arc::new(Mutex::new(Vec::new()));
-            buffer.on_operation({
-                let edits = operations.clone();
-                move |operation, _| {
-                    edits.lock().push(operation);
-                }
-            });
-
             buffer.edit(vec![1..1], "abx", cx);
             buffer.edit(vec![3..4], "yzef", cx);
             buffer.edit(vec![3..5], "cd", cx);
             assert_eq!(buffer.text(), "1abcdef234");
 
-            let edit1 = operations.lock()[0].clone();
-            let edit2 = operations.lock()[1].clone();
-            let edit3 = operations.lock()[2].clone();
+            let edit1 = buffer.operations[0].clone();
+            let edit2 = buffer.operations[1].clone();
+            let edit3 = buffer.operations[2].clone();
 
             buffer.undo_or_redo(edit1.edit_id().unwrap(), cx).unwrap();
             assert_eq!(buffer.text(), "1cdef234");
@@ -3194,39 +3322,21 @@ mod tests {
         let buffer2 = cx.add_model(|cx| Buffer::new(2, text, cx));
         let buffer3 = cx.add_model(|cx| Buffer::new(3, text, cx));
 
-        let ops = Arc::new(Mutex::new(Vec::new()));
-
-        buffer1.update(cx, |buffer, cx| {
-            buffer.on_operation({
-                let ops = ops.clone();
-                move |operation, _| ops.lock().push(operation)
-            });
-
+        let buf1_op = buffer1.update(cx, |buffer, cx| {
             buffer.edit(vec![1..2], "12", cx);
             assert_eq!(buffer.text(), "a12cdef");
+            buffer.operations.last().unwrap().clone()
         });
-        buffer2.update(cx, |buffer, cx| {
-            buffer.on_operation({
-                let ops = ops.clone();
-                move |operation, _| ops.lock().push(operation)
-            });
-
+        let buf2_op = buffer2.update(cx, |buffer, cx| {
             buffer.edit(vec![3..4], "34", cx);
             assert_eq!(buffer.text(), "abc34ef");
+            buffer.operations.last().unwrap().clone()
         });
-        buffer3.update(cx, |buffer, cx| {
-            buffer.on_operation({
-                let ops = ops.clone();
-                move |operation, _| ops.lock().push(operation)
-            });
-
+        let buf3_op = buffer3.update(cx, |buffer, cx| {
             buffer.edit(vec![5..6], "56", cx);
             assert_eq!(buffer.text(), "abcde56");
+            buffer.operations.last().unwrap().clone()
         });
-
-        let buf1_op = ops.lock()[0].clone();
-        let buf2_op = ops.lock()[1].clone();
-        let buf3_op = ops.lock()[2].clone();
 
         buffer1.update(cx, |buffer, _| {
             buffer.apply_op(buf2_op.clone()).unwrap();
@@ -3265,7 +3375,6 @@ mod tests {
         for seed in start_seed..start_seed + iterations {
             dbg!(seed);
             let mut rng = StdRng::seed_from_u64(seed);
-            let network = Arc::new(Mutex::new(Network::new(StdRng::seed_from_u64(seed))));
 
             let base_text_len = rng.gen_range(0..10);
             let base_text = RandomCharIter::new(&mut rng)
@@ -3273,22 +3382,14 @@ mod tests {
                 .collect::<String>();
             let mut replica_ids = Vec::new();
             let mut buffers = Vec::new();
+            let mut network = Network::new(StdRng::seed_from_u64(seed));
+
             for i in 0..peers {
-                let buffer = cx.add_model(|cx| {
-                    let replica_id = i as ReplicaId;
-                    let mut buffer = Buffer::new(replica_id, base_text.as_str(), cx);
-                    buffer.on_operation({
-                        let network = network.clone();
-                        move |op, _| {
-                            network.lock().broadcast(replica_id, vec![op]);
-                        }
-                    });
-                    buffer
-                });
+                let buffer = cx.add_model(|cx| Buffer::new(i as ReplicaId, base_text.as_str(), cx));
 
                 buffers.push(buffer);
                 replica_ids.push(i as u16);
-                network.lock().add_peer(i as u16);
+                network.add_peer(i as u16);
             }
 
             log::info!("initial text: {:?}", base_text);
@@ -3300,15 +3401,17 @@ mod tests {
                 buffers[replica_index].update(cx, |buffer, cx| match rng.gen_range(0..=100) {
                     0..=50 if mutation_count != 0 => {
                         buffer.randomly_mutate(&mut rng, cx);
+                        network.broadcast(buffer.replica_id, mem::take(&mut buffer.operations));
                         log::info!("buffer {} text: {:?}", buffer.replica_id, buffer.text());
                         mutation_count -= 1;
                     }
                     51..=70 if mutation_count != 0 => {
                         buffer.randomly_undo_redo(&mut rng, cx);
+                        network.broadcast(buffer.replica_id, mem::take(&mut buffer.operations));
                         mutation_count -= 1;
                     }
-                    71..=100 if network.lock().has_unreceived(replica_id) => {
-                        let ops = network.lock().receive(replica_id);
+                    71..=100 if network.has_unreceived(replica_id) => {
+                        let ops = network.receive(replica_id);
                         if !ops.is_empty() {
                             log::info!(
                                 "peer {} applying {} ops from the network.",
@@ -3321,7 +3424,7 @@ mod tests {
                     _ => {}
                 });
 
-                if mutation_count == 0 && network.lock().is_idle() {
+                if mutation_count == 0 && network.is_idle() {
                     break;
                 }
             }
