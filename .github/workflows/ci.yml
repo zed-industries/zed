@@ -3,7 +3,7 @@ name: CI
 on:
   push:
     branches:
-      - master
+      - main
     tags:
       - "v*"
   pull_request:
@@ -61,14 +61,15 @@ jobs:
       - name: Create app bundle
         run: script/bundle
 
-      - name: Upload app bundle to workflow run
+      - name: Upload app bundle to workflow run if main branch
         uses: actions/upload-artifact@v2
+        if: ${{ github.ref == 'refs/heads/main' }}
         with:
           name: Zed.dmg
           path: target/release/Zed.dmg
 
       - uses: softprops/action-gh-release@v1
-        name: Upload app bundle to release
+        name: Upload app bundle to release if release tag
         if: ${{ startsWith(github.ref, 'refs/tags/v') }}
         with:
           draft: true
