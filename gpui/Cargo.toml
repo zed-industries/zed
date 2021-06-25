@@ -30,7 +30,7 @@ tree-sitter = "0.19"
 usvg = "0.14"
 
 [build-dependencies]
-bindgen = "0.57"
+bindgen = "0.58.1"
 cc = "1.0.67"
 
 [dev-dependencies]
