@@ -30,6 +30,8 @@ use std::{
 
 pub trait Entity: 'static + Send + Sync {
     type Event;
+
+    fn release(&mut self, _: &mut MutableAppContext) {}
 }
 
 pub trait View: Entity {
@@ -374,8 +376,8 @@ impl TestAppContext {
         self.cx.borrow().foreground().clone()
     }
 
-    pub fn background_executor(&self) -> Arc<executor::Background> {
-        self.cx.borrow().background_executor().clone()
+    pub fn background(&self) -> Arc<executor::Background> {
+        self.cx.borrow().background().clone()
     }
 
     pub fn simulate_new_path_selection(&self, result: impl FnOnce(PathBuf) -> Option<PathBuf>) {
@@ -429,7 +431,7 @@ impl AsyncAppContext {
         self.0.borrow().platform()
     }
 
-    pub fn background_executor(&self) -> Arc<executor::Background> {
+    pub fn background(&self) -> Arc<executor::Background> {
         self.0.borrow().cx.background.clone()
     }
 }
@@ -622,7 +624,7 @@ impl MutableAppContext {
         &self.foreground
     }
 
-    pub fn background_executor(&self) -> &Arc<executor::Background> {
+    pub fn background(&self) -> &Arc<executor::Background> {
         &self.cx.background
     }
 
@@ -1087,15 +1089,17 @@ impl MutableAppContext {
             }
 
             for model_id in dropped_models {
-                self.cx.models.remove(&model_id);
                 self.subscriptions.remove(&model_id);
                 self.model_observations.remove(&model_id);
+                let mut model = self.cx.models.remove(&model_id).unwrap();
+                model.release(self);
             }
 
             for (window_id, view_id) in dropped_views {
                 self.subscriptions.remove(&view_id);
                 self.model_observations.remove(&view_id);
-                self.cx.views.remove(&(window_id, view_id));
+                let mut view = self.cx.views.remove(&(window_id, view_id)).unwrap();
+                view.release(self);
                 let change_focus_to = self.cx.windows.get_mut(&window_id).and_then(|window| {
                     window
                         .invalidation
@@ -1496,7 +1500,7 @@ impl AppContext {
             .collect::<HashMap<_, ElementBox>>()
     }
 
-    pub fn background_executor(&self) -> &Arc<executor::Background> {
+    pub fn background(&self) -> &Arc<executor::Background> {
         &self.background
     }
 
@@ -1574,6 +1578,7 @@ pub enum Effect {
 pub trait AnyModel: Send + Sync {
     fn as_any(&self) -> &dyn Any;
     fn as_any_mut(&mut self) -> &mut dyn Any;
+    fn release(&mut self, cx: &mut MutableAppContext);
 }
 
 impl<T> AnyModel for T
@@ -1587,11 +1592,16 @@ where
     fn as_any_mut(&mut self) -> &mut dyn Any {
         self
     }
+
+    fn release(&mut self, cx: &mut MutableAppContext) {
+        self.release(cx);
+    }
 }
 
 pub trait AnyView: Send + Sync {
     fn as_any(&self) -> &dyn Any;
     fn as_any_mut(&mut self) -> &mut dyn Any;
+    fn release(&mut self, cx: &mut MutableAppContext);
     fn ui_name(&self) -> &'static str;
     fn render<'a>(&self, cx: &AppContext) -> ElementBox;
     fn on_focus(&mut self, cx: &mut MutableAppContext, window_id: usize, view_id: usize);
@@ -1609,6 +1619,10 @@ where
 
     fn as_any_mut(&mut self) -> &mut dyn Any {
         self
+    }
+
+    fn release(&mut self, cx: &mut MutableAppContext) {
+        self.release(cx);
     }
 
     fn ui_name(&self) -> &'static str {
@@ -1651,7 +1665,7 @@ impl<'a, T: Entity> ModelContext<'a, T> {
         }
     }
 
-    pub fn background_executor(&self) -> &Arc<executor::Background> {
+    pub fn background(&self) -> &Arc<executor::Background> {
         &self.app.cx.background
     }
 
@@ -2947,6 +2961,65 @@ mod tests {
         assert_eq!(cx.cx.views.len(), 2);
         assert!(cx.subscriptions.is_empty());
         assert!(cx.model_observations.is_empty());
+    }
+
+    #[crate::test(self)]
+    fn test_entity_release_hooks(cx: &mut MutableAppContext) {
+        struct Model {
+            released: Arc<Mutex<bool>>,
+        }
+
+        struct View {
+            released: Arc<Mutex<bool>>,
+        }
+
+        impl Entity for Model {
+            type Event = ();
+
+            fn release(&mut self, _: &mut MutableAppContext) {
+                *self.released.lock() = true;
+            }
+        }
+
+        impl Entity for View {
+            type Event = ();
+
+            fn release(&mut self, _: &mut MutableAppContext) {
+                *self.released.lock() = true;
+            }
+        }
+
+        impl super::View for View {
+            fn ui_name() -> &'static str {
+                "View"
+            }
+
+            fn render<'a>(&self, _: &AppContext) -> ElementBox {
+                Empty::new().boxed()
+            }
+        }
+
+        let model_released = Arc::new(Mutex::new(false));
+        let view_released = Arc::new(Mutex::new(false));
+
+        let model = cx.add_model(|_| Model {
+            released: model_released.clone(),
+        });
+
+        let (window_id, _) = cx.add_window(|_| View {
+            released: view_released.clone(),
+        });
+
+        assert!(!*model_released.lock());
+        assert!(!*view_released.lock());
+
+        cx.update(move || {
+            drop(model);
+        });
+        assert!(*model_released.lock());
+
+        drop(cx.remove_window(window_id));
+        assert!(*view_released.lock());
     }
 
     #[crate::test(self)]
