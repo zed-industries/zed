@@ -466,19 +466,17 @@ mod tests {
         let text = sample_text(6, 6);
         let buffer = cx.add_model(|cx| Buffer::new(0, text, cx));
         let map = DisplayMap::new(buffer.clone(), 4, cx.as_ref());
-        buffer
-            .update(cx, |buffer, cx| {
-                buffer.edit(
-                    vec![
-                        Point::new(1, 0)..Point::new(1, 0),
-                        Point::new(1, 1)..Point::new(1, 1),
-                        Point::new(2, 1)..Point::new(2, 1),
-                    ],
-                    "\t",
-                    cx,
-                )
-            })
-            .unwrap();
+        buffer.update(cx, |buffer, cx| {
+            buffer.edit(
+                vec![
+                    Point::new(1, 0)..Point::new(1, 0),
+                    Point::new(1, 1)..Point::new(1, 1),
+                    Point::new(2, 1)..Point::new(2, 1),
+                ],
+                "\t",
+                cx,
+            )
+        });
 
         assert_eq!(
             &map.snapshot(cx.as_ref())

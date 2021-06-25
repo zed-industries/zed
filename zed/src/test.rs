@@ -19,17 +19,19 @@ struct Envelope<T: Clone> {
 }
 
 #[cfg(test)]
-pub(crate) struct Network<T: Clone> {
+pub(crate) struct Network<T: Clone, R: rand::Rng> {
     inboxes: std::collections::BTreeMap<ReplicaId, Vec<Envelope<T>>>,
     all_messages: Vec<T>,
+    rng: R,
 }
 
 #[cfg(test)]
-impl<T: Clone> Network<T> {
-    pub fn new() -> Self {
+impl<T: Clone, R: rand::Rng> Network<T, R> {
+    pub fn new(rng: R) -> Self {
         Network {
             inboxes: Default::default(),
             all_messages: Vec::new(),
+            rng,
         }
     }
 
@@ -41,7 +43,7 @@ impl<T: Clone> Network<T> {
         self.inboxes.values().all(|i| i.is_empty())
     }
 
-    pub fn broadcast<R: rand::Rng>(&mut self, sender: ReplicaId, messages: Vec<T>, rng: &mut R) {
+    pub fn broadcast(&mut self, sender: ReplicaId, messages: Vec<T>) {
         for (replica, inbox) in self.inboxes.iter_mut() {
             if *replica != sender {
                 for message in &messages {
@@ -60,8 +62,8 @@ impl<T: Clone> Network<T> {
 
                     // Insert one or more duplicates of this message *after* the previous
                     // message delivered by this replica.
-                    for _ in 0..rng.gen_range(1..4) {
-                        let insertion_index = rng.gen_range(min_index..inbox.len() + 1);
+                    for _ in 0..self.rng.gen_range(1..4) {
+                        let insertion_index = self.rng.gen_range(min_index..inbox.len() + 1);
                         inbox.insert(
                             insertion_index,
                             Envelope {
@@ -80,9 +82,9 @@ impl<T: Clone> Network<T> {
         !self.inboxes[&receiver].is_empty()
     }
 
-    pub fn receive<R: rand::Rng>(&mut self, receiver: ReplicaId, rng: &mut R) -> Vec<T> {
+    pub fn receive(&mut self, receiver: ReplicaId) -> Vec<T> {
         let inbox = self.inboxes.get_mut(&receiver).unwrap();
-        let count = rng.gen_range(0..inbox.len() + 1);
+        let count = self.rng.gen_range(0..inbox.len() + 1);
         inbox
             .drain(0..count)
             .map(|envelope| envelope.message)

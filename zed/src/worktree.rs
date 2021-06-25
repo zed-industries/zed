@@ -298,7 +298,22 @@ impl LocalWorktree {
                 let language = language_registry.select_language(&path).cloned();
                 let file = File::new(handle, path.into());
                 let buffer = cx.add_model(|cx| {
-                    Buffer::from_history(0, History::new(contents.into()), Some(file), language, cx)
+                    let mut buffer = Buffer::from_history(
+                        0,
+                        History::new(contents.into()),
+                        Some(file),
+                        language,
+                        cx,
+                    );
+                    buffer.on_operation({
+                        let worktree = handle.clone();
+                        move |operation, cx| {
+                            worktree.update(cx, |tree, cx| {
+                                // tree.buffer_changed(cx.model_id(), operation)
+                            });
+                        }
+                    });
+                    buffer
                 });
                 this.update(&mut cx, |this, _| {
                     let this = this.as_local_mut().unwrap();

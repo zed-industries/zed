@@ -413,7 +413,7 @@ impl Editor {
         let display_map = DisplayMap::new(buffer.clone(), settings.borrow().tab_size, cx.as_ref());
 
         let mut next_selection_id = 0;
-        let (selection_set_id, _) = buffer.update(cx, |buffer, cx| {
+        let selection_set_id = buffer.update(cx, |buffer, cx| {
             buffer.add_selection_set(
                 vec![Selection {
                     id: post_inc(&mut next_selection_id),
@@ -886,8 +886,7 @@ impl Editor {
             })
             .collect();
         self.buffer
-            .update(cx, |buffer, cx| buffer.edit(edit_ranges, "", cx))
-            .unwrap();
+            .update(cx, |buffer, cx| buffer.edit(edit_ranges, "", cx));
         self.update_selections(new_selections, true, cx);
         self.end_transaction(cx);
     }
@@ -939,7 +938,7 @@ impl Editor {
 
         self.buffer.update(cx, |buffer, cx| {
             for (offset, text) in edits.into_iter().rev() {
-                buffer.edit(Some(offset..offset), text, cx).unwrap();
+                buffer.edit(Some(offset..offset), text, cx);
             }
         });
 
@@ -1029,7 +1028,7 @@ impl Editor {
         self.unfold_ranges(old_folds, cx);
         self.buffer.update(cx, |buffer, cx| {
             for (range, text) in edits.into_iter().rev() {
-                buffer.edit(Some(range), text, cx).unwrap();
+                buffer.edit(Some(range), text, cx);
             }
         });
         self.fold_ranges(new_folds, cx);
@@ -1117,7 +1116,7 @@ impl Editor {
         self.unfold_ranges(old_folds, cx);
         self.buffer.update(cx, |buffer, cx| {
             for (range, text) in edits.into_iter().rev() {
-                buffer.edit(Some(range), text, cx).unwrap();
+                buffer.edit(Some(range), text, cx);
             }
         });
         self.fold_ranges(new_folds, cx);
@@ -1226,13 +1225,9 @@ impl Editor {
                         let new_selection_start = selection.end.bias_right(buffer);
                         if selection_start == selection_end && clipboard_selection.is_entire_line {
                             let line_start = Point::new(selection_start.row, 0);
-                            buffer
-                                .edit(Some(line_start..line_start), to_insert, cx)
-                                .unwrap();
+                            buffer.edit(Some(line_start..line_start), to_insert, cx);
                         } else {
-                            buffer
-                                .edit(Some(&selection.start..&selection.end), to_insert, cx)
-                                .unwrap();
+                            buffer.edit(Some(&selection.start..&selection.end), to_insert, cx);
                         };
 
                         let new_selection_start = new_selection_start.bias_left(buffer);
@@ -1996,9 +1991,7 @@ impl Editor {
         }
 
         self.buffer.update(cx, |buffer, cx| {
-            buffer
-                .update_selection_set(self.selection_set_id, selections, cx)
-                .unwrap()
+            buffer.update_selection_set(self.selection_set_id, selections, cx)
         });
         self.pause_cursor_blinking(cx);
 
@@ -2808,16 +2801,14 @@ mod tests {
         let (_, view) = cx.add_window(|cx| Editor::for_buffer(buffer.clone(), settings, cx));
 
         buffer.update(cx, |buffer, cx| {
-            buffer
-                .edit(
-                    vec![
-                        Point::new(1, 0)..Point::new(1, 0),
-                        Point::new(1, 1)..Point::new(1, 1),
-                    ],
-                    "\t",
-                    cx,
-                )
-                .unwrap();
+            buffer.edit(
+                vec![
+                    Point::new(1, 0)..Point::new(1, 0),
+                    Point::new(1, 1)..Point::new(1, 1),
+                ],
+                "\t",
+                cx,
+            );
         });
 
         view.update(cx, |view, cx| {

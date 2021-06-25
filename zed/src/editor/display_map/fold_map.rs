@@ -873,24 +873,20 @@ mod tests {
         assert_eq!(map.text(cx.as_ref()), "aa…cc…eeeee");
 
         buffer.update(cx, |buffer, cx| {
-            buffer
-                .edit(
-                    vec![
-                        Point::new(0, 0)..Point::new(0, 1),
-                        Point::new(2, 3)..Point::new(2, 3),
-                    ],
-                    "123",
-                    cx,
-                )
-                .unwrap();
+            buffer.edit(
+                vec![
+                    Point::new(0, 0)..Point::new(0, 1),
+                    Point::new(2, 3)..Point::new(2, 3),
+                ],
+                "123",
+                cx,
+            );
         });
         assert_eq!(map.text(cx.as_ref()), "123a…c123c…eeeee");
 
         buffer.update(cx, |buffer, cx| {
             let start_version = buffer.version.clone();
-            buffer
-                .edit(Some(Point::new(2, 6)..Point::new(4, 3)), "456", cx)
-                .unwrap();
+            buffer.edit(Some(Point::new(2, 6)..Point::new(4, 3)), "456", cx);
             buffer.edits_since(start_version).collect::<Vec<_>>()
         });
         assert_eq!(map.text(cx.as_ref()), "123a…c123456eee");
@@ -932,7 +928,7 @@ mod tests {
             // Edit within one of the folds.
             buffer.update(cx, |buffer, cx| {
                 let version = buffer.version();
-                buffer.edit(vec![0..1], "12345", cx).unwrap();
+                buffer.edit(vec![0..1], "12345", cx);
                 buffer.edits_since(version).collect::<Vec<_>>()
             });
             map.check_invariants(cx.as_ref());
@@ -971,9 +967,7 @@ mod tests {
         assert_eq!(map.text(cx.as_ref()), "aa…cccc\nd…eeeee");
 
         buffer.update(cx, |buffer, cx| {
-            buffer
-                .edit(Some(Point::new(2, 2)..Point::new(3, 1)), "", cx)
-                .unwrap();
+            buffer.edit(Some(Point::new(2, 2)..Point::new(3, 1)), "", cx)
         });
         assert_eq!(map.text(cx.as_ref()), "aa…eeeee");
     }

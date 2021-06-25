@@ -15,6 +15,7 @@ message Envelope {
         OpenBuffer open_buffer = 10;
         OpenBufferResponse open_buffer_response = 11;
         CloseBuffer close_buffer = 12;
+        EditBuffer edit_buffer = 13;
     }
 }
 
@@ -69,6 +70,12 @@ message CloseBuffer {
     uint64 buffer_id = 2;
 }
 
+message EditBuffer {
+    uint64 worktree_id = 1;
+    uint64 buffer_id = 2;
+    repeated Operation operations = 3;
+}
+
 message User {
     uint64 id = 1;
     string github_login = 2;
@@ -98,6 +105,7 @@ message Buffer {
 message Operation {
     oneof variant {
         Edit edit = 1;
+        Undo undo = 2;
     }
 
     message Edit {
@@ -107,6 +115,15 @@ message Operation {
         repeated VectorClockEntry version = 4;
         repeated Range ranges = 5;
         optional string new_text = 6;
+    }
+
+    message Undo {
+        uint32 replica_id = 1;
+        uint32 local_timestamp = 2;
+        uint32 lamport_timestamp = 3;
+        uint32 edit_replica_id = 4;
+        uint32 edit_local_timestamp = 5;
+        uint32 count = 6;
     }
 }
 
