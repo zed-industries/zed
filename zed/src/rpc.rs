@@ -30,7 +30,7 @@ pub struct Client {
 pub struct ClientState {
     connection_id: Option<ConnectionId>,
     pub shared_worktrees: HashMap<u64, ModelHandle<Worktree>>,
-    pub shared_buffers: HashMap<PeerId, HashMap<usize, ModelHandle<Buffer>>>,
+    pub shared_buffers: HashMap<PeerId, HashMap<u64, ModelHandle<Buffer>>>,
     pub language_registry: Arc<LanguageRegistry>,
 }
 
@@ -64,12 +64,12 @@ impl Client {
         .detach();
     }
 
-    pub async fn log_in_and_connect(&self, cx: &AsyncAppContext) -> surf::Result<ConnectionId> {
-        if let Some(connection_id) = self.state.lock().await.connection_id {
-            return Ok(connection_id);
+    pub async fn log_in_and_connect(&self, cx: &AsyncAppContext) -> surf::Result<()> {
+        if self.state.lock().await.connection_id.is_some() {
+            return Ok(());
         }
 
-        let (user_id, access_token) = Self::login(cx.platform(), &cx.background_executor()).await?;
+        let (user_id, access_token) = Self::login(cx.platform(), &cx.background()).await?;
 
         let mut response = surf::get(format!(
             "{}{}",
@@ -88,13 +88,8 @@ impl Client {
             .await
             .context("failed to parse rpc address response")?;
 
-        self.connect(
-            &address,
-            user_id.parse()?,
-            access_token,
-            &cx.background_executor(),
-        )
-        .await
+        self.connect(&address, user_id.parse()?, access_token, &cx.background())
+            .await
     }
 
     pub async fn connect(
@@ -103,7 +98,7 @@ impl Client {
         user_id: i32,
         access_token: String,
         executor: &Arc<Background>,
-    ) -> surf::Result<ConnectionId> {
+    ) -> surf::Result<()> {
         // TODO - If the `ZED_SERVER_URL` uses https, then wrap this stream in
         // a TLS stream using `native-tls`.
         let stream = smol::net::TcpStream::connect(&address).await?;
@@ -129,7 +124,8 @@ impl Client {
             Err(anyhow!("failed to authenticate with RPC server"))?;
         }
 
-        Ok(connection_id)
+        self.state.lock().await.connection_id = Some(connection_id);
+        Ok(())
     }
 
     pub fn login(
@@ -208,20 +204,22 @@ impl Client {
         })
     }
 
-    pub fn send<T: EnvelopedMessage>(
-        &self,
-        connection_id: ConnectionId,
-        message: T,
-    ) -> impl Future<Output = Result<()>> {
-        self.peer.send(connection_id, message)
+    async fn connection_id(&self) -> Result<ConnectionId> {
+        self.state
+            .lock()
+            .await
+            .connection_id
+            .ok_or_else(|| anyhow!("not connected"))
     }
 
-    pub fn request<T: RequestMessage>(
-        &self,
-        connection_id: ConnectionId,
-        request: T,
-    ) -> impl Future<Output = Result<T::Response>> {
-        self.peer.request(connection_id, request)
+    pub async fn send<T: EnvelopedMessage>(&self, message: T) -> Result<()> {
+        self.peer.send(self.connection_id().await?, message).await
+    }
+
+    pub async fn request<T: RequestMessage>(&self, request: T) -> Result<T::Response> {
+        self.peer
+            .request(self.connection_id().await?, request)
+            .await
     }
 
     pub fn respond<T: RequestMessage>(

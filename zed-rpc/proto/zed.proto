@@ -61,18 +61,18 @@ message OpenBuffer {
 }
 
 message OpenBufferResponse {
-    uint64 buffer_id = 1;
-    Buffer buffer = 2;
+    Buffer buffer = 1;
 }
 
 message CloseBuffer {
-    uint64 id = 1;
+    uint64 worktree_id = 1;
+    uint64 buffer_id = 2;
 }
 
 message User {
-    string github_login = 1;
-    string avatar_url = 2;
-    uint64 id = 3;
+    uint64 id = 1;
+    string github_login = 2;
+    string avatar_url = 3;
 }
 
 message Worktree {
@@ -90,8 +90,9 @@ message Entry {
 }
 
 message Buffer {
-    string content = 1;
-    repeated Operation history = 2;
+    uint64 id = 1;
+    string content = 2;
+    repeated Operation history = 3;
 }
 
 message Operation {

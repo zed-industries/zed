@@ -630,13 +630,13 @@ impl Workspace {
         let platform = cx.platform();
 
         let task = cx.spawn(|this, mut cx| async move {
-            let connection_id = rpc.log_in_and_connect(&cx).await?;
+            rpc.log_in_and_connect(&cx).await?;
 
             let share_task = this.update(&mut cx, |this, cx| {
                 let worktree = this.worktrees.iter().next()?;
                 worktree.update(cx, |worktree, cx| {
                     let worktree = worktree.as_local_mut()?;
-                    Some(worktree.share(rpc, connection_id, cx))
+                    Some(worktree.share(rpc, cx))
                 })
             });
 
@@ -661,7 +661,7 @@ impl Workspace {
         let rpc = self.rpc.clone();
 
         let task = cx.spawn(|this, mut cx| async move {
-            let connection_id = rpc.log_in_and_connect(&cx).await?;
+            rpc.log_in_and_connect(&cx).await?;
 
             let worktree_url = cx
                 .platform()
@@ -671,14 +671,8 @@ impl Workspace {
                 .ok_or_else(|| anyhow!("failed to decode worktree url"))?;
             log::info!("read worktree url from clipboard: {}", worktree_url.text());
 
-            let worktree = Worktree::remote(
-                rpc.clone(),
-                connection_id,
-                worktree_id,
-                access_token,
-                &mut cx,
-            )
-            .await?;
+            let worktree =
+                Worktree::remote(rpc.clone(), worktree_id, access_token, &mut cx).await?;
             this.update(&mut cx, |workspace, cx| {
                 cx.observe_model(&worktree, |_, _, cx| cx.notify());
                 workspace.worktrees.insert(worktree);

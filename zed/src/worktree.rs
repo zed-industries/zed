@@ -6,7 +6,7 @@ use self::{char_bag::CharBag, ignore::IgnoreStack};
 use crate::{
     editor::{Buffer, History, Rope},
     language::LanguageRegistry,
-    rpc::{self, proto, ConnectionId},
+    rpc::{self, proto},
     sum_tree::{self, Cursor, Edit, SumTree},
     time::ReplicaId,
     util::Bias,
@@ -71,19 +71,15 @@ impl Worktree {
 
     pub async fn remote(
         rpc: rpc::Client,
-        connection_id: ConnectionId,
         id: u64,
         access_token: String,
         cx: &mut AsyncAppContext,
     ) -> Result<ModelHandle<Self>> {
         let open_worktree_response = rpc
-            .request(
-                connection_id,
-                proto::OpenWorktree {
-                    worktree_id: id,
-                    access_token,
-                },
-            )
+            .request(proto::OpenWorktree {
+                worktree_id: id,
+                access_token,
+            })
             .await?;
         let worktree_message = open_worktree_response
             .worktree
@@ -97,7 +93,6 @@ impl Worktree {
                     id,
                     worktree_message,
                     rpc,
-                    connection_id,
                     replica_id as ReplicaId,
                     cx,
                 ))
@@ -148,6 +143,25 @@ impl Worktree {
                 worktree.open_buffer(path.as_ref(), language_registry, cx)
             }
         }
+    }
+
+    pub fn has_open_buffer(&self, path: impl AsRef<Path>, cx: &AppContext) -> bool {
+        let open_buffers = match self {
+            Worktree::Local(worktree) => &worktree.open_buffers,
+            Worktree::Remote(worktree) => &worktree.open_buffers,
+        };
+
+        let path = path.as_ref();
+        open_buffers
+            .values()
+            .find(|buffer| {
+                if let Some(file) = buffer.upgrade(cx).and_then(|buffer| buffer.read(cx).file()) {
+                    file.path.as_ref() == path
+                } else {
+                    false
+                }
+            })
+            .is_some()
     }
 
     pub fn save(
@@ -415,7 +429,7 @@ impl LocalWorktree {
 
     fn load(&self, path: &Path, cx: &AppContext) -> Task<Result<String>> {
         let abs_path = self.absolutize(path);
-        cx.background_executor().spawn(async move {
+        cx.background().spawn(async move {
             let mut file = fs::File::open(&abs_path)?;
             let mut contents = String::new();
             file.read_to_string(&mut contents)?;
@@ -434,7 +448,7 @@ impl LocalWorktree {
         let background_snapshot = self.background_snapshot.clone();
         let save = {
             let path = path.clone();
-            cx.background_executor().spawn(async move {
+            cx.background().spawn(async move {
                 let buffer_size = content.summary().bytes.min(10 * 1024);
                 let file = fs::File::create(&abs_path)?;
                 let mut writer = io::BufWriter::with_capacity(buffer_size, &file);
@@ -472,7 +486,6 @@ impl LocalWorktree {
     pub fn share(
         &mut self,
         client: rpc::Client,
-        connection_id: ConnectionId,
         cx: &mut ModelContext<Worktree>,
     ) -> Task<anyhow::Result<(u64, String)>> {
         self.rpc = Some(client.clone());
@@ -481,7 +494,7 @@ impl LocalWorktree {
         let handle = cx.handle();
         cx.spawn(|_this, cx| async move {
             let entries = cx
-                .background_executor()
+                .background()
                 .spawn(async move {
                     snapshot
                         .entries
@@ -499,12 +512,9 @@ impl LocalWorktree {
                 .await;
 
             let share_response = client
-                .request(
-                    connection_id,
-                    proto::ShareWorktree {
-                        worktree: Some(proto::Worktree { root_name, entries }),
-                    },
-                )
+                .request(proto::ShareWorktree {
+                    worktree: Some(proto::Worktree { root_name, entries }),
+                })
                 .await?;
 
             client
@@ -538,9 +548,8 @@ pub struct RemoteWorktree {
     remote_id: u64,
     snapshot: Snapshot,
     rpc: rpc::Client,
-    connection_id: ConnectionId,
     replica_id: ReplicaId,
-    open_buffers: HashMap<u64, WeakModelHandle<Buffer>>,
+    open_buffers: HashMap<usize, WeakModelHandle<Buffer>>,
 }
 
 impl RemoteWorktree {
@@ -548,7 +557,6 @@ impl RemoteWorktree {
         remote_id: u64,
         worktree: proto::Worktree,
         rpc: rpc::Client,
-        connection_id: ConnectionId,
         replica_id: ReplicaId,
         cx: &mut ModelContext<Worktree>,
     ) -> Self {
@@ -596,7 +604,6 @@ impl RemoteWorktree {
             remote_id,
             snapshot,
             rpc,
-            connection_id,
             replica_id,
             open_buffers: Default::default(),
         }
@@ -625,7 +632,6 @@ impl RemoteWorktree {
 
         let rpc = self.rpc.clone();
         let replica_id = self.replica_id;
-        let connection_id = self.connection_id;
         let remote_worktree_id = self.remote_id;
         let path = path.to_string_lossy().to_string();
         cx.spawn(|this, mut cx| async move {
@@ -635,22 +641,21 @@ impl RemoteWorktree {
                 let file = File::new(handle, Path::new(&path).into());
                 let language = language_registry.select_language(&path).cloned();
                 let response = rpc
-                    .request(
-                        connection_id,
-                        proto::OpenBuffer {
-                            worktree_id: remote_worktree_id as u64,
-                            path,
-                        },
-                    )
+                    .request(proto::OpenBuffer {
+                        worktree_id: remote_worktree_id as u64,
+                        path,
+                    })
                     .await?;
-                let buffer_id = response.buffer_id;
                 let remote_buffer = response.buffer.ok_or_else(|| anyhow!("empty buffer"))?;
+                let buffer_id = remote_buffer.id;
                 let buffer = cx.add_model(|cx| {
-                    Buffer::from_proto(replica_id, remote_buffer, Some(file), language, cx).unwrap()
+                    Buffer::from_proto(replica_id, remote_buffer, Some(file), rpc, language, cx)
+                        .unwrap()
                 });
                 this.update(&mut cx, |this, _| {
                     let this = this.as_remote_mut().unwrap();
-                    this.open_buffers.insert(buffer_id, buffer.downgrade());
+                    this.open_buffers
+                        .insert(buffer_id as usize, buffer.downgrade());
                 });
                 Ok(buffer)
             }
@@ -1764,13 +1769,12 @@ mod remote {
             .shared_buffers
             .entry(peer_id)
             .or_default()
-            .insert(buffer.id(), buffer.clone());
+            .insert(buffer.id() as u64, buffer.clone());
 
         rpc.respond(
             request.receipt(),
             proto::OpenBufferResponse {
-                buffer_id: buffer.id() as u64,
-                buffer: Some(buffer.read_with(cx, |buf, _| buf.to_proto())),
+                buffer: Some(buffer.update(cx, |buf, cx| buf.to_proto(cx))),
             },
         )
         .await?;
@@ -1779,28 +1783,18 @@ mod remote {
     }
 
     pub async fn close_buffer(
-        _request: TypedEnvelope<proto::CloseBuffer>,
-        _rpc: &rpc::Client,
-        _cx: &mut AsyncAppContext,
+        message: TypedEnvelope<proto::CloseBuffer>,
+        rpc: &rpc::Client,
+        _: &mut AsyncAppContext,
     ) -> anyhow::Result<()> {
-        // let message = &request.payload;
-        // let peer_id = request
-        //     .original_sender_id
-        //     .ok_or_else(|| anyhow!("missing original sender id"))?;
-        // let mut state = rpc.state.lock().await;
-        // if let Some((_, ref_counts)) = state
-        //     .shared_files
-        //     .iter_mut()
-        //     .find(|(file, _)| file.id() == message.id)
-        // {
-        //     if let Some(count) = ref_counts.get_mut(&peer_id) {
-        //         *count -= 1;
-        //         if *count == 0 {
-        //             ref_counts.remove(&peer_id);
-        //         }
-        //     }
-        // }
-
+        let peer_id = message
+            .original_sender_id
+            .ok_or_else(|| anyhow!("missing original sender id"))?;
+        let message = &message.payload;
+        let mut state = rpc.state.lock().await;
+        state.shared_buffers.entry(peer_id).and_modify(|buffers| {
+            buffers.remove(&message.buffer_id);
+        });
         Ok(())
     }
 }

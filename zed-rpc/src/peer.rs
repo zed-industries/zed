@@ -442,8 +442,8 @@ mod tests {
                 path: "path/two".to_string(),
             };
             let response3 = proto::OpenBufferResponse {
-                buffer_id: 2,
                 buffer: Some(proto::Buffer {
+                    id: 2,
                     content: "path/two content".to_string(),
                     history: vec![],
                 }),
@@ -453,8 +453,8 @@ mod tests {
                 path: "path/one".to_string(),
             };
             let response4 = proto::OpenBufferResponse {
-                buffer_id: 1,
                 buffer: Some(proto::Buffer {
+                    id: 1,
                     content: "path/one content".to_string(),
                     history: vec![],
                 }),

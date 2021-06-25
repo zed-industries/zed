@@ -16,6 +16,7 @@ use zed_rpc::proto;
 use crate::{
     language::{Language, Tree},
     operation_queue::{self, OperationQueue},
+    rpc,
     settings::{StyleId, ThemeMap},
     sum_tree::{self, FilterCursor, SumTree},
     time::{self, ReplicaId},
@@ -117,6 +118,7 @@ pub struct Buffer {
     undo_map: UndoMap,
     history: History,
     file: Option<File>,
+    rpc: Option<rpc::Client>,
     language: Option<Arc<Language>>,
     syntax_tree: Mutex<Option<SyntaxTree>>,
     is_parsing: bool,
@@ -125,6 +127,7 @@ pub struct Buffer {
     deferred_ops: OperationQueue<Operation>,
     deferred_replicas: HashSet<ReplicaId>,
     replica_id: ReplicaId,
+    remote_id: Option<u64>,
     local_clock: time::Local,
     lamport_clock: time::Lamport,
 }
@@ -416,7 +419,15 @@ impl Buffer {
         base_text: T,
         cx: &mut ModelContext<Self>,
     ) -> Self {
-        Self::build(replica_id, History::new(base_text.into()), None, None, cx)
+        Self::build(
+            replica_id,
+            History::new(base_text.into()),
+            None,
+            None,
+            None,
+            None,
+            cx,
+        )
     }
 
     pub fn from_history(
@@ -426,13 +437,15 @@ impl Buffer {
         language: Option<Arc<Language>>,
         cx: &mut ModelContext<Self>,
     ) -> Self {
-        Self::build(replica_id, history, file, language, cx)
+        Self::build(replica_id, history, file, None, None, language, cx)
     }
 
     fn build(
         replica_id: ReplicaId,
         history: History,
         file: Option<File>,
+        rpc: Option<rpc::Client>,
+        remote_id: Option<u64>,
         language: Option<Arc<Language>>,
         cx: &mut ModelContext<Self>,
     ) -> Self {
@@ -469,6 +482,7 @@ impl Buffer {
             undo_map: Default::default(),
             history,
             file,
+            rpc,
             syntax_tree: Mutex::new(None),
             is_parsing: false,
             language,
@@ -478,6 +492,7 @@ impl Buffer {
             deferred_ops: OperationQueue::new(),
             deferred_replicas: HashSet::default(),
             replica_id,
+            remote_id,
             local_clock: time::Local::new(replica_id),
             lamport_clock: time::Lamport::new(replica_id),
         };
@@ -496,19 +511,22 @@ impl Buffer {
 
     pub fn from_proto(
         replica_id: ReplicaId,
-        remote_buffer: proto::Buffer,
+        message: proto::Buffer,
         file: Option<File>,
+        rpc: rpc::Client,
         language: Option<Arc<Language>>,
         cx: &mut ModelContext<Self>,
     ) -> Result<Self> {
         let mut buffer = Buffer::build(
             replica_id,
-            History::new(remote_buffer.content.into()),
+            History::new(message.content.into()),
             file,
+            Some(rpc),
+            Some(message.id),
             language,
             cx,
         );
-        let ops = remote_buffer
+        let ops = message
             .history
             .into_iter()
             .filter_map(|op| op.variant)
@@ -542,7 +560,7 @@ impl Buffer {
         Ok(buffer)
     }
 
-    pub fn to_proto(&self) -> proto::Buffer {
+    pub fn to_proto(&self, cx: &mut ModelContext<Self>) -> proto::Buffer {
         let ops = self
             .history
             .ops
@@ -577,6 +595,7 @@ impl Buffer {
             })
             .collect();
         proto::Buffer {
+            id: cx.model_id() as u64,
             content: self.history.base_text.to_string(),
             history: ops,
         }
@@ -730,7 +749,7 @@ impl Buffer {
 
                     // Parse the current text in a background thread.
                     let new_tree = cx
-                        .background_executor()
+                        .background()
                         .spawn({
                             let language = language.clone();
                             async move { Self::parse_text(&new_text, new_tree, &language) }
@@ -818,7 +837,7 @@ impl Buffer {
         // TODO: it would be nice to not allocate here.
         let old_text = self.text();
         let base_version = self.version();
-        cx.background_executor().spawn(async move {
+        cx.background().spawn(async move {
             let changes = TextDiff::from_lines(old_text.as_str(), new_text.as_ref())
                 .iter_all_changes()
                 .map(|c| (c.tag(), c.value().len()))
@@ -1778,11 +1797,13 @@ impl Clone for Buffer {
             selections_last_update: self.selections_last_update.clone(),
             deferred_ops: self.deferred_ops.clone(),
             file: self.file.clone(),
+            rpc: self.rpc.clone(),
             language: self.language.clone(),
             syntax_tree: Mutex::new(self.syntax_tree.lock().clone()),
             is_parsing: false,
             deferred_replicas: self.deferred_replicas.clone(),
             replica_id: self.replica_id,
+            remote_id: self.remote_id.clone(),
             local_clock: self.local_clock.clone(),
             lamport_clock: self.lamport_clock.clone(),
         }
@@ -1919,6 +1940,26 @@ pub enum Event {
 
 impl Entity for Buffer {
     type Event = Event;
+
+    fn release(&mut self, cx: &mut gpui::MutableAppContext) {
+        if let (Some(buffer_id), Some(file)) = (self.remote_id, self.file.as_ref()) {
+            let rpc = self.rpc.clone().unwrap();
+            let worktree_id = file.worktree_id() as u64;
+            cx.background()
+                .spawn(async move {
+                    if let Err(error) = rpc
+                        .send(proto::CloseBuffer {
+                            worktree_id,
+                            buffer_id,
+                        })
+                        .await
+                    {
+                        log::error!("error closing remote buffer: {}", error);
+                    };
+                })
+                .detach();
+        }
+    }
 }
 
 impl<'a, F: Fn(&FragmentSummary) -> bool> Iterator for Edits<'a, F> {
