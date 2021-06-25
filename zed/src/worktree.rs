@@ -43,6 +43,11 @@ lazy_static! {
     static ref GITIGNORE: &'static OsStr = OsStr::new(".gitignore");
 }
 
+pub fn init(cx: &mut MutableAppContext, rpc: rpc::Client) {
+    rpc.on_message(remote::open_buffer, cx);
+    rpc.on_message(remote::close_buffer, cx);
+}
+
 #[derive(Clone, Debug)]
 enum ScanState {
     Idle(Option<Diff>),
@@ -1722,6 +1727,81 @@ impl<'a> Iterator for ChildEntriesIter<'a> {
         } else {
             None
         }
+    }
+}
+
+mod remote {
+    use super::*;
+    use crate::rpc::TypedEnvelope;
+
+    pub async fn open_buffer(
+        request: TypedEnvelope<proto::OpenBuffer>,
+        rpc: &rpc::Client,
+        cx: &mut AsyncAppContext,
+    ) -> anyhow::Result<()> {
+        let message = &request.payload;
+        let peer_id = request
+            .original_sender_id
+            .ok_or_else(|| anyhow!("missing original sender id"))?;
+
+        let mut state = rpc.state.lock().await;
+        let worktree = state
+            .shared_worktrees
+            .get(&message.worktree_id)
+            .ok_or_else(|| anyhow!("worktree {} not found", message.worktree_id))?
+            .clone();
+
+        let buffer = worktree
+            .update(cx, |worktree, cx| {
+                worktree.open_buffer(
+                    Path::new(&message.path),
+                    state.language_registry.clone(),
+                    cx,
+                )
+            })
+            .await?;
+        state
+            .shared_buffers
+            .entry(peer_id)
+            .or_default()
+            .insert(buffer.id(), buffer.clone());
+
+        rpc.respond(
+            request.receipt(),
+            proto::OpenBufferResponse {
+                buffer_id: buffer.id() as u64,
+                buffer: Some(buffer.read_with(cx, |buf, _| buf.to_proto())),
+            },
+        )
+        .await?;
+
+        Ok(())
+    }
+
+    pub async fn close_buffer(
+        _request: TypedEnvelope<proto::CloseBuffer>,
+        _rpc: &rpc::Client,
+        _cx: &mut AsyncAppContext,
+    ) -> anyhow::Result<()> {
+        // let message = &request.payload;
+        // let peer_id = request
+        //     .original_sender_id
+        //     .ok_or_else(|| anyhow!("missing original sender id"))?;
+        // let mut state = rpc.state.lock().await;
+        // if let Some((_, ref_counts)) = state
+        //     .shared_files
+        //     .iter_mut()
+        //     .find(|(file, _)| file.id() == message.id)
+        // {
+        //     if let Some(count) = ref_counts.get_mut(&peer_id) {
+        //         *count -= 1;
+        //         if *count == 0 {
+        //             ref_counts.remove(&peer_id);
+        //         }
+        //     }
+        // }
+
+        Ok(())
     }
 }
 

@@ -12,8 +12,8 @@ use crate::{
 use anyhow::{anyhow, Result};
 use gpui::{
     color::rgbu, elements::*, json::to_string_pretty, keymap::Binding, AnyViewHandle, AppContext,
-    AsyncAppContext, ClipboardItem, Entity, ModelHandle, MutableAppContext, PathPromptOptions,
-    PromptLevel, Task, View, ViewContext, ViewHandle, WeakModelHandle,
+    ClipboardItem, Entity, ModelHandle, MutableAppContext, PathPromptOptions, PromptLevel, Task,
+    View, ViewContext, ViewHandle, WeakModelHandle,
 };
 use log::error;
 pub use pane::*;
@@ -26,9 +26,8 @@ use std::{
     path::{Path, PathBuf},
     sync::Arc,
 };
-use zed_rpc::{proto, TypedEnvelope};
 
-pub fn init(cx: &mut MutableAppContext, rpc: rpc::Client) {
+pub fn init(cx: &mut MutableAppContext) {
     cx.add_global_action("workspace:open", open);
     cx.add_global_action("workspace:open_paths", open_paths);
     cx.add_action("workspace:save", Workspace::save_active_item);
@@ -41,9 +40,6 @@ pub fn init(cx: &mut MutableAppContext, rpc: rpc::Client) {
         Binding::new("cmd-alt-i", "workspace:debug_elements", None),
     ]);
     pane::init(cx);
-
-    rpc.on_message(remote::open_buffer, cx);
-    rpc.on_message(remote::close_buffer, cx);
 }
 
 pub struct OpenParams {
@@ -102,80 +98,6 @@ fn open_paths(params: &OpenParams, cx: &mut MutableAppContext) {
         cx.foreground().spawn(open_paths).detach();
         view
     });
-}
-
-mod remote {
-    use super::*;
-
-    pub async fn open_buffer(
-        request: TypedEnvelope<proto::OpenBuffer>,
-        rpc: &rpc::Client,
-        cx: &mut AsyncAppContext,
-    ) -> anyhow::Result<()> {
-        let message = &request.payload;
-        let peer_id = request
-            .original_sender_id
-            .ok_or_else(|| anyhow!("missing original sender id"))?;
-
-        let mut state = rpc.state.lock().await;
-        let worktree = state
-            .shared_worktrees
-            .get(&message.worktree_id)
-            .ok_or_else(|| anyhow!("worktree {} not found", message.worktree_id))?
-            .clone();
-
-        let buffer = worktree
-            .update(cx, |worktree, cx| {
-                worktree.open_buffer(
-                    Path::new(&message.path),
-                    state.language_registry.clone(),
-                    cx,
-                )
-            })
-            .await?;
-        state
-            .shared_buffers
-            .entry(peer_id)
-            .or_default()
-            .insert(buffer.id(), buffer.clone());
-
-        rpc.respond(
-            request.receipt(),
-            proto::OpenBufferResponse {
-                buffer_id: buffer.id() as u64,
-                buffer: Some(buffer.read_with(cx, |buf, _| buf.to_proto())),
-            },
-        )
-        .await?;
-
-        Ok(())
-    }
-
-    pub async fn close_buffer(
-        _request: TypedEnvelope<proto::CloseBuffer>,
-        _rpc: &rpc::Client,
-        _cx: &mut AsyncAppContext,
-    ) -> anyhow::Result<()> {
-        // let message = &request.payload;
-        // let peer_id = request
-        //     .original_sender_id
-        //     .ok_or_else(|| anyhow!("missing original sender id"))?;
-        // let mut state = rpc.state.lock().await;
-        // if let Some((_, ref_counts)) = state
-        //     .shared_files
-        //     .iter_mut()
-        //     .find(|(file, _)| file.id() == message.id)
-        // {
-        //     if let Some(count) = ref_counts.get_mut(&peer_id) {
-        //         *count -= 1;
-        //         if *count == 0 {
-        //             ref_counts.remove(&peer_id);
-        //         }
-        //     }
-        // }
-
-        Ok(())
-    }
 }
 
 pub trait Item: Entity + Sized {
@@ -921,7 +843,7 @@ mod tests {
     fn test_open_paths_action(cx: &mut gpui::MutableAppContext) {
         let app_state = build_app_state(cx.as_ref());
 
-        init(cx, app_state.rpc.clone());
+        init(cx);
 
         let dir = temp_tree(json!({
             "a": {

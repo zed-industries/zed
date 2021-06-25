@@ -8,7 +8,7 @@ use std::{fs, path::PathBuf, sync::Arc};
 use zed::{
     self, assets, editor, file_finder, language, menus, rpc, settings,
     workspace::{self, OpenParams},
-    AppState,
+    worktree, AppState,
 };
 
 fn main() {
@@ -29,7 +29,8 @@ fn main() {
     app.run(move |cx| {
         cx.set_menus(menus::menus(app_state.clone()));
         zed::init(cx);
-        workspace::init(cx, app_state.rpc.clone());
+        workspace::init(cx);
+        worktree::init(cx, app_state.rpc.clone());
         editor::init(cx);
         file_finder::init(cx);
 
