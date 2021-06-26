@@ -313,7 +313,7 @@ impl FoldMap {
 
             let anchor = buffer.anchor_before(edit.new_range.start);
             let mut folds_cursor = self.folds.cursor::<_, ()>();
-            folds_cursor.seek(&Fold(anchor..Anchor::End), Bias::Left, buffer);
+            folds_cursor.seek(&Fold(anchor..Anchor::max()), Bias::Left, buffer);
             let mut folds = iter::from_fn(move || {
                 let item = folds_cursor
                     .item()
@@ -597,7 +597,7 @@ struct Fold(Range<Anchor>);
 
 impl Default for Fold {
     fn default() -> Self {
-        Self(Anchor::Start..Anchor::End)
+        Self(Anchor::min()..Anchor::max())
     }
 }
 
@@ -627,10 +627,10 @@ struct FoldSummary {
 impl Default for FoldSummary {
     fn default() -> Self {
         Self {
-            start: Anchor::Start,
-            end: Anchor::End,
-            min_start: Anchor::End,
-            max_end: Anchor::Start,
+            start: Anchor::min(),
+            end: Anchor::max(),
+            min_start: Anchor::max(),
+            max_end: Anchor::min(),
             count: 0,
         }
     }

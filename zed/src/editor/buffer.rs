@@ -1493,14 +1493,8 @@ impl Buffer {
                 Operation::UpdateSelections { selections, .. } => {
                     if let Some(selections) = selections {
                         selections.iter().all(|selection| {
-                            let contains_start = match &selection.start {
-                                Anchor::Middle { version, .. } => self.version >= *version,
-                                _ => true,
-                            };
-                            let contains_end = match &selection.end {
-                                Anchor::Middle { version, .. } => self.version >= *version,
-                                _ => true,
-                            };
+                            let contains_start = self.version >= selection.start.version;
+                            let contains_end = self.version >= selection.end.version;
                             contains_start && contains_end
                         })
                     } else {
@@ -1645,76 +1639,42 @@ impl Buffer {
         let offset = position.to_offset(self);
         let max_offset = self.len();
         assert!(offset <= max_offset, "offset is out of range");
-
-        if offset == 0 && bias == Bias::Left {
-            Anchor::Start
-        } else if offset == max_offset && bias == Bias::Right {
-            Anchor::End
-        } else {
-            let mut cursor = self.fragments.cursor::<usize, FragmentTextSummary>();
-            cursor.seek(&offset, bias, &None);
-            Anchor::Middle {
-                offset: offset + cursor.start().deleted,
-                bias,
-                version: self.version(),
-            }
+        let mut cursor = self.fragments.cursor::<usize, FragmentTextSummary>();
+        cursor.seek(&offset, bias, &None);
+        Anchor {
+            offset: offset + cursor.start().deleted,
+            bias,
+            version: self.version(),
         }
     }
 
     fn summary_for_anchor(&self, anchor: &Anchor) -> TextSummary {
-        match anchor {
-            Anchor::Start => TextSummary::default(),
-            Anchor::End => self.text_summary(),
-            Anchor::Middle {
-                offset,
-                bias,
-                version,
-            } => {
-                let mut cursor = self
-                    .fragments
-                    .cursor::<VersionedOffset, (VersionedOffset, usize)>();
-                cursor.seek(
-                    &VersionedOffset::Offset(*offset),
-                    *bias,
-                    &Some(version.clone()),
-                );
-                let fragment = cursor.item().unwrap();
-                let overshoot = if fragment.visible {
-                    offset - cursor.start().0.offset()
-                } else {
-                    0
-                };
-
-                self.text_summary_for_range(0..cursor.start().1 + overshoot)
-            }
-        }
+        let cx = Some(anchor.version.clone());
+        let mut cursor = self
+            .fragments
+            .cursor::<VersionedOffset, (VersionedOffset, usize)>();
+        cursor.seek(&VersionedOffset::Offset(anchor.offset), anchor.bias, &cx);
+        let overshoot = if cursor.item().map_or(false, |fragment| fragment.visible) {
+            anchor.offset - cursor.start().0.offset()
+        } else {
+            0
+        };
+        self.text_summary_for_range(0..cursor.start().1 + overshoot)
     }
 
     fn full_offset_for_anchor(&self, anchor: &Anchor) -> usize {
-        match anchor {
-            Anchor::Start => 0,
-            Anchor::End => {
-                let summary = self.fragments.summary();
-                summary.text.visible + summary.text.deleted
-            }
-            Anchor::Middle {
-                offset,
-                bias,
-                version,
-            } => {
-                let mut cursor = self
-                    .fragments
-                    .cursor::<VersionedOffset, (VersionedOffset, FragmentTextSummary)>();
-                cursor.seek(
-                    &VersionedOffset::Offset(*offset),
-                    *bias,
-                    &Some(version.clone()),
-                );
-                let overshoot = offset - cursor.start().0.offset();
-                let summary = cursor.start().1;
-                summary.visible + summary.deleted + overshoot
-            }
-        }
+        let cx = Some(anchor.version.clone());
+        let mut cursor = self
+            .fragments
+            .cursor::<VersionedOffset, (VersionedOffset, FragmentTextSummary)>();
+        cursor.seek(&VersionedOffset::Offset(anchor.offset), anchor.bias, &cx);
+        let overshoot = if cursor.item().is_some() {
+            anchor.offset - cursor.start().0.offset()
+        } else {
+            0
+        };
+        let summary = cursor.start().1;
+        summary.visible + summary.deleted + overshoot
     }
 
     pub fn point_for_offset(&self, offset: usize) -> Result<Point> {
@@ -2311,34 +2271,19 @@ impl<'a> Into<proto::operation::Edit> for &'a EditOperation {
 
 impl<'a> Into<proto::Anchor> for &'a Anchor {
     fn into(self) -> proto::Anchor {
-        match self {
-            Anchor::Middle {
-                offset,
-                bias,
-                version,
-            } => proto::Anchor {
-                version: version
-                    .iter()
-                    .map(|entry| proto::VectorClockEntry {
-                        replica_id: entry.replica_id as u32,
-                        timestamp: entry.value,
-                    })
-                    .collect(),
-                offset: *offset as u64,
-                bias: match bias {
-                    Bias::Left => proto::anchor::Bias::Left as i32,
-                    Bias::Right => proto::anchor::Bias::Right as i32,
-                },
-            },
-            Anchor::Start => proto::Anchor {
-                version: Vec::new(),
-                bias: proto::anchor::Bias::Left as i32,
-                offset: 0,
-            },
-            Anchor::End => proto::Anchor {
-                version: Vec::new(),
-                bias: proto::anchor::Bias::Right as i32,
-                offset: u64::MAX,
+        proto::Anchor {
+            version: self
+                .version
+                .iter()
+                .map(|entry| proto::VectorClockEntry {
+                    replica_id: entry.replica_id as u32,
+                    timestamp: entry.value,
+                })
+                .collect(),
+            offset: self.offset as u64,
+            bias: match self.bias {
+                Bias::Left => proto::anchor::Bias::Left as i32,
+                Bias::Right => proto::anchor::Bias::Right as i32,
             },
         }
     }
@@ -2449,7 +2394,7 @@ impl TryFrom<proto::Anchor> for Anchor {
             });
         }
 
-        Ok(Self::Middle {
+        Ok(Self {
             offset: message.offset as usize,
             bias: if message.bias == proto::anchor::Bias::Left as i32 {
                 Bias::Left

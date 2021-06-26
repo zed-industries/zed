@@ -1629,7 +1629,7 @@ impl Editor {
 
     pub fn select_to_beginning(&mut self, _: &(), cx: &mut ViewContext<Self>) {
         let mut selection = self.selections(cx.as_ref()).last().unwrap().clone();
-        selection.set_head(self.buffer.read(cx), Anchor::Start);
+        selection.set_head(self.buffer.read(cx), Anchor::min());
         self.update_selections(vec![selection], true, cx);
     }
 
@@ -1648,15 +1648,15 @@ impl Editor {
 
     pub fn select_to_end(&mut self, _: &(), cx: &mut ViewContext<Self>) {
         let mut selection = self.selections(cx.as_ref()).last().unwrap().clone();
-        selection.set_head(self.buffer.read(cx), Anchor::End);
+        selection.set_head(self.buffer.read(cx), Anchor::max());
         self.update_selections(vec![selection], true, cx);
     }
 
     pub fn select_all(&mut self, _: &(), cx: &mut ViewContext<Self>) {
         let selection = Selection {
             id: post_inc(&mut self.next_selection_id),
-            start: Anchor::Start,
-            end: Anchor::End,
+            start: Anchor::min(),
+            end: Anchor::max(),
             reversed: false,
             goal: SelectionGoal::None,
         };
