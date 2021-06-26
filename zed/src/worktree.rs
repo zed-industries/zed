@@ -933,13 +933,7 @@ impl File {
         })
     }
 
-    pub fn buffer_updated(
-        &self,
-        buffer: ModelHandle<Buffer>,
-        operation: Operation,
-        cx: &mut MutableAppContext,
-    ) {
-        let buffer_id = buffer.read(cx).remote_id();
+    pub fn buffer_updated(&self, buffer_id: u64, operation: Operation, cx: &mut MutableAppContext) {
         self.worktree.update(cx, |worktree, cx| {
             if let Some((rpc, remote_id)) = match worktree {
                 Worktree::Local(worktree) => worktree.rpc.clone(),
@@ -1883,6 +1877,11 @@ mod remote {
             }) {
                 log::error!("error applying buffer operations {}", error);
             }
+        } else {
+            log::error!(
+                "invalid buffer {} in update buffer message",
+                message.buffer_id
+            );
         }
         Ok(())
     }

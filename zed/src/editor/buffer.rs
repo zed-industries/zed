@@ -1339,7 +1339,7 @@ impl Buffer {
     #[cfg(not(test))]
     pub fn send_operation(&mut self, operation: Operation, cx: &mut ModelContext<Self>) {
         if let Some(file) = &self.file {
-            file.buffer_updated(cx.handle(), operation, cx.as_mut());
+            file.buffer_updated(self.remote_id, operation, cx.as_mut());
         }
     }
 
