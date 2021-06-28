@@ -124,6 +124,7 @@ message Operation {
         Edit edit = 1;
         Undo undo = 2;
         UpdateSelections update_selections = 3;
+        SetActiveSelections set_active_selections = 4;
     }
 
     message Edit {
@@ -149,6 +150,12 @@ message Operation {
         uint32 local_timestamp = 2;
         uint32 lamport_timestamp = 3;
         repeated Selection selections = 4;
+    }
+
+    message SetActiveSelections {
+        uint32 replica_id = 1;
+        optional uint32 local_timestamp = 2;
+        uint32 lamport_timestamp = 3;
     }
 }
 

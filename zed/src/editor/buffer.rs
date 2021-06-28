@@ -121,8 +121,7 @@ pub struct Buffer {
     language: Option<Arc<Language>>,
     syntax_tree: Mutex<Option<SyntaxTree>>,
     is_parsing: bool,
-    selections: HashMap<SelectionSetId, Arc<[Selection]>>,
-    pub selections_last_update: SelectionsVersion,
+    selections: HashMap<SelectionSetId, SelectionSet>,
     deferred_ops: OperationQueue<Operation>,
     deferred_replicas: HashSet<ReplicaId>,
     replica_id: ReplicaId,
@@ -131,6 +130,12 @@ pub struct Buffer {
     lamport_clock: time::Lamport,
     #[cfg(test)]
     operations: Vec<Operation>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+struct SelectionSet {
+    selections: Arc<[Selection]>,
+    active: bool,
 }
 
 #[derive(Clone)]
@@ -397,6 +402,10 @@ pub enum Operation {
         selections: Option<Arc<[Selection]>>,
         lamport_timestamp: time::Lamport,
     },
+    SetActiveSelections {
+        set_id: Option<SelectionSetId>,
+        lamport_timestamp: time::Lamport,
+    },
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -493,7 +502,6 @@ impl Buffer {
             language,
             saved_mtime,
             selections: HashMap::default(),
-            selections_last_update: 0,
             deferred_ops: OperationQueue::new(),
             deferred_replicas: HashSet::default(),
             replica_id,
@@ -890,10 +898,6 @@ impl Buffer {
         self.visible_text.chars_at(offset)
     }
 
-    pub fn selections_changed_since(&self, since: SelectionsVersion) -> bool {
-        self.selections_last_update != since
-    }
-
     pub fn edits_since<'a>(&'a self, since: time::Global) -> impl 'a + Iterator<Item = Edit> {
         let since_2 = since.clone();
         let cursor = self.fragments.filter(
@@ -929,11 +933,11 @@ impl Buffer {
         cx: &mut ModelContext<Self>,
     ) -> Result<()> {
         let selections = if let Some(set_id) = set_id {
-            let selections = self
+            let set = self
                 .selections
                 .get(&set_id)
                 .ok_or_else(|| anyhow!("invalid selection set {:?}", set_id))?;
-            Some((set_id, selections.clone()))
+            Some((set_id, set.selections.clone()))
         } else {
             None
         };
@@ -961,11 +965,11 @@ impl Buffer {
         cx: &mut ModelContext<Self>,
     ) -> Result<()> {
         let selections = if let Some(set_id) = set_id {
-            let selections = self
+            let set = self
                 .selections
                 .get(&set_id)
                 .ok_or_else(|| anyhow!("invalid selection set {:?}", set_id))?;
-            Some((set_id, selections.clone()))
+            Some((set_id, set.selections.clone()))
         } else {
             None
         };
@@ -1049,10 +1053,13 @@ impl Buffer {
     ) -> SelectionSetId {
         let selections = selections.into();
         let lamport_timestamp = self.lamport_clock.tick();
-        self.selections
-            .insert(lamport_timestamp, Arc::clone(&selections));
-        self.selections_last_update += 1;
-
+        self.selections.insert(
+            lamport_timestamp,
+            SelectionSet {
+                selections: selections.clone(),
+                active: false,
+            },
+        );
         cx.notify();
 
         self.send_operation(
@@ -1072,15 +1079,15 @@ impl Buffer {
         set_id: SelectionSetId,
         selections: impl Into<Arc<[Selection]>>,
         cx: &mut ModelContext<Self>,
-    ) {
+    ) -> Result<()> {
         let selections = selections.into();
-        self.selections.insert(set_id, selections.clone());
-
+        let set = self
+            .selections
+            .get_mut(&set_id)
+            .ok_or_else(|| anyhow!("invalid selection set id {:?}", set_id))?;
+        set.selections = selections.clone();
         let lamport_timestamp = self.lamport_clock.tick();
-        self.selections_last_update += 1;
-
         cx.notify();
-
         self.send_operation(
             Operation::UpdateSelections {
                 set_id,
@@ -1089,6 +1096,27 @@ impl Buffer {
             },
             cx,
         );
+        Ok(())
+    }
+
+    pub fn set_active_selection_set(
+        &mut self,
+        set_id: Option<SelectionSetId>,
+        cx: &mut ModelContext<Self>,
+    ) -> Result<()> {
+        if set_id.is_some() && !self.selections.contains_key(set_id.as_ref().unwrap()) {
+            return Err(anyhow!("invalid selection set id {:?}", set_id));
+        }
+
+        let lamport_timestamp = self.lamport_clock.tick();
+        self.send_operation(
+            Operation::SetActiveSelections {
+                set_id,
+                lamport_timestamp,
+            },
+            cx,
+        );
+        Ok(())
     }
 
     pub fn remove_selection_set(
@@ -1100,8 +1128,6 @@ impl Buffer {
             .remove(&set_id)
             .ok_or_else(|| anyhow!("invalid selection set id {:?}", set_id))?;
         let lamport_timestamp = self.lamport_clock.tick();
-        self.selections_last_update += 1;
-
         cx.notify();
         self.send_operation(
             Operation::UpdateSelections {
@@ -1117,7 +1143,7 @@ impl Buffer {
     pub fn selections(&self, set_id: SelectionSetId) -> Result<&[Selection]> {
         self.selections
             .get(&set_id)
-            .map(|s| s.as_ref())
+            .map(|s| s.selections.as_ref())
             .ok_or_else(|| anyhow!("invalid selection set id {:?}", set_id))
     }
 
@@ -1180,12 +1206,36 @@ impl Buffer {
                 lamport_timestamp,
             } => {
                 if let Some(selections) = selections {
-                    self.selections.insert(set_id, selections);
+                    if let Some(set) = self.selections.get_mut(&set_id) {
+                        set.selections = selections;
+                    } else {
+                        self.selections.insert(
+                            set_id,
+                            SelectionSet {
+                                selections,
+                                active: false,
+                            },
+                        );
+                    }
                 } else {
                     self.selections.remove(&set_id);
                 }
                 self.lamport_clock.observe(lamport_timestamp);
-                self.selections_last_update += 1;
+            }
+            Operation::SetActiveSelections {
+                set_id,
+                lamport_timestamp,
+            } => {
+                for (id, set) in &mut self.selections {
+                    if id.replica_id == lamport_timestamp.replica_id {
+                        if Some(*id) == set_id {
+                            set.active = true;
+                        } else {
+                            set.active = false;
+                        }
+                    }
+                }
+                self.lamport_clock.observe(lamport_timestamp);
             }
         }
         Ok(())
@@ -1501,6 +1551,9 @@ impl Buffer {
                         true
                     }
                 }
+                Operation::SetActiveSelections { set_id, .. } => {
+                    set_id.map_or(true, |set_id| self.selections.contains_key(&set_id))
+                }
             }
         }
     }
@@ -1707,7 +1760,6 @@ impl Clone for Buffer {
             undo_map: self.undo_map.clone(),
             history: self.history.clone(),
             selections: self.selections.clone(),
-            selections_last_update: self.selections_last_update.clone(),
             deferred_ops: self.deferred_ops.clone(),
             file: self.file.clone(),
             language: self.language.clone(),
@@ -2186,6 +2238,9 @@ impl Operation {
             Operation::UpdateSelections {
                 lamport_timestamp, ..
             } => *lamport_timestamp,
+            Operation::SetActiveSelections {
+                lamport_timestamp, ..
+            } => *lamport_timestamp,
         }
     }
 
@@ -2233,6 +2288,16 @@ impl<'a> Into<proto::Operation> for &'a Operation {
                                 })
                                 .collect()
                         }),
+                    },
+                ),
+                Operation::SetActiveSelections {
+                    set_id,
+                    lamport_timestamp,
+                } => proto::operation::Variant::SetActiveSelections(
+                    proto::operation::SetActiveSelections {
+                        replica_id: lamport_timestamp.replica_id as u32,
+                        local_timestamp: set_id.map(|set_id| set_id.value),
+                        lamport_timestamp: lamport_timestamp.value,
                     },
                 ),
             }),
@@ -2348,6 +2413,18 @@ impl TryFrom<proto::Operation> for Operation {
                                 .collect::<Result<Vec<_>, anyhow::Error>>()?
                                 .into(),
                         ),
+                    }
+                }
+                proto::operation::Variant::SetActiveSelections(message) => {
+                    Operation::SetActiveSelections {
+                        set_id: message.local_timestamp.map(|value| time::Lamport {
+                            replica_id: message.replica_id as ReplicaId,
+                            value,
+                        }),
+                        lamport_timestamp: time::Lamport {
+                            replica_id: message.replica_id as ReplicaId,
+                            value: message.lamport_timestamp,
+                        },
                     }
                 }
             },
@@ -3210,11 +3287,13 @@ mod tests {
             assert_eq!(buffer.selection_ranges(set_id).unwrap(), vec![4..4]);
 
             buffer.start_transaction_at(Some(set_id), now, cx).unwrap();
-            buffer.update_selection_set(
-                set_id,
-                buffer.selections_from_ranges(vec![1..3]).unwrap(),
-                cx,
-            );
+            buffer
+                .update_selection_set(
+                    set_id,
+                    buffer.selections_from_ranges(vec![1..3]).unwrap(),
+                    cx,
+                )
+                .unwrap();
             buffer.edit(vec![4..5], "e", cx);
             buffer.end_transaction_at(Some(set_id), now, cx).unwrap();
             assert_eq!(buffer.text(), "12cde6");
@@ -3222,11 +3301,13 @@ mod tests {
 
             now += UNDO_GROUP_INTERVAL + Duration::from_millis(1);
             buffer.start_transaction_at(Some(set_id), now, cx).unwrap();
-            buffer.update_selection_set(
-                set_id,
-                buffer.selections_from_ranges(vec![2..2]).unwrap(),
-                cx,
-            );
+            buffer
+                .update_selection_set(
+                    set_id,
+                    buffer.selections_from_ranges(vec![2..2]).unwrap(),
+                    cx,
+                )
+                .unwrap();
             buffer.edit(vec![0..1], "a", cx);
             buffer.edit(vec![1..1], "b", cx);
             buffer.end_transaction_at(Some(set_id), now, cx).unwrap();
@@ -3649,7 +3730,8 @@ mod tests {
                 if set_id.is_none() || rng.gen_bool(1.0 / 5.0) {
                     self.add_selection_set(new_selections, cx);
                 } else {
-                    self.update_selection_set(*set_id.unwrap(), new_selections, cx);
+                    self.update_selection_set(*set_id.unwrap(), new_selections, cx)
+                        .unwrap();
                 }
             }
 
@@ -3716,7 +3798,7 @@ mod tests {
         pub fn all_selections(&self) -> impl Iterator<Item = (&SelectionSetId, &[Selection])> {
             self.selections
                 .iter()
-                .map(|(set_id, selections)| (set_id, selections.as_ref()))
+                .map(|(set_id, set)| (set_id, set.selections.as_ref()))
         }
 
         pub fn all_selection_ranges<'a>(
@@ -3745,6 +3827,7 @@ mod tests {
                 Operation::Edit(edit) => Some(edit.timestamp.local()),
                 Operation::Undo { undo, .. } => Some(undo.edit_id),
                 Operation::UpdateSelections { .. } => None,
+                Operation::SetActiveSelections { .. } => None,
             }
         }
     }

@@ -1991,7 +1991,9 @@ impl Editor {
         }
 
         self.buffer.update(cx, |buffer, cx| {
-            buffer.update_selection_set(self.selection_set_id, selections, cx)
+            buffer
+                .update_selection_set(self.selection_set_id, selections, cx)
+                .unwrap();
         });
         self.pause_cursor_blinking(cx);
 
@@ -2432,11 +2434,19 @@ impl View for Editor {
     fn on_focus(&mut self, cx: &mut ViewContext<Self>) {
         self.focused = true;
         self.blink_cursors(self.blink_epoch, cx);
+        self.buffer.update(cx, |buffer, cx| {
+            buffer
+                .set_active_selection_set(Some(self.selection_set_id), cx)
+                .unwrap();
+        });
     }
 
     fn on_blur(&mut self, cx: &mut ViewContext<Self>) {
         self.focused = false;
         self.cursors_visible = false;
+        self.buffer.update(cx, |buffer, cx| {
+            buffer.set_active_selection_set(None, cx).unwrap();
+        });
         cx.emit(Event::Blurred);
         cx.notify();
     }
