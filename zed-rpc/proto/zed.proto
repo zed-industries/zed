@@ -92,12 +92,13 @@ message Worktree {
 }
 
 message Entry {
-    bool is_dir = 1;
-    string path = 2;
-    uint64 inode = 3;
-    Timestamp mtime = 4;
-    bool is_symlink = 5;
-    bool is_ignored = 6;
+    uint64 id = 1;
+    bool is_dir = 2;
+    string path = 3;
+    uint64 inode = 4;
+    Timestamp mtime = 5;
+    bool is_symlink = 6;
+    bool is_ignored = 7;
 }
 
 message Buffer {

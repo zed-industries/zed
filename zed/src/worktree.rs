@@ -13,6 +13,7 @@ use crate::{
 };
 use ::ignore::gitignore::Gitignore;
 use anyhow::{anyhow, Context, Result};
+use atomic::Ordering::SeqCst;
 pub use fuzzy::{match_paths, PathMatch};
 use gpui::{
     scoped_pool, AppContext, AsyncAppContext, Entity, ModelContext, ModelHandle, MutableAppContext,
@@ -35,7 +36,10 @@ use std::{
     ops::Deref,
     os::unix::fs::MetadataExt,
     path::{Path, PathBuf},
-    sync::Arc,
+    sync::{
+        atomic::{self, AtomicUsize},
+        Arc,
+    },
     time::{Duration, SystemTime, UNIX_EPOCH},
 };
 
@@ -243,6 +247,8 @@ impl LocalWorktree {
             root_char_bag: Default::default(),
             ignores: Default::default(),
             entries: Default::default(),
+            removed_entry_ids: Default::default(),
+            next_entry_id: Default::default(),
         };
         let (event_stream, event_stream_handle) =
             fsevent::EventStream::new(&[snapshot.abs_path.as_ref()], Duration::from_millis(100));
@@ -490,10 +496,16 @@ impl LocalWorktree {
                 writer.flush()?;
 
                 // Eagerly populate the snapshot with an updated entry for the saved file
-                let root_char_bag = background_snapshot.lock().root_char_bag;
-                let entry = fs_entry_for_path(root_char_bag, path, &abs_path)?
+                let root_char_bag;
+                let next_entry_id;
+                {
+                    let snapshot = background_snapshot.lock();
+                    root_char_bag = snapshot.root_char_bag;
+                    next_entry_id = snapshot.next_entry_id.clone();
+                }
+                let entry = fs_entry_for_path(root_char_bag, &next_entry_id, path, &abs_path)?
                     .ok_or_else(|| anyhow!("could not read saved file metadata"))?;
-                let added = background_snapshot.lock().entries.replace(entry, &());
+                let added = background_snapshot.lock().insert_entry(entry);
 
                 Ok::<bool, anyhow::Error>(added)
             })
@@ -531,6 +543,7 @@ impl LocalWorktree {
                         .entries
                         .cursor::<(), ()>()
                         .map(|entry| proto::Entry {
+                            id: entry.id as u64,
                             is_dir: entry.is_dir(),
                             path: entry.path.to_string_lossy().to_string(),
                             inode: entry.inode,
@@ -611,6 +624,7 @@ impl RemoteWorktree {
                 };
                 if let Some(mtime) = entry.mtime {
                     Some(Entry {
+                        id: entry.id as usize,
                         kind,
                         path: Path::new(&entry.path).into(),
                         inode: entry.inode,
@@ -633,6 +647,8 @@ impl RemoteWorktree {
             root_char_bag,
             ignores: Default::default(),
             entries,
+            removed_entry_ids: Default::default(),
+            next_entry_id: Default::default(),
         };
         Self {
             remote_id,
@@ -705,6 +721,8 @@ pub struct Snapshot {
     root_char_bag: CharBag,
     ignores: HashMap<Arc<Path>, (Arc<Gitignore>, usize)>,
     entries: SumTree<Entry>,
+    removed_entry_ids: HashMap<u64, usize>,
+    next_entry_id: Arc<AtomicUsize>,
 }
 
 impl Snapshot {
@@ -777,7 +795,7 @@ impl Snapshot {
         self.entry_for_path(path.as_ref()).map(|e| e.inode())
     }
 
-    fn insert_entry(&mut self, entry: Entry) {
+    fn insert_entry(&mut self, mut entry: Entry) -> bool {
         if !entry.is_dir() && entry.path().file_name() == Some(&GITIGNORE) {
             let (ignore, err) = Gitignore::new(self.abs_path.join(entry.path()));
             if let Some(err) = err {
@@ -788,7 +806,12 @@ impl Snapshot {
             self.ignores
                 .insert(ignore_dir_path.into(), (Arc::new(ignore), self.scan_id));
         }
-        self.entries.insert(entry, &());
+
+        self.remove_path(entry.path());
+        if let Some(renamed_entry_id) = self.removed_entry_ids.remove(&entry.inode) {
+            entry.id = renamed_entry_id;
+        }
+        self.entries.insert_or_replace(entry, &())
     }
 
     fn populate_dir(
@@ -814,21 +837,32 @@ impl Snapshot {
         }
         edits.push(Edit::Insert(parent_entry));
 
-        for entry in entries {
+        for mut entry in entries {
+            if let Some(renamed_entry_id) = self.removed_entry_ids.remove(&entry.inode) {
+                entry.id = renamed_entry_id;
+            }
             edits.push(Edit::Insert(entry));
         }
         self.entries.edit(edits, &());
     }
 
     fn remove_path(&mut self, path: &Path) {
-        let new_entries = {
+        let mut new_entries;
+        let removed_entry_ids;
+        {
             let mut cursor = self.entries.cursor::<_, ()>();
-            let mut new_entries = cursor.slice(&PathSearch::Exact(path), Bias::Left, &());
-            cursor.seek_forward(&PathSearch::Successor(path), Bias::Left, &());
+            new_entries = cursor.slice(&PathSearch::Exact(path), Bias::Left, &());
+            removed_entry_ids = cursor.slice(&PathSearch::Successor(path), Bias::Left, &());
             new_entries.push_tree(cursor.suffix(&()), &());
-            new_entries
-        };
+        }
         self.entries = new_entries;
+        for entry in removed_entry_ids.cursor::<(), ()>() {
+            let removed_entry_id = self
+                .removed_entry_ids
+                .entry(entry.inode)
+                .or_insert(entry.id);
+            *removed_entry_id = cmp::max(*removed_entry_id, entry.id);
+        }
 
         if path.file_name() == Some(&GITIGNORE) {
             if let Some((_, scan_id)) = self.ignores.get_mut(path.parent().unwrap()) {
@@ -864,7 +898,7 @@ impl Snapshot {
         ignore_stack
     }
 
-    fn diff(&self, old: &Self) -> Diff {
+    fn diff(&mut self, old: &Self) -> Diff {
         let mut new = self.entries.cursor::<(), ()>().peekable();
         let mut old = old.entries.cursor::<(), ()>().peekable();
 
@@ -883,7 +917,7 @@ impl Snapshot {
                         old.next();
                     }
                     cmp::Ordering::Less => {
-                        added.insert(new_entry.inode, new_entry);
+                        added.insert(new_entry.id, new_entry);
                         diff.added.insert(new_entry.path.clone());
                         new.next();
                     }
@@ -894,7 +928,7 @@ impl Snapshot {
                     }
                 },
                 (Some(new_entry), None) => {
-                    added.insert(new_entry.inode, new_entry);
+                    added.insert(new_entry.id, new_entry);
                     diff.added.insert(new_entry.path.clone());
                     new.next();
                 }
@@ -908,7 +942,7 @@ impl Snapshot {
         }
 
         for (removed_path, removed_entry) in removed {
-            if let Some(added_entry) = added.remove(&removed_entry.inode) {
+            if let Some(added_entry) = added.remove(&removed_entry.id) {
                 diff.removed.remove(removed_path);
                 diff.added.remove(&added_entry.path);
                 diff.moved
@@ -1060,6 +1094,7 @@ impl File {
 
 #[derive(Clone, Debug)]
 pub struct Entry {
+    id: usize,
     kind: EntryKind,
     path: Arc<Path>,
     inode: u64,
@@ -1309,14 +1344,17 @@ impl BackgroundScanner {
         }
 
         let root_char_bag = root_name.chars().map(|c| c.to_ascii_lowercase()).collect();
+        let next_entry_id;
         {
             let mut snapshot = self.snapshot.lock();
             snapshot.root_name = root_name;
             snapshot.root_char_bag = root_char_bag;
+            next_entry_id = snapshot.next_entry_id.clone();
         }
 
         if is_dir {
             self.snapshot.lock().insert_entry(Entry {
+                id: next_entry_id.fetch_add(1, SeqCst),
                 kind: EntryKind::PendingDir,
                 path: path.clone(),
                 inode,
@@ -1339,7 +1377,9 @@ impl BackgroundScanner {
                 for _ in 0..self.thread_pool.thread_count() {
                     pool.execute(|| {
                         while let Ok(job) = rx.recv() {
-                            if let Err(err) = self.scan_dir(root_char_bag, &job) {
+                            if let Err(err) =
+                                self.scan_dir(root_char_bag, next_entry_id.clone(), &job)
+                            {
                                 log::error!("error scanning {:?}: {}", job.abs_path, err);
                             }
                         }
@@ -1348,6 +1388,7 @@ impl BackgroundScanner {
             });
         } else {
             self.snapshot.lock().insert_entry(Entry {
+                id: next_entry_id.fetch_add(1, SeqCst),
                 kind: EntryKind::File(char_bag_for_path(root_char_bag, &path)),
                 path,
                 inode,
@@ -1360,7 +1401,12 @@ impl BackgroundScanner {
         Ok(())
     }
 
-    fn scan_dir(&self, root_char_bag: CharBag, job: &ScanJob) -> io::Result<()> {
+    fn scan_dir(
+        &self,
+        root_char_bag: CharBag,
+        next_entry_id: Arc<AtomicUsize>,
+        job: &ScanJob,
+    ) -> io::Result<()> {
         let mut new_entries: Vec<Entry> = Vec::new();
         let mut new_jobs: Vec<ScanJob> = Vec::new();
         let mut ignore_stack = job.ignore_stack.clone();
@@ -1412,6 +1458,7 @@ impl BackgroundScanner {
             if child_metadata.is_dir() {
                 let is_ignored = ignore_stack.is_path_ignored(&child_path, true);
                 new_entries.push(Entry {
+                    id: next_entry_id.fetch_add(1, SeqCst),
                     kind: EntryKind::PendingDir,
                     path: child_path.clone(),
                     inode: child_inode,
@@ -1432,6 +1479,7 @@ impl BackgroundScanner {
             } else {
                 let is_ignored = ignore_stack.is_path_ignored(&child_path, false);
                 new_entries.push(Entry {
+                    id: next_entry_id.fetch_add(1, SeqCst),
                     kind: EntryKind::File(char_bag_for_path(root_char_bag, &child_path)),
                     path: child_path,
                     inode: child_inode,
@@ -1462,31 +1510,45 @@ impl BackgroundScanner {
             return false;
         };
         let root_char_bag = snapshot.root_char_bag;
+        let next_entry_id = snapshot.next_entry_id.clone();
 
         events.sort_unstable_by(|a, b| a.path.cmp(&b.path));
-        let mut abs_paths = events.into_iter().map(|e| e.path).peekable();
-        let (scan_queue_tx, scan_queue_rx) = crossbeam_channel::unbounded();
+        events.dedup_by(|a, b| a.path.starts_with(&b.path));
 
-        while let Some(abs_path) = abs_paths.next() {
-            let path = match abs_path.strip_prefix(&root_abs_path) {
+        for event in &events {
+            match event.path.strip_prefix(&root_abs_path) {
+                Ok(path) => snapshot.remove_path(&path),
+                Err(_) => {
+                    log::error!(
+                        "unexpected event {:?} for root path {:?}",
+                        event.path,
+                        root_abs_path
+                    );
+                    continue;
+                }
+            }
+        }
+
+        let (scan_queue_tx, scan_queue_rx) = crossbeam_channel::unbounded();
+        for event in events {
+            let path: Arc<Path> = match event.path.strip_prefix(&root_abs_path) {
                 Ok(path) => Arc::from(path.to_path_buf()),
                 Err(_) => {
                     log::error!(
                         "unexpected event {:?} for root path {:?}",
-                        abs_path,
+                        event.path,
                         root_abs_path
                     );
                     continue;
                 }
             };
 
-            while abs_paths.peek().map_or(false, |p| p.starts_with(&abs_path)) {
-                abs_paths.next();
-            }
-
-            snapshot.remove_path(&path);
-
-            match fs_entry_for_path(snapshot.root_char_bag, path.clone(), &abs_path) {
+            match fs_entry_for_path(
+                snapshot.root_char_bag,
+                &next_entry_id,
+                path.clone(),
+                &event.path,
+            ) {
                 Ok(Some(mut fs_entry)) => {
                     let is_dir = fs_entry.is_dir();
                     let ignore_stack = snapshot.ignore_stack_for_path(&path, is_dir);
@@ -1495,7 +1557,7 @@ impl BackgroundScanner {
                     if is_dir {
                         scan_queue_tx
                             .send(ScanJob {
-                                abs_path,
+                                abs_path: event.path,
                                 path,
                                 ignore_stack,
                                 scan_queue: scan_queue_tx.clone(),
@@ -1519,13 +1581,17 @@ impl BackgroundScanner {
             for _ in 0..self.thread_pool.thread_count() {
                 pool.execute(|| {
                     while let Ok(job) = scan_queue_rx.recv() {
-                        if let Err(err) = self.scan_dir(root_char_bag, &job) {
+                        if let Err(err) = self.scan_dir(root_char_bag, next_entry_id.clone(), &job)
+                        {
                             log::error!("error scanning {:?}: {}", job.abs_path, err);
                         }
                     }
                 });
             }
         });
+
+        // Attempt to detect renames only over a single batch of file-system events.
+        self.snapshot.lock().removed_entry_ids.clear();
 
         self.update_ignore_statuses();
         true
@@ -1620,6 +1686,7 @@ impl BackgroundScanner {
 
 fn fs_entry_for_path(
     root_char_bag: CharBag,
+    next_entry_id: &AtomicUsize,
     path: Arc<Path>,
     abs_path: &Path,
 ) -> Result<Option<Entry>> {
@@ -1641,6 +1708,7 @@ fn fs_entry_for_path(
         .is_symlink();
 
     let entry = Entry {
+        id: next_entry_id.fetch_add(1, SeqCst),
         kind: if metadata.file_type().is_dir() {
             EntryKind::PendingDir
         } else {
@@ -2102,17 +2170,24 @@ mod tests {
 
         let tree = cx.add_model(|cx| Worktree::local(dir.path(), cx));
 
-        let mut buffer_for_path = |path: &'static str| {
-            let buffer = tree.update(&mut cx, |tree, cx| {
+        let buffer_for_path = |path: &'static str, cx: &mut gpui::TestAppContext| {
+            let buffer = tree.update(cx, |tree, cx| {
                 tree.open_buffer(path, language_registry.clone(), cx)
             });
             async move { buffer.await.unwrap() }
         };
+        let id_for_path = |path: &'static str, cx: &gpui::TestAppContext| {
+            tree.read_with(cx, |tree, _| tree.entry_for_path(path).unwrap().id)
+        };
 
-        let buffer2 = buffer_for_path("a/file2").await;
-        let buffer3 = buffer_for_path("a/file3").await;
-        let buffer4 = buffer_for_path("b/c/file4").await;
-        let buffer5 = buffer_for_path("b/c/file5").await;
+        let buffer2 = buffer_for_path("a/file2", &mut cx).await;
+        let buffer3 = buffer_for_path("a/file3", &mut cx).await;
+        let buffer4 = buffer_for_path("b/c/file4", &mut cx).await;
+        let buffer5 = buffer_for_path("b/c/file5", &mut cx).await;
+
+        let file2_id = id_for_path("a/file2", &cx);
+        let file3_id = id_for_path("a/file3", &cx);
+        let file4_id = id_for_path("b/c/file4", &cx);
 
         // After scanning, the worktree knows which files exist and which don't.
         cx.read(|cx| tree.read(cx).as_local().unwrap().scan_complete())
@@ -2132,9 +2207,9 @@ mod tests {
         std::fs::rename(dir.path().join("a/file2"), dir.path().join("a/file2.new")).unwrap();
         tree.flush_fs_events(&cx).await;
 
-        cx.read(|cx| {
+        cx.read(|app| {
             assert_eq!(
-                tree.read(cx)
+                tree.read(app)
                     .paths()
                     .map(|p| p.to_str().unwrap())
                     .collect::<Vec<_>>(),
@@ -2149,27 +2224,31 @@ mod tests {
                 ]
             );
 
+            assert_eq!(id_for_path("a/file2.new", &cx), file2_id);
+            assert_eq!(id_for_path("d/file3", &cx), file3_id);
+            assert_eq!(id_for_path("d/file4", &cx), file4_id);
+
             assert_eq!(
-                buffer2.read(cx).file().unwrap().path().as_ref(),
+                buffer2.read(app).file().unwrap().path().as_ref(),
                 Path::new("a/file2.new")
             );
             assert_eq!(
-                buffer3.read(cx).file().unwrap().path().as_ref(),
+                buffer3.read(app).file().unwrap().path().as_ref(),
                 Path::new("d/file3")
             );
             assert_eq!(
-                buffer4.read(cx).file().unwrap().path().as_ref(),
+                buffer4.read(app).file().unwrap().path().as_ref(),
                 Path::new("d/file4")
             );
             assert_eq!(
-                buffer5.read(cx).file().unwrap().path().as_ref(),
+                buffer5.read(app).file().unwrap().path().as_ref(),
                 Path::new("b/c/file5")
             );
 
-            assert!(!buffer2.read(cx).file().unwrap().is_deleted(cx));
-            assert!(!buffer3.read(cx).file().unwrap().is_deleted(cx));
-            assert!(!buffer4.read(cx).file().unwrap().is_deleted(cx));
-            assert!(buffer5.read(cx).file().unwrap().is_deleted(cx));
+            assert!(!buffer2.read(app).file().unwrap().is_deleted(app));
+            assert!(!buffer3.read(app).file().unwrap().is_deleted(app));
+            assert!(!buffer4.read(app).file().unwrap().is_deleted(app));
+            assert!(buffer5.read(app).file().unwrap().is_deleted(app));
         });
     }
 
@@ -2219,14 +2298,17 @@ mod tests {
             scan_id: 0,
             abs_path: Path::new("").into(),
             entries: Default::default(),
+            removed_entry_ids: Default::default(),
             ignores: Default::default(),
             root_name: Default::default(),
             root_char_bag: Default::default(),
+            next_entry_id: Default::default(),
         };
 
         snapshot.entries.edit(
             vec![
                 Edit::Insert(Entry {
+                    id: 1,
                     path: Path::new("b").into(),
                     kind: EntryKind::Dir,
                     inode: 0,
@@ -2235,6 +2317,7 @@ mod tests {
                     is_symlink: false,
                 }),
                 Edit::Insert(Entry {
+                    id: 2,
                     path: Path::new("b/a").into(),
                     kind: EntryKind::Dir,
                     inode: 0,
@@ -2243,6 +2326,7 @@ mod tests {
                     is_symlink: false,
                 }),
                 Edit::Insert(Entry {
+                    id: 3,
                     path: Path::new("b/c").into(),
                     kind: EntryKind::PendingDir,
                     inode: 0,
@@ -2251,6 +2335,7 @@ mod tests {
                     is_symlink: false,
                 }),
                 Edit::Insert(Entry {
+                    id: 4,
                     path: Path::new("b/e").into(),
                     kind: EntryKind::Dir,
                     inode: 0,
@@ -2378,9 +2463,11 @@ mod tests {
                     scan_id: 0,
                     abs_path: root_dir.path().into(),
                     entries: Default::default(),
+                    removed_entry_ids: Default::default(),
                     ignores: Default::default(),
                     root_name: Default::default(),
                     root_char_bag: Default::default(),
+                    next_entry_id: Default::default(),
                 })),
                 notify_tx,
                 0,
@@ -2413,9 +2500,11 @@ mod tests {
                     scan_id: 0,
                     abs_path: root_dir.path().into(),
                     entries: Default::default(),
+                    removed_entry_ids: Default::default(),
                     ignores: Default::default(),
                     root_name: Default::default(),
                     root_char_bag: Default::default(),
+                    next_entry_id: Default::default(),
                 })),
                 notify_tx,
                 1,
