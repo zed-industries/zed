@@ -466,11 +466,18 @@ impl LocalWorktree {
     }
 
     fn load(&self, path: &Path, cx: &AppContext) -> Task<Result<String>> {
-        let abs_path = self.absolutize(path);
+        let path = Arc::from(path);
+        let abs_path = self.absolutize(&path);
+        let background_snapshot = self.background_snapshot.clone();
+
         cx.background().spawn(async move {
             let mut file = fs::File::open(&abs_path)?;
             let mut contents = String::new();
             file.read_to_string(&mut contents)?;
+
+            // Eagerly populate the snapshot with an updated entry for the loaded file
+            refresh_entry(&background_snapshot, path, &abs_path)?;
+
             Result::<_, anyhow::Error>::Ok(contents)
         })
     }
@@ -496,32 +503,17 @@ impl LocalWorktree {
                 writer.flush()?;
 
                 // Eagerly populate the snapshot with an updated entry for the saved file
-                let root_char_bag;
-                let next_entry_id;
-                {
-                    let snapshot = background_snapshot.lock();
-                    root_char_bag = snapshot.root_char_bag;
-                    next_entry_id = snapshot.next_entry_id.clone();
-                }
-                let entry = fs_entry_for_path(root_char_bag, &next_entry_id, path, &abs_path)?
-                    .ok_or_else(|| anyhow!("could not read saved file metadata"))?;
-                let added = background_snapshot.lock().insert_entry(entry);
+                refresh_entry(&background_snapshot, path.clone(), &abs_path)?;
 
-                Ok::<bool, anyhow::Error>(added)
+                Ok::<_, anyhow::Error>(())
             })
         };
 
         cx.spawn(|worktree, mut cx| async move {
-            let added = save.await?;
+            save.await?;
             worktree.update(&mut cx, |worktree, cx| {
                 let worktree = worktree.as_local_mut().unwrap();
                 worktree.poll_snapshot(cx);
-                let mut diff = Diff::default();
-                if added {
-                    diff.added.insert(path.clone());
-                }
-                diff.modified.insert(path);
-                worktree.observe_snapshot_diff(diff, cx)
             });
             Ok(())
         })
@@ -1682,6 +1674,20 @@ impl BackgroundScanner {
         }
         self.snapshot.lock().entries.edit(edits, &());
     }
+}
+
+fn refresh_entry(snapshot: &Mutex<Snapshot>, path: Arc<Path>, abs_path: &Path) -> Result<()> {
+    let root_char_bag;
+    let next_entry_id;
+    {
+        let snapshot = snapshot.lock();
+        root_char_bag = snapshot.root_char_bag;
+        next_entry_id = snapshot.next_entry_id.clone();
+    }
+    let entry = fs_entry_for_path(root_char_bag, &next_entry_id, path, &abs_path)?
+        .ok_or_else(|| anyhow!("could not read saved file metadata"))?;
+    snapshot.lock().insert_entry(entry);
+    Ok(())
 }
 
 fn fs_entry_for_path(
