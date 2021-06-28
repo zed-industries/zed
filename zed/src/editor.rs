@@ -2410,6 +2410,14 @@ pub enum Event {
 
 impl Entity for Editor {
     type Event = Event;
+
+    fn release(&mut self, cx: &mut MutableAppContext) {
+        self.buffer.update(cx, |buffer, cx| {
+            buffer
+                .remove_selection_set(self.selection_set_id, cx)
+                .unwrap();
+        });
+    }
 }
 
 impl View for Editor {
