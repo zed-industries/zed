@@ -74,6 +74,7 @@ request_message!(OpenWorktree, OpenWorktreeResponse);
 request_message!(OpenBuffer, OpenBufferResponse);
 message!(CloseBuffer);
 message!(UpdateBuffer);
+message!(RemoveGuest);
 
 /// A stream of protobuf messages.
 pub struct MessageStream<T> {

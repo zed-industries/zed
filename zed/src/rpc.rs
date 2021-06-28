@@ -2,7 +2,7 @@ use super::util::SurfResultExt as _;
 use crate::{editor::Buffer, language::LanguageRegistry, worktree::Worktree};
 use anyhow::{anyhow, Context, Result};
 use gpui::executor::Background;
-use gpui::{AsyncAppContext, ModelHandle, Task};
+use gpui::{AsyncAppContext, ModelHandle, Task, WeakModelHandle};
 use lazy_static::lazy_static;
 use postage::prelude::Stream;
 use smol::lock::Mutex;
@@ -29,9 +29,28 @@ pub struct Client {
 
 pub struct ClientState {
     connection_id: Option<ConnectionId>,
-    pub shared_worktrees: HashMap<u64, ModelHandle<Worktree>>,
+    pub remote_worktrees: HashMap<u64, WeakModelHandle<Worktree>>,
     pub shared_buffers: HashMap<PeerId, HashMap<u64, ModelHandle<Buffer>>>,
     pub language_registry: Arc<LanguageRegistry>,
+}
+
+impl ClientState {
+    pub fn remote_worktree(
+        &mut self,
+        id: u64,
+        cx: &mut AsyncAppContext,
+    ) -> Result<ModelHandle<Worktree>> {
+        if let Some(worktree) = self.remote_worktrees.get(&id) {
+            if let Some(worktree) = cx.read(|cx| worktree.upgrade(cx)) {
+                Ok(worktree)
+            } else {
+                self.remote_worktrees.remove(&id);
+                Err(anyhow!("worktree {} was dropped", id))
+            }
+        } else {
+            Err(anyhow!("worktree {} does not exist", id))
+        }
+    }
 }
 
 impl Client {
@@ -40,7 +59,7 @@ impl Client {
             peer: Peer::new(),
             state: Arc::new(Mutex::new(ClientState {
                 connection_id: None,
-                shared_worktrees: Default::default(),
+                remote_worktrees: Default::default(),
                 shared_buffers: Default::default(),
                 language_registry,
             })),

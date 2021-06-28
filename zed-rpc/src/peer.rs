@@ -29,7 +29,7 @@ type BoxedReader = Pin<Box<dyn AsyncRead + 'static + Send>>;
 pub struct ConnectionId(u32);
 
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
-pub struct PeerId(u32);
+pub struct PeerId(pub u32);
 
 struct Connection {
     writer: Mutex<MessageStream<BoxedWriter>>,

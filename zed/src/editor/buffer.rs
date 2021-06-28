@@ -1398,6 +1398,12 @@ impl Buffer {
         self.operations.push(operation);
     }
 
+    pub fn peer_left(&mut self, replica_id: ReplicaId, cx: &mut ModelContext<Self>) {
+        self.selections
+            .retain(|set_id, _| set_id.replica_id != replica_id);
+        cx.notify();
+    }
+
     pub fn undo(&mut self, cx: &mut ModelContext<Self>) {
         let was_dirty = self.is_dirty(cx.as_ref());
         let old_version = self.version.clone();
