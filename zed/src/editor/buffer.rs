@@ -38,8 +38,6 @@ use std::{
     time::{Duration, Instant, SystemTime, UNIX_EPOCH},
 };
 
-const UNDO_GROUP_INTERVAL: Duration = Duration::from_millis(300);
-
 #[derive(Clone, Default)]
 struct DeterministicState;
 
@@ -145,15 +143,65 @@ struct SyntaxTree {
     version: time::Global,
 }
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 struct Transaction {
     start: time::Global,
+    end: time::Global,
     buffer_was_dirty: bool,
     edits: Vec<time::Local>,
+    ranges: Vec<Range<usize>>,
     selections_before: Option<(SelectionSetId, Arc<[Selection]>)>,
     selections_after: Option<(SelectionSetId, Arc<[Selection]>)>,
     first_edit_at: Instant,
     last_edit_at: Instant,
+}
+
+impl Transaction {
+    fn push_edit(&mut self, edit: &EditOperation) {
+        self.edits.push(edit.timestamp.local());
+        self.end.observe(edit.timestamp.local());
+
+        let mut other_ranges = edit.ranges.iter().peekable();
+        let mut new_ranges: Vec<Range<usize>> = Vec::new();
+        let insertion_len = edit.new_text.as_ref().map_or(0, |t| t.len());
+        let mut delta = 0;
+
+        for mut self_range in self.ranges.iter().cloned() {
+            self_range.start += delta;
+            self_range.end += delta;
+
+            while let Some(other_range) = other_ranges.peek() {
+                let mut other_range = (*other_range).clone();
+                other_range.start += delta;
+                other_range.end += delta;
+
+                if other_range.start <= self_range.end {
+                    other_ranges.next().unwrap();
+                    delta += insertion_len;
+
+                    if other_range.end < self_range.start {
+                        new_ranges.push(other_range.start..other_range.end + insertion_len);
+                        self_range.start += insertion_len;
+                        self_range.end += insertion_len;
+                    } else {
+                        self_range.start = cmp::min(self_range.start, other_range.start);
+                        self_range.end = cmp::max(self_range.end, other_range.end) + insertion_len;
+                    }
+                } else {
+                    break;
+                }
+            }
+
+            new_ranges.push(self_range);
+        }
+
+        for other_range in other_ranges {
+            new_ranges.push(other_range.start + delta..other_range.end + delta + insertion_len);
+            delta += insertion_len;
+        }
+
+        self.ranges = new_ranges;
+    }
 }
 
 #[derive(Clone)]
@@ -175,7 +223,7 @@ impl History {
             undo_stack: Vec::new(),
             redo_stack: Vec::new(),
             transaction_depth: 0,
-            group_interval: UNDO_GROUP_INTERVAL,
+            group_interval: Duration::from_millis(300),
         }
     }
 
@@ -193,9 +241,11 @@ impl History {
         self.transaction_depth += 1;
         if self.transaction_depth == 1 {
             self.undo_stack.push(Transaction {
-                start,
+                start: start.clone(),
+                end: start,
                 buffer_was_dirty,
                 edits: Vec::new(),
+                ranges: Vec::new(),
                 selections_before: selections,
                 selections_after: None,
                 first_edit_at: now,
@@ -226,12 +276,10 @@ impl History {
         let mut transactions = self.undo_stack.iter_mut();
 
         if let Some(mut transaction) = transactions.next_back() {
-            for prev_transaction in transactions.next_back() {
+            while let Some(prev_transaction) = transactions.next_back() {
                 if transaction.first_edit_at - prev_transaction.last_edit_at <= self.group_interval
+                    && transaction.start == prev_transaction.end
                 {
-                    prev_transaction.edits.append(&mut transaction.edits);
-                    prev_transaction.last_edit_at = transaction.last_edit_at;
-                    prev_transaction.selections_after = transaction.selections_after.take();
                     transaction = prev_transaction;
                     new_len -= 1;
                 } else {
@@ -240,12 +288,28 @@ impl History {
             }
         }
 
+        let (transactions_to_keep, transactions_to_merge) = self.undo_stack.split_at_mut(new_len);
+        if let Some(last_transaction) = transactions_to_keep.last_mut() {
+            for transaction in &*transactions_to_merge {
+                for edit_id in &transaction.edits {
+                    last_transaction.push_edit(&self.ops[edit_id]);
+                }
+            }
+
+            if let Some(transaction) = transactions_to_merge.last_mut() {
+                last_transaction.last_edit_at = transaction.last_edit_at;
+                last_transaction.selections_after = transaction.selections_after.take();
+                last_transaction.end = transaction.end.clone();
+            }
+        }
+
         self.undo_stack.truncate(new_len);
     }
 
     fn push_undo(&mut self, edit_id: time::Local) {
         assert_ne!(self.transaction_depth, 0);
-        self.undo_stack.last_mut().unwrap().edits.push(edit_id);
+        let last_transaction = self.undo_stack.last_mut().unwrap();
+        last_transaction.push_edit(&self.ops[&edit_id]);
     }
 
     fn pop_undo(&mut self) -> Option<&Transaction> {
@@ -270,11 +334,13 @@ impl History {
 }
 
 #[derive(Clone, Default, Debug)]
-struct UndoMap(HashMap<time::Local, Vec<UndoOperation>>);
+struct UndoMap(HashMap<time::Local, Vec<(time::Local, u32)>>);
 
 impl UndoMap {
-    fn insert(&mut self, undo: UndoOperation) {
-        self.0.entry(undo.edit_id).or_default().push(undo);
+    fn insert(&mut self, undo: &UndoOperation) {
+        for (edit_id, count) in &undo.counts {
+            self.0.entry(*edit_id).or_default().push((undo.id, *count));
+        }
     }
 
     fn is_undone(&self, edit_id: time::Local) -> bool {
@@ -287,8 +353,8 @@ impl UndoMap {
             .get(&edit_id)
             .unwrap_or(&Vec::new())
             .iter()
-            .filter(|undo| version.observed(undo.id))
-            .map(|undo| undo.count)
+            .filter(|(undo_id, _)| version.observed(*undo_id))
+            .map(|(_, undo_count)| *undo_count)
             .max()
             .unwrap_or(0);
         undo_count % 2 == 1
@@ -299,7 +365,7 @@ impl UndoMap {
             .get(&edit_id)
             .unwrap_or(&Vec::new())
             .iter()
-            .map(|undo| undo.count)
+            .map(|(_, undo_count)| *undo_count)
             .max()
             .unwrap_or(0)
     }
@@ -416,11 +482,12 @@ pub struct EditOperation {
     new_text: Option<String>,
 }
 
-#[derive(Copy, Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub struct UndoOperation {
     id: time::Local,
-    edit_id: time::Local,
-    count: u32,
+    counts: HashMap<time::Local, u32>,
+    ranges: Vec<Range<usize>>,
+    version: time::Global,
 }
 
 impl Buffer {
@@ -1211,7 +1278,7 @@ impl Buffer {
                 lamport_timestamp,
             } => {
                 if !self.version.observed(undo.id) {
-                    self.apply_undo(undo)?;
+                    self.apply_undo(&undo)?;
                     self.version.observe(undo.id);
                     self.lamport_clock.observe(lamport_timestamp);
                 }
@@ -1276,7 +1343,7 @@ impl Buffer {
             old_fragments.slice(&VersionedOffset::Offset(ranges[0].start), Bias::Left, &cx);
         new_ropes.push_tree(new_fragments.summary().text);
 
-        let mut fragment_start = old_fragments.start().offset();
+        let mut fragment_start = old_fragments.sum_start().offset();
         for range in ranges {
             let fragment_end = old_fragments.end(&cx).offset();
 
@@ -1285,7 +1352,7 @@ impl Buffer {
             if fragment_end < range.start {
                 // If the current fragment has been partially consumed, then consume the rest of it
                 // and advance to the next fragment before slicing.
-                if fragment_start > old_fragments.start().offset() {
+                if fragment_start > old_fragments.sum_start().offset() {
                     if fragment_end > fragment_start {
                         let mut suffix = old_fragments.item().unwrap().clone();
                         suffix.len = fragment_end - fragment_start;
@@ -1299,7 +1366,7 @@ impl Buffer {
                     old_fragments.slice(&VersionedOffset::Offset(range.start), Bias::Left, &cx);
                 new_ropes.push_tree(slice.summary().text);
                 new_fragments.push_tree(slice, &None);
-                fragment_start = old_fragments.start().offset();
+                fragment_start = old_fragments.sum_start().offset();
             }
 
             // If we are at the end of a non-concurrent fragment, advance to the next one.
@@ -1310,7 +1377,7 @@ impl Buffer {
                 new_ropes.push_fragment(&fragment, fragment.visible);
                 new_fragments.push(fragment, &None);
                 old_fragments.next(&cx);
-                fragment_start = old_fragments.start().offset();
+                fragment_start = old_fragments.sum_start().offset();
             }
 
             // Skip over insertions that are concurrent to this edit, but have a lower lamport
@@ -1378,7 +1445,7 @@ impl Buffer {
 
         // If the current fragment has been partially consumed, then consume the rest of it
         // and advance to the next fragment before slicing.
-        if fragment_start > old_fragments.start().offset() {
+        if fragment_start > old_fragments.sum_start().offset() {
             let fragment_end = old_fragments.end(&cx).offset();
             if fragment_end > fragment_start {
                 let mut suffix = old_fragments.item().unwrap().clone();
@@ -1424,12 +1491,9 @@ impl Buffer {
         let was_dirty = self.is_dirty(cx.as_ref());
         let old_version = self.version.clone();
 
-        if let Some(transaction) = self.history.pop_undo() {
+        if let Some(transaction) = self.history.pop_undo().cloned() {
             let selections = transaction.selections_before.clone();
-            for edit_id in transaction.edits.clone() {
-                self.undo_or_redo(edit_id, cx).unwrap();
-            }
-
+            self.undo_or_redo(transaction, cx).unwrap();
             if let Some((set_id, selections)) = selections {
                 let _ = self.update_selection_set(set_id, selections, cx);
             }
@@ -1446,12 +1510,9 @@ impl Buffer {
         let was_dirty = self.is_dirty(cx.as_ref());
         let old_version = self.version.clone();
 
-        if let Some(transaction) = self.history.pop_redo() {
+        if let Some(transaction) = self.history.pop_redo().cloned() {
             let selections = transaction.selections_after.clone();
-            for edit_id in transaction.edits.clone() {
-                self.undo_or_redo(edit_id, cx).unwrap();
-            }
-
+            self.undo_or_redo(transaction, cx).unwrap();
             if let Some((set_id, selections)) = selections {
                 let _ = self.update_selection_set(set_id, selections, cx);
             }
@@ -1464,13 +1525,23 @@ impl Buffer {
         }
     }
 
-    fn undo_or_redo(&mut self, edit_id: time::Local, cx: &mut ModelContext<Self>) -> Result<()> {
+    fn undo_or_redo(
+        &mut self,
+        transaction: Transaction,
+        cx: &mut ModelContext<Self>,
+    ) -> Result<()> {
+        let mut counts = HashMap::default();
+        for edit_id in transaction.edits {
+            counts.insert(edit_id, self.undo_map.undo_count(edit_id) + 1);
+        }
+
         let undo = UndoOperation {
             id: self.local_clock.tick(),
-            edit_id,
-            count: self.undo_map.undo_count(edit_id) + 1,
+            counts,
+            ranges: transaction.ranges,
+            version: transaction.start.clone(),
         };
-        self.apply_undo(undo)?;
+        self.apply_undo(&undo)?;
         self.version.observe(undo.id);
 
         let operation = Operation::Undo {
@@ -1482,27 +1553,31 @@ impl Buffer {
         Ok(())
     }
 
-    fn apply_undo(&mut self, undo: UndoOperation) -> Result<()> {
+    fn apply_undo(&mut self, undo: &UndoOperation) -> Result<()> {
         self.undo_map.insert(undo);
-        let edit = &self.history.ops[&undo.edit_id];
-        let version = Some(edit.version.clone());
+
+        let mut cx = undo.version.clone();
+        for edit_id in undo.counts.keys().copied() {
+            cx.observe(edit_id);
+        }
+        let cx = Some(cx);
 
         let mut old_fragments = self.fragments.cursor::<VersionedOffset, VersionedOffset>();
-        old_fragments.seek(&VersionedOffset::Offset(0), Bias::Left, &version);
-
-        let mut new_fragments = SumTree::new();
+        let mut new_fragments = old_fragments.slice(
+            &VersionedOffset::Offset(undo.ranges[0].start),
+            Bias::Right,
+            &cx,
+        );
         let mut new_ropes =
             RopeBuilder::new(self.visible_text.cursor(0), self.deleted_text.cursor(0));
+        new_ropes.push_tree(new_fragments.summary().text);
 
-        for range in &edit.ranges {
-            let mut end_offset = old_fragments.end(&version).offset();
+        for range in &undo.ranges {
+            let mut end_offset = old_fragments.end(&cx).offset();
 
             if end_offset < range.start {
-                let preceding_fragments = old_fragments.slice(
-                    &VersionedOffset::Offset(range.start),
-                    Bias::Left,
-                    &version,
-                );
+                let preceding_fragments =
+                    old_fragments.slice(&VersionedOffset::Offset(range.start), Bias::Right, &cx);
                 new_ropes.push_tree(preceding_fragments.summary().text);
                 new_fragments.push_tree(preceding_fragments, &None);
             }
@@ -1511,8 +1586,9 @@ impl Buffer {
                 if let Some(fragment) = old_fragments.item() {
                     let mut fragment = fragment.clone();
                     let fragment_was_visible = fragment.visible;
-                    if fragment.was_visible(&edit.version, &self.undo_map)
-                        || fragment.timestamp.local() == edit.timestamp.local()
+
+                    if fragment.was_visible(&undo.version, &self.undo_map)
+                        || undo.counts.contains_key(&fragment.timestamp.local())
                     {
                         fragment.visible = fragment.is_visible(&self.undo_map);
                         fragment.max_undos.observe(undo.id);
@@ -1520,15 +1596,24 @@ impl Buffer {
                     new_ropes.push_fragment(&fragment, fragment_was_visible);
                     new_fragments.push(fragment, &None);
 
-                    old_fragments.next(&version);
-                    end_offset = old_fragments.end(&version).offset();
+                    old_fragments.next(&cx);
+                    if end_offset == old_fragments.end(&cx).offset() {
+                        let unseen_fragments = old_fragments.slice(
+                            &VersionedOffset::Offset(end_offset),
+                            Bias::Right,
+                            &cx,
+                        );
+                        new_ropes.push_tree(unseen_fragments.summary().text);
+                        new_fragments.push_tree(unseen_fragments, &None);
+                    }
+                    end_offset = old_fragments.end(&cx).offset();
                 } else {
                     break;
                 }
             }
         }
 
-        let suffix = old_fragments.suffix(&version);
+        let suffix = old_fragments.suffix(&cx);
         new_ropes.push_tree(suffix.summary().text);
         new_fragments.push_tree(suffix, &None);
 
@@ -1561,7 +1646,7 @@ impl Buffer {
         } else {
             match op {
                 Operation::Edit(edit) => self.version >= edit.version,
-                Operation::Undo { undo, .. } => self.version.observed(undo.edit_id),
+                Operation::Undo { undo, .. } => self.version >= undo.version,
                 Operation::UpdateSelections { selections, .. } => {
                     if let Some(selections) = selections {
                         selections.iter().all(|selection| {
@@ -1599,7 +1684,7 @@ impl Buffer {
         let mut new_fragments = old_fragments.slice(&ranges[0].start, Bias::Right, &None);
         new_ropes.push_tree(new_fragments.summary().text);
 
-        let mut fragment_start = old_fragments.start().visible;
+        let mut fragment_start = old_fragments.sum_start().visible;
         for range in ranges {
             let fragment_end = old_fragments.end(&None).visible;
 
@@ -1608,7 +1693,7 @@ impl Buffer {
             if fragment_end < range.start {
                 // If the current fragment has been partially consumed, then consume the rest of it
                 // and advance to the next fragment before slicing.
-                if fragment_start > old_fragments.start().visible {
+                if fragment_start > old_fragments.sum_start().visible {
                     if fragment_end > fragment_start {
                         let mut suffix = old_fragments.item().unwrap().clone();
                         suffix.len = fragment_end - fragment_start;
@@ -1621,10 +1706,10 @@ impl Buffer {
                 let slice = old_fragments.slice(&range.start, Bias::Right, &None);
                 new_ropes.push_tree(slice.summary().text);
                 new_fragments.push_tree(slice, &None);
-                fragment_start = old_fragments.start().visible;
+                fragment_start = old_fragments.sum_start().visible;
             }
 
-            let full_range_start = range.start + old_fragments.start().deleted;
+            let full_range_start = range.start + old_fragments.sum_start().deleted;
 
             // Preserve any portion of the current fragment that precedes this range.
             if fragment_start < range.start {
@@ -1672,13 +1757,13 @@ impl Buffer {
                 }
             }
 
-            let full_range_end = range.end + old_fragments.start().deleted;
+            let full_range_end = range.end + old_fragments.sum_start().deleted;
             edit.ranges.push(full_range_start..full_range_end);
         }
 
         // If the current fragment has been partially consumed, then consume the rest of it
         // and advance to the next fragment before slicing.
-        if fragment_start > old_fragments.start().visible {
+        if fragment_start > old_fragments.sum_start().visible {
             let fragment_end = old_fragments.end(&None).visible;
             if fragment_end > fragment_start {
                 let mut suffix = old_fragments.item().unwrap().clone();
@@ -1717,7 +1802,7 @@ impl Buffer {
         let mut cursor = self.fragments.cursor::<usize, FragmentTextSummary>();
         cursor.seek(&offset, bias, &None);
         Anchor {
-            offset: offset + cursor.start().deleted,
+            offset: offset + cursor.sum_start().deleted,
             bias,
             version: self.version(),
         }
@@ -1725,30 +1810,28 @@ impl Buffer {
 
     fn summary_for_anchor(&self, anchor: &Anchor) -> TextSummary {
         let cx = Some(anchor.version.clone());
-        let mut cursor = self
-            .fragments
-            .cursor::<VersionedOffset, (VersionedOffset, usize)>();
+        let mut cursor = self.fragments.cursor::<VersionedOffset, usize>();
         cursor.seek(&VersionedOffset::Offset(anchor.offset), anchor.bias, &cx);
         let overshoot = if cursor.item().map_or(false, |fragment| fragment.visible) {
-            anchor.offset - cursor.start().0.offset()
+            anchor.offset - cursor.seek_start().offset()
         } else {
             0
         };
-        self.text_summary_for_range(0..cursor.start().1 + overshoot)
+        self.text_summary_for_range(0..*cursor.sum_start() + overshoot)
     }
 
     fn full_offset_for_anchor(&self, anchor: &Anchor) -> usize {
         let cx = Some(anchor.version.clone());
         let mut cursor = self
             .fragments
-            .cursor::<VersionedOffset, (VersionedOffset, FragmentTextSummary)>();
+            .cursor::<VersionedOffset, FragmentTextSummary>();
         cursor.seek(&VersionedOffset::Offset(anchor.offset), anchor.bias, &cx);
         let overshoot = if cursor.item().is_some() {
-            anchor.offset - cursor.start().0.offset()
+            anchor.offset - cursor.seek_start().offset()
         } else {
             0
         };
-        let summary = cursor.start().1;
+        let summary = cursor.sum_start();
         summary.visible + summary.deleted + overshoot
     }
 
@@ -2286,9 +2369,24 @@ impl<'a> Into<proto::Operation> for &'a Operation {
                     replica_id: undo.id.replica_id as u32,
                     local_timestamp: undo.id.value,
                     lamport_timestamp: lamport_timestamp.value,
-                    edit_replica_id: undo.edit_id.replica_id as u32,
-                    edit_local_timestamp: undo.edit_id.value,
-                    count: undo.count,
+                    ranges: undo
+                        .ranges
+                        .iter()
+                        .map(|r| proto::Range {
+                            start: r.start as u64,
+                            end: r.end as u64,
+                        })
+                        .collect(),
+                    counts: undo
+                        .counts
+                        .iter()
+                        .map(|(edit_id, count)| proto::operation::UndoCount {
+                            replica_id: edit_id.replica_id as u32,
+                            local_timestamp: edit_id.value,
+                            count: *count,
+                        })
+                        .collect(),
+                    version: From::from(&undo.version),
                 }),
                 Operation::UpdateSelections {
                     set_id,
@@ -2329,14 +2427,6 @@ impl<'a> Into<proto::Operation> for &'a Operation {
 
 impl<'a> Into<proto::operation::Edit> for &'a EditOperation {
     fn into(self) -> proto::operation::Edit {
-        let version = self
-            .version
-            .iter()
-            .map(|entry| proto::VectorClockEntry {
-                replica_id: entry.replica_id as u32,
-                timestamp: entry.value,
-            })
-            .collect();
         let ranges = self
             .ranges
             .iter()
@@ -2349,7 +2439,7 @@ impl<'a> Into<proto::operation::Edit> for &'a EditOperation {
             replica_id: self.timestamp.replica_id as u32,
             local_timestamp: self.timestamp.local,
             lamport_timestamp: self.timestamp.lamport,
-            version,
+            version: From::from(&self.version),
             ranges,
             new_text: self.new_text.clone(),
         }
@@ -2396,11 +2486,25 @@ impl TryFrom<proto::Operation> for Operation {
                             replica_id: undo.replica_id as ReplicaId,
                             value: undo.local_timestamp,
                         },
-                        edit_id: time::Local {
-                            replica_id: undo.edit_replica_id as ReplicaId,
-                            value: undo.edit_local_timestamp,
-                        },
-                        count: undo.count,
+                        counts: undo
+                            .counts
+                            .into_iter()
+                            .map(|c| {
+                                (
+                                    time::Local {
+                                        replica_id: c.replica_id as ReplicaId,
+                                        value: c.local_timestamp,
+                                    },
+                                    c.count,
+                                )
+                            })
+                            .collect(),
+                        ranges: undo
+                            .ranges
+                            .into_iter()
+                            .map(|r| r.start as usize..r.end as usize)
+                            .collect(),
+                        version: undo.version.into(),
                     },
                 },
                 proto::operation::Variant::UpdateSelections(message) => {
@@ -2456,13 +2560,6 @@ impl TryFrom<proto::Operation> for Operation {
 
 impl From<proto::operation::Edit> for EditOperation {
     fn from(edit: proto::operation::Edit) -> Self {
-        let mut version = time::Global::new();
-        for entry in edit.version {
-            version.observe(time::Local {
-                replica_id: entry.replica_id as ReplicaId,
-                value: entry.timestamp,
-            });
-        }
         let ranges = edit
             .ranges
             .into_iter()
@@ -2474,7 +2571,7 @@ impl From<proto::operation::Edit> for EditOperation {
                 local: edit.local_timestamp,
                 lamport: edit.lamport_timestamp,
             },
-            version,
+            version: edit.version.into(),
             ranges,
             new_text: edit.new_text,
         }
@@ -2673,6 +2770,7 @@ mod tests {
                 .collect::<String>();
             cx.add_model(|cx| {
                 let mut buffer = Buffer::new(0, reference_string.as_str(), cx);
+                buffer.history.group_interval = Duration::from_millis(rng.gen_range(0..=200));
                 let mut buffer_versions = Vec::new();
                 log::info!(
                     "buffer text {:?}, version: {:?}",
@@ -2695,6 +2793,11 @@ mod tests {
                     if rng.gen_bool(0.25) {
                         buffer.randomly_undo_redo(rng, cx);
                         reference_string = buffer.text();
+                        log::info!(
+                            "buffer text {:?}, version: {:?}",
+                            buffer.text(),
+                            buffer.version()
+                        );
                     }
 
                     let range = buffer.random_byte_range(0, rng);
@@ -3258,35 +3361,36 @@ mod tests {
     fn test_undo_redo(cx: &mut gpui::MutableAppContext) {
         cx.add_model(|cx| {
             let mut buffer = Buffer::new(0, "1234", cx);
+            // Set group interval to zero so as to not group edits in the undo stack.
+            buffer.history.group_interval = Duration::from_secs(0);
 
             buffer.edit(vec![1..1], "abx", cx);
             buffer.edit(vec![3..4], "yzef", cx);
             buffer.edit(vec![3..5], "cd", cx);
             assert_eq!(buffer.text(), "1abcdef234");
 
-            let edit1 = buffer.operations[0].clone();
-            let edit2 = buffer.operations[1].clone();
-            let edit3 = buffer.operations[2].clone();
+            let transactions = buffer.history.undo_stack.clone();
+            assert_eq!(transactions.len(), 3);
 
-            buffer.undo_or_redo(edit1.edit_id().unwrap(), cx).unwrap();
+            buffer.undo_or_redo(transactions[0].clone(), cx).unwrap();
             assert_eq!(buffer.text(), "1cdef234");
-            buffer.undo_or_redo(edit1.edit_id().unwrap(), cx).unwrap();
+            buffer.undo_or_redo(transactions[0].clone(), cx).unwrap();
             assert_eq!(buffer.text(), "1abcdef234");
 
-            buffer.undo_or_redo(edit2.edit_id().unwrap(), cx).unwrap();
+            buffer.undo_or_redo(transactions[1].clone(), cx).unwrap();
             assert_eq!(buffer.text(), "1abcdx234");
-            buffer.undo_or_redo(edit3.edit_id().unwrap(), cx).unwrap();
+            buffer.undo_or_redo(transactions[2].clone(), cx).unwrap();
             assert_eq!(buffer.text(), "1abx234");
-            buffer.undo_or_redo(edit2.edit_id().unwrap(), cx).unwrap();
+            buffer.undo_or_redo(transactions[1].clone(), cx).unwrap();
             assert_eq!(buffer.text(), "1abyzef234");
-            buffer.undo_or_redo(edit3.edit_id().unwrap(), cx).unwrap();
+            buffer.undo_or_redo(transactions[2].clone(), cx).unwrap();
             assert_eq!(buffer.text(), "1abcdef234");
 
-            buffer.undo_or_redo(edit3.edit_id().unwrap(), cx).unwrap();
+            buffer.undo_or_redo(transactions[2].clone(), cx).unwrap();
             assert_eq!(buffer.text(), "1abyzef234");
-            buffer.undo_or_redo(edit1.edit_id().unwrap(), cx).unwrap();
+            buffer.undo_or_redo(transactions[0].clone(), cx).unwrap();
             assert_eq!(buffer.text(), "1yzef234");
-            buffer.undo_or_redo(edit2.edit_id().unwrap(), cx).unwrap();
+            buffer.undo_or_redo(transactions[1].clone(), cx).unwrap();
             assert_eq!(buffer.text(), "1234");
 
             buffer
@@ -3320,7 +3424,7 @@ mod tests {
             assert_eq!(buffer.text(), "12cde6");
             assert_eq!(buffer.selection_ranges(set_id).unwrap(), vec![1..3]);
 
-            now += UNDO_GROUP_INTERVAL + Duration::from_millis(1);
+            now += buffer.history.group_interval + Duration::from_millis(1);
             buffer.start_transaction_at(Some(set_id), now, cx).unwrap();
             buffer
                 .update_selection_set(
@@ -3432,8 +3536,11 @@ mod tests {
             let mut network = Network::new(StdRng::seed_from_u64(seed));
 
             for i in 0..peers {
-                let buffer = cx.add_model(|cx| Buffer::new(i as ReplicaId, base_text.as_str(), cx));
-
+                let buffer = cx.add_model(|cx| {
+                    let mut buf = Buffer::new(i as ReplicaId, base_text.as_str(), cx);
+                    buf.history.group_interval = Duration::from_millis(rng.gen_range(0..=200));
+                    buf
+                });
                 buffers.push(buffer);
                 replica_ids.push(i as u16);
                 network.add_peer(i as u16);
@@ -3761,9 +3868,13 @@ mod tests {
 
         pub fn randomly_undo_redo(&mut self, rng: &mut impl Rng, cx: &mut ModelContext<Self>) {
             for _ in 0..rng.gen_range(1..=5) {
-                if let Some(edit_id) = self.history.ops.keys().choose(rng).copied() {
-                    log::info!("undoing buffer {} operation {:?}", self.replica_id, edit_id);
-                    self.undo_or_redo(edit_id, cx).unwrap();
+                if let Some(transaction) = self.history.undo_stack.choose(rng).cloned() {
+                    log::info!(
+                        "undoing buffer {} transaction {:?}",
+                        self.replica_id,
+                        transaction
+                    );
+                    self.undo_or_redo(transaction, cx).unwrap();
                 }
             }
         }
@@ -3839,17 +3950,6 @@ mod tests {
                 let point_end = end.start.to_point(self)..end.end.to_point(self);
                 (point_start, point_end)
             })
-        }
-    }
-
-    impl Operation {
-        fn edit_id(&self) -> Option<time::Local> {
-            match self {
-                Operation::Edit(edit) => Some(edit.timestamp.local()),
-                Operation::Undo { undo, .. } => Some(undo.edit_id),
-                Operation::UpdateSelections { .. } => None,
-                Operation::SetActiveSelections { .. } => None,
-            }
         }
     }
 }

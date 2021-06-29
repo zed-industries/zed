@@ -529,7 +529,7 @@ impl LocalWorktree {
                 let file = fs::File::create(&abs_path)?;
                 let mut writer = io::BufWriter::with_capacity(buffer_size, &file);
                 for chunk in text.chunks() {
-                    writer.write(chunk.as_bytes())?;
+                    writer.write_all(chunk.as_bytes())?;
                 }
                 writer.flush()?;
 
@@ -1824,8 +1824,8 @@ impl WorktreeHandle for ModelHandle<Worktree> {
 }
 
 pub enum FileIter<'a> {
-    All(Cursor<'a, Entry, FileCount, FileCount>),
-    Visible(Cursor<'a, Entry, VisibleFileCount, VisibleFileCount>),
+    All(Cursor<'a, Entry, FileCount, ()>),
+    Visible(Cursor<'a, Entry, VisibleFileCount, ()>),
 }
 
 impl<'a> FileIter<'a> {
@@ -1844,11 +1844,11 @@ impl<'a> FileIter<'a> {
     fn next_internal(&mut self) {
         match self {
             Self::All(cursor) => {
-                let ix = *cursor.start();
+                let ix = *cursor.seek_start();
                 cursor.seek_forward(&FileCount(ix.0 + 1), Bias::Right, &());
             }
             Self::Visible(cursor) => {
-                let ix = *cursor.start();
+                let ix = *cursor.seek_start();
                 cursor.seek_forward(&VisibleFileCount(ix.0 + 1), Bias::Right, &());
             }
         }

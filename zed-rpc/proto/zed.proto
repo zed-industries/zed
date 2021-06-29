@@ -145,9 +145,15 @@ message Operation {
         uint32 replica_id = 1;
         uint32 local_timestamp = 2;
         uint32 lamport_timestamp = 3;
-        uint32 edit_replica_id = 4;
-        uint32 edit_local_timestamp = 5;
-        uint32 count = 6;
+        repeated Range ranges = 4;
+        repeated VectorClockEntry version = 5;
+        repeated UndoCount counts = 6;
+    }
+
+    message UndoCount {
+        uint32 replica_id = 1;
+        uint32 local_timestamp = 2;
+        uint32 count = 3;
     }
 
     message UpdateSelections {
