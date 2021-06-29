@@ -203,11 +203,11 @@ impl Worktree {
     pub fn save(
         &self,
         path: &Path,
-        content: Rope,
+        text: Rope,
         cx: &mut ModelContext<Self>,
     ) -> impl Future<Output = Result<()>> {
         match self {
-            Worktree::Local(worktree) => worktree.save(path, content, cx),
+            Worktree::Local(worktree) => worktree.save(path, text, cx),
             Worktree::Remote(_) => todo!(),
         }
     }
@@ -329,9 +329,7 @@ impl LocalWorktree {
                 Ok(existing_buffer)
             } else {
                 let contents = this
-                    .read_with(&cx, |this, cx| {
-                        this.as_local().unwrap().load(&path, cx.as_ref())
-                    })
+                    .update(&mut cx, |this, cx| this.as_local().unwrap().load(&path, cx))
                     .await?;
                 let language = language_registry.select_language(&path).cloned();
                 let file = File::new(handle, path.into());
@@ -390,8 +388,8 @@ impl LocalWorktree {
 
                         if diff.modified.contains(&path) {
                             cx.spawn(|buffer, mut cx| async move {
-                                let new_contents = handle
-                                    .read_with(&cx, |this, cx| {
+                                let new_text = handle
+                                    .update(&mut cx, |this, cx| {
                                         let this = this.as_local().unwrap();
                                         this.load(&path, cx)
                                     })
@@ -402,7 +400,7 @@ impl LocalWorktree {
                                 });
                                 if let Some(mtime) = mtime {
                                     buffer.update(&mut cx, |buffer, cx| {
-                                        buffer.file_was_modified(new_contents, mtime, cx)
+                                        buffer.file_was_modified(new_text, mtime, cx)
                                     });
                                 }
                                 Result::<_, anyhow::Error>::Ok(())
@@ -465,39 +463,72 @@ impl LocalWorktree {
         }
     }
 
-    fn load(&self, path: &Path, cx: &AppContext) -> Task<Result<String>> {
+    fn load(&self, path: &Path, cx: &mut ModelContext<Worktree>) -> Task<Result<String>> {
         let path = Arc::from(path);
         let abs_path = self.absolutize(&path);
         let background_snapshot = self.background_snapshot.clone();
 
-        cx.background().spawn(async move {
+        let load = cx.background().spawn(async move {
             let mut file = fs::File::open(&abs_path)?;
-            let mut contents = String::new();
-            file.read_to_string(&mut contents)?;
+            let mut text = String::new();
+            file.read_to_string(&mut text)?;
 
             // Eagerly populate the snapshot with an updated entry for the loaded file
             refresh_entry(&background_snapshot, path, &abs_path)?;
 
-            Result::<_, anyhow::Error>::Ok(contents)
+            Result::<_, anyhow::Error>::Ok(text)
+        });
+
+        cx.spawn(|this, mut cx| async move {
+            let text = load.await?;
+            this.update(&mut cx, |this, _| {
+                let this = this.as_local_mut().unwrap();
+                this.snapshot = this.background_snapshot.lock().clone();
+            });
+
+            Ok(text)
+        })
+    }
+
+    pub fn save_buffer_as(
+        &self,
+        buffer: ModelHandle<Buffer>,
+        path: impl Into<Arc<Path>>,
+        content: Rope,
+        cx: &mut ModelContext<Worktree>,
+    ) -> Task<Result<File>> {
+        let handle = cx.handle();
+        let path = path.into();
+        let save = self.save(path.clone(), content, cx);
+
+        cx.spawn(|this, mut cx| async move {
+            save.await?;
+            this.update(&mut cx, |this, _| {
+                if let Some(this) = this.as_local_mut() {
+                    this.open_buffers.insert(buffer.id(), buffer.downgrade());
+                }
+            });
+            Ok(File::new(handle, path))
         })
     }
 
     pub fn save(
         &self,
         path: impl Into<Arc<Path>>,
-        content: Rope,
+        text: Rope,
         cx: &mut ModelContext<Worktree>,
     ) -> Task<Result<()>> {
         let path = path.into();
         let abs_path = self.absolutize(&path);
         let background_snapshot = self.background_snapshot.clone();
+
         let save = {
             let path = path.clone();
             cx.background().spawn(async move {
-                let buffer_size = content.summary().bytes.min(10 * 1024);
+                let buffer_size = text.summary().bytes.min(10 * 1024);
                 let file = fs::File::create(&abs_path)?;
                 let mut writer = io::BufWriter::with_capacity(buffer_size, &file);
-                for chunk in content.chunks() {
+                for chunk in text.chunks() {
                     writer.write(chunk.as_bytes())?;
                 }
                 writer.flush()?;
@@ -511,9 +542,9 @@ impl LocalWorktree {
 
         cx.spawn(|worktree, mut cx| async move {
             save.await?;
-            worktree.update(&mut cx, |worktree, cx| {
-                let worktree = worktree.as_local_mut().unwrap();
-                worktree.poll_snapshot(cx);
+            worktree.update(&mut cx, |this, _| {
+                let this = this.as_local_mut().unwrap();
+                this.snapshot = this.background_snapshot.lock().clone();
             });
             Ok(())
         })
@@ -731,9 +762,10 @@ impl Snapshot {
     }
 
     pub fn paths(&self) -> impl Iterator<Item = &Arc<Path>> {
+        let empty_path = Path::new("");
         self.entries
             .cursor::<(), ()>()
-            .skip(1)
+            .filter(move |entry| entry.path.as_ref() != empty_path)
             .map(|entry| entry.path())
     }
 
@@ -799,10 +831,7 @@ impl Snapshot {
                 .insert(ignore_dir_path.into(), (Arc::new(ignore), self.scan_id));
         }
 
-        self.remove_path(entry.path());
-        if let Some(renamed_entry_id) = self.removed_entry_ids.remove(&entry.inode) {
-            entry.id = renamed_entry_id;
-        }
+        self.reuse_entry_id(&mut entry);
         self.entries.insert_or_replace(entry, &())
     }
 
@@ -830,12 +859,18 @@ impl Snapshot {
         edits.push(Edit::Insert(parent_entry));
 
         for mut entry in entries {
-            if let Some(renamed_entry_id) = self.removed_entry_ids.remove(&entry.inode) {
-                entry.id = renamed_entry_id;
-            }
+            self.reuse_entry_id(&mut entry);
             edits.push(Edit::Insert(entry));
         }
         self.entries.edit(edits, &());
+    }
+
+    fn reuse_entry_id(&mut self, entry: &mut Entry) {
+        if let Some(removed_entry_id) = self.removed_entry_ids.remove(&entry.inode) {
+            entry.id = removed_entry_id;
+        } else if let Some(existing_entry) = self.entry_for_path(&entry.path) {
+            entry.id = existing_entry.id;
+        }
     }
 
     fn remove_path(&mut self, path: &Path) {
@@ -980,16 +1015,6 @@ impl File {
         Self { worktree, path }
     }
 
-    pub fn buffer_added(&self, buffer: ModelHandle<Buffer>, cx: &mut MutableAppContext) {
-        self.worktree.update(cx, |worktree, _| {
-            if let Worktree::Local(worktree) = worktree {
-                worktree
-                    .open_buffers
-                    .insert(buffer.id(), buffer.downgrade());
-            }
-        })
-    }
-
     pub fn buffer_updated(&self, buffer_id: u64, operation: Operation, cx: &mut MutableAppContext) {
         self.worktree.update(cx, |worktree, cx| {
             if let Some((rpc, remote_id)) = match worktree {
@@ -1066,13 +1091,9 @@ impl File {
             .map_or(UNIX_EPOCH, |entry| entry.mtime)
     }
 
-    pub fn save(
-        &self,
-        content: Rope,
-        cx: &mut MutableAppContext,
-    ) -> impl Future<Output = Result<()>> {
+    pub fn save(&self, text: Rope, cx: &mut MutableAppContext) -> impl Future<Output = Result<()>> {
         self.worktree
-            .update(cx, |worktree, cx| worktree.save(&self.path(), content, cx))
+            .update(cx, |worktree, cx| worktree.save(&self.path(), text, cx))
     }
 
     pub fn worktree_id(&self) -> usize {
@@ -1217,7 +1238,7 @@ impl<'a> Ord for PathSearch<'a> {
                     a.cmp(b)
                 }
             }
-            _ => todo!("not sure we need the other two cases"),
+            _ => unreachable!("not sure we need the other two cases"),
         }
     }
 }
@@ -1684,7 +1705,7 @@ fn refresh_entry(snapshot: &Mutex<Snapshot>, path: Arc<Path>, abs_path: &Path) -
         root_char_bag = snapshot.root_char_bag;
         next_entry_id = snapshot.next_entry_id.clone();
     }
-    let entry = fs_entry_for_path(root_char_bag, &next_entry_id, path, &abs_path)?
+    let entry = fs_entry_for_path(root_char_bag, &next_entry_id, path, abs_path)?
         .ok_or_else(|| anyhow!("could not read saved file metadata"))?;
     snapshot.lock().insert_entry(entry);
     Ok(())
@@ -2119,11 +2140,8 @@ mod tests {
         .await
         .unwrap();
 
-        let new_contents = fs::read_to_string(dir.path().join(path)).unwrap();
-        assert_eq!(
-            new_contents,
-            buffer.read_with(&cx, |buffer, _| buffer.text())
-        );
+        let new_text = fs::read_to_string(dir.path().join(path)).unwrap();
+        assert_eq!(new_text, buffer.read_with(&cx, |buffer, _| buffer.text()));
     }
 
     #[gpui::test]
@@ -2149,11 +2167,8 @@ mod tests {
         .await
         .unwrap();
 
-        let new_contents = fs::read_to_string(file_path).unwrap();
-        assert_eq!(
-            new_contents,
-            buffer.read_with(&cx, |buffer, _| buffer.text())
-        );
+        let new_text = fs::read_to_string(file_path).unwrap();
+        assert_eq!(new_text, buffer.read_with(&cx, |buffer, _| buffer.text()));
     }
 
     #[gpui::test]
@@ -2183,7 +2198,11 @@ mod tests {
             async move { buffer.await.unwrap() }
         };
         let id_for_path = |path: &'static str, cx: &gpui::TestAppContext| {
-            tree.read_with(cx, |tree, _| tree.entry_for_path(path).unwrap().id)
+            tree.read_with(cx, |tree, _| {
+                tree.entry_for_path(path)
+                    .expect(&format!("no entry for path {}", path))
+                    .id
+            })
         };
 
         let buffer2 = buffer_for_path("a/file2", &mut cx).await;

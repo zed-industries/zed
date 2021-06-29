@@ -20,10 +20,10 @@ use crate::{
     sum_tree::{self, FilterCursor, SumTree},
     time::{self, ReplicaId},
     util::Bias,
-    worktree::File,
+    worktree::{File, Worktree},
 };
 use anyhow::{anyhow, Result};
-use gpui::{AppContext, Entity, ModelContext, Task};
+use gpui::{AppContext, Entity, ModelContext, ModelHandle, Task};
 use lazy_static::lazy_static;
 use std::{
     cell::RefCell,
@@ -561,44 +561,60 @@ impl Buffer {
         self.file.as_ref()
     }
 
-    pub fn save(
-        &mut self,
-        new_file: Option<File>,
-        cx: &mut ModelContext<Self>,
-    ) -> Task<Result<()>> {
+    pub fn save(&mut self, cx: &mut ModelContext<Self>) -> Result<Task<Result<()>>> {
+        let file = self
+            .file
+            .as_ref()
+            .ok_or_else(|| anyhow!("buffer has no file"))?;
+
         let text = self.visible_text.clone();
         let version = self.version.clone();
-        let file = self.file.clone();
+        let save = file.save(text, cx.as_mut());
 
-        cx.spawn(|handle, mut cx| async move {
-            if let Some(file) = new_file.as_ref().or(file.as_ref()) {
-                let result = cx.update(|cx| file.save(text, cx)).await;
-                if result.is_ok() {
-                    handle.update(&mut cx, |me, cx| me.did_save(version, new_file, cx));
-                }
-                result
-            } else {
-                Ok(())
-            }
+        Ok(cx.spawn(|this, mut cx| async move {
+            save.await?;
+            this.update(&mut cx, |this, cx| {
+                this.did_save(version, cx).unwrap();
+            });
+            Ok(())
+        }))
+    }
+
+    pub fn save_as(
+        &mut self,
+        worktree: &ModelHandle<Worktree>,
+        path: impl Into<Arc<Path>>,
+        cx: &mut ModelContext<Self>,
+    ) -> Task<Result<()>> {
+        let handle = cx.handle();
+        let text = self.visible_text.clone();
+        let version = self.version.clone();
+        let save_as = worktree.update(cx, |worktree, cx| {
+            worktree
+                .as_local_mut()
+                .unwrap()
+                .save_buffer_as(handle, path, text, cx)
+        });
+
+        cx.spawn(|this, mut cx| async move {
+            save_as.await.map(|new_file| {
+                this.update(&mut cx, |this, cx| {
+                    this.file = Some(new_file);
+                    this.did_save(version, cx).unwrap();
+                });
+            })
         })
     }
 
-    fn did_save(
-        &mut self,
-        version: time::Global,
-        new_file: Option<File>,
-        cx: &mut ModelContext<Self>,
-    ) {
-        if let Some(new_file) = new_file {
-            let buffer = cx.handle();
-            new_file.buffer_added(buffer, cx.as_mut());
-            self.file = Some(new_file);
-        }
-        if let Some(file) = &self.file {
+    fn did_save(&mut self, version: time::Global, cx: &mut ModelContext<Self>) -> Result<()> {
+        if let Some(file) = self.file.as_ref() {
             self.saved_mtime = file.mtime(cx.as_ref());
+            self.saved_version = version;
+            cx.emit(Event::Saved);
+            Ok(())
+        } else {
+            Err(anyhow!("buffer has no file"))
         }
-        self.saved_version = version;
-        cx.emit(Event::Saved);
     }
 
     pub fn file_was_moved(&mut self, new_path: Arc<Path>, cx: &mut ModelContext<Self>) {
@@ -3051,8 +3067,7 @@ mod tests {
             assert!(buffer.is_dirty(cx.as_ref()));
             assert_eq!(*events.borrow(), &[Event::Edited, Event::Dirtied]);
             events.borrow_mut().clear();
-
-            buffer.did_save(buffer.version(), None, cx);
+            buffer.did_save(buffer.version(), cx).unwrap();
         });
 
         // after saving, the buffer is not dirty, and emits a saved event.

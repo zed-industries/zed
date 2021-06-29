@@ -7,7 +7,7 @@ use crate::{
     settings::{Settings, StyleId},
     util::{post_inc, Bias},
     workspace,
-    worktree::File,
+    worktree::{File, Worktree},
 };
 use anyhow::Result;
 pub use buffer::*;
@@ -2506,8 +2506,18 @@ impl workspace::ItemView for Editor {
         Some(clone)
     }
 
-    fn save(&mut self, new_file: Option<File>, cx: &mut ViewContext<Self>) -> Task<Result<()>> {
-        self.buffer.update(cx, |b, cx| b.save(new_file, cx))
+    fn save(&mut self, cx: &mut ViewContext<Self>) -> Result<Task<Result<()>>> {
+        self.buffer.update(cx, |b, cx| b.save(cx))
+    }
+
+    fn save_as(
+        &mut self,
+        worktree: &ModelHandle<Worktree>,
+        path: &Path,
+        cx: &mut ViewContext<Self>,
+    ) -> Task<Result<()>> {
+        self.buffer
+            .update(cx, |b, cx| b.save_as(worktree, path, cx))
     }
 
     fn is_dirty(&self, cx: &AppContext) -> bool {

@@ -127,7 +127,13 @@ pub trait ItemView: View {
     fn has_conflict(&self, _: &AppContext) -> bool {
         false
     }
-    fn save(&mut self, _: Option<File>, _: &mut ViewContext<Self>) -> Task<anyhow::Result<()>>;
+    fn save(&mut self, cx: &mut ViewContext<Self>) -> Result<Task<Result<()>>>;
+    fn save_as(
+        &mut self,
+        worktree: &ModelHandle<Worktree>,
+        path: &Path,
+        cx: &mut ViewContext<Self>,
+    ) -> Task<anyhow::Result<()>>;
     fn should_activate_item_on_event(_: &Self::Event) -> bool {
         false
     }
@@ -162,7 +168,13 @@ pub trait ItemViewHandle: Send + Sync {
     fn to_any(&self) -> AnyViewHandle;
     fn is_dirty(&self, cx: &AppContext) -> bool;
     fn has_conflict(&self, cx: &AppContext) -> bool;
-    fn save(&self, file: Option<File>, cx: &mut MutableAppContext) -> Task<anyhow::Result<()>>;
+    fn save(&self, cx: &mut MutableAppContext) -> Result<Task<Result<()>>>;
+    fn save_as(
+        &self,
+        worktree: &ModelHandle<Worktree>,
+        path: &Path,
+        cx: &mut MutableAppContext,
+    ) -> Task<anyhow::Result<()>>;
 }
 
 impl<T: Item> ItemHandle for ModelHandle<T> {
@@ -236,8 +248,17 @@ impl<T: ItemView> ItemViewHandle for ViewHandle<T> {
         })
     }
 
-    fn save(&self, file: Option<File>, cx: &mut MutableAppContext) -> Task<anyhow::Result<()>> {
-        self.update(cx, |item, cx| item.save(file, cx))
+    fn save(&self, cx: &mut MutableAppContext) -> Result<Task<Result<()>>> {
+        self.update(cx, |item, cx| item.save(cx))
+    }
+
+    fn save_as(
+        &self,
+        worktree: &ModelHandle<Worktree>,
+        path: &Path,
+        cx: &mut MutableAppContext,
+    ) -> Task<anyhow::Result<()>> {
+        self.update(cx, |item, cx| item.save_as(worktree, path, cx))
     }
 
     fn is_dirty(&self, cx: &AppContext) -> bool {
@@ -386,6 +407,23 @@ impl Workspace {
                 }
             }
         }
+    }
+
+    fn worktree_for_abs_path(
+        &mut self,
+        abs_path: &Path,
+        cx: &mut ViewContext<Self>,
+    ) -> (ModelHandle<Worktree>, PathBuf) {
+        for tree in self.worktrees.iter() {
+            if let Some(path) = tree
+                .read(cx)
+                .as_local()
+                .and_then(|tree| abs_path.strip_prefix(&tree.abs_path()).ok())
+            {
+                return (tree.clone(), path.to_path_buf());
+            }
+        }
+        (self.add_worktree(abs_path, cx), PathBuf::new())
     }
 
     fn file_for_path(&mut self, abs_path: &Path, cx: &mut ViewContext<Self>) -> File {
@@ -559,19 +597,19 @@ impl Workspace {
             let handle = cx.handle();
             if item.entry_id(cx.as_ref()).is_none() {
                 let worktree = self.worktrees.iter().next();
-                let start_path = worktree
+                let start_abs_path = worktree
                     .and_then(|w| w.read(cx).as_local())
                     .map_or(Path::new(""), |w| w.abs_path())
                     .to_path_buf();
-                cx.prompt_for_new_path(&start_path, move |path, cx| {
-                    if let Some(path) = path {
+                cx.prompt_for_new_path(&start_abs_path, move |abs_path, cx| {
+                    if let Some(abs_path) = abs_path {
                         cx.spawn(|mut cx| async move {
-                            let result = async move {
-                                let file =
-                                    handle.update(&mut cx, |me, cx| me.file_for_path(&path, cx));
-                                cx.update(|cx| item.save(Some(file), cx)).await
-                            }
-                            .await;
+                            let result = handle
+                                .update(&mut cx, |me, cx| {
+                                    let (worktree, path) = me.worktree_for_abs_path(&abs_path, cx);
+                                    item.save_as(&worktree, &path, cx.as_mut())
+                                })
+                                .await;
                             if let Err(error) = result {
                                 error!("failed to save item: {:?}, ", error);
                             }
@@ -590,7 +628,7 @@ impl Workspace {
                     move |answer, cx| {
                         if answer == 0 {
                             cx.spawn(|mut cx| async move {
-                                if let Err(error) = cx.update(|cx| item.save(None, cx)).await {
+                                if let Err(error) = cx.update(|cx| item.save(cx)).unwrap().await {
                                     error!("failed to save item: {:?}, ", error);
                                 }
                             })
@@ -600,7 +638,7 @@ impl Workspace {
                 );
             } else {
                 cx.spawn(|_, mut cx| async move {
-                    if let Err(error) = cx.update(|cx| item.save(None, cx)).await {
+                    if let Err(error) = cx.update(|cx| item.save(cx)).unwrap().await {
                         error!("failed to save item: {:?}, ", error);
                     }
                 })
