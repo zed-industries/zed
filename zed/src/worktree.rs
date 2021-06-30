@@ -37,7 +37,6 @@ use std::{
     fmt, fs,
     future::Future,
     io,
-    iter::FromIterator,
     ops::Deref,
     os::unix::fs::MetadataExt,
     path::{Path, PathBuf},
@@ -103,14 +102,14 @@ impl Worktree {
             .worktree
             .ok_or_else(|| anyhow!("empty worktree"))?;
         let replica_id = open_worktree_response.replica_id;
-        let host_peer_id = PeerId(open_worktree_response.host_peer_id);
+        let peers = open_worktree_response.peers;
         let worktree = cx.update(|cx| {
             cx.add_model(|cx| {
                 Worktree::Remote(RemoteWorktree::new(
                     id,
                     replica_id as ReplicaId,
-                    host_peer_id,
                     worktree_message,
+                    peers,
                     rpc.clone(),
                     languages,
                     cx,
@@ -442,10 +441,12 @@ impl LocalWorktree {
         envelope: TypedEnvelope<proto::AddGuest>,
         cx: &mut ModelContext<Worktree>,
     ) -> Result<()> {
-        self.peers.insert(
-            PeerId(envelope.payload.peer_id),
-            envelope.payload.replica_id as ReplicaId,
-        );
+        let guest = envelope
+            .payload
+            .guest
+            .ok_or_else(|| anyhow!("empty peer"))?;
+        self.peers
+            .insert(PeerId(guest.peer_id), guest.replica_id as ReplicaId);
         Ok(())
     }
 
@@ -760,8 +761,8 @@ impl RemoteWorktree {
     fn new(
         remote_id: u64,
         replica_id: ReplicaId,
-        host_peer_id: PeerId,
         worktree: proto::Worktree,
+        peers: Vec<proto::Peer>,
         rpc: rpc::Client,
         languages: Arc<LanguageRegistry>,
         cx: &mut ModelContext<Worktree>,
@@ -818,7 +819,10 @@ impl RemoteWorktree {
             rpc,
             replica_id,
             open_buffers: Default::default(),
-            peers: HashMap::from_iter(Some((host_peer_id, 0))),
+            peers: peers
+                .into_iter()
+                .map(|p| (PeerId(p.peer_id), p.replica_id as ReplicaId))
+                .collect(),
             languages,
         }
     }
@@ -883,10 +887,12 @@ impl RemoteWorktree {
         envelope: TypedEnvelope<proto::AddGuest>,
         cx: &mut ModelContext<Worktree>,
     ) -> Result<()> {
-        self.peers.insert(
-            PeerId(envelope.payload.peer_id),
-            envelope.payload.replica_id as ReplicaId,
-        );
+        let guest = envelope
+            .payload
+            .guest
+            .ok_or_else(|| anyhow!("empty peer"))?;
+        self.peers
+            .insert(PeerId(guest.peer_id), guest.replica_id as ReplicaId);
         Ok(())
     }
 

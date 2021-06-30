@@ -26,7 +26,7 @@ type BoxedWriter = Pin<Box<dyn AsyncWrite + 'static + Send>>;
 type BoxedReader = Pin<Box<dyn AsyncRead + 'static + Send>>;
 
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
-pub struct ConnectionId(u32);
+pub struct ConnectionId(pub u32);
 
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
 pub struct PeerId(pub u32);
