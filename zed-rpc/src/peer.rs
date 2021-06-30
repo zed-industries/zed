@@ -51,9 +51,16 @@ pub struct Receipt<T> {
 
 pub struct TypedEnvelope<T> {
     pub sender_id: ConnectionId,
-    pub original_sender_id: Option<PeerId>,
+    original_sender_id: Option<PeerId>,
     pub message_id: u32,
     pub payload: T,
+}
+
+impl<T> TypedEnvelope<T> {
+    pub fn original_sender_id(&self) -> Result<PeerId> {
+        self.original_sender_id
+            .ok_or_else(|| anyhow!("missing original_sender_id"))
+    }
 }
 
 impl<T: RequestMessage> TypedEnvelope<T> {
