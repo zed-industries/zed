@@ -16,7 +16,8 @@ message Envelope {
         OpenBufferResponse open_buffer_response = 11;
         CloseBuffer close_buffer = 12;
         UpdateBuffer update_buffer = 13;
-        RemoveGuest remove_guest = 14;
+        AddGuest add_guest = 14;
+        RemoveGuest remove_guest = 15;
     }
 }
 
@@ -45,19 +46,20 @@ message OpenWorktree {
 
 message OpenWorktreeResponse {
     Worktree worktree = 1;
-    optional uint32 replica_id = 2;
+    uint32 replica_id = 2;
+    uint32 host_peer_id = 3;
 }
 
 message AddGuest {
     uint64 worktree_id = 1;
-    uint32 replica_id = 2;
-    User user = 3;
+    uint32 peer_id = 2;
+    uint32 replica_id = 3;
+    User user = 4;
 }
 
 message RemoveGuest {
     uint64 worktree_id = 1;
     uint32 peer_id = 2;
-    uint32 replica_id = 3;
 }
 
 message OpenBuffer {

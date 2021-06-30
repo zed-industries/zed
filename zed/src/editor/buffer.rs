@@ -1494,7 +1494,7 @@ impl Buffer {
         self.operations.push(operation);
     }
 
-    pub fn peer_left(&mut self, replica_id: ReplicaId, cx: &mut ModelContext<Self>) {
+    pub fn remove_guest(&mut self, replica_id: ReplicaId, cx: &mut ModelContext<Self>) {
         self.selections
             .retain(|set_id, _| set_id.replica_id != replica_id);
         cx.notify();
