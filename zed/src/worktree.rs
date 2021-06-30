@@ -53,10 +53,10 @@ lazy_static! {
 }
 
 pub fn init(cx: &mut MutableAppContext, rpc: rpc::Client) {
+    rpc.on_message(remote::remove_guest, cx);
     rpc.on_message(remote::open_buffer, cx);
     rpc.on_message(remote::close_buffer, cx);
     rpc.on_message(remote::update_buffer, cx);
-    rpc.on_message(remote::remove_guest, cx);
 }
 
 #[derive(Clone, Debug)]
@@ -151,6 +151,17 @@ impl Worktree {
         match self {
             Worktree::Local(worktree) => worktree.snapshot(),
             Worktree::Remote(worktree) => worktree.snapshot.clone(),
+        }
+    }
+
+    pub fn remove_guest(
+        &mut self,
+        envelope: TypedEnvelope<proto::RemoveGuest>,
+        cx: &mut ModelContext<Worktree>,
+    ) -> Result<()> {
+        match self {
+            Worktree::Local(worktree) => worktree.remove_guest(envelope, cx),
+            Worktree::Remote(_) => todo!(),
         }
     }
 
@@ -1926,7 +1937,18 @@ impl<'a> Iterator for ChildEntriesIter<'a> {
 
 mod remote {
     use super::*;
-    use crate::rpc::TypedEnvelope;
+
+    pub async fn remove_guest(
+        envelope: TypedEnvelope<proto::RemoveGuest>,
+        rpc: &rpc::Client,
+        cx: &mut AsyncAppContext,
+    ) -> anyhow::Result<()> {
+        rpc.state
+            .lock()
+            .await
+            .shared_worktree(envelope.payload.worktree_id, cx)?
+            .update(cx, |worktree, cx| worktree.remove_guest(envelope, cx))
+    }
 
     pub async fn open_buffer(
         envelope: TypedEnvelope<proto::OpenBuffer>,
@@ -1991,21 +2013,6 @@ mod remote {
         }
 
         Ok(())
-    }
-
-    pub async fn remove_guest(
-        envelope: TypedEnvelope<proto::RemoveGuest>,
-        rpc: &rpc::Client,
-        cx: &mut AsyncAppContext,
-    ) -> anyhow::Result<()> {
-        rpc.state
-            .lock()
-            .await
-            .shared_worktree(envelope.payload.worktree_id, cx)?
-            .update(cx, |worktree, cx| match worktree {
-                Worktree::Local(worktree) => worktree.remove_guest(envelope, cx),
-                Worktree::Remote(_) => todo!(),
-            })
     }
 }
 
