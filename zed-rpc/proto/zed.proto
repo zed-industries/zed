@@ -12,12 +12,13 @@ message Envelope {
         ShareWorktreeResponse share_worktree_response = 7;
         OpenWorktree open_worktree = 8;
         OpenWorktreeResponse open_worktree_response = 9;
-        OpenBuffer open_buffer = 10;
-        OpenBufferResponse open_buffer_response = 11;
-        CloseBuffer close_buffer = 12;
-        UpdateBuffer update_buffer = 13;
-        AddGuest add_guest = 14;
-        RemoveGuest remove_guest = 15;
+        CloseWorktree close_worktree = 10;
+        OpenBuffer open_buffer = 11;
+        OpenBufferResponse open_buffer_response = 12;
+        CloseBuffer close_buffer = 13;
+        UpdateBuffer update_buffer = 14;
+        AddGuest add_guest = 15;
+        RemoveGuest remove_guest = 16;
     }
 }
 
@@ -48,6 +49,10 @@ message OpenWorktreeResponse {
     Worktree worktree = 1;
     uint32 replica_id = 2;
     repeated Peer peers = 3;
+}
+
+message CloseWorktree {
+    uint64 worktree_id = 1;
 }
 
 message AddGuest {

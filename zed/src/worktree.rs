@@ -74,6 +74,23 @@ pub enum Worktree {
 
 impl Entity for Worktree {
     type Event = ();
+
+    fn release(&mut self, cx: &mut MutableAppContext) {
+        let rpc = match self {
+            Self::Local(tree) => tree.rpc.clone(),
+            Self::Remote(tree) => Some((tree.rpc.clone(), tree.remote_id)),
+        };
+
+        if let Some((rpc, worktree_id)) = rpc {
+            cx.spawn(|_| async move {
+                rpc.state.lock().await.shared_worktrees.remove(&worktree_id);
+                if let Err(err) = rpc.send(proto::CloseWorktree { worktree_id }).await {
+                    log::error!("error closing worktree {}: {}", worktree_id, err);
+                }
+            })
+            .detach();
+        }
+    }
 }
 
 impl Worktree {
