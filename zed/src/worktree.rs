@@ -2002,16 +2002,8 @@ mod remote {
     ) -> anyhow::Result<()> {
         let message = envelope.payload;
         let mut state = rpc.state.lock().await;
-        match state.shared_worktree(message.worktree_id, cx) {
-            Ok(worktree) => {
-                if let Err(error) = worktree.update(cx, |tree, cx| tree.update_buffer(message, cx))
-                {
-                    log::error!("error applying operations to buffer: {}", error);
-                }
-            }
-            Err(error) => log::error!("{}", error),
-        }
-
+        let worktree = state.shared_worktree(message.worktree_id, cx)?;
+        worktree.update(cx, |tree, cx| tree.update_buffer(message, cx))?;
         Ok(())
     }
 }
