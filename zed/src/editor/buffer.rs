@@ -533,7 +533,7 @@ impl Buffer {
     ) -> Self {
         let saved_mtime;
         if let Some(file) = file.as_ref() {
-            saved_mtime = file.mtime(cx.as_ref());
+            saved_mtime = file.mtime;
         } else {
             saved_mtime = UNIX_EPOCH;
         }
@@ -628,6 +628,10 @@ impl Buffer {
         self.file.as_ref()
     }
 
+    pub fn file_mut(&mut self) -> Option<&mut File> {
+        self.file.as_mut()
+    }
+
     pub fn save(&mut self, cx: &mut ModelContext<Self>) -> Result<Task<Result<()>>> {
         let file = self
             .file
@@ -675,7 +679,7 @@ impl Buffer {
 
     fn did_save(&mut self, version: time::Global, cx: &mut ModelContext<Self>) -> Result<()> {
         if let Some(file) = self.file.as_ref() {
-            self.saved_mtime = file.mtime(cx.as_ref());
+            self.saved_mtime = file.mtime;
             self.saved_version = version;
             cx.emit(Event::Saved);
             Ok(())
@@ -684,42 +688,50 @@ impl Buffer {
         }
     }
 
-    pub fn file_was_moved(&mut self, new_path: Arc<Path>, cx: &mut ModelContext<Self>) {
-        self.file.as_mut().unwrap().path = new_path;
-        cx.emit(Event::FileHandleChanged);
-    }
-
-    pub fn file_was_added(&mut self, cx: &mut ModelContext<Self>) {
-        cx.emit(Event::FileHandleChanged);
-    }
-
-    pub fn file_was_deleted(&mut self, cx: &mut ModelContext<Self>) {
-        if self.version == self.saved_version {
-            cx.emit(Event::Dirtied);
-        }
-        cx.emit(Event::FileHandleChanged);
-    }
-
-    pub fn file_was_modified(
+    pub fn file_updated(
         &mut self,
-        new_text: String,
+        path: Arc<Path>,
         mtime: SystemTime,
+        new_text: Option<String>,
         cx: &mut ModelContext<Self>,
     ) {
+        let file = self.file.as_mut().unwrap();
+        let mut changed = false;
+        if path != file.path {
+            file.path = path;
+            changed = true;
+        }
+
+        if mtime != file.mtime {
+            file.mtime = mtime;
+            changed = true;
+            if let Some(new_text) = new_text {
+                if self.version == self.saved_version {
+                    cx.spawn(|this, mut cx| async move {
+                        let diff = this
+                            .read_with(&cx, |this, cx| this.diff(new_text.into(), cx))
+                            .await;
+                        this.update(&mut cx, |this, cx| {
+                            if this.apply_diff(diff, cx) {
+                                this.saved_version = this.version.clone();
+                                this.saved_mtime = mtime;
+                                cx.emit(Event::Reloaded);
+                            }
+                        });
+                    })
+                    .detach();
+                }
+            }
+        }
+
+        if changed {
+            cx.emit(Event::FileHandleChanged);
+        }
+    }
+
+    pub fn file_deleted(&mut self, cx: &mut ModelContext<Self>) {
         if self.version == self.saved_version {
-            cx.spawn(|this, mut cx| async move {
-                let diff = this
-                    .read_with(&cx, |this, cx| this.diff(new_text.into(), cx))
-                    .await;
-                this.update(&mut cx, |this, cx| {
-                    if this.set_text_via_diff(diff, cx) {
-                        this.saved_version = this.version.clone();
-                        this.saved_mtime = mtime;
-                        cx.emit(Event::Reloaded);
-                    }
-                });
-            })
-            .detach();
+            cx.emit(Event::Dirtied);
         }
         cx.emit(Event::FileHandleChanged);
     }
@@ -889,9 +901,23 @@ impl Buffer {
         })
     }
 
-    fn set_text_via_diff(&mut self, diff: Diff, cx: &mut ModelContext<Self>) -> bool {
+    pub fn set_text_from_disk(&self, new_text: Arc<str>, cx: &mut ModelContext<Self>) -> Task<()> {
+        cx.spawn(|this, mut cx| async move {
+            let diff = this
+                .read_with(&cx, |this, cx| this.diff(new_text, cx))
+                .await;
+
+            this.update(&mut cx, |this, cx| {
+                if this.apply_diff(diff, cx) {
+                    this.saved_version = this.version.clone();
+                }
+            });
+        })
+    }
+
+    fn apply_diff(&mut self, diff: Diff, cx: &mut ModelContext<Self>) -> bool {
         if self.version == diff.base_version {
-            self.start_transaction(None, cx).unwrap();
+            self.start_transaction(None).unwrap();
             let mut offset = 0;
             for (tag, len) in diff.changes {
                 let range = offset..(offset + len);
@@ -911,17 +937,17 @@ impl Buffer {
         }
     }
 
-    pub fn is_dirty(&self, cx: &AppContext) -> bool {
+    pub fn is_dirty(&self) -> bool {
         self.version > self.saved_version
-            || self.file.as_ref().map_or(false, |file| file.is_deleted(cx))
+            || self.file.as_ref().map_or(false, |file| file.is_deleted())
     }
 
-    pub fn has_conflict(&self, cx: &AppContext) -> bool {
+    pub fn has_conflict(&self) -> bool {
         self.version > self.saved_version
             && self
                 .file
                 .as_ref()
-                .map_or(false, |file| file.mtime(cx) > self.saved_mtime)
+                .map_or(false, |file| file.mtime > self.saved_mtime)
     }
 
     pub fn remote_id(&self) -> u64 {
@@ -1001,20 +1027,11 @@ impl Buffer {
         self.deferred_ops.len()
     }
 
-    pub fn start_transaction(
-        &mut self,
-        set_id: Option<SelectionSetId>,
-        cx: &mut ModelContext<Self>,
-    ) -> Result<()> {
-        self.start_transaction_at(set_id, Instant::now(), cx)
+    pub fn start_transaction(&mut self, set_id: Option<SelectionSetId>) -> Result<()> {
+        self.start_transaction_at(set_id, Instant::now())
     }
 
-    fn start_transaction_at(
-        &mut self,
-        set_id: Option<SelectionSetId>,
-        now: Instant,
-        cx: &mut ModelContext<Self>,
-    ) -> Result<()> {
+    fn start_transaction_at(&mut self, set_id: Option<SelectionSetId>, now: Instant) -> Result<()> {
         let selections = if let Some(set_id) = set_id {
             let set = self
                 .selections
@@ -1024,12 +1041,8 @@ impl Buffer {
         } else {
             None
         };
-        self.history.start_transaction(
-            self.version.clone(),
-            self.is_dirty(cx.as_ref()),
-            selections,
-            now,
-        );
+        self.history
+            .start_transaction(self.version.clone(), self.is_dirty(), selections, now);
         Ok(())
     }
 
@@ -1104,7 +1117,7 @@ impl Buffer {
         }
 
         if !ranges.is_empty() {
-            self.start_transaction_at(None, Instant::now(), cx).unwrap();
+            self.start_transaction_at(None, Instant::now()).unwrap();
             let timestamp = InsertionTimestamp {
                 replica_id: self.replica_id,
                 local: self.local_clock.tick().value,
@@ -1235,7 +1248,7 @@ impl Buffer {
         ops: I,
         cx: &mut ModelContext<Self>,
     ) -> Result<()> {
-        let was_dirty = self.is_dirty(cx.as_ref());
+        let was_dirty = self.is_dirty();
         let old_version = self.version.clone();
 
         let mut deferred_ops = Vec::new();
@@ -1488,7 +1501,7 @@ impl Buffer {
     }
 
     pub fn undo(&mut self, cx: &mut ModelContext<Self>) {
-        let was_dirty = self.is_dirty(cx.as_ref());
+        let was_dirty = self.is_dirty();
         let old_version = self.version.clone();
 
         if let Some(transaction) = self.history.pop_undo().cloned() {
@@ -1507,7 +1520,7 @@ impl Buffer {
     }
 
     pub fn redo(&mut self, cx: &mut ModelContext<Self>) {
-        let was_dirty = self.is_dirty(cx.as_ref());
+        let was_dirty = self.is_dirty();
         let old_version = self.version.clone();
 
         if let Some(transaction) = self.history.pop_redo().cloned() {
@@ -2717,12 +2730,12 @@ mod tests {
             buffer.edit(Some(2..4), "XYZ", cx);
 
             // An empty transaction does not emit any events.
-            buffer.start_transaction(None, cx).unwrap();
+            buffer.start_transaction(None).unwrap();
             buffer.end_transaction(None, cx).unwrap();
 
             // A transaction containing two edits emits one edited event.
             now += Duration::from_secs(1);
-            buffer.start_transaction_at(None, now, cx).unwrap();
+            buffer.start_transaction_at(None, now).unwrap();
             buffer.edit(Some(5..5), "u", cx);
             buffer.edit(Some(6..6), "w", cx);
             buffer.end_transaction_at(None, now, cx).unwrap();
@@ -3158,7 +3171,7 @@ mod tests {
                 move |_, event, _| events.borrow_mut().push(event.clone())
             });
 
-            assert!(!buffer.is_dirty(cx.as_ref()));
+            assert!(!buffer.is_dirty());
             assert!(events.borrow().is_empty());
 
             buffer.edit(vec![1..2], "", cx);
@@ -3167,7 +3180,7 @@ mod tests {
         // after the first edit, the buffer is dirty, and emits a dirtied event.
         buffer1.update(&mut cx, |buffer, cx| {
             assert!(buffer.text() == "ac");
-            assert!(buffer.is_dirty(cx.as_ref()));
+            assert!(buffer.is_dirty());
             assert_eq!(*events.borrow(), &[Event::Edited, Event::Dirtied]);
             events.borrow_mut().clear();
             buffer.did_save(buffer.version(), cx).unwrap();
@@ -3175,7 +3188,7 @@ mod tests {
 
         // after saving, the buffer is not dirty, and emits a saved event.
         buffer1.update(&mut cx, |buffer, cx| {
-            assert!(!buffer.is_dirty(cx.as_ref()));
+            assert!(!buffer.is_dirty());
             assert_eq!(*events.borrow(), &[Event::Saved]);
             events.borrow_mut().clear();
 
@@ -3186,7 +3199,7 @@ mod tests {
         // after editing again, the buffer is dirty, and emits another dirty event.
         buffer1.update(&mut cx, |buffer, cx| {
             assert!(buffer.text() == "aBDc");
-            assert!(buffer.is_dirty(cx.as_ref()));
+            assert!(buffer.is_dirty());
             assert_eq!(
                 *events.borrow(),
                 &[Event::Edited, Event::Dirtied, Event::Edited],
@@ -3197,7 +3210,7 @@ mod tests {
             // previously-saved state, the is still considered dirty.
             buffer.edit(vec![1..3], "", cx);
             assert!(buffer.text() == "ac");
-            assert!(buffer.is_dirty(cx.as_ref()));
+            assert!(buffer.is_dirty());
         });
 
         assert_eq!(*events.borrow(), &[Event::Edited]);
@@ -3218,9 +3231,7 @@ mod tests {
         });
 
         fs::remove_file(dir.path().join("file2")).unwrap();
-        buffer2
-            .condition(&cx, |b, cx| b.is_dirty(cx.as_ref()))
-            .await;
+        buffer2.condition(&cx, |b, _| b.is_dirty()).await;
         assert_eq!(
             *events.borrow(),
             &[Event::Dirtied, Event::FileHandleChanged]
@@ -3251,7 +3262,7 @@ mod tests {
             .condition(&cx, |_, _| !events.borrow().is_empty())
             .await;
         assert_eq!(*events.borrow(), &[Event::FileHandleChanged]);
-        cx.read(|cx| assert!(buffer3.read(cx).is_dirty(cx)));
+        cx.read(|cx| assert!(buffer3.read(cx).is_dirty()));
     }
 
     #[gpui::test]
@@ -3272,7 +3283,7 @@ mod tests {
 
         // Add a cursor at the start of each row.
         let selection_set_id = buffer.update(&mut cx, |buffer, cx| {
-            assert!(!buffer.is_dirty(cx.as_ref()));
+            assert!(!buffer.is_dirty());
             buffer.add_selection_set(
                 (0..3)
                     .map(|row| {
@@ -3292,9 +3303,9 @@ mod tests {
 
         // Change the file on disk, adding two new lines of text, and removing
         // one line.
-        buffer.read_with(&cx, |buffer, cx| {
-            assert!(!buffer.is_dirty(cx.as_ref()));
-            assert!(!buffer.has_conflict(cx.as_ref()));
+        buffer.read_with(&cx, |buffer, _| {
+            assert!(!buffer.is_dirty());
+            assert!(!buffer.has_conflict());
         });
         let new_contents = "AAAA\naaa\nBB\nbbbbb\n";
         fs::write(&abs_path, new_contents).unwrap();
@@ -3306,10 +3317,10 @@ mod tests {
             .condition(&cx, |buffer, _| buffer.text() != initial_contents)
             .await;
 
-        buffer.update(&mut cx, |buffer, cx| {
+        buffer.update(&mut cx, |buffer, _| {
             assert_eq!(buffer.text(), new_contents);
-            assert!(!buffer.is_dirty(cx.as_ref()));
-            assert!(!buffer.has_conflict(cx.as_ref()));
+            assert!(!buffer.is_dirty());
+            assert!(!buffer.has_conflict());
 
             let selections = buffer.selections(selection_set_id).unwrap();
             let cursor_positions = selections
@@ -3328,7 +3339,7 @@ mod tests {
         // Modify the buffer
         buffer.update(&mut cx, |buffer, cx| {
             buffer.edit(vec![0..0], " ", cx);
-            assert!(buffer.is_dirty(cx.as_ref()));
+            assert!(buffer.is_dirty());
         });
 
         // Change the file on disk again, adding blank lines to the beginning.
@@ -3337,23 +3348,23 @@ mod tests {
         // Becaues the buffer is modified, it doesn't reload from disk, but is
         // marked as having a conflict.
         buffer
-            .condition(&cx, |buffer, cx| buffer.has_conflict(cx.as_ref()))
+            .condition(&cx, |buffer, _| buffer.has_conflict())
             .await;
     }
 
     #[gpui::test]
-    async fn test_set_text_via_diff(mut cx: gpui::TestAppContext) {
+    async fn test_apply_diff(mut cx: gpui::TestAppContext) {
         let text = "a\nbb\nccc\ndddd\neeeee\nffffff\n";
         let buffer = cx.add_model(|cx| Buffer::new(0, text, cx));
 
         let text = "a\nccc\ndddd\nffffff\n";
         let diff = buffer.read_with(&cx, |b, cx| b.diff(text.into(), cx)).await;
-        buffer.update(&mut cx, |b, cx| b.set_text_via_diff(diff, cx));
+        buffer.update(&mut cx, |b, cx| b.apply_diff(diff, cx));
         cx.read(|cx| assert_eq!(buffer.read(cx).text(), text));
 
         let text = "a\n1\n\nccc\ndd2dd\nffffff\n";
         let diff = buffer.read_with(&cx, |b, cx| b.diff(text.into(), cx)).await;
-        buffer.update(&mut cx, |b, cx| b.set_text_via_diff(diff, cx));
+        buffer.update(&mut cx, |b, cx| b.apply_diff(diff, cx));
         cx.read(|cx| assert_eq!(buffer.read(cx).text(), text));
     }
 
@@ -3405,13 +3416,13 @@ mod tests {
 
             let set_id =
                 buffer.add_selection_set(buffer.selections_from_ranges(vec![4..4]).unwrap(), cx);
-            buffer.start_transaction_at(Some(set_id), now, cx).unwrap();
+            buffer.start_transaction_at(Some(set_id), now).unwrap();
             buffer.edit(vec![2..4], "cd", cx);
             buffer.end_transaction_at(Some(set_id), now, cx).unwrap();
             assert_eq!(buffer.text(), "12cd56");
             assert_eq!(buffer.selection_ranges(set_id).unwrap(), vec![4..4]);
 
-            buffer.start_transaction_at(Some(set_id), now, cx).unwrap();
+            buffer.start_transaction_at(Some(set_id), now).unwrap();
             buffer
                 .update_selection_set(
                     set_id,
@@ -3425,7 +3436,7 @@ mod tests {
             assert_eq!(buffer.selection_ranges(set_id).unwrap(), vec![1..3]);
 
             now += buffer.history.group_interval + Duration::from_millis(1);
-            buffer.start_transaction_at(Some(set_id), now, cx).unwrap();
+            buffer.start_transaction_at(Some(set_id), now).unwrap();
             buffer
                 .update_selection_set(
                     set_id,
@@ -3636,7 +3647,7 @@ mod tests {
         // Perform some edits (add parameter and variable reference)
         // Parsing doesn't begin until the transaction is complete
         buffer.update(&mut cx, |buf, cx| {
-            buf.start_transaction(None, cx).unwrap();
+            buf.start_transaction(None).unwrap();
 
             let offset = buf.text().find(")").unwrap();
             buf.edit(vec![offset..offset], "b: C", cx);

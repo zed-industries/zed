@@ -6,7 +6,7 @@ use crate::{
     language::LanguageRegistry,
     rpc,
     settings::Settings,
-    worktree::{File, Worktree, WorktreeHandle},
+    worktree::{File, Worktree},
     AppState,
 };
 use anyhow::{anyhow, Result};
@@ -394,7 +394,7 @@ impl Workspace {
         let entries = abs_paths
             .iter()
             .cloned()
-            .map(|path| self.file_for_path(&path, cx))
+            .map(|path| self.entry_id_for_path(&path, cx))
             .collect::<Vec<_>>();
 
         let bg = cx.background_executor().clone();
@@ -402,12 +402,11 @@ impl Workspace {
             .iter()
             .cloned()
             .zip(entries.into_iter())
-            .map(|(abs_path, file)| {
+            .map(|(abs_path, entry_id)| {
                 let is_file = bg.spawn(async move { abs_path.is_file() });
                 cx.spawn(|this, mut cx| async move {
                     if is_file.await {
-                        return this
-                            .update(&mut cx, |this, cx| this.open_entry(file.entry_id(), cx));
+                        return this.update(&mut cx, |this, cx| this.open_entry(entry_id, cx));
                     } else {
                         None
                     }
@@ -440,18 +439,22 @@ impl Workspace {
         (self.add_worktree(abs_path, cx), PathBuf::new())
     }
 
-    fn file_for_path(&mut self, abs_path: &Path, cx: &mut ViewContext<Self>) -> File {
+    fn entry_id_for_path(
+        &mut self,
+        abs_path: &Path,
+        cx: &mut ViewContext<Self>,
+    ) -> (usize, Arc<Path>) {
         for tree in self.worktrees.iter() {
             if let Some(relative_path) = tree
                 .read(cx)
                 .as_local()
                 .and_then(|t| abs_path.strip_prefix(t.abs_path()).ok())
             {
-                return tree.file(relative_path);
+                return (tree.id(), relative_path.into());
             }
         }
         let worktree = self.add_worktree(&abs_path, cx);
-        worktree.file(Path::new(""))
+        (worktree.id(), Path::new("").into())
     }
 
     pub fn add_worktree(
@@ -880,6 +883,7 @@ mod tests {
     use crate::{
         editor::Editor,
         test::{build_app_state, temp_tree},
+        worktree::WorktreeHandle,
     };
     use serde_json::json;
     use std::{collections::HashSet, fs};

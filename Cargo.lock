@@ -108,6 +108,15 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "35c7a5669cb64f085739387e1308b74e6d44022464b7f1b63bbd4ceb6379ec31"
 
 [[package]]
+name = "archery"
+version = "0.4.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "0a8da9bc4c4053ee067669762bcaeea6e241841295a2b6c948312dad6ef4cc02"
+dependencies = [
+ "static_assertions",
+]
+
+[[package]]
 name = "arrayref"
 version = "0.3.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3028,6 +3037,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "rpds"
+version = "0.9.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "387f58b714cda2b5042ef9e91819445f60189900b618475186b11d7876f6adb4"
+dependencies = [
+ "archery",
+]
+
+[[package]]
 name = "rsa"
 version = "0.4.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -4330,6 +4348,7 @@ dependencies = [
  "parking_lot",
  "postage",
  "rand 0.8.3",
+ "rpds",
  "rsa",
  "rust-embed",
  "seahash",

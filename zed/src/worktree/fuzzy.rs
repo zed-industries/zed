@@ -618,6 +618,7 @@ mod tests {
                 abs_path: PathBuf::new().into(),
                 ignores: Default::default(),
                 entries: Default::default(),
+                paths_by_id: Default::default(),
                 removed_entry_ids: Default::default(),
                 root_name: Default::default(),
                 root_char_bag: Default::default(),

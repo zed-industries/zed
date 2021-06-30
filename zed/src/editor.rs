@@ -1,4 +1,4 @@
-mod buffer;
+pub mod buffer;
 pub mod display_map;
 mod element;
 pub mod movement;
@@ -2007,9 +2007,9 @@ impl Editor {
     }
 
     fn start_transaction(&self, cx: &mut ViewContext<Self>) {
-        self.buffer.update(cx, |buffer, cx| {
+        self.buffer.update(cx, |buffer, _| {
             buffer
-                .start_transaction(Some(self.selection_set_id), cx)
+                .start_transaction(Some(self.selection_set_id))
                 .unwrap()
         });
     }
@@ -2521,11 +2521,11 @@ impl workspace::ItemView for Editor {
     }
 
     fn is_dirty(&self, cx: &AppContext) -> bool {
-        self.buffer.read(cx).is_dirty(cx)
+        self.buffer.read(cx).is_dirty()
     }
 
     fn has_conflict(&self, cx: &AppContext) -> bool {
-        self.buffer.read(cx).has_conflict(cx)
+        self.buffer.read(cx).has_conflict()
     }
 }
 
