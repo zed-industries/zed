@@ -4003,7 +4003,7 @@ mod tests {
     #[gpui::test]
     async fn test_select_larger_smaller_syntax_node(mut cx: gpui::TestAppContext) {
         let app_state = cx.read(build_app_state);
-        let lang = app_state.language_registry.select_language("z.rs");
+        let lang = app_state.languages.select_language("z.rs");
         let text = r#"
             use mod1::mod2::{mod3, mod4};
 

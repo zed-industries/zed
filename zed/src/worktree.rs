@@ -74,14 +74,19 @@ impl Entity for Worktree {
 }
 
 impl Worktree {
-    pub fn local(path: impl Into<Arc<Path>>, cx: &mut ModelContext<Worktree>) -> Self {
-        Worktree::Local(LocalWorktree::new(path, cx))
+    pub fn local(
+        path: impl Into<Arc<Path>>,
+        languages: Arc<LanguageRegistry>,
+        cx: &mut ModelContext<Worktree>,
+    ) -> Self {
+        Worktree::Local(LocalWorktree::new(path, languages, cx))
     }
 
     pub async fn remote(
         rpc: rpc::Client,
         id: u64,
         access_token: String,
+        languages: Arc<LanguageRegistry>,
         cx: &mut AsyncAppContext,
     ) -> Result<ModelHandle<Self>> {
         let open_worktree_response = rpc
@@ -103,6 +108,7 @@ impl Worktree {
                     worktree_message,
                     rpc.clone(),
                     replica_id as ReplicaId,
+                    languages,
                     cx,
                 ))
             })
@@ -149,14 +155,11 @@ impl Worktree {
     pub fn open_buffer(
         &mut self,
         path: impl AsRef<Path>,
-        language_registry: Arc<LanguageRegistry>,
         cx: &mut ModelContext<Self>,
     ) -> Task<Result<ModelHandle<Buffer>>> {
         match self {
-            Worktree::Local(worktree) => worktree.open_buffer(path.as_ref(), language_registry, cx),
-            Worktree::Remote(worktree) => {
-                worktree.open_buffer(path.as_ref(), language_registry, cx)
-            }
+            Worktree::Local(worktree) => worktree.open_buffer(path.as_ref(), cx),
+            Worktree::Remote(worktree) => worktree.open_buffer(path.as_ref(), cx),
         }
     }
 
@@ -241,10 +244,15 @@ pub struct LocalWorktree {
     poll_scheduled: bool,
     rpc: Option<(rpc::Client, u64)>,
     open_buffers: HashMap<usize, WeakModelHandle<Buffer>>,
+    languages: Arc<LanguageRegistry>,
 }
 
 impl LocalWorktree {
-    fn new(path: impl Into<Arc<Path>>, cx: &mut ModelContext<Worktree>) -> Self {
+    fn new(
+        path: impl Into<Arc<Path>>,
+        languages: Arc<LanguageRegistry>,
+        cx: &mut ModelContext<Worktree>,
+    ) -> Self {
         let abs_path = path.into();
         let (scan_state_tx, scan_state_rx) = smol::channel::unbounded();
         let id = cx.model_id();
@@ -268,11 +276,12 @@ impl LocalWorktree {
         let tree = Self {
             snapshot,
             background_snapshot: background_snapshot.clone(),
-            open_buffers: Default::default(),
             scan_state: watch::channel_with(ScanState::Scanning),
             _event_stream_handle: event_stream_handle,
             poll_scheduled: false,
+            open_buffers: Default::default(),
             rpc: None,
+            languages,
         };
 
         std::thread::spawn(move || {
@@ -313,7 +322,6 @@ impl LocalWorktree {
     pub fn open_buffer(
         &mut self,
         path: &Path,
-        language_registry: Arc<LanguageRegistry>,
         cx: &mut ModelContext<Worktree>,
     ) -> Task<Result<ModelHandle<Buffer>>> {
         let handle = cx.handle();
@@ -333,6 +341,7 @@ impl LocalWorktree {
             }
         });
 
+        let languages = self.languages.clone();
         let path = Arc::from(path);
         cx.spawn(|this, mut cx| async move {
             if let Some(existing_buffer) = existing_buffer {
@@ -341,7 +350,7 @@ impl LocalWorktree {
                 let (file, contents) = this
                     .update(&mut cx, |this, cx| this.as_local().unwrap().load(&path, cx))
                     .await?;
-                let language = language_registry.select_language(&path).cloned();
+                let language = languages.select_language(&path).cloned();
                 let buffer = cx.add_model(|cx| {
                     Buffer::from_history(0, History::new(contents.into()), Some(file), language, cx)
                 });
@@ -638,6 +647,7 @@ pub struct RemoteWorktree {
     rpc: rpc::Client,
     replica_id: ReplicaId,
     open_buffers: HashMap<usize, WeakModelHandle<Buffer>>,
+    languages: Arc<LanguageRegistry>,
 }
 
 impl RemoteWorktree {
@@ -646,6 +656,7 @@ impl RemoteWorktree {
         worktree: proto::Worktree,
         rpc: rpc::Client,
         replica_id: ReplicaId,
+        languages: Arc<LanguageRegistry>,
         cx: &mut ModelContext<Worktree>,
     ) -> Self {
         let root_char_bag: CharBag = worktree
@@ -700,13 +711,13 @@ impl RemoteWorktree {
             rpc,
             replica_id,
             open_buffers: Default::default(),
+            languages,
         }
     }
 
     pub fn open_buffer(
         &mut self,
         path: &Path,
-        language_registry: Arc<LanguageRegistry>,
         cx: &mut ModelContext<Worktree>,
     ) -> Task<Result<ModelHandle<Buffer>>> {
         let handle = cx.handle();
@@ -725,6 +736,7 @@ impl RemoteWorktree {
         });
 
         let rpc = self.rpc.clone();
+        let languages = self.languages.clone();
         let replica_id = self.replica_id;
         let remote_worktree_id = self.remote_id;
         let path = path.to_string_lossy().to_string();
@@ -736,7 +748,7 @@ impl RemoteWorktree {
                     .read_with(&cx, |tree, _| tree.entry_for_path(&path).cloned())
                     .ok_or_else(|| anyhow!("file does not exist"))?;
                 let file = File::new(entry.id, handle, entry.path, entry.mtime);
-                let language = language_registry.select_language(&path).cloned();
+                let language = languages.select_language(&path).cloned();
                 let response = rpc
                     .request(proto::OpenBuffer {
                         worktree_id: remote_worktree_id as u64,
@@ -1880,11 +1892,7 @@ mod remote {
 
         let buffer = worktree
             .update(cx, |worktree, cx| {
-                worktree.open_buffer(
-                    Path::new(&message.path),
-                    state.language_registry.clone(),
-                    cx,
-                )
+                worktree.open_buffer(Path::new(&message.path), cx)
             })
             .await?;
         state
@@ -2026,7 +2034,7 @@ mod tests {
         )
         .unwrap();
 
-        let tree = cx.add_model(|cx| Worktree::local(root_link_path, cx));
+        let tree = cx.add_model(|cx| Worktree::local(root_link_path, Default::default(), cx));
 
         cx.read(|cx| tree.read(cx).as_local().unwrap().scan_complete())
             .await;
@@ -2068,11 +2076,9 @@ mod tests {
         let dir = temp_tree(json!({
             "file1": "the old contents",
         }));
-        let tree = cx.add_model(|cx| Worktree::local(dir.path(), cx));
+        let tree = cx.add_model(|cx| Worktree::local(dir.path(), app_state.languages, cx));
         let buffer = tree
-            .update(&mut cx, |tree, cx| {
-                tree.open_buffer("file1", app_state.language_registry, cx)
-            })
+            .update(&mut cx, |tree, cx| tree.open_buffer("file1", cx))
             .await
             .unwrap();
         let save = buffer.update(&mut cx, |buffer, cx| {
@@ -2093,15 +2099,13 @@ mod tests {
         }));
         let file_path = dir.path().join("file1");
 
-        let tree = cx.add_model(|cx| Worktree::local(file_path.clone(), cx));
+        let tree = cx.add_model(|cx| Worktree::local(file_path.clone(), app_state.languages, cx));
         cx.read(|cx| tree.read(cx).as_local().unwrap().scan_complete())
             .await;
         cx.read(|cx| assert_eq!(tree.read(cx).file_count(), 1));
 
         let buffer = tree
-            .update(&mut cx, |tree, cx| {
-                tree.open_buffer("", app_state.language_registry, cx)
-            })
+            .update(&mut cx, |tree, cx| tree.open_buffer("", cx))
             .await
             .unwrap();
         let save = buffer.update(&mut cx, |buffer, cx| {
@@ -2130,14 +2134,10 @@ mod tests {
             }
         }));
 
-        let language_registry = Arc::new(LanguageRegistry::new());
-
-        let tree = cx.add_model(|cx| Worktree::local(dir.path(), cx));
+        let tree = cx.add_model(|cx| Worktree::local(dir.path(), Default::default(), cx));
 
         let buffer_for_path = |path: &'static str, cx: &mut gpui::TestAppContext| {
-            let buffer = tree.update(cx, |tree, cx| {
-                tree.open_buffer(path, language_registry.clone(), cx)
-            });
+            let buffer = tree.update(cx, |tree, cx| tree.open_buffer(path, cx));
             async move { buffer.await.unwrap() }
         };
         let id_for_path = |path: &'static str, cx: &gpui::TestAppContext| {
@@ -2233,7 +2233,7 @@ mod tests {
             }
         }));
 
-        let tree = cx.add_model(|cx| Worktree::local(dir.path(), cx));
+        let tree = cx.add_model(|cx| Worktree::local(dir.path(), Default::default(), cx));
         cx.read(|cx| tree.read(cx).as_local().unwrap().scan_complete())
             .await;
         tree.flush_fs_events(&cx).await;

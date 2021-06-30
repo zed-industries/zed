@@ -17,7 +17,7 @@ pub mod worktree;
 #[derive(Clone)]
 pub struct AppState {
     pub settings: postage::watch::Receiver<settings::Settings>,
-    pub language_registry: std::sync::Arc<language::LanguageRegistry>,
+    pub languages: std::sync::Arc<language::LanguageRegistry>,
     pub rpc: rpc::Client,
 }
 

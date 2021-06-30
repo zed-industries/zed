@@ -142,10 +142,10 @@ fn write_tree(path: &Path, tree: serde_json::Value) {
 
 pub fn build_app_state(cx: &AppContext) -> AppState {
     let settings = settings::channel(&cx.font_cache()).unwrap().1;
-    let language_registry = Arc::new(LanguageRegistry::new());
+    let languages = Arc::new(LanguageRegistry::new());
     AppState {
         settings,
-        language_registry: language_registry.clone(),
-        rpc: rpc::Client::new(language_registry),
+        languages: languages.clone(),
+        rpc: rpc::Client::new(languages),
     }
 }

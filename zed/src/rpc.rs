@@ -31,7 +31,7 @@ pub struct ClientState {
     connection_id: Option<ConnectionId>,
     pub remote_worktrees: HashMap<u64, WeakModelHandle<Worktree>>,
     pub shared_buffers: HashMap<PeerId, HashMap<u64, ModelHandle<Buffer>>>,
-    pub language_registry: Arc<LanguageRegistry>,
+    pub languages: Arc<LanguageRegistry>,
 }
 
 impl ClientState {
@@ -54,14 +54,14 @@ impl ClientState {
 }
 
 impl Client {
-    pub fn new(language_registry: Arc<LanguageRegistry>) -> Self {
+    pub fn new(languages: Arc<LanguageRegistry>) -> Self {
         Self {
             peer: Peer::new(),
             state: Arc::new(Mutex::new(ClientState {
                 connection_id: None,
                 remote_worktrees: Default::default(),
                 shared_buffers: Default::default(),
-                language_registry,
+                languages,
             })),
         }
     }

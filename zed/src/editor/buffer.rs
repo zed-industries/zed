@@ -2671,7 +2671,6 @@ impl ToPoint for usize {
 mod tests {
     use super::*;
     use crate::{
-        language::LanguageRegistry,
         test::{build_app_state, temp_tree},
         util::RandomCharIter,
         worktree::{Worktree, WorktreeHandle},
@@ -3144,22 +3143,18 @@ mod tests {
 
     #[gpui::test]
     async fn test_is_dirty(mut cx: gpui::TestAppContext) {
-        let language_registry = Arc::new(LanguageRegistry::new());
-
         let dir = temp_tree(json!({
             "file1": "abc",
             "file2": "def",
             "file3": "ghi",
         }));
-        let tree = cx.add_model(|cx| Worktree::local(dir.path(), cx));
+        let tree = cx.add_model(|cx| Worktree::local(dir.path(), Default::default(), cx));
         tree.flush_fs_events(&cx).await;
         cx.read(|cx| tree.read(cx).as_local().unwrap().scan_complete())
             .await;
 
         let buffer1 = tree
-            .update(&mut cx, |tree, cx| {
-                tree.open_buffer("file1", language_registry.clone(), cx)
-            })
+            .update(&mut cx, |tree, cx| tree.open_buffer("file1", cx))
             .await
             .unwrap();
         let events = Rc::new(RefCell::new(Vec::new()));
@@ -3218,9 +3213,7 @@ mod tests {
         // When a file is deleted, the buffer is considered dirty.
         let events = Rc::new(RefCell::new(Vec::new()));
         let buffer2 = tree
-            .update(&mut cx, |tree, cx| {
-                tree.open_buffer("file2", language_registry.clone(), cx)
-            })
+            .update(&mut cx, |tree, cx| tree.open_buffer("file2", cx))
             .await
             .unwrap();
         buffer2.update(&mut cx, |_, cx| {
@@ -3240,9 +3233,7 @@ mod tests {
         // When a file is already dirty when deleted, we don't emit a Dirtied event.
         let events = Rc::new(RefCell::new(Vec::new()));
         let buffer3 = tree
-            .update(&mut cx, |tree, cx| {
-                tree.open_buffer("file3", language_registry.clone(), cx)
-            })
+            .update(&mut cx, |tree, cx| tree.open_buffer("file3", cx))
             .await
             .unwrap();
         buffer3.update(&mut cx, |_, cx| {
@@ -3269,14 +3260,14 @@ mod tests {
     async fn test_file_changes_on_disk(mut cx: gpui::TestAppContext) {
         let initial_contents = "aaa\nbbbbb\nc\n";
         let dir = temp_tree(json!({ "the-file": initial_contents }));
-        let tree = cx.add_model(|cx| Worktree::local(dir.path(), cx));
+        let tree = cx.add_model(|cx| Worktree::local(dir.path(), Default::default(), cx));
         cx.read(|cx| tree.read(cx).as_local().unwrap().scan_complete())
             .await;
 
         let abs_path = dir.path().join("the-file");
         let buffer = tree
             .update(&mut cx, |tree, cx| {
-                tree.open_buffer(Path::new("the-file"), Arc::new(LanguageRegistry::new()), cx)
+                tree.open_buffer(Path::new("the-file"), cx)
             })
             .await
             .unwrap();
@@ -3620,7 +3611,7 @@ mod tests {
     #[gpui::test]
     async fn test_reparse(mut cx: gpui::TestAppContext) {
         let app_state = cx.read(build_app_state);
-        let rust_lang = app_state.language_registry.select_language("test.rs");
+        let rust_lang = app_state.languages.select_language("test.rs");
         assert!(rust_lang.is_some());
 
         let buffer = cx.add_model(|cx| {
@@ -3761,7 +3752,7 @@ mod tests {
         use unindent::Unindent as _;
 
         let app_state = cx.read(build_app_state);
-        let rust_lang = app_state.language_registry.select_language("test.rs");
+        let rust_lang = app_state.languages.select_language("test.rs");
         assert!(rust_lang.is_some());
 
         let buffer = cx.add_model(|cx| {

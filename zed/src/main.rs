@@ -17,13 +17,13 @@ fn main() {
     let app = gpui::App::new(assets::Assets).unwrap();
 
     let (_, settings) = settings::channel(&app.font_cache()).unwrap();
-    let language_registry = Arc::new(language::LanguageRegistry::new());
-    language_registry.set_theme(&settings.borrow().theme);
+    let languages = Arc::new(language::LanguageRegistry::new());
+    languages.set_theme(&settings.borrow().theme);
 
     let app_state = AppState {
-        language_registry: language_registry.clone(),
+        languages: languages.clone(),
         settings,
-        rpc: rpc::Client::new(language_registry),
+        rpc: rpc::Client::new(languages),
     };
 
     app.run(move |cx| {

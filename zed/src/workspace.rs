@@ -91,7 +91,7 @@ fn open_paths(params: &OpenParams, cx: &mut MutableAppContext) {
     cx.add_window(|cx| {
         let mut view = Workspace::new(
             params.app_state.settings.clone(),
-            params.app_state.language_registry.clone(),
+            params.app_state.languages.clone(),
             params.app_state.rpc.clone(),
             cx,
         );
@@ -105,7 +105,7 @@ fn open_new(app_state: &AppState, cx: &mut MutableAppContext) {
     cx.add_window(|cx| {
         let mut view = Workspace::new(
             app_state.settings.clone(),
-            app_state.language_registry.clone(),
+            app_state.languages.clone(),
             app_state.rpc.clone(),
             cx,
         );
@@ -312,7 +312,7 @@ pub struct State {
 
 pub struct Workspace {
     pub settings: watch::Receiver<Settings>,
-    language_registry: Arc<LanguageRegistry>,
+    languages: Arc<LanguageRegistry>,
     rpc: rpc::Client,
     modal: Option<AnyViewHandle>,
     center: PaneGroup,
@@ -329,7 +329,7 @@ pub struct Workspace {
 impl Workspace {
     pub fn new(
         settings: watch::Receiver<Settings>,
-        language_registry: Arc<LanguageRegistry>,
+        languages: Arc<LanguageRegistry>,
         rpc: rpc::Client,
         cx: &mut ViewContext<Self>,
     ) -> Self {
@@ -346,7 +346,7 @@ impl Workspace {
             panes: vec![pane.clone()],
             active_pane: pane.clone(),
             settings,
-            language_registry,
+            languages: languages,
             rpc,
             worktrees: Default::default(),
             items: Default::default(),
@@ -462,7 +462,7 @@ impl Workspace {
         path: &Path,
         cx: &mut ViewContext<Self>,
     ) -> ModelHandle<Worktree> {
-        let worktree = cx.add_model(|cx| Worktree::local(path, cx));
+        let worktree = cx.add_model(|cx| Worktree::local(path, self.languages.clone(), cx));
         cx.observe_model(&worktree, |_, _, cx| cx.notify());
         self.worktrees.insert(worktree.clone());
         cx.notify();
@@ -558,13 +558,12 @@ impl Workspace {
         if let Entry::Vacant(entry) = self.loading_items.entry(entry.clone()) {
             let (mut tx, rx) = postage::watch::channel();
             entry.insert(rx);
-            let language_registry = self.language_registry.clone();
 
             cx.as_mut()
                 .spawn(|mut cx| async move {
                     let buffer = worktree
                         .update(&mut cx, |worktree, cx| {
-                            worktree.open_buffer(path.as_ref(), language_registry, cx)
+                            worktree.open_buffer(path.as_ref(), cx)
                         })
                         .await;
                     *tx.borrow_mut() = Some(
@@ -714,6 +713,7 @@ impl Workspace {
 
     fn join_worktree(&mut self, _: &(), cx: &mut ViewContext<Self>) {
         let rpc = self.rpc.clone();
+        let languages = self.languages.clone();
 
         let task = cx.spawn(|this, mut cx| async move {
             rpc.log_in_and_connect(&cx).await?;
@@ -727,7 +727,8 @@ impl Workspace {
             log::info!("read worktree url from clipboard: {}", worktree_url.text());
 
             let worktree =
-                Worktree::remote(rpc.clone(), worktree_id, access_token, &mut cx).await?;
+                Worktree::remote(rpc.clone(), worktree_id, access_token, languages, &mut cx)
+                    .await?;
             this.update(&mut cx, |workspace, cx| {
                 cx.observe_model(&worktree, |_, _, cx| cx.notify());
                 workspace.worktrees.insert(worktree);
@@ -961,12 +962,8 @@ mod tests {
         let app_state = cx.read(build_app_state);
 
         let (_, workspace) = cx.add_window(|cx| {
-            let mut workspace = Workspace::new(
-                app_state.settings,
-                app_state.language_registry,
-                app_state.rpc,
-                cx,
-            );
+            let mut workspace =
+                Workspace::new(app_state.settings, app_state.languages, app_state.rpc, cx);
             workspace.add_worktree(dir.path(), cx);
             workspace
         });
@@ -1069,12 +1066,8 @@ mod tests {
 
         let app_state = cx.read(build_app_state);
         let (_, workspace) = cx.add_window(|cx| {
-            let mut workspace = Workspace::new(
-                app_state.settings,
-                app_state.language_registry,
-                app_state.rpc,
-                cx,
-            );
+            let mut workspace =
+                Workspace::new(app_state.settings, app_state.languages, app_state.rpc, cx);
             workspace.add_worktree(dir1.path(), cx);
             workspace
         });
@@ -1142,12 +1135,8 @@ mod tests {
 
         let app_state = cx.read(build_app_state);
         let (window_id, workspace) = cx.add_window(|cx| {
-            let mut workspace = Workspace::new(
-                app_state.settings,
-                app_state.language_registry,
-                app_state.rpc,
-                cx,
-            );
+            let mut workspace =
+                Workspace::new(app_state.settings, app_state.languages, app_state.rpc, cx);
             workspace.add_worktree(dir.path(), cx);
             workspace
         });
@@ -1192,7 +1181,7 @@ mod tests {
         let (_, workspace) = cx.add_window(|cx| {
             let mut workspace = Workspace::new(
                 app_state.settings.clone(),
-                app_state.language_registry.clone(),
+                app_state.languages.clone(),
                 app_state.rpc.clone(),
                 cx,
             );
@@ -1315,12 +1304,8 @@ mod tests {
 
         let app_state = cx.read(build_app_state);
         let (window_id, workspace) = cx.add_window(|cx| {
-            let mut workspace = Workspace::new(
-                app_state.settings,
-                app_state.language_registry,
-                app_state.rpc,
-                cx,
-            );
+            let mut workspace =
+                Workspace::new(app_state.settings, app_state.languages, app_state.rpc, cx);
             workspace.add_worktree(dir.path(), cx);
             workspace
         });
