@@ -32,6 +32,7 @@ use smol::{
 use std::{
     cmp,
     collections::HashMap,
+    convert::TryInto,
     ffi::{OsStr, OsString},
     fmt, fs,
     future::Future,
@@ -183,28 +184,31 @@ impl Worktree {
             .is_some()
     }
 
-    pub fn buffer(&self, id: u64, cx: &AppContext) -> Option<ModelHandle<Buffer>> {
+    pub fn update_buffer(
+        &mut self,
+        envelope: proto::UpdateBuffer,
+        cx: &mut ModelContext<Self>,
+    ) -> Result<()> {
         let open_buffers = match self {
             Worktree::Local(worktree) => &worktree.open_buffers,
             Worktree::Remote(worktree) => &worktree.open_buffers,
         };
-
-        open_buffers
-            .get(&(id as usize))
-            .and_then(|buffer| buffer.upgrade(cx))
-    }
-
-    pub fn buffers<'a>(
-        &'a self,
-        cx: &'a AppContext,
-    ) -> impl 'a + Iterator<Item = ModelHandle<Buffer>> {
-        let open_buffers = match self {
-            Worktree::Local(worktree) => &worktree.open_buffers,
-            Worktree::Remote(worktree) => &worktree.open_buffers,
-        };
-        open_buffers
-            .values()
-            .filter_map(move |buffer| buffer.upgrade(cx))
+        let buffer = open_buffers
+            .get(&(envelope.buffer_id as usize))
+            .and_then(|buf| buf.upgrade(&cx))
+            .ok_or_else(|| {
+                anyhow!(
+                    "invalid buffer {} in update buffer message",
+                    envelope.buffer_id
+                )
+            })?;
+        let ops = envelope
+            .operations
+            .into_iter()
+            .map(|op| op.try_into())
+            .collect::<anyhow::Result<Vec<_>>>()?;
+        buffer.update(cx, |buffer, cx| buffer.apply_ops(ops, cx))?;
+        Ok(())
     }
 
     fn save(
@@ -1923,7 +1927,6 @@ impl<'a> Iterator for ChildEntriesIter<'a> {
 mod remote {
     use super::*;
     use crate::rpc::TypedEnvelope;
-    use std::convert::TryInto;
 
     pub async fn open_buffer(
         envelope: TypedEnvelope<proto::OpenBuffer>,
@@ -1979,25 +1982,9 @@ mod remote {
         let mut state = rpc.state.lock().await;
         match state.shared_worktree(message.worktree_id, cx) {
             Ok(worktree) => {
-                if let Some(buffer) =
-                    worktree.read_with(cx, |w, cx| w.buffer(message.buffer_id, cx))
+                if let Err(error) = worktree.update(cx, |tree, cx| tree.update_buffer(message, cx))
                 {
-                    if let Err(error) = buffer.update(cx, |buffer, cx| {
-                        let ops = message
-                            .operations
-                            .into_iter()
-                            .map(|op| op.try_into())
-                            .collect::<anyhow::Result<Vec<_>>>()?;
-                        buffer.apply_ops(ops, cx)?;
-                        Ok::<(), anyhow::Error>(())
-                    }) {
-                        log::error!("error applying buffer operations {}", error);
-                    }
-                } else {
-                    log::error!(
-                        "invalid buffer {} in update buffer message",
-                        message.buffer_id
-                    );
+                    log::error!("error applying operations to buffer: {}", error);
                 }
             }
             Err(error) => log::error!("{}", error),
