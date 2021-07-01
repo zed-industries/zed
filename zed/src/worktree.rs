@@ -219,6 +219,7 @@ impl Worktree {
         }
     }
 
+    #[cfg(feature = "test-support")]
     pub fn has_open_buffer(&self, path: impl AsRef<Path>, cx: &AppContext) -> bool {
         let open_buffers = match self {
             Worktree::Local(worktree) => &worktree.open_buffers,
@@ -249,13 +250,21 @@ impl Worktree {
         };
         let buffer = open_buffers
             .get(&(envelope.buffer_id as usize))
-            .and_then(|buf| buf.upgrade(&cx))
-            .ok_or_else(|| {
-                anyhow!(
+            .and_then(|buf| buf.upgrade(&cx));
+
+        let buffer = if let Some(buffer) = buffer {
+            buffer
+        } else {
+            return if matches!(self, Worktree::Local(_)) {
+                Err(anyhow!(
                     "invalid buffer {} in update buffer message",
                     envelope.buffer_id
-                )
-            })?;
+                ))
+            } else {
+                Ok(())
+            };
+        };
+
         let ops = envelope
             .operations
             .into_iter()
@@ -458,7 +467,7 @@ impl LocalWorktree {
     pub fn close_remote_buffer(
         &mut self,
         envelope: TypedEnvelope<proto::CloseBuffer>,
-        cx: &mut ModelContext<Worktree>,
+        _: &mut ModelContext<Worktree>,
     ) -> Result<()> {
         if let Some(shared_buffers) = self.shared_buffers.get_mut(&envelope.original_sender_id()?) {
             shared_buffers.remove(&envelope.payload.buffer_id);
