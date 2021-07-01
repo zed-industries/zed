@@ -2427,8 +2427,8 @@ impl<'a> Into<proto::Operation> for &'a Operation {
                         replica_id: set_id.replica_id as u32,
                         local_timestamp: set_id.value,
                         lamport_timestamp: lamport_timestamp.value,
-                        selections: selections.as_ref().map_or(Vec::new(), |selections| {
-                            selections
+                        set: selections.as_ref().map(|selections| proto::SelectionSet {
+                            selections: selections
                                 .iter()
                                 .map(|selection| proto::Selection {
                                     id: selection.id as u64,
@@ -2436,7 +2436,7 @@ impl<'a> Into<proto::Operation> for &'a Operation {
                                     end: Some((&selection.end).into()),
                                     reversed: selection.reversed,
                                 })
-                                .collect()
+                                .collect(),
                         }),
                     },
                 ),
@@ -2538,18 +2538,9 @@ impl TryFrom<proto::Operation> for Operation {
                     },
                 },
                 proto::operation::Variant::UpdateSelections(message) => {
-                    Operation::UpdateSelections {
-                        set_id: time::Lamport {
-                            replica_id: message.replica_id as ReplicaId,
-                            value: message.local_timestamp,
-                        },
-                        lamport_timestamp: time::Lamport {
-                            replica_id: message.replica_id as ReplicaId,
-                            value: message.lamport_timestamp,
-                        },
-                        selections: Some(
-                            message
-                                .selections
+                    let selections = if let Some(set) = message.set {
+                        Some(
+                            set.selections
                                 .into_iter()
                                 .map(|selection| {
                                     Ok(Selection {
@@ -2566,9 +2557,21 @@ impl TryFrom<proto::Operation> for Operation {
                                         goal: SelectionGoal::None,
                                     })
                                 })
-                                .collect::<Result<Vec<_>, anyhow::Error>>()?
-                                .into(),
-                        ),
+                                .collect::<Result<Vec<_>, anyhow::Error>>()?,
+                        )
+                    } else {
+                        None
+                    };
+                    Operation::UpdateSelections {
+                        set_id: time::Lamport {
+                            replica_id: message.replica_id as ReplicaId,
+                            value: message.local_timestamp,
+                        },
+                        lamport_timestamp: time::Lamport {
+                            replica_id: message.replica_id as ReplicaId,
+                            value: message.lamport_timestamp,
+                        },
+                        selections: selections.map(Arc::from),
                     }
                 }
                 proto::operation::Variant::SetActiveSelections(message) => {

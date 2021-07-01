@@ -117,6 +117,10 @@ message Buffer {
     repeated Operation.Edit history = 3;
 }
 
+message SelectionSet {
+    repeated Selection selections = 1;
+}
+
 message Selection {
     uint64 id = 1;
     Anchor start = 2;
@@ -170,7 +174,7 @@ message Operation {
         uint32 replica_id = 1;
         uint32 local_timestamp = 2;
         uint32 lamport_timestamp = 3;
-        repeated Selection selections = 4;
+        SelectionSet set = 4;
     }
 
     message SetActiveSelections {
