@@ -2369,11 +2369,14 @@ impl Editor {
         cx.notify();
 
         let epoch = self.next_blink_epoch();
-        cx.spawn(|this, mut cx| async move {
-            Timer::after(CURSOR_BLINK_INTERVAL).await;
-            this.update(&mut cx, |this, cx| {
-                this.resume_cursor_blinking(epoch, cx);
-            })
+        cx.spawn(|this, mut cx| {
+            let this = this.downgrade();
+            async move {
+                Timer::after(CURSOR_BLINK_INTERVAL).await;
+                if let Some(this) = cx.read(|cx| this.upgrade(cx)) {
+                    this.update(&mut cx, |this, cx| this.resume_cursor_blinking(epoch, cx))
+                }
+            }
         })
         .detach();
     }
@@ -2391,9 +2394,14 @@ impl Editor {
             cx.notify();
 
             let epoch = self.next_blink_epoch();
-            cx.spawn(|this, mut cx| async move {
-                Timer::after(CURSOR_BLINK_INTERVAL).await;
-                this.update(&mut cx, |this, cx| this.blink_cursors(epoch, cx));
+            cx.spawn(|this, mut cx| {
+                let this = this.downgrade();
+                async move {
+                    Timer::after(CURSOR_BLINK_INTERVAL).await;
+                    if let Some(this) = cx.read(|cx| this.upgrade(cx)) {
+                        this.update(&mut cx, |this, cx| this.blink_cursors(epoch, cx));
+                    }
+                }
             })
             .detach();
         }
