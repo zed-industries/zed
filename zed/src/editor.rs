@@ -622,8 +622,8 @@ impl Editor {
 
     fn end_selection(&mut self, cx: &mut ViewContext<Self>) {
         if let Some(selection) = self.pending_selection.take() {
-            let ix = self.selection_insertion_index(&selection.start, cx.as_ref());
             let mut selections = self.selections(cx.as_ref()).to_vec();
+            let ix = self.selection_insertion_index(&selections, &selection.start, cx.as_ref());
             selections.insert(ix, selection);
             self.update_selections(selections, false, cx);
         } else {
@@ -1916,31 +1916,53 @@ impl Editor {
         }
     }
 
+    pub fn active_selection_sets<'a>(
+        &'a self,
+        cx: &'a AppContext,
+    ) -> impl 'a + Iterator<Item = SelectionSetId> {
+        self.buffer
+            .read(cx)
+            .selection_sets()
+            .filter(|(_, set)| set.active)
+            .map(|(set_id, _)| *set_id)
+    }
+
     pub fn selections_in_range<'a>(
         &'a self,
+        set_id: SelectionSetId,
         range: Range<DisplayPoint>,
         cx: &'a AppContext,
     ) -> impl 'a + Iterator<Item = Range<DisplayPoint>> {
+        let buffer = self.buffer.read(cx);
+        let selections = &buffer.selection_set(set_id).unwrap().selections;
         let start = self.display_map.anchor_before(range.start, Bias::Left, cx);
-        let start_index = self.selection_insertion_index(&start, cx);
-        let pending_selection = self.pending_selection.as_ref().and_then(|s| {
-            let selection_range = s.display_range(&self.display_map, cx);
-            if selection_range.start <= range.end || selection_range.end <= range.end {
-                Some(selection_range)
-            } else {
-                None
-            }
-        });
-        self.selections(cx)[start_index..]
+        let start_index = self.selection_insertion_index(selections, &start, cx);
+        let pending_selection = if set_id.replica_id == self.buffer.read(cx).replica_id() {
+            self.pending_selection.as_ref().and_then(|s| {
+                let selection_range = s.display_range(&self.display_map, cx);
+                if selection_range.start <= range.end || selection_range.end <= range.end {
+                    Some(selection_range)
+                } else {
+                    None
+                }
+            })
+        } else {
+            None
+        };
+        selections[start_index..]
             .iter()
             .map(move |s| s.display_range(&self.display_map, cx))
             .take_while(move |r| r.start <= range.end || r.end <= range.end)
             .chain(pending_selection)
     }
 
-    fn selection_insertion_index(&self, start: &Anchor, cx: &AppContext) -> usize {
+    fn selection_insertion_index(
+        &self,
+        selections: &[Selection],
+        start: &Anchor,
+        cx: &AppContext,
+    ) -> usize {
         let buffer = self.buffer.read(cx);
-        let selections = self.selections(cx);
         match selections.binary_search_by(|probe| probe.start.cmp(&start, buffer).unwrap()) {
             Ok(index) => index,
             Err(index) => {
@@ -1956,10 +1978,11 @@ impl Editor {
     }
 
     fn selections<'a>(&self, cx: &'a AppContext) -> &'a [Selection] {
-        self.buffer
-            .read(cx)
-            .selections(self.selection_set_id)
+        let buffer = self.buffer.read(cx);
+        &buffer
+            .selection_set(self.selection_set_id)
             .unwrap()
+            .selections
     }
 
     fn update_selections(
@@ -2551,14 +2574,8 @@ mod tests {
         });
 
         let view = buffer_view.read(cx);
-        let selections = view
-            .selections_in_range(
-                DisplayPoint::zero()..view.max_point(cx.as_ref()),
-                cx.as_ref(),
-            )
-            .collect::<Vec<_>>();
         assert_eq!(
-            selections,
+            view.selection_ranges(cx.as_ref()),
             [DisplayPoint::new(2, 2)..DisplayPoint::new(2, 2)]
         );
 
@@ -2567,14 +2584,8 @@ mod tests {
         });
 
         let view = buffer_view.read(cx);
-        let selections = view
-            .selections_in_range(
-                DisplayPoint::zero()..view.max_point(cx.as_ref()),
-                cx.as_ref(),
-            )
-            .collect::<Vec<_>>();
         assert_eq!(
-            selections,
+            view.selection_ranges(cx.as_ref()),
             [DisplayPoint::new(2, 2)..DisplayPoint::new(3, 3)]
         );
 
@@ -2583,14 +2594,8 @@ mod tests {
         });
 
         let view = buffer_view.read(cx);
-        let selections = view
-            .selections_in_range(
-                DisplayPoint::zero()..view.max_point(cx.as_ref()),
-                cx.as_ref(),
-            )
-            .collect::<Vec<_>>();
         assert_eq!(
-            selections,
+            view.selection_ranges(cx.as_ref()),
             [DisplayPoint::new(2, 2)..DisplayPoint::new(1, 1)]
         );
 
@@ -2600,14 +2605,8 @@ mod tests {
         });
 
         let view = buffer_view.read(cx);
-        let selections = view
-            .selections_in_range(
-                DisplayPoint::zero()..view.max_point(cx.as_ref()),
-                cx.as_ref(),
-            )
-            .collect::<Vec<_>>();
         assert_eq!(
-            selections,
+            view.selection_ranges(cx.as_ref()),
             [DisplayPoint::new(2, 2)..DisplayPoint::new(1, 1)]
         );
 
@@ -2617,14 +2616,8 @@ mod tests {
         });
 
         let view = buffer_view.read(cx);
-        let selections = view
-            .selections_in_range(
-                DisplayPoint::zero()..view.max_point(cx.as_ref()),
-                cx.as_ref(),
-            )
-            .collect::<Vec<_>>();
         assert_eq!(
-            selections,
+            view.selection_ranges(cx.as_ref()),
             [
                 DisplayPoint::new(2, 2)..DisplayPoint::new(1, 1),
                 DisplayPoint::new(3, 3)..DisplayPoint::new(0, 0)
@@ -2636,14 +2629,8 @@ mod tests {
         });
 
         let view = buffer_view.read(cx);
-        let selections = view
-            .selections_in_range(
-                DisplayPoint::zero()..view.max_point(cx.as_ref()),
-                cx.as_ref(),
-            )
-            .collect::<Vec<_>>();
         assert_eq!(
-            selections,
+            view.selection_ranges(cx.as_ref()),
             [DisplayPoint::new(3, 3)..DisplayPoint::new(0, 0)]
         );
     }
@@ -4141,8 +4128,12 @@ mod tests {
 
     impl Editor {
         fn selection_ranges(&self, cx: &AppContext) -> Vec<Range<DisplayPoint>> {
-            self.selections_in_range(DisplayPoint::zero()..self.max_point(cx), cx)
-                .collect::<Vec<_>>()
+            self.selections_in_range(
+                self.selection_set_id,
+                DisplayPoint::zero()..self.max_point(cx),
+                cx,
+            )
+            .collect::<Vec<_>>()
         }
     }
 

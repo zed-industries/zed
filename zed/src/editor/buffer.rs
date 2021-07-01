@@ -131,9 +131,9 @@ pub struct Buffer {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
-struct SelectionSet {
-    selections: Arc<[Selection]>,
-    active: bool,
+pub struct SelectionSet {
+    pub selections: Arc<[Selection]>,
+    pub active: bool,
 }
 
 #[derive(Clone)]
@@ -581,6 +581,10 @@ impl Buffer {
         };
         result.reparse(cx);
         result
+    }
+
+    pub fn replica_id(&self) -> ReplicaId {
+        self.local_clock.replica_id
     }
 
     pub fn snapshot(&self) -> Snapshot {
@@ -1200,8 +1204,18 @@ impl Buffer {
         set_id: Option<SelectionSetId>,
         cx: &mut ModelContext<Self>,
     ) -> Result<()> {
-        if set_id.is_some() && !self.selections.contains_key(set_id.as_ref().unwrap()) {
-            return Err(anyhow!("invalid selection set id {:?}", set_id));
+        if let Some(set_id) = set_id {
+            assert_eq!(set_id.replica_id, self.replica_id());
+        }
+
+        for (id, set) in &mut self.selections {
+            if id.replica_id == self.local_clock.replica_id {
+                if Some(*id) == set_id {
+                    set.active = true;
+                } else {
+                    set.active = false;
+                }
+            }
         }
 
         let lamport_timestamp = self.lamport_clock.tick();
@@ -1236,11 +1250,14 @@ impl Buffer {
         Ok(())
     }
 
-    pub fn selections(&self, set_id: SelectionSetId) -> Result<&[Selection]> {
+    pub fn selection_set(&self, set_id: SelectionSetId) -> Result<&SelectionSet> {
         self.selections
             .get(&set_id)
-            .map(|s| s.selections.as_ref())
             .ok_or_else(|| anyhow!("invalid selection set id {:?}", set_id))
+    }
+
+    pub fn selection_sets(&self) -> impl Iterator<Item = (&SelectionSetId, &SelectionSet)> {
+        self.selections.iter()
     }
 
     pub fn apply_ops<I: IntoIterator<Item = Operation>>(
@@ -3313,8 +3330,9 @@ mod tests {
             assert!(!buffer.is_dirty());
             assert!(!buffer.has_conflict());
 
-            let selections = buffer.selections(selection_set_id).unwrap();
-            let cursor_positions = selections
+            let set = buffer.selection_set(selection_set_id).unwrap();
+            let cursor_positions = set
+                .selections
                 .iter()
                 .map(|selection| {
                     assert_eq!(selection.start, selection.end);
@@ -3595,8 +3613,8 @@ mod tests {
                     buffer.replica_id
                 );
                 assert_eq!(
-                    buffer.all_selections().collect::<HashMap<_, _>>(),
-                    first_buffer.all_selections().collect::<HashMap<_, _>>()
+                    buffer.selection_sets().collect::<HashMap<_, _>>(),
+                    first_buffer.selection_sets().collect::<HashMap<_, _>>()
                 );
                 assert_eq!(
                     buffer.all_selection_ranges().collect::<HashMap<_, _>>(),
@@ -3843,7 +3861,7 @@ mod tests {
 
             // Randomly add, remove or mutate selection sets.
             let replica_selection_sets = &self
-                .all_selections()
+                .selection_sets()
                 .map(|(set_id, _)| *set_id)
                 .filter(|set_id| self.replica_id == set_id.replica_id)
                 .collect::<Vec<_>>();
@@ -3915,7 +3933,8 @@ mod tests {
 
         pub fn selection_ranges<'a>(&'a self, set_id: SelectionSetId) -> Result<Vec<Range<usize>>> {
             Ok(self
-                .selections(set_id)?
+                .selection_set(set_id)?
+                .selections
                 .iter()
                 .map(move |selection| {
                     let start = selection.start.to_offset(self);
@@ -3927,12 +3946,6 @@ mod tests {
                     }
                 })
                 .collect())
-        }
-
-        pub fn all_selections(&self) -> impl Iterator<Item = (&SelectionSetId, &[Selection])> {
-            self.selections
-                .iter()
-                .map(|(set_id, set)| (set_id, set.selections.as_ref()))
         }
 
         pub fn all_selection_ranges<'a>(

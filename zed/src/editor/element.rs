@@ -1,6 +1,6 @@
 use super::{DisplayPoint, Editor, SelectAction};
 use gpui::{
-    color::{ColorF, ColorU},
+    color::ColorU,
     geometry::{
         rect::RectF,
         vector::{vec2f, Vector2F},
@@ -217,66 +217,83 @@ impl EditorElement {
 
         // Draw selections
         let corner_radius = 2.5;
+        let colors = [
+            (ColorU::from_u32(0xa3d6ffff), ColorU::from_u32(0x000000ff)),
+            (ColorU::from_u32(0xffaf87ff), ColorU::from_u32(0xff8e72ff)),
+            (ColorU::from_u32(0x86eaccff), ColorU::from_u32(0x377771ff)),
+            (ColorU::from_u32(0xb8b8ffff), ColorU::from_u32(0x9381ffff)),
+            (ColorU::from_u32(0xf5cce8ff), ColorU::from_u32(0x4a2040ff)),
+        ];
         let mut cursors = SmallVec::<[Cursor; 32]>::new();
 
         let content_origin = bounds.origin() + vec2f(-descent, 0.0);
+        for selection_set_id in view.active_selection_sets(cx.app) {
+            let (selection_color, cursor_color) =
+                colors[selection_set_id.replica_id as usize % colors.len()];
+            for selection in view.selections_in_range(
+                selection_set_id,
+                DisplayPoint::new(start_row, 0)..DisplayPoint::new(end_row, 0),
+                cx.app,
+            ) {
+                if selection.start != selection.end {
+                    let range_start = cmp::min(selection.start, selection.end);
+                    let range_end = cmp::max(selection.start, selection.end);
+                    let row_range = if range_end.column() == 0 {
+                        cmp::max(range_start.row(), start_row)..cmp::min(range_end.row(), end_row)
+                    } else {
+                        cmp::max(range_start.row(), start_row)
+                            ..cmp::min(range_end.row() + 1, end_row)
+                    };
 
-        for selection in view.selections_in_range(
-            DisplayPoint::new(start_row, 0)..DisplayPoint::new(end_row, 0),
-            cx.app,
-        ) {
-            if selection.start != selection.end {
-                let range_start = cmp::min(selection.start, selection.end);
-                let range_end = cmp::max(selection.start, selection.end);
-                let row_range = if range_end.column() == 0 {
-                    cmp::max(range_start.row(), start_row)..cmp::min(range_end.row(), end_row)
-                } else {
-                    cmp::max(range_start.row(), start_row)..cmp::min(range_end.row() + 1, end_row)
-                };
-
-                let selection = Selection {
-                    line_height,
-                    start_y: content_origin.y() + row_range.start as f32 * line_height - scroll_top,
-                    lines: row_range
-                        .into_iter()
-                        .map(|row| {
-                            let line_layout = &layout.line_layouts[(row - start_row) as usize];
-                            SelectionLine {
-                                start_x: if row == range_start.row() {
-                                    content_origin.x()
-                                        + line_layout.x_for_index(range_start.column() as usize)
-                                        - scroll_left
-                                } else {
-                                    content_origin.x() - scroll_left
-                                },
-                                end_x: if row == range_end.row() {
-                                    content_origin.x()
-                                        + line_layout.x_for_index(range_end.column() as usize)
-                                        - scroll_left
-                                } else {
-                                    content_origin.x() + line_layout.width() + corner_radius * 2.0
-                                        - scroll_left
-                                },
-                            }
-                        })
-                        .collect(),
-                };
-
-                selection.paint(bounds, cx.scene);
-            }
-
-            if view.cursors_visible() {
-                let cursor_position = selection.end;
-                if (start_row..end_row).contains(&cursor_position.row()) {
-                    let cursor_row_layout =
-                        &layout.line_layouts[(selection.end.row() - start_row) as usize];
-                    let x = cursor_row_layout.x_for_index(selection.end.column() as usize)
-                        - scroll_left;
-                    let y = selection.end.row() as f32 * line_height - scroll_top;
-                    cursors.push(Cursor {
-                        origin: content_origin + vec2f(x, y),
+                    let selection = Selection {
+                        color: selection_color,
                         line_height,
-                    });
+                        start_y: content_origin.y() + row_range.start as f32 * line_height
+                            - scroll_top,
+                        lines: row_range
+                            .into_iter()
+                            .map(|row| {
+                                let line_layout = &layout.line_layouts[(row - start_row) as usize];
+                                SelectionLine {
+                                    start_x: if row == range_start.row() {
+                                        content_origin.x()
+                                            + line_layout.x_for_index(range_start.column() as usize)
+                                            - scroll_left
+                                    } else {
+                                        content_origin.x() - scroll_left
+                                    },
+                                    end_x: if row == range_end.row() {
+                                        content_origin.x()
+                                            + line_layout.x_for_index(range_end.column() as usize)
+                                            - scroll_left
+                                    } else {
+                                        content_origin.x()
+                                            + line_layout.width()
+                                            + corner_radius * 2.0
+                                            - scroll_left
+                                    },
+                                }
+                            })
+                            .collect(),
+                    };
+
+                    selection.paint(bounds, cx.scene);
+                }
+
+                if view.cursors_visible() {
+                    let cursor_position = selection.end;
+                    if (start_row..end_row).contains(&cursor_position.row()) {
+                        let cursor_row_layout =
+                            &layout.line_layouts[(selection.end.row() - start_row) as usize];
+                        let x = cursor_row_layout.x_for_index(selection.end.column() as usize)
+                            - scroll_left;
+                        let y = selection.end.row() as f32 * line_height - scroll_top;
+                        cursors.push(Cursor {
+                            color: cursor_color,
+                            origin: content_origin + vec2f(x, y),
+                            line_height,
+                        });
+                    }
                 }
             }
         }
@@ -575,13 +592,14 @@ impl PaintState {
 struct Cursor {
     origin: Vector2F,
     line_height: f32,
+    color: ColorU,
 }
 
 impl Cursor {
     fn paint(&self, cx: &mut PaintContext) {
         cx.scene.push_quad(Quad {
             bounds: RectF::new(self.origin, vec2f(2.0, self.line_height)),
-            background: Some(ColorU::black()),
+            background: Some(self.color),
             border: Border::new(0., ColorU::black()),
             corner_radius: 0.,
         });
@@ -593,6 +611,7 @@ struct Selection {
     start_y: f32,
     line_height: f32,
     lines: Vec<SelectionLine>,
+    color: ColorU,
 }
 
 #[derive(Debug)]
@@ -696,7 +715,7 @@ impl Selection {
         path.curve_to(first_top_left + top_curve_width, first_top_left);
         path.line_to(first_top_right - top_curve_width);
 
-        scene.push_path(path.build(ColorF::new(0.639, 0.839, 1.0, 1.0).to_u8(), Some(bounds)));
+        scene.push_path(path.build(self.color, Some(bounds)));
     }
 }
 
