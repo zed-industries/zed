@@ -172,6 +172,13 @@ impl Worktree {
         }
     }
 
+    pub fn replica_id(&self) -> ReplicaId {
+        match self {
+            Worktree::Local(_) => 0,
+            Worktree::Remote(worktree) => worktree.replica_id,
+        }
+    }
+
     pub fn add_guest(
         &mut self,
         envelope: TypedEnvelope<proto::AddGuest>,
@@ -191,6 +198,13 @@ impl Worktree {
         match self {
             Worktree::Local(worktree) => worktree.remove_guest(envelope, cx),
             Worktree::Remote(worktree) => worktree.remove_guest(envelope, cx),
+        }
+    }
+
+    pub fn peers(&self) -> &HashMap<PeerId, ReplicaId> {
+        match self {
+            Worktree::Local(worktree) => &worktree.peers,
+            Worktree::Remote(worktree) => &worktree.peers,
         }
     }
 
@@ -464,6 +478,7 @@ impl LocalWorktree {
             .ok_or_else(|| anyhow!("empty peer"))?;
         self.peers
             .insert(PeerId(guest.peer_id), guest.replica_id as ReplicaId);
+        cx.notify();
         Ok(())
     }
 
@@ -483,6 +498,7 @@ impl LocalWorktree {
                 buffer.update(cx, |buffer, cx| buffer.remove_guest(replica_id, cx));
             }
         }
+        cx.notify();
         Ok(())
     }
 
@@ -910,6 +926,7 @@ impl RemoteWorktree {
             .ok_or_else(|| anyhow!("empty peer"))?;
         self.peers
             .insert(PeerId(guest.peer_id), guest.replica_id as ReplicaId);
+        cx.notify();
         Ok(())
     }
 
@@ -928,6 +945,7 @@ impl RemoteWorktree {
                 buffer.update(cx, |buffer, cx| buffer.remove_guest(replica_id, cx));
             }
         }
+        cx.notify();
         Ok(())
     }
 }
