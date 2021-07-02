@@ -451,6 +451,7 @@ mod tests {
                     id: 2,
                     content: "path/two content".to_string(),
                     history: vec![],
+                    selections: vec![],
                 }),
             };
             let request4 = proto::OpenBuffer {
@@ -462,6 +463,7 @@ mod tests {
                     id: 1,
                     content: "path/one content".to_string(),
                     history: vec![],
+                    selections: vec![],
                 }),
             };
 
