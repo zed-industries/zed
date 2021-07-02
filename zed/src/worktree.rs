@@ -119,19 +119,74 @@ impl Worktree {
         let worktree_message = open_worktree_response
             .worktree
             .ok_or_else(|| anyhow!("empty worktree"))?;
-        let replica_id = open_worktree_response.replica_id;
+        let replica_id = open_worktree_response.replica_id as ReplicaId;
         let peers = open_worktree_response.peers;
+        let root_char_bag: CharBag = worktree_message
+            .root_name
+            .chars()
+            .map(|c| c.to_ascii_lowercase())
+            .collect();
+        let root_name = worktree_message.root_name.clone();
+        let (entries, paths_by_id) = cx
+            .background()
+            .spawn(async move {
+                let mut entries = SumTree::new();
+                let mut paths_by_id = rpds::HashTrieMapSync::default();
+                for entry in worktree_message.entries {
+                    if let Some(mtime) = entry.mtime {
+                        let kind = if entry.is_dir {
+                            EntryKind::Dir
+                        } else {
+                            let mut char_bag = root_char_bag.clone();
+                            char_bag.extend(entry.path.chars().map(|c| c.to_ascii_lowercase()));
+                            EntryKind::File(char_bag)
+                        };
+                        let path: Arc<Path> = Arc::from(Path::new(&entry.path));
+                        entries.push(
+                            Entry {
+                                id: entry.id as usize,
+                                kind,
+                                path: path.clone(),
+                                inode: entry.inode,
+                                mtime: mtime.into(),
+                                is_symlink: entry.is_symlink,
+                                is_ignored: entry.is_ignored,
+                            },
+                            &(),
+                        );
+                        paths_by_id.insert_mut(entry.id as usize, path);
+                    } else {
+                        log::warn!("missing mtime in remote worktree entry {:?}", entry.path);
+                    }
+                }
+                (entries, paths_by_id)
+            })
+            .await;
         let worktree = cx.update(|cx| {
             cx.add_model(|cx| {
-                Worktree::Remote(RemoteWorktree::new(
-                    id,
-                    replica_id as ReplicaId,
-                    worktree_message,
-                    peers,
-                    rpc.clone(),
+                Worktree::Remote(RemoteWorktree {
+                    remote_id: id,
+                    replica_id,
+                    snapshot: Snapshot {
+                        id: cx.model_id(),
+                        scan_id: 0,
+                        abs_path: Path::new("").into(),
+                        root_name,
+                        root_char_bag,
+                        ignores: Default::default(),
+                        entries,
+                        paths_by_id,
+                        removed_entry_ids: Default::default(),
+                        next_entry_id: Default::default(),
+                    },
+                    rpc: rpc.clone(),
+                    open_buffers: Default::default(),
+                    peers: peers
+                        .into_iter()
+                        .map(|p| (PeerId(p.peer_id), p.replica_id as ReplicaId))
+                        .collect(),
                     languages,
-                    cx,
-                ))
+                })
             })
         });
         rpc.state
@@ -822,75 +877,6 @@ pub struct RemoteWorktree {
 }
 
 impl RemoteWorktree {
-    fn new(
-        remote_id: u64,
-        replica_id: ReplicaId,
-        worktree: proto::Worktree,
-        peers: Vec<proto::Peer>,
-        rpc: rpc::Client,
-        languages: Arc<LanguageRegistry>,
-        cx: &mut ModelContext<Worktree>,
-    ) -> Self {
-        let root_char_bag: CharBag = worktree
-            .root_name
-            .chars()
-            .map(|c| c.to_ascii_lowercase())
-            .collect();
-        let mut entries = SumTree::new();
-        let mut paths_by_id = rpds::HashTrieMapSync::default();
-        for entry in worktree.entries {
-            if let Some(mtime) = entry.mtime {
-                let kind = if entry.is_dir {
-                    EntryKind::Dir
-                } else {
-                    let mut char_bag = root_char_bag.clone();
-                    char_bag.extend(entry.path.chars().map(|c| c.to_ascii_lowercase()));
-                    EntryKind::File(char_bag)
-                };
-                let path: Arc<Path> = Arc::from(Path::new(&entry.path));
-                entries.push(
-                    Entry {
-                        id: entry.id as usize,
-                        kind,
-                        path: path.clone(),
-                        inode: entry.inode,
-                        mtime: mtime.into(),
-                        is_symlink: entry.is_symlink,
-                        is_ignored: entry.is_ignored,
-                    },
-                    &(),
-                );
-                paths_by_id.insert_mut(entry.id as usize, path);
-            } else {
-                log::warn!("missing mtime in remote worktree entry {:?}", entry.path);
-            }
-        }
-        let snapshot = Snapshot {
-            id: cx.model_id(),
-            scan_id: 0,
-            abs_path: Path::new("").into(),
-            root_name: worktree.root_name,
-            root_char_bag,
-            ignores: Default::default(),
-            entries,
-            paths_by_id,
-            removed_entry_ids: Default::default(),
-            next_entry_id: Default::default(),
-        };
-        Self {
-            remote_id,
-            snapshot,
-            rpc,
-            replica_id,
-            open_buffers: Default::default(),
-            peers: peers
-                .into_iter()
-                .map(|p| (PeerId(p.peer_id), p.replica_id as ReplicaId))
-                .collect(),
-            languages,
-        }
-    }
-
     pub fn open_buffer(
         &mut self,
         path: &Path,
