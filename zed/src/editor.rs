@@ -2538,7 +2538,11 @@ impl workspace::ItemView for Editor {
     }
 
     fn save(&mut self, cx: &mut ViewContext<Self>) -> Result<Task<Result<()>>> {
-        self.buffer.update(cx, |b, cx| b.save(cx))
+        let save = self.buffer.update(cx, |b, cx| b.save(cx))?;
+        Ok(cx.spawn(|_, _| async move {
+            save.await?;
+            Ok(())
+        }))
     }
 
     fn save_as(

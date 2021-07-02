@@ -666,22 +666,20 @@ impl Buffer {
         self.file.as_mut()
     }
 
-    pub fn save(&mut self, cx: &mut ModelContext<Self>) -> Result<Task<Result<()>>> {
+    pub fn save(&mut self, cx: &mut ModelContext<Self>) -> Result<Task<Result<time::Global>>> {
         let file = self
             .file
             .as_ref()
             .ok_or_else(|| anyhow!("buffer has no file"))?;
-
         let text = self.visible_text.clone();
         let version = self.version.clone();
-        let save = file.save(text, cx.as_mut());
-
+        let save = file.save(self.remote_id, text, version, cx.as_mut());
         Ok(cx.spawn(|this, mut cx| async move {
-            save.await?;
+            let version = save.await?;
             this.update(&mut cx, |this, cx| {
-                this.did_save(version, cx).unwrap();
+                this.did_save(version.clone(), cx).unwrap();
             });
-            Ok(())
+            Ok(version)
         }))
     }
 
@@ -711,7 +709,7 @@ impl Buffer {
         })
     }
 
-    fn did_save(&mut self, version: time::Global, cx: &mut ModelContext<Self>) -> Result<()> {
+    pub fn did_save(&mut self, version: time::Global, cx: &mut ModelContext<Self>) -> Result<()> {
         if let Some(file) = self.file.as_ref() {
             self.saved_mtime = file.mtime;
             self.saved_version = version;
