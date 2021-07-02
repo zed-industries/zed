@@ -85,7 +85,11 @@ impl Entity for Worktree {
 
         if let Some((rpc, worktree_id)) = rpc {
             cx.spawn(|_| async move {
-                rpc.state.lock().await.shared_worktrees.remove(&worktree_id);
+                rpc.state
+                    .write()
+                    .await
+                    .shared_worktrees
+                    .remove(&worktree_id);
                 if let Err(err) = rpc.send(proto::CloseWorktree { worktree_id }).await {
                     log::error!("error closing worktree {}: {}", worktree_id, err);
                 }
@@ -191,7 +195,7 @@ impl Worktree {
             })
         });
         rpc.state
-            .lock()
+            .write()
             .await
             .shared_worktrees
             .insert(id, worktree.downgrade());
@@ -343,8 +347,7 @@ impl Worktree {
                 .and_then(|buf| buf.upgrade(&cx))
             {
                 buffer.update(cx, |buffer, cx| {
-                    buffer.did_save(message.version.try_into()?, cx);
-                    Result::<_, anyhow::Error>::Ok(())
+                    buffer.did_save(message.version.try_into()?, cx)
                 })?;
             }
             Ok(())
@@ -798,7 +801,7 @@ impl LocalWorktree {
                 .await?;
 
             rpc.state
-                .lock()
+                .write()
                 .await
                 .shared_worktrees
                 .insert(share_response.worktree_id, handle.downgrade());
@@ -2094,7 +2097,7 @@ mod remote {
         cx: &mut AsyncAppContext,
     ) -> anyhow::Result<()> {
         rpc.state
-            .lock()
+            .read()
             .await
             .shared_worktree(envelope.payload.worktree_id, cx)?
             .update(cx, |worktree, cx| worktree.add_guest(envelope, cx))
@@ -2106,7 +2109,7 @@ mod remote {
         cx: &mut AsyncAppContext,
     ) -> anyhow::Result<()> {
         rpc.state
-            .lock()
+            .read()
             .await
             .shared_worktree(envelope.payload.worktree_id, cx)?
             .update(cx, |worktree, cx| worktree.remove_guest(envelope, cx))
@@ -2120,7 +2123,7 @@ mod remote {
         let receipt = envelope.receipt();
         let worktree = rpc
             .state
-            .lock()
+            .read()
             .await
             .shared_worktree(envelope.payload.worktree_id, cx)?;
 
@@ -2145,7 +2148,7 @@ mod remote {
     ) -> anyhow::Result<()> {
         let worktree = rpc
             .state
-            .lock()
+            .read()
             .await
             .shared_worktree(envelope.payload.worktree_id, cx)?;
 
@@ -2163,9 +2166,11 @@ mod remote {
         cx: &mut AsyncAppContext,
     ) -> anyhow::Result<()> {
         let message = envelope.payload;
-        let mut state = rpc.state.lock().await;
-        let worktree = state.shared_worktree(message.worktree_id, cx)?;
-        worktree.update(cx, |tree, cx| tree.update_buffer(message, cx))?;
+        rpc.state
+            .read()
+            .await
+            .shared_worktree(message.worktree_id, cx)?
+            .update(cx, |tree, cx| tree.update_buffer(message, cx))?;
         Ok(())
     }
 
@@ -2203,11 +2208,13 @@ mod remote {
         rpc: &rpc::Client,
         cx: &mut AsyncAppContext,
     ) -> anyhow::Result<()> {
-        let mut state = rpc.state.lock().await;
-        let worktree = state.shared_worktree(envelope.payload.worktree_id, cx)?;
-        worktree.update(cx, |worktree, cx| {
-            worktree.buffer_saved(envelope.payload, cx)
-        })?;
+        rpc.state
+            .read()
+            .await
+            .shared_worktree(envelope.payload.worktree_id, cx)?
+            .update(cx, |worktree, cx| {
+                worktree.buffer_saved(envelope.payload, cx)
+            })?;
         Ok(())
     }
 }

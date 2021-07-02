@@ -5,7 +5,7 @@ use gpui::executor::Background;
 use gpui::{AsyncAppContext, ModelHandle, Task, WeakModelHandle};
 use lazy_static::lazy_static;
 use postage::prelude::Stream;
-use smol::lock::Mutex;
+use smol::lock::RwLock;
 use std::collections::HashMap;
 use std::time::Duration;
 use std::{convert::TryFrom, future::Future, sync::Arc};
@@ -24,7 +24,7 @@ lazy_static! {
 #[derive(Clone)]
 pub struct Client {
     peer: Arc<Peer>,
-    pub state: Arc<Mutex<ClientState>>,
+    pub state: Arc<RwLock<ClientState>>,
 }
 
 pub struct ClientState {
@@ -35,7 +35,7 @@ pub struct ClientState {
 
 impl ClientState {
     pub fn shared_worktree(
-        &mut self,
+        &self,
         id: u64,
         cx: &mut AsyncAppContext,
     ) -> Result<ModelHandle<Worktree>> {
@@ -43,7 +43,6 @@ impl ClientState {
             if let Some(worktree) = cx.read(|cx| worktree.upgrade(cx)) {
                 Ok(worktree)
             } else {
-                self.shared_worktrees.remove(&id);
                 Err(anyhow!("worktree {} was dropped", id))
             }
         } else {
@@ -56,7 +55,7 @@ impl Client {
     pub fn new(languages: Arc<LanguageRegistry>) -> Self {
         Self {
             peer: Peer::new(),
-            state: Arc::new(Mutex::new(ClientState {
+            state: Arc::new(RwLock::new(ClientState {
                 connection_id: None,
                 shared_worktrees: Default::default(),
                 languages,
@@ -82,7 +81,7 @@ impl Client {
     }
 
     pub async fn log_in_and_connect(&self, cx: &AsyncAppContext) -> surf::Result<()> {
-        if self.state.lock().await.connection_id.is_some() {
+        if self.state.read().await.connection_id.is_some() {
             return Ok(());
         }
 
@@ -139,7 +138,7 @@ impl Client {
             Err(anyhow!("failed to authenticate with RPC server"))?;
         }
 
-        self.state.lock().await.connection_id = Some(connection_id);
+        self.state.write().await.connection_id = Some(connection_id);
         Ok(())
     }
 
@@ -221,7 +220,7 @@ impl Client {
 
     async fn connection_id(&self) -> Result<ConnectionId> {
         self.state
-            .lock()
+            .read()
             .await
             .connection_id
             .ok_or_else(|| anyhow!("not connected"))
