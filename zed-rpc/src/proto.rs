@@ -8,7 +8,7 @@ use std::{
 
 include!(concat!(env!("OUT_DIR"), "/zed.messages.rs"));
 
-pub trait EnvelopedMessage: Sized + Send + 'static {
+pub trait EnvelopedMessage: Clone + Sized + Send + 'static {
     const NAME: &'static str;
     fn into_envelope(
         self,

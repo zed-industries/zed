@@ -28,7 +28,6 @@ type MessageHandler = Box<
     dyn Send + Sync + Fn(&mut Option<proto::Envelope>, ConnectionId) -> Option<BoxFuture<bool>>,
 >;
 
-#[derive(Clone, Copy)]
 pub struct Receipt<T> {
     sender_id: ConnectionId,
     message_id: u32,
@@ -376,6 +375,18 @@ where
     }
 }
 
+impl<T> Clone for Receipt<T> {
+    fn clone(&self) -> Self {
+        Self {
+            sender_id: self.sender_id,
+            message_id: self.message_id,
+            payload_type: PhantomData,
+        }
+    }
+}
+
+impl<T> Copy for Receipt<T> {}
+
 impl fmt::Display for ConnectionId {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         self.0.fmt(f)
@@ -391,6 +402,7 @@ impl fmt::Display for PeerId {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use postage::oneshot;
     use smol::{
         io::AsyncWriteExt,
         net::unix::{UnixListener, UnixStream},
