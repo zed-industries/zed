@@ -616,6 +616,26 @@ impl Buffer {
             .into_iter()
             .map(|op| Operation::Edit(op.into()));
         buffer.apply_ops(ops, cx)?;
+        buffer.selections = message
+            .selections
+            .into_iter()
+            .map(|set| {
+                let set_id = time::Lamport {
+                    replica_id: set.replica_id as ReplicaId,
+                    value: set.local_timestamp,
+                };
+                let selections: Vec<Selection> = set
+                    .selections
+                    .into_iter()
+                    .map(TryFrom::try_from)
+                    .collect::<Result<_, _>>()?;
+                let set = SelectionSet {
+                    selections: Arc::from(selections),
+                    active: set.is_active,
+                };
+                Result::<_, anyhow::Error>::Ok((set_id, set))
+            })
+            .collect::<Result<_, _>>()?;
         Ok(buffer)
     }
 
@@ -625,6 +645,16 @@ impl Buffer {
             id: cx.model_id() as u64,
             content: self.history.base_text.to_string(),
             history: ops,
+            selections: self
+                .selections
+                .iter()
+                .map(|(set_id, set)| proto::SelectionSetSnapshot {
+                    replica_id: set_id.replica_id as u32,
+                    local_timestamp: set_id.value,
+                    selections: set.selections.iter().map(Into::into).collect(),
+                    is_active: set.active,
+                })
+                .collect(),
         }
     }
 
@@ -2428,15 +2458,7 @@ impl<'a> Into<proto::Operation> for &'a Operation {
                         local_timestamp: set_id.value,
                         lamport_timestamp: lamport_timestamp.value,
                         set: selections.as_ref().map(|selections| proto::SelectionSet {
-                            selections: selections
-                                .iter()
-                                .map(|selection| proto::Selection {
-                                    id: selection.id as u64,
-                                    start: Some((&selection.start).into()),
-                                    end: Some((&selection.end).into()),
-                                    reversed: selection.reversed,
-                                })
-                                .collect(),
+                            selections: selections.iter().map(Into::into).collect(),
                         }),
                     },
                 ),
@@ -2496,6 +2518,17 @@ impl<'a> Into<proto::Anchor> for &'a Anchor {
     }
 }
 
+impl<'a> Into<proto::Selection> for &'a Selection {
+    fn into(self) -> proto::Selection {
+        proto::Selection {
+            id: self.id as u64,
+            start: Some((&self.start).into()),
+            end: Some((&self.end).into()),
+            reversed: self.reversed,
+        }
+    }
+}
+
 impl TryFrom<proto::Operation> for Operation {
     type Error = anyhow::Error;
 
@@ -2538,26 +2571,12 @@ impl TryFrom<proto::Operation> for Operation {
                     },
                 },
                 proto::operation::Variant::UpdateSelections(message) => {
-                    let selections = if let Some(set) = message.set {
+                    let selections: Option<Vec<Selection>> = if let Some(set) = message.set {
                         Some(
                             set.selections
                                 .into_iter()
-                                .map(|selection| {
-                                    Ok(Selection {
-                                        id: selection.id as usize,
-                                        start: selection
-                                            .start
-                                            .ok_or_else(|| anyhow!("missing selection start"))?
-                                            .try_into()?,
-                                        end: selection
-                                            .end
-                                            .ok_or_else(|| anyhow!("missing selection end"))?
-                                            .try_into()?,
-                                        reversed: selection.reversed,
-                                        goal: SelectionGoal::None,
-                                    })
-                                })
-                                .collect::<Result<Vec<_>, anyhow::Error>>()?,
+                                .map(TryFrom::try_from)
+                                .collect::<Result<_, _>>()?,
                         )
                     } else {
                         None
@@ -2633,6 +2652,26 @@ impl TryFrom<proto::Anchor> for Anchor {
                 Err(anyhow!("invalid anchor bias {}", message.bias))?
             },
             version,
+        })
+    }
+}
+
+impl TryFrom<proto::Selection> for Selection {
+    type Error = anyhow::Error;
+
+    fn try_from(selection: proto::Selection) -> Result<Self, Self::Error> {
+        Ok(Selection {
+            id: selection.id as usize,
+            start: selection
+                .start
+                .ok_or_else(|| anyhow!("missing selection start"))?
+                .try_into()?,
+            end: selection
+                .end
+                .ok_or_else(|| anyhow!("missing selection end"))?
+                .try_into()?,
+            reversed: selection.reversed,
+            goal: SelectionGoal::None,
         })
     }
 }

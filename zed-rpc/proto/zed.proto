@@ -115,6 +115,14 @@ message Buffer {
     uint64 id = 1;
     string content = 2;
     repeated Operation.Edit history = 3;
+    repeated SelectionSetSnapshot selections = 4;
+}
+
+message SelectionSetSnapshot {
+    uint32 replica_id = 1;
+    uint32 local_timestamp = 2;
+    repeated Selection selections = 3;
+    bool is_active = 4;
 }
 
 message SelectionSet {
