@@ -82,6 +82,7 @@ message!(RemoveGuest);
 pub struct MessageStream<T> {
     byte_stream: T,
     buffer: Vec<u8>,
+    upcoming_message_len: Option<usize>,
 }
 
 impl<T> MessageStream<T> {
@@ -89,6 +90,7 @@ impl<T> MessageStream<T> {
         Self {
             byte_stream,
             buffer: Default::default(),
+            upcoming_message_len: None,
         }
     }
 
@@ -120,12 +122,23 @@ where
 {
     /// Read a protobuf message of the given type from the stream.
     pub async fn read_message(&mut self) -> io::Result<Envelope> {
-        let mut delimiter_buf = [0; 4];
-        self.byte_stream.read_exact(&mut delimiter_buf).await?;
-        let message_len = u32::from_be_bytes(delimiter_buf) as usize;
-        self.buffer.resize(message_len, 0);
-        self.byte_stream.read_exact(&mut self.buffer).await?;
-        Ok(Envelope::decode(self.buffer.as_slice())?)
+        loop {
+            if let Some(upcoming_message_len) = self.upcoming_message_len {
+                self.buffer.resize(upcoming_message_len, 0);
+                self.byte_stream.read_exact(&mut self.buffer).await?;
+                self.upcoming_message_len = None;
+                return Ok(Envelope::decode(self.buffer.as_slice())?);
+            } else {
+                self.buffer.resize(4, 0);
+                self.byte_stream.read_exact(&mut self.buffer).await?;
+                self.upcoming_message_len = Some(u32::from_be_bytes([
+                    self.buffer[0],
+                    self.buffer[1],
+                    self.buffer[2],
+                    self.buffer[3],
+                ]) as usize);
+            }
+        }
     }
 }
 

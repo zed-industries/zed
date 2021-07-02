@@ -121,10 +121,8 @@ impl Client {
         let stream = smol::net::TcpStream::connect(&address).await?;
         log::info!("connected to rpc address {}", address);
 
-        let connection_id = self.peer.add_connection(stream).await;
-        executor
-            .spawn(self.peer.handle_messages(connection_id))
-            .detach();
+        let (connection_id, handler) = self.peer.add_connection(stream).await;
+        executor.spawn(handler.run()).detach();
 
         let auth_response = self
             .peer
