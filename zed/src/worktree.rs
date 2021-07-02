@@ -59,6 +59,7 @@ pub fn init(cx: &mut MutableAppContext, rpc: rpc::Client) {
     rpc.on_message(remote::close_buffer, cx);
     rpc.on_message(remote::update_buffer, cx);
     rpc.on_message(remote::buffer_saved, cx);
+    rpc.on_message(remote::save_buffer, cx);
 }
 
 #[derive(Clone, Debug)]
@@ -710,20 +711,6 @@ impl LocalWorktree {
             });
             Ok((File::new(entry.id, handle, entry.path, entry.mtime), text))
         })
-    }
-
-    pub fn save_remote_buffer(
-        &self,
-        envelope: &TypedEnvelope<proto::SaveBuffer>,
-        cx: &mut ModelContext<Worktree>,
-    ) -> Result<Task<Result<time::Global>>> {
-        let sender_id = envelope.original_sender_id()?;
-        let buffer = self
-            .shared_buffers
-            .get_mut(&sender_id)
-            .and_then(|shared_buffers| shared_buffers.get(&envelope.payload.buffer_id))
-            .ok_or_else(|| anyhow!("unknown buffer id {}", envelope.payload.buffer_id))?;
-        buffer.update(cx, |buffer, cx| buffer.save(cx))
     }
 
     pub fn save_buffer_as(
@@ -2187,15 +2174,18 @@ mod remote {
         rpc: &rpc::Client,
         cx: &mut AsyncAppContext,
     ) -> anyhow::Result<()> {
-        let mut state = rpc.state.lock().await;
+        let state = rpc.state.read().await;
         let worktree = state.shared_worktree(envelope.payload.worktree_id, cx)?;
-        let version = worktree
-            .update(cx, |tree, cx| {
-                tree.as_local_mut()
-                    .unwrap()
-                    .save_remote_buffer(&envelope, cx)
-            })?
-            .await?;
+        let sender_id = envelope.original_sender_id()?;
+        let buffer = worktree.read_with(cx, |tree, _| {
+            tree.as_local()
+                .unwrap()
+                .shared_buffers
+                .get(&sender_id)
+                .and_then(|shared_buffers| shared_buffers.get(&envelope.payload.buffer_id).cloned())
+                .ok_or_else(|| anyhow!("unknown buffer id {}", envelope.payload.buffer_id))
+        })?;
+        let version = buffer.update(cx, |buffer, cx| buffer.save(cx))?.await?;
         rpc.respond(
             envelope.receipt(),
             proto::BufferSaved {
