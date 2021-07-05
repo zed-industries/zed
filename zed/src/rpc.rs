@@ -218,6 +218,12 @@ impl Client {
         })
     }
 
+    pub async fn disconnect(&self) -> Result<()> {
+        let conn_id = self.connection_id().await?;
+        self.peer.disconnect(conn_id).await;
+        Ok(())
+    }
+
     async fn connection_id(&self) -> Result<ConnectionId> {
         self.state
             .read()
