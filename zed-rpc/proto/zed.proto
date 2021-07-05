@@ -19,8 +19,8 @@ message Envelope {
         UpdateBuffer update_buffer = 14;
         SaveBuffer save_buffer = 15;
         BufferSaved buffer_saved = 16;
-        AddGuest add_guest = 17;
-        RemoveGuest remove_guest = 18;
+        AddPeer add_peer = 17;
+        RemovePeer remove_peer = 18;
     }
 }
 
@@ -57,12 +57,12 @@ message CloseWorktree {
     uint64 worktree_id = 1;
 }
 
-message AddGuest {
+message AddPeer {
     uint64 worktree_id = 1;
-    Peer guest = 2;
+    Peer peer = 2;
 }
 
-message RemoveGuest {
+message RemovePeer {
     uint64 worktree_id = 1;
     uint32 peer_id = 2;
 }

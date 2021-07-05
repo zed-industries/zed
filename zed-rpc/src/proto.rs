@@ -76,8 +76,8 @@ request_message!(OpenBuffer, OpenBufferResponse);
 message!(CloseBuffer);
 message!(UpdateBuffer);
 request_message!(SaveBuffer, BufferSaved);
-message!(AddGuest);
-message!(RemoveGuest);
+message!(AddPeer);
+message!(RemovePeer);
 
 /// A stream of protobuf messages.
 pub struct MessageStream<T> {

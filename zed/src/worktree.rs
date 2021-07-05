@@ -53,8 +53,8 @@ lazy_static! {
 }
 
 pub fn init(cx: &mut MutableAppContext, rpc: rpc::Client) {
-    rpc.on_message(remote::add_guest, cx);
-    rpc.on_message(remote::remove_guest, cx);
+    rpc.on_message(remote::add_peer, cx);
+    rpc.on_message(remote::remove_peer, cx);
     rpc.on_message(remote::open_buffer, cx);
     rpc.on_message(remote::close_buffer, cx);
     rpc.on_message(remote::update_buffer, cx);
@@ -240,25 +240,25 @@ impl Worktree {
         }
     }
 
-    pub fn add_guest(
+    pub fn add_peer(
         &mut self,
-        envelope: TypedEnvelope<proto::AddGuest>,
+        envelope: TypedEnvelope<proto::AddPeer>,
         cx: &mut ModelContext<Worktree>,
     ) -> Result<()> {
         match self {
-            Worktree::Local(worktree) => worktree.add_guest(envelope, cx),
-            Worktree::Remote(worktree) => worktree.add_guest(envelope, cx),
+            Worktree::Local(worktree) => worktree.add_peer(envelope, cx),
+            Worktree::Remote(worktree) => worktree.add_peer(envelope, cx),
         }
     }
 
-    pub fn remove_guest(
+    pub fn remove_peer(
         &mut self,
-        envelope: TypedEnvelope<proto::RemoveGuest>,
+        envelope: TypedEnvelope<proto::RemovePeer>,
         cx: &mut ModelContext<Worktree>,
     ) -> Result<()> {
         match self {
-            Worktree::Local(worktree) => worktree.remove_guest(envelope, cx),
-            Worktree::Remote(worktree) => worktree.remove_guest(envelope, cx),
+            Worktree::Local(worktree) => worktree.remove_peer(envelope, cx),
+            Worktree::Remote(worktree) => worktree.remove_peer(envelope, cx),
         }
     }
 
@@ -543,24 +543,21 @@ impl LocalWorktree {
         Ok(())
     }
 
-    pub fn add_guest(
+    pub fn add_peer(
         &mut self,
-        envelope: TypedEnvelope<proto::AddGuest>,
+        envelope: TypedEnvelope<proto::AddPeer>,
         cx: &mut ModelContext<Worktree>,
     ) -> Result<()> {
-        let guest = envelope
-            .payload
-            .guest
-            .ok_or_else(|| anyhow!("empty peer"))?;
+        let peer = envelope.payload.peer.ok_or_else(|| anyhow!("empty peer"))?;
         self.peers
-            .insert(PeerId(guest.peer_id), guest.replica_id as ReplicaId);
+            .insert(PeerId(peer.peer_id), peer.replica_id as ReplicaId);
         cx.notify();
         Ok(())
     }
 
-    pub fn remove_guest(
+    pub fn remove_peer(
         &mut self,
-        envelope: TypedEnvelope<proto::RemoveGuest>,
+        envelope: TypedEnvelope<proto::RemovePeer>,
         cx: &mut ModelContext<Worktree>,
     ) -> Result<()> {
         let peer_id = PeerId(envelope.payload.peer_id);
@@ -571,7 +568,7 @@ impl LocalWorktree {
         self.shared_buffers.remove(&peer_id);
         for (_, buffer) in &self.open_buffers {
             if let Some(buffer) = buffer.upgrade(&cx) {
-                buffer.update(cx, |buffer, cx| buffer.remove_guest(replica_id, cx));
+                buffer.update(cx, |buffer, cx| buffer.remove_peer(replica_id, cx));
             }
         }
         cx.notify();
@@ -922,24 +919,21 @@ impl RemoteWorktree {
         })
     }
 
-    pub fn add_guest(
+    pub fn add_peer(
         &mut self,
-        envelope: TypedEnvelope<proto::AddGuest>,
+        envelope: TypedEnvelope<proto::AddPeer>,
         cx: &mut ModelContext<Worktree>,
     ) -> Result<()> {
-        let guest = envelope
-            .payload
-            .guest
-            .ok_or_else(|| anyhow!("empty peer"))?;
+        let peer = envelope.payload.peer.ok_or_else(|| anyhow!("empty peer"))?;
         self.peers
-            .insert(PeerId(guest.peer_id), guest.replica_id as ReplicaId);
+            .insert(PeerId(peer.peer_id), peer.replica_id as ReplicaId);
         cx.notify();
         Ok(())
     }
 
-    pub fn remove_guest(
+    pub fn remove_peer(
         &mut self,
-        envelope: TypedEnvelope<proto::RemoveGuest>,
+        envelope: TypedEnvelope<proto::RemovePeer>,
         cx: &mut ModelContext<Worktree>,
     ) -> Result<()> {
         let peer_id = PeerId(envelope.payload.peer_id);
@@ -949,7 +943,7 @@ impl RemoteWorktree {
             .ok_or_else(|| anyhow!("unknown peer {:?}", peer_id))?;
         for (_, buffer) in &self.open_buffers {
             if let Some(buffer) = buffer.upgrade(&cx) {
-                buffer.update(cx, |buffer, cx| buffer.remove_guest(replica_id, cx));
+                buffer.update(cx, |buffer, cx| buffer.remove_peer(replica_id, cx));
             }
         }
         cx.notify();
@@ -2091,8 +2085,8 @@ impl<'a> Iterator for ChildEntriesIter<'a> {
 mod remote {
     use super::*;
 
-    pub async fn add_guest(
-        envelope: TypedEnvelope<proto::AddGuest>,
+    pub async fn add_peer(
+        envelope: TypedEnvelope<proto::AddPeer>,
         rpc: &rpc::Client,
         cx: &mut AsyncAppContext,
     ) -> anyhow::Result<()> {
@@ -2100,11 +2094,11 @@ mod remote {
             .read()
             .await
             .shared_worktree(envelope.payload.worktree_id, cx)?
-            .update(cx, |worktree, cx| worktree.add_guest(envelope, cx))
+            .update(cx, |worktree, cx| worktree.add_peer(envelope, cx))
     }
 
-    pub async fn remove_guest(
-        envelope: TypedEnvelope<proto::RemoveGuest>,
+    pub async fn remove_peer(
+        envelope: TypedEnvelope<proto::RemovePeer>,
         rpc: &rpc::Client,
         cx: &mut AsyncAppContext,
     ) -> anyhow::Result<()> {
@@ -2112,7 +2106,7 @@ mod remote {
             .read()
             .await
             .shared_worktree(envelope.payload.worktree_id, cx)?
-            .update(cx, |worktree, cx| worktree.remove_guest(envelope, cx))
+            .update(cx, |worktree, cx| worktree.remove_peer(envelope, cx))
     }
 
     pub async fn open_buffer(
