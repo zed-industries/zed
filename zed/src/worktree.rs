@@ -152,23 +152,26 @@ impl Worktree {
                 (entries, paths_by_id)
             })
             .await;
+
         let worktree = cx.update(|cx| {
             cx.add_model(|cx| {
+                let snapshot = Snapshot {
+                    id: cx.model_id(),
+                    scan_id: 0,
+                    abs_path: Path::new("").into(),
+                    root_name,
+                    root_char_bag,
+                    ignores: Default::default(),
+                    entries,
+                    paths_by_id,
+                    removed_entry_ids: Default::default(),
+                    next_entry_id: Default::default(),
+                };
+
                 Worktree::Remote(RemoteWorktree {
                     remote_id: id,
                     replica_id,
-                    snapshot: Snapshot {
-                        id: cx.model_id(),
-                        scan_id: 0,
-                        abs_path: Path::new("").into(),
-                        root_name,
-                        root_char_bag,
-                        ignores: Default::default(),
-                        entries,
-                        paths_by_id,
-                        removed_entry_ids: Default::default(),
-                        next_entry_id: Default::default(),
-                    },
+                    snapshot,
                     rpc: rpc.clone(),
                     open_buffers: Default::default(),
                     peers: peers
@@ -184,6 +187,7 @@ impl Worktree {
             .await
             .shared_worktrees
             .insert(id, worktree.downgrade());
+
         Ok(worktree)
     }
 
@@ -794,12 +798,7 @@ impl LocalWorktree {
                 std::thread::spawn(move || {
                     let mut prev_snapshot = snapshot;
                     while let Ok(snapshot) = smol::block_on(snapshots_to_send_rx.recv()) {
-                        let (updated_entries, removed_entries) = snapshot.diff(&prev_snapshot);
-                        let message = proto::UpdateWorktree {
-                            worktree_id,
-                            updated_entries: updated_entries.iter().map(Into::into).collect(),
-                            removed_entries: removed_entries.iter().map(|id| *id as u64).collect(),
-                        };
+                        let message = snapshot.build_update(&prev_snapshot, worktree_id);
                         match smol::block_on(rpc.send(message)) {
                             Ok(()) => prev_snapshot = snapshot,
                             Err(err) => log::error!("error sending snapshot diff {}", err),
@@ -960,39 +959,8 @@ impl RemoteWorktree {
         envelope: TypedEnvelope<proto::UpdateWorktree>,
         cx: &mut ModelContext<Worktree>,
     ) -> Result<()> {
-        self.update_snapshot(envelope, cx)?;
+        self.snapshot.apply_update(envelope.payload)?;
         self.update_open_buffers(cx);
-        Ok(())
-    }
-
-    fn update_snapshot(
-        &mut self,
-        envelope: TypedEnvelope<proto::UpdateWorktree>,
-        cx: &mut ModelContext<Worktree>,
-    ) -> Result<()> {
-        self.snapshot.scan_id += 1;
-        let scan_id = self.snapshot.scan_id;
-
-        let mut edits = Vec::new();
-        for entry_id in envelope.payload.removed_entries {
-            let entry_id = entry_id as usize;
-            let entry = self
-                .snapshot
-                .entry_for_id(entry_id)
-                .ok_or_else(|| anyhow!("unknown entry"))?;
-            edits.push(Edit::Remove(PathKey(entry.path.clone())));
-            self.snapshot.paths_by_id.remove_mut(&entry_id);
-        }
-
-        for entry in envelope.payload.updated_entries {
-            let entry = Entry::try_from((&self.snapshot.root_char_bag, entry))?;
-            self.snapshot
-                .paths_by_id
-                .insert_mut(entry.id, (entry.path.clone(), scan_id));
-            edits.push(Edit::Insert(entry));
-        }
-        self.snapshot.entries.edit(edits, &());
-
         cx.notify();
         Ok(())
     }
@@ -1063,7 +1031,7 @@ pub struct Snapshot {
 }
 
 impl Snapshot {
-    pub fn diff(&self, other: &Self) -> (Vec<Entry>, Vec<usize>) {
+    pub fn build_update(&self, other: &Self, worktree_id: u64) -> proto::UpdateWorktree {
         let mut updated_entries = Vec::new();
         let mut removed_entries = Vec::new();
         let mut self_entries = self.paths_by_id.iter().peekable();
@@ -1075,13 +1043,13 @@ impl Snapshot {
                     Some((other_entry_id, (_, other_scan_id))),
                 ) => match self_entry_id.cmp(other_entry_id) {
                     Ordering::Less => {
-                        let entry = self.entry_for_id(**self_entry_id).unwrap().clone();
+                        let entry = self.entry_for_id(**self_entry_id).unwrap().into();
                         updated_entries.push(entry);
                         self_entries.next();
                     }
                     Ordering::Equal => {
                         if self_scan_id != other_scan_id {
-                            let entry = self.entry_for_id(**self_entry_id).unwrap().clone();
+                            let entry = self.entry_for_id(**self_entry_id).unwrap().into();
                             updated_entries.push(entry);
                         }
 
@@ -1089,24 +1057,53 @@ impl Snapshot {
                         other_entries.next();
                     }
                     Ordering::Greater => {
-                        removed_entries.push(**other_entry_id);
+                        removed_entries.push(**other_entry_id as u64);
                         other_entries.next();
                     }
                 },
                 (Some((self_entry_id, _)), None) => {
-                    let entry = self.entry_for_id(**self_entry_id).unwrap().clone();
+                    let entry = self.entry_for_id(**self_entry_id).unwrap().into();
                     updated_entries.push(entry);
                     self_entries.next();
                 }
                 (None, Some((other_entry_id, _))) => {
-                    removed_entries.push(**other_entry_id);
+                    removed_entries.push(**other_entry_id as u64);
                     other_entries.next();
                 }
                 (None, None) => break,
             }
         }
 
-        (updated_entries, removed_entries)
+        proto::UpdateWorktree {
+            updated_entries,
+            removed_entries,
+            worktree_id,
+        }
+    }
+
+    fn apply_update(&mut self, update: proto::UpdateWorktree) -> Result<()> {
+        self.scan_id += 1;
+        let scan_id = self.scan_id;
+
+        let mut edits = Vec::new();
+        for entry_id in update.removed_entries {
+            let entry_id = entry_id as usize;
+            let entry = self
+                .entry_for_id(entry_id)
+                .ok_or_else(|| anyhow!("unknown entry"))?;
+            edits.push(Edit::Remove(PathKey(entry.path.clone())));
+            self.paths_by_id.remove_mut(&entry_id);
+        }
+
+        for entry in update.updated_entries {
+            let entry = Entry::try_from((&self.root_char_bag, entry))?;
+            self.paths_by_id
+                .insert_mut(entry.id, (entry.path.clone(), scan_id));
+            edits.push(Edit::Insert(entry));
+        }
+        self.entries.edit(edits, &());
+
+        Ok(())
     }
 
     pub fn file_count(&self) -> usize {
@@ -2313,7 +2310,7 @@ mod remote {
                     worktree.update(envelope, cx)?;
                 } else {
                     log::error!(
-                        "invalid update message for worktree {}",
+                        "invalid update message for local worktree {}",
                         envelope.payload.worktree_id
                     );
                 }
