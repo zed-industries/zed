@@ -71,6 +71,7 @@ macro_rules! request_message {
 request_message!(Auth, AuthResponse);
 request_message!(ShareWorktree, ShareWorktreeResponse);
 request_message!(OpenWorktree, OpenWorktreeResponse);
+message!(UpdateWorktree);
 message!(CloseWorktree);
 request_message!(OpenBuffer, OpenBufferResponse);
 message!(CloseBuffer);
