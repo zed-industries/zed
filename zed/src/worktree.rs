@@ -145,23 +145,30 @@ impl Worktree {
             .map(|c| c.to_ascii_lowercase())
             .collect();
         let root_name = worktree.root_name.clone();
-        let (entries, paths_by_id) = cx
+        let (entries_by_path, entries_by_id) = cx
             .background()
             .spawn(async move {
-                let mut paths_by_id = rpds::RedBlackTreeMapSync::default();
-                let mut edits = Vec::new();
+                let mut entries_by_path_edits = Vec::new();
+                let mut entries_by_id_edits = Vec::new();
                 for entry in worktree.entries {
                     match Entry::try_from((&root_char_bag, entry)) {
                         Ok(entry) => {
-                            paths_by_id.insert_mut(entry.id as usize, (entry.path.clone(), 0));
-                            edits.push(Edit::Insert(entry));
+                            entries_by_id_edits.push(Edit::Insert(PathEntry {
+                                id: entry.id,
+                                path: entry.path.clone(),
+                                scan_id: 0,
+                            }));
+                            entries_by_path_edits.push(Edit::Insert(entry));
                         }
                         Err(err) => log::warn!("error for remote worktree entry {:?}", err),
                     }
                 }
-                let mut entries = SumTree::new();
-                entries.edit(edits, &());
-                (entries, paths_by_id)
+
+                let mut entries_by_path = SumTree::new();
+                let mut entries_by_id = SumTree::new();
+                entries_by_path.edit(entries_by_path_edits, &());
+                entries_by_id.edit(entries_by_id_edits, &());
+                (entries_by_path, entries_by_id)
             })
             .await;
 
@@ -174,8 +181,8 @@ impl Worktree {
                     root_name,
                     root_char_bag,
                     ignores: Default::default(),
-                    entries,
-                    paths_by_id,
+                    entries_by_path,
+                    entries_by_id,
                     removed_entry_ids: Default::default(),
                     next_entry_id: Default::default(),
                 };
@@ -540,8 +547,8 @@ impl LocalWorktree {
             root_name: Default::default(),
             root_char_bag: Default::default(),
             ignores: Default::default(),
-            entries: Default::default(),
-            paths_by_id: Default::default(),
+            entries_by_path: Default::default(),
+            entries_by_id: Default::default(),
             removed_entry_ids: Default::default(),
             next_entry_id: Default::default(),
         };
@@ -869,7 +876,7 @@ impl LocalWorktree {
         let root_name = self.root_name.clone();
         cx.background().spawn(async move {
             let entries = snapshot
-                .entries
+                .entries_by_path
                 .cursor::<(), ()>()
                 .map(Into::into)
                 .collect();
@@ -1032,8 +1039,8 @@ pub struct Snapshot {
     root_name: String,
     root_char_bag: CharBag,
     ignores: HashMap<Arc<Path>, (Arc<Gitignore>, usize)>,
-    entries: SumTree<Entry>,
-    paths_by_id: rpds::RedBlackTreeMapSync<usize, (Arc<Path>, usize)>,
+    entries_by_path: SumTree<Entry>,
+    entries_by_id: SumTree<PathEntry>,
     removed_entry_ids: HashMap<u64, usize>,
     next_entry_id: Arc<AtomicUsize>,
 }
@@ -1042,22 +1049,19 @@ impl Snapshot {
     pub fn build_update(&self, other: &Self, worktree_id: u64) -> proto::UpdateWorktree {
         let mut updated_entries = Vec::new();
         let mut removed_entries = Vec::new();
-        let mut self_entries = self.paths_by_id.iter().peekable();
-        let mut other_entries = other.paths_by_id.iter().peekable();
+        let mut self_entries = self.entries_by_id.cursor::<(), ()>().peekable();
+        let mut other_entries = other.entries_by_id.cursor::<(), ()>().peekable();
         loop {
             match (self_entries.peek(), other_entries.peek()) {
-                (
-                    Some((self_entry_id, (_, self_scan_id))),
-                    Some((other_entry_id, (_, other_scan_id))),
-                ) => match self_entry_id.cmp(other_entry_id) {
+                (Some(self_entry), Some(other_entry)) => match self_entry.id.cmp(&other_entry.id) {
                     Ordering::Less => {
-                        let entry = self.entry_for_id(**self_entry_id).unwrap().into();
+                        let entry = self.entry_for_id(self_entry.id).unwrap().into();
                         updated_entries.push(entry);
                         self_entries.next();
                     }
                     Ordering::Equal => {
-                        if self_scan_id != other_scan_id {
-                            let entry = self.entry_for_id(**self_entry_id).unwrap().into();
+                        if self_entry.scan_id != other_entry.scan_id {
+                            let entry = self.entry_for_id(self_entry.id).unwrap().into();
                             updated_entries.push(entry);
                         }
 
@@ -1065,17 +1069,17 @@ impl Snapshot {
                         other_entries.next();
                     }
                     Ordering::Greater => {
-                        removed_entries.push(**other_entry_id as u64);
+                        removed_entries.push(other_entry.id as u64);
                         other_entries.next();
                     }
                 },
-                (Some((self_entry_id, _)), None) => {
-                    let entry = self.entry_for_id(**self_entry_id).unwrap().into();
+                (Some(self_entry), None) => {
+                    let entry = self.entry_for_id(self_entry.id).unwrap().into();
                     updated_entries.push(entry);
                     self_entries.next();
                 }
-                (None, Some((other_entry_id, _))) => {
-                    removed_entries.push(**other_entry_id as u64);
+                (None, Some(other_entry)) => {
+                    removed_entries.push(other_entry.id as u64);
                     other_entries.next();
                 }
                 (None, None) => break,
@@ -1093,36 +1097,42 @@ impl Snapshot {
         self.scan_id += 1;
         let scan_id = self.scan_id;
 
-        let mut edits = Vec::new();
+        let mut entries_by_path_edits = Vec::new();
+        let mut entries_by_id_edits = Vec::new();
         for entry_id in update.removed_entries {
             let entry_id = entry_id as usize;
             let entry = self
                 .entry_for_id(entry_id)
                 .ok_or_else(|| anyhow!("unknown entry"))?;
-            edits.push(Edit::Remove(PathKey(entry.path.clone())));
-            self.paths_by_id.remove_mut(&entry_id);
+            entries_by_path_edits.push(Edit::Remove(PathKey(entry.path.clone())));
+            entries_by_id_edits.push(Edit::Remove(entry.id));
         }
 
         for entry in update.updated_entries {
             let entry = Entry::try_from((&self.root_char_bag, entry))?;
-            if let Some((path, _)) = self.paths_by_id.get(&entry.id) {
-                edits.push(Edit::Remove(PathKey(path.clone())));
+            if let Some(PathEntry { path, .. }) = self.entries_by_id.get(&entry.id, &()) {
+                entries_by_path_edits.push(Edit::Remove(PathKey(path.clone())));
             }
-            self.paths_by_id
-                .insert_mut(entry.id, (entry.path.clone(), scan_id));
-            edits.push(Edit::Insert(entry));
+            entries_by_id_edits.push(Edit::Insert(PathEntry {
+                id: entry.id,
+                path: entry.path.clone(),
+                scan_id,
+            }));
+            entries_by_path_edits.push(Edit::Insert(entry));
         }
-        self.entries.edit(edits, &());
+
+        self.entries_by_path.edit(entries_by_path_edits, &());
+        self.entries_by_id.edit(entries_by_id_edits, &());
 
         Ok(())
     }
 
     pub fn file_count(&self) -> usize {
-        self.entries.summary().file_count
+        self.entries_by_path.summary().file_count
     }
 
     pub fn visible_file_count(&self) -> usize {
-        self.entries.summary().visible_file_count
+        self.entries_by_path.summary().visible_file_count
     }
 
     pub fn files(&self, start: usize) -> FileIter {
@@ -1131,7 +1141,7 @@ impl Snapshot {
 
     pub fn paths(&self) -> impl Iterator<Item = &Arc<Path>> {
         let empty_path = Path::new("");
-        self.entries
+        self.entries_by_path
             .cursor::<(), ()>()
             .filter(move |entry| entry.path.as_ref() != empty_path)
             .map(|entry| entry.path())
@@ -1156,7 +1166,7 @@ impl Snapshot {
     }
 
     fn entry_for_path(&self, path: impl AsRef<Path>) -> Option<&Entry> {
-        let mut cursor = self.entries.cursor::<_, ()>();
+        let mut cursor = self.entries_by_path.cursor::<_, ()>();
         if cursor.seek(&PathSearch::Exact(path.as_ref()), Bias::Left, &()) {
             cursor.item()
         } else {
@@ -1165,8 +1175,8 @@ impl Snapshot {
     }
 
     fn entry_for_id(&self, id: usize) -> Option<&Entry> {
-        let (path, _) = self.paths_by_id.get(&id)?;
-        self.entry_for_path(path)
+        let entry = self.entries_by_id.get(&id, &())?;
+        self.entry_for_path(&entry.path)
     }
 
     pub fn inode_for_path(&self, path: impl AsRef<Path>) -> Option<u64> {
@@ -1186,9 +1196,15 @@ impl Snapshot {
         }
 
         self.reuse_entry_id(&mut entry);
-        self.entries.insert_or_replace(entry.clone(), &());
-        self.paths_by_id
-            .insert_mut(entry.id, (entry.path.clone(), self.scan_id));
+        self.entries_by_path.insert_or_replace(entry.clone(), &());
+        self.entries_by_id.insert_or_replace(
+            PathEntry {
+                id: entry.id,
+                path: entry.path.clone(),
+                scan_id: self.scan_id,
+            },
+            &(),
+        );
         entry
     }
 
@@ -1198,10 +1214,8 @@ impl Snapshot {
         entries: impl IntoIterator<Item = Entry>,
         ignore: Option<Arc<Gitignore>>,
     ) {
-        let mut edits = Vec::new();
-
         let mut parent_entry = self
-            .entries
+            .entries_by_path
             .get(&PathKey(parent_path.clone()), &())
             .unwrap()
             .clone();
@@ -1213,15 +1227,22 @@ impl Snapshot {
         } else {
             unreachable!();
         }
-        edits.push(Edit::Insert(parent_entry));
+
+        let mut entries_by_path_edits = vec![Edit::Insert(parent_entry)];
+        let mut entries_by_id_edits = Vec::new();
 
         for mut entry in entries {
             self.reuse_entry_id(&mut entry);
-            self.paths_by_id
-                .insert_mut(entry.id, (entry.path.clone(), self.scan_id));
-            edits.push(Edit::Insert(entry));
+            entries_by_id_edits.push(Edit::Insert(PathEntry {
+                id: entry.id,
+                path: entry.path.clone(),
+                scan_id: self.scan_id,
+            }));
+            entries_by_path_edits.push(Edit::Insert(entry));
         }
-        self.entries.edit(edits, &());
+
+        self.entries_by_path.edit(entries_by_path_edits, &());
+        self.entries_by_id.edit(entries_by_id_edits, &());
     }
 
     fn reuse_entry_id(&mut self, entry: &mut Entry) {
@@ -1236,20 +1257,23 @@ impl Snapshot {
         let mut new_entries;
         let removed_entry_ids;
         {
-            let mut cursor = self.entries.cursor::<_, ()>();
+            let mut cursor = self.entries_by_path.cursor::<_, ()>();
             new_entries = cursor.slice(&PathSearch::Exact(path), Bias::Left, &());
             removed_entry_ids = cursor.slice(&PathSearch::Successor(path), Bias::Left, &());
             new_entries.push_tree(cursor.suffix(&()), &());
         }
-        self.entries = new_entries;
+        self.entries_by_path = new_entries;
+
+        let mut entries_by_id_edits = Vec::new();
         for entry in removed_entry_ids.cursor::<(), ()>() {
             let removed_entry_id = self
                 .removed_entry_ids
                 .entry(entry.inode)
                 .or_insert(entry.id);
             *removed_entry_id = cmp::max(*removed_entry_id, entry.id);
-            self.paths_by_id.remove_mut(&entry.id);
+            entries_by_id_edits.push(Edit::Remove(entry.id));
         }
+        self.entries_by_id.edit(entries_by_id_edits, &());
 
         if path.file_name() == Some(&GITIGNORE) {
             if let Some((_, scan_id)) = self.ignores.get_mut(path.parent().unwrap()) {
@@ -1288,7 +1312,7 @@ impl Snapshot {
 
 impl fmt::Debug for Snapshot {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        for entry in self.entries.cursor::<(), ()>() {
+        for entry in self.entries_by_path.cursor::<(), ()>() {
             for _ in entry.path().ancestors().skip(1) {
                 write!(f, " ")?;
             }
@@ -1540,6 +1564,48 @@ impl sum_tree::Summary for EntrySummary {
         self.max_path = rhs.max_path.clone();
         self.file_count += rhs.file_count;
         self.visible_file_count += rhs.visible_file_count;
+    }
+}
+
+#[derive(Clone, Debug)]
+struct PathEntry {
+    id: usize,
+    path: Arc<Path>,
+    scan_id: usize,
+}
+
+impl sum_tree::Item for PathEntry {
+    type Summary = PathEntrySummary;
+
+    fn summary(&self) -> Self::Summary {
+        PathEntrySummary { max_id: self.id }
+    }
+}
+
+impl sum_tree::KeyedItem for PathEntry {
+    type Key = usize;
+
+    fn key(&self) -> Self::Key {
+        self.id
+    }
+}
+
+#[derive(Clone, Debug, Default)]
+struct PathEntrySummary {
+    max_id: usize,
+}
+
+impl sum_tree::Summary for PathEntrySummary {
+    type Context = ();
+
+    fn add_summary(&mut self, summary: &Self, _: &Self::Context) {
+        self.max_id = summary.max_id;
+    }
+}
+
+impl<'a> sum_tree::Dimension<'a, PathEntrySummary> for usize {
+    fn add_summary(&mut self, summary: &'a PathEntrySummary, _: &()) {
+        *self = summary.max_id;
     }
 }
 
@@ -2028,7 +2094,7 @@ impl BackgroundScanner {
                 edits.push(Edit::Insert(entry));
             }
         }
-        self.snapshot.lock().entries.edit(edits, &());
+        self.snapshot.lock().entries_by_path.edit(edits, &());
     }
 }
 
@@ -2156,13 +2222,13 @@ pub enum FileIter<'a> {
 
 impl<'a> FileIter<'a> {
     fn all(snapshot: &'a Snapshot, start: usize) -> Self {
-        let mut cursor = snapshot.entries.cursor();
+        let mut cursor = snapshot.entries_by_path.cursor();
         cursor.seek(&FileCount(start), Bias::Right, &());
         Self::All(cursor)
     }
 
     fn visible(snapshot: &'a Snapshot, start: usize) -> Self {
-        let mut cursor = snapshot.entries.cursor();
+        let mut cursor = snapshot.entries_by_path.cursor();
         cursor.seek(&VisibleFileCount(start), Bias::Right, &());
         Self::Visible(cursor)
     }
@@ -2208,7 +2274,7 @@ struct ChildEntriesIter<'a> {
 
 impl<'a> ChildEntriesIter<'a> {
     fn new(parent_path: &'a Path, snapshot: &'a Snapshot) -> Self {
-        let mut cursor = snapshot.entries.cursor();
+        let mut cursor = snapshot.entries_by_path.cursor();
         cursor.seek(&PathSearch::Exact(parent_path), Bias::Right, &());
         Self {
             parent_path,
@@ -2781,8 +2847,8 @@ mod tests {
                     id: 0,
                     scan_id: 0,
                     abs_path: root_dir.path().into(),
-                    entries: Default::default(),
-                    paths_by_id: Default::default(),
+                    entries_by_path: Default::default(),
+                    entries_by_id: Default::default(),
                     removed_entry_ids: Default::default(),
                     ignores: Default::default(),
                     root_name: Default::default(),
@@ -2819,8 +2885,8 @@ mod tests {
                     id: 0,
                     scan_id: 0,
                     abs_path: root_dir.path().into(),
-                    entries: Default::default(),
-                    paths_by_id: Default::default(),
+                    entries_by_path: Default::default(),
+                    entries_by_id: Default::default(),
                     removed_entry_ids: Default::default(),
                     ignores: Default::default(),
                     root_name: Default::default(),
@@ -2986,7 +3052,7 @@ mod tests {
         fn check_invariants(&self) {
             let mut files = self.files(0);
             let mut visible_files = self.visible_files(0);
-            for entry in self.entries.cursor::<(), ()>() {
+            for entry in self.entries_by_path.cursor::<(), ()>() {
                 if entry.is_file() {
                     assert_eq!(files.next().unwrap().inode(), entry.inode);
                     if !entry.is_ignored {
@@ -3008,7 +3074,7 @@ mod tests {
             }
 
             let dfs_paths = self
-                .entries
+                .entries_by_path
                 .cursor::<(), ()>()
                 .map(|e| e.path().as_ref())
                 .collect::<Vec<_>>();
@@ -3024,7 +3090,7 @@ mod tests {
 
         fn to_vec(&self) -> Vec<(&Path, u64, bool)> {
             let mut paths = Vec::new();
-            for entry in self.entries.cursor::<(), ()>() {
+            for entry in self.entries_by_path.cursor::<(), ()>() {
                 paths.push((entry.path().as_ref(), entry.inode(), entry.is_ignored()));
             }
             paths.sort_by(|a, b| a.0.cmp(&b.0));
