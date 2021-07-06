@@ -6,6 +6,7 @@ use crate::{
     language::LanguageRegistry,
     rpc,
     settings::Settings,
+    util::SurfResultExt as _,
     worktree::{File, Worktree},
     AppState,
 };
@@ -684,7 +685,9 @@ impl Workspace {
         let platform = cx.platform();
 
         let task = cx.spawn(|this, mut cx| async move {
-            rpc.log_in_and_connect(&cx).await?;
+            rpc.log_in_and_connect(&cx)
+                .await
+                .context("failed to establish rpc connection")?;
 
             let share_task = this.update(&mut cx, |this, cx| {
                 let worktree = this.worktrees.iter().next()?;
@@ -705,7 +708,7 @@ impl Workspace {
 
         cx.spawn(|_, _| async move {
             if let Err(e) = task.await {
-                log::error!("sharing failed: {}", e);
+                log::error!("sharing failed: {:?}", e);
             }
         })
         .detach();

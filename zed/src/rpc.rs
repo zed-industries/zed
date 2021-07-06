@@ -115,13 +115,22 @@ impl Client {
         access_token: String,
         executor: &Arc<Background>,
     ) -> surf::Result<()> {
-        // TODO - If the `ZED_SERVER_URL` uses https, then wrap this stream in
-        // a TLS stream using `native-tls`.
         let stream = smol::net::TcpStream::connect(&address).await?;
-        log::info!("connected to rpc address {}", address);
 
-        let (connection_id, handler) = self.peer.add_connection(stream).await;
-        executor.spawn(handler.run()).detach();
+        let connection_id = if ZED_SERVER_URL.starts_with("https") {
+            let host = address.split(':').next().unwrap();
+            let stream = async_native_tls::connect(host, stream)
+                .await
+                .context("failed to establish TLS connection")?;
+            let (conn_id, handler) = self.peer.add_connection(stream).await;
+            executor.spawn(handler.run()).detach();
+            conn_id
+        } else {
+            let (conn_id, handler) = self.peer.add_connection(stream).await;
+            executor.spawn(handler.run()).detach();
+            conn_id
+        };
+        log::info!("connected to rpc address {}", address);
 
         let auth_response = self
             .peer
@@ -138,6 +147,7 @@ impl Client {
             Err(anyhow!("failed to authenticate with RPC server"))?;
         }
 
+        log::info!("authenticated rpc connection as user {}", user_id);
         self.state.write().await.connection_id = Some(connection_id);
         Ok(())
     }

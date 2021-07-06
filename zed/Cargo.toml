@@ -31,6 +31,7 @@ ignore = "0.4"
 lazy_static = "1.4.0"
 libc = "0.2"
 log = "0.4"
+async-native-tls = "0.3"
 num_cpus = "1.13.0"
 parking_lot = "0.11.1"
 postage = { version="0.4.1", features=["futures-traits"] }
