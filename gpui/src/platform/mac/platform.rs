@@ -317,15 +317,10 @@ impl platform::Platform for MacPlatform {
             let block = ConcreteBlock::new(move |response: NSModalResponse| {
                 let result = if response == NSModalResponse::NSModalResponseOk {
                     let url = panel.URL();
-                    let string = url.absoluteString();
-                    let string = std::ffi::CStr::from_ptr(string.UTF8String())
+                    let path = std::ffi::CStr::from_ptr(url.path().UTF8String())
                         .to_string_lossy()
                         .to_string();
-                    if let Some(path) = string.strip_prefix("file://") {
-                        Some(PathBuf::from(path))
-                    } else {
-                        None
-                    }
+                    Some(PathBuf::from(path))
                 } else {
                     None
                 };
