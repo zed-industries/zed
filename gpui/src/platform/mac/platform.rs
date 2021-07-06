@@ -283,13 +283,10 @@ impl platform::Platform for MacPlatform {
                     let urls = panel.URLs();
                     for i in 0..urls.count() {
                         let url = urls.objectAtIndex(i);
-                        let string = url.absoluteString();
-                        let string = std::ffi::CStr::from_ptr(string.UTF8String())
+                        let path = std::ffi::CStr::from_ptr(url.path().UTF8String())
                             .to_string_lossy()
                             .to_string();
-                        if let Some(path) = string.strip_prefix("file://") {
-                            result.push(PathBuf::from(path));
-                        }
+                        result.push(PathBuf::from(path));
                     }
                     Some(result)
                 } else {
