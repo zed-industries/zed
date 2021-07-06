@@ -196,14 +196,18 @@ impl Worktree {
                     })
                     .detach();
 
-                cx.spawn(|this, mut cx| async move {
+                cx.spawn_weak(|this, mut cx| async move {
                     while let Some(snapshot) = snapshot_rx.recv().await {
-                        this.update(&mut cx, |this, cx| {
-                            let this = this.as_remote_mut().unwrap();
-                            this.snapshot = snapshot;
-                            cx.notify();
-                            this.update_open_buffers(cx);
-                        })
+                        if let Some(this) = cx.read(|cx| this.upgrade(cx)) {
+                            this.update(&mut cx, |this, cx| {
+                                let this = this.as_remote_mut().unwrap();
+                                this.snapshot = snapshot;
+                                cx.notify();
+                                this.update_open_buffers(cx);
+                            });
+                        } else {
+                            break;
+                        }
                     }
                 })
                 .detach();
@@ -460,28 +464,16 @@ impl LocalWorktree {
             scanner.run(event_stream)
         });
 
-        cx.spawn(|this, mut cx| {
-            let this = this.downgrade();
-            async move {
-                while let Ok(scan_state) = scan_state_rx.recv().await {
-                    let alive = cx.update(|cx| {
-                        if let Some(handle) = this.upgrade(&cx) {
-                            handle.update(cx, |this, cx| {
-                                if let Worktree::Local(worktree) = this {
-                                    worktree.observe_scan_state(scan_state, cx)
-                                } else {
-                                    unreachable!()
-                                }
-                            });
-                            true
-                        } else {
-                            false
-                        }
+        cx.spawn_weak(|this, mut cx| async move {
+            while let Ok(scan_state) = scan_state_rx.recv().await {
+                if let Some(handle) = cx.read(|cx| this.upgrade(&cx)) {
+                    handle.update(&mut cx, |this, cx| {
+                        this.as_local_mut()
+                            .unwrap()
+                            .observe_scan_state(scan_state, cx)
                     });
-
-                    if !alive {
-                        break;
-                    }
+                } else {
+                    break;
                 }
             }
         })

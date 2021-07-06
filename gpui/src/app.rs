@@ -1761,6 +1761,16 @@ impl<'a, T: Entity> ModelContext<'a, T> {
         let handle = self.handle();
         self.app.spawn(|cx| f(handle, cx))
     }
+
+    pub fn spawn_weak<F, Fut, S>(&self, f: F) -> Task<S>
+    where
+        F: FnOnce(WeakModelHandle<T>, AsyncAppContext) -> Fut,
+        Fut: 'static + Future<Output = S>,
+        S: 'static,
+    {
+        let handle = self.handle().downgrade();
+        self.app.spawn(|cx| f(handle, cx))
+    }
 }
 
 impl<M> AsRef<AppContext> for ModelContext<'_, M> {
