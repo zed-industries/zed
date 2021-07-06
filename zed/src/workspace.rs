@@ -727,7 +727,7 @@ impl Workspace {
             log::info!("read worktree url from clipboard: {}", worktree_url.text());
 
             let worktree =
-                Worktree::remote(rpc.clone(), worktree_id, access_token, languages, &mut cx)
+                Worktree::open_remote(rpc.clone(), worktree_id, access_token, languages, &mut cx)
                     .await?;
             this.update(&mut cx, |workspace, cx| {
                 cx.observe_model(&worktree, |_, _, cx| cx.notify());
