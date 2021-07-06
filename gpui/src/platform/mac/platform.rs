@@ -7,7 +7,7 @@ use cocoa::{
         NSEventModifierFlags, NSMenu, NSMenuItem, NSModalResponse, NSOpenPanel, NSPasteboard,
         NSPasteboardTypeString, NSSavePanel, NSWindow,
     },
-    base::{id, nil, selector},
+    base::{id, nil, selector, YES},
     foundation::{NSArray, NSAutoreleasePool, NSData, NSInteger, NSString, NSURL},
 };
 use ctor::ctor;
@@ -283,10 +283,12 @@ impl platform::Platform for MacPlatform {
                     let urls = panel.URLs();
                     for i in 0..urls.count() {
                         let url = urls.objectAtIndex(i);
-                        let path = std::ffi::CStr::from_ptr(url.path().UTF8String())
-                            .to_string_lossy()
-                            .to_string();
-                        result.push(PathBuf::from(path));
+                        if url.isFileURL() == YES {
+                            let path = std::ffi::CStr::from_ptr(url.path().UTF8String())
+                                .to_string_lossy()
+                                .to_string();
+                            result.push(PathBuf::from(path));
+                        }
                     }
                     Some(result)
                 } else {
@@ -317,10 +319,14 @@ impl platform::Platform for MacPlatform {
             let block = ConcreteBlock::new(move |response: NSModalResponse| {
                 let result = if response == NSModalResponse::NSModalResponseOk {
                     let url = panel.URL();
-                    let path = std::ffi::CStr::from_ptr(url.path().UTF8String())
-                        .to_string_lossy()
-                        .to_string();
-                    Some(PathBuf::from(path))
+                    if url.isFileURL() == YES {
+                        let path = std::ffi::CStr::from_ptr(url.path().UTF8String())
+                            .to_string_lossy()
+                            .to_string();
+                        Some(PathBuf::from(path))
+                    } else {
+                        None
+                    }
                 } else {
                     None
                 };
