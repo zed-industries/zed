@@ -1,7 +1,7 @@
-use futures::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt as _};
+use async_tungstenite::tungstenite::{Error as WebSocketError, Message as WebSocketMessage};
+use futures::{SinkExt as _, StreamExt as _};
 use prost::Message;
 use std::{
-    convert::TryInto,
     io,
     time::{Duration, SystemTime, UNIX_EPOCH},
 };
@@ -81,66 +81,52 @@ message!(AddPeer);
 message!(RemovePeer);
 
 /// A stream of protobuf messages.
-pub struct MessageStream<T> {
-    byte_stream: T,
-    buffer: Vec<u8>,
-    upcoming_message_len: Option<usize>,
+pub struct MessageStream<S> {
+    stream: S,
 }
 
-impl<T> MessageStream<T> {
-    pub fn new(byte_stream: T) -> Self {
-        Self {
-            byte_stream,
-            buffer: Default::default(),
-            upcoming_message_len: None,
-        }
+impl<S> MessageStream<S> {
+    pub fn new(stream: S) -> Self {
+        Self { stream }
     }
 
-    pub fn inner_mut(&mut self) -> &mut T {
-        &mut self.byte_stream
+    pub fn inner_mut(&mut self) -> &mut S {
+        &mut self.stream
     }
 }
 
-impl<T> MessageStream<T>
+impl<S> MessageStream<S>
 where
-    T: AsyncWrite + Unpin,
+    S: futures::Sink<WebSocketMessage, Error = WebSocketError> + Unpin,
 {
     /// Write a given protobuf message to the stream.
-    pub async fn write_message(&mut self, message: &Envelope) -> io::Result<()> {
-        let message_len: u32 = message
-            .encoded_len()
-            .try_into()
-            .map_err(|_| io::Error::new(io::ErrorKind::InvalidData, "message is too large"))?;
-        self.buffer.clear();
-        self.buffer.extend_from_slice(&message_len.to_be_bytes());
-        message.encode(&mut self.buffer)?;
-        self.byte_stream.write_all(&self.buffer).await
+    pub async fn write_message(&mut self, message: &Envelope) -> Result<(), WebSocketError> {
+        let mut buffer = Vec::with_capacity(message.encoded_len());
+        message
+            .encode(&mut buffer)
+            .map_err(|err| io::Error::from(err))?;
+        self.stream.send(WebSocketMessage::Binary(buffer)).await?;
+        Ok(())
     }
 }
 
-impl<T> MessageStream<T>
+impl<S> MessageStream<S>
 where
-    T: AsyncRead + Unpin,
+    S: futures::Stream<Item = Result<WebSocketMessage, WebSocketError>> + Unpin,
 {
     /// Read a protobuf message of the given type from the stream.
-    pub async fn read_message(&mut self) -> io::Result<Envelope> {
-        loop {
-            if let Some(upcoming_message_len) = self.upcoming_message_len {
-                self.buffer.resize(upcoming_message_len, 0);
-                self.byte_stream.read_exact(&mut self.buffer).await?;
-                self.upcoming_message_len = None;
-                return Ok(Envelope::decode(self.buffer.as_slice())?);
-            } else {
-                self.buffer.resize(4, 0);
-                self.byte_stream.read_exact(&mut self.buffer).await?;
-                self.upcoming_message_len = Some(u32::from_be_bytes([
-                    self.buffer[0],
-                    self.buffer[1],
-                    self.buffer[2],
-                    self.buffer[3],
-                ]) as usize);
+    pub async fn read_message(&mut self) -> Result<Envelope, WebSocketError> {
+        while let Some(bytes) = self.stream.next().await {
+            match bytes? {
+                WebSocketMessage::Binary(bytes) => {
+                    let envelope = Envelope::decode(bytes.as_slice()).map_err(io::Error::from)?;
+                    return Ok(envelope);
+                }
+                WebSocketMessage::Close(_) => break,
+                _ => {}
             }
         }
+        Err(WebSocketError::ConnectionClosed)
     }
 }
 
@@ -165,20 +151,12 @@ impl From<SystemTime> for Timestamp {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::{
-        pin::Pin,
-        task::{Context, Poll},
-    };
+    use crate::test;
 
     #[test]
     fn test_round_trip_message() {
         smol::block_on(async {
-            let byte_stream = ChunkedStream {
-                bytes: Vec::new(),
-                read_offset: 0,
-                chunk_size: 3,
-            };
-
+            let stream = test::Channel::new();
             let message1 = Auth {
                 user_id: 5,
                 access_token: "the-access-token".into(),
@@ -191,7 +169,7 @@ mod tests {
             }
             .into_envelope(5, None, None);
 
-            let mut message_stream = MessageStream::new(byte_stream);
+            let mut message_stream = MessageStream::new(stream);
             message_stream.write_message(&message1).await.unwrap();
             message_stream.write_message(&message2).await.unwrap();
             let decoded_message1 = message_stream.read_message().await.unwrap();
@@ -199,48 +177,5 @@ mod tests {
             assert_eq!(decoded_message1, message1);
             assert_eq!(decoded_message2, message2);
         });
-    }
-
-    struct ChunkedStream {
-        bytes: Vec<u8>,
-        read_offset: usize,
-        chunk_size: usize,
-    }
-
-    impl AsyncWrite for ChunkedStream {
-        fn poll_write(
-            mut self: Pin<&mut Self>,
-            _: &mut Context<'_>,
-            buf: &[u8],
-        ) -> Poll<io::Result<usize>> {
-            let bytes_written = buf.len().min(self.chunk_size);
-            self.bytes.extend_from_slice(&buf[0..bytes_written]);
-            Poll::Ready(Ok(bytes_written))
-        }
-
-        fn poll_flush(self: Pin<&mut Self>, _: &mut Context<'_>) -> Poll<io::Result<()>> {
-            Poll::Ready(Ok(()))
-        }
-
-        fn poll_close(self: Pin<&mut Self>, _: &mut Context<'_>) -> Poll<io::Result<()>> {
-            Poll::Ready(Ok(()))
-        }
-    }
-
-    impl AsyncRead for ChunkedStream {
-        fn poll_read(
-            mut self: Pin<&mut Self>,
-            _: &mut Context<'_>,
-            buf: &mut [u8],
-        ) -> Poll<io::Result<usize>> {
-            let bytes_read = buf
-                .len()
-                .min(self.chunk_size)
-                .min(self.bytes.len() - self.read_offset);
-            let end_offset = self.read_offset + bytes_read;
-            buf[0..bytes_read].copy_from_slice(&self.bytes[self.read_offset..end_offset]);
-            self.read_offset = end_offset;
-            Poll::Ready(Ok(bytes_read))
-        }
     }
 }

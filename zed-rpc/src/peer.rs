@@ -1,7 +1,12 @@
 use crate::proto::{self, EnvelopedMessage, MessageStream, RequestMessage};
 use anyhow::{anyhow, Context, Result};
 use async_lock::{Mutex, RwLock};
-use futures::{future::BoxFuture, AsyncRead, AsyncWrite, FutureExt};
+use async_tungstenite::tungstenite::{Error as WebSocketError, Message as WebSocketMessage};
+use futures::{
+    future::BoxFuture,
+    stream::{SplitSink, SplitStream},
+    FutureExt, StreamExt,
+};
 use postage::{
     mpsc,
     prelude::{Sink, Stream},
@@ -72,13 +77,13 @@ struct Connection {
     response_channels: ResponseChannels,
 }
 
-pub struct ConnectionHandler<Conn> {
+pub struct ConnectionHandler<W, R> {
     peer: Arc<Peer>,
     connection_id: ConnectionId,
     response_channels: ResponseChannels,
     outgoing_rx: mpsc::Receiver<proto::Envelope>,
-    reader: MessageStream<Conn>,
-    writer: MessageStream<Conn>,
+    writer: MessageStream<W>,
+    reader: MessageStream<R>,
 }
 
 type ResponseChannels = Arc<Mutex<HashMap<u32, mpsc::Sender<proto::Envelope>>>>;
@@ -131,10 +136,16 @@ impl Peer {
     pub async fn add_connection<Conn>(
         self: &Arc<Self>,
         conn: Conn,
-    ) -> (ConnectionId, ConnectionHandler<Conn>)
+    ) -> (
+        ConnectionId,
+        ConnectionHandler<SplitSink<Conn, WebSocketMessage>, SplitStream<Conn>>,
+    )
     where
-        Conn: Clone + AsyncRead + AsyncWrite + Unpin + Send + 'static,
+        Conn: futures::Sink<WebSocketMessage, Error = WebSocketError>
+            + futures::Stream<Item = Result<WebSocketMessage, WebSocketError>>
+            + Unpin,
     {
+        let (tx, rx) = conn.split();
         let connection_id = ConnectionId(
             self.next_connection_id
                 .fetch_add(1, atomic::Ordering::SeqCst),
@@ -150,8 +161,8 @@ impl Peer {
             connection_id,
             response_channels: connection.response_channels.clone(),
             outgoing_rx,
-            reader: MessageStream::new(conn.clone()),
-            writer: MessageStream::new(conn),
+            writer: MessageStream::new(tx),
+            reader: MessageStream::new(rx),
         };
         self.connections
             .write()
@@ -291,9 +302,10 @@ impl Peer {
     }
 }
 
-impl<Conn> ConnectionHandler<Conn>
+impl<W, R> ConnectionHandler<W, R>
 where
-    Conn: Clone + AsyncRead + AsyncWrite + Unpin + Send + 'static,
+    W: futures::Sink<WebSocketMessage, Error = WebSocketError> + Unpin,
+    R: futures::Stream<Item = Result<WebSocketMessage, WebSocketError>> + Unpin,
 {
     pub async fn run(mut self) -> Result<()> {
         loop {
@@ -402,38 +414,25 @@ impl fmt::Display for PeerId {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::test;
     use postage::oneshot;
-    use smol::{
-        io::AsyncWriteExt,
-        net::unix::{UnixListener, UnixStream},
-    };
-    use std::io;
-    use tempdir::TempDir;
 
     #[test]
     fn test_request_response() {
         smol::block_on(async move {
-            // create socket
-            let socket_dir_path = TempDir::new("test-request-response").unwrap();
-            let socket_path = socket_dir_path.path().join("test.sock");
-            let listener = UnixListener::bind(&socket_path).unwrap();
-
             // create 2 clients connected to 1 server
             let server = Peer::new();
             let client1 = Peer::new();
             let client2 = Peer::new();
-            let (client1_conn_id, task1) = client1
-                .add_connection(UnixStream::connect(&socket_path).await.unwrap())
-                .await;
-            let (client2_conn_id, task2) = client2
-                .add_connection(UnixStream::connect(&socket_path).await.unwrap())
-                .await;
-            let (_, task3) = server
-                .add_connection(listener.accept().await.unwrap().0)
-                .await;
-            let (_, task4) = server
-                .add_connection(listener.accept().await.unwrap().0)
-                .await;
+
+            let (client1_to_server_conn, server_to_client_1_conn) = test::Channel::bidirectional();
+            let (client1_conn_id, task1) = client1.add_connection(client1_to_server_conn).await;
+            let (_, task2) = server.add_connection(server_to_client_1_conn).await;
+
+            let (client2_to_server_conn, server_to_client_2_conn) = test::Channel::bidirectional();
+            let (client2_conn_id, task3) = client2.add_connection(client2_to_server_conn).await;
+            let (_, task4) = server.add_connection(server_to_client_2_conn).await;
+
             smol::spawn(task1.run()).detach();
             smol::spawn(task2.run()).detach();
             smol::spawn(task3.run()).detach();
@@ -553,11 +552,7 @@ mod tests {
     #[test]
     fn test_disconnect() {
         smol::block_on(async move {
-            let socket_dir_path = TempDir::new("drop-client").unwrap();
-            let socket_path = socket_dir_path.path().join(".sock");
-            let listener = UnixListener::bind(&socket_path).unwrap();
-            let client_conn = UnixStream::connect(&socket_path).await.unwrap();
-            let (mut server_conn, _) = listener.accept().await.unwrap();
+            let (client_conn, mut server_conn) = test::Channel::bidirectional();
 
             let client = Peer::new();
             let (connection_id, handler) = client.add_connection(client_conn).await;
@@ -571,20 +566,19 @@ mod tests {
             client.disconnect(connection_id).await;
 
             incoming_messages_ended_rx.recv().await;
-
-            let err = server_conn.write(&[]).await.unwrap_err();
-            assert_eq!(err.kind(), io::ErrorKind::BrokenPipe);
+            assert!(
+                futures::SinkExt::send(&mut server_conn, WebSocketMessage::Binary(vec![]))
+                    .await
+                    .is_err()
+            );
         });
     }
 
     #[test]
     fn test_io_error() {
         smol::block_on(async move {
-            let socket_dir_path = TempDir::new("io-error").unwrap();
-            let socket_path = socket_dir_path.path().join(".sock");
-            let _listener = UnixListener::bind(&socket_path).unwrap();
-            let mut client_conn = UnixStream::connect(&socket_path).await.unwrap();
-            client_conn.close().await.unwrap();
+            let (client_conn, server_conn) = test::Channel::bidirectional();
+            drop(server_conn);
 
             let client = Peer::new();
             let (connection_id, handler) = client.add_connection(client_conn).await;
