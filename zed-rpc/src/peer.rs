@@ -1,11 +1,7 @@
 use crate::proto::{self, EnvelopedMessage, MessageStream, RequestMessage};
 use anyhow::{anyhow, Context, Result};
 use async_lock::{Mutex, RwLock};
-use futures::{
-    future::BoxFuture,
-    io::{ReadHalf, WriteHalf},
-    AsyncRead, AsyncReadExt, AsyncWrite, FutureExt,
-};
+use futures::{future::BoxFuture, AsyncRead, AsyncWrite, FutureExt};
 use postage::{
     mpsc,
     prelude::{Sink, Stream},
@@ -76,13 +72,13 @@ struct Connection {
     response_channels: ResponseChannels,
 }
 
-pub struct ConnectionHandler<ReadConn, WriteConn> {
+pub struct ConnectionHandler<Conn> {
     peer: Arc<Peer>,
     connection_id: ConnectionId,
     response_channels: ResponseChannels,
     outgoing_rx: mpsc::Receiver<proto::Envelope>,
-    reader: MessageStream<ReadConn>,
-    writer: MessageStream<WriteConn>,
+    reader: MessageStream<Conn>,
+    writer: MessageStream<Conn>,
 }
 
 type ResponseChannels = Arc<Mutex<HashMap<u32, mpsc::Sender<proto::Envelope>>>>;
@@ -135,12 +131,9 @@ impl Peer {
     pub async fn add_connection<Conn>(
         self: &Arc<Self>,
         conn: Conn,
-    ) -> (
-        ConnectionId,
-        ConnectionHandler<ReadHalf<Conn>, WriteHalf<Conn>>,
-    )
+    ) -> (ConnectionId, ConnectionHandler<Conn>)
     where
-        Conn: AsyncRead + AsyncWrite + Unpin + Send + 'static,
+        Conn: Clone + AsyncRead + AsyncWrite + Unpin + Send + 'static,
     {
         let connection_id = ConnectionId(
             self.next_connection_id
@@ -152,15 +145,13 @@ impl Peer {
             next_message_id: Default::default(),
             response_channels: Default::default(),
         };
-
-        let (read_conn, write_conn) = conn.split();
         let handler = ConnectionHandler {
             peer: self.clone(),
             connection_id,
             response_channels: connection.response_channels.clone(),
             outgoing_rx,
-            reader: MessageStream::new(read_conn),
-            writer: MessageStream::new(write_conn),
+            reader: MessageStream::new(conn.clone()),
+            writer: MessageStream::new(conn),
         };
         self.connections
             .write()
@@ -300,10 +291,9 @@ impl Peer {
     }
 }
 
-impl<ReadConn, WriteConn> ConnectionHandler<ReadConn, WriteConn>
+impl<Conn> ConnectionHandler<Conn>
 where
-    ReadConn: AsyncRead + Unpin + Send + 'static,
-    WriteConn: AsyncWrite + Unpin + Send + 'static,
+    Conn: Clone + AsyncRead + AsyncWrite + Unpin + Send + 'static,
 {
     pub async fn run(mut self) -> Result<()> {
         loop {

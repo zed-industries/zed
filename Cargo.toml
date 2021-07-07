@@ -9,7 +9,6 @@ tree-sitter = { git = "https://github.com/tree-sitter/tree-sitter", rev = "d7277
 cocoa = { git = "https://github.com/servo/core-foundation-rs", rev = "025dcb3c0d1ef01530f57ef65f3b1deb948f5737" }
 cocoa-foundation = { git = "https://github.com/servo/core-foundation-rs", rev = "025dcb3c0d1ef01530f57ef65f3b1deb948f5737" }
 core-foundation = { git = "https://github.com/servo/core-foundation-rs", rev = "025dcb3c0d1ef01530f57ef65f3b1deb948f5737" }
-core-foundation-sys = { git = "https://github.com/servo/core-foundation-rs", rev = "025dcb3c0d1ef01530f57ef65f3b1deb948f5737" }
 core-graphics = { git = "https://github.com/servo/core-foundation-rs", rev = "025dcb3c0d1ef01530f57ef65f3b1deb948f5737" }
 
 [profile.dev]
