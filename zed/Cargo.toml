@@ -19,8 +19,7 @@ test-support = ["tempdir", "serde_json"]
 [dependencies]
 anyhow = "1.0.38"
 arrayvec = "0.5.2"
-async-native-tls = "0.3"
-async-tungstenite = "0.14"
+async-tungstenite = { version="0.14", features=["async-tls"] }
 crossbeam-channel = "0.5.0"
 ctor = "0.1.20"
 dirs = "3.0"

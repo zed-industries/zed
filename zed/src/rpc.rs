@@ -1,6 +1,5 @@
 use crate::{language::LanguageRegistry, worktree::Worktree};
 use anyhow::{anyhow, Context, Result};
-use async_native_tls::TlsConnector;
 use gpui::executor::Background;
 use gpui::{AsyncAppContext, ModelHandle, Task, WeakModelHandle};
 use lazy_static::lazy_static;
@@ -105,12 +104,12 @@ impl Client {
     ) -> surf::Result<()> {
         let connection_id = if let Some(host) = server_url.strip_prefix("https://") {
             let stream = smol::net::TcpStream::connect(host).await?;
-            let stream = TlsConnector::new()
-                .use_sni(true)
-                .connect(host, stream)
-                .await?;
-            let (stream, _) =
-                async_tungstenite::client_async(format!("wss://{}/rpc", host), stream).await?;
+            let (stream, _) = async_tungstenite::async_tls::client_async_tls(
+                format!("wss://{}/rpc", host),
+                stream,
+            )
+            .await
+            .context("websocket handshake")?;
             log::info!("connected to rpc address {}", &*ZED_SERVER_URL);
             let (connection_id, handler) = self.peer.add_connection(stream).await;
             executor
