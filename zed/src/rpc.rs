@@ -1,6 +1,6 @@
-use super::util::SurfResultExt as _;
 use crate::{language::LanguageRegistry, worktree::Worktree};
 use anyhow::{anyhow, Context, Result};
+use async_native_tls::TlsConnector;
 use gpui::executor::Background;
 use gpui::{AsyncAppContext, ModelHandle, Task, WeakModelHandle};
 use lazy_static::lazy_static;
@@ -13,12 +13,12 @@ use surf::Url;
 pub use zed_rpc::{proto, ConnectionId, PeerId, TypedEnvelope};
 use zed_rpc::{
     proto::{EnvelopedMessage, RequestMessage},
-    rest, Peer, Receipt,
+    Peer, Receipt,
 };
 
 lazy_static! {
     static ref ZED_SERVER_URL: String =
-        std::env::var("ZED_SERVER_URL").unwrap_or("https://zed.dev".to_string());
+        std::env::var("ZED_SERVER_URL").unwrap_or("https://zed.dev:443".to_string());
 }
 
 #[derive(Clone)]
@@ -86,42 +86,46 @@ impl Client {
         }
 
         let (user_id, access_token) = Self::login(cx.platform(), &cx.background()).await?;
-
-        let mut response = surf::get(format!(
-            "{}{}",
-            *ZED_SERVER_URL,
-            &rest::GET_RPC_ADDRESS_PATH
-        ))
-        .header(
-            "Authorization",
-            http_auth_basic::Credentials::new(&user_id, &access_token).as_http_header(),
+        self.connect(
+            &ZED_SERVER_URL,
+            user_id.parse()?,
+            access_token,
+            &cx.background(),
         )
-        .await
-        .context("rpc address request failed")?;
-
-        let rest::GetRpcAddressResponse { address } = response
-            .body_json()
-            .await
-            .context("failed to parse rpc address response")?;
-
-        self.connect(&address, user_id.parse()?, access_token, &cx.background())
-            .await
+        .await?;
+        Ok(())
     }
 
     pub async fn connect(
         &self,
-        address: &str,
+        server_url: &str,
         user_id: i32,
         access_token: String,
         executor: &Arc<Background>,
     ) -> surf::Result<()> {
-        // TODO - If the `ZED_SERVER_URL` uses https, then wrap this stream in
-        // a TLS stream using `native-tls`.
-        let stream = smol::net::TcpStream::connect(&address).await?;
-        log::info!("connected to rpc address {}", address);
-
-        let (connection_id, handler) = self.peer.add_connection(stream).await;
-        executor.spawn(handler.run()).detach();
+        let connection_id = if let Some(host) = server_url.strip_prefix("https://") {
+            let stream = smol::net::TcpStream::connect(host).await?;
+            let stream = TlsConnector::new()
+                .use_sni(true)
+                .connect(host, stream)
+                .await?;
+            let (stream, _) =
+                async_tungstenite::client_async(format!("wss://{}/rpc", host), stream).await?;
+            log::info!("connected to rpc address {}", &*ZED_SERVER_URL);
+            let (connection_id, handler) = self.peer.add_connection(stream).await;
+            executor.spawn(handler.run()).detach();
+            connection_id
+        } else if let Some(host) = server_url.strip_prefix("http://") {
+            let stream = smol::net::TcpStream::connect(host).await?;
+            let (stream, _) =
+                async_tungstenite::client_async(format!("ws://{}/rpc", host), stream).await?;
+            log::info!("connected to rpc address {}", &*ZED_SERVER_URL);
+            let (connection_id, handler) = self.peer.add_connection(stream).await;
+            executor.spawn(handler.run()).detach();
+            connection_id
+        } else {
+            return Err(anyhow!("invalid server url: {}", server_url))?;
+        };
 
         let auth_response = self
             .peer
