@@ -705,7 +705,7 @@ impl Workspace {
 
         cx.spawn(|_, _| async move {
             if let Err(e) = task.await {
-                log::error!("sharing failed: {}", e);
+                log::error!("sharing failed: {:?}", e);
             }
         })
         .detach();

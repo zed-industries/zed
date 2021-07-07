@@ -113,7 +113,13 @@ impl Client {
                 async_tungstenite::client_async(format!("wss://{}/rpc", host), stream).await?;
             log::info!("connected to rpc address {}", &*ZED_SERVER_URL);
             let (connection_id, handler) = self.peer.add_connection(stream).await;
-            executor.spawn(handler.run()).detach();
+            executor
+                .spawn(async move {
+                    if let Err(error) = handler.run().await {
+                        log::error!("connection error: {:?}", error);
+                    }
+                })
+                .detach();
             connection_id
         } else if let Some(host) = server_url.strip_prefix("http://") {
             let stream = smol::net::TcpStream::connect(host).await?;
@@ -121,7 +127,13 @@ impl Client {
                 async_tungstenite::client_async(format!("ws://{}/rpc", host), stream).await?;
             log::info!("connected to rpc address {}", &*ZED_SERVER_URL);
             let (connection_id, handler) = self.peer.add_connection(stream).await;
-            executor.spawn(handler.run()).detach();
+            executor
+                .spawn(async move {
+                    if let Err(error) = handler.run().await {
+                        log::error!("connection error: {:?}", error);
+                    }
+                })
+                .detach();
             connection_id
         } else {
             return Err(anyhow!("invalid server url: {}", server_url))?;
