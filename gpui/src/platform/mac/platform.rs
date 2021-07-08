@@ -7,7 +7,7 @@ use cocoa::{
         NSEventModifierFlags, NSMenu, NSMenuItem, NSModalResponse, NSOpenPanel, NSPasteboard,
         NSPasteboardTypeString, NSSavePanel, NSWindow,
     },
-    base::{id, nil, selector},
+    base::{id, nil, selector, YES},
     foundation::{NSArray, NSAutoreleasePool, NSData, NSInteger, NSString, NSURL},
 };
 use core_foundation::{
@@ -244,11 +244,10 @@ impl platform::ForegroundPlatform for MacForegroundPlatform {
                     let urls = panel.URLs();
                     for i in 0..urls.count() {
                         let url = urls.objectAtIndex(i);
-                        let string = url.absoluteString();
-                        let string = std::ffi::CStr::from_ptr(string.UTF8String())
-                            .to_string_lossy()
-                            .to_string();
-                        if let Some(path) = string.strip_prefix("file://") {
+                        if url.isFileURL() == YES {
+                            let path = std::ffi::CStr::from_ptr(url.path().UTF8String())
+                                .to_string_lossy()
+                                .to_string();
                             result.push(PathBuf::from(path));
                         }
                     }
@@ -281,11 +280,10 @@ impl platform::ForegroundPlatform for MacForegroundPlatform {
             let block = ConcreteBlock::new(move |response: NSModalResponse| {
                 let result = if response == NSModalResponse::NSModalResponseOk {
                     let url = panel.URL();
-                    let string = url.absoluteString();
-                    let string = std::ffi::CStr::from_ptr(string.UTF8String())
-                        .to_string_lossy()
-                        .to_string();
-                    if let Some(path) = string.strip_prefix("file://") {
+                    if url.isFileURL() == YES {
+                        let path = std::ffi::CStr::from_ptr(url.path().UTF8String())
+                            .to_string_lossy()
+                            .to_string();
                         Some(PathBuf::from(path))
                     } else {
                         None
