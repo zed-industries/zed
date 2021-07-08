@@ -119,6 +119,7 @@ impl App {
         let foreground = Rc::new(executor::Foreground::test());
         let cx = Rc::new(RefCell::new(MutableAppContext::new(
             foreground,
+            Arc::new(executor::Background::new()),
             Arc::new(platform),
             Rc::new(foreground_platform),
             (),
@@ -134,6 +135,7 @@ impl App {
         let foreground = Rc::new(executor::Foreground::platform(platform.dispatcher())?);
         let app = Self(Rc::new(RefCell::new(MutableAppContext::new(
             foreground,
+            Arc::new(executor::Background::new()),
             platform.clone(),
             foreground_platform.clone(),
             asset_source,
@@ -237,11 +239,16 @@ impl App {
 }
 
 impl TestAppContext {
-    pub fn new(foreground: Rc<executor::Foreground>, first_entity_id: usize) -> Self {
+    pub fn new(
+        foreground: Rc<executor::Foreground>,
+        background: Arc<executor::Background>,
+        first_entity_id: usize,
+    ) -> Self {
         let platform = Arc::new(platform::test::platform());
         let foreground_platform = Rc::new(platform::test::foreground_platform());
         let mut cx = MutableAppContext::new(
             foreground.clone(),
+            background,
             platform,
             foreground_platform.clone(),
             (),
@@ -566,6 +573,7 @@ pub struct MutableAppContext {
 impl MutableAppContext {
     fn new(
         foreground: Rc<executor::Foreground>,
+        background: Arc<executor::Background>,
         platform: Arc<dyn platform::Platform>,
         foreground_platform: Rc<dyn platform::ForegroundPlatform>,
         asset_source: impl AssetSource,
@@ -582,7 +590,7 @@ impl MutableAppContext {
                 windows: Default::default(),
                 values: Default::default(),
                 ref_counts: Arc::new(Mutex::new(RefCounts::default())),
-                background: Arc::new(executor::Background::new()),
+                background,
                 thread_pool: scoped_pool::Pool::new(num_cpus::get(), "app"),
                 font_cache: Arc::new(FontCache::new(fonts)),
             },

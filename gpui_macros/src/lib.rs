@@ -11,6 +11,7 @@ pub fn test(args: TokenStream, function: TokenStream) -> TokenStream {
 
     let args = syn::parse_macro_input!(args as AttributeArgs);
     let mut max_retries = 0;
+    let mut iterations = 1;
     for arg in args {
         match arg {
             NestedMeta::Meta(Meta::Path(name))
@@ -19,9 +20,14 @@ pub fn test(args: TokenStream, function: TokenStream) -> TokenStream {
                 namespace = format_ident!("crate");
             }
             NestedMeta::Meta(Meta::NameValue(meta)) => {
-                if let Some(result) = parse_retries(&meta) {
+                if let Some(result) = parse_int_meta(&meta, "retries") {
                     match result {
-                        Ok(retries) => max_retries = retries,
+                        Ok(value) => max_retries = value,
+                        Err(error) => return TokenStream::from(error.into_compile_error()),
+                    }
+                } else if let Some(result) = parse_int_meta(&meta, "iterations") {
+                    match result {
+                        Ok(value) => iterations = value,
                         Err(error) => return TokenStream::from(error.into_compile_error()),
                     }
                 }
@@ -44,7 +50,7 @@ pub fn test(args: TokenStream, function: TokenStream) -> TokenStream {
     let inner_fn_args = (0..inner_fn.sig.inputs.len())
         .map(|i| {
             let first_entity_id = i * 100_000;
-            quote!(#namespace::TestAppContext::new(foreground.clone(), #first_entity_id),)
+            quote!(#namespace::TestAppContext::new(foreground.clone(), background.clone(), #first_entity_id),)
         })
         .collect::<proc_macro2::TokenStream>();
 
@@ -54,29 +60,34 @@ pub fn test(args: TokenStream, function: TokenStream) -> TokenStream {
             fn #outer_fn_name() {
                 #inner_fn
 
-                if #max_retries > 0 {
-                    let mut retries = 0;
-                    loop {
-                        let result = std::panic::catch_unwind(|| {
-                            let foreground = ::std::rc::Rc::new(#namespace::executor::Foreground::test());
-                            #namespace::block_on(foreground.run(#inner_fn_name(#inner_fn_args)));
-                        });
+                let mut retries = 0;
+                let mut seed = 0;
+                loop {
+                    let result = std::panic::catch_unwind(|| {
+                        let (foreground, background) = #namespace::executor::deterministic(seed as u64);
+                        foreground.run(#inner_fn_name(#inner_fn_args));
+                    });
 
-                        match result {
-                            Ok(result) => return result,
-                            Err(error) => {
-                                if retries < #max_retries {
-                                    retries += 1;
-                                    println!("retrying: attempt {}", retries);
-                                } else {
-                                    std::panic::resume_unwind(error);
+                    match result {
+                        Ok(result) => {
+                            seed += 1;
+                            retries = 0;
+                            if seed == #iterations {
+                                return result
+                            }
+                        }
+                        Err(error) => {
+                            if retries < #max_retries {
+                                retries += 1;
+                                println!("retrying: attempt {}", retries);
+                            } else {
+                                if #iterations > 1 {
+                                    eprintln!("failing seed: {}", seed);
                                 }
+                                std::panic::resume_unwind(error);
                             }
                         }
                     }
-                } else {
-                    let foreground = ::std::rc::Rc::new(#namespace::executor::Foreground::test());
-                    #namespace::block_on(foreground.run(#inner_fn_name(#inner_fn_args)));
                 }
             }
         }
@@ -120,15 +131,15 @@ pub fn test(args: TokenStream, function: TokenStream) -> TokenStream {
     TokenStream::from(quote!(#outer_fn))
 }
 
-fn parse_retries(meta: &MetaNameValue) -> Option<syn::Result<usize>> {
+fn parse_int_meta(meta: &MetaNameValue, name: &str) -> Option<syn::Result<usize>> {
     let ident = meta.path.get_ident();
-    if ident.map_or(false, |n| n == "retries") {
+    if ident.map_or(false, |n| n == name) {
         if let Lit::Int(int) = &meta.lit {
             Some(int.base10_parse())
         } else {
             Some(Err(syn::Error::new(
                 meta.lit.span(),
-                "retries mut be an integer",
+                format!("{} mut be an integer", name),
             )))
         }
     } else {
