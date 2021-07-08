@@ -666,7 +666,10 @@ impl Buffer {
         self.file.as_mut()
     }
 
-    pub fn save(&mut self, cx: &mut ModelContext<Self>) -> Result<Task<Result<time::Global>>> {
+    pub fn save(
+        &mut self,
+        cx: &mut ModelContext<Self>,
+    ) -> Result<Task<Result<(time::Global, SystemTime)>>> {
         let file = self
             .file
             .as_ref()
@@ -675,11 +678,11 @@ impl Buffer {
         let version = self.version.clone();
         let save = file.save(self.remote_id, text, version, cx.as_mut());
         Ok(cx.spawn(|this, mut cx| async move {
-            let version = save.await?;
+            let (version, mtime) = save.await?;
             this.update(&mut cx, |this, cx| {
-                this.did_save(version.clone(), cx).unwrap();
+                this.did_save(version.clone(), mtime, cx);
             });
-            Ok(version)
+            Ok((version, mtime))
         }))
     }
 
@@ -702,22 +705,23 @@ impl Buffer {
         cx.spawn(|this, mut cx| async move {
             save_as.await.map(|new_file| {
                 this.update(&mut cx, |this, cx| {
+                    let mtime = new_file.mtime;
                     this.file = Some(new_file);
-                    this.did_save(version, cx).unwrap();
+                    this.did_save(version, mtime, cx);
                 });
             })
         })
     }
 
-    pub fn did_save(&mut self, version: time::Global, cx: &mut ModelContext<Self>) -> Result<()> {
-        if let Some(file) = self.file.as_ref() {
-            self.saved_mtime = file.mtime;
-            self.saved_version = version;
-            cx.emit(Event::Saved);
-            Ok(())
-        } else {
-            Err(anyhow!("buffer has no file"))
-        }
+    pub fn did_save(
+        &mut self,
+        version: time::Global,
+        mtime: SystemTime,
+        cx: &mut ModelContext<Self>,
+    ) {
+        self.saved_mtime = mtime;
+        self.saved_version = version;
+        cx.emit(Event::Saved);
     }
 
     pub fn file_updated(
@@ -3235,7 +3239,7 @@ mod tests {
             assert!(buffer.is_dirty());
             assert_eq!(*events.borrow(), &[Event::Edited, Event::Dirtied]);
             events.borrow_mut().clear();
-            buffer.did_save(buffer.version(), cx).unwrap();
+            buffer.did_save(buffer.version(), buffer.file().unwrap().mtime, cx);
         });
 
         // after saving, the buffer is not dirty, and emits a saved event.

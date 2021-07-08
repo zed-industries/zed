@@ -386,7 +386,13 @@ impl Worktree {
                 .and_then(|buf| buf.upgrade(&cx))
             {
                 buffer.update(cx, |buffer, cx| {
-                    buffer.did_save(message.version.try_into()?, cx)
+                    let version = message.version.try_into()?;
+                    let mtime = message
+                        .mtime
+                        .ok_or_else(|| anyhow!("missing mtime"))?
+                        .into();
+                    buffer.did_save(version, mtime, cx);
+                    Result::<_, anyhow::Error>::Ok(())
                 })?;
             }
             Ok(())
@@ -1423,22 +1429,23 @@ impl File {
         text: Rope,
         version: time::Global,
         cx: &mut MutableAppContext,
-    ) -> Task<Result<time::Global>> {
+    ) -> Task<Result<(time::Global, SystemTime)>> {
         self.worktree.update(cx, |worktree, cx| match worktree {
             Worktree::Local(worktree) => {
                 let rpc = worktree.rpc.clone();
                 let save = worktree.save(self.path.clone(), text, cx);
                 cx.spawn(|_, _| async move {
-                    save.await?;
+                    let entry = save.await?;
                     if let Some((rpc, worktree_id)) = rpc {
                         rpc.send(proto::BufferSaved {
                             worktree_id,
                             buffer_id,
                             version: (&version).into(),
+                            mtime: Some(entry.mtime.into()),
                         })
                         .await?;
                     }
-                    Ok(version)
+                    Ok((version, entry.mtime))
                 })
             }
             Worktree::Remote(worktree) => {
@@ -1451,7 +1458,12 @@ impl File {
                             buffer_id,
                         })
                         .await?;
-                    Ok(response.version.try_into()?)
+                    let version = response.version.try_into()?;
+                    let mtime = response
+                        .mtime
+                        .ok_or_else(|| anyhow!("missing mtime"))?
+                        .into();
+                    Ok((version, mtime))
                 })
             }
         })
@@ -2477,13 +2489,14 @@ mod remote {
                 .and_then(|shared_buffers| shared_buffers.get(&envelope.payload.buffer_id).cloned())
                 .ok_or_else(|| anyhow!("unknown buffer id {}", envelope.payload.buffer_id))
         })?;
-        let version = buffer.update(cx, |buffer, cx| buffer.save(cx))?.await?;
+        let (version, mtime) = buffer.update(cx, |buffer, cx| buffer.save(cx))?.await?;
         rpc.respond(
             envelope.receipt(),
             proto::BufferSaved {
                 worktree_id: envelope.payload.worktree_id,
                 buffer_id: envelope.payload.buffer_id,
                 version: (&version).into(),
+                mtime: Some(mtime.into()),
             },
         )
         .await?;
