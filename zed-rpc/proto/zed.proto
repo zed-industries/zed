@@ -109,6 +109,7 @@ message BufferSaved {
     uint64 worktree_id = 1;
     uint64 buffer_id = 2;
     repeated VectorClockEntry version = 3;
+    Timestamp mtime = 4;
 }
 
 message User {
