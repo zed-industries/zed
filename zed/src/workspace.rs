@@ -501,7 +501,8 @@ impl Workspace {
         let buffer_view =
             cx.add_view(|cx| Editor::for_buffer(buffer.clone(), self.settings.clone(), cx));
         self.items.push(ItemHandle::downgrade(&buffer));
-        self.add_item_view(Box::new(buffer_view), cx);
+        self.active_pane()
+            .add_item_view(Box::new(buffer_view), cx.as_mut());
     }
 
     #[must_use]
@@ -510,38 +511,8 @@ impl Workspace {
         entry: (usize, Arc<Path>),
         cx: &mut ViewContext<Self>,
     ) -> Option<Task<()>> {
-        // If the active pane contains a view for this file, then activate
-        // that item view.
-        if self
-            .active_pane()
-            .update(cx, |pane, cx| pane.activate_entry(entry.clone(), cx))
-        {
-            return None;
-        }
-
-        // Otherwise, if this file is already open somewhere in the workspace,
-        // then add another view for it.
-        let settings = self.settings.clone();
-        let mut view_for_existing_item = None;
-        self.items.retain(|item| {
-            if item.alive(cx.as_ref()) {
-                if view_for_existing_item.is_none()
-                    && item
-                        .file(cx.as_ref())
-                        .map_or(false, |file| file.entry_id() == entry)
-                {
-                    view_for_existing_item = Some(
-                        item.add_view(cx.window_id(), settings.clone(), cx.as_mut())
-                            .unwrap(),
-                    );
-                }
-                true
-            } else {
-                false
-            }
-        });
-        if let Some(view) = view_for_existing_item {
-            self.add_item_view(view, cx);
+        let pane = self.active_pane().clone();
+        if self.activate_or_open_existing_entry(entry.clone(), &pane, cx) {
             return None;
         }
 
@@ -575,6 +546,8 @@ impl Workspace {
                 .detach();
         }
 
+        let pane = pane.downgrade();
+        let settings = self.settings.clone();
         let mut watch = self.loading_items.get(&entry).unwrap().clone();
 
         Some(cx.spawn(|this, mut cx| async move {
@@ -587,21 +560,69 @@ impl Workspace {
 
             this.update(&mut cx, |this, cx| {
                 this.loading_items.remove(&entry);
-                match load_result {
-                    Ok(item) => {
-                        let weak_item = item.downgrade();
-                        let view = weak_item
-                            .add_view(cx.window_id(), settings, cx.as_mut())
-                            .unwrap();
-                        this.items.push(weak_item);
-                        this.add_item_view(view, cx);
-                    }
-                    Err(error) => {
-                        log::error!("error opening item: {}", error);
+                if let Some(pane) = pane.upgrade(&cx) {
+                    match load_result {
+                        Ok(item) => {
+                            // By the time loading finishes, the entry could have been already added
+                            // to the pane. If it was, we activate it, otherwise we'll store the
+                            // item and add a new view for it.
+                            if !this.activate_or_open_existing_entry(entry, &pane, cx) {
+                                let weak_item = item.downgrade();
+                                let view = weak_item
+                                    .add_view(cx.window_id(), settings, cx.as_mut())
+                                    .unwrap();
+                                this.items.push(weak_item);
+                                pane.add_item_view(view, cx.as_mut());
+                            }
+                        }
+                        Err(error) => {
+                            log::error!("error opening item: {}", error);
+                        }
                     }
                 }
             })
         }))
+    }
+
+    fn activate_or_open_existing_entry(
+        &mut self,
+        entry: (usize, Arc<Path>),
+        pane: &ViewHandle<Pane>,
+        cx: &mut ViewContext<Self>,
+    ) -> bool {
+        // If the pane contains a view for this file, then activate
+        // that item view.
+        if pane.update(cx, |pane, cx| pane.activate_entry(entry.clone(), cx)) {
+            return true;
+        }
+
+        // Otherwise, if this file is already open somewhere in the workspace,
+        // then add another view for it.
+        let settings = self.settings.clone();
+        let mut view_for_existing_item = None;
+        self.items.retain(|item| {
+            if item.alive(cx.as_ref()) {
+                if view_for_existing_item.is_none()
+                    && item
+                        .file(cx.as_ref())
+                        .map_or(false, |file| file.entry_id() == entry)
+                {
+                    view_for_existing_item = Some(
+                        item.add_view(cx.window_id(), settings.clone(), cx.as_mut())
+                            .unwrap(),
+                    );
+                }
+                true
+            } else {
+                false
+            }
+        });
+        if let Some(view) = view_for_existing_item {
+            pane.add_item_view(view, cx.as_mut());
+            true
+        } else {
+            false
+        }
     }
 
     pub fn active_item(&self, cx: &ViewContext<Self>) -> Option<Box<dyn ItemViewHandle>> {
@@ -796,7 +817,7 @@ impl Workspace {
         self.activate_pane(new_pane.clone(), cx);
         if let Some(item) = pane.read(cx).active_item() {
             if let Some(clone) = item.clone_on_split(cx.as_mut()) {
-                self.add_item_view(clone, cx);
+                new_pane.add_item_view(clone, cx.as_mut());
             }
         }
         self.center
@@ -819,15 +840,6 @@ impl Workspace {
 
     pub fn active_pane(&self) -> &ViewHandle<Pane> {
         &self.active_pane
-    }
-
-    fn add_item_view(&self, item: Box<dyn ItemViewHandle>, cx: &mut ViewContext<Self>) {
-        let active_pane = self.active_pane();
-        item.set_parent_pane(&active_pane, cx.as_mut());
-        active_pane.update(cx, |pane, cx| {
-            let item_idx = pane.add_item(item, cx);
-            pane.activate_item(item_idx, cx);
-        });
     }
 }
 
@@ -1030,8 +1042,7 @@ mod tests {
             );
         });
 
-        // Open the third entry twice concurrently. Two pane items
-        // are added.
+        // Open the third entry twice concurrently. Only one pane item is added.
         let (t1, t2) = workspace.update(&mut cx, |w, cx| {
             (
                 w.open_entry(file3.clone(), cx).unwrap(),
@@ -1051,7 +1062,7 @@ mod tests {
                 .iter()
                 .map(|i| i.entry_id(cx).unwrap())
                 .collect::<Vec<_>>();
-            assert_eq!(pane_entries, &[file1, file2, file3.clone(), file3]);
+            assert_eq!(pane_entries, &[file1, file2, file3]);
         });
     }
 

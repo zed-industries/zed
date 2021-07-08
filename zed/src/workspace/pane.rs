@@ -5,7 +5,7 @@ use gpui::{
     elements::*,
     geometry::{rect::RectF, vector::vec2f},
     keymap::Binding,
-    AppContext, Border, Entity, MutableAppContext, Quad, View, ViewContext,
+    AppContext, Border, Entity, MutableAppContext, Quad, View, ViewContext, ViewHandle,
 };
 use postage::watch;
 use std::{cmp, path::Path, sync::Arc};
@@ -380,5 +380,19 @@ impl View for Pane {
 
     fn on_focus(&mut self, cx: &mut ViewContext<Self>) {
         self.focus_active_item(cx);
+    }
+}
+
+pub trait PaneHandle {
+    fn add_item_view(&self, item: Box<dyn ItemViewHandle>, cx: &mut MutableAppContext);
+}
+
+impl PaneHandle for ViewHandle<Pane> {
+    fn add_item_view(&self, item: Box<dyn ItemViewHandle>, cx: &mut MutableAppContext) {
+        item.set_parent_pane(self, cx);
+        self.update(cx, |pane, cx| {
+            let item_idx = pane.add_item(item, cx);
+            pane.activate_item(item_idx, cx);
+        });
     }
 }
