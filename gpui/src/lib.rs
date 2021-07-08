@@ -31,3 +31,4 @@ pub use presenter::{
     SizeConstraint, Vector2FExt,
 };
 pub use scoped_pool;
+pub use smol::block_on;

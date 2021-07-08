@@ -128,17 +128,6 @@ impl App {
         f(&mut *cx)
     }
 
-    pub fn test_async<T, F, Fn>(f: Fn) -> T
-    where
-        Fn: FnOnce(TestAppContext) -> F,
-        F: Future<Output = T>,
-    {
-        let foreground = Rc::new(executor::Foreground::test());
-        let cx = TestAppContext::new(foreground.clone());
-        let future = f(cx);
-        smol::block_on(foreground.run(future))
-    }
-
     pub fn new(asset_source: impl AssetSource) -> Result<Self> {
         let platform = platform::current::platform();
         let foreground_platform = platform::current::foreground_platform();
@@ -248,16 +237,18 @@ impl App {
 }
 
 impl TestAppContext {
-    pub fn new(foreground: Rc<executor::Foreground>) -> Self {
+    pub fn new(foreground: Rc<executor::Foreground>, first_entity_id: usize) -> Self {
         let platform = Arc::new(platform::test::platform());
         let foreground_platform = Rc::new(platform::test::foreground_platform());
+        let mut cx = MutableAppContext::new(
+            foreground.clone(),
+            platform,
+            foreground_platform.clone(),
+            (),
+        );
+        cx.next_entity_id = first_entity_id;
         let cx = TestAppContext {
-            cx: Rc::new(RefCell::new(MutableAppContext::new(
-                foreground.clone(),
-                platform,
-                foreground_platform.clone(),
-                (),
-            ))),
+            cx: Rc::new(RefCell::new(cx)),
             foreground_platform,
         };
         cx.cx.borrow_mut().weak_self = Some(Rc::downgrade(&cx.cx));

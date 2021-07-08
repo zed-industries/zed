@@ -38,6 +38,16 @@ pub fn test(args: TokenStream, function: TokenStream) -> TokenStream {
     let inner_fn_attributes = mem::take(&mut inner_fn.attrs);
     let inner_fn_name = format_ident!("_{}", inner_fn.sig.ident);
     let outer_fn_name = mem::replace(&mut inner_fn.sig.ident, inner_fn_name.clone());
+
+    // Pass to the test function the number of app contexts that it needs,
+    // based on its parameter list.
+    let inner_fn_args = (0..inner_fn.sig.inputs.len())
+        .map(|i| {
+            let first_entity_id = i * 100_000;
+            quote!(#namespace::TestAppContext::new(foreground.clone(), #first_entity_id),)
+        })
+        .collect::<proc_macro2::TokenStream>();
+
     let mut outer_fn: ItemFn = if inner_fn.sig.asyncness.is_some() {
         parse_quote! {
             #[test]
@@ -48,9 +58,8 @@ pub fn test(args: TokenStream, function: TokenStream) -> TokenStream {
                     let mut retries = 0;
                     loop {
                         let result = std::panic::catch_unwind(|| {
-                            #namespace::App::test_async(move |cx| async {
-                                #inner_fn_name(cx).await;
-                            });
+                            let foreground = ::std::rc::Rc::new(#namespace::executor::Foreground::test());
+                            #namespace::block_on(foreground.run(#inner_fn_name(#inner_fn_args)));
                         });
 
                         match result {
@@ -66,9 +75,8 @@ pub fn test(args: TokenStream, function: TokenStream) -> TokenStream {
                         }
                     }
                 } else {
-                    #namespace::App::test_async(move |cx| async {
-                        #inner_fn_name(cx).await;
-                    });
+                    let foreground = ::std::rc::Rc::new(#namespace::executor::Foreground::test());
+                    #namespace::block_on(foreground.run(#inner_fn_name(#inner_fn_args)));
                 }
             }
         }
