@@ -312,7 +312,7 @@ where
             let read_message = self.reader.read_message().fuse();
             futures::pin_mut!(read_message);
             loop {
-                futures::select! {
+                futures::select_biased! {
                     incoming = read_message => match incoming {
                         Ok(incoming) => {
                             Self::handle_incoming_message(incoming, &self.peer, self.connection_id, &self.response_channels).await;
