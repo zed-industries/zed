@@ -33,9 +33,16 @@ pub enum Background {
     },
 }
 
+#[derive(Default)]
+struct Runnables {
+    scheduled: Vec<Runnable>,
+    spawned_from_foreground: Vec<Runnable>,
+    waker: Option<SyncSender<()>>,
+}
+
 pub struct Deterministic {
     seed: u64,
-    runnables: Arc<Mutex<(Vec<Runnable>, Option<SyncSender<()>>)>>,
+    runnables: Arc<Mutex<Runnables>>,
 }
 
 impl Deterministic {
@@ -46,17 +53,23 @@ impl Deterministic {
         }
     }
 
-    pub fn spawn_local<F, T>(&self, future: F) -> Task<T>
+    pub fn spawn_from_foreground<F, T>(&self, future: F) -> Task<T>
     where
         T: 'static,
         F: Future<Output = T> + 'static,
     {
+        let scheduled_once = Mutex::new(false);
         let runnables = self.runnables.clone();
         let (runnable, task) = async_task::spawn_local(future, move |runnable| {
             let mut runnables = runnables.lock();
-            runnables.0.push(runnable);
-            if let Some(wake_tx) = runnables.1.as_ref() {
-                wake_tx.send(()).ok();
+            if *scheduled_once.lock() {
+                runnables.scheduled.push(runnable);
+            } else {
+                runnables.spawned_from_foreground.push(runnable);
+                *scheduled_once.lock() = true;
+            }
+            if let Some(waker) = runnables.waker.as_ref() {
+                waker.send(()).ok();
             }
         });
         runnable.schedule();
@@ -71,9 +84,9 @@ impl Deterministic {
         let runnables = self.runnables.clone();
         let (runnable, task) = async_task::spawn(future, move |runnable| {
             let mut runnables = runnables.lock();
-            runnables.0.push(runnable);
-            if let Some(wake_tx) = runnables.1.as_ref() {
-                wake_tx.send(()).ok();
+            runnables.scheduled.push(runnable);
+            if let Some(waker) = runnables.waker.as_ref() {
+                waker.send(()).ok();
             }
         });
         runnable.schedule();
@@ -87,10 +100,10 @@ impl Deterministic {
     {
         let (wake_tx, wake_rx) = std::sync::mpsc::sync_channel(32);
         let runnables = self.runnables.clone();
-        runnables.lock().1 = Some(wake_tx);
+        runnables.lock().waker = Some(wake_tx);
 
         let (output_tx, output_rx) = std::sync::mpsc::channel();
-        self.spawn_local(async move {
+        self.spawn_from_foreground(async move {
             let output = future.await;
             output_tx.send(output).unwrap();
         })
@@ -99,16 +112,21 @@ impl Deterministic {
         let mut rng = StdRng::seed_from_u64(self.seed);
         loop {
             if let Ok(value) = output_rx.try_recv() {
-                runnables.lock().1 = None;
+                runnables.lock().waker = None;
                 return value;
             }
 
             wake_rx.recv().unwrap();
             let runnable = {
                 let mut runnables = runnables.lock();
-                let runnables = &mut runnables.0;
-                let index = rng.gen_range(0..runnables.len());
-                runnables.remove(index)
+                let ix = rng.gen_range(
+                    0..runnables.scheduled.len() + runnables.spawned_from_foreground.len(),
+                );
+                if ix < runnables.scheduled.len() {
+                    runnables.scheduled.remove(ix)
+                } else {
+                    runnables.spawned_from_foreground.remove(0)
+                }
             };
 
             runnable.run();
@@ -142,7 +160,7 @@ impl Foreground {
                 task
             }
             Self::Test(executor) => executor.spawn(future),
-            Self::Deterministic(executor) => executor.spawn_local(future),
+            Self::Deterministic(executor) => executor.spawn_from_foreground(future),
         }
     }
 
