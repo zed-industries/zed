@@ -66,7 +66,7 @@ pub fn init(cx: &mut MutableAppContext, rpc: rpc::Client) {
 }
 
 #[async_trait::async_trait]
-trait Fs: Send + Sync {
+pub trait Fs: Send + Sync {
     async fn entry(
         &self,
         root_char_bag: CharBag,
@@ -83,12 +83,13 @@ trait Fs: Send + Sync {
     ) -> Result<Pin<Box<dyn 'a + Stream<Item = Result<Entry>> + Send>>>;
     async fn load(&self, path: &Path) -> Result<String>;
     async fn save(&self, path: &Path, text: &Rope) -> Result<()>;
+    async fn canonicalize(&self, path: &Path) -> Result<PathBuf>;
 }
 
-struct OsFs;
+struct ProductionFs;
 
 #[async_trait::async_trait]
-impl Fs for OsFs {
+impl Fs for ProductionFs {
     async fn entry(
         &self,
         root_char_bag: CharBag,
@@ -182,6 +183,10 @@ impl Fs for OsFs {
         }
         writer.flush().await?;
         Ok(())
+    }
+
+    async fn canonicalize(&self, path: &Path) -> Result<PathBuf> {
+        Ok(smol::fs::canonicalize(path).await?)
     }
 }
 
@@ -403,19 +408,21 @@ impl Fs for InMemoryFs {
         } else {
             let inode = state.next_inode;
             state.next_inode += 1;
-            state.entries.insert(
-                path.to_path_buf(),
-                InMemoryEntry {
-                    inode,
-                    mtime: SystemTime::now(),
-                    is_dir: false,
-                    is_symlink: false,
-                    content: Some(text.chunks().collect()),
-                },
-            );
+            let entry = InMemoryEntry {
+                inode,
+                mtime: SystemTime::now(),
+                is_dir: false,
+                is_symlink: false,
+                content: Some(text.chunks().collect()),
+            };
+            state.entries.insert(path.to_path_buf(), entry);
             state.emit_event(path).await;
             Ok(())
         }
+    }
+
+    async fn canonicalize(&self, path: &Path) -> Result<PathBuf> {
+        Ok(path.to_path_buf())
     }
 }
 
@@ -462,7 +469,7 @@ impl Worktree {
         languages: Arc<LanguageRegistry>,
         cx: &mut ModelContext<Worktree>,
     ) -> Self {
-        let fs = Arc::new(OsFs);
+        let fs = Arc::new(ProductionFs);
         let (mut tree, scan_states_tx) = LocalWorktree::new(path, languages, fs.clone(), cx);
         let (event_stream, event_stream_handle) = fsevent::EventStream::new(
             &[tree.snapshot.abs_path.as_ref()],
@@ -2169,7 +2176,7 @@ impl BackgroundScanner {
                 break;
             }
 
-            if self.process_events(events).await {
+            if !self.process_events(events).await {
                 break;
             }
 
@@ -2339,7 +2346,7 @@ impl BackgroundScanner {
         let mut snapshot = self.snapshot();
         snapshot.scan_id += 1;
 
-        let root_abs_path = if let Ok(abs_path) = snapshot.abs_path.canonicalize() {
+        let root_abs_path = if let Ok(abs_path) = self.fs.canonicalize(&snapshot.abs_path).await {
             abs_path
         } else {
             return false;
@@ -3258,7 +3265,7 @@ mod tests {
                     next_entry_id: Default::default(),
                 })),
                 notify_tx,
-                Arc::new(OsFs),
+                Arc::new(ProductionFs),
                 Arc::new(gpui::executor::Background::new()),
             );
             smol::block_on(scanner.scan_dirs()).unwrap();

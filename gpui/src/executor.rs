@@ -204,22 +204,13 @@ impl Background {
             _phantom: PhantomData,
         };
         (scheduler)(&mut scope);
-        match self {
-            Self::Deterministic(_) => {
-                for spawned in scope.futures {
-                    spawned.await;
-                }
-            }
-            Self::Production { executor, .. } => {
-                let spawned = scope
-                    .futures
-                    .into_iter()
-                    .map(|f| executor.spawn(f))
-                    .collect::<Vec<_>>();
-                for task in spawned {
-                    task.await;
-                }
-            }
+        let spawned = scope
+            .futures
+            .into_iter()
+            .map(|f| self.spawn(f))
+            .collect::<Vec<_>>();
+        for task in spawned {
+            task.await;
         }
     }
 }
