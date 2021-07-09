@@ -51,7 +51,9 @@ impl Deterministic {
         let (runnable, task) = async_task::spawn_local(future, move |runnable| {
             let mut runnables = runnables.lock();
             runnables.0.push(runnable);
-            runnables.1.as_ref().unwrap().send(()).ok();
+            if let Some(wake_tx) = runnables.1.as_ref() {
+                wake_tx.send(()).ok();
+            }
         });
         runnable.schedule();
         task
@@ -66,7 +68,9 @@ impl Deterministic {
         let (runnable, task) = async_task::spawn(future, move |runnable| {
             let mut runnables = runnables.lock();
             runnables.0.push(runnable);
-            runnables.1.as_ref().unwrap().send(()).ok();
+            if let Some(wake_tx) = runnables.1.as_ref() {
+                wake_tx.send(()).ok();
+            }
         });
         runnable.schedule();
         task
