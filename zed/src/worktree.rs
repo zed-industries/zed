@@ -14,7 +14,7 @@ use crate::{
 use ::ignore::gitignore::Gitignore;
 use anyhow::{anyhow, Context, Result};
 use atomic::Ordering::SeqCst;
-use futures::{future, stream, Stream, StreamExt};
+use futures::{Stream, StreamExt};
 pub use fuzzy::{match_paths, PathMatch};
 use gpui::{
     executor, AppContext, AsyncAppContext, Entity, ModelContext, ModelHandle, MutableAppContext,
@@ -23,18 +23,16 @@ use gpui::{
 use lazy_static::lazy_static;
 use parking_lot::Mutex;
 use postage::{
-    broadcast,
     prelude::{Sink as _, Stream as _},
     watch,
 };
 use smol::{
     channel::{self, Sender},
     io::{AsyncReadExt, AsyncWriteExt},
-    lock::RwLock,
 };
 use std::{
     cmp::{self, Ordering},
-    collections::{BTreeMap, HashMap},
+    collections::HashMap,
     convert::{TryFrom, TryInto},
     ffi::{OsStr, OsString},
     fmt,
@@ -196,12 +194,14 @@ struct InMemoryEntry {
     content: Option<String>,
 }
 
+#[cfg(any(test, feature = "test-support"))]
 struct InMemoryFsState {
-    entries: BTreeMap<PathBuf, InMemoryEntry>,
+    entries: std::collections::BTreeMap<PathBuf, InMemoryEntry>,
     next_inode: u64,
-    events_tx: broadcast::Sender<fsevent::Event>,
+    events_tx: postage::broadcast::Sender<fsevent::Event>,
 }
 
+#[cfg(any(test, feature = "test-support"))]
 impl InMemoryFsState {
     fn validate_path(&self, path: &Path) -> Result<()> {
         if path.is_absolute()
@@ -228,14 +228,16 @@ impl InMemoryFsState {
     }
 }
 
+#[cfg(any(test, feature = "test-support"))]
 pub struct InMemoryFs {
-    state: RwLock<InMemoryFsState>,
+    state: smol::lock::RwLock<InMemoryFsState>,
 }
 
+#[cfg(any(test, feature = "test-support"))]
 impl InMemoryFs {
     pub fn new() -> Self {
-        let (events_tx, _) = broadcast::channel(2048);
-        let mut entries = BTreeMap::new();
+        let (events_tx, _) = postage::broadcast::channel(2048);
+        let mut entries = std::collections::BTreeMap::new();
         entries.insert(
             Path::new("/").to_path_buf(),
             InMemoryEntry {
@@ -247,7 +249,7 @@ impl InMemoryFs {
             },
         );
         Self {
-            state: RwLock::new(InMemoryFsState {
+            state: smol::lock::RwLock::new(InMemoryFsState {
                 entries,
                 next_inode: 1,
                 events_tx,
@@ -309,11 +311,12 @@ impl InMemoryFs {
         }
     }
 
-    pub async fn events(&self) -> broadcast::Receiver<fsevent::Event> {
+    pub async fn events(&self) -> postage::broadcast::Receiver<fsevent::Event> {
         self.state.read().await.events_tx.subscribe()
     }
 }
 
+#[cfg(any(test, feature = "test-support"))]
 #[async_trait::async_trait]
 impl Fs for InMemoryFs {
     async fn entry(
@@ -350,6 +353,8 @@ impl Fs for InMemoryFs {
         path: &'a Path,
         abs_path: &'a Path,
     ) -> Result<Pin<Box<dyn 'a + Stream<Item = Result<Entry>> + Send>>> {
+        use futures::{future, stream};
+
         let state = self.state.read().await;
         Ok(stream::iter(state.entries.clone())
             .filter(move |(child_path, _)| future::ready(child_path.parent() == Some(abs_path)))
@@ -2134,7 +2139,7 @@ impl BackgroundScanner {
     }
 
     #[cfg(any(test, feature = "test-support"))]
-    async fn run_test(mut self, mut events_rx: broadcast::Receiver<fsevent::Event>) {
+    async fn run_test(mut self, mut events_rx: postage::broadcast::Receiver<fsevent::Event>) {
         if self.notify.send(ScanState::Scanning).await.is_err() {
             return;
         }
