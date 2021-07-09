@@ -10,6 +10,7 @@ use zed::{
     workspace::{self, OpenParams},
     worktree, AppState,
 };
+use zed_rpc::ForegroundRouter;
 
 fn main() {
     init_logger();
@@ -20,19 +21,26 @@ fn main() {
     let languages = Arc::new(language::LanguageRegistry::new());
     languages.set_theme(&settings.borrow().theme);
 
-    let app_state = AppState {
+    let mut app_state = AppState {
         languages: languages.clone(),
         settings,
+        rpc_router: Arc::new(ForegroundRouter::new()),
         rpc: rpc::Client::new(languages),
     };
 
     app.run(move |cx| {
-        cx.set_menus(menus::menus(app_state.clone()));
+        worktree::init(
+            cx,
+            &app_state.rpc,
+            Arc::get_mut(&mut app_state.rpc_router).unwrap(),
+        );
         zed::init(cx);
         workspace::init(cx);
-        worktree::init(cx, app_state.rpc.clone());
         editor::init(cx);
         file_finder::init(cx);
+
+        let app_state = Arc::new(app_state);
+        cx.set_menus(menus::menus(&app_state.clone()));
 
         if stdout_is_a_pty() {
             cx.platform().activate(true);

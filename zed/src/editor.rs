@@ -4015,7 +4015,8 @@ mod tests {
             let history = History::new(text.into());
             Buffer::from_history(0, history, None, lang.cloned(), cx)
         });
-        let (_, view) = cx.add_window(|cx| Editor::for_buffer(buffer, app_state.settings, cx));
+        let (_, view) =
+            cx.add_window(|cx| Editor::for_buffer(buffer, app_state.settings.clone(), cx));
         view.condition(&cx, |view, cx| !view.buffer.read(cx).is_parsing())
             .await;
 

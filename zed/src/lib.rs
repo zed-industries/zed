@@ -1,3 +1,5 @@
+use zed_rpc::ForegroundRouter;
+
 pub mod assets;
 pub mod editor;
 pub mod file_finder;
@@ -14,10 +16,10 @@ mod util;
 pub mod workspace;
 pub mod worktree;
 
-#[derive(Clone)]
 pub struct AppState {
     pub settings: postage::watch::Receiver<settings::Settings>,
     pub languages: std::sync::Arc<language::LanguageRegistry>,
+    pub rpc_router: std::sync::Arc<ForegroundRouter>,
     pub rpc: rpc::Client,
 }
 

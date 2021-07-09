@@ -5,6 +5,7 @@ use std::{
     sync::Arc,
 };
 use tempdir::TempDir;
+use zed_rpc::ForegroundRouter;
 
 #[cfg(feature = "test-support")]
 pub use zed_rpc::test::Channel;
@@ -143,12 +144,13 @@ fn write_tree(path: &Path, tree: serde_json::Value) {
     }
 }
 
-pub fn build_app_state(cx: &AppContext) -> AppState {
+pub fn build_app_state(cx: &AppContext) -> Arc<AppState> {
     let settings = settings::channel(&cx.font_cache()).unwrap().1;
     let languages = Arc::new(LanguageRegistry::new());
-    AppState {
+    Arc::new(AppState {
         settings,
         languages: languages.clone(),
+        rpc_router: Arc::new(ForegroundRouter::new()),
         rpc: rpc::Client::new(languages),
-    }
+    })
 }

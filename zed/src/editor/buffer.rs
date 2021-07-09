@@ -719,6 +719,7 @@ impl Buffer {
         mtime: SystemTime,
         cx: &mut ModelContext<Self>,
     ) {
+        eprintln!("{} did_save {:?}", self.replica_id, version);
         self.saved_mtime = mtime;
         self.saved_version = version;
         cx.emit(Event::Saved);

@@ -4507,6 +4507,7 @@ dependencies = [
  "base64 0.13.0",
  "futures",
  "log",
+ "parking_lot",
  "postage",
  "prost 0.7.0 (registry+https://github.com/rust-lang/crates.io-index)",
  "prost-build",

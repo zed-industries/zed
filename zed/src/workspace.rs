@@ -45,10 +45,10 @@ pub fn init(cx: &mut MutableAppContext) {
 
 pub struct OpenParams {
     pub paths: Vec<PathBuf>,
-    pub app_state: AppState,
+    pub app_state: Arc<AppState>,
 }
 
-fn open(app_state: &AppState, cx: &mut MutableAppContext) {
+fn open(app_state: &Arc<AppState>, cx: &mut MutableAppContext) {
     let app_state = app_state.clone();
     cx.prompt_for_paths(
         PathPromptOptions {
@@ -101,7 +101,7 @@ fn open_paths(params: &OpenParams, cx: &mut MutableAppContext) {
     });
 }
 
-fn open_new(app_state: &AppState, cx: &mut MutableAppContext) {
+fn open_new(app_state: &Arc<AppState>, cx: &mut MutableAppContext) {
     cx.add_window(|cx| {
         let mut view = Workspace::new(
             app_state.settings.clone(),
@@ -700,12 +700,13 @@ impl Workspace {
         };
     }
 
-    fn share_worktree(&mut self, _: &(), cx: &mut ViewContext<Self>) {
+    fn share_worktree(&mut self, app_state: &Arc<AppState>, cx: &mut ViewContext<Self>) {
         let rpc = self.rpc.clone();
         let platform = cx.platform();
+        let router = app_state.rpc_router.clone();
 
         let task = cx.spawn(|this, mut cx| async move {
-            rpc.log_in_and_connect(&cx).await?;
+            rpc.log_in_and_connect(router, cx.clone()).await?;
 
             let share_task = this.update(&mut cx, |this, cx| {
                 let worktree = this.worktrees.iter().next()?;
@@ -732,12 +733,13 @@ impl Workspace {
         .detach();
     }
 
-    fn join_worktree(&mut self, _: &(), cx: &mut ViewContext<Self>) {
+    fn join_worktree(&mut self, app_state: &Arc<AppState>, cx: &mut ViewContext<Self>) {
         let rpc = self.rpc.clone();
         let languages = self.languages.clone();
+        let router = app_state.rpc_router.clone();
 
         let task = cx.spawn(|this, mut cx| async move {
-            rpc.log_in_and_connect(&cx).await?;
+            rpc.log_in_and_connect(router, cx.clone()).await?;
 
             let worktree_url = cx
                 .platform()
@@ -974,8 +976,12 @@ mod tests {
         let app_state = cx.read(build_app_state);
 
         let (_, workspace) = cx.add_window(|cx| {
-            let mut workspace =
-                Workspace::new(app_state.settings, app_state.languages, app_state.rpc, cx);
+            let mut workspace = Workspace::new(
+                app_state.settings.clone(),
+                app_state.languages.clone(),
+                app_state.rpc.clone(),
+                cx,
+            );
             workspace.add_worktree(dir.path(), cx);
             workspace
         });
@@ -1077,8 +1083,12 @@ mod tests {
 
         let app_state = cx.read(build_app_state);
         let (_, workspace) = cx.add_window(|cx| {
-            let mut workspace =
-                Workspace::new(app_state.settings, app_state.languages, app_state.rpc, cx);
+            let mut workspace = Workspace::new(
+                app_state.settings.clone(),
+                app_state.languages.clone(),
+                app_state.rpc.clone(),
+                cx,
+            );
             workspace.add_worktree(dir1.path(), cx);
             workspace
         });
@@ -1146,8 +1156,12 @@ mod tests {
 
         let app_state = cx.read(build_app_state);
         let (window_id, workspace) = cx.add_window(|cx| {
-            let mut workspace =
-                Workspace::new(app_state.settings, app_state.languages, app_state.rpc, cx);
+            let mut workspace = Workspace::new(
+                app_state.settings.clone(),
+                app_state.languages.clone(),
+                app_state.rpc.clone(),
+                cx,
+            );
             workspace.add_worktree(dir.path(), cx);
             workspace
         });
@@ -1315,8 +1329,12 @@ mod tests {
 
         let app_state = cx.read(build_app_state);
         let (window_id, workspace) = cx.add_window(|cx| {
-            let mut workspace =
-                Workspace::new(app_state.settings, app_state.languages, app_state.rpc, cx);
+            let mut workspace = Workspace::new(
+                app_state.settings.clone(),
+                app_state.languages.clone(),
+                app_state.rpc.clone(),
+                cx,
+            );
             workspace.add_worktree(dir.path(), cx);
             workspace
         });

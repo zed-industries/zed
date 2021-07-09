@@ -104,7 +104,10 @@ pub enum MenuItem<'a> {
 #[derive(Clone)]
 pub struct App(Rc<RefCell<MutableAppContext>>);
 
+#[derive(Clone)]
 pub struct AsyncAppContext(Rc<RefCell<MutableAppContext>>);
+
+pub struct BackgroundAppContext(*const RefCell<MutableAppContext>);
 
 #[derive(Clone)]
 pub struct TestAppContext {
@@ -409,6 +412,15 @@ impl TestAppContext {
 }
 
 impl AsyncAppContext {
+    pub fn spawn<F, Fut, T>(&self, f: F) -> Task<T>
+    where
+        F: FnOnce(AsyncAppContext) -> Fut,
+        Fut: 'static + Future<Output = T>,
+        T: 'static,
+    {
+        self.0.borrow().foreground.spawn(f(self.clone()))
+    }
+
     pub fn read<T, F: FnOnce(&AppContext) -> T>(&mut self, callback: F) -> T {
         callback(self.0.borrow().as_ref())
     }
@@ -431,6 +443,10 @@ impl AsyncAppContext {
 
     pub fn platform(&self) -> Arc<dyn Platform> {
         self.0.borrow().platform()
+    }
+
+    pub fn foreground(&self) -> Rc<executor::Foreground> {
+        self.0.borrow().foreground.clone()
     }
 
     pub fn background(&self) -> Arc<executor::Background> {

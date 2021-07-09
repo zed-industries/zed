@@ -1,10 +1,8 @@
 use crate::{language::LanguageRegistry, worktree::Worktree};
 use anyhow::{anyhow, Context, Result};
 use async_tungstenite::tungstenite::{Error as WebSocketError, Message as WebSocketMessage};
-use gpui::executor::Background;
 use gpui::{AsyncAppContext, ModelHandle, Task, WeakModelHandle};
 use lazy_static::lazy_static;
-use postage::prelude::Stream;
 use smol::lock::RwLock;
 use std::collections::HashMap;
 use std::time::Duration;
@@ -13,7 +11,7 @@ use surf::Url;
 pub use zed_rpc::{proto, ConnectionId, PeerId, TypedEnvelope};
 use zed_rpc::{
     proto::{EnvelopedMessage, RequestMessage},
-    Peer, Receipt,
+    ForegroundRouter, Peer, Receipt,
 };
 
 lazy_static! {
@@ -63,24 +61,30 @@ impl Client {
         }
     }
 
-    pub fn on_message<H, M>(&self, handler: H, cx: &mut gpui::MutableAppContext)
-    where
-        H: 'static + for<'a> MessageHandler<'a, M>,
+    pub fn on_message<H, M>(
+        &self,
+        router: &mut ForegroundRouter,
+        handler: H,
+        cx: &mut gpui::MutableAppContext,
+    ) where
+        H: 'static + Clone + for<'a> MessageHandler<'a, M>,
         M: proto::EnvelopedMessage,
     {
         let this = self.clone();
-        let mut messages = smol::block_on(this.peer.add_message_handler::<M>());
-        cx.spawn(|mut cx| async move {
-            while let Some(message) = messages.recv().await {
-                if let Err(err) = handler.handle(message, &this, &mut cx).await {
-                    log::error!("error handling message: {:?}", err);
-                }
-            }
-        })
-        .detach();
+        let cx = cx.to_async();
+        router.add_message_handler(move |message| {
+            let this = this.clone();
+            let mut cx = cx.clone();
+            let handler = handler.clone();
+            async move { handler.handle(message, &this, &mut cx).await }
+        });
     }
 
-    pub async fn log_in_and_connect(&self, cx: &AsyncAppContext) -> surf::Result<()> {
+    pub async fn log_in_and_connect(
+        &self,
+        router: Arc<ForegroundRouter>,
+        cx: AsyncAppContext,
+    ) -> surf::Result<()> {
         if self.state.read().await.connection_id.is_some() {
             return Ok(());
         }
@@ -96,14 +100,14 @@ impl Client {
             .await
             .context("websocket handshake")?;
             log::info!("connected to rpc address {}", *ZED_SERVER_URL);
-            self.add_connection(stream, user_id, access_token, &cx.background())
+            self.add_connection(stream, user_id, access_token, router, cx)
                 .await?;
         } else if let Some(host) = ZED_SERVER_URL.strip_prefix("http://") {
             let stream = smol::net::TcpStream::connect(host).await?;
             let (stream, _) =
                 async_tungstenite::client_async(format!("ws://{}/rpc", host), stream).await?;
             log::info!("connected to rpc address {}", *ZED_SERVER_URL);
-            self.add_connection(stream, user_id, access_token, &cx.background())
+            self.add_connection(stream, user_id, access_token, router, cx)
                 .await?;
         } else {
             return Err(anyhow!("invalid server url: {}", *ZED_SERVER_URL))?;
@@ -117,7 +121,8 @@ impl Client {
         conn: Conn,
         user_id: i32,
         access_token: String,
-        executor: &Arc<Background>,
+        router: Arc<ForegroundRouter>,
+        cx: AsyncAppContext,
     ) -> surf::Result<()>
     where
         Conn: 'static
@@ -126,10 +131,12 @@ impl Client {
             + Unpin
             + Send,
     {
-        let (connection_id, handler) = self.peer.add_connection(conn).await;
-        executor
+        let (connection_id, handle_io, handle_messages) =
+            self.peer.add_connection(conn, router).await;
+        cx.foreground().spawn(handle_messages).detach();
+        cx.background()
             .spawn(async move {
-                if let Err(error) = handler.run().await {
+                if let Err(error) = handle_io.run().await {
                     log::error!("connection error: {:?}", error);
                 }
             })
@@ -263,7 +270,7 @@ impl Client {
     }
 }
 
-pub trait MessageHandler<'a, M: proto::EnvelopedMessage> {
+pub trait MessageHandler<'a, M: proto::EnvelopedMessage>: Clone {
     type Output: 'a + Future<Output = anyhow::Result<()>>;
 
     fn handle(
@@ -277,7 +284,7 @@ pub trait MessageHandler<'a, M: proto::EnvelopedMessage> {
 impl<'a, M, F, Fut> MessageHandler<'a, M> for F
 where
     M: proto::EnvelopedMessage,
-    F: Fn(TypedEnvelope<M>, &'a Client, &'a mut gpui::AsyncAppContext) -> Fut,
+    F: Clone + Fn(TypedEnvelope<M>, &'a Client, &'a mut gpui::AsyncAppContext) -> Fut,
     Fut: 'a + Future<Output = anyhow::Result<()>>,
 {
     type Output = Fut;

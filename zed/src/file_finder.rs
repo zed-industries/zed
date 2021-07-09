@@ -479,8 +479,12 @@ mod tests {
 
         let app_state = cx.read(build_app_state);
         let (window_id, workspace) = cx.add_window(|cx| {
-            let mut workspace =
-                Workspace::new(app_state.settings, app_state.languages, app_state.rpc, cx);
+            let mut workspace = Workspace::new(
+                app_state.settings.clone(),
+                app_state.languages.clone(),
+                app_state.rpc.clone(),
+                cx,
+            );
             workspace.add_worktree(tmp_dir.path(), cx);
             workspace
         });
@@ -559,7 +563,7 @@ mod tests {
         cx.read(|cx| workspace.read(cx).worktree_scans_complete(cx))
             .await;
         let (_, finder) =
-            cx.add_window(|cx| FileFinder::new(app_state.settings, workspace.clone(), cx));
+            cx.add_window(|cx| FileFinder::new(app_state.settings.clone(), workspace.clone(), cx));
 
         let query = "hi".to_string();
         finder
@@ -622,7 +626,7 @@ mod tests {
         cx.read(|cx| workspace.read(cx).worktree_scans_complete(cx))
             .await;
         let (_, finder) =
-            cx.add_window(|cx| FileFinder::new(app_state.settings, workspace.clone(), cx));
+            cx.add_window(|cx| FileFinder::new(app_state.settings.clone(), workspace.clone(), cx));
 
         // Even though there is only one worktree, that worktree's filename
         // is included in the matching, because the worktree is a single file.
@@ -681,7 +685,7 @@ mod tests {
             .await;
 
         let (_, finder) =
-            cx.add_window(|cx| FileFinder::new(app_state.settings, workspace.clone(), cx));
+            cx.add_window(|cx| FileFinder::new(app_state.settings.clone(), workspace.clone(), cx));
 
         // Run a search that matches two files with the same relative path.
         finder

@@ -3,7 +3,7 @@ use anyhow::{anyhow, Context, Result};
 use async_lock::{Mutex, RwLock};
 use async_tungstenite::tungstenite::{Error as WebSocketError, Message as WebSocketMessage};
 use futures::{
-    future::BoxFuture,
+    future::{BoxFuture, LocalBoxFuture},
     stream::{SplitSink, SplitStream},
     FutureExt, StreamExt,
 };
@@ -30,8 +30,13 @@ pub struct ConnectionId(pub u32);
 pub struct PeerId(pub u32);
 
 type MessageHandler = Box<
-    dyn Send + Sync + Fn(&mut Option<proto::Envelope>, ConnectionId) -> Option<BoxFuture<bool>>,
+    dyn Send
+        + Sync
+        + Fn(&mut Option<proto::Envelope>, ConnectionId) -> Option<BoxFuture<'static, ()>>,
 >;
+
+type ForegroundMessageHandler =
+    Box<dyn Fn(&mut Option<proto::Envelope>, ConnectionId) -> Option<LocalBoxFuture<'static, ()>>>;
 
 pub struct Receipt<T> {
     sender_id: ConnectionId,
@@ -63,10 +68,15 @@ impl<T: RequestMessage> TypedEnvelope<T> {
     }
 }
 
+pub type Router = RouterInternal<MessageHandler>;
+pub type ForegroundRouter = RouterInternal<ForegroundMessageHandler>;
+pub struct RouterInternal<H> {
+    message_handlers: Vec<H>,
+    handler_types: HashSet<TypeId>,
+}
+
 pub struct Peer {
     connections: RwLock<HashMap<ConnectionId, Connection>>,
-    message_handlers: RwLock<Vec<MessageHandler>>,
-    handler_types: Mutex<HashSet<TypeId>>,
     next_connection_id: AtomicU32,
 }
 
@@ -74,73 +84,37 @@ pub struct Peer {
 struct Connection {
     outgoing_tx: mpsc::Sender<proto::Envelope>,
     next_message_id: Arc<AtomicU32>,
-    response_channels: ResponseChannels,
+    response_channels: Arc<Mutex<HashMap<u32, mpsc::Sender<proto::Envelope>>>>,
 }
 
-pub struct ConnectionHandler<W, R> {
-    peer: Arc<Peer>,
+pub struct IOHandler<W, R> {
     connection_id: ConnectionId,
-    response_channels: ResponseChannels,
+    incoming_tx: mpsc::Sender<proto::Envelope>,
     outgoing_rx: mpsc::Receiver<proto::Envelope>,
     writer: MessageStream<W>,
     reader: MessageStream<R>,
 }
 
-type ResponseChannels = Arc<Mutex<HashMap<u32, mpsc::Sender<proto::Envelope>>>>;
-
 impl Peer {
     pub fn new() -> Arc<Self> {
         Arc::new(Self {
             connections: Default::default(),
-            message_handlers: Default::default(),
-            handler_types: Default::default(),
             next_connection_id: Default::default(),
         })
     }
 
-    pub async fn add_message_handler<T: EnvelopedMessage>(
-        &self,
-    ) -> mpsc::Receiver<TypedEnvelope<T>> {
-        if !self.handler_types.lock().await.insert(TypeId::of::<T>()) {
-            panic!("duplicate handler type");
-        }
-
-        let (tx, rx) = mpsc::channel(256);
-        self.message_handlers
-            .write()
-            .await
-            .push(Box::new(move |envelope, connection_id| {
-                if envelope.as_ref().map_or(false, T::matches_envelope) {
-                    let envelope = Option::take(envelope).unwrap();
-                    let mut tx = tx.clone();
-                    Some(
-                        async move {
-                            tx.send(TypedEnvelope {
-                                sender_id: connection_id,
-                                original_sender_id: envelope.original_sender_id.map(PeerId),
-                                message_id: envelope.id,
-                                payload: T::from_envelope(envelope).unwrap(),
-                            })
-                            .await
-                            .is_err()
-                        }
-                        .boxed(),
-                    )
-                } else {
-                    None
-                }
-            }));
-        rx
-    }
-
-    pub async fn add_connection<Conn>(
+    pub async fn add_connection<Conn, H, Fut>(
         self: &Arc<Self>,
         conn: Conn,
+        router: Arc<RouterInternal<H>>,
     ) -> (
         ConnectionId,
-        ConnectionHandler<SplitSink<Conn, WebSocketMessage>, SplitStream<Conn>>,
+        IOHandler<SplitSink<Conn, WebSocketMessage>, SplitStream<Conn>>,
+        impl Future<Output = anyhow::Result<()>>,
     )
     where
+        H: Fn(&mut Option<proto::Envelope>, ConnectionId) -> Option<Fut>,
+        Fut: Future<Output = ()>,
         Conn: futures::Sink<WebSocketMessage, Error = WebSocketError>
             + futures::Stream<Item = Result<WebSocketMessage, WebSocketError>>
             + Unpin,
@@ -150,25 +124,45 @@ impl Peer {
             self.next_connection_id
                 .fetch_add(1, atomic::Ordering::SeqCst),
         );
+        let (incoming_tx, mut incoming_rx) = mpsc::channel(64);
         let (outgoing_tx, outgoing_rx) = mpsc::channel(64);
         let connection = Connection {
             outgoing_tx,
             next_message_id: Default::default(),
             response_channels: Default::default(),
         };
-        let handler = ConnectionHandler {
-            peer: self.clone(),
+        let handle_io = IOHandler {
             connection_id,
-            response_channels: connection.response_channels.clone(),
             outgoing_rx,
+            incoming_tx,
             writer: MessageStream::new(tx),
             reader: MessageStream::new(rx),
         };
+
+        let response_channels = connection.response_channels.clone();
+        let handle_messages = async move {
+            while let Some(message) = incoming_rx.recv().await {
+                if let Some(responding_to) = message.responding_to {
+                    let channel = response_channels.lock().await.remove(&responding_to);
+                    if let Some(mut tx) = channel {
+                        tx.send(message).await.ok();
+                    } else {
+                        log::warn!("received RPC response to unknown request {}", responding_to);
+                    }
+                } else {
+                    router.handle(connection_id, message).await;
+                }
+            }
+            response_channels.lock().await.clear();
+            Ok(())
+        };
+
         self.connections
             .write()
             .await
             .insert(connection_id, connection);
-        (connection_id, handler)
+
+        (connection_id, handle_io, handle_messages)
     }
 
     pub async fn disconnect(&self, connection_id: ConnectionId) {
@@ -177,8 +171,6 @@ impl Peer {
 
     pub async fn reset(&self) {
         self.connections.write().await.clear();
-        self.handler_types.lock().await.clear();
-        self.message_handlers.write().await.clear();
     }
 
     pub fn request<T: RequestMessage>(
@@ -302,7 +294,115 @@ impl Peer {
     }
 }
 
-impl<W, R> ConnectionHandler<W, R>
+impl<H, Fut> RouterInternal<H>
+where
+    H: Fn(&mut Option<proto::Envelope>, ConnectionId) -> Option<Fut>,
+    Fut: Future<Output = ()>,
+{
+    pub fn new() -> Self {
+        Self {
+            message_handlers: Default::default(),
+            handler_types: Default::default(),
+        }
+    }
+
+    async fn handle(&self, connection_id: ConnectionId, message: proto::Envelope) {
+        let mut envelope = Some(message);
+        for handler in self.message_handlers.iter() {
+            if let Some(future) = handler(&mut envelope, connection_id) {
+                future.await;
+                return;
+            }
+        }
+        log::warn!("unhandled message: {:?}", envelope.unwrap().payload);
+    }
+}
+
+impl Router {
+    pub fn add_message_handler<T, Fut, F>(&mut self, handler: F)
+    where
+        T: EnvelopedMessage,
+        Fut: 'static + Send + Future<Output = Result<()>>,
+        F: 'static + Send + Sync + Fn(TypedEnvelope<T>) -> Fut,
+    {
+        if !self.handler_types.insert(TypeId::of::<T>()) {
+            panic!("duplicate handler type");
+        }
+
+        self.message_handlers
+            .push(Box::new(move |envelope, connection_id| {
+                if envelope.as_ref().map_or(false, T::matches_envelope) {
+                    let envelope = Option::take(envelope).unwrap();
+                    let message_id = envelope.id;
+                    let future = handler(TypedEnvelope {
+                        sender_id: connection_id,
+                        original_sender_id: envelope.original_sender_id.map(PeerId),
+                        message_id,
+                        payload: T::from_envelope(envelope).unwrap(),
+                    });
+                    Some(
+                        async move {
+                            if let Err(error) = future.await {
+                                log::error!(
+                                    "error handling message {} {}: {:?}",
+                                    T::NAME,
+                                    message_id,
+                                    error
+                                );
+                            }
+                        }
+                        .boxed(),
+                    )
+                } else {
+                    None
+                }
+            }));
+    }
+}
+
+impl ForegroundRouter {
+    pub fn add_message_handler<T, Fut, F>(&mut self, handler: F)
+    where
+        T: EnvelopedMessage,
+        Fut: 'static + Future<Output = Result<()>>,
+        F: 'static + Fn(TypedEnvelope<T>) -> Fut,
+    {
+        if !self.handler_types.insert(TypeId::of::<T>()) {
+            panic!("duplicate handler type");
+        }
+
+        self.message_handlers
+            .push(Box::new(move |envelope, connection_id| {
+                if envelope.as_ref().map_or(false, T::matches_envelope) {
+                    let envelope = Option::take(envelope).unwrap();
+                    let message_id = envelope.id;
+                    let future = handler(TypedEnvelope {
+                        sender_id: connection_id,
+                        original_sender_id: envelope.original_sender_id.map(PeerId),
+                        message_id,
+                        payload: T::from_envelope(envelope).unwrap(),
+                    });
+                    Some(
+                        async move {
+                            if let Err(error) = future.await {
+                                log::error!(
+                                    "error handling message {} {}: {:?}",
+                                    T::NAME,
+                                    message_id,
+                                    error
+                                );
+                            }
+                        }
+                        .boxed_local(),
+                    )
+                } else {
+                    None
+                }
+            }));
+    }
+}
+
+impl<W, R> IOHandler<W, R>
 where
     W: futures::Sink<WebSocketMessage, Error = WebSocketError> + Unpin,
     R: futures::Stream<Item = Result<WebSocketMessage, WebSocketError>> + Unpin,
@@ -315,18 +415,18 @@ where
                 futures::select_biased! {
                     incoming = read_message => match incoming {
                         Ok(incoming) => {
-                            Self::handle_incoming_message(incoming, &self.peer, self.connection_id, &self.response_channels).await;
+                            if self.incoming_tx.send(incoming).await.is_err() {
+                                return Ok(());
+                            }
                             break;
                         }
                         Err(error) => {
-                            self.response_channels.lock().await.clear();
                             Err(error).context("received invalid RPC message")?;
                         }
                     },
                     outgoing = self.outgoing_rx.recv().fuse() => match outgoing {
                         Some(outgoing) => {
                             if let Err(result) = self.writer.write_message(&outgoing).await {
-                                self.response_channels.lock().await.clear();
                                 Err(result).context("failed to write RPC message")?;
                             }
                         }
@@ -349,41 +449,6 @@ where
             message_id,
             payload,
         })
-    }
-
-    async fn handle_incoming_message(
-        message: proto::Envelope,
-        peer: &Arc<Peer>,
-        connection_id: ConnectionId,
-        response_channels: &ResponseChannels,
-    ) {
-        if let Some(responding_to) = message.responding_to {
-            let channel = response_channels.lock().await.remove(&responding_to);
-            if let Some(mut tx) = channel {
-                tx.send(message).await.ok();
-            } else {
-                log::warn!("received RPC response to unknown request {}", responding_to);
-            }
-        } else {
-            let mut envelope = Some(message);
-            let mut handler_index = None;
-            let mut handler_was_dropped = false;
-            for (i, handler) in peer.message_handlers.read().await.iter().enumerate() {
-                if let Some(future) = handler(&mut envelope, connection_id) {
-                    handler_was_dropped = future.await;
-                    handler_index = Some(i);
-                    break;
-                }
-            }
-
-            if let Some(handler_index) = handler_index {
-                if handler_was_dropped {
-                    drop(peer.message_handlers.write().await.remove(handler_index));
-                }
-            } else {
-                log::warn!("unhandled message: {:?}", envelope.unwrap().payload);
-            }
-        }
     }
 }
 
@@ -415,7 +480,6 @@ impl fmt::Display for PeerId {
 mod tests {
     use super::*;
     use crate::test;
-    use postage::oneshot;
 
     #[test]
     fn test_request_response() {
@@ -425,127 +489,185 @@ mod tests {
             let client1 = Peer::new();
             let client2 = Peer::new();
 
+            let mut router = Router::new();
+            router.add_message_handler({
+                let server = server.clone();
+                move |envelope: TypedEnvelope<proto::Auth>| {
+                    let server = server.clone();
+                    async move {
+                        let receipt = envelope.receipt();
+                        let message = envelope.payload;
+                        server
+                            .respond(
+                                receipt,
+                                match message.user_id {
+                                    1 => {
+                                        assert_eq!(message.access_token, "access-token-1");
+                                        proto::AuthResponse {
+                                            credentials_valid: true,
+                                        }
+                                    }
+                                    2 => {
+                                        assert_eq!(message.access_token, "access-token-2");
+                                        proto::AuthResponse {
+                                            credentials_valid: false,
+                                        }
+                                    }
+                                    _ => {
+                                        panic!("unexpected user id {}", message.user_id);
+                                    }
+                                },
+                            )
+                            .await
+                    }
+                }
+            });
+
+            router.add_message_handler({
+                let server = server.clone();
+                move |envelope: TypedEnvelope<proto::OpenBuffer>| {
+                    let server = server.clone();
+                    async move {
+                        let receipt = envelope.receipt();
+                        let message = envelope.payload;
+                        server
+                            .respond(
+                                receipt,
+                                match message.path.as_str() {
+                                    "path/one" => {
+                                        assert_eq!(message.worktree_id, 1);
+                                        proto::OpenBufferResponse {
+                                            buffer: Some(proto::Buffer {
+                                                id: 101,
+                                                content: "path/one content".to_string(),
+                                                history: vec![],
+                                                selections: vec![],
+                                            }),
+                                        }
+                                    }
+                                    "path/two" => {
+                                        assert_eq!(message.worktree_id, 2);
+                                        proto::OpenBufferResponse {
+                                            buffer: Some(proto::Buffer {
+                                                id: 102,
+                                                content: "path/two content".to_string(),
+                                                history: vec![],
+                                                selections: vec![],
+                                            }),
+                                        }
+                                    }
+                                    _ => {
+                                        panic!("unexpected path {}", message.path);
+                                    }
+                                },
+                            )
+                            .await
+                    }
+                }
+            });
+            let router = Arc::new(router);
+
             let (client1_to_server_conn, server_to_client_1_conn) = test::Channel::bidirectional();
-            let (client1_conn_id, task1) = client1.add_connection(client1_to_server_conn).await;
-            let (_, task2) = server.add_connection(server_to_client_1_conn).await;
+            let (client1_conn_id, io_task1, msg_task1) = client1
+                .add_connection(client1_to_server_conn, router.clone())
+                .await;
+            let (_, io_task2, msg_task2) = server
+                .add_connection(server_to_client_1_conn, router.clone())
+                .await;
 
             let (client2_to_server_conn, server_to_client_2_conn) = test::Channel::bidirectional();
-            let (client2_conn_id, task3) = client2.add_connection(client2_to_server_conn).await;
-            let (_, task4) = server.add_connection(server_to_client_2_conn).await;
+            let (client2_conn_id, io_task3, msg_task3) = client2
+                .add_connection(client2_to_server_conn, router.clone())
+                .await;
+            let (_, io_task4, msg_task4) = server
+                .add_connection(server_to_client_2_conn, router.clone())
+                .await;
 
-            smol::spawn(task1.run()).detach();
-            smol::spawn(task2.run()).detach();
-            smol::spawn(task3.run()).detach();
-            smol::spawn(task4.run()).detach();
+            smol::spawn(io_task1.run()).detach();
+            smol::spawn(io_task2.run()).detach();
+            smol::spawn(io_task3.run()).detach();
+            smol::spawn(io_task4.run()).detach();
+            smol::spawn(msg_task1).detach();
+            smol::spawn(msg_task2).detach();
+            smol::spawn(msg_task3).detach();
+            smol::spawn(msg_task4).detach();
 
-            // define the expected requests and responses
-            let request1 = proto::Auth {
-                user_id: 1,
-                access_token: "token-1".to_string(),
-            };
-            let response1 = proto::AuthResponse {
-                credentials_valid: true,
-            };
-            let request2 = proto::Auth {
-                user_id: 2,
-                access_token: "token-2".to_string(),
-            };
-            let response2 = proto::AuthResponse {
-                credentials_valid: false,
-            };
-            let request3 = proto::OpenBuffer {
-                worktree_id: 1,
-                path: "path/two".to_string(),
-            };
-            let response3 = proto::OpenBufferResponse {
-                buffer: Some(proto::Buffer {
-                    id: 2,
-                    content: "path/two content".to_string(),
-                    history: vec![],
-                    selections: vec![],
-                }),
-            };
-            let request4 = proto::OpenBuffer {
-                worktree_id: 2,
-                path: "path/one".to_string(),
-            };
-            let response4 = proto::OpenBufferResponse {
-                buffer: Some(proto::Buffer {
-                    id: 1,
-                    content: "path/one content".to_string(),
-                    history: vec![],
-                    selections: vec![],
-                }),
-            };
-
-            // on the server, respond to two requests for each client
-            let mut open_buffer_rx = server.add_message_handler::<proto::OpenBuffer>().await;
-            let mut auth_rx = server.add_message_handler::<proto::Auth>().await;
-            let (mut server_done_tx, mut server_done_rx) = oneshot::channel::<()>();
-            smol::spawn({
-                let request1 = request1.clone();
-                let request2 = request2.clone();
-                let request3 = request3.clone();
-                let request4 = request4.clone();
-                let response1 = response1.clone();
-                let response2 = response2.clone();
-                let response3 = response3.clone();
-                let response4 = response4.clone();
-                async move {
-                    let msg = auth_rx.recv().await.unwrap();
-                    assert_eq!(msg.payload, request1);
-                    server
-                        .respond(msg.receipt(), response1.clone())
-                        .await
-                        .unwrap();
-
-                    let msg = auth_rx.recv().await.unwrap();
-                    assert_eq!(msg.payload, request2.clone());
-                    server
-                        .respond(msg.receipt(), response2.clone())
-                        .await
-                        .unwrap();
-
-                    let msg = open_buffer_rx.recv().await.unwrap();
-                    assert_eq!(msg.payload, request3.clone());
-                    server
-                        .respond(msg.receipt(), response3.clone())
-                        .await
-                        .unwrap();
-
-                    let msg = open_buffer_rx.recv().await.unwrap();
-                    assert_eq!(msg.payload, request4.clone());
-                    server
-                        .respond(msg.receipt(), response4.clone())
-                        .await
-                        .unwrap();
-
-                    server_done_tx.send(()).await.unwrap();
+            assert_eq!(
+                client1
+                    .request(
+                        client1_conn_id,
+                        proto::Auth {
+                            user_id: 1,
+                            access_token: "access-token-1".to_string(),
+                        },
+                    )
+                    .await
+                    .unwrap(),
+                proto::AuthResponse {
+                    credentials_valid: true,
                 }
-            })
-            .detach();
+            );
 
             assert_eq!(
-                client1.request(client1_conn_id, request1).await.unwrap(),
-                response1
+                client2
+                    .request(
+                        client2_conn_id,
+                        proto::Auth {
+                            user_id: 2,
+                            access_token: "access-token-2".to_string(),
+                        },
+                    )
+                    .await
+                    .unwrap(),
+                proto::AuthResponse {
+                    credentials_valid: false,
+                }
             );
+
             assert_eq!(
-                client2.request(client2_conn_id, request2).await.unwrap(),
-                response2
+                client1
+                    .request(
+                        client1_conn_id,
+                        proto::OpenBuffer {
+                            worktree_id: 1,
+                            path: "path/one".to_string(),
+                        },
+                    )
+                    .await
+                    .unwrap(),
+                proto::OpenBufferResponse {
+                    buffer: Some(proto::Buffer {
+                        id: 101,
+                        content: "path/one content".to_string(),
+                        history: vec![],
+                        selections: vec![],
+                    }),
+                }
             );
+
             assert_eq!(
-                client2.request(client2_conn_id, request3).await.unwrap(),
-                response3
-            );
-            assert_eq!(
-                client1.request(client1_conn_id, request4).await.unwrap(),
-                response4
+                client2
+                    .request(
+                        client2_conn_id,
+                        proto::OpenBuffer {
+                            worktree_id: 2,
+                            path: "path/two".to_string(),
+                        },
+                    )
+                    .await
+                    .unwrap(),
+                proto::OpenBufferResponse {
+                    buffer: Some(proto::Buffer {
+                        id: 102,
+                        content: "path/two content".to_string(),
+                        history: vec![],
+                        selections: vec![],
+                    }),
+                }
             );
 
             client1.disconnect(client1_conn_id).await;
             client2.disconnect(client1_conn_id).await;
-
-            server_done_rx.recv().await.unwrap();
         });
     }
 
@@ -555,17 +677,28 @@ mod tests {
             let (client_conn, mut server_conn) = test::Channel::bidirectional();
 
             let client = Peer::new();
-            let (connection_id, handler) = client.add_connection(client_conn).await;
-            let (mut incoming_messages_ended_tx, mut incoming_messages_ended_rx) =
-                postage::barrier::channel();
+            let router = Arc::new(Router::new());
+            let (connection_id, io_handler, message_handler) =
+                client.add_connection(client_conn, router).await;
+
+            let (mut io_ended_tx, mut io_ended_rx) = postage::barrier::channel();
             smol::spawn(async move {
-                handler.run().await.ok();
-                incoming_messages_ended_tx.send(()).await.unwrap();
+                io_handler.run().await.ok();
+                io_ended_tx.send(()).await.unwrap();
             })
             .detach();
+
+            let (mut messages_ended_tx, mut messages_ended_rx) = postage::barrier::channel();
+            smol::spawn(async move {
+                message_handler.await.ok();
+                messages_ended_tx.send(()).await.unwrap();
+            })
+            .detach();
+
             client.disconnect(connection_id).await;
 
-            incoming_messages_ended_rx.recv().await;
+            io_ended_rx.recv().await;
+            messages_ended_rx.recv().await;
             assert!(
                 futures::SinkExt::send(&mut server_conn, WebSocketMessage::Binary(vec![]))
                     .await
@@ -581,8 +714,11 @@ mod tests {
             drop(server_conn);
 
             let client = Peer::new();
-            let (connection_id, handler) = client.add_connection(client_conn).await;
-            smol::spawn(handler.run()).detach();
+            let router = Arc::new(Router::new());
+            let (connection_id, io_handler, message_handler) =
+                client.add_connection(client_conn, router).await;
+            smol::spawn(io_handler.run()).detach();
+            smol::spawn(message_handler).detach();
 
             let err = client
                 .request(

@@ -48,21 +48,21 @@ use std::{
     },
     time::{Duration, SystemTime},
 };
-use zed_rpc::{PeerId, TypedEnvelope};
+use zed_rpc::{ForegroundRouter, PeerId, TypedEnvelope};
 
 lazy_static! {
     static ref GITIGNORE: &'static OsStr = OsStr::new(".gitignore");
 }
 
-pub fn init(cx: &mut MutableAppContext, rpc: rpc::Client) {
-    rpc.on_message(remote::add_peer, cx);
-    rpc.on_message(remote::remove_peer, cx);
-    rpc.on_message(remote::update_worktree, cx);
-    rpc.on_message(remote::open_buffer, cx);
-    rpc.on_message(remote::close_buffer, cx);
-    rpc.on_message(remote::update_buffer, cx);
-    rpc.on_message(remote::buffer_saved, cx);
-    rpc.on_message(remote::save_buffer, cx);
+pub fn init(cx: &mut MutableAppContext, rpc: &rpc::Client, router: &mut ForegroundRouter) {
+    rpc.on_message(router, remote::add_peer, cx);
+    rpc.on_message(router, remote::remove_peer, cx);
+    rpc.on_message(router, remote::update_worktree, cx);
+    rpc.on_message(router, remote::open_buffer, cx);
+    rpc.on_message(router, remote::close_buffer, cx);
+    rpc.on_message(router, remote::update_buffer, cx);
+    rpc.on_message(router, remote::buffer_saved, cx);
+    rpc.on_message(router, remote::save_buffer, cx);
 }
 
 #[async_trait::async_trait]
@@ -2861,6 +2861,8 @@ mod remote {
         rpc: &rpc::Client,
         cx: &mut AsyncAppContext,
     ) -> anyhow::Result<()> {
+        eprintln!("got update buffer message {:?}", envelope.payload);
+
         let message = envelope.payload;
         rpc.state
             .read()
@@ -2875,6 +2877,8 @@ mod remote {
         rpc: &rpc::Client,
         cx: &mut AsyncAppContext,
     ) -> anyhow::Result<()> {
+        eprintln!("got save buffer message {:?}", envelope.payload);
+
         let state = rpc.state.read().await;
         let worktree = state.shared_worktree(envelope.payload.worktree_id, cx)?;
         let sender_id = envelope.original_sender_id()?;
@@ -2905,6 +2909,8 @@ mod remote {
         rpc: &rpc::Client,
         cx: &mut AsyncAppContext,
     ) -> anyhow::Result<()> {
+        eprintln!("got buffer_saved {:?}", envelope.payload);
+
         rpc.state
             .read()
             .await
@@ -2993,7 +2999,7 @@ mod tests {
         let dir = temp_tree(json!({
             "file1": "the old contents",
         }));
-        let tree = cx.add_model(|cx| Worktree::local(dir.path(), app_state.languages, cx));
+        let tree = cx.add_model(|cx| Worktree::local(dir.path(), app_state.languages.clone(), cx));
         let buffer = tree
             .update(&mut cx, |tree, cx| tree.open_buffer("file1", cx))
             .await
@@ -3016,7 +3022,8 @@ mod tests {
         }));
         let file_path = dir.path().join("file1");
 
-        let tree = cx.add_model(|cx| Worktree::local(file_path.clone(), app_state.languages, cx));
+        let tree =
+            cx.add_model(|cx| Worktree::local(file_path.clone(), app_state.languages.clone(), cx));
         cx.read(|cx| tree.read(cx).as_local().unwrap().scan_complete())
             .await;
         cx.read(|cx| assert_eq!(tree.read(cx).file_count(), 1));
