@@ -204,14 +204,15 @@ struct InMemoryFsState {
 
 impl InMemoryFsState {
     fn validate_path(&self, path: &Path) -> Result<()> {
-        if path
-            .parent()
-            .and_then(|path| self.entries.get(path))
-            .map_or(false, |e| e.is_dir)
+        if path.is_absolute()
+            && path
+                .parent()
+                .and_then(|path| self.entries.get(path))
+                .map_or(false, |e| e.is_dir)
         {
             Ok(())
         } else {
-            Err(anyhow!("invalid "))
+            Err(anyhow!("invalid path {:?}", path))
         }
     }
 
@@ -277,21 +278,35 @@ impl InMemoryFs {
     pub async fn remove(&self, path: &Path) -> Result<()> {
         let mut state = self.state.write().await;
         state.validate_path(path)?;
-
-        let mut paths = Vec::new();
-        state.entries.retain(|path, _| {
-            if path.starts_with(path) {
-                paths.push(path.to_path_buf());
-                false
-            } else {
-                true
-            }
-        });
-        for path in paths {
-            state.emit_event(&path).await;
-        }
-
+        state.entries.retain(|path, _| !path.starts_with(path));
+        state.emit_event(&path).await;
         Ok(())
+    }
+
+    pub async fn rename(&self, source: &Path, target: &Path) -> Result<()> {
+        let mut state = self.state.write().await;
+        state.validate_path(source)?;
+        state.validate_path(target)?;
+        if state.entries.contains_key(target) {
+            Err(anyhow!("target path already exists"))
+        } else {
+            let mut removed = Vec::new();
+            state.entries.retain(|path, entry| {
+                if let Ok(relative_path) = path.strip_prefix(source) {
+                    removed.push((relative_path.to_path_buf(), entry.clone()));
+                    false
+                } else {
+                    true
+                }
+            });
+
+            for (relative_path, entry) in removed {
+                let new_path = target.join(relative_path);
+                state.entries.insert(new_path, entry);
+            }
+
+            Ok(())
+        }
     }
 
     pub async fn events(&self) -> broadcast::Receiver<fsevent::Event> {
