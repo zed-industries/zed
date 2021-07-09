@@ -1748,20 +1748,19 @@ impl File {
                 Worktree::Local(worktree) => worktree.rpc.clone(),
                 Worktree::Remote(worktree) => Some((worktree.rpc.clone(), worktree.remote_id)),
             } {
-                cx.background()
-                    .spawn(async move {
-                        if let Err(error) = rpc
-                            .send(proto::UpdateBuffer {
-                                worktree_id: remote_id,
-                                buffer_id,
-                                operations: Some(operation).iter().map(Into::into).collect(),
-                            })
-                            .await
-                        {
-                            log::error!("error sending buffer operation: {}", error);
-                        }
-                    })
-                    .detach();
+                cx.spawn(|_, _| async move {
+                    if let Err(error) = rpc
+                        .send(proto::UpdateBuffer {
+                            worktree_id: remote_id,
+                            buffer_id,
+                            operations: Some(operation).iter().map(Into::into).collect(),
+                        })
+                        .await
+                    {
+                        log::error!("error sending buffer operation: {}", error);
+                    }
+                })
+                .detach();
             }
         });
     }
