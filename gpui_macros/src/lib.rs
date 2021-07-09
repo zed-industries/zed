@@ -2,7 +2,8 @@ use proc_macro::TokenStream;
 use quote::{format_ident, quote};
 use std::mem;
 use syn::{
-    parse_macro_input, parse_quote, AttributeArgs, ItemFn, Lit, Meta, MetaNameValue, NestedMeta,
+    parse_macro_input, parse_quote, spanned::Spanned as _, AttributeArgs, ItemFn, Lit, Meta,
+    NestedMeta,
 };
 
 #[proc_macro_attribute]
@@ -11,7 +12,8 @@ pub fn test(args: TokenStream, function: TokenStream) -> TokenStream {
 
     let args = syn::parse_macro_input!(args as AttributeArgs);
     let mut max_retries = 0;
-    let mut iterations = 1;
+    let mut num_iterations = 1;
+    let mut starting_seed = 0;
     for arg in args {
         match arg {
             NestedMeta::Meta(Meta::Path(name))
@@ -20,17 +22,25 @@ pub fn test(args: TokenStream, function: TokenStream) -> TokenStream {
                 namespace = format_ident!("crate");
             }
             NestedMeta::Meta(Meta::NameValue(meta)) => {
-                if let Some(result) = parse_int_meta(&meta, "retries") {
-                    match result {
-                        Ok(value) => max_retries = value,
-                        Err(error) => return TokenStream::from(error.into_compile_error()),
+                let key_name = meta.path.get_ident().map(|i| i.to_string());
+                let variable = match key_name.as_ref().map(String::as_str) {
+                    Some("retries") => &mut max_retries,
+                    Some("iterations") => &mut num_iterations,
+                    Some("seed") => &mut starting_seed,
+                    _ => {
+                        return TokenStream::from(
+                            syn::Error::new(meta.path.span(), "invalid argument")
+                                .into_compile_error(),
+                        )
                     }
-                } else if let Some(result) = parse_int_meta(&meta, "iterations") {
-                    match result {
-                        Ok(value) => iterations = value,
-                        Err(error) => return TokenStream::from(error.into_compile_error()),
+                };
+
+                *variable = match parse_int(&meta.lit) {
+                    Ok(value) => value,
+                    Err(error) => {
+                        return TokenStream::from(error.into_compile_error());
                     }
-                }
+                };
             }
             other => {
                 return TokenStream::from(
@@ -61,8 +71,9 @@ pub fn test(args: TokenStream, function: TokenStream) -> TokenStream {
                 #inner_fn
 
                 let mut retries = 0;
-                let mut seed = 0;
+                let mut i = 0;
                 loop {
+                    let seed = #starting_seed + i;
                     let result = std::panic::catch_unwind(|| {
                         let (foreground, background) = #namespace::executor::deterministic(seed as u64);
                         foreground.run(#inner_fn_name(#inner_fn_args));
@@ -70,9 +81,9 @@ pub fn test(args: TokenStream, function: TokenStream) -> TokenStream {
 
                     match result {
                         Ok(result) => {
-                            seed += 1;
                             retries = 0;
-                            if seed == #iterations {
+                            i += 1;
+                            if i == #num_iterations {
                                 return result
                             }
                         }
@@ -81,7 +92,7 @@ pub fn test(args: TokenStream, function: TokenStream) -> TokenStream {
                                 retries += 1;
                                 println!("retrying: attempt {}", retries);
                             } else {
-                                if #iterations > 1 {
+                                if #num_iterations > 1 {
                                     eprintln!("failing seed: {}", seed);
                                 }
                                 std::panic::resume_unwind(error);
@@ -131,18 +142,10 @@ pub fn test(args: TokenStream, function: TokenStream) -> TokenStream {
     TokenStream::from(quote!(#outer_fn))
 }
 
-fn parse_int_meta(meta: &MetaNameValue, name: &str) -> Option<syn::Result<usize>> {
-    let ident = meta.path.get_ident();
-    if ident.map_or(false, |n| n == name) {
-        if let Lit::Int(int) = &meta.lit {
-            Some(int.base10_parse())
-        } else {
-            Some(Err(syn::Error::new(
-                meta.lit.span(),
-                format!("{} mut be an integer", name),
-            )))
-        }
+fn parse_int(literal: &Lit) -> syn::Result<usize> {
+    if let Lit::Int(int) = &literal {
+        int.base10_parse()
     } else {
-        None
+        Err(syn::Error::new(literal.span(), "must be an integer"))
     }
 }
