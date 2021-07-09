@@ -19,6 +19,7 @@ test-support = ["tempdir", "serde_json", "zed-rpc/test-support"]
 [dependencies]
 anyhow = "1.0.38"
 arrayvec = "0.5.2"
+async-trait = "0.1"
 async-tungstenite = { version="0.14", features=["async-tls"] }
 crossbeam-channel = "0.5.0"
 ctor = "0.1.20"

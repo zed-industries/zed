@@ -4457,6 +4457,7 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "arrayvec",
+ "async-trait",
  "async-tungstenite",
  "cargo-bundle",
  "crossbeam-channel",
