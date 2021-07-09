@@ -14,7 +14,7 @@ use crate::{
 use ::ignore::gitignore::Gitignore;
 use anyhow::{anyhow, Context, Result};
 use atomic::Ordering::SeqCst;
-use futures::{Stream, StreamExt};
+use futures::{future, stream, Stream, StreamExt};
 pub use fuzzy::{match_paths, PathMatch};
 use gpui::{
     executor, AppContext, AsyncAppContext, Entity, ModelContext, ModelHandle, MutableAppContext,
@@ -187,6 +187,7 @@ impl Fs for OsFs {
     }
 }
 
+#[derive(Clone)]
 struct InMemoryEntry {
     inode: u64,
     mtime: SystemTime,
@@ -334,7 +335,27 @@ impl Fs for InMemoryFs {
         path: &'a Path,
         abs_path: &'a Path,
     ) -> Result<Pin<Box<dyn 'a + Stream<Item = Result<Entry>> + Send>>> {
-        todo!()
+        let state = self.state.read().await;
+        Ok(stream::iter(state.entries.clone())
+            .filter(move |(child_path, _)| future::ready(child_path.parent() == Some(abs_path)))
+            .then(move |(child_abs_path, child_entry)| async move {
+                smol::future::yield_now().await;
+                let child_path = Arc::from(path.join(child_abs_path.file_name().unwrap()));
+                Ok(Entry {
+                    id: next_entry_id.fetch_add(1, SeqCst),
+                    kind: if child_entry.is_dir {
+                        EntryKind::PendingDir
+                    } else {
+                        EntryKind::File(char_bag_for_path(root_char_bag, &child_path))
+                    },
+                    path: child_path,
+                    inode: child_entry.inode,
+                    mtime: child_entry.mtime,
+                    is_symlink: child_entry.is_symlink,
+                    is_ignored: false,
+                })
+            })
+            .boxed())
     }
 
     async fn load(&self, path: &Path) -> Result<String> {
