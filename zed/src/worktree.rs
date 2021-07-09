@@ -28,10 +28,11 @@ use postage::{
 use smol::{
     channel::Sender,
     io::{AsyncReadExt, AsyncWriteExt},
+    lock::RwLock,
 };
 use std::{
     cmp::{self, Ordering},
-    collections::HashMap,
+    collections::{BTreeMap, HashMap},
     convert::{TryFrom, TryInto},
     ffi::{OsStr, OsString},
     fmt, fs,
@@ -141,6 +142,151 @@ impl Fs for OsFs {
     }
 }
 
+struct InMemoryEntry {
+    inode: u64,
+    mtime: SystemTime,
+    is_dir: bool,
+    is_symlink: bool,
+    content: Option<String>,
+}
+
+struct InMemoryFsState {
+    entries: BTreeMap<PathBuf, InMemoryEntry>,
+    next_inode: u64,
+    events_tx: watch::Sender<()>,
+}
+
+impl InMemoryFsState {
+    fn validate_path(&self, path: &Path) -> Result<()> {
+        if path
+            .parent()
+            .and_then(|path| self.entries.get(path))
+            .map_or(false, |e| e.is_dir)
+        {
+            Ok(())
+        } else {
+            Err(anyhow!("invalid "))
+        }
+    }
+}
+
+pub struct InMemoryFs {
+    state: RwLock<InMemoryFsState>,
+    events_rx: watch::Receiver<()>,
+}
+
+impl InMemoryFs {
+    pub fn new() -> Self {
+        let (events_tx, events_rx) = watch::channel();
+        let mut entries = BTreeMap::new();
+        entries.insert(
+            Path::new("/").to_path_buf(),
+            InMemoryEntry {
+                inode: 0,
+                mtime: SystemTime::now(),
+                is_dir: true,
+                is_symlink: false,
+                content: None,
+            },
+        );
+        Self {
+            state: RwLock::new(InMemoryFsState {
+                entries,
+                next_inode: 1,
+                events_tx,
+            }),
+            events_rx,
+        }
+    }
+
+    pub async fn insert_dir(&self, path: &Path) -> Result<()> {
+        let mut state = self.state.write().await;
+        state.validate_path(path)?;
+
+        let inode = state.next_inode;
+        state.next_inode += 1;
+        state.entries.insert(
+            path.to_path_buf(),
+            InMemoryEntry {
+                inode,
+                mtime: SystemTime::now(),
+                is_dir: true,
+                is_symlink: false,
+                content: None,
+            },
+        );
+        Ok(())
+    }
+}
+
+#[async_trait::async_trait]
+impl Fs for InMemoryFs {
+    async fn entry(
+        &self,
+        root_char_bag: CharBag,
+        next_entry_id: &AtomicUsize,
+        path: Arc<Path>,
+        abs_path: &Path,
+    ) -> Result<Option<Entry>> {
+        let state = self.state.read().await;
+        if let Some(entry) = state.entries.get(abs_path) {
+            Ok(Some(Entry {
+                id: next_entry_id.fetch_add(1, SeqCst),
+                kind: if entry.is_dir {
+                    EntryKind::PendingDir
+                } else {
+                    EntryKind::File(char_bag_for_path(root_char_bag, &path))
+                },
+                path: Arc::from(path),
+                inode: entry.inode,
+                mtime: entry.mtime,
+                is_symlink: entry.is_symlink,
+                is_ignored: false,
+            }))
+        } else {
+            Ok(None)
+        }
+    }
+
+    async fn load(&self, path: &Path) -> Result<String> {
+        let state = self.state.read().await;
+        let text = state
+            .entries
+            .get(path)
+            .and_then(|e| e.content.as_ref())
+            .ok_or_else(|| anyhow!("file {:?} does not exist", path))?;
+        Ok(text.clone())
+    }
+
+    async fn save(&self, path: &Path, text: &Rope) -> Result<()> {
+        let mut state = self.state.write().await;
+        state.validate_path(path)?;
+        if let Some(entry) = state.entries.get_mut(path) {
+            if entry.is_dir {
+                Err(anyhow!("cannot overwrite a directory with a file"))
+            } else {
+                entry.content = Some(text.chunks().collect());
+                entry.mtime = SystemTime::now();
+                Ok(())
+            }
+        } else {
+            let inode = state.next_inode;
+            state.next_inode += 1;
+            state.entries.insert(
+                path.to_path_buf(),
+                InMemoryEntry {
+                    inode,
+                    mtime: SystemTime::now(),
+                    is_dir: false,
+                    is_symlink: false,
+                    content: Some(text.chunks().collect()),
+                },
+            );
+            Ok(())
+        }
+    }
+}
+
 #[derive(Clone, Debug)]
 enum ScanState {
     Idle,
@@ -197,6 +343,20 @@ impl Worktree {
             scanner.run(event_stream);
         });
         tree._event_stream_handle = Some(event_stream_handle);
+        Worktree::Local(tree)
+    }
+
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn test(
+        path: impl Into<Arc<Path>>,
+        languages: Arc<LanguageRegistry>,
+        fs: Arc<InMemoryFs>,
+        cx: &mut ModelContext<Worktree>,
+    ) -> Self {
+        let (tree, scan_states_tx) = LocalWorktree::new(path, languages, fs.clone(), cx);
+        let background_snapshot = tree.background_snapshot.clone();
+        let id = tree.id;
+        cx.background().spawn(async move {}).detach();
         Worktree::Local(tree)
     }
 
