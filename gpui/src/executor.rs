@@ -3,12 +3,15 @@ use async_task::Runnable;
 pub use async_task::Task;
 use parking_lot::Mutex;
 use rand::prelude::*;
-use smol::prelude::*;
-use smol::{channel, Executor};
-use std::rc::Rc;
-use std::sync::mpsc::SyncSender;
-use std::sync::Arc;
-use std::{marker::PhantomData, thread};
+use smol::{channel, prelude::*, Executor};
+use std::{
+    marker::PhantomData,
+    mem,
+    pin::Pin,
+    rc::Rc,
+    sync::{mpsc::SyncSender, Arc},
+    thread,
+};
 
 use crate::platform;
 
@@ -25,6 +28,7 @@ pub enum Background {
     Deterministic(Arc<Deterministic>),
     Production {
         executor: Arc<smol::Executor<'static>>,
+        threads: usize,
         _stop: channel::Sender<()>,
     },
 }
@@ -155,8 +159,9 @@ impl Background {
     pub fn new() -> Self {
         let executor = Arc::new(Executor::new());
         let stop = channel::unbounded::<()>();
+        let threads = num_cpus::get();
 
-        for i in 0..num_cpus::get() {
+        for i in 0..threads {
             let executor = executor.clone();
             let stop = stop.1.clone();
             thread::Builder::new()
@@ -167,7 +172,15 @@ impl Background {
 
         Self::Production {
             executor,
+            threads,
             _stop: stop.0,
+        }
+    }
+
+    pub fn threads(&self) -> usize {
+        match self {
+            Self::Deterministic(_) => 1,
+            Self::Production { threads, .. } => *threads,
         }
     }
 
@@ -180,6 +193,54 @@ impl Background {
             Self::Production { executor, .. } => executor.spawn(future),
             Self::Deterministic(executor) => executor.spawn(future),
         }
+    }
+
+    pub async fn scoped<'scope, F>(&self, scheduler: F)
+    where
+        F: FnOnce(&mut Scope<'scope>),
+    {
+        let mut scope = Scope {
+            futures: Default::default(),
+            _phantom: PhantomData,
+        };
+        (scheduler)(&mut scope);
+        match self {
+            Self::Deterministic(_) => {
+                for spawned in scope.futures {
+                    spawned.await;
+                }
+            }
+            Self::Production { executor, .. } => {
+                let spawned = scope
+                    .futures
+                    .into_iter()
+                    .map(|f| executor.spawn(f))
+                    .collect::<Vec<_>>();
+                for task in spawned {
+                    task.await;
+                }
+            }
+        }
+    }
+}
+
+pub struct Scope<'a> {
+    futures: Vec<Pin<Box<dyn Future<Output = ()> + Send + 'static>>>,
+    _phantom: PhantomData<&'a ()>,
+}
+
+impl<'a> Scope<'a> {
+    pub fn spawn<F>(&mut self, f: F)
+    where
+        F: Future<Output = ()> + Send + 'a,
+    {
+        let f = unsafe {
+            mem::transmute::<
+                Pin<Box<dyn Future<Output = ()> + Send + 'a>>,
+                Pin<Box<dyn Future<Output = ()> + Send + 'static>>,
+            >(Box::pin(f))
+        };
+        self.futures.push(f);
     }
 }
 
