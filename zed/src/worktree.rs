@@ -470,7 +470,8 @@ impl Worktree {
         cx: &mut ModelContext<Worktree>,
     ) -> Self {
         let fs = Arc::new(ProductionFs);
-        let (mut tree, scan_states_tx) = LocalWorktree::new(path, languages, fs.clone(), cx);
+        let (mut tree, scan_states_tx) =
+            LocalWorktree::new(path, languages, fs.clone(), Duration::from_millis(100), cx);
         let (event_stream, event_stream_handle) = fsevent::EventStream::new(
             &[tree.snapshot.abs_path.as_ref()],
             Duration::from_millis(100),
@@ -496,7 +497,8 @@ impl Worktree {
         fs: Arc<InMemoryFs>,
         cx: &mut ModelContext<Worktree>,
     ) -> Self {
-        let (tree, scan_states_tx) = LocalWorktree::new(path, languages, fs.clone(), cx);
+        let (tree, scan_states_tx) =
+            LocalWorktree::new(path, languages, fs.clone(), Duration::ZERO, cx);
         let background_snapshot = tree.background_snapshot.clone();
         let fs = fs.clone();
         let background = cx.background().clone();
@@ -809,11 +811,16 @@ impl Worktree {
     fn poll_snapshot(&mut self, cx: &mut ModelContext<Worktree>) {
         let update_buffers = match self {
             Self::Local(worktree) => {
+                let poll_interval = worktree.poll_interval;
                 worktree.snapshot = worktree.background_snapshot.lock().clone();
                 if worktree.is_scanning() {
                     if !worktree.poll_scheduled {
                         cx.spawn(|this, mut cx| async move {
-                            smol::Timer::after(Duration::from_millis(100)).await;
+                            if poll_interval.is_zero() {
+                                smol::future::yield_now().await;
+                            } else {
+                                smol::Timer::after(poll_interval).await;
+                            }
                             this.update(&mut cx, |this, cx| {
                                 this.as_local_mut().unwrap().poll_scheduled = false;
                                 this.poll_snapshot(cx);
@@ -937,6 +944,7 @@ pub struct LocalWorktree {
     peers: HashMap<PeerId, ReplicaId>,
     languages: Arc<LanguageRegistry>,
     fs: Arc<dyn Fs>,
+    poll_interval: Duration,
 }
 
 impl LocalWorktree {
@@ -944,6 +952,7 @@ impl LocalWorktree {
         path: impl Into<Arc<Path>>,
         languages: Arc<LanguageRegistry>,
         fs: Arc<dyn Fs>,
+        poll_interval: Duration,
         cx: &mut ModelContext<Worktree>,
     ) -> (Self, Sender<ScanState>) {
         let abs_path = path.into();
@@ -976,6 +985,7 @@ impl LocalWorktree {
             rpc: None,
             languages,
             fs,
+            poll_interval,
         };
 
         cx.spawn_weak(|this, mut cx| async move {
