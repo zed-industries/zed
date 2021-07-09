@@ -865,7 +865,7 @@ impl Worktree {
                                     if let Some(worktree) = self.as_local() {
                                         if buffer_is_clean {
                                             let abs_path = worktree.absolutize(&file.path);
-                                            refresh_buffer(abs_path, cx);
+                                            refresh_buffer(abs_path, &worktree.fs, cx);
                                         }
                                     }
                                 }
@@ -875,7 +875,7 @@ impl Worktree {
                                 if let Some(worktree) = self.as_local() {
                                     if buffer_is_clean {
                                         let abs_path = worktree.absolutize(&file.path);
-                                        refresh_buffer(abs_path, cx);
+                                        refresh_buffer(abs_path, &worktree.fs, cx);
                                     }
                                 }
                                 file_changed = true;
@@ -1292,24 +1292,16 @@ impl LocalWorktree {
     }
 }
 
-pub fn refresh_buffer(abs_path: PathBuf, cx: &mut ModelContext<Buffer>) {
+pub fn refresh_buffer(abs_path: PathBuf, fs: &Arc<dyn Fs>, cx: &mut ModelContext<Buffer>) {
+    let fs = fs.clone();
     cx.spawn(|buffer, mut cx| async move {
-        let new_text = cx
-            .background()
-            .spawn(async move {
-                let mut file = smol::fs::File::open(&abs_path).await?;
-                let mut text = String::new();
-                file.read_to_string(&mut text).await?;
-                Ok::<_, anyhow::Error>(text.into())
-            })
-            .await;
-
+        let new_text = fs.load(&abs_path).await;
         match new_text {
             Err(error) => log::error!("error refreshing buffer after file changed: {}", error),
             Ok(new_text) => {
                 buffer
                     .update(&mut cx, |buffer, cx| {
-                        buffer.set_text_from_disk(new_text, cx)
+                        buffer.set_text_from_disk(new_text.into(), cx)
                     })
                     .await;
             }
