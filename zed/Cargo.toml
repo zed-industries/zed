@@ -14,7 +14,7 @@ name = "Zed"
 path = "src/main.rs"
 
 [features]
-test-support = ["tempdir", "serde_json"]
+test-support = ["tempdir", "serde_json", "zed-rpc/test-support"]
 
 [dependencies]
 anyhow = "1.0.38"

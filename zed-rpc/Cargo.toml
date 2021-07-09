@@ -4,6 +4,9 @@ edition = "2018"
 name = "zed-rpc"
 version = "0.1.0"
 
+[features]
+test-support = []
+
 [dependencies]
 anyhow = "1.0"
 async-lock = "2.4"

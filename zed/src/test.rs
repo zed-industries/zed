@@ -6,6 +6,9 @@ use std::{
 };
 use tempdir::TempDir;
 
+#[cfg(feature = "test-support")]
+pub use zed_rpc::test::Channel;
+
 #[cfg(test)]
 #[ctor::ctor]
 fn init_logger() {
