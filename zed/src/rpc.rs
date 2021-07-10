@@ -1,5 +1,6 @@
 use crate::{language::LanguageRegistry, worktree::Worktree};
 use anyhow::{anyhow, Context, Result};
+use async_tungstenite::tungstenite::http::Request;
 use async_tungstenite::tungstenite::{Error as WebSocketError, Message as WebSocketMessage};
 use gpui::{AsyncAppContext, ModelHandle, Task, WeakModelHandle};
 use lazy_static::lazy_static;
@@ -91,21 +92,22 @@ impl Client {
 
         let (user_id, access_token) = Self::login(cx.platform(), &cx.background()).await?;
         let user_id = user_id.parse()?;
+        let request =
+            Request::builder().header("Authorization", format!("{} {}", user_id, access_token));
+
         if let Some(host) = ZED_SERVER_URL.strip_prefix("https://") {
             let stream = smol::net::TcpStream::connect(host).await?;
-            let (stream, _) = async_tungstenite::async_tls::client_async_tls(
-                format!("wss://{}/rpc", host),
-                stream,
-            )
-            .await
-            .context("websocket handshake")?;
+            let request = request.uri(format!("wss://{}/rpc", host)).body(())?;
+            let (stream, _) = async_tungstenite::async_tls::client_async_tls(request, stream)
+                .await
+                .context("websocket handshake")?;
             log::info!("connected to rpc address {}", *ZED_SERVER_URL);
             self.add_connection(stream, user_id, access_token, router, cx)
                 .await?;
         } else if let Some(host) = ZED_SERVER_URL.strip_prefix("http://") {
             let stream = smol::net::TcpStream::connect(host).await?;
-            let (stream, _) =
-                async_tungstenite::client_async(format!("ws://{}/rpc", host), stream).await?;
+            let request = request.uri(format!("ws://{}/rpc", host)).body(())?;
+            let (stream, _) = async_tungstenite::client_async(request, stream).await?;
             log::info!("connected to rpc address {}", *ZED_SERVER_URL);
             self.add_connection(stream, user_id, access_token, router, cx)
                 .await?;
