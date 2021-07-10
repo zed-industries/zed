@@ -91,7 +91,7 @@ impl Client {
         }
 
         let (user_id, access_token) = Self::login(cx.platform(), &cx.background()).await?;
-        let user_id = user_id.parse()?;
+        let user_id: i32 = user_id.parse()?;
         let request =
             Request::builder().header("Authorization", format!("{} {}", user_id, access_token));
 
@@ -102,15 +102,13 @@ impl Client {
                 .await
                 .context("websocket handshake")?;
             log::info!("connected to rpc address {}", *ZED_SERVER_URL);
-            self.add_connection(stream, user_id, access_token, router, cx)
-                .await?;
+            self.add_connection(stream, router, cx).await?;
         } else if let Some(host) = ZED_SERVER_URL.strip_prefix("http://") {
             let stream = smol::net::TcpStream::connect(host).await?;
             let request = request.uri(format!("ws://{}/rpc", host)).body(())?;
             let (stream, _) = async_tungstenite::client_async(request, stream).await?;
             log::info!("connected to rpc address {}", *ZED_SERVER_URL);
-            self.add_connection(stream, user_id, access_token, router, cx)
-                .await?;
+            self.add_connection(stream, router, cx).await?;
         } else {
             return Err(anyhow!("invalid server url: {}", *ZED_SERVER_URL))?;
         };
@@ -121,8 +119,6 @@ impl Client {
     pub async fn add_connection<Conn>(
         &self,
         conn: Conn,
-        user_id: i32,
-        access_token: String,
         router: Arc<ForegroundRouter>,
         cx: AsyncAppContext,
     ) -> surf::Result<()>
@@ -138,27 +134,11 @@ impl Client {
         cx.foreground().spawn(handle_messages).detach();
         cx.background()
             .spawn(async move {
-                if let Err(error) = handle_io.run().await {
+                if let Err(error) = handle_io.await {
                     log::error!("connection error: {:?}", error);
                 }
             })
             .detach();
-
-        let auth_response = self
-            .peer
-            .request(
-                connection_id,
-                proto::Auth {
-                    user_id,
-                    access_token,
-                },
-            )
-            .await
-            .context("rpc auth request failed")?;
-        if !auth_response.credentials_valid {
-            Err(anyhow!("failed to authenticate with RPC server"))?;
-        }
-
         self.state.write().await.connection_id = Some(connection_id);
         Ok(())
     }
