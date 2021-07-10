@@ -101,7 +101,7 @@ impl Peer {
     ) -> (
         ConnectionId,
         impl Future<Output = anyhow::Result<()>> + Send,
-        impl Future<Output = anyhow::Result<()>>,
+        impl Future<Output = ()>,
     )
     where
         H: Fn(&mut Option<proto::Envelope>, ConnectionId) -> Option<Fut>,
@@ -171,7 +171,6 @@ impl Peer {
                 }
             }
             response_channels.lock().await.clear();
-            Ok(())
         };
 
         self.connections
@@ -657,7 +656,7 @@ mod tests {
 
             let (mut messages_ended_tx, mut messages_ended_rx) = postage::barrier::channel();
             smol::spawn(async move {
-                message_handler.await.ok();
+                message_handler.await;
                 messages_ended_tx.send(()).await.unwrap();
             })
             .detach();
