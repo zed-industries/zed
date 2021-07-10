@@ -190,7 +190,7 @@ impl Fs for ProductionFs {
     }
 }
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 struct InMemoryEntry {
     inode: u64,
     mtime: SystemTime,
@@ -311,6 +311,9 @@ impl InMemoryFs {
                 let new_path = target.join(relative_path);
                 state.entries.insert(new_path, entry);
             }
+
+            state.emit_event(source).await;
+            state.emit_event(target).await;
 
             Ok(())
         }
