@@ -977,7 +977,10 @@ impl MutableAppContext {
             },
         );
         self.open_platform_window(window_id);
-        root_view.update(self, |view, cx| view.on_focus(cx));
+        root_view.update(self, |view, cx| {
+            view.on_focus(cx);
+            cx.notify();
+        });
         self.flush_effects();
 
         (window_id, root_view)
@@ -1592,6 +1595,31 @@ pub enum Effect {
         window_id: usize,
         view_id: usize,
     },
+}
+
+impl Debug for Effect {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Effect::Event { entity_id, .. } => f
+                .debug_struct("Effect::Event")
+                .field("entity_id", entity_id)
+                .finish(),
+            Effect::ModelNotification { model_id } => f
+                .debug_struct("Effect::ModelNotification")
+                .field("model_id", model_id)
+                .finish(),
+            Effect::ViewNotification { window_id, view_id } => f
+                .debug_struct("Effect::ViewNotification")
+                .field("window_id", window_id)
+                .field("view_id", view_id)
+                .finish(),
+            Effect::Focus { window_id, view_id } => f
+                .debug_struct("Effect::Focus")
+                .field("window_id", window_id)
+                .field("view_id", view_id)
+                .finish(),
+        }
+    }
 }
 
 pub trait AnyModel: Send + Sync {
@@ -2798,6 +2826,7 @@ mod tests {
     use super::*;
     use crate::elements::*;
     use smol::future::poll_once;
+    use std::sync::atomic::{AtomicUsize, Ordering::SeqCst};
 
     #[crate::test(self)]
     fn test_model_handles(cx: &mut MutableAppContext) {
@@ -2990,6 +3019,48 @@ mod tests {
         assert_eq!(cx.cx.views.len(), 2);
         assert!(cx.subscriptions.is_empty());
         assert!(cx.model_observations.is_empty());
+    }
+
+    #[crate::test(self)]
+    fn test_add_window(cx: &mut MutableAppContext) {
+        struct View {
+            mouse_down_count: Arc<AtomicUsize>,
+        }
+
+        impl Entity for View {
+            type Event = ();
+        }
+
+        impl super::View for View {
+            fn render<'a>(&self, _: &AppContext) -> ElementBox {
+                let mouse_down_count = self.mouse_down_count.clone();
+                EventHandler::new(Empty::new().boxed())
+                    .on_mouse_down(move |_| {
+                        mouse_down_count.fetch_add(1, SeqCst);
+                        true
+                    })
+                    .boxed()
+            }
+
+            fn ui_name() -> &'static str {
+                "View"
+            }
+        }
+
+        let mouse_down_count = Arc::new(AtomicUsize::new(0));
+        let (window_id, _) = cx.add_window(|_| View {
+            mouse_down_count: mouse_down_count.clone(),
+        });
+        let presenter = cx.presenters_and_platform_windows[&window_id].0.clone();
+        // Ensure window's root element is in a valid lifecycle state.
+        presenter.borrow_mut().dispatch_event(
+            Event::LeftMouseDown {
+                position: Default::default(),
+                cmd: false,
+            },
+            cx,
+        );
+        assert_eq!(mouse_down_count.load(SeqCst), 1);
     }
 
     #[crate::test(self)]
