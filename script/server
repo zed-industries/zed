@@ -3,4 +3,4 @@
 set -e
 
 cd server
-cargo run
+cargo run $@
