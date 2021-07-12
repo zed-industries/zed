@@ -31,6 +31,7 @@ pub fn init(cx: &mut MutableAppContext) {
     cx.add_global_action("workspace:open", open);
     cx.add_global_action("workspace:open_paths", open_paths);
     cx.add_global_action("workspace:new_file", open_new);
+    cx.add_global_action("workspace:join_worktree", join_worktree);
     cx.add_action("workspace:save", Workspace::save_active_item);
     cx.add_action("workspace:debug_elements", Workspace::debug_elements);
     cx.add_action("workspace:new_file", Workspace::open_new_file);
@@ -110,6 +111,19 @@ fn open_new(app_state: &Arc<AppState>, cx: &mut MutableAppContext) {
             cx,
         );
         view.open_new_file(&app_state, cx);
+        view
+    });
+}
+
+fn join_worktree(app_state: &Arc<AppState>, cx: &mut MutableAppContext) {
+    cx.add_window(|cx| {
+        let mut view = Workspace::new(
+            app_state.settings.clone(),
+            app_state.languages.clone(),
+            app_state.rpc.clone(),
+            cx,
+        );
+        view.join_worktree(&app_state, cx);
         view
     });
 }
