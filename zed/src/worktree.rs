@@ -2919,8 +2919,6 @@ mod remote {
         rpc: &rpc::Client,
         cx: &mut AsyncAppContext,
     ) -> anyhow::Result<()> {
-        eprintln!("got save buffer message {:?}", envelope.payload);
-
         let state = rpc.state.read().await;
         let worktree = state.shared_worktree(envelope.payload.worktree_id, cx)?;
         let sender_id = envelope.original_sender_id()?;
