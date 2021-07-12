@@ -39,6 +39,6 @@ module.exports = {
         require('@tailwindcss/typography'),
     ],
     purge: [
-        "../templates/**/*.hbs"
+        "../server/templates/**/*.hbs"
     ]
 }
