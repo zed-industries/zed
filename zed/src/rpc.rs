@@ -288,7 +288,7 @@ pub fn encode_worktree_url(id: u64, access_token: &str) -> String {
 }
 
 pub fn decode_worktree_url(url: &str) -> Option<(u64, String)> {
-    let path = url.strip_prefix(WORKTREE_URL_PREFIX)?;
+    let path = url.trim().strip_prefix(WORKTREE_URL_PREFIX)?;
     let mut parts = path.split('/');
     let id = parts.next()?.parse::<u64>().ok()?;
     let access_token = parts.next()?;
@@ -309,5 +309,9 @@ const LOGIN_RESPONSE: &'static str = "
 fn test_encode_and_decode_worktree_url() {
     let url = encode_worktree_url(5, "deadbeef");
     assert_eq!(decode_worktree_url(&url), Some((5, "deadbeef".to_string())));
+    assert_eq!(
+        decode_worktree_url(&format!("\n {}\t", url)),
+        Some((5, "deadbeef".to_string()))
+    );
     assert_eq!(decode_worktree_url("not://the-right-format"), None);
 }
