@@ -1,0 +1,71 @@
+---
+kind: Service
+apiVersion: v1
+metadata:
+  name: zed
+  annotations:
+    service.beta.kubernetes.io/do-loadbalancer-tls-ports: "443"
+    service.beta.kubernetes.io/do-loadbalancer-certificate-id: "606e2db9-2b58-4ae7-b12c-a0c7d56af49b"
+spec:
+  type: LoadBalancer
+  selector:
+    app: zed
+  ports:
+    - name: web
+      protocol: TCP
+      port: 443
+      targetPort: 8080
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: zed
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: zed
+  template:
+    metadata:
+      labels:
+        app: zed
+    spec:
+      containers:
+        - name: zed
+          image: registry.digitalocean.com/zed/zed-server
+          ports:
+            - containerPort: 8080
+              protocol: TCP
+          env:
+            - name: HTTP_PORT
+              value: "8080"
+            - name: DATABASE_URL
+              valueFrom:
+                secretKeyRef:
+                  name: database
+                  key: url
+            - name: SESSION_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: session
+                  key: secret
+            - name: GITHUB_APP_ID
+              valueFrom:
+                secretKeyRef:
+                  name: github
+                  key: appId
+            - name: GITHUB_CLIENT_ID
+              valueFrom:
+                secretKeyRef:
+                  name: github
+                  key: clientId
+            - name: GITHUB_CLIENT_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: github
+                  key: clientSecret
+            - name: GITHUB_PRIVATE_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: github
+                  key: privateKey

@@ -1,0 +1,12 @@
+#!/bin/bash
+
+set -e
+
+# Install sqlx-cli if needed
+[[ "$(sqlx --version)" == "sqlx-cli 0.5.5" ]] || cargo install sqlx-cli --version 0.5.5
+
+# Export contents of .env.toml
+eval "$(cargo run --bin dotenv)"
+
+# Run sqlx command
+sqlx $@

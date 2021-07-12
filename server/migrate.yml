@@ -1,0 +1,17 @@
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: migrate
+spec:
+  template:
+    spec:
+      restartPolicy: Never
+      containers:
+      - name: migrator
+        image: registry.digitalocean.com/zed/zed-migrator
+        env:
+          - name: DATABASE_URL
+            valueFrom:
+              secretKeyRef:
+                name: database
+                key: url

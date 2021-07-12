@@ -1,10 +1,17 @@
 [workspace]
-members = ["zed", "zed-rpc", "gpui", "gpui_macros", "fsevent", "scoped_pool"]
+members = [
+    "fsevent",
+    "gpui",
+    "gpui_macros",
+    "scoped_pool",
+    "server",
+    "zed",
+    "zed-rpc"
+]
 
 [patch.crates-io]
 async-task = { git = "https://github.com/zed-industries/async-task", rev = "341b57d6de98cdfd7b418567b8de2022ca993a6e" }
 tree-sitter = { git = "https://github.com/tree-sitter/tree-sitter", rev = "d72771a19f4143530b1cfd23808e344f1276e176" }
-
 # TODO - Remove when a version is released with this PR: https://github.com/servo/core-foundation-rs/pull/457
 cocoa = { git = "https://github.com/servo/core-foundation-rs", rev = "025dcb3c0d1ef01530f57ef65f3b1deb948f5737" }
 cocoa-foundation = { git = "https://github.com/servo/core-foundation-rs", rev = "025dcb3c0d1ef01530f57ef65f3b1deb948f5737" }

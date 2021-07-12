@@ -1,0 +1,81 @@
+{{#> layout }}
+<script>
+    window.addEventListener("DOMContentLoaded", function () {
+        let users = document.getElementById("users");
+        if (users) {
+            users.addEventListener("change", async function (event) {
+                const action = event.target.getAttribute("action");
+                if (action) {
+                    console.log(action, event.target.checked);
+                    const response = await fetch(action, {
+                        method: 'PUT',
+                        headers: {
+                            'Content-Type': 'application/json'
+                        },
+                        body: JSON.stringify({ admin: event.target.checked })
+                    });
+                }
+            });
+        }
+    });
+</script>
+
+<div class="bg-white">
+    <div class="container py-4 px-8 md:px-12 mx-auto">
+        <h1 class="text-xl font-bold border-b border-gray-300 mb-4">Users</h1>
+        <table class="table" id="users">
+            <tr>
+                <th class="text-left pr-2">GitHub Login</th>
+                <th class="text-left pr-2">Admin</th>
+                <th></th>
+            </tr>
+            <form action="/users" method="post" class="m-0 mb-4">
+                <tr>
+                    <td>
+                        <input name="github_login" type="text" class="border border-gray-300 p-1 mr-2 w-48"
+                            placeholder="@github_handle">
+                    </td>
+                    <td>
+                        <input type="checkbox" id="admin" name="admin" value="true">
+                    </td>
+                    <td class="text-right">
+                        <button class="p-1 w-20 text-white rounded-md bg-gray-600 hover:bg-black">Add</button>
+                    </td>
+                </tr>
+            </form>
+
+            {{#each users}}
+            <tr>
+                <form action="/users/{{id}}/delete" method="post">
+                    <td class="py-1">
+                        {{github_login}}
+                    </td>
+                    <td>
+                        <input action="/users/{{id}}" type="checkbox" {{#if admin}}checked{{/if}}>
+                    </td>
+                    <td class="text-right">
+                        <button class="p-1 w-20 rounded-md bg-gray-600 hover:bg-black text-white">Remove</button>
+                    </td>
+                </form>
+            </tr>
+            {{/each}}
+        </table>
+
+        <h1 class="text-xl font-bold border-b border-gray-300 mb-4 mt-8">Signups</h1>
+        <table class="table">
+            {{#each signups}}
+            <tr>
+                <form action="/signups/{{id}}/delete" method="post">
+                    <td class="align-top">{{github_login}}</td>
+                    <td class="pl-4 align-top">{{email_address}}</td>
+                    <td class="pl-4 align-top">{{about}}</td>
+                    <td class="text-right">
+                        <button class="p-1 w-20 rounded-md bg-gray-600 hover:bg-black text-white">Remove</button>
+                    </td>
+                </form>
+            </tr>
+            {{/each}}
+        </table>
+    </div>
+</div>
+{{/layout}}

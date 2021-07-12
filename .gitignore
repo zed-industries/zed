@@ -1,3 +1,6 @@
 /target
 /zed.xcworkspace
 .DS_Store
+/script/node_modules
+/server/.env.toml
+/server/static/styles.css

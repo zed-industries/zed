@@ -1,0 +1,62 @@
+<html>
+
+<head>
+    <link rel="icon" href="/static/images/favicon.png">
+    <link rel="stylesheet" href="/static/styles.css">
+    <title>Zed Industries</title>
+
+
+    <script>
+        window.addEventListener("DOMContentLoaded", function () {
+            let avatar = document.getElementById("avatar");
+            let sign_out = document.getElementById("sign_out");
+            if (avatar && sign_out) {
+                avatar.addEventListener("click", function (event) {
+                    sign_out.classList.toggle("hidden");
+                    event.stopPropagation();
+                });
+                document.addEventListener("click", function (event) {
+                    sign_out.classList.add("hidden");
+                });
+            }
+        });
+    </script>
+</head>
+
+<body class="font-body bg-black">
+    <div class="text-lg text-gray-50">
+        <div class="container mx-auto flex flex-row items-center py-4 px-8 md:px-12 font-display">
+            <a href="/" class="font-display">
+                <span class="font-black">ZED</span><span class="font-light" style="padding-left: 1px">INDUSTRIES</span>
+            </a>
+            <div class="flex-1"></div>
+            <a href="/team" class="text-sm mr-4 hover:underline">
+                Team
+            </a>
+            {{#if current_user}}
+            {{#if current_user.is_admin }}
+            <a href="/admin" class="text-sm mr-4 hover:underline">
+                Admin
+            </a>
+            {{/if}}
+            <div class="relative">
+                <img id="avatar" src="{{current_user.avatar_url}}"
+                    class="w-8 rounded-full border-gray-400 border cursor-pointer" />
+                <form id="sign_out" action="/sign_out" method="post"
+                    class="hidden absolute mt-1 right-0 bg-black rounded border border-gray-400 text-center text-sm p-2 px-4 whitespace-nowrap">
+                    <button class="hover:underline">Sign out</button>
+                </form>
+            </div>
+            {{else}}
+            <a href=" /sign_in"
+                class="text-sm align-middle p-1 px-2 rounded-md border border-gray-50 cursor-pointer hover:bg-gray-800">
+                Log in
+            </a>
+            {{/if}}
+        </div>
+    </div>
+
+    {{> @partial-block}}
+</body>
+
+</html>
