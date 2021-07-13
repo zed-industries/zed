@@ -8,7 +8,8 @@ use std::{fs, path::PathBuf, sync::Arc};
 use zed::{
     self, assets, editor, file_finder, language, menus, rpc, settings,
     workspace::{self, OpenParams},
-    worktree, AppState,
+    worktree::{self, RealFs},
+    AppState,
 };
 use zed_rpc::ForegroundRouter;
 
@@ -26,6 +27,7 @@ fn main() {
         settings,
         rpc_router: Arc::new(ForegroundRouter::new()),
         rpc: rpc::Client::new(languages),
+        fs: Arc::new(RealFs),
     };
 
     app.run(move |cx| {

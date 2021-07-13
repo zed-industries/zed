@@ -1,4 +1,6 @@
-use crate::{language::LanguageRegistry, rpc, settings, time::ReplicaId, AppState};
+use crate::{
+    language::LanguageRegistry, rpc, settings, time::ReplicaId, worktree::RealFs, AppState,
+};
 use gpui::AppContext;
 use std::{
     path::{Path, PathBuf},
@@ -152,5 +154,6 @@ pub fn build_app_state(cx: &AppContext) -> Arc<AppState> {
         languages: languages.clone(),
         rpc_router: Arc::new(ForegroundRouter::new()),
         rpc: rpc::Client::new(languages),
+        fs: Arc::new(RealFs),
     })
 }

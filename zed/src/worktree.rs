@@ -14,6 +14,7 @@ use crate::{
 use ::ignore::gitignore::Gitignore;
 use anyhow::{anyhow, Context, Result};
 use atomic::Ordering::SeqCst;
+use fsevent::EventStream;
 use futures::{Stream, StreamExt};
 pub use fuzzy::{match_paths, PathMatch};
 use gpui::{
@@ -84,12 +85,19 @@ pub trait Fs: Send + Sync {
     async fn load(&self, path: &Path) -> Result<String>;
     async fn save(&self, path: &Path, text: &Rope) -> Result<()>;
     async fn canonicalize(&self, path: &Path) -> Result<PathBuf>;
+    async fn is_file(&self, path: &Path) -> bool;
+    fn watch(
+        &self,
+        path: &Path,
+        latency: Duration,
+    ) -> Pin<Box<dyn Send + Stream<Item = Vec<fsevent::Event>>>>;
+    fn is_fake(&self) -> bool;
 }
 
-struct ProductionFs;
+pub struct RealFs;
 
 #[async_trait::async_trait]
-impl Fs for ProductionFs {
+impl Fs for RealFs {
     async fn entry(
         &self,
         root_char_bag: CharBag,
@@ -188,10 +196,34 @@ impl Fs for ProductionFs {
     async fn canonicalize(&self, path: &Path) -> Result<PathBuf> {
         Ok(smol::fs::canonicalize(path).await?)
     }
+
+    async fn is_file(&self, path: &Path) -> bool {
+        smol::fs::metadata(path)
+            .await
+            .map_or(false, |metadata| metadata.is_file())
+    }
+
+    fn watch(
+        &self,
+        path: &Path,
+        latency: Duration,
+    ) -> Pin<Box<dyn Send + Stream<Item = Vec<fsevent::Event>>>> {
+        let (mut tx, rx) = postage::mpsc::channel(64);
+        let (stream, handle) = EventStream::new(&[path], latency);
+        std::mem::forget(handle);
+        std::thread::spawn(move || {
+            stream.run(move |events| smol::block_on(tx.send(events)).is_ok());
+        });
+        Box::pin(rx)
+    }
+
+    fn is_fake(&self) -> bool {
+        false
+    }
 }
 
 #[derive(Clone, Debug)]
-struct InMemoryEntry {
+struct FakeFsEntry {
     inode: u64,
     mtime: SystemTime,
     is_dir: bool,
@@ -200,14 +232,14 @@ struct InMemoryEntry {
 }
 
 #[cfg(any(test, feature = "test-support"))]
-struct InMemoryFsState {
-    entries: std::collections::BTreeMap<PathBuf, InMemoryEntry>,
+struct FakeFsState {
+    entries: std::collections::BTreeMap<PathBuf, FakeFsEntry>,
     next_inode: u64,
-    events_tx: postage::broadcast::Sender<fsevent::Event>,
+    events_tx: postage::broadcast::Sender<Vec<fsevent::Event>>,
 }
 
 #[cfg(any(test, feature = "test-support"))]
-impl InMemoryFsState {
+impl FakeFsState {
     fn validate_path(&self, path: &Path) -> Result<()> {
         if path.is_absolute()
             && path
@@ -221,31 +253,33 @@ impl InMemoryFsState {
         }
     }
 
-    async fn emit_event(&mut self, path: &Path) {
-        let _ = self
-            .events_tx
-            .send(fsevent::Event {
+    async fn emit_event(&mut self, paths: &[&Path]) {
+        let events = paths
+            .iter()
+            .map(|path| fsevent::Event {
                 event_id: 0,
                 flags: fsevent::StreamFlags::empty(),
                 path: path.to_path_buf(),
             })
-            .await;
+            .collect();
+
+        let _ = self.events_tx.send(events).await;
     }
 }
 
 #[cfg(any(test, feature = "test-support"))]
-pub struct InMemoryFs {
-    state: smol::lock::RwLock<InMemoryFsState>,
+pub struct FakeFs {
+    state: smol::lock::RwLock<FakeFsState>,
 }
 
 #[cfg(any(test, feature = "test-support"))]
-impl InMemoryFs {
+impl FakeFs {
     pub fn new() -> Self {
         let (events_tx, _) = postage::broadcast::channel(2048);
         let mut entries = std::collections::BTreeMap::new();
         entries.insert(
             Path::new("/").to_path_buf(),
-            InMemoryEntry {
+            FakeFsEntry {
                 inode: 0,
                 mtime: SystemTime::now(),
                 is_dir: true,
@@ -254,7 +288,7 @@ impl InMemoryFs {
             },
         );
         Self {
-            state: smol::lock::RwLock::new(InMemoryFsState {
+            state: smol::lock::RwLock::new(FakeFsState {
                 entries,
                 next_inode: 1,
                 events_tx,
@@ -262,15 +296,16 @@ impl InMemoryFs {
         }
     }
 
-    pub async fn insert_dir(&self, path: &Path) -> Result<()> {
+    pub async fn insert_dir(&self, path: impl AsRef<Path>) -> Result<()> {
         let mut state = self.state.write().await;
+        let path = path.as_ref();
         state.validate_path(path)?;
 
         let inode = state.next_inode;
         state.next_inode += 1;
         state.entries.insert(
             path.to_path_buf(),
-            InMemoryEntry {
+            FakeFsEntry {
                 inode,
                 mtime: SystemTime::now(),
                 is_dir: true,
@@ -278,7 +313,28 @@ impl InMemoryFs {
                 content: None,
             },
         );
-        state.emit_event(path).await;
+        state.emit_event(&[path]).await;
+        Ok(())
+    }
+
+    pub async fn insert_file(&self, path: impl AsRef<Path>, content: String) -> Result<()> {
+        let mut state = self.state.write().await;
+        let path = path.as_ref();
+        state.validate_path(path)?;
+
+        let inode = state.next_inode;
+        state.next_inode += 1;
+        state.entries.insert(
+            path.to_path_buf(),
+            FakeFsEntry {
+                inode,
+                mtime: SystemTime::now(),
+                is_dir: false,
+                is_symlink: false,
+                content: Some(content),
+            },
+        );
+        state.emit_event(&[path]).await;
         Ok(())
     }
 
@@ -286,7 +342,7 @@ impl InMemoryFs {
         let mut state = self.state.write().await;
         state.validate_path(path)?;
         state.entries.retain(|path, _| !path.starts_with(path));
-        state.emit_event(&path).await;
+        state.emit_event(&[path]).await;
         Ok(())
     }
 
@@ -312,21 +368,15 @@ impl InMemoryFs {
                 state.entries.insert(new_path, entry);
             }
 
-            state.emit_event(source).await;
-            state.emit_event(target).await;
-
+            state.emit_event(&[source, target]).await;
             Ok(())
         }
-    }
-
-    pub async fn events(&self) -> postage::broadcast::Receiver<fsevent::Event> {
-        self.state.read().await.events_tx.subscribe()
     }
 }
 
 #[cfg(any(test, feature = "test-support"))]
 #[async_trait::async_trait]
-impl Fs for InMemoryFs {
+impl Fs for FakeFs {
     async fn entry(
         &self,
         root_char_bag: CharBag,
@@ -405,13 +455,13 @@ impl Fs for InMemoryFs {
             } else {
                 entry.content = Some(text.chunks().collect());
                 entry.mtime = SystemTime::now();
-                state.emit_event(path).await;
+                state.emit_event(&[path]).await;
                 Ok(())
             }
         } else {
             let inode = state.next_inode;
             state.next_inode += 1;
-            let entry = InMemoryEntry {
+            let entry = FakeFsEntry {
                 inode,
                 mtime: SystemTime::now(),
                 is_dir: false,
@@ -419,13 +469,36 @@ impl Fs for InMemoryFs {
                 content: Some(text.chunks().collect()),
             };
             state.entries.insert(path.to_path_buf(), entry);
-            state.emit_event(path).await;
+            state.emit_event(&[path]).await;
             Ok(())
         }
     }
 
     async fn canonicalize(&self, path: &Path) -> Result<PathBuf> {
         Ok(path.to_path_buf())
+    }
+
+    async fn is_file(&self, path: &Path) -> bool {
+        let state = self.state.read().await;
+        state.entries.get(path).map_or(false, |entry| !entry.is_dir)
+    }
+
+    fn watch(
+        &self,
+        path: &Path,
+        _: Duration,
+    ) -> Pin<Box<dyn Send + Stream<Item = Vec<fsevent::Event>>>> {
+        let state = smol::block_on(self.state.read());
+        let rx = state.events_tx.subscribe();
+        let path = path.to_path_buf();
+        Box::pin(futures::StreamExt::filter(rx, move |events| {
+            let result = events.iter().any(|event| event.path.starts_with(&path));
+            async move { result }
+        }))
+    }
+
+    fn is_fake(&self) -> bool {
+        true
     }
 }
 
@@ -470,49 +543,22 @@ impl Worktree {
     pub fn local(
         path: impl Into<Arc<Path>>,
         languages: Arc<LanguageRegistry>,
+        fs: Arc<dyn Fs>,
         cx: &mut ModelContext<Worktree>,
     ) -> Self {
-        let fs = Arc::new(ProductionFs);
-        let (mut tree, scan_states_tx) =
-            LocalWorktree::new(path, languages, fs.clone(), Duration::from_millis(100), cx);
-        let (event_stream, event_stream_handle) = fsevent::EventStream::new(
-            &[tree.snapshot.abs_path.as_ref()],
-            Duration::from_millis(100),
-        );
+        let (mut tree, scan_states_tx) = LocalWorktree::new(path, languages, fs.clone(), cx);
+
+        let events = fs.watch(tree.snapshot.abs_path.as_ref(), Duration::from_millis(100));
         let background_snapshot = tree.background_snapshot.clone();
-        std::thread::spawn(move || {
+        tree._background_scanner_task = Some(cx.background().spawn(async move {
             let scanner = BackgroundScanner::new(
                 background_snapshot,
                 scan_states_tx,
                 fs,
                 Arc::new(executor::Background::new()),
             );
-            scanner.run(event_stream);
-        });
-        tree._event_stream_handle = Some(event_stream_handle);
-        Worktree::Local(tree)
-    }
-
-    #[cfg(any(test, feature = "test-support"))]
-    pub fn test(
-        path: impl Into<Arc<Path>>,
-        languages: Arc<LanguageRegistry>,
-        fs: Arc<InMemoryFs>,
-        cx: &mut ModelContext<Worktree>,
-    ) -> Self {
-        let (tree, scan_states_tx) =
-            LocalWorktree::new(path, languages, fs.clone(), Duration::ZERO, cx);
-        let background_snapshot = tree.background_snapshot.clone();
-        let fs = fs.clone();
-        let background = cx.background().clone();
-        cx.background()
-            .spawn(async move {
-                let events_rx = fs.events().await;
-                let scanner =
-                    BackgroundScanner::new(background_snapshot, scan_states_tx, fs, background);
-                scanner.run_test(events_rx).await;
-            })
-            .detach();
+            scanner.run(events).await;
+        }));
         Worktree::Local(tree)
     }
 
@@ -831,15 +877,15 @@ impl Worktree {
     fn poll_snapshot(&mut self, cx: &mut ModelContext<Self>) {
         match self {
             Self::Local(worktree) => {
-                let poll_interval = worktree.poll_interval;
+                let is_fake_fs = worktree.fs.is_fake();
                 worktree.snapshot = worktree.background_snapshot.lock().clone();
                 if worktree.is_scanning() {
                     if !worktree.poll_scheduled {
                         cx.spawn(|this, mut cx| async move {
-                            if poll_interval.is_zero() {
+                            if is_fake_fs {
                                 smol::future::yield_now().await;
                             } else {
-                                smol::Timer::after(poll_interval).await;
+                                smol::Timer::after(Duration::from_millis(100)).await;
                             }
                             this.update(&mut cx, |this, cx| {
                                 this.as_local_mut().unwrap().poll_scheduled = false;
@@ -961,7 +1007,7 @@ pub struct LocalWorktree {
     background_snapshot: Arc<Mutex<Snapshot>>,
     snapshots_to_send_tx: Option<Sender<Snapshot>>,
     last_scan_state_rx: watch::Receiver<ScanState>,
-    _event_stream_handle: Option<fsevent::Handle>,
+    _background_scanner_task: Option<Task<()>>,
     poll_scheduled: bool,
     rpc: Option<(rpc::Client, u64)>,
     open_buffers: HashMap<usize, WeakModelHandle<Buffer>>,
@@ -969,7 +1015,6 @@ pub struct LocalWorktree {
     peers: HashMap<PeerId, ReplicaId>,
     languages: Arc<LanguageRegistry>,
     fs: Arc<dyn Fs>,
-    poll_interval: Duration,
 }
 
 impl LocalWorktree {
@@ -977,7 +1022,6 @@ impl LocalWorktree {
         path: impl Into<Arc<Path>>,
         languages: Arc<LanguageRegistry>,
         fs: Arc<dyn Fs>,
-        poll_interval: Duration,
         cx: &mut ModelContext<Worktree>,
     ) -> (Self, Sender<ScanState>) {
         let abs_path = path.into();
@@ -1002,7 +1046,7 @@ impl LocalWorktree {
             background_snapshot: Arc::new(Mutex::new(snapshot)),
             snapshots_to_send_tx: None,
             last_scan_state_rx,
-            _event_stream_handle: None,
+            _background_scanner_task: None,
             poll_scheduled: false,
             open_buffers: Default::default(),
             shared_buffers: Default::default(),
@@ -1010,7 +1054,6 @@ impl LocalWorktree {
             rpc: None,
             languages,
             fs,
-            poll_interval,
         };
 
         cx.spawn_weak(|this, mut cx| async move {
@@ -2158,40 +2201,7 @@ impl BackgroundScanner {
         self.snapshot.lock().clone()
     }
 
-    fn run(mut self, event_stream: fsevent::EventStream) {
-        if smol::block_on(self.notify.send(ScanState::Scanning)).is_err() {
-            return;
-        }
-
-        if let Err(err) = smol::block_on(self.scan_dirs()) {
-            if smol::block_on(self.notify.send(ScanState::Err(Arc::new(err)))).is_err() {
-                return;
-            }
-        }
-
-        if smol::block_on(self.notify.send(ScanState::Idle)).is_err() {
-            return;
-        }
-
-        event_stream.run(move |events| {
-            if smol::block_on(self.notify.send(ScanState::Scanning)).is_err() {
-                return false;
-            }
-
-            if !smol::block_on(self.process_events(events)) {
-                return false;
-            }
-
-            if smol::block_on(self.notify.send(ScanState::Idle)).is_err() {
-                return false;
-            }
-
-            true
-        });
-    }
-
-    #[cfg(any(test, feature = "test-support"))]
-    async fn run_test(mut self, mut events_rx: postage::broadcast::Receiver<fsevent::Event>) {
+    async fn run(mut self, events_rx: impl Stream<Item = Vec<fsevent::Event>>) {
         if self.notify.send(ScanState::Scanning).await.is_err() {
             return;
         }
@@ -2211,12 +2221,8 @@ impl BackgroundScanner {
             return;
         }
 
-        while let Some(event) = events_rx.recv().await {
-            let mut events = vec![event];
-            while let Ok(event) = events_rx.try_recv() {
-                events.push(event);
-            }
-
+        futures::pin_mut!(events_rx);
+        while let Some(events) = events_rx.next().await {
             if self.notify.send(ScanState::Scanning).await.is_err() {
                 break;
             }
@@ -2997,7 +3003,9 @@ mod tests {
         )
         .unwrap();
 
-        let tree = cx.add_model(|cx| Worktree::local(root_link_path, Default::default(), cx));
+        let tree = cx.add_model(|cx| {
+            Worktree::local(root_link_path, Default::default(), Arc::new(RealFs), cx)
+        });
 
         cx.read(|cx| tree.read(cx).as_local().unwrap().scan_complete())
             .await;
@@ -3039,7 +3047,14 @@ mod tests {
         let dir = temp_tree(json!({
             "file1": "the old contents",
         }));
-        let tree = cx.add_model(|cx| Worktree::local(dir.path(), app_state.languages.clone(), cx));
+        let tree = cx.add_model(|cx| {
+            Worktree::local(
+                dir.path(),
+                app_state.languages.clone(),
+                Arc::new(RealFs),
+                cx,
+            )
+        });
         let buffer = tree
             .update(&mut cx, |tree, cx| tree.open_buffer("file1", cx))
             .await
@@ -3062,8 +3077,14 @@ mod tests {
         }));
         let file_path = dir.path().join("file1");
 
-        let tree =
-            cx.add_model(|cx| Worktree::local(file_path.clone(), app_state.languages.clone(), cx));
+        let tree = cx.add_model(|cx| {
+            Worktree::local(
+                file_path.clone(),
+                app_state.languages.clone(),
+                Arc::new(RealFs),
+                cx,
+            )
+        });
         cx.read(|cx| tree.read(cx).as_local().unwrap().scan_complete())
             .await;
         cx.read(|cx| assert_eq!(tree.read(cx).file_count(), 1));
@@ -3098,7 +3119,8 @@ mod tests {
             }
         }));
 
-        let tree = cx.add_model(|cx| Worktree::local(dir.path(), Default::default(), cx));
+        let tree = cx
+            .add_model(|cx| Worktree::local(dir.path(), Default::default(), Arc::new(RealFs), cx));
 
         let buffer_for_path = |path: &'static str, cx: &mut gpui::TestAppContext| {
             let buffer = tree.update(cx, |tree, cx| tree.open_buffer(path, cx));
@@ -3245,7 +3267,8 @@ mod tests {
             }
         }));
 
-        let tree = cx.add_model(|cx| Worktree::local(dir.path(), Default::default(), cx));
+        let tree = cx
+            .add_model(|cx| Worktree::local(dir.path(), Default::default(), Arc::new(RealFs), cx));
         cx.read(|cx| tree.read(cx).as_local().unwrap().scan_complete())
             .await;
         tree.flush_fs_events(&cx).await;
@@ -3313,7 +3336,7 @@ mod tests {
                     next_entry_id: Default::default(),
                 })),
                 notify_tx,
-                Arc::new(ProductionFs),
+                Arc::new(RealFs),
                 Arc::new(gpui::executor::Background::new()),
             );
             smol::block_on(scanner.scan_dirs()).unwrap();

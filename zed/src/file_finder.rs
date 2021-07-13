@@ -479,12 +479,7 @@ mod tests {
 
         let app_state = cx.read(build_app_state);
         let (window_id, workspace) = cx.add_window(|cx| {
-            let mut workspace = Workspace::new(
-                app_state.settings.clone(),
-                app_state.languages.clone(),
-                app_state.rpc.clone(),
-                cx,
-            );
+            let mut workspace = Workspace::new(&app_state, cx);
             workspace.add_worktree(tmp_dir.path(), cx);
             workspace
         });
@@ -551,12 +546,7 @@ mod tests {
         }));
         let app_state = cx.read(build_app_state);
         let (_, workspace) = cx.add_window(|cx| {
-            let mut workspace = Workspace::new(
-                app_state.settings.clone(),
-                app_state.languages.clone(),
-                app_state.rpc.clone(),
-                cx,
-            );
+            let mut workspace = Workspace::new(&app_state, cx);
             workspace.add_worktree(tmp_dir.path(), cx);
             workspace
         });
@@ -614,12 +604,7 @@ mod tests {
 
         let app_state = cx.read(build_app_state);
         let (_, workspace) = cx.add_window(|cx| {
-            let mut workspace = Workspace::new(
-                app_state.settings.clone(),
-                app_state.languages.clone(),
-                app_state.rpc.clone(),
-                cx,
-            );
+            let mut workspace = Workspace::new(&app_state, cx);
             workspace.add_worktree(&file_path, cx);
             workspace
         });
@@ -663,15 +648,7 @@ mod tests {
         }));
 
         let app_state = cx.read(build_app_state);
-
-        let (_, workspace) = cx.add_window(|cx| {
-            Workspace::new(
-                app_state.settings.clone(),
-                app_state.languages.clone(),
-                app_state.rpc.clone(),
-                cx,
-            )
-        });
+        let (_, workspace) = cx.add_window(|cx| Workspace::new(&app_state, cx));
 
         workspace
             .update(&mut cx, |workspace, cx| {

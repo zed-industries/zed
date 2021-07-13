@@ -19,7 +19,7 @@ use zed::{
     rpc::Client,
     settings,
     test::{temp_tree, Channel},
-    worktree::{Fs, InMemoryFs, Worktree},
+    worktree::{FakeFs, Fs, RealFs, Worktree},
 };
 use zed_rpc::{ForegroundRouter, Peer, Router};
 
@@ -39,7 +39,8 @@ async fn test_share_worktree(mut cx_a: TestAppContext, mut cx_b: TestAppContext)
         "a.txt": "a-contents",
         "b.txt": "b-contents",
     }));
-    let worktree_a = cx_a.add_model(|cx| Worktree::local(dir.path(), lang_registry.clone(), cx));
+    let worktree_a = cx_a
+        .add_model(|cx| Worktree::local(dir.path(), lang_registry.clone(), Arc::new(RealFs), cx));
     worktree_a
         .read_with(&cx_a, |tree, _| tree.as_local().unwrap().scan_complete())
         .await;
@@ -133,7 +134,8 @@ async fn test_propagate_saves_and_fs_changes_in_shared_worktree(
         "file1": "",
         "file2": ""
     }));
-    let worktree_a = cx_a.add_model(|cx| Worktree::local(dir.path(), lang_registry.clone(), cx));
+    let worktree_a = cx_a
+        .add_model(|cx| Worktree::local(dir.path(), lang_registry.clone(), Arc::new(RealFs), cx));
     worktree_a
         .read_with(&cx_a, |tree, _| tree.as_local().unwrap().scan_complete())
         .await;
@@ -243,12 +245,12 @@ async fn test_buffer_conflict_after_save(mut cx_a: TestAppContext, mut cx_b: Tes
     let client_b = server.create_client(&mut cx_b, "user_b").await;
 
     // Share a local worktree as client A
-    let fs = Arc::new(InMemoryFs::new());
+    let fs = Arc::new(FakeFs::new());
     fs.save(Path::new("/a.txt"), &"a-contents".into())
         .await
         .unwrap();
     let worktree_a =
-        cx_a.add_model(|cx| Worktree::test(Path::new("/"), lang_registry.clone(), fs.clone(), cx));
+        cx_a.add_model(|cx| Worktree::local(Path::new("/"), lang_registry.clone(), fs.clone(), cx));
     worktree_a
         .read_with(&cx_a, |tree, _| tree.as_local().unwrap().scan_complete())
         .await;
@@ -314,12 +316,12 @@ async fn test_editing_while_guest_opens_buffer(mut cx_a: TestAppContext, mut cx_
     let client_b = server.create_client(&mut cx_b, "user_b").await;
 
     // Share a local worktree as client A
-    let fs = Arc::new(InMemoryFs::new());
+    let fs = Arc::new(FakeFs::new());
     fs.save(Path::new("/a.txt"), &"a-contents".into())
         .await
         .unwrap();
     let worktree_a =
-        cx_a.add_model(|cx| Worktree::test(Path::new("/"), lang_registry.clone(), fs.clone(), cx));
+        cx_a.add_model(|cx| Worktree::local(Path::new("/"), lang_registry.clone(), fs.clone(), cx));
     worktree_a
         .read_with(&cx_a, |tree, _| tree.as_local().unwrap().scan_complete())
         .await;
@@ -371,7 +373,8 @@ async fn test_peer_disconnection(mut cx_a: TestAppContext, cx_b: TestAppContext)
         "a.txt": "a-contents",
         "b.txt": "b-contents",
     }));
-    let worktree_a = cx_a.add_model(|cx| Worktree::local(dir.path(), lang_registry.clone(), cx));
+    let worktree_a = cx_a
+        .add_model(|cx| Worktree::local(dir.path(), lang_registry.clone(), Arc::new(RealFs), cx));
     worktree_a
         .read_with(&cx_a, |tree, _| tree.as_local().unwrap().scan_complete())
         .await;
