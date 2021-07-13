@@ -13,7 +13,7 @@ use std::{
     rc::Rc,
     sync::{
         atomic::{AtomicBool, Ordering::SeqCst},
-        mpsc::SyncSender,
+        mpsc::Sender,
         Arc,
     },
     thread,
@@ -43,7 +43,7 @@ struct DeterministicState {
     seed: u64,
     scheduled: Vec<(Runnable, Backtrace)>,
     spawned_from_foreground: Vec<(Runnable, Backtrace)>,
-    waker: Option<SyncSender<()>>,
+    waker: Option<Sender<()>>,
 }
 
 pub struct Deterministic(Arc<Mutex<DeterministicState>>);
@@ -106,7 +106,7 @@ impl Deterministic {
         T: 'static,
         F: Future<Output = T> + 'static,
     {
-        let (wake_tx, wake_rx) = std::sync::mpsc::sync_channel(32);
+        let (wake_tx, wake_rx) = std::sync::mpsc::channel();
         let state = self.0.clone();
         state.lock().waker = Some(wake_tx);
 
