@@ -39,8 +39,14 @@ async fn test_share_worktree(mut cx_a: TestAppContext, mut cx_b: TestAppContext)
         "a.txt": "a-contents",
         "b.txt": "b-contents",
     }));
-    let worktree_a = cx_a
-        .add_model(|cx| Worktree::local(dir.path(), lang_registry.clone(), Arc::new(RealFs), cx));
+    let worktree_a = Worktree::open_local(
+        dir.path(),
+        lang_registry.clone(),
+        Arc::new(RealFs),
+        &mut cx_a.to_async(),
+    )
+    .await
+    .unwrap();
     worktree_a
         .read_with(&cx_a, |tree, _| tree.as_local().unwrap().scan_complete())
         .await;
@@ -134,8 +140,14 @@ async fn test_propagate_saves_and_fs_changes_in_shared_worktree(
         "file1": "",
         "file2": ""
     }));
-    let worktree_a = cx_a
-        .add_model(|cx| Worktree::local(dir.path(), lang_registry.clone(), Arc::new(RealFs), cx));
+    let worktree_a = Worktree::open_local(
+        dir.path(),
+        lang_registry.clone(),
+        Arc::new(RealFs),
+        &mut cx_a.to_async(),
+    )
+    .await
+    .unwrap();
     worktree_a
         .read_with(&cx_a, |tree, _| tree.as_local().unwrap().scan_complete())
         .await;
@@ -249,8 +261,14 @@ async fn test_buffer_conflict_after_save(mut cx_a: TestAppContext, mut cx_b: Tes
     fs.save(Path::new("/a.txt"), &"a-contents".into())
         .await
         .unwrap();
-    let worktree_a =
-        cx_a.add_model(|cx| Worktree::local(Path::new("/"), lang_registry.clone(), fs.clone(), cx));
+    let worktree_a = Worktree::open_local(
+        "/".as_ref(),
+        lang_registry.clone(),
+        Arc::new(RealFs),
+        &mut cx_a.to_async(),
+    )
+    .await
+    .unwrap();
     worktree_a
         .read_with(&cx_a, |tree, _| tree.as_local().unwrap().scan_complete())
         .await;
@@ -320,8 +338,14 @@ async fn test_editing_while_guest_opens_buffer(mut cx_a: TestAppContext, mut cx_
     fs.save(Path::new("/a.txt"), &"a-contents".into())
         .await
         .unwrap();
-    let worktree_a =
-        cx_a.add_model(|cx| Worktree::local(Path::new("/"), lang_registry.clone(), fs.clone(), cx));
+    let worktree_a = Worktree::open_local(
+        "/".as_ref(),
+        lang_registry.clone(),
+        Arc::new(RealFs),
+        &mut cx_a.to_async(),
+    )
+    .await
+    .unwrap();
     worktree_a
         .read_with(&cx_a, |tree, _| tree.as_local().unwrap().scan_complete())
         .await;
@@ -373,8 +397,14 @@ async fn test_peer_disconnection(mut cx_a: TestAppContext, cx_b: TestAppContext)
         "a.txt": "a-contents",
         "b.txt": "b-contents",
     }));
-    let worktree_a = cx_a
-        .add_model(|cx| Worktree::local(dir.path(), lang_registry.clone(), Arc::new(RealFs), cx));
+    let worktree_a = Worktree::open_local(
+        dir.path(),
+        lang_registry.clone(),
+        Arc::new(RealFs),
+        &mut cx_a.to_async(),
+    )
+    .await
+    .unwrap();
     worktree_a
         .read_with(&cx_a, |tree, _| tree.as_local().unwrap().scan_complete())
         .await;

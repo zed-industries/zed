@@ -476,11 +476,13 @@ mod tests {
         });
 
         let app_state = cx.read(build_app_state);
-        let (window_id, workspace) = cx.add_window(|cx| {
-            let mut workspace = Workspace::new(&app_state, cx);
-            workspace.add_worktree(tmp_dir.path(), cx);
-            workspace
-        });
+        let (window_id, workspace) = cx.add_window(|cx| Workspace::new(&app_state, cx));
+        workspace
+            .update(&mut cx, |workspace, cx| {
+                workspace.add_worktree(tmp_dir.path(), cx)
+            })
+            .await
+            .unwrap();
         cx.read(|cx| workspace.read(cx).worktree_scans_complete(cx))
             .await;
         cx.dispatch_action(
@@ -543,11 +545,13 @@ mod tests {
             "hiccup": "",
         }));
         let app_state = cx.read(build_app_state);
-        let (_, workspace) = cx.add_window(|cx| {
-            let mut workspace = Workspace::new(&app_state, cx);
-            workspace.add_worktree(tmp_dir.path(), cx);
-            workspace
-        });
+        let (_, workspace) = cx.add_window(|cx| Workspace::new(&app_state, cx));
+        workspace
+            .update(&mut cx, |workspace, cx| {
+                workspace.add_worktree(tmp_dir.path(), cx)
+            })
+            .await
+            .unwrap();
         cx.read(|cx| workspace.read(cx).worktree_scans_complete(cx))
             .await;
         let (_, finder) =
@@ -601,11 +605,13 @@ mod tests {
         fs::write(&file_path, "").unwrap();
 
         let app_state = cx.read(build_app_state);
-        let (_, workspace) = cx.add_window(|cx| {
-            let mut workspace = Workspace::new(&app_state, cx);
-            workspace.add_worktree(&file_path, cx);
-            workspace
-        });
+        let (_, workspace) = cx.add_window(|cx| Workspace::new(&app_state, cx));
+        workspace
+            .update(&mut cx, |workspace, cx| {
+                workspace.add_worktree(&file_path, cx)
+            })
+            .await
+            .unwrap();
         cx.read(|cx| workspace.read(cx).worktree_scans_complete(cx))
             .await;
         let (_, finder) =

@@ -3209,8 +3209,14 @@ mod tests {
             "file2": "def",
             "file3": "ghi",
         }));
-        let tree = cx
-            .add_model(|cx| Worktree::local(dir.path(), Default::default(), Arc::new(RealFs), cx));
+        let tree = Worktree::open_local(
+            dir.path(),
+            Default::default(),
+            Arc::new(RealFs),
+            &mut cx.to_async(),
+        )
+        .await
+        .unwrap();
         tree.flush_fs_events(&cx).await;
         cx.read(|cx| tree.read(cx).as_local().unwrap().scan_complete())
             .await;
@@ -3322,8 +3328,14 @@ mod tests {
     async fn test_file_changes_on_disk(mut cx: gpui::TestAppContext) {
         let initial_contents = "aaa\nbbbbb\nc\n";
         let dir = temp_tree(json!({ "the-file": initial_contents }));
-        let tree = cx
-            .add_model(|cx| Worktree::local(dir.path(), Default::default(), Arc::new(RealFs), cx));
+        let tree = Worktree::open_local(
+            dir.path(),
+            Default::default(),
+            Arc::new(RealFs),
+            &mut cx.to_async(),
+        )
+        .await
+        .unwrap();
         cx.read(|cx| tree.read(cx).as_local().unwrap().scan_complete())
             .await;
 
