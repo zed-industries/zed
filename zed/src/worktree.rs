@@ -1,11 +1,11 @@
 mod char_bag;
-mod fs;
 mod fuzzy;
 mod ignore;
 
 use self::{char_bag::CharBag, ignore::IgnoreStack};
 use crate::{
     editor::{self, Buffer, History, Operation, Rope},
+    fs::{self, Fs},
     language::LanguageRegistry,
     rpc::{self, proto},
     sum_tree::{self, Cursor, Edit, SumTree},
@@ -14,7 +14,6 @@ use crate::{
 };
 use ::ignore::gitignore::Gitignore;
 use anyhow::{anyhow, Result};
-pub use fs::*;
 use futures::{Stream, StreamExt};
 pub use fuzzy::{match_paths, PathMatch};
 use gpui::{
@@ -2571,6 +2570,7 @@ mod tests {
     use super::*;
     use crate::test::*;
     use anyhow::Result;
+    use fs::RealFs;
     use rand::prelude::*;
     use serde_json::json;
     use std::time::UNIX_EPOCH;

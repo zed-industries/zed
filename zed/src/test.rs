@@ -1,6 +1,4 @@
-use crate::{
-    language::LanguageRegistry, rpc, settings, time::ReplicaId, worktree::RealFs, AppState,
-};
+use crate::{fs::RealFs, language::LanguageRegistry, rpc, settings, time::ReplicaId, AppState};
 use gpui::AppContext;
 use std::{
     path::{Path, PathBuf},

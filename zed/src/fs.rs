@@ -1,4 +1,4 @@
-use super::Rope;
+use super::editor::Rope;
 use anyhow::{anyhow, Result};
 use fsevent::EventStream;
 use futures::{Stream, StreamExt};

@@ -457,9 +457,9 @@ mod tests {
     use super::*;
     use crate::{
         editor,
+        fs::FakeFs,
         test::{build_app_state, temp_tree},
         workspace::Workspace,
-        worktree::FakeFs,
     };
     use serde_json::json;
     use std::fs;

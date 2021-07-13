@@ -15,11 +15,12 @@ use sqlx::{
 use std::{path::Path, sync::Arc};
 use zed::{
     editor::Editor,
+    fs::{FakeFs, Fs as _},
     language::LanguageRegistry,
     rpc::Client,
     settings,
     test::Channel,
-    worktree::{FakeFs, Fs as _, Worktree},
+    worktree::Worktree,
 };
 use zrpc::{ForegroundRouter, Peer, Router};
 
