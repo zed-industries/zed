@@ -1917,8 +1917,9 @@ impl File {
     /// Returns the last component of this handle's absolute path. If this handle refers to the root
     /// of its worktree, then this method will return the name of the worktree itself.
     pub fn file_name<'a>(&'a self, cx: &'a AppContext) -> Option<OsString> {
-        dbg!(self.path.file_name())
-            .or_else(|| Some(OsStr::new(dbg!(self.worktree.read(cx).root_name()))))
+        self.path
+            .file_name()
+            .or_else(|| Some(OsStr::new(self.worktree.read(cx).root_name())))
             .map(Into::into)
     }
 
