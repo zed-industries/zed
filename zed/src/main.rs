@@ -11,7 +11,7 @@ use zed::{
     worktree::{self, RealFs},
     AppState,
 };
-use zed_rpc::ForegroundRouter;
+use zrpc::ForegroundRouter;
 
 fn main() {
     init_logger();

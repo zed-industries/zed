@@ -21,7 +21,7 @@ use zed::{
     test::{temp_tree, Channel},
     worktree::{FakeFs, Fs, RealFs, Worktree},
 };
-use zed_rpc::{ForegroundRouter, Peer, Router};
+use zrpc::{ForegroundRouter, Peer, Router};
 
 #[gpui::test]
 async fn test_share_worktree(mut cx_a: TestAppContext, mut cx_b: TestAppContext) {

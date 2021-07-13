@@ -21,7 +21,7 @@ use tide::{
     http::headers::{HeaderName, CONNECTION, UPGRADE},
     Request, Response,
 };
-use zed_rpc::{
+use zrpc::{
     auth::random_token,
     proto::{self, EnvelopedMessage},
     ConnectionId, Peer, Router, TypedEnvelope,

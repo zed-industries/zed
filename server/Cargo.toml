@@ -32,7 +32,7 @@ surf = "2.2.0"
 tide = "0.16.0"
 tide-compress = "0.9.0"
 toml = "0.5.8"
-zed-rpc = { path = "../zed-rpc" }
+zrpc = { path = "../zrpc" }
 
 [dependencies.async-sqlx-session]
 version = "0.3.0"

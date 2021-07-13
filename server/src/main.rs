@@ -26,7 +26,7 @@ use std::sync::Arc;
 use surf::http::cookies::SameSite;
 use tide::{log, sessions::SessionMiddleware};
 use tide_compress::CompressMiddleware;
-use zed_rpc::Peer;
+use zrpc::Peer;
 
 type Request = tide::Request<Arc<AppState>>;
 type DbPool = PgPool;

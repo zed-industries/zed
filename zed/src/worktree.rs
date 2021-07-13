@@ -49,7 +49,7 @@ use std::{
     },
     time::{Duration, SystemTime},
 };
-use zed_rpc::{ForegroundRouter, PeerId, TypedEnvelope};
+use zrpc::{ForegroundRouter, PeerId, TypedEnvelope};
 
 lazy_static! {
     static ref GITIGNORE: &'static OsStr = OsStr::new(".gitignore");

@@ -1,4 +1,4 @@
-use zed_rpc::ForegroundRouter;
+use zrpc::ForegroundRouter;
 
 pub mod assets;
 pub mod editor;

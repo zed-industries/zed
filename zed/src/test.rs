@@ -7,10 +7,10 @@ use std::{
     sync::Arc,
 };
 use tempdir::TempDir;
-use zed_rpc::ForegroundRouter;
+use zrpc::ForegroundRouter;
 
 #[cfg(feature = "test-support")]
-pub use zed_rpc::test::Channel;
+pub use zrpc::test::Channel;
 
 #[cfg(test)]
 #[ctor::ctor]

@@ -18,7 +18,7 @@ use sqlx::FromRow;
 use std::{borrow::Cow, convert::TryFrom, sync::Arc};
 use surf::Url;
 use tide::Server;
-use zed_rpc::{auth as zed_auth, proto, Peer};
+use zrpc::{auth as zed_auth, proto, Peer};
 
 static CURRENT_GITHUB_USER: &'static str = "current_github_user";
 static GITHUB_AUTH_URL: &'static str = "https://github.com/login/oauth/authorize";
@@ -124,7 +124,7 @@ impl RequestExt for Request {
 pub trait PeerExt {
     async fn sign_out(
         self: &Arc<Self>,
-        connection_id: zed_rpc::ConnectionId,
+        connection_id: zrpc::ConnectionId,
         state: &AppState,
     ) -> tide::Result<()>;
 }
@@ -133,7 +133,7 @@ pub trait PeerExt {
 impl PeerExt for Peer {
     async fn sign_out(
         self: &Arc<Self>,
-        connection_id: zed_rpc::ConnectionId,
+        connection_id: zrpc::ConnectionId,
         state: &AppState,
     ) -> tide::Result<()> {
         self.disconnect(connection_id).await;

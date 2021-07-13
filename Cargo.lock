@@ -5834,28 +5834,7 @@ dependencies = [
  "tree-sitter-rust",
  "unindent",
  "url",
- "zed-rpc",
-]
-
-[[package]]
-name = "zed-rpc"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "async-lock",
- "async-tungstenite",
- "base64 0.13.0",
- "futures",
- "log",
- "parking_lot",
- "postage",
- "prost 0.7.0 (registry+https://github.com/rust-lang/crates.io-index)",
- "prost-build",
- "rand 0.8.3",
- "rsa",
- "serde 1.0.125",
- "smol",
- "tempdir",
+ "zrpc",
 ]
 
 [[package]]
@@ -5894,7 +5873,7 @@ dependencies = [
  "tide-compress",
  "toml 0.5.8",
  "zed",
- "zed-rpc",
+ "zrpc",
 ]
 
 [[package]]
@@ -5916,4 +5895,25 @@ dependencies = [
  "quote",
  "syn",
  "synstructure",
+]
+
+[[package]]
+name = "zrpc"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "async-lock",
+ "async-tungstenite",
+ "base64 0.13.0",
+ "futures",
+ "log",
+ "parking_lot",
+ "postage",
+ "prost 0.7.0 (registry+https://github.com/rust-lang/crates.io-index)",
+ "prost-build",
+ "rand 0.8.3",
+ "rsa",
+ "serde 1.0.125",
+ "smol",
+ "tempdir",
 ]

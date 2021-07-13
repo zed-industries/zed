@@ -11,7 +11,7 @@ use seahash::SeaHasher;
 pub use selection::*;
 use similar::{ChangeTag, TextDiff};
 use tree_sitter::{InputEdit, Parser, QueryCursor};
-use zed_rpc::proto;
+use zrpc::proto;
 
 use crate::{
     language::{Language, Tree},
