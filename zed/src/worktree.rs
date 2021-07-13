@@ -550,14 +550,15 @@ impl Worktree {
         let (mut tree, scan_states_tx) = LocalWorktree::new(path, languages, fs.clone(), cx);
         let abs_path = tree.snapshot.abs_path.clone();
         let background_snapshot = tree.background_snapshot.clone();
+        let background = if fs.is_fake() {
+            cx.background().clone()
+        } else {
+            Arc::new(executor::Background::new())
+        };
         tree._background_scanner_task = Some(cx.background().spawn(async move {
             let events = fs.watch(&abs_path, Duration::from_millis(100)).await;
-            let scanner = BackgroundScanner::new(
-                background_snapshot,
-                scan_states_tx,
-                fs,
-                Arc::new(executor::Background::new()),
-            );
+            let scanner =
+                BackgroundScanner::new(background_snapshot, scan_states_tx, fs, background);
             scanner.run(events).await;
         }));
         Worktree::Local(tree)
