@@ -1,0 +1,17 @@
+#!/bin/bash
+
+# Prerequisites:
+#
+# - Log in to the DigitalOcean docker registry
+#   doctl registry login
+#
+# - Set the default K8s context to production
+#   doctl kubernetes cluster kubeconfig save zed-1
+
+set -e
+
+IMAGE_ID=registry.digitalocean.com/zed/zed-server
+
+docker build . --tag $IMAGE_ID
+docker push $IMAGE_ID
+kubectl rollout restart deployment zed

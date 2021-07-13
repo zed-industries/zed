@@ -11,7 +11,7 @@ use seahash::SeaHasher;
 pub use selection::*;
 use similar::{ChangeTag, TextDiff};
 use tree_sitter::{InputEdit, Parser, QueryCursor};
-use zed_rpc::proto;
+use zrpc::proto;
 
 use crate::{
     language::{Language, Tree},
@@ -2734,7 +2734,7 @@ mod tests {
     use crate::{
         test::{build_app_state, temp_tree},
         util::RandomCharIter,
-        worktree::{Worktree, WorktreeHandle},
+        worktree::{RealFs, Worktree, WorktreeHandle},
     };
     use gpui::ModelHandle;
     use rand::prelude::*;
@@ -3209,7 +3209,14 @@ mod tests {
             "file2": "def",
             "file3": "ghi",
         }));
-        let tree = cx.add_model(|cx| Worktree::local(dir.path(), Default::default(), cx));
+        let tree = Worktree::open_local(
+            dir.path(),
+            Default::default(),
+            Arc::new(RealFs),
+            &mut cx.to_async(),
+        )
+        .await
+        .unwrap();
         tree.flush_fs_events(&cx).await;
         cx.read(|cx| tree.read(cx).as_local().unwrap().scan_complete())
             .await;
@@ -3321,7 +3328,14 @@ mod tests {
     async fn test_file_changes_on_disk(mut cx: gpui::TestAppContext) {
         let initial_contents = "aaa\nbbbbb\nc\n";
         let dir = temp_tree(json!({ "the-file": initial_contents }));
-        let tree = cx.add_model(|cx| Worktree::local(dir.path(), Default::default(), cx));
+        let tree = Worktree::open_local(
+            dir.path(),
+            Default::default(),
+            Arc::new(RealFs),
+            &mut cx.to_async(),
+        )
+        .await
+        .unwrap();
         cx.read(|cx| tree.read(cx).as_local().unwrap().scan_complete())
             .await;
 

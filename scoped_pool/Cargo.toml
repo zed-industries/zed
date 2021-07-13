@@ -1,8 +1,0 @@
-[package]
-name = "scoped-pool"
-version = "0.0.1"
-license = "MIT"
-edition = "2018"
-
-[dependencies]
-crossbeam-channel = "0.5"

@@ -1,0 +1,11 @@
+#!/bin/bash
+
+set -e
+
+IMAGE_ID=registry.digitalocean.com/zed/zed-migrator
+
+docker build . \
+  --file ./Dockerfile.migrator \
+  --tag $IMAGE_ID
+docker push $IMAGE_ID
+kubectl apply -f ./server/migrate.yml

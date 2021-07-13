@@ -399,11 +399,11 @@ impl FileFinder {
             .map(|tree| tree.read(cx).snapshot())
             .collect::<Vec<_>>();
         let search_id = util::post_inc(&mut self.search_count);
-        let pool = cx.as_ref().thread_pool().clone();
+        let background = cx.as_ref().background().clone();
         self.cancel_flag.store(true, atomic::Ordering::Relaxed);
         self.cancel_flag = Arc::new(AtomicBool::new(false));
         let cancel_flag = self.cancel_flag.clone();
-        let background_task = cx.background_executor().spawn(async move {
+        Some(cx.spawn(|this, mut cx| async move {
             let include_root_name = snapshots.len() > 1;
             let matches = match_paths(
                 snapshots.iter(),
@@ -413,15 +413,13 @@ impl FileFinder {
                 false,
                 100,
                 cancel_flag.clone(),
-                pool,
-            );
+                background,
+            )
+            .await;
             let did_cancel = cancel_flag.load(atomic::Ordering::Relaxed);
-            (search_id, did_cancel, query, matches)
-        });
-
-        Some(cx.spawn(|this, mut cx| async move {
-            let matches = background_task.await;
-            this.update(&mut cx, |this, cx| this.update_matches(matches, cx));
+            this.update(&mut cx, |this, cx| {
+                this.update_matches((search_id, did_cancel, query, matches), cx)
+            });
         }))
     }
 
@@ -461,6 +459,7 @@ mod tests {
         editor,
         test::{build_app_state, temp_tree},
         workspace::Workspace,
+        worktree::FakeFs,
     };
     use serde_json::json;
     use std::fs;
@@ -478,16 +477,13 @@ mod tests {
         });
 
         let app_state = cx.read(build_app_state);
-        let (window_id, workspace) = cx.add_window(|cx| {
-            let mut workspace = Workspace::new(
-                app_state.settings.clone(),
-                app_state.languages.clone(),
-                app_state.rpc.clone(),
-                cx,
-            );
-            workspace.add_worktree(tmp_dir.path(), cx);
-            workspace
-        });
+        let (window_id, workspace) = cx.add_window(|cx| Workspace::new(&app_state, cx));
+        workspace
+            .update(&mut cx, |workspace, cx| {
+                workspace.add_worktree(tmp_dir.path(), cx)
+            })
+            .await
+            .unwrap();
         cx.read(|cx| workspace.read(cx).worktree_scans_complete(cx))
             .await;
         cx.dispatch_action(
@@ -540,26 +536,31 @@ mod tests {
 
     #[gpui::test]
     async fn test_matching_cancellation(mut cx: gpui::TestAppContext) {
-        let tmp_dir = temp_tree(json!({
-            "hello": "",
-            "goodbye": "",
-            "halogen-light": "",
-            "happiness": "",
-            "height": "",
-            "hi": "",
-            "hiccup": "",
-        }));
-        let app_state = cx.read(build_app_state);
-        let (_, workspace) = cx.add_window(|cx| {
-            let mut workspace = Workspace::new(
-                app_state.settings.clone(),
-                app_state.languages.clone(),
-                app_state.rpc.clone(),
-                cx,
-            );
-            workspace.add_worktree(tmp_dir.path(), cx);
-            workspace
-        });
+        let fs = Arc::new(FakeFs::new());
+        fs.insert_tree(
+            "/dir",
+            json!({
+                "hello": "",
+                "goodbye": "",
+                "halogen-light": "",
+                "happiness": "",
+                "height": "",
+                "hi": "",
+                "hiccup": "",
+            }),
+        )
+        .await;
+
+        let mut app_state = cx.read(build_app_state);
+        Arc::get_mut(&mut app_state).unwrap().fs = fs;
+
+        let (_, workspace) = cx.add_window(|cx| Workspace::new(&app_state, cx));
+        workspace
+            .update(&mut cx, |workspace, cx| {
+                workspace.add_worktree("/dir".as_ref(), cx)
+            })
+            .await
+            .unwrap();
         cx.read(|cx| workspace.read(cx).worktree_scans_complete(cx))
             .await;
         let (_, finder) =
@@ -613,16 +614,13 @@ mod tests {
         fs::write(&file_path, "").unwrap();
 
         let app_state = cx.read(build_app_state);
-        let (_, workspace) = cx.add_window(|cx| {
-            let mut workspace = Workspace::new(
-                app_state.settings.clone(),
-                app_state.languages.clone(),
-                app_state.rpc.clone(),
-                cx,
-            );
-            workspace.add_worktree(&file_path, cx);
-            workspace
-        });
+        let (_, workspace) = cx.add_window(|cx| Workspace::new(&app_state, cx));
+        workspace
+            .update(&mut cx, |workspace, cx| {
+                workspace.add_worktree(&file_path, cx)
+            })
+            .await
+            .unwrap();
         cx.read(|cx| workspace.read(cx).worktree_scans_complete(cx))
             .await;
         let (_, finder) =
@@ -663,15 +661,7 @@ mod tests {
         }));
 
         let app_state = cx.read(build_app_state);
-
-        let (_, workspace) = cx.add_window(|cx| {
-            Workspace::new(
-                app_state.settings.clone(),
-                app_state.languages.clone(),
-                app_state.rpc.clone(),
-                cx,
-            )
-        });
+        let (_, workspace) = cx.add_window(|cx| Workspace::new(&app_state, cx));
 
         workspace
             .update(&mut cx, |workspace, cx| {

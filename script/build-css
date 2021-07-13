@@ -1,0 +1,10 @@
+#!/bin/bash
+
+set -e
+
+cd ./script
+[ -d node_modules ] || npm install
+if [[ $1 == --release ]]; then
+    export NODE_ENV=production # Purge unused styles in --release mode
+fi
+npx tailwindcss build ../server/styles.css --output ../server/static/styles.css

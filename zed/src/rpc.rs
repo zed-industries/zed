@@ -9,8 +9,8 @@ use std::collections::HashMap;
 use std::time::Duration;
 use std::{convert::TryFrom, future::Future, sync::Arc};
 use surf::Url;
-pub use zed_rpc::{proto, ConnectionId, PeerId, TypedEnvelope};
-use zed_rpc::{
+pub use zrpc::{proto, ConnectionId, PeerId, TypedEnvelope};
+use zrpc::{
     proto::{EnvelopedMessage, RequestMessage},
     ForegroundRouter, Peer, Receipt,
 };
@@ -158,7 +158,7 @@ impl Client {
             // zed server to encrypt the user's access token, so that it can'be intercepted by
             // any other app running on the user's device.
             let (public_key, private_key) =
-                zed_rpc::auth::keypair().expect("failed to generate keypair for auth");
+                zrpc::auth::keypair().expect("failed to generate keypair for auth");
             let public_key_string =
                 String::try_from(public_key).expect("failed to serialize public key for auth");
 

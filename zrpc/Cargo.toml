@@ -1,7 +1,7 @@
 [package]
 description = "Shared logic for communication between the Zed app and the zed.dev server"
 edition = "2018"
-name = "zed-rpc"
+name = "zrpc"
 version = "0.1.0"
 
 [features]
@@ -15,14 +15,14 @@ base64 = "0.13"
 futures = "0.3"
 log = "0.4"
 parking_lot = "0.11.1"
-postage = {version = "0.4.1", features = ["futures-traits"]}
+postage = { version = "0.4.1", features = ["futures-traits"] }
 prost = "0.7"
 rand = "0.8"
 rsa = "0.4"
-serde = {version = "1", features = ["derive"]}
+serde = { version = "1", features = ["derive"] }
 
 [build-dependencies]
-prost-build = {git = "https://github.com/tokio-rs/prost", rev = "6cf97ea422b09d98de34643c4dda2d4f8b7e23e6"}
+prost-build = { git = "https://github.com/tokio-rs/prost", rev = "6cf97ea422b09d98de34643c4dda2d4f8b7e23e6" }
 
 [dev-dependencies]
 smol = "1.2.5"

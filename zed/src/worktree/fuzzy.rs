@@ -1,6 +1,6 @@
 use super::{char_bag::CharBag, EntryKind, Snapshot};
 use crate::util;
-use gpui::scoped_pool;
+use gpui::executor;
 use std::{
     cmp::{max, min, Ordering},
     path::Path,
@@ -51,7 +51,7 @@ impl Ord for PathMatch {
     }
 }
 
-pub fn match_paths<'a, T>(
+pub async fn match_paths<'a, T>(
     snapshots: T,
     query: &str,
     include_root_name: bool,
@@ -59,7 +59,7 @@ pub fn match_paths<'a, T>(
     smart_case: bool,
     max_results: usize,
     cancel_flag: Arc<AtomicBool>,
-    pool: scoped_pool::Pool,
+    background: Arc<executor::Background>,
 ) -> Vec<PathMatch>
 where
     T: Clone + Send + Iterator<Item = &'a Snapshot> + 'a,
@@ -71,88 +71,91 @@ where
     let query = &query;
     let query_chars = CharBag::from(&lowercase_query[..]);
 
-    let cpus = num_cpus::get();
     let path_count: usize = if include_ignored {
         snapshots.clone().map(Snapshot::file_count).sum()
     } else {
         snapshots.clone().map(Snapshot::visible_file_count).sum()
     };
 
-    let segment_size = (path_count + cpus - 1) / cpus;
-    let mut segment_results = (0..cpus)
+    let num_cpus = background.num_cpus().min(path_count);
+    let segment_size = (path_count + num_cpus - 1) / num_cpus;
+    let mut segment_results = (0..num_cpus)
         .map(|_| Vec::with_capacity(max_results))
         .collect::<Vec<_>>();
 
-    pool.scoped(|scope| {
-        for (segment_idx, results) in segment_results.iter_mut().enumerate() {
-            let snapshots = snapshots.clone();
-            let cancel_flag = &cancel_flag;
-            scope.execute(move || {
-                let segment_start = segment_idx * segment_size;
-                let segment_end = segment_start + segment_size;
+    background
+        .scoped(|scope| {
+            for (segment_idx, results) in segment_results.iter_mut().enumerate() {
+                let snapshots = snapshots.clone();
+                let cancel_flag = &cancel_flag;
+                scope.spawn(async move {
+                    let segment_start = segment_idx * segment_size;
+                    let segment_end = segment_start + segment_size;
 
-                let mut min_score = 0.0;
-                let mut last_positions = Vec::new();
-                last_positions.resize(query.len(), 0);
-                let mut match_positions = Vec::new();
-                match_positions.resize(query.len(), 0);
-                let mut score_matrix = Vec::new();
-                let mut best_position_matrix = Vec::new();
+                    let mut min_score = 0.0;
+                    let mut last_positions = Vec::new();
+                    last_positions.resize(query.len(), 0);
+                    let mut match_positions = Vec::new();
+                    match_positions.resize(query.len(), 0);
+                    let mut score_matrix = Vec::new();
+                    let mut best_position_matrix = Vec::new();
 
-                let mut tree_start = 0;
-                for snapshot in snapshots {
-                    let tree_end = if include_ignored {
-                        tree_start + snapshot.file_count()
-                    } else {
-                        tree_start + snapshot.visible_file_count()
-                    };
-
-                    let include_root_name = include_root_name || snapshot.root_entry().is_file();
-                    if tree_start < segment_end && segment_start < tree_end {
-                        let start = max(tree_start, segment_start) - tree_start;
-                        let end = min(tree_end, segment_end) - tree_start;
-                        let entries = if include_ignored {
-                            snapshot.files(start).take(end - start)
+                    let mut tree_start = 0;
+                    for snapshot in snapshots {
+                        let tree_end = if include_ignored {
+                            tree_start + snapshot.file_count()
                         } else {
-                            snapshot.visible_files(start).take(end - start)
+                            tree_start + snapshot.visible_file_count()
                         };
-                        let paths = entries.map(|entry| {
-                            if let EntryKind::File(char_bag) = entry.kind {
-                                MatchCandidate {
-                                    path: &entry.path,
-                                    char_bag,
-                                }
-                            } else {
-                                unreachable!()
-                            }
-                        });
 
-                        match_single_tree_paths(
-                            snapshot,
-                            include_root_name,
-                            paths,
-                            query,
-                            lowercase_query,
-                            query_chars,
-                            smart_case,
-                            results,
-                            max_results,
-                            &mut min_score,
-                            &mut match_positions,
-                            &mut last_positions,
-                            &mut score_matrix,
-                            &mut best_position_matrix,
-                            &cancel_flag,
-                        );
+                        let include_root_name =
+                            include_root_name || snapshot.root_entry().is_file();
+                        if tree_start < segment_end && segment_start < tree_end {
+                            let start = max(tree_start, segment_start) - tree_start;
+                            let end = min(tree_end, segment_end) - tree_start;
+                            let entries = if include_ignored {
+                                snapshot.files(start).take(end - start)
+                            } else {
+                                snapshot.visible_files(start).take(end - start)
+                            };
+                            let paths = entries.map(|entry| {
+                                if let EntryKind::File(char_bag) = entry.kind {
+                                    MatchCandidate {
+                                        path: &entry.path,
+                                        char_bag,
+                                    }
+                                } else {
+                                    unreachable!()
+                                }
+                            });
+
+                            match_single_tree_paths(
+                                snapshot,
+                                include_root_name,
+                                paths,
+                                query,
+                                lowercase_query,
+                                query_chars,
+                                smart_case,
+                                results,
+                                max_results,
+                                &mut min_score,
+                                &mut match_positions,
+                                &mut last_positions,
+                                &mut score_matrix,
+                                &mut best_position_matrix,
+                                &cancel_flag,
+                            );
+                        }
+                        if tree_end >= segment_end {
+                            break;
+                        }
+                        tree_start = tree_end;
                     }
-                    if tree_end >= segment_end {
-                        break;
-                    }
-                    tree_start = tree_end;
-                }
-            })
-        }
-    });
+                })
+            }
+        })
+        .await;
 
     let mut results = Vec::new();
     for segment_result in segment_results {

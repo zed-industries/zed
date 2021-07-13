@@ -607,7 +607,6 @@ impl MutableAppContext {
                 values: Default::default(),
                 ref_counts: Arc::new(Mutex::new(RefCounts::default())),
                 background,
-                thread_pool: scoped_pool::Pool::new(num_cpus::get(), "app"),
                 font_cache: Arc::new(FontCache::new(fonts)),
             },
             actions: HashMap::new(),
@@ -1485,7 +1484,6 @@ pub struct AppContext {
     values: RwLock<HashMap<(TypeId, usize), Box<dyn Any>>>,
     background: Arc<executor::Background>,
     ref_counts: Arc<Mutex<RefCounts>>,
-    thread_pool: scoped_pool::Pool,
     font_cache: Arc<FontCache>,
 }
 
@@ -1528,10 +1526,6 @@ impl AppContext {
 
     pub fn font_cache(&self) -> &FontCache {
         &self.font_cache
-    }
-
-    pub fn thread_pool(&self) -> &scoped_pool::Pool {
-        &self.thread_pool
     }
 
     pub fn value<Tag: 'static, T: 'static + Default>(&self, id: usize) -> ValueHandle<T> {
@@ -1714,10 +1708,6 @@ impl<'a, T: Entity> ModelContext<'a, T> {
 
     pub fn background(&self) -> &Arc<executor::Background> {
         &self.app.cx.background
-    }
-
-    pub fn thread_pool(&self) -> &scoped_pool::Pool {
-        &self.app.cx.thread_pool
     }
 
     pub fn halt_stream(&mut self) {

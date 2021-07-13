@@ -1,0 +1,69 @@
+{{#> layout }}
+{{#if releases}}
+
+<div class="bg-white">
+    <div class="container mx-auto py-12 px-8 md:px-12 lg:flex lg:flex-row">
+        {{#each releases}}
+        <div class="md:flex md:flex-row">
+            <div class="font-display mb-8 md:mb-0 md:text-right">
+                <div class="text-2xl font-bold whitespace-nowrap">
+                    VERSION {{name}}
+                </div>
+                <a class="text-md underline text-yellow-600 hover:text-yellow-700"
+                    href="/releases/{{tag_name}}/{{assets.0.name}}">
+                    DOWNLOAD
+                </a>
+            </div>
+            <div
+                class="prose prose-lg xl:prose-xl border-t md:border-t-0 pt-8 md:border-l border-gray-400 md:ml-8 md:pl-8 md:pt-0 xl:ml-16 xl:pl-16 max-w-5xl font-body">
+                {{{body}}}
+            </div>
+        </div>
+        {{/each}}
+    </div>
+</div>
+
+{{else}}
+
+<div class="bg-dotgrid-sm md:bg-dotgrid-md lg:bg-dotgrid-lg">
+    <img src="/static/svg/hero.svg" class="container mx-auto px-8 md:px-12 py-16 md:py-24 lg:py-32" />
+</div>
+
+<div class="container mx-auto py-24 lg:py-32 px-8 md:px-12 lg:flex lg:flex-row lg:items-center">
+    <div class="prose prose-xl md:prose-2xl text-gray-50 prose-gray-50 w-full lg:w-1/2">
+        <p>
+            We’re the team behind GitHub’s Atom text editor, and we’re building something new:
+        </p>
+
+        <p>
+            <b>Zed</b> is a fully-native desktop code editor focused on high performance,
+            clean design, and seamless collaboration.
+        </p>
+
+        <p>
+            We’re in early development, but we’d like to build a small community of developers who care deeply about
+            their tools and are willing to give us feedback. We'll be sharing alpha builds with community members and
+            telling our story along the way.
+        </p>
+
+        <p>
+            If you’re interested in joining us, please let us know.
+        </p>
+    </div>
+
+    <form class="my-16 lg:my-0 lg:ml-16 flex-1 text-xl md:text-2xl" action="/signups" method="post">
+        <input name="github_login" placeholder="@github_handle"
+            class="w-3/5 xl:w-1/2 p-3 mb-8 block bg-gray-50 placeholder-gray-500">
+        <input name="email_address" placeholder="email@addre.ss"
+            class="w-4/5 xl:w-3/4 p-3 my-8 block bg-gray-50 placeholder-gray-500">
+        <textarea name="about" class="block w-full xl:w-full h-48 p-3 my-8 bg-gray-50 placeholder-gray-500 my-6"
+            placeholder="Please tell us a bit about you and why you're interested in Zed. What code editor do you use today? What do you love and hate about it?"></textarea>
+        <button
+            class="p-4 rounded-md text-gray-50 bg-gray-500 inline-block cursor-pointer hover:bg-gray-400 font-display">
+            ENGAGE
+        </button>
+    </form>
+</div>
+
+{{/if}}
+{{/layout}}

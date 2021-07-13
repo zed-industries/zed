@@ -6,7 +6,7 @@ use crate::{
     language::LanguageRegistry,
     rpc,
     settings::Settings,
-    worktree::{File, Worktree},
+    worktree::{File, Fs, Worktree},
     AppState,
 };
 use anyhow::{anyhow, Result};
@@ -29,7 +29,10 @@ use std::{
 
 pub fn init(cx: &mut MutableAppContext) {
     cx.add_global_action("workspace:open", open);
-    cx.add_global_action("workspace:open_paths", open_paths);
+    cx.add_global_action(
+        "workspace:open_paths",
+        |params: &OpenParams, cx: &mut MutableAppContext| open_paths(params, cx).detach(),
+    );
     cx.add_global_action("workspace:new_file", open_new);
     cx.add_global_action("workspace:join_worktree", join_worktree);
     cx.add_action("workspace:save", Workspace::save_active_item);
@@ -65,23 +68,23 @@ fn open(app_state: &Arc<AppState>, cx: &mut MutableAppContext) {
     );
 }
 
-fn open_paths(params: &OpenParams, cx: &mut MutableAppContext) {
+fn open_paths(params: &OpenParams, cx: &mut MutableAppContext) -> Task<()> {
     log::info!("open paths {:?}", params.paths);
 
     // Open paths in existing workspace if possible
     for window_id in cx.window_ids().collect::<Vec<_>>() {
         if let Some(handle) = cx.root_view::<Workspace>(window_id) {
-            if handle.update(cx, |view, cx| {
+            let task = handle.update(cx, |view, cx| {
                 if view.contains_paths(&params.paths, cx.as_ref()) {
-                    let open_paths = view.open_paths(&params.paths, cx);
-                    cx.foreground().spawn(open_paths).detach();
                     log::info!("open paths on existing workspace");
-                    true
+                    Some(view.open_paths(&params.paths, cx))
                 } else {
-                    false
+                    None
                 }
-            }) {
-                return;
+            });
+
+            if let Some(task) = task {
+                return task;
             }
         }
     }
@@ -89,27 +92,13 @@ fn open_paths(params: &OpenParams, cx: &mut MutableAppContext) {
     log::info!("open new workspace");
 
     // Add a new workspace if necessary
-    cx.add_window(|cx| {
-        let mut view = Workspace::new(
-            params.app_state.settings.clone(),
-            params.app_state.languages.clone(),
-            params.app_state.rpc.clone(),
-            cx,
-        );
-        let open_paths = view.open_paths(&params.paths, cx);
-        cx.foreground().spawn(open_paths).detach();
-        view
-    });
+    let (_, workspace) = cx.add_window(|cx| Workspace::new(&params.app_state, cx));
+    workspace.update(cx, |workspace, cx| workspace.open_paths(&params.paths, cx))
 }
 
 fn open_new(app_state: &Arc<AppState>, cx: &mut MutableAppContext) {
     cx.add_window(|cx| {
-        let mut view = Workspace::new(
-            app_state.settings.clone(),
-            app_state.languages.clone(),
-            app_state.rpc.clone(),
-            cx,
-        );
+        let mut view = Workspace::new(app_state.as_ref(), cx);
         view.open_new_file(&app_state, cx);
         view
     });
@@ -117,12 +106,7 @@ fn open_new(app_state: &Arc<AppState>, cx: &mut MutableAppContext) {
 
 fn join_worktree(app_state: &Arc<AppState>, cx: &mut MutableAppContext) {
     cx.add_window(|cx| {
-        let mut view = Workspace::new(
-            app_state.settings.clone(),
-            app_state.languages.clone(),
-            app_state.rpc.clone(),
-            cx,
-        );
+        let mut view = Workspace::new(app_state.as_ref(), cx);
         view.join_worktree(&app_state, cx);
         view
     });
@@ -328,6 +312,7 @@ pub struct Workspace {
     pub settings: watch::Receiver<Settings>,
     languages: Arc<LanguageRegistry>,
     rpc: rpc::Client,
+    fs: Arc<dyn Fs>,
     modal: Option<AnyViewHandle>,
     center: PaneGroup,
     panes: Vec<ViewHandle<Pane>>,
@@ -341,13 +326,8 @@ pub struct Workspace {
 }
 
 impl Workspace {
-    pub fn new(
-        settings: watch::Receiver<Settings>,
-        languages: Arc<LanguageRegistry>,
-        rpc: rpc::Client,
-        cx: &mut ViewContext<Self>,
-    ) -> Self {
-        let pane = cx.add_view(|_| Pane::new(settings.clone()));
+    pub fn new(app_state: &AppState, cx: &mut ViewContext<Self>) -> Self {
+        let pane = cx.add_view(|_| Pane::new(app_state.settings.clone()));
         let pane_id = pane.id();
         cx.subscribe_to_view(&pane, move |me, _, event, cx| {
             me.handle_pane_event(pane_id, event, cx)
@@ -359,9 +339,10 @@ impl Workspace {
             center: PaneGroup::new(pane.id()),
             panes: vec![pane.clone()],
             active_pane: pane.clone(),
-            settings,
-            languages: languages,
-            rpc,
+            settings: app_state.settings.clone(),
+            languages: app_state.languages.clone(),
+            rpc: app_state.rpc.clone(),
+            fs: app_state.fs.clone(),
             worktrees: Default::default(),
             items: Default::default(),
             loading_items: Default::default(),
@@ -400,87 +381,106 @@ impl Workspace {
         }
     }
 
-    pub fn open_paths(
-        &mut self,
-        abs_paths: &[PathBuf],
-        cx: &mut ViewContext<Self>,
-    ) -> impl Future<Output = ()> {
+    pub fn open_paths(&mut self, abs_paths: &[PathBuf], cx: &mut ViewContext<Self>) -> Task<()> {
         let entries = abs_paths
             .iter()
             .cloned()
             .map(|path| self.entry_id_for_path(&path, cx))
             .collect::<Vec<_>>();
 
-        let bg = cx.background_executor().clone();
+        let fs = self.fs.clone();
         let tasks = abs_paths
             .iter()
             .cloned()
             .zip(entries.into_iter())
             .map(|(abs_path, entry_id)| {
-                let is_file = bg.spawn(async move { abs_path.is_file() });
-                cx.spawn(|this, mut cx| async move {
-                    if is_file.await {
-                        return this.update(&mut cx, |this, cx| this.open_entry(entry_id, cx));
-                    } else {
-                        None
+                cx.spawn(|this, mut cx| {
+                    let fs = fs.clone();
+                    async move {
+                        let entry_id = entry_id.await?;
+                        if fs.is_file(&abs_path).await {
+                            if let Some(entry) =
+                                this.update(&mut cx, |this, cx| this.open_entry(entry_id, cx))
+                            {
+                                entry.await;
+                            }
+                        }
+                        Ok(())
                     }
                 })
             })
-            .collect::<Vec<_>>();
-        async move {
+            .collect::<Vec<Task<Result<()>>>>();
+
+        cx.foreground().spawn(async move {
             for task in tasks {
-                if let Some(task) = task.await {
-                    task.await;
+                if let Err(error) = task.await {
+                    log::error!("error opening paths {}", error);
                 }
             }
-        }
+        })
     }
 
     fn worktree_for_abs_path(
-        &mut self,
+        &self,
         abs_path: &Path,
         cx: &mut ViewContext<Self>,
-    ) -> (ModelHandle<Worktree>, PathBuf) {
-        for tree in self.worktrees.iter() {
-            if let Some(path) = tree
-                .read(cx)
-                .as_local()
-                .and_then(|tree| abs_path.strip_prefix(&tree.abs_path()).ok())
-            {
-                return (tree.clone(), path.to_path_buf());
+    ) -> Task<Result<(ModelHandle<Worktree>, PathBuf)>> {
+        let abs_path: Arc<Path> = Arc::from(abs_path);
+        cx.spawn(|this, mut cx| async move {
+            let mut entry_id = None;
+            this.read_with(&cx, |this, cx| {
+                for tree in this.worktrees.iter() {
+                    if let Some(relative_path) = tree
+                        .read(cx)
+                        .as_local()
+                        .and_then(|t| abs_path.strip_prefix(t.abs_path()).ok())
+                    {
+                        entry_id = Some((tree.clone(), relative_path.into()));
+                        break;
+                    }
+                }
+            });
+
+            if let Some(entry_id) = entry_id {
+                Ok(entry_id)
+            } else {
+                let worktree = this
+                    .update(&mut cx, |this, cx| this.add_worktree(&abs_path, cx))
+                    .await?;
+                Ok((worktree, PathBuf::new()))
             }
-        }
-        (self.add_worktree(abs_path, cx), PathBuf::new())
+        })
     }
 
     fn entry_id_for_path(
-        &mut self,
+        &self,
         abs_path: &Path,
         cx: &mut ViewContext<Self>,
-    ) -> (usize, Arc<Path>) {
-        for tree in self.worktrees.iter() {
-            if let Some(relative_path) = tree
-                .read(cx)
-                .as_local()
-                .and_then(|t| abs_path.strip_prefix(t.abs_path()).ok())
-            {
-                return (tree.id(), relative_path.into());
-            }
-        }
-        let worktree = self.add_worktree(&abs_path, cx);
-        (worktree.id(), Path::new("").into())
+    ) -> Task<Result<(usize, Arc<Path>)>> {
+        let entry = self.worktree_for_abs_path(abs_path, cx);
+        cx.spawn(|_, _| async move {
+            let (worktree, path) = entry.await?;
+            Ok((worktree.id(), path.into()))
+        })
     }
 
     pub fn add_worktree(
-        &mut self,
+        &self,
         path: &Path,
         cx: &mut ViewContext<Self>,
-    ) -> ModelHandle<Worktree> {
-        let worktree = cx.add_model(|cx| Worktree::local(path, self.languages.clone(), cx));
-        cx.observe_model(&worktree, |_, _, cx| cx.notify());
-        self.worktrees.insert(worktree.clone());
-        cx.notify();
-        worktree
+    ) -> Task<Result<ModelHandle<Worktree>>> {
+        let languages = self.languages.clone();
+        let fs = self.fs.clone();
+        let path = Arc::from(path);
+        cx.spawn(|this, mut cx| async move {
+            let worktree = Worktree::open_local(path, languages, fs, &mut cx).await?;
+            this.update(&mut cx, |this, cx| {
+                cx.observe_model(&worktree, |_, _, cx| cx.notify());
+                this.worktrees.insert(worktree.clone());
+                cx.notify();
+            });
+            Ok(worktree)
+        })
     }
 
     pub fn toggle_modal<V, F>(&mut self, cx: &mut ViewContext<Self>, add_view: F)
@@ -655,12 +655,22 @@ impl Workspace {
                 cx.prompt_for_new_path(&start_abs_path, move |abs_path, cx| {
                     if let Some(abs_path) = abs_path {
                         cx.spawn(|mut cx| async move {
-                            let result = handle
-                                .update(&mut cx, |me, cx| {
-                                    let (worktree, path) = me.worktree_for_abs_path(&abs_path, cx);
-                                    item.save_as(&worktree, &path, cx.as_mut())
+                            let result = match handle
+                                .update(&mut cx, |this, cx| {
+                                    this.worktree_for_abs_path(&abs_path, cx)
                                 })
-                                .await;
+                                .await
+                            {
+                                Ok((worktree, path)) => {
+                                    handle
+                                        .update(&mut cx, |_, cx| {
+                                            item.save_as(&worktree, &path, cx.as_mut())
+                                        })
+                                        .await
+                                }
+                                Err(error) => Err(error),
+                            };
+
                             if let Err(error) = result {
                                 error!("failed to save item: {:?}, ", error);
                             }
@@ -912,18 +922,15 @@ mod tests {
     use crate::{
         editor::Editor,
         test::{build_app_state, temp_tree},
-        worktree::WorktreeHandle,
+        worktree::{FakeFs, WorktreeHandle},
     };
     use serde_json::json;
     use std::{collections::HashSet, fs};
     use tempdir::TempDir;
 
     #[gpui::test]
-    fn test_open_paths_action(cx: &mut gpui::MutableAppContext) {
-        let app_state = build_app_state(cx.as_ref());
-
-        init(cx);
-
+    async fn test_open_paths_action(mut cx: gpui::TestAppContext) {
+        let app_state = cx.read(build_app_state);
         let dir = temp_tree(json!({
             "a": {
                 "aa": null,
@@ -939,42 +946,51 @@ mod tests {
             },
         }));
 
-        cx.dispatch_global_action(
-            "workspace:open_paths",
-            OpenParams {
-                paths: vec![
-                    dir.path().join("a").to_path_buf(),
-                    dir.path().join("b").to_path_buf(),
-                ],
-                app_state: app_state.clone(),
-            },
-        );
-        assert_eq!(cx.window_ids().count(), 1);
+        cx.update(|cx| {
+            open_paths(
+                &OpenParams {
+                    paths: vec![
+                        dir.path().join("a").to_path_buf(),
+                        dir.path().join("b").to_path_buf(),
+                    ],
+                    app_state: app_state.clone(),
+                },
+                cx,
+            )
+        })
+        .await;
+        assert_eq!(cx.window_ids().len(), 1);
 
-        cx.dispatch_global_action(
-            "workspace:open_paths",
-            OpenParams {
-                paths: vec![dir.path().join("a").to_path_buf()],
-                app_state: app_state.clone(),
-            },
-        );
-        assert_eq!(cx.window_ids().count(), 1);
-        let workspace_view_1 = cx
-            .root_view::<Workspace>(cx.window_ids().next().unwrap())
-            .unwrap();
-        assert_eq!(workspace_view_1.read(cx).worktrees().len(), 2);
+        cx.update(|cx| {
+            open_paths(
+                &OpenParams {
+                    paths: vec![dir.path().join("a").to_path_buf()],
+                    app_state: app_state.clone(),
+                },
+                cx,
+            )
+        })
+        .await;
+        assert_eq!(cx.window_ids().len(), 1);
+        let workspace_view_1 = cx.root_view::<Workspace>(cx.window_ids()[0]).unwrap();
+        workspace_view_1.read_with(&cx, |workspace, _| {
+            assert_eq!(workspace.worktrees().len(), 2)
+        });
 
-        cx.dispatch_global_action(
-            "workspace:open_paths",
-            OpenParams {
-                paths: vec![
-                    dir.path().join("b").to_path_buf(),
-                    dir.path().join("c").to_path_buf(),
-                ],
-                app_state: app_state.clone(),
-            },
-        );
-        assert_eq!(cx.window_ids().count(), 2);
+        cx.update(|cx| {
+            open_paths(
+                &OpenParams {
+                    paths: vec![
+                        dir.path().join("b").to_path_buf(),
+                        dir.path().join("c").to_path_buf(),
+                    ],
+                    app_state: app_state.clone(),
+                },
+                cx,
+            )
+        })
+        .await;
+        assert_eq!(cx.window_ids().len(), 2);
     }
 
     #[gpui::test]
@@ -989,16 +1005,13 @@ mod tests {
 
         let app_state = cx.read(build_app_state);
 
-        let (_, workspace) = cx.add_window(|cx| {
-            let mut workspace = Workspace::new(
-                app_state.settings.clone(),
-                app_state.languages.clone(),
-                app_state.rpc.clone(),
-                cx,
-            );
-            workspace.add_worktree(dir.path(), cx);
-            workspace
-        });
+        let (_, workspace) = cx.add_window(|cx| Workspace::new(&app_state, cx));
+        workspace
+            .update(&mut cx, |workspace, cx| {
+                workspace.add_worktree(dir.path(), cx)
+            })
+            .await
+            .unwrap();
 
         cx.read(|cx| workspace.read(cx).worktree_scans_complete(cx))
             .await;
@@ -1088,32 +1101,28 @@ mod tests {
 
     #[gpui::test]
     async fn test_open_paths(mut cx: gpui::TestAppContext) {
-        let dir1 = temp_tree(json!({
-            "a.txt": "",
-        }));
-        let dir2 = temp_tree(json!({
-            "b.txt": "",
-        }));
+        let fs = FakeFs::new();
+        fs.insert_dir("/dir1").await.unwrap();
+        fs.insert_dir("/dir2").await.unwrap();
+        fs.insert_file("/dir1/a.txt", "".into()).await.unwrap();
+        fs.insert_file("/dir2/b.txt", "".into()).await.unwrap();
 
-        let app_state = cx.read(build_app_state);
-        let (_, workspace) = cx.add_window(|cx| {
-            let mut workspace = Workspace::new(
-                app_state.settings.clone(),
-                app_state.languages.clone(),
-                app_state.rpc.clone(),
-                cx,
-            );
-            workspace.add_worktree(dir1.path(), cx);
-            workspace
-        });
+        let mut app_state = cx.read(build_app_state);
+        Arc::get_mut(&mut app_state).unwrap().fs = Arc::new(fs);
+
+        let (_, workspace) = cx.add_window(|cx| Workspace::new(&app_state, cx));
+        workspace
+            .update(&mut cx, |workspace, cx| {
+                workspace.add_worktree("/dir1".as_ref(), cx)
+            })
+            .await
+            .unwrap();
         cx.read(|cx| workspace.read(cx).worktree_scans_complete(cx))
             .await;
 
         // Open a file within an existing worktree.
         cx.update(|cx| {
-            workspace.update(cx, |view, cx| {
-                view.open_paths(&[dir1.path().join("a.txt")], cx)
-            })
+            workspace.update(cx, |view, cx| view.open_paths(&["/dir1/a.txt".into()], cx))
         })
         .await;
         cx.read(|cx| {
@@ -1131,9 +1140,7 @@ mod tests {
 
         // Open a file outside of any existing worktree.
         cx.update(|cx| {
-            workspace.update(cx, |view, cx| {
-                view.open_paths(&[dir2.path().join("b.txt")], cx)
-            })
+            workspace.update(cx, |view, cx| view.open_paths(&["/dir2/b.txt".into()], cx))
         })
         .await;
         cx.read(|cx| {
@@ -1145,8 +1152,9 @@ mod tests {
                 .collect::<HashSet<_>>();
             assert_eq!(
                 worktree_roots,
-                vec![dir1.path(), &dir2.path().join("b.txt")]
+                vec!["/dir1", "/dir2/b.txt"]
                     .into_iter()
+                    .map(Path::new)
                     .collect(),
             );
             assert_eq!(
@@ -1169,16 +1177,13 @@ mod tests {
         }));
 
         let app_state = cx.read(build_app_state);
-        let (window_id, workspace) = cx.add_window(|cx| {
-            let mut workspace = Workspace::new(
-                app_state.settings.clone(),
-                app_state.languages.clone(),
-                app_state.rpc.clone(),
-                cx,
-            );
-            workspace.add_worktree(dir.path(), cx);
-            workspace
-        });
+        let (window_id, workspace) = cx.add_window(|cx| Workspace::new(&app_state, cx));
+        workspace
+            .update(&mut cx, |workspace, cx| {
+                workspace.add_worktree(dir.path(), cx)
+            })
+            .await
+            .unwrap();
         let tree = cx.read(|cx| {
             let mut trees = workspace.read(cx).worktrees().iter();
             trees.next().unwrap().clone()
@@ -1217,16 +1222,13 @@ mod tests {
     async fn test_open_and_save_new_file(mut cx: gpui::TestAppContext) {
         let dir = TempDir::new("test-new-file").unwrap();
         let app_state = cx.read(build_app_state);
-        let (_, workspace) = cx.add_window(|cx| {
-            let mut workspace = Workspace::new(
-                app_state.settings.clone(),
-                app_state.languages.clone(),
-                app_state.rpc.clone(),
-                cx,
-            );
-            workspace.add_worktree(dir.path(), cx);
-            workspace
-        });
+        let (_, workspace) = cx.add_window(|cx| Workspace::new(&app_state, cx));
+        workspace
+            .update(&mut cx, |workspace, cx| {
+                workspace.add_worktree(dir.path(), cx)
+            })
+            .await
+            .unwrap();
         let tree = cx.read(|cx| {
             workspace
                 .read(cx)
@@ -1342,16 +1344,13 @@ mod tests {
         }));
 
         let app_state = cx.read(build_app_state);
-        let (window_id, workspace) = cx.add_window(|cx| {
-            let mut workspace = Workspace::new(
-                app_state.settings.clone(),
-                app_state.languages.clone(),
-                app_state.rpc.clone(),
-                cx,
-            );
-            workspace.add_worktree(dir.path(), cx);
-            workspace
-        });
+        let (window_id, workspace) = cx.add_window(|cx| Workspace::new(&app_state, cx));
+        workspace
+            .update(&mut cx, |workspace, cx| {
+                workspace.add_worktree(dir.path(), cx)
+            })
+            .await
+            .unwrap();
         cx.read(|cx| workspace.read(cx).worktree_scans_complete(cx))
             .await;
         let entries = cx.read(|cx| workspace.file_entries(cx));

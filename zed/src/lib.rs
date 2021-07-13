@@ -1,4 +1,4 @@
-use zed_rpc::ForegroundRouter;
+use zrpc::ForegroundRouter;
 
 pub mod assets;
 pub mod editor;
@@ -21,6 +21,7 @@ pub struct AppState {
     pub languages: std::sync::Arc<language::LanguageRegistry>,
     pub rpc_router: std::sync::Arc<ForegroundRouter>,
     pub rpc: rpc::Client,
+    pub fs: std::sync::Arc<dyn worktree::Fs>,
 }
 
 pub fn init(cx: &mut gpui::MutableAppContext) {
