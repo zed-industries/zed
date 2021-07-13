@@ -459,6 +459,7 @@ mod tests {
         editor,
         test::{build_app_state, temp_tree},
         workspace::Workspace,
+        worktree::FakeFs,
     };
     use serde_json::json;
     use std::fs;
@@ -535,20 +536,28 @@ mod tests {
 
     #[gpui::test]
     async fn test_matching_cancellation(mut cx: gpui::TestAppContext) {
-        let tmp_dir = temp_tree(json!({
-            "hello": "",
-            "goodbye": "",
-            "halogen-light": "",
-            "happiness": "",
-            "height": "",
-            "hi": "",
-            "hiccup": "",
-        }));
-        let app_state = cx.read(build_app_state);
+        let fs = Arc::new(FakeFs::new());
+        fs.insert_tree(
+            "/dir",
+            json!({
+                "hello": "",
+                "goodbye": "",
+                "halogen-light": "",
+                "happiness": "",
+                "height": "",
+                "hi": "",
+                "hiccup": "",
+            }),
+        )
+        .await;
+
+        let mut app_state = cx.read(build_app_state);
+        Arc::get_mut(&mut app_state).unwrap().fs = fs;
+
         let (_, workspace) = cx.add_window(|cx| Workspace::new(&app_state, cx));
         workspace
             .update(&mut cx, |workspace, cx| {
-                workspace.add_worktree(tmp_dir.path(), cx)
+                workspace.add_worktree("/dir".as_ref(), cx)
             })
             .await
             .unwrap();

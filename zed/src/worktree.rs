@@ -435,22 +435,21 @@ impl Worktree {
                 let is_fake_fs = worktree.fs.is_fake();
                 worktree.snapshot = worktree.background_snapshot.lock().clone();
                 if worktree.is_scanning() {
-                    if !worktree.poll_scheduled {
-                        cx.spawn(|this, mut cx| async move {
+                    if worktree.poll_task.is_none() {
+                        worktree.poll_task = Some(cx.spawn(|this, mut cx| async move {
                             if is_fake_fs {
                                 smol::future::yield_now().await;
                             } else {
                                 smol::Timer::after(Duration::from_millis(100)).await;
                             }
                             this.update(&mut cx, |this, cx| {
-                                this.as_local_mut().unwrap().poll_scheduled = false;
+                                this.as_local_mut().unwrap().poll_task = None;
                                 this.poll_snapshot(cx);
                             })
-                        })
-                        .detach();
-                        worktree.poll_scheduled = true;
+                        }));
                     }
                 } else {
+                    worktree.poll_task.take();
                     self.update_open_buffers(cx);
                 }
             }
@@ -563,7 +562,7 @@ pub struct LocalWorktree {
     snapshots_to_send_tx: Option<Sender<Snapshot>>,
     last_scan_state_rx: watch::Receiver<ScanState>,
     _background_scanner_task: Option<Task<()>>,
-    poll_scheduled: bool,
+    poll_task: Option<Task<()>>,
     rpc: Option<(rpc::Client, u64)>,
     open_buffers: HashMap<usize, WeakModelHandle<Buffer>>,
     shared_buffers: HashMap<PeerId, HashMap<u64, ModelHandle<Buffer>>>,
@@ -621,7 +620,7 @@ impl LocalWorktree {
                 snapshots_to_send_tx: None,
                 last_scan_state_rx,
                 _background_scanner_task: None,
-                poll_scheduled: false,
+                poll_task: None,
                 open_buffers: Default::default(),
                 shared_buffers: Default::default(),
                 peers: Default::default(),
