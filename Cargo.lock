@@ -2146,6 +2146,7 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "async-task",
+ "backtrace",
  "bindgen",
  "block",
  "cc",

@@ -6,6 +6,7 @@ version = "0.1.0"
 
 [dependencies]
 async-task = "4.0.3"
+backtrace = "0.3"
 ctor = "0.1"
 etagere = "0.2"
 gpui_macros = { path = "../gpui_macros" }
