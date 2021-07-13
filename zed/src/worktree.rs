@@ -37,7 +37,10 @@ use std::{
     future::Future,
     ops::Deref,
     path::{Path, PathBuf},
-    sync::{atomic::AtomicUsize, Arc},
+    sync::{
+        atomic::{AtomicUsize, Ordering::SeqCst},
+        Arc,
+    },
     time::{Duration, SystemTime},
 };
 use zrpc::{ForegroundRouter, PeerId, TypedEnvelope};
@@ -588,12 +591,11 @@ impl LocalWorktree {
             .file_name()
             .map_or(String::new(), |f| f.to_string_lossy().to_string());
         let root_char_bag = root_name.chars().map(|c| c.to_ascii_lowercase()).collect();
-        let entry = fs
-            .entry(root_char_bag, &next_entry_id, path.clone(), &abs_path)
+        let metadata = fs
+            .metadata(&abs_path)
             .await?
             .ok_or_else(|| anyhow!("root entry does not exist"))?;
-        let is_dir = entry.is_dir();
-        if is_dir {
+        if metadata.is_dir {
             root_name.push('/');
         }
 
@@ -612,7 +614,19 @@ impl LocalWorktree {
                 removed_entry_ids: Default::default(),
                 next_entry_id: Arc::new(next_entry_id),
             };
-            snapshot.insert_entry(entry);
+            snapshot.insert_entry(Entry {
+                id: snapshot.next_entry_id.fetch_add(1, SeqCst),
+                kind: if metadata.is_dir {
+                    EntryKind::PendingDir
+                } else {
+                    EntryKind::File(char_bag_for_path(root_char_bag, &path))
+                },
+                path: Arc::from(path),
+                inode: metadata.ino,
+                mtime: metadata.mtime,
+                is_symlink: metadata.is_symlink,
+                is_ignored: false,
+            });
 
             let tree = Self {
                 snapshot: snapshot.clone(),
@@ -1558,6 +1572,27 @@ pub enum EntryKind {
 }
 
 impl Entry {
+    fn new(
+        path: Arc<Path>,
+        metadata: &fs::Metadata,
+        next_entry_id: &AtomicUsize,
+        root_char_bag: CharBag,
+    ) -> Self {
+        Self {
+            id: next_entry_id.fetch_add(1, SeqCst),
+            kind: if metadata.is_dir {
+                EntryKind::PendingDir
+            } else {
+                EntryKind::File(char_bag_for_path(root_char_bag, &path))
+            },
+            path,
+            inode: metadata.ino,
+            mtime: metadata.mtime,
+            is_symlink: metadata.is_symlink,
+            is_ignored: false,
+        }
+    }
+
     pub fn path(&self) -> &Arc<Path> {
         &self.path
     }
@@ -1878,32 +1913,27 @@ impl BackgroundScanner {
         let mut ignore_stack = job.ignore_stack.clone();
         let mut new_ignore = None;
 
-        let mut child_entries = self
-            .fs
-            .child_entries(
-                root_char_bag,
-                next_entry_id.as_ref(),
-                &job.path,
-                &job.abs_path,
-            )
-            .await?;
-        while let Some(child_entry) = child_entries.next().await {
-            let mut child_entry = match child_entry {
-                Ok(child_entry) => child_entry,
+        let mut child_paths = self.fs.read_dir(&job.abs_path).await?;
+        while let Some(child_abs_path) = child_paths.next().await {
+            let child_abs_path = match child_abs_path {
+                Ok(child_abs_path) => child_abs_path,
                 Err(error) => {
                     log::error!("error processing entry {:?}", error);
                     continue;
                 }
             };
-            let child_name = child_entry.path.file_name().unwrap();
-            let child_abs_path = job.abs_path.join(&child_name);
-            let child_path = child_entry.path.clone();
+            let child_name = child_abs_path.file_name().unwrap();
+            let child_path: Arc<Path> = job.path.join(child_name).into();
+            let child_metadata = match self.fs.metadata(&child_abs_path).await? {
+                Some(metadata) => metadata,
+                None => continue,
+            };
 
             // If we find a .gitignore, add it to the stack of ignores used to determine which paths are ignored
             if child_name == *GITIGNORE {
                 let (ignore, err) = Gitignore::new(&child_abs_path);
                 if let Some(err) = err {
-                    log::error!("error in ignore file {:?} - {:?}", child_entry.path, err);
+                    log::error!("error in ignore file {:?} - {:?}", child_name, err);
                 }
                 let ignore = Arc::new(ignore);
                 ignore_stack = ignore_stack.append(job.path.clone(), ignore.clone());
@@ -1926,7 +1956,14 @@ impl BackgroundScanner {
                 }
             }
 
-            if child_entry.is_dir() {
+            let mut child_entry = Entry::new(
+                child_path.clone(),
+                &child_metadata,
+                &next_entry_id,
+                root_char_bag,
+            );
+
+            if child_metadata.is_dir {
                 let is_ignored = ignore_stack.is_path_ignored(&child_path, true);
                 child_entry.is_ignored = is_ignored;
                 new_entries.push(child_entry);
@@ -1999,22 +2036,18 @@ impl BackgroundScanner {
                 }
             };
 
-            match self
-                .fs
-                .entry(
-                    snapshot.root_char_bag,
-                    &next_entry_id,
-                    path.clone(),
-                    &event.path,
-                )
-                .await
-            {
-                Ok(Some(mut fs_entry)) => {
-                    let is_dir = fs_entry.is_dir();
-                    let ignore_stack = snapshot.ignore_stack_for_path(&path, is_dir);
+            match self.fs.metadata(&event.path).await {
+                Ok(Some(metadata)) => {
+                    let ignore_stack = snapshot.ignore_stack_for_path(&path, metadata.is_dir);
+                    let mut fs_entry = Entry::new(
+                        path.clone(),
+                        &metadata,
+                        snapshot.next_entry_id.as_ref(),
+                        snapshot.root_char_bag,
+                    );
                     fs_entry.is_ignored = ignore_stack.is_all();
                     snapshot.insert_entry(fs_entry);
-                    if is_dir {
+                    if metadata.is_dir {
                         scan_queue_tx
                             .send(ScanJob {
                                 abs_path: event.path,
@@ -2166,10 +2199,14 @@ async fn refresh_entry(
         root_char_bag = snapshot.root_char_bag;
         next_entry_id = snapshot.next_entry_id.clone();
     }
-    let entry = fs
-        .entry(root_char_bag, &next_entry_id, path, abs_path)
-        .await?
-        .ok_or_else(|| anyhow!("could not read saved file metadata"))?;
+    let entry = Entry::new(
+        path,
+        &fs.metadata(abs_path)
+            .await?
+            .ok_or_else(|| anyhow!("could not read saved file metadata"))?,
+        &next_entry_id,
+        root_char_bag,
+    );
     Ok(snapshot.lock().insert_entry(entry))
 }
 
@@ -2918,16 +2955,14 @@ mod tests {
                 root_char_bag: Default::default(),
                 next_entry_id: next_entry_id.clone(),
             };
-            initial_snapshot.insert_entry(
-                smol::block_on(fs.entry(
-                    Default::default(),
-                    &next_entry_id,
-                    Path::new("").into(),
-                    root_dir.path().into(),
-                ))
-                .unwrap()
-                .unwrap(),
-            );
+            initial_snapshot.insert_entry(Entry::new(
+                Path::new("").into(),
+                &smol::block_on(fs.metadata(root_dir.path()))
+                    .unwrap()
+                    .unwrap(),
+                &next_entry_id,
+                Default::default(),
+            ));
             let mut scanner = BackgroundScanner::new(
                 Arc::new(Mutex::new(initial_snapshot.clone())),
                 notify_tx,

@@ -1,8 +1,7 @@
-use super::{char_bag::CharBag, char_bag_for_path, Entry, EntryKind, Rope};
-use anyhow::{anyhow, Context, Result};
-use atomic::Ordering::SeqCst;
+use super::Rope;
+use anyhow::{anyhow, Result};
 use fsevent::EventStream;
-use futures::{future::BoxFuture, Stream, StreamExt};
+use futures::{Stream, StreamExt};
 use postage::prelude::Sink as _;
 use smol::io::{AsyncReadExt, AsyncWriteExt};
 use std::{
@@ -10,33 +9,20 @@ use std::{
     os::unix::fs::MetadataExt,
     path::{Path, PathBuf},
     pin::Pin,
-    sync::{
-        atomic::{self, AtomicUsize},
-        Arc,
-    },
     time::{Duration, SystemTime},
 };
 
 #[async_trait::async_trait]
 pub trait Fs: Send + Sync {
-    async fn entry(
-        &self,
-        root_char_bag: CharBag,
-        next_entry_id: &AtomicUsize,
-        path: Arc<Path>,
-        abs_path: &Path,
-    ) -> Result<Option<Entry>>;
-    async fn child_entries<'a>(
-        &self,
-        root_char_bag: CharBag,
-        next_entry_id: &'a AtomicUsize,
-        path: &'a Path,
-        abs_path: &'a Path,
-    ) -> Result<Pin<Box<dyn 'a + Stream<Item = Result<Entry>> + Send>>>;
     async fn load(&self, path: &Path) -> Result<String>;
     async fn save(&self, path: &Path, text: &Rope) -> Result<()>;
     async fn canonicalize(&self, path: &Path) -> Result<PathBuf>;
     async fn is_file(&self, path: &Path) -> bool;
+    async fn metadata(&self, path: &Path) -> Result<Option<Metadata>>;
+    async fn read_dir(
+        &self,
+        path: &Path,
+    ) -> Result<Pin<Box<dyn Send + Stream<Item = Result<PathBuf>>>>>;
     async fn watch(
         &self,
         path: &Path,
@@ -45,87 +31,17 @@ pub trait Fs: Send + Sync {
     fn is_fake(&self) -> bool;
 }
 
+pub struct Metadata {
+    pub ino: u64,
+    pub mtime: SystemTime,
+    pub is_symlink: bool,
+    pub is_dir: bool,
+}
+
 pub struct RealFs;
 
 #[async_trait::async_trait]
 impl Fs for RealFs {
-    async fn entry(
-        &self,
-        root_char_bag: CharBag,
-        next_entry_id: &AtomicUsize,
-        path: Arc<Path>,
-        abs_path: &Path,
-    ) -> Result<Option<Entry>> {
-        let metadata = match smol::fs::metadata(&abs_path).await {
-            Err(err) => {
-                return match (err.kind(), err.raw_os_error()) {
-                    (io::ErrorKind::NotFound, _) => Ok(None),
-                    (io::ErrorKind::Other, Some(libc::ENOTDIR)) => Ok(None),
-                    _ => Err(anyhow::Error::new(err)),
-                }
-            }
-            Ok(metadata) => metadata,
-        };
-        let inode = metadata.ino();
-        let mtime = metadata.modified()?;
-        let is_symlink = smol::fs::symlink_metadata(&abs_path)
-            .await
-            .context("failed to read symlink metadata")?
-            .file_type()
-            .is_symlink();
-
-        let entry = Entry {
-            id: next_entry_id.fetch_add(1, SeqCst),
-            kind: if metadata.file_type().is_dir() {
-                EntryKind::PendingDir
-            } else {
-                EntryKind::File(char_bag_for_path(root_char_bag, &path))
-            },
-            path: Arc::from(path),
-            inode,
-            mtime,
-            is_symlink,
-            is_ignored: false,
-        };
-
-        Ok(Some(entry))
-    }
-
-    async fn child_entries<'a>(
-        &self,
-        root_char_bag: CharBag,
-        next_entry_id: &'a AtomicUsize,
-        path: &'a Path,
-        abs_path: &'a Path,
-    ) -> Result<Pin<Box<dyn 'a + Stream<Item = Result<Entry>> + Send>>> {
-        let entries = smol::fs::read_dir(abs_path).await?;
-        Ok(entries
-            .then(move |entry| async move {
-                let child_entry = entry?;
-                let child_name = child_entry.file_name();
-                let child_path: Arc<Path> = path.join(&child_name).into();
-                let child_abs_path = abs_path.join(&child_name);
-                let child_is_symlink = child_entry.metadata().await?.file_type().is_symlink();
-                let child_metadata = smol::fs::metadata(child_abs_path).await?;
-                let child_inode = child_metadata.ino();
-                let child_mtime = child_metadata.modified()?;
-                Ok(Entry {
-                    id: next_entry_id.fetch_add(1, SeqCst),
-                    kind: if child_metadata.file_type().is_dir() {
-                        EntryKind::PendingDir
-                    } else {
-                        EntryKind::File(char_bag_for_path(root_char_bag, &child_path))
-                    },
-                    path: child_path,
-                    inode: child_inode,
-                    mtime: child_mtime,
-                    is_symlink: child_is_symlink,
-                    is_ignored: false,
-                })
-            })
-            .boxed())
-    }
-
     async fn load(&self, path: &Path) -> Result<String> {
         let mut file = smol::fs::File::open(path).await?;
         let mut text = String::new();
@@ -152,6 +68,43 @@ impl Fs for RealFs {
         smol::fs::metadata(path)
             .await
             .map_or(false, |metadata| metadata.is_file())
+    }
+
+    async fn metadata(&self, path: &Path) -> Result<Option<Metadata>> {
+        let symlink_metadata = match smol::fs::symlink_metadata(path).await {
+            Ok(metadata) => metadata,
+            Err(err) => {
+                return match (err.kind(), err.raw_os_error()) {
+                    (io::ErrorKind::NotFound, _) => Ok(None),
+                    (io::ErrorKind::Other, Some(libc::ENOTDIR)) => Ok(None),
+                    _ => Err(anyhow::Error::new(err)),
+                }
+            }
+        };
+
+        let is_symlink = symlink_metadata.file_type().is_symlink();
+        let metadata = if is_symlink {
+            smol::fs::metadata(path).await?
+        } else {
+            symlink_metadata
+        };
+        Ok(Some(Metadata {
+            ino: metadata.ino(),
+            mtime: metadata.modified().unwrap(),
+            is_symlink,
+            is_dir: metadata.file_type().is_dir(),
+        }))
+    }
+
+    async fn read_dir(
+        &self,
+        path: &Path,
+    ) -> Result<Pin<Box<dyn Send + Stream<Item = Result<PathBuf>>>>> {
+        let result = smol::fs::read_dir(path).await?.map(|entry| match entry {
+            Ok(entry) => Ok(entry.path()),
+            Err(error) => Err(anyhow!("failed to read dir entry {:?}", error)),
+        });
+        Ok(Box::pin(result))
     }
 
     async fn watch(
@@ -295,7 +248,7 @@ impl FakeFs {
         &'a self,
         path: impl 'a + AsRef<Path> + Send,
         tree: serde_json::Value,
-    ) -> BoxFuture<'a, ()> {
+    ) -> futures::future::BoxFuture<'a, ()> {
         use futures::FutureExt as _;
         use serde_json::Value::*;
 
@@ -364,65 +317,6 @@ impl FakeFs {
 #[cfg(any(test, feature = "test-support"))]
 #[async_trait::async_trait]
 impl Fs for FakeFs {
-    async fn entry(
-        &self,
-        root_char_bag: CharBag,
-        next_entry_id: &AtomicUsize,
-        path: Arc<Path>,
-        abs_path: &Path,
-    ) -> Result<Option<Entry>> {
-        let state = self.state.lock().await;
-        if let Some(entry) = state.entries.get(abs_path) {
-            Ok(Some(Entry {
-                id: next_entry_id.fetch_add(1, SeqCst),
-                kind: if entry.is_dir {
-                    EntryKind::PendingDir
-                } else {
-                    EntryKind::File(char_bag_for_path(root_char_bag, &path))
-                },
-                path: Arc::from(path),
-                inode: entry.inode,
-                mtime: entry.mtime,
-                is_symlink: entry.is_symlink,
-                is_ignored: false,
-            }))
-        } else {
-            Ok(None)
-        }
-    }
-
-    async fn child_entries<'a>(
-        &self,
-        root_char_bag: CharBag,
-        next_entry_id: &'a AtomicUsize,
-        path: &'a Path,
-        abs_path: &'a Path,
-    ) -> Result<Pin<Box<dyn 'a + Stream<Item = Result<Entry>> + Send>>> {
-        use futures::{future, stream};
-
-        let state = self.state.lock().await;
-        Ok(stream::iter(state.entries.clone())
-            .filter(move |(child_path, _)| future::ready(child_path.parent() == Some(abs_path)))
-            .then(move |(child_abs_path, child_entry)| async move {
-                smol::future::yield_now().await;
-                let child_path = Arc::from(path.join(child_abs_path.file_name().unwrap()));
-                Ok(Entry {
-                    id: next_entry_id.fetch_add(1, SeqCst),
-                    kind: if child_entry.is_dir {
-                        EntryKind::PendingDir
-                    } else {
-                        EntryKind::File(char_bag_for_path(root_char_bag, &child_path))
-                    },
-                    path: child_path,
-                    inode: child_entry.inode,
-                    mtime: child_entry.mtime,
-                    is_symlink: child_entry.is_symlink,
-                    is_ignored: false,
-                })
-            })
-            .boxed())
-    }
-
     async fn load(&self, path: &Path) -> Result<String> {
         let state = self.state.lock().await;
         let text = state
@@ -468,6 +362,34 @@ impl Fs for FakeFs {
     async fn is_file(&self, path: &Path) -> bool {
         let state = self.state.lock().await;
         state.entries.get(path).map_or(false, |entry| !entry.is_dir)
+    }
+
+    async fn metadata(&self, path: &Path) -> Result<Option<Metadata>> {
+        let state = self.state.lock().await;
+        Ok(state.entries.get(path).map(|entry| Metadata {
+            ino: entry.inode,
+            mtime: entry.mtime,
+            is_dir: entry.is_dir,
+            is_symlink: entry.is_symlink,
+        }))
+    }
+
+    async fn read_dir(
+        &self,
+        abs_path: &Path,
+    ) -> Result<Pin<Box<dyn Send + Stream<Item = Result<PathBuf>>>>> {
+        use futures::{future, stream};
+        let state = self.state.lock().await;
+        let abs_path = abs_path.to_path_buf();
+        Ok(Box::pin(stream::iter(state.entries.clone()).filter_map(
+            move |(child_path, _)| {
+                future::ready(if child_path.parent() == Some(&abs_path) {
+                    Some(Ok(child_path))
+                } else {
+                    None
+                })
+            },
+        )))
     }
 
     async fn watch(
