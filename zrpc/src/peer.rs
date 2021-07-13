@@ -227,7 +227,8 @@ impl Peer {
             connection
                 .outgoing_tx
                 .send(request.into_envelope(message_id, None, original_sender_id.map(|id| id.0)))
-                .await?;
+                .await
+                .map_err(|_| anyhow!("connection was closed"))?;
             let response = rx
                 .recv()
                 .await
