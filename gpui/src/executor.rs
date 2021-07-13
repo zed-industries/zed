@@ -34,7 +34,6 @@ pub enum Background {
     Deterministic(Arc<Deterministic>),
     Production {
         executor: Arc<smol::Executor<'static>>,
-        threads: usize,
         _stop: channel::Sender<()>,
     },
 }
@@ -324,9 +323,8 @@ impl Background {
     pub fn new() -> Self {
         let executor = Arc::new(Executor::new());
         let stop = channel::unbounded::<()>();
-        let threads = num_cpus::get();
 
-        for i in 0..threads {
+        for i in 0..2 * num_cpus::get() {
             let executor = executor.clone();
             let stop = stop.1.clone();
             thread::Builder::new()
@@ -337,16 +335,12 @@ impl Background {
 
         Self::Production {
             executor,
-            threads,
             _stop: stop.0,
         }
     }
 
-    pub fn threads(&self) -> usize {
-        match self {
-            Self::Deterministic(_) => 1,
-            Self::Production { threads, .. } => *threads,
-        }
+    pub fn num_cpus(&self) -> usize {
+        num_cpus::get()
     }
 
     pub fn spawn<T, F>(&self, future: F) -> Task<T>

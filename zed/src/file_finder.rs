@@ -399,7 +399,7 @@ impl FileFinder {
             .map(|tree| tree.read(cx).snapshot())
             .collect::<Vec<_>>();
         let search_id = util::post_inc(&mut self.search_count);
-        let pool = cx.as_ref().thread_pool().clone();
+        let background = cx.as_ref().background().clone();
         self.cancel_flag.store(true, atomic::Ordering::Relaxed);
         self.cancel_flag = Arc::new(AtomicBool::new(false));
         let cancel_flag = self.cancel_flag.clone();
@@ -413,7 +413,7 @@ impl FileFinder {
                 false,
                 100,
                 cancel_flag.clone(),
-                pool,
+                background,
             )
             .await;
             let did_cancel = cancel_flag.load(atomic::Ordering::Relaxed);

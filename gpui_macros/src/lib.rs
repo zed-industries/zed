@@ -60,7 +60,7 @@ pub fn test(args: TokenStream, function: TokenStream) -> TokenStream {
     let inner_fn_args = (0..inner_fn.sig.inputs.len())
         .map(|i| {
             let first_entity_id = i * 100_000;
-            quote!(#namespace::TestAppContext::new(foreground.clone(), background.clone(), background.clone(), #first_entity_id),)
+            quote!(#namespace::TestAppContext::new(foreground.clone(), background.clone(), #first_entity_id),)
         })
         .collect::<proc_macro2::TokenStream>();
 

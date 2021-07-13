@@ -552,11 +552,11 @@ impl Worktree {
             let tree = tree.as_local_mut().unwrap();
             let abs_path = tree.snapshot.abs_path.clone();
             let background_snapshot = tree.background_snapshot.clone();
-            let thread_pool = cx.thread_pool().clone();
+            let background = cx.background().clone();
             tree._background_scanner_task = Some(cx.background().spawn(async move {
                 let events = fs.watch(&abs_path, Duration::from_millis(100)).await;
                 let scanner =
-                    BackgroundScanner::new(background_snapshot, scan_states_tx, fs, thread_pool);
+                    BackgroundScanner::new(background_snapshot, scan_states_tx, fs, background);
                 scanner.run(events).await;
             }));
         });
@@ -2295,7 +2295,7 @@ impl BackgroundScanner {
 
             self.executor
                 .scoped(|scope| {
-                    for _ in 0..self.executor.threads() {
+                    for _ in 0..self.executor.num_cpus() {
                         scope.spawn(async {
                             while let Ok(job) = rx.recv().await {
                                 if let Err(err) = self
@@ -2487,7 +2487,7 @@ impl BackgroundScanner {
         drop(scan_queue_tx);
         self.executor
             .scoped(|scope| {
-                for _ in 0..self.executor.threads() {
+                for _ in 0..self.executor.num_cpus() {
                     scope.spawn(async {
                         while let Ok(job) = scan_queue_rx.recv().await {
                             if let Err(err) = self
@@ -2555,7 +2555,7 @@ impl BackgroundScanner {
 
         self.executor
             .scoped(|scope| {
-                for _ in 0..self.executor.threads() {
+                for _ in 0..self.executor.num_cpus() {
                     scope.spawn(async {
                         while let Ok(job) = ignore_queue_rx.recv().await {
                             self.update_ignore_status(job, &snapshot).await;
@@ -3044,7 +3044,7 @@ mod tests {
                     false,
                     10,
                     Default::default(),
-                    cx.thread_pool().clone(),
+                    cx.background().clone(),
                 )
             })
             .await;
