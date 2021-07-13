@@ -1,6 +1,6 @@
 use super::{char_bag::CharBag, EntryKind, Snapshot};
 use crate::util;
-use gpui::scoped_pool;
+use gpui::executor;
 use std::{
     cmp::{max, min, Ordering},
     path::Path,
@@ -51,7 +51,7 @@ impl Ord for PathMatch {
     }
 }
 
-pub fn match_paths<'a, T>(
+pub async fn match_paths<'a, T>(
     snapshots: T,
     query: &str,
     include_root_name: bool,
@@ -59,7 +59,7 @@ pub fn match_paths<'a, T>(
     smart_case: bool,
     max_results: usize,
     cancel_flag: Arc<AtomicBool>,
-    pool: scoped_pool::Pool,
+    pool: Arc<executor::Background>,
 ) -> Vec<PathMatch>
 where
     T: Clone + Send + Iterator<Item = &'a Snapshot> + 'a,
@@ -71,15 +71,14 @@ where
     let query = &query;
     let query_chars = CharBag::from(&lowercase_query[..]);
 
-    let cpus = num_cpus::get();
     let path_count: usize = if include_ignored {
         snapshots.clone().map(Snapshot::file_count).sum()
     } else {
         snapshots.clone().map(Snapshot::visible_file_count).sum()
     };
 
-    let segment_size = (path_count + cpus - 1) / cpus;
-    let mut segment_results = (0..cpus)
+    let segment_size = (path_count + pool.threads() - 1) / pool.threads();
+    let mut segment_results = (0..pool.threads())
         .map(|_| Vec::with_capacity(max_results))
         .collect::<Vec<_>>();
 
@@ -87,7 +86,7 @@ where
         for (segment_idx, results) in segment_results.iter_mut().enumerate() {
             let snapshots = snapshots.clone();
             let cancel_flag = &cancel_flag;
-            scope.execute(move || {
+            scope.spawn(async move {
                 let segment_start = segment_idx * segment_size;
                 let segment_end = segment_start + segment_size;
 
@@ -152,7 +151,8 @@ where
                 }
             })
         }
-    });
+    })
+    .await;
 
     let mut results = Vec::new();
     for segment_result in segment_results {

@@ -123,6 +123,7 @@ impl App {
         let cx = Rc::new(RefCell::new(MutableAppContext::new(
             foreground,
             Arc::new(executor::Background::new()),
+            Arc::new(executor::Background::new()),
             Arc::new(platform),
             Rc::new(foreground_platform),
             (),
@@ -138,6 +139,7 @@ impl App {
         let foreground = Rc::new(executor::Foreground::platform(platform.dispatcher())?);
         let app = Self(Rc::new(RefCell::new(MutableAppContext::new(
             foreground,
+            Arc::new(executor::Background::new()),
             Arc::new(executor::Background::new()),
             platform.clone(),
             foreground_platform.clone(),
@@ -245,6 +247,7 @@ impl TestAppContext {
     pub fn new(
         foreground: Rc<executor::Foreground>,
         background: Arc<executor::Background>,
+        thread_pool: Arc<executor::Background>,
         first_entity_id: usize,
     ) -> Self {
         let platform = Arc::new(platform::test::platform());
@@ -252,6 +255,7 @@ impl TestAppContext {
         let mut cx = MutableAppContext::new(
             foreground.clone(),
             background,
+            thread_pool,
             platform,
             foreground_platform.clone(),
             (),
@@ -590,6 +594,7 @@ impl MutableAppContext {
     fn new(
         foreground: Rc<executor::Foreground>,
         background: Arc<executor::Background>,
+        thread_pool: Arc<executor::Background>,
         platform: Arc<dyn platform::Platform>,
         foreground_platform: Rc<dyn platform::ForegroundPlatform>,
         asset_source: impl AssetSource,
@@ -607,7 +612,7 @@ impl MutableAppContext {
                 values: Default::default(),
                 ref_counts: Arc::new(Mutex::new(RefCounts::default())),
                 background,
-                thread_pool: scoped_pool::Pool::new(num_cpus::get(), "app"),
+                thread_pool,
                 font_cache: Arc::new(FontCache::new(fonts)),
             },
             actions: HashMap::new(),
@@ -1485,7 +1490,7 @@ pub struct AppContext {
     values: RwLock<HashMap<(TypeId, usize), Box<dyn Any>>>,
     background: Arc<executor::Background>,
     ref_counts: Arc<Mutex<RefCounts>>,
-    thread_pool: scoped_pool::Pool,
+    thread_pool: Arc<executor::Background>,
     font_cache: Arc<FontCache>,
 }
 
@@ -1530,7 +1535,7 @@ impl AppContext {
         &self.font_cache
     }
 
-    pub fn thread_pool(&self) -> &scoped_pool::Pool {
+    pub fn thread_pool(&self) -> &Arc<executor::Background> {
         &self.thread_pool
     }
 
@@ -1716,7 +1721,7 @@ impl<'a, T: Entity> ModelContext<'a, T> {
         &self.app.cx.background
     }
 
-    pub fn thread_pool(&self) -> &scoped_pool::Pool {
+    pub fn thread_pool(&self) -> &Arc<executor::Background> {
         &self.app.cx.thread_pool
     }
 

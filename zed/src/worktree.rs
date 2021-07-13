@@ -550,15 +550,11 @@ impl Worktree {
         let (mut tree, scan_states_tx) = LocalWorktree::new(path, languages, fs.clone(), cx);
         let abs_path = tree.snapshot.abs_path.clone();
         let background_snapshot = tree.background_snapshot.clone();
-        let background = if fs.is_fake() {
-            cx.background().clone()
-        } else {
-            Arc::new(executor::Background::new())
-        };
+        let thread_pool = cx.thread_pool().clone();
         tree._background_scanner_task = Some(cx.background().spawn(async move {
             let events = fs.watch(&abs_path, Duration::from_millis(100)).await;
             let scanner =
-                BackgroundScanner::new(background_snapshot, scan_states_tx, fs, background);
+                BackgroundScanner::new(background_snapshot, scan_states_tx, fs, thread_pool);
             scanner.run(events).await;
         }));
         Worktree::Local(tree)
@@ -3017,36 +3013,40 @@ mod tests {
 
         cx.read(|cx| tree.read(cx).as_local().unwrap().scan_complete())
             .await;
-        cx.read(|cx| {
+        let snapshot = cx.read(|cx| {
             let tree = tree.read(cx);
             assert_eq!(tree.file_count(), 5);
-
             assert_eq!(
                 tree.inode_for_path("fennel/grape"),
                 tree.inode_for_path("finnochio/grape")
             );
 
-            let results = match_paths(
-                Some(tree.snapshot()).iter(),
-                "bna",
-                false,
-                false,
-                false,
-                10,
-                Default::default(),
-                cx.thread_pool().clone(),
-            )
-            .into_iter()
-            .map(|result| result.path)
-            .collect::<Vec<Arc<Path>>>();
-            assert_eq!(
-                results,
-                vec![
-                    PathBuf::from("banana/carrot/date").into(),
-                    PathBuf::from("banana/carrot/endive").into(),
-                ]
-            );
-        })
+            tree.snapshot()
+        });
+        let results = cx
+            .read(|cx| {
+                match_paths(
+                    Some(&snapshot).into_iter(),
+                    "bna",
+                    false,
+                    false,
+                    false,
+                    10,
+                    Default::default(),
+                    cx.thread_pool().clone(),
+                )
+            })
+            .await;
+        assert_eq!(
+            results
+                .into_iter()
+                .map(|result| result.path)
+                .collect::<Vec<Arc<Path>>>(),
+            vec![
+                PathBuf::from("banana/carrot/date").into(),
+                PathBuf::from("banana/carrot/endive").into(),
+            ]
+        );
     }
 
     #[gpui::test]

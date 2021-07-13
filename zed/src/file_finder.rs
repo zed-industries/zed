@@ -403,7 +403,7 @@ impl FileFinder {
         self.cancel_flag.store(true, atomic::Ordering::Relaxed);
         self.cancel_flag = Arc::new(AtomicBool::new(false));
         let cancel_flag = self.cancel_flag.clone();
-        let background_task = cx.background_executor().spawn(async move {
+        Some(cx.spawn(|this, mut cx| async move {
             let include_root_name = snapshots.len() > 1;
             let matches = match_paths(
                 snapshots.iter(),
@@ -414,14 +414,12 @@ impl FileFinder {
                 100,
                 cancel_flag.clone(),
                 pool,
-            );
+            )
+            .await;
             let did_cancel = cancel_flag.load(atomic::Ordering::Relaxed);
-            (search_id, did_cancel, query, matches)
-        });
-
-        Some(cx.spawn(|this, mut cx| async move {
-            let matches = background_task.await;
-            this.update(&mut cx, |this, cx| this.update_matches(matches, cx));
+            this.update(&mut cx, |this, cx| {
+                this.update_matches((search_id, did_cancel, query, matches), cx)
+            });
         }))
     }
 
