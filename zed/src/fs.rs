@@ -31,8 +31,9 @@ pub trait Fs: Send + Sync {
     fn is_fake(&self) -> bool;
 }
 
+#[derive(Clone, Debug)]
 pub struct Metadata {
-    pub ino: u64,
+    pub inode: u64,
     pub mtime: SystemTime,
     pub is_symlink: bool,
     pub is_dir: bool,
@@ -89,7 +90,7 @@ impl Fs for RealFs {
             symlink_metadata
         };
         Ok(Some(Metadata {
-            ino: metadata.ino(),
+            inode: metadata.ino(),
             mtime: metadata.modified().unwrap(),
             is_symlink,
             is_dir: metadata.file_type().is_dir(),
@@ -128,10 +129,7 @@ impl Fs for RealFs {
 
 #[derive(Clone, Debug)]
 struct FakeFsEntry {
-    inode: u64,
-    mtime: SystemTime,
-    is_dir: bool,
-    is_symlink: bool,
+    metadata: Metadata,
     content: Option<String>,
 }
 
@@ -149,7 +147,7 @@ impl FakeFsState {
             && path
                 .parent()
                 .and_then(|path| self.entries.get(path))
-                .map_or(false, |e| e.is_dir)
+                .map_or(false, |e| e.metadata.is_dir)
         {
             Ok(())
         } else {
@@ -185,10 +183,12 @@ impl FakeFs {
         entries.insert(
             Path::new("/").to_path_buf(),
             FakeFsEntry {
-                inode: 0,
-                mtime: SystemTime::now(),
-                is_dir: true,
-                is_symlink: false,
+                metadata: Metadata {
+                    inode: 0,
+                    mtime: SystemTime::now(),
+                    is_dir: true,
+                    is_symlink: false,
+                },
                 content: None,
             },
         );
@@ -211,10 +211,12 @@ impl FakeFs {
         state.entries.insert(
             path.to_path_buf(),
             FakeFsEntry {
-                inode,
-                mtime: SystemTime::now(),
-                is_dir: true,
-                is_symlink: false,
+                metadata: Metadata {
+                    inode,
+                    mtime: SystemTime::now(),
+                    is_dir: true,
+                    is_symlink: false,
+                },
                 content: None,
             },
         );
@@ -232,10 +234,12 @@ impl FakeFs {
         state.entries.insert(
             path.to_path_buf(),
             FakeFsEntry {
-                inode,
-                mtime: SystemTime::now(),
-                is_dir: false,
-                is_symlink: false,
+                metadata: Metadata {
+                    inode,
+                    mtime: SystemTime::now(),
+                    is_dir: false,
+                    is_symlink: false,
+                },
                 content: Some(content),
             },
         );
@@ -331,11 +335,11 @@ impl Fs for FakeFs {
         let mut state = self.state.lock().await;
         state.validate_path(path)?;
         if let Some(entry) = state.entries.get_mut(path) {
-            if entry.is_dir {
+            if entry.metadata.is_dir {
                 Err(anyhow!("cannot overwrite a directory with a file"))
             } else {
                 entry.content = Some(text.chunks().collect());
-                entry.mtime = SystemTime::now();
+                entry.metadata.mtime = SystemTime::now();
                 state.emit_event(&[path]).await;
                 Ok(())
             }
@@ -343,10 +347,12 @@ impl Fs for FakeFs {
             let inode = state.next_inode;
             state.next_inode += 1;
             let entry = FakeFsEntry {
-                inode,
-                mtime: SystemTime::now(),
-                is_dir: false,
-                is_symlink: false,
+                metadata: Metadata {
+                    inode,
+                    mtime: SystemTime::now(),
+                    is_dir: false,
+                    is_symlink: false,
+                },
                 content: Some(text.chunks().collect()),
             };
             state.entries.insert(path.to_path_buf(), entry);
@@ -361,17 +367,15 @@ impl Fs for FakeFs {
 
     async fn is_file(&self, path: &Path) -> bool {
         let state = self.state.lock().await;
-        state.entries.get(path).map_or(false, |entry| !entry.is_dir)
+        state
+            .entries
+            .get(path)
+            .map_or(false, |entry| !entry.metadata.is_dir)
     }
 
     async fn metadata(&self, path: &Path) -> Result<Option<Metadata>> {
         let state = self.state.lock().await;
-        Ok(state.entries.get(path).map(|entry| Metadata {
-            ino: entry.inode,
-            mtime: entry.mtime,
-            is_dir: entry.is_dir,
-            is_symlink: entry.is_symlink,
-        }))
+        Ok(state.entries.get(path).map(|entry| entry.metadata.clone()))
     }
 
     async fn read_dir(

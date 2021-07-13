@@ -621,7 +621,7 @@ impl LocalWorktree {
                     EntryKind::File(char_bag_for_path(root_char_bag, &path))
                 },
                 path: Arc::from(path),
-                inode: metadata.ino,
+                inode: metadata.inode,
                 mtime: metadata.mtime,
                 is_symlink: metadata.is_symlink,
                 is_ignored: false,
@@ -1585,7 +1585,7 @@ impl Entry {
                 EntryKind::File(char_bag_for_path(root_char_bag, &path))
             },
             path,
-            inode: metadata.ino,
+            inode: metadata.inode,
             mtime: metadata.mtime,
             is_symlink: metadata.is_symlink,
             is_ignored: false,
