@@ -2,7 +2,7 @@ use super::{char_bag::CharBag, char_bag_for_path, Entry, EntryKind, Rope};
 use anyhow::{anyhow, Context, Result};
 use atomic::Ordering::SeqCst;
 use fsevent::EventStream;
-use futures::{Stream, StreamExt};
+use futures::{future::BoxFuture, Stream, StreamExt};
 use postage::prelude::Sink as _;
 use smol::io::{AsyncReadExt, AsyncWriteExt};
 use std::{
@@ -288,6 +288,40 @@ impl FakeFs {
         );
         state.emit_event(&[path]).await;
         Ok(())
+    }
+
+    pub fn insert_tree<'a>(
+        &'a self,
+        path: impl 'a + AsRef<Path> + Send,
+        tree: serde_json::Value,
+    ) -> BoxFuture<'a, ()> {
+        use futures::FutureExt as _;
+        use serde_json::Value::*;
+
+        async move {
+            let path = path.as_ref();
+
+            match tree {
+                Object(map) => {
+                    self.insert_dir(path).await.unwrap();
+                    for (name, contents) in map {
+                        let mut path = PathBuf::from(path);
+                        path.push(name);
+                        self.insert_tree(&path, contents).await;
+                    }
+                }
+                Null => {
+                    self.insert_dir(&path).await.unwrap();
+                }
+                String(contents) => {
+                    self.insert_file(&path, contents).await.unwrap();
+                }
+                _ => {
+                    panic!("JSON object must contain only objects, strings, or null");
+                }
+            }
+        }
+        .boxed()
     }
 
     pub async fn remove(&self, path: &Path) -> Result<()> {

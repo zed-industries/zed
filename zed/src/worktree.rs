@@ -2519,8 +2519,6 @@ mod remote {
         rpc: &rpc::Client,
         cx: &mut AsyncAppContext,
     ) -> anyhow::Result<()> {
-        eprintln!("got buffer_saved {:?}", envelope.payload);
-
         rpc.state
             .read()
             .await

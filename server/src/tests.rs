@@ -12,7 +12,7 @@ use sqlx::{
     postgres::PgPoolOptions,
     Executor as _, Postgres,
 };
-use std::{fs, path::Path, sync::Arc};
+use std::{path::Path, sync::Arc};
 use zed::{
     editor::Editor,
     language::LanguageRegistry,
@@ -135,15 +135,22 @@ async fn test_propagate_saves_and_fs_changes_in_shared_worktree(
     let client_b = server.create_client(&mut cx_b, "user_b").await;
     let client_c = server.create_client(&mut cx_c, "user_c").await;
 
+    let fs = Arc::new(FakeFs::new());
+
     // Share a worktree as client A.
-    let dir = temp_tree(json!({
-        "file1": "",
-        "file2": ""
-    }));
+    fs.insert_tree(
+        "/a",
+        json!({
+            "file1": "",
+            "file2": ""
+        }),
+    )
+    .await;
+
     let worktree_a = Worktree::open_local(
-        dir.path(),
+        Path::new("/a"),
         lang_registry.clone(),
-        Arc::new(RealFs),
+        fs.clone(),
         &mut cx_a.to_async(),
     )
     .await
@@ -195,7 +202,13 @@ async fn test_propagate_saves_and_fs_changes_in_shared_worktree(
         .update(&mut cx_a, |tree, cx| tree.open_buffer("file1", cx))
         .await
         .unwrap();
-    buffer_a.update(&mut cx_a, |buf, cx| buf.edit([0..0], "i-am-a", cx));
+
+    buffer_a
+        .condition(&mut cx_a, |buf, _| buf.text() == "i-am-c, i-am-b, ")
+        .await;
+    buffer_a.update(&mut cx_a, |buf, cx| {
+        buf.edit([buf.len()..buf.len()], "i-am-a", cx)
+    });
 
     // Wait for edits to propagate
     buffer_a
@@ -213,7 +226,7 @@ async fn test_propagate_saves_and_fs_changes_in_shared_worktree(
     buffer_a.update(&mut cx_a, |buf, cx| buf.edit([0..0], "hi-a, ", cx));
     save_b.await.unwrap();
     assert_eq!(
-        fs::read_to_string(dir.path().join("file1")).unwrap(),
+        fs.load(Path::new("/a/file1")).await.unwrap(),
         "hi-a, i-am-c, i-am-b, i-am-a"
     );
     buffer_a.read_with(&cx_a, |buf, _| assert!(!buf.is_dirty()));
@@ -221,8 +234,13 @@ async fn test_propagate_saves_and_fs_changes_in_shared_worktree(
     buffer_c.condition(&cx_c, |buf, _| !buf.is_dirty()).await;
 
     // Make changes on host's file system, see those changes on the guests.
-    fs::rename(dir.path().join("file2"), dir.path().join("file3")).unwrap();
-    fs::write(dir.path().join("file4"), "4").unwrap();
+    fs.rename(Path::new("/a/file2"), Path::new("/a/file3"))
+        .await
+        .unwrap();
+    fs.insert_file(Path::new("/a/file4"), "4".into())
+        .await
+        .unwrap();
+
     worktree_b
         .condition(&cx_b, |tree, _| tree.file_count() == 3)
         .await;
