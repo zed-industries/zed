@@ -18,8 +18,8 @@ use zed::{
     language::LanguageRegistry,
     rpc::Client,
     settings,
-    test::{temp_tree, Channel},
-    worktree::{FakeFs, Fs, RealFs, Worktree},
+    test::Channel,
+    worktree::{FakeFs, Fs as _, Worktree},
 };
 use zrpc::{ForegroundRouter, Peer, Router};
 
@@ -35,14 +35,19 @@ async fn test_share_worktree(mut cx_a: TestAppContext, mut cx_b: TestAppContext)
     let client_b = server.create_client(&mut cx_b, "user_b").await;
 
     // Share a local worktree as client A
-    let dir = temp_tree(json!({
-        "a.txt": "a-contents",
-        "b.txt": "b-contents",
-    }));
+    let fs = Arc::new(FakeFs::new());
+    fs.insert_tree(
+        "/a",
+        json!({
+            "a.txt": "a-contents",
+            "b.txt": "b-contents",
+        }),
+    )
+    .await;
     let worktree_a = Worktree::open_local(
-        dir.path(),
+        "/a".as_ref(),
         lang_registry.clone(),
-        Arc::new(RealFs),
+        fs,
         &mut cx_a.to_async(),
     )
     .await
@@ -148,7 +153,7 @@ async fn test_propagate_saves_and_fs_changes_in_shared_worktree(
     .await;
 
     let worktree_a = Worktree::open_local(
-        Path::new("/a"),
+        "/a".as_ref(),
         lang_registry.clone(),
         fs.clone(),
         &mut cx_a.to_async(),
@@ -226,7 +231,7 @@ async fn test_propagate_saves_and_fs_changes_in_shared_worktree(
     buffer_a.update(&mut cx_a, |buf, cx| buf.edit([0..0], "hi-a, ", cx));
     save_b.await.unwrap();
     assert_eq!(
-        fs.load(Path::new("/a/file1")).await.unwrap(),
+        fs.load("/a/file1".as_ref()).await.unwrap(),
         "hi-a, i-am-c, i-am-b, i-am-a"
     );
     buffer_a.read_with(&cx_a, |buf, _| assert!(!buf.is_dirty()));
@@ -234,7 +239,7 @@ async fn test_propagate_saves_and_fs_changes_in_shared_worktree(
     buffer_c.condition(&cx_c, |buf, _| !buf.is_dirty()).await;
 
     // Make changes on host's file system, see those changes on the guests.
-    fs.rename(Path::new("/a/file2"), Path::new("/a/file3"))
+    fs.rename("/a/file2".as_ref(), "/a/file3".as_ref())
         .await
         .unwrap();
     fs.insert_file(Path::new("/a/file4"), "4".into())
@@ -282,7 +287,7 @@ async fn test_buffer_conflict_after_save(mut cx_a: TestAppContext, mut cx_b: Tes
     let worktree_a = Worktree::open_local(
         "/".as_ref(),
         lang_registry.clone(),
-        Arc::new(RealFs),
+        fs,
         &mut cx_a.to_async(),
     )
     .await
@@ -359,7 +364,7 @@ async fn test_editing_while_guest_opens_buffer(mut cx_a: TestAppContext, mut cx_
     let worktree_a = Worktree::open_local(
         "/".as_ref(),
         lang_registry.clone(),
-        Arc::new(RealFs),
+        fs,
         &mut cx_a.to_async(),
     )
     .await
@@ -411,14 +416,19 @@ async fn test_peer_disconnection(mut cx_a: TestAppContext, cx_b: TestAppContext)
     let client_b = server.create_client(&mut cx_a, "user_b").await;
 
     // Share a local worktree as client A
-    let dir = temp_tree(json!({
-        "a.txt": "a-contents",
-        "b.txt": "b-contents",
-    }));
+    let fs = Arc::new(FakeFs::new());
+    fs.insert_tree(
+        "/a",
+        json!({
+            "a.txt": "a-contents",
+            "b.txt": "b-contents",
+        }),
+    )
+    .await;
     let worktree_a = Worktree::open_local(
-        dir.path(),
+        "/a".as_ref(),
         lang_registry.clone(),
-        Arc::new(RealFs),
+        fs,
         &mut cx_a.to_async(),
     )
     .await

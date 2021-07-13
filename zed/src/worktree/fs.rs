@@ -290,6 +290,7 @@ impl FakeFs {
         Ok(())
     }
 
+    #[must_use]
     pub fn insert_tree<'a>(
         &'a self,
         path: impl 'a + AsRef<Path> + Send,
