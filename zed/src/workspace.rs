@@ -29,7 +29,10 @@ use std::{
 
 pub fn init(cx: &mut MutableAppContext) {
     cx.add_global_action("workspace:open", open);
-    cx.add_global_action("workspace:open_paths", open_paths);
+    cx.add_global_action(
+        "workspace:open_paths",
+        |params: &OpenParams, cx: &mut MutableAppContext| open_paths(params, cx).detach(),
+    );
     cx.add_global_action("workspace:new_file", open_new);
     cx.add_global_action("workspace:join_worktree", join_worktree);
     cx.add_action("workspace:save", Workspace::save_active_item);
@@ -65,23 +68,23 @@ fn open(app_state: &Arc<AppState>, cx: &mut MutableAppContext) {
     );
 }
 
-fn open_paths(params: &OpenParams, cx: &mut MutableAppContext) {
+fn open_paths(params: &OpenParams, cx: &mut MutableAppContext) -> Task<()> {
     log::info!("open paths {:?}", params.paths);
 
     // Open paths in existing workspace if possible
     for window_id in cx.window_ids().collect::<Vec<_>>() {
         if let Some(handle) = cx.root_view::<Workspace>(window_id) {
-            if handle.update(cx, |view, cx| {
+            let task = handle.update(cx, |view, cx| {
                 if view.contains_paths(&params.paths, cx.as_ref()) {
-                    let open_paths = view.open_paths(&params.paths, cx);
-                    cx.foreground().spawn(open_paths).detach();
                     log::info!("open paths on existing workspace");
-                    true
+                    Some(view.open_paths(&params.paths, cx))
                 } else {
-                    false
+                    None
                 }
-            }) {
-                return;
+            });
+
+            if let Some(task) = task {
+                return task;
             }
         }
     }
@@ -89,12 +92,8 @@ fn open_paths(params: &OpenParams, cx: &mut MutableAppContext) {
     log::info!("open new workspace");
 
     // Add a new workspace if necessary
-    cx.add_window(|cx| {
-        let mut view = Workspace::new(&params.app_state, cx);
-        let open_paths = view.open_paths(&params.paths, cx);
-        cx.foreground().spawn(open_paths).detach();
-        view
-    });
+    let (_, workspace) = cx.add_window(|cx| Workspace::new(&params.app_state, cx));
+    workspace.update(cx, |workspace, cx| workspace.open_paths(&params.paths, cx))
 }
 
 fn open_new(app_state: &Arc<AppState>, cx: &mut MutableAppContext) {
@@ -382,11 +381,7 @@ impl Workspace {
         }
     }
 
-    pub fn open_paths(
-        &mut self,
-        abs_paths: &[PathBuf],
-        cx: &mut ViewContext<Self>,
-    ) -> impl Future<Output = ()> {
+    pub fn open_paths(&mut self, abs_paths: &[PathBuf], cx: &mut ViewContext<Self>) -> Task<()> {
         let entries = abs_paths
             .iter()
             .cloned()
@@ -415,13 +410,14 @@ impl Workspace {
                 })
             })
             .collect::<Vec<Task<Result<()>>>>();
-        async move {
+
+        cx.foreground().spawn(async move {
             for task in tasks {
                 if let Err(error) = task.await {
                     log::error!("error opening paths {}", error);
                 }
             }
-        }
+        })
     }
 
     fn worktree_for_abs_path(
@@ -933,11 +929,8 @@ mod tests {
     use tempdir::TempDir;
 
     #[gpui::test]
-    fn test_open_paths_action(cx: &mut gpui::MutableAppContext) {
-        let app_state = build_app_state(cx.as_ref());
-
-        init(cx);
-
+    async fn test_open_paths_action(mut cx: gpui::TestAppContext) {
+        let app_state = cx.read(build_app_state);
         let dir = temp_tree(json!({
             "a": {
                 "aa": null,
@@ -953,42 +946,51 @@ mod tests {
             },
         }));
 
-        cx.dispatch_global_action(
-            "workspace:open_paths",
-            OpenParams {
-                paths: vec![
-                    dir.path().join("a").to_path_buf(),
-                    dir.path().join("b").to_path_buf(),
-                ],
-                app_state: app_state.clone(),
-            },
-        );
-        assert_eq!(cx.window_ids().count(), 1);
+        cx.update(|cx| {
+            open_paths(
+                &OpenParams {
+                    paths: vec![
+                        dir.path().join("a").to_path_buf(),
+                        dir.path().join("b").to_path_buf(),
+                    ],
+                    app_state: app_state.clone(),
+                },
+                cx,
+            )
+        })
+        .await;
+        assert_eq!(cx.window_ids().len(), 1);
 
-        cx.dispatch_global_action(
-            "workspace:open_paths",
-            OpenParams {
-                paths: vec![dir.path().join("a").to_path_buf()],
-                app_state: app_state.clone(),
-            },
-        );
-        assert_eq!(cx.window_ids().count(), 1);
-        let workspace_view_1 = cx
-            .root_view::<Workspace>(cx.window_ids().next().unwrap())
-            .unwrap();
-        assert_eq!(workspace_view_1.read(cx).worktrees().len(), 2);
+        cx.update(|cx| {
+            open_paths(
+                &OpenParams {
+                    paths: vec![dir.path().join("a").to_path_buf()],
+                    app_state: app_state.clone(),
+                },
+                cx,
+            )
+        })
+        .await;
+        assert_eq!(cx.window_ids().len(), 1);
+        let workspace_view_1 = cx.root_view::<Workspace>(cx.window_ids()[0]).unwrap();
+        workspace_view_1.read_with(&cx, |workspace, _| {
+            assert_eq!(workspace.worktrees().len(), 2)
+        });
 
-        cx.dispatch_global_action(
-            "workspace:open_paths",
-            OpenParams {
-                paths: vec![
-                    dir.path().join("b").to_path_buf(),
-                    dir.path().join("c").to_path_buf(),
-                ],
-                app_state: app_state.clone(),
-            },
-        );
-        assert_eq!(cx.window_ids().count(), 2);
+        cx.update(|cx| {
+            open_paths(
+                &OpenParams {
+                    paths: vec![
+                        dir.path().join("b").to_path_buf(),
+                        dir.path().join("c").to_path_buf(),
+                    ],
+                    app_state: app_state.clone(),
+                },
+                cx,
+            )
+        })
+        .await;
+        assert_eq!(cx.window_ids().len(), 2);
     }
 
     #[gpui::test]

@@ -3352,21 +3352,34 @@ mod tests {
             log::info!("Generated initial tree");
 
             let (notify_tx, _notify_rx) = smol::channel::unbounded();
+            let fs = Arc::new(RealFs);
+            let next_entry_id = Arc::new(AtomicUsize::new(0));
+            let mut initial_snapshot = Snapshot {
+                id: 0,
+                scan_id: 0,
+                abs_path: root_dir.path().into(),
+                entries_by_path: Default::default(),
+                entries_by_id: Default::default(),
+                removed_entry_ids: Default::default(),
+                ignores: Default::default(),
+                root_name: Default::default(),
+                root_char_bag: Default::default(),
+                next_entry_id: next_entry_id.clone(),
+            };
+            initial_snapshot.insert_entry(
+                smol::block_on(fs.entry(
+                    Default::default(),
+                    &next_entry_id,
+                    Path::new("").into(),
+                    root_dir.path().into(),
+                ))
+                .unwrap()
+                .unwrap(),
+            );
             let mut scanner = BackgroundScanner::new(
-                Arc::new(Mutex::new(Snapshot {
-                    id: 0,
-                    scan_id: 0,
-                    abs_path: root_dir.path().into(),
-                    entries_by_path: Default::default(),
-                    entries_by_id: Default::default(),
-                    removed_entry_ids: Default::default(),
-                    ignores: Default::default(),
-                    root_name: Default::default(),
-                    root_char_bag: Default::default(),
-                    next_entry_id: Default::default(),
-                })),
+                Arc::new(Mutex::new(initial_snapshot.clone())),
                 notify_tx,
-                Arc::new(RealFs),
+                fs.clone(),
                 Arc::new(gpui::executor::Background::new()),
             );
             smol::block_on(scanner.scan_dirs()).unwrap();
@@ -3392,18 +3405,7 @@ mod tests {
 
             let (notify_tx, _notify_rx) = smol::channel::unbounded();
             let mut new_scanner = BackgroundScanner::new(
-                Arc::new(Mutex::new(Snapshot {
-                    id: 0,
-                    scan_id: 0,
-                    abs_path: root_dir.path().into(),
-                    entries_by_path: Default::default(),
-                    entries_by_id: Default::default(),
-                    removed_entry_ids: Default::default(),
-                    ignores: Default::default(),
-                    root_name: Default::default(),
-                    root_char_bag: Default::default(),
-                    next_entry_id: Default::default(),
-                })),
+                Arc::new(Mutex::new(initial_snapshot)),
                 notify_tx,
                 scanner.fs.clone(),
                 scanner.executor.clone(),
