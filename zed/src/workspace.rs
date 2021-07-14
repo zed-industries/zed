@@ -3,10 +3,11 @@ pub mod pane_group;
 
 use crate::{
     editor::{Buffer, Editor},
+    fs::Fs,
     language::LanguageRegistry,
     rpc,
     settings::Settings,
-    worktree::{File, Fs, Worktree},
+    worktree::{File, Worktree},
     AppState,
 };
 use anyhow::{anyhow, Result};
@@ -921,8 +922,9 @@ mod tests {
     use super::*;
     use crate::{
         editor::Editor,
+        fs::FakeFs,
         test::{build_app_state, temp_tree},
-        worktree::{FakeFs, WorktreeHandle},
+        worktree::WorktreeHandle,
     };
     use serde_json::json;
     use std::{collections::HashSet, fs};

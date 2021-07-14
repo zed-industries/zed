@@ -6,9 +6,11 @@ use log::LevelFilter;
 use simplelog::SimpleLogger;
 use std::{fs, path::PathBuf, sync::Arc};
 use zed::{
-    self, assets, editor, file_finder, language, menus, rpc, settings,
+    self, assets, editor, file_finder,
+    fs::RealFs,
+    language, menus, rpc, settings,
     workspace::{self, OpenParams},
-    worktree::{self, RealFs},
+    worktree::{self},
     AppState,
 };
 use zrpc::ForegroundRouter;

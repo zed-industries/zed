@@ -2732,9 +2732,10 @@ impl ToPoint for usize {
 mod tests {
     use super::*;
     use crate::{
+        fs::RealFs,
         test::{build_app_state, temp_tree},
         util::RandomCharIter,
-        worktree::{RealFs, Worktree, WorktreeHandle},
+        worktree::{Worktree, WorktreeHandle as _},
     };
     use gpui::ModelHandle;
     use rand::prelude::*;
