@@ -1,4 +1,5 @@
 mod fold_map;
+mod wrap_map;
 
 use crate::settings::StyleId;
 

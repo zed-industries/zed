@@ -27,15 +27,14 @@ pub struct FoldMap {
 impl FoldMap {
     pub fn new(buffer_handle: ModelHandle<Buffer>, cx: &AppContext) -> Self {
         let buffer = buffer_handle.read(cx);
-        let text_summary = buffer.text_summary();
         Self {
             buffer: buffer_handle,
             folds: Default::default(),
             transforms: Mutex::new(SumTree::from_item(
                 Transform {
                     summary: TransformSummary {
-                        buffer: text_summary.clone(),
-                        display: text_summary,
+                        buffer: buffer.text_summary(),
+                        display: buffer.text_summary(),
                     },
                     display_text: None,
                 },
