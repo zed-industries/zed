@@ -1,7 +1,8 @@
 use crate::{
-    editor::{display_map::FoldMap, Buffer, TextSummary},
+    editor::{display_map::FoldMap, Buffer, Point, TextSummary},
     sum_tree::{self, SumTree},
     time,
+    util::Bias,
 };
 use gpui::{AppContext, Entity, ModelContext, ModelHandle, Task};
 use parking_lot::Mutex;
@@ -56,6 +57,7 @@ impl WrapMap {
         let (buffers_tx, buffers_rx) = mpsc::channel(32);
         cx.observe(&buffer_handle, move |_, buffer, cx| {
             let mut buffers_tx = buffers_tx.clone();
+            // TODO: replace cloning buffers with sending `Buffer::snapshot`.
             let buffer = buffer.read(cx).clone();
             cx.spawn_weak(|_, _| async move {
                 let _ = buffers_tx.send(buffer).await;
@@ -111,6 +113,20 @@ impl BackgroundWrapper {
     }
 
     async fn sync(&mut self, buffer: Buffer) -> bool {
+        let mut new_transforms = SumTree::new();
+        {
+            let mut old_cursor = self.snapshot.transforms.cursor::<Point, ()>();
+            for edit in buffer.edits_since(self.snapshot.version.clone()) {
+                // TODO: old lines gives us an extent but we really want to park ourselves at the start of the line.
+                new_transforms.push_tree(
+                    old_cursor.slice(&Point::new(edit.old_lines.row, 0), Bias::Left, &()),
+                    &(),
+                );
+            }
+        }
+
+        self.snapshot.transforms = new_transforms;
+        self.snapshot.version = buffer.version();
         self.snapshots_tx.send(self.snapshot.clone()).await.is_ok()
     }
 }
@@ -144,8 +160,8 @@ impl sum_tree::Summary for TransformSummary {
     }
 }
 
-impl<'a> sum_tree::Dimension<'a, TransformSummary> for TransformSummary {
+impl<'a> sum_tree::Dimension<'a, TransformSummary> for Point {
     fn add_summary(&mut self, summary: &'a TransformSummary, _: &()) {
-        sum_tree::Summary::add_summary(self, summary, &());
+        *self += &summary.buffer.lines;
     }
 }
