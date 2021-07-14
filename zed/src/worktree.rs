@@ -613,19 +613,12 @@ impl LocalWorktree {
                 removed_entry_ids: Default::default(),
                 next_entry_id: Arc::new(next_entry_id),
             };
-            snapshot.insert_entry(Entry {
-                id: snapshot.next_entry_id.fetch_add(1, SeqCst),
-                kind: if metadata.is_dir {
-                    EntryKind::PendingDir
-                } else {
-                    EntryKind::File(char_bag_for_path(root_char_bag, &path))
-                },
-                path: Arc::from(path),
-                inode: metadata.inode,
-                mtime: metadata.mtime,
-                is_symlink: metadata.is_symlink,
-                is_ignored: false,
-            });
+            snapshot.insert_entry(Entry::new(
+                path.into(),
+                &metadata,
+                &snapshot.next_entry_id,
+                snapshot.root_char_bag,
+            ));
 
             let tree = Self {
                 snapshot: snapshot.clone(),
