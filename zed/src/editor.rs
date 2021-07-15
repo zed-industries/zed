@@ -958,6 +958,7 @@ impl Editor {
 
         let app = cx.as_ref();
         let buffer = self.buffer.read(cx);
+        let display_map = self.display_map.snapshot(cx.as_ref());
 
         let mut edits = Vec::new();
         let mut new_selection_ranges = Vec::new();
@@ -1013,7 +1014,7 @@ impl Editor {
 
                 // Move folds up.
                 old_folds.push(start..end);
-                for fold in self.display_map.folds_in_range(start..end, app) {
+                for fold in display_map.folds_in_range(start..end) {
                     let mut start = fold.start.to_point(buffer);
                     let mut end = fold.end.to_point(buffer);
                     start.row -= row_delta;
@@ -1042,6 +1043,7 @@ impl Editor {
 
         let app = cx.as_ref();
         let buffer = self.buffer.read(cx);
+        let display_map = self.display_map.snapshot(cx.as_ref());
 
         let mut edits = Vec::new();
         let mut new_selection_ranges = Vec::new();
@@ -1101,7 +1103,7 @@ impl Editor {
 
                 // Move folds down.
                 old_folds.push(start..end);
-                for fold in self.display_map.folds_in_range(start..end, app) {
+                for fold in display_map.folds_in_range(start..end) {
                     let mut start = fold.start.to_point(buffer);
                     let mut end = fold.end.to_point(buffer);
                     start.row += row_delta;

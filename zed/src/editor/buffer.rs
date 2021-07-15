@@ -600,8 +600,9 @@ impl Buffer {
 
     pub fn snapshot(&self) -> Snapshot {
         Snapshot {
-            text: self.visible_text.clone(),
+            visible_text: self.visible_text.clone(),
             fragments: self.fragments.clone(),
+            version: self.version.clone(),
             tree: self.syntax_tree(),
             language: self.language.clone(),
             query_cursor: QueryCursorHandle::new(),
@@ -1007,7 +1008,7 @@ impl Buffer {
     }
 
     pub fn len(&self) -> usize {
-        self.fragments.extent::<usize>(&None)
+        self.content().len()
     }
 
     pub fn line_len(&self, row: u32) -> u32 {
@@ -1874,39 +1875,11 @@ impl Buffer {
     }
 
     pub fn anchor_at<T: ToOffset>(&self, position: T, bias: Bias) -> Anchor {
-        let offset = position.to_offset(self);
-        let max_offset = self.len();
-        assert!(offset <= max_offset, "offset is out of range");
-        let mut cursor = self.fragments.cursor::<usize, FragmentTextSummary>();
-        cursor.seek(&offset, bias, &None);
-        Anchor {
-            offset: offset + cursor.sum_start().deleted,
-            bias,
-            version: self.version(),
-        }
-    }
-
-    fn full_offset_for_anchor(&self, anchor: &Anchor) -> usize {
-        let cx = Some(anchor.version.clone());
-        let mut cursor = self
-            .fragments
-            .cursor::<VersionedOffset, FragmentTextSummary>();
-        cursor.seek(&VersionedOffset::Offset(anchor.offset), anchor.bias, &cx);
-        let overshoot = if cursor.item().is_some() {
-            anchor.offset - cursor.seek_start().offset()
-        } else {
-            0
-        };
-        let summary = cursor.sum_start();
-        summary.visible + summary.deleted + overshoot
+        self.content().anchor_at(position, bias)
     }
 
     pub fn point_for_offset(&self, offset: usize) -> Result<Point> {
-        if offset <= self.len() {
-            Ok(self.content().text_summary_for_range(0..offset).lines)
-        } else {
-            Err(anyhow!("offset out of bounds"))
-        }
+        self.content().point_for_offset(offset)
     }
 
     pub fn clip_point(&self, point: Point, bias: Bias) -> Point {
@@ -1949,8 +1922,9 @@ impl Clone for Buffer {
 }
 
 pub struct Snapshot {
-    text: Rope,
+    visible_text: Rope,
     fragments: SumTree<Fragment>,
+    version: time::Global,
     tree: Option<Tree>,
     language: Option<Arc<Language>>,
     query_cursor: QueryCursorHandle,
@@ -1958,24 +1932,32 @@ pub struct Snapshot {
 
 impl Snapshot {
     pub fn len(&self) -> usize {
-        self.text.len()
+        self.visible_text.len()
     }
 
     pub fn text(&self) -> Rope {
-        self.text.clone()
+        self.visible_text.clone()
+    }
+
+    pub fn text_summary(&self) -> TextSummary {
+        self.visible_text.summary()
+    }
+
+    pub fn max_point(&self) -> Point {
+        self.visible_text.max_point()
     }
 
     pub fn text_for_range(&self, range: Range<usize>) -> Chunks {
-        self.text.chunks_in_range(range)
+        self.visible_text.chunks_in_range(range)
     }
 
     pub fn highlighted_text_for_range(&mut self, range: Range<usize>) -> HighlightedChunks {
-        let chunks = self.text.chunks_in_range(range.clone());
+        let chunks = self.visible_text.chunks_in_range(range.clone());
         if let Some((language, tree)) = self.language.as_ref().zip(self.tree.as_ref()) {
             let captures = self.query_cursor.set_byte_range(range.clone()).captures(
                 &language.highlight_query,
                 tree.root_node(),
-                TextProvider(&self.text),
+                TextProvider(&self.visible_text),
             );
 
             HighlightedChunks {
@@ -1997,33 +1979,55 @@ impl Snapshot {
         }
     }
 
+    pub fn text_summary_for_range(&self, range: Range<usize>) -> TextSummary {
+        self.content().text_summary_for_range(range)
+    }
+
+    pub fn point_for_offset(&self, offset: usize) -> Result<Point> {
+        self.content().point_for_offset(offset)
+    }
+
     pub fn clip_offset(&self, offset: usize, bias: Bias) -> usize {
-        self.text.clip_offset(offset, bias)
+        self.visible_text.clip_offset(offset, bias)
     }
 
     pub fn clip_point(&self, point: Point, bias: Bias) -> Point {
-        self.text.clip_point(point, bias)
+        self.visible_text.clip_point(point, bias)
     }
 
     pub fn to_offset(&self, point: Point) -> usize {
-        self.text.to_offset(point)
+        self.visible_text.to_offset(point)
     }
 
     pub fn to_point(&self, offset: usize) -> Point {
-        self.text.to_point(offset)
+        self.visible_text.to_point(offset)
+    }
+
+    pub fn anchor_before<T: ToOffset>(&self, position: T) -> Anchor {
+        self.content().anchor_at(position, Bias::Left)
+    }
+
+    pub fn anchor_after<T: ToOffset>(&self, position: T) -> Anchor {
+        self.content().anchor_at(position, Bias::Right)
+    }
+
+    fn content(&self) -> Content {
+        self.into()
     }
 }
 
 pub struct Content<'a> {
     visible_text: &'a Rope,
     fragments: &'a SumTree<Fragment>,
+    version: &'a time::Global,
 }
 
 impl<'a> From<&'a Snapshot> for Content<'a> {
     fn from(snapshot: &'a Snapshot) -> Self {
         Self {
-            visible_text: &snapshot.text,
+            visible_text: &snapshot.visible_text,
             fragments: &snapshot.fragments,
+            version: &snapshot.version,
         }
     }
 }
@@ -2033,6 +2037,7 @@ impl<'a> From<&'a Buffer> for Content<'a> {
         Self {
             visible_text: &buffer.visible_text,
             fragments: &buffer.fragments,
+            version: &buffer.version,
         }
     }
 }
@@ -2042,11 +2047,26 @@ impl<'a> From<&'a mut Buffer> for Content<'a> {
         Self {
             visible_text: &buffer.visible_text,
             fragments: &buffer.fragments,
+            version: &buffer.version,
+        }
+    }
+}
+
+impl<'a> From<&'a Content<'a>> for Content<'a> {
+    fn from(content: &'a Content) -> Self {
+        Self {
+            visible_text: &content.visible_text,
+            fragments: &content.fragments,
+            version: &content.version,
         }
     }
 }
 
 impl<'a> Content<'a> {
+    fn len(&self) -> usize {
+        self.fragments.extent::<usize>(&None)
+    }
+
     fn summary_for_anchor(&self, anchor: &Anchor) -> TextSummary {
         let cx = Some(anchor.version.clone());
         let mut cursor = self.fragments.cursor::<VersionedOffset, usize>();
@@ -2059,8 +2079,44 @@ impl<'a> Content<'a> {
         self.text_summary_for_range(0..*cursor.sum_start() + overshoot)
     }
 
-    pub fn text_summary_for_range(&self, range: Range<usize>) -> TextSummary {
+    fn text_summary_for_range(&self, range: Range<usize>) -> TextSummary {
         self.visible_text.cursor(range.start).summary(range.end)
+    }
+
+    fn anchor_at<T: ToOffset>(&self, position: T, bias: Bias) -> Anchor {
+        let offset = position.to_offset(self);
+        let max_offset = self.len();
+        assert!(offset <= max_offset, "offset is out of range");
+        let mut cursor = self.fragments.cursor::<usize, FragmentTextSummary>();
+        cursor.seek(&offset, bias, &None);
+        Anchor {
+            offset: offset + cursor.sum_start().deleted,
+            bias,
+            version: self.version.clone(),
+        }
+    }
+
+    fn full_offset_for_anchor(&self, anchor: &Anchor) -> usize {
+        let cx = Some(anchor.version.clone());
+        let mut cursor = self
+            .fragments
+            .cursor::<VersionedOffset, FragmentTextSummary>();
+        cursor.seek(&VersionedOffset::Offset(anchor.offset), anchor.bias, &cx);
+        let overshoot = if cursor.item().is_some() {
+            anchor.offset - cursor.seek_start().offset()
+        } else {
+            0
+        };
+        let summary = cursor.sum_start();
+        summary.visible + summary.deleted + overshoot
+    }
+
+    fn point_for_offset(&self, offset: usize) -> Result<Point> {
+        if offset <= self.len() {
+            Ok(self.text_summary_for_range(0..offset).lines)
+        } else {
+            Err(anyhow!("offset out of bounds"))
+        }
     }
 }
 

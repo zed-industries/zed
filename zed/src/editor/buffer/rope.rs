@@ -188,6 +188,12 @@ impl<'a> From<&'a str> for Rope {
     }
 }
 
+impl Into<String> for Rope {
+    fn into(self) -> String {
+        self.chunks().collect()
+    }
+}
+
 pub struct Cursor<'a> {
     rope: &'a Rope,
     chunks: sum_tree::Cursor<'a, Chunk, usize, ()>,

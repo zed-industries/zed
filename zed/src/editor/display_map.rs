@@ -31,17 +31,6 @@ impl DisplayMap {
         }
     }
 
-    pub fn folds_in_range<'a, T>(
-        &'a self,
-        range: Range<T>,
-        cx: &'a AppContext,
-    ) -> impl Iterator<Item = &'a Range<Anchor>>
-    where
-        T: ToOffset,
-    {
-        self.fold_map.folds_in_range(range, cx)
-    }
-
     pub fn fold<T: ToOffset>(
         &mut self,
         ranges: impl IntoIterator<Item = Range<T>>,
@@ -59,11 +48,11 @@ impl DisplayMap {
     }
 
     pub fn intersects_fold<T: ToOffset>(&self, offset: T, cx: &AppContext) -> bool {
-        self.fold_map.intersects_fold(offset, cx)
+        self.fold_map.snapshot(cx).intersects_fold(offset)
     }
 
     pub fn is_line_folded(&self, display_row: u32, cx: &AppContext) -> bool {
-        self.fold_map.is_line_folded(display_row, cx)
+        self.fold_map.snapshot(cx).is_line_folded(display_row)
     }
 
     pub fn text(&self, cx: &AppContext) -> String {
@@ -104,7 +93,7 @@ impl DisplayMap {
     }
 
     pub fn line_len(&self, row: u32, cx: &AppContext) -> u32 {
-        DisplayPoint::new(row, self.fold_map.line_len(row, cx))
+        DisplayPoint::new(row, self.fold_map.snapshot(cx).line_len(row))
             .expand_tabs(self, cx)
             .column()
     }
@@ -114,7 +103,7 @@ impl DisplayMap {
     }
 
     pub fn longest_row(&self, cx: &AppContext) -> u32 {
-        self.fold_map.longest_row(cx)
+        self.fold_map.snapshot(cx).longest_row()
     }
 
     pub fn anchor_before(&self, point: DisplayPoint, bias: Bias, cx: &AppContext) -> Anchor {
@@ -209,6 +198,16 @@ impl DisplayMapSnapshot {
         )
     }
 
+    pub fn folds_in_range<'a, T>(
+        &'a self,
+        range: Range<T>,
+    ) -> impl Iterator<Item = &'a Range<Anchor>>
+    where
+        T: ToOffset,
+    {
+        self.folds_snapshot.folds_in_range(range)
+    }
+
     fn expand_tabs(&self, mut point: DisplayPoint) -> DisplayPoint {
         let chars = self
             .folds_snapshot
@@ -260,12 +259,14 @@ impl DisplayPoint {
 
     pub fn to_buffer_point(self, map: &DisplayMap, bias: Bias, cx: &AppContext) -> Point {
         map.fold_map
-            .to_buffer_point(self.collapse_tabs(map, bias, cx), cx)
+            .snapshot(cx)
+            .to_buffer_point(self.collapse_tabs(map, bias, cx))
     }
 
     pub fn to_buffer_offset(self, map: &DisplayMap, bias: Bias, cx: &AppContext) -> usize {
         map.fold_map
-            .to_buffer_offset(self.collapse_tabs(&map, bias, cx), cx)
+            .snapshot(cx)
+            .to_buffer_offset(self.collapse_tabs(&map, bias, cx))
     }
 
     fn expand_tabs(self, map: &DisplayMap, cx: &AppContext) -> Self {
@@ -279,7 +280,7 @@ impl DisplayPoint {
 
 impl Point {
     pub fn to_display_point(self, map: &DisplayMap, cx: &AppContext) -> DisplayPoint {
-        let mut display_point = map.fold_map.to_display_point(self, cx);
+        let mut display_point = map.fold_map.snapshot(cx).to_display_point(self);
         let snapshot = map.fold_map.snapshot(cx);
         let chars = snapshot.chars_at(DisplayPoint::new(display_point.row(), 0));
         *display_point.column_mut() =
