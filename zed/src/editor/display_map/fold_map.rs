@@ -1,6 +1,6 @@
 use super::{
     buffer::{AnchorRangeExt, TextSummary},
-    Anchor, Buffer, DisplayPoint, Edit, Point, ToOffset,
+    Anchor, Buffer, DisplayPoint, Point, ToOffset,
 };
 use crate::{
     editor::buffer,
@@ -70,7 +70,6 @@ impl FoldMap {
                 edits.push(Edit {
                     old_bytes: range.clone(),
                     new_bytes: range.clone(),
-                    ..Default::default()
                 });
             }
         }
@@ -116,7 +115,6 @@ impl FoldMap {
                 edits.push(Edit {
                     old_bytes: offset_range.clone(),
                     new_bytes: offset_range,
-                    ..Default::default()
                 });
                 fold_ixs_to_delete.push(*folds_cursor.start());
                 folds_cursor.next(&buffer);
@@ -147,7 +145,10 @@ impl FoldMap {
 
     fn sync(&self, cx: &AppContext) -> MutexGuard<SumTree<Transform>> {
         let buffer = self.buffer.read(cx);
-        let mut edits = buffer.edits_since(self.last_sync.lock().clone()).peekable();
+        let mut edits = buffer
+            .edits_since(self.last_sync.lock().clone())
+            .map(Into::into)
+            .peekable();
         if edits.peek().is_some() {
             self.apply_edits(edits, cx);
         }
@@ -835,6 +836,34 @@ impl<'a> sum_tree::Dimension<'a, TransformSummary> for Point {
 impl<'a> sum_tree::Dimension<'a, TransformSummary> for usize {
     fn add_summary(&mut self, summary: &'a TransformSummary, _: &()) {
         *self += &summary.buffer.bytes;
+    }
+}
+
+struct Edit {
+    old_bytes: Range<usize>,
+    new_bytes: Range<usize>,
+}
+
+impl Edit {
+    pub fn delta(&self) -> isize {
+        self.inserted_bytes() as isize - self.deleted_bytes() as isize
+    }
+
+    pub fn deleted_bytes(&self) -> usize {
+        self.old_bytes.len()
+    }
+
+    pub fn inserted_bytes(&self) -> usize {
+        self.new_bytes.len()
+    }
+}
+
+impl From<buffer::Edit> for Edit {
+    fn from(edit: buffer::Edit) -> Self {
+        Self {
+            old_bytes: edit.old_bytes,
+            new_bytes: edit.new_bytes,
+        }
     }
 }
 
