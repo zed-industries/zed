@@ -601,6 +601,7 @@ impl Buffer {
     pub fn snapshot(&self) -> Snapshot {
         Snapshot {
             text: self.visible_text.clone(),
+            fragments: self.fragments.clone(),
             tree: self.syntax_tree(),
             language: self.language.clone(),
             query_cursor: QueryCursorHandle::new(),
@@ -1005,10 +1006,6 @@ impl Buffer {
         self.visible_text.summary()
     }
 
-    pub fn text_summary_for_range(&self, range: Range<usize>) -> TextSummary {
-        self.visible_text.cursor(range.start).summary(range.end)
-    }
-
     pub fn len(&self) -> usize {
         self.fragments.extent::<usize>(&None)
     }
@@ -1149,7 +1146,7 @@ impl Buffer {
         // Skip invalid ranges and coalesce contiguous ones.
         let mut ranges: Vec<Range<usize>> = Vec::new();
         for range in ranges_iter {
-            let range = range.start.to_offset(self)..range.end.to_offset(self);
+            let range = range.start.to_offset(&*self)..range.end.to_offset(&*self);
             if has_new_text || !range.is_empty() {
                 if let Some(prev_range) = ranges.last_mut() {
                     if prev_range.end >= range.start {
@@ -1860,6 +1857,14 @@ impl Buffer {
         edit
     }
 
+    fn content<'a>(&'a self) -> Content<'a> {
+        self.into()
+    }
+
+    pub fn text_summary_for_range(&self, range: Range<usize>) -> TextSummary {
+        self.content().text_summary_for_range(range)
+    }
+
     pub fn anchor_before<T: ToOffset>(&self, position: T) -> Anchor {
         self.anchor_at(position, Bias::Left)
     }
@@ -1881,18 +1886,6 @@ impl Buffer {
         }
     }
 
-    fn summary_for_anchor(&self, anchor: &Anchor) -> TextSummary {
-        let cx = Some(anchor.version.clone());
-        let mut cursor = self.fragments.cursor::<VersionedOffset, usize>();
-        cursor.seek(&VersionedOffset::Offset(anchor.offset), anchor.bias, &cx);
-        let overshoot = if cursor.item().map_or(false, |fragment| fragment.visible) {
-            anchor.offset - cursor.seek_start().offset()
-        } else {
-            0
-        };
-        self.text_summary_for_range(0..*cursor.sum_start() + overshoot)
-    }
-
     fn full_offset_for_anchor(&self, anchor: &Anchor) -> usize {
         let cx = Some(anchor.version.clone());
         let mut cursor = self
@@ -1910,7 +1903,7 @@ impl Buffer {
 
     pub fn point_for_offset(&self, offset: usize) -> Result<Point> {
         if offset <= self.len() {
-            Ok(self.text_summary_for_range(0..offset).lines)
+            Ok(self.content().text_summary_for_range(0..offset).lines)
         } else {
             Err(anyhow!("offset out of bounds"))
         }
@@ -1957,6 +1950,7 @@ impl Clone for Buffer {
 
 pub struct Snapshot {
     text: Rope,
+    fragments: SumTree<Fragment>,
     tree: Option<Tree>,
     language: Option<Arc<Language>>,
     query_cursor: QueryCursorHandle,
@@ -2017,6 +2011,56 @@ impl Snapshot {
 
     pub fn to_point(&self, offset: usize) -> Point {
         self.text.to_point(offset)
+    }
+}
+
+pub struct Content<'a> {
+    visible_text: &'a Rope,
+    fragments: &'a SumTree<Fragment>,
+}
+
+impl<'a> From<&'a Snapshot> for Content<'a> {
+    fn from(snapshot: &'a Snapshot) -> Self {
+        Self {
+            visible_text: &snapshot.text,
+            fragments: &snapshot.fragments,
+        }
+    }
+}
+
+impl<'a> From<&'a Buffer> for Content<'a> {
+    fn from(buffer: &'a Buffer) -> Self {
+        Self {
+            visible_text: &buffer.visible_text,
+            fragments: &buffer.fragments,
+        }
+    }
+}
+
+impl<'a> From<&'a mut Buffer> for Content<'a> {
+    fn from(buffer: &'a mut Buffer) -> Self {
+        Self {
+            visible_text: &buffer.visible_text,
+            fragments: &buffer.fragments,
+        }
+    }
+}
+
+impl<'a> Content<'a> {
+    fn summary_for_anchor(&self, anchor: &Anchor) -> TextSummary {
+        let cx = Some(anchor.version.clone());
+        let mut cursor = self.fragments.cursor::<VersionedOffset, usize>();
+        cursor.seek(&VersionedOffset::Offset(anchor.offset), anchor.bias, &cx);
+        let overshoot = if cursor.item().map_or(false, |fragment| fragment.visible) {
+            anchor.offset - cursor.seek_start().offset()
+        } else {
+            0
+        };
+        self.text_summary_for_range(0..*cursor.sum_start() + overshoot)
+    }
+
+    pub fn text_summary_for_range(&self, range: Range<usize>) -> TextSummary {
+        self.visible_text.cursor(range.start).summary(range.end)
     }
 }
 
@@ -2704,46 +2748,46 @@ impl operation_queue::Operation for Operation {
 }
 
 pub trait ToOffset {
-    fn to_offset(&self, buffer: &Buffer) -> usize;
+    fn to_offset<'a>(&self, content: impl Into<Content<'a>>) -> usize;
 }
 
 impl ToOffset for Point {
-    fn to_offset(&self, buffer: &Buffer) -> usize {
-        buffer.visible_text.to_offset(*self)
+    fn to_offset<'a>(&self, content: impl Into<Content<'a>>) -> usize {
+        content.into().visible_text.to_offset(*self)
     }
 }
 
 impl ToOffset for usize {
-    fn to_offset(&self, _: &Buffer) -> usize {
+    fn to_offset<'a>(&self, _: impl Into<Content<'a>>) -> usize {
         *self
     }
 }
 
 impl ToOffset for Anchor {
-    fn to_offset(&self, buffer: &Buffer) -> usize {
-        buffer.summary_for_anchor(self).bytes
+    fn to_offset<'a>(&self, content: impl Into<Content<'a>>) -> usize {
+        content.into().summary_for_anchor(self).bytes
     }
 }
 
 impl<'a> ToOffset for &'a Anchor {
-    fn to_offset(&self, buffer: &Buffer) -> usize {
-        buffer.summary_for_anchor(self).bytes
+    fn to_offset<'b>(&self, content: impl Into<Content<'b>>) -> usize {
+        content.into().summary_for_anchor(self).bytes
     }
 }
 
 pub trait ToPoint {
-    fn to_point(&self, buffer: &Buffer) -> Point;
+    fn to_point<'a>(&self, content: impl Into<Content<'a>>) -> Point;
 }
 
 impl ToPoint for Anchor {
-    fn to_point(&self, buffer: &Buffer) -> Point {
-        buffer.summary_for_anchor(self).lines
+    fn to_point<'a>(&self, content: impl Into<Content<'a>>) -> Point {
+        content.into().summary_for_anchor(self).lines
     }
 }
 
 impl ToPoint for usize {
-    fn to_point(&self, buffer: &Buffer) -> Point {
-        buffer.visible_text.to_point(*self)
+    fn to_point<'a>(&self, content: impl Into<Content<'a>>) -> Point {
+        content.into().visible_text.to_point(*self)
     }
 }
 
@@ -3411,7 +3455,7 @@ mod tests {
                 .iter()
                 .map(|selection| {
                     assert_eq!(selection.start, selection.end);
-                    selection.start.to_point(&buffer)
+                    selection.start.to_point(&*buffer)
                 })
                 .collect::<Vec<_>>();
             assert_eq!(

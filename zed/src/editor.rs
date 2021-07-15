@@ -1215,8 +1215,8 @@ impl Editor {
                         String::from_iter(clipboard_chars.by_ref().take(clipboard_selection.len));
 
                     self.buffer.update(cx, |buffer, cx| {
-                        let selection_start = selection.start.to_point(buffer);
-                        let selection_end = selection.end.to_point(buffer);
+                        let selection_start = selection.start.to_point(&*buffer);
+                        let selection_end = selection.end.to_point(&*buffer);
 
                         // If the corresponding selection was empty when this slice of the
                         // clipboard text was written, then the entire line containing the
