@@ -1,12 +1,10 @@
 use crate::{
     editor::{
         buffer::{Anchor, Buffer, Point, ToOffset as _, ToPoint as _},
-        display_map::DisplayMap,
-        Bias, DisplayPoint,
+        Bias, DisplayMapSnapshot, DisplayPoint,
     },
     time,
 };
-use gpui::AppContext;
 use std::{cmp::Ordering, mem, ops::Range};
 
 pub type SelectionSetId = time::Lamport;
@@ -81,9 +79,9 @@ impl Selection {
         }
     }
 
-    pub fn display_range(&self, map: &DisplayMap, cx: &AppContext) -> Range<DisplayPoint> {
-        let start = self.start.to_display_point(map, cx);
-        let end = self.end.to_display_point(map, cx);
+    pub fn display_range(&self, map: &DisplayMapSnapshot) -> Range<DisplayPoint> {
+        let start = self.start.to_display_point(map);
+        let end = self.end.to_display_point(map);
         if self.reversed {
             end..start
         } else {
@@ -94,23 +92,22 @@ impl Selection {
     pub fn buffer_rows_for_display_rows(
         &self,
         include_end_if_at_line_start: bool,
-        map: &DisplayMap,
-        cx: &AppContext,
+        map: &DisplayMapSnapshot,
     ) -> (Range<u32>, Range<u32>) {
-        let display_start = self.start.to_display_point(map, cx);
+        let display_start = self.start.to_display_point(map);
         let buffer_start =
-            DisplayPoint::new(display_start.row(), 0).to_buffer_point(map, Bias::Left, cx);
+            DisplayPoint::new(display_start.row(), 0).to_buffer_point(map, Bias::Left);
 
-        let mut display_end = self.end.to_display_point(map, cx);
+        let mut display_end = self.end.to_display_point(map);
         if !include_end_if_at_line_start
-            && display_end.row() != map.max_point(cx).row()
+            && display_end.row() != map.max_point().row()
             && display_start.row() != display_end.row()
             && display_end.column() == 0
         {
             *display_end.row_mut() -= 1;
         }
-        let buffer_end = DisplayPoint::new(display_end.row(), map.line_len(display_end.row(), cx))
-            .to_buffer_point(map, Bias::Left, cx);
+        let buffer_end = DisplayPoint::new(display_end.row(), map.line_len(display_end.row()))
+            .to_buffer_point(map, Bias::Left);
 
         (
             buffer_start.row..buffer_end.row + 1,

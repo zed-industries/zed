@@ -4,7 +4,7 @@ use crate::{
     time,
     util::Bias,
 };
-use gpui::{AppContext, Entity, ModelContext, ModelHandle, Task};
+use gpui::{Entity, ModelContext, ModelHandle, Task};
 use parking_lot::Mutex;
 use postage::{
     mpsc,
