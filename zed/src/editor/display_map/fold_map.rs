@@ -10,7 +10,7 @@ use crate::{
     util::Bias,
 };
 use gpui::{AppContext, ModelHandle};
-use parking_lot::{Mutex, MutexGuard};
+use parking_lot::Mutex;
 use std::{
     cmp::{self, Ordering},
     iter,
@@ -45,8 +45,9 @@ impl FoldMap {
     }
 
     pub fn snapshot(&self, cx: &AppContext) -> FoldMapSnapshot {
+        self.sync(cx);
         FoldMapSnapshot {
-            transforms: self.sync(cx).clone(),
+            transforms: self.transforms.lock().clone(),
             folds: self.folds.clone(),
             buffer: self.buffer.read(cx).snapshot(),
         }
@@ -57,7 +58,7 @@ impl FoldMap {
         ranges: impl IntoIterator<Item = Range<T>>,
         cx: &AppContext,
     ) {
-        let _ = self.sync(cx);
+        self.sync(cx);
 
         let mut edits = Vec::new();
         let mut folds = Vec::new();
@@ -100,7 +101,7 @@ impl FoldMap {
         ranges: impl IntoIterator<Item = Range<T>>,
         cx: &AppContext,
     ) {
-        let _ = self.sync(cx);
+        self.sync(cx);
 
         let buffer = self.buffer.read(cx).snapshot();
         let snapshot = self.snapshot(cx);
@@ -143,29 +144,31 @@ impl FoldMap {
         self.apply_edits(edits, cx);
     }
 
-    fn sync(&self, cx: &AppContext) -> MutexGuard<SumTree<Transform>> {
+    fn sync(&self, cx: &AppContext) -> Vec<Edit> {
         let buffer = self.buffer.read(cx);
         let mut edits = buffer
             .edits_since(self.last_sync.lock().clone())
             .map(Into::into)
             .peekable();
-        if edits.peek().is_some() {
-            self.apply_edits(edits, cx);
-        }
+        let edits = if edits.peek().is_some() {
+            self.apply_edits(edits, cx)
+        } else {
+            Vec::new()
+        };
         *self.last_sync.lock() = buffer.version();
-        self.transforms.lock()
+        edits
     }
 
-    fn apply_edits(&self, edits: impl IntoIterator<Item = Edit>, cx: &AppContext) {
+    fn apply_edits(&self, edits: Vec<Edit>, cx: &AppContext) -> Vec<Edit> {
         let buffer = self.buffer.read(cx).snapshot();
-        let mut edits = edits.into_iter().peekable();
+        let mut edits_iter = edits.iter().cloned().peekable();
 
         let mut new_transforms = SumTree::new();
         let mut transforms = self.transforms.lock();
         let mut cursor = transforms.cursor::<usize, ()>();
         cursor.seek(&0, Bias::Right, &());
 
-        while let Some(mut edit) = edits.next() {
+        while let Some(mut edit) = edits_iter.next() {
             new_transforms.push_tree(cursor.slice(&edit.old_bytes.start, Bias::Left, &()), &());
             edit.new_bytes.start -= edit.old_bytes.start - cursor.seek_start();
             edit.old_bytes.start = *cursor.seek_start();
@@ -177,12 +180,12 @@ impl FoldMap {
             loop {
                 edit.old_bytes.end = *cursor.seek_start();
 
-                if let Some(next_edit) = edits.peek() {
+                if let Some(next_edit) = edits_iter.peek() {
                     if next_edit.old_bytes.start > edit.old_bytes.end {
                         break;
                     }
 
-                    let next_edit = edits.next().unwrap();
+                    let next_edit = edits_iter.next().unwrap();
                     delta += next_edit.delta();
 
                     if next_edit.old_bytes.end >= edit.old_bytes.end {
@@ -304,7 +307,29 @@ impl FoldMap {
         }
 
         drop(cursor);
+
+        {
+            let mut old_transforms = transforms.cursor::<usize, DisplayOffset>();
+            let mut new_transforms = new_transforms.cursor::<usize, DisplayOffset>();
+            for edit in &mut edits {
+                old_transforms.seek_forward(&edit.old_bytes.start, Bias::Right, &());
+                edit.old_bytes.start = old_transforms.sum_start().0
+                    + (edit.old_bytes.start - old_transforms.seek_start());
+                old_transforms.seek_forward(&edit.old_bytes.end, Bias::Right, &());
+                edit.old_bytes.end = old_transforms.sum_start().0
+                    + (edit.old_bytes.end - old_transforms.seek_start());
+                new_transforms.seek_forward(&edit.new_bytes.start, Bias::Right, &());
+                edit.new_bytes.start = new_transforms.sum_start().0
+                    + (edit.new_bytes.start - new_transforms.seek_start());
+                new_transforms.seek_forward(&edit.new_bytes.end, Bias::Right, &());
+                edit.new_bytes.end = new_transforms.sum_start().0
+                    + (edit.new_bytes.end - new_transforms.seek_start());
+            }
+        }
+
         *transforms = new_transforms;
+
+        edits
     }
 }
 
@@ -839,6 +864,7 @@ impl<'a> sum_tree::Dimension<'a, TransformSummary> for usize {
     }
 }
 
+#[derive(Clone)]
 struct Edit {
     old_bytes: Range<usize>,
     new_bytes: Range<usize>,
@@ -1275,10 +1301,10 @@ mod tests {
         }
 
         fn check_invariants(&self, cx: &AppContext) {
-            let transforms = self.sync(cx);
+            self.sync(cx);
             let buffer = self.buffer.read(cx);
             assert_eq!(
-                transforms.summary().buffer.bytes,
+                self.transforms.lock().summary().buffer.bytes,
                 buffer.len(),
                 "transform tree does not match buffer's length"
             );
