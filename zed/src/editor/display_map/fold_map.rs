@@ -106,8 +106,8 @@ impl FoldMap {
                 let fold = Fold(buffer.anchor_after(range.start)..buffer.anchor_before(range.end));
                 folds.push(fold);
                 edits.push(Edit {
-                    old_range: range.clone(),
-                    new_range: range.clone(),
+                    old_bytes: range.clone(),
+                    new_bytes: range.clone(),
                     ..Default::default()
                 });
             }
@@ -115,10 +115,10 @@ impl FoldMap {
 
         folds.sort_unstable_by(|a, b| sum_tree::SeekDimension::cmp(a, b, buffer));
         edits.sort_unstable_by(|a, b| {
-            a.old_range
+            a.old_bytes
                 .start
-                .cmp(&b.old_range.start)
-                .then_with(|| b.old_range.end.cmp(&a.old_range.end))
+                .cmp(&b.old_bytes.start)
+                .then_with(|| b.old_bytes.end.cmp(&a.old_bytes.end))
         });
 
         self.folds = {
@@ -151,8 +151,8 @@ impl FoldMap {
             while let Some(fold) = folds_cursor.item() {
                 let offset_range = fold.0.start.to_offset(buffer)..fold.0.end.to_offset(buffer);
                 edits.push(Edit {
-                    old_range: offset_range.clone(),
-                    new_range: offset_range,
+                    old_bytes: offset_range.clone(),
+                    new_bytes: offset_range,
                     ..Default::default()
                 });
                 fold_ixs_to_delete.push(*folds_cursor.start());
@@ -163,10 +163,10 @@ impl FoldMap {
         fold_ixs_to_delete.sort_unstable();
         fold_ixs_to_delete.dedup();
         edits.sort_unstable_by(|a, b| {
-            a.old_range
+            a.old_bytes
                 .start
-                .cmp(&b.old_range.start)
-                .then_with(|| b.old_range.end.cmp(&a.old_range.end))
+                .cmp(&b.old_bytes.start)
+                .then_with(|| b.old_bytes.end.cmp(&a.old_bytes.end))
         });
 
         self.folds = {
@@ -278,28 +278,28 @@ impl FoldMap {
         cursor.seek(&0, Bias::Right, &());
 
         while let Some(mut edit) = edits.next() {
-            new_transforms.push_tree(cursor.slice(&edit.old_range.start, Bias::Left, &()), &());
-            edit.new_range.start -= edit.old_range.start - cursor.seek_start();
-            edit.old_range.start = *cursor.seek_start();
+            new_transforms.push_tree(cursor.slice(&edit.old_bytes.start, Bias::Left, &()), &());
+            edit.new_bytes.start -= edit.old_bytes.start - cursor.seek_start();
+            edit.old_bytes.start = *cursor.seek_start();
 
-            cursor.seek(&edit.old_range.end, Bias::Right, &());
+            cursor.seek(&edit.old_bytes.end, Bias::Right, &());
             cursor.next(&());
 
             let mut delta = edit.delta();
             loop {
-                edit.old_range.end = *cursor.seek_start();
+                edit.old_bytes.end = *cursor.seek_start();
 
                 if let Some(next_edit) = edits.peek() {
-                    if next_edit.old_range.start > edit.old_range.end {
+                    if next_edit.old_bytes.start > edit.old_bytes.end {
                         break;
                     }
 
                     let next_edit = edits.next().unwrap();
                     delta += next_edit.delta();
 
-                    if next_edit.old_range.end >= edit.old_range.end {
-                        edit.old_range.end = next_edit.old_range.end;
-                        cursor.seek(&edit.old_range.end, Bias::Right, &());
+                    if next_edit.old_bytes.end >= edit.old_bytes.end {
+                        edit.old_bytes.end = next_edit.old_bytes.end;
+                        cursor.seek(&edit.old_bytes.end, Bias::Right, &());
                         cursor.next(&());
                     }
                 } else {
@@ -307,10 +307,10 @@ impl FoldMap {
                 }
             }
 
-            edit.new_range.end =
-                ((edit.new_range.start + edit.old_extent()) as isize + delta) as usize;
+            edit.new_bytes.end =
+                ((edit.new_bytes.start + edit.deleted_bytes()) as isize + delta) as usize;
 
-            let anchor = buffer.anchor_before(edit.new_range.start);
+            let anchor = buffer.anchor_before(edit.new_bytes.start);
             let mut folds_cursor = self.folds.cursor::<_, ()>();
             folds_cursor.seek(&Fold(anchor..Anchor::max()), Bias::Left, buffer);
             let mut folds = iter::from_fn(move || {
@@ -324,7 +324,7 @@ impl FoldMap {
 
             while folds
                 .peek()
-                .map_or(false, |fold| fold.start < edit.new_range.end)
+                .map_or(false, |fold| fold.start < edit.new_bytes.end)
             {
                 let mut fold = folds.next().unwrap();
                 let sum = new_transforms.summary();
@@ -380,9 +380,9 @@ impl FoldMap {
             }
 
             let sum = new_transforms.summary();
-            if sum.buffer.bytes < edit.new_range.end {
+            if sum.buffer.bytes < edit.new_bytes.end {
                 let text_summary =
-                    buffer.text_summary_for_range(sum.buffer.bytes..edit.new_range.end);
+                    buffer.text_summary_for_range(sum.buffer.bytes..edit.new_bytes.end);
                 new_transforms.push(
                     Transform {
                         summary: TransformSummary {

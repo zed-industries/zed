@@ -117,9 +117,8 @@ impl BackgroundWrapper {
         {
             let mut old_cursor = self.snapshot.transforms.cursor::<Point, ()>();
             for edit in buffer.edits_since(self.snapshot.version.clone()) {
-                // TODO: old lines gives us an extent but we really want to park ourselves at the start of the line.
                 new_transforms.push_tree(
-                    old_cursor.slice(&Point::new(edit.old_lines.row, 0), Bias::Left, &()),
+                    old_cursor.slice(&Point::new(edit.old_lines.start.row, 0), Bias::Left, &()),
                     &(),
                 );
             }
