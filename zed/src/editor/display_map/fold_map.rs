@@ -25,7 +25,7 @@ impl<'a> FoldMapWriter<'a> {
         &mut self,
         ranges: impl IntoIterator<Item = Range<T>>,
         cx: &AppContext,
-    ) -> Vec<Edit> {
+    ) -> (Snapshot, Vec<Edit>) {
         let mut edits = Vec::new();
         let mut folds = Vec::new();
         let buffer = self.0.buffer.read(cx).snapshot();
@@ -54,15 +54,22 @@ impl<'a> FoldMapWriter<'a> {
             new_tree
         };
 
-        self.consolidate_edits(&mut edits);
-        self.0.apply_edits(edits, cx)
+        consolidate_edits(&mut edits);
+        let edits = self.0.apply_edits(edits, cx);
+        let snapshot = Snapshot {
+            transforms: self.0.transforms.lock().clone(),
+            folds: self.0.folds.clone(),
+            buffer: self.0.buffer.read(cx).snapshot(),
+            version: self.0.version.load(SeqCst),
+        };
+        (snapshot, edits)
     }
 
     pub fn unfold<T: ToOffset>(
         &mut self,
         ranges: impl IntoIterator<Item = Range<T>>,
         cx: &AppContext,
-    ) -> Vec<Edit> {
+    ) -> (Snapshot, Vec<Edit>) {
         let mut edits = Vec::new();
         let mut fold_ixs_to_delete = Vec::new();
         let buffer = self.0.buffer.read(cx).snapshot();
@@ -94,31 +101,15 @@ impl<'a> FoldMapWriter<'a> {
             folds
         };
 
-        self.consolidate_edits(&mut edits);
-        self.0.apply_edits(edits, cx)
-    }
-
-    fn consolidate_edits(&self, edits: &mut Vec<Edit>) {
-        edits.sort_unstable_by(|a, b| {
-            a.old_bytes
-                .start
-                .cmp(&b.old_bytes.start)
-                .then_with(|| b.old_bytes.end.cmp(&a.old_bytes.end))
-        });
-
-        let mut i = 0;
-        while i < edits.len() {
-            let range = edits[i].old_bytes.clone();
-            if i > 0 {
-                if edits[i - 1].old_bytes.end >= range.start {
-                    edits[i - 1].old_bytes.end = edits[i - 1].old_bytes.end.max(range.end);
-                    edits[i - 1].new_bytes.end = edits[i - 1].new_bytes.end.max(range.end);
-                    edits.remove(i);
-                    continue;
-                }
-            }
-            i += 1;
-        }
+        consolidate_edits(&mut edits);
+        let edits = self.0.apply_edits(edits, cx);
+        let snapshot = Snapshot {
+            transforms: self.0.transforms.lock().clone(),
+            folds: self.0.folds.clone(),
+            buffer: self.0.buffer.read(cx).snapshot(),
+            version: self.0.version.load(SeqCst),
+        };
+        (snapshot, edits)
     }
 }
 
@@ -153,6 +144,7 @@ impl FoldMap {
 
     pub fn read(&self, cx: &AppContext) -> (Snapshot, Vec<Edit>) {
         let edits = self.sync(cx);
+        self.check_invariants(cx);
         let snapshot = Snapshot {
             transforms: self.transforms.lock().clone(),
             folds: self.folds.clone(),
@@ -178,6 +170,18 @@ impl FoldMap {
             Vec::new()
         } else {
             self.apply_edits(edits, cx)
+        }
+    }
+
+    fn check_invariants(&self, cx: &AppContext) {
+        #[cfg(debug_assertions)]
+        {
+            let buffer = self.buffer.read(cx);
+            assert_eq!(
+                self.transforms.lock().summary().buffer.bytes,
+                buffer.len(),
+                "transform tree does not match buffer's length"
+            );
         }
     }
 
@@ -334,25 +338,39 @@ impl FoldMap {
             let mut old_transforms = transforms.cursor::<usize, DisplayOffset>();
             let mut new_transforms = new_transforms.cursor::<usize, DisplayOffset>();
 
-            let mut delta = 0;
             for edit in &mut edits {
-                old_transforms.seek_forward(&edit.old_bytes.start, Bias::Right, &());
+                old_transforms.seek(&edit.old_bytes.start, Bias::Left, &());
+                if old_transforms.item().map_or(false, |t| t.is_fold()) {
+                    edit.old_bytes.start = *old_transforms.seek_start();
+                }
                 edit.old_bytes.start = old_transforms.sum_start().0
                     + (edit.old_bytes.start - old_transforms.seek_start());
+
                 old_transforms.seek_forward(&edit.old_bytes.end, Bias::Right, &());
+                if old_transforms.item().map_or(false, |t| t.is_fold()) {
+                    old_transforms.next(&());
+                    edit.old_bytes.end = *old_transforms.seek_start();
+                }
                 edit.old_bytes.end = old_transforms.sum_start().0
                     + (edit.old_bytes.end - old_transforms.seek_start());
-                new_transforms.seek_forward(&edit.new_bytes.start, Bias::Right, &());
+
+                new_transforms.seek(&edit.new_bytes.start, Bias::Left, &());
+                if new_transforms.item().map_or(false, |t| t.is_fold()) {
+                    edit.new_bytes.start = *new_transforms.seek_start();
+                }
                 edit.new_bytes.start = new_transforms.sum_start().0
                     + (edit.new_bytes.start - new_transforms.seek_start());
+
                 new_transforms.seek_forward(&edit.new_bytes.end, Bias::Right, &());
+                if new_transforms.item().map_or(false, |t| t.is_fold()) {
+                    new_transforms.next(&());
+                    edit.new_bytes.end = *new_transforms.seek_start();
+                }
                 edit.new_bytes.end = new_transforms.sum_start().0
                     + (edit.new_bytes.end - new_transforms.seek_start());
-
-                edit.old_bytes.start = (edit.old_bytes.start as isize + delta) as usize;
-                edit.old_bytes.end = (edit.old_bytes.end as isize + delta) as usize;
-                delta += edit.delta();
             }
+
+            consolidate_edits(&mut edits);
         }
 
         *transforms = new_transforms;
@@ -607,10 +625,39 @@ where
     )
 }
 
+fn consolidate_edits(edits: &mut Vec<Edit>) {
+    edits.sort_unstable_by(|a, b| {
+        a.old_bytes
+            .start
+            .cmp(&b.old_bytes.start)
+            .then_with(|| b.old_bytes.end.cmp(&a.old_bytes.end))
+    });
+
+    let mut i = 1;
+    while i < edits.len() {
+        let edit = edits[i].clone();
+        let prev_edit = &mut edits[i - 1];
+        if prev_edit.old_bytes.end >= edit.old_bytes.start {
+            prev_edit.old_bytes.end = prev_edit.old_bytes.end.max(edit.old_bytes.end);
+            prev_edit.new_bytes.start = prev_edit.new_bytes.start.min(edit.new_bytes.start);
+            prev_edit.new_bytes.end = prev_edit.new_bytes.end.max(edit.new_bytes.end);
+            edits.remove(i);
+            continue;
+        }
+        i += 1;
+    }
+}
+
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
 struct Transform {
     summary: TransformSummary,
     display_text: Option<&'static str>,
+}
+
+impl Transform {
+    fn is_fold(&self) -> bool {
+        self.display_text.is_some()
+    }
 }
 
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
@@ -1014,21 +1061,18 @@ mod tests {
 
             let (mut writer, _, _) = map.write(cx.as_ref());
             writer.fold(vec![5..8], cx.as_ref());
-            map.check_invariants(cx.as_ref());
             let (snapshot, _) = map.read(cx.as_ref());
             assert_eq!(snapshot.text(), "abcde…ijkl");
 
             // Create an fold adjacent to the start of the first fold.
             let (mut writer, _, _) = map.write(cx.as_ref());
             writer.fold(vec![0..1, 2..5], cx.as_ref());
-            map.check_invariants(cx.as_ref());
             let (snapshot, _) = map.read(cx.as_ref());
             assert_eq!(snapshot.text(), "…b…ijkl");
 
             // Create an fold adjacent to the end of the first fold.
             let (mut writer, _, _) = map.write(cx.as_ref());
             writer.fold(vec![11..11, 8..10], cx.as_ref());
-            map.check_invariants(cx.as_ref());
             let (snapshot, _) = map.read(cx.as_ref());
             assert_eq!(snapshot.text(), "…b…kl");
         }
@@ -1039,17 +1083,11 @@ mod tests {
             // Create two adjacent folds.
             let (mut writer, _, _) = map.write(cx.as_ref());
             writer.fold(vec![0..2, 2..5], cx.as_ref());
-            map.check_invariants(cx.as_ref());
             let (snapshot, _) = map.read(cx.as_ref());
             assert_eq!(snapshot.text(), "…fghijkl");
 
             // Edit within one of the folds.
-            buffer.update(cx, |buffer, cx| {
-                let version = buffer.version();
-                buffer.edit(vec![0..1], "12345", cx);
-                buffer.edits_since(version).collect::<Vec<_>>()
-            });
-            map.check_invariants(cx.as_ref());
+            buffer.update(cx, |buffer, cx| buffer.edit(vec![0..1], "12345", cx));
             let (snapshot, _) = map.read(cx.as_ref());
             assert_eq!(snapshot.text(), "12345…fghijkl");
         }
@@ -1158,6 +1196,9 @@ mod tests {
             });
             let mut map = FoldMap::new(buffer.clone(), cx.as_ref());
 
+            let (mut initial_snapshot, _) = map.read(cx.as_ref());
+            let mut snapshot_edits = Vec::new();
+
             for _ in 0..operations {
                 log::info!("text: {:?}", buffer.read(cx).text());
                 match rng.gen_range(0..=100) {
@@ -1170,8 +1211,10 @@ mod tests {
                             to_fold.push(start..end);
                         }
                         log::info!("folding {:?}", to_fold);
-                        let (mut writer, _, _) = map.write(cx.as_ref());
-                        writer.fold(to_fold, cx.as_ref());
+                        let (mut writer, snapshot, edits) = map.write(cx.as_ref());
+                        snapshot_edits.push((snapshot, edits));
+                        let (snapshot, edits) = writer.fold(to_fold, cx.as_ref());
+                        snapshot_edits.push((snapshot, edits));
                     }
                     35..=59 if !map.folds.is_empty() => {
                         let buffer = buffer.read(cx);
@@ -1182,8 +1225,10 @@ mod tests {
                             to_unfold.push(start..end);
                         }
                         log::info!("unfolding {:?}", to_unfold);
-                        let (mut writer, _, _) = map.write(cx.as_ref());
-                        writer.unfold(to_unfold, cx.as_ref());
+                        let (mut writer, snapshot, edits) = map.write(cx.as_ref());
+                        snapshot_edits.push((snapshot, edits));
+                        let (snapshot, edits) = writer.fold(to_unfold, cx.as_ref());
+                        snapshot_edits.push((snapshot, edits));
                     }
                     _ => {
                         let edits = buffer.update(cx, |buffer, cx| {
@@ -1195,7 +1240,6 @@ mod tests {
                         log::info!("editing {:?}", edits);
                     }
                 }
-                map.check_invariants(cx.as_ref());
 
                 let buffer = map.buffer.read(cx).snapshot();
                 let mut expected_text: String = buffer.text().into();
@@ -1212,8 +1256,9 @@ mod tests {
                 expected_buffer_rows.extend((0..=next_row).rev());
                 expected_buffer_rows.reverse();
 
-                let (snapshot, _) = map.read(cx.as_ref());
+                let (snapshot, edits) = map.read(cx.as_ref());
                 assert_eq!(snapshot.text(), expected_text);
+                snapshot_edits.push((snapshot.clone(), edits));
 
                 for (display_row, line) in expected_text.lines().enumerate() {
                     let line_len = snapshot.line_len(display_row as u32);
@@ -1321,6 +1366,21 @@ mod tests {
                         expected_folds
                     );
                 }
+
+                let mut text = initial_snapshot.text();
+                for (snapshot, edits) in snapshot_edits.drain(..) {
+                    let new_text = snapshot.text();
+                    let mut delta = 0isize;
+                    for mut edit in edits {
+                        edit.old_bytes.start = ((edit.old_bytes.start as isize) + delta) as usize;
+                        edit.old_bytes.end = ((edit.old_bytes.end as isize) + delta) as usize;
+                        delta += edit.delta();
+                        text.replace_range(edit.old_bytes, &new_text[edit.new_bytes]);
+                    }
+
+                    assert_eq!(text, new_text);
+                    initial_snapshot = snapshot;
+                }
             }
         }
     }
@@ -1375,16 +1435,6 @@ mod tests {
                 }
             }
             merged_ranges
-        }
-
-        fn check_invariants(&self, cx: &AppContext) {
-            self.sync(cx);
-            let buffer = self.buffer.read(cx);
-            assert_eq!(
-                self.transforms.lock().summary().buffer.bytes,
-                buffer.len(),
-                "transform tree does not match buffer's length"
-            );
         }
     }
 }
