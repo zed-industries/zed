@@ -147,7 +147,7 @@ impl App {
         let cx = app.0.clone();
         foreground_platform.on_menu_command(Box::new(move |command, arg| {
             let mut cx = cx.borrow_mut();
-            if let Some(key_window_id) = cx.platform.key_window_id() {
+            if let Some(key_window_id) = cx.cx.platform.key_window_id() {
                 if let Some((presenter, _)) = cx.presenters_and_platform_windows.get(&key_window_id)
                 {
                     let presenter = presenter.clone();
@@ -374,7 +374,7 @@ impl TestAppContext {
     }
 
     pub fn platform(&self) -> Arc<dyn platform::Platform> {
-        self.cx.borrow().platform.clone()
+        self.cx.borrow().cx.platform.clone()
     }
 
     pub fn foreground(&self) -> Rc<executor::Foreground> {
@@ -566,7 +566,6 @@ type GlobalActionCallback = dyn FnMut(&dyn Any, &mut MutableAppContext);
 pub struct MutableAppContext {
     weak_self: Option<rc::Weak<RefCell<Self>>>,
     foreground_platform: Rc<dyn platform::ForegroundPlatform>,
-    platform: Arc<dyn platform::Platform>,
     assets: Arc<AssetCache>,
     cx: AppContext,
     actions: HashMap<TypeId, HashMap<String, Vec<Box<ActionCallback>>>>,
@@ -598,7 +597,6 @@ impl MutableAppContext {
         Self {
             weak_self: None,
             foreground_platform,
-            platform,
             assets: Arc::new(AssetCache::new(asset_source)),
             cx: AppContext {
                 models: Default::default(),
@@ -608,6 +606,7 @@ impl MutableAppContext {
                 ref_counts: Arc::new(Mutex::new(RefCounts::default())),
                 background,
                 font_cache: Arc::new(FontCache::new(fonts)),
+                platform,
             },
             actions: HashMap::new(),
             global_actions: HashMap::new(),
@@ -631,7 +630,7 @@ impl MutableAppContext {
     }
 
     pub fn platform(&self) -> Arc<dyn platform::Platform> {
-        self.platform.clone()
+        self.cx.platform.clone()
     }
 
     pub fn font_cache(&self) -> &Arc<FontCache> {
@@ -992,7 +991,7 @@ impl MutableAppContext {
     }
 
     fn open_platform_window(&mut self, window_id: usize) {
-        let mut window = self.platform.open_window(
+        let mut window = self.cx.platform.open_window(
             window_id,
             WindowOptions {
                 bounds: RectF::new(vec2f(0., 0.), vec2f(1024., 768.)),
@@ -1000,7 +999,7 @@ impl MutableAppContext {
             },
             self.foreground.clone(),
         );
-        let text_layout_cache = TextLayoutCache::new(self.platform.fonts());
+        let text_layout_cache = TextLayoutCache::new(self.cx.platform.fonts());
         let presenter = Rc::new(RefCell::new(Presenter::new(
             window_id,
             self.cx.font_cache.clone(),
@@ -1387,11 +1386,11 @@ impl MutableAppContext {
     }
 
     pub fn write_to_clipboard(&self, item: ClipboardItem) {
-        self.platform.write_to_clipboard(item);
+        self.cx.platform.write_to_clipboard(item);
     }
 
     pub fn read_from_clipboard(&self) -> Option<ClipboardItem> {
-        self.platform.read_from_clipboard()
+        self.cx.platform.read_from_clipboard()
     }
 }
 
@@ -1485,6 +1484,7 @@ pub struct AppContext {
     background: Arc<executor::Background>,
     ref_counts: Arc<Mutex<RefCounts>>,
     font_cache: Arc<FontCache>,
+    platform: Arc<dyn Platform>,
 }
 
 impl AppContext {
@@ -1524,8 +1524,12 @@ impl AppContext {
         &self.background
     }
 
-    pub fn font_cache(&self) -> &FontCache {
+    pub fn font_cache(&self) -> &Arc<FontCache> {
         &self.font_cache
+    }
+
+    pub fn platform(&self) -> &Arc<dyn Platform> {
+        &self.platform
     }
 
     pub fn value<Tag: 'static, T: 'static + Default>(&self, id: usize) -> ValueHandle<T> {

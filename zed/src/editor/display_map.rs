@@ -21,7 +21,9 @@ impl DisplayMap {
         let fold_map = FoldMap::new(buffer.clone(), cx);
         let (snapshot, edits) = fold_map.read(cx);
         assert_eq!(edits.len(), 0);
-        let wrap_map = WrapMap::new(snapshot, cx);
+        // TODO: take `wrap_width` as a parameter.
+        let config = { todo!() };
+        let wrap_map = WrapMap::new(snapshot, config, cx);
         DisplayMap {
             buffer,
             fold_map,
