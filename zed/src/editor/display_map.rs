@@ -3,7 +3,7 @@ mod wrap_map;
 
 use crate::settings::StyleId;
 
-use super::{buffer, Anchor, Bias, Buffer, Edit, Point, ToOffset, ToPoint};
+use super::{buffer, Anchor, Bias, Buffer, Point, ToOffset, ToPoint};
 pub use fold_map::BufferRows;
 use fold_map::{FoldMap, FoldMapSnapshot};
 use gpui::{AppContext, ModelHandle};
