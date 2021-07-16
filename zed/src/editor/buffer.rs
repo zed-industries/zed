@@ -1930,6 +1930,19 @@ pub struct Snapshot {
     query_cursor: QueryCursorHandle,
 }
 
+impl Clone for Snapshot {
+    fn clone(&self) -> Self {
+        Self {
+            visible_text: self.visible_text.clone(),
+            fragments: self.fragments.clone(),
+            version: self.version.clone(),
+            tree: self.tree.clone(),
+            language: self.language.clone(),
+            query_cursor: QueryCursorHandle::new(),
+        }
+    }
+}
+
 impl Snapshot {
     pub fn len(&self) -> usize {
         self.visible_text.len()

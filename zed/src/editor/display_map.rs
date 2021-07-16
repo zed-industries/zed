@@ -1,31 +1,37 @@
 mod fold_map;
 mod wrap_map;
 
-use crate::settings::StyleId;
-
 use super::{buffer, Anchor, Bias, Buffer, Point, ToOffset, ToPoint};
+use crate::settings::StyleId;
 pub use fold_map::BufferRows;
-use fold_map::{FoldMap, FoldMapSnapshot};
+use fold_map::FoldMap;
 use gpui::{AppContext, ModelHandle};
 use std::{mem, ops::Range};
+use wrap_map::WrapMap;
 
 pub struct DisplayMap {
     buffer: ModelHandle<Buffer>,
     fold_map: FoldMap,
+    wrap_map: WrapMap,
     tab_size: usize,
 }
 
 impl DisplayMap {
     pub fn new(buffer: ModelHandle<Buffer>, tab_size: usize, cx: &AppContext) -> Self {
+        let fold_map = FoldMap::new(buffer.clone(), cx);
+        let (snapshot, edits) = fold_map.read(cx);
+        assert_eq!(edits.len(), 0);
+        let wrap_map = WrapMap::new(snapshot, cx);
         DisplayMap {
-            buffer: buffer.clone(),
-            fold_map: FoldMap::new(buffer, cx),
+            buffer,
+            fold_map,
+            wrap_map,
             tab_size,
         }
     }
 
     pub fn snapshot(&self, cx: &AppContext) -> DisplayMapSnapshot {
-        let (folds_snapshot, edits) = self.fold_map.snapshot(cx);
+        let (folds_snapshot, edits) = self.fold_map.read(cx);
         DisplayMapSnapshot {
             buffer_snapshot: self.buffer.read(cx).snapshot(),
             folds_snapshot,
@@ -38,7 +44,8 @@ impl DisplayMap {
         ranges: impl IntoIterator<Item = Range<T>>,
         cx: &AppContext,
     ) {
-        self.fold_map.fold(ranges, cx)
+        let (mut fold_map, snapshot, edits) = self.fold_map.write(cx);
+        let edits = fold_map.fold(ranges, cx);
     }
 
     pub fn unfold<T: ToOffset>(
@@ -46,13 +53,14 @@ impl DisplayMap {
         ranges: impl IntoIterator<Item = Range<T>>,
         cx: &AppContext,
     ) {
-        self.fold_map.unfold(ranges, cx)
+        let (mut fold_map, snapshot, edits) = self.fold_map.write(cx);
+        let edits = fold_map.unfold(ranges, cx);
     }
 }
 
 pub struct DisplayMapSnapshot {
     buffer_snapshot: buffer::Snapshot,
-    folds_snapshot: FoldMapSnapshot,
+    folds_snapshot: fold_map::Snapshot,
     tab_size: usize,
 }
 

@@ -1,97 +1,85 @@
 use crate::{
-    editor::{display_map::FoldMap, Buffer, Point, TextSummary},
+    editor::{display_map::fold_map, Point, TextSummary},
     sum_tree::{self, SumTree},
-    time,
     util::Bias,
 };
-use gpui::{Entity, ModelContext, ModelHandle, Task};
+use gpui::{AppContext, Task};
 use parking_lot::Mutex;
-use postage::{
-    mpsc,
-    prelude::{Sink, Stream},
-    watch,
-};
+use postage::{prelude::Sink, watch};
+use smol::channel;
 
 #[derive(Clone)]
-struct Snapshot {
+pub struct Snapshot {
     transforms: SumTree<Transform>,
-    version: time::Global,
+    version: usize,
 }
 
 struct State {
     snapshot: Snapshot,
-    interpolated_version: time::Global,
+    interpolated_version: usize,
 }
 
-struct WrapMap {
-    buffer: ModelHandle<Buffer>,
-    fold_map: FoldMap,
+pub struct WrapMap {
     state: Mutex<State>,
+    edits_tx: channel::Sender<(fold_map::Snapshot, Vec<fold_map::Edit>)>,
     background_snapshots: watch::Receiver<Snapshot>,
     _background_task: Task<()>,
 }
 
-impl Entity for WrapMap {
-    type Event = ();
-}
-
 impl WrapMap {
-    fn new(buffer_handle: ModelHandle<Buffer>, cx: &mut ModelContext<Self>) -> Self {
-        let buffer = buffer_handle.read(cx).clone();
-        let version = buffer.version();
+    pub fn new(folds_snapshot: fold_map::Snapshot, cx: &AppContext) -> Self {
         let snapshot = Snapshot {
             transforms: SumTree::from_item(
                 Transform {
                     summary: TransformSummary {
-                        buffer: buffer.text_summary(),
-                        display: buffer.text_summary(),
+                        folded: folds_snapshot.text_summary(),
+                        wrapped: folds_snapshot.text_summary(),
                     },
                     display_text: None,
                 },
                 &(),
             ),
-            version: version.clone(),
+            version: folds_snapshot.version,
         };
         let (background_snapshots_tx, background_snapshots_rx) =
             watch::channel_with(snapshot.clone());
-        let (buffers_tx, buffers_rx) = mpsc::channel(32);
-        cx.observe(&buffer_handle, move |_, buffer, cx| {
-            let mut buffers_tx = buffers_tx.clone();
-            // TODO: replace cloning buffers with sending `Buffer::snapshot`.
-            let buffer = buffer.read(cx).clone();
-            cx.spawn_weak(|_, _| async move {
-                let _ = buffers_tx.send(buffer).await;
-            })
-            .detach();
-        });
+        let (edits_tx, edits_rx) = channel::unbounded();
         let background_task = cx.background().spawn(async move {
-            let mut wrapper = BackgroundWrapper::new(buffers_rx, background_snapshots_tx);
-            wrapper.run(buffer).await;
+            let mut wrapper = BackgroundWrapper::new(edits_rx, background_snapshots_tx);
+            wrapper.run(folds_snapshot).await;
         });
 
         Self {
-            buffer: buffer_handle.clone(),
-            fold_map: FoldMap::new(buffer_handle, cx.as_ref()),
             state: Mutex::new(State {
+                interpolated_version: snapshot.version,
                 snapshot,
-                interpolated_version: version,
             }),
+            edits_tx,
             background_snapshots: background_snapshots_rx,
             _background_task: background_task,
         }
     }
+
+    pub fn read(&self, folds_snapshot: fold_map::Snapshot, edits: Vec<fold_map::Edit>) -> Snapshot {
+        // TODO: interpolate
+        self.edits_tx.try_send((folds_snapshot, edits)).unwrap();
+        self.state.lock().snapshot.clone()
+    }
 }
 
 struct BackgroundWrapper {
-    buffers_rx: mpsc::Receiver<Buffer>,
+    edits_rx: channel::Receiver<(fold_map::Snapshot, Vec<fold_map::Edit>)>,
     snapshots_tx: watch::Sender<Snapshot>,
     snapshot: Snapshot,
 }
 
 impl BackgroundWrapper {
-    fn new(buffers_rx: mpsc::Receiver<Buffer>, snapshots_tx: watch::Sender<Snapshot>) -> Self {
+    fn new(
+        edits_rx: channel::Receiver<(fold_map::Snapshot, Vec<fold_map::Edit>)>,
+        snapshots_tx: watch::Sender<Snapshot>,
+    ) -> Self {
         Self {
-            buffers_rx,
+            edits_rx,
             snapshots_tx,
             snapshot: Snapshot {
                 transforms: Default::default(),
@@ -100,32 +88,36 @@ impl BackgroundWrapper {
         }
     }
 
-    async fn run(&mut self, buffer: Buffer) {
-        if !self.sync(buffer).await {
+    async fn run(&mut self, snapshot: fold_map::Snapshot) {
+        let edit = fold_map::Edit {
+            old_bytes: 0..0,
+            new_bytes: 0..snapshot.len(),
+        };
+        if !self.sync(snapshot, vec![edit]).await {
             return;
         }
 
-        while let Some(buffer) = self.buffers_rx.recv().await {
-            if !self.sync(buffer).await {
+        while let Ok((snapshot, edits)) = self.edits_rx.recv().await {
+            if !self.sync(snapshot, edits).await {
                 break;
             }
         }
     }
 
-    async fn sync(&mut self, buffer: Buffer) -> bool {
+    async fn sync(&mut self, snapshot: fold_map::Snapshot, edits: Vec<fold_map::Edit>) -> bool {
         let mut new_transforms = SumTree::new();
         {
-            let mut old_cursor = self.snapshot.transforms.cursor::<Point, ()>();
-            for edit in buffer.edits_since(self.snapshot.version.clone()) {
-                new_transforms.push_tree(
-                    old_cursor.slice(&Point::new(edit.old_lines.start.row, 0), Bias::Left, &()),
-                    &(),
-                );
-            }
+            // let mut old_cursor = self.snapshot.transforms.cursor::<Point, ()>();
+            // for edit in buffer.edits_since(self.snapshot.version.clone()) {
+            //     new_transforms.push_tree(
+            //         old_cursor.slice(&Point::new(edit.old_lines.start.row, 0), Bias::Left, &()),
+            //         &(),
+            //     );
+            // }
         }
 
         self.snapshot.transforms = new_transforms;
-        self.snapshot.version = buffer.version();
+        self.snapshot.version = snapshot.version;
         self.snapshots_tx.send(self.snapshot.clone()).await.is_ok()
     }
 }
@@ -146,21 +138,21 @@ impl sum_tree::Item for Transform {
 
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
 struct TransformSummary {
-    display: TextSummary,
-    buffer: TextSummary,
+    folded: TextSummary,
+    wrapped: TextSummary,
 }
 
 impl sum_tree::Summary for TransformSummary {
     type Context = ();
 
     fn add_summary(&mut self, other: &Self, _: &()) {
-        self.buffer += &other.buffer;
-        self.display += &other.display;
+        self.folded += &other.folded;
+        self.wrapped += &other.wrapped;
     }
 }
 
 impl<'a> sum_tree::Dimension<'a, TransformSummary> for Point {
     fn add_summary(&mut self, summary: &'a TransformSummary, _: &()) {
-        *self += &summary.buffer.lines;
+        *self += &summary.folded.lines;
     }
 }
