@@ -60,7 +60,7 @@ impl TextLayoutCache {
             curr_frame.insert(key, layout.clone());
             Line::new(layout.clone(), runs)
         } else {
-            let layout = Arc::new(self.fonts.layout_str(text, font_size, runs));
+            let layout = Arc::new(self.fonts.layout_line(text, font_size, runs));
             let key = CacheKeyValue {
                 text: text.into(),
                 font_size: OrderedFloat(font_size),

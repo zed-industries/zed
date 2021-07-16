@@ -77,13 +77,17 @@ impl platform::FontSystem for FontSystem {
             .rasterize_glyph(font_id, font_size, glyph_id, subpixel_shift, scale_factor)
     }
 
-    fn layout_str(
+    fn layout_line(
         &self,
         text: &str,
         font_size: f32,
         runs: &[(usize, FontId, ColorU)],
     ) -> LineLayout {
-        self.0.read().layout_str(text, font_size, runs)
+        self.0.read().layout_line(text, font_size, runs)
+    }
+
+    fn wrap_line(&self, text: &str, font_size: f32, font_id: FontId) -> Vec<usize> {
+        self.0.read().wrap_line(text, font_size, font_id)
     }
 }
 
@@ -182,7 +186,7 @@ impl FontSystemState {
         }
     }
 
-    fn layout_str(
+    fn layout_line(
         &self,
         text: &str,
         font_size: f32,
@@ -307,6 +311,22 @@ impl FontSystemState {
             len,
         }
     }
+
+    fn wrap_line(&self, text: &str, font_size: f32, font_id: FontId) -> Vec<usize> {
+        let mut string = CFMutableAttributedString::new();
+        string.replace_str(&CFString::new(text), CFRange::init(0, 0));
+        let cf_range = CFRange::init(0 as isize, text.encode_utf16().count() as isize);
+        let font = &self.fonts[font_id.0];
+        unsafe {
+            string.set_attribute(
+                cf_range,
+                kCTFontAttributeName,
+                &font.native_font().clone_with_font_size(font_size as f64),
+            );
+        }
+
+        Vec::new()
+    }
 }
 
 #[cfg(test)]
@@ -333,7 +353,7 @@ mod tests {
         assert_ne!(menlo_regular, menlo_bold);
         assert_ne!(menlo_italic, menlo_bold);
 
-        let line = fonts.layout_str(
+        let line = fonts.layout_line(
             "hello world",
             16.0,
             &[
@@ -360,7 +380,7 @@ mod tests {
         let menlo_regular = fonts.select_font(&menlo, &Properties::new())?;
 
         let text = "This is, m𐍈re 𐍈r less, Zapfino!𐍈";
-        let line = fonts.layout_str(
+        let line = fonts.layout_line(
             text,
             16.0,
             &[

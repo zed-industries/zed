@@ -73,7 +73,7 @@ impl WrapMap {
         }
     }
 
-    pub fn read(&self, folds_snapshot: fold_map::Snapshot, edits: Vec<fold_map::Edit>) -> Snapshot {
+    pub fn sync(&self, folds_snapshot: fold_map::Snapshot, edits: Vec<fold_map::Edit>) -> Snapshot {
         // TODO: interpolate
         self.edits_tx.try_send((folds_snapshot, edits)).unwrap();
         self.state.lock().snapshot.clone()
@@ -186,7 +186,7 @@ mod tests {
     use Bias::{Left, Right};
 
     #[gpui::test]
-    fn test_random_folds(cx: &mut gpui::MutableAppContext) {
+    fn test_random_wraps(cx: &mut gpui::MutableAppContext) {
         let iterations = env::var("ITERATIONS")
             .map(|i| i.parse().expect("invalid `ITERATIONS` variable"))
             .unwrap_or(100);
@@ -218,16 +218,29 @@ mod tests {
                 font_family: font_cache.load_family(&["Helvetica"]).unwrap(),
                 font_size: 14.0,
             };
-            let mut wrapper = BackgroundWrapper::new(config, font_cache.clone(), font_system);
+            let font_id = font_cache
+                .select_font(config.font_family, &Default::default())
+                .unwrap();
+            let mut wrapper =
+                BackgroundWrapper::new(config, font_cache.clone(), font_system.clone());
             let edit = fold_map::Edit {
                 old_bytes: 0..0,
                 new_bytes: 0..snapshot.len(),
             };
-            wrapper.sync(snapshot, vec![edit]);
-            // for line in wrapper.snapshot.text().lines() {
-            //     font_cache.
-            // }
-            // assert_eq!(wrap_map.snapshot().text())
+            wrapper.sync(snapshot.clone(), vec![edit]);
+
+            let mut expected_text = String::new();
+            for line in snapshot.text().lines() {
+                let mut prev_ix = 0;
+                for ix in font_system.wrap_line(line, 14.0, font_id) {
+                    expected_text.push_str(&line[prev_ix..ix]);
+                    expected_text.push('\n');
+                    prev_ix = ix;
+                }
+                expected_text.push_str(&line[prev_ix..]);
+                expected_text.push('\n');
+            }
+            dbg!(expected_text);
         }
     }
 }
