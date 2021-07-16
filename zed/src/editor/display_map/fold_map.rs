@@ -13,10 +13,8 @@ use gpui::{AppContext, ModelHandle};
 use parking_lot::Mutex;
 use std::{
     cmp::{self, Ordering},
-    collections::VecDeque,
     iter,
     ops::Range,
-    sync::Arc,
 };
 
 pub struct FoldMap {
@@ -24,14 +22,6 @@ pub struct FoldMap {
     transforms: Mutex<SumTree<Transform>>,
     folds: SumTree<Fold>,
     last_sync: Mutex<time::Global>,
-    history: Arc<Mutex<FoldMapHistory>>,
-}
-
-#[derive(Default)]
-struct FoldMapHistory {
-    edits: VecDeque<Edit>,
-    oldest_edit_version: usize,
-    snapshot_versions: Vec<usize>,
 }
 
 impl FoldMap {
@@ -51,22 +41,17 @@ impl FoldMap {
                 &(),
             )),
             last_sync: Mutex::new(buffer.version()),
-            history: Default::default(),
         }
     }
 
-    pub fn snapshot(&self, cx: &AppContext) -> FoldMapSnapshot {
-        self.sync(cx);
-        let mut history = self.history.lock();
-        let version = history.oldest_edit_version + history.edits.len();
-        history.snapshot_versions.push(version);
-        FoldMapSnapshot {
+    pub fn snapshot(&self, cx: &AppContext) -> (FoldMapSnapshot, Vec<Edit>) {
+        let edits = self.sync(cx);
+        let snapshot = FoldMapSnapshot {
             transforms: self.transforms.lock().clone(),
             folds: self.folds.clone(),
             buffer: self.buffer.read(cx).snapshot(),
-            history: self.history.clone(),
-            version,
-        }
+        };
+        (snapshot, edits)
     }
 
     pub fn fold<T: ToOffset>(
@@ -74,9 +59,9 @@ impl FoldMap {
         ranges: impl IntoIterator<Item = Range<T>>,
         cx: &AppContext,
     ) {
-        self.sync(cx);
+        let edits = self.sync(cx);
 
-        let mut edits = Vec::new();
+        let mut fold_edits = Vec::new();
         let mut folds = Vec::new();
         let buffer = self.buffer.read(cx).snapshot();
         for range in ranges.into_iter() {
@@ -84,7 +69,7 @@ impl FoldMap {
             if range.start != range.end {
                 let fold = Fold(buffer.anchor_after(range.start)..buffer.anchor_before(range.end));
                 folds.push(fold);
-                edits.push(Edit {
+                fold_edits.push(Edit {
                     old_bytes: range.clone(),
                     new_bytes: range.clone(),
                 });
@@ -104,8 +89,8 @@ impl FoldMap {
             new_tree
         };
 
-        self.consolidate_edits(&mut edits);
-        self.apply_edits(edits, cx);
+        self.consolidate_edits(&mut fold_edits);
+        self.apply_edits(fold_edits, cx);
     }
 
     pub fn unfold<T: ToOffset>(
@@ -113,9 +98,9 @@ impl FoldMap {
         ranges: impl IntoIterator<Item = Range<T>>,
         cx: &AppContext,
     ) {
-        self.sync(cx);
+        let edits = self.sync(cx);
 
-        let mut edits = Vec::new();
+        let mut fold_edits = Vec::new();
         let mut fold_ixs_to_delete = Vec::new();
         let buffer = self.buffer.read(cx).snapshot();
         for range in ranges.into_iter() {
@@ -123,7 +108,7 @@ impl FoldMap {
             let mut folds_cursor = intersecting_folds(&buffer, &self.folds, range);
             while let Some(fold) = folds_cursor.item() {
                 let offset_range = fold.0.start.to_offset(&buffer)..fold.0.end.to_offset(&buffer);
-                edits.push(Edit {
+                fold_edits.push(Edit {
                     old_bytes: offset_range.clone(),
                     new_bytes: offset_range,
                 });
@@ -146,23 +131,26 @@ impl FoldMap {
             folds
         };
 
-        self.consolidate_edits(&mut edits);
-        self.apply_edits(edits, cx);
+        self.consolidate_edits(&mut fold_edits);
+        self.apply_edits(fold_edits, cx);
     }
 
-    fn sync(&self, cx: &AppContext) {
+    #[must_use]
+    fn sync(&self, cx: &AppContext) -> Vec<Edit> {
         let buffer = self.buffer.read(cx);
         let edits = buffer
             .edits_since(self.last_sync.lock().clone())
             .map(Into::into)
             .collect::<Vec<_>>();
-        if !edits.is_empty() {
-            self.apply_edits(edits, cx);
-        }
         *self.last_sync.lock() = buffer.version();
+        if edits.is_empty() {
+            Vec::new()
+        } else {
+            self.apply_edits(edits, cx)
+        }
     }
 
-    fn apply_edits(&self, mut edits: Vec<Edit>, cx: &AppContext) {
+    fn apply_edits(&self, mut edits: Vec<Edit>, cx: &AppContext) -> Vec<Edit> {
         let buffer = self.buffer.read(cx).snapshot();
         let mut edits_iter = edits.iter().cloned().peekable();
 
@@ -337,7 +325,7 @@ impl FoldMap {
         }
 
         *transforms = new_transforms;
-        self.history.lock().edits.extend(edits);
+        edits
     }
 
     fn consolidate_edits(&self, edits: &mut Vec<Edit>) {
@@ -368,17 +356,9 @@ pub struct FoldMapSnapshot {
     transforms: SumTree<Transform>,
     folds: SumTree<Fold>,
     buffer: buffer::Snapshot,
-    history: Arc<Mutex<FoldMapHistory>>,
-    version: usize,
 }
 
 impl FoldMapSnapshot {
-    pub fn edits_since_creation(&self) -> Vec<Edit> {
-        let history = self.history.lock();
-        let index = self.version - history.oldest_edit_version;
-        history.edits.range(index..).cloned().collect()
-    }
-
     #[cfg(test)]
     pub fn text(&self) -> String {
         self.chunks_at(DisplayOffset(0)).collect()
@@ -589,37 +569,6 @@ impl FoldMapSnapshot {
             }
         } else {
             DisplayPoint(self.transforms.summary().display.lines)
-        }
-    }
-}
-
-impl Drop for FoldMapSnapshot {
-    fn drop(&mut self) {
-        let mut history = self.history.lock();
-
-        // Remove this snapshot's version number from the set of currently-snapshotted
-        // version numbers.
-        let mut i = 0;
-        let mut min_snapshot_version = None;
-        while i < history.snapshot_versions.len() {
-            let version = history.snapshot_versions[i];
-            if version == self.version {
-                history.snapshot_versions.remove(i);
-            } else {
-                if min_snapshot_version.map_or(true, |min_version| min_version > version) {
-                    min_snapshot_version = Some(version);
-                }
-                i += 1;
-            }
-        }
-
-        // Discard any edits that predate any outstanding snapshot.
-        if let Some(min_snapshot_version) = min_snapshot_version {
-            if min_snapshot_version > history.oldest_edit_version {
-                let remove_count = min_snapshot_version - history.oldest_edit_version;
-                drop(history.edits.drain(..remove_count));
-                history.oldest_edit_version = min_snapshot_version;
-            }
         }
     }
 }
@@ -978,7 +927,6 @@ mod tests {
     fn test_basic_folds(cx: &mut gpui::MutableAppContext) {
         let buffer = cx.add_model(|cx| Buffer::new(0, sample_text(5, 6), cx));
         let mut map = FoldMap::new(buffer.clone(), cx.as_ref());
-        let snapshot1 = map.snapshot(cx.as_ref());
 
         map.fold(
             vec![
@@ -987,12 +935,10 @@ mod tests {
             ],
             cx.as_ref(),
         );
-        let snapshot2 = map.snapshot(cx.as_ref());
+        let (snapshot2, edits) = map.snapshot(cx.as_ref());
         assert_eq!(snapshot2.text(), "aa…cc…eeeee");
-
-        assert_eq!(snapshot2.edits_since_creation(), &[]);
         assert_eq!(
-            snapshot1.edits_since_creation(),
+            edits,
             &[
                 Edit {
                     old_bytes: 2..16,
@@ -1015,34 +961,11 @@ mod tests {
                 cx,
             );
         });
-        let snapshot3 = map.snapshot(cx.as_ref());
+        let (snapshot3, edits) = map.snapshot(cx.as_ref());
         assert_eq!(snapshot3.text(), "123a…c123c…eeeee");
-
-        assert_eq!(snapshot3.edits_since_creation(), &[]);
         assert_eq!(
-            snapshot2.edits_since_creation(),
+            edits,
             &[
-                Edit {
-                    old_bytes: 0..1,
-                    new_bytes: 0..3,
-                },
-                Edit {
-                    old_bytes: 8..8,
-                    new_bytes: 8..11,
-                },
-            ]
-        );
-        assert_eq!(
-            snapshot1.edits_since_creation(),
-            &[
-                Edit {
-                    old_bytes: 2..16,
-                    new_bytes: 2..5,
-                },
-                Edit {
-                    old_bytes: 7..18,
-                    new_bytes: 7..10
-                },
                 Edit {
                     old_bytes: 0..1,
                     new_bytes: 0..3,
@@ -1057,18 +980,12 @@ mod tests {
         buffer.update(cx, |buffer, cx| {
             buffer.edit(vec![Point::new(2, 6)..Point::new(4, 3)], "456", cx)
         });
-        let snapshot4 = map.snapshot(cx.as_ref());
+        let (snapshot4, _) = map.snapshot(cx.as_ref());
         assert_eq!(snapshot4.text(), "123a…c123456eee");
 
         map.unfold(Some(Point::new(0, 4)..Point::new(0, 5)), cx.as_ref());
-        let snapshot5 = map.snapshot(cx.as_ref());
+        let (snapshot5, _) = map.snapshot(cx.as_ref());
         assert_eq!(snapshot5.text(), "123aaaaa\nbbbbbb\nccc123456eee");
-
-        drop(snapshot1);
-        drop(snapshot2);
-        drop(snapshot3);
-        drop(snapshot4);
-        assert_eq!(map.history.lock().edits, &[]);
     }
 
     #[gpui::test]
@@ -1080,17 +997,20 @@ mod tests {
 
             map.fold(vec![5..8], cx.as_ref());
             map.check_invariants(cx.as_ref());
-            assert_eq!(map.snapshot(cx.as_ref()).text(), "abcde…ijkl");
+            let (snapshot, _) = map.snapshot(cx.as_ref());
+            assert_eq!(snapshot.text(), "abcde…ijkl");
 
             // Create an fold adjacent to the start of the first fold.
             map.fold(vec![0..1, 2..5], cx.as_ref());
             map.check_invariants(cx.as_ref());
-            assert_eq!(map.snapshot(cx.as_ref()).text(), "…b…ijkl");
+            let (snapshot, _) = map.snapshot(cx.as_ref());
+            assert_eq!(snapshot.text(), "…b…ijkl");
 
             // Create an fold adjacent to the end of the first fold.
             map.fold(vec![11..11, 8..10], cx.as_ref());
             map.check_invariants(cx.as_ref());
-            assert_eq!(map.snapshot(cx.as_ref()).text(), "…b…kl");
+            let (snapshot, _) = map.snapshot(cx.as_ref());
+            assert_eq!(snapshot.text(), "…b…kl");
         }
 
         {
@@ -1099,7 +1019,8 @@ mod tests {
             // Create two adjacent folds.
             map.fold(vec![0..2, 2..5], cx.as_ref());
             map.check_invariants(cx.as_ref());
-            assert_eq!(map.snapshot(cx.as_ref()).text(), "…fghijkl");
+            let (snapshot, _) = map.snapshot(cx.as_ref());
+            assert_eq!(snapshot.text(), "…fghijkl");
 
             // Edit within one of the folds.
             buffer.update(cx, |buffer, cx| {
@@ -1108,7 +1029,8 @@ mod tests {
                 buffer.edits_since(version).collect::<Vec<_>>()
             });
             map.check_invariants(cx.as_ref());
-            assert_eq!(map.snapshot(cx.as_ref()).text(), "12345…fghijkl");
+            let (snapshot, _) = map.snapshot(cx.as_ref());
+            assert_eq!(snapshot.text(), "12345…fghijkl");
         }
     }
 
@@ -1125,7 +1047,8 @@ mod tests {
             ],
             cx.as_ref(),
         );
-        assert_eq!(map.snapshot(cx.as_ref()).text(), "aa…eeeee");
+        let (snapshot, _) = map.snapshot(cx.as_ref());
+        assert_eq!(snapshot.text(), "aa…eeeee");
     }
 
     #[gpui::test]
@@ -1140,12 +1063,14 @@ mod tests {
             ],
             cx.as_ref(),
         );
-        assert_eq!(map.snapshot(cx.as_ref()).text(), "aa…cccc\nd…eeeee");
+        let (snapshot, _) = map.snapshot(cx.as_ref());
+        assert_eq!(snapshot.text(), "aa…cccc\nd…eeeee");
 
         buffer.update(cx, |buffer, cx| {
             buffer.edit(Some(Point::new(2, 2)..Point::new(3, 1)), "", cx)
         });
-        assert_eq!(map.snapshot(cx.as_ref()).text(), "aa…eeeee");
+        let (snapshot, _) = map.snapshot(cx.as_ref());
+        assert_eq!(snapshot.text(), "aa…eeeee");
     }
 
     #[gpui::test]
@@ -1163,8 +1088,8 @@ mod tests {
             ],
             cx.as_ref(),
         );
-        let fold_ranges = map
-            .snapshot(cx.as_ref())
+        let (snapshot, _) = map.snapshot(cx.as_ref());
+        let fold_ranges = snapshot
             .folds_in_range(Point::new(1, 0)..Point::new(1, 3))
             .map(|fold| fold.start.to_point(buffer)..fold.end.to_point(buffer))
             .collect::<Vec<_>>();
@@ -1261,9 +1186,9 @@ mod tests {
                 expected_buffer_rows.extend((0..=next_row).rev());
                 expected_buffer_rows.reverse();
 
-                assert_eq!(map.snapshot(cx.as_ref()).text(), expected_text);
+                let (snapshot, _) = map.snapshot(cx.as_ref());
+                assert_eq!(snapshot.text(), expected_text);
 
-                let snapshot = map.snapshot(cx.as_ref());
                 for (display_row, line) in expected_text.lines().enumerate() {
                     let line_len = snapshot.line_len(display_row as u32);
                     assert_eq!(line_len, line.len() as u32);
@@ -1321,7 +1246,6 @@ mod tests {
                     }
                 }
 
-                let snapshot = map.snapshot(cx.as_ref());
                 for _ in 0..5 {
                     let offset = snapshot.clip_offset(
                         DisplayOffset(rng.gen_range(0..=snapshot.len())),
@@ -1390,18 +1314,10 @@ mod tests {
             cx.as_ref(),
         );
 
-        assert_eq!(
-            map.snapshot(cx.as_ref()).text(),
-            "aa…cccc\nd…eeeee\nffffff\n"
-        );
-        assert_eq!(
-            map.snapshot(cx.as_ref()).buffer_rows(0).collect::<Vec<_>>(),
-            vec![0, 3, 5, 6]
-        );
-        assert_eq!(
-            map.snapshot(cx.as_ref()).buffer_rows(3).collect::<Vec<_>>(),
-            vec![6]
-        );
+        let (snapshot, _) = map.snapshot(cx.as_ref());
+        assert_eq!(snapshot.text(), "aa…cccc\nd…eeeee\nffffff\n");
+        assert_eq!(snapshot.buffer_rows(0).collect::<Vec<_>>(), [0, 3, 5, 6]);
+        assert_eq!(snapshot.buffer_rows(3).collect::<Vec<_>>(), [6]);
     }
 
     impl FoldMap {

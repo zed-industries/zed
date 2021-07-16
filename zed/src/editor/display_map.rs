@@ -25,9 +25,10 @@ impl DisplayMap {
     }
 
     pub fn snapshot(&self, cx: &AppContext) -> DisplayMapSnapshot {
+        let (folds_snapshot, edits) = self.fold_map.snapshot(cx);
         DisplayMapSnapshot {
             buffer_snapshot: self.buffer.read(cx).snapshot(),
-            folds_snapshot: self.fold_map.snapshot(cx),
+            folds_snapshot,
             tab_size: self.tab_size,
         }
     }
