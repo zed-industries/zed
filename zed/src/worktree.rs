@@ -2642,6 +2642,55 @@ mod tests {
     }
 
     #[gpui::test]
+    async fn test_search_worktree_without_files(cx: gpui::TestAppContext) {
+        let dir = temp_tree(json!({
+            "root": {
+                "dir1": {},
+                "dir2": {
+                    "dir3": {}
+                }
+            }
+        }));
+        let tree = Worktree::open_local(
+            dir.path(),
+            Default::default(),
+            Arc::new(RealFs),
+            &mut cx.to_async(),
+        )
+        .await
+        .unwrap();
+
+        cx.read(|cx| tree.read(cx).as_local().unwrap().scan_complete())
+            .await;
+        let snapshot = cx.read(|cx| {
+            let tree = tree.read(cx);
+            assert_eq!(tree.file_count(), 0);
+            tree.snapshot()
+        });
+        let results = cx
+            .read(|cx| {
+                match_paths(
+                    Some(&snapshot).into_iter(),
+                    "dir",
+                    false,
+                    false,
+                    false,
+                    10,
+                    Default::default(),
+                    cx.background().clone(),
+                )
+            })
+            .await;
+        assert_eq!(
+            results
+                .into_iter()
+                .map(|result| result.path)
+                .collect::<Vec<Arc<Path>>>(),
+            vec![]
+        );
+    }
+
+    #[gpui::test]
     async fn test_save_file(mut cx: gpui::TestAppContext) {
         let app_state = cx.read(build_app_state);
         let dir = temp_tree(json!({

@@ -64,18 +64,21 @@ pub async fn match_paths<'a, T>(
 where
     T: Clone + Send + Iterator<Item = &'a Snapshot> + 'a,
 {
+    let path_count: usize = if include_ignored {
+        snapshots.clone().map(Snapshot::file_count).sum()
+    } else {
+        snapshots.clone().map(Snapshot::visible_file_count).sum()
+    };
+    if path_count == 0 {
+        return Vec::new();
+    }
+
     let lowercase_query = query.to_lowercase().chars().collect::<Vec<_>>();
     let query = query.chars().collect::<Vec<_>>();
 
     let lowercase_query = &lowercase_query;
     let query = &query;
     let query_chars = CharBag::from(&lowercase_query[..]);
-
-    let path_count: usize = if include_ignored {
-        snapshots.clone().map(Snapshot::file_count).sum()
-    } else {
-        snapshots.clone().map(Snapshot::visible_file_count).sum()
-    };
 
     let num_cpus = background.num_cpus().min(path_count);
     let segment_size = (path_count + num_cpus - 1) / num_cpus;
