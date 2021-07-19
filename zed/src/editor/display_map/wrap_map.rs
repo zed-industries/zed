@@ -22,6 +22,7 @@ struct State {
     interpolated_version: usize,
 }
 
+#[derive(Clone)]
 pub struct Config {
     pub wrap_width: f32,
     pub font_family: FamilyId,
@@ -222,7 +223,7 @@ mod tests {
                 .select_font(config.font_family, &Default::default())
                 .unwrap();
             let mut wrapper =
-                BackgroundWrapper::new(config, font_cache.clone(), font_system.clone());
+                BackgroundWrapper::new(config.clone(), font_cache.clone(), font_system.clone());
             let edit = fold_map::Edit {
                 old_bytes: 0..0,
                 new_bytes: 0..snapshot.len(),
@@ -232,13 +233,11 @@ mod tests {
             let mut expected_text = String::new();
             for line in snapshot.text().lines() {
                 let mut prev_ix = 0;
-                for ix in font_system.wrap_line(line, 14.0, font_id) {
+                for ix in font_system.wrap_line(line, font_id, 14.0, config.wrap_width) {
                     expected_text.push_str(&line[prev_ix..ix]);
                     expected_text.push('\n');
                     prev_ix = ix;
                 }
-                expected_text.push_str(&line[prev_ix..]);
-                expected_text.push('\n');
             }
             dbg!(expected_text);
         }
