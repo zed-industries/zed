@@ -1,18 +1,18 @@
 mod fold_map;
-mod wrap_map;
+// mod wrap_map;
 
 use super::{buffer, Anchor, Bias, Buffer, Point, ToOffset, ToPoint};
 use crate::settings::StyleId;
-pub use fold_map::BufferRows;
 use fold_map::FoldMap;
+pub use fold_map::InputRows;
 use gpui::{AppContext, ModelHandle};
 use std::{mem, ops::Range};
-use wrap_map::WrapMap;
+// use wrap_map::WrapMap;
 
 pub struct DisplayMap {
     buffer: ModelHandle<Buffer>,
     fold_map: FoldMap,
-    wrap_map: WrapMap,
+    // wrap_map: WrapMap,
     tab_size: usize,
 }
 
@@ -22,12 +22,12 @@ impl DisplayMap {
         let (snapshot, edits) = fold_map.read(cx);
         assert_eq!(edits.len(), 0);
         // TODO: take `wrap_width` as a parameter.
-        let config = { todo!() };
-        let wrap_map = WrapMap::new(snapshot, config, cx);
+        // let config = { todo!() };
+        // let wrap_map = WrapMap::new(snapshot, config, cx);
         DisplayMap {
             buffer,
             fold_map,
-            wrap_map,
+            // wrap_map,
             tab_size,
         }
     }
@@ -67,8 +67,8 @@ pub struct DisplayMapSnapshot {
 }
 
 impl DisplayMapSnapshot {
-    pub fn buffer_rows(&self, start_row: u32) -> BufferRows {
-        self.folds_snapshot.buffer_rows(start_row)
+    pub fn buffer_rows(&self, start_row: u32) -> InputRows {
+        self.folds_snapshot.input_rows(start_row)
     }
 
     pub fn max_point(&self) -> DisplayPoint {
@@ -79,7 +79,7 @@ impl DisplayMapSnapshot {
         let (point, expanded_char_column, to_next_stop) = self.collapse_tabs(point, Bias::Left);
         let fold_chunks = self
             .folds_snapshot
-            .chunks_at(self.folds_snapshot.to_display_offset(point));
+            .chunks_at(self.folds_snapshot.to_output_offset(point));
         Chunks {
             fold_chunks,
             column: expanded_char_column,
@@ -91,9 +91,9 @@ impl DisplayMapSnapshot {
 
     pub fn highlighted_chunks_for_rows(&mut self, rows: Range<u32>) -> HighlightedChunks {
         let start = DisplayPoint::new(rows.start, 0);
-        let start = self.folds_snapshot.to_display_offset(start);
+        let start = self.folds_snapshot.to_output_offset(start.0);
         let end = DisplayPoint::new(rows.end, 0).min(self.max_point());
-        let end = self.folds_snapshot.to_display_offset(end);
+        let end = self.folds_snapshot.to_output_offset(end.0);
         HighlightedChunks {
             fold_chunks: self.folds_snapshot.highlighted_chunks(start..end),
             column: 0,
@@ -190,8 +190,11 @@ impl DisplayMapSnapshot {
     }
 
     pub fn line_len(&self, row: u32) -> u32 {
-        self.expand_tabs(DisplayPoint::new(row, self.folds_snapshot.line_len(row)))
-            .column()
+        self.expand_tabs(fold_map::OutputPoint::new(
+            row,
+            self.folds_snapshot.line_len(row),
+        ))
+        .column()
     }
 
     pub fn longest_row(&self) -> u32 {
@@ -208,33 +211,39 @@ impl DisplayMapSnapshot {
             .anchor_after(point.to_buffer_point(self, bias))
     }
 
-    fn expand_tabs(&self, mut point: DisplayPoint) -> DisplayPoint {
+    fn expand_tabs(&self, point: fold_map::OutputPoint) -> DisplayPoint {
         let chars = self
             .folds_snapshot
-            .chars_at(DisplayPoint(Point::new(point.row(), 0)));
+            .chars_at(fold_map::OutputPoint::new(point.row(), 0));
         let expanded = expand_tabs(chars, point.column() as usize, self.tab_size);
-        *point.column_mut() = expanded as u32;
-        point
+        DisplayPoint::new(point.row(), expanded as u32)
     }
 
-    fn collapse_tabs(&self, mut point: DisplayPoint, bias: Bias) -> (DisplayPoint, usize, usize) {
+    fn collapse_tabs(
+        &self,
+        point: DisplayPoint,
+        bias: Bias,
+    ) -> (fold_map::OutputPoint, usize, usize) {
         let chars = self
             .folds_snapshot
-            .chars_at(DisplayPoint(Point::new(point.row(), 0)));
+            .chars_at(fold_map::OutputPoint::new(point.row(), 0));
         let expanded = point.column() as usize;
         let (collapsed, expanded_char_column, to_next_stop) =
             collapse_tabs(chars, expanded, bias, self.tab_size);
-        *point.column_mut() = collapsed as u32;
-        (point, expanded_char_column, to_next_stop)
+        (
+            fold_map::OutputPoint::new(point.row(), collapsed as u32),
+            expanded_char_column,
+            to_next_stop,
+        )
     }
 }
 
 #[derive(Copy, Clone, Debug, Default, Eq, Ord, PartialOrd, PartialEq)]
-pub struct DisplayPoint(Point);
+pub struct DisplayPoint(fold_map::OutputPoint);
 
 impl DisplayPoint {
     pub fn new(row: u32, column: u32) -> Self {
-        Self(Point::new(row, column))
+        Self(fold_map::OutputPoint::new(row, column))
     }
 
     pub fn zero() -> Self {
@@ -242,41 +251,42 @@ impl DisplayPoint {
     }
 
     pub fn row(self) -> u32 {
-        self.0.row
+        self.0.row()
     }
 
     pub fn column(self) -> u32 {
-        self.0.column
+        self.0.column()
     }
 
     pub fn row_mut(&mut self) -> &mut u32 {
-        &mut self.0.row
+        self.0.row_mut()
     }
 
     pub fn column_mut(&mut self) -> &mut u32 {
-        &mut self.0.column
+        self.0.column_mut()
     }
 
     pub fn to_buffer_point(self, map: &DisplayMapSnapshot, bias: Bias) -> Point {
         map.folds_snapshot
-            .to_buffer_point(map.collapse_tabs(self, bias).0)
+            .to_input_point(map.collapse_tabs(self, bias).0)
     }
 
     pub fn to_buffer_offset(self, map: &DisplayMapSnapshot, bias: Bias) -> usize {
         map.folds_snapshot
-            .to_buffer_offset(map.collapse_tabs(self, bias).0)
+            .to_input_offset(map.collapse_tabs(self, bias).0)
     }
 }
 
 impl Point {
     pub fn to_display_point(self, map: &DisplayMapSnapshot) -> DisplayPoint {
-        let mut display_point = map.folds_snapshot.to_display_point(self);
+        let folded_point = map.folds_snapshot.to_output_point(self);
         let chars = map
             .folds_snapshot
-            .chars_at(DisplayPoint::new(display_point.row(), 0));
-        *display_point.column_mut() =
-            expand_tabs(chars, display_point.column() as usize, map.tab_size) as u32;
-        display_point
+            .chars_at(fold_map::OutputPoint::new(folded_point.row(), 0));
+        DisplayPoint::new(
+            folded_point.row(),
+            expand_tabs(chars, folded_point.column() as usize, map.tab_size) as u32,
+        )
     }
 }
 
