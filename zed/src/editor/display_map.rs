@@ -1,6 +1,6 @@
 mod fold_map;
 mod tab_map;
-// mod wrap_map;
+mod wrap_map;
 
 use super::{buffer, Anchor, Bias, Buffer, Point, ToOffset, ToPoint};
 use fold_map::FoldMap;

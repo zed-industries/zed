@@ -47,6 +47,35 @@ pub struct Snapshot {
 }
 
 impl Snapshot {
+    pub fn text_summary(&self) -> TextSummary {
+        // TODO: expand tabs on first and last line, ignoring the longest row.
+        let summary = self.input.text_summary();
+        TextSummary {
+            lines: summary.lines,
+            first_line_chars: summary.first_line_chars,
+            last_line_chars: summary.last_line_chars,
+            longest_row: summary.longest_row,
+            longest_row_chars: summary.longest_row_chars,
+        }
+    }
+
+    pub fn text_summary_for_rows(&self, rows: Range<u32>) -> TextSummary {
+        // TODO: expand tabs on first and last line, ignoring the longest row.
+        let range = InputPoint::new(rows.start, 0)..InputPoint::new(rows.end, 0);
+        let summary = self.input.text_summary_for_range(range);
+        TextSummary {
+            lines: summary.lines,
+            first_line_chars: summary.first_line_chars,
+            last_line_chars: summary.last_line_chars,
+            longest_row: summary.longest_row,
+            longest_row_chars: summary.longest_row_chars,
+        }
+    }
+
+    pub fn version(&self) -> usize {
+        self.input.version
+    }
+
     pub fn chunks_at(&self, point: OutputPoint) -> Chunks {
         let (point, expanded_char_column, to_next_stop) = self.to_input_point(point, Bias::Left);
         let fold_chunks = self.input.chunks_at(self.input.to_output_offset(point));
@@ -71,6 +100,15 @@ impl Snapshot {
             chunk: "",
             style_id: Default::default(),
         }
+    }
+
+    #[cfg(test)]
+    pub fn text(&self) -> String {
+        self.chunks_at(Default::default()).collect()
+    }
+
+    pub fn len(&self) -> OutputOffset {
+        self.to_output_offset(self.input.len())
     }
 
     pub fn line_len(&self, row: u32) -> u32 {
@@ -184,27 +222,7 @@ impl Snapshot {
 }
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
-pub struct OutputOffset(usize);
-
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct Edit {
-    pub old_bytes: Range<OutputOffset>,
-    pub new_bytes: Range<OutputOffset>,
-}
-
-impl Edit {
-    pub fn delta(&self) -> isize {
-        self.inserted_bytes() as isize - self.deleted_bytes() as isize
-    }
-
-    pub fn deleted_bytes(&self) -> usize {
-        self.old_bytes.end.0 - self.old_bytes.start.0
-    }
-
-    pub fn inserted_bytes(&self) -> usize {
-        self.new_bytes.end.0 - self.new_bytes.start.0
-    }
-}
+pub struct OutputOffset(pub usize);
 
 #[derive(Copy, Clone, Debug, Default, Eq, Ord, PartialOrd, PartialEq)]
 pub struct OutputPoint(super::Point);
@@ -232,6 +250,61 @@ impl OutputPoint {
 
     pub fn column_mut(&mut self) -> &mut u32 {
         &mut self.0.column
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Edit {
+    pub old_bytes: Range<OutputOffset>,
+    pub new_bytes: Range<OutputOffset>,
+}
+
+impl Edit {
+    pub fn delta(&self) -> isize {
+        self.inserted_bytes() as isize - self.deleted_bytes() as isize
+    }
+
+    pub fn deleted_bytes(&self) -> usize {
+        self.old_bytes.end.0 - self.old_bytes.start.0
+    }
+
+    pub fn inserted_bytes(&self) -> usize {
+        self.new_bytes.end.0 - self.new_bytes.start.0
+    }
+}
+
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
+pub struct TextSummary {
+    pub lines: super::Point,
+    pub first_line_chars: u32,
+    pub last_line_chars: u32,
+    pub longest_row: u32,
+    pub longest_row_chars: u32,
+}
+
+impl<'a> std::ops::AddAssign<&'a Self> for TextSummary {
+    fn add_assign(&mut self, other: &'a Self) {
+        let joined_chars = self.last_line_chars + other.first_line_chars;
+        if joined_chars > self.longest_row_chars {
+            self.longest_row = self.lines.row;
+            self.longest_row_chars = joined_chars;
+        }
+        if other.longest_row_chars > self.longest_row_chars {
+            self.longest_row = self.lines.row + other.longest_row;
+            self.longest_row_chars = other.longest_row_chars;
+        }
+
+        if self.lines.row == 0 {
+            self.first_line_chars += other.first_line_chars;
+        }
+
+        if other.lines.row == 0 {
+            self.last_line_chars += other.first_line_chars;
+        } else {
+            self.last_line_chars = other.last_line_chars;
+        }
+
+        self.lines += &other.lines;
     }
 }
 

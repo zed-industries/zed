@@ -483,14 +483,14 @@ impl Snapshot {
         summary
     }
 
-    pub fn len(&self) -> usize {
-        self.transforms.summary().output.bytes
+    pub fn len(&self) -> OutputOffset {
+        OutputOffset(self.transforms.summary().output.bytes)
     }
 
     pub fn line_len(&self, row: u32) -> u32 {
         let line_start = self.to_output_offset(OutputPoint::new(row, 0)).0;
         let line_end = if row >= self.max_point().row() {
-            self.len()
+            self.len().0
         } else {
             self.to_output_offset(OutputPoint::new(row + 1, 0)).0 - 1
         };
@@ -1442,8 +1442,10 @@ mod tests {
                 }
 
                 for _ in 0..5 {
-                    let offset = snapshot
-                        .clip_offset(OutputOffset(rng.gen_range(0..=snapshot.len())), Bias::Right);
+                    let offset = snapshot.clip_offset(
+                        OutputOffset(rng.gen_range(0..=snapshot.len().0)),
+                        Bias::Right,
+                    );
                     assert_eq!(
                         snapshot.chunks_at(offset).collect::<String>(),
                         &expected_text[offset.0..],
