@@ -1,16 +1,19 @@
 use super::tab_map::{
-    Edit as InputEdit, OutputPoint as InputPoint, Snapshot as InputSnapshot, TextSummary,
+    self, Edit as InputEdit, OutputPoint as InputPoint, Snapshot as InputSnapshot, TextSummary,
 };
 use crate::{
     editor::Point,
-    sum_tree::{self, SumTree},
+    sum_tree::{self, Cursor, SumTree},
     util::Bias,
 };
 use gpui::{font_cache::FamilyId, AppContext, FontCache, FontSystem, Task};
 use parking_lot::Mutex;
 use postage::{prelude::Sink, watch};
 use smol::channel;
-use std::{ops::Range, sync::Arc};
+use std::{
+    ops::{AddAssign, Range, Sub},
+    sync::Arc,
+};
 
 #[derive(Copy, Clone, Debug, Default, Eq, Ord, PartialOrd, PartialEq)]
 pub struct OutputPoint(super::Point);
@@ -41,6 +44,20 @@ impl OutputPoint {
     }
 }
 
+impl AddAssign<Self> for OutputPoint {
+    fn add_assign(&mut self, rhs: Self) {
+        self.0 += &rhs.0;
+    }
+}
+
+impl Sub<Self> for OutputPoint {
+    type Output = OutputPoint;
+
+    fn sub(self, other: Self) -> Self::Output {
+        Self(self.0 - other.0)
+    }
+}
+
 #[derive(Clone)]
 pub struct Snapshot {
     transforms: SumTree<Transform>,
@@ -64,6 +81,65 @@ impl Snapshot {
             version: input.version(),
             input,
         }
+    }
+
+    pub fn chunks_at(&self, point: OutputPoint) -> Chunks {
+        let mut transforms = self.transforms.cursor();
+        transforms.seek(&point, Bias::Right, &());
+        let input_position =
+            *transforms.sum_start() + InputPoint((point - *transforms.seek_start()).0);
+        let input_chunks = self.input.chunks_at(input_position);
+        Chunks {
+            input_chunks,
+            transforms,
+            input_position,
+            input_chunk: "",
+        }
+    }
+}
+
+pub struct Chunks<'a> {
+    input_chunks: tab_map::Chunks<'a>,
+    input_chunk: &'a str,
+    input_position: InputPoint,
+    transforms: Cursor<'a, Transform, OutputPoint, InputPoint>,
+}
+
+impl<'a> Iterator for Chunks<'a> {
+    type Item = &'a str;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        let transform = self.transforms.item()?;
+        if let Some(display_text) = transform.display_text {
+            self.transforms.next(&());
+            return Some(display_text);
+        }
+
+        if self.input_chunk.is_empty() {
+            self.input_chunk = self.input_chunks.next().unwrap();
+        }
+
+        let mut input_len = 0;
+        let transform_end = self.transforms.sum_end(&());
+        for c in self.input_chunk.chars() {
+            let char_len = c.len_utf8();
+            input_len += char_len;
+            if c == '\n' {
+                *self.input_position.row_mut() += 1;
+                *self.input_position.column_mut() = 0;
+            } else {
+                *self.input_position.column_mut() += char_len as u32;
+            }
+
+            if self.input_position >= transform_end {
+                self.transforms.next(&());
+                break;
+            }
+        }
+
+        let (prefix, suffix) = self.input_chunk.split_at(input_len);
+        self.input_chunk = suffix;
+        Some(prefix)
     }
 }
 
@@ -149,7 +225,7 @@ impl BackgroundWrapper {
         mut snapshots_tx: watch::Sender<Snapshot>,
     ) {
         let edit = InputEdit {
-            old_lines: Default::default()..Default::default(),
+            old_lines: Default::default()..snapshot.max_point(),
             new_lines: Default::default()..snapshot.max_point(),
         };
         self.sync(snapshot, vec![edit]);
@@ -214,6 +290,8 @@ impl BackgroundWrapper {
                 'outer: for chunk in new_snapshot.chunks_at(InputPoint::new(row, 0)) {
                     for (ix, line_chunk) in chunk.split('\n').enumerate() {
                         if ix > 0 {
+                            line.push('\n');
+
                             let mut prev_boundary_ix = 0;
                             for boundary_ix in self
                                 .font_system
@@ -224,6 +302,15 @@ impl BackgroundWrapper {
                                     .push(Transform::isomorphic(TextSummary::from(wrapped)), &());
                                 new_transforms.push(Transform::newline(), &());
                                 prev_boundary_ix = boundary_ix;
+                            }
+
+                            if prev_boundary_ix < line.len() {
+                                new_transforms.push(
+                                    Transform::isomorphic(TextSummary::from(
+                                        &line[prev_boundary_ix..],
+                                    )),
+                                    &(),
+                                );
                             }
 
                             line.clear();
@@ -238,14 +325,17 @@ impl BackgroundWrapper {
                 }
 
                 old_cursor.seek_forward(&InputPoint::new(edit.old_rows.end, 0), Bias::Right, &());
+                if old_cursor.seek_end(&()).row() > edit.old_rows.end {
+                    new_transforms.push(
+                        Transform::isomorphic(self.snapshot.input.text_summary_for_rows(
+                            edit.old_rows.end..old_cursor.seek_end(&()).row(),
+                        )),
+                        &(),
+                    );
+                }
+
                 if let Some(next_edit) = edits.peek() {
                     if next_edit.old_rows.start > old_cursor.seek_end(&()).row() {
-                        new_transforms.push(
-                            Transform::isomorphic(self.snapshot.input.text_summary_for_rows(
-                                edit.old_rows.end..old_cursor.seek_end(&()).row(),
-                            )),
-                            &(),
-                        );
                         old_cursor.next(&());
                         new_transforms.push_tree(
                             old_cursor.slice(
@@ -257,12 +347,6 @@ impl BackgroundWrapper {
                         );
                     }
                 } else {
-                    new_transforms.push(
-                        Transform::isomorphic(self.snapshot.input.text_summary_for_rows(
-                            edit.old_rows.end..old_cursor.seek_end(&()).row(),
-                        )),
-                        &(),
-                    );
                     old_cursor.next(&());
                     new_transforms.push_tree(old_cursor.suffix(&()), &());
                 }
@@ -282,6 +366,10 @@ struct Transform {
 
 impl Transform {
     fn isomorphic(summary: TextSummary) -> Self {
+        if summary.lines.is_zero() {
+            panic!("wtf");
+        }
+
         Self {
             summary: TransformSummary {
                 input: summary.clone(),
@@ -337,6 +425,12 @@ impl<'a> sum_tree::Dimension<'a, TransformSummary> for InputPoint {
     }
 }
 
+impl<'a> sum_tree::Dimension<'a, TransformSummary> for OutputPoint {
+    fn add_summary(&mut self, summary: &'a TransformSummary, _: &()) {
+        *self += OutputPoint(summary.output.lines);
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -347,8 +441,39 @@ mod tests {
         },
         util::RandomCharIter,
     };
+    use futures::StreamExt;
     use rand::prelude::*;
     use std::env;
+
+    #[gpui::test]
+    async fn test_simple_wraps(mut cx: gpui::TestAppContext) {
+        let text = "one two three four five six\n";
+        let font_cache = cx.font_cache().clone();
+        let config = Config {
+            wrap_width: 64.,
+            font_family: font_cache.load_family(&["Helvetica"]).unwrap(),
+            font_size: 14.0,
+        };
+
+        let buffer = cx.add_model(|cx| Buffer::new(0, text.to_string(), cx));
+        let mut wrap_map = cx.read(|cx| {
+            let fold_map = FoldMap::new(buffer.clone(), cx);
+            let (folds_snapshot, edits) = fold_map.read(cx);
+            let tab_map = TabMap::new(folds_snapshot.clone(), 4);
+            let (tabs_snapshot, _) = tab_map.sync(folds_snapshot, edits);
+            WrapMap::new(tabs_snapshot, config, cx)
+        });
+
+        wrap_map.background_snapshots.next().await;
+        let snapshot = wrap_map.background_snapshots.next().await.unwrap();
+
+        assert_eq!(
+            snapshot
+                .chunks_at(OutputPoint(Point::new(0, 3)))
+                .collect::<String>(),
+            " two \nthree four \nfive six\n"
+        );
+    }
 
     #[gpui::test]
     fn test_random_wraps(cx: &mut gpui::MutableAppContext) {
@@ -370,7 +495,7 @@ mod tests {
             let mut rng = StdRng::seed_from_u64(seed);
 
             let buffer = cx.add_model(|cx| {
-                let len = rng.gen_range(0..10);
+                let len = rng.gen_range(0..32);
                 let text = RandomCharIter::new(&mut rng).take(len).collect::<String>();
                 Buffer::new(0, text, cx)
             });
@@ -409,6 +534,7 @@ mod tests {
                     prev_ix = ix;
                 }
             }
+
             dbg!(expected_text);
         }
     }

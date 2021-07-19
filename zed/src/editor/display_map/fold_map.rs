@@ -634,7 +634,7 @@ impl Snapshot {
         let overshoot = point - cursor.seek_start();
         OutputPoint(cmp::min(
             cursor.sum_start().0 + overshoot,
-            cursor.end(&()).0,
+            cursor.sum_end(&()).0,
         ))
     }
 
@@ -936,7 +936,7 @@ impl<'a> Iterator for Chunks<'a> {
             self.input_offset += transform.summary.input.bytes;
             self.input_chunks.seek(self.input_offset);
 
-            while self.input_offset >= self.transform_cursor.end(&())
+            while self.input_offset >= self.transform_cursor.sum_end(&())
                 && self.transform_cursor.item().is_some()
             {
                 self.transform_cursor.next(&());
@@ -951,7 +951,7 @@ impl<'a> Iterator for Chunks<'a> {
             chunk = &chunk[offset_in_chunk..];
 
             // Truncate the chunk so that it ends at the next fold.
-            let region_end = self.transform_cursor.end(&()) - self.input_offset;
+            let region_end = self.transform_cursor.sum_end(&()) - self.input_offset;
             if chunk.len() >= region_end {
                 chunk = &chunk[0..region_end];
                 self.transform_cursor.next(&());
@@ -991,7 +991,7 @@ impl<'a> Iterator for HighlightedChunks<'a> {
             self.input_offset += transform.summary.input.bytes;
             self.input_chunks.seek(self.input_offset);
 
-            while self.input_offset >= self.transform_cursor.end(&())
+            while self.input_offset >= self.transform_cursor.sum_end(&())
                 && self.transform_cursor.item().is_some()
             {
                 self.transform_cursor.next(&());
@@ -1015,7 +1015,7 @@ impl<'a> Iterator for HighlightedChunks<'a> {
             chunk = &chunk[offset_in_chunk..];
 
             // Truncate the chunk so that it ends at the next fold.
-            let region_end = self.transform_cursor.end(&()) - self.input_offset;
+            let region_end = self.transform_cursor.sum_end(&()) - self.input_offset;
             if chunk.len() >= region_end {
                 chunk = &chunk[0..region_end];
                 self.transform_cursor.next(&());

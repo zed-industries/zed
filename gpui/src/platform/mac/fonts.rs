@@ -316,6 +316,9 @@ impl FontSystemState {
                     width as f64,
                 ) as usize;
                 ix_converter.advance_to_utf16_ix(ix_converter.utf16_ix + utf16_len);
+                if ix_converter.utf8_ix >= text.len() {
+                    break;
+                }
                 break_indices.push(ix_converter.utf8_ix as usize);
             }
             break_indices
@@ -485,22 +488,15 @@ mod tests {
         let font_ids = fonts.load_family("Helvetica").unwrap();
         let font_id = fonts.select_font(&font_ids, &Default::default()).unwrap();
 
-        let line = "one two three four five";
+        let line = "one two three four five\n";
         let wrap_boundaries = fonts.wrap_line(line, font_id, 16., 64.0);
-        assert_eq!(
-            wrap_boundaries,
-            &["one two ".len(), "one two three ".len(), line.len()]
-        );
+        assert_eq!(wrap_boundaries, &["one two ".len(), "one two three ".len()]);
 
-        let line = "aaa ααα ✋✋✋ 🎉🎉🎉";
+        let line = "aaa ααα ✋✋✋ 🎉🎉🎉\n";
         let wrap_boundaries = fonts.wrap_line(line, font_id, 16., 64.0);
         assert_eq!(
             wrap_boundaries,
-            &[
-                "aaa ααα ".len(),
-                "aaa ααα ✋✋✋ ".len(),
-                "aaa ααα ✋✋✋ 🎉🎉🎉".len(),
-            ]
+            &["aaa ααα ".len(), "aaa ααα ✋✋✋ ".len(),]
         );
     }
 }

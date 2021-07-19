@@ -63,7 +63,7 @@ where
         &self.sum_dimension
     }
 
-    pub fn end(&self, cx: &<T::Summary as Summary>::Context) -> U {
+    pub fn sum_end(&self, cx: &<T::Summary as Summary>::Context) -> U {
         if let Some(item_summary) = self.item_summary() {
             let mut end = self.sum_start().clone();
             end.add_summary(item_summary, cx);

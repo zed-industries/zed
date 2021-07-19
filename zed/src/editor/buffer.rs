@@ -1416,7 +1416,7 @@ impl Buffer {
 
         let mut fragment_start = old_fragments.sum_start().offset();
         for range in ranges {
-            let fragment_end = old_fragments.end(&cx).offset();
+            let fragment_end = old_fragments.sum_end(&cx).offset();
 
             // If the current fragment ends before this range, then jump ahead to the first fragment
             // that extends past the start of this range, reusing any intervening fragments.
@@ -1441,7 +1441,7 @@ impl Buffer {
             }
 
             // If we are at the end of a non-concurrent fragment, advance to the next one.
-            let fragment_end = old_fragments.end(&cx).offset();
+            let fragment_end = old_fragments.sum_end(&cx).offset();
             if fragment_end == range.start && fragment_end > fragment_start {
                 let mut fragment = old_fragments.item().unwrap().clone();
                 fragment.len = fragment_end - fragment_start;
@@ -1495,7 +1495,7 @@ impl Buffer {
             // portions as deleted.
             while fragment_start < range.end {
                 let fragment = old_fragments.item().unwrap();
-                let fragment_end = old_fragments.end(&cx).offset();
+                let fragment_end = old_fragments.sum_end(&cx).offset();
                 let mut intersection = fragment.clone();
                 let intersection_end = cmp::min(range.end, fragment_end);
                 if fragment.was_visible(version, &self.undo_map) {
@@ -1517,7 +1517,7 @@ impl Buffer {
         // If the current fragment has been partially consumed, then consume the rest of it
         // and advance to the next fragment before slicing.
         if fragment_start > old_fragments.sum_start().offset() {
-            let fragment_end = old_fragments.end(&cx).offset();
+            let fragment_end = old_fragments.sum_end(&cx).offset();
             if fragment_end > fragment_start {
                 let mut suffix = old_fragments.item().unwrap().clone();
                 suffix.len = fragment_end - fragment_start;
@@ -1644,7 +1644,7 @@ impl Buffer {
         new_ropes.push_tree(new_fragments.summary().text);
 
         for range in &undo.ranges {
-            let mut end_offset = old_fragments.end(&cx).offset();
+            let mut end_offset = old_fragments.sum_end(&cx).offset();
 
             if end_offset < range.start {
                 let preceding_fragments =
@@ -1668,7 +1668,7 @@ impl Buffer {
                     new_fragments.push(fragment, &None);
 
                     old_fragments.next(&cx);
-                    if end_offset == old_fragments.end(&cx).offset() {
+                    if end_offset == old_fragments.sum_end(&cx).offset() {
                         let unseen_fragments = old_fragments.slice(
                             &VersionedOffset::Offset(end_offset),
                             Bias::Right,
@@ -1677,7 +1677,7 @@ impl Buffer {
                         new_ropes.push_tree(unseen_fragments.summary().text);
                         new_fragments.push_tree(unseen_fragments, &None);
                     }
-                    end_offset = old_fragments.end(&cx).offset();
+                    end_offset = old_fragments.sum_end(&cx).offset();
                 } else {
                     break;
                 }
@@ -1757,7 +1757,7 @@ impl Buffer {
 
         let mut fragment_start = old_fragments.sum_start().visible;
         for range in ranges {
-            let fragment_end = old_fragments.end(&None).visible;
+            let fragment_end = old_fragments.sum_end(&None).visible;
 
             // If the current fragment ends before this range, then jump ahead to the first fragment
             // that extends past the start of this range, reusing any intervening fragments.
@@ -1810,7 +1810,7 @@ impl Buffer {
             // portions as deleted.
             while fragment_start < range.end {
                 let fragment = old_fragments.item().unwrap();
-                let fragment_end = old_fragments.end(&None).visible;
+                let fragment_end = old_fragments.sum_end(&None).visible;
                 let mut intersection = fragment.clone();
                 let intersection_end = cmp::min(range.end, fragment_end);
                 if fragment.visible {
@@ -1835,7 +1835,7 @@ impl Buffer {
         // If the current fragment has been partially consumed, then consume the rest of it
         // and advance to the next fragment before slicing.
         if fragment_start > old_fragments.sum_start().visible {
-            let fragment_end = old_fragments.end(&None).visible;
+            let fragment_end = old_fragments.sum_end(&None).visible;
             if fragment_end > fragment_start {
                 let mut suffix = old_fragments.item().unwrap().clone();
                 suffix.len = fragment_end - fragment_start;
