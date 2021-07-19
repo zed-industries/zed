@@ -1041,7 +1041,7 @@ impl<'a> sum_tree::Dimension<'a, TransformSummary> for OutputPoint {
 pub struct OutputOffset(pub usize);
 
 impl OutputOffset {
-    pub fn to_output_point(&self, snapshot: &Snapshot) -> OutputPoint {
+    pub fn to_point(&self, snapshot: &Snapshot) -> OutputPoint {
         let mut cursor = snapshot
             .transforms
             .cursor::<OutputOffset, TransformSummary>();
