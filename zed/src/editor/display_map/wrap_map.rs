@@ -2,7 +2,7 @@ use std::sync::Arc;
 
 use crate::{
     editor::{
-        display_map::fold_map::{self, DisplayOffset},
+        display_map::fold_map::{self, DisplayOffset, FoldedPoint},
         Point, TextSummary,
     },
     sum_tree::{self, SumTree},
@@ -13,9 +13,39 @@ use parking_lot::Mutex;
 use postage::{prelude::Sink, watch};
 use smol::channel;
 
-#[derive(Clone)]
+#[derive(Copy, Clone, Debug, Default, Eq, Ord, PartialOrd, PartialEq)]
+pub struct WrappedPoint(Point);
+
+impl WrappedPoint {
+    pub fn new(row: u32, column: u32) -> Self {
+        Self(Point::new(row, column))
+    }
+
+    pub fn zero() -> Self {
+        Self::new(0, 0)
+    }
+
+    pub fn row(self) -> u32 {
+        self.0.row
+    }
+
+    pub fn column(self) -> u32 {
+        self.0.column
+    }
+
+    pub fn row_mut(&mut self) -> &mut u32 {
+        &mut self.0.row
+    }
+
+    pub fn column_mut(&mut self) -> &mut u32 {
+        &mut self.0.column
+    }
+}
+
+#[derive(Clone, Default)]
 pub struct Snapshot {
     transforms: SumTree<Transform>,
+    folds_snapshot: fold_map::Snapshot,
     version: usize,
 }
 
@@ -53,6 +83,7 @@ impl WrapMap {
                 },
                 &(),
             ),
+            folds_snapshot,
             version: folds_snapshot.version,
         };
         let (background_snapshots_tx, background_snapshots_rx) =
@@ -96,10 +127,7 @@ impl BackgroundWrapper {
             config,
             font_cache,
             font_system,
-            snapshot: Snapshot {
-                transforms: Default::default(),
-                version: Default::default(),
-            },
+            snapshot: Snapshot::default(),
         }
     }
 
@@ -127,15 +155,80 @@ impl BackgroundWrapper {
     }
 
     fn sync(&mut self, snapshot: fold_map::Snapshot, edits: Vec<fold_map::Edit>) {
+        let font_id = self
+            .font_cache
+            .select_font(self.config.font_family, &Default::default());
+        let font_size = self.config.font_size;
+        let wrap_width = self.config.wrap_width;
+
         let mut new_transforms = SumTree::new();
         {
-            // let mut old_cursor = self.snapshot.transforms.cursor::<Point, ()>();
-            // for edit in buffer.edits_since(self.snapshot.version.clone()) {
-            //     new_transforms.push_tree(
-            //         old_cursor.slice(&Point::new(edit.old_lines.start.row, 0), Bias::Left, &()),
-            //         &(),
-            //     );
-            // }
+            let mut old_cursor = self.snapshot.transforms.cursor::<DisplayPoint, ()>();
+            let mut position = DisplayPoint::zero();
+            for edit in edits {
+                let old_start = DisplayPoint::new(
+                    edit.old_bytes.start.to_display_point(&self.snapshot).row(),
+                    0,
+                );
+                let old_end = DisplayPoint::new(
+                    edit.old_bytes.end.to_display_point(&self.snapshot).row() + 1,
+                    0,
+                );
+                let new_start =
+                    DisplayPoint::new(edit.new_bytes.start.to_display_point(&snapshot).row(), 0);
+                let new_end =
+                    DisplayPoint::new(edit.new_bytes.end.to_display_point(&snapshot).row() + 1, 0);
+
+                if position > old_cursor.seek_start() && old_start >= old_cursor.seek_end(&()) {
+                    old_cursor.next(&());
+                }
+
+                let prefix = old_cursor.slice(&old_start, Bias::Right, &());
+                new_transforms.push_tree(prefix, &());
+                new_transforms.push(
+                    Transform::isomorphic(
+                        self.snapshot
+                            .folds_snapshot
+                            .text_summary_for_range(position..old_start),
+                    ),
+                    &(),
+                );
+
+                let mut row = new_start.row();
+                let mut line = String::new();
+                'outer: for chunk in snapshot.chunks_at(snapshot.to_display_offset(new_start)) {
+                    for (ix, line_chunk) in chunk.split('\n').enumerate() {
+                        if ix > 0 {
+                            let mut prev_boundary_ix = 0;
+                            for boundary_ix in self
+                                .font_system
+                                .wrap_line(&line, font_id, font_size, wrap_width)
+                            {
+                                let wrapped = &line[prev_boundary_ix..boundary_ix];
+                                new_transforms
+                                    .push(Transform::isomorphic(TextSummary::from(wrapped)));
+                                new_transforms.push(Transform::newline());
+                                prev_boundary_ix = boundary_ix;
+                            }
+
+                            line.clear();
+                            row += 1;
+                            if row == new_end.row() {
+                                break 'outer;
+                            }
+                        }
+
+                        line.push_str(line_chunk);
+                    }
+                }
+
+                old_cursor.seek_forward(&old_end, Bias::Right, &());
+                position = old_end;
+            }
+
+            if position > old_cursor.seek_start() && old_start >= old_cursor.seek_end(&()) {
+                old_cursor.next(&());
+            }
         }
 
         self.snapshot.transforms = new_transforms;
@@ -147,6 +240,28 @@ impl BackgroundWrapper {
 struct Transform {
     summary: TransformSummary,
     display_text: Option<&'static str>,
+}
+
+impl Transform {
+    fn isomorphic(summary: TextSummary) -> Self {
+        Self {
+            summary: TransformSummary {
+                folded: summary.clone(),
+                wrapped: summary,
+            },
+            display_text: None,
+        }
+    }
+
+    fn newline() -> Self {
+        Self {
+            summary: TransformSummary {
+                folded: TextSummary::default(),
+                wrapped: TextSummary::from("\n"),
+            },
+            display_text: Some("\n"),
+        }
+    }
 }
 
 impl sum_tree::Item for Transform {
