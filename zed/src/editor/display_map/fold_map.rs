@@ -405,6 +405,47 @@ impl Snapshot {
         self.transforms.summary().display
     }
 
+    pub fn text_summary_for_range(&self, range: Range<DisplayPoint>) -> TextSummary {
+        let mut summary = TextSummary::default();
+
+        let mut cursor = self.transforms.cursor::<DisplayPoint, Point>();
+        cursor.seek(&range.start, Bias::Right, &());
+        if let Some(transform) = cursor.item() {
+            let start_in_transform = range.start.0 - cursor.seek_start().0;
+            let end_in_transform =
+                cmp::min(range.end, cursor.seek_end(&())).0 - cursor.seek_start().0;
+            if let Some(display_text) = transform.display_text {
+                summary = TextSummary::from(
+                    &display_text
+                        [start_in_transform.column as usize..end_in_transform.column as usize],
+                );
+            } else {
+                let buffer_start = *cursor.sum_start() + start_in_transform;
+                let buffer_end = *cursor.sum_start() + end_in_transform;
+                summary = self.buffer.text_summary_for_range(buffer_start..buffer_end);
+            }
+        }
+
+        if range.end > cursor.seek_end(&()) {
+            cursor.next(&());
+            summary += &cursor
+                .summary::<TransformSummary>(&range.end, Bias::Right, &())
+                .display;
+            if let Some(transform) = cursor.item() {
+                let end_in_transform = range.end.0 - cursor.seek_start().0;
+                if let Some(display_text) = transform.display_text {
+                    summary += TextSummary::from(&display_text[..end_in_transform.column as usize]);
+                } else {
+                    let buffer_start = *cursor.sum_start();
+                    let buffer_end = *cursor.sum_start() + end_in_transform;
+                    summary += self.buffer.text_summary_for_range(buffer_start..buffer_end);
+                }
+            }
+        }
+
+        summary
+    }
+
     pub fn len(&self) -> usize {
         self.transforms.summary().display.bytes
     }
@@ -1023,6 +1064,7 @@ mod tests {
     use super::*;
     use crate::editor::buffer::ToPoint;
     use crate::test::sample_text;
+    use std::mem;
 
     #[gpui::test]
     fn test_basic_folds(cx: &mut gpui::MutableAppContext) {
@@ -1404,6 +1446,28 @@ mod tests {
                             .collect::<Vec<_>>(),
                         expected_folds
                     );
+                }
+
+                let text = snapshot.text();
+                for _ in 0..5 {
+                    let start_row = rng.gen_range(0..=snapshot.max_point().row());
+                    let start_column = rng.gen_range(0..=snapshot.line_len(start_row));
+                    let end_row = rng.gen_range(0..=snapshot.max_point().row());
+                    let end_column = rng.gen_range(0..=snapshot.line_len(end_row));
+                    let mut start =
+                        snapshot.clip_point(DisplayPoint::new(start_row, start_column), Bias::Left);
+                    let mut end =
+                        snapshot.clip_point(DisplayPoint::new(end_row, end_column), Bias::Right);
+                    if start > end {
+                        mem::swap(&mut start, &mut end);
+                    }
+
+                    let lines = start..end;
+                    let bytes = snapshot.to_display_offset(start)..snapshot.to_display_offset(end);
+                    assert_eq!(
+                        snapshot.text_summary_for_range(lines),
+                        TextSummary::from(&text[bytes.start.0..bytes.end.0])
+                    )
                 }
 
                 let mut text = initial_snapshot.text();

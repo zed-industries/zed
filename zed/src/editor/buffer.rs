@@ -1992,7 +1992,11 @@ impl Snapshot {
         }
     }
 
-    pub fn text_summary_for_range(&self, range: Range<usize>) -> TextSummary {
+    pub fn text_summary_for_range<T>(&self, range: Range<T>) -> TextSummary
+    where
+        T: ToOffset,
+    {
+        let range = range.start.to_offset(self.content())..range.end.to_offset(self.content());
         self.content().text_summary_for_range(range)
     }
 
