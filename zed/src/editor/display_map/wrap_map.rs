@@ -1,6 +1,5 @@
 use super::tab_map::{
-    Edit as InputEdit, OutputOffset as InputOffset, OutputPoint as InputPoint,
-    Snapshot as InputSnapshot, TextSummary,
+    Edit as InputEdit, OutputPoint as InputPoint, Snapshot as InputSnapshot, TextSummary,
 };
 use crate::{
     editor::Point,
@@ -200,11 +199,11 @@ impl BackgroundWrapper {
                 &(),
             );
 
-            for edit in edits {
-                if edit.new_rows.start > new_transforms.summary().input.row() {
+            while let Some(edit) = edits.next() {
+                if edit.new_rows.start > new_transforms.summary().input.lines.row {
                     new_transforms.push(
-                        Transform::isomorphic(new_snapshot.input.text_summary_for_rows(
-                            new_transforms.summary().input.row()..edit.new_rows.start,
+                        Transform::isomorphic(new_snapshot.text_summary_for_rows(
+                            new_transforms.summary().input.lines.row..edit.new_rows.start,
                         )),
                         &(),
                     );
@@ -238,7 +237,7 @@ impl BackgroundWrapper {
                     }
                 }
 
-                old_cursor.seek_forward(&edit.old_rows.end, Bias::Right, &());
+                old_cursor.seek_forward(&InputPoint::new(edit.old_rows.end, 0), Bias::Right, &());
                 if let Some(next_edit) = edits.peek() {
                     if next_edit.old_rows.start > old_cursor.seek_end(&()).row() {
                         new_transforms.push(
@@ -249,7 +248,11 @@ impl BackgroundWrapper {
                         );
                         old_cursor.next(&());
                         new_transforms.push_tree(
-                            old_cursor.slice(&next_edit.old_rows.start, Bias::Right, &()),
+                            old_cursor.slice(
+                                &InputPoint::new(next_edit.old_rows.start, 0),
+                                Bias::Right,
+                                &(),
+                            ),
                             &(),
                         );
                     }
@@ -330,7 +333,7 @@ impl sum_tree::Summary for TransformSummary {
 
 impl<'a> sum_tree::Dimension<'a, TransformSummary> for InputPoint {
     fn add_summary(&mut self, summary: &'a TransformSummary, _: &()) {
-        *self += &InputPoint(summary.input.lines);
+        *self += InputPoint(summary.input.lines);
     }
 }
 
@@ -392,7 +395,7 @@ mod tests {
                 font_system.clone(),
             );
             let edit = InputEdit {
-                old_lines: Default::default()..Default::default(),
+                old_lines: Default::default()..tabs_snapshot.max_point(),
                 new_lines: Default::default()..tabs_snapshot.max_point(),
             };
             wrapper.sync(tabs_snapshot.clone(), vec![edit]);

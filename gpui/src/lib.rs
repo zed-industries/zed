@@ -25,7 +25,8 @@ pub mod json;
 pub mod keymap;
 mod platform;
 pub use gpui_macros::test;
-pub use platform::{Event, FontSystem, PathPromptOptions, Platform, PromptLevel};
+pub use platform::FontSystem;
+pub use platform::{Event, PathPromptOptions, Platform, PromptLevel};
 pub use presenter::{
     AfterLayoutContext, Axis, DebugContext, EventContext, LayoutContext, PaintContext,
     SizeConstraint, Vector2FExt,

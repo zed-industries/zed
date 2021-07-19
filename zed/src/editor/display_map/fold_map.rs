@@ -19,7 +19,7 @@ use std::{
 };
 
 #[derive(Copy, Clone, Debug, Default, Eq, Ord, PartialOrd, PartialEq)]
-pub struct OutputPoint(super::Point);
+pub struct OutputPoint(pub super::Point);
 
 impl OutputPoint {
     pub fn new(row: u32, column: u32) -> Self {

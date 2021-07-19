@@ -72,6 +72,12 @@ impl Sub for Point {
 
 impl<'a> AddAssign<&'a Self> for Point {
     fn add_assign(&mut self, other: &'a Self) {
+        *self += *self;
+    }
+}
+
+impl AddAssign<Self> for Point {
+    fn add_assign(&mut self, other: Self) {
         if other.row == 0 {
             self.column += other.column;
         } else {

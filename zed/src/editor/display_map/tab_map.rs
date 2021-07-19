@@ -4,7 +4,7 @@ use super::fold_map::{
     Chunks as InputChunks, Edit as InputEdit, HighlightedChunks as InputHighlightedChunks,
     OutputOffset as InputOffset, OutputPoint as InputPoint, Snapshot as InputSnapshot,
 };
-use crate::{settings::StyleId, util::Bias};
+use crate::{editor::rope, settings::StyleId, util::Bias};
 use std::{
     mem,
     ops::{AddAssign, Range},
@@ -232,7 +232,7 @@ impl Snapshot {
 pub struct OutputOffset(pub usize);
 
 #[derive(Copy, Clone, Debug, Default, Eq, Ord, PartialOrd, PartialEq)]
-pub struct OutputPoint(super::Point);
+pub struct OutputPoint(pub super::Point);
 
 impl OutputPoint {
     pub fn new(row: u32, column: u32) -> Self {
@@ -262,7 +262,7 @@ impl OutputPoint {
 
 impl AddAssign<Self> for OutputPoint {
     fn add_assign(&mut self, rhs: Self) {
-        self.0 += rhs.0;
+        self.0 += &rhs.0;
     }
 }
 
@@ -279,6 +279,20 @@ pub struct TextSummary {
     pub last_line_chars: u32,
     pub longest_row: u32,
     pub longest_row_chars: u32,
+}
+
+impl<'a> From<&'a str> for TextSummary {
+    fn from(text: &'a str) -> Self {
+        let sum = rope::TextSummary::from(text);
+
+        TextSummary {
+            lines: sum.lines,
+            first_line_chars: sum.first_line_chars,
+            last_line_chars: sum.last_line_chars,
+            longest_row: sum.longest_row,
+            longest_row_chars: sum.longest_row_chars,
+        }
+    }
 }
 
 impl<'a> std::ops::AddAssign<&'a Self> for TextSummary {
