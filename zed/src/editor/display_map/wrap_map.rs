@@ -1,8 +1,10 @@
 use std::sync::Arc;
 
 use crate::{
-    editor::{display_map::fold_map, Point, TextSummary},
-    settings::Settings,
+    editor::{
+        display_map::fold_map::{self, DisplayOffset},
+        Point, TextSummary,
+    },
     sum_tree::{self, SumTree},
     util::Bias,
 };
@@ -108,8 +110,8 @@ impl BackgroundWrapper {
         mut snapshots_tx: watch::Sender<Snapshot>,
     ) {
         let edit = fold_map::Edit {
-            old_bytes: 0..0,
-            new_bytes: 0..snapshot.len(),
+            old_bytes: DisplayOffset(0)..DisplayOffset(0),
+            new_bytes: DisplayOffset(0)..DisplayOffset(snapshot.len()),
         };
         self.sync(snapshot, vec![edit]);
         if snapshots_tx.send(self.snapshot.clone()).await.is_err() {
@@ -179,9 +181,10 @@ impl<'a> sum_tree::Dimension<'a, TransformSummary> for Point {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::editor::display_map::fold_map::FoldMap;
-    use crate::editor::{Buffer, ToPoint};
-    use crate::util::RandomCharIter;
+    use crate::{
+        editor::{display_map::fold_map::FoldMap, Buffer},
+        util::RandomCharIter,
+    };
     use rand::prelude::*;
     use std::env;
     use Bias::{Left, Right};
@@ -225,8 +228,8 @@ mod tests {
             let mut wrapper =
                 BackgroundWrapper::new(config.clone(), font_cache.clone(), font_system.clone());
             let edit = fold_map::Edit {
-                old_bytes: 0..0,
-                new_bytes: 0..snapshot.len(),
+                old_bytes: DisplayOffset(0)..DisplayOffset(0),
+                new_bytes: DisplayOffset(0)..DisplayOffset(snapshot.len()),
             };
             wrapper.sync(snapshot.clone(), vec![edit]);
 

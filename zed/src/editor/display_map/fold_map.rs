@@ -34,9 +34,10 @@ impl<'a> FoldMapWriter<'a> {
             if range.start != range.end {
                 let fold = Fold(buffer.anchor_after(range.start)..buffer.anchor_before(range.end));
                 folds.push(fold);
-                edits.push(Edit {
+                edits.push(buffer::Edit {
                     old_bytes: range.clone(),
                     new_bytes: range.clone(),
+                    ..Default::default()
                 });
             }
         }
@@ -54,7 +55,7 @@ impl<'a> FoldMapWriter<'a> {
             new_tree
         };
 
-        consolidate_edits(&mut edits);
+        consolidate_buffer_edits(&mut edits);
         let edits = self.0.apply_edits(edits, cx);
         let snapshot = Snapshot {
             transforms: self.0.transforms.lock().clone(),
@@ -78,9 +79,10 @@ impl<'a> FoldMapWriter<'a> {
             let mut folds_cursor = intersecting_folds(&buffer, &self.0.folds, range);
             while let Some(fold) = folds_cursor.item() {
                 let offset_range = fold.0.start.to_offset(&buffer)..fold.0.end.to_offset(&buffer);
-                edits.push(Edit {
+                edits.push(buffer::Edit {
                     old_bytes: offset_range.clone(),
                     new_bytes: offset_range,
+                    ..Default::default()
                 });
                 fold_ixs_to_delete.push(*folds_cursor.start());
                 folds_cursor.next(&buffer);
@@ -101,7 +103,7 @@ impl<'a> FoldMapWriter<'a> {
             folds
         };
 
-        consolidate_edits(&mut edits);
+        consolidate_buffer_edits(&mut edits);
         let edits = self.0.apply_edits(edits, cx);
         let snapshot = Snapshot {
             transforms: self.0.transforms.lock().clone(),
@@ -185,16 +187,16 @@ impl FoldMap {
         }
     }
 
-    fn apply_edits(&self, mut edits: Vec<Edit>, cx: &AppContext) -> Vec<Edit> {
+    fn apply_edits(&self, buffer_edits: Vec<buffer::Edit>, cx: &AppContext) -> Vec<Edit> {
         let buffer = self.buffer.read(cx).snapshot();
-        let mut edits_iter = edits.iter().cloned().peekable();
+        let mut buffer_edits_iter = buffer_edits.iter().cloned().peekable();
 
         let mut new_transforms = SumTree::new();
         let mut transforms = self.transforms.lock();
         let mut cursor = transforms.cursor::<usize, ()>();
         cursor.seek(&0, Bias::Right, &());
 
-        while let Some(mut edit) = edits_iter.next() {
+        while let Some(mut edit) = buffer_edits_iter.next() {
             new_transforms.push_tree(cursor.slice(&edit.old_bytes.start, Bias::Left, &()), &());
             edit.new_bytes.start -= edit.old_bytes.start - cursor.seek_start();
             edit.old_bytes.start = *cursor.seek_start();
@@ -206,12 +208,12 @@ impl FoldMap {
             loop {
                 edit.old_bytes.end = *cursor.seek_start();
 
-                if let Some(next_edit) = edits_iter.peek() {
+                if let Some(next_edit) = buffer_edits_iter.peek() {
                     if next_edit.old_bytes.start > edit.old_bytes.end {
                         break;
                     }
 
-                    let next_edit = edits_iter.next().unwrap();
+                    let next_edit = buffer_edits_iter.next().unwrap();
                     delta += next_edit.delta();
 
                     if next_edit.old_bytes.end >= edit.old_bytes.end {
@@ -334,16 +336,17 @@ impl FoldMap {
 
         drop(cursor);
 
+        let mut display_edits = Vec::with_capacity(buffer_edits.len());
         {
             let mut old_transforms = transforms.cursor::<usize, DisplayOffset>();
             let mut new_transforms = new_transforms.cursor::<usize, DisplayOffset>();
 
-            for edit in &mut edits {
+            for mut edit in buffer_edits {
                 old_transforms.seek(&edit.old_bytes.start, Bias::Left, &());
                 if old_transforms.item().map_or(false, |t| t.is_fold()) {
                     edit.old_bytes.start = *old_transforms.seek_start();
                 }
-                edit.old_bytes.start = old_transforms.sum_start().0
+                let old_start = old_transforms.sum_start().0
                     + (edit.old_bytes.start - old_transforms.seek_start());
 
                 old_transforms.seek_forward(&edit.old_bytes.end, Bias::Right, &());
@@ -351,14 +354,14 @@ impl FoldMap {
                     old_transforms.next(&());
                     edit.old_bytes.end = *old_transforms.seek_start();
                 }
-                edit.old_bytes.end = old_transforms.sum_start().0
+                let old_end = old_transforms.sum_start().0
                     + (edit.old_bytes.end - old_transforms.seek_start());
 
                 new_transforms.seek(&edit.new_bytes.start, Bias::Left, &());
                 if new_transforms.item().map_or(false, |t| t.is_fold()) {
                     edit.new_bytes.start = *new_transforms.seek_start();
                 }
-                edit.new_bytes.start = new_transforms.sum_start().0
+                let new_start = new_transforms.sum_start().0
                     + (edit.new_bytes.start - new_transforms.seek_start());
 
                 new_transforms.seek_forward(&edit.new_bytes.end, Bias::Right, &());
@@ -366,16 +369,21 @@ impl FoldMap {
                     new_transforms.next(&());
                     edit.new_bytes.end = *new_transforms.seek_start();
                 }
-                edit.new_bytes.end = new_transforms.sum_start().0
+                let new_end = new_transforms.sum_start().0
                     + (edit.new_bytes.end - new_transforms.seek_start());
+
+                display_edits.push(Edit {
+                    old_bytes: DisplayOffset(old_start)..DisplayOffset(old_end),
+                    new_bytes: DisplayOffset(new_start)..DisplayOffset(new_end),
+                });
             }
 
-            consolidate_edits(&mut edits);
+            consolidate_display_edits(&mut display_edits);
         }
 
         *transforms = new_transforms;
         self.version.fetch_add(1, SeqCst);
-        edits
+        display_edits
     }
 }
 
@@ -625,7 +633,30 @@ where
     )
 }
 
-fn consolidate_edits(edits: &mut Vec<Edit>) {
+fn consolidate_buffer_edits(edits: &mut Vec<buffer::Edit>) {
+    edits.sort_unstable_by(|a, b| {
+        a.old_bytes
+            .start
+            .cmp(&b.old_bytes.start)
+            .then_with(|| b.old_bytes.end.cmp(&a.old_bytes.end))
+    });
+
+    let mut i = 1;
+    while i < edits.len() {
+        let edit = edits[i].clone();
+        let prev_edit = &mut edits[i - 1];
+        if prev_edit.old_bytes.end >= edit.old_bytes.start {
+            prev_edit.old_bytes.end = prev_edit.old_bytes.end.max(edit.old_bytes.end);
+            prev_edit.new_bytes.start = prev_edit.new_bytes.start.min(edit.new_bytes.start);
+            prev_edit.new_bytes.end = prev_edit.new_bytes.end.max(edit.new_bytes.end);
+            edits.remove(i);
+            continue;
+        }
+        i += 1;
+    }
+}
+
+fn consolidate_display_edits(edits: &mut Vec<Edit>) {
     edits.sort_unstable_by(|a, b| {
         a.old_bytes
             .start
@@ -930,7 +961,24 @@ impl<'a> sum_tree::Dimension<'a, TransformSummary> for DisplayPoint {
 }
 
 #[derive(Copy, Clone, Debug, Default, Eq, Ord, PartialOrd, PartialEq)]
-pub struct DisplayOffset(usize);
+pub struct DisplayOffset(pub usize);
+
+impl DisplayOffset {
+    pub fn to_display_point(&self, snapshot: &Snapshot) -> DisplayPoint {
+        let mut cursor = snapshot
+            .transforms
+            .cursor::<DisplayOffset, TransformSummary>();
+        cursor.seek(self, Bias::Right, &());
+        let overshoot = if cursor.item().map_or(true, |t| t.is_fold()) {
+            Point::new(0, (self.0 - cursor.seek_start().0) as u32)
+        } else {
+            let buffer_offset = cursor.sum_start().buffer.bytes + self.0 - cursor.seek_start().0;
+            let buffer_point = snapshot.buffer.to_point(buffer_offset);
+            buffer_point - cursor.sum_start().buffer.lines
+        };
+        DisplayPoint(cursor.sum_start().display.lines + overshoot)
+    }
+}
 
 impl<'a> sum_tree::Dimension<'a, TransformSummary> for DisplayOffset {
     fn add_summary(&mut self, summary: &'a TransformSummary, _: &()) {
@@ -952,8 +1000,8 @@ impl<'a> sum_tree::Dimension<'a, TransformSummary> for usize {
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Edit {
-    pub old_bytes: Range<usize>,
-    pub new_bytes: Range<usize>,
+    pub old_bytes: Range<DisplayOffset>,
+    pub new_bytes: Range<DisplayOffset>,
 }
 
 impl Edit {
@@ -962,20 +1010,11 @@ impl Edit {
     }
 
     pub fn deleted_bytes(&self) -> usize {
-        self.old_bytes.len()
+        self.old_bytes.end.0 - self.old_bytes.start.0
     }
 
     pub fn inserted_bytes(&self) -> usize {
-        self.new_bytes.len()
-    }
-}
-
-impl From<buffer::Edit> for Edit {
-    fn from(edit: buffer::Edit) -> Self {
-        Self {
-            old_bytes: edit.old_bytes,
-            new_bytes: edit.new_bytes,
-        }
+        self.new_bytes.end.0 - self.new_bytes.start.0
     }
 }
 
@@ -1004,12 +1043,12 @@ mod tests {
             edits,
             &[
                 Edit {
-                    old_bytes: 2..16,
-                    new_bytes: 2..5,
+                    old_bytes: DisplayOffset(2)..DisplayOffset(16),
+                    new_bytes: DisplayOffset(2)..DisplayOffset(5),
                 },
                 Edit {
-                    old_bytes: 7..18,
-                    new_bytes: 7..10
+                    old_bytes: DisplayOffset(7)..DisplayOffset(18),
+                    new_bytes: DisplayOffset(7)..DisplayOffset(10)
                 },
             ]
         );
@@ -1030,12 +1069,12 @@ mod tests {
             edits,
             &[
                 Edit {
-                    old_bytes: 0..1,
-                    new_bytes: 0..3,
+                    old_bytes: DisplayOffset(0)..DisplayOffset(1),
+                    new_bytes: DisplayOffset(0)..DisplayOffset(3),
                 },
                 Edit {
-                    old_bytes: 8..8,
-                    new_bytes: 8..11,
+                    old_bytes: DisplayOffset(8)..DisplayOffset(8),
+                    new_bytes: DisplayOffset(8)..DisplayOffset(11),
                 },
             ]
         );
@@ -1371,11 +1410,12 @@ mod tests {
                 for (snapshot, edits) in snapshot_edits.drain(..) {
                     let new_text = snapshot.text();
                     let mut delta = 0isize;
-                    for mut edit in edits {
-                        edit.old_bytes.start = ((edit.old_bytes.start as isize) + delta) as usize;
-                        edit.old_bytes.end = ((edit.old_bytes.end as isize) + delta) as usize;
+                    for edit in edits {
+                        let old_bytes = ((edit.old_bytes.start.0 as isize) + delta) as usize
+                            ..((edit.old_bytes.end.0 as isize) + delta) as usize;
+                        let new_bytes = edit.new_bytes.start.0..edit.new_bytes.end.0;
                         delta += edit.delta();
-                        text.replace_range(edit.old_bytes, &new_text[edit.new_bytes]);
+                        text.replace_range(old_bytes, &new_text[new_bytes]);
                     }
 
                     assert_eq!(text, new_text);
