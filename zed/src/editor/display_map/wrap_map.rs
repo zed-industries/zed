@@ -1,15 +1,17 @@
 use super::tab_map::{
-    Edit as InputEdit, OutputOffset as InputOffset, Snapshot as InputSnapshot, TextSummary,
+    Edit as InputEdit, OutputOffset as InputOffset, OutputPoint as InputPoint,
+    Snapshot as InputSnapshot, TextSummary,
 };
 use crate::{
     editor::Point,
     sum_tree::{self, SumTree},
+    util::Bias,
 };
 use gpui::{font_cache::FamilyId, AppContext, FontCache, FontSystem, Task};
 use parking_lot::Mutex;
 use postage::{prelude::Sink, watch};
 use smol::channel;
-use std::sync::Arc;
+use std::{ops::Range, sync::Arc};
 
 #[derive(Copy, Clone, Debug, Default, Eq, Ord, PartialOrd, PartialEq)]
 pub struct OutputPoint(super::Point);
@@ -148,8 +150,8 @@ impl BackgroundWrapper {
         mut snapshots_tx: watch::Sender<Snapshot>,
     ) {
         let edit = InputEdit {
-            old_bytes: InputOffset(0)..InputOffset(0),
-            new_bytes: InputOffset(0)..snapshot.len(),
+            old_lines: Default::default()..Default::default(),
+            new_lines: Default::default()..snapshot.max_point(),
         };
         self.sync(snapshot, vec![edit]);
         if snapshots_tx.send(self.snapshot.clone()).await.is_err() {
@@ -164,85 +166,108 @@ impl BackgroundWrapper {
         }
     }
 
-    fn sync(&mut self, snapshot: InputSnapshot, edits: Vec<InputEdit>) {
+    fn sync(&mut self, new_snapshot: InputSnapshot, edits: Vec<InputEdit>) {
+        if edits.is_empty() {
+            return;
+        }
+
         let font_id = self
             .font_cache
-            .select_font(self.config.font_family, &Default::default());
+            .select_font(self.config.font_family, &Default::default())
+            .unwrap();
         let font_size = self.config.font_size;
         let wrap_width = self.config.wrap_width;
 
-        let mut new_transforms = SumTree::new();
+        let mut new_transforms;
         {
-            // let mut old_cursor = self.snapshot.transforms.cursor::<DisplayPoint, ()>();
-            // let mut position = DisplayPoint::zero();
-            // for edit in edits {
-            //     let old_start = DisplayPoint::new(
-            //         edit.old_bytes.start.to_display_point(&self.snapshot).row(),
-            //         0,
-            //     );
-            //     let old_end = DisplayPoint::new(
-            //         edit.old_bytes.end.to_display_point(&self.snapshot).row() + 1,
-            //         0,
-            //     );
-            //     let new_start =
-            //         DisplayPoint::new(edit.new_bytes.start.to_display_point(&snapshot).row(), 0);
-            //     let new_end =
-            //         DisplayPoint::new(edit.new_bytes.end.to_display_point(&snapshot).row() + 1, 0);
+            struct RowEdit {
+                old_rows: Range<u32>,
+                new_rows: Range<u32>,
+            }
 
-            //     if position > old_cursor.seek_start() && old_start >= old_cursor.seek_end(&()) {
-            //         old_cursor.next(&());
-            //     }
+            let mut edits = edits
+                .into_iter()
+                .map(|edit| RowEdit {
+                    old_rows: edit.old_lines.start.row()..edit.old_lines.end.row() + 1,
+                    new_rows: edit.new_lines.start.row()..edit.new_lines.end.row() + 1,
+                })
+                .peekable();
+            let mut old_cursor = self.snapshot.transforms.cursor::<InputPoint, ()>();
 
-            //     let prefix = old_cursor.slice(&old_start, Bias::Right, &());
-            //     new_transforms.push_tree(prefix, &());
-            //     new_transforms.push(
-            //         Transform::isomorphic(
-            //             self.snapshot
-            //                 .folds_snapshot
-            //                 .text_summary_for_range(position..old_start),
-            //         ),
-            //         &(),
-            //     );
+            new_transforms = old_cursor.slice(
+                &InputPoint::new(edits.peek().unwrap().old_rows.start, 0),
+                Bias::Right,
+                &(),
+            );
 
-            //     let mut row = new_start.row();
-            //     let mut line = String::new();
-            //     'outer: for chunk in snapshot.chunks_at(snapshot.to_display_offset(new_start)) {
-            //         for (ix, line_chunk) in chunk.split('\n').enumerate() {
-            //             if ix > 0 {
-            //                 let mut prev_boundary_ix = 0;
-            //                 for boundary_ix in self
-            //                     .font_system
-            //                     .wrap_line(&line, font_id, font_size, wrap_width)
-            //                 {
-            //                     let wrapped = &line[prev_boundary_ix..boundary_ix];
-            //                     new_transforms
-            //                         .push(Transform::isomorphic(TextSummary::from(wrapped)));
-            //                     new_transforms.push(Transform::newline());
-            //                     prev_boundary_ix = boundary_ix;
-            //                 }
+            for edit in edits {
+                if edit.new_rows.start > new_transforms.summary().input.row() {
+                    new_transforms.push(
+                        Transform::isomorphic(new_snapshot.input.text_summary_for_rows(
+                            new_transforms.summary().input.row()..edit.new_rows.start,
+                        )),
+                        &(),
+                    );
+                }
 
-            //                 line.clear();
-            //                 row += 1;
-            //                 if row == new_end.row() {
-            //                     break 'outer;
-            //                 }
-            //             }
+                let mut row = edit.new_rows.start;
+                let mut line = String::new();
+                'outer: for chunk in new_snapshot.chunks_at(InputPoint::new(row, 0)) {
+                    for (ix, line_chunk) in chunk.split('\n').enumerate() {
+                        if ix > 0 {
+                            let mut prev_boundary_ix = 0;
+                            for boundary_ix in self
+                                .font_system
+                                .wrap_line(&line, font_id, font_size, wrap_width)
+                            {
+                                let wrapped = &line[prev_boundary_ix..boundary_ix];
+                                new_transforms
+                                    .push(Transform::isomorphic(TextSummary::from(wrapped)), &());
+                                new_transforms.push(Transform::newline(), &());
+                                prev_boundary_ix = boundary_ix;
+                            }
 
-            //             line.push_str(line_chunk);
-            //         }
-            //     }
+                            line.clear();
+                            row += 1;
+                            if row == edit.new_rows.end {
+                                break 'outer;
+                            }
+                        }
 
-            //     old_cursor.seek_forward(&old_end, Bias::Right, &());
-            //     position = old_end;
-            // }
+                        line.push_str(line_chunk);
+                    }
+                }
 
-            // if position > old_cursor.seek_start() && old_start >= old_cursor.seek_end(&()) {
-            //     old_cursor.next(&());
-            // }
+                old_cursor.seek_forward(&edit.old_rows.end, Bias::Right, &());
+                if let Some(next_edit) = edits.peek() {
+                    if next_edit.old_rows.start > old_cursor.seek_end(&()).row() {
+                        new_transforms.push(
+                            Transform::isomorphic(self.snapshot.input.text_summary_for_rows(
+                                edit.old_rows.end..old_cursor.seek_end(&()).row(),
+                            )),
+                            &(),
+                        );
+                        old_cursor.next(&());
+                        new_transforms.push_tree(
+                            old_cursor.slice(&next_edit.old_rows.start, Bias::Right, &()),
+                            &(),
+                        );
+                    }
+                } else {
+                    new_transforms.push(
+                        Transform::isomorphic(self.snapshot.input.text_summary_for_rows(
+                            edit.old_rows.end..old_cursor.seek_end(&()).row(),
+                        )),
+                        &(),
+                    );
+                    old_cursor.next(&());
+                    new_transforms.push_tree(old_cursor.suffix(&()), &());
+                }
+            }
         }
 
         self.snapshot.transforms = new_transforms;
-        self.snapshot.version = snapshot.version();
+        self.snapshot.version = new_snapshot.version();
     }
 }
 
@@ -303,9 +328,9 @@ impl sum_tree::Summary for TransformSummary {
     }
 }
 
-impl<'a> sum_tree::Dimension<'a, TransformSummary> for Point {
+impl<'a> sum_tree::Dimension<'a, TransformSummary> for InputPoint {
     fn add_summary(&mut self, summary: &'a TransformSummary, _: &()) {
-        *self += &summary.input.lines;
+        *self += &InputPoint(summary.input.lines);
     }
 }
 
@@ -367,8 +392,8 @@ mod tests {
                 font_system.clone(),
             );
             let edit = InputEdit {
-                old_bytes: InputOffset(0)..InputOffset(0),
-                new_bytes: InputOffset(0)..tabs_snapshot.len(),
+                old_lines: Default::default()..Default::default(),
+                new_lines: Default::default()..tabs_snapshot.max_point(),
             };
             wrapper.sync(tabs_snapshot.clone(), vec![edit]);
 

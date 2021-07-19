@@ -5,7 +5,10 @@ use super::fold_map::{
     OutputOffset as InputOffset, OutputPoint as InputPoint, Snapshot as InputSnapshot,
 };
 use crate::{settings::StyleId, util::Bias};
-use std::{mem, ops::Range};
+use std::{
+    mem,
+    ops::{AddAssign, Range},
+};
 
 pub struct TabMap(Mutex<Snapshot>);
 
@@ -27,11 +30,15 @@ impl TabMap {
 
         let mut output_edits = Vec::with_capacity(input_edits.len());
         for input_edit in input_edits {
+            let old_start = input_edit.old_bytes.start.to_point(&old_snapshot.input);
+            let old_end = input_edit.old_bytes.end.to_point(&old_snapshot.input);
+            let new_start = input_edit.new_bytes.start.to_point(&new_snapshot.input);
+            let new_end = input_edit.new_bytes.end.to_point(&new_snapshot.input);
             output_edits.push(Edit {
-                old_bytes: old_snapshot.to_output_offset(input_edit.old_bytes.start)
-                    ..old_snapshot.to_output_offset(input_edit.old_bytes.end),
-                new_bytes: new_snapshot.to_output_offset(input_edit.new_bytes.start)
-                    ..new_snapshot.to_output_offset(input_edit.new_bytes.end),
+                old_lines: old_snapshot.to_output_point(old_start)
+                    ..old_snapshot.to_output_point(old_end),
+                new_lines: new_snapshot.to_output_point(new_start)
+                    ..new_snapshot.to_output_point(new_end),
             });
         }
 
@@ -253,24 +260,16 @@ impl OutputPoint {
     }
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct Edit {
-    pub old_bytes: Range<OutputOffset>,
-    pub new_bytes: Range<OutputOffset>,
+impl AddAssign<Self> for OutputPoint {
+    fn add_assign(&mut self, rhs: Self) {
+        self.0 += rhs.0;
+    }
 }
 
-impl Edit {
-    pub fn delta(&self) -> isize {
-        self.inserted_bytes() as isize - self.deleted_bytes() as isize
-    }
-
-    pub fn deleted_bytes(&self) -> usize {
-        self.old_bytes.end.0 - self.old_bytes.start.0
-    }
-
-    pub fn inserted_bytes(&self) -> usize {
-        self.new_bytes.end.0 - self.new_bytes.start.0
-    }
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Edit {
+    pub old_lines: Range<OutputPoint>,
+    pub new_lines: Range<OutputPoint>,
 }
 
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
