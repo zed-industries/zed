@@ -72,7 +72,7 @@ impl Sub for Point {
 
 impl<'a> AddAssign<&'a Self> for Point {
     fn add_assign(&mut self, other: &'a Self) {
-        *self += *self;
+        *self += *other;
     }
 }
 
