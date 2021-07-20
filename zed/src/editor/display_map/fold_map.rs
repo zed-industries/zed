@@ -1108,14 +1108,13 @@ mod tests {
         let mut map = FoldMap::new(buffer.clone(), cx.as_ref());
 
         let (mut writer, _, _) = map.write(cx.as_ref());
-        writer.fold(
+        let (snapshot2, edits) = writer.fold(
             vec![
                 InputPoint::new(0, 2)..InputPoint::new(2, 2),
                 InputPoint::new(2, 4)..InputPoint::new(4, 1),
             ],
             cx.as_ref(),
         );
-        let (snapshot2, edits) = map.read(cx.as_ref());
         assert_eq!(snapshot2.text(), "aa…cc…eeeee");
         assert_eq!(
             edits,
@@ -1125,7 +1124,7 @@ mod tests {
                     new_bytes: OutputOffset(2)..OutputOffset(5),
                 },
                 Edit {
-                    old_bytes: OutputOffset(7)..OutputOffset(18),
+                    old_bytes: OutputOffset(18)..OutputOffset(29),
                     new_bytes: OutputOffset(7)..OutputOffset(10)
                 },
             ]
@@ -1151,7 +1150,7 @@ mod tests {
                     new_bytes: OutputOffset(0)..OutputOffset(3),
                 },
                 Edit {
-                    old_bytes: OutputOffset(8)..OutputOffset(8),
+                    old_bytes: OutputOffset(6)..OutputOffset(6),
                     new_bytes: OutputOffset(8)..OutputOffset(11),
                 },
             ]
