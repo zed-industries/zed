@@ -253,11 +253,13 @@ impl BackgroundWrapper {
         let font_size = self.config.font_size;
         let wrap_width = self.config.wrap_width;
 
+        #[derive(Debug)]
         struct RowEdit {
             old_rows: Range<u32>,
             new_rows: Range<u32>,
         }
 
+        dbg!(&edits);
         let mut edits = edits.into_iter().peekable();
         let mut row_edits = Vec::new();
         while let Some(edit) = edits.next() {
@@ -278,6 +280,7 @@ impl BackgroundWrapper {
 
             row_edits.push(row_edit);
         }
+        dbg!(&row_edits);
 
         let mut new_transforms;
         {
@@ -292,12 +295,11 @@ impl BackgroundWrapper {
 
             while let Some(edit) = row_edits.next() {
                 if edit.new_rows.start > new_transforms.summary().input.lines.row {
-                    new_transforms.push(
-                        Transform::isomorphic(new_snapshot.text_summary_for_rows(
-                            new_transforms.summary().input.lines.row..edit.new_rows.start,
-                        )),
-                        &(),
+                    let summary = new_snapshot.text_summary_for_range(
+                        InputPoint::new(new_transforms.summary().input.lines.row, 0)
+                            ..InputPoint::new(edit.new_rows.start, 0),
                     );
+                    new_transforms.push(Transform::isomorphic(summary), &());
                 }
 
                 let mut input_row = edit.new_rows.start;
@@ -345,17 +347,14 @@ impl BackgroundWrapper {
                 }
 
                 old_cursor.seek_forward(&InputPoint::new(edit.old_rows.end, 0), Bias::Right, &());
-                if old_cursor.seek_end(&()).row() > edit.old_rows.end {
-                    new_transforms.push(
-                        Transform::isomorphic(self.snapshot.input.text_summary_for_rows(
-                            edit.old_rows.end..old_cursor.seek_end(&()).row(),
-                        )),
-                        &(),
-                    );
-                }
-
                 if let Some(next_edit) = row_edits.peek() {
                     if next_edit.old_rows.start > old_cursor.seek_end(&()).row() {
+                        if old_cursor.seek_end(&()) > InputPoint::new(edit.old_rows.end, 0) {
+                            let summary = self.snapshot.input.text_summary_for_range(
+                                InputPoint::new(edit.old_rows.end, 0)..old_cursor.seek_end(&()),
+                            );
+                            new_transforms.push(Transform::isomorphic(summary), &());
+                        }
                         old_cursor.next(&());
                         new_transforms.push_tree(
                             old_cursor.slice(
@@ -367,6 +366,12 @@ impl BackgroundWrapper {
                         );
                     }
                 } else {
+                    if old_cursor.seek_end(&()) > InputPoint::new(edit.old_rows.end, 0) {
+                        let summary = self.snapshot.input.text_summary_for_range(
+                            InputPoint::new(edit.old_rows.end, 0)..old_cursor.seek_end(&()),
+                        );
+                        new_transforms.push(Transform::isomorphic(summary), &());
+                    }
                     old_cursor.next(&());
                     new_transforms.push_tree(old_cursor.suffix(&()), &());
                 }

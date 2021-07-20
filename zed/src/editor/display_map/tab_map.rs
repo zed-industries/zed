@@ -66,10 +66,11 @@ impl Snapshot {
         }
     }
 
-    pub fn text_summary_for_rows(&self, rows: Range<u32>) -> TextSummary {
+    pub fn text_summary_for_range(&self, range: Range<OutputPoint>) -> TextSummary {
         // TODO: expand tabs on first and last line, ignoring the longest row.
-        let range = InputPoint::new(rows.start, 0)..InputPoint::new(rows.end, 0);
-        let summary = self.input.text_summary_for_range(range);
+        let start = self.to_input_point(range.start, Bias::Left).0;
+        let end = self.to_input_point(range.end, Bias::Right).0;
+        let summary = self.input.text_summary_for_range(start..end);
         TextSummary {
             lines: summary.lines,
             first_line_chars: summary.first_line_chars,
