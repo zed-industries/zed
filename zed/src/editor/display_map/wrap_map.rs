@@ -8,11 +8,16 @@ use crate::{
 };
 use gpui::{font_cache::FamilyId, AppContext, FontCache, FontSystem, Task};
 use parking_lot::Mutex;
-use postage::{prelude::Sink, watch};
+use postage::{
+    prelude::{Sink, Stream},
+    watch,
+};
 use smol::channel;
 use std::{
+    collections::VecDeque,
     ops::{AddAssign, Range, Sub},
     sync::Arc,
+    time::Duration,
 };
 
 #[derive(Copy, Clone, Debug, Default, Eq, Ord, PartialOrd, PartialEq)]
@@ -200,6 +205,7 @@ impl<'a> Iterator for Chunks<'a> {
 
 struct State {
     snapshot: Snapshot,
+    pending_edits: VecDeque<(InputSnapshot, Vec<InputEdit>)>,
 }
 
 #[derive(Clone)]
@@ -212,7 +218,7 @@ pub struct Config {
 pub struct WrapMap {
     state: Mutex<State>,
     edits_tx: channel::Sender<(InputSnapshot, Vec<InputEdit>)>,
-    background_snapshots: watch::Receiver<Snapshot>,
+    background_snapshot: watch::Receiver<Snapshot>,
     _background_task: Task<()>,
 }
 
@@ -221,31 +227,54 @@ impl WrapMap {
         let font_cache = cx.font_cache().clone();
         let font_system = cx.platform().fonts();
         let snapshot = Snapshot::new(input.clone());
-        let (background_snapshots_tx, background_snapshots_rx) =
+        let (background_snapshot_tx, background_snapshot_rx) =
             watch::channel_with(snapshot.clone());
         let (edits_tx, edits_rx) = channel::unbounded();
         let background_task = {
             let snapshot = snapshot.clone();
             cx.background().spawn(async move {
                 let mut wrapper = BackgroundWrapper::new(snapshot, config, font_cache, font_system);
-                wrapper.run(input, edits_rx, background_snapshots_tx).await;
+                wrapper.run(input, edits_rx, background_snapshot_tx).await;
             })
         };
 
         Self {
-            state: Mutex::new(State { snapshot }),
+            state: Mutex::new(State {
+                snapshot,
+                pending_edits: VecDeque::new(),
+            }),
             edits_tx,
-            background_snapshots: background_snapshots_rx,
+            background_snapshot: background_snapshot_rx,
             _background_task: background_task,
         }
     }
 
-    pub fn sync(&self, input: InputSnapshot, edits: Vec<InputEdit>) -> Snapshot {
-        self.state
-            .lock()
-            .snapshot
-            .interpolate(input.clone(), &edits);
-        self.edits_tx.try_send((input, edits)).unwrap();
+    pub fn sync(&self, input: InputSnapshot, edits: Vec<InputEdit>, cx: &AppContext) -> Snapshot {
+        self.edits_tx
+            .try_send((input.clone(), edits.clone()))
+            .unwrap();
+
+        let mut state = &mut *self.state.lock();
+        state.snapshot = self.background_snapshot.borrow().clone();
+        state
+            .pending_edits
+            .push_back((input.clone(), edits.clone()));
+        while state.pending_edits.front().map_or(false, |(input, _)| {
+            input.version() <= state.snapshot.input.version()
+        }) {
+            state.pending_edits.pop_front();
+        }
+        for (input, edits) in &state.pending_edits {
+            state.snapshot.interpolate(input.clone(), &edits);
+        }
+
+        let mut background_snapshot = self.background_snapshot.clone();
+        let next_snapshot = cx
+            .background()
+            .block_on(Duration::from_millis(5), async move {
+                background_snapshot.recv().await;
+            });
+
         self.state.lock().snapshot.clone()
     }
 }
@@ -276,20 +305,20 @@ impl BackgroundWrapper {
         &mut self,
         snapshot: InputSnapshot,
         edits_rx: channel::Receiver<(InputSnapshot, Vec<InputEdit>)>,
-        mut snapshots_tx: watch::Sender<Snapshot>,
+        mut snapshot_tx: watch::Sender<Snapshot>,
     ) {
         let edit = InputEdit {
             old_lines: Default::default()..snapshot.max_point(),
             new_lines: Default::default()..snapshot.max_point(),
         };
         self.sync(snapshot, vec![edit]);
-        if snapshots_tx.send(self.snapshot.clone()).await.is_err() {
+        if snapshot_tx.send(self.snapshot.clone()).await.is_err() {
             return;
         }
 
         while let Ok((snapshot, edits)) = edits_rx.recv().await {
             self.sync(snapshot, edits);
-            if snapshots_tx.send(self.snapshot.clone()).await.is_err() {
+            if snapshot_tx.send(self.snapshot.clone()).await.is_err() {
                 break;
             }
         }
@@ -564,8 +593,8 @@ mod tests {
             WrapMap::new(tabs_snapshot, config, cx)
         });
 
-        wrap_map.background_snapshots.next().await;
-        let snapshot = wrap_map.background_snapshots.next().await.unwrap();
+        wrap_map.background_snapshot.next().await;
+        let snapshot = wrap_map.background_snapshot.next().await.unwrap();
 
         assert_eq!(
             snapshot
