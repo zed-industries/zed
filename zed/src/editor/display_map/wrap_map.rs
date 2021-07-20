@@ -297,7 +297,7 @@ impl BackgroundWrapper {
                         InputPoint::new(new_transforms.summary().input.lines.row, 0)
                             ..InputPoint::new(edit.new_rows.start, 0),
                     );
-                    new_transforms.push(Transform::isomorphic(summary), &());
+                    new_transforms.push_or_extend(Transform::isomorphic(summary));
                 }
 
                 let mut input_row = edit.new_rows.start;
@@ -325,16 +325,16 @@ impl BackgroundWrapper {
                         .wrap_line(&line, font_id, font_size, wrap_width)
                     {
                         let wrapped = &line[prev_boundary_ix..boundary_ix];
-                        new_transforms.push(Transform::isomorphic(TextSummary::from(wrapped)), &());
-                        new_transforms.push(Transform::newline(), &());
+                        new_transforms
+                            .push_or_extend(Transform::isomorphic(TextSummary::from(wrapped)));
+                        new_transforms.push_or_extend(Transform::newline());
                         prev_boundary_ix = boundary_ix;
                     }
 
                     if prev_boundary_ix < line.len() {
-                        new_transforms.push(
-                            Transform::isomorphic(TextSummary::from(&line[prev_boundary_ix..])),
-                            &(),
-                        );
+                        new_transforms.push_or_extend(Transform::isomorphic(TextSummary::from(
+                            &line[prev_boundary_ix..],
+                        )));
                     }
 
                     line.clear();
@@ -351,7 +351,7 @@ impl BackgroundWrapper {
                             let summary = self.snapshot.input.text_summary_for_range(
                                 InputPoint::new(edit.old_rows.end, 0)..old_cursor.seek_end(&()),
                             );
-                            new_transforms.push(Transform::isomorphic(summary), &());
+                            new_transforms.push_or_extend(Transform::isomorphic(summary));
                         }
                         old_cursor.next(&());
                         new_transforms.push_tree(
@@ -368,7 +368,7 @@ impl BackgroundWrapper {
                         let summary = self.snapshot.input.text_summary_for_range(
                             InputPoint::new(edit.old_rows.end, 0)..old_cursor.seek_end(&()),
                         );
-                        new_transforms.push(Transform::isomorphic(summary), &());
+                        new_transforms.push_or_extend(Transform::isomorphic(summary));
                     }
                     old_cursor.next(&());
                     new_transforms.push_tree(old_cursor.suffix(&()), &());
@@ -381,6 +381,21 @@ impl BackgroundWrapper {
             version: new_snapshot.version(),
             input: new_snapshot,
         };
+        self.check_invariants();
+    }
+
+    fn check_invariants(&self) {
+        #[cfg(debug_assertions)]
+        {
+            let mut transforms = self.snapshot.transforms.cursor::<(), ()>().peekable();
+            while let Some(transform) = transforms.next() {
+                let next_transform = transforms.peek();
+                assert!(
+                    !transform.is_isomorphic()
+                        || next_transform.map_or(true, |t| !t.is_isomorphic())
+                );
+            }
+        }
     }
 }
 
@@ -416,6 +431,10 @@ impl Transform {
             display_text: Some("\n"),
         }
     }
+
+    fn is_isomorphic(&self) -> bool {
+        self.display_text.is_none()
+    }
 }
 
 impl sum_tree::Item for Transform {
@@ -423,6 +442,26 @@ impl sum_tree::Item for Transform {
 
     fn summary(&self) -> Self::Summary {
         self.summary.clone()
+    }
+}
+
+impl SumTree<Transform> {
+    pub fn push_or_extend(&mut self, transform: Transform) {
+        let mut transform = Some(transform);
+        self.update_last(
+            |last_transform| {
+                if last_transform.is_isomorphic() && transform.as_ref().unwrap().is_isomorphic() {
+                    let transform = transform.take().unwrap();
+                    last_transform.summary.input += &transform.summary.input;
+                    last_transform.summary.output += &transform.summary.output;
+                }
+            },
+            &(),
+        );
+
+        if let Some(transform) = transform {
+            self.push(transform, &());
+        }
     }
 }
 
