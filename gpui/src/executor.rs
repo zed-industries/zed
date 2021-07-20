@@ -328,23 +328,14 @@ impl Foreground {
         }
     }
 
-    pub fn reset(&self) {
-        match self {
-            Self::Platform { .. } => panic!("can't call this method on a platform executor"),
-            Self::Test(_) => panic!("can't call this method on a test executor"),
-            Self::Deterministic(executor) => {
-                let state = &mut *executor.state.lock();
-                state.rng = StdRng::seed_from_u64(state.seed);
-            }
-        }
-    }
-
     pub fn forbid_parking(&self) {
         match self {
             Self::Platform { .. } => panic!("can't call this method on a platform executor"),
             Self::Test(_) => panic!("can't call this method on a test executor"),
             Self::Deterministic(executor) => {
-                executor.state.lock().forbid_parking = true;
+                let mut state = executor.state.lock();
+                state.forbid_parking = true;
+                state.rng = StdRng::seed_from_u64(state.seed);
             }
         }
     }

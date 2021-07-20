@@ -523,8 +523,6 @@ impl TestServer {
             .await
             .unwrap();
 
-        // Reset the executor because running SQL queries has a non-deterministic impact on it.
-        cx.foreground().reset();
         client
     }
 
