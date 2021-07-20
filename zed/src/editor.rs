@@ -410,7 +410,8 @@ impl Editor {
     ) -> Self {
         cx.observe_model(&buffer, Self::on_buffer_changed);
         cx.subscribe_to_model(&buffer, Self::on_buffer_event);
-        let display_map = DisplayMap::new(buffer.clone(), settings.borrow().tab_size, cx.as_ref());
+        let display_map =
+            DisplayMap::new(buffer.clone(), settings.borrow().clone(), None, cx.as_ref());
 
         let mut next_selection_id = 0;
         let selection_set_id = buffer.update(cx, |buffer, cx| {

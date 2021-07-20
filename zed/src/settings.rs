@@ -49,6 +49,11 @@ impl Settings {
             ),
         })
     }
+
+    pub fn with_tab_size(mut self, tab_size: usize) -> Self {
+        self.tab_size = tab_size;
+        self
+    }
 }
 
 impl Theme {

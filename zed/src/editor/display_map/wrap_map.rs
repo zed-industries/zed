@@ -5,8 +5,9 @@ use crate::{
     editor::Point,
     sum_tree::{self, Cursor, SumTree},
     util::Bias,
+    Settings,
 };
-use gpui::{font_cache::FamilyId, AppContext, FontCache, FontSystem, Task};
+use gpui::{AppContext, FontCache, FontSystem, Task};
 use parking_lot::Mutex;
 use postage::{
     prelude::{Sink, Stream},
@@ -208,13 +209,6 @@ struct State {
     pending_edits: VecDeque<(InputSnapshot, Vec<InputEdit>)>,
 }
 
-#[derive(Clone)]
-pub struct Config {
-    pub wrap_width: f32,
-    pub font_family: FamilyId,
-    pub font_size: f32,
-}
-
 pub struct WrapMap {
     state: Mutex<State>,
     edits_tx: channel::Sender<(InputSnapshot, Vec<InputEdit>)>,
@@ -223,7 +217,12 @@ pub struct WrapMap {
 }
 
 impl WrapMap {
-    pub fn new(input: InputSnapshot, config: Config, cx: &AppContext) -> Self {
+    pub fn new(
+        input: InputSnapshot,
+        settings: Settings,
+        wrap_width: Option<f32>,
+        cx: &AppContext,
+    ) -> Self {
         let font_cache = cx.font_cache().clone();
         let font_system = cx.platform().fonts();
         let snapshot = Snapshot::new(input.clone());
@@ -233,7 +232,8 @@ impl WrapMap {
         let background_task = {
             let snapshot = snapshot.clone();
             cx.background().spawn(async move {
-                let mut wrapper = BackgroundWrapper::new(snapshot, config, font_cache, font_system);
+                let mut wrapper =
+                    BackgroundWrapper::new(snapshot, settings, wrap_width, font_cache, font_system);
                 wrapper.run(input, edits_rx, background_snapshot_tx).await;
             })
         };
@@ -254,11 +254,20 @@ impl WrapMap {
             .try_send((input.clone(), edits.clone()))
             .unwrap();
 
+        let mut snapshot = self.state.lock().snapshot.clone();
+        let mut background_snapshot = self.background_snapshot.clone();
+        cx.background().block_on(Duration::from_millis(5), async {
+            loop {
+                snapshot = background_snapshot.recv().await.unwrap();
+                if snapshot.input.version() == input.version() {
+                    break;
+                }
+            }
+        });
+
         let mut state = &mut *self.state.lock();
-        state.snapshot = self.background_snapshot.borrow().clone();
-        state
-            .pending_edits
-            .push_back((input.clone(), edits.clone()));
+        state.snapshot = snapshot;
+        state.pending_edits.push_back((input, edits));
         while state.pending_edits.front().map_or(false, |(input, _)| {
             input.version() <= state.snapshot.input.version()
         }) {
@@ -267,20 +276,17 @@ impl WrapMap {
         for (input, edits) in &state.pending_edits {
             state.snapshot.interpolate(input.clone(), &edits);
         }
+        state.snapshot.clone()
+    }
 
-        let mut background_snapshot = self.background_snapshot.clone();
-        let next_snapshot = cx
-            .background()
-            .block_on(Duration::from_millis(5), async move {
-                background_snapshot.recv().await;
-            });
-
-        self.state.lock().snapshot.clone()
+    pub fn set_wrap_width(&self, width: Option<f32>) {
+        todo!()
     }
 }
 
 struct BackgroundWrapper {
-    config: Config,
+    settings: Settings,
+    wrap_width: Option<f32>,
     font_cache: Arc<FontCache>,
     font_system: Arc<dyn FontSystem>,
     snapshot: Snapshot,
@@ -289,12 +295,14 @@ struct BackgroundWrapper {
 impl BackgroundWrapper {
     fn new(
         snapshot: Snapshot,
-        config: Config,
+        settings: Settings,
+        wrap_width: Option<f32>,
         font_cache: Arc<FontCache>,
         font_system: Arc<dyn FontSystem>,
     ) -> Self {
         Self {
-            config,
+            settings,
+            wrap_width,
             font_cache,
             font_system,
             snapshot,
@@ -331,10 +339,9 @@ impl BackgroundWrapper {
 
         let font_id = self
             .font_cache
-            .select_font(self.config.font_family, &Default::default())
+            .select_font(self.settings.buffer_font_family, &Default::default())
             .unwrap();
-        let font_size = self.config.font_size;
-        let wrap_width = self.config.wrap_width;
+        let font_size = self.settings.buffer_font_size;
 
         #[derive(Debug)]
         struct RowEdit {
@@ -403,15 +410,17 @@ impl BackgroundWrapper {
                     }
 
                     let mut prev_boundary_ix = 0;
-                    for boundary_ix in self
-                        .font_system
-                        .wrap_line(&line, font_id, font_size, wrap_width)
-                    {
-                        let wrapped = &line[prev_boundary_ix..boundary_ix];
-                        new_transforms
-                            .push_or_extend(Transform::isomorphic(TextSummary::from(wrapped)));
-                        new_transforms.push_or_extend(Transform::newline());
-                        prev_boundary_ix = boundary_ix;
+                    if let Some(wrap_width) = self.wrap_width {
+                        for boundary_ix in self
+                            .font_system
+                            .wrap_line(&line, font_id, font_size, wrap_width)
+                        {
+                            let wrapped = &line[prev_boundary_ix..boundary_ix];
+                            new_transforms
+                                .push_or_extend(Transform::isomorphic(TextSummary::from(wrapped)));
+                            new_transforms.push_or_extend(Transform::newline());
+                            prev_boundary_ix = boundary_ix;
+                        }
                     }
 
                     if prev_boundary_ix < line.len() {
@@ -575,36 +584,6 @@ mod tests {
     use std::env;
 
     #[gpui::test]
-    async fn test_simple_wraps(mut cx: gpui::TestAppContext) {
-        let text = "one two three four five\nsix seven eight";
-        let font_cache = cx.font_cache().clone();
-        let config = Config {
-            wrap_width: 64.,
-            font_family: font_cache.load_family(&["Helvetica"]).unwrap(),
-            font_size: 14.0,
-        };
-
-        let buffer = cx.add_model(|cx| Buffer::new(0, text.to_string(), cx));
-        let mut wrap_map = cx.read(|cx| {
-            let fold_map = FoldMap::new(buffer.clone(), cx);
-            let (folds_snapshot, edits) = fold_map.read(cx);
-            let tab_map = TabMap::new(folds_snapshot.clone(), 4);
-            let (tabs_snapshot, _) = tab_map.sync(folds_snapshot, edits);
-            WrapMap::new(tabs_snapshot, config, cx)
-        });
-
-        wrap_map.background_snapshot.next().await;
-        let snapshot = wrap_map.background_snapshot.next().await.unwrap();
-
-        assert_eq!(
-            snapshot
-                .chunks_at(OutputPoint(Point::new(0, 3)))
-                .collect::<String>(),
-            " two \nthree four \nfive\nsix seven \neight"
-        );
-    }
-
-    #[gpui::test]
     fn test_random_wraps(cx: &mut gpui::MutableAppContext) {
         let iterations = env::var("ITERATIONS")
             .map(|i| i.parse().expect("invalid `ITERATIONS` variable"))
@@ -629,23 +608,25 @@ mod tests {
                 log::info!("Initial buffer text: {:?}", text);
                 Buffer::new(0, text, cx)
             });
-            let fold_map = FoldMap::new(buffer.clone(), cx.as_ref());
-            let (folds_snapshot, edits) = fold_map.read(cx.as_ref());
-            let tab_map = TabMap::new(folds_snapshot.clone(), rng.gen_range(1..=4));
-            let (tabs_snapshot, _) = tab_map.sync(folds_snapshot, edits);
+            let (fold_map, folds_snapshot) = FoldMap::new(buffer.clone(), cx.as_ref());
+            let (tab_map, tabs_snapshot) =
+                TabMap::new(folds_snapshot.clone(), rng.gen_range(1..=4));
             let font_cache = cx.font_cache().clone();
             let font_system = cx.platform().fonts();
-            let config = Config {
-                wrap_width: rng.gen_range(100.0..=1000.0),
-                font_family: font_cache.load_family(&["Helvetica"]).unwrap(),
-                font_size: 14.0,
+            let wrap_width = rng.gen_range(100.0..=1000.0);
+            let settings = Settings {
+                tab_size: 4,
+                buffer_font_family: font_cache.load_family(&["Helvetica"]).unwrap(),
+                buffer_font_size: 14.0,
+                ..Settings::new(&font_cache).unwrap()
             };
             let font_id = font_cache
-                .select_font(config.font_family, &Default::default())
+                .select_font(settings.buffer_font_family, &Default::default())
                 .unwrap();
             let mut wrapper = BackgroundWrapper::new(
                 Snapshot::new(tabs_snapshot.clone()),
-                config.clone(),
+                settings.clone(),
+                Some(wrap_width),
                 font_cache.clone(),
                 font_system.clone(),
             );
@@ -656,12 +637,8 @@ mod tests {
             wrapper.sync(tabs_snapshot.clone(), vec![edit]);
 
             let unwrapped_text = tabs_snapshot.text();
-            let expected_text = wrap_text(
-                &unwrapped_text,
-                config.wrap_width,
-                font_id,
-                font_system.as_ref(),
-            );
+            let expected_text =
+                wrap_text(&unwrapped_text, wrap_width, font_id, font_system.as_ref());
 
             let actual_text = wrapper
                 .snapshot
@@ -683,12 +660,8 @@ mod tests {
                 interpolated_snapshot.check_invariants();
 
                 let unwrapped_text = snapshot.text();
-                let expected_text = wrap_text(
-                    &unwrapped_text,
-                    config.wrap_width,
-                    font_id,
-                    font_system.as_ref(),
-                );
+                let expected_text =
+                    wrap_text(&unwrapped_text, wrap_width, font_id, font_system.as_ref());
                 wrapper.sync(snapshot, edits);
                 wrapper.snapshot.check_invariants();
                 let actual_text = wrapper

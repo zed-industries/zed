@@ -161,9 +161,9 @@ pub struct FoldMap {
 }
 
 impl FoldMap {
-    pub fn new(buffer_handle: ModelHandle<Buffer>, cx: &AppContext) -> Self {
+    pub fn new(buffer_handle: ModelHandle<Buffer>, cx: &AppContext) -> (Self, Snapshot) {
         let buffer = buffer_handle.read(cx);
-        Self {
+        let this = Self {
             buffer: buffer_handle,
             folds: Default::default(),
             transforms: Mutex::new(SumTree::from_item(
@@ -178,7 +178,9 @@ impl FoldMap {
             )),
             last_sync: Mutex::new(buffer.version()),
             version: AtomicUsize::new(0),
-        }
+        };
+        let (snapshot, _) = this.read(cx);
+        (this, snapshot)
     }
 
     pub fn read(&self, cx: &AppContext) -> (Snapshot, Vec<Edit>) {
@@ -1105,7 +1107,7 @@ mod tests {
     #[gpui::test]
     fn test_basic_folds(cx: &mut gpui::MutableAppContext) {
         let buffer = cx.add_model(|cx| Buffer::new(0, sample_text(5, 6), cx));
-        let mut map = FoldMap::new(buffer.clone(), cx.as_ref());
+        let mut map = FoldMap::new(buffer.clone(), cx.as_ref()).0;
 
         let (mut writer, _, _) = map.write(cx.as_ref());
         let (snapshot2, edits) = writer.fold(
@@ -1180,7 +1182,7 @@ mod tests {
         let buffer = cx.add_model(|cx| Buffer::new(0, "abcdefghijkl", cx));
 
         {
-            let mut map = FoldMap::new(buffer.clone(), cx.as_ref());
+            let mut map = FoldMap::new(buffer.clone(), cx.as_ref()).0;
 
             let (mut writer, _, _) = map.write(cx.as_ref());
             writer.fold(vec![5..8], cx.as_ref());
@@ -1201,7 +1203,7 @@ mod tests {
         }
 
         {
-            let mut map = FoldMap::new(buffer.clone(), cx.as_ref());
+            let mut map = FoldMap::new(buffer.clone(), cx.as_ref()).0;
 
             // Create two adjacent folds.
             let (mut writer, _, _) = map.write(cx.as_ref());
@@ -1219,7 +1221,7 @@ mod tests {
     #[gpui::test]
     fn test_overlapping_folds(cx: &mut gpui::MutableAppContext) {
         let buffer = cx.add_model(|cx| Buffer::new(0, sample_text(5, 6), cx));
-        let mut map = FoldMap::new(buffer.clone(), cx.as_ref());
+        let mut map = FoldMap::new(buffer.clone(), cx.as_ref()).0;
         let (mut writer, _, _) = map.write(cx.as_ref());
         writer.fold(
             vec![
@@ -1237,7 +1239,7 @@ mod tests {
     #[gpui::test]
     fn test_merging_folds_via_edit(cx: &mut gpui::MutableAppContext) {
         let buffer = cx.add_model(|cx| Buffer::new(0, sample_text(5, 6), cx));
-        let mut map = FoldMap::new(buffer.clone(), cx.as_ref());
+        let mut map = FoldMap::new(buffer.clone(), cx.as_ref()).0;
 
         let (mut writer, _, _) = map.write(cx.as_ref());
         writer.fold(
@@ -1260,7 +1262,7 @@ mod tests {
     #[gpui::test]
     fn test_folds_in_range(cx: &mut gpui::MutableAppContext) {
         let buffer = cx.add_model(|cx| Buffer::new(0, sample_text(5, 6), cx));
-        let mut map = FoldMap::new(buffer.clone(), cx.as_ref());
+        let mut map = FoldMap::new(buffer.clone(), cx.as_ref()).0;
         let buffer = buffer.read(cx);
 
         let (mut writer, _, _) = map.write(cx.as_ref());
@@ -1317,7 +1319,7 @@ mod tests {
                 let text = RandomCharIter::new(&mut rng).take(len).collect::<String>();
                 Buffer::new(0, text, cx)
             });
-            let mut map = FoldMap::new(buffer.clone(), cx.as_ref());
+            let mut map = FoldMap::new(buffer.clone(), cx.as_ref()).0;
 
             let (mut initial_snapshot, _) = map.read(cx.as_ref());
             let mut snapshot_edits = Vec::new();
@@ -1537,7 +1539,7 @@ mod tests {
         let text = sample_text(6, 6) + "\n";
         let buffer = cx.add_model(|cx| Buffer::new(0, text, cx));
 
-        let mut map = FoldMap::new(buffer.clone(), cx.as_ref());
+        let mut map = FoldMap::new(buffer.clone(), cx.as_ref()).0;
 
         let (mut writer, _, _) = map.write(cx.as_ref());
         writer.fold(

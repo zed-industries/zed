@@ -13,8 +13,9 @@ use std::{
 pub struct TabMap(Mutex<Snapshot>);
 
 impl TabMap {
-    pub fn new(input: InputSnapshot, tab_size: usize) -> Self {
-        Self(Mutex::new(Snapshot { input, tab_size }))
+    pub fn new(input: InputSnapshot, tab_size: usize) -> (Self, Snapshot) {
+        let snapshot = Snapshot { input, tab_size };
+        (Self(Mutex::new(snapshot.clone())), snapshot)
     }
 
     pub fn sync(

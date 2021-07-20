@@ -2,35 +2,36 @@ mod fold_map;
 mod tab_map;
 mod wrap_map;
 
-use super::{buffer, Anchor, Bias, Buffer, Point, ToOffset, ToPoint};
+use super::{buffer, Anchor, Bias, Buffer, Point, Settings, ToOffset, ToPoint};
 use fold_map::FoldMap;
 pub use fold_map::InputRows;
 use gpui::{AppContext, ModelHandle};
 use std::ops::Range;
 use tab_map::TabMap;
-// use wrap_map::WrapMap;
+use wrap_map::WrapMap;
 
 pub struct DisplayMap {
     buffer: ModelHandle<Buffer>,
     fold_map: FoldMap,
     tab_map: TabMap,
-    // wrap_map: WrapMap,
+    wrap_map: WrapMap,
 }
 
 impl DisplayMap {
-    pub fn new(buffer: ModelHandle<Buffer>, tab_size: usize, cx: &AppContext) -> Self {
-        let fold_map = FoldMap::new(buffer.clone(), cx);
-        let (snapshot, edits) = fold_map.read(cx);
-        assert_eq!(edits.len(), 0);
-        let tab_map = TabMap::new(snapshot, tab_size);
-        // TODO: take `wrap_width` as a parameter.
-        // let config = { todo!() };
-        // let wrap_map = WrapMap::new(snapshot, config, cx);
+    pub fn new(
+        buffer: ModelHandle<Buffer>,
+        settings: Settings,
+        wrap_width: Option<f32>,
+        cx: &AppContext,
+    ) -> Self {
+        let (fold_map, snapshot) = FoldMap::new(buffer.clone(), cx);
+        let (tab_map, snapshot) = TabMap::new(snapshot, settings.tab_size);
+        let wrap_map = WrapMap::new(snapshot, settings, wrap_width, cx);
         DisplayMap {
             buffer,
             fold_map,
             tab_map,
-            // wrap_map,
+            wrap_map,
         }
     }
 
@@ -60,6 +61,10 @@ impl DisplayMap {
     ) {
         let (mut fold_map, snapshot, edits) = self.fold_map.write(cx);
         let edits = fold_map.unfold(ranges, cx);
+    }
+
+    pub fn set_wrap_width(&self, width: Option<f32>) {
+        self.wrap_map.set_wrap_width(width);
     }
 }
 
@@ -257,7 +262,12 @@ mod tests {
     fn test_chunks_at(cx: &mut gpui::MutableAppContext) {
         let text = sample_text(6, 6);
         let buffer = cx.add_model(|cx| Buffer::new(0, text, cx));
-        let map = DisplayMap::new(buffer.clone(), 4, cx.as_ref());
+        let map = DisplayMap::new(
+            buffer.clone(),
+            Settings::new(cx.font_cache()).unwrap().with_tab_size(4),
+            None,
+            cx.as_ref(),
+        );
         buffer.update(cx, |buffer, cx| {
             buffer.edit(
                 vec![
@@ -334,7 +344,14 @@ mod tests {
         });
         buffer.condition(&cx, |buf, _| !buf.is_parsing()).await;
 
-        let mut map = cx.read(|cx| DisplayMap::new(buffer, 2, cx));
+        let mut map = cx.read(|cx| {
+            DisplayMap::new(
+                buffer,
+                Settings::new(cx.font_cache()).unwrap().with_tab_size(2),
+                None,
+                cx,
+            )
+        });
         assert_eq!(
             cx.read(|cx| highlighted_chunks(0..5, &map, &theme, cx)),
             vec![
@@ -399,7 +416,12 @@ mod tests {
         let display_text = "\n'a', 'α',   '✋',    '❎', '🍐'\n";
         let buffer = cx.add_model(|cx| Buffer::new(0, text, cx));
         let cx = cx.as_ref();
-        let map = DisplayMap::new(buffer.clone(), 4, cx);
+        let map = DisplayMap::new(
+            buffer.clone(),
+            Settings::new(cx.font_cache()).unwrap().with_tab_size(4),
+            None,
+            cx,
+        );
         let map = map.snapshot(cx);
 
         assert_eq!(map.text(), display_text);
@@ -434,7 +456,12 @@ mod tests {
         let text = "✅\t\tα\nβ\t\n🏀β\t\tγ";
         let buffer = cx.add_model(|cx| Buffer::new(0, text, cx));
         let cx = cx.as_ref();
-        let map = DisplayMap::new(buffer.clone(), 4, cx);
+        let map = DisplayMap::new(
+            buffer.clone(),
+            Settings::new(cx.font_cache()).unwrap().with_tab_size(4),
+            None,
+            cx,
+        );
         let map = map.snapshot(cx);
         assert_eq!(map.text(), "✅       α\nβ   \n🏀β      γ");
 
@@ -495,7 +522,12 @@ mod tests {
     #[gpui::test]
     fn test_max_point(cx: &mut gpui::MutableAppContext) {
         let buffer = cx.add_model(|cx| Buffer::new(0, "aaa\n\t\tbbb", cx));
-        let map = DisplayMap::new(buffer.clone(), 4, cx.as_ref());
+        let map = DisplayMap::new(
+            buffer.clone(),
+            Settings::new(cx.font_cache()).unwrap().with_tab_size(4),
+            None,
+            cx.as_ref(),
+        );
         assert_eq!(
             map.snapshot(cx.as_ref()).max_point(),
             DisplayPoint::new(1, 11)
