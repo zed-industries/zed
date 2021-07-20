@@ -150,7 +150,7 @@ impl Deterministic {
                 if let Poll::Ready(result) = future.as_mut().poll(&mut cx) {
                     return Some(result);
                 }
-                let state = &mut *self.state.lock();
+                let state = self.state.lock();
                 if state.scheduled.is_empty() && state.spawned_from_foreground.is_empty() {
                     if state.forbid_parking {
                         panic!("deterministic executor parked after a call to forbid_parking");
