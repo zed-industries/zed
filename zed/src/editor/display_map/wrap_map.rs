@@ -293,6 +293,14 @@ struct BackgroundWrapper {
     snapshot: Snapshot,
 }
 
+enum WrapChange {
+    InputChange {
+        snapshot: InputSnapshot,
+        edits: Vec<tab_map::Edit>,
+    },
+    WidthChange(Option<f32>),
+}
+
 impl BackgroundWrapper {
     fn new(
         snapshot: Snapshot,
@@ -313,7 +321,7 @@ impl BackgroundWrapper {
     async fn run(
         &mut self,
         snapshot: InputSnapshot,
-        edits_rx: channel::Receiver<(InputSnapshot, Vec<InputEdit>)>,
+        edits_rx: channel::Receiver<WrapChange>,
         mut snapshot_tx: watch::Sender<Snapshot>,
     ) {
         let edit = InputEdit {

@@ -338,6 +338,8 @@ impl Element for EditorElement {
         }
 
         let view = self.view(app);
+        view.set_width(size.x());
+
         let font_cache = &cx.font_cache;
         let layout_cache = &cx.text_layout_cache;
         let line_height = view.line_height(font_cache);
