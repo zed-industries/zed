@@ -14,12 +14,7 @@ use postage::{
     watch,
 };
 use smol::channel;
-use std::{
-    collections::VecDeque,
-    ops::{AddAssign, Range, Sub},
-    sync::Arc,
-    time::Duration,
-};
+use std::{collections::VecDeque, ops::Range, sync::Arc, time::Duration};
 
 #[derive(Copy, Clone, Debug, Default, Eq, Ord, PartialOrd, PartialEq)]
 pub struct OutputPoint(super::Point);
@@ -47,20 +42,6 @@ impl OutputPoint {
 
     pub fn column_mut(&mut self) -> &mut u32 {
         &mut self.0.column
-    }
-}
-
-impl AddAssign<Self> for OutputPoint {
-    fn add_assign(&mut self, rhs: Self) {
-        self.0 += &rhs.0;
-    }
-}
-
-impl Sub<Self> for OutputPoint {
-    type Output = OutputPoint;
-
-    fn sub(self, other: Self) -> Self::Output {
-        Self(self.0 - other.0)
     }
 }
 
@@ -145,10 +126,10 @@ impl Snapshot {
     }
 
     pub fn chunks_at(&self, point: OutputPoint) -> Chunks {
-        let mut transforms = self.transforms.cursor();
+        let mut transforms = self.transforms.cursor::<OutputPoint, InputPoint>();
         transforms.seek(&point, Bias::Right, &());
         let input_position =
-            *transforms.sum_start() + InputPoint((point - *transforms.seek_start()).0);
+            InputPoint(transforms.sum_start().0 + (point.0 - transforms.seek_start().0));
         let input_chunks = self.input.chunks_at(input_position);
         Chunks {
             input_chunks,
@@ -156,6 +137,26 @@ impl Snapshot {
             input_position,
             input_chunk: "",
         }
+    }
+
+    pub fn max_point(&self) -> OutputPoint {
+        self.to_output_point(self.input.max_point())
+    }
+
+    pub fn to_input_point(&self, point: OutputPoint) -> InputPoint {
+        let mut cursor = self.transforms.cursor::<OutputPoint, InputPoint>();
+        cursor.seek(&point, Bias::Right, &());
+        InputPoint(cursor.sum_start().0 + (point.0 - cursor.seek_start().0))
+    }
+
+    pub fn to_output_point(&self, point: InputPoint) -> OutputPoint {
+        let mut cursor = self.transforms.cursor::<InputPoint, OutputPoint>();
+        cursor.seek(&point, Bias::Right, &());
+        OutputPoint(cursor.sum_start().0 + (point.0 - cursor.seek_start().0))
+    }
+
+    pub fn clip_point(&self, point: OutputPoint, bias: Bias) -> OutputPoint {
+        self.to_output_point(self.input.clip_point(self.to_input_point(point), bias))
     }
 }
 
@@ -558,13 +559,13 @@ impl sum_tree::Summary for TransformSummary {
 
 impl<'a> sum_tree::Dimension<'a, TransformSummary> for InputPoint {
     fn add_summary(&mut self, summary: &'a TransformSummary, _: &()) {
-        *self += InputPoint(summary.input.lines);
+        self.0 += summary.input.lines;
     }
 }
 
 impl<'a> sum_tree::Dimension<'a, TransformSummary> for OutputPoint {
     fn add_summary(&mut self, summary: &'a TransformSummary, _: &()) {
-        *self += OutputPoint(summary.output.lines);
+        self.0 += summary.output.lines;
     }
 }
 
@@ -578,7 +579,6 @@ mod tests {
         },
         util::RandomCharIter,
     };
-    use futures::StreamExt;
     use gpui::fonts::FontId;
     use rand::prelude::*;
     use std::env;

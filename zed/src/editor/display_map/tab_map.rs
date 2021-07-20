@@ -5,10 +5,7 @@ use super::fold_map::{
     OutputOffset as InputOffset, OutputPoint as InputPoint, Snapshot as InputSnapshot,
 };
 use crate::{editor::rope, settings::StyleId, util::Bias};
-use std::{
-    mem,
-    ops::{Add, AddAssign, Range},
-};
+use std::{mem, ops::Range};
 
 pub struct TabMap(Mutex<Snapshot>);
 
@@ -265,20 +262,6 @@ impl OutputPoint {
 impl From<super::Point> for OutputPoint {
     fn from(point: super::Point) -> Self {
         Self(point)
-    }
-}
-
-impl AddAssign<Self> for OutputPoint {
-    fn add_assign(&mut self, rhs: Self) {
-        self.0 += &rhs.0;
-    }
-}
-
-impl Add<Self> for OutputPoint {
-    type Output = OutputPoint;
-
-    fn add(self, other: Self) -> Self::Output {
-        Self(self.0 + other.0)
     }
 }
 

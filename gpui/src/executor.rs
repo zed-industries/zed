@@ -9,6 +9,7 @@ use std::{
     fmt::{self, Debug},
     marker::PhantomData,
     mem,
+    ops::RangeInclusive,
     pin::Pin,
     rc::Rc,
     sync::{
@@ -46,6 +47,7 @@ struct DeterministicState {
     scheduled: Vec<(Runnable, Backtrace)>,
     spawned_from_foreground: Vec<(Runnable, Backtrace)>,
     forbid_parking: bool,
+    block_on_ticks: RangeInclusive<usize>,
 }
 
 pub struct Deterministic {
@@ -62,6 +64,7 @@ impl Deterministic {
                 scheduled: Default::default(),
                 spawned_from_foreground: Default::default(),
                 forbid_parking: false,
+                block_on_ticks: 0..=1000,
             })),
             parker: Default::default(),
         }
@@ -330,13 +333,19 @@ impl Foreground {
 
     pub fn forbid_parking(&self) {
         match self {
-            Self::Platform { .. } => panic!("can't call this method on a platform executor"),
-            Self::Test(_) => panic!("can't call this method on a test executor"),
             Self::Deterministic(executor) => {
                 let mut state = executor.state.lock();
                 state.forbid_parking = true;
                 state.rng = StdRng::seed_from_u64(state.seed);
             }
+            _ => panic!("this method can only be called on a deterministic executor"),
+        }
+    }
+
+    pub fn set_block_on_ticks(&self, range: RangeInclusive<usize>) {
+        match self {
+            Self::Deterministic(executor) => executor.state.lock().block_on_ticks = range,
+            _ => panic!("this method can only be called on a deterministic executor"),
         }
     }
 }
@@ -386,7 +395,11 @@ impl Background {
                 smol::block_on(async move { util::timeout(timeout, future).await.ok() })
             }
             Self::Deterministic(executor) => {
-                let max_ticks = executor.state.lock().rng.gen_range(1..=1000);
+                let max_ticks = {
+                    let mut state = executor.state.lock();
+                    let range = state.block_on_ticks.clone();
+                    state.rng.gen_range(range)
+                };
                 executor.block_on(max_ticks, future)
             }
         }

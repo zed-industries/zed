@@ -38,10 +38,12 @@ impl DisplayMap {
     pub fn snapshot(&self, cx: &AppContext) -> DisplayMapSnapshot {
         let (folds_snapshot, edits) = self.fold_map.read(cx);
         let (tabs_snapshot, edits) = self.tab_map.sync(folds_snapshot.clone(), edits);
+        let wraps_snapshot = self.wrap_map.sync(tabs_snapshot.clone(), edits, cx);
         DisplayMapSnapshot {
             buffer_snapshot: self.buffer.read(cx).snapshot(),
             folds_snapshot,
             tabs_snapshot,
+            wraps_snapshot,
         }
     }
 
@@ -51,7 +53,11 @@ impl DisplayMap {
         cx: &AppContext,
     ) {
         let (mut fold_map, snapshot, edits) = self.fold_map.write(cx);
-        let edits = fold_map.fold(ranges, cx);
+        let (snapshot, edits) = self.tab_map.sync(snapshot, edits);
+        self.wrap_map.sync(snapshot, edits, cx);
+        let (snapshot, edits) = fold_map.fold(ranges, cx);
+        let (snapshot, edits) = self.tab_map.sync(snapshot, edits);
+        self.wrap_map.sync(snapshot, edits, cx);
     }
 
     pub fn unfold<T: ToOffset>(
@@ -60,7 +66,11 @@ impl DisplayMap {
         cx: &AppContext,
     ) {
         let (mut fold_map, snapshot, edits) = self.fold_map.write(cx);
-        let edits = fold_map.unfold(ranges, cx);
+        let (snapshot, edits) = self.tab_map.sync(snapshot, edits);
+        self.wrap_map.sync(snapshot, edits, cx);
+        let (snapshot, edits) = fold_map.unfold(ranges, cx);
+        let (snapshot, edits) = self.tab_map.sync(snapshot, edits);
+        self.wrap_map.sync(snapshot, edits, cx);
     }
 
     pub fn set_wrap_width(&self, width: Option<f32>) {
@@ -72,6 +82,7 @@ pub struct DisplayMapSnapshot {
     buffer_snapshot: buffer::Snapshot,
     folds_snapshot: fold_map::Snapshot,
     tabs_snapshot: tab_map::Snapshot,
+    wraps_snapshot: wrap_map::Snapshot,
 }
 
 impl DisplayMapSnapshot {
@@ -80,11 +91,11 @@ impl DisplayMapSnapshot {
     }
 
     pub fn max_point(&self) -> DisplayPoint {
-        DisplayPoint(self.tabs_snapshot.max_point())
+        DisplayPoint(self.wraps_snapshot.max_point())
     }
 
-    pub fn chunks_at(&self, point: DisplayPoint) -> tab_map::Chunks {
-        self.tabs_snapshot.chunks_at(point.0)
+    pub fn chunks_at(&self, point: DisplayPoint) -> wrap_map::Chunks {
+        self.wraps_snapshot.chunks_at(point.0)
     }
 
     pub fn highlighted_chunks_for_rows(&mut self, rows: Range<u32>) -> tab_map::HighlightedChunks {
@@ -122,7 +133,7 @@ impl DisplayMapSnapshot {
     }
 
     pub fn clip_point(&self, point: DisplayPoint, bias: Bias) -> DisplayPoint {
-        DisplayPoint(self.tabs_snapshot.clip_point(point.0, bias))
+        DisplayPoint(self.wraps_snapshot.clip_point(point.0, bias))
     }
 
     pub fn folds_in_range<'a, T>(
@@ -194,11 +205,11 @@ impl DisplayMapSnapshot {
 }
 
 #[derive(Copy, Clone, Debug, Default, Eq, Ord, PartialOrd, PartialEq)]
-pub struct DisplayPoint(tab_map::OutputPoint);
+pub struct DisplayPoint(wrap_map::OutputPoint);
 
 impl DisplayPoint {
     pub fn new(row: u32, column: u32) -> Self {
-        Self(tab_map::OutputPoint::new(row, column))
+        Self(wrap_map::OutputPoint::new(row, column))
     }
 
     pub fn zero() -> Self {
@@ -222,22 +233,24 @@ impl DisplayPoint {
     }
 
     pub fn to_buffer_point(self, map: &DisplayMapSnapshot, bias: Bias) -> Point {
-        map.folds_snapshot
-            .to_input_point(map.tabs_snapshot.to_input_point(self.0, bias).0)
+        let unwrapped_point = map.wraps_snapshot.to_input_point(self.0);
+        let unexpanded_point = map.tabs_snapshot.to_input_point(unwrapped_point, bias).0;
+        map.folds_snapshot.to_input_point(unexpanded_point)
     }
 
     pub fn to_buffer_offset(self, map: &DisplayMapSnapshot, bias: Bias) -> usize {
-        map.folds_snapshot
-            .to_input_offset(map.tabs_snapshot.to_input_point(self.0, bias).0)
+        let unwrapped_point = map.wraps_snapshot.to_input_point(self.0);
+        let unexpanded_point = map.tabs_snapshot.to_input_point(unwrapped_point, bias).0;
+        map.folds_snapshot.to_input_offset(unexpanded_point)
     }
 }
 
 impl Point {
     pub fn to_display_point(self, map: &DisplayMapSnapshot) -> DisplayPoint {
-        DisplayPoint(
-            map.tabs_snapshot
-                .to_output_point(map.folds_snapshot.to_output_point(self)),
-        )
+        let folded_point = map.folds_snapshot.to_output_point(self);
+        let expanded_point = map.tabs_snapshot.to_output_point(folded_point);
+        let wrapped_point = map.wraps_snapshot.to_output_point(expanded_point);
+        DisplayPoint(wrapped_point)
     }
 }
 
@@ -257,6 +270,48 @@ mod tests {
     };
     use buffer::History;
     use std::sync::Arc;
+
+    #[gpui::test]
+    async fn test_soft_wraps(mut cx: gpui::TestAppContext) {
+        cx.foreground().set_block_on_ticks(usize::MAX..=usize::MAX);
+
+        let font_cache = cx.font_cache();
+
+        let settings = Settings {
+            buffer_font_family: font_cache.load_family(&["Helvetica"]).unwrap(),
+            ui_font_family: font_cache.load_family(&["Helvetica"]).unwrap(),
+            buffer_font_size: 12.0,
+            ui_font_size: 12.0,
+            tab_size: 4,
+            theme: Arc::new(Theme::default()),
+        };
+        let wrap_width = Some(64.);
+
+        let text = "one two three four five\nsix seven eight";
+        let buffer = cx.add_model(|cx| Buffer::new(0, text.to_string(), cx));
+        let map = cx.read(|cx| DisplayMap::new(buffer.clone(), settings, wrap_width, cx));
+
+        let snapshot = cx.read(|cx| map.snapshot(cx));
+        assert_eq!(
+            snapshot
+                .chunks_at(DisplayPoint::new(0, 3))
+                .collect::<String>(),
+            " two \nthree four \nfive\nsix seven \neight"
+        );
+
+        buffer.update(&mut cx, |buffer, cx| {
+            let ix = buffer.text().find("seven").unwrap();
+            buffer.edit(vec![ix..ix], "and ", cx);
+        });
+
+        let snapshot = cx.read(|cx| map.snapshot(cx));
+        assert_eq!(
+            snapshot
+                .chunks_at(DisplayPoint::new(1, 0))
+                .collect::<String>(),
+            "three four \nfive\nsix and \nseven eight"
+        );
+    }
 
     #[gpui::test]
     fn test_chunks_at(cx: &mut gpui::MutableAppContext) {

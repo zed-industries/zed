@@ -14,7 +14,7 @@ use parking_lot::Mutex;
 use std::{
     cmp::{self, Ordering},
     iter,
-    ops::{Range, Sub},
+    ops::Range,
     sync::atomic::{AtomicUsize, Ordering::SeqCst},
 };
 
@@ -44,14 +44,6 @@ impl OutputPoint {
 
     pub fn column_mut(&mut self) -> &mut u32 {
         &mut self.0.column
-    }
-}
-
-impl Sub<Self> for OutputPoint {
-    type Output = OutputPoint;
-
-    fn sub(self, other: Self) -> Self::Output {
-        Self(self.0 - other.0)
     }
 }
 
@@ -906,8 +898,8 @@ impl<'a> Iterator for InputRows<'a> {
         }
 
         if self.cursor.item().is_some() {
-            let overshoot = self.output_point - *self.cursor.seek_start();
-            let input_point = *self.cursor.sum_start() + overshoot.0;
+            let overshoot = self.output_point.0 - self.cursor.seek_start().0;
+            let input_point = *self.cursor.sum_start() + overshoot;
             *self.output_point.row_mut() += 1;
             Some(input_point.row)
         } else {
