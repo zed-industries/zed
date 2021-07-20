@@ -253,29 +253,44 @@ impl BackgroundWrapper {
         let font_size = self.config.font_size;
         let wrap_width = self.config.wrap_width;
 
-        let mut new_transforms;
-        {
-            struct RowEdit {
-                old_rows: Range<u32>,
-                new_rows: Range<u32>,
+        struct RowEdit {
+            old_rows: Range<u32>,
+            new_rows: Range<u32>,
+        }
+
+        let mut edits = edits.into_iter().peekable();
+        let mut row_edits = Vec::new();
+        while let Some(edit) = edits.next() {
+            let mut row_edit = RowEdit {
+                old_rows: edit.old_lines.start.row()..edit.old_lines.end.row() + 1,
+                new_rows: edit.new_lines.start.row()..edit.new_lines.end.row() + 1,
+            };
+
+            while let Some(next_edit) = edits.peek() {
+                if next_edit.old_lines.start.row() <= row_edit.old_rows.end {
+                    row_edit.old_rows.end = next_edit.old_lines.end.row() + 1;
+                    row_edit.new_rows.end = next_edit.new_lines.end.row() + 1;
+                    edits.next();
+                } else {
+                    break;
+                }
             }
 
-            let mut edits = edits
-                .into_iter()
-                .map(|edit| RowEdit {
-                    old_rows: edit.old_lines.start.row()..edit.old_lines.end.row() + 1,
-                    new_rows: edit.new_lines.start.row()..edit.new_lines.end.row() + 1,
-                })
-                .peekable();
+            row_edits.push(row_edit);
+        }
+
+        let mut new_transforms;
+        {
+            let mut row_edits = row_edits.into_iter().peekable();
             let mut old_cursor = self.snapshot.transforms.cursor::<InputPoint, ()>();
 
             new_transforms = old_cursor.slice(
-                &InputPoint::new(edits.peek().unwrap().old_rows.start, 0),
+                &InputPoint::new(row_edits.peek().unwrap().old_rows.start, 0),
                 Bias::Right,
                 &(),
             );
 
-            while let Some(edit) = edits.next() {
+            while let Some(edit) = row_edits.next() {
                 if edit.new_rows.start > new_transforms.summary().input.lines.row {
                     new_transforms.push(
                         Transform::isomorphic(new_snapshot.text_summary_for_rows(
@@ -339,7 +354,7 @@ impl BackgroundWrapper {
                     );
                 }
 
-                if let Some(next_edit) = edits.peek() {
+                if let Some(next_edit) = row_edits.peek() {
                     if next_edit.old_rows.start > old_cursor.seek_end(&()).row() {
                         old_cursor.next(&());
                         new_transforms.push_tree(
@@ -358,8 +373,11 @@ impl BackgroundWrapper {
             }
         }
 
-        self.snapshot.transforms = new_transforms;
-        self.snapshot.version = new_snapshot.version();
+        self.snapshot = Snapshot {
+            transforms: new_transforms,
+            version: new_snapshot.version(),
+            input: new_snapshot,
+        };
     }
 }
 
@@ -447,6 +465,7 @@ mod tests {
         util::RandomCharIter,
     };
     use futures::StreamExt;
+    use gpui::fonts::FontId;
     use rand::prelude::*;
     use std::env;
 
@@ -500,8 +519,9 @@ mod tests {
             let mut rng = StdRng::seed_from_u64(seed);
 
             let buffer = cx.add_model(|cx| {
-                let len = rng.gen_range(0..32);
+                let len = rng.gen_range(0..10);
                 let text = RandomCharIter::new(&mut rng).take(len).collect::<String>();
+                dbg!(&text);
                 Buffer::new(0, text, cx)
             });
             let fold_map = FoldMap::new(buffer.clone(), cx.as_ref());
@@ -530,21 +550,13 @@ mod tests {
             };
             wrapper.sync(tabs_snapshot.clone(), vec![edit]);
 
-            let mut expected_text = String::new();
             let unwrapped_text = tabs_snapshot.text();
-            let mut unwrapped_lines = unwrapped_text.split('\n').peekable();
-            while let Some(line) = unwrapped_lines.next() {
-                let mut prev_ix = 0;
-                for ix in font_system.wrap_line(line, font_id, 14.0, config.wrap_width) {
-                    expected_text.push_str(&line[prev_ix..ix]);
-                    expected_text.push('\n');
-                    prev_ix = ix;
-                }
-                expected_text.push_str(&line[prev_ix..]);
-                if unwrapped_lines.peek().is_some() {
-                    expected_text.push('\n');
-                }
-            }
+            let expected_text = wrap_text(
+                &unwrapped_text,
+                config.wrap_width,
+                font_id,
+                font_system.as_ref(),
+            );
 
             let actual_text = wrapper
                 .snapshot
@@ -556,6 +568,57 @@ mod tests {
                 "unwrapped text is: {:?}",
                 unwrapped_text
             );
+
+            for _i in 0..operations {
+                buffer.update(cx, |buffer, cx| buffer.randomly_mutate(&mut rng, cx));
+                let (snapshot, edits) = fold_map.read(cx.as_ref());
+                let (snapshot, edits) = tab_map.sync(snapshot, edits);
+                let unwrapped_text = snapshot.text();
+                let expected_text = wrap_text(
+                    &unwrapped_text,
+                    config.wrap_width,
+                    font_id,
+                    font_system.as_ref(),
+                );
+                wrapper.sync(snapshot, edits);
+
+                dbg!(&unwrapped_text);
+                dbg!(&expected_text);
+                dbg!(wrapper.snapshot.transforms.items(&()));
+
+                let actual_text = wrapper
+                    .snapshot
+                    .chunks_at(OutputPoint::zero())
+                    .collect::<String>();
+                assert_eq!(
+                    actual_text, expected_text,
+                    "unwrapped text is: {:?}",
+                    unwrapped_text
+                );
+            }
         }
+    }
+
+    fn wrap_text(
+        unwrapped_text: &str,
+        wrap_width: f32,
+        font_id: FontId,
+        font_system: &dyn FontSystem,
+    ) -> String {
+        let mut wrapped_text = String::new();
+        for (row, line) in unwrapped_text.split('\n').enumerate() {
+            if row > 0 {
+                wrapped_text.push('\n')
+            }
+
+            let mut prev_ix = 0;
+            for ix in font_system.wrap_line(line, font_id, 14.0, wrap_width) {
+                wrapped_text.push_str(&line[prev_ix..ix]);
+                wrapped_text.push('\n');
+                prev_ix = ix;
+            }
+            wrapped_text.push_str(&line[prev_ix..]);
+        }
+        wrapped_text
     }
 }
