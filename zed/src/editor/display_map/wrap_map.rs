@@ -387,6 +387,12 @@ impl BackgroundWrapper {
     fn check_invariants(&self) {
         #[cfg(debug_assertions)]
         {
+            let summary = self.snapshot.transforms.summary();
+            assert_eq!(
+                InputPoint::new(summary.input.lines.row, summary.input.lines.column),
+                self.snapshot.input.max_point()
+            );
+
             let mut transforms = self.snapshot.transforms.cursor::<(), ()>().peekable();
             while let Some(transform) = transforms.next() {
                 let next_transform = transforms.peek();
