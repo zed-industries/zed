@@ -2159,6 +2159,7 @@ dependencies = [
  "etagere",
  "font-kit",
  "foreign-types",
+ "futures",
  "gpui_macros",
  "log",
  "metal",

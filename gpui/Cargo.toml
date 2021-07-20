@@ -9,6 +9,7 @@ async-task = "4.0.3"
 backtrace = "0.3"
 ctor = "0.1"
 etagere = "0.2"
+futures = "0.3"
 gpui_macros = { path = "../gpui_macros" }
 log = "0.4"
 num_cpus = "1.13"
