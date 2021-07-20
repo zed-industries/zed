@@ -259,7 +259,6 @@ impl BackgroundWrapper {
             new_rows: Range<u32>,
         }
 
-        dbg!(&edits);
         let mut edits = edits.into_iter().peekable();
         let mut row_edits = Vec::new();
         while let Some(edit) = edits.next() {
@@ -280,7 +279,6 @@ impl BackgroundWrapper {
 
             row_edits.push(row_edit);
         }
-        dbg!(&row_edits);
 
         let mut new_transforms;
         {
@@ -394,10 +392,6 @@ struct Transform {
 
 impl Transform {
     fn isomorphic(summary: TextSummary) -> Self {
-        if summary.lines.is_zero() {
-            panic!("wtf");
-        }
-
         Self {
             summary: TransformSummary {
                 input: summary.clone(),
@@ -526,7 +520,7 @@ mod tests {
             let buffer = cx.add_model(|cx| {
                 let len = rng.gen_range(0..10);
                 let text = RandomCharIter::new(&mut rng).take(len).collect::<String>();
-                dbg!(&text);
+                log::info!("Initial buffer text: {:?}", text);
                 Buffer::new(0, text, cx)
             });
             let fold_map = FoldMap::new(buffer.clone(), cx.as_ref());
@@ -586,10 +580,6 @@ mod tests {
                     font_system.as_ref(),
                 );
                 wrapper.sync(snapshot, edits);
-
-                dbg!(&unwrapped_text);
-                dbg!(&expected_text);
-                dbg!(wrapper.snapshot.transforms.items(&()));
 
                 let actual_text = wrapper
                     .snapshot
