@@ -285,42 +285,47 @@ impl BackgroundWrapper {
                     );
                 }
 
-                let mut row = edit.new_rows.start;
+                let mut input_row = edit.new_rows.start;
                 let mut line = String::new();
-                'outer: for chunk in new_snapshot.chunks_at(InputPoint::new(row, 0)) {
-                    for (ix, line_chunk) in chunk.split('\n').enumerate() {
-                        if ix > 0 {
-                            line.push('\n');
-
-                            let mut prev_boundary_ix = 0;
-                            for boundary_ix in self
-                                .font_system
-                                .wrap_line(&line, font_id, font_size, wrap_width)
-                            {
-                                let wrapped = &line[prev_boundary_ix..boundary_ix];
-                                new_transforms
-                                    .push(Transform::isomorphic(TextSummary::from(wrapped)), &());
-                                new_transforms.push(Transform::newline(), &());
-                                prev_boundary_ix = boundary_ix;
-                            }
-
-                            if prev_boundary_ix < line.len() {
-                                new_transforms.push(
-                                    Transform::isomorphic(TextSummary::from(
-                                        &line[prev_boundary_ix..],
-                                    )),
-                                    &(),
-                                );
-                            }
-
-                            line.clear();
-                            row += 1;
-                            if row == edit.new_rows.end {
-                                break 'outer;
-                            }
+                let mut remaining = None;
+                let mut chunks = new_snapshot.chunks_at(InputPoint::new(input_row, 0));
+                loop {
+                    while let Some(chunk) = remaining.take().or_else(|| chunks.next()) {
+                        if let Some(ix) = chunk.find('\n') {
+                            line.push_str(&chunk[..ix + 1]);
+                            remaining = Some(&chunk[ix + 1..]);
+                            break;
+                        } else {
+                            line.push_str(chunk)
                         }
+                    }
 
-                        line.push_str(line_chunk);
+                    if line.is_empty() {
+                        break;
+                    }
+
+                    let mut prev_boundary_ix = 0;
+                    for boundary_ix in self
+                        .font_system
+                        .wrap_line(&line, font_id, font_size, wrap_width)
+                    {
+                        let wrapped = &line[prev_boundary_ix..boundary_ix];
+                        new_transforms.push(Transform::isomorphic(TextSummary::from(wrapped)), &());
+                        new_transforms.push(Transform::newline(), &());
+                        prev_boundary_ix = boundary_ix;
+                    }
+
+                    if prev_boundary_ix < line.len() {
+                        new_transforms.push(
+                            Transform::isomorphic(TextSummary::from(&line[prev_boundary_ix..])),
+                            &(),
+                        );
+                    }
+
+                    line.clear();
+                    input_row += 1;
+                    if input_row == edit.new_rows.end {
+                        break;
                     }
                 }
 
@@ -447,7 +452,7 @@ mod tests {
 
     #[gpui::test]
     async fn test_simple_wraps(mut cx: gpui::TestAppContext) {
-        let text = "one two three four five six\n";
+        let text = "one two three four five\nsix seven eight";
         let font_cache = cx.font_cache().clone();
         let config = Config {
             wrap_width: 64.,
@@ -471,7 +476,7 @@ mod tests {
             snapshot
                 .chunks_at(OutputPoint(Point::new(0, 3)))
                 .collect::<String>(),
-            " two \nthree four \nfive six\n"
+            " two \nthree four \nfive\nsix seven \neight"
         );
     }
 
