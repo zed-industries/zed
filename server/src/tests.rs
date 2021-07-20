@@ -35,6 +35,8 @@ async fn test_share_worktree(mut cx_a: TestAppContext, mut cx_b: TestAppContext)
     let client_a = server.create_client(&mut cx_a, "user_a").await;
     let client_b = server.create_client(&mut cx_b, "user_b").await;
 
+    cx_a.foreground().forbid_parking();
+
     // Share a local worktree as client A
     let fs = Arc::new(FakeFs::new());
     fs.insert_tree(
@@ -140,6 +142,8 @@ async fn test_propagate_saves_and_fs_changes_in_shared_worktree(
     let client_a = server.create_client(&mut cx_a, "user_a").await;
     let client_b = server.create_client(&mut cx_b, "user_b").await;
     let client_c = server.create_client(&mut cx_c, "user_c").await;
+
+    cx_a.foreground().forbid_parking();
 
     let fs = Arc::new(FakeFs::new());
 
@@ -280,6 +284,8 @@ async fn test_buffer_conflict_after_save(mut cx_a: TestAppContext, mut cx_b: Tes
     let client_a = server.create_client(&mut cx_a, "user_a").await;
     let client_b = server.create_client(&mut cx_b, "user_b").await;
 
+    cx_a.foreground().forbid_parking();
+
     // Share a local worktree as client A
     let fs = Arc::new(FakeFs::new());
     fs.save(Path::new("/a.txt"), &"a-contents".into())
@@ -357,6 +363,8 @@ async fn test_editing_while_guest_opens_buffer(mut cx_a: TestAppContext, mut cx_
     let client_a = server.create_client(&mut cx_a, "user_a").await;
     let client_b = server.create_client(&mut cx_b, "user_b").await;
 
+    cx_a.foreground().forbid_parking();
+
     // Share a local worktree as client A
     let fs = Arc::new(FakeFs::new());
     fs.save(Path::new("/a.txt"), &"a-contents".into())
@@ -415,6 +423,8 @@ async fn test_peer_disconnection(mut cx_a: TestAppContext, cx_b: TestAppContext)
     let mut server = TestServer::start().await;
     let client_a = server.create_client(&mut cx_a, "user_a").await;
     let client_b = server.create_client(&mut cx_a, "user_b").await;
+
+    cx_a.foreground().forbid_parking();
 
     // Share a local worktree as client A
     let fs = Arc::new(FakeFs::new());
@@ -529,7 +539,12 @@ impl TestServer {
             .connect(&config.database_url)
             .await
             .expect("failed to connect to postgres database");
-        let migrator = Migrator::new(Path::new("./migrations")).await.unwrap();
+        let migrator = Migrator::new(Path::new(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/migrations"
+        )))
+        .await
+        .unwrap();
         migrator.run(&db).await.unwrap();
 
         let github_client = github::AppClient::test();
