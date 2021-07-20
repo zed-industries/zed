@@ -62,7 +62,6 @@ impl Sub<Self> for OutputPoint {
 pub struct Snapshot {
     transforms: SumTree<Transform>,
     input: InputSnapshot,
-    version: usize,
 }
 
 impl Snapshot {
@@ -78,9 +77,65 @@ impl Snapshot {
                 },
                 &(),
             ),
-            version: input.version(),
             input,
         }
+    }
+
+    fn interpolate(&mut self, new_snapshot: InputSnapshot, edits: &[InputEdit]) {
+        if edits.is_empty() {
+            return;
+        }
+
+        let mut new_transforms;
+        {
+            let mut old_cursor = self.transforms.cursor::<InputPoint, ()>();
+            let mut edits = edits.into_iter().peekable();
+            new_transforms =
+                old_cursor.slice(&edits.peek().unwrap().old_lines.start, Bias::Right, &());
+
+            while let Some(edit) = edits.next() {
+                if edit.new_lines.start > InputPoint::from(new_transforms.summary().input.lines) {
+                    let summary = new_snapshot.text_summary_for_range(
+                        InputPoint::from(new_transforms.summary().input.lines)
+                            ..edit.new_lines.start,
+                    );
+                    new_transforms.push_or_extend(Transform::isomorphic(summary));
+                }
+
+                new_transforms.push_or_extend(Transform::isomorphic(
+                    new_snapshot.text_summary_for_range(edit.new_lines.clone()),
+                ));
+
+                old_cursor.seek_forward(&edit.old_lines.end, Bias::Right, &());
+                if let Some(next_edit) = edits.peek() {
+                    if next_edit.old_lines.start > old_cursor.seek_end(&()) {
+                        if old_cursor.seek_end(&()) > edit.old_lines.end {
+                            let summary = self.input.text_summary_for_range(
+                                edit.old_lines.end..old_cursor.seek_end(&()),
+                            );
+                            new_transforms.push_or_extend(Transform::isomorphic(summary));
+                        }
+                        old_cursor.next(&());
+                        new_transforms.push_tree(
+                            old_cursor.slice(&next_edit.old_lines.start, Bias::Right, &()),
+                            &(),
+                        );
+                    }
+                } else {
+                    if old_cursor.seek_end(&()) > edit.old_lines.end {
+                        let summary = self
+                            .input
+                            .text_summary_for_range(edit.old_lines.end..old_cursor.seek_end(&()));
+                        new_transforms.push_or_extend(Transform::isomorphic(summary));
+                    }
+                    old_cursor.next(&());
+                    new_transforms.push_tree(old_cursor.suffix(&()), &());
+                }
+            }
+        }
+
+        self.transforms = new_transforms;
+        self.input = new_snapshot;
     }
 
     pub fn chunks_at(&self, point: OutputPoint) -> Chunks {
@@ -145,7 +200,6 @@ impl<'a> Iterator for Chunks<'a> {
 
 struct State {
     snapshot: Snapshot,
-    interpolated_version: usize,
 }
 
 #[derive(Clone)]
@@ -179,10 +233,7 @@ impl WrapMap {
         };
 
         Self {
-            state: Mutex::new(State {
-                interpolated_version: snapshot.version,
-                snapshot,
-            }),
+            state: Mutex::new(State { snapshot }),
             edits_tx,
             background_snapshots: background_snapshots_rx,
             _background_task: background_task,
@@ -190,7 +241,10 @@ impl WrapMap {
     }
 
     pub fn sync(&self, input: InputSnapshot, edits: Vec<InputEdit>) -> Snapshot {
-        // TODO: interpolate
+        self.state
+            .lock()
+            .snapshot
+            .interpolate(input.clone(), &edits);
         self.edits_tx.try_send((input, edits)).unwrap();
         self.state.lock().snapshot.clone()
     }
@@ -378,30 +432,8 @@ impl BackgroundWrapper {
 
         self.snapshot = Snapshot {
             transforms: new_transforms,
-            version: new_snapshot.version(),
             input: new_snapshot,
         };
-        self.check_invariants();
-    }
-
-    fn check_invariants(&self) {
-        #[cfg(debug_assertions)]
-        {
-            let summary = self.snapshot.transforms.summary();
-            assert_eq!(
-                InputPoint::new(summary.input.lines.row, summary.input.lines.column),
-                self.snapshot.input.max_point()
-            );
-
-            let mut transforms = self.snapshot.transforms.cursor::<(), ()>().peekable();
-            while let Some(transform) = transforms.next() {
-                let next_transform = transforms.peek();
-                assert!(
-                    !transform.is_isomorphic()
-                        || next_transform.map_or(true, |t| !t.is_isomorphic())
-                );
-            }
-        }
     }
 }
 
@@ -613,10 +645,14 @@ mod tests {
                 unwrapped_text
             );
 
+            let mut interpolated_snapshot = wrapper.snapshot.clone();
             for _i in 0..operations {
                 buffer.update(cx, |buffer, cx| buffer.randomly_mutate(&mut rng, cx));
                 let (snapshot, edits) = fold_map.read(cx.as_ref());
                 let (snapshot, edits) = tab_map.sync(snapshot, edits);
+                interpolated_snapshot.interpolate(snapshot.clone(), &edits);
+                interpolated_snapshot.check_invariants();
+
                 let unwrapped_text = snapshot.text();
                 let expected_text = wrap_text(
                     &unwrapped_text,
@@ -625,7 +661,7 @@ mod tests {
                     font_system.as_ref(),
                 );
                 wrapper.sync(snapshot, edits);
-
+                wrapper.snapshot.check_invariants();
                 let actual_text = wrapper
                     .snapshot
                     .chunks_at(OutputPoint::zero())
@@ -635,6 +671,8 @@ mod tests {
                     "unwrapped text is: {:?}",
                     unwrapped_text
                 );
+
+                interpolated_snapshot = wrapper.snapshot.clone();
             }
         }
     }
@@ -660,5 +698,23 @@ mod tests {
             wrapped_text.push_str(&line[prev_ix..]);
         }
         wrapped_text
+    }
+
+    impl Snapshot {
+        fn check_invariants(&self) {
+            assert_eq!(
+                InputPoint::from(self.transforms.summary().input.lines),
+                self.input.max_point()
+            );
+
+            let mut transforms = self.transforms.cursor::<(), ()>().peekable();
+            while let Some(transform) = transforms.next() {
+                let next_transform = transforms.peek();
+                assert!(
+                    !transform.is_isomorphic()
+                        || next_transform.map_or(true, |t| !t.is_isomorphic())
+                );
+            }
+        }
     }
 }

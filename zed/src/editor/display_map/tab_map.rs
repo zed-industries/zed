@@ -261,6 +261,12 @@ impl OutputPoint {
     }
 }
 
+impl From<super::Point> for OutputPoint {
+    fn from(point: super::Point) -> Self {
+        Self(point)
+    }
+}
+
 impl AddAssign<Self> for OutputPoint {
     fn add_assign(&mut self, rhs: Self) {
         self.0 += &rhs.0;
