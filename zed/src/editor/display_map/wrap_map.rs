@@ -531,16 +531,31 @@ mod tests {
             wrapper.sync(tabs_snapshot.clone(), vec![edit]);
 
             let mut expected_text = String::new();
-            for line in tabs_snapshot.text().lines() {
+            let unwrapped_text = tabs_snapshot.text();
+            let mut unwrapped_lines = unwrapped_text.split('\n').peekable();
+            while let Some(line) = unwrapped_lines.next() {
                 let mut prev_ix = 0;
                 for ix in font_system.wrap_line(line, font_id, 14.0, config.wrap_width) {
                     expected_text.push_str(&line[prev_ix..ix]);
                     expected_text.push('\n');
                     prev_ix = ix;
                 }
+                expected_text.push_str(&line[prev_ix..]);
+                if unwrapped_lines.peek().is_some() {
+                    expected_text.push('\n');
+                }
             }
 
-            dbg!(expected_text);
+            let actual_text = wrapper
+                .snapshot
+                .chunks_at(OutputPoint::zero())
+                .collect::<String>();
+
+            assert_eq!(
+                actual_text, expected_text,
+                "unwrapped text is: {:?}",
+                unwrapped_text
+            );
         }
     }
 }
