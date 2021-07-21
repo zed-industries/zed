@@ -392,8 +392,6 @@ impl WrapMap {
         let mut background_snapshot = self.background_snapshot.clone();
         let mut snapshot = background_snapshot.borrow().clone();
 
-        log::info!("sync version: {:?}", snapshot.input.version());
-
         if !edits.is_empty() {
             self.background_changes_tx
                 .try_send(Change::Input {
