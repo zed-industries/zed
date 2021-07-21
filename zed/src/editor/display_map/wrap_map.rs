@@ -208,7 +208,16 @@ impl Snapshot {
         OutputPoint(cursor.sum_start().0 + (point.0 - cursor.seek_start().0))
     }
 
-    pub fn clip_point(&self, point: OutputPoint, bias: Bias) -> OutputPoint {
+    pub fn clip_point(&self, mut point: OutputPoint, bias: Bias) -> OutputPoint {
+        if bias == Bias::Left {
+            let mut cursor = self.transforms.cursor::<OutputPoint, ()>();
+            cursor.seek(&point, Bias::Right, &());
+            let transform = cursor.item().expect("invalid point");
+            if !transform.is_isomorphic() {
+                *point.column_mut() -= 1;
+            }
+        }
+
         self.to_output_point(self.input.clip_point(self.to_input_point(point), bias))
     }
 }

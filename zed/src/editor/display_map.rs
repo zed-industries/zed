@@ -369,6 +369,14 @@ mod tests {
                 .collect::<String>(),
             " two \nthree four \nfive\nsix seven \neight"
         );
+        assert_eq!(
+            snapshot.clip_point(DisplayPoint::new(0, 8), Bias::Left),
+            DisplayPoint::new(0, 7)
+        );
+        assert_eq!(
+            snapshot.clip_point(DisplayPoint::new(0, 8), Bias::Right),
+            DisplayPoint::new(1, 0)
+        );
 
         buffer.update(&mut cx, |buffer, cx| {
             let ix = buffer.text().find("seven").unwrap();
