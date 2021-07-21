@@ -200,7 +200,6 @@ impl EditorElement {
     fn paint_text(&mut self, bounds: RectF, layout: &LayoutState, cx: &mut PaintContext) {
         let view = self.view(cx.app);
         let line_height = view.line_height(cx.font_cache);
-        let descent = view.font_descent(cx.font_cache);
         let start_row = view.scroll_position().y() as u32;
         let scroll_top = view.scroll_position().y() * line_height;
         let end_row = ((scroll_top + bounds.height()) / line_height).ceil() as u32 + 1; // Add 1 to ensure selections bleed off screen
@@ -226,7 +225,7 @@ impl EditorElement {
         ];
         let mut cursors = SmallVec::<[Cursor; 32]>::new();
 
-        let content_origin = bounds.origin() + vec2f(-descent, 0.0);
+        let content_origin = bounds.origin() + layout.text_offset;
         for selection_set_id in view.active_selection_sets(cx.app) {
             let (selection_color, cursor_color) =
                 colors[selection_set_id.replica_id as usize % colors.len()];
@@ -361,7 +360,13 @@ impl Element for EditorElement {
 
         let gutter_size = vec2f(gutter_width, size.y());
         let text_size = size - vec2f(gutter_width, 0.0);
-        view.set_width(text_size.x());
+        let text_offset = vec2f(-view.font_descent(cx.font_cache), 0.);
+        let em_width = view.em_width(cx.font_cache);
+        let overscroll = vec2f(em_width, 0.);
+        let wrap_width = text_size.x() - text_offset.x() - overscroll.x();
+        // TODO: Core text doesn't seem to be keeping our lines below the specified wrap width. Find out why.
+        let wrap_width = wrap_width - em_width;
+        view.set_wrap_width(wrap_width);
 
         let autoscroll_horizontally = view.autoscroll_vertically(size.y(), line_height, app);
 
@@ -406,6 +411,8 @@ impl Element for EditorElement {
                 gutter_size,
                 gutter_padding,
                 text_size,
+                overscroll,
+                text_offset,
                 line_layouts,
                 line_number_layouts,
                 max_visible_line_width,
@@ -521,6 +528,8 @@ pub struct LayoutState {
     text_size: Vector2F,
     line_layouts: Vec<text_layout::Line>,
     line_number_layouts: Vec<text_layout::Line>,
+    overscroll: Vector2F,
+    text_offset: Vector2F,
     max_visible_line_width: f32,
     autoscroll_horizontally: bool,
 }
@@ -538,7 +547,7 @@ impl LayoutState {
             .layout_line(row, font_cache, layout_cache, cx)
             .unwrap()
             .width();
-        longest_line_width.max(self.max_visible_line_width) + view.em_width(font_cache)
+        longest_line_width.max(self.max_visible_line_width) + self.overscroll.x()
     }
 
     fn scroll_max(
