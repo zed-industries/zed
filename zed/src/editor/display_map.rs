@@ -156,7 +156,9 @@ impl DisplayMapSnapshot {
     }
 
     pub fn is_line_folded(&self, display_row: u32) -> bool {
-        self.folds_snapshot.is_line_folded(display_row)
+        let wrap_point = DisplayPoint::new(display_row, 0).0;
+        let row = self.wraps_snapshot.to_input_point(wrap_point).row();
+        self.folds_snapshot.is_line_folded(row)
     }
 
     pub fn text(&self) -> String {
@@ -191,11 +193,11 @@ impl DisplayMapSnapshot {
     }
 
     pub fn line_len(&self, row: u32) -> u32 {
-        self.tabs_snapshot.line_len(row)
+        self.wraps_snapshot.line_len(row)
     }
 
     pub fn longest_row(&self) -> u32 {
-        self.tabs_snapshot.longest_row()
+        self.wraps_snapshot.longest_row()
     }
 
     pub fn anchor_before(&self, point: DisplayPoint, bias: Bias) -> Anchor {

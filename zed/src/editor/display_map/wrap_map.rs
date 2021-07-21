@@ -164,6 +164,23 @@ impl Snapshot {
         self.to_output_point(self.input.max_point())
     }
 
+    pub fn line_len(&self, row: u32) -> u32 {
+        let mut len = 0;
+        for chunk in self.chunks_at(OutputPoint::new(row, 0)) {
+            if let Some(newline_ix) = chunk.find('\n') {
+                len += newline_ix;
+                break;
+            } else {
+                len += chunk.len();
+            }
+        }
+        len as u32
+    }
+
+    pub fn longest_row(&self) -> u32 {
+        self.transforms.summary().output.longest_row
+    }
+
     pub fn buffer_rows(&self, start_row: u32) -> BufferRows {
         let mut transforms = self.transforms.cursor::<OutputPoint, InputPoint>();
         transforms.seek(&OutputPoint::new(start_row, 0), Bias::Right, &());
