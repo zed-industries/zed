@@ -167,14 +167,15 @@ impl Snapshot {
     pub fn buffer_rows(&self, start_row: u32) -> BufferRows {
         let mut transforms = self.transforms.cursor::<OutputPoint, InputPoint>();
         transforms.seek(&OutputPoint::new(start_row, 0), Bias::Right, &());
-        let input_row = transforms.sum_start().row();
-        let mut input_buffer_rows = self.input.buffer_rows(start_row);
+        let input_row = transforms.sum_start().row() + (start_row - transforms.seek_start().row());
+        let mut input_buffer_rows = self.input.buffer_rows(input_row);
         let input_buffer_row = input_buffer_rows.next().unwrap();
         BufferRows {
             transforms,
-            input_row,
             input_buffer_row,
             input_buffer_rows,
+            output_row: start_row,
+            max_output_row: self.max_point().row(),
         }
     }
 
@@ -212,8 +213,9 @@ pub struct HighlightedChunks<'a> {
 
 pub struct BufferRows<'a> {
     input_buffer_rows: fold_map::BufferRows<'a>,
-    input_row: u32,
     input_buffer_row: u32,
+    output_row: u32,
+    max_output_row: u32,
     transforms: Cursor<'a, Transform, OutputPoint, InputPoint>,
 }
 
@@ -299,18 +301,19 @@ impl<'a> Iterator for BufferRows<'a> {
     type Item = u32;
 
     fn next(&mut self) -> Option<Self::Item> {
-        let result = self.input_buffer_row;
-        if self.input_row + 1 < self.transforms.sum_end(&()).row() {
-            self.input_row += 1;
-            self.input_buffer_row = self.input_buffer_rows.next().unwrap();
-        } else {
-            self.transforms.seek_forward(
-                &OutputPoint::new(self.transforms.seek_start().row() + 1, 0),
-                Bias::Right,
-                &(),
-            );
+        if self.output_row > self.max_output_row {
+            return None;
         }
-        Some(result)
+
+        let buffer_row = self.input_buffer_row;
+        self.output_row += 1;
+        self.transforms
+            .seek_forward(&OutputPoint::new(self.output_row, 0), Bias::Left, &());
+        if self.transforms.item().map_or(false, |t| t.is_isomorphic()) {
+            self.input_buffer_row = self.input_buffer_rows.next().unwrap();
+        }
+
+        Some(buffer_row)
     }
 }
 

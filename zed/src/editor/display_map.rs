@@ -272,9 +272,73 @@ mod tests {
         language::{Language, LanguageConfig},
         settings::Theme,
         test::*,
+        util::RandomCharIter,
     };
     use buffer::History;
-    use std::sync::Arc;
+    use rand::prelude::*;
+    use std::{env, sync::Arc};
+
+    #[gpui::test]
+    async fn test_random(mut cx: gpui::TestAppContext) {
+        cx.foreground().set_block_on_ticks(usize::MAX..=usize::MAX);
+        let iterations = env::var("ITERATIONS")
+            .map(|i| i.parse().expect("invalid `ITERATIONS` variable"))
+            .unwrap_or(100);
+        let operations = env::var("OPERATIONS")
+            .map(|i| i.parse().expect("invalid `OPERATIONS` variable"))
+            .unwrap_or(10);
+        let seed_range = if let Ok(seed) = env::var("SEED") {
+            let seed = seed.parse().expect("invalid `SEED` variable");
+            seed..seed + 1
+        } else {
+            0..iterations
+        };
+        let font_cache = cx.font_cache();
+
+        for seed in seed_range {
+            dbg!(seed);
+            let mut rng = StdRng::seed_from_u64(seed);
+            let settings = Settings {
+                buffer_font_family: font_cache.load_family(&["Helvetica"]).unwrap(),
+                ui_font_family: font_cache.load_family(&["Helvetica"]).unwrap(),
+                buffer_font_size: 12.0,
+                ui_font_size: 12.0,
+                tab_size: rng.gen_range(1..=4),
+                theme: Arc::new(Theme::default()),
+            };
+
+            let buffer = cx.add_model(|cx| {
+                let len = rng.gen_range(0..10);
+                let text = RandomCharIter::new(&mut rng).take(len).collect::<String>();
+                log::info!("Initial buffer text: {:?}", text);
+                Buffer::new(0, text, cx)
+            });
+            let wrap_width = Some(rng.gen_range(20.0..=100.0));
+            let map = cx.read(|cx| DisplayMap::new(buffer.clone(), settings, wrap_width, cx));
+
+            for _op_ix in 0..operations {
+                buffer.update(&mut cx, |buffer, cx| buffer.randomly_mutate(&mut rng, cx));
+                let snapshot = cx.read(|cx| map.snapshot(cx));
+                let expected_buffer_rows = (0..=snapshot.max_point().row())
+                    .map(|display_row| {
+                        DisplayPoint::new(display_row, 0)
+                            .to_buffer_point(&snapshot, Bias::Left)
+                            .row
+                    })
+                    .collect::<Vec<_>>();
+                for start_display_row in 0..expected_buffer_rows.len() {
+                    assert_eq!(
+                        snapshot
+                            .buffer_rows(start_display_row as u32)
+                            .collect::<Vec<_>>(),
+                        &expected_buffer_rows[start_display_row..],
+                        "invalid buffer_rows({}..)",
+                        start_display_row
+                    );
+                }
+            }
+        }
+    }
 
     #[gpui::test]
     async fn test_soft_wraps(mut cx: gpui::TestAppContext) {
