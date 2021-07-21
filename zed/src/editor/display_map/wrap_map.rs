@@ -755,28 +755,30 @@ mod tests {
         for seed in seed_range {
             dbg!(seed);
             let mut rng = StdRng::seed_from_u64(seed);
-
-            let buffer = cx.add_model(|cx| {
-                let len = rng.gen_range(0..10);
-                let text = RandomCharIter::new(&mut rng).take(len).collect::<String>();
-                log::info!("Initial buffer text: {:?}", text);
-                Buffer::new(0, text, cx)
-            });
-            let (fold_map, folds_snapshot) = FoldMap::new(buffer.clone(), cx.as_ref());
-            let (tab_map, tabs_snapshot) =
-                TabMap::new(folds_snapshot.clone(), rng.gen_range(1..=4));
             let font_cache = cx.font_cache().clone();
             let font_system = cx.platform().fonts();
             let wrap_width = rng.gen_range(100.0..=1000.0);
             let settings = Settings {
-                tab_size: 4,
+                tab_size: rng.gen_range(1..=4),
                 buffer_font_family: font_cache.load_family(&["Helvetica"]).unwrap(),
                 buffer_font_size: 14.0,
                 ..Settings::new(&font_cache).unwrap()
             };
+            log::info!("Tab size: {}", settings.tab_size);
+            log::info!("Wrap width: {}", wrap_width);
+
             let font_id = font_cache
                 .select_font(settings.buffer_font_family, &Default::default())
                 .unwrap();
+
+            let buffer = cx.add_model(|cx| {
+                let len = rng.gen_range(0..10);
+                let text = RandomCharIter::new(&mut rng).take(len).collect::<String>();
+                log::info!("Initial buffer text: {:?} (len: {})", text, text.len());
+                Buffer::new(0, text, cx)
+            });
+            let (fold_map, folds_snapshot) = FoldMap::new(buffer.clone(), cx.as_ref());
+            let (tab_map, tabs_snapshot) = TabMap::new(folds_snapshot.clone(), settings.tab_size);
             let mut wrapper = BackgroundWrapper::new(
                 Snapshot::new(tabs_snapshot.clone()),
                 settings.clone(),
@@ -818,10 +820,8 @@ mod tests {
                     wrap_text(&unwrapped_text, wrap_width, font_id, font_system.as_ref());
                 wrapper.sync(snapshot, edits);
                 wrapper.snapshot.check_invariants();
-                let actual_text = wrapper
-                    .snapshot
-                    .chunks_at(OutputPoint::zero())
-                    .collect::<String>();
+
+                let actual_text = wrapper.snapshot.text();
                 assert_eq!(
                     actual_text, expected_text,
                     "unwrapped text is: {:?}",
@@ -857,6 +857,10 @@ mod tests {
     }
 
     impl Snapshot {
+        fn text(&self) -> String {
+            self.chunks_at(OutputPoint::zero()).collect()
+        }
+
         fn check_invariants(&self) {
             assert_eq!(
                 InputPoint::from(self.transforms.summary().input.lines),

@@ -5,7 +5,7 @@ use super::fold_map::{
     OutputOffset as InputOffset, OutputPoint as InputPoint, Snapshot as InputSnapshot,
 };
 use crate::{editor::rope, settings::StyleId, util::Bias};
-use std::{mem, ops::Range};
+use std::{cmp, mem, ops::Range};
 
 pub struct TabMap(Mutex<Snapshot>);
 
@@ -18,7 +18,7 @@ impl TabMap {
     pub fn sync(
         &self,
         snapshot: InputSnapshot,
-        input_edits: Vec<InputEdit>,
+        mut input_edits: Vec<InputEdit>,
     ) -> (Snapshot, Vec<Edit>) {
         let mut old_snapshot = self.0.lock();
         let new_snapshot = Snapshot {
@@ -27,6 +27,39 @@ impl TabMap {
         };
 
         let mut output_edits = Vec::with_capacity(input_edits.len());
+        for input_edit in &mut input_edits {
+            let mut delta = 0;
+            for chunk in old_snapshot.input.chunks_at(input_edit.old_bytes.end) {
+                let patterns: &[_] = &['\t', '\n'];
+                if let Some(ix) = chunk.find(patterns) {
+                    if &chunk[ix..ix + 1] == "\t" {
+                        input_edit.old_bytes.end.0 += delta + ix + old_snapshot.tab_size;
+                        input_edit.new_bytes.end.0 += delta + ix + new_snapshot.tab_size;
+                    }
+
+                    break;
+                }
+
+                delta += chunk.len();
+            }
+            input_edit.old_bytes.end = cmp::min(input_edit.old_bytes.end, old_snapshot.input.len());
+            input_edit.new_bytes.end = cmp::min(input_edit.new_bytes.end, new_snapshot.input.len());
+        }
+
+        let mut ix = 1;
+        while ix < input_edits.len() {
+            let (prev_edits, next_edits) = input_edits.split_at_mut(ix);
+            let prev_edit = prev_edits.last_mut().unwrap();
+            let edit = &next_edits[0];
+            if prev_edit.old_bytes.end >= edit.old_bytes.start {
+                prev_edit.old_bytes.end = edit.old_bytes.end;
+                prev_edit.new_bytes.end = edit.new_bytes.end;
+                input_edits.remove(ix);
+            } else {
+                ix += 1;
+            }
+        }
+
         for input_edit in input_edits {
             let old_start = input_edit.old_bytes.start.to_point(&old_snapshot.input);
             let old_end = input_edit.old_bytes.end.to_point(&old_snapshot.input);
@@ -53,28 +86,45 @@ pub struct Snapshot {
 
 impl Snapshot {
     pub fn text_summary(&self) -> TextSummary {
-        // TODO: expand tabs on first and last line, ignoring the longest row.
-        let summary = self.input.text_summary();
-        TextSummary {
-            lines: summary.lines,
-            first_line_chars: summary.first_line_chars,
-            last_line_chars: summary.last_line_chars,
-            longest_row: summary.longest_row,
-            longest_row_chars: summary.longest_row_chars,
-        }
+        self.text_summary_for_range(OutputPoint::zero()..self.max_point())
     }
 
     pub fn text_summary_for_range(&self, range: Range<OutputPoint>) -> TextSummary {
-        // TODO: expand tabs on first and last line, ignoring the longest row.
-        let start = self.to_input_point(range.start, Bias::Left).0;
-        let end = self.to_input_point(range.end, Bias::Right).0;
-        let summary = self.input.text_summary_for_range(start..end);
+        let input_start = self.to_input_point(range.start, Bias::Left).0;
+        let input_end = self.to_input_point(range.end, Bias::Right).0;
+        let input_summary = self.input.text_summary_for_range(input_start..input_end);
+
+        let mut first_line_chars = 0;
+        let mut first_line_bytes = 0;
+        for c in self.chunks_at(range.start).flat_map(|chunk| chunk.chars()) {
+            if c == '\n'
+                || (range.start.row() == range.end.row() && first_line_bytes == range.end.column())
+            {
+                break;
+            }
+            first_line_chars += 1;
+            first_line_bytes += c.len_utf8() as u32;
+        }
+
+        let mut last_line_chars = 0;
+        let mut last_line_bytes = 0;
+        for c in self
+            .chunks_at(OutputPoint::new(range.end.row(), 0).max(range.start))
+            .flat_map(|chunk| chunk.chars())
+        {
+            if last_line_bytes == range.end.column() {
+                break;
+            }
+            last_line_chars += 1;
+            last_line_bytes += c.len_utf8() as u32;
+        }
+
         TextSummary {
-            lines: summary.lines,
-            first_line_chars: summary.first_line_chars,
-            last_line_chars: summary.last_line_chars,
-            longest_row: summary.longest_row,
-            longest_row_chars: summary.longest_row_chars,
+            lines: range.end.0 - range.start.0,
+            first_line_chars,
+            last_line_chars,
+            longest_row: input_summary.longest_row,
+            longest_row_chars: input_summary.longest_row_chars,
         }
     }
 
