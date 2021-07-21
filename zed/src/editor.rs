@@ -21,7 +21,7 @@ use gpui::{
     WeakViewHandle,
 };
 use parking_lot::Mutex;
-use postage::watch;
+use postage::{prelude::Stream, watch};
 use serde::{Deserialize, Serialize};
 use smallvec::SmallVec;
 use smol::Timer;
@@ -412,6 +412,14 @@ impl Editor {
         cx.subscribe_to_model(&buffer, Self::on_buffer_event);
         let display_map =
             DisplayMap::new(buffer.clone(), settings.borrow().clone(), None, cx.as_ref());
+
+        let mut notifications = display_map.notifications();
+        cx.spawn(|this, mut cx| async move {
+            while notifications.recv().await.is_some() {
+                this.update(&mut cx, |_, cx| cx.notify());
+            }
+        })
+        .detach();
 
         let mut next_selection_id = 0;
         let selection_set_id = buffer.update(cx, |buffer, cx| {

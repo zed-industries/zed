@@ -1,7 +1,7 @@
 use parking_lot::Mutex;
 
 use super::fold_map::{
-    Chunks as InputChunks, Edit as InputEdit, HighlightedChunks as InputHighlightedChunks,
+    self, Chunks as InputChunks, Edit as InputEdit, HighlightedChunks as InputHighlightedChunks,
     OutputOffset as InputOffset, OutputPoint as InputPoint, Snapshot as InputSnapshot,
 };
 use crate::{editor::rope, settings::StyleId, util::Bias};
@@ -94,18 +94,24 @@ impl Snapshot {
         }
     }
 
-    pub fn highlighted_chunks_for_rows(&mut self, rows: Range<u32>) -> HighlightedChunks {
-        let start = self.input.to_output_offset(InputPoint::new(rows.start, 0));
-        let end = self
+    pub fn highlighted_chunks(&mut self, range: Range<OutputPoint>) -> HighlightedChunks {
+        let input_start = self
             .input
-            .to_output_offset(InputPoint::new(rows.end, 0).min(self.input.max_point()));
+            .to_output_offset(self.to_input_point(range.start, Bias::Left).0);
+        let input_end = self
+            .input
+            .to_output_offset(self.to_input_point(range.end, Bias::Left).0);
         HighlightedChunks {
-            input_chunks: self.input.highlighted_chunks(start..end),
+            input_chunks: self.input.highlighted_chunks(input_start..input_end),
             column: 0,
             tab_size: self.tab_size,
             chunk: "",
             style_id: Default::default(),
         }
+    }
+
+    pub fn buffer_rows(&self, row: u32) -> fold_map::BufferRows {
+        self.input.buffer_rows(row)
     }
 
     #[cfg(test)]

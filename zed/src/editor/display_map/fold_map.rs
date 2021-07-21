@@ -491,7 +491,7 @@ impl Snapshot {
         (line_end - line_start) as u32
     }
 
-    pub fn input_rows(&self, start_row: u32) -> InputRows {
+    pub fn buffer_rows(&self, start_row: u32) -> BufferRows {
         if start_row > self.transforms.summary().output.lines.row {
             panic!("invalid display row {}", start_row);
         }
@@ -499,7 +499,7 @@ impl Snapshot {
         let output_point = OutputPoint::new(start_row, 0);
         let mut cursor = self.transforms.cursor();
         cursor.seek(&output_point, Bias::Left, &());
-        InputRows {
+        BufferRows {
             output_point,
             cursor,
         }
@@ -880,12 +880,12 @@ impl<'a> sum_tree::Dimension<'a, FoldSummary> for usize {
     }
 }
 
-pub struct InputRows<'a> {
+pub struct BufferRows<'a> {
     cursor: Cursor<'a, Transform, OutputPoint, InputPoint>,
     output_point: OutputPoint,
 }
 
-impl<'a> Iterator for InputRows<'a> {
+impl<'a> Iterator for BufferRows<'a> {
     type Item = u32;
 
     fn next(&mut self) -> Option<Self::Item> {
@@ -1450,7 +1450,7 @@ mod tests {
                         .to_output_point(InputPoint::new(*input_row, 0))
                         .row();
                     assert_eq!(
-                        snapshot.input_rows(output_row).collect::<Vec<_>>(),
+                        snapshot.buffer_rows(output_row).collect::<Vec<_>>(),
                         expected_input_rows[idx..],
                     );
                 }
@@ -1544,8 +1544,8 @@ mod tests {
 
         let (snapshot, _) = map.read(cx.as_ref());
         assert_eq!(snapshot.text(), "aa…cccc\nd…eeeee\nffffff\n");
-        assert_eq!(snapshot.input_rows(0).collect::<Vec<_>>(), [0, 3, 5, 6]);
-        assert_eq!(snapshot.input_rows(3).collect::<Vec<_>>(), [6]);
+        assert_eq!(snapshot.buffer_rows(0).collect::<Vec<_>>(), [0, 3, 5, 6]);
+        assert_eq!(snapshot.buffer_rows(3).collect::<Vec<_>>(), [6]);
     }
 
     impl FoldMap {

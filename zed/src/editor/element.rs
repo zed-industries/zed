@@ -338,7 +338,6 @@ impl Element for EditorElement {
         }
 
         let view = self.view(app);
-        view.set_width(size.x());
 
         let font_cache = &cx.font_cache;
         let layout_cache = &cx.text_layout_cache;
@@ -362,6 +361,7 @@ impl Element for EditorElement {
 
         let gutter_size = vec2f(gutter_width, size.y());
         let text_size = size - vec2f(gutter_width, 0.0);
+        view.set_width(text_size.x());
 
         let autoscroll_horizontally = view.autoscroll_vertically(size.y(), line_height, app);
 

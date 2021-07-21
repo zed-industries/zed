@@ -4,10 +4,11 @@ mod wrap_map;
 
 use super::{buffer, Anchor, Bias, Buffer, Point, Settings, ToOffset, ToPoint};
 use fold_map::FoldMap;
-pub use fold_map::InputRows;
 use gpui::{AppContext, ModelHandle};
+use postage::prelude::Stream;
 use std::ops::Range;
 use tab_map::TabMap;
+pub use wrap_map::BufferRows;
 use wrap_map::WrapMap;
 
 pub struct DisplayMap {
@@ -76,6 +77,10 @@ impl DisplayMap {
     pub fn set_wrap_width(&self, width: Option<f32>) {
         self.wrap_map.set_wrap_width(width);
     }
+
+    pub fn notifications(&self) -> impl Stream<Item = ()> {
+        self.wrap_map.notifications()
+    }
 }
 
 pub struct DisplayMapSnapshot {
@@ -86,8 +91,8 @@ pub struct DisplayMapSnapshot {
 }
 
 impl DisplayMapSnapshot {
-    pub fn buffer_rows(&self, start_row: u32) -> InputRows {
-        self.folds_snapshot.input_rows(start_row)
+    pub fn buffer_rows(&self, start_row: u32) -> BufferRows {
+        self.wraps_snapshot.buffer_rows(start_row)
     }
 
     pub fn max_point(&self) -> DisplayPoint {
@@ -98,8 +103,8 @@ impl DisplayMapSnapshot {
         self.wraps_snapshot.chunks_at(point.0)
     }
 
-    pub fn highlighted_chunks_for_rows(&mut self, rows: Range<u32>) -> tab_map::HighlightedChunks {
-        self.tabs_snapshot.highlighted_chunks_for_rows(rows)
+    pub fn highlighted_chunks_for_rows(&mut self, rows: Range<u32>) -> wrap_map::HighlightedChunks {
+        self.wraps_snapshot.highlighted_chunks_for_rows(rows)
     }
 
     pub fn chars_at<'a>(&'a self, point: DisplayPoint) -> impl Iterator<Item = char> + 'a {

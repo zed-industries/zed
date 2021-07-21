@@ -1,13 +1,17 @@
-use super::tab_map::{
-    self, Edit as InputEdit, OutputPoint as InputPoint, Snapshot as InputSnapshot, TextSummary,
+use super::{
+    fold_map,
+    tab_map::{
+        self, Edit as InputEdit, OutputPoint as InputPoint, Snapshot as InputSnapshot, TextSummary,
+    },
 };
 use crate::{
-    editor::{Editor, Point},
+    editor::Point,
+    settings::StyleId,
     sum_tree::{self, Cursor, SumTree},
     util::Bias,
     Settings,
 };
-use gpui::{AppContext, FontCache, FontSystem, Task, ViewContext};
+use gpui::{AppContext, FontCache, FontSystem, Task};
 use parking_lot::Mutex;
 use postage::{
     prelude::{Sink, Stream},
@@ -139,8 +143,39 @@ impl Snapshot {
         }
     }
 
+    pub fn highlighted_chunks_for_rows(&mut self, rows: Range<u32>) -> HighlightedChunks {
+        let output_start = OutputPoint::new(rows.start, 0);
+        let output_end = OutputPoint::new(rows.end, 0);
+        let mut transforms = self.transforms.cursor::<OutputPoint, InputPoint>();
+        transforms.seek(&output_start, Bias::Right, &());
+        let input_start =
+            InputPoint(transforms.sum_start().0 + (output_start.0 - transforms.seek_start().0));
+        let input_end = self.to_input_point(output_end).min(self.input.max_point());
+        HighlightedChunks {
+            input_chunks: self.input.highlighted_chunks(input_start..input_end),
+            input_position: input_start,
+            style_id: StyleId::default(),
+            input_chunk: "",
+            transforms,
+        }
+    }
+
     pub fn max_point(&self) -> OutputPoint {
         self.to_output_point(self.input.max_point())
+    }
+
+    pub fn buffer_rows(&self, start_row: u32) -> BufferRows {
+        let mut transforms = self.transforms.cursor::<OutputPoint, InputPoint>();
+        transforms.seek(&OutputPoint::new(start_row, 0), Bias::Right, &());
+        let input_row = transforms.sum_start().row();
+        let mut input_buffer_rows = self.input.buffer_rows(start_row);
+        let input_buffer_row = input_buffer_rows.next().unwrap();
+        BufferRows {
+            transforms,
+            input_row,
+            input_buffer_row,
+            input_buffer_rows,
+        }
     }
 
     pub fn to_input_point(&self, point: OutputPoint) -> InputPoint {
@@ -164,6 +199,21 @@ pub struct Chunks<'a> {
     input_chunks: tab_map::Chunks<'a>,
     input_chunk: &'a str,
     input_position: InputPoint,
+    transforms: Cursor<'a, Transform, OutputPoint, InputPoint>,
+}
+
+pub struct HighlightedChunks<'a> {
+    input_chunks: tab_map::HighlightedChunks<'a>,
+    input_chunk: &'a str,
+    style_id: StyleId,
+    input_position: InputPoint,
+    transforms: Cursor<'a, Transform, OutputPoint, InputPoint>,
+}
+
+pub struct BufferRows<'a> {
+    input_buffer_rows: fold_map::BufferRows<'a>,
+    input_row: u32,
+    input_buffer_row: u32,
     transforms: Cursor<'a, Transform, OutputPoint, InputPoint>,
 }
 
@@ -205,6 +255,65 @@ impl<'a> Iterator for Chunks<'a> {
     }
 }
 
+impl<'a> Iterator for HighlightedChunks<'a> {
+    type Item = (&'a str, StyleId);
+
+    fn next(&mut self) -> Option<Self::Item> {
+        let transform = self.transforms.item()?;
+        if let Some(display_text) = transform.display_text {
+            self.transforms.next(&());
+            return Some((display_text, self.style_id));
+        }
+
+        if self.input_chunk.is_empty() {
+            let (chunk, style_id) = self.input_chunks.next().unwrap();
+            self.input_chunk = chunk;
+            self.style_id = style_id;
+        }
+
+        let mut input_len = 0;
+        let transform_end = self.transforms.sum_end(&());
+        for c in self.input_chunk.chars() {
+            let char_len = c.len_utf8();
+            input_len += char_len;
+            if c == '\n' {
+                *self.input_position.row_mut() += 1;
+                *self.input_position.column_mut() = 0;
+            } else {
+                *self.input_position.column_mut() += char_len as u32;
+            }
+
+            if self.input_position >= transform_end {
+                self.transforms.next(&());
+                break;
+            }
+        }
+
+        let (prefix, suffix) = self.input_chunk.split_at(input_len);
+        self.input_chunk = suffix;
+        Some((prefix, self.style_id))
+    }
+}
+
+impl<'a> Iterator for BufferRows<'a> {
+    type Item = u32;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        let result = self.input_buffer_row;
+        if self.input_row + 1 < self.transforms.sum_end(&()).row() {
+            self.input_row += 1;
+            self.input_buffer_row = self.input_buffer_rows.next().unwrap();
+        } else {
+            self.transforms.seek_forward(
+                &OutputPoint::new(self.transforms.seek_start().row() + 1, 0),
+                Bias::Right,
+                &(),
+            );
+        }
+        Some(result)
+    }
+}
+
 struct State {
     snapshot: Snapshot,
     pending_edits: VecDeque<(InputSnapshot, Vec<InputEdit>)>,
@@ -222,7 +331,7 @@ impl WrapMap {
         input: InputSnapshot,
         settings: Settings,
         wrap_width: Option<f32>,
-        cx: &mut ViewContext<Editor>,
+        cx: &AppContext,
     ) -> Self {
         let font_cache = cx.font_cache().clone();
         let font_system = cx.platform().fonts();
@@ -252,7 +361,9 @@ impl WrapMap {
 
     pub fn sync(&self, input: InputSnapshot, edits: Vec<InputEdit>, cx: &AppContext) -> Snapshot {
         let mut background_snapshot = self.background_snapshot.clone();
-        let mut snapshot = self.background_snapshot.borrow().clone();
+        let mut snapshot = background_snapshot.borrow().clone();
+
+        log::info!("sync version: {:?}", snapshot.input.version());
 
         if !edits.is_empty() {
             self.background_changes_tx
@@ -294,6 +405,10 @@ impl WrapMap {
         self.background_changes_tx
             .try_send(Change::Width(width))
             .unwrap();
+    }
+
+    pub fn notifications(&self) -> impl Stream<Item = ()> {
+        self.background_snapshot.clone().map(|_| ())
     }
 }
 
@@ -362,6 +477,7 @@ impl BackgroundWrapper {
                     }
                 }
             };
+
             if snapshot_tx.send(self.snapshot.clone()).await.is_err() {
                 break;
             }
