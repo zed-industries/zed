@@ -158,9 +158,10 @@ impl Snapshot {
         let input_end = self.to_input_point(output_end).min(self.input.max_point());
         HighlightedChunks {
             input_chunks: self.input.highlighted_chunks(input_start..input_end),
-            input_position: input_start,
-            style_id: StyleId::default(),
             input_chunk: "",
+            style_id: StyleId::default(),
+            output_position: output_start,
+            max_output_row: rows.end,
             transforms,
         }
     }
@@ -238,7 +239,8 @@ pub struct HighlightedChunks<'a> {
     input_chunks: tab_map::HighlightedChunks<'a>,
     input_chunk: &'a str,
     style_id: StyleId,
-    input_position: InputPoint,
+    output_position: OutputPoint,
+    max_output_row: u32,
     transforms: Cursor<'a, Transform, OutputPoint, InputPoint>,
 }
 
@@ -292,8 +294,13 @@ impl<'a> Iterator for HighlightedChunks<'a> {
     type Item = (&'a str, StyleId);
 
     fn next(&mut self) -> Option<Self::Item> {
+        if self.output_position.row() >= self.max_output_row {
+            return None;
+        }
+
         let transform = self.transforms.item()?;
         if let Some(display_text) = transform.display_text {
+            self.output_position.0 += transform.summary.output.lines;
             self.transforms.next(&());
             return Some((display_text, self.style_id));
         }
@@ -305,18 +312,18 @@ impl<'a> Iterator for HighlightedChunks<'a> {
         }
 
         let mut input_len = 0;
-        let transform_end = self.transforms.sum_end(&());
+        let transform_end = self.transforms.seek_end(&());
         for c in self.input_chunk.chars() {
             let char_len = c.len_utf8();
             input_len += char_len;
             if c == '\n' {
-                *self.input_position.row_mut() += 1;
-                *self.input_position.column_mut() = 0;
+                *self.output_position.row_mut() += 1;
+                *self.output_position.column_mut() = 0;
             } else {
-                *self.input_position.column_mut() += char_len as u32;
+                *self.output_position.column_mut() += char_len as u32;
             }
 
-            if self.input_position >= transform_end {
+            if self.output_position >= transform_end {
                 self.transforms.next(&());
                 break;
             }

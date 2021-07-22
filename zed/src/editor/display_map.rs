@@ -518,28 +518,84 @@ mod tests {
                 ("() {}\n}".to_string(), Some("mod.body")),
             ]
         );
+    }
 
-        fn highlighted_chunks<'a>(
-            rows: Range<u32>,
-            map: &DisplayMap,
-            theme: &'a Theme,
-            cx: &AppContext,
-        ) -> Vec<(String, Option<&'a str>)> {
-            let mut chunks: Vec<(String, Option<&str>)> = Vec::new();
-            for (chunk, style_id) in map.snapshot(cx).highlighted_chunks_for_rows(rows) {
-                let style_name = theme.syntax_style_name(style_id);
-                if let Some((last_chunk, last_style_name)) = chunks.last_mut() {
-                    if style_name == *last_style_name {
-                        last_chunk.push_str(chunk);
-                    } else {
-                        chunks.push((chunk.to_string(), style_name));
-                    }
-                } else {
-                    chunks.push((chunk.to_string(), style_name));
-                }
-            }
-            chunks
-        }
+    #[gpui::test]
+    async fn test_highlighted_chunks_with_soft_wrapping(mut cx: gpui::TestAppContext) {
+        use unindent::Unindent as _;
+
+        cx.foreground().set_block_on_ticks(usize::MAX..=usize::MAX);
+
+        let grammar = tree_sitter_rust::language();
+        let text = r#"
+            fn outer() {}
+
+            mod module {
+                fn inner() {}
+            }"#
+        .unindent();
+        let highlight_query = tree_sitter::Query::new(
+            grammar,
+            r#"
+            (mod_item name: (identifier) body: _ @mod.body)
+            (function_item name: (identifier) @fn.name)"#,
+        )
+        .unwrap();
+        let theme = Theme::parse(
+            r#"
+            [syntax]
+            "mod.body" = 0xff0000
+            "fn.name" = 0x00ff00"#,
+        )
+        .unwrap();
+        let lang = Arc::new(Language {
+            config: LanguageConfig {
+                name: "Test".to_string(),
+                path_suffixes: vec![".test".to_string()],
+                ..Default::default()
+            },
+            grammar: grammar.clone(),
+            highlight_query,
+            brackets_query: tree_sitter::Query::new(grammar, "").unwrap(),
+            theme_mapping: Default::default(),
+        });
+        lang.set_theme(&theme);
+
+        let buffer = cx.add_model(|cx| {
+            Buffer::from_history(0, History::new(text.into()), None, Some(lang), cx)
+        });
+        buffer.condition(&cx, |buf, _| !buf.is_parsing()).await;
+
+        let font_cache = cx.font_cache();
+        let settings = Settings {
+            tab_size: 4,
+            buffer_font_family: font_cache.load_family(&["Courier"]).unwrap(),
+            buffer_font_size: 16.0,
+            ..Settings::new(&font_cache).unwrap()
+        };
+        let mut map = cx.read(|cx| DisplayMap::new(buffer, settings, Some(40.0), cx));
+        assert_eq!(
+            cx.read(|cx| highlighted_chunks(0..5, &map, &theme, cx)),
+            [
+                ("fn \n".to_string(), None),
+                ("oute\nr".to_string(), Some("fn.name")),
+                ("() \n{}\n\n".to_string(), None),
+            ]
+        );
+        assert_eq!(
+            cx.read(|cx| highlighted_chunks(3..5, &map, &theme, cx)),
+            [("{}\n\n".to_string(), None)]
+        );
+
+        cx.read(|cx| map.fold(vec![Point::new(0, 6)..Point::new(3, 2)], cx));
+        assert_eq!(
+            cx.read(|cx| highlighted_chunks(1..4, &map, &theme, cx)),
+            [
+                ("out".to_string(), Some("fn.name")),
+                ("…\n".to_string(), None),
+                ("  fn\n \n".to_string(), Some("mod.body"))
+            ]
+        );
     }
 
     #[gpui::test]
@@ -666,5 +722,27 @@ mod tests {
             map.snapshot(cx.as_ref()).max_point(),
             DisplayPoint::new(1, 11)
         )
+    }
+
+    fn highlighted_chunks<'a>(
+        rows: Range<u32>,
+        map: &DisplayMap,
+        theme: &'a Theme,
+        cx: &AppContext,
+    ) -> Vec<(String, Option<&'a str>)> {
+        let mut chunks: Vec<(String, Option<&str>)> = Vec::new();
+        for (chunk, style_id) in map.snapshot(cx).highlighted_chunks_for_rows(rows) {
+            let style_name = theme.syntax_style_name(style_id);
+            if let Some((last_chunk, last_style_name)) = chunks.last_mut() {
+                if style_name == *last_style_name {
+                    last_chunk.push_str(chunk);
+                } else {
+                    chunks.push((chunk.to_string(), style_name));
+                }
+            } else {
+                chunks.push((chunk.to_string(), style_name));
+            }
+        }
+        chunks
     }
 }
