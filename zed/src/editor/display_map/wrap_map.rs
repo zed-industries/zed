@@ -1,7 +1,8 @@
 use super::{
     fold_map,
+    line_wrapper::LineWrapper,
     tab_map::{
-        self, Edit as InputEdit, OutputPoint as InputPoint, Snapshot as InputSnapshot, TextSummary,
+        self, Edit as TabEdit, OutputPoint as TabPoint, Snapshot as TabSnapshot, TextSummary,
     },
 };
 use crate::{
@@ -11,100 +12,257 @@ use crate::{
     util::Bias,
     Settings,
 };
-use gpui::{fonts::FontId, AppContext, FontCache, FontSystem, Task};
+use gpui::{executor::Background, AppContext, Task};
 use parking_lot::Mutex;
-use postage::{
-    prelude::{Sink, Stream},
-    watch,
-};
-use smol::channel;
-use std::{
-    collections::{HashMap, VecDeque},
-    ops::Range,
-    sync::Arc,
-    time::Duration,
-};
+use postage::{prelude::Stream, sink::Sink, watch};
+use smol::future::yield_now;
+use std::{collections::VecDeque, ops::Range, sync::Arc, time::Duration};
 
-#[derive(Copy, Clone, Debug, Default, Eq, Ord, PartialOrd, PartialEq)]
-pub struct OutputPoint(super::Point);
+#[derive(Clone)]
+pub struct WrapMap(Arc<Mutex<WrapMapState>>);
 
-impl OutputPoint {
-    pub fn new(row: u32, column: u32) -> Self {
-        Self(super::Point::new(row, column))
-    }
-
-    pub fn zero() -> Self {
-        Self::new(0, 0)
-    }
-
-    pub fn row(self) -> u32 {
-        self.0.row
-    }
-
-    pub fn column(self) -> u32 {
-        self.0.column
-    }
-
-    pub fn row_mut(&mut self) -> &mut u32 {
-        &mut self.0.row
-    }
-
-    pub fn column_mut(&mut self) -> &mut u32 {
-        &mut self.0.column
-    }
+struct WrapMapState {
+    snapshot: Snapshot,
+    pending_edits: VecDeque<(TabSnapshot, Vec<TabEdit>)>,
+    wrap_width: Option<f32>,
+    background_task: Option<Task<()>>,
+    updates: (watch::Sender<()>, watch::Receiver<()>),
+    line_wrapper: Arc<LineWrapper>,
 }
 
 #[derive(Clone)]
 pub struct Snapshot {
+    tab_snapshot: TabSnapshot,
     transforms: SumTree<Transform>,
-    input: InputSnapshot,
+}
+
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
+struct Transform {
+    summary: TransformSummary,
+    display_text: Option<&'static str>,
+}
+
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
+struct TransformSummary {
+    input: TextSummary,
+    output: TextSummary,
+}
+
+#[derive(Copy, Clone, Debug, Default, Eq, Ord, PartialOrd, PartialEq)]
+pub struct WrapPoint(super::Point);
+
+pub struct Chunks<'a> {
+    input_chunks: tab_map::Chunks<'a>,
+    input_chunk: &'a str,
+    input_position: TabPoint,
+    transforms: Cursor<'a, Transform, WrapPoint, TabPoint>,
+}
+
+pub struct HighlightedChunks<'a> {
+    input_chunks: tab_map::HighlightedChunks<'a>,
+    input_chunk: &'a str,
+    style_id: StyleId,
+    output_position: WrapPoint,
+    max_output_row: u32,
+    transforms: Cursor<'a, Transform, WrapPoint, TabPoint>,
+}
+
+pub struct BufferRows<'a> {
+    input_buffer_rows: fold_map::BufferRows<'a>,
+    input_buffer_row: u32,
+    output_row: u32,
+    max_output_row: u32,
+    transforms: Cursor<'a, Transform, WrapPoint, TabPoint>,
+}
+
+impl WrapMap {
+    pub fn new(
+        tab_snapshot: TabSnapshot,
+        settings: Settings,
+        wrap_width: Option<f32>,
+        cx: &AppContext,
+    ) -> Self {
+        let this = Self(Arc::new(Mutex::new(WrapMapState {
+            background_task: None,
+            wrap_width: None,
+            updates: watch::channel(),
+            pending_edits: Default::default(),
+            snapshot: Snapshot::new(tab_snapshot),
+            line_wrapper: Arc::new(LineWrapper::new(
+                cx.platform().fonts(),
+                cx.font_cache().clone(),
+                settings,
+            )),
+        })));
+        this.set_wrap_width(wrap_width, cx);
+        this
+    }
+
+    pub fn notifications(&self) -> impl Stream<Item = ()> {
+        self.0.lock().updates.1.clone()
+    }
+
+    pub fn sync(
+        &self,
+        tab_snapshot: TabSnapshot,
+        edits: Vec<TabEdit>,
+        cx: &AppContext,
+    ) -> Snapshot {
+        self.0.lock().pending_edits.push_back((tab_snapshot, edits));
+        self.flush_edits(cx.background());
+        self.0.lock().snapshot.clone()
+    }
+
+    pub fn set_wrap_width(&self, wrap_width: Option<f32>, cx: &AppContext) {
+        let mut state = self.0.lock();
+        if wrap_width == state.wrap_width {
+            return;
+        }
+
+        state.background_task.take();
+
+        if let Some(wrap_width) = wrap_width {
+            let mut new_snapshot = state.snapshot.clone();
+            let line_wrapper = state.line_wrapper.clone();
+            let task = cx.background().spawn(async move {
+                let tab_snapshot = new_snapshot.tab_snapshot.clone();
+                let range = TabPoint::zero()..tab_snapshot.max_point();
+                new_snapshot
+                    .update(
+                        tab_snapshot,
+                        &[TabEdit {
+                            old_lines: range.clone(),
+                            new_lines: range.clone(),
+                        }],
+                        wrap_width,
+                        line_wrapper.as_ref(),
+                    )
+                    .await;
+                new_snapshot
+            });
+
+            let executor = cx.background();
+            match executor.block_with_timeout(Duration::from_millis(5), task) {
+                Ok(snapshot) => state.snapshot = snapshot,
+                Err(wrap_task) => {
+                    let this = self.clone();
+                    let exec = executor.clone();
+                    state.background_task = Some(executor.spawn(async move {
+                        this.0.lock().snapshot = wrap_task.await;
+                        this.flush_edits(&exec);
+                        this.0.lock().updates.0.blocking_send(()).ok();
+                    }));
+                }
+            }
+        }
+    }
+
+    fn flush_edits(&self, executor: &Arc<Background>) {
+        let mut state = self.0.lock();
+
+        while let Some((tab_snapshot, _)) = state.pending_edits.front() {
+            if tab_snapshot.version() <= state.snapshot.tab_snapshot.version() {
+                state.pending_edits.pop_front();
+            } else {
+                break;
+            }
+        }
+
+        if state.pending_edits.is_empty() {
+            return;
+        }
+
+        if let Some(wrap_width) = state.wrap_width {
+            if state.background_task.is_none() {
+                let pending_edits = state.pending_edits.clone();
+                let mut snapshot = state.snapshot.clone();
+                let line_wrapper = state.line_wrapper.clone();
+
+                let update_task = executor.spawn(async move {
+                    for (tab_snapshot, edits) in pending_edits {
+                        snapshot
+                            .update(tab_snapshot, &edits, wrap_width, &line_wrapper)
+                            .await;
+                    }
+                    snapshot
+                });
+
+                match executor.block_with_timeout(Duration::from_micros(500), update_task) {
+                    Ok(snapshot) => {
+                        state.snapshot = snapshot;
+                    }
+                    Err(update_task) => {
+                        let this = self.clone();
+                        let exec = executor.clone();
+                        state.background_task = Some(executor.spawn(async move {
+                            this.0.lock().snapshot = update_task.await;
+                            this.flush_edits(&exec);
+                            this.0.lock().updates.0.blocking_send(()).ok();
+                        }));
+                    }
+                }
+            }
+        }
+
+        while let Some((tab_snapshot, _)) = state.pending_edits.front() {
+            if tab_snapshot.version() <= state.snapshot.tab_snapshot.version() {
+                state.pending_edits.pop_front();
+            } else {
+                break;
+            }
+        }
+
+        for (tab_snapshot, edits) in state.pending_edits.clone() {
+            state.snapshot.interpolate(tab_snapshot, &edits);
+        }
+    }
 }
 
 impl Snapshot {
-    fn new(input: InputSnapshot) -> Self {
+    fn new(tab_snapshot: TabSnapshot) -> Self {
+        let extent = tab_snapshot.text_summary();
         Self {
             transforms: SumTree::from_item(
                 Transform {
                     summary: TransformSummary {
-                        input: input.text_summary(),
-                        output: input.text_summary(),
+                        input: extent.clone(),
+                        output: extent.clone(),
                     },
                     display_text: None,
                 },
                 &(),
             ),
-            input,
+            tab_snapshot,
         }
     }
 
-    fn interpolate(&mut self, new_snapshot: InputSnapshot, edits: &[InputEdit]) {
+    fn interpolate(&mut self, new_tab_snapshot: TabSnapshot, edits: &[TabEdit]) {
         let mut new_transforms;
         if edits.is_empty() {
             new_transforms = self.transforms.clone();
         } else {
-            let mut old_cursor = self.transforms.cursor::<InputPoint, ()>();
+            let mut old_cursor = self.transforms.cursor::<TabPoint, ()>();
             let mut edits = edits.into_iter().peekable();
             new_transforms =
                 old_cursor.slice(&edits.peek().unwrap().old_lines.start, Bias::Right, &());
 
             while let Some(edit) = edits.next() {
-                if edit.new_lines.start > InputPoint::from(new_transforms.summary().input.lines) {
-                    let summary = new_snapshot.text_summary_for_range(
-                        InputPoint::from(new_transforms.summary().input.lines)
-                            ..edit.new_lines.start,
+                if edit.new_lines.start > TabPoint::from(new_transforms.summary().input.lines) {
+                    let summary = new_tab_snapshot.text_summary_for_range(
+                        TabPoint::from(new_transforms.summary().input.lines)..edit.new_lines.start,
                     );
                     new_transforms.push_or_extend(Transform::isomorphic(summary));
                 }
 
                 new_transforms.push_or_extend(Transform::isomorphic(
-                    new_snapshot.text_summary_for_range(edit.new_lines.clone()),
+                    new_tab_snapshot.text_summary_for_range(edit.new_lines.clone()),
                 ));
 
                 old_cursor.seek_forward(&edit.old_lines.end, Bias::Right, &());
                 if let Some(next_edit) = edits.peek() {
                     if next_edit.old_lines.start > old_cursor.seek_end(&()) {
                         if old_cursor.seek_end(&()) > edit.old_lines.end {
-                            let summary = self.input.text_summary_for_range(
+                            let summary = self.tab_snapshot.text_summary_for_range(
                                 edit.old_lines.end..old_cursor.seek_end(&()),
                             );
                             new_transforms.push_or_extend(Transform::isomorphic(summary));
@@ -118,7 +276,7 @@ impl Snapshot {
                 } else {
                     if old_cursor.seek_end(&()) > edit.old_lines.end {
                         let summary = self
-                            .input
+                            .tab_snapshot
                             .text_summary_for_range(edit.old_lines.end..old_cursor.seek_end(&()));
                         new_transforms.push_or_extend(Transform::isomorphic(summary));
                     }
@@ -129,15 +287,144 @@ impl Snapshot {
         }
 
         self.transforms = new_transforms;
-        self.input = new_snapshot;
+        self.tab_snapshot = new_tab_snapshot;
     }
 
-    pub fn chunks_at(&self, point: OutputPoint) -> Chunks {
-        let mut transforms = self.transforms.cursor::<OutputPoint, InputPoint>();
+    async fn update(
+        &mut self,
+        new_tab_snapshot: TabSnapshot,
+        edits: &[TabEdit],
+        wrap_width: f32,
+        line_wrapper: &LineWrapper,
+    ) {
+        #[derive(Debug)]
+        struct RowEdit {
+            old_rows: Range<u32>,
+            new_rows: Range<u32>,
+        }
+
+        let mut edits = edits.into_iter().peekable();
+        let mut row_edits = Vec::new();
+        while let Some(edit) = edits.next() {
+            let mut row_edit = RowEdit {
+                old_rows: edit.old_lines.start.row()..edit.old_lines.end.row() + 1,
+                new_rows: edit.new_lines.start.row()..edit.new_lines.end.row() + 1,
+            };
+
+            while let Some(next_edit) = edits.peek() {
+                if next_edit.old_lines.start.row() <= row_edit.old_rows.end {
+                    row_edit.old_rows.end = next_edit.old_lines.end.row() + 1;
+                    row_edit.new_rows.end = next_edit.new_lines.end.row() + 1;
+                    edits.next();
+                } else {
+                    break;
+                }
+            }
+
+            row_edits.push(row_edit);
+        }
+
+        let mut new_transforms;
+        if row_edits.is_empty() {
+            new_transforms = self.transforms.clone();
+        } else {
+            let mut row_edits = row_edits.into_iter().peekable();
+            let mut old_cursor = self.transforms.cursor::<TabPoint, ()>();
+
+            new_transforms = old_cursor.slice(
+                &TabPoint::new(row_edits.peek().unwrap().old_rows.start, 0),
+                Bias::Right,
+                &(),
+            );
+
+            while let Some(edit) = row_edits.next() {
+                if edit.new_rows.start > new_transforms.summary().input.lines.row {
+                    let summary = new_tab_snapshot.text_summary_for_range(
+                        TabPoint::new(new_transforms.summary().input.lines.row, 0)
+                            ..TabPoint::new(edit.new_rows.start, 0),
+                    );
+                    new_transforms.push_or_extend(Transform::isomorphic(summary));
+                }
+
+                let mut line = String::new();
+                let mut remaining = None;
+                let mut chunks = new_tab_snapshot.chunks_at(TabPoint::new(edit.new_rows.start, 0));
+                for _ in edit.new_rows.start..edit.new_rows.end {
+                    while let Some(chunk) = remaining.take().or_else(|| chunks.next()) {
+                        if let Some(ix) = chunk.find('\n') {
+                            line.push_str(&chunk[..ix + 1]);
+                            remaining = Some(&chunk[ix + 1..]);
+                            break;
+                        } else {
+                            line.push_str(chunk)
+                        }
+                    }
+
+                    if line.is_empty() {
+                        break;
+                    }
+
+                    let mut prev_boundary_ix = 0;
+                    for boundary_ix in line_wrapper.wrap_line_without_shaping(&line, wrap_width) {
+                        let wrapped = &line[prev_boundary_ix..boundary_ix];
+                        new_transforms
+                            .push_or_extend(Transform::isomorphic(TextSummary::from(wrapped)));
+                        new_transforms.push_or_extend(Transform::newline());
+                        prev_boundary_ix = boundary_ix;
+                    }
+
+                    if prev_boundary_ix < line.len() {
+                        new_transforms.push_or_extend(Transform::isomorphic(TextSummary::from(
+                            &line[prev_boundary_ix..],
+                        )));
+                    }
+
+                    line.clear();
+                    yield_now().await;
+                }
+
+                old_cursor.seek_forward(&TabPoint::new(edit.old_rows.end, 0), Bias::Right, &());
+                if let Some(next_edit) = row_edits.peek() {
+                    if next_edit.old_rows.start > old_cursor.seek_end(&()).row() {
+                        if old_cursor.seek_end(&()) > TabPoint::new(edit.old_rows.end, 0) {
+                            let summary = self.tab_snapshot.text_summary_for_range(
+                                TabPoint::new(edit.old_rows.end, 0)..old_cursor.seek_end(&()),
+                            );
+                            new_transforms.push_or_extend(Transform::isomorphic(summary));
+                        }
+                        old_cursor.next(&());
+                        new_transforms.push_tree(
+                            old_cursor.slice(
+                                &TabPoint::new(next_edit.old_rows.start, 0),
+                                Bias::Right,
+                                &(),
+                            ),
+                            &(),
+                        );
+                    }
+                } else {
+                    if old_cursor.seek_end(&()) > TabPoint::new(edit.old_rows.end, 0) {
+                        let summary = self.tab_snapshot.text_summary_for_range(
+                            TabPoint::new(edit.old_rows.end, 0)..old_cursor.seek_end(&()),
+                        );
+                        new_transforms.push_or_extend(Transform::isomorphic(summary));
+                    }
+                    old_cursor.next(&());
+                    new_transforms.push_tree(old_cursor.suffix(&()), &());
+                }
+            }
+        }
+
+        self.transforms = new_transforms;
+        self.tab_snapshot = new_tab_snapshot;
+    }
+
+    pub fn chunks_at(&self, point: WrapPoint) -> Chunks {
+        let mut transforms = self.transforms.cursor::<WrapPoint, TabPoint>();
         transforms.seek(&point, Bias::Right, &());
         let input_position =
-            InputPoint(transforms.sum_start().0 + (point.0 - transforms.seek_start().0));
-        let input_chunks = self.input.chunks_at(input_position);
+            TabPoint(transforms.sum_start().0 + (point.0 - transforms.seek_start().0));
+        let input_chunks = self.tab_snapshot.chunks_at(input_position);
         Chunks {
             input_chunks,
             transforms,
@@ -147,15 +434,17 @@ impl Snapshot {
     }
 
     pub fn highlighted_chunks_for_rows(&mut self, rows: Range<u32>) -> HighlightedChunks {
-        let output_start = OutputPoint::new(rows.start, 0);
-        let output_end = OutputPoint::new(rows.end, 0);
-        let mut transforms = self.transforms.cursor::<OutputPoint, InputPoint>();
+        let output_start = WrapPoint::new(rows.start, 0);
+        let output_end = WrapPoint::new(rows.end, 0);
+        let mut transforms = self.transforms.cursor::<WrapPoint, TabPoint>();
         transforms.seek(&output_start, Bias::Right, &());
         let input_start =
-            InputPoint(transforms.sum_start().0 + (output_start.0 - transforms.seek_start().0));
-        let input_end = self.to_input_point(output_end).min(self.input.max_point());
+            TabPoint(transforms.sum_start().0 + (output_start.0 - transforms.seek_start().0));
+        let input_end = self
+            .to_input_point(output_end)
+            .min(self.tab_snapshot.max_point());
         HighlightedChunks {
-            input_chunks: self.input.highlighted_chunks(input_start..input_end),
+            input_chunks: self.tab_snapshot.highlighted_chunks(input_start..input_end),
             input_chunk: "",
             style_id: StyleId::default(),
             output_position: output_start,
@@ -164,13 +453,13 @@ impl Snapshot {
         }
     }
 
-    pub fn max_point(&self) -> OutputPoint {
-        self.to_output_point(self.input.max_point())
+    pub fn max_point(&self) -> WrapPoint {
+        self.to_output_point(self.tab_snapshot.max_point())
     }
 
     pub fn line_len(&self, row: u32) -> u32 {
         let mut len = 0;
-        for chunk in self.chunks_at(OutputPoint::new(row, 0)) {
+        for chunk in self.chunks_at(WrapPoint::new(row, 0)) {
             if let Some(newline_ix) = chunk.find('\n') {
                 len += newline_ix;
                 break;
@@ -186,10 +475,10 @@ impl Snapshot {
     }
 
     pub fn buffer_rows(&self, start_row: u32) -> BufferRows {
-        let mut transforms = self.transforms.cursor::<OutputPoint, InputPoint>();
-        transforms.seek(&OutputPoint::new(start_row, 0), Bias::Right, &());
+        let mut transforms = self.transforms.cursor::<WrapPoint, TabPoint>();
+        transforms.seek(&WrapPoint::new(start_row, 0), Bias::Right, &());
         let input_row = transforms.sum_start().row() + (start_row - transforms.seek_start().row());
-        let mut input_buffer_rows = self.input.buffer_rows(input_row);
+        let mut input_buffer_rows = self.tab_snapshot.buffer_rows(input_row);
         let input_buffer_row = input_buffer_rows.next().unwrap();
         BufferRows {
             transforms,
@@ -200,21 +489,21 @@ impl Snapshot {
         }
     }
 
-    pub fn to_input_point(&self, point: OutputPoint) -> InputPoint {
-        let mut cursor = self.transforms.cursor::<OutputPoint, InputPoint>();
+    pub fn to_input_point(&self, point: WrapPoint) -> TabPoint {
+        let mut cursor = self.transforms.cursor::<WrapPoint, TabPoint>();
         cursor.seek(&point, Bias::Right, &());
-        InputPoint(cursor.sum_start().0 + (point.0 - cursor.seek_start().0))
+        TabPoint(cursor.sum_start().0 + (point.0 - cursor.seek_start().0))
     }
 
-    pub fn to_output_point(&self, point: InputPoint) -> OutputPoint {
-        let mut cursor = self.transforms.cursor::<InputPoint, OutputPoint>();
+    pub fn to_output_point(&self, point: TabPoint) -> WrapPoint {
+        let mut cursor = self.transforms.cursor::<TabPoint, WrapPoint>();
         cursor.seek(&point, Bias::Right, &());
-        OutputPoint(cursor.sum_start().0 + (point.0 - cursor.seek_start().0))
+        WrapPoint(cursor.sum_start().0 + (point.0 - cursor.seek_start().0))
     }
 
-    pub fn clip_point(&self, mut point: OutputPoint, bias: Bias) -> OutputPoint {
+    pub fn clip_point(&self, mut point: WrapPoint, bias: Bias) -> WrapPoint {
         if bias == Bias::Left {
-            let mut cursor = self.transforms.cursor::<OutputPoint, ()>();
+            let mut cursor = self.transforms.cursor::<WrapPoint, ()>();
             cursor.seek(&point, Bias::Right, &());
             let transform = cursor.item().expect("invalid point");
             if !transform.is_isomorphic() {
@@ -222,32 +511,11 @@ impl Snapshot {
             }
         }
 
-        self.to_output_point(self.input.clip_point(self.to_input_point(point), bias))
+        self.to_output_point(
+            self.tab_snapshot
+                .clip_point(self.to_input_point(point), bias),
+        )
     }
-}
-
-pub struct Chunks<'a> {
-    input_chunks: tab_map::Chunks<'a>,
-    input_chunk: &'a str,
-    input_position: InputPoint,
-    transforms: Cursor<'a, Transform, OutputPoint, InputPoint>,
-}
-
-pub struct HighlightedChunks<'a> {
-    input_chunks: tab_map::HighlightedChunks<'a>,
-    input_chunk: &'a str,
-    style_id: StyleId,
-    output_position: OutputPoint,
-    max_output_row: u32,
-    transforms: Cursor<'a, Transform, OutputPoint, InputPoint>,
-}
-
-pub struct BufferRows<'a> {
-    input_buffer_rows: fold_map::BufferRows<'a>,
-    input_buffer_row: u32,
-    output_row: u32,
-    max_output_row: u32,
-    transforms: Cursor<'a, Transform, OutputPoint, InputPoint>,
 }
 
 impl<'a> Iterator for Chunks<'a> {
@@ -344,467 +612,13 @@ impl<'a> Iterator for BufferRows<'a> {
         let buffer_row = self.input_buffer_row;
         self.output_row += 1;
         self.transforms
-            .seek_forward(&OutputPoint::new(self.output_row, 0), Bias::Left, &());
+            .seek_forward(&WrapPoint::new(self.output_row, 0), Bias::Left, &());
         if self.transforms.item().map_or(false, |t| t.is_isomorphic()) {
             self.input_buffer_row = self.input_buffer_rows.next().unwrap();
         }
 
         Some(buffer_row)
     }
-}
-
-struct State {
-    snapshot: Snapshot,
-    pending_edits: VecDeque<(InputSnapshot, Vec<InputEdit>)>,
-    last_background_output_version: usize,
-}
-
-pub struct WrapMap {
-    state: Mutex<State>,
-    notifications_rx: watch::Receiver<()>,
-    background_changes_tx: channel::Sender<Change>,
-    background_state: Arc<Mutex<BackgroundState>>,
-    _background_task: Task<()>,
-}
-
-impl WrapMap {
-    pub fn new(
-        input: InputSnapshot,
-        settings: Settings,
-        wrap_width: Option<f32>,
-        cx: &AppContext,
-    ) -> Self {
-        let snapshot = Snapshot::new(input.clone());
-        let (mut wrapper, background_state, notifications_rx) = BackgroundWrapper::new(
-            snapshot.clone(),
-            settings,
-            wrap_width,
-            cx.font_cache().clone(),
-            cx.platform().fonts(),
-        );
-        let (background_changes_tx, background_changes_rx) = channel::unbounded();
-        let background_task = cx.background().spawn(async move {
-            wrapper.run(input, background_changes_rx).await;
-        });
-
-        Self {
-            state: Mutex::new(State {
-                snapshot,
-                pending_edits: VecDeque::new(),
-                last_background_output_version: 0,
-            }),
-            background_changes_tx,
-            background_state,
-            _background_task: background_task,
-            notifications_rx,
-        }
-    }
-
-    pub fn sync(&self, input: InputSnapshot, edits: Vec<InputEdit>, cx: &AppContext) -> Snapshot {
-        let mut state = &mut *self.state.lock();
-        let mut background_state = self.background_state.lock();
-
-        let block = if input.version() > state.snapshot.input.version() {
-            self.background_changes_tx
-                .try_send(Change::Input {
-                    snapshot: input.clone(),
-                    edits: edits.clone(),
-                })
-                .unwrap();
-            state.pending_edits.push_back((input.clone(), edits));
-            true
-        } else {
-            background_state.is_wrapping
-        };
-
-        println!("will block? {}", block);
-        let mut updated_from_background = false;
-        if block {
-            let (sync_tx, sync_rx) = channel::unbounded();
-            background_state.sync_tx = Some(sync_tx);
-            drop(background_state);
-            cx.background().block_on(Duration::from_micros(500), async {
-                loop {
-                    sync_rx.recv().await.unwrap();
-                    let background_state = self.background_state.lock();
-                    state.snapshot = background_state.snapshot.clone();
-                    state.last_background_output_version = background_state.output_version;
-                    updated_from_background = true;
-                    if state.snapshot.input.version() == input.version() {
-                        break;
-                    }
-                }
-            });
-        } else {
-            drop(background_state);
-        }
-
-        {
-            let mut background_state = self.background_state.lock();
-            background_state.sync_tx = None;
-            if background_state.output_version > state.last_background_output_version {
-                println!("last chance to update");
-                state.snapshot = background_state.snapshot.clone();
-                state.last_background_output_version = background_state.output_version;
-                updated_from_background = true;
-            }
-        }
-
-        println!("updated from background? {}", updated_from_background);
-        if updated_from_background {
-            while let Some((pending_input, _)) = state.pending_edits.front() {
-                if pending_input.version() <= state.snapshot.input.version() {
-                    state.pending_edits.pop_front();
-                } else {
-                    break;
-                }
-            }
-
-            for (input, edits) in &state.pending_edits {
-                state.snapshot.interpolate(input.clone(), &edits);
-            }
-        }
-
-        state.snapshot.clone()
-    }
-
-    pub fn set_wrap_width(&self, width: Option<f32>) {
-        self.background_changes_tx
-            .try_send(Change::Width(width))
-            .unwrap();
-    }
-
-    pub fn notifications(&self) -> impl Stream<Item = ()> {
-        self.notifications_rx.clone()
-    }
-}
-
-struct BackgroundWrapper {
-    wrap_width: Option<f32>,
-    state: Arc<Mutex<BackgroundState>>,
-    snapshot: Snapshot,
-    notifications_tx: watch::Sender<()>,
-    line_wrapper: LineWrapper,
-}
-
-struct BackgroundState {
-    is_wrapping: bool,
-    sync_tx: Option<channel::Sender<()>>,
-    snapshot: Snapshot,
-    output_version: usize,
-}
-
-struct LineWrapper {
-    font_system: Arc<dyn FontSystem>,
-    font_cache: Arc<FontCache>,
-    font_id: FontId,
-    font_size: f32,
-    cached_ascii_char_widths: [f32; 128],
-    cached_other_char_widths: HashMap<char, f32>,
-}
-
-enum Change {
-    Input {
-        snapshot: InputSnapshot,
-        edits: Vec<tab_map::Edit>,
-    },
-    Width(Option<f32>),
-}
-
-impl BackgroundWrapper {
-    fn new(
-        snapshot: Snapshot,
-        settings: Settings,
-        wrap_width: Option<f32>,
-        font_cache: Arc<FontCache>,
-        font_system: Arc<dyn FontSystem>,
-    ) -> (Self, Arc<Mutex<BackgroundState>>, watch::Receiver<()>) {
-        let (notifications_tx, notifications_rx) = watch::channel();
-        let state = Arc::new(Mutex::new(BackgroundState {
-            is_wrapping: false,
-            sync_tx: None,
-            snapshot: snapshot.clone(),
-            output_version: 0,
-        }));
-        let wrapper = Self {
-            wrap_width,
-            state: state.clone(),
-            snapshot,
-            line_wrapper: LineWrapper::new(font_system, font_cache, settings),
-            notifications_tx,
-        };
-        (wrapper, state, notifications_rx)
-    }
-
-    async fn run(&mut self, input: InputSnapshot, changes_rx: channel::Receiver<Change>) {
-        let edit = InputEdit {
-            old_lines: Default::default()..input.max_point(),
-            new_lines: Default::default()..input.max_point(),
-        };
-        self.sync(input, vec![edit]);
-
-        while let Ok(change) = changes_rx.recv().await {
-            match change {
-                Change::Input { snapshot, edits } => {
-                    self.sync(snapshot, edits);
-                }
-                Change::Width(wrap_width) => {
-                    if self.wrap_width != wrap_width {
-                        self.wrap_width = wrap_width;
-                        let edit = InputEdit {
-                            old_lines: Default::default()..self.snapshot.input.max_point(),
-                            new_lines: Default::default()..self.snapshot.input.max_point(),
-                        };
-                        self.sync(self.snapshot.input.clone(), vec![edit]);
-                    }
-                }
-            };
-        }
-    }
-
-    fn sync(&mut self, new_snapshot: InputSnapshot, edits: Vec<InputEdit>) {
-        #[derive(Debug)]
-        struct RowEdit {
-            old_rows: Range<u32>,
-            new_rows: Range<u32>,
-        }
-
-        self.state.lock().is_wrapping = true;
-
-        let mut edits = edits.into_iter().peekable();
-        let mut row_edits = Vec::new();
-        while let Some(edit) = edits.next() {
-            let mut row_edit = RowEdit {
-                old_rows: edit.old_lines.start.row()..edit.old_lines.end.row() + 1,
-                new_rows: edit.new_lines.start.row()..edit.new_lines.end.row() + 1,
-            };
-
-            while let Some(next_edit) = edits.peek() {
-                if next_edit.old_lines.start.row() <= row_edit.old_rows.end {
-                    row_edit.old_rows.end = next_edit.old_lines.end.row() + 1;
-                    row_edit.new_rows.end = next_edit.new_lines.end.row() + 1;
-                    edits.next();
-                } else {
-                    break;
-                }
-            }
-
-            row_edits.push(row_edit);
-        }
-
-        let mut new_transforms;
-        if row_edits.is_empty() {
-            new_transforms = self.snapshot.transforms.clone();
-        } else {
-            let mut row_edits = row_edits.into_iter().peekable();
-            let mut old_cursor = self.snapshot.transforms.cursor::<InputPoint, ()>();
-
-            new_transforms = old_cursor.slice(
-                &InputPoint::new(row_edits.peek().unwrap().old_rows.start, 0),
-                Bias::Right,
-                &(),
-            );
-
-            while let Some(edit) = row_edits.next() {
-                if edit.new_rows.start > new_transforms.summary().input.lines.row {
-                    let summary = new_snapshot.text_summary_for_range(
-                        InputPoint::new(new_transforms.summary().input.lines.row, 0)
-                            ..InputPoint::new(edit.new_rows.start, 0),
-                    );
-                    new_transforms.push_or_extend(Transform::isomorphic(summary));
-                }
-
-                let mut input_row = edit.new_rows.start;
-                let mut line = String::new();
-                let mut remaining = None;
-                let mut chunks = new_snapshot.chunks_at(InputPoint::new(input_row, 0));
-                loop {
-                    while let Some(chunk) = remaining.take().or_else(|| chunks.next()) {
-                        if let Some(ix) = chunk.find('\n') {
-                            line.push_str(&chunk[..ix + 1]);
-                            remaining = Some(&chunk[ix + 1..]);
-                            break;
-                        } else {
-                            line.push_str(chunk)
-                        }
-                    }
-
-                    if line.is_empty() {
-                        break;
-                    }
-
-                    let mut prev_boundary_ix = 0;
-                    if let Some(wrap_width) = self.wrap_width {
-                        for boundary_ix in self
-                            .line_wrapper
-                            .wrap_line_without_shaping(&line, wrap_width)
-                        {
-                            let wrapped = &line[prev_boundary_ix..boundary_ix];
-                            new_transforms
-                                .push_or_extend(Transform::isomorphic(TextSummary::from(wrapped)));
-                            new_transforms.push_or_extend(Transform::newline());
-                            prev_boundary_ix = boundary_ix;
-                        }
-                    }
-
-                    if prev_boundary_ix < line.len() {
-                        new_transforms.push_or_extend(Transform::isomorphic(TextSummary::from(
-                            &line[prev_boundary_ix..],
-                        )));
-                    }
-
-                    line.clear();
-                    input_row += 1;
-                    if input_row == edit.new_rows.end {
-                        break;
-                    }
-                }
-
-                old_cursor.seek_forward(&InputPoint::new(edit.old_rows.end, 0), Bias::Right, &());
-                if let Some(next_edit) = row_edits.peek() {
-                    if next_edit.old_rows.start > old_cursor.seek_end(&()).row() {
-                        if old_cursor.seek_end(&()) > InputPoint::new(edit.old_rows.end, 0) {
-                            let summary = self.snapshot.input.text_summary_for_range(
-                                InputPoint::new(edit.old_rows.end, 0)..old_cursor.seek_end(&()),
-                            );
-                            new_transforms.push_or_extend(Transform::isomorphic(summary));
-                        }
-                        old_cursor.next(&());
-                        new_transforms.push_tree(
-                            old_cursor.slice(
-                                &InputPoint::new(next_edit.old_rows.start, 0),
-                                Bias::Right,
-                                &(),
-                            ),
-                            &(),
-                        );
-                    }
-                } else {
-                    if old_cursor.seek_end(&()) > InputPoint::new(edit.old_rows.end, 0) {
-                        let summary = self.snapshot.input.text_summary_for_range(
-                            InputPoint::new(edit.old_rows.end, 0)..old_cursor.seek_end(&()),
-                        );
-                        new_transforms.push_or_extend(Transform::isomorphic(summary));
-                    }
-                    old_cursor.next(&());
-                    new_transforms.push_tree(old_cursor.suffix(&()), &());
-                }
-            }
-        }
-
-        self.snapshot.transforms = new_transforms;
-        self.snapshot.input = new_snapshot;
-
-        let mut state = self.state.lock();
-        state.output_version += 1;
-        state.is_wrapping = false;
-        state.snapshot = self.snapshot.clone();
-        if let Some(sync_tx) = state.sync_tx.as_ref() {
-            let _ = sync_tx.try_send(());
-        } else {
-            let _ = self.notifications_tx.try_send(());
-        }
-    }
-}
-
-impl LineWrapper {
-    fn new(
-        font_system: Arc<dyn FontSystem>,
-        font_cache: Arc<FontCache>,
-        settings: Settings,
-    ) -> Self {
-        let font_id = font_cache
-            .select_font(settings.buffer_font_family, &Default::default())
-            .unwrap();
-        let font_size = settings.buffer_font_size;
-        Self {
-            font_cache,
-            font_system,
-            font_id,
-            font_size,
-            cached_ascii_char_widths: [f32::NAN; 128],
-            cached_other_char_widths: HashMap::new(),
-        }
-    }
-
-    fn wrap_line_with_shaping(&mut self, line: &str, wrap_width: f32) -> Vec<usize> {
-        self.font_system
-            .wrap_line(line, self.font_id, self.font_size, wrap_width)
-    }
-
-    fn wrap_line_without_shaping(&mut self, line: &str, wrap_width: f32) -> Vec<usize> {
-        let mut width = 0.0;
-        let mut result = Vec::new();
-        let mut last_boundary_ix = 0;
-        let mut last_boundary_width = 0.0;
-        let mut prev_c = '\0';
-        for (ix, c) in line.char_indices() {
-            if self.is_boundary(prev_c, c) {
-                last_boundary_ix = ix;
-                last_boundary_width = width;
-            }
-
-            let char_width = self.width_for_char(c);
-            width += char_width;
-            if width > wrap_width {
-                if last_boundary_ix > 0 {
-                    result.push(last_boundary_ix);
-                    width -= last_boundary_width;
-                    last_boundary_ix = 0;
-                } else {
-                    result.push(ix);
-                    width = char_width;
-                }
-            }
-            prev_c = c;
-        }
-        result
-    }
-
-    fn is_boundary(&self, prev: char, next: char) -> bool {
-        if prev == ' ' || next == ' ' {
-            return true;
-        }
-        false
-    }
-
-    fn width_for_char(&mut self, c: char) -> f32 {
-        if (c as u32) < 128 {
-            let mut width = self.cached_ascii_char_widths[c as usize];
-            if width.is_nan() {
-                width = self.compute_width_for_char(c);
-                self.cached_ascii_char_widths[c as usize] = width;
-            }
-            width
-        } else {
-            let mut width = self
-                .cached_other_char_widths
-                .get(&c)
-                .copied()
-                .unwrap_or(f32::NAN);
-            if width.is_nan() {
-                width = self.compute_width_for_char(c);
-                self.cached_other_char_widths.insert(c, width);
-            }
-            width
-        }
-    }
-
-    fn compute_width_for_char(&self, c: char) -> f32 {
-        self.font_system
-            .layout_line(
-                &c.to_string(),
-                self.font_size,
-                &[(1, self.font_id, Default::default())],
-            )
-            .width
-    }
-}
-
-#[derive(Clone, Debug, Default, Eq, PartialEq)]
-struct Transform {
-    summary: TransformSummary,
-    display_text: Option<&'static str>,
 }
 
 impl Transform {
@@ -867,10 +681,30 @@ impl SumTree<Transform> {
     }
 }
 
-#[derive(Clone, Debug, Default, Eq, PartialEq)]
-struct TransformSummary {
-    input: TextSummary,
-    output: TextSummary,
+impl WrapPoint {
+    pub fn new(row: u32, column: u32) -> Self {
+        Self(super::Point::new(row, column))
+    }
+
+    pub fn zero() -> Self {
+        Self::new(0, 0)
+    }
+
+    pub fn row(self) -> u32 {
+        self.0.row
+    }
+
+    pub fn column(self) -> u32 {
+        self.0.column
+    }
+
+    pub fn row_mut(&mut self) -> &mut u32 {
+        &mut self.0.row
+    }
+
+    pub fn column_mut(&mut self) -> &mut u32 {
+        &mut self.0.column
+    }
 }
 
 impl sum_tree::Summary for TransformSummary {
@@ -882,13 +716,13 @@ impl sum_tree::Summary for TransformSummary {
     }
 }
 
-impl<'a> sum_tree::Dimension<'a, TransformSummary> for InputPoint {
+impl<'a> sum_tree::Dimension<'a, TransformSummary> for TabPoint {
     fn add_summary(&mut self, summary: &'a TransformSummary, _: &()) {
         self.0 += summary.input.lines;
     }
 }
 
-impl<'a> sum_tree::Dimension<'a, TransformSummary> for OutputPoint {
+impl<'a> sum_tree::Dimension<'a, TransformSummary> for WrapPoint {
     fn add_summary(&mut self, summary: &'a TransformSummary, _: &()) {
         self.0 += summary.output.lines;
     }
@@ -984,7 +818,7 @@ mod tests {
                 font_cache.clone(),
                 font_system.clone(),
             );
-            let edit = InputEdit {
+            let edit = TabEdit {
                 old_lines: Default::default()..tabs_snapshot.max_point(),
                 new_lines: Default::default()..tabs_snapshot.max_point(),
             };
@@ -995,7 +829,7 @@ mod tests {
             let expected_text = wrap_text(&unwrapped_text, wrap_width, &mut line_wrapper);
             let actual_text = wrapper
                 .snapshot
-                .chunks_at(OutputPoint::zero())
+                .chunks_at(WrapPoint::zero())
                 .collect::<String>();
             assert_eq!(
                 actual_text, expected_text,
@@ -1048,13 +882,13 @@ mod tests {
 
     impl Snapshot {
         fn text(&self) -> String {
-            self.chunks_at(OutputPoint::zero()).collect()
+            self.chunks_at(WrapPoint::zero()).collect()
         }
 
         fn check_invariants(&self) {
             assert_eq!(
-                InputPoint::from(self.transforms.summary().input.lines),
-                self.input.max_point()
+                TabPoint::from(self.transforms.summary().input.lines),
+                self.tab_snapshot.max_point()
             );
 
             let mut transforms = self.transforms.cursor::<(), ()>().peekable();

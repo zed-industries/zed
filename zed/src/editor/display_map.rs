@@ -1,4 +1,5 @@
 mod fold_map;
+mod line_wrapper;
 mod tab_map;
 mod wrap_map;
 
@@ -74,8 +75,8 @@ impl DisplayMap {
         self.wrap_map.sync(snapshot, edits, cx);
     }
 
-    pub fn set_wrap_width(&self, width: Option<f32>) {
-        self.wrap_map.set_wrap_width(width);
+    pub fn set_wrap_width(&self, width: Option<f32>, cx: &AppContext) {
+        self.wrap_map.set_wrap_width(width, cx);
     }
 
     pub fn notifications(&self) -> impl Stream<Item = ()> {
@@ -212,11 +213,11 @@ impl DisplayMapSnapshot {
 }
 
 #[derive(Copy, Clone, Debug, Default, Eq, Ord, PartialOrd, PartialEq)]
-pub struct DisplayPoint(wrap_map::OutputPoint);
+pub struct DisplayPoint(wrap_map::WrapPoint);
 
 impl DisplayPoint {
     pub fn new(row: u32, column: u32) -> Self {
-        Self(wrap_map::OutputPoint::new(row, column))
+        Self(wrap_map::WrapPoint::new(row, column))
     }
 
     pub fn zero() -> Self {

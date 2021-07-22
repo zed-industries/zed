@@ -2198,8 +2198,8 @@ impl Editor {
         font_cache.em_width(font_id, settings.buffer_font_size)
     }
 
-    pub fn set_wrap_width(&self, width: f32) {
-        self.display_map.set_wrap_width(Some(width));
+    pub fn set_wrap_width(&self, width: f32, cx: &AppContext) {
+        self.display_map.set_wrap_width(Some(width), cx);
     }
 
     // TODO: Can we make this not return a result?

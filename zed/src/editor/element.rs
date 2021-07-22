@@ -366,7 +366,7 @@ impl Element for EditorElement {
         let wrap_width = text_size.x() - text_offset.x() - overscroll.x();
         // TODO: Core text doesn't seem to be keeping our lines below the specified wrap width. Find out why.
         let wrap_width = wrap_width - em_width;
-        view.set_wrap_width(wrap_width);
+        view.set_wrap_width(wrap_width, app);
 
         let autoscroll_horizontally = view.autoscroll_vertically(size.y(), line_height, app);
 

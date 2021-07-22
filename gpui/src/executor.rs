@@ -385,14 +385,14 @@ impl Background {
         }
     }
 
-    pub fn block_on<F, T>(&self, timeout: Duration, future: F) -> Option<T>
+    pub fn block_with_timeout<F, T>(&self, timeout: Duration, mut future: F) -> Result<T, F>
     where
         T: 'static,
-        F: Future<Output = T>,
+        F: 'static + Unpin + Future<Output = T>,
     {
-        match self {
+        let output = match self {
             Self::Production { .. } => {
-                smol::block_on(async move { util::timeout(timeout, future).await.ok() })
+                smol::block_on(util::timeout(timeout, Pin::new(&mut future))).ok()
             }
             Self::Deterministic(executor) => {
                 let max_ticks = {
@@ -400,8 +400,14 @@ impl Background {
                     let range = state.block_on_ticks.clone();
                     state.rng.gen_range(range)
                 };
-                executor.block_on(max_ticks, future)
+                executor.block_on(max_ticks, Pin::new(&mut future))
             }
+        };
+
+        if let Some(output) = output {
+            Ok(output)
+        } else {
+            Err(future)
         }
     }
 
