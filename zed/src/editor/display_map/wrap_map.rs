@@ -78,12 +78,10 @@ impl Snapshot {
     }
 
     fn interpolate(&mut self, new_snapshot: InputSnapshot, edits: &[InputEdit]) {
-        if edits.is_empty() {
-            return;
-        }
-
         let mut new_transforms;
-        {
+        if edits.is_empty() {
+            new_transforms = self.transforms.clone();
+        } else {
             let mut old_cursor = self.transforms.cursor::<InputPoint, ()>();
             let mut edits = edits.into_iter().peekable();
             new_transforms =
@@ -358,12 +356,14 @@ impl<'a> Iterator for BufferRows<'a> {
 struct State {
     snapshot: Snapshot,
     pending_edits: VecDeque<(InputSnapshot, Vec<InputEdit>)>,
+    last_background_output_version: usize,
 }
 
 pub struct WrapMap {
     state: Mutex<State>,
+    notifications_rx: watch::Receiver<()>,
     background_changes_tx: channel::Sender<Change>,
-    background_snapshot: watch::Receiver<Snapshot>,
+    background_state: Arc<Mutex<BackgroundState>>,
     _background_task: Task<()>,
 }
 
@@ -374,69 +374,97 @@ impl WrapMap {
         wrap_width: Option<f32>,
         cx: &AppContext,
     ) -> Self {
-        let font_cache = cx.font_cache().clone();
-        let font_system = cx.platform().fonts();
         let snapshot = Snapshot::new(input.clone());
-        let (background_snapshot_tx, background_snapshot_rx) =
-            watch::channel_with(snapshot.clone());
-        let (edits_tx, edits_rx) = channel::unbounded();
-        let background_task = {
-            let snapshot = snapshot.clone();
-            cx.background().spawn(async move {
-                let mut wrapper =
-                    BackgroundWrapper::new(snapshot, settings, wrap_width, font_cache, font_system);
-                wrapper.run(input, edits_rx, background_snapshot_tx).await;
-            })
-        };
+        let (mut wrapper, background_state, notifications_rx) = BackgroundWrapper::new(
+            snapshot.clone(),
+            settings,
+            wrap_width,
+            cx.font_cache().clone(),
+            cx.platform().fonts(),
+        );
+        let (background_changes_tx, background_changes_rx) = channel::unbounded();
+        let background_task = cx.background().spawn(async move {
+            wrapper.run(input, background_changes_rx).await;
+        });
 
         Self {
             state: Mutex::new(State {
                 snapshot,
                 pending_edits: VecDeque::new(),
+                last_background_output_version: 0,
             }),
-            background_changes_tx: edits_tx,
-            background_snapshot: background_snapshot_rx,
+            background_changes_tx,
+            background_state,
             _background_task: background_task,
+            notifications_rx,
         }
     }
 
     pub fn sync(&self, input: InputSnapshot, edits: Vec<InputEdit>, cx: &AppContext) -> Snapshot {
-        let mut background_snapshot = self.background_snapshot.clone();
-        let mut snapshot = background_snapshot.borrow().clone();
+        let mut state = &mut *self.state.lock();
+        let mut background_state = self.background_state.lock();
 
-        if !edits.is_empty() {
+        let block = if input.version() > state.snapshot.input.version() {
             self.background_changes_tx
                 .try_send(Change::Input {
                     snapshot: input.clone(),
                     edits: edits.clone(),
                 })
                 .unwrap();
+            state.pending_edits.push_back((input.clone(), edits));
+            true
+        } else {
+            background_state.is_wrapping
+        };
 
-            cx.background().block_on(Duration::from_millis(5), async {
+        println!("will block? {}", block);
+        let mut updated_from_background = false;
+        if block {
+            let (sync_tx, sync_rx) = channel::unbounded();
+            background_state.sync_tx = Some(sync_tx);
+            drop(background_state);
+            cx.background().block_on(Duration::from_micros(500), async {
                 loop {
-                    snapshot = background_snapshot.recv().await.unwrap();
-                    if snapshot.input.version() == input.version() {
+                    sync_rx.recv().await.unwrap();
+                    let background_state = self.background_state.lock();
+                    state.snapshot = background_state.snapshot.clone();
+                    state.last_background_output_version = background_state.output_version;
+                    updated_from_background = true;
+                    if state.snapshot.input.version() == input.version() {
                         break;
                     }
                 }
             });
+        } else {
+            drop(background_state);
         }
 
-        let mut state = &mut *self.state.lock();
-        state.snapshot = snapshot;
-        state.pending_edits.push_back((input, edits));
-
-        while let Some((pending_input, _)) = state.pending_edits.front() {
-            if pending_input.version() <= state.snapshot.input.version() {
-                state.pending_edits.pop_front();
-            } else {
-                break;
+        {
+            let mut background_state = self.background_state.lock();
+            background_state.sync_tx = None;
+            if background_state.output_version > state.last_background_output_version {
+                println!("last chance to update");
+                state.snapshot = background_state.snapshot.clone();
+                state.last_background_output_version = background_state.output_version;
+                updated_from_background = true;
             }
         }
 
-        for (input, edits) in &state.pending_edits {
-            state.snapshot.interpolate(input.clone(), &edits);
+        println!("updated from background? {}", updated_from_background);
+        if updated_from_background {
+            while let Some((pending_input, _)) = state.pending_edits.front() {
+                if pending_input.version() <= state.snapshot.input.version() {
+                    state.pending_edits.pop_front();
+                } else {
+                    break;
+                }
+            }
+
+            for (input, edits) in &state.pending_edits {
+                state.snapshot.interpolate(input.clone(), &edits);
+            }
         }
+
         state.snapshot.clone()
     }
 
@@ -447,14 +475,23 @@ impl WrapMap {
     }
 
     pub fn notifications(&self) -> impl Stream<Item = ()> {
-        self.background_snapshot.clone().map(|_| ())
+        self.notifications_rx.clone()
     }
 }
 
 struct BackgroundWrapper {
     wrap_width: Option<f32>,
+    state: Arc<Mutex<BackgroundState>>,
     snapshot: Snapshot,
+    notifications_tx: watch::Sender<()>,
     line_wrapper: LineWrapper,
+}
+
+struct BackgroundState {
+    is_wrapping: bool,
+    sync_tx: Option<channel::Sender<()>>,
+    snapshot: Snapshot,
+    output_version: usize,
 }
 
 struct LineWrapper {
@@ -481,63 +518,58 @@ impl BackgroundWrapper {
         wrap_width: Option<f32>,
         font_cache: Arc<FontCache>,
         font_system: Arc<dyn FontSystem>,
-    ) -> Self {
-        Self {
+    ) -> (Self, Arc<Mutex<BackgroundState>>, watch::Receiver<()>) {
+        let (notifications_tx, notifications_rx) = watch::channel();
+        let state = Arc::new(Mutex::new(BackgroundState {
+            is_wrapping: false,
+            sync_tx: None,
+            snapshot: snapshot.clone(),
+            output_version: 0,
+        }));
+        let wrapper = Self {
             wrap_width,
+            state: state.clone(),
             snapshot,
             line_wrapper: LineWrapper::new(font_system, font_cache, settings),
-        }
+            notifications_tx,
+        };
+        (wrapper, state, notifications_rx)
     }
 
-    async fn run(
-        &mut self,
-        input: InputSnapshot,
-        edits_rx: channel::Receiver<Change>,
-        mut snapshot_tx: watch::Sender<Snapshot>,
-    ) {
+    async fn run(&mut self, input: InputSnapshot, changes_rx: channel::Receiver<Change>) {
         let edit = InputEdit {
             old_lines: Default::default()..input.max_point(),
             new_lines: Default::default()..input.max_point(),
         };
         self.sync(input, vec![edit]);
-        if snapshot_tx.send(self.snapshot.clone()).await.is_err() {
-            return;
-        }
 
-        while let Ok(change) = edits_rx.recv().await {
+        while let Ok(change) = changes_rx.recv().await {
             match change {
-                Change::Input { snapshot, edits } => self.sync(snapshot, edits),
+                Change::Input { snapshot, edits } => {
+                    self.sync(snapshot, edits);
+                }
                 Change::Width(wrap_width) => {
-                    if self.wrap_width == wrap_width {
-                        continue;
-                    } else {
+                    if self.wrap_width != wrap_width {
                         self.wrap_width = wrap_width;
-                        let input = self.snapshot.input.clone();
                         let edit = InputEdit {
-                            old_lines: Default::default()..input.max_point(),
-                            new_lines: Default::default()..input.max_point(),
+                            old_lines: Default::default()..self.snapshot.input.max_point(),
+                            new_lines: Default::default()..self.snapshot.input.max_point(),
                         };
-                        self.sync(input, vec![edit])
+                        self.sync(self.snapshot.input.clone(), vec![edit]);
                     }
                 }
             };
-
-            if snapshot_tx.send(self.snapshot.clone()).await.is_err() {
-                break;
-            }
         }
     }
 
     fn sync(&mut self, new_snapshot: InputSnapshot, edits: Vec<InputEdit>) {
-        if edits.is_empty() {
-            return;
-        }
-
         #[derive(Debug)]
         struct RowEdit {
             old_rows: Range<u32>,
             new_rows: Range<u32>,
         }
+
+        self.state.lock().is_wrapping = true;
 
         let mut edits = edits.into_iter().peekable();
         let mut row_edits = Vec::new();
@@ -561,7 +593,9 @@ impl BackgroundWrapper {
         }
 
         let mut new_transforms;
-        {
+        if row_edits.is_empty() {
+            new_transforms = self.snapshot.transforms.clone();
+        } else {
             let mut row_edits = row_edits.into_iter().peekable();
             let mut old_cursor = self.snapshot.transforms.cursor::<InputPoint, ()>();
 
@@ -658,10 +692,18 @@ impl BackgroundWrapper {
             }
         }
 
-        self.snapshot = Snapshot {
-            transforms: new_transforms,
-            input: new_snapshot,
-        };
+        self.snapshot.transforms = new_transforms;
+        self.snapshot.input = new_snapshot;
+
+        let mut state = self.state.lock();
+        state.output_version += 1;
+        state.is_wrapping = false;
+        state.snapshot = self.snapshot.clone();
+        if let Some(sync_tx) = state.sync_tx.as_ref() {
+            let _ = sync_tx.try_send(());
+        } else {
+            let _ = self.notifications_tx.try_send(());
+        }
     }
 }
 
@@ -862,7 +904,6 @@ mod tests {
         },
         util::RandomCharIter,
     };
-    use gpui::fonts::FontId;
     use rand::prelude::*;
     use std::env;
 
@@ -928,10 +969,6 @@ mod tests {
             log::info!("Tab size: {}", settings.tab_size);
             log::info!("Wrap width: {}", wrap_width);
 
-            let font_id = font_cache
-                .select_font(settings.buffer_font_family, &Default::default())
-                .unwrap();
-
             let buffer = cx.add_model(|cx| {
                 let len = rng.gen_range(0..10);
                 let text = RandomCharIter::new(&mut rng).take(len).collect::<String>();
@@ -940,7 +977,7 @@ mod tests {
             });
             let (fold_map, folds_snapshot) = FoldMap::new(buffer.clone(), cx.as_ref());
             let (tab_map, tabs_snapshot) = TabMap::new(folds_snapshot.clone(), settings.tab_size);
-            let mut wrapper = BackgroundWrapper::new(
+            let (mut wrapper, _, _) = BackgroundWrapper::new(
                 Snapshot::new(tabs_snapshot.clone()),
                 settings.clone(),
                 Some(wrap_width),
@@ -953,15 +990,13 @@ mod tests {
             };
             wrapper.sync(tabs_snapshot.clone(), vec![edit]);
 
+            let mut line_wrapper = LineWrapper::new(font_system, font_cache, settings);
             let unwrapped_text = tabs_snapshot.text();
-            let expected_text =
-                wrap_text(&unwrapped_text, wrap_width, font_id, font_system.as_ref());
-
+            let expected_text = wrap_text(&unwrapped_text, wrap_width, &mut line_wrapper);
             let actual_text = wrapper
                 .snapshot
                 .chunks_at(OutputPoint::zero())
                 .collect::<String>();
-
             assert_eq!(
                 actual_text, expected_text,
                 "unwrapped text is: {:?}",
@@ -977,8 +1012,7 @@ mod tests {
                 interpolated_snapshot.check_invariants();
 
                 let unwrapped_text = snapshot.text();
-                let expected_text =
-                    wrap_text(&unwrapped_text, wrap_width, font_id, font_system.as_ref());
+                let expected_text = wrap_text(&unwrapped_text, wrap_width, &mut line_wrapper);
                 wrapper.sync(snapshot, edits);
                 wrapper.snapshot.check_invariants();
 
@@ -994,12 +1028,7 @@ mod tests {
         }
     }
 
-    fn wrap_text(
-        unwrapped_text: &str,
-        wrap_width: f32,
-        font_id: FontId,
-        font_system: &dyn FontSystem,
-    ) -> String {
+    fn wrap_text(unwrapped_text: &str, wrap_width: f32, line_wrapper: &mut LineWrapper) -> String {
         let mut wrapped_text = String::new();
         for (row, line) in unwrapped_text.split('\n').enumerate() {
             if row > 0 {
@@ -1007,7 +1036,7 @@ mod tests {
             }
 
             let mut prev_ix = 0;
-            for ix in font_system.wrap_line(line, font_id, 14.0, wrap_width) {
+            for ix in line_wrapper.wrap_line_without_shaping(line, wrap_width) {
                 wrapped_text.push_str(&line[prev_ix..ix]);
                 wrapped_text.push('\n');
                 prev_ix = ix;

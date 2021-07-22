@@ -13,7 +13,7 @@ use gpui::{AppContext, ModelHandle};
 use parking_lot::Mutex;
 use std::{
     cmp::{self, Ordering},
-    iter,
+    iter, mem,
     ops::Range,
     sync::atomic::{AtomicUsize, Ordering::SeqCst},
 };
@@ -148,8 +148,14 @@ pub struct FoldMap {
     buffer: ModelHandle<Buffer>,
     transforms: Mutex<SumTree<Transform>>,
     folds: SumTree<Fold>,
-    last_sync: Mutex<time::Global>,
+    last_sync: Mutex<SyncState>,
     version: AtomicUsize,
+}
+
+#[derive(Clone)]
+struct SyncState {
+    version: time::Global,
+    is_parsing: bool,
 }
 
 impl FoldMap {
@@ -168,7 +174,10 @@ impl FoldMap {
                 },
                 &(),
             )),
-            last_sync: Mutex::new(buffer.version()),
+            last_sync: Mutex::new(SyncState {
+                version: buffer.version(),
+                is_parsing: buffer.is_parsing(),
+            }),
             version: AtomicUsize::new(0),
         };
         let (snapshot, _) = this.read(cx);
@@ -194,12 +203,21 @@ impl FoldMap {
 
     fn sync(&self, cx: &AppContext) -> Vec<Edit> {
         let buffer = self.buffer.read(cx);
+        let last_sync = mem::replace(
+            &mut *self.last_sync.lock(),
+            SyncState {
+                version: buffer.version(),
+                is_parsing: buffer.is_parsing(),
+            },
+        );
         let edits = buffer
-            .edits_since(self.last_sync.lock().clone())
+            .edits_since(last_sync.version)
             .map(Into::into)
             .collect::<Vec<_>>();
-        *self.last_sync.lock() = buffer.version();
         if edits.is_empty() {
+            if last_sync.is_parsing != buffer.is_parsing() {
+                self.version.fetch_add(1, SeqCst);
+            }
             Vec::new()
         } else {
             self.apply_edits(edits, cx)

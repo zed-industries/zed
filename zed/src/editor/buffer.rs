@@ -604,6 +604,7 @@ impl Buffer {
             fragments: self.fragments.clone(),
             version: self.version.clone(),
             tree: self.syntax_tree(),
+            is_parsing: self.is_parsing,
             language: self.language.clone(),
             query_cursor: QueryCursorHandle::new(),
         }
@@ -1926,6 +1927,7 @@ pub struct Snapshot {
     fragments: SumTree<Fragment>,
     version: time::Global,
     tree: Option<Tree>,
+    is_parsing: bool,
     language: Option<Arc<Language>>,
     query_cursor: QueryCursorHandle,
 }
@@ -1937,6 +1939,7 @@ impl Clone for Snapshot {
             fragments: self.fragments.clone(),
             version: self.version.clone(),
             tree: self.tree.clone(),
+            is_parsing: self.is_parsing,
             language: self.language.clone(),
             query_cursor: QueryCursorHandle::new(),
         }

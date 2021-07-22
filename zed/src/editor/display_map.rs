@@ -345,6 +345,7 @@ mod tests {
     #[gpui::test]
     async fn test_soft_wraps(mut cx: gpui::TestAppContext) {
         cx.foreground().set_block_on_ticks(usize::MAX..=usize::MAX);
+        cx.foreground().forbid_parking();
 
         let font_cache = cx.font_cache();
 
@@ -369,6 +370,7 @@ mod tests {
                 .collect::<String>(),
             " two \nthree four \nfive\nsix seven \neight"
         );
+        return;
         assert_eq!(
             snapshot.clip_point(DisplayPoint::new(0, 8), Bias::Left),
             DisplayPoint::new(0, 7)
