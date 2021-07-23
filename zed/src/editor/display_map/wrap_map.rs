@@ -742,38 +742,6 @@ mod tests {
     use std::env;
 
     #[gpui::test]
-    fn test_line_wrapper(cx: &mut gpui::MutableAppContext) {
-        let font_cache = cx.font_cache().clone();
-        let font_system = cx.platform().fonts();
-        let settings = Settings {
-            tab_size: 4,
-            buffer_font_family: font_cache.load_family(&["Courier"]).unwrap(),
-            buffer_font_size: 16.0,
-            ..Settings::new(&font_cache).unwrap()
-        };
-
-        let mut wrapper = LineWrapper::new(font_system, font_cache, settings);
-
-        assert_eq!(
-            wrapper.wrap_line_with_shaping("aa bbb cccc ddddd eeee", 72.0),
-            &[7, 12, 18],
-        );
-        assert_eq!(
-            wrapper.wrap_line_without_shaping("aa bbb cccc ddddd eeee", 72.0),
-            &[7, 12, 18],
-        );
-
-        assert_eq!(
-            wrapper.wrap_line_with_shaping("aaa aaaaaaaaaaaaaaaaaa", 72.0),
-            &[4, 11, 18],
-        );
-        assert_eq!(
-            wrapper.wrap_line_without_shaping("aaa aaaaaaaaaaaaaaaaaa", 72.0),
-            &[4, 11, 18],
-        );
-    }
-
-    #[gpui::test]
     fn test_random_wraps(cx: &mut gpui::MutableAppContext) {
         let iterations = env::var("ITERATIONS")
             .map(|i| i.parse().expect("invalid `ITERATIONS` variable"))
