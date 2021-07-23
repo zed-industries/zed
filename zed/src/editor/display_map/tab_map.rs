@@ -145,17 +145,18 @@ impl Snapshot {
     }
 
     pub fn highlighted_chunks(&mut self, range: Range<OutputPoint>) -> HighlightedChunks {
-        let input_start = self
-            .input
-            .to_output_offset(self.to_input_point(range.start, Bias::Left).0);
+        let (input_start, expanded_char_column, to_next_stop) =
+            self.to_input_point(range.start, Bias::Left);
+        let input_start = self.input.to_output_offset(input_start);
         let input_end = self
             .input
             .to_output_offset(self.to_input_point(range.end, Bias::Left).0);
         HighlightedChunks {
-            input_chunks: self.input.highlighted_chunks(input_start..input_end),
-            column: 0,
+            fold_chunks: self.input.highlighted_chunks(input_start..input_end),
+            column: expanded_char_column,
             tab_size: self.tab_size,
-            chunk: "",
+            chunk: &SPACES[0..to_next_stop],
+            skip_leading_tab: to_next_stop > 0,
             style_id: Default::default(),
         }
     }
@@ -429,11 +430,12 @@ impl<'a> Iterator for Chunks<'a> {
 }
 
 pub struct HighlightedChunks<'a> {
-    input_chunks: InputHighlightedChunks<'a>,
+    fold_chunks: InputHighlightedChunks<'a>,
     chunk: &'a str,
     style_id: StyleId,
     column: usize,
     tab_size: usize,
+    skip_leading_tab: bool,
 }
 
 impl<'a> Iterator for HighlightedChunks<'a> {
@@ -441,9 +443,13 @@ impl<'a> Iterator for HighlightedChunks<'a> {
 
     fn next(&mut self) -> Option<Self::Item> {
         if self.chunk.is_empty() {
-            if let Some((chunk, style_id)) = self.input_chunks.next() {
+            if let Some((chunk, style_id)) = self.fold_chunks.next() {
                 self.chunk = chunk;
                 self.style_id = style_id;
+                if self.skip_leading_tab {
+                    self.chunk = &self.chunk[1..];
+                    self.skip_leading_tab = false;
+                }
             } else {
                 return None;
             }
