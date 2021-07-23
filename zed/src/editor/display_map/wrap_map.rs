@@ -98,6 +98,10 @@ impl WrapMap {
         this
     }
 
+    pub fn is_rewrapping(&self) -> bool {
+        self.0.lock().background_task.is_some()
+    }
+
     pub fn notifications(&self) -> impl Stream<Item = ()> {
         self.0.lock().updates.1.clone()
     }
@@ -779,53 +783,57 @@ mod tests {
             });
             let (fold_map, folds_snapshot) = FoldMap::new(buffer.clone(), cx.as_ref());
             let (tab_map, tabs_snapshot) = TabMap::new(folds_snapshot.clone(), settings.tab_size);
-            let (mut wrapper, _, _) = BackgroundWrapper::new(
-                Snapshot::new(tabs_snapshot.clone()),
+            let wrap_map = WrapMap::new(
+                tabs_snapshot.clone(),
                 settings.clone(),
                 Some(wrap_width),
-                font_cache.clone(),
-                font_system.clone(),
+                cx.as_ref(),
             );
-            let edit = TabEdit {
-                old_lines: Default::default()..tabs_snapshot.max_point(),
-                new_lines: Default::default()..tabs_snapshot.max_point(),
-            };
-            wrapper.sync(tabs_snapshot.clone(), vec![edit]);
+            let mut notifications = wrap_map.notifications();
 
             let mut line_wrapper = LineWrapper::new(font_system, font_cache, settings);
             let unwrapped_text = tabs_snapshot.text();
             let expected_text = wrap_text(&unwrapped_text, wrap_width, &mut line_wrapper);
-            let actual_text = wrapper
-                .snapshot
-                .chunks_at(WrapPoint::zero())
-                .collect::<String>();
+
+            if wrap_map.is_rewrapping() {
+                notifications.blocking_recv();
+            }
+
+            let snapshot = wrap_map.sync(tabs_snapshot, Vec::new(), cx.as_ref());
+            let actual_text = snapshot.text();
+
             assert_eq!(
                 actual_text, expected_text,
                 "unwrapped text is: {:?}",
                 unwrapped_text
             );
 
-            let mut interpolated_snapshot = wrapper.snapshot.clone();
+            let mut interpolated_snapshot = snapshot.clone();
             for _i in 0..operations {
                 buffer.update(cx, |buffer, cx| buffer.randomly_mutate(&mut rng, cx));
-                let (snapshot, edits) = fold_map.read(cx.as_ref());
-                let (snapshot, edits) = tab_map.sync(snapshot, edits);
-                interpolated_snapshot.interpolate(snapshot.clone(), &edits);
+                let (folds_snapshot, edits) = fold_map.read(cx.as_ref());
+                let (tabs_snapshot, edits) = tab_map.sync(folds_snapshot, edits);
+                interpolated_snapshot.interpolate(tabs_snapshot.clone(), &edits);
                 interpolated_snapshot.check_invariants();
 
-                let unwrapped_text = snapshot.text();
+                let unwrapped_text = tabs_snapshot.text();
                 let expected_text = wrap_text(&unwrapped_text, wrap_width, &mut line_wrapper);
-                wrapper.sync(snapshot, edits);
-                wrapper.snapshot.check_invariants();
+                let mut snapshot = wrap_map.sync(tabs_snapshot.clone(), edits, cx.as_ref());
 
-                let actual_text = wrapper.snapshot.text();
+                if wrap_map.is_rewrapping() {
+                    notifications.blocking_recv();
+                    snapshot = wrap_map.sync(tabs_snapshot, Vec::new(), cx.as_ref());
+                }
+
+                snapshot.check_invariants();
+                let actual_text = snapshot.text();
                 assert_eq!(
                     actual_text, expected_text,
                     "unwrapped text is: {:?}",
                     unwrapped_text
                 );
 
-                interpolated_snapshot = wrapper.snapshot.clone();
+                interpolated_snapshot = snapshot.clone();
             }
         }
     }
