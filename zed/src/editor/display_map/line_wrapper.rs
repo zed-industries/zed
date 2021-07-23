@@ -39,11 +39,15 @@ impl LineWrapper {
 
     pub fn wrap_line_without_shaping(&self, line: &str, wrap_width: f32) -> Vec<usize> {
         let mut width = 0.0;
-        let mut result = Vec::new();
+        let mut boundaries = Vec::new();
         let mut last_boundary_ix = 0;
         let mut last_boundary_width = 0.0;
         let mut prev_c = '\0';
         for (ix, c) in line.char_indices() {
+            if c == '\n' {
+                break;
+            }
+
             if self.is_boundary(prev_c, c) {
                 last_boundary_ix = ix;
                 last_boundary_width = width;
@@ -51,19 +55,19 @@ impl LineWrapper {
 
             let char_width = self.width_for_char(c);
             width += char_width;
-            if width > wrap_width {
+            if width > wrap_width && ix > *boundaries.last().unwrap_or(&0) {
                 if last_boundary_ix > 0 {
-                    result.push(last_boundary_ix);
+                    boundaries.push(last_boundary_ix);
                     width -= last_boundary_width;
                     last_boundary_ix = 0;
                 } else {
-                    result.push(ix);
+                    boundaries.push(ix);
                     width = char_width;
                 }
             }
             prev_c = c;
         }
-        result
+        boundaries
     }
 
     fn is_boundary(&self, prev: char, next: char) -> bool {

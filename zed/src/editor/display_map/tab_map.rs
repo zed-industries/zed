@@ -150,7 +150,7 @@ impl Snapshot {
         let input_start = self.input.to_output_offset(input_start);
         let input_end = self
             .input
-            .to_output_offset(self.to_input_point(range.end, Bias::Left).0);
+            .to_output_offset(self.to_input_point(range.end, Bias::Right).0);
         HighlightedChunks {
             fold_chunks: self.input.highlighted_chunks(input_start..input_end),
             column: expanded_char_column,

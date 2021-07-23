@@ -787,7 +787,7 @@ mod tests {
             let mut rng = StdRng::seed_from_u64(seed);
             let font_cache = cx.font_cache().clone();
             let font_system = cx.platform().fonts();
-            let wrap_width = rng.gen_range(100.0..=1000.0);
+            let wrap_width = rng.gen_range(0.0..=1000.0);
             let settings = Settings {
                 tab_size: rng.gen_range(1..=4),
                 buffer_font_family: font_cache.load_family(&["Helvetica"]).unwrap(),
@@ -800,11 +800,15 @@ mod tests {
             let buffer = cx.add_model(|cx| {
                 let len = rng.gen_range(0..10);
                 let text = RandomCharIter::new(&mut rng).take(len).collect::<String>();
-                log::info!("Initial buffer text: {:?} (len: {})", text, text.len());
                 Buffer::new(0, text, cx)
             });
             let (fold_map, folds_snapshot) = cx.read(|cx| FoldMap::new(buffer.clone(), cx));
             let (tab_map, tabs_snapshot) = TabMap::new(folds_snapshot.clone(), settings.tab_size);
+            log::info!(
+                "Unwrapped text (unexpanded tabs): {:?}",
+                folds_snapshot.text()
+            );
+            log::info!("Unwrapped text (expanded tabs): {:?}", tabs_snapshot.text());
             let wrap_map = cx.read(|cx| {
                 WrapMap::new(
                     tabs_snapshot.clone(),
@@ -825,18 +829,23 @@ mod tests {
 
             let snapshot = cx.read(|cx| wrap_map.sync(tabs_snapshot, Vec::new(), cx));
             let actual_text = snapshot.text();
-
             assert_eq!(
                 actual_text, expected_text,
                 "unwrapped text is: {:?}",
                 unwrapped_text
             );
+            log::info!("Wrapped text: {:?}", actual_text);
 
             let mut interpolated_snapshot = snapshot.clone();
             for _i in 0..operations {
                 buffer.update(&mut cx, |buffer, cx| buffer.randomly_mutate(&mut rng, cx));
                 let (folds_snapshot, edits) = cx.read(|cx| fold_map.read(cx));
+                log::info!(
+                    "Unwrapped text (unexpanded tabs): {:?}",
+                    folds_snapshot.text()
+                );
                 let (tabs_snapshot, edits) = tab_map.sync(folds_snapshot, edits);
+                log::info!("Unwrapped text (expanded tabs): {:?}", tabs_snapshot.text());
                 interpolated_snapshot.interpolate(tabs_snapshot.clone(), &edits);
                 interpolated_snapshot.check_invariants(&mut rng);
 
@@ -857,6 +866,7 @@ mod tests {
                     "unwrapped text is: {:?}",
                     unwrapped_text
                 );
+                log::info!("New wrapped text: {:?}", actual_text);
 
                 interpolated_snapshot = snapshot.clone();
             }
