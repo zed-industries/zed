@@ -103,7 +103,13 @@ impl WrapMap {
     }
 
     pub fn notifications(&self) -> impl Stream<Item = ()> {
-        self.0.lock().updates.1.clone()
+        let state = self.0.lock();
+        let mut rx = state.updates.1.clone();
+        // The first item in the stream always returns what's stored on the watch, but we only want
+        // to receive notifications occurring after calling this method, so we discard the first
+        // item.
+        let _ = rx.blocking_recv();
+        rx
     }
 
     pub fn sync(
@@ -123,6 +129,7 @@ impl WrapMap {
             return;
         }
 
+        state.wrap_width = wrap_width;
         state.background_task.take();
 
         if let Some(wrap_width) = wrap_width {
@@ -147,12 +154,19 @@ impl WrapMap {
 
             let executor = cx.background();
             match executor.block_with_timeout(Duration::from_millis(5), task) {
-                Ok(snapshot) => state.snapshot = snapshot,
+                Ok(snapshot) => {
+                    state.snapshot = snapshot;
+                }
                 Err(wrap_task) => {
                     let this = self.clone();
                     let exec = executor.clone();
                     state.background_task = Some(executor.spawn(async move {
-                        this.0.lock().snapshot = wrap_task.await;
+                        let snapshot = wrap_task.await;
+                        {
+                            let mut state = this.0.lock();
+                            state.snapshot = snapshot;
+                            state.background_task = None;
+                        }
                         this.flush_edits(&exec);
                         this.0.lock().updates.0.blocking_send(()).ok();
                     }));
@@ -199,7 +213,12 @@ impl WrapMap {
                         let this = self.clone();
                         let exec = executor.clone();
                         state.background_task = Some(executor.spawn(async move {
-                            this.0.lock().snapshot = update_task.await;
+                            let snapshot = update_task.await;
+                            {
+                                let mut state = this.0.lock();
+                                state.snapshot = snapshot;
+                                state.background_task = None;
+                            }
                             this.flush_edits(&exec);
                             this.0.lock().updates.0.blocking_send(()).ok();
                         }));
@@ -746,7 +765,7 @@ mod tests {
     use std::env;
 
     #[gpui::test]
-    fn test_random_wraps(cx: &mut gpui::MutableAppContext) {
+    async fn test_random_wraps(mut cx: gpui::TestAppContext) {
         let iterations = env::var("ITERATIONS")
             .map(|i| i.parse().expect("invalid `ITERATIONS` variable"))
             .unwrap_or(100);
@@ -761,6 +780,8 @@ mod tests {
         };
 
         for seed in seed_range {
+            cx.foreground().forbid_parking();
+
             dbg!(seed);
             let mut rng = StdRng::seed_from_u64(seed);
             let font_cache = cx.font_cache().clone();
@@ -781,14 +802,16 @@ mod tests {
                 log::info!("Initial buffer text: {:?} (len: {})", text, text.len());
                 Buffer::new(0, text, cx)
             });
-            let (fold_map, folds_snapshot) = FoldMap::new(buffer.clone(), cx.as_ref());
+            let (fold_map, folds_snapshot) = cx.read(|cx| FoldMap::new(buffer.clone(), cx));
             let (tab_map, tabs_snapshot) = TabMap::new(folds_snapshot.clone(), settings.tab_size);
-            let wrap_map = WrapMap::new(
-                tabs_snapshot.clone(),
-                settings.clone(),
-                Some(wrap_width),
-                cx.as_ref(),
-            );
+            let wrap_map = cx.read(|cx| {
+                WrapMap::new(
+                    tabs_snapshot.clone(),
+                    settings.clone(),
+                    Some(wrap_width),
+                    cx,
+                )
+            });
             let mut notifications = wrap_map.notifications();
 
             let mut line_wrapper = LineWrapper::new(font_system, font_cache, settings);
@@ -796,10 +819,10 @@ mod tests {
             let expected_text = wrap_text(&unwrapped_text, wrap_width, &mut line_wrapper);
 
             if wrap_map.is_rewrapping() {
-                notifications.blocking_recv();
+                notifications.recv().await;
             }
 
-            let snapshot = wrap_map.sync(tabs_snapshot, Vec::new(), cx.as_ref());
+            let snapshot = cx.read(|cx| wrap_map.sync(tabs_snapshot, Vec::new(), cx));
             let actual_text = snapshot.text();
 
             assert_eq!(
@@ -810,19 +833,19 @@ mod tests {
 
             let mut interpolated_snapshot = snapshot.clone();
             for _i in 0..operations {
-                buffer.update(cx, |buffer, cx| buffer.randomly_mutate(&mut rng, cx));
-                let (folds_snapshot, edits) = fold_map.read(cx.as_ref());
+                buffer.update(&mut cx, |buffer, cx| buffer.randomly_mutate(&mut rng, cx));
+                let (folds_snapshot, edits) = cx.read(|cx| fold_map.read(cx));
                 let (tabs_snapshot, edits) = tab_map.sync(folds_snapshot, edits);
                 interpolated_snapshot.interpolate(tabs_snapshot.clone(), &edits);
                 interpolated_snapshot.check_invariants();
 
                 let unwrapped_text = tabs_snapshot.text();
                 let expected_text = wrap_text(&unwrapped_text, wrap_width, &mut line_wrapper);
-                let mut snapshot = wrap_map.sync(tabs_snapshot.clone(), edits, cx.as_ref());
+                let mut snapshot = cx.read(|cx| wrap_map.sync(tabs_snapshot.clone(), edits, cx));
 
                 if wrap_map.is_rewrapping() {
-                    notifications.blocking_recv();
-                    snapshot = wrap_map.sync(tabs_snapshot, Vec::new(), cx.as_ref());
+                    notifications.recv().await;
+                    snapshot = cx.read(|cx| wrap_map.sync(tabs_snapshot, Vec::new(), cx));
                 }
 
                 snapshot.check_invariants();
