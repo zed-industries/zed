@@ -311,7 +311,7 @@ impl FileFinder {
     }
 
     fn workspace_updated(&mut self, _: ViewHandle<Workspace>, cx: &mut ViewContext<Self>) {
-        if let Some(task) = self.spawn_search(self.query_buffer.read(cx).text(cx.as_ref()), cx) {
+        if let Some(task) = self.spawn_search(self.query_buffer.read(cx).text(cx), cx) {
             task.detach();
         }
     }
@@ -324,7 +324,7 @@ impl FileFinder {
     ) {
         match event {
             editor::Event::Edited => {
-                let query = self.query_buffer.read(cx).text(cx.as_ref());
+                let query = self.query_buffer.update(cx, |buffer, cx| buffer.text(cx));
                 if query.is_empty() {
                     self.latest_search_id = util::post_inc(&mut self.search_count);
                     self.matches.clear();

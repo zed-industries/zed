@@ -126,7 +126,7 @@ mod tests {
             ..Settings::new(&font_cache).unwrap()
         };
 
-        let mut wrapper = LineWrapper::new(font_system, font_cache, settings);
+        let wrapper = LineWrapper::new(font_system, font_cache, settings);
 
         assert_eq!(
             wrapper.wrap_line_with_shaping("aa bbb cccc ddddd eeee", 72.0),

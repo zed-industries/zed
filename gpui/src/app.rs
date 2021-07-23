@@ -23,7 +23,7 @@ use std::{
     fmt::{self, Debug},
     hash::{Hash, Hasher},
     marker::PhantomData,
-    ops::Deref,
+    ops::{Deref, DerefMut},
     path::{Path, PathBuf},
     rc::{self, Rc},
     sync::{Arc, Weak},
@@ -2107,6 +2107,12 @@ impl<M> Deref for ViewContext<'_, M> {
 
     fn deref(&self) -> &Self::Target {
         &self.app
+    }
+}
+
+impl<M> DerefMut for ViewContext<'_, M> {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.app
     }
 }
 

@@ -12,7 +12,7 @@ use crate::{
     util::Bias,
     Settings,
 };
-use gpui::{executor::Background, AppContext, Task};
+use gpui::{executor::Background, MutableAppContext, Task};
 use parking_lot::Mutex;
 use postage::{prelude::Stream, sink::Sink, watch};
 use smol::future::yield_now;
@@ -80,7 +80,7 @@ impl WrapMap {
         tab_snapshot: TabSnapshot,
         settings: Settings,
         wrap_width: Option<f32>,
-        cx: &AppContext,
+        cx: &mut MutableAppContext,
     ) -> Self {
         let this = Self(Arc::new(Mutex::new(WrapMapState {
             background_task: None,
@@ -116,14 +116,14 @@ impl WrapMap {
         &self,
         tab_snapshot: TabSnapshot,
         edits: Vec<TabEdit>,
-        cx: &AppContext,
+        cx: &mut MutableAppContext,
     ) -> Snapshot {
         self.0.lock().pending_edits.push_back((tab_snapshot, edits));
         self.flush_edits(cx.background());
         self.0.lock().snapshot.clone()
     }
 
-    pub fn set_wrap_width(&self, wrap_width: Option<f32>, cx: &AppContext) {
+    pub fn set_wrap_width(&self, wrap_width: Option<f32>, cx: &mut MutableAppContext) {
         let mut state = self.0.lock();
         if wrap_width == state.wrap_width {
             return;
@@ -814,7 +814,7 @@ mod tests {
                 folds_snapshot.text()
             );
             log::info!("Unwrapped text (expanded tabs): {:?}", tabs_snapshot.text());
-            let wrap_map = cx.read(|cx| {
+            let wrap_map = cx.update(|cx| {
                 WrapMap::new(
                     tabs_snapshot.clone(),
                     settings.clone(),
@@ -832,7 +832,7 @@ mod tests {
                 notifications.recv().await;
             }
 
-            let snapshot = cx.read(|cx| wrap_map.sync(tabs_snapshot, Vec::new(), cx));
+            let snapshot = cx.update(|cx| wrap_map.sync(tabs_snapshot, Vec::new(), cx));
             let actual_text = snapshot.text();
             assert_eq!(
                 actual_text, expected_text,
@@ -856,12 +856,12 @@ mod tests {
 
                 let unwrapped_text = tabs_snapshot.text();
                 let expected_text = wrap_text(&unwrapped_text, wrap_width, &mut line_wrapper);
-                let mut snapshot = cx.read(|cx| wrap_map.sync(tabs_snapshot.clone(), edits, cx));
+                let mut snapshot = cx.update(|cx| wrap_map.sync(tabs_snapshot.clone(), edits, cx));
                 snapshot.check_invariants(&mut rng);
 
                 if wrap_map.is_rewrapping() {
                     notifications.recv().await;
-                    snapshot = cx.read(|cx| wrap_map.sync(tabs_snapshot, Vec::new(), cx));
+                    snapshot = cx.update(|cx| wrap_map.sync(tabs_snapshot, Vec::new(), cx));
                 }
 
                 snapshot.check_invariants(&mut rng);

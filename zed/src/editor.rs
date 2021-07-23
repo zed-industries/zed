@@ -4,7 +4,7 @@ mod element;
 pub mod movement;
 
 use crate::{
-    settings::{Settings, StyleId},
+    settings::{Settings, StyleId, Theme},
     util::{post_inc, Bias},
     workspace,
     worktree::{File, Worktree},
@@ -15,10 +15,10 @@ pub use display_map::DisplayPoint;
 use display_map::*;
 pub use element::*;
 use gpui::{
-    color::ColorU, fonts::Properties as FontProperties, geometry::vector::Vector2F,
-    keymap::Binding, text_layout, AppContext, ClipboardItem, Element, ElementBox, Entity,
-    FontCache, ModelHandle, MutableAppContext, Task, TextLayoutCache, View, ViewContext,
-    WeakViewHandle,
+    color::ColorU, font_cache::FamilyId, fonts::Properties as FontProperties,
+    geometry::vector::Vector2F, keymap::Binding, text_layout, AppContext, ClipboardItem, Element,
+    ElementBox, Entity, FontCache, ModelHandle, MutableAppContext, Task, TextLayoutCache, View,
+    ViewContext, WeakViewHandle,
 };
 use parking_lot::Mutex;
 use postage::{prelude::Stream, watch};
@@ -384,6 +384,15 @@ pub struct Editor {
     single_line: bool,
 }
 
+struct Snapshot {
+    display_snapshot: DisplayMapSnapshot,
+    gutter_visible: bool,
+    scroll_position: Vector2F,
+    theme: Arc<Theme>,
+    font_family: FamilyId,
+    font_size: f32,
+}
+
 struct AddSelectionsState {
     above: bool,
     stack: Vec<usize>,
@@ -410,8 +419,7 @@ impl Editor {
     ) -> Self {
         cx.observe_model(&buffer, Self::on_buffer_changed);
         cx.subscribe_to_model(&buffer, Self::on_buffer_event);
-        let display_map =
-            DisplayMap::new(buffer.clone(), settings.borrow().clone(), None, cx.as_ref());
+        let display_map = DisplayMap::new(buffer.clone(), settings.borrow().clone(), None, cx);
 
         let mut notifications = display_map.notifications();
         cx.spawn(|this, mut cx| async move {
@@ -458,8 +466,17 @@ impl Editor {
         &self.buffer
     }
 
-    pub fn is_gutter_visible(&self) -> bool {
-        !self.single_line
+    pub fn snapshot(&mut self, cx: &mut MutableAppContext) -> Snapshot {
+        let settings = self.settings.borrow();
+
+        Snapshot {
+            display_snapshot: self.display_map.snapshot(cx),
+            gutter_visible: !self.single_line,
+            scroll_position: *self.scroll_position.lock(),
+            theme: settings.theme.clone(),
+            font_family: settings.buffer_font_family,
+            font_size: settings.buffer_font_size,
+        }
     }
 
     fn scroll(&mut self, scroll_position: &Vector2F, cx: &mut ViewContext<Self>) {
@@ -481,7 +498,7 @@ impl Editor {
         &self,
         viewport_height: f32,
         line_height: f32,
-        cx: &AppContext,
+        cx: &mut MutableAppContext,
     ) -> bool {
         let display_map = self.display_map.snapshot(cx);
         let mut scroll_position = self.scroll_position.lock();
@@ -541,7 +558,7 @@ impl Editor {
         scroll_width: f32,
         max_glyph_width: f32,
         layouts: &[text_layout::Line],
-        cx: &AppContext,
+        cx: &mut MutableAppContext,
     ) {
         let display_map = self.display_map.snapshot(cx);
         let mut target_left = std::f32::INFINITY;
@@ -591,7 +608,7 @@ impl Editor {
             cx.emit(Event::Activate);
         }
 
-        let display_map = self.display_map.snapshot(cx.as_ref());
+        let display_map = self.display_map.snapshot(cx);
         let cursor = display_map.anchor_before(position, Bias::Left);
         let selection = Selection {
             id: post_inc(&mut self.next_selection_id),
@@ -616,7 +633,7 @@ impl Editor {
         cx: &mut ViewContext<Self>,
     ) {
         let buffer = self.buffer.read(cx);
-        let display_map = self.display_map.snapshot(cx.as_ref());
+        let display_map = self.display_map.snapshot(cx);
         let cursor = display_map.anchor_before(position, Bias::Left);
         if let Some(selection) = self.pending_selection.as_mut() {
             selection.set_head(buffer, cursor);
@@ -694,7 +711,7 @@ impl Editor {
         T: IntoIterator<Item = &'a Range<DisplayPoint>>,
     {
         let mut selections = Vec::new();
-        let display_map = self.display_map.snapshot(cx.as_ref());
+        let display_map = self.display_map.snapshot(cx);
         for range in ranges {
             let mut start = range.start;
             let mut end = range.end;
@@ -769,7 +786,7 @@ impl Editor {
     pub fn backspace(&mut self, _: &(), cx: &mut ViewContext<Self>) {
         self.start_transaction(cx);
         let mut selections = self.selections(cx.as_ref()).to_vec();
-        let display_map = self.display_map.snapshot(cx.as_ref());
+        let display_map = self.display_map.snapshot(cx);
         {
             let buffer = self.buffer.read(cx);
             for selection in &mut selections {
@@ -791,7 +808,7 @@ impl Editor {
 
     pub fn delete(&mut self, _: &(), cx: &mut ViewContext<Self>) {
         self.start_transaction(cx);
-        let display_map = self.display_map.snapshot(cx.as_ref());
+        let display_map = self.display_map.snapshot(cx);
         let mut selections = self.selections(cx.as_ref()).to_vec();
         {
             let buffer = self.buffer.read(cx);
@@ -821,7 +838,7 @@ impl Editor {
         let mut new_cursors = Vec::new();
         let mut edit_ranges = Vec::new();
 
-        let display_map = self.display_map.snapshot(cx.as_ref());
+        let display_map = self.display_map.snapshot(cx);
         let mut selections = self.selections(app).iter().peekable();
         while let Some(selection) = selections.next() {
             let (mut rows, _) = selection.buffer_rows_for_display_rows(false, &display_map);
@@ -902,7 +919,7 @@ impl Editor {
         self.update_selections(selections.clone(), false, cx);
 
         let buffer = self.buffer.read(cx);
-        let display_map = self.display_map.snapshot(cx.as_ref());
+        let display_map = self.display_map.snapshot(cx);
 
         let mut edits = Vec::new();
         let mut selections_iter = selections.iter_mut().peekable();
@@ -952,7 +969,7 @@ impl Editor {
 
         let app = cx.as_ref();
         let buffer = self.buffer.read(cx);
-        let display_map = self.display_map.snapshot(cx.as_ref());
+        let display_map = self.display_map.snapshot(cx);
 
         let mut edits = Vec::new();
         let mut new_selection_ranges = Vec::new();
@@ -1037,7 +1054,7 @@ impl Editor {
 
         let app = cx.as_ref();
         let buffer = self.buffer.read(cx);
-        let display_map = self.display_map.snapshot(cx.as_ref());
+        let display_map = self.display_map.snapshot(cx);
 
         let mut edits = Vec::new();
         let mut new_selection_ranges = Vec::new();
@@ -1250,8 +1267,8 @@ impl Editor {
     }
 
     pub fn move_left(&mut self, _: &(), cx: &mut ViewContext<Self>) {
+        let display_map = self.display_map.snapshot(cx);
         let app = cx.as_ref();
-        let display_map = self.display_map.snapshot(app);
         let mut selections = self.selections(app).to_vec();
         {
             for selection in &mut selections {
@@ -1274,7 +1291,7 @@ impl Editor {
     }
 
     pub fn select_left(&mut self, _: &(), cx: &mut ViewContext<Self>) {
-        let display_map = self.display_map.snapshot(cx.as_ref());
+        let display_map = self.display_map.snapshot(cx);
         let mut selections = self.selections(cx.as_ref()).to_vec();
         {
             let buffer = self.buffer.read(cx);
@@ -1290,7 +1307,7 @@ impl Editor {
     }
 
     pub fn move_right(&mut self, _: &(), cx: &mut ViewContext<Self>) {
-        let display_map = self.display_map.snapshot(cx.as_ref());
+        let display_map = self.display_map.snapshot(cx);
         let mut selections = self.selections(cx.as_ref()).to_vec();
         {
             for selection in &mut selections {
@@ -1313,7 +1330,7 @@ impl Editor {
     }
 
     pub fn select_right(&mut self, _: &(), cx: &mut ViewContext<Self>) {
-        let display_map = self.display_map.snapshot(cx.as_ref());
+        let display_map = self.display_map.snapshot(cx);
         let mut selections = self.selections(cx.as_ref()).to_vec();
         {
             let app = cx.as_ref();
@@ -1330,7 +1347,7 @@ impl Editor {
     }
 
     pub fn move_up(&mut self, _: &(), cx: &mut ViewContext<Self>) {
-        let display_map = self.display_map.snapshot(cx.as_ref());
+        let display_map = self.display_map.snapshot(cx);
         if self.single_line {
             cx.propagate_action();
         } else {
@@ -1356,7 +1373,7 @@ impl Editor {
     }
 
     pub fn select_up(&mut self, _: &(), cx: &mut ViewContext<Self>) {
-        let display_map = self.display_map.snapshot(cx.as_ref());
+        let display_map = self.display_map.snapshot(cx);
         let mut selections = self.selections(cx.as_ref()).to_vec();
         {
             let app = cx.as_ref();
@@ -1375,7 +1392,7 @@ impl Editor {
         if self.single_line {
             cx.propagate_action();
         } else {
-            let display_map = self.display_map.snapshot(cx.as_ref());
+            let display_map = self.display_map.snapshot(cx);
             let mut selections = self.selections(cx.as_ref()).to_vec();
             {
                 for selection in &mut selections {
@@ -1398,8 +1415,8 @@ impl Editor {
     }
 
     pub fn select_down(&mut self, _: &(), cx: &mut ViewContext<Self>) {
-        let display_map = self.display_map.snapshot(cx.as_ref());
-        let mut selections = self.selections(cx.as_ref()).to_vec();
+        let display_map = self.display_map.snapshot(cx);
+        let mut selections = self.selections(cx).to_vec();
         {
             let app = cx.as_ref();
             let buffer = self.buffer.read(app);
@@ -1414,9 +1431,8 @@ impl Editor {
     }
 
     pub fn move_to_previous_word_boundary(&mut self, _: &(), cx: &mut ViewContext<Self>) {
-        let app = cx.as_ref();
-        let display_map = self.display_map.snapshot(app);
-        let mut selections = self.selections(app).to_vec();
+        let display_map = self.display_map.snapshot(cx);
+        let mut selections = self.selections(cx).to_vec();
         {
             for selection in &mut selections {
                 let head = selection.head().to_display_point(&display_map);
@@ -1432,9 +1448,8 @@ impl Editor {
     }
 
     pub fn select_to_previous_word_boundary(&mut self, _: &(), cx: &mut ViewContext<Self>) {
-        let app = cx.as_ref();
-        let display_map = self.display_map.snapshot(app);
-        let mut selections = self.selections(app).to_vec();
+        let display_map = self.display_map.snapshot(cx);
+        let mut selections = self.selections(cx).to_vec();
         {
             let buffer = self.buffer.read(cx);
             for selection in &mut selections {
@@ -1456,9 +1471,8 @@ impl Editor {
     }
 
     pub fn move_to_next_word_boundary(&mut self, _: &(), cx: &mut ViewContext<Self>) {
-        let app = cx.as_ref();
-        let display_map = self.display_map.snapshot(app);
-        let mut selections = self.selections(app).to_vec();
+        let display_map = self.display_map.snapshot(cx);
+        let mut selections = self.selections(cx).to_vec();
         {
             for selection in &mut selections {
                 let head = selection.head().to_display_point(&display_map);
@@ -1474,9 +1488,8 @@ impl Editor {
     }
 
     pub fn select_to_next_word_boundary(&mut self, _: &(), cx: &mut ViewContext<Self>) {
-        let app = cx.as_ref();
-        let display_map = self.display_map.snapshot(app);
-        let mut selections = self.selections(app).to_vec();
+        let display_map = self.display_map.snapshot(cx);
+        let mut selections = self.selections(cx).to_vec();
         {
             let buffer = self.buffer.read(cx);
             for selection in &mut selections {
@@ -1498,9 +1511,8 @@ impl Editor {
     }
 
     pub fn move_to_beginning_of_line(&mut self, _: &(), cx: &mut ViewContext<Self>) {
-        let app = cx.as_ref();
-        let display_map = self.display_map.snapshot(app);
-        let mut selections = self.selections(app).to_vec();
+        let display_map = self.display_map.snapshot(cx);
+        let mut selections = self.selections(cx).to_vec();
         {
             for selection in &mut selections {
                 let head = selection.head().to_display_point(&display_map);
@@ -1520,9 +1532,8 @@ impl Editor {
         toggle_indent: &bool,
         cx: &mut ViewContext<Self>,
     ) {
-        let app = cx.as_ref();
-        let display_map = self.display_map.snapshot(app);
-        let mut selections = self.selections(app).to_vec();
+        let display_map = self.display_map.snapshot(cx);
+        let mut selections = self.selections(cx).to_vec();
         {
             let buffer = self.buffer.read(cx);
             for selection in &mut selections {
@@ -1545,9 +1556,8 @@ impl Editor {
     }
 
     pub fn move_to_end_of_line(&mut self, _: &(), cx: &mut ViewContext<Self>) {
-        let app = cx.as_ref();
-        let display_map = self.display_map.snapshot(app);
-        let mut selections = self.selections(app).to_vec();
+        let display_map = self.display_map.snapshot(cx);
+        let mut selections = self.selections(cx).to_vec();
         {
             for selection in &mut selections {
                 let head = selection.head().to_display_point(&display_map);
@@ -1563,9 +1573,8 @@ impl Editor {
     }
 
     pub fn select_to_end_of_line(&mut self, _: &(), cx: &mut ViewContext<Self>) {
-        let app = cx.as_ref();
-        let display_map = self.display_map.snapshot(app);
-        let mut selections = self.selections(app).to_vec();
+        let display_map = self.display_map.snapshot(cx);
+        let mut selections = self.selections(cx).to_vec();
         {
             let buffer = self.buffer.read(cx);
             for selection in &mut selections {
@@ -1643,10 +1652,9 @@ impl Editor {
     }
 
     pub fn select_line(&mut self, _: &(), cx: &mut ViewContext<Self>) {
-        let app = cx.as_ref();
-        let buffer = self.buffer.read(app);
-        let display_map = self.display_map.snapshot(app);
-        let mut selections = self.selections(app).to_vec();
+        let display_map = self.display_map.snapshot(cx);
+        let buffer = self.buffer.read(cx);
+        let mut selections = self.selections(cx).to_vec();
         let max_point = buffer.max_point();
         for selection in &mut selections {
             let (rows, _) = selection.buffer_rows_for_display_rows(true, &display_map);
@@ -1706,9 +1714,8 @@ impl Editor {
     }
 
     fn add_selection(&mut self, above: bool, cx: &mut ViewContext<Self>) {
-        let app = cx.as_ref();
-        let display_map = self.display_map.snapshot(app);
-        let mut selections = self.selections(app).to_vec();
+        let display_map = self.display_map.snapshot(cx);
+        let mut selections = self.selections(cx).to_vec();
         let mut state = self.add_selections_state.take().unwrap_or_else(|| {
             let oldest_selection = selections.iter().min_by_key(|s| s.id).unwrap().clone();
             let range = oldest_selection.display_range(&display_map).sorted();
@@ -1800,13 +1807,12 @@ impl Editor {
     }
 
     pub fn select_larger_syntax_node(&mut self, _: &(), cx: &mut ViewContext<Self>) {
-        let app = cx.as_ref();
-        let buffer = self.buffer.read(app);
-        let display_map = self.display_map.snapshot(app);
+        let display_map = self.display_map.snapshot(cx);
+        let buffer = self.buffer.read(cx);
 
         let mut stack = mem::take(&mut self.select_larger_syntax_node_stack);
         let mut selected_larger_node = false;
-        let old_selections = self.selections(app).to_vec();
+        let old_selections = self.selections(cx).to_vec();
         let mut new_selection_ranges = Vec::new();
         for selection in &old_selections {
             let old_range = selection.start.to_offset(buffer)..selection.end.to_offset(buffer);
@@ -1916,10 +1922,10 @@ impl Editor {
         &'a self,
         set_id: SelectionSetId,
         range: Range<DisplayPoint>,
-        cx: &'a AppContext,
+        cx: &'a mut MutableAppContext,
     ) -> impl 'a + Iterator<Item = Range<DisplayPoint>> {
-        let buffer = self.buffer.read(cx);
         let display_map = self.display_map.snapshot(cx);
+        let buffer = self.buffer.read(cx);
         let selections = &buffer.selection_set(set_id).unwrap().selections;
         let start = display_map.anchor_before(range.start, Bias::Left);
         let start_index = self.selection_insertion_index(selections, &start, cx);
@@ -2042,9 +2048,8 @@ impl Editor {
     pub fn fold(&mut self, _: &(), cx: &mut ViewContext<Self>) {
         let mut fold_ranges = Vec::new();
 
-        let app = cx.as_ref();
-        let display_map = self.display_map.snapshot(app);
-        for selection in self.selections(app) {
+        let display_map = self.display_map.snapshot(cx);
+        for selection in self.selections(cx) {
             let range = selection.display_range(&display_map).sorted();
             let buffer_start_row = range.start.to_buffer_point(&display_map, Bias::Left).row;
 
@@ -2065,11 +2070,10 @@ impl Editor {
     }
 
     pub fn unfold(&mut self, _: &(), cx: &mut ViewContext<Self>) {
-        let app = cx.as_ref();
-        let buffer = self.buffer.read(app);
-        let display_map = self.display_map.snapshot(app);
+        let display_map = self.display_map.snapshot(cx);
+        let buffer = self.buffer.read(cx);
         let ranges = self
-            .selections(app)
+            .selections(cx)
             .iter()
             .map(|s| {
                 let range = s.display_range(&display_map).sorted();
@@ -2138,7 +2142,7 @@ impl Editor {
 
     fn fold_ranges<T: ToOffset>(&mut self, ranges: Vec<Range<T>>, cx: &mut ViewContext<Self>) {
         if !ranges.is_empty() {
-            self.display_map.fold(ranges, cx.as_ref());
+            self.display_map.fold(ranges, cx);
             *self.autoscroll_requested.lock() = true;
             cx.notify();
         }
@@ -2146,25 +2150,25 @@ impl Editor {
 
     fn unfold_ranges<T: ToOffset>(&mut self, ranges: Vec<Range<T>>, cx: &mut ViewContext<Self>) {
         if !ranges.is_empty() {
-            self.display_map.unfold(ranges, cx.as_ref());
+            self.display_map.unfold(ranges, cx);
             *self.autoscroll_requested.lock() = true;
             cx.notify();
         }
     }
 
-    pub fn line_len(&self, display_row: u32, cx: &AppContext) -> u32 {
+    pub fn line_len(&self, display_row: u32, cx: &mut MutableAppContext) -> u32 {
         self.display_map.snapshot(cx).line_len(display_row)
     }
 
-    pub fn longest_row(&self, cx: &AppContext) -> u32 {
+    pub fn longest_row(&self, cx: &mut MutableAppContext) -> u32 {
         self.display_map.snapshot(cx).longest_row()
     }
 
-    pub fn max_point(&self, cx: &AppContext) -> DisplayPoint {
+    pub fn max_point(&self, cx: &mut MutableAppContext) -> DisplayPoint {
         self.display_map.snapshot(cx).max_point()
     }
 
-    pub fn text(&self, cx: &AppContext) -> String {
+    pub fn text(&self, cx: &mut MutableAppContext) -> String {
         self.display_map.snapshot(cx).text()
     }
 
@@ -2172,175 +2176,8 @@ impl Editor {
         self.settings.borrow().buffer_font_size
     }
 
-    pub fn font_ascent(&self, font_cache: &FontCache) -> f32 {
-        let settings = self.settings.borrow();
-        let font_id = font_cache.default_font(settings.buffer_font_family);
-        let ascent = font_cache.metric(font_id, |m| m.ascent);
-        font_cache.scale_metric(ascent, font_id, settings.buffer_font_size)
-    }
-
-    pub fn font_descent(&self, font_cache: &FontCache) -> f32 {
-        let settings = self.settings.borrow();
-        let font_id = font_cache.default_font(settings.buffer_font_family);
-        let ascent = font_cache.metric(font_id, |m| m.descent);
-        font_cache.scale_metric(ascent, font_id, settings.buffer_font_size)
-    }
-
-    pub fn line_height(&self, font_cache: &FontCache) -> f32 {
-        let settings = self.settings.borrow();
-        let font_id = font_cache.default_font(settings.buffer_font_family);
-        font_cache.line_height(font_id, settings.buffer_font_size)
-    }
-
-    pub fn em_width(&self, font_cache: &FontCache) -> f32 {
-        let settings = self.settings.borrow();
-        let font_id = font_cache.default_font(settings.buffer_font_family);
-        font_cache.em_width(font_id, settings.buffer_font_size)
-    }
-
-    pub fn set_wrap_width(&self, width: f32, cx: &AppContext) {
+    pub fn set_wrap_width(&self, width: f32, cx: &mut MutableAppContext) {
         self.display_map.set_wrap_width(Some(width), cx);
-    }
-
-    // TODO: Can we make this not return a result?
-    pub fn max_line_number_width(
-        &self,
-        font_cache: &FontCache,
-        layout_cache: &TextLayoutCache,
-        cx: &AppContext,
-    ) -> Result<f32> {
-        let settings = self.settings.borrow();
-        let font_size = settings.buffer_font_size;
-        let font_id =
-            font_cache.select_font(settings.buffer_font_family, &FontProperties::new())?;
-        let digit_count = (self.buffer.read(cx).row_count() as f32).log10().floor() as usize + 1;
-
-        Ok(layout_cache
-            .layout_str(
-                "1".repeat(digit_count).as_str(),
-                font_size,
-                &[(digit_count, font_id, ColorU::black())],
-            )
-            .width())
-    }
-
-    pub fn layout_line_numbers(
-        &self,
-        viewport_height: f32,
-        font_cache: &FontCache,
-        layout_cache: &TextLayoutCache,
-        cx: &AppContext,
-    ) -> Result<Vec<text_layout::Line>> {
-        let settings = self.settings.borrow();
-        let font_size = settings.buffer_font_size;
-        let font_id =
-            font_cache.select_font(settings.buffer_font_family, &FontProperties::new())?;
-
-        let start_row = self.scroll_position().y() as usize;
-        let end_row = cmp::min(
-            self.max_point(cx).row() as usize,
-            start_row + (viewport_height / self.line_height(font_cache)).ceil() as usize,
-        );
-        let line_count = end_row - start_row + 1;
-
-        let mut layouts = Vec::with_capacity(line_count);
-        let mut line_number = String::new();
-        for buffer_row in self
-            .display_map
-            .snapshot(cx)
-            .buffer_rows(start_row as u32)
-            .take(line_count)
-        {
-            line_number.clear();
-            write!(&mut line_number, "{}", buffer_row + 1).unwrap();
-            layouts.push(layout_cache.layout_str(
-                &line_number,
-                font_size,
-                &[(line_number.len(), font_id, ColorU::black())],
-            ));
-        }
-
-        Ok(layouts)
-    }
-
-    pub fn layout_lines(
-        &self,
-        mut rows: Range<u32>,
-        font_cache: &FontCache,
-        layout_cache: &TextLayoutCache,
-        cx: &AppContext,
-    ) -> Result<Vec<text_layout::Line>> {
-        let mut display_map = self.display_map.snapshot(cx);
-        rows.end = cmp::min(rows.end, display_map.max_point().row() + 1);
-        if rows.start >= rows.end {
-            return Ok(Vec::new());
-        }
-
-        let settings = self.settings.borrow();
-        let font_size = settings.buffer_font_size;
-        let font_family = settings.buffer_font_family;
-        let mut prev_font_properties = FontProperties::new();
-        let mut prev_font_id = font_cache
-            .select_font(font_family, &prev_font_properties)
-            .unwrap();
-
-        let mut layouts = Vec::with_capacity(rows.len());
-        let mut line = String::new();
-        let mut styles = Vec::new();
-        let mut row = rows.start;
-        let chunks = display_map.highlighted_chunks_for_rows(rows.clone());
-        let theme = settings.theme.clone();
-
-        'outer: for (chunk, style_ix) in chunks.chain(Some(("\n", StyleId::default()))) {
-            for (ix, line_chunk) in chunk.split('\n').enumerate() {
-                if ix > 0 {
-                    layouts.push(layout_cache.layout_str(&line, font_size, &styles));
-                    line.clear();
-                    styles.clear();
-                    row += 1;
-                    if row == rows.end {
-                        break 'outer;
-                    }
-                }
-
-                if !line_chunk.is_empty() {
-                    let (color, font_properties) = theme.syntax_style(style_ix);
-                    // Avoid a lookup if the font properties match the previous ones.
-                    let font_id = if font_properties == prev_font_properties {
-                        prev_font_id
-                    } else {
-                        font_cache.select_font(font_family, &font_properties)?
-                    };
-                    line.push_str(line_chunk);
-                    styles.push((line_chunk.len(), font_id, color));
-                    prev_font_id = font_id;
-                    prev_font_properties = font_properties;
-                }
-            }
-        }
-
-        Ok(layouts)
-    }
-
-    pub fn layout_line(
-        &self,
-        row: u32,
-        font_cache: &FontCache,
-        layout_cache: &TextLayoutCache,
-        cx: &AppContext,
-    ) -> Result<text_layout::Line> {
-        let settings = self.settings.borrow();
-        let display_map = self.display_map.snapshot(cx);
-        let font_id =
-            font_cache.select_font(settings.buffer_font_family, &FontProperties::new())?;
-
-        let line = display_map.line(row);
-
-        Ok(layout_cache.layout_str(
-            &line,
-            settings.buffer_font_size,
-            &[(display_map.line_len(row) as usize, font_id, ColorU::black())],
-        ))
     }
 
     fn next_blink_epoch(&mut self) -> usize {
@@ -2413,6 +2250,166 @@ impl Editor {
             buffer::Event::Reloaded => cx.emit(Event::FileHandleChanged),
             buffer::Event::Reparsed => {}
         }
+    }
+}
+
+impl Snapshot {
+    pub fn font_ascent(&self, font_cache: &FontCache) -> f32 {
+        let font_id = font_cache.default_font(self.font_family);
+        let ascent = font_cache.metric(font_id, |m| m.ascent);
+        font_cache.scale_metric(ascent, font_id, self.font_size)
+    }
+
+    pub fn font_descent(&self, font_cache: &FontCache) -> f32 {
+        let font_id = font_cache.default_font(self.font_family);
+        let descent = font_cache.metric(font_id, |m| m.descent);
+        font_cache.scale_metric(descent, font_id, self.font_size)
+    }
+
+    pub fn line_height(&self, font_cache: &FontCache) -> f32 {
+        let font_id = font_cache.default_font(self.font_family);
+        font_cache.line_height(font_id, self.font_size)
+    }
+
+    pub fn em_width(&self, font_cache: &FontCache) -> f32 {
+        let font_id = font_cache.default_font(self.font_family);
+        font_cache.em_width(font_id, self.font_size)
+    }
+
+    // TODO: Can we make this not return a result?
+    pub fn max_line_number_width(
+        &self,
+        font_cache: &FontCache,
+        layout_cache: &TextLayoutCache,
+        cx: &AppContext,
+    ) -> Result<f32> {
+        let font_size = self.font_size;
+        let font_id = font_cache.select_font(self.font_family, &FontProperties::new())?;
+        let digit_count = (self.display_snapshot.buffer_row_count() as f32)
+            .log10()
+            .floor() as usize
+            + 1;
+
+        Ok(layout_cache
+            .layout_str(
+                "1".repeat(digit_count).as_str(),
+                font_size,
+                &[(digit_count, font_id, ColorU::black())],
+            )
+            .width())
+    }
+
+    pub fn layout_line_numbers(
+        &self,
+        viewport_height: f32,
+        font_cache: &FontCache,
+        layout_cache: &TextLayoutCache,
+        cx: &mut MutableAppContext,
+    ) -> Result<Vec<text_layout::Line>> {
+        let font_id = font_cache.select_font(self.font_family, &FontProperties::new())?;
+
+        let start_row = self.scroll_position.y() as usize;
+        let end_row = cmp::min(
+            self.display_snapshot.max_point().row() as usize,
+            start_row + (viewport_height / self.line_height(font_cache)).ceil() as usize,
+        );
+        let line_count = end_row - start_row + 1;
+
+        let mut layouts = Vec::with_capacity(line_count);
+        let mut line_number = String::new();
+        for buffer_row in self
+            .display_snapshot
+            .buffer_rows(start_row as u32)
+            .take(line_count)
+        {
+            line_number.clear();
+            write!(&mut line_number, "{}", buffer_row + 1).unwrap();
+            layouts.push(layout_cache.layout_str(
+                &line_number,
+                self.font_size,
+                &[(line_number.len(), font_id, ColorU::black())],
+            ));
+        }
+
+        Ok(layouts)
+    }
+
+    pub fn layout_lines(
+        &self,
+        mut rows: Range<u32>,
+        font_cache: &FontCache,
+        layout_cache: &TextLayoutCache,
+        cx: &mut MutableAppContext,
+    ) -> Result<Vec<text_layout::Line>> {
+        rows.end = cmp::min(rows.end, self.display_snapshot.max_point().row() + 1);
+        if rows.start >= rows.end {
+            return Ok(Vec::new());
+        }
+
+        let mut prev_font_properties = FontProperties::new();
+        let mut prev_font_id = font_cache
+            .select_font(font_family, &prev_font_properties)
+            .unwrap();
+
+        let mut layouts = Vec::with_capacity(rows.len());
+        let mut line = String::new();
+        let mut styles = Vec::new();
+        let mut row = rows.start;
+        let chunks = self
+            .display_snapshot
+            .highlighted_chunks_for_rows(rows.clone());
+
+        'outer: for (chunk, style_ix) in chunks.chain(Some(("\n", StyleId::default()))) {
+            for (ix, line_chunk) in chunk.split('\n').enumerate() {
+                if ix > 0 {
+                    layouts.push(layout_cache.layout_str(&line, self.font_size, &styles));
+                    line.clear();
+                    styles.clear();
+                    row += 1;
+                    if row == rows.end {
+                        break 'outer;
+                    }
+                }
+
+                if !line_chunk.is_empty() {
+                    let (color, font_properties) = self.theme.syntax_style(style_ix);
+                    // Avoid a lookup if the font properties match the previous ones.
+                    let font_id = if font_properties == prev_font_properties {
+                        prev_font_id
+                    } else {
+                        font_cache.select_font(self.font_family, &font_properties)?
+                    };
+                    line.push_str(line_chunk);
+                    styles.push((line_chunk.len(), font_id, color));
+                    prev_font_id = font_id;
+                    prev_font_properties = font_properties;
+                }
+            }
+        }
+
+        Ok(layouts)
+    }
+
+    pub fn layout_line(
+        &self,
+        row: u32,
+        font_cache: &FontCache,
+        layout_cache: &TextLayoutCache,
+        cx: &mut MutableAppContext,
+    ) -> Result<text_layout::Line> {
+        let font_id = font_cache.select_font(self.font_family, &FontProperties::new())?;
+
+        let line = self.display_snapshot.line(row);
+
+        Ok(layout_cache.layout_str(
+            &line,
+            self.font_size,
+            &[(
+                self.display_snapshot.line_len(row) as usize,
+                font_id,
+                ColorU::black(),
+            )],
+        ))
     }
 }
 
@@ -2571,7 +2568,7 @@ mod tests {
 
         let view = buffer_view.read(cx);
         assert_eq!(
-            view.selection_ranges(cx.as_ref()),
+            view.selection_ranges(cx),
             [DisplayPoint::new(2, 2)..DisplayPoint::new(2, 2)]
         );
 
@@ -2581,7 +2578,7 @@ mod tests {
 
         let view = buffer_view.read(cx);
         assert_eq!(
-            view.selection_ranges(cx.as_ref()),
+            view.selection_ranges(cx),
             [DisplayPoint::new(2, 2)..DisplayPoint::new(3, 3)]
         );
 
@@ -2591,7 +2588,7 @@ mod tests {
 
         let view = buffer_view.read(cx);
         assert_eq!(
-            view.selection_ranges(cx.as_ref()),
+            view.selection_ranges(cx),
             [DisplayPoint::new(2, 2)..DisplayPoint::new(1, 1)]
         );
 
@@ -2602,7 +2599,7 @@ mod tests {
 
         let view = buffer_view.read(cx);
         assert_eq!(
-            view.selection_ranges(cx.as_ref()),
+            view.selection_ranges(cx),
             [DisplayPoint::new(2, 2)..DisplayPoint::new(1, 1)]
         );
 
@@ -2613,7 +2610,7 @@ mod tests {
 
         let view = buffer_view.read(cx);
         assert_eq!(
-            view.selection_ranges(cx.as_ref()),
+            view.selection_ranges(cx),
             [
                 DisplayPoint::new(2, 2)..DisplayPoint::new(1, 1),
                 DisplayPoint::new(3, 3)..DisplayPoint::new(0, 0)
@@ -2626,7 +2623,7 @@ mod tests {
 
         let view = buffer_view.read(cx);
         assert_eq!(
-            view.selection_ranges(cx.as_ref()),
+            view.selection_ranges(cx),
             [DisplayPoint::new(3, 3)..DisplayPoint::new(0, 0)]
         );
     }
@@ -2641,7 +2638,7 @@ mod tests {
             view.begin_selection(DisplayPoint::new(2, 2), false, cx);
         });
         assert_eq!(
-            view.read(cx).selection_ranges(cx.as_ref()),
+            view.update(cx, |view, cx| view.selection_ranges(cx)),
             [DisplayPoint::new(2, 2)..DisplayPoint::new(2, 2)]
         );
 
@@ -2649,7 +2646,7 @@ mod tests {
             view.update_selection(DisplayPoint::new(3, 3), Vector2F::zero(), cx);
         });
         assert_eq!(
-            view.read(cx).selection_ranges(cx.as_ref()),
+            view.update(cx, |view, cx| view.selection_ranges(cx)),
             [DisplayPoint::new(2, 2)..DisplayPoint::new(3, 3)]
         );
 
@@ -2658,7 +2655,7 @@ mod tests {
             view.update_selection(DisplayPoint::new(1, 1), Vector2F::zero(), cx);
         });
         assert_eq!(
-            view.read(cx).selection_ranges(cx.as_ref()),
+            view.update(cx, |view, cx| view.selection_ranges(cx)),
             [DisplayPoint::new(2, 2)..DisplayPoint::new(3, 3)]
         );
     }
@@ -2679,7 +2676,7 @@ mod tests {
             view.end_selection(cx);
         });
         assert_eq!(
-            view.read(cx).selection_ranges(cx.as_ref()),
+            view.update(cx, |view, cx| view.selection_ranges(cx)),
             [
                 DisplayPoint::new(0, 1)..DisplayPoint::new(0, 3),
                 DisplayPoint::new(3, 4)..DisplayPoint::new(1, 1),
@@ -2688,13 +2685,13 @@ mod tests {
 
         view.update(cx, |view, cx| view.cancel(&(), cx));
         assert_eq!(
-            view.read(cx).selection_ranges(cx.as_ref()),
+            view.update(cx, |view, cx| view.selection_ranges(cx)),
             [DisplayPoint::new(3, 4)..DisplayPoint::new(1, 1)]
         );
 
         view.update(cx, |view, cx| view.cancel(&(), cx));
         assert_eq!(
-            view.read(cx).selection_ranges(cx.as_ref()),
+            view.update(cx, |view, cx| view.selection_ranges(cx)),
             [DisplayPoint::new(1, 1)..DisplayPoint::new(1, 1)]
         );
     }
@@ -2711,7 +2708,7 @@ mod tests {
 
         let layouts = view
             .read(cx)
-            .layout_line_numbers(1000.0, &font_cache, &layout_cache, cx.as_ref())
+            .layout_line_numbers(1000.0, &font_cache, &layout_cache, cx)
             .unwrap();
         assert_eq!(layouts.len(), 6);
     }
@@ -2750,7 +2747,7 @@ mod tests {
                 .unwrap();
             view.fold(&(), cx);
             assert_eq!(
-                view.text(cx.as_ref()),
+                view.text(cx),
                 "
                     impl Foo {
                         // Hello!
@@ -2771,7 +2768,7 @@ mod tests {
 
             view.fold(&(), cx);
             assert_eq!(
-                view.text(cx.as_ref()),
+                view.text(cx),
                 "
                     impl Foo {…
                     }
@@ -2781,7 +2778,7 @@ mod tests {
 
             view.unfold(&(), cx);
             assert_eq!(
-                view.text(cx.as_ref()),
+                view.text(cx),
                 "
                     impl Foo {
                         // Hello!
@@ -2801,7 +2798,7 @@ mod tests {
             );
 
             view.unfold(&(), cx);
-            assert_eq!(view.text(cx.as_ref()), buffer.read(cx).text());
+            assert_eq!(view.text(cx), buffer.read(cx).text());
         });
     }
 
@@ -2824,43 +2821,43 @@ mod tests {
 
         view.update(cx, |view, cx| {
             assert_eq!(
-                view.selection_ranges(cx.as_ref()),
+                view.selection_ranges(cx),
                 &[DisplayPoint::new(0, 0)..DisplayPoint::new(0, 0)]
             );
 
             view.move_down(&(), cx);
             assert_eq!(
-                view.selection_ranges(cx.as_ref()),
+                view.selection_ranges(cx),
                 &[DisplayPoint::new(1, 0)..DisplayPoint::new(1, 0)]
             );
 
             view.move_right(&(), cx);
             assert_eq!(
-                view.selection_ranges(cx.as_ref()),
+                view.selection_ranges(cx),
                 &[DisplayPoint::new(1, 4)..DisplayPoint::new(1, 4)]
             );
 
             view.move_left(&(), cx);
             assert_eq!(
-                view.selection_ranges(cx.as_ref()),
+                view.selection_ranges(cx),
                 &[DisplayPoint::new(1, 0)..DisplayPoint::new(1, 0)]
             );
 
             view.move_up(&(), cx);
             assert_eq!(
-                view.selection_ranges(cx.as_ref()),
+                view.selection_ranges(cx),
                 &[DisplayPoint::new(0, 0)..DisplayPoint::new(0, 0)]
             );
 
             view.move_to_end(&(), cx);
             assert_eq!(
-                view.selection_ranges(cx.as_ref()),
+                view.selection_ranges(cx),
                 &[DisplayPoint::new(5, 6)..DisplayPoint::new(5, 6)]
             );
 
             view.move_to_beginning(&(), cx);
             assert_eq!(
-                view.selection_ranges(cx.as_ref()),
+                view.selection_ranges(cx),
                 &[DisplayPoint::new(0, 0)..DisplayPoint::new(0, 0)]
             );
 
@@ -2868,13 +2865,13 @@ mod tests {
                 .unwrap();
             view.select_to_beginning(&(), cx);
             assert_eq!(
-                view.selection_ranges(cx.as_ref()),
+                view.selection_ranges(cx),
                 &[DisplayPoint::new(0, 1)..DisplayPoint::new(0, 0)]
             );
 
             view.select_to_end(&(), cx);
             assert_eq!(
-                view.selection_ranges(cx.as_ref()),
+                view.selection_ranges(cx),
                 &[DisplayPoint::new(0, 1)..DisplayPoint::new(5, 6)]
             );
         });
@@ -2898,86 +2895,41 @@ mod tests {
                 ],
                 cx,
             );
-            assert_eq!(view.text(cx.as_ref()), "ⓐⓑ…ⓔ\nab…e\nαβ…ε\n");
+            assert_eq!(view.text(cx), "ⓐⓑ…ⓔ\nab…e\nαβ…ε\n");
 
             view.move_right(&(), cx);
-            assert_eq!(
-                view.selection_ranges(cx.as_ref()),
-                &[empty_range(0, "ⓐ".len())]
-            );
+            assert_eq!(view.selection_ranges(cx), &[empty_range(0, "ⓐ".len())]);
             view.move_right(&(), cx);
-            assert_eq!(
-                view.selection_ranges(cx.as_ref()),
-                &[empty_range(0, "ⓐⓑ".len())]
-            );
+            assert_eq!(view.selection_ranges(cx), &[empty_range(0, "ⓐⓑ".len())]);
             view.move_right(&(), cx);
-            assert_eq!(
-                view.selection_ranges(cx.as_ref()),
-                &[empty_range(0, "ⓐⓑ…".len())]
-            );
+            assert_eq!(view.selection_ranges(cx), &[empty_range(0, "ⓐⓑ…".len())]);
 
             view.move_down(&(), cx);
-            assert_eq!(
-                view.selection_ranges(cx.as_ref()),
-                &[empty_range(1, "ab…".len())]
-            );
+            assert_eq!(view.selection_ranges(cx), &[empty_range(1, "ab…".len())]);
             view.move_left(&(), cx);
-            assert_eq!(
-                view.selection_ranges(cx.as_ref()),
-                &[empty_range(1, "ab".len())]
-            );
+            assert_eq!(view.selection_ranges(cx), &[empty_range(1, "ab".len())]);
             view.move_left(&(), cx);
-            assert_eq!(
-                view.selection_ranges(cx.as_ref()),
-                &[empty_range(1, "a".len())]
-            );
+            assert_eq!(view.selection_ranges(cx), &[empty_range(1, "a".len())]);
 
             view.move_down(&(), cx);
-            assert_eq!(
-                view.selection_ranges(cx.as_ref()),
-                &[empty_range(2, "α".len())]
-            );
+            assert_eq!(view.selection_ranges(cx), &[empty_range(2, "α".len())]);
             view.move_right(&(), cx);
-            assert_eq!(
-                view.selection_ranges(cx.as_ref()),
-                &[empty_range(2, "αβ".len())]
-            );
+            assert_eq!(view.selection_ranges(cx), &[empty_range(2, "αβ".len())]);
             view.move_right(&(), cx);
-            assert_eq!(
-                view.selection_ranges(cx.as_ref()),
-                &[empty_range(2, "αβ…".len())]
-            );
+            assert_eq!(view.selection_ranges(cx), &[empty_range(2, "αβ…".len())]);
             view.move_right(&(), cx);
-            assert_eq!(
-                view.selection_ranges(cx.as_ref()),
-                &[empty_range(2, "αβ…ε".len())]
-            );
+            assert_eq!(view.selection_ranges(cx), &[empty_range(2, "αβ…ε".len())]);
 
             view.move_up(&(), cx);
-            assert_eq!(
-                view.selection_ranges(cx.as_ref()),
-                &[empty_range(1, "ab…e".len())]
-            );
+            assert_eq!(view.selection_ranges(cx), &[empty_range(1, "ab…e".len())]);
             view.move_up(&(), cx);
-            assert_eq!(
-                view.selection_ranges(cx.as_ref()),
-                &[empty_range(0, "ⓐⓑ…ⓔ".len())]
-            );
+            assert_eq!(view.selection_ranges(cx), &[empty_range(0, "ⓐⓑ…ⓔ".len())]);
             view.move_left(&(), cx);
-            assert_eq!(
-                view.selection_ranges(cx.as_ref()),
-                &[empty_range(0, "ⓐⓑ…".len())]
-            );
+            assert_eq!(view.selection_ranges(cx), &[empty_range(0, "ⓐⓑ…".len())]);
             view.move_left(&(), cx);
-            assert_eq!(
-                view.selection_ranges(cx.as_ref()),
-                &[empty_range(0, "ⓐⓑ".len())]
-            );
+            assert_eq!(view.selection_ranges(cx), &[empty_range(0, "ⓐⓑ".len())]);
             view.move_left(&(), cx);
-            assert_eq!(
-                view.selection_ranges(cx.as_ref()),
-                &[empty_range(0, "ⓐ".len())]
-            );
+            assert_eq!(view.selection_ranges(cx), &[empty_range(0, "ⓐ".len())]);
         });
     }
 
@@ -2991,40 +2943,22 @@ mod tests {
                 .unwrap();
 
             view.move_down(&(), cx);
-            assert_eq!(
-                view.selection_ranges(cx.as_ref()),
-                &[empty_range(1, "abcd".len())]
-            );
+            assert_eq!(view.selection_ranges(cx), &[empty_range(1, "abcd".len())]);
 
             view.move_down(&(), cx);
-            assert_eq!(
-                view.selection_ranges(cx.as_ref()),
-                &[empty_range(2, "αβγ".len())]
-            );
+            assert_eq!(view.selection_ranges(cx), &[empty_range(2, "αβγ".len())]);
 
             view.move_down(&(), cx);
-            assert_eq!(
-                view.selection_ranges(cx.as_ref()),
-                &[empty_range(3, "abcd".len())]
-            );
+            assert_eq!(view.selection_ranges(cx), &[empty_range(3, "abcd".len())]);
 
             view.move_down(&(), cx);
-            assert_eq!(
-                view.selection_ranges(cx.as_ref()),
-                &[empty_range(4, "ⓐⓑⓒⓓⓔ".len())]
-            );
+            assert_eq!(view.selection_ranges(cx), &[empty_range(4, "ⓐⓑⓒⓓⓔ".len())]);
 
             view.move_up(&(), cx);
-            assert_eq!(
-                view.selection_ranges(cx.as_ref()),
-                &[empty_range(3, "abcd".len())]
-            );
+            assert_eq!(view.selection_ranges(cx), &[empty_range(3, "abcd".len())]);
 
             view.move_up(&(), cx);
-            assert_eq!(
-                view.selection_ranges(cx.as_ref()),
-                &[empty_range(2, "αβγ".len())]
-            );
+            assert_eq!(view.selection_ranges(cx), &[empty_range(2, "αβγ".len())]);
         });
     }
 
@@ -3046,7 +2980,7 @@ mod tests {
 
         view.update(cx, |view, cx| view.move_to_beginning_of_line(&(), cx));
         assert_eq!(
-            view.read(cx).selection_ranges(cx.as_ref()),
+            view.update(cx, |view, cx| view.selection_ranges(cx)),
             &[
                 DisplayPoint::new(0, 0)..DisplayPoint::new(0, 0),
                 DisplayPoint::new(1, 2)..DisplayPoint::new(1, 2),
@@ -3055,7 +2989,7 @@ mod tests {
 
         view.update(cx, |view, cx| view.move_to_beginning_of_line(&(), cx));
         assert_eq!(
-            view.read(cx).selection_ranges(cx.as_ref()),
+            view.update(cx, |view, cx| view.selection_ranges(cx)),
             &[
                 DisplayPoint::new(0, 0)..DisplayPoint::new(0, 0),
                 DisplayPoint::new(1, 0)..DisplayPoint::new(1, 0),
@@ -3064,7 +2998,7 @@ mod tests {
 
         view.update(cx, |view, cx| view.move_to_beginning_of_line(&(), cx));
         assert_eq!(
-            view.read(cx).selection_ranges(cx.as_ref()),
+            view.update(cx, |view, cx| view.selection_ranges(cx)),
             &[
                 DisplayPoint::new(0, 0)..DisplayPoint::new(0, 0),
                 DisplayPoint::new(1, 2)..DisplayPoint::new(1, 2),
@@ -3073,7 +3007,7 @@ mod tests {
 
         view.update(cx, |view, cx| view.move_to_end_of_line(&(), cx));
         assert_eq!(
-            view.read(cx).selection_ranges(cx.as_ref()),
+            view.update(cx, |view, cx| view.selection_ranges(cx)),
             &[
                 DisplayPoint::new(0, 3)..DisplayPoint::new(0, 3),
                 DisplayPoint::new(1, 5)..DisplayPoint::new(1, 5),
@@ -3083,7 +3017,7 @@ mod tests {
         // Moving to the end of line again is a no-op.
         view.update(cx, |view, cx| view.move_to_end_of_line(&(), cx));
         assert_eq!(
-            view.read(cx).selection_ranges(cx.as_ref()),
+            view.update(cx, |view, cx| view.selection_ranges(cx)),
             &[
                 DisplayPoint::new(0, 3)..DisplayPoint::new(0, 3),
                 DisplayPoint::new(1, 5)..DisplayPoint::new(1, 5),
@@ -3095,7 +3029,7 @@ mod tests {
             view.select_to_beginning_of_line(&true, cx);
         });
         assert_eq!(
-            view.read(cx).selection_ranges(cx.as_ref()),
+            view.update(cx, |view, cx| view.selection_ranges(cx)),
             &[
                 DisplayPoint::new(0, 2)..DisplayPoint::new(0, 0),
                 DisplayPoint::new(1, 4)..DisplayPoint::new(1, 2),
@@ -3104,7 +3038,7 @@ mod tests {
 
         view.update(cx, |view, cx| view.select_to_beginning_of_line(&true, cx));
         assert_eq!(
-            view.read(cx).selection_ranges(cx.as_ref()),
+            view.update(cx, |view, cx| view.selection_ranges(cx)),
             &[
                 DisplayPoint::new(0, 2)..DisplayPoint::new(0, 0),
                 DisplayPoint::new(1, 4)..DisplayPoint::new(1, 0),
@@ -3113,7 +3047,7 @@ mod tests {
 
         view.update(cx, |view, cx| view.select_to_beginning_of_line(&true, cx));
         assert_eq!(
-            view.read(cx).selection_ranges(cx.as_ref()),
+            view.update(cx, |view, cx| view.selection_ranges(cx)),
             &[
                 DisplayPoint::new(0, 2)..DisplayPoint::new(0, 0),
                 DisplayPoint::new(1, 4)..DisplayPoint::new(1, 2),
@@ -3122,7 +3056,7 @@ mod tests {
 
         view.update(cx, |view, cx| view.select_to_end_of_line(&(), cx));
         assert_eq!(
-            view.read(cx).selection_ranges(cx.as_ref()),
+            view.update(cx, |view, cx| view.selection_ranges(cx)),
             &[
                 DisplayPoint::new(0, 2)..DisplayPoint::new(0, 3),
                 DisplayPoint::new(1, 4)..DisplayPoint::new(1, 5),
@@ -3130,9 +3064,9 @@ mod tests {
         );
 
         view.update(cx, |view, cx| view.delete_to_end_of_line(&(), cx));
-        assert_eq!(view.read(cx).text(cx.as_ref()), "ab\n  de");
+        assert_eq!(view.read(cx).text(cx), "ab\n  de");
         assert_eq!(
-            view.read(cx).selection_ranges(cx.as_ref()),
+            view.update(cx, |view, cx| view.selection_ranges(cx)),
             &[
                 DisplayPoint::new(0, 2)..DisplayPoint::new(0, 2),
                 DisplayPoint::new(1, 4)..DisplayPoint::new(1, 4),
@@ -3140,9 +3074,9 @@ mod tests {
         );
 
         view.update(cx, |view, cx| view.delete_to_beginning_of_line(&(), cx));
-        assert_eq!(view.read(cx).text(cx.as_ref()), "\n");
+        assert_eq!(view.read(cx).text(cx), "\n");
         assert_eq!(
-            view.read(cx).selection_ranges(cx.as_ref()),
+            view.update(cx, |view, cx| view.selection_ranges(cx)),
             &[
                 DisplayPoint::new(0, 0)..DisplayPoint::new(0, 0),
                 DisplayPoint::new(1, 0)..DisplayPoint::new(1, 0),
@@ -3169,7 +3103,7 @@ mod tests {
 
         view.update(cx, |view, cx| view.move_to_previous_word_boundary(&(), cx));
         assert_eq!(
-            view.read(cx).selection_ranges(cx.as_ref()),
+            view.update(cx, |view, cx| view.selection_ranges(cx)),
             &[
                 DisplayPoint::new(0, 9)..DisplayPoint::new(0, 9),
                 DisplayPoint::new(2, 3)..DisplayPoint::new(2, 3),
@@ -3178,7 +3112,7 @@ mod tests {
 
         view.update(cx, |view, cx| view.move_to_previous_word_boundary(&(), cx));
         assert_eq!(
-            view.read(cx).selection_ranges(cx.as_ref()),
+            view.update(cx, |view, cx| view.selection_ranges(cx)),
             &[
                 DisplayPoint::new(0, 7)..DisplayPoint::new(0, 7),
                 DisplayPoint::new(2, 2)..DisplayPoint::new(2, 2),
@@ -3187,7 +3121,7 @@ mod tests {
 
         view.update(cx, |view, cx| view.move_to_previous_word_boundary(&(), cx));
         assert_eq!(
-            view.read(cx).selection_ranges(cx.as_ref()),
+            view.update(cx, |view, cx| view.selection_ranges(cx)),
             &[
                 DisplayPoint::new(0, 4)..DisplayPoint::new(0, 4),
                 DisplayPoint::new(2, 0)..DisplayPoint::new(2, 0),
@@ -3196,7 +3130,7 @@ mod tests {
 
         view.update(cx, |view, cx| view.move_to_previous_word_boundary(&(), cx));
         assert_eq!(
-            view.read(cx).selection_ranges(cx.as_ref()),
+            view.update(cx, |view, cx| view.selection_ranges(cx)),
             &[
                 DisplayPoint::new(0, 3)..DisplayPoint::new(0, 3),
                 DisplayPoint::new(1, 0)..DisplayPoint::new(1, 0),
@@ -3205,7 +3139,7 @@ mod tests {
 
         view.update(cx, |view, cx| view.move_to_previous_word_boundary(&(), cx));
         assert_eq!(
-            view.read(cx).selection_ranges(cx.as_ref()),
+            view.update(cx, |view, cx| view.selection_ranges(cx)),
             &[
                 DisplayPoint::new(0, 0)..DisplayPoint::new(0, 0),
                 DisplayPoint::new(0, 24)..DisplayPoint::new(0, 24),
@@ -3214,7 +3148,7 @@ mod tests {
 
         view.update(cx, |view, cx| view.move_to_previous_word_boundary(&(), cx));
         assert_eq!(
-            view.read(cx).selection_ranges(cx.as_ref()),
+            view.update(cx, |view, cx| view.selection_ranges(cx)),
             &[
                 DisplayPoint::new(0, 0)..DisplayPoint::new(0, 0),
                 DisplayPoint::new(0, 23)..DisplayPoint::new(0, 23),
@@ -3223,7 +3157,7 @@ mod tests {
 
         view.update(cx, |view, cx| view.move_to_next_word_boundary(&(), cx));
         assert_eq!(
-            view.read(cx).selection_ranges(cx.as_ref()),
+            view.update(cx, |view, cx| view.selection_ranges(cx)),
             &[
                 DisplayPoint::new(0, 3)..DisplayPoint::new(0, 3),
                 DisplayPoint::new(0, 24)..DisplayPoint::new(0, 24),
@@ -3232,7 +3166,7 @@ mod tests {
 
         view.update(cx, |view, cx| view.move_to_next_word_boundary(&(), cx));
         assert_eq!(
-            view.read(cx).selection_ranges(cx.as_ref()),
+            view.update(cx, |view, cx| view.selection_ranges(cx)),
             &[
                 DisplayPoint::new(0, 4)..DisplayPoint::new(0, 4),
                 DisplayPoint::new(1, 0)..DisplayPoint::new(1, 0),
@@ -3241,7 +3175,7 @@ mod tests {
 
         view.update(cx, |view, cx| view.move_to_next_word_boundary(&(), cx));
         assert_eq!(
-            view.read(cx).selection_ranges(cx.as_ref()),
+            view.update(cx, |view, cx| view.selection_ranges(cx)),
             &[
                 DisplayPoint::new(0, 7)..DisplayPoint::new(0, 7),
                 DisplayPoint::new(2, 0)..DisplayPoint::new(2, 0),
@@ -3250,7 +3184,7 @@ mod tests {
 
         view.update(cx, |view, cx| view.move_to_next_word_boundary(&(), cx));
         assert_eq!(
-            view.read(cx).selection_ranges(cx.as_ref()),
+            view.update(cx, |view, cx| view.selection_ranges(cx)),
             &[
                 DisplayPoint::new(0, 9)..DisplayPoint::new(0, 9),
                 DisplayPoint::new(2, 2)..DisplayPoint::new(2, 2),
@@ -3262,7 +3196,7 @@ mod tests {
             view.select_to_previous_word_boundary(&(), cx);
         });
         assert_eq!(
-            view.read(cx).selection_ranges(cx.as_ref()),
+            view.update(cx, |view, cx| view.selection_ranges(cx)),
             &[
                 DisplayPoint::new(0, 10)..DisplayPoint::new(0, 9),
                 DisplayPoint::new(2, 3)..DisplayPoint::new(2, 2),
@@ -3273,7 +3207,7 @@ mod tests {
             view.select_to_previous_word_boundary(&(), cx)
         });
         assert_eq!(
-            view.read(cx).selection_ranges(cx.as_ref()),
+            view.update(cx, |view, cx| view.selection_ranges(cx)),
             &[
                 DisplayPoint::new(0, 10)..DisplayPoint::new(0, 7),
                 DisplayPoint::new(2, 3)..DisplayPoint::new(2, 0),
@@ -3282,7 +3216,7 @@ mod tests {
 
         view.update(cx, |view, cx| view.select_to_next_word_boundary(&(), cx));
         assert_eq!(
-            view.read(cx).selection_ranges(cx.as_ref()),
+            view.update(cx, |view, cx| view.selection_ranges(cx)),
             &[
                 DisplayPoint::new(0, 10)..DisplayPoint::new(0, 9),
                 DisplayPoint::new(2, 3)..DisplayPoint::new(2, 2),
@@ -3291,11 +3225,11 @@ mod tests {
 
         view.update(cx, |view, cx| view.delete_to_next_word_boundary(&(), cx));
         assert_eq!(
-            view.read(cx).text(cx.as_ref()),
+            view.read(cx).text(cx),
             "use std::s::{foo, bar}\n\n  {az.qux()}"
         );
         assert_eq!(
-            view.read(cx).selection_ranges(cx.as_ref()),
+            view.update(cx, |view, cx| view.selection_ranges(cx)),
             &[
                 DisplayPoint::new(0, 10)..DisplayPoint::new(0, 10),
                 DisplayPoint::new(2, 3)..DisplayPoint::new(2, 3),
@@ -3306,11 +3240,11 @@ mod tests {
             view.delete_to_previous_word_boundary(&(), cx)
         });
         assert_eq!(
-            view.read(cx).text(cx.as_ref()),
+            view.read(cx).text(cx),
             "use std::::{foo, bar}\n\n  az.qux()}"
         );
         assert_eq!(
-            view.read(cx).selection_ranges(cx.as_ref()),
+            view.update(cx, |view, cx| view.selection_ranges(cx)),
             &[
                 DisplayPoint::new(0, 9)..DisplayPoint::new(0, 9),
                 DisplayPoint::new(2, 2)..DisplayPoint::new(2, 2),
@@ -3403,9 +3337,9 @@ mod tests {
             .unwrap();
             view.delete_line(&(), cx);
         });
-        assert_eq!(view.read(cx).text(cx.as_ref()), "ghi");
+        assert_eq!(view.read(cx).text(cx), "ghi");
         assert_eq!(
-            view.read(cx).selection_ranges(cx.as_ref()),
+            view.update(cx, |view, cx| view.selection_ranges(cx)),
             vec![
                 DisplayPoint::new(0, 0)..DisplayPoint::new(0, 0),
                 DisplayPoint::new(0, 1)..DisplayPoint::new(0, 1)
@@ -3420,9 +3354,9 @@ mod tests {
                 .unwrap();
             view.delete_line(&(), cx);
         });
-        assert_eq!(view.read(cx).text(cx.as_ref()), "ghi\n");
+        assert_eq!(view.read(cx).text(cx), "ghi\n");
         assert_eq!(
-            view.read(cx).selection_ranges(cx.as_ref()),
+            view.update(cx, |view, cx| view.selection_ranges(cx)),
             vec![DisplayPoint::new(0, 1)..DisplayPoint::new(0, 1)]
         );
     }
@@ -3445,12 +3379,9 @@ mod tests {
             .unwrap();
             view.duplicate_line(&(), cx);
         });
+        assert_eq!(view.read(cx).text(cx), "abc\nabc\ndef\ndef\nghi\n\n");
         assert_eq!(
-            view.read(cx).text(cx.as_ref()),
-            "abc\nabc\ndef\ndef\nghi\n\n"
-        );
-        assert_eq!(
-            view.read(cx).selection_ranges(cx.as_ref()),
+            view.update(cx, |view, cx| view.selection_ranges(cx)),
             vec![
                 DisplayPoint::new(1, 0)..DisplayPoint::new(1, 1),
                 DisplayPoint::new(1, 2)..DisplayPoint::new(1, 2),
@@ -3473,12 +3404,9 @@ mod tests {
             .unwrap();
             view.duplicate_line(&(), cx);
         });
+        assert_eq!(view.read(cx).text(cx), "abc\ndef\nghi\nabc\ndef\nghi\n");
         assert_eq!(
-            view.read(cx).text(cx.as_ref()),
-            "abc\ndef\nghi\nabc\ndef\nghi\n"
-        );
-        assert_eq!(
-            view.read(cx).selection_ranges(cx.as_ref()),
+            view.update(cx, |view, cx| view.selection_ranges(cx)),
             vec![
                 DisplayPoint::new(3, 1)..DisplayPoint::new(4, 1),
                 DisplayPoint::new(4, 2)..DisplayPoint::new(5, 1),
@@ -3512,17 +3440,17 @@ mod tests {
             .unwrap();
         });
         assert_eq!(
-            view.read(cx).text(cx.as_ref()),
+            view.read(cx).text(cx),
             "aa…bbb\nccc…eeee\nfffff\nggggg\n…i\njjjjj"
         );
 
         view.update(cx, |view, cx| view.move_line_up(&(), cx));
         assert_eq!(
-            view.read(cx).text(cx.as_ref()),
+            view.read(cx).text(cx),
             "aa…bbb\nccc…eeee\nggggg\n…i\njjjjj\nfffff"
         );
         assert_eq!(
-            view.read(cx).selection_ranges(cx.as_ref()),
+            view.update(cx, |view, cx| view.selection_ranges(cx)),
             vec![
                 DisplayPoint::new(0, 1)..DisplayPoint::new(0, 1),
                 DisplayPoint::new(2, 1)..DisplayPoint::new(2, 1),
@@ -3533,11 +3461,11 @@ mod tests {
 
         view.update(cx, |view, cx| view.move_line_down(&(), cx));
         assert_eq!(
-            view.read(cx).text(cx.as_ref()),
+            view.read(cx).text(cx),
             "ccc…eeee\naa…bbb\nfffff\nggggg\n…i\njjjjj"
         );
         assert_eq!(
-            view.read(cx).selection_ranges(cx.as_ref()),
+            view.update(cx, |view, cx| view.selection_ranges(cx)),
             vec![
                 DisplayPoint::new(1, 1)..DisplayPoint::new(1, 1),
                 DisplayPoint::new(3, 1)..DisplayPoint::new(3, 1),
@@ -3548,11 +3476,11 @@ mod tests {
 
         view.update(cx, |view, cx| view.move_line_down(&(), cx));
         assert_eq!(
-            view.read(cx).text(cx.as_ref()),
+            view.read(cx).text(cx),
             "ccc…eeee\nfffff\naa…bbb\nggggg\n…i\njjjjj"
         );
         assert_eq!(
-            view.read(cx).selection_ranges(cx.as_ref()),
+            view.update(cx, |view, cx| view.selection_ranges(cx)),
             vec![
                 DisplayPoint::new(2, 1)..DisplayPoint::new(2, 1),
                 DisplayPoint::new(3, 1)..DisplayPoint::new(3, 1),
@@ -3563,11 +3491,11 @@ mod tests {
 
         view.update(cx, |view, cx| view.move_line_up(&(), cx));
         assert_eq!(
-            view.read(cx).text(cx.as_ref()),
+            view.read(cx).text(cx),
             "ccc…eeee\naa…bbb\nggggg\n…i\njjjjj\nfffff"
         );
         assert_eq!(
-            view.read(cx).selection_ranges(cx.as_ref()),
+            view.update(cx, |view, cx| view.selection_ranges(cx)),
             vec![
                 DisplayPoint::new(1, 1)..DisplayPoint::new(1, 1),
                 DisplayPoint::new(2, 1)..DisplayPoint::new(2, 1),
@@ -3590,19 +3518,16 @@ mod tests {
             view.select_ranges(vec![0..4, 8..14, 19..24], false, cx);
             view.cut(&(), cx);
         });
-        assert_eq!(view.read(cx).text(cx.as_ref()), "two four six ");
+        assert_eq!(view.read(cx).text(cx), "two four six ");
 
         // Paste with three cursors. Each cursor pastes one slice of the clipboard text.
         view.update(cx, |view, cx| {
             view.select_ranges(vec![4..4, 9..9, 13..13], false, cx);
             view.paste(&(), cx);
         });
+        assert_eq!(view.read(cx).text(cx), "two one four three six five ");
         assert_eq!(
-            view.read(cx).text(cx.as_ref()),
-            "two one four three six five "
-        );
-        assert_eq!(
-            view.read(cx).selection_ranges(cx.as_ref()),
+            view.update(cx, |view, cx| view.selection_ranges(cx)),
             &[
                 DisplayPoint::new(0, 8)..DisplayPoint::new(0, 8),
                 DisplayPoint::new(0, 19)..DisplayPoint::new(0, 19),
@@ -3620,7 +3545,7 @@ mod tests {
             view.insert(&") ".to_string(), cx);
         });
         assert_eq!(
-            view.read(cx).text(cx.as_ref()),
+            view.read(cx).text(cx),
             "( one three five ) two one four three six five ( one three five ) "
         );
 
@@ -3629,7 +3554,7 @@ mod tests {
             view.insert(&"123\n4567\n89\n".to_string(), cx);
         });
         assert_eq!(
-            view.read(cx).text(cx.as_ref()),
+            view.read(cx).text(cx),
             "123\n4567\n89\n( one three five ) two one four three six five ( one three five ) "
         );
 
@@ -3647,7 +3572,7 @@ mod tests {
             view.cut(&(), cx);
         });
         assert_eq!(
-            view.read(cx).text(cx.as_ref()),
+            view.read(cx).text(cx),
             "13\n9\n( one three five ) two one four three six five ( one three five ) "
         );
 
@@ -3666,11 +3591,11 @@ mod tests {
             view.paste(&(), cx);
         });
         assert_eq!(
-            view.read(cx).text(cx.as_ref()),
+            view.read(cx).text(cx),
             "123\n4567\n9\n( 8ne three five ) two one four three six five ( one three five ) "
         );
         assert_eq!(
-            view.read(cx).selection_ranges(cx.as_ref()),
+            view.update(cx, |view, cx| view.selection_ranges(cx)),
             &[
                 DisplayPoint::new(0, 2)..DisplayPoint::new(0, 2),
                 DisplayPoint::new(2, 1)..DisplayPoint::new(2, 1),
@@ -3700,11 +3625,11 @@ mod tests {
             view.paste(&(), cx);
         });
         assert_eq!(
-                view.read(cx).text(cx.as_ref()),
+                view.read(cx).text(cx),
                 "123\n123\n123\n67\n123\n9\n( 8ne three five ) two one four three six five ( one three five ) "
             );
         assert_eq!(
-            view.read(cx).selection_ranges(cx.as_ref()),
+            view.update(cx, |view, cx| view.selection_ranges(cx)),
             &[
                 DisplayPoint::new(1, 1)..DisplayPoint::new(1, 1),
                 DisplayPoint::new(3, 0)..DisplayPoint::new(3, 0),
@@ -3720,7 +3645,7 @@ mod tests {
         let (_, view) = cx.add_window(|cx| Editor::for_buffer(buffer, settings, cx));
         view.update(cx, |b, cx| b.select_all(&(), cx));
         assert_eq!(
-            view.read(cx).selection_ranges(cx.as_ref()),
+            view.update(cx, |view, cx| view.selection_ranges(cx)),
             &[DisplayPoint::new(0, 0)..DisplayPoint::new(2, 3)]
         );
     }
@@ -3744,7 +3669,7 @@ mod tests {
             view.select_line(&(), cx);
         });
         assert_eq!(
-            view.read(cx).selection_ranges(cx.as_ref()),
+            view.update(cx, |view, cx| view.selection_ranges(cx)),
             vec![
                 DisplayPoint::new(0, 0)..DisplayPoint::new(2, 0),
                 DisplayPoint::new(4, 0)..DisplayPoint::new(5, 0),
@@ -3753,7 +3678,7 @@ mod tests {
 
         view.update(cx, |view, cx| view.select_line(&(), cx));
         assert_eq!(
-            view.read(cx).selection_ranges(cx.as_ref()),
+            view.update(cx, |view, cx| view.selection_ranges(cx)),
             vec![
                 DisplayPoint::new(0, 0)..DisplayPoint::new(3, 0),
                 DisplayPoint::new(4, 0)..DisplayPoint::new(5, 5),
@@ -3762,7 +3687,7 @@ mod tests {
 
         view.update(cx, |view, cx| view.select_line(&(), cx));
         assert_eq!(
-            view.read(cx).selection_ranges(cx.as_ref()),
+            view.update(cx, |view, cx| view.selection_ranges(cx)),
             vec![DisplayPoint::new(0, 0)..DisplayPoint::new(5, 5)]
         );
     }
@@ -3792,18 +3717,12 @@ mod tests {
             )
             .unwrap();
         });
-        assert_eq!(
-            view.read(cx).text(cx.as_ref()),
-            "aa…bbb\nccc…eeee\nfffff\nggggg\n…i"
-        );
+        assert_eq!(view.read(cx).text(cx), "aa…bbb\nccc…eeee\nfffff\nggggg\n…i");
 
         view.update(cx, |view, cx| view.split_selection_into_lines(&(), cx));
+        assert_eq!(view.read(cx).text(cx), "aa…bbb\nccc…eeee\nfffff\nggggg\n…i");
         assert_eq!(
-            view.read(cx).text(cx.as_ref()),
-            "aa…bbb\nccc…eeee\nfffff\nggggg\n…i"
-        );
-        assert_eq!(
-            view.read(cx).selection_ranges(cx.as_ref()),
+            view.update(cx, |view, cx| view.selection_ranges(cx)),
             [
                 DisplayPoint::new(0, 1)..DisplayPoint::new(0, 1),
                 DisplayPoint::new(0, 2)..DisplayPoint::new(0, 2),
@@ -3818,11 +3737,11 @@ mod tests {
             view.split_selection_into_lines(&(), cx);
         });
         assert_eq!(
-            view.read(cx).text(cx.as_ref()),
+            view.read(cx).text(cx),
             "aaaaa\nbbbbb\nccccc\nddddd\neeeee\nfffff\nggggg\n…i"
         );
         assert_eq!(
-            view.read(cx).selection_ranges(cx.as_ref()),
+            view.update(cx, |view, cx| view.selection_ranges(cx)),
             [
                 DisplayPoint::new(0, 1)..DisplayPoint::new(0, 1),
                 DisplayPoint::new(1, 5)..DisplayPoint::new(1, 5),
@@ -3848,7 +3767,7 @@ mod tests {
         });
         view.update(cx, |view, cx| view.add_selection_above(&(), cx));
         assert_eq!(
-            view.read(cx).selection_ranges(cx.as_ref()),
+            view.update(cx, |view, cx| view.selection_ranges(cx)),
             vec![
                 DisplayPoint::new(0, 3)..DisplayPoint::new(0, 3),
                 DisplayPoint::new(1, 3)..DisplayPoint::new(1, 3)
@@ -3857,7 +3776,7 @@ mod tests {
 
         view.update(cx, |view, cx| view.add_selection_above(&(), cx));
         assert_eq!(
-            view.read(cx).selection_ranges(cx.as_ref()),
+            view.update(cx, |view, cx| view.selection_ranges(cx)),
             vec![
                 DisplayPoint::new(0, 3)..DisplayPoint::new(0, 3),
                 DisplayPoint::new(1, 3)..DisplayPoint::new(1, 3)
@@ -3866,13 +3785,13 @@ mod tests {
 
         view.update(cx, |view, cx| view.add_selection_below(&(), cx));
         assert_eq!(
-            view.read(cx).selection_ranges(cx.as_ref()),
+            view.update(cx, |view, cx| view.selection_ranges(cx)),
             vec![DisplayPoint::new(1, 3)..DisplayPoint::new(1, 3)]
         );
 
         view.update(cx, |view, cx| view.add_selection_below(&(), cx));
         assert_eq!(
-            view.read(cx).selection_ranges(cx.as_ref()),
+            view.update(cx, |view, cx| view.selection_ranges(cx)),
             vec![
                 DisplayPoint::new(1, 3)..DisplayPoint::new(1, 3),
                 DisplayPoint::new(4, 3)..DisplayPoint::new(4, 3)
@@ -3881,7 +3800,7 @@ mod tests {
 
         view.update(cx, |view, cx| view.add_selection_below(&(), cx));
         assert_eq!(
-            view.read(cx).selection_ranges(cx.as_ref()),
+            view.update(cx, |view, cx| view.selection_ranges(cx)),
             vec![
                 DisplayPoint::new(1, 3)..DisplayPoint::new(1, 3),
                 DisplayPoint::new(4, 3)..DisplayPoint::new(4, 3)
@@ -3894,7 +3813,7 @@ mod tests {
         });
         view.update(cx, |view, cx| view.add_selection_below(&(), cx));
         assert_eq!(
-            view.read(cx).selection_ranges(cx.as_ref()),
+            view.update(cx, |view, cx| view.selection_ranges(cx)),
             vec![
                 DisplayPoint::new(1, 4)..DisplayPoint::new(1, 3),
                 DisplayPoint::new(4, 4)..DisplayPoint::new(4, 3)
@@ -3903,7 +3822,7 @@ mod tests {
 
         view.update(cx, |view, cx| view.add_selection_below(&(), cx));
         assert_eq!(
-            view.read(cx).selection_ranges(cx.as_ref()),
+            view.update(cx, |view, cx| view.selection_ranges(cx)),
             vec![
                 DisplayPoint::new(1, 4)..DisplayPoint::new(1, 3),
                 DisplayPoint::new(4, 4)..DisplayPoint::new(4, 3)
@@ -3912,13 +3831,13 @@ mod tests {
 
         view.update(cx, |view, cx| view.add_selection_above(&(), cx));
         assert_eq!(
-            view.read(cx).selection_ranges(cx.as_ref()),
+            view.update(cx, |view, cx| view.selection_ranges(cx)),
             vec![DisplayPoint::new(1, 4)..DisplayPoint::new(1, 3)]
         );
 
         view.update(cx, |view, cx| view.add_selection_above(&(), cx));
         assert_eq!(
-            view.read(cx).selection_ranges(cx.as_ref()),
+            view.update(cx, |view, cx| view.selection_ranges(cx)),
             vec![DisplayPoint::new(1, 4)..DisplayPoint::new(1, 3)]
         );
 
@@ -3928,7 +3847,7 @@ mod tests {
         });
         view.update(cx, |view, cx| view.add_selection_below(&(), cx));
         assert_eq!(
-            view.read(cx).selection_ranges(cx.as_ref()),
+            view.update(cx, |view, cx| view.selection_ranges(cx)),
             vec![
                 DisplayPoint::new(0, 1)..DisplayPoint::new(0, 3),
                 DisplayPoint::new(1, 1)..DisplayPoint::new(1, 4),
@@ -3938,7 +3857,7 @@ mod tests {
 
         view.update(cx, |view, cx| view.add_selection_below(&(), cx));
         assert_eq!(
-            view.read(cx).selection_ranges(cx.as_ref()),
+            view.update(cx, |view, cx| view.selection_ranges(cx)),
             vec![
                 DisplayPoint::new(0, 1)..DisplayPoint::new(0, 3),
                 DisplayPoint::new(1, 1)..DisplayPoint::new(1, 4),
@@ -3949,7 +3868,7 @@ mod tests {
 
         view.update(cx, |view, cx| view.add_selection_above(&(), cx));
         assert_eq!(
-            view.read(cx).selection_ranges(cx.as_ref()),
+            view.update(cx, |view, cx| view.selection_ranges(cx)),
             vec![
                 DisplayPoint::new(0, 1)..DisplayPoint::new(0, 3),
                 DisplayPoint::new(1, 1)..DisplayPoint::new(1, 4),
@@ -3963,7 +3882,7 @@ mod tests {
         });
         view.update(cx, |view, cx| view.add_selection_above(&(), cx));
         assert_eq!(
-            view.read(cx).selection_ranges(cx.as_ref()),
+            view.update(cx, |view, cx| view.selection_ranges(cx)),
             vec![
                 DisplayPoint::new(0, 3)..DisplayPoint::new(0, 1),
                 DisplayPoint::new(1, 3)..DisplayPoint::new(1, 1),
@@ -3974,7 +3893,7 @@ mod tests {
 
         view.update(cx, |view, cx| view.add_selection_below(&(), cx));
         assert_eq!(
-            view.read(cx).selection_ranges(cx.as_ref()),
+            view.update(cx, |view, cx| view.selection_ranges(cx)),
             vec![
                 DisplayPoint::new(1, 3)..DisplayPoint::new(1, 1),
                 DisplayPoint::new(3, 2)..DisplayPoint::new(3, 1),
@@ -4017,7 +3936,7 @@ mod tests {
             view.select_larger_syntax_node(&(), cx);
         });
         assert_eq!(
-            view.read_with(&cx, |view, cx| view.selection_ranges(cx)),
+            view.update(&mut cx, |view, cx| view.selection_ranges(cx)),
             &[
                 DisplayPoint::new(0, 23)..DisplayPoint::new(0, 27),
                 DisplayPoint::new(2, 35)..DisplayPoint::new(2, 7),
@@ -4029,7 +3948,7 @@ mod tests {
             view.select_larger_syntax_node(&(), cx);
         });
         assert_eq!(
-            view.read_with(&cx, |view, cx| view.selection_ranges(cx)),
+            view.update(&mut cx, |view, cx| view.selection_ranges(cx)),
             &[
                 DisplayPoint::new(0, 16)..DisplayPoint::new(0, 28),
                 DisplayPoint::new(4, 1)..DisplayPoint::new(2, 0),
@@ -4040,7 +3959,7 @@ mod tests {
             view.select_larger_syntax_node(&(), cx);
         });
         assert_eq!(
-            view.read_with(&cx, |view, cx| view.selection_ranges(cx)),
+            view.update(&mut cx, |view, cx| view.selection_ranges(cx)),
             &[DisplayPoint::new(5, 0)..DisplayPoint::new(0, 0)]
         );
 
@@ -4049,7 +3968,7 @@ mod tests {
             view.select_larger_syntax_node(&(), cx);
         });
         assert_eq!(
-            view.read_with(&cx, |view, cx| view.selection_ranges(cx)),
+            view.update(&mut cx, |view, cx| view.selection_ranges(cx)),
             &[DisplayPoint::new(5, 0)..DisplayPoint::new(0, 0)]
         );
 
@@ -4057,7 +3976,7 @@ mod tests {
             view.select_smaller_syntax_node(&(), cx);
         });
         assert_eq!(
-            view.read_with(&cx, |view, cx| view.selection_ranges(cx)),
+            view.update(&mut cx, |view, cx| view.selection_ranges(cx)),
             &[
                 DisplayPoint::new(0, 16)..DisplayPoint::new(0, 28),
                 DisplayPoint::new(4, 1)..DisplayPoint::new(2, 0),
@@ -4068,7 +3987,7 @@ mod tests {
             view.select_smaller_syntax_node(&(), cx);
         });
         assert_eq!(
-            view.read_with(&cx, |view, cx| view.selection_ranges(cx)),
+            view.update(&mut cx, |view, cx| view.selection_ranges(cx)),
             &[
                 DisplayPoint::new(0, 23)..DisplayPoint::new(0, 27),
                 DisplayPoint::new(2, 35)..DisplayPoint::new(2, 7),
@@ -4080,7 +3999,7 @@ mod tests {
             view.select_smaller_syntax_node(&(), cx);
         });
         assert_eq!(
-            view.read_with(&cx, |view, cx| view.selection_ranges(cx)),
+            view.update(&mut cx, |view, cx| view.selection_ranges(cx)),
             &[
                 DisplayPoint::new(0, 25)..DisplayPoint::new(0, 25),
                 DisplayPoint::new(2, 24)..DisplayPoint::new(2, 12),
@@ -4093,7 +4012,7 @@ mod tests {
             view.select_smaller_syntax_node(&(), cx);
         });
         assert_eq!(
-            view.read_with(&cx, |view, cx| view.selection_ranges(cx)),
+            view.update(&mut cx, |view, cx| view.selection_ranges(cx)),
             &[
                 DisplayPoint::new(0, 25)..DisplayPoint::new(0, 25),
                 DisplayPoint::new(2, 24)..DisplayPoint::new(2, 12),
@@ -4114,7 +4033,7 @@ mod tests {
             view.select_larger_syntax_node(&(), cx);
         });
         assert_eq!(
-            view.read_with(&cx, |view, cx| view.selection_ranges(cx)),
+            view.update(&mut cx, |view, cx| view.selection_ranges(cx)),
             &[
                 DisplayPoint::new(0, 16)..DisplayPoint::new(0, 28),
                 DisplayPoint::new(2, 35)..DisplayPoint::new(2, 7),
@@ -4124,7 +4043,7 @@ mod tests {
     }
 
     impl Editor {
-        fn selection_ranges(&self, cx: &AppContext) -> Vec<Range<DisplayPoint>> {
+        fn selection_ranges(&self, cx: &mut MutableAppContext) -> Vec<Range<DisplayPoint>> {
             self.selections_in_range(
                 self.selection_set_id,
                 DisplayPoint::zero()..self.max_point(cx),
