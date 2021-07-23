@@ -277,9 +277,11 @@ impl Snapshot {
                     new_transforms.push_or_extend(Transform::isomorphic(summary));
                 }
 
-                new_transforms.push_or_extend(Transform::isomorphic(
-                    new_tab_snapshot.text_summary_for_range(edit.new_lines.clone()),
-                ));
+                if !edit.new_lines.is_empty() {
+                    new_transforms.push_or_extend(Transform::isomorphic(
+                        new_tab_snapshot.text_summary_for_range(edit.new_lines.clone()),
+                    ));
+                }
 
                 old_cursor.seek_forward(&edit.old_lines.end, Bias::Right, &());
                 if let Some(next_edit) = edits.peek() {
@@ -647,6 +649,9 @@ impl<'a> Iterator for BufferRows<'a> {
 
 impl Transform {
     fn isomorphic(summary: TextSummary) -> Self {
+        #[cfg(test)]
+        assert!(!summary.lines.is_zero());
+
         Self {
             summary: TransformSummary {
                 input: summary.clone(),
