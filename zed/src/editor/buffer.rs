@@ -374,7 +374,7 @@ impl UndoMap {
 struct Edits<'a, F: Fn(&FragmentSummary) -> bool> {
     visible_text: &'a Rope,
     deleted_text: &'a Rope,
-    cursor: FilterCursor<'a, F, Fragment, FragmentTextSummary>,
+    cursor: Option<FilterCursor<'a, F, Fragment, FragmentTextSummary>>,
     undos: &'a UndoMap,
     since: time::Global,
     old_offset: usize,
@@ -1051,10 +1051,14 @@ impl Buffer {
 
     pub fn edits_since<'a>(&'a self, since: time::Global) -> impl 'a + Iterator<Item = Edit> {
         let since_2 = since.clone();
-        let cursor = self.fragments.filter(
-            move |summary| summary.max_version.changed_since(&since_2),
-            &None,
-        );
+        let cursor = if since == self.version {
+            None
+        } else {
+            Some(self.fragments.filter(
+                move |summary| summary.max_version.changed_since(&since_2),
+                &None,
+            ))
+        };
 
         Edits {
             visible_text: &self.visible_text,
@@ -2218,10 +2222,11 @@ impl<'a, F: Fn(&FragmentSummary) -> bool> Iterator for Edits<'a, F> {
 
     fn next(&mut self) -> Option<Self::Item> {
         let mut change: Option<Edit> = None;
+        let cursor = self.cursor.as_mut()?;
 
-        while let Some(fragment) = self.cursor.item() {
-            let bytes = self.cursor.start().visible - self.new_offset;
-            let lines = self.visible_text.to_point(self.cursor.start().visible) - self.new_point;
+        while let Some(fragment) = cursor.item() {
+            let bytes = cursor.start().visible - self.new_offset;
+            let lines = self.visible_text.to_point(cursor.start().visible) - self.new_point;
             self.old_offset += bytes;
             self.old_point += &lines;
             self.new_offset += bytes;
@@ -2247,7 +2252,7 @@ impl<'a, F: Fn(&FragmentSummary) -> bool> Iterator for Edits<'a, F> {
                 self.new_offset += fragment.len;
                 self.new_point += &fragment_lines;
             } else if fragment.was_visible(&self.since, &self.undos) && !fragment.visible {
-                let deleted_start = self.cursor.start().deleted;
+                let deleted_start = cursor.start().deleted;
                 let fragment_lines = self.deleted_text.to_point(deleted_start + fragment.len)
                     - self.deleted_text.to_point(deleted_start);
                 if let Some(ref mut change) = change {
@@ -2269,7 +2274,7 @@ impl<'a, F: Fn(&FragmentSummary) -> bool> Iterator for Edits<'a, F> {
                 self.old_point += &fragment_lines;
             }
 
-            self.cursor.next(&None);
+            cursor.next(&None);
         }
 
         change
