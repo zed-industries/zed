@@ -5,7 +5,8 @@ use crate::{
     platform::{self, Platform, PromptLevel, WindowOptions},
     presenter::Presenter,
     util::{post_inc, timeout},
-    AssetCache, AssetSource, ClipboardItem, FontCache, PathPromptOptions, TextLayoutCache,
+    AssetCache, AssetSource, ClipboardItem, EventContext, FontCache, PathPromptOptions,
+    TextLayoutCache,
 };
 use anyhow::{anyhow, Result};
 use async_task::Task;
@@ -22,6 +23,7 @@ use std::{
     fmt::{self, Debug},
     hash::{Hash, Hasher},
     marker::PhantomData,
+    ops::Deref,
     path::{Path, PathBuf},
     rc::{self, Rc},
     sync::{Arc, Weak},
@@ -1476,6 +1478,14 @@ impl AsRef<AppContext> for MutableAppContext {
     }
 }
 
+impl Deref for MutableAppContext {
+    type Target = AppContext;
+
+    fn deref(&self) -> &Self::Target {
+        &self.cx
+    }
+}
+
 pub struct AppContext {
     models: HashMap<usize, Box<dyn AnyModel>>,
     views: HashMap<(usize, usize), Box<dyn AnyView>>,
@@ -1534,8 +1544,10 @@ impl AppContext {
 
     pub fn value<Tag: 'static, T: 'static + Default>(&self, id: usize) -> ValueHandle<T> {
         let key = (TypeId::of::<Tag>(), id);
-        let mut values = self.values.write();
-        values.entry(key).or_insert_with(|| Box::new(T::default()));
+        self.values
+            .write()
+            .entry(key)
+            .or_insert_with(|| Box::new(T::default()));
         ValueHandle::new(TypeId::of::<Tag>(), id, &self.ref_counts)
     }
 }
@@ -2090,6 +2102,14 @@ impl<M> AsRef<AppContext> for ViewContext<'_, M> {
     }
 }
 
+impl<M> Deref for ViewContext<'_, M> {
+    type Target = MutableAppContext;
+
+    fn deref(&self) -> &Self::Target {
+        &self.app
+    }
+}
+
 impl<M> AsMut<MutableAppContext> for ViewContext<'_, M> {
     fn as_mut(&mut self) -> &mut MutableAppContext {
         self.app
@@ -2633,8 +2653,7 @@ impl<T: View> WeakViewHandle<T> {
         }
     }
 
-    pub fn upgrade(&self, cx: impl AsRef<AppContext>) -> Option<ViewHandle<T>> {
-        let cx = cx.as_ref();
+    pub fn upgrade(&self, cx: &AppContext) -> Option<ViewHandle<T>> {
         if cx.ref_counts.lock().is_entity_alive(self.view_id) {
             Some(ViewHandle::new(
                 self.window_id,
@@ -2684,13 +2703,25 @@ impl<T: 'static> ValueHandle<T> {
             .unwrap())
     }
 
-    pub fn update<R>(&self, cx: &AppContext, f: impl FnOnce(&mut T) -> R) -> R {
-        f(cx.values
+    pub fn update<R>(
+        &self,
+        cx: &mut EventContext,
+        f: impl FnOnce(&mut T, &mut EventContext) -> R,
+    ) -> R {
+        let mut value = cx
+            .app
+            .cx
+            .values
             .write()
-            .get_mut(&(self.tag_type_id, self.id))
-            .unwrap()
-            .downcast_mut()
-            .unwrap())
+            .remove(&(self.tag_type_id, self.id))
+            .unwrap();
+        let result = f(value.downcast_mut().unwrap(), cx);
+        cx.app
+            .cx
+            .values
+            .write()
+            .insert((self.tag_type_id, self.id), value);
+        result
     }
 }
 

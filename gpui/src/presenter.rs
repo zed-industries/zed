@@ -76,7 +76,7 @@ impl Presenter {
         let mut scene = Scene::new(scale_factor);
 
         if let Some(root_view_id) = cx.root_view_id(self.window_id) {
-            self.layout(window_size, cx.as_ref());
+            self.layout(window_size, cx);
             self.after_layout(cx);
             let mut paint_cx = PaintContext {
                 scene: &mut scene,
@@ -98,7 +98,7 @@ impl Presenter {
         scene
     }
 
-    fn layout(&mut self, size: Vector2F, cx: &AppContext) {
+    fn layout(&mut self, size: Vector2F, cx: &mut MutableAppContext) {
         if let Some(root_view_id) = cx.root_view_id(self.window_id) {
             let mut layout_ctx = LayoutContext {
                 rendered_views: &mut self.rendered_views,
@@ -138,7 +138,7 @@ impl Presenter {
                 text_layout_cache: &self.text_layout_cache,
                 view_stack: Default::default(),
                 invalidated_views: Default::default(),
-                app: cx.as_ref(),
+                app: cx,
             };
             event_cx.dispatch_event(root_view_id, &event);
 
@@ -184,7 +184,7 @@ pub struct LayoutContext<'a> {
     pub font_cache: &'a FontCache,
     pub text_layout_cache: &'a TextLayoutCache,
     pub asset_cache: &'a AssetCache,
-    pub app: &'a AppContext,
+    pub app: &'a mut MutableAppContext,
     view_stack: Vec<usize>,
 }
 
@@ -240,7 +240,7 @@ pub struct EventContext<'a> {
     actions: Vec<ActionToDispatch>,
     pub font_cache: &'a FontCache,
     pub text_layout_cache: &'a TextLayoutCache,
-    pub app: &'a AppContext,
+    pub app: &'a mut MutableAppContext,
     view_stack: Vec<usize>,
     invalidated_views: HashSet<usize>,
 }

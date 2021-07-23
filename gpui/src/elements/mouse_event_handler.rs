@@ -24,7 +24,7 @@ impl MouseEventHandler {
         F: FnOnce(MouseState) -> ElementBox,
     {
         let state_handle = cx.value::<Tag, _>(id);
-        let state = state_handle.read(cx, |state| *state);
+        let state = state_handle.read(cx.as_ref(), |state| *state);
         let child = render_child(state);
         Self {
             state: state_handle,
@@ -81,7 +81,7 @@ impl Element for MouseEventHandler {
 
         let handled_in_child = self.child.dispatch_event(event, cx);
 
-        self.state.update(cx.app, |state| match event {
+        self.state.update(cx, |state, cx| match event {
             Event::MouseMoved { position } => {
                 let mouse_in = bounds.contains_point(*position);
                 if state.hovered != mouse_in {

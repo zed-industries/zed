@@ -124,6 +124,7 @@ impl FileFinder {
             self.list_state.clone(),
             self.matches.len(),
             move |mut range, items, cx| {
+                let cx = cx.as_ref();
                 let finder = handle.upgrade(cx).unwrap();
                 let finder = finder.read(cx);
                 let start = range.start;

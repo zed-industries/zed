@@ -38,8 +38,9 @@ impl EditorElement {
         cx: &mut EventContext,
     ) -> bool {
         if paint.text_bounds.contains_point(position) {
-            let view = self.view(cx.app);
-            let position = paint.point_for_position(view, layout, position, cx.font_cache, cx.app);
+            let view = self.view(cx.app.as_ref());
+            let position =
+                paint.point_for_position(view, layout, position, cx.font_cache, cx.app.as_ref());
             cx.dispatch_action("buffer:select", SelectAction::Begin { position, add: cmd });
             true
         } else {
@@ -48,7 +49,7 @@ impl EditorElement {
     }
 
     fn mouse_up(&self, _position: Vector2F, cx: &mut EventContext) -> bool {
-        if self.view(cx.app).is_selecting() {
+        if self.view(cx.app.as_ref()).is_selecting() {
             cx.dispatch_action("buffer:select", SelectAction::End);
             true
         } else {
@@ -63,7 +64,7 @@ impl EditorElement {
         paint: &mut PaintState,
         cx: &mut EventContext,
     ) -> bool {
-        let view = self.view(cx.app);
+        let view = self.view(cx.app.as_ref());
 
         if view.is_selecting() {
             let rect = paint.text_bounds;
@@ -93,22 +94,21 @@ impl EditorElement {
                 ))
             }
 
-            cx.dispatch_action(
-                "buffer:select",
-                SelectAction::Update {
-                    position: paint.point_for_position(
-                        view,
-                        layout,
-                        position,
-                        cx.font_cache,
-                        cx.app,
-                    ),
-                    scroll_position: (view.scroll_position() + scroll_delta).clamp(
-                        Vector2F::zero(),
-                        layout.scroll_max(view, cx.font_cache, cx.text_layout_cache, cx.app),
-                    ),
-                },
-            );
+            let action = SelectAction::Update {
+                position: paint.point_for_position(
+                    view,
+                    layout,
+                    position,
+                    cx.font_cache,
+                    cx.app.as_ref(),
+                ),
+                scroll_position: (view.scroll_position() + scroll_delta).clamp(
+                    Vector2F::zero(),
+                    layout.scroll_max(view, cx.font_cache, cx.text_layout_cache, cx.app),
+                ),
+            };
+
+            cx.dispatch_action("buffer:select", action);
             true
         } else {
             false
@@ -326,7 +326,7 @@ impl Element for EditorElement {
         constraint: SizeConstraint,
         cx: &mut LayoutContext,
     ) -> (Vector2F, Self::LayoutState) {
-        let app = cx.app;
+        let app = &mut cx.app;
         let mut size = constraint.max;
         if size.y().is_infinite() {
             let view = self.view(app);
