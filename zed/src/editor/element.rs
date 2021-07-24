@@ -339,17 +339,16 @@ impl Element for EditorElement {
             unimplemented!("we don't yet handle an infinite width constraint on buffer elements");
         }
 
-        let view = self.view(cx.app);
-
         let font_cache = &cx.font_cache;
         let layout_cache = &cx.text_layout_cache;
-        let line_height = view.line_height(font_cache);
+        let snapshot = self.update_view(cx.app, |view, cx| view.snapshot(cx));
+        let line_height = snapshot.line_height(font_cache);
 
         let gutter_padding;
         let gutter_width;
-        if view.is_gutter_visible() {
-            gutter_padding = view.em_width(cx.font_cache);
-            match view.max_line_number_width(cx.font_cache, cx.text_layout_cache, cx.app) {
+        if snapshot.gutter_visible {
+            gutter_padding = snapshot.em_width(cx.font_cache);
+            match snapshot.max_line_number_width(cx.font_cache, cx.text_layout_cache, cx.app) {
                 Err(error) => {
                     log::error!("error computing max line number width: {}", error);
                     return (size, None);
@@ -363,24 +362,35 @@ impl Element for EditorElement {
 
         let gutter_size = vec2f(gutter_width, size.y());
         let text_size = size - vec2f(gutter_width, 0.0);
-        let text_offset = vec2f(-view.font_descent(cx.font_cache), 0.);
-        let em_width = view.em_width(cx.font_cache);
+        let text_offset = vec2f(-snapshot.font_descent(cx.font_cache), 0.);
+        let em_width = snapshot.em_width(font_cache);
         let overscroll = vec2f(em_width, 0.);
-        let wrap_width = text_size.x() - text_offset.x() - overscroll.x();
-        // TODO: Core text doesn't seem to be keeping our lines below the specified wrap width. Find out why.
-        let wrap_width = wrap_width - em_width;
-        self.update_view(cx.app, |view, cx| {
-            view.set_wrap_width(wrap_width, cx);
+        let wrap_width = text_size.x() - text_offset.x() - overscroll.x() - em_width;
+        let snapshot = self.update_view(cx.app, |view, cx| {
+            if view.set_wrap_width(wrap_width, cx) {
+                view.snapshot(cx)
+            } else {
+                snapshot
+            }
         });
 
         if size.y().is_infinite() {
-            size.set_y((view.max_point(cx.app).row() + 1) as f32 * view.line_height(cx.font_cache));
+            size.set_y((snapshot.max_point().row() + 1) as f32 * line_height);
         }
 
-        let autoscroll_horizontally = view.autoscroll_vertically(size.y(), line_height, cx.app);
+        let (autoscroll_horizontally, snapshot) = self.update_view(cx.app, |view, cx| {
+            let autoscroll_horizontally = view.autoscroll_vertically(size.y(), line_height, cx);
+            let snapshot = view.snapshot(cx);
+            (autoscroll_horizontally, snapshot)
+        });
 
-        let line_number_layouts = if view.is_gutter_visible() {
-            match view.layout_line_numbers(size.y(), cx.font_cache, cx.text_layout_cache, cx.app) {
+        let line_number_layouts = if snapshot.gutter_visible {
+            match snapshot.layout_line_numbers(
+                size.y(),
+                cx.font_cache,
+                cx.text_layout_cache,
+                cx.app,
+            ) {
                 Err(error) => {
                     log::error!("error laying out line numbers: {}", error);
                     return (size, None);
@@ -391,13 +401,13 @@ impl Element for EditorElement {
             Vec::new()
         };
 
-        let start_row = view.scroll_position().y() as u32;
-        let scroll_top = view.scroll_position().y() * line_height;
+        let start_row = snapshot.scroll_position.y() as u32;
+        let scroll_top = snapshot.scroll_position.y() * line_height;
         let end_row = ((scroll_top + size.y()) / line_height).ceil() as u32 + 1; // Add 1 to ensure selections bleed off screen
 
         let mut max_visible_line_width = 0.0;
         let line_layouts =
-            match view.layout_lines(start_row..end_row, font_cache, layout_cache, cx.app) {
+            match snapshot.layout_lines(start_row..end_row, font_cache, layout_cache, cx.app) {
                 Err(error) => {
                     log::error!("error laying out lines: {}", error);
                     return (size, None);
@@ -413,6 +423,7 @@ impl Element for EditorElement {
                 }
             };
 
+        let view = self.view(cx.app);
         let mut selections = HashMap::new();
         for selection_set_id in view.active_selection_sets(cx.app) {
             selections.insert(
@@ -426,7 +437,7 @@ impl Element for EditorElement {
             );
         }
 
-        let layout_state = Some(LayoutState {
+        let layout = LayoutState {
             size,
             gutter_size,
             gutter_padding,
@@ -437,37 +448,35 @@ impl Element for EditorElement {
             line_number_layouts,
             selections,
             max_visible_line_width,
-            autoscroll_horizontally,
-        });
+        };
 
-        (size, layout_state)
+        let view = self.view(cx.app);
+        view.clamp_scroll_left(
+            layout
+                .scroll_max(view, cx.font_cache, cx.text_layout_cache, cx.app)
+                .x(),
+        );
+
+        if autoscroll_horizontally {
+            view.autoscroll_horizontally(
+                view.scroll_position().y() as u32,
+                layout.text_size.x(),
+                layout.scroll_width(view, cx.font_cache, cx.text_layout_cache, cx.app),
+                snapshot.em_width(cx.font_cache),
+                &layout.line_layouts,
+                cx.app,
+            );
+        }
+
+        (size, Some(layout))
     }
 
     fn after_layout(
         &mut self,
-        _: Vector2F,
-        layout: &mut Option<LayoutState>,
+        size: Vector2F,
+        layout: &mut Self::LayoutState,
         cx: &mut AfterLayoutContext,
     ) {
-        if let Some(layout) = layout {
-            let view = self.view(cx.app);
-            view.clamp_scroll_left(
-                layout
-                    .scroll_max(view, cx.font_cache, cx.text_layout_cache, cx.app)
-                    .x(),
-            );
-
-            if layout.autoscroll_horizontally {
-                view.autoscroll_horizontally(
-                    view.scroll_position().y() as u32,
-                    layout.text_size.x(),
-                    layout.scroll_width(view, cx.font_cache, cx.text_layout_cache, cx.app),
-                    view.em_width(cx.font_cache),
-                    &layout.line_layouts,
-                    cx.app,
-                );
-            }
-        }
     }
 
     fn paint(
@@ -483,7 +492,7 @@ impl Element for EditorElement {
                 layout.text_size,
             );
 
-            if self.view(cx.app).is_gutter_visible() {
+            if layout.gutter_size.x() > 0. {
                 self.paint_gutter(gutter_bounds, layout, cx);
             }
             self.paint_text(text_bounds, layout, cx);
@@ -552,7 +561,6 @@ pub struct LayoutState {
     overscroll: Vector2F,
     text_offset: Vector2F,
     max_visible_line_width: f32,
-    autoscroll_horizontally: bool,
 }
 
 impl LayoutState {
@@ -604,7 +612,7 @@ impl PaintState {
         let scroll_position = view.scroll_position();
         let position = position - self.text_bounds.origin();
         let y = position.y().max(0.0).min(layout.size.y());
-        let row = ((y / view.line_height(font_cache)) + scroll_position.y()) as u32;
+        let row = ((y / line_h) + scroll_position.y()) as u32;
         let row = cmp::min(row, view.max_point(cx).row());
         let line = &layout.line_layouts[(row - scroll_position.y() as u32) as usize];
         let x = position.x() + (scroll_position.x() * view.em_width(font_cache));

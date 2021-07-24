@@ -123,10 +123,10 @@ impl WrapMap {
         self.0.lock().snapshot.clone()
     }
 
-    pub fn set_wrap_width(&self, wrap_width: Option<f32>, cx: &mut MutableAppContext) {
+    pub fn set_wrap_width(&self, wrap_width: Option<f32>, cx: &mut MutableAppContext) -> bool {
         let mut state = self.0.lock();
         if wrap_width == state.wrap_width {
-            return;
+            return false;
         }
 
         state.wrap_width = wrap_width;
@@ -173,6 +173,8 @@ impl WrapMap {
                 }
             }
         }
+
+        true
     }
 
     fn flush_edits(&self, executor: &Arc<Background>) {

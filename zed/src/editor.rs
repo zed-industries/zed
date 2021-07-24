@@ -385,12 +385,12 @@ pub struct Editor {
 }
 
 struct Snapshot {
-    display_snapshot: DisplayMapSnapshot,
-    gutter_visible: bool,
-    scroll_position: Vector2F,
-    theme: Arc<Theme>,
-    font_family: FamilyId,
-    font_size: f32,
+    pub display_snapshot: DisplayMapSnapshot,
+    pub gutter_visible: bool,
+    pub scroll_position: Vector2F,
+    pub theme: Arc<Theme>,
+    pub font_family: FamilyId,
+    pub font_size: f32,
 }
 
 struct AddSelectionsState {
@@ -2176,8 +2176,8 @@ impl Editor {
         self.settings.borrow().buffer_font_size
     }
 
-    pub fn set_wrap_width(&self, width: f32, cx: &mut MutableAppContext) {
-        self.display_map.set_wrap_width(Some(width), cx);
+    pub fn set_wrap_width(&self, width: f32, cx: &mut MutableAppContext) -> bool {
+        self.display_map.set_wrap_width(Some(width), cx)
     }
 
     fn next_blink_epoch(&mut self) -> usize {
@@ -2254,6 +2254,10 @@ impl Editor {
 }
 
 impl Snapshot {
+    pub fn max_point(&self) -> DisplayPoint {
+        self.display_snapshot.max_point()
+    }
+
     pub fn font_ascent(&self, font_cache: &FontCache) -> f32 {
         let font_id = font_cache.default_font(self.font_family);
         let ascent = font_cache.metric(font_id, |m| m.ascent);
@@ -2348,7 +2352,7 @@ impl Snapshot {
 
         let mut prev_font_properties = FontProperties::new();
         let mut prev_font_id = font_cache
-            .select_font(font_family, &prev_font_properties)
+            .select_font(self.font_family, &prev_font_properties)
             .unwrap();
 
         let mut layouts = Vec::with_capacity(rows.len());
@@ -2708,6 +2712,7 @@ mod tests {
 
         let layouts = view
             .read(cx)
+            .snapshot(cx)
             .layout_line_numbers(1000.0, &font_cache, &layout_cache, cx)
             .unwrap();
         assert_eq!(layouts.len(), 6);

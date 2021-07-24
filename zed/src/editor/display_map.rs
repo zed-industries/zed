@@ -75,8 +75,8 @@ impl DisplayMap {
         self.wrap_map.sync(snapshot, edits, cx);
     }
 
-    pub fn set_wrap_width(&self, width: Option<f32>, cx: &mut MutableAppContext) {
-        self.wrap_map.set_wrap_width(width, cx);
+    pub fn set_wrap_width(&self, width: Option<f32>, cx: &mut MutableAppContext) -> bool {
+        self.wrap_map.set_wrap_width(width, cx)
     }
 
     pub fn notifications(&self) -> impl Stream<Item = ()> {
