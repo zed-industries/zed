@@ -632,8 +632,8 @@ impl Editor {
         scroll_position: Vector2F,
         cx: &mut ViewContext<Self>,
     ) {
-        let buffer = self.buffer.read(cx);
         let display_map = self.display_map.snapshot(cx);
+        let buffer = self.buffer.read(cx);
         let cursor = display_map.anchor_before(position, Bias::Left);
         if let Some(selection) = self.pending_selection.as_mut() {
             selection.set_head(buffer, cursor);
@@ -832,13 +832,13 @@ impl Editor {
     pub fn delete_line(&mut self, _: &(), cx: &mut ViewContext<Self>) {
         self.start_transaction(cx);
 
+        let display_map = self.display_map.snapshot(cx);
         let app = cx.as_ref();
         let buffer = self.buffer.read(app);
 
         let mut new_cursors = Vec::new();
         let mut edit_ranges = Vec::new();
 
-        let display_map = self.display_map.snapshot(cx);
         let mut selections = self.selections(app).iter().peekable();
         while let Some(selection) = selections.next() {
             let (mut rows, _) = selection.buffer_rows_for_display_rows(false, &display_map);
@@ -918,8 +918,8 @@ impl Editor {
         }
         self.update_selections(selections.clone(), false, cx);
 
-        let buffer = self.buffer.read(cx);
         let display_map = self.display_map.snapshot(cx);
+        let buffer = self.buffer.read(cx);
 
         let mut edits = Vec::new();
         let mut selections_iter = selections.iter_mut().peekable();
@@ -967,9 +967,9 @@ impl Editor {
     pub fn move_line_up(&mut self, _: &(), cx: &mut ViewContext<Self>) {
         self.start_transaction(cx);
 
+        let display_map = self.display_map.snapshot(cx);
         let app = cx.as_ref();
         let buffer = self.buffer.read(cx);
-        let display_map = self.display_map.snapshot(cx);
 
         let mut edits = Vec::new();
         let mut new_selection_ranges = Vec::new();
@@ -1052,9 +1052,9 @@ impl Editor {
     pub fn move_line_down(&mut self, _: &(), cx: &mut ViewContext<Self>) {
         self.start_transaction(cx);
 
+        let display_map = self.display_map.snapshot(cx);
         let app = cx.as_ref();
         let buffer = self.buffer.read(cx);
-        let display_map = self.display_map.snapshot(cx);
 
         let mut edits = Vec::new();
         let mut new_selection_ranges = Vec::new();
@@ -2258,6 +2258,10 @@ impl Snapshot {
         self.display_snapshot.max_point()
     }
 
+    pub fn longest_row(&self) -> u32 {
+        self.display_snapshot.longest_row()
+    }
+
     pub fn font_ascent(&self, font_cache: &FontCache) -> f32 {
         let font_id = font_cache.default_font(self.font_family);
         let ascent = font_cache.metric(font_id, |m| m.ascent);
@@ -2285,7 +2289,6 @@ impl Snapshot {
         &self,
         font_cache: &FontCache,
         layout_cache: &TextLayoutCache,
-        cx: &AppContext,
     ) -> Result<f32> {
         let font_size = self.font_size;
         let font_id = font_cache.select_font(self.font_family, &FontProperties::new())?;
@@ -2308,7 +2311,6 @@ impl Snapshot {
         viewport_height: f32,
         font_cache: &FontCache,
         layout_cache: &TextLayoutCache,
-        cx: &mut MutableAppContext,
     ) -> Result<Vec<text_layout::Line>> {
         let font_id = font_cache.select_font(self.font_family, &FontProperties::new())?;
 
@@ -2339,11 +2341,10 @@ impl Snapshot {
     }
 
     pub fn layout_lines(
-        &self,
+        &mut self,
         mut rows: Range<u32>,
         font_cache: &FontCache,
         layout_cache: &TextLayoutCache,
-        cx: &mut MutableAppContext,
     ) -> Result<Vec<text_layout::Line>> {
         rows.end = cmp::min(rows.end, self.display_snapshot.max_point().row() + 1);
         if rows.start >= rows.end {
@@ -2399,7 +2400,6 @@ impl Snapshot {
         row: u32,
         font_cache: &FontCache,
         layout_cache: &TextLayoutCache,
-        cx: &mut MutableAppContext,
     ) -> Result<text_layout::Line> {
         let font_id = font_cache.select_font(self.font_family, &FontProperties::new())?;
 
@@ -2713,7 +2713,7 @@ mod tests {
         let layouts = view
             .read(cx)
             .snapshot(cx)
-            .layout_line_numbers(1000.0, &font_cache, &layout_cache, cx)
+            .layout_line_numbers(1000.0, &font_cache, &layout_cache)
             .unwrap();
         assert_eq!(layouts.len(), 6);
     }

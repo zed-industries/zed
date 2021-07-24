@@ -584,7 +584,7 @@ impl Snapshot {
         }
     }
 
-    pub fn highlighted_chunks(&mut self, range: Range<OutputOffset>) -> HighlightedChunks {
+    pub fn highlighted_chunks(&self, range: Range<OutputOffset>) -> HighlightedChunks {
         let mut transform_cursor = self.transforms.cursor::<OutputOffset, usize>();
 
         transform_cursor.seek(&range.end, Bias::Right, &());

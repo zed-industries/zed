@@ -144,7 +144,7 @@ impl Snapshot {
         }
     }
 
-    pub fn highlighted_chunks(&mut self, range: Range<OutputPoint>) -> HighlightedChunks {
+    pub fn highlighted_chunks(&self, range: Range<OutputPoint>) -> HighlightedChunks {
         let (input_start, expanded_char_column, to_next_stop) =
             self.to_input_point(range.start, Bias::Left);
         let input_start = self.input.to_output_offset(input_start);

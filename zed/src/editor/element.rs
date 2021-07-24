@@ -1,6 +1,6 @@
 use crate::time::ReplicaId;
 
-use super::{DisplayPoint, Editor, SelectAction};
+use super::{DisplayPoint, Editor, SelectAction, Snapshot};
 use gpui::{
     color::ColorU,
     geometry::{
@@ -83,7 +83,7 @@ impl EditorElement {
             let rect = paint.text_bounds;
             let mut scroll_delta = Vector2F::zero();
 
-            let vertical_margin = view.line_height(cx.font_cache).min(rect.height() / 3.0);
+            let vertical_margin = layout.line_height.min(rect.height() / 3.0);
             let top = rect.origin_y() + vertical_margin;
             let bottom = rect.lower_left().y() - vertical_margin;
             if position.y() < top {
@@ -93,7 +93,7 @@ impl EditorElement {
                 scroll_delta.set_y(scale_vertical_mouse_autoscroll_delta(position.y() - bottom))
             }
 
-            let horizontal_margin = view.line_height(cx.font_cache).min(rect.width() / 3.0);
+            let horizontal_margin = layout.line_height.min(rect.width() / 3.0);
             let left = rect.origin_x() + horizontal_margin;
             let right = rect.upper_right().x() - horizontal_margin;
             if position.x() < left {
@@ -113,7 +113,7 @@ impl EditorElement {
                 position: paint.point_for_position(view, layout, position, &font_cache, cx),
                 scroll_position: (view.scroll_position() + scroll_delta).clamp(
                     Vector2F::zero(),
-                    layout.scroll_max(view, &font_cache, &text_layout_cache, cx),
+                    layout.scroll_max(&font_cache, &text_layout_cache),
                 ),
             });
 
@@ -159,19 +159,16 @@ impl EditorElement {
         let view = self.view(cx.app);
         let font_cache = &cx.font_cache;
         let layout_cache = &cx.text_layout_cache;
-        let max_glyph_width = view.em_width(font_cache);
-        let line_height = view.line_height(font_cache);
+        let max_glyph_width = layout.em_width;
         if !precise {
-            delta *= vec2f(max_glyph_width, line_height);
+            delta *= vec2f(max_glyph_width, layout.line_height);
         }
 
         let x = (view.scroll_position().x() * max_glyph_width - delta.x()) / max_glyph_width;
-        let y = (view.scroll_position().y() * line_height - delta.y()) / line_height;
+        let y = (view.scroll_position().y() * layout.line_height - delta.y()) / layout.line_height;
         let scroll_position = vec2f(x, y).clamp(
             Vector2F::zero(),
-            self.update_view(cx.app, |view, cx| {
-                layout.scroll_max(view, font_cache, layout_cache, cx)
-            }),
+            layout.scroll_max(font_cache, layout_cache),
         );
 
         cx.dispatch_action("buffer:scroll", scroll_position);
@@ -180,9 +177,7 @@ impl EditorElement {
     }
 
     fn paint_gutter(&mut self, rect: RectF, layout: &LayoutState, cx: &mut PaintContext) {
-        let view = self.view(cx.app);
-        let line_height = view.line_height(cx.font_cache);
-        let scroll_top = view.scroll_position().y() * line_height;
+        let scroll_top = layout.snapshot.scroll_position.y() * layout.line_height;
 
         cx.scene.push_layer(Some(rect));
         cx.scene.push_quad(Quad {
@@ -196,11 +191,11 @@ impl EditorElement {
             let line_origin = rect.origin()
                 + vec2f(
                     rect.width() - line.width() - layout.gutter_padding,
-                    ix as f32 * line_height - (scroll_top % line_height),
+                    ix as f32 * layout.line_height - (scroll_top % layout.line_height),
                 );
             line.paint(
                 line_origin,
-                RectF::new(vec2f(0., 0.), vec2f(line.width(), line_height)),
+                RectF::new(vec2f(0., 0.), vec2f(line.width(), layout.line_height)),
                 cx,
             );
         }
@@ -210,12 +205,12 @@ impl EditorElement {
 
     fn paint_text(&mut self, bounds: RectF, layout: &LayoutState, cx: &mut PaintContext) {
         let view = self.view(cx.app);
-        let line_height = view.line_height(cx.font_cache);
-        let start_row = view.scroll_position().y() as u32;
-        let scroll_top = view.scroll_position().y() * line_height;
-        let end_row = ((scroll_top + bounds.height()) / line_height).ceil() as u32 + 1; // Add 1 to ensure selections bleed off screen
-        let max_glyph_width = view.em_width(cx.font_cache);
-        let scroll_left = view.scroll_position().x() * max_glyph_width;
+        let scroll_position = layout.snapshot.scroll_position;
+        let start_row = scroll_position.y() as u32;
+        let scroll_top = scroll_position.y() * layout.line_height;
+        let end_row = ((scroll_top + bounds.height()) / layout.line_height).ceil() as u32 + 1; // Add 1 to ensure selections bleed off screen
+        let max_glyph_width = layout.em_width;
+        let scroll_left = scroll_position.x() * max_glyph_width;
 
         cx.scene.push_layer(Some(bounds));
         cx.scene.push_quad(Quad {
@@ -254,8 +249,8 @@ impl EditorElement {
 
                     let selection = Selection {
                         color: selection_color,
-                        line_height,
-                        start_y: content_origin.y() + row_range.start as f32 * line_height
+                        line_height: layout.line_height,
+                        start_y: content_origin.y() + row_range.start as f32 * layout.line_height
                             - scroll_top,
                         lines: row_range
                             .into_iter()
@@ -294,11 +289,11 @@ impl EditorElement {
                             &layout.line_layouts[(selection.end.row() - start_row) as usize];
                         let x = cursor_row_layout.x_for_index(selection.end.column() as usize)
                             - scroll_left;
-                        let y = selection.end.row() as f32 * line_height - scroll_top;
+                        let y = selection.end.row() as f32 * layout.line_height - scroll_top;
                         cursors.push(Cursor {
                             color: cursor_color,
                             origin: content_origin + vec2f(x, y),
-                            line_height,
+                            line_height: layout.line_height,
                         });
                     }
                 }
@@ -309,8 +304,11 @@ impl EditorElement {
         for (ix, line) in layout.line_layouts.iter().enumerate() {
             let row = start_row + ix as u32;
             line.paint(
-                content_origin + vec2f(-scroll_left, row as f32 * line_height - scroll_top),
-                RectF::new(vec2f(scroll_left, 0.), vec2f(bounds.width(), line_height)),
+                content_origin + vec2f(-scroll_left, row as f32 * layout.line_height - scroll_top),
+                RectF::new(
+                    vec2f(scroll_left, 0.),
+                    vec2f(bounds.width(), layout.line_height),
+                ),
                 cx,
             );
         }
@@ -348,7 +346,7 @@ impl Element for EditorElement {
         let gutter_width;
         if snapshot.gutter_visible {
             gutter_padding = snapshot.em_width(cx.font_cache);
-            match snapshot.max_line_number_width(cx.font_cache, cx.text_layout_cache, cx.app) {
+            match snapshot.max_line_number_width(cx.font_cache, cx.text_layout_cache) {
                 Err(error) => {
                     log::error!("error computing max line number width: {}", error);
                     return (size, None);
@@ -385,12 +383,7 @@ impl Element for EditorElement {
         });
 
         let line_number_layouts = if snapshot.gutter_visible {
-            match snapshot.layout_line_numbers(
-                size.y(),
-                cx.font_cache,
-                cx.text_layout_cache,
-                cx.app,
-            ) {
+            match snapshot.layout_line_numbers(size.y(), cx.font_cache, cx.text_layout_cache) {
                 Err(error) => {
                     log::error!("error laying out line numbers: {}", error);
                     return (size, None);
@@ -406,22 +399,22 @@ impl Element for EditorElement {
         let end_row = ((scroll_top + size.y()) / line_height).ceil() as u32 + 1; // Add 1 to ensure selections bleed off screen
 
         let mut max_visible_line_width = 0.0;
-        let line_layouts =
-            match snapshot.layout_lines(start_row..end_row, font_cache, layout_cache, cx.app) {
-                Err(error) => {
-                    log::error!("error laying out lines: {}", error);
-                    return (size, None);
-                }
-                Ok(layouts) => {
-                    for line in &layouts {
-                        if line.width() > max_visible_line_width {
-                            max_visible_line_width = line.width();
-                        }
+        let line_layouts = match snapshot.layout_lines(start_row..end_row, font_cache, layout_cache)
+        {
+            Err(error) => {
+                log::error!("error laying out lines: {}", error);
+                return (size, None);
+            }
+            Ok(layouts) => {
+                for line in &layouts {
+                    if line.width() > max_visible_line_width {
+                        max_visible_line_width = line.width();
                     }
-
-                    layouts
                 }
-            };
+
+                layouts
+            }
+        };
 
         let view = self.view(cx.app);
         let mut selections = HashMap::new();
@@ -444,24 +437,23 @@ impl Element for EditorElement {
             text_size,
             overscroll,
             text_offset,
+            snapshot,
             line_layouts,
             line_number_layouts,
+            line_height,
+            em_width,
             selections,
             max_visible_line_width,
         };
 
+        // TODO: If any of the below changes the editor's scroll state, update the layout's snapshot to reflect it.
         let view = self.view(cx.app);
-        view.clamp_scroll_left(
-            layout
-                .scroll_max(view, cx.font_cache, cx.text_layout_cache, cx.app)
-                .x(),
-        );
-
+        view.clamp_scroll_left(layout.scroll_max(cx.font_cache, cx.text_layout_cache).x());
         if autoscroll_horizontally {
             view.autoscroll_horizontally(
                 view.scroll_position().y() as u32,
                 layout.text_size.x(),
-                layout.scroll_width(view, cx.font_cache, cx.text_layout_cache, cx.app),
+                layout.scroll_width(cx.font_cache, cx.text_layout_cache),
                 snapshot.em_width(cx.font_cache),
                 &layout.line_layouts,
                 cx.app,
@@ -471,12 +463,7 @@ impl Element for EditorElement {
         (size, Some(layout))
     }
 
-    fn after_layout(
-        &mut self,
-        size: Vector2F,
-        layout: &mut Self::LayoutState,
-        cx: &mut AfterLayoutContext,
-    ) {
+    fn after_layout(&mut self, _: Vector2F, _: &mut Self::LayoutState, _: &mut AfterLayoutContext) {
     }
 
     fn paint(
@@ -555,8 +542,11 @@ pub struct LayoutState {
     gutter_size: Vector2F,
     gutter_padding: f32,
     text_size: Vector2F,
+    snapshot: Snapshot,
     line_layouts: Vec<text_layout::Line>,
     line_number_layouts: Vec<text_layout::Line>,
+    line_height: f32,
+    em_width: f32,
     selections: HashMap<ReplicaId, Vec<Range<DisplayPoint>>>,
     overscroll: Vector2F,
     text_offset: Vector2F,
@@ -564,33 +554,25 @@ pub struct LayoutState {
 }
 
 impl LayoutState {
-    fn scroll_width(
-        &self,
-        view: &Editor,
-        font_cache: &FontCache,
-        layout_cache: &TextLayoutCache,
-        cx: &mut MutableAppContext,
-    ) -> f32 {
-        let row = view.longest_row(cx);
-        let longest_line_width = view
-            .layout_line(row, font_cache, layout_cache, cx)
+    fn scroll_width(&self, font_cache: &FontCache, layout_cache: &TextLayoutCache) -> f32 {
+        let row = self.snapshot.longest_row();
+        let longest_line_width = self
+            .snapshot
+            .layout_line(row, font_cache, layout_cache)
             .unwrap()
             .width();
         longest_line_width.max(self.max_visible_line_width) + self.overscroll.x()
     }
 
-    fn scroll_max(
-        &self,
-        view: &Editor,
-        font_cache: &FontCache,
-        layout_cache: &TextLayoutCache,
-        cx: &mut MutableAppContext,
-    ) -> Vector2F {
+    fn scroll_max(&self, font_cache: &FontCache, layout_cache: &TextLayoutCache) -> Vector2F {
+        let text_width = self.text_size.x();
+        let scroll_width = self.scroll_width(font_cache, layout_cache);
+        let em_width = self.snapshot.em_width(font_cache);
+        let max_row = self.snapshot.max_point().row();
+
         vec2f(
-            ((self.scroll_width(view, font_cache, layout_cache, cx) - self.text_size.x())
-                / view.em_width(font_cache))
-            .max(0.0),
-            view.max_point(cx).row().saturating_sub(1) as f32,
+            ((scroll_width - text_width) / em_width).max(0.0),
+            max_row.saturating_sub(1) as f32,
         )
     }
 }
@@ -612,10 +594,10 @@ impl PaintState {
         let scroll_position = view.scroll_position();
         let position = position - self.text_bounds.origin();
         let y = position.y().max(0.0).min(layout.size.y());
-        let row = ((y / line_h) + scroll_position.y()) as u32;
+        let row = ((y / layout.line_height) + scroll_position.y()) as u32;
         let row = cmp::min(row, view.max_point(cx).row());
         let line = &layout.line_layouts[(row - scroll_position.y() as u32) as usize];
-        let x = position.x() + (scroll_position.x() * view.em_width(font_cache));
+        let x = position.x() + (scroll_position.x() * layout.em_width);
 
         let column = if x >= 0.0 {
             line.index_for_x(x)
