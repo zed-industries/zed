@@ -5,7 +5,6 @@ use std::{collections::HashMap, sync::Arc};
 
 pub struct LineWrapper {
     font_system: Arc<dyn FontSystem>,
-    font_cache: Arc<FontCache>,
     font_id: FontId,
     font_size: f32,
     cached_ascii_char_widths: Mutex<[f32; 128]>,
@@ -15,7 +14,7 @@ pub struct LineWrapper {
 impl LineWrapper {
     pub fn new(
         font_system: Arc<dyn FontSystem>,
-        font_cache: Arc<FontCache>,
+        font_cache: &FontCache,
         settings: Settings,
     ) -> Self {
         let font_id = font_cache
@@ -23,7 +22,6 @@ impl LineWrapper {
             .unwrap();
         let font_size = settings.buffer_font_size;
         Self {
-            font_cache,
             font_system,
             font_id,
             font_size,
@@ -32,12 +30,13 @@ impl LineWrapper {
         }
     }
 
+    #[cfg(test)]
     pub fn wrap_line_with_shaping(&self, line: &str, wrap_width: f32) -> Vec<usize> {
         self.font_system
             .wrap_line(line, self.font_id, self.font_size, wrap_width)
     }
 
-    pub fn wrap_line_without_shaping(&self, line: &str, wrap_width: f32) -> Vec<usize> {
+    pub fn wrap_line(&self, line: &str, wrap_width: f32) -> Vec<usize> {
         let mut width = 0.0;
         let mut boundaries = Vec::new();
         let mut last_boundary_ix = 0;
@@ -126,14 +125,14 @@ mod tests {
             ..Settings::new(&font_cache).unwrap()
         };
 
-        let wrapper = LineWrapper::new(font_system, font_cache, settings);
+        let wrapper = LineWrapper::new(font_system, &font_cache, settings);
 
         assert_eq!(
             wrapper.wrap_line_with_shaping("aa bbb cccc ddddd eeee", 72.0),
             &[7, 12, 18],
         );
         assert_eq!(
-            wrapper.wrap_line_without_shaping("aa bbb cccc ddddd eeee", 72.0),
+            wrapper.wrap_line("aa bbb cccc ddddd eeee", 72.0),
             &[7, 12, 18],
         );
 
@@ -142,7 +141,7 @@ mod tests {
             &[4, 11, 18],
         );
         assert_eq!(
-            wrapper.wrap_line_without_shaping("aaa aaaaaaaaaaaaaaaaaa", 72.0),
+            wrapper.wrap_line("aaa aaaaaaaaaaaaaaaaaa", 72.0),
             &[4, 11, 18],
         );
     }

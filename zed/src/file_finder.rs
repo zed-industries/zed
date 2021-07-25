@@ -311,7 +311,8 @@ impl FileFinder {
     }
 
     fn workspace_updated(&mut self, _: ViewHandle<Workspace>, cx: &mut ViewContext<Self>) {
-        if let Some(task) = self.spawn_search(self.query_buffer.read(cx).text(cx), cx) {
+        let query = self.query_buffer.update(cx, |buffer, cx| buffer.text(cx));
+        if let Some(task) = self.spawn_search(query, cx) {
             task.detach();
         }
     }

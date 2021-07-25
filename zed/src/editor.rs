@@ -384,7 +384,7 @@ pub struct Editor {
     single_line: bool,
 }
 
-struct Snapshot {
+pub struct Snapshot {
     pub display_snapshot: DisplayMapSnapshot,
     pub gutter_visible: bool,
     pub scroll_position: Vector2F,
@@ -488,10 +488,14 @@ impl Editor {
         *self.scroll_position.lock()
     }
 
-    pub fn clamp_scroll_left(&self, max: f32) {
+    pub fn clamp_scroll_left(&mut self, max: f32) -> bool {
         let mut scroll_position = self.scroll_position.lock();
-        let scroll_left = scroll_position.x();
-        scroll_position.set_x(scroll_left.min(max));
+        if max < scroll_position.x() {
+            scroll_position.set_x(max);
+            true
+        } else {
+            false
+        }
     }
 
     pub fn autoscroll_vertically(
@@ -559,7 +563,7 @@ impl Editor {
         max_glyph_width: f32,
         layouts: &[text_layout::Line],
         cx: &mut MutableAppContext,
-    ) {
+    ) -> bool {
         let display_map = self.display_map.snapshot(cx);
         let mut target_left = std::f32::INFINITY;
         let mut target_right = 0.0_f32;
@@ -577,7 +581,7 @@ impl Editor {
         target_right = target_right.min(scroll_width);
 
         if target_right - target_left > viewport_width {
-            return;
+            return false;
         }
 
         let mut scroll_position = self.scroll_position.lock();
@@ -586,8 +590,12 @@ impl Editor {
 
         if target_left < scroll_left {
             scroll_position.set_x(target_left / max_glyph_width);
+            true
         } else if target_right > scroll_right {
             scroll_position.set_x((target_right - viewport_width) / max_glyph_width);
+            true
+        } else {
+            false
         }
     }
 
@@ -2564,70 +2572,64 @@ mod tests {
     fn test_selection_with_mouse(cx: &mut gpui::MutableAppContext) {
         let buffer = cx.add_model(|cx| Buffer::new(0, "aaaaaa\nbbbbbb\ncccccc\ndddddd\n", cx));
         let settings = settings::channel(&cx.font_cache()).unwrap().1;
-        let (_, buffer_view) = cx.add_window(|cx| Editor::for_buffer(buffer, settings, cx));
+        let (_, editor) = cx.add_window(|cx| Editor::for_buffer(buffer, settings, cx));
 
-        buffer_view.update(cx, |view, cx| {
+        editor.update(cx, |view, cx| {
             view.begin_selection(DisplayPoint::new(2, 2), false, cx);
         });
 
-        let view = buffer_view.read(cx);
         assert_eq!(
-            view.selection_ranges(cx),
+            editor.update(cx, |view, cx| view.selection_ranges(cx)),
             [DisplayPoint::new(2, 2)..DisplayPoint::new(2, 2)]
         );
 
-        buffer_view.update(cx, |view, cx| {
+        editor.update(cx, |view, cx| {
             view.update_selection(DisplayPoint::new(3, 3), Vector2F::zero(), cx);
         });
 
-        let view = buffer_view.read(cx);
         assert_eq!(
-            view.selection_ranges(cx),
+            editor.update(cx, |view, cx| view.selection_ranges(cx)),
             [DisplayPoint::new(2, 2)..DisplayPoint::new(3, 3)]
         );
 
-        buffer_view.update(cx, |view, cx| {
+        editor.update(cx, |view, cx| {
             view.update_selection(DisplayPoint::new(1, 1), Vector2F::zero(), cx);
         });
 
-        let view = buffer_view.read(cx);
         assert_eq!(
-            view.selection_ranges(cx),
+            editor.update(cx, |view, cx| view.selection_ranges(cx)),
             [DisplayPoint::new(2, 2)..DisplayPoint::new(1, 1)]
         );
 
-        buffer_view.update(cx, |view, cx| {
+        editor.update(cx, |view, cx| {
             view.end_selection(cx);
             view.update_selection(DisplayPoint::new(3, 3), Vector2F::zero(), cx);
         });
 
-        let view = buffer_view.read(cx);
         assert_eq!(
-            view.selection_ranges(cx),
+            editor.update(cx, |view, cx| view.selection_ranges(cx)),
             [DisplayPoint::new(2, 2)..DisplayPoint::new(1, 1)]
         );
 
-        buffer_view.update(cx, |view, cx| {
+        editor.update(cx, |view, cx| {
             view.begin_selection(DisplayPoint::new(3, 3), true, cx);
             view.update_selection(DisplayPoint::new(0, 0), Vector2F::zero(), cx);
         });
 
-        let view = buffer_view.read(cx);
         assert_eq!(
-            view.selection_ranges(cx),
+            editor.update(cx, |view, cx| view.selection_ranges(cx)),
             [
                 DisplayPoint::new(2, 2)..DisplayPoint::new(1, 1),
                 DisplayPoint::new(3, 3)..DisplayPoint::new(0, 0)
             ]
         );
 
-        buffer_view.update(cx, |view, cx| {
+        editor.update(cx, |view, cx| {
             view.end_selection(cx);
         });
 
-        let view = buffer_view.read(cx);
         assert_eq!(
-            view.selection_ranges(cx),
+            editor.update(cx, |view, cx| view.selection_ranges(cx)),
             [DisplayPoint::new(3, 3)..DisplayPoint::new(0, 0)]
         );
     }
@@ -2640,28 +2642,28 @@ mod tests {
 
         view.update(cx, |view, cx| {
             view.begin_selection(DisplayPoint::new(2, 2), false, cx);
+            assert_eq!(
+                view.selection_ranges(cx),
+                [DisplayPoint::new(2, 2)..DisplayPoint::new(2, 2)]
+            );
         });
-        assert_eq!(
-            view.update(cx, |view, cx| view.selection_ranges(cx)),
-            [DisplayPoint::new(2, 2)..DisplayPoint::new(2, 2)]
-        );
 
         view.update(cx, |view, cx| {
             view.update_selection(DisplayPoint::new(3, 3), Vector2F::zero(), cx);
+            assert_eq!(
+                view.selection_ranges(cx),
+                [DisplayPoint::new(2, 2)..DisplayPoint::new(3, 3)]
+            );
         });
-        assert_eq!(
-            view.update(cx, |view, cx| view.selection_ranges(cx)),
-            [DisplayPoint::new(2, 2)..DisplayPoint::new(3, 3)]
-        );
 
         view.update(cx, |view, cx| {
             view.cancel(&(), cx);
             view.update_selection(DisplayPoint::new(1, 1), Vector2F::zero(), cx);
+            assert_eq!(
+                view.selection_ranges(cx),
+                [DisplayPoint::new(2, 2)..DisplayPoint::new(3, 3)]
+            );
         });
-        assert_eq!(
-            view.update(cx, |view, cx| view.selection_ranges(cx)),
-            [DisplayPoint::new(2, 2)..DisplayPoint::new(3, 3)]
-        );
     }
 
     #[gpui::test]
@@ -2678,26 +2680,30 @@ mod tests {
             view.begin_selection(DisplayPoint::new(0, 1), true, cx);
             view.update_selection(DisplayPoint::new(0, 3), Vector2F::zero(), cx);
             view.end_selection(cx);
+            assert_eq!(
+                view.selection_ranges(cx),
+                [
+                    DisplayPoint::new(0, 1)..DisplayPoint::new(0, 3),
+                    DisplayPoint::new(3, 4)..DisplayPoint::new(1, 1),
+                ]
+            );
         });
-        assert_eq!(
-            view.update(cx, |view, cx| view.selection_ranges(cx)),
-            [
-                DisplayPoint::new(0, 1)..DisplayPoint::new(0, 3),
-                DisplayPoint::new(3, 4)..DisplayPoint::new(1, 1),
-            ]
-        );
 
-        view.update(cx, |view, cx| view.cancel(&(), cx));
-        assert_eq!(
-            view.update(cx, |view, cx| view.selection_ranges(cx)),
-            [DisplayPoint::new(3, 4)..DisplayPoint::new(1, 1)]
-        );
+        view.update(cx, |view, cx| {
+            view.cancel(&(), cx);
+            assert_eq!(
+                view.selection_ranges(cx),
+                [DisplayPoint::new(3, 4)..DisplayPoint::new(1, 1)]
+            );
+        });
 
-        view.update(cx, |view, cx| view.cancel(&(), cx));
-        assert_eq!(
-            view.update(cx, |view, cx| view.selection_ranges(cx)),
-            [DisplayPoint::new(1, 1)..DisplayPoint::new(1, 1)]
-        );
+        view.update(cx, |view, cx| {
+            view.cancel(&(), cx);
+            assert_eq!(
+                view.selection_ranges(cx),
+                [DisplayPoint::new(1, 1)..DisplayPoint::new(1, 1)]
+            );
+        });
     }
 
     #[gpui::test]
@@ -2708,13 +2714,14 @@ mod tests {
         let buffer = cx.add_model(|cx| Buffer::new(0, sample_text(6, 6), cx));
 
         let settings = settings::channel(&font_cache).unwrap().1;
-        let (_, view) = cx.add_window(|cx| Editor::for_buffer(buffer.clone(), settings, cx));
+        let (_, editor) = cx.add_window(|cx| Editor::for_buffer(buffer.clone(), settings, cx));
 
-        let layouts = view
-            .read(cx)
-            .snapshot(cx)
-            .layout_line_numbers(1000.0, &font_cache, &layout_cache)
-            .unwrap();
+        let layouts = editor.update(cx, |editor, cx| {
+            editor
+                .snapshot(cx)
+                .layout_line_numbers(1000.0, &font_cache, &layout_cache)
+                .unwrap()
+        });
         assert_eq!(layouts.len(), 6);
     }
 
@@ -2983,110 +2990,130 @@ mod tests {
             .unwrap();
         });
 
-        view.update(cx, |view, cx| view.move_to_beginning_of_line(&(), cx));
-        assert_eq!(
-            view.update(cx, |view, cx| view.selection_ranges(cx)),
-            &[
-                DisplayPoint::new(0, 0)..DisplayPoint::new(0, 0),
-                DisplayPoint::new(1, 2)..DisplayPoint::new(1, 2),
-            ]
-        );
+        view.update(cx, |view, cx| {
+            view.move_to_beginning_of_line(&(), cx);
+            assert_eq!(
+                view.selection_ranges(cx),
+                &[
+                    DisplayPoint::new(0, 0)..DisplayPoint::new(0, 0),
+                    DisplayPoint::new(1, 2)..DisplayPoint::new(1, 2),
+                ]
+            );
+        });
 
-        view.update(cx, |view, cx| view.move_to_beginning_of_line(&(), cx));
-        assert_eq!(
-            view.update(cx, |view, cx| view.selection_ranges(cx)),
-            &[
-                DisplayPoint::new(0, 0)..DisplayPoint::new(0, 0),
-                DisplayPoint::new(1, 0)..DisplayPoint::new(1, 0),
-            ]
-        );
+        view.update(cx, |view, cx| {
+            view.move_to_beginning_of_line(&(), cx);
+            assert_eq!(
+                view.selection_ranges(cx),
+                &[
+                    DisplayPoint::new(0, 0)..DisplayPoint::new(0, 0),
+                    DisplayPoint::new(1, 0)..DisplayPoint::new(1, 0),
+                ]
+            );
+        });
 
-        view.update(cx, |view, cx| view.move_to_beginning_of_line(&(), cx));
-        assert_eq!(
-            view.update(cx, |view, cx| view.selection_ranges(cx)),
-            &[
-                DisplayPoint::new(0, 0)..DisplayPoint::new(0, 0),
-                DisplayPoint::new(1, 2)..DisplayPoint::new(1, 2),
-            ]
-        );
+        view.update(cx, |view, cx| {
+            view.move_to_beginning_of_line(&(), cx);
+            assert_eq!(
+                view.selection_ranges(cx),
+                &[
+                    DisplayPoint::new(0, 0)..DisplayPoint::new(0, 0),
+                    DisplayPoint::new(1, 2)..DisplayPoint::new(1, 2),
+                ]
+            );
+        });
 
-        view.update(cx, |view, cx| view.move_to_end_of_line(&(), cx));
-        assert_eq!(
-            view.update(cx, |view, cx| view.selection_ranges(cx)),
-            &[
-                DisplayPoint::new(0, 3)..DisplayPoint::new(0, 3),
-                DisplayPoint::new(1, 5)..DisplayPoint::new(1, 5),
-            ]
-        );
+        view.update(cx, |view, cx| {
+            view.move_to_end_of_line(&(), cx);
+            assert_eq!(
+                view.selection_ranges(cx),
+                &[
+                    DisplayPoint::new(0, 3)..DisplayPoint::new(0, 3),
+                    DisplayPoint::new(1, 5)..DisplayPoint::new(1, 5),
+                ]
+            );
+        });
 
         // Moving to the end of line again is a no-op.
-        view.update(cx, |view, cx| view.move_to_end_of_line(&(), cx));
-        assert_eq!(
-            view.update(cx, |view, cx| view.selection_ranges(cx)),
-            &[
-                DisplayPoint::new(0, 3)..DisplayPoint::new(0, 3),
-                DisplayPoint::new(1, 5)..DisplayPoint::new(1, 5),
-            ]
-        );
+        view.update(cx, |view, cx| {
+            view.move_to_end_of_line(&(), cx);
+            assert_eq!(
+                view.selection_ranges(cx),
+                &[
+                    DisplayPoint::new(0, 3)..DisplayPoint::new(0, 3),
+                    DisplayPoint::new(1, 5)..DisplayPoint::new(1, 5),
+                ]
+            );
+        });
 
         view.update(cx, |view, cx| {
             view.move_left(&(), cx);
             view.select_to_beginning_of_line(&true, cx);
+            assert_eq!(
+                view.selection_ranges(cx),
+                &[
+                    DisplayPoint::new(0, 2)..DisplayPoint::new(0, 0),
+                    DisplayPoint::new(1, 4)..DisplayPoint::new(1, 2),
+                ]
+            );
         });
-        assert_eq!(
-            view.update(cx, |view, cx| view.selection_ranges(cx)),
-            &[
-                DisplayPoint::new(0, 2)..DisplayPoint::new(0, 0),
-                DisplayPoint::new(1, 4)..DisplayPoint::new(1, 2),
-            ]
-        );
 
-        view.update(cx, |view, cx| view.select_to_beginning_of_line(&true, cx));
-        assert_eq!(
-            view.update(cx, |view, cx| view.selection_ranges(cx)),
-            &[
-                DisplayPoint::new(0, 2)..DisplayPoint::new(0, 0),
-                DisplayPoint::new(1, 4)..DisplayPoint::new(1, 0),
-            ]
-        );
+        view.update(cx, |view, cx| {
+            view.select_to_beginning_of_line(&true, cx);
+            assert_eq!(
+                view.selection_ranges(cx),
+                &[
+                    DisplayPoint::new(0, 2)..DisplayPoint::new(0, 0),
+                    DisplayPoint::new(1, 4)..DisplayPoint::new(1, 0),
+                ]
+            );
+        });
 
-        view.update(cx, |view, cx| view.select_to_beginning_of_line(&true, cx));
-        assert_eq!(
-            view.update(cx, |view, cx| view.selection_ranges(cx)),
-            &[
-                DisplayPoint::new(0, 2)..DisplayPoint::new(0, 0),
-                DisplayPoint::new(1, 4)..DisplayPoint::new(1, 2),
-            ]
-        );
+        view.update(cx, |view, cx| {
+            view.select_to_beginning_of_line(&true, cx);
+            assert_eq!(
+                view.selection_ranges(cx),
+                &[
+                    DisplayPoint::new(0, 2)..DisplayPoint::new(0, 0),
+                    DisplayPoint::new(1, 4)..DisplayPoint::new(1, 2),
+                ]
+            );
+        });
 
-        view.update(cx, |view, cx| view.select_to_end_of_line(&(), cx));
-        assert_eq!(
-            view.update(cx, |view, cx| view.selection_ranges(cx)),
-            &[
-                DisplayPoint::new(0, 2)..DisplayPoint::new(0, 3),
-                DisplayPoint::new(1, 4)..DisplayPoint::new(1, 5),
-            ]
-        );
+        view.update(cx, |view, cx| {
+            view.select_to_end_of_line(&(), cx);
+            assert_eq!(
+                view.selection_ranges(cx),
+                &[
+                    DisplayPoint::new(0, 2)..DisplayPoint::new(0, 3),
+                    DisplayPoint::new(1, 4)..DisplayPoint::new(1, 5),
+                ]
+            );
+        });
 
-        view.update(cx, |view, cx| view.delete_to_end_of_line(&(), cx));
-        assert_eq!(view.read(cx).text(cx), "ab\n  de");
-        assert_eq!(
-            view.update(cx, |view, cx| view.selection_ranges(cx)),
-            &[
-                DisplayPoint::new(0, 2)..DisplayPoint::new(0, 2),
-                DisplayPoint::new(1, 4)..DisplayPoint::new(1, 4),
-            ]
-        );
+        view.update(cx, |view, cx| {
+            view.delete_to_end_of_line(&(), cx);
+            assert_eq!(view.text(cx), "ab\n  de");
+            assert_eq!(
+                view.selection_ranges(cx),
+                &[
+                    DisplayPoint::new(0, 2)..DisplayPoint::new(0, 2),
+                    DisplayPoint::new(1, 4)..DisplayPoint::new(1, 4),
+                ]
+            );
+        });
 
-        view.update(cx, |view, cx| view.delete_to_beginning_of_line(&(), cx));
-        assert_eq!(view.read(cx).text(cx), "\n");
-        assert_eq!(
-            view.update(cx, |view, cx| view.selection_ranges(cx)),
-            &[
-                DisplayPoint::new(0, 0)..DisplayPoint::new(0, 0),
-                DisplayPoint::new(1, 0)..DisplayPoint::new(1, 0),
-            ]
-        );
+        view.update(cx, |view, cx| {
+            assert_eq!(view.text(cx), "\n");
+            assert_eq!(
+                view.selection_ranges(cx),
+                &[
+                    DisplayPoint::new(0, 0)..DisplayPoint::new(0, 0),
+                    DisplayPoint::new(1, 0)..DisplayPoint::new(1, 0),
+                ]
+            );
+            view.delete_to_beginning_of_line(&(), cx)
+        });
     }
 
     #[gpui::test]
@@ -3106,155 +3133,173 @@ mod tests {
             .unwrap();
         });
 
-        view.update(cx, |view, cx| view.move_to_previous_word_boundary(&(), cx));
-        assert_eq!(
-            view.update(cx, |view, cx| view.selection_ranges(cx)),
-            &[
-                DisplayPoint::new(0, 9)..DisplayPoint::new(0, 9),
-                DisplayPoint::new(2, 3)..DisplayPoint::new(2, 3),
-            ]
-        );
+        view.update(cx, |view, cx| {
+            view.move_to_previous_word_boundary(&(), cx);
+            assert_eq!(
+                view.selection_ranges(cx),
+                &[
+                    DisplayPoint::new(0, 9)..DisplayPoint::new(0, 9),
+                    DisplayPoint::new(2, 3)..DisplayPoint::new(2, 3),
+                ]
+            );
+        });
 
-        view.update(cx, |view, cx| view.move_to_previous_word_boundary(&(), cx));
-        assert_eq!(
-            view.update(cx, |view, cx| view.selection_ranges(cx)),
-            &[
-                DisplayPoint::new(0, 7)..DisplayPoint::new(0, 7),
-                DisplayPoint::new(2, 2)..DisplayPoint::new(2, 2),
-            ]
-        );
+        view.update(cx, |view, cx| {
+            view.move_to_previous_word_boundary(&(), cx);
+            assert_eq!(
+                view.selection_ranges(cx),
+                &[
+                    DisplayPoint::new(0, 7)..DisplayPoint::new(0, 7),
+                    DisplayPoint::new(2, 2)..DisplayPoint::new(2, 2),
+                ]
+            );
+        });
 
-        view.update(cx, |view, cx| view.move_to_previous_word_boundary(&(), cx));
-        assert_eq!(
-            view.update(cx, |view, cx| view.selection_ranges(cx)),
-            &[
-                DisplayPoint::new(0, 4)..DisplayPoint::new(0, 4),
-                DisplayPoint::new(2, 0)..DisplayPoint::new(2, 0),
-            ]
-        );
+        view.update(cx, |view, cx| {
+            view.move_to_previous_word_boundary(&(), cx);
+            assert_eq!(
+                view.selection_ranges(cx),
+                &[
+                    DisplayPoint::new(0, 4)..DisplayPoint::new(0, 4),
+                    DisplayPoint::new(2, 0)..DisplayPoint::new(2, 0),
+                ]
+            );
+        });
 
-        view.update(cx, |view, cx| view.move_to_previous_word_boundary(&(), cx));
-        assert_eq!(
-            view.update(cx, |view, cx| view.selection_ranges(cx)),
-            &[
-                DisplayPoint::new(0, 3)..DisplayPoint::new(0, 3),
-                DisplayPoint::new(1, 0)..DisplayPoint::new(1, 0),
-            ]
-        );
+        view.update(cx, |view, cx| {
+            view.move_to_previous_word_boundary(&(), cx);
+            assert_eq!(
+                view.selection_ranges(cx),
+                &[
+                    DisplayPoint::new(0, 3)..DisplayPoint::new(0, 3),
+                    DisplayPoint::new(1, 0)..DisplayPoint::new(1, 0),
+                ]
+            );
+        });
 
-        view.update(cx, |view, cx| view.move_to_previous_word_boundary(&(), cx));
-        assert_eq!(
-            view.update(cx, |view, cx| view.selection_ranges(cx)),
-            &[
-                DisplayPoint::new(0, 0)..DisplayPoint::new(0, 0),
-                DisplayPoint::new(0, 24)..DisplayPoint::new(0, 24),
-            ]
-        );
+        view.update(cx, |view, cx| {
+            view.move_to_previous_word_boundary(&(), cx);
+            assert_eq!(
+                view.selection_ranges(cx),
+                &[
+                    DisplayPoint::new(0, 0)..DisplayPoint::new(0, 0),
+                    DisplayPoint::new(0, 24)..DisplayPoint::new(0, 24),
+                ]
+            );
+        });
 
-        view.update(cx, |view, cx| view.move_to_previous_word_boundary(&(), cx));
-        assert_eq!(
-            view.update(cx, |view, cx| view.selection_ranges(cx)),
-            &[
-                DisplayPoint::new(0, 0)..DisplayPoint::new(0, 0),
-                DisplayPoint::new(0, 23)..DisplayPoint::new(0, 23),
-            ]
-        );
+        view.update(cx, |view, cx| {
+            view.move_to_previous_word_boundary(&(), cx);
+            assert_eq!(
+                view.selection_ranges(cx),
+                &[
+                    DisplayPoint::new(0, 0)..DisplayPoint::new(0, 0),
+                    DisplayPoint::new(0, 23)..DisplayPoint::new(0, 23),
+                ]
+            );
+        });
 
-        view.update(cx, |view, cx| view.move_to_next_word_boundary(&(), cx));
-        assert_eq!(
-            view.update(cx, |view, cx| view.selection_ranges(cx)),
-            &[
-                DisplayPoint::new(0, 3)..DisplayPoint::new(0, 3),
-                DisplayPoint::new(0, 24)..DisplayPoint::new(0, 24),
-            ]
-        );
+        view.update(cx, |view, cx| {
+            view.move_to_next_word_boundary(&(), cx);
+            assert_eq!(
+                view.selection_ranges(cx),
+                &[
+                    DisplayPoint::new(0, 3)..DisplayPoint::new(0, 3),
+                    DisplayPoint::new(0, 24)..DisplayPoint::new(0, 24),
+                ]
+            );
+        });
 
-        view.update(cx, |view, cx| view.move_to_next_word_boundary(&(), cx));
-        assert_eq!(
-            view.update(cx, |view, cx| view.selection_ranges(cx)),
-            &[
-                DisplayPoint::new(0, 4)..DisplayPoint::new(0, 4),
-                DisplayPoint::new(1, 0)..DisplayPoint::new(1, 0),
-            ]
-        );
+        view.update(cx, |view, cx| {
+            view.move_to_next_word_boundary(&(), cx);
+            assert_eq!(
+                view.selection_ranges(cx),
+                &[
+                    DisplayPoint::new(0, 4)..DisplayPoint::new(0, 4),
+                    DisplayPoint::new(1, 0)..DisplayPoint::new(1, 0),
+                ]
+            );
+        });
 
-        view.update(cx, |view, cx| view.move_to_next_word_boundary(&(), cx));
-        assert_eq!(
-            view.update(cx, |view, cx| view.selection_ranges(cx)),
-            &[
-                DisplayPoint::new(0, 7)..DisplayPoint::new(0, 7),
-                DisplayPoint::new(2, 0)..DisplayPoint::new(2, 0),
-            ]
-        );
+        view.update(cx, |view, cx| {
+            view.move_to_next_word_boundary(&(), cx);
+            assert_eq!(
+                view.selection_ranges(cx),
+                &[
+                    DisplayPoint::new(0, 7)..DisplayPoint::new(0, 7),
+                    DisplayPoint::new(2, 0)..DisplayPoint::new(2, 0),
+                ]
+            );
+        });
 
-        view.update(cx, |view, cx| view.move_to_next_word_boundary(&(), cx));
-        assert_eq!(
-            view.update(cx, |view, cx| view.selection_ranges(cx)),
-            &[
-                DisplayPoint::new(0, 9)..DisplayPoint::new(0, 9),
-                DisplayPoint::new(2, 2)..DisplayPoint::new(2, 2),
-            ]
-        );
+        view.update(cx, |view, cx| {
+            view.move_to_next_word_boundary(&(), cx);
+            assert_eq!(
+                view.selection_ranges(cx),
+                &[
+                    DisplayPoint::new(0, 9)..DisplayPoint::new(0, 9),
+                    DisplayPoint::new(2, 2)..DisplayPoint::new(2, 2),
+                ]
+            );
+        });
 
         view.update(cx, |view, cx| {
             view.move_right(&(), cx);
             view.select_to_previous_word_boundary(&(), cx);
+            assert_eq!(
+                view.selection_ranges(cx),
+                &[
+                    DisplayPoint::new(0, 10)..DisplayPoint::new(0, 9),
+                    DisplayPoint::new(2, 3)..DisplayPoint::new(2, 2),
+                ]
+            );
         });
-        assert_eq!(
-            view.update(cx, |view, cx| view.selection_ranges(cx)),
-            &[
-                DisplayPoint::new(0, 10)..DisplayPoint::new(0, 9),
-                DisplayPoint::new(2, 3)..DisplayPoint::new(2, 2),
-            ]
-        );
 
         view.update(cx, |view, cx| {
-            view.select_to_previous_word_boundary(&(), cx)
+            view.select_to_previous_word_boundary(&(), cx);
+            assert_eq!(
+                view.selection_ranges(cx),
+                &[
+                    DisplayPoint::new(0, 10)..DisplayPoint::new(0, 7),
+                    DisplayPoint::new(2, 3)..DisplayPoint::new(2, 0),
+                ]
+            );
         });
-        assert_eq!(
-            view.update(cx, |view, cx| view.selection_ranges(cx)),
-            &[
-                DisplayPoint::new(0, 10)..DisplayPoint::new(0, 7),
-                DisplayPoint::new(2, 3)..DisplayPoint::new(2, 0),
-            ]
-        );
-
-        view.update(cx, |view, cx| view.select_to_next_word_boundary(&(), cx));
-        assert_eq!(
-            view.update(cx, |view, cx| view.selection_ranges(cx)),
-            &[
-                DisplayPoint::new(0, 10)..DisplayPoint::new(0, 9),
-                DisplayPoint::new(2, 3)..DisplayPoint::new(2, 2),
-            ]
-        );
-
-        view.update(cx, |view, cx| view.delete_to_next_word_boundary(&(), cx));
-        assert_eq!(
-            view.read(cx).text(cx),
-            "use std::s::{foo, bar}\n\n  {az.qux()}"
-        );
-        assert_eq!(
-            view.update(cx, |view, cx| view.selection_ranges(cx)),
-            &[
-                DisplayPoint::new(0, 10)..DisplayPoint::new(0, 10),
-                DisplayPoint::new(2, 3)..DisplayPoint::new(2, 3),
-            ]
-        );
 
         view.update(cx, |view, cx| {
-            view.delete_to_previous_word_boundary(&(), cx)
+            view.select_to_next_word_boundary(&(), cx);
+            assert_eq!(
+                view.selection_ranges(cx),
+                &[
+                    DisplayPoint::new(0, 10)..DisplayPoint::new(0, 9),
+                    DisplayPoint::new(2, 3)..DisplayPoint::new(2, 2),
+                ]
+            );
         });
-        assert_eq!(
-            view.read(cx).text(cx),
-            "use std::::{foo, bar}\n\n  az.qux()}"
-        );
-        assert_eq!(
-            view.update(cx, |view, cx| view.selection_ranges(cx)),
-            &[
-                DisplayPoint::new(0, 9)..DisplayPoint::new(0, 9),
-                DisplayPoint::new(2, 2)..DisplayPoint::new(2, 2),
-            ]
-        );
+
+        view.update(cx, |view, cx| {
+            view.delete_to_next_word_boundary(&(), cx);
+            assert_eq!(view.text(cx), "use std::s::{foo, bar}\n\n  {az.qux()}");
+            assert_eq!(
+                view.selection_ranges(cx),
+                &[
+                    DisplayPoint::new(0, 10)..DisplayPoint::new(0, 10),
+                    DisplayPoint::new(2, 3)..DisplayPoint::new(2, 3),
+                ]
+            );
+        });
+
+        view.update(cx, |view, cx| {
+            view.delete_to_previous_word_boundary(&(), cx);
+            assert_eq!(view.text(cx), "use std::::{foo, bar}\n\n  az.qux()}");
+            assert_eq!(
+                view.selection_ranges(cx),
+                &[
+                    DisplayPoint::new(0, 9)..DisplayPoint::new(0, 9),
+                    DisplayPoint::new(2, 2)..DisplayPoint::new(2, 2),
+                ]
+            );
+        });
     }
 
     #[gpui::test]
@@ -3341,15 +3386,15 @@ mod tests {
             )
             .unwrap();
             view.delete_line(&(), cx);
+            assert_eq!(view.text(cx), "ghi");
+            assert_eq!(
+                view.selection_ranges(cx),
+                vec![
+                    DisplayPoint::new(0, 0)..DisplayPoint::new(0, 0),
+                    DisplayPoint::new(0, 1)..DisplayPoint::new(0, 1)
+                ]
+            );
         });
-        assert_eq!(view.read(cx).text(cx), "ghi");
-        assert_eq!(
-            view.update(cx, |view, cx| view.selection_ranges(cx)),
-            vec![
-                DisplayPoint::new(0, 0)..DisplayPoint::new(0, 0),
-                DisplayPoint::new(0, 1)..DisplayPoint::new(0, 1)
-            ]
-        );
 
         let settings = settings::channel(&cx.font_cache()).unwrap().1;
         let buffer = cx.add_model(|cx| Buffer::new(0, "abc\ndef\nghi\n", cx));
@@ -3358,12 +3403,12 @@ mod tests {
             view.select_display_ranges(&[DisplayPoint::new(2, 0)..DisplayPoint::new(0, 1)], cx)
                 .unwrap();
             view.delete_line(&(), cx);
+            assert_eq!(view.text(cx), "ghi\n");
+            assert_eq!(
+                view.selection_ranges(cx),
+                vec![DisplayPoint::new(0, 1)..DisplayPoint::new(0, 1)]
+            );
         });
-        assert_eq!(view.read(cx).text(cx), "ghi\n");
-        assert_eq!(
-            view.update(cx, |view, cx| view.selection_ranges(cx)),
-            vec![DisplayPoint::new(0, 1)..DisplayPoint::new(0, 1)]
-        );
     }
 
     #[gpui::test]
@@ -3383,17 +3428,17 @@ mod tests {
             )
             .unwrap();
             view.duplicate_line(&(), cx);
+            assert_eq!(view.text(cx), "abc\nabc\ndef\ndef\nghi\n\n");
+            assert_eq!(
+                view.selection_ranges(cx),
+                vec![
+                    DisplayPoint::new(1, 0)..DisplayPoint::new(1, 1),
+                    DisplayPoint::new(1, 2)..DisplayPoint::new(1, 2),
+                    DisplayPoint::new(3, 0)..DisplayPoint::new(3, 0),
+                    DisplayPoint::new(6, 0)..DisplayPoint::new(6, 0),
+                ]
+            );
         });
-        assert_eq!(view.read(cx).text(cx), "abc\nabc\ndef\ndef\nghi\n\n");
-        assert_eq!(
-            view.update(cx, |view, cx| view.selection_ranges(cx)),
-            vec![
-                DisplayPoint::new(1, 0)..DisplayPoint::new(1, 1),
-                DisplayPoint::new(1, 2)..DisplayPoint::new(1, 2),
-                DisplayPoint::new(3, 0)..DisplayPoint::new(3, 0),
-                DisplayPoint::new(6, 0)..DisplayPoint::new(6, 0),
-            ]
-        );
 
         let settings = settings::channel(&cx.font_cache()).unwrap().1;
         let buffer = cx.add_model(|cx| Buffer::new(0, "abc\ndef\nghi\n", cx));
@@ -3408,15 +3453,15 @@ mod tests {
             )
             .unwrap();
             view.duplicate_line(&(), cx);
+            assert_eq!(view.text(cx), "abc\ndef\nghi\nabc\ndef\nghi\n");
+            assert_eq!(
+                view.selection_ranges(cx),
+                vec![
+                    DisplayPoint::new(3, 1)..DisplayPoint::new(4, 1),
+                    DisplayPoint::new(4, 2)..DisplayPoint::new(5, 1),
+                ]
+            );
         });
-        assert_eq!(view.read(cx).text(cx), "abc\ndef\nghi\nabc\ndef\nghi\n");
-        assert_eq!(
-            view.update(cx, |view, cx| view.selection_ranges(cx)),
-            vec![
-                DisplayPoint::new(3, 1)..DisplayPoint::new(4, 1),
-                DisplayPoint::new(4, 2)..DisplayPoint::new(5, 1),
-            ]
-        );
     }
 
     #[gpui::test]
@@ -3443,71 +3488,62 @@ mod tests {
                 cx,
             )
             .unwrap();
+            assert_eq!(view.text(cx), "aa…bbb\nccc…eeee\nfffff\nggggg\n…i\njjjjj");
+
+            view.move_line_up(&(), cx);
+            assert_eq!(view.text(cx), "aa…bbb\nccc…eeee\nggggg\n…i\njjjjj\nfffff");
+            assert_eq!(
+                view.selection_ranges(cx),
+                vec![
+                    DisplayPoint::new(0, 1)..DisplayPoint::new(0, 1),
+                    DisplayPoint::new(2, 1)..DisplayPoint::new(2, 1),
+                    DisplayPoint::new(2, 2)..DisplayPoint::new(3, 3),
+                    DisplayPoint::new(4, 0)..DisplayPoint::new(4, 2)
+                ]
+            );
         });
-        assert_eq!(
-            view.read(cx).text(cx),
-            "aa…bbb\nccc…eeee\nfffff\nggggg\n…i\njjjjj"
-        );
 
-        view.update(cx, |view, cx| view.move_line_up(&(), cx));
-        assert_eq!(
-            view.read(cx).text(cx),
-            "aa…bbb\nccc…eeee\nggggg\n…i\njjjjj\nfffff"
-        );
-        assert_eq!(
-            view.update(cx, |view, cx| view.selection_ranges(cx)),
-            vec![
-                DisplayPoint::new(0, 1)..DisplayPoint::new(0, 1),
-                DisplayPoint::new(2, 1)..DisplayPoint::new(2, 1),
-                DisplayPoint::new(2, 2)..DisplayPoint::new(3, 3),
-                DisplayPoint::new(4, 0)..DisplayPoint::new(4, 2)
-            ]
-        );
+        view.update(cx, |view, cx| {
+            view.move_line_down(&(), cx);
+            assert_eq!(view.text(cx), "ccc…eeee\naa…bbb\nfffff\nggggg\n…i\njjjjj");
+            assert_eq!(
+                view.selection_ranges(cx),
+                vec![
+                    DisplayPoint::new(1, 1)..DisplayPoint::new(1, 1),
+                    DisplayPoint::new(3, 1)..DisplayPoint::new(3, 1),
+                    DisplayPoint::new(3, 2)..DisplayPoint::new(4, 3),
+                    DisplayPoint::new(5, 0)..DisplayPoint::new(5, 2)
+                ]
+            );
+        });
 
-        view.update(cx, |view, cx| view.move_line_down(&(), cx));
-        assert_eq!(
-            view.read(cx).text(cx),
-            "ccc…eeee\naa…bbb\nfffff\nggggg\n…i\njjjjj"
-        );
-        assert_eq!(
-            view.update(cx, |view, cx| view.selection_ranges(cx)),
-            vec![
-                DisplayPoint::new(1, 1)..DisplayPoint::new(1, 1),
-                DisplayPoint::new(3, 1)..DisplayPoint::new(3, 1),
-                DisplayPoint::new(3, 2)..DisplayPoint::new(4, 3),
-                DisplayPoint::new(5, 0)..DisplayPoint::new(5, 2)
-            ]
-        );
+        view.update(cx, |view, cx| {
+            view.move_line_down(&(), cx);
+            assert_eq!(view.text(cx), "ccc…eeee\nfffff\naa…bbb\nggggg\n…i\njjjjj");
+            assert_eq!(
+                view.selection_ranges(cx),
+                vec![
+                    DisplayPoint::new(2, 1)..DisplayPoint::new(2, 1),
+                    DisplayPoint::new(3, 1)..DisplayPoint::new(3, 1),
+                    DisplayPoint::new(3, 2)..DisplayPoint::new(4, 3),
+                    DisplayPoint::new(5, 0)..DisplayPoint::new(5, 2)
+                ]
+            );
+        });
 
-        view.update(cx, |view, cx| view.move_line_down(&(), cx));
-        assert_eq!(
-            view.read(cx).text(cx),
-            "ccc…eeee\nfffff\naa…bbb\nggggg\n…i\njjjjj"
-        );
-        assert_eq!(
-            view.update(cx, |view, cx| view.selection_ranges(cx)),
-            vec![
-                DisplayPoint::new(2, 1)..DisplayPoint::new(2, 1),
-                DisplayPoint::new(3, 1)..DisplayPoint::new(3, 1),
-                DisplayPoint::new(3, 2)..DisplayPoint::new(4, 3),
-                DisplayPoint::new(5, 0)..DisplayPoint::new(5, 2)
-            ]
-        );
-
-        view.update(cx, |view, cx| view.move_line_up(&(), cx));
-        assert_eq!(
-            view.read(cx).text(cx),
-            "ccc…eeee\naa…bbb\nggggg\n…i\njjjjj\nfffff"
-        );
-        assert_eq!(
-            view.update(cx, |view, cx| view.selection_ranges(cx)),
-            vec![
-                DisplayPoint::new(1, 1)..DisplayPoint::new(1, 1),
-                DisplayPoint::new(2, 1)..DisplayPoint::new(2, 1),
-                DisplayPoint::new(2, 2)..DisplayPoint::new(3, 3),
-                DisplayPoint::new(4, 0)..DisplayPoint::new(4, 2)
-            ]
-        );
+        view.update(cx, |view, cx| {
+            view.move_line_up(&(), cx);
+            assert_eq!(view.text(cx), "ccc…eeee\naa…bbb\nggggg\n…i\njjjjj\nfffff");
+            assert_eq!(
+                view.selection_ranges(cx),
+                vec![
+                    DisplayPoint::new(1, 1)..DisplayPoint::new(1, 1),
+                    DisplayPoint::new(2, 1)..DisplayPoint::new(2, 1),
+                    DisplayPoint::new(2, 2)..DisplayPoint::new(3, 3),
+                    DisplayPoint::new(4, 0)..DisplayPoint::new(4, 2)
+                ]
+            );
+        });
     }
 
     #[gpui::test]
@@ -3522,23 +3558,23 @@ mod tests {
         view.update(cx, |view, cx| {
             view.select_ranges(vec![0..4, 8..14, 19..24], false, cx);
             view.cut(&(), cx);
+            assert_eq!(view.text(cx), "two four six ");
         });
-        assert_eq!(view.read(cx).text(cx), "two four six ");
 
         // Paste with three cursors. Each cursor pastes one slice of the clipboard text.
         view.update(cx, |view, cx| {
             view.select_ranges(vec![4..4, 9..9, 13..13], false, cx);
             view.paste(&(), cx);
+            assert_eq!(view.text(cx), "two one four three six five ");
+            assert_eq!(
+                view.selection_ranges(cx),
+                &[
+                    DisplayPoint::new(0, 8)..DisplayPoint::new(0, 8),
+                    DisplayPoint::new(0, 19)..DisplayPoint::new(0, 19),
+                    DisplayPoint::new(0, 28)..DisplayPoint::new(0, 28)
+                ]
+            );
         });
-        assert_eq!(view.read(cx).text(cx), "two one four three six five ");
-        assert_eq!(
-            view.update(cx, |view, cx| view.selection_ranges(cx)),
-            &[
-                DisplayPoint::new(0, 8)..DisplayPoint::new(0, 8),
-                DisplayPoint::new(0, 19)..DisplayPoint::new(0, 19),
-                DisplayPoint::new(0, 28)..DisplayPoint::new(0, 28)
-            ]
-        );
 
         // Paste again but with only two cursors. Since the number of cursors doesn't
         // match the number of slices in the clipboard, the entire clipboard text
@@ -3548,20 +3584,20 @@ mod tests {
             view.insert(&"( ".to_string(), cx);
             view.paste(&(), cx);
             view.insert(&") ".to_string(), cx);
+            assert_eq!(
+                view.text(cx),
+                "( one three five ) two one four three six five ( one three five ) "
+            );
         });
-        assert_eq!(
-            view.read(cx).text(cx),
-            "( one three five ) two one four three six five ( one three five ) "
-        );
 
         view.update(cx, |view, cx| {
             view.select_ranges(vec![0..0], false, cx);
             view.insert(&"123\n4567\n89\n".to_string(), cx);
+            assert_eq!(
+                view.text(cx),
+                "123\n4567\n89\n( one three five ) two one four three six five ( one three five ) "
+            );
         });
-        assert_eq!(
-            view.read(cx).text(cx),
-            "123\n4567\n89\n( one three five ) two one four three six five ( one three five ) "
-        );
 
         // Cut with three selections, one of which is full-line.
         view.update(cx, |view, cx| {
@@ -3575,11 +3611,11 @@ mod tests {
             )
             .unwrap();
             view.cut(&(), cx);
+            assert_eq!(
+                view.text(cx),
+                "13\n9\n( one three five ) two one four three six five ( one three five ) "
+            );
         });
-        assert_eq!(
-            view.read(cx).text(cx),
-            "13\n9\n( one three five ) two one four three six five ( one three five ) "
-        );
 
         // Paste with three selections, noticing how the copied selection that was full-line
         // gets inserted before the second cursor.
@@ -3594,19 +3630,19 @@ mod tests {
             )
             .unwrap();
             view.paste(&(), cx);
+            assert_eq!(
+                view.text(cx),
+                "123\n4567\n9\n( 8ne three five ) two one four three six five ( one three five ) "
+            );
+            assert_eq!(
+                view.selection_ranges(cx),
+                &[
+                    DisplayPoint::new(0, 2)..DisplayPoint::new(0, 2),
+                    DisplayPoint::new(2, 1)..DisplayPoint::new(2, 1),
+                    DisplayPoint::new(3, 3)..DisplayPoint::new(3, 3),
+                ]
+            );
         });
-        assert_eq!(
-            view.read(cx).text(cx),
-            "123\n4567\n9\n( 8ne three five ) two one four three six five ( one three five ) "
-        );
-        assert_eq!(
-            view.update(cx, |view, cx| view.selection_ranges(cx)),
-            &[
-                DisplayPoint::new(0, 2)..DisplayPoint::new(0, 2),
-                DisplayPoint::new(2, 1)..DisplayPoint::new(2, 1),
-                DisplayPoint::new(3, 3)..DisplayPoint::new(3, 3),
-            ]
-        );
 
         // Copy with a single cursor only, which writes the whole line into the clipboard.
         view.update(cx, |view, cx| {
@@ -3628,19 +3664,19 @@ mod tests {
             )
             .unwrap();
             view.paste(&(), cx);
-        });
-        assert_eq!(
-                view.read(cx).text(cx),
+            assert_eq!(
+                view.text(cx),
                 "123\n123\n123\n67\n123\n9\n( 8ne three five ) two one four three six five ( one three five ) "
             );
-        assert_eq!(
-            view.update(cx, |view, cx| view.selection_ranges(cx)),
-            &[
-                DisplayPoint::new(1, 1)..DisplayPoint::new(1, 1),
-                DisplayPoint::new(3, 0)..DisplayPoint::new(3, 0),
-                DisplayPoint::new(5, 1)..DisplayPoint::new(5, 1),
-            ]
-        );
+            assert_eq!(
+                view.selection_ranges(cx),
+                &[
+                    DisplayPoint::new(1, 1)..DisplayPoint::new(1, 1),
+                    DisplayPoint::new(3, 0)..DisplayPoint::new(3, 0),
+                    DisplayPoint::new(5, 1)..DisplayPoint::new(5, 1),
+                ]
+            );
+        });
     }
 
     #[gpui::test]
@@ -3648,11 +3684,13 @@ mod tests {
         let buffer = cx.add_model(|cx| Buffer::new(0, "abc\nde\nfgh", cx));
         let settings = settings::channel(&cx.font_cache()).unwrap().1;
         let (_, view) = cx.add_window(|cx| Editor::for_buffer(buffer, settings, cx));
-        view.update(cx, |b, cx| b.select_all(&(), cx));
-        assert_eq!(
-            view.update(cx, |view, cx| view.selection_ranges(cx)),
-            &[DisplayPoint::new(0, 0)..DisplayPoint::new(2, 3)]
-        );
+        view.update(cx, |view, cx| {
+            view.select_all(&(), cx);
+            assert_eq!(
+                view.selection_ranges(cx),
+                &[DisplayPoint::new(0, 0)..DisplayPoint::new(2, 3)]
+            );
+        });
     }
 
     #[gpui::test]
@@ -3672,29 +3710,33 @@ mod tests {
             )
             .unwrap();
             view.select_line(&(), cx);
+            assert_eq!(
+                view.selection_ranges(cx),
+                vec![
+                    DisplayPoint::new(0, 0)..DisplayPoint::new(2, 0),
+                    DisplayPoint::new(4, 0)..DisplayPoint::new(5, 0),
+                ]
+            );
         });
-        assert_eq!(
-            view.update(cx, |view, cx| view.selection_ranges(cx)),
-            vec![
-                DisplayPoint::new(0, 0)..DisplayPoint::new(2, 0),
-                DisplayPoint::new(4, 0)..DisplayPoint::new(5, 0),
-            ]
-        );
 
-        view.update(cx, |view, cx| view.select_line(&(), cx));
-        assert_eq!(
-            view.update(cx, |view, cx| view.selection_ranges(cx)),
-            vec![
-                DisplayPoint::new(0, 0)..DisplayPoint::new(3, 0),
-                DisplayPoint::new(4, 0)..DisplayPoint::new(5, 5),
-            ]
-        );
+        view.update(cx, |view, cx| {
+            view.select_line(&(), cx);
+            assert_eq!(
+                view.selection_ranges(cx),
+                vec![
+                    DisplayPoint::new(0, 0)..DisplayPoint::new(3, 0),
+                    DisplayPoint::new(4, 0)..DisplayPoint::new(5, 5),
+                ]
+            );
+        });
 
-        view.update(cx, |view, cx| view.select_line(&(), cx));
-        assert_eq!(
-            view.update(cx, |view, cx| view.selection_ranges(cx)),
-            vec![DisplayPoint::new(0, 0)..DisplayPoint::new(5, 5)]
-        );
+        view.update(cx, |view, cx| {
+            view.select_line(&(), cx);
+            assert_eq!(
+                view.selection_ranges(cx),
+                vec![DisplayPoint::new(0, 0)..DisplayPoint::new(5, 5)]
+            );
+        });
     }
 
     #[gpui::test]
@@ -3721,43 +3763,45 @@ mod tests {
                 cx,
             )
             .unwrap();
+            assert_eq!(view.text(cx), "aa…bbb\nccc…eeee\nfffff\nggggg\n…i");
         });
-        assert_eq!(view.read(cx).text(cx), "aa…bbb\nccc…eeee\nfffff\nggggg\n…i");
 
-        view.update(cx, |view, cx| view.split_selection_into_lines(&(), cx));
-        assert_eq!(view.read(cx).text(cx), "aa…bbb\nccc…eeee\nfffff\nggggg\n…i");
-        assert_eq!(
-            view.update(cx, |view, cx| view.selection_ranges(cx)),
-            [
-                DisplayPoint::new(0, 1)..DisplayPoint::new(0, 1),
-                DisplayPoint::new(0, 2)..DisplayPoint::new(0, 2),
-                DisplayPoint::new(1, 0)..DisplayPoint::new(1, 0),
-                DisplayPoint::new(4, 4)..DisplayPoint::new(4, 4)
-            ]
-        );
+        view.update(cx, |view, cx| {
+            view.split_selection_into_lines(&(), cx);
+            assert_eq!(view.text(cx), "aa…bbb\nccc…eeee\nfffff\nggggg\n…i");
+            assert_eq!(
+                view.selection_ranges(cx),
+                [
+                    DisplayPoint::new(0, 1)..DisplayPoint::new(0, 1),
+                    DisplayPoint::new(0, 2)..DisplayPoint::new(0, 2),
+                    DisplayPoint::new(1, 0)..DisplayPoint::new(1, 0),
+                    DisplayPoint::new(4, 4)..DisplayPoint::new(4, 4)
+                ]
+            );
+        });
 
         view.update(cx, |view, cx| {
             view.select_display_ranges(&[DisplayPoint::new(4, 0)..DisplayPoint::new(0, 1)], cx)
                 .unwrap();
             view.split_selection_into_lines(&(), cx);
+            assert_eq!(
+                view.text(cx),
+                "aaaaa\nbbbbb\nccccc\nddddd\neeeee\nfffff\nggggg\n…i"
+            );
+            assert_eq!(
+                view.selection_ranges(cx),
+                [
+                    DisplayPoint::new(0, 1)..DisplayPoint::new(0, 1),
+                    DisplayPoint::new(1, 5)..DisplayPoint::new(1, 5),
+                    DisplayPoint::new(2, 5)..DisplayPoint::new(2, 5),
+                    DisplayPoint::new(3, 5)..DisplayPoint::new(3, 5),
+                    DisplayPoint::new(4, 5)..DisplayPoint::new(4, 5),
+                    DisplayPoint::new(5, 5)..DisplayPoint::new(5, 5),
+                    DisplayPoint::new(6, 5)..DisplayPoint::new(6, 5),
+                    DisplayPoint::new(7, 0)..DisplayPoint::new(7, 0)
+                ]
+            );
         });
-        assert_eq!(
-            view.read(cx).text(cx),
-            "aaaaa\nbbbbb\nccccc\nddddd\neeeee\nfffff\nggggg\n…i"
-        );
-        assert_eq!(
-            view.update(cx, |view, cx| view.selection_ranges(cx)),
-            [
-                DisplayPoint::new(0, 1)..DisplayPoint::new(0, 1),
-                DisplayPoint::new(1, 5)..DisplayPoint::new(1, 5),
-                DisplayPoint::new(2, 5)..DisplayPoint::new(2, 5),
-                DisplayPoint::new(3, 5)..DisplayPoint::new(3, 5),
-                DisplayPoint::new(4, 5)..DisplayPoint::new(4, 5),
-                DisplayPoint::new(5, 5)..DisplayPoint::new(5, 5),
-                DisplayPoint::new(6, 5)..DisplayPoint::new(6, 5),
-                DisplayPoint::new(7, 0)..DisplayPoint::new(7, 0)
-            ]
-        );
     }
 
     #[gpui::test]
@@ -3770,141 +3814,167 @@ mod tests {
             view.select_display_ranges(&[DisplayPoint::new(1, 3)..DisplayPoint::new(1, 3)], cx)
                 .unwrap();
         });
-        view.update(cx, |view, cx| view.add_selection_above(&(), cx));
-        assert_eq!(
-            view.update(cx, |view, cx| view.selection_ranges(cx)),
-            vec![
-                DisplayPoint::new(0, 3)..DisplayPoint::new(0, 3),
-                DisplayPoint::new(1, 3)..DisplayPoint::new(1, 3)
-            ]
-        );
+        view.update(cx, |view, cx| {
+            view.add_selection_above(&(), cx);
+            assert_eq!(
+                view.selection_ranges(cx),
+                vec![
+                    DisplayPoint::new(0, 3)..DisplayPoint::new(0, 3),
+                    DisplayPoint::new(1, 3)..DisplayPoint::new(1, 3)
+                ]
+            );
+        });
 
-        view.update(cx, |view, cx| view.add_selection_above(&(), cx));
-        assert_eq!(
-            view.update(cx, |view, cx| view.selection_ranges(cx)),
-            vec![
-                DisplayPoint::new(0, 3)..DisplayPoint::new(0, 3),
-                DisplayPoint::new(1, 3)..DisplayPoint::new(1, 3)
-            ]
-        );
+        view.update(cx, |view, cx| {
+            view.add_selection_above(&(), cx);
+            assert_eq!(
+                view.selection_ranges(cx),
+                vec![
+                    DisplayPoint::new(0, 3)..DisplayPoint::new(0, 3),
+                    DisplayPoint::new(1, 3)..DisplayPoint::new(1, 3)
+                ]
+            );
+        });
 
-        view.update(cx, |view, cx| view.add_selection_below(&(), cx));
-        assert_eq!(
-            view.update(cx, |view, cx| view.selection_ranges(cx)),
-            vec![DisplayPoint::new(1, 3)..DisplayPoint::new(1, 3)]
-        );
+        view.update(cx, |view, cx| {
+            view.add_selection_below(&(), cx);
+            assert_eq!(
+                view.selection_ranges(cx),
+                vec![DisplayPoint::new(1, 3)..DisplayPoint::new(1, 3)]
+            );
+        });
 
-        view.update(cx, |view, cx| view.add_selection_below(&(), cx));
-        assert_eq!(
-            view.update(cx, |view, cx| view.selection_ranges(cx)),
-            vec![
-                DisplayPoint::new(1, 3)..DisplayPoint::new(1, 3),
-                DisplayPoint::new(4, 3)..DisplayPoint::new(4, 3)
-            ]
-        );
+        view.update(cx, |view, cx| {
+            view.add_selection_below(&(), cx);
+            assert_eq!(
+                view.selection_ranges(cx),
+                vec![
+                    DisplayPoint::new(1, 3)..DisplayPoint::new(1, 3),
+                    DisplayPoint::new(4, 3)..DisplayPoint::new(4, 3)
+                ]
+            );
+        });
 
-        view.update(cx, |view, cx| view.add_selection_below(&(), cx));
-        assert_eq!(
-            view.update(cx, |view, cx| view.selection_ranges(cx)),
-            vec![
-                DisplayPoint::new(1, 3)..DisplayPoint::new(1, 3),
-                DisplayPoint::new(4, 3)..DisplayPoint::new(4, 3)
-            ]
-        );
+        view.update(cx, |view, cx| {
+            view.add_selection_below(&(), cx);
+            assert_eq!(
+                view.selection_ranges(cx),
+                vec![
+                    DisplayPoint::new(1, 3)..DisplayPoint::new(1, 3),
+                    DisplayPoint::new(4, 3)..DisplayPoint::new(4, 3)
+                ]
+            );
+        });
 
         view.update(cx, |view, cx| {
             view.select_display_ranges(&[DisplayPoint::new(1, 4)..DisplayPoint::new(1, 3)], cx)
                 .unwrap();
         });
-        view.update(cx, |view, cx| view.add_selection_below(&(), cx));
-        assert_eq!(
-            view.update(cx, |view, cx| view.selection_ranges(cx)),
-            vec![
-                DisplayPoint::new(1, 4)..DisplayPoint::new(1, 3),
-                DisplayPoint::new(4, 4)..DisplayPoint::new(4, 3)
-            ]
-        );
+        view.update(cx, |view, cx| {
+            view.add_selection_below(&(), cx);
+            assert_eq!(
+                view.selection_ranges(cx),
+                vec![
+                    DisplayPoint::new(1, 4)..DisplayPoint::new(1, 3),
+                    DisplayPoint::new(4, 4)..DisplayPoint::new(4, 3)
+                ]
+            );
+        });
 
-        view.update(cx, |view, cx| view.add_selection_below(&(), cx));
-        assert_eq!(
-            view.update(cx, |view, cx| view.selection_ranges(cx)),
-            vec![
-                DisplayPoint::new(1, 4)..DisplayPoint::new(1, 3),
-                DisplayPoint::new(4, 4)..DisplayPoint::new(4, 3)
-            ]
-        );
+        view.update(cx, |view, cx| {
+            view.add_selection_below(&(), cx);
+            assert_eq!(
+                view.selection_ranges(cx),
+                vec![
+                    DisplayPoint::new(1, 4)..DisplayPoint::new(1, 3),
+                    DisplayPoint::new(4, 4)..DisplayPoint::new(4, 3)
+                ]
+            );
+        });
 
-        view.update(cx, |view, cx| view.add_selection_above(&(), cx));
-        assert_eq!(
-            view.update(cx, |view, cx| view.selection_ranges(cx)),
-            vec![DisplayPoint::new(1, 4)..DisplayPoint::new(1, 3)]
-        );
+        view.update(cx, |view, cx| {
+            view.add_selection_above(&(), cx);
+            assert_eq!(
+                view.selection_ranges(cx),
+                vec![DisplayPoint::new(1, 4)..DisplayPoint::new(1, 3)]
+            );
+        });
 
-        view.update(cx, |view, cx| view.add_selection_above(&(), cx));
-        assert_eq!(
-            view.update(cx, |view, cx| view.selection_ranges(cx)),
-            vec![DisplayPoint::new(1, 4)..DisplayPoint::new(1, 3)]
-        );
+        view.update(cx, |view, cx| {
+            view.add_selection_above(&(), cx);
+            assert_eq!(
+                view.selection_ranges(cx),
+                vec![DisplayPoint::new(1, 4)..DisplayPoint::new(1, 3)]
+            );
+        });
 
         view.update(cx, |view, cx| {
             view.select_display_ranges(&[DisplayPoint::new(0, 1)..DisplayPoint::new(1, 4)], cx)
                 .unwrap();
+            view.add_selection_below(&(), cx);
+            assert_eq!(
+                view.selection_ranges(cx),
+                vec![
+                    DisplayPoint::new(0, 1)..DisplayPoint::new(0, 3),
+                    DisplayPoint::new(1, 1)..DisplayPoint::new(1, 4),
+                    DisplayPoint::new(3, 1)..DisplayPoint::new(3, 2),
+                ]
+            );
         });
-        view.update(cx, |view, cx| view.add_selection_below(&(), cx));
-        assert_eq!(
-            view.update(cx, |view, cx| view.selection_ranges(cx)),
-            vec![
-                DisplayPoint::new(0, 1)..DisplayPoint::new(0, 3),
-                DisplayPoint::new(1, 1)..DisplayPoint::new(1, 4),
-                DisplayPoint::new(3, 1)..DisplayPoint::new(3, 2),
-            ]
-        );
 
-        view.update(cx, |view, cx| view.add_selection_below(&(), cx));
-        assert_eq!(
-            view.update(cx, |view, cx| view.selection_ranges(cx)),
-            vec![
-                DisplayPoint::new(0, 1)..DisplayPoint::new(0, 3),
-                DisplayPoint::new(1, 1)..DisplayPoint::new(1, 4),
-                DisplayPoint::new(3, 1)..DisplayPoint::new(3, 2),
-                DisplayPoint::new(4, 1)..DisplayPoint::new(4, 4),
-            ]
-        );
+        view.update(cx, |view, cx| {
+            view.add_selection_below(&(), cx);
+            assert_eq!(
+                view.selection_ranges(cx),
+                vec![
+                    DisplayPoint::new(0, 1)..DisplayPoint::new(0, 3),
+                    DisplayPoint::new(1, 1)..DisplayPoint::new(1, 4),
+                    DisplayPoint::new(3, 1)..DisplayPoint::new(3, 2),
+                    DisplayPoint::new(4, 1)..DisplayPoint::new(4, 4),
+                ]
+            );
+        });
 
-        view.update(cx, |view, cx| view.add_selection_above(&(), cx));
-        assert_eq!(
-            view.update(cx, |view, cx| view.selection_ranges(cx)),
-            vec![
-                DisplayPoint::new(0, 1)..DisplayPoint::new(0, 3),
-                DisplayPoint::new(1, 1)..DisplayPoint::new(1, 4),
-                DisplayPoint::new(3, 1)..DisplayPoint::new(3, 2),
-            ]
-        );
+        view.update(cx, |view, cx| {
+            view.add_selection_above(&(), cx);
+            assert_eq!(
+                view.selection_ranges(cx),
+                vec![
+                    DisplayPoint::new(0, 1)..DisplayPoint::new(0, 3),
+                    DisplayPoint::new(1, 1)..DisplayPoint::new(1, 4),
+                    DisplayPoint::new(3, 1)..DisplayPoint::new(3, 2),
+                ]
+            );
+        });
 
         view.update(cx, |view, cx| {
             view.select_display_ranges(&[DisplayPoint::new(4, 3)..DisplayPoint::new(1, 1)], cx)
                 .unwrap();
         });
-        view.update(cx, |view, cx| view.add_selection_above(&(), cx));
-        assert_eq!(
-            view.update(cx, |view, cx| view.selection_ranges(cx)),
-            vec![
-                DisplayPoint::new(0, 3)..DisplayPoint::new(0, 1),
-                DisplayPoint::new(1, 3)..DisplayPoint::new(1, 1),
-                DisplayPoint::new(3, 2)..DisplayPoint::new(3, 1),
-                DisplayPoint::new(4, 3)..DisplayPoint::new(4, 1),
-            ]
-        );
+        view.update(cx, |view, cx| {
+            view.add_selection_above(&(), cx);
+            assert_eq!(
+                view.selection_ranges(cx),
+                vec![
+                    DisplayPoint::new(0, 3)..DisplayPoint::new(0, 1),
+                    DisplayPoint::new(1, 3)..DisplayPoint::new(1, 1),
+                    DisplayPoint::new(3, 2)..DisplayPoint::new(3, 1),
+                    DisplayPoint::new(4, 3)..DisplayPoint::new(4, 1),
+                ]
+            );
+        });
 
-        view.update(cx, |view, cx| view.add_selection_below(&(), cx));
-        assert_eq!(
-            view.update(cx, |view, cx| view.selection_ranges(cx)),
-            vec![
-                DisplayPoint::new(1, 3)..DisplayPoint::new(1, 1),
-                DisplayPoint::new(3, 2)..DisplayPoint::new(3, 1),
-                DisplayPoint::new(4, 3)..DisplayPoint::new(4, 1),
-            ]
-        );
+        view.update(cx, |view, cx| {
+            view.add_selection_below(&(), cx);
+            assert_eq!(
+                view.selection_ranges(cx),
+                vec![
+                    DisplayPoint::new(1, 3)..DisplayPoint::new(1, 1),
+                    DisplayPoint::new(3, 2)..DisplayPoint::new(3, 1),
+                    DisplayPoint::new(4, 3)..DisplayPoint::new(4, 1),
+                ]
+            );
+        });
     }
 
     #[gpui::test]

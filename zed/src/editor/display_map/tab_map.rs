@@ -2,7 +2,7 @@ use parking_lot::Mutex;
 
 use super::fold_map::{
     self, Chunks as InputChunks, Edit as InputEdit, HighlightedChunks as InputHighlightedChunks,
-    OutputOffset as InputOffset, OutputPoint as InputPoint, Snapshot as InputSnapshot,
+    OutputPoint as InputPoint, Snapshot as InputSnapshot,
 };
 use crate::{editor::rope, settings::StyleId, util::Bias};
 use std::{cmp, mem, ops::Range};
@@ -144,7 +144,7 @@ impl Snapshot {
         }
     }
 
-    pub fn highlighted_chunks(&self, range: Range<OutputPoint>) -> HighlightedChunks {
+    pub fn highlighted_chunks(&mut self, range: Range<OutputPoint>) -> HighlightedChunks {
         let (input_start, expanded_char_column, to_next_stop) =
             self.to_input_point(range.start, Bias::Left);
         let input_start = self.input.to_output_offset(input_start);
@@ -170,20 +170,6 @@ impl Snapshot {
         self.chunks_at(Default::default()).collect()
     }
 
-    pub fn len(&self) -> OutputOffset {
-        self.to_output_offset(self.input.len())
-    }
-
-    pub fn line_len(&self, row: u32) -> u32 {
-        self.to_output_point(InputPoint::new(row, self.input.line_len(row)))
-            .column()
-    }
-
-    pub fn longest_row(&self) -> u32 {
-        // TODO: Account for tab expansion.
-        self.input.longest_row()
-    }
-
     pub fn max_point(&self) -> OutputPoint {
         self.to_output_point(self.input.max_point())
     }
@@ -193,15 +179,6 @@ impl Snapshot {
             self.input
                 .clip_point(self.to_input_point(point, bias).0, bias),
         )
-    }
-
-    pub fn to_output_offset(&self, input_offset: InputOffset) -> OutputOffset {
-        let input_point = input_offset.to_point(&self.input);
-        let input_row_start_offset = self
-            .input
-            .to_output_offset(InputPoint::new(input_point.row(), 0));
-        let output_point = self.to_output_point(input_point);
-        OutputOffset(input_row_start_offset.0 + output_point.column() as usize)
     }
 
     pub fn to_output_point(&self, input: InputPoint) -> OutputPoint {
@@ -305,14 +282,6 @@ impl OutputPoint {
 
     pub fn column(self) -> u32 {
         self.0.column
-    }
-
-    pub fn row_mut(&mut self) -> &mut u32 {
-        &mut self.0.row
-    }
-
-    pub fn column_mut(&mut self) -> &mut u32 {
-        &mut self.0.column
     }
 }
 

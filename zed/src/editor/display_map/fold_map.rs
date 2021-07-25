@@ -26,10 +26,6 @@ impl OutputPoint {
         Self(super::Point::new(row, column))
     }
 
-    pub fn zero() -> Self {
-        Self::new(0, 0)
-    }
-
     pub fn row(self) -> u32 {
         self.0.row
     }
@@ -42,6 +38,7 @@ impl OutputPoint {
         &mut self.0.row
     }
 
+    #[cfg(test)]
     pub fn column_mut(&mut self) -> &mut u32 {
         &mut self.0.column
     }
@@ -450,10 +447,6 @@ impl Snapshot {
         self.chunks_at(OutputOffset(0)).collect()
     }
 
-    pub fn text_summary(&self) -> TextSummary {
-        self.transforms.summary().output
-    }
-
     pub fn text_summary_for_range(&self, range: Range<OutputPoint>) -> TextSummary {
         let mut summary = TextSummary::default();
 
@@ -499,6 +492,7 @@ impl Snapshot {
         OutputOffset(self.transforms.summary().output.bytes)
     }
 
+    #[cfg(test)]
     pub fn line_len(&self, row: u32) -> u32 {
         let line_start = self.to_output_offset(OutputPoint::new(row, 0)).0;
         let line_end = if row >= self.max_point().row() {
@@ -527,6 +521,7 @@ impl Snapshot {
         OutputPoint(self.transforms.summary().output.lines)
     }
 
+    #[cfg(test)]
     pub fn longest_row(&self) -> u32 {
         self.transforms.summary().output.longest_row
     }
@@ -584,7 +579,7 @@ impl Snapshot {
         }
     }
 
-    pub fn highlighted_chunks(&self, range: Range<OutputOffset>) -> HighlightedChunks {
+    pub fn highlighted_chunks(&mut self, range: Range<OutputOffset>) -> HighlightedChunks {
         let mut transform_cursor = self.transforms.cursor::<OutputOffset, usize>();
 
         transform_cursor.seek(&range.end, Bias::Right, &());
@@ -1093,6 +1088,7 @@ pub struct Edit {
     pub new_bytes: Range<OutputOffset>,
 }
 
+#[cfg(test)]
 impl Edit {
     pub fn delta(&self) -> isize {
         self.inserted_bytes() as isize - self.deleted_bytes() as isize

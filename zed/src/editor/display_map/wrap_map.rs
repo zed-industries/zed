@@ -90,7 +90,7 @@ impl WrapMap {
             snapshot: Snapshot::new(tab_snapshot),
             line_wrapper: Arc::new(LineWrapper::new(
                 cx.platform().fonts(),
-                cx.font_cache().clone(),
+                cx.font_cache(),
                 settings,
             )),
         })));
@@ -98,6 +98,7 @@ impl WrapMap {
         this
     }
 
+    #[cfg(test)]
     pub fn is_rewrapping(&self) -> bool {
         self.0.lock().background_task.is_some()
     }
@@ -392,7 +393,7 @@ impl Snapshot {
                     }
 
                     let mut prev_boundary_ix = 0;
-                    for boundary_ix in line_wrapper.wrap_line_without_shaping(&line, wrap_width) {
+                    for boundary_ix in line_wrapper.wrap_line(&line, wrap_width) {
                         let wrapped = &line[prev_boundary_ix..boundary_ix];
                         new_transforms
                             .push_or_extend(Transform::isomorphic(TextSummary::from(wrapped)));
@@ -717,6 +718,7 @@ impl WrapPoint {
         Self(super::Point::new(row, column))
     }
 
+    #[cfg(test)]
     pub fn zero() -> Self {
         Self::new(0, 0)
     }
@@ -826,7 +828,7 @@ mod tests {
             });
             let mut notifications = wrap_map.notifications();
 
-            let mut line_wrapper = LineWrapper::new(font_system, font_cache, settings);
+            let mut line_wrapper = LineWrapper::new(font_system, &font_cache, settings);
             let unwrapped_text = tabs_snapshot.text();
             let expected_text = wrap_text(&unwrapped_text, wrap_width, &mut line_wrapper);
 
@@ -888,7 +890,7 @@ mod tests {
             }
 
             let mut prev_ix = 0;
-            for ix in line_wrapper.wrap_line_without_shaping(line, wrap_width) {
+            for ix in line_wrapper.wrap_line(line, wrap_width) {
                 wrapped_text.push_str(&line[prev_ix..ix]);
                 wrapped_text.push('\n');
                 prev_ix = ix;

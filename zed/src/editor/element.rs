@@ -51,8 +51,7 @@ impl EditorElement {
     ) -> bool {
         if paint.text_bounds.contains_point(position) {
             let position = self.update_view(cx.app, |view, cx| {
-                let font_cache = cx.font_cache().clone();
-                paint.point_for_position(view, layout, position, &font_cache, cx)
+                paint.point_for_position(view, layout, position, cx)
             });
             cx.dispatch_action("buffer:select", SelectAction::Begin { position, add: cmd });
             true
@@ -110,7 +109,7 @@ impl EditorElement {
             let font_cache = cx.font_cache.clone();
             let text_layout_cache = cx.text_layout_cache.clone();
             let action = self.update_view(cx.app, |view, cx| SelectAction::Update {
-                position: paint.point_for_position(view, layout, position, &font_cache, cx),
+                position: paint.point_for_position(view, layout, position, cx),
                 scroll_position: (view.scroll_position() + scroll_delta).clamp(
                     Vector2F::zero(),
                     layout.scroll_max(&font_cache, &text_layout_cache),
@@ -376,7 +375,7 @@ impl Element for EditorElement {
             size.set_y((snapshot.max_point().row() + 1) as f32 * line_height);
         }
 
-        let (autoscroll_horizontally, snapshot) = self.update_view(cx.app, |view, cx| {
+        let (autoscroll_horizontally, mut snapshot) = self.update_view(cx.app, |view, cx| {
             let autoscroll_horizontally = view.autoscroll_vertically(size.y(), line_height, cx);
             let snapshot = view.snapshot(cx);
             (autoscroll_horizontally, snapshot)
@@ -416,21 +415,22 @@ impl Element for EditorElement {
             }
         };
 
-        let view = self.view(cx.app);
         let mut selections = HashMap::new();
-        for selection_set_id in view.active_selection_sets(cx.app) {
-            selections.insert(
-                selection_set_id.replica_id,
-                view.selections_in_range(
-                    selection_set_id,
-                    DisplayPoint::new(start_row, 0)..DisplayPoint::new(end_row, 0),
-                    cx.app,
-                )
-                .collect(),
-            );
-        }
+        self.update_view(cx.app, |view, cx| {
+            for selection_set_id in view.active_selection_sets(cx).collect::<Vec<_>>() {
+                selections.insert(
+                    selection_set_id.replica_id,
+                    view.selections_in_range(
+                        selection_set_id,
+                        DisplayPoint::new(start_row, 0)..DisplayPoint::new(end_row, 0),
+                        cx,
+                    )
+                    .collect(),
+                );
+            }
+        });
 
-        let layout = LayoutState {
+        let mut layout = LayoutState {
             size,
             gutter_size,
             gutter_padding,
@@ -446,19 +446,26 @@ impl Element for EditorElement {
             max_visible_line_width,
         };
 
-        // TODO: If any of the below changes the editor's scroll state, update the layout's snapshot to reflect it.
-        let view = self.view(cx.app);
-        view.clamp_scroll_left(layout.scroll_max(cx.font_cache, cx.text_layout_cache).x());
-        if autoscroll_horizontally {
-            view.autoscroll_horizontally(
-                view.scroll_position().y() as u32,
-                layout.text_size.x(),
-                layout.scroll_width(cx.font_cache, cx.text_layout_cache),
-                snapshot.em_width(cx.font_cache),
-                &layout.line_layouts,
-                cx.app,
-            );
-        }
+        self.update_view(cx.app, |view, cx| {
+            let clamped = view.clamp_scroll_left(layout.scroll_max(font_cache, layout_cache).x());
+            let autoscrolled;
+            if autoscroll_horizontally {
+                autoscrolled = view.autoscroll_horizontally(
+                    view.scroll_position().y() as u32,
+                    layout.text_size.x(),
+                    layout.scroll_width(font_cache, layout_cache),
+                    layout.snapshot.em_width(font_cache),
+                    &layout.line_layouts,
+                    cx,
+                );
+            } else {
+                autoscrolled = false;
+            }
+
+            if clamped || autoscrolled {
+                layout.snapshot = view.snapshot(cx);
+            }
+        });
 
         (size, Some(layout))
     }
@@ -588,7 +595,6 @@ impl PaintState {
         view: &Editor,
         layout: &LayoutState,
         position: Vector2F,
-        font_cache: &FontCache,
         cx: &mut MutableAppContext,
     ) -> DisplayPoint {
         let scroll_position = view.scroll_position();
