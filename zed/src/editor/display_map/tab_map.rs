@@ -1,8 +1,8 @@
 use parking_lot::Mutex;
 
 use super::fold_map::{
-    self, Chunks as InputChunks, Edit as InputEdit, HighlightedChunks as InputHighlightedChunks,
-    OutputPoint as InputPoint, Snapshot as InputSnapshot,
+    self, Chunks as InputChunks, FoldEdit, FoldPoint, HighlightedChunks as HighlightedFoldChunks,
+    Snapshot as FoldSnapshot,
 };
 use crate::{editor::rope, settings::StyleId, util::Bias};
 use std::{cmp, mem, ops::Range};
@@ -10,31 +10,37 @@ use std::{cmp, mem, ops::Range};
 pub struct TabMap(Mutex<Snapshot>);
 
 impl TabMap {
-    pub fn new(input: InputSnapshot, tab_size: usize) -> (Self, Snapshot) {
-        let snapshot = Snapshot { input, tab_size };
+    pub fn new(input: FoldSnapshot, tab_size: usize) -> (Self, Snapshot) {
+        let snapshot = Snapshot {
+            fold_snapshot: input,
+            tab_size,
+        };
         (Self(Mutex::new(snapshot.clone())), snapshot)
     }
 
     pub fn sync(
         &self,
-        snapshot: InputSnapshot,
-        mut input_edits: Vec<InputEdit>,
+        fold_snapshot: FoldSnapshot,
+        mut fold_edits: Vec<FoldEdit>,
     ) -> (Snapshot, Vec<Edit>) {
         let mut old_snapshot = self.0.lock();
         let new_snapshot = Snapshot {
-            input: snapshot,
+            fold_snapshot,
             tab_size: old_snapshot.tab_size,
         };
 
-        let mut output_edits = Vec::with_capacity(input_edits.len());
-        for input_edit in &mut input_edits {
+        let mut tab_edits = Vec::with_capacity(fold_edits.len());
+        for fold_edit in &mut fold_edits {
             let mut delta = 0;
-            for chunk in old_snapshot.input.chunks_at(input_edit.old_bytes.end) {
+            for chunk in old_snapshot
+                .fold_snapshot
+                .chunks_at(fold_edit.old_bytes.end)
+            {
                 let patterns: &[_] = &['\t', '\n'];
                 if let Some(ix) = chunk.find(patterns) {
                     if &chunk[ix..ix + 1] == "\t" {
-                        input_edit.old_bytes.end.0 += delta + ix + old_snapshot.tab_size;
-                        input_edit.new_bytes.end.0 += delta + ix + new_snapshot.tab_size;
+                        fold_edit.old_bytes.end.0 += delta + ix + old_snapshot.tab_size;
+                        fold_edit.new_bytes.end.0 += delta + ix + new_snapshot.tab_size;
                     }
 
                     break;
@@ -42,30 +48,44 @@ impl TabMap {
 
                 delta += chunk.len();
             }
-            input_edit.old_bytes.end = cmp::min(input_edit.old_bytes.end, old_snapshot.input.len());
-            input_edit.new_bytes.end = cmp::min(input_edit.new_bytes.end, new_snapshot.input.len());
+            fold_edit.old_bytes.end =
+                cmp::min(fold_edit.old_bytes.end, old_snapshot.fold_snapshot.len());
+            fold_edit.new_bytes.end =
+                cmp::min(fold_edit.new_bytes.end, new_snapshot.fold_snapshot.len());
         }
 
         let mut ix = 1;
-        while ix < input_edits.len() {
-            let (prev_edits, next_edits) = input_edits.split_at_mut(ix);
+        while ix < fold_edits.len() {
+            let (prev_edits, next_edits) = fold_edits.split_at_mut(ix);
             let prev_edit = prev_edits.last_mut().unwrap();
             let edit = &next_edits[0];
             if prev_edit.old_bytes.end >= edit.old_bytes.start {
                 prev_edit.old_bytes.end = edit.old_bytes.end;
                 prev_edit.new_bytes.end = edit.new_bytes.end;
-                input_edits.remove(ix);
+                fold_edits.remove(ix);
             } else {
                 ix += 1;
             }
         }
 
-        for input_edit in input_edits {
-            let old_start = input_edit.old_bytes.start.to_point(&old_snapshot.input);
-            let old_end = input_edit.old_bytes.end.to_point(&old_snapshot.input);
-            let new_start = input_edit.new_bytes.start.to_point(&new_snapshot.input);
-            let new_end = input_edit.new_bytes.end.to_point(&new_snapshot.input);
-            output_edits.push(Edit {
+        for fold_edit in fold_edits {
+            let old_start = fold_edit
+                .old_bytes
+                .start
+                .to_point(&old_snapshot.fold_snapshot);
+            let old_end = fold_edit
+                .old_bytes
+                .end
+                .to_point(&old_snapshot.fold_snapshot);
+            let new_start = fold_edit
+                .new_bytes
+                .start
+                .to_point(&new_snapshot.fold_snapshot);
+            let new_end = fold_edit
+                .new_bytes
+                .end
+                .to_point(&new_snapshot.fold_snapshot);
+            tab_edits.push(Edit {
                 old_lines: old_snapshot.to_output_point(old_start)
                     ..old_snapshot.to_output_point(old_end),
                 new_lines: new_snapshot.to_output_point(new_start)
@@ -74,25 +94,27 @@ impl TabMap {
         }
 
         *old_snapshot = new_snapshot;
-        (old_snapshot.clone(), output_edits)
+        (old_snapshot.clone(), tab_edits)
     }
 }
 
 #[derive(Clone)]
 pub struct Snapshot {
-    input: InputSnapshot,
+    fold_snapshot: FoldSnapshot,
     tab_size: usize,
 }
 
 impl Snapshot {
     pub fn text_summary(&self) -> TextSummary {
-        self.text_summary_for_range(OutputPoint::zero()..self.max_point())
+        self.text_summary_for_range(TabPoint::zero()..self.max_point())
     }
 
-    pub fn text_summary_for_range(&self, range: Range<OutputPoint>) -> TextSummary {
+    pub fn text_summary_for_range(&self, range: Range<TabPoint>) -> TextSummary {
         let input_start = self.to_input_point(range.start, Bias::Left).0;
         let input_end = self.to_input_point(range.end, Bias::Right).0;
-        let input_summary = self.input.text_summary_for_range(input_start..input_end);
+        let input_summary = self
+            .fold_snapshot
+            .text_summary_for_range(input_start..input_end);
 
         let mut first_line_chars = 0;
         let mut first_line_bytes = 0;
@@ -109,7 +131,7 @@ impl Snapshot {
         let mut last_line_chars = 0;
         let mut last_line_bytes = 0;
         for c in self
-            .chunks_at(OutputPoint::new(range.end.row(), 0).max(range.start))
+            .chunks_at(TabPoint::new(range.end.row(), 0).max(range.start))
             .flat_map(|chunk| chunk.chars())
         {
             if last_line_bytes == range.end.column() {
@@ -129,12 +151,14 @@ impl Snapshot {
     }
 
     pub fn version(&self) -> usize {
-        self.input.version
+        self.fold_snapshot.version
     }
 
-    pub fn chunks_at(&self, point: OutputPoint) -> Chunks {
+    pub fn chunks_at(&self, point: TabPoint) -> Chunks {
         let (point, expanded_char_column, to_next_stop) = self.to_input_point(point, Bias::Left);
-        let fold_chunks = self.input.chunks_at(self.input.to_output_offset(point));
+        let fold_chunks = self
+            .fold_snapshot
+            .chunks_at(point.to_offset(&self.fold_snapshot));
         Chunks {
             fold_chunks,
             column: expanded_char_column,
@@ -144,15 +168,18 @@ impl Snapshot {
         }
     }
 
-    pub fn highlighted_chunks(&mut self, range: Range<OutputPoint>) -> HighlightedChunks {
+    pub fn highlighted_chunks(&mut self, range: Range<TabPoint>) -> HighlightedChunks {
         let (input_start, expanded_char_column, to_next_stop) =
             self.to_input_point(range.start, Bias::Left);
-        let input_start = self.input.to_output_offset(input_start);
+        let input_start = input_start.to_offset(&self.fold_snapshot);
         let input_end = self
-            .input
-            .to_output_offset(self.to_input_point(range.end, Bias::Right).0);
+            .to_input_point(range.end, Bias::Right)
+            .0
+            .to_offset(&self.fold_snapshot);
         HighlightedChunks {
-            fold_chunks: self.input.highlighted_chunks(input_start..input_end),
+            fold_chunks: self
+                .fold_snapshot
+                .highlighted_chunks(input_start..input_end),
             column: expanded_char_column,
             tab_size: self.tab_size,
             chunk: &SPACES[0..to_next_stop],
@@ -162,7 +189,7 @@ impl Snapshot {
     }
 
     pub fn buffer_rows(&self, row: u32) -> fold_map::BufferRows {
-        self.input.buffer_rows(row)
+        self.fold_snapshot.buffer_rows(row)
     }
 
     #[cfg(test)]
@@ -170,30 +197,30 @@ impl Snapshot {
         self.chunks_at(Default::default()).collect()
     }
 
-    pub fn max_point(&self) -> OutputPoint {
-        self.to_output_point(self.input.max_point())
+    pub fn max_point(&self) -> TabPoint {
+        self.to_output_point(self.fold_snapshot.max_point())
     }
 
-    pub fn clip_point(&self, point: OutputPoint, bias: Bias) -> OutputPoint {
+    pub fn clip_point(&self, point: TabPoint, bias: Bias) -> TabPoint {
         self.to_output_point(
-            self.input
+            self.fold_snapshot
                 .clip_point(self.to_input_point(point, bias).0, bias),
         )
     }
 
-    pub fn to_output_point(&self, input: InputPoint) -> OutputPoint {
-        let chars = self.input.chars_at(InputPoint::new(input.row(), 0));
+    pub fn to_output_point(&self, input: FoldPoint) -> TabPoint {
+        let chars = self.fold_snapshot.chars_at(FoldPoint::new(input.row(), 0));
         let expanded = Self::expand_tabs(chars, input.column() as usize, self.tab_size);
-        OutputPoint::new(input.row(), expanded as u32)
+        TabPoint::new(input.row(), expanded as u32)
     }
 
-    pub fn to_input_point(&self, output: OutputPoint, bias: Bias) -> (InputPoint, usize, usize) {
-        let chars = self.input.chars_at(InputPoint::new(output.row(), 0));
+    pub fn to_input_point(&self, output: TabPoint, bias: Bias) -> (FoldPoint, usize, usize) {
+        let chars = self.fold_snapshot.chars_at(FoldPoint::new(output.row(), 0));
         let expanded = output.column() as usize;
         let (collapsed, expanded_char_column, to_next_stop) =
             Self::collapse_tabs(chars, expanded, bias, self.tab_size);
         (
-            InputPoint::new(output.row(), collapsed as u32),
+            FoldPoint::new(output.row(), collapsed as u32),
             expanded_char_column,
             to_next_stop,
         )
@@ -265,9 +292,9 @@ impl Snapshot {
 pub struct OutputOffset(pub usize);
 
 #[derive(Copy, Clone, Debug, Default, Eq, Ord, PartialOrd, PartialEq)]
-pub struct OutputPoint(pub super::Point);
+pub struct TabPoint(pub super::Point);
 
-impl OutputPoint {
+impl TabPoint {
     pub fn new(row: u32, column: u32) -> Self {
         Self(super::Point::new(row, column))
     }
@@ -285,7 +312,7 @@ impl OutputPoint {
     }
 }
 
-impl From<super::Point> for OutputPoint {
+impl From<super::Point> for TabPoint {
     fn from(point: super::Point) -> Self {
         Self(point)
     }
@@ -293,8 +320,8 @@ impl From<super::Point> for OutputPoint {
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Edit {
-    pub old_lines: Range<OutputPoint>,
-    pub new_lines: Range<OutputPoint>,
+    pub old_lines: Range<TabPoint>,
+    pub new_lines: Range<TabPoint>,
 }
 
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
@@ -399,7 +426,7 @@ impl<'a> Iterator for Chunks<'a> {
 }
 
 pub struct HighlightedChunks<'a> {
-    fold_chunks: InputHighlightedChunks<'a>,
+    fold_chunks: HighlightedFoldChunks<'a>,
     chunk: &'a str,
     style_id: StyleId,
     column: usize,

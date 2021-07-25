@@ -247,22 +247,22 @@ impl DisplayPoint {
     pub fn to_buffer_point(self, map: &DisplayMapSnapshot, bias: Bias) -> Point {
         let unwrapped_point = map.wraps_snapshot.to_input_point(self.0);
         let unexpanded_point = map.tabs_snapshot.to_input_point(unwrapped_point, bias).0;
-        map.folds_snapshot.to_input_point(unexpanded_point)
+        unexpanded_point.to_buffer_point(&map.folds_snapshot)
     }
 
     pub fn to_buffer_offset(self, map: &DisplayMapSnapshot, bias: Bias) -> usize {
         let unwrapped_point = map.wraps_snapshot.to_input_point(self.0);
         let unexpanded_point = map.tabs_snapshot.to_input_point(unwrapped_point, bias).0;
-        map.folds_snapshot.to_input_offset(unexpanded_point)
+        unexpanded_point.to_buffer_offset(&map.folds_snapshot)
     }
 }
 
 impl Point {
     pub fn to_display_point(self, map: &DisplayMapSnapshot) -> DisplayPoint {
-        let folded_point = map.folds_snapshot.to_output_point(self);
-        let expanded_point = map.tabs_snapshot.to_output_point(folded_point);
-        let wrapped_point = map.wraps_snapshot.to_output_point(expanded_point);
-        DisplayPoint(wrapped_point)
+        let fold_point = self.to_fold_point(&map.folds_snapshot);
+        let tab_point = map.tabs_snapshot.to_output_point(fold_point);
+        let wrap_point = map.wraps_snapshot.to_output_point(tab_point);
+        DisplayPoint(wrap_point)
     }
 }
 

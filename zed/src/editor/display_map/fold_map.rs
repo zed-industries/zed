@@ -1,6 +1,6 @@
 use super::{
     buffer::{AnchorRangeExt, TextSummary},
-    Anchor, Buffer, Point as InputPoint, ToOffset,
+    Anchor, Buffer, Point, ToOffset,
 };
 use crate::{
     editor::buffer,
@@ -19,9 +19,9 @@ use std::{
 };
 
 #[derive(Copy, Clone, Debug, Default, Eq, Ord, PartialOrd, PartialEq)]
-pub struct OutputPoint(pub super::Point);
+pub struct FoldPoint(pub super::Point);
 
-impl OutputPoint {
+impl FoldPoint {
     pub fn new(row: u32, column: u32) -> Self {
         Self(super::Point::new(row, column))
     }
@@ -42,6 +42,50 @@ impl OutputPoint {
     pub fn column_mut(&mut self) -> &mut u32 {
         &mut self.0.column
     }
+
+    pub fn to_buffer_point(&self, snapshot: &Snapshot) -> Point {
+        let mut cursor = snapshot.transforms.cursor::<FoldPoint, Point>();
+        cursor.seek(self, Bias::Right, &());
+        let overshoot = self.0 - cursor.seek_start().0;
+        *cursor.sum_start() + overshoot
+    }
+
+    pub fn to_buffer_offset(&self, snapshot: &Snapshot) -> usize {
+        let mut cursor = snapshot.transforms.cursor::<FoldPoint, Point>();
+        cursor.seek(self, Bias::Right, &());
+        let overshoot = self.0 - cursor.seek_start().0;
+        snapshot
+            .buffer_snapshot
+            .to_offset(*cursor.sum_start() + overshoot)
+    }
+
+    pub fn to_offset(&self, snapshot: &Snapshot) -> FoldOffset {
+        let mut cursor = snapshot.transforms.cursor::<FoldPoint, TransformSummary>();
+        cursor.seek(self, Bias::Right, &());
+        let overshoot = self.0 - cursor.sum_start().output.lines;
+        let mut offset = cursor.sum_start().output.bytes;
+        if !overshoot.is_zero() {
+            let transform = cursor.item().expect("display point out of range");
+            assert!(transform.output_text.is_none());
+            let end_buffer_offset = snapshot
+                .buffer_snapshot
+                .to_offset(cursor.sum_start().input.lines + overshoot);
+            offset += end_buffer_offset - cursor.sum_start().input.bytes;
+        }
+        FoldOffset(offset)
+    }
+}
+
+impl Point {
+    pub fn to_fold_point(&self, snapshot: &Snapshot) -> FoldPoint {
+        let mut cursor = snapshot.transforms.cursor::<Point, FoldPoint>();
+        cursor.seek(self, Bias::Right, &());
+        let overshoot = *self - cursor.seek_start();
+        FoldPoint(cmp::min(
+            cursor.sum_start().0 + overshoot,
+            cursor.sum_end(&()).0,
+        ))
+    }
 }
 
 pub struct FoldMapWriter<'a>(&'a mut FoldMap);
@@ -51,7 +95,7 @@ impl<'a> FoldMapWriter<'a> {
         &mut self,
         ranges: impl IntoIterator<Item = Range<T>>,
         cx: &AppContext,
-    ) -> (Snapshot, Vec<Edit>) {
+    ) -> (Snapshot, Vec<FoldEdit>) {
         let mut edits = Vec::new();
         let mut folds = Vec::new();
         let buffer = self.0.buffer.read(cx).snapshot();
@@ -81,12 +125,12 @@ impl<'a> FoldMapWriter<'a> {
             new_tree
         };
 
-        consolidate_input_edits(&mut edits);
+        consolidate_buffer_edits(&mut edits);
         let edits = self.0.apply_edits(edits, cx);
         let snapshot = Snapshot {
             transforms: self.0.transforms.lock().clone(),
             folds: self.0.folds.clone(),
-            buffer: self.0.buffer.read(cx).snapshot(),
+            buffer_snapshot: self.0.buffer.read(cx).snapshot(),
             version: self.0.version.load(SeqCst),
         };
         (snapshot, edits)
@@ -96,7 +140,7 @@ impl<'a> FoldMapWriter<'a> {
         &mut self,
         ranges: impl IntoIterator<Item = Range<T>>,
         cx: &AppContext,
-    ) -> (Snapshot, Vec<Edit>) {
+    ) -> (Snapshot, Vec<FoldEdit>) {
         let mut edits = Vec::new();
         let mut fold_ixs_to_delete = Vec::new();
         let buffer = self.0.buffer.read(cx).snapshot();
@@ -129,12 +173,12 @@ impl<'a> FoldMapWriter<'a> {
             folds
         };
 
-        consolidate_input_edits(&mut edits);
+        consolidate_buffer_edits(&mut edits);
         let edits = self.0.apply_edits(edits, cx);
         let snapshot = Snapshot {
             transforms: self.0.transforms.lock().clone(),
             folds: self.0.folds.clone(),
-            buffer: self.0.buffer.read(cx).snapshot(),
+            buffer_snapshot: self.0.buffer.read(cx).snapshot(),
             version: self.0.version.load(SeqCst),
         };
         (snapshot, edits)
@@ -181,24 +225,24 @@ impl FoldMap {
         (this, snapshot)
     }
 
-    pub fn read(&self, cx: &AppContext) -> (Snapshot, Vec<Edit>) {
+    pub fn read(&self, cx: &AppContext) -> (Snapshot, Vec<FoldEdit>) {
         let edits = self.sync(cx);
         self.check_invariants(cx);
         let snapshot = Snapshot {
             transforms: self.transforms.lock().clone(),
             folds: self.folds.clone(),
-            buffer: self.buffer.read(cx).snapshot(),
+            buffer_snapshot: self.buffer.read(cx).snapshot(),
             version: self.version.load(SeqCst),
         };
         (snapshot, edits)
     }
 
-    pub fn write(&mut self, cx: &AppContext) -> (FoldMapWriter, Snapshot, Vec<Edit>) {
+    pub fn write(&mut self, cx: &AppContext) -> (FoldMapWriter, Snapshot, Vec<FoldEdit>) {
         let (snapshot, edits) = self.read(cx);
         (FoldMapWriter(self), snapshot, edits)
     }
 
-    fn sync(&self, cx: &AppContext) -> Vec<Edit> {
+    fn sync(&self, cx: &AppContext) -> Vec<FoldEdit> {
         let buffer = self.buffer.read(cx);
         let last_sync = mem::replace(
             &mut *self.last_sync.lock(),
@@ -233,16 +277,16 @@ impl FoldMap {
         }
     }
 
-    fn apply_edits(&self, input_edits: Vec<buffer::Edit>, cx: &AppContext) -> Vec<Edit> {
+    fn apply_edits(&self, buffer_edits: Vec<buffer::Edit>, cx: &AppContext) -> Vec<FoldEdit> {
         let buffer = self.buffer.read(cx).snapshot();
-        let mut input_edits_iter = input_edits.iter().cloned().peekable();
+        let mut buffer_edits_iter = buffer_edits.iter().cloned().peekable();
 
         let mut new_transforms = SumTree::new();
         let mut transforms = self.transforms.lock();
         let mut cursor = transforms.cursor::<usize, ()>();
         cursor.seek(&0, Bias::Right, &());
 
-        while let Some(mut edit) = input_edits_iter.next() {
+        while let Some(mut edit) = buffer_edits_iter.next() {
             new_transforms.push_tree(cursor.slice(&edit.old_bytes.start, Bias::Left, &()), &());
             edit.new_bytes.start -= edit.old_bytes.start - cursor.seek_start();
             edit.old_bytes.start = *cursor.seek_start();
@@ -254,12 +298,12 @@ impl FoldMap {
             loop {
                 edit.old_bytes.end = *cursor.seek_start();
 
-                if let Some(next_edit) = input_edits_iter.peek() {
+                if let Some(next_edit) = buffer_edits_iter.peek() {
                     if next_edit.old_bytes.start > edit.old_bytes.end {
                         break;
                     }
 
-                    let next_edit = input_edits_iter.next().unwrap();
+                    let next_edit = buffer_edits_iter.next().unwrap();
                     delta += next_edit.delta();
 
                     if next_edit.old_bytes.end >= edit.old_bytes.end {
@@ -382,12 +426,12 @@ impl FoldMap {
 
         drop(cursor);
 
-        let mut output_edits = Vec::with_capacity(input_edits.len());
+        let mut fold_edits = Vec::with_capacity(buffer_edits.len());
         {
-            let mut old_transforms = transforms.cursor::<usize, OutputOffset>();
-            let mut new_transforms = new_transforms.cursor::<usize, OutputOffset>();
+            let mut old_transforms = transforms.cursor::<usize, FoldOffset>();
+            let mut new_transforms = new_transforms.cursor::<usize, FoldOffset>();
 
-            for mut edit in input_edits {
+            for mut edit in buffer_edits {
                 old_transforms.seek(&edit.old_bytes.start, Bias::Left, &());
                 if old_transforms.item().map_or(false, |t| t.is_fold()) {
                     edit.old_bytes.start = *old_transforms.seek_start();
@@ -418,18 +462,18 @@ impl FoldMap {
                 let new_end = new_transforms.sum_start().0
                     + (edit.new_bytes.end - new_transforms.seek_start());
 
-                output_edits.push(Edit {
-                    old_bytes: OutputOffset(old_start)..OutputOffset(old_end),
-                    new_bytes: OutputOffset(new_start)..OutputOffset(new_end),
+                fold_edits.push(FoldEdit {
+                    old_bytes: FoldOffset(old_start)..FoldOffset(old_end),
+                    new_bytes: FoldOffset(new_start)..FoldOffset(new_end),
                 });
             }
 
-            consolidate_output_edits(&mut output_edits);
+            consolidate_fold_edits(&mut fold_edits);
         }
 
         *transforms = new_transforms;
         self.version.fetch_add(1, SeqCst);
-        output_edits
+        fold_edits
     }
 }
 
@@ -437,20 +481,20 @@ impl FoldMap {
 pub struct Snapshot {
     transforms: SumTree<Transform>,
     folds: SumTree<Fold>,
-    buffer: buffer::Snapshot,
+    buffer_snapshot: buffer::Snapshot,
     pub version: usize,
 }
 
 impl Snapshot {
     #[cfg(test)]
     pub fn text(&self) -> String {
-        self.chunks_at(OutputOffset(0)).collect()
+        self.chunks_at(FoldOffset(0)).collect()
     }
 
-    pub fn text_summary_for_range(&self, range: Range<OutputPoint>) -> TextSummary {
+    pub fn text_summary_for_range(&self, range: Range<FoldPoint>) -> TextSummary {
         let mut summary = TextSummary::default();
 
-        let mut cursor = self.transforms.cursor::<OutputPoint, InputPoint>();
+        let mut cursor = self.transforms.cursor::<FoldPoint, Point>();
         cursor.seek(&range.start, Bias::Right, &());
         if let Some(transform) = cursor.item() {
             let start_in_transform = range.start.0 - cursor.seek_start().0;
@@ -462,9 +506,11 @@ impl Snapshot {
                         [start_in_transform.column as usize..end_in_transform.column as usize],
                 );
             } else {
-                let input_start = *cursor.sum_start() + start_in_transform;
-                let input_end = *cursor.sum_start() + end_in_transform;
-                summary = self.buffer.text_summary_for_range(input_start..input_end);
+                let buffer_start = *cursor.sum_start() + start_in_transform;
+                let buffer_end = *cursor.sum_start() + end_in_transform;
+                summary = self
+                    .buffer_snapshot
+                    .text_summary_for_range(buffer_start..buffer_end);
             }
         }
 
@@ -478,9 +524,11 @@ impl Snapshot {
                 if let Some(output_text) = transform.output_text {
                     summary += TextSummary::from(&output_text[..end_in_transform.column as usize]);
                 } else {
-                    let input_start = *cursor.sum_start();
-                    let input_end = *cursor.sum_start() + end_in_transform;
-                    summary += self.buffer.text_summary_for_range(input_start..input_end);
+                    let buffer_start = *cursor.sum_start();
+                    let buffer_end = *cursor.sum_start() + end_in_transform;
+                    summary += self
+                        .buffer_snapshot
+                        .text_summary_for_range(buffer_start..buffer_end);
                 }
             }
         }
@@ -488,17 +536,17 @@ impl Snapshot {
         summary
     }
 
-    pub fn len(&self) -> OutputOffset {
-        OutputOffset(self.transforms.summary().output.bytes)
+    pub fn len(&self) -> FoldOffset {
+        FoldOffset(self.transforms.summary().output.bytes)
     }
 
     #[cfg(test)]
     pub fn line_len(&self, row: u32) -> u32 {
-        let line_start = self.to_output_offset(OutputPoint::new(row, 0)).0;
+        let line_start = FoldPoint::new(row, 0).to_offset(self).0;
         let line_end = if row >= self.max_point().row() {
             self.len().0
         } else {
-            self.to_output_offset(OutputPoint::new(row + 1, 0)).0 - 1
+            FoldPoint::new(row + 1, 0).to_offset(self).0 - 1
         };
         (line_end - line_start) as u32
     }
@@ -508,17 +556,14 @@ impl Snapshot {
             panic!("invalid display row {}", start_row);
         }
 
-        let output_point = OutputPoint::new(start_row, 0);
+        let fold_point = FoldPoint::new(start_row, 0);
         let mut cursor = self.transforms.cursor();
-        cursor.seek(&output_point, Bias::Left, &());
-        BufferRows {
-            output_point,
-            cursor,
-        }
+        cursor.seek(&fold_point, Bias::Left, &());
+        BufferRows { fold_point, cursor }
     }
 
-    pub fn max_point(&self) -> OutputPoint {
-        OutputPoint(self.transforms.summary().output.lines)
+    pub fn max_point(&self) -> FoldPoint {
+        FoldPoint(self.transforms.summary().output.lines)
     }
 
     #[cfg(test)]
@@ -533,10 +578,10 @@ impl Snapshot {
     where
         T: ToOffset,
     {
-        let mut folds = intersecting_folds(&self.buffer, &self.folds, range);
+        let mut folds = intersecting_folds(&self.buffer_snapshot, &self.folds, range);
         iter::from_fn(move || {
             let item = folds.item().map(|f| &f.0);
-            folds.next(&self.buffer);
+            folds.next(&self.buffer_snapshot);
             item
         })
     }
@@ -545,15 +590,15 @@ impl Snapshot {
     where
         T: ToOffset,
     {
-        let offset = offset.to_offset(&self.buffer);
+        let offset = offset.to_offset(&self.buffer_snapshot);
         let mut cursor = self.transforms.cursor::<usize, ()>();
         cursor.seek(&offset, Bias::Right, &());
         cursor.item().map_or(false, |t| t.output_text.is_some())
     }
 
     pub fn is_line_folded(&self, output_row: u32) -> bool {
-        let mut cursor = self.transforms.cursor::<OutputPoint, ()>();
-        cursor.seek(&OutputPoint::new(output_row, 0), Bias::Right, &());
+        let mut cursor = self.transforms.cursor::<FoldPoint, ()>();
+        cursor.seek(&FoldPoint::new(output_row, 0), Bias::Right, &());
         while let Some(transform) = cursor.item() {
             if transform.output_text.is_some() {
                 return true;
@@ -567,133 +612,96 @@ impl Snapshot {
         false
     }
 
-    pub fn chunks_at(&self, offset: OutputOffset) -> Chunks {
-        let mut transform_cursor = self.transforms.cursor::<OutputOffset, usize>();
+    pub fn chunks_at(&self, offset: FoldOffset) -> Chunks {
+        let mut transform_cursor = self.transforms.cursor::<FoldOffset, usize>();
         transform_cursor.seek(&offset, Bias::Right, &());
         let overshoot = offset.0 - transform_cursor.seek_start().0;
-        let input_offset = transform_cursor.sum_start() + overshoot;
+        let buffer_offset = transform_cursor.sum_start() + overshoot;
         Chunks {
             transform_cursor,
-            input_offset,
-            input_chunks: self.buffer.text_for_range(input_offset..self.buffer.len()),
+            buffer_offset,
+            buffer_chunks: self
+                .buffer_snapshot
+                .text_for_range(buffer_offset..self.buffer_snapshot.len()),
         }
     }
 
-    pub fn highlighted_chunks(&mut self, range: Range<OutputOffset>) -> HighlightedChunks {
-        let mut transform_cursor = self.transforms.cursor::<OutputOffset, usize>();
+    pub fn highlighted_chunks(&mut self, range: Range<FoldOffset>) -> HighlightedChunks {
+        let mut transform_cursor = self.transforms.cursor::<FoldOffset, usize>();
 
         transform_cursor.seek(&range.end, Bias::Right, &());
         let overshoot = range.end.0 - transform_cursor.seek_start().0;
-        let input_end = transform_cursor.sum_start() + overshoot;
+        let buffer_end = transform_cursor.sum_start() + overshoot;
 
         transform_cursor.seek(&range.start, Bias::Right, &());
         let overshoot = range.start.0 - transform_cursor.seek_start().0;
-        let input_start = transform_cursor.sum_start() + overshoot;
+        let buffer_start = transform_cursor.sum_start() + overshoot;
 
         HighlightedChunks {
             transform_cursor,
-            input_offset: input_start,
-            input_chunks: self
-                .buffer
-                .highlighted_text_for_range(input_start..input_end),
-            input_chunk: None,
+            buffer_offset: buffer_start,
+            buffer_chunks: self
+                .buffer_snapshot
+                .highlighted_text_for_range(buffer_start..buffer_end),
+            buffer_chunk: None,
         }
     }
 
-    pub fn chars_at<'a>(&'a self, point: OutputPoint) -> impl Iterator<Item = char> + 'a {
-        let offset = self.to_output_offset(point);
+    pub fn chars_at<'a>(&'a self, point: FoldPoint) -> impl Iterator<Item = char> + 'a {
+        let offset = point.to_offset(self);
         self.chunks_at(offset).flat_map(str::chars)
     }
 
-    pub fn to_output_offset(&self, point: OutputPoint) -> OutputOffset {
-        let mut cursor = self.transforms.cursor::<OutputPoint, TransformSummary>();
-        cursor.seek(&point, Bias::Right, &());
-        let overshoot = point.0 - cursor.sum_start().output.lines;
-        let mut offset = cursor.sum_start().output.bytes;
-        if !overshoot.is_zero() {
-            let transform = cursor.item().expect("display point out of range");
-            assert!(transform.output_text.is_none());
-            let end_input_offset = self
-                .buffer
-                .to_offset(cursor.sum_start().input.lines + overshoot);
-            offset += end_input_offset - cursor.sum_start().input.bytes;
-        }
-        OutputOffset(offset)
-    }
-
-    pub fn to_input_offset(&self, point: OutputPoint) -> usize {
-        let mut cursor = self.transforms.cursor::<OutputPoint, InputPoint>();
-        cursor.seek(&point, Bias::Right, &());
-        let overshoot = point.0 - cursor.seek_start().0;
-        self.buffer.to_offset(*cursor.sum_start() + overshoot)
-    }
-
-    pub fn to_input_point(&self, output_point: OutputPoint) -> InputPoint {
-        let mut cursor = self.transforms.cursor::<OutputPoint, InputPoint>();
-        cursor.seek(&output_point, Bias::Right, &());
-        let overshoot = output_point.0 - cursor.seek_start().0;
-        *cursor.sum_start() + overshoot
-    }
-
-    pub fn to_output_point(&self, point: InputPoint) -> OutputPoint {
-        let mut cursor = self.transforms.cursor::<InputPoint, OutputPoint>();
-        cursor.seek(&point, Bias::Right, &());
-        let overshoot = point - cursor.seek_start();
-        OutputPoint(cmp::min(
-            cursor.sum_start().0 + overshoot,
-            cursor.sum_end(&()).0,
-        ))
-    }
-
     #[cfg(test)]
-    pub fn clip_offset(&self, offset: OutputOffset, bias: Bias) -> OutputOffset {
-        let mut cursor = self.transforms.cursor::<OutputOffset, usize>();
+    pub fn clip_offset(&self, offset: FoldOffset, bias: Bias) -> FoldOffset {
+        let mut cursor = self.transforms.cursor::<FoldOffset, usize>();
         cursor.seek(&offset, Bias::Right, &());
         if let Some(transform) = cursor.item() {
             let transform_start = cursor.seek_start().0;
             if transform.output_text.is_some() {
                 if offset.0 == transform_start || matches!(bias, Bias::Left) {
-                    OutputOffset(transform_start)
+                    FoldOffset(transform_start)
                 } else {
-                    OutputOffset(cursor.seek_end(&()).0)
+                    FoldOffset(cursor.seek_end(&()).0)
                 }
             } else {
                 let overshoot = offset.0 - transform_start;
-                let input_offset = cursor.sum_start() + overshoot;
-                let clipped_input_offset = self.buffer.clip_offset(input_offset, bias);
-                OutputOffset(
-                    (offset.0 as isize + (clipped_input_offset as isize - input_offset as isize))
+                let buffer_offset = cursor.sum_start() + overshoot;
+                let clipped_buffer_offset = self.buffer_snapshot.clip_offset(buffer_offset, bias);
+                FoldOffset(
+                    (offset.0 as isize + (clipped_buffer_offset as isize - buffer_offset as isize))
                         as usize,
                 )
             }
         } else {
-            OutputOffset(self.transforms.summary().output.bytes)
+            FoldOffset(self.transforms.summary().output.bytes)
         }
     }
 
-    pub fn clip_point(&self, point: OutputPoint, bias: Bias) -> OutputPoint {
-        let mut cursor = self.transforms.cursor::<OutputPoint, InputPoint>();
+    pub fn clip_point(&self, point: FoldPoint, bias: Bias) -> FoldPoint {
+        let mut cursor = self.transforms.cursor::<FoldPoint, Point>();
         cursor.seek(&point, Bias::Right, &());
         if let Some(transform) = cursor.item() {
             let transform_start = cursor.seek_start().0;
             if transform.output_text.is_some() {
                 if point.0 == transform_start || matches!(bias, Bias::Left) {
-                    OutputPoint(transform_start)
+                    FoldPoint(transform_start)
                 } else {
-                    OutputPoint(cursor.seek_end(&()).0)
+                    FoldPoint(cursor.seek_end(&()).0)
                 }
             } else {
                 let overshoot = point.0 - transform_start;
-                let input_position = *cursor.sum_start() + overshoot;
-                let clipped_input_position = self.buffer.clip_point(input_position, bias);
-                OutputPoint::new(
+                let buffer_position = *cursor.sum_start() + overshoot;
+                let clipped_buffer_position =
+                    self.buffer_snapshot.clip_point(buffer_position, bias);
+                FoldPoint::new(
                     point.row(),
-                    ((point.column() as i32) + clipped_input_position.column as i32
-                        - input_position.column as i32) as u32,
+                    ((point.column() as i32) + clipped_buffer_position.column as i32
+                        - buffer_position.column as i32) as u32,
                 )
             }
         } else {
-            OutputPoint(self.transforms.summary().output.lines)
+            FoldPoint(self.transforms.summary().output.lines)
         }
     }
 }
@@ -717,7 +725,7 @@ where
     )
 }
 
-fn consolidate_input_edits(edits: &mut Vec<buffer::Edit>) {
+fn consolidate_buffer_edits(edits: &mut Vec<buffer::Edit>) {
     edits.sort_unstable_by(|a, b| {
         a.old_bytes
             .start
@@ -740,7 +748,7 @@ fn consolidate_input_edits(edits: &mut Vec<buffer::Edit>) {
     }
 }
 
-fn consolidate_output_edits(edits: &mut Vec<Edit>) {
+fn consolidate_fold_edits(edits: &mut Vec<FoldEdit>) {
     edits.sort_unstable_by(|a, b| {
         a.old_bytes
             .start
@@ -894,15 +902,15 @@ impl<'a> sum_tree::Dimension<'a, FoldSummary> for usize {
 }
 
 pub struct BufferRows<'a> {
-    cursor: Cursor<'a, Transform, OutputPoint, InputPoint>,
-    output_point: OutputPoint,
+    cursor: Cursor<'a, Transform, FoldPoint, Point>,
+    fold_point: FoldPoint,
 }
 
 impl<'a> Iterator for BufferRows<'a> {
     type Item = u32;
 
     fn next(&mut self) -> Option<Self::Item> {
-        while self.output_point > self.cursor.seek_end(&()) {
+        while self.fold_point > self.cursor.seek_end(&()) {
             self.cursor.next(&());
             if self.cursor.item().is_none() {
                 // TODO: Return a bool from next?
@@ -911,10 +919,10 @@ impl<'a> Iterator for BufferRows<'a> {
         }
 
         if self.cursor.item().is_some() {
-            let overshoot = self.output_point.0 - self.cursor.seek_start().0;
-            let input_point = *self.cursor.sum_start() + overshoot;
-            *self.output_point.row_mut() += 1;
-            Some(input_point.row)
+            let overshoot = self.fold_point.0 - self.cursor.seek_start().0;
+            let buffer_point = *self.cursor.sum_start() + overshoot;
+            *self.fold_point.row_mut() += 1;
+            Some(buffer_point.row)
         } else {
             None
         }
@@ -922,9 +930,9 @@ impl<'a> Iterator for BufferRows<'a> {
 }
 
 pub struct Chunks<'a> {
-    transform_cursor: Cursor<'a, Transform, OutputOffset, usize>,
-    input_chunks: buffer::Chunks<'a>,
-    input_offset: usize,
+    transform_cursor: Cursor<'a, Transform, FoldOffset, usize>,
+    buffer_chunks: buffer::Chunks<'a>,
+    buffer_offset: usize,
 }
 
 impl<'a> Iterator for Chunks<'a> {
@@ -940,10 +948,10 @@ impl<'a> Iterator for Chunks<'a> {
         // If we're in a fold, then return the fold's display text and
         // advance the transform and buffer cursors to the end of the fold.
         if let Some(output_text) = transform.output_text {
-            self.input_offset += transform.summary.input.bytes;
-            self.input_chunks.seek(self.input_offset);
+            self.buffer_offset += transform.summary.input.bytes;
+            self.buffer_chunks.seek(self.buffer_offset);
 
-            while self.input_offset >= self.transform_cursor.sum_end(&())
+            while self.buffer_offset >= self.transform_cursor.sum_end(&())
                 && self.transform_cursor.item().is_some()
             {
                 self.transform_cursor.next(&());
@@ -953,20 +961,20 @@ impl<'a> Iterator for Chunks<'a> {
         }
 
         // Otherwise, take a chunk from the buffer's text.
-        if let Some(mut chunk) = self.input_chunks.peek() {
-            let offset_in_chunk = self.input_offset - self.input_chunks.offset();
+        if let Some(mut chunk) = self.buffer_chunks.peek() {
+            let offset_in_chunk = self.buffer_offset - self.buffer_chunks.offset();
             chunk = &chunk[offset_in_chunk..];
 
             // Truncate the chunk so that it ends at the next fold.
-            let region_end = self.transform_cursor.sum_end(&()) - self.input_offset;
+            let region_end = self.transform_cursor.sum_end(&()) - self.buffer_offset;
             if chunk.len() >= region_end {
                 chunk = &chunk[0..region_end];
                 self.transform_cursor.next(&());
             } else {
-                self.input_chunks.next();
+                self.buffer_chunks.next();
             }
 
-            self.input_offset += chunk.len();
+            self.buffer_offset += chunk.len();
             return Some(chunk);
         }
 
@@ -975,10 +983,10 @@ impl<'a> Iterator for Chunks<'a> {
 }
 
 pub struct HighlightedChunks<'a> {
-    transform_cursor: Cursor<'a, Transform, OutputOffset, usize>,
-    input_chunks: buffer::HighlightedChunks<'a>,
-    input_chunk: Option<(usize, &'a str, StyleId)>,
-    input_offset: usize,
+    transform_cursor: Cursor<'a, Transform, FoldOffset, usize>,
+    buffer_chunks: buffer::HighlightedChunks<'a>,
+    buffer_chunk: Option<(usize, &'a str, StyleId)>,
+    buffer_offset: usize,
 }
 
 impl<'a> Iterator for HighlightedChunks<'a> {
@@ -994,11 +1002,11 @@ impl<'a> Iterator for HighlightedChunks<'a> {
         // If we're in a fold, then return the fold's display text and
         // advance the transform and buffer cursors to the end of the fold.
         if let Some(output_text) = transform.output_text {
-            self.input_chunk.take();
-            self.input_offset += transform.summary.input.bytes;
-            self.input_chunks.seek(self.input_offset);
+            self.buffer_chunk.take();
+            self.buffer_offset += transform.summary.input.bytes;
+            self.buffer_chunks.seek(self.buffer_offset);
 
-            while self.input_offset >= self.transform_cursor.sum_end(&())
+            while self.buffer_offset >= self.transform_cursor.sum_end(&())
                 && self.transform_cursor.item().is_some()
             {
                 self.transform_cursor.next(&());
@@ -1008,29 +1016,29 @@ impl<'a> Iterator for HighlightedChunks<'a> {
         }
 
         // Retrieve a chunk from the current location in the buffer.
-        if self.input_chunk.is_none() {
-            let chunk_offset = self.input_chunks.offset();
-            self.input_chunk = self
-                .input_chunks
+        if self.buffer_chunk.is_none() {
+            let chunk_offset = self.buffer_chunks.offset();
+            self.buffer_chunk = self
+                .buffer_chunks
                 .next()
                 .map(|(chunk, capture_ix)| (chunk_offset, chunk, capture_ix));
         }
 
         // Otherwise, take a chunk from the buffer's text.
-        if let Some((chunk_offset, mut chunk, capture_ix)) = self.input_chunk {
-            let offset_in_chunk = self.input_offset - chunk_offset;
+        if let Some((chunk_offset, mut chunk, capture_ix)) = self.buffer_chunk {
+            let offset_in_chunk = self.buffer_offset - chunk_offset;
             chunk = &chunk[offset_in_chunk..];
 
             // Truncate the chunk so that it ends at the next fold.
-            let region_end = self.transform_cursor.sum_end(&()) - self.input_offset;
+            let region_end = self.transform_cursor.sum_end(&()) - self.buffer_offset;
             if chunk.len() >= region_end {
                 chunk = &chunk[0..region_end];
                 self.transform_cursor.next(&());
             } else {
-                self.input_chunk.take();
+                self.buffer_chunk.take();
             }
 
-            self.input_offset += chunk.len();
+            self.buffer_offset += chunk.len();
             return Some((chunk, capture_ix));
         }
 
@@ -1038,39 +1046,37 @@ impl<'a> Iterator for HighlightedChunks<'a> {
     }
 }
 
-impl<'a> sum_tree::Dimension<'a, TransformSummary> for OutputPoint {
+impl<'a> sum_tree::Dimension<'a, TransformSummary> for FoldPoint {
     fn add_summary(&mut self, summary: &'a TransformSummary, _: &()) {
         self.0 += &summary.output.lines;
     }
 }
 
 #[derive(Copy, Clone, Debug, Default, Eq, Ord, PartialOrd, PartialEq)]
-pub struct OutputOffset(pub usize);
+pub struct FoldOffset(pub usize);
 
-impl OutputOffset {
-    pub fn to_point(&self, snapshot: &Snapshot) -> OutputPoint {
-        let mut cursor = snapshot
-            .transforms
-            .cursor::<OutputOffset, TransformSummary>();
+impl FoldOffset {
+    pub fn to_point(&self, snapshot: &Snapshot) -> FoldPoint {
+        let mut cursor = snapshot.transforms.cursor::<FoldOffset, TransformSummary>();
         cursor.seek(self, Bias::Right, &());
         let overshoot = if cursor.item().map_or(true, |t| t.is_fold()) {
-            InputPoint::new(0, (self.0 - cursor.seek_start().0) as u32)
+            Point::new(0, (self.0 - cursor.seek_start().0) as u32)
         } else {
-            let input_offset = cursor.sum_start().input.bytes + self.0 - cursor.seek_start().0;
-            let input_point = snapshot.buffer.to_point(input_offset);
-            input_point - cursor.sum_start().input.lines
+            let buffer_offset = cursor.sum_start().input.bytes + self.0 - cursor.seek_start().0;
+            let buffer_point = snapshot.buffer_snapshot.to_point(buffer_offset);
+            buffer_point - cursor.sum_start().input.lines
         };
-        OutputPoint(cursor.sum_start().output.lines + overshoot)
+        FoldPoint(cursor.sum_start().output.lines + overshoot)
     }
 }
 
-impl<'a> sum_tree::Dimension<'a, TransformSummary> for OutputOffset {
+impl<'a> sum_tree::Dimension<'a, TransformSummary> for FoldOffset {
     fn add_summary(&mut self, summary: &'a TransformSummary, _: &()) {
         self.0 += &summary.output.bytes;
     }
 }
 
-impl<'a> sum_tree::Dimension<'a, TransformSummary> for InputPoint {
+impl<'a> sum_tree::Dimension<'a, TransformSummary> for Point {
     fn add_summary(&mut self, summary: &'a TransformSummary, _: &()) {
         *self += &summary.input.lines;
     }
@@ -1083,13 +1089,13 @@ impl<'a> sum_tree::Dimension<'a, TransformSummary> for usize {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub struct Edit {
-    pub old_bytes: Range<OutputOffset>,
-    pub new_bytes: Range<OutputOffset>,
+pub struct FoldEdit {
+    pub old_bytes: Range<FoldOffset>,
+    pub new_bytes: Range<FoldOffset>,
 }
 
 #[cfg(test)]
-impl Edit {
+impl FoldEdit {
     pub fn delta(&self) -> isize {
         self.inserted_bytes() as isize - self.deleted_bytes() as isize
     }
@@ -1118,8 +1124,8 @@ mod tests {
         let (mut writer, _, _) = map.write(cx.as_ref());
         let (snapshot2, edits) = writer.fold(
             vec![
-                InputPoint::new(0, 2)..InputPoint::new(2, 2),
-                InputPoint::new(2, 4)..InputPoint::new(4, 1),
+                Point::new(0, 2)..Point::new(2, 2),
+                Point::new(2, 4)..Point::new(4, 1),
             ],
             cx.as_ref(),
         );
@@ -1127,13 +1133,13 @@ mod tests {
         assert_eq!(
             edits,
             &[
-                Edit {
-                    old_bytes: OutputOffset(2)..OutputOffset(16),
-                    new_bytes: OutputOffset(2)..OutputOffset(5),
+                FoldEdit {
+                    old_bytes: FoldOffset(2)..FoldOffset(16),
+                    new_bytes: FoldOffset(2)..FoldOffset(5),
                 },
-                Edit {
-                    old_bytes: OutputOffset(18)..OutputOffset(29),
-                    new_bytes: OutputOffset(7)..OutputOffset(10)
+                FoldEdit {
+                    old_bytes: FoldOffset(18)..FoldOffset(29),
+                    new_bytes: FoldOffset(7)..FoldOffset(10)
                 },
             ]
         );
@@ -1141,8 +1147,8 @@ mod tests {
         buffer.update(cx, |buffer, cx| {
             buffer.edit(
                 vec![
-                    InputPoint::new(0, 0)..InputPoint::new(0, 1),
-                    InputPoint::new(2, 3)..InputPoint::new(2, 3),
+                    Point::new(0, 0)..Point::new(0, 1),
+                    Point::new(2, 3)..Point::new(2, 3),
                 ],
                 "123",
                 cx,
@@ -1153,32 +1159,25 @@ mod tests {
         assert_eq!(
             edits,
             &[
-                Edit {
-                    old_bytes: OutputOffset(0)..OutputOffset(1),
-                    new_bytes: OutputOffset(0)..OutputOffset(3),
+                FoldEdit {
+                    old_bytes: FoldOffset(0)..FoldOffset(1),
+                    new_bytes: FoldOffset(0)..FoldOffset(3),
                 },
-                Edit {
-                    old_bytes: OutputOffset(6)..OutputOffset(6),
-                    new_bytes: OutputOffset(8)..OutputOffset(11),
+                FoldEdit {
+                    old_bytes: FoldOffset(6)..FoldOffset(6),
+                    new_bytes: FoldOffset(8)..FoldOffset(11),
                 },
             ]
         );
 
         buffer.update(cx, |buffer, cx| {
-            buffer.edit(
-                vec![InputPoint::new(2, 6)..InputPoint::new(4, 3)],
-                "456",
-                cx,
-            )
+            buffer.edit(vec![Point::new(2, 6)..Point::new(4, 3)], "456", cx)
         });
         let (snapshot4, _) = map.read(cx.as_ref());
         assert_eq!(snapshot4.text(), "123a…c123456eee");
 
         let (mut writer, _, _) = map.write(cx.as_ref());
-        writer.unfold(
-            Some(InputPoint::new(0, 4)..InputPoint::new(0, 5)),
-            cx.as_ref(),
-        );
+        writer.unfold(Some(Point::new(0, 4)..Point::new(0, 5)), cx.as_ref());
         let (snapshot5, _) = map.read(cx.as_ref());
         assert_eq!(snapshot5.text(), "123aaaaa\nbbbbbb\nccc123456eee");
     }
@@ -1231,10 +1230,10 @@ mod tests {
         let (mut writer, _, _) = map.write(cx.as_ref());
         writer.fold(
             vec![
-                InputPoint::new(0, 2)..InputPoint::new(2, 2),
-                InputPoint::new(0, 4)..InputPoint::new(1, 0),
-                InputPoint::new(1, 2)..InputPoint::new(3, 2),
-                InputPoint::new(3, 1)..InputPoint::new(4, 1),
+                Point::new(0, 2)..Point::new(2, 2),
+                Point::new(0, 4)..Point::new(1, 0),
+                Point::new(1, 2)..Point::new(3, 2),
+                Point::new(3, 1)..Point::new(4, 1),
             ],
             cx.as_ref(),
         );
@@ -1250,8 +1249,8 @@ mod tests {
         let (mut writer, _, _) = map.write(cx.as_ref());
         writer.fold(
             vec![
-                InputPoint::new(0, 2)..InputPoint::new(2, 2),
-                InputPoint::new(3, 1)..InputPoint::new(4, 1),
+                Point::new(0, 2)..Point::new(2, 2),
+                Point::new(3, 1)..Point::new(4, 1),
             ],
             cx.as_ref(),
         );
@@ -1259,7 +1258,7 @@ mod tests {
         assert_eq!(snapshot.text(), "aa…cccc\nd…eeeee");
 
         buffer.update(cx, |buffer, cx| {
-            buffer.edit(Some(InputPoint::new(2, 2)..InputPoint::new(3, 1)), "", cx)
+            buffer.edit(Some(Point::new(2, 2)..Point::new(3, 1)), "", cx)
         });
         let (snapshot, _) = map.read(cx.as_ref());
         assert_eq!(snapshot.text(), "aa…eeeee");
@@ -1274,23 +1273,23 @@ mod tests {
         let (mut writer, _, _) = map.write(cx.as_ref());
         writer.fold(
             vec![
-                InputPoint::new(0, 2)..InputPoint::new(2, 2),
-                InputPoint::new(0, 4)..InputPoint::new(1, 0),
-                InputPoint::new(1, 2)..InputPoint::new(3, 2),
-                InputPoint::new(3, 1)..InputPoint::new(4, 1),
+                Point::new(0, 2)..Point::new(2, 2),
+                Point::new(0, 4)..Point::new(1, 0),
+                Point::new(1, 2)..Point::new(3, 2),
+                Point::new(3, 1)..Point::new(4, 1),
             ],
             cx.as_ref(),
         );
         let (snapshot, _) = map.read(cx.as_ref());
         let fold_ranges = snapshot
-            .folds_in_range(InputPoint::new(1, 0)..InputPoint::new(1, 3))
+            .folds_in_range(Point::new(1, 0)..Point::new(1, 3))
             .map(|fold| fold.start.to_point(buffer)..fold.end.to_point(buffer))
             .collect::<Vec<_>>();
         assert_eq!(
             fold_ranges,
             vec![
-                InputPoint::new(0, 2)..InputPoint::new(2, 2),
-                InputPoint::new(1, 2)..InputPoint::new(3, 2)
+                Point::new(0, 2)..Point::new(2, 2),
+                Point::new(1, 2)..Point::new(3, 2)
             ]
         );
     }
@@ -1374,18 +1373,18 @@ mod tests {
 
                 let buffer = map.buffer.read(cx).snapshot();
                 let mut expected_text: String = buffer.text().into();
-                let mut expected_input_rows = Vec::new();
+                let mut expected_buffer_rows = Vec::new();
                 let mut next_row = buffer.max_point().row;
                 for fold_range in map.merged_fold_ranges(cx.as_ref()).into_iter().rev() {
                     let fold_start = buffer.point_for_offset(fold_range.start).unwrap();
                     let fold_end = buffer.point_for_offset(fold_range.end).unwrap();
-                    expected_input_rows.extend((fold_end.row + 1..=next_row).rev());
+                    expected_buffer_rows.extend((fold_end.row + 1..=next_row).rev());
                     next_row = fold_start.row;
 
                     expected_text.replace_range(fold_range.start..fold_range.end, "…");
                 }
-                expected_input_rows.extend((0..=next_row).rev());
-                expected_input_rows.reverse();
+                expected_buffer_rows.extend((0..=next_row).rev());
+                expected_buffer_rows.reverse();
 
                 let (snapshot, edits) = map.read(cx.as_ref());
                 assert_eq!(snapshot.text(), expected_text);
@@ -1403,75 +1402,71 @@ mod tests {
                     .unwrap()
                     .chars()
                     .count();
-                let mut output_point = OutputPoint::new(0, 0);
-                let mut output_offset = OutputOffset(0);
+                let mut fold_point = FoldPoint::new(0, 0);
+                let mut fold_offset = FoldOffset(0);
                 let mut char_column = 0;
                 for c in expected_text.chars() {
-                    let input_point = snapshot.to_input_point(output_point);
-                    let input_offset = input_point.to_offset(&buffer);
+                    let buffer_point = fold_point.to_buffer_point(&snapshot);
+                    let buffer_offset = buffer_point.to_offset(&buffer);
                     assert_eq!(
-                        snapshot.to_output_point(input_point),
-                        output_point,
-                        "to_output_point({:?})",
-                        input_point,
+                        buffer_point.to_fold_point(&snapshot),
+                        fold_point,
+                        "buffer_Point.to_fold_point({:?})",
+                        buffer_point,
                     );
                     assert_eq!(
-                        snapshot.to_input_offset(output_point),
-                        input_offset,
-                        "to_input_offset({:?})",
-                        output_point,
+                        fold_point.to_buffer_offset(&snapshot),
+                        buffer_offset,
+                        "fold_point.to_buffer_offset({:?})",
+                        fold_point,
                     );
                     assert_eq!(
-                        snapshot.to_output_offset(output_point),
-                        output_offset,
-                        "to_output_offset({:?})",
-                        output_point,
+                        fold_point.to_offset(&snapshot),
+                        fold_offset,
+                        "fold_point.to_offset({:?})",
+                        fold_point,
                     );
 
                     if c == '\n' {
-                        *output_point.row_mut() += 1;
-                        *output_point.column_mut() = 0;
+                        *fold_point.row_mut() += 1;
+                        *fold_point.column_mut() = 0;
                         char_column = 0;
                     } else {
-                        *output_point.column_mut() += c.len_utf8() as u32;
+                        *fold_point.column_mut() += c.len_utf8() as u32;
                         char_column += 1;
                     }
-                    output_offset.0 += c.len_utf8();
+                    fold_offset.0 += c.len_utf8();
                     if char_column > longest_char_column {
                         panic!(
                             "invalid longest row {:?} (chars {}), found row {:?} (chars: {})",
                             longest_row,
                             longest_char_column,
-                            output_point.row(),
+                            fold_point.row(),
                             char_column
                         );
                     }
                 }
 
                 for _ in 0..5 {
-                    let offset = snapshot.clip_offset(
-                        OutputOffset(rng.gen_range(0..=snapshot.len().0)),
-                        Bias::Right,
-                    );
+                    let offset = snapshot
+                        .clip_offset(FoldOffset(rng.gen_range(0..=snapshot.len().0)), Bias::Right);
                     assert_eq!(
                         snapshot.chunks_at(offset).collect::<String>(),
                         &expected_text[offset.0..],
                     );
                 }
 
-                for (idx, input_row) in expected_input_rows.iter().enumerate() {
-                    let output_row = snapshot
-                        .to_output_point(InputPoint::new(*input_row, 0))
-                        .row();
+                for (idx, buffer_row) in expected_buffer_rows.iter().enumerate() {
+                    let fold_row = Point::new(*buffer_row, 0).to_fold_point(&snapshot).row();
                     assert_eq!(
-                        snapshot.buffer_rows(output_row).collect::<Vec<_>>(),
-                        expected_input_rows[idx..],
+                        snapshot.buffer_rows(fold_row).collect::<Vec<_>>(),
+                        expected_buffer_rows[idx..],
                     );
                 }
 
                 for fold_range in map.merged_fold_ranges(cx.as_ref()) {
-                    let output_point = snapshot.to_output_point(fold_range.start.to_point(&buffer));
-                    assert!(snapshot.is_line_folded(output_point.row()));
+                    let fold_point = fold_range.start.to_point(&buffer).to_fold_point(&snapshot);
+                    assert!(snapshot.is_line_folded(fold_point.row()));
                 }
 
                 for _ in 0..5 {
@@ -1506,15 +1501,15 @@ mod tests {
                     let end_row = rng.gen_range(0..=snapshot.max_point().row());
                     let end_column = rng.gen_range(0..=snapshot.line_len(end_row));
                     let mut start =
-                        snapshot.clip_point(OutputPoint::new(start_row, start_column), Bias::Left);
+                        snapshot.clip_point(FoldPoint::new(start_row, start_column), Bias::Left);
                     let mut end =
-                        snapshot.clip_point(OutputPoint::new(end_row, end_column), Bias::Right);
+                        snapshot.clip_point(FoldPoint::new(end_row, end_column), Bias::Right);
                     if start > end {
                         mem::swap(&mut start, &mut end);
                     }
 
                     let lines = start..end;
-                    let bytes = snapshot.to_output_offset(start)..snapshot.to_output_offset(end);
+                    let bytes = start.to_offset(&snapshot)..end.to_offset(&snapshot);
                     assert_eq!(
                         snapshot.text_summary_for_range(lines),
                         TextSummary::from(&text[bytes.start.0..bytes.end.0])
@@ -1541,7 +1536,7 @@ mod tests {
     }
 
     #[gpui::test]
-    fn test_input_rows(cx: &mut gpui::MutableAppContext) {
+    fn test_buffer_rows(cx: &mut gpui::MutableAppContext) {
         let text = sample_text(6, 6) + "\n";
         let buffer = cx.add_model(|cx| Buffer::new(0, text, cx));
 
@@ -1550,8 +1545,8 @@ mod tests {
         let (mut writer, _, _) = map.write(cx.as_ref());
         writer.fold(
             vec![
-                InputPoint::new(0, 2)..InputPoint::new(2, 2),
-                InputPoint::new(3, 1)..InputPoint::new(4, 1),
+                Point::new(0, 2)..Point::new(2, 2),
+                Point::new(3, 1)..Point::new(4, 1),
             ],
             cx.as_ref(),
         );

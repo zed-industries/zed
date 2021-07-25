@@ -1,9 +1,7 @@
 use super::{
     fold_map,
     line_wrapper::LineWrapper,
-    tab_map::{
-        self, Edit as TabEdit, OutputPoint as TabPoint, Snapshot as TabSnapshot, TextSummary,
-    },
+    tab_map::{self, Edit as TabEdit, Snapshot as TabSnapshot, TabPoint, TextSummary},
 };
 use crate::{
     editor::Point,
