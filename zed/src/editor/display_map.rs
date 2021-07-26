@@ -5,8 +5,7 @@ mod wrap_map;
 
 use super::{buffer, Anchor, Bias, Buffer, Point, Settings, ToOffset, ToPoint};
 use fold_map::FoldMap;
-use gpui::{ModelHandle, MutableAppContext};
-use postage::prelude::Stream;
+use gpui::{Entity, ModelContext, ModelHandle};
 use std::ops::Range;
 use tab_map::TabMap;
 pub use wrap_map::BufferRows;
@@ -16,7 +15,11 @@ pub struct DisplayMap {
     buffer: ModelHandle<Buffer>,
     fold_map: FoldMap,
     tab_map: TabMap,
-    wrap_map: WrapMap,
+    wrap_map: ModelHandle<WrapMap>,
+}
+
+impl Entity for DisplayMap {
+    type Event = ();
 }
 
 impl DisplayMap {
@@ -24,11 +27,12 @@ impl DisplayMap {
         buffer: ModelHandle<Buffer>,
         settings: Settings,
         wrap_width: Option<f32>,
-        cx: &mut MutableAppContext,
+        cx: &mut ModelContext<Self>,
     ) -> Self {
         let (fold_map, snapshot) = FoldMap::new(buffer.clone(), cx);
         let (tab_map, snapshot) = TabMap::new(snapshot, settings.tab_size);
-        let wrap_map = WrapMap::new(snapshot, settings, wrap_width, cx);
+        let wrap_map = cx.add_model(|cx| WrapMap::new(snapshot, settings, wrap_width, cx));
+        cx.observe(&wrap_map, |_, _, cx| cx.notify());
         DisplayMap {
             buffer,
             fold_map,
@@ -37,10 +41,12 @@ impl DisplayMap {
         }
     }
 
-    pub fn snapshot(&self, cx: &mut MutableAppContext) -> DisplayMapSnapshot {
+    pub fn snapshot(&self, cx: &mut ModelContext<Self>) -> DisplayMapSnapshot {
         let (folds_snapshot, edits) = self.fold_map.read(cx);
         let (tabs_snapshot, edits) = self.tab_map.sync(folds_snapshot.clone(), edits);
-        let wraps_snapshot = self.wrap_map.sync(tabs_snapshot.clone(), edits, cx);
+        let wraps_snapshot = self
+            .wrap_map
+            .update(cx, |map, cx| map.sync(tabs_snapshot.clone(), edits, cx));
         DisplayMapSnapshot {
             buffer_snapshot: self.buffer.read(cx).snapshot(),
             folds_snapshot,
@@ -52,35 +58,36 @@ impl DisplayMap {
     pub fn fold<T: ToOffset>(
         &mut self,
         ranges: impl IntoIterator<Item = Range<T>>,
-        cx: &mut MutableAppContext,
+        cx: &mut ModelContext<Self>,
     ) {
         let (mut fold_map, snapshot, edits) = self.fold_map.write(cx);
         let (snapshot, edits) = self.tab_map.sync(snapshot, edits);
-        self.wrap_map.sync(snapshot, edits, cx);
+        self.wrap_map
+            .update(cx, |map, cx| map.sync(snapshot, edits, cx));
         let (snapshot, edits) = fold_map.fold(ranges, cx);
         let (snapshot, edits) = self.tab_map.sync(snapshot, edits);
-        self.wrap_map.sync(snapshot, edits, cx);
+        self.wrap_map
+            .update(cx, |map, cx| map.sync(snapshot, edits, cx));
     }
 
     pub fn unfold<T: ToOffset>(
         &mut self,
         ranges: impl IntoIterator<Item = Range<T>>,
-        cx: &mut MutableAppContext,
+        cx: &mut ModelContext<Self>,
     ) {
         let (mut fold_map, snapshot, edits) = self.fold_map.write(cx);
         let (snapshot, edits) = self.tab_map.sync(snapshot, edits);
-        self.wrap_map.sync(snapshot, edits, cx);
+        self.wrap_map
+            .update(cx, |map, cx| map.sync(snapshot, edits, cx));
         let (snapshot, edits) = fold_map.unfold(ranges, cx);
         let (snapshot, edits) = self.tab_map.sync(snapshot, edits);
-        self.wrap_map.sync(snapshot, edits, cx);
+        self.wrap_map
+            .update(cx, |map, cx| map.sync(snapshot, edits, cx));
     }
 
-    pub fn set_wrap_width(&self, width: Option<f32>, cx: &mut MutableAppContext) -> bool {
-        self.wrap_map.set_wrap_width(width, cx)
-    }
-
-    pub fn notifications(&self) -> impl Stream<Item = ()> {
-        self.wrap_map.notifications()
+    pub fn set_wrap_width(&self, width: Option<f32>, cx: &mut ModelContext<Self>) -> bool {
+        self.wrap_map
+            .update(cx, |map, cx| map.set_wrap_width(width, cx))
     }
 }
 
@@ -282,6 +289,7 @@ mod tests {
         util::RandomCharIter,
     };
     use buffer::History;
+    use gpui::MutableAppContext;
     use rand::prelude::*;
     use std::{env, sync::Arc};
 
@@ -321,11 +329,11 @@ mod tests {
                 Buffer::new(0, text, cx)
             });
             let wrap_width = Some(rng.gen_range(20.0..=100.0));
-            let map = cx.update(|cx| DisplayMap::new(buffer.clone(), settings, wrap_width, cx));
+            let map = cx.add_model(|cx| DisplayMap::new(buffer.clone(), settings, wrap_width, cx));
 
             for _op_ix in 0..operations {
                 buffer.update(&mut cx, |buffer, cx| buffer.randomly_mutate(&mut rng, cx));
-                let snapshot = cx.update(|cx| map.snapshot(cx));
+                let snapshot = map.update(&mut cx, |map, cx| map.snapshot(cx));
                 let expected_buffer_rows = (0..=snapshot.max_point().row())
                     .map(|display_row| {
                         DisplayPoint::new(display_row, 0)
@@ -366,9 +374,9 @@ mod tests {
 
         let text = "one two three four five\nsix seven eight";
         let buffer = cx.add_model(|cx| Buffer::new(0, text.to_string(), cx));
-        let map = cx.update(|cx| DisplayMap::new(buffer.clone(), settings, wrap_width, cx));
+        let map = cx.add_model(|cx| DisplayMap::new(buffer.clone(), settings, wrap_width, cx));
 
-        let snapshot = cx.update(|cx| map.snapshot(cx));
+        let snapshot = map.update(&mut cx, |map, cx| map.snapshot(cx));
         assert_eq!(
             snapshot
                 .chunks_at(DisplayPoint::new(0, 3))
@@ -389,7 +397,7 @@ mod tests {
             buffer.edit(vec![ix..ix], "and ", cx);
         });
 
-        let snapshot = cx.update(|cx| map.snapshot(cx));
+        let snapshot = map.update(&mut cx, |map, cx| map.snapshot(cx));
         assert_eq!(
             snapshot
                 .chunks_at(DisplayPoint::new(1, 0))
@@ -402,12 +410,14 @@ mod tests {
     fn test_chunks_at(cx: &mut gpui::MutableAppContext) {
         let text = sample_text(6, 6);
         let buffer = cx.add_model(|cx| Buffer::new(0, text, cx));
-        let map = DisplayMap::new(
-            buffer.clone(),
-            Settings::new(cx.font_cache()).unwrap().with_tab_size(4),
-            None,
-            cx,
-        );
+        let map = cx.add_model(|cx| {
+            DisplayMap::new(
+                buffer.clone(),
+                Settings::new(cx.font_cache()).unwrap().with_tab_size(4),
+                None,
+                cx,
+            )
+        });
         buffer.update(cx, |buffer, cx| {
             buffer.edit(
                 vec![
@@ -421,19 +431,19 @@ mod tests {
         });
 
         assert_eq!(
-            &map.snapshot(cx)
+            &map.update(cx, |map, cx| map.snapshot(cx))
                 .chunks_at(DisplayPoint::new(1, 0))
                 .collect::<String>()[0..10],
             "    b   bb"
         );
         assert_eq!(
-            &map.snapshot(cx)
+            &map.update(cx, |map, cx| map.snapshot(cx))
                 .chunks_at(DisplayPoint::new(1, 2))
                 .collect::<String>()[0..10],
             "  b   bbbb"
         );
         assert_eq!(
-            &map.snapshot(cx)
+            &map.update(cx, |map, cx| map.snapshot(cx))
                 .chunks_at(DisplayPoint::new(1, 6))
                 .collect::<String>()[0..13],
             "  bbbbb\nc   c"
@@ -484,7 +494,7 @@ mod tests {
         });
         buffer.condition(&cx, |buf, _| !buf.is_parsing()).await;
 
-        let mut map = cx.update(|cx| {
+        let map = cx.add_model(|cx| {
             DisplayMap::new(
                 buffer,
                 Settings::new(cx.font_cache()).unwrap().with_tab_size(2),
@@ -512,7 +522,9 @@ mod tests {
             ]
         );
 
-        cx.update(|cx| map.fold(vec![Point::new(0, 6)..Point::new(3, 2)], cx));
+        map.update(&mut cx, |map, cx| {
+            map.fold(vec![Point::new(0, 6)..Point::new(3, 2)], cx)
+        });
         assert_eq!(
             cx.update(|cx| highlighted_chunks(0..2, &map, &theme, cx)),
             vec![
@@ -579,7 +591,7 @@ mod tests {
             buffer_font_size: 16.0,
             ..Settings::new(&font_cache).unwrap()
         };
-        let mut map = cx.update(|cx| DisplayMap::new(buffer, settings, Some(40.0), cx));
+        let map = cx.add_model(|cx| DisplayMap::new(buffer, settings, Some(40.0), cx));
         assert_eq!(
             cx.update(|cx| highlighted_chunks(0..5, &map, &theme, cx)),
             [
@@ -593,7 +605,9 @@ mod tests {
             [("{}\n\n".to_string(), None)]
         );
 
-        cx.update(|cx| map.fold(vec![Point::new(0, 6)..Point::new(3, 2)], cx));
+        map.update(&mut cx, |map, cx| {
+            map.fold(vec![Point::new(0, 6)..Point::new(3, 2)], cx)
+        });
         assert_eq!(
             cx.update(|cx| highlighted_chunks(1..4, &map, &theme, cx)),
             [
@@ -611,13 +625,15 @@ mod tests {
         let text = "\n'a', 'α',\t'✋',\t'❎', '🍐'\n";
         let display_text = "\n'a', 'α',   '✋',    '❎', '🍐'\n";
         let buffer = cx.add_model(|cx| Buffer::new(0, text, cx));
-        let map = DisplayMap::new(
-            buffer.clone(),
-            Settings::new(cx.font_cache()).unwrap().with_tab_size(4),
-            None,
-            cx,
-        );
-        let map = map.snapshot(cx);
+        let map = cx.add_model(|cx| {
+            DisplayMap::new(
+                buffer.clone(),
+                Settings::new(cx.font_cache()).unwrap().with_tab_size(4),
+                None,
+                cx,
+            )
+        });
+        let map = map.update(cx, |map, cx| map.snapshot(cx));
 
         assert_eq!(map.text(), display_text);
         for (input_column, bias, output_column) in vec![
@@ -650,13 +666,15 @@ mod tests {
     fn test_tabs_with_multibyte_chars(cx: &mut gpui::MutableAppContext) {
         let text = "✅\t\tα\nβ\t\n🏀β\t\tγ";
         let buffer = cx.add_model(|cx| Buffer::new(0, text, cx));
-        let map = DisplayMap::new(
-            buffer.clone(),
-            Settings::new(cx.font_cache()).unwrap().with_tab_size(4),
-            None,
-            cx,
-        );
-        let map = map.snapshot(cx);
+        let map = cx.add_model(|cx| {
+            DisplayMap::new(
+                buffer.clone(),
+                Settings::new(cx.font_cache()).unwrap().with_tab_size(4),
+                None,
+                cx,
+            )
+        });
+        let map = map.update(cx, |map, cx| map.snapshot(cx));
         assert_eq!(map.text(), "✅       α\nβ   \n🏀β      γ");
 
         let point = Point::new(0, "✅\t\t".len() as u32);
@@ -716,23 +734,29 @@ mod tests {
     #[gpui::test]
     fn test_max_point(cx: &mut gpui::MutableAppContext) {
         let buffer = cx.add_model(|cx| Buffer::new(0, "aaa\n\t\tbbb", cx));
-        let map = DisplayMap::new(
-            buffer.clone(),
-            Settings::new(cx.font_cache()).unwrap().with_tab_size(4),
-            None,
-            cx,
-        );
-        assert_eq!(map.snapshot(cx).max_point(), DisplayPoint::new(1, 11))
+        let map = cx.add_model(|cx| {
+            DisplayMap::new(
+                buffer.clone(),
+                Settings::new(cx.font_cache()).unwrap().with_tab_size(4),
+                None,
+                cx,
+            )
+        });
+        assert_eq!(
+            map.update(cx, |map, cx| map.snapshot(cx)).max_point(),
+            DisplayPoint::new(1, 11)
+        )
     }
 
     fn highlighted_chunks<'a>(
         rows: Range<u32>,
-        map: &DisplayMap,
+        map: &ModelHandle<DisplayMap>,
         theme: &'a Theme,
         cx: &mut MutableAppContext,
     ) -> Vec<(String, Option<&'a str>)> {
+        let mut snapshot = map.update(cx, |map, cx| map.snapshot(cx));
         let mut chunks: Vec<(String, Option<&str>)> = Vec::new();
-        for (chunk, style_id) in map.snapshot(cx).highlighted_chunks_for_rows(rows) {
+        for (chunk, style_id) in snapshot.highlighted_chunks_for_rows(rows) {
             let style_name = theme.syntax_style_name(style_id);
             if let Some((last_chunk, last_style_name)) = chunks.last_mut() {
                 if style_name == *last_style_name {

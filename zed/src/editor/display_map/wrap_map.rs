@@ -10,22 +10,20 @@ use crate::{
     util::Bias,
     Settings,
 };
-use gpui::{MutableAppContext, Task};
-use parking_lot::Mutex;
-use postage::{prelude::Stream, sink::Sink, watch};
+use gpui::{Entity, ModelContext, Task};
 use smol::future::yield_now;
 use std::{collections::VecDeque, ops::Range, sync::Arc, time::Duration};
 
-#[derive(Clone)]
-pub struct WrapMap(Arc<Mutex<WrapMapState>>);
-
-struct WrapMapState {
+pub struct WrapMap {
     snapshot: Snapshot,
     pending_edits: VecDeque<(TabSnapshot, Vec<TabEdit>)>,
     wrap_width: Option<f32>,
     background_task: Option<Task<()>>,
-    updates: (watch::Sender<()>, watch::Receiver<()>),
     line_wrapper: Arc<LineWrapper>,
+}
+
+impl Entity for WrapMap {
+    type Event = ();
 }
 
 #[derive(Clone)]
@@ -78,12 +76,11 @@ impl WrapMap {
         tab_snapshot: TabSnapshot,
         settings: Settings,
         wrap_width: Option<f32>,
-        cx: &mut MutableAppContext,
+        cx: &mut ModelContext<Self>,
     ) -> Self {
-        let this = Self(Arc::new(Mutex::new(WrapMapState {
+        let mut this = Self {
             background_task: None,
             wrap_width: None,
-            updates: watch::channel(),
             pending_edits: Default::default(),
             snapshot: Snapshot::new(tab_snapshot),
             line_wrapper: Arc::new(LineWrapper::new(
@@ -91,49 +88,38 @@ impl WrapMap {
                 cx.font_cache(),
                 settings,
             )),
-        })));
+        };
         this.set_wrap_width(wrap_width, cx);
         this
     }
 
     #[cfg(test)]
     pub fn is_rewrapping(&self) -> bool {
-        self.0.lock().background_task.is_some()
-    }
-
-    pub fn notifications(&self) -> impl Stream<Item = ()> {
-        let state = self.0.lock();
-        let mut rx = state.updates.1.clone();
-        // The first item in the stream always returns what's stored on the watch, but we only want
-        // to receive notifications occurring after calling this method, so we discard the first
-        // item.
-        let _ = rx.blocking_recv();
-        rx
+        self.background_task.is_some()
     }
 
     pub fn sync(
-        &self,
+        &mut self,
         tab_snapshot: TabSnapshot,
         edits: Vec<TabEdit>,
-        cx: &mut MutableAppContext,
+        cx: &mut ModelContext<Self>,
     ) -> Snapshot {
-        self.0.lock().pending_edits.push_back((tab_snapshot, edits));
+        self.pending_edits.push_back((tab_snapshot, edits));
         self.flush_edits(cx);
-        self.0.lock().snapshot.clone()
+        self.snapshot.clone()
     }
 
-    pub fn set_wrap_width(&self, wrap_width: Option<f32>, cx: &mut MutableAppContext) -> bool {
-        let mut state = self.0.lock();
-        if wrap_width == state.wrap_width {
+    pub fn set_wrap_width(&mut self, wrap_width: Option<f32>, cx: &mut ModelContext<Self>) -> bool {
+        if wrap_width == self.wrap_width {
             return false;
         }
 
-        state.wrap_width = wrap_width;
-        state.background_task.take();
+        self.wrap_width = wrap_width;
+        self.background_task.take();
 
         if let Some(wrap_width) = wrap_width {
-            let mut new_snapshot = state.snapshot.clone();
-            let line_wrapper = state.line_wrapper.clone();
+            let mut new_snapshot = self.snapshot.clone();
+            let line_wrapper = self.line_wrapper.clone();
             let task = cx.background().spawn(async move {
                 let tab_snapshot = new_snapshot.tab_snapshot.clone();
                 let range = TabPoint::zero()..tab_snapshot.max_point();
@@ -156,19 +142,17 @@ impl WrapMap {
                 .block_with_timeout(Duration::from_millis(5), task)
             {
                 Ok(snapshot) => {
-                    state.snapshot = snapshot;
+                    self.snapshot = snapshot;
                 }
                 Err(wrap_task) => {
-                    let this = self.clone();
-                    state.background_task = Some(cx.spawn(|mut cx| async move {
+                    self.background_task = Some(cx.spawn(|this, mut cx| async move {
                         let snapshot = wrap_task.await;
-                        {
-                            let mut state = this.0.lock();
-                            state.snapshot = snapshot;
-                            state.background_task = None;
-                        }
-                        cx.update(|cx| this.flush_edits(cx));
-                        this.0.lock().updates.0.blocking_send(()).ok();
+                        this.update(&mut cx, |this, cx| {
+                            this.snapshot = snapshot;
+                            this.background_task = None;
+                            this.flush_edits(cx);
+                            cx.notify();
+                        });
                     }));
                 }
             }
@@ -177,26 +161,24 @@ impl WrapMap {
         true
     }
 
-    fn flush_edits(&self, cx: &mut MutableAppContext) {
-        let mut state = self.0.lock();
-
-        while let Some((tab_snapshot, _)) = state.pending_edits.front() {
-            if tab_snapshot.version() <= state.snapshot.tab_snapshot.version() {
-                state.pending_edits.pop_front();
+    fn flush_edits(&mut self, cx: &mut ModelContext<Self>) {
+        while let Some((tab_snapshot, _)) = self.pending_edits.front() {
+            if tab_snapshot.version() <= self.snapshot.tab_snapshot.version() {
+                self.pending_edits.pop_front();
             } else {
                 break;
             }
         }
 
-        if state.pending_edits.is_empty() {
+        if self.pending_edits.is_empty() {
             return;
         }
 
-        if let Some(wrap_width) = state.wrap_width {
-            if state.background_task.is_none() {
-                let pending_edits = state.pending_edits.clone();
-                let mut snapshot = state.snapshot.clone();
-                let line_wrapper = state.line_wrapper.clone();
+        if let Some(wrap_width) = self.wrap_width {
+            if self.background_task.is_none() {
+                let pending_edits = self.pending_edits.clone();
+                let mut snapshot = self.snapshot.clone();
+                let line_wrapper = self.line_wrapper.clone();
 
                 let update_task = cx.background().spawn(async move {
                     for (tab_snapshot, edits) in pending_edits {
@@ -212,35 +194,33 @@ impl WrapMap {
                     .block_with_timeout(Duration::from_micros(500), update_task)
                 {
                     Ok(snapshot) => {
-                        state.snapshot = snapshot;
+                        self.snapshot = snapshot;
                     }
                     Err(update_task) => {
-                        let this = self.clone();
-                        state.background_task = Some(cx.spawn(|mut cx| async move {
+                        self.background_task = Some(cx.spawn(|this, mut cx| async move {
                             let snapshot = update_task.await;
-                            {
-                                let mut state = this.0.lock();
-                                state.snapshot = snapshot;
-                                state.background_task = None;
-                            }
-                            cx.update(|cx| this.flush_edits(cx));
-                            this.0.lock().updates.0.blocking_send(()).ok();
+                            this.update(&mut cx, |this, cx| {
+                                this.snapshot = snapshot;
+                                this.background_task = None;
+                                this.flush_edits(cx);
+                                cx.notify();
+                            });
                         }));
                     }
                 }
             }
         }
 
-        while let Some((tab_snapshot, _)) = state.pending_edits.front() {
-            if tab_snapshot.version() <= state.snapshot.tab_snapshot.version() {
-                state.pending_edits.pop_front();
+        while let Some((tab_snapshot, _)) = self.pending_edits.front() {
+            if tab_snapshot.version() <= self.snapshot.tab_snapshot.version() {
+                self.pending_edits.pop_front();
             } else {
                 break;
             }
         }
 
-        for (tab_snapshot, edits) in state.pending_edits.clone() {
-            state.snapshot.interpolate(tab_snapshot, &edits);
+        for (tab_snapshot, edits) in self.pending_edits.clone() {
+            self.snapshot.interpolate(tab_snapshot, &edits);
         }
     }
 }
@@ -769,7 +749,9 @@ mod tests {
         },
         util::RandomCharIter,
     };
+    use gpui::ModelHandle;
     use rand::prelude::*;
+    use smol::channel;
     use std::env;
 
     #[gpui::test]
@@ -816,7 +798,7 @@ mod tests {
                 folds_snapshot.text()
             );
             log::info!("Unwrapped text (expanded tabs): {:?}", tabs_snapshot.text());
-            let wrap_map = cx.update(|cx| {
+            let wrap_map = cx.add_model(|cx| {
                 WrapMap::new(
                     tabs_snapshot.clone(),
                     settings.clone(),
@@ -824,17 +806,18 @@ mod tests {
                     cx,
                 )
             });
-            let mut notifications = wrap_map.notifications();
+            let (_observer, notifications) = Observer::new(&wrap_map, &mut cx);
 
             let mut line_wrapper = LineWrapper::new(font_system, &font_cache, settings);
             let unwrapped_text = tabs_snapshot.text();
             let expected_text = wrap_text(&unwrapped_text, wrap_width, &mut line_wrapper);
 
-            if wrap_map.is_rewrapping() {
-                notifications.recv().await;
+            if wrap_map.read_with(&cx, |map, _| map.is_rewrapping()) {
+                notifications.recv().await.unwrap();
             }
 
-            let snapshot = cx.update(|cx| wrap_map.sync(tabs_snapshot, Vec::new(), cx));
+            let snapshot =
+                wrap_map.update(&mut cx, |map, cx| map.sync(tabs_snapshot, Vec::new(), cx));
             let actual_text = snapshot.text();
             assert_eq!(
                 actual_text, expected_text,
@@ -858,12 +841,15 @@ mod tests {
 
                 let unwrapped_text = tabs_snapshot.text();
                 let expected_text = wrap_text(&unwrapped_text, wrap_width, &mut line_wrapper);
-                let mut snapshot = cx.update(|cx| wrap_map.sync(tabs_snapshot.clone(), edits, cx));
+                let mut snapshot = wrap_map.update(&mut cx, |map, cx| {
+                    map.sync(tabs_snapshot.clone(), edits, cx)
+                });
                 snapshot.check_invariants(&mut rng);
 
-                if wrap_map.is_rewrapping() {
-                    notifications.recv().await;
-                    snapshot = cx.update(|cx| wrap_map.sync(tabs_snapshot, Vec::new(), cx));
+                if wrap_map.read_with(&cx, |map, _| map.is_rewrapping()) {
+                    notifications.recv().await.unwrap();
+                    snapshot =
+                        wrap_map.update(&mut cx, |map, cx| map.sync(tabs_snapshot, Vec::new(), cx));
                 }
 
                 snapshot.check_invariants(&mut rng);
@@ -950,6 +936,28 @@ mod tests {
                     start_row..end_row
                 );
             }
+        }
+    }
+
+    struct Observer;
+
+    impl Entity for Observer {
+        type Event = ();
+    }
+
+    impl Observer {
+        fn new(
+            handle: &ModelHandle<WrapMap>,
+            cx: &mut gpui::TestAppContext,
+        ) -> (ModelHandle<Self>, channel::Receiver<()>) {
+            let (notify_tx, notify_rx) = channel::unbounded();
+            let observer = cx.add_model(|cx| {
+                cx.observe(handle, move |_, _, _| {
+                    let _ = notify_tx.try_send(());
+                });
+                Observer
+            });
+            (observer, notify_rx)
         }
     }
 }

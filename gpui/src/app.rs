@@ -1850,6 +1850,20 @@ impl<M> UpdateModel for ModelContext<'_, M> {
     }
 }
 
+impl<M> Deref for ModelContext<'_, M> {
+    type Target = MutableAppContext;
+
+    fn deref(&self) -> &Self::Target {
+        &self.app
+    }
+}
+
+impl<M> DerefMut for ModelContext<'_, M> {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.app
+    }
+}
+
 pub struct ViewContext<'a, T: ?Sized> {
     app: &'a mut MutableAppContext,
     window_id: usize,

@@ -21,7 +21,7 @@ use gpui::{
     ViewContext, WeakViewHandle,
 };
 use parking_lot::Mutex;
-use postage::{prelude::Stream, watch};
+use postage::watch;
 use serde::{Deserialize, Serialize};
 use smallvec::SmallVec;
 use smol::Timer;
@@ -368,7 +368,7 @@ pub enum SelectAction {
 pub struct Editor {
     handle: WeakViewHandle<Self>,
     buffer: ModelHandle<Buffer>,
-    display_map: DisplayMap,
+    display_map: ModelHandle<DisplayMap>,
     selection_set_id: SelectionSetId,
     pending_selection: Option<Selection>,
     next_selection_id: usize,
@@ -417,17 +417,11 @@ impl Editor {
         settings: watch::Receiver<Settings>,
         cx: &mut ViewContext<Self>,
     ) -> Self {
+        let display_map =
+            cx.add_model(|cx| DisplayMap::new(buffer.clone(), settings.borrow().clone(), None, cx));
         cx.observe_model(&buffer, Self::on_buffer_changed);
         cx.subscribe_to_model(&buffer, Self::on_buffer_event);
-        let display_map = DisplayMap::new(buffer.clone(), settings.borrow().clone(), None, cx);
-
-        let mut notifications = display_map.notifications();
-        cx.spawn(|this, mut cx| async move {
-            while notifications.recv().await.is_some() {
-                this.update(&mut cx, |_, cx| cx.notify());
-            }
-        })
-        .detach();
+        cx.observe_model(&display_map, Self::on_display_map_changed);
 
         let mut next_selection_id = 0;
         let selection_set_id = buffer.update(cx, |buffer, cx| {
@@ -470,7 +464,7 @@ impl Editor {
         let settings = self.settings.borrow();
 
         Snapshot {
-            display_snapshot: self.display_map.snapshot(cx),
+            display_snapshot: self.display_map.update(cx, |map, cx| map.snapshot(cx)),
             gutter_visible: !self.single_line,
             scroll_position: *self.scroll_position.lock(),
             theme: settings.theme.clone(),
@@ -504,7 +498,7 @@ impl Editor {
         line_height: f32,
         cx: &mut MutableAppContext,
     ) -> bool {
-        let display_map = self.display_map.snapshot(cx);
+        let display_map = self.display_map.update(cx, |map, cx| map.snapshot(cx));
         let mut scroll_position = self.scroll_position.lock();
         let scroll_top = scroll_position.y();
         scroll_position
@@ -564,7 +558,7 @@ impl Editor {
         layouts: &[text_layout::Line],
         cx: &mut MutableAppContext,
     ) -> bool {
-        let display_map = self.display_map.snapshot(cx);
+        let display_map = self.display_map.update(cx, |map, cx| map.snapshot(cx));
         let mut target_left = std::f32::INFINITY;
         let mut target_right = 0.0_f32;
         for selection in self.selections(cx) {
@@ -616,7 +610,7 @@ impl Editor {
             cx.emit(Event::Activate);
         }
 
-        let display_map = self.display_map.snapshot(cx);
+        let display_map = self.display_map.update(cx, |map, cx| map.snapshot(cx));
         let cursor = display_map.anchor_before(position, Bias::Left);
         let selection = Selection {
             id: post_inc(&mut self.next_selection_id),
@@ -640,7 +634,7 @@ impl Editor {
         scroll_position: Vector2F,
         cx: &mut ViewContext<Self>,
     ) {
-        let display_map = self.display_map.snapshot(cx);
+        let display_map = self.display_map.update(cx, |map, cx| map.snapshot(cx));
         let buffer = self.buffer.read(cx);
         let cursor = display_map.anchor_before(position, Bias::Left);
         if let Some(selection) = self.pending_selection.as_mut() {
@@ -719,7 +713,7 @@ impl Editor {
         T: IntoIterator<Item = &'a Range<DisplayPoint>>,
     {
         let mut selections = Vec::new();
-        let display_map = self.display_map.snapshot(cx);
+        let display_map = self.display_map.update(cx, |map, cx| map.snapshot(cx));
         for range in ranges {
             let mut start = range.start;
             let mut end = range.end;
@@ -794,7 +788,7 @@ impl Editor {
     pub fn backspace(&mut self, _: &(), cx: &mut ViewContext<Self>) {
         self.start_transaction(cx);
         let mut selections = self.selections(cx.as_ref()).to_vec();
-        let display_map = self.display_map.snapshot(cx);
+        let display_map = self.display_map.update(cx, |map, cx| map.snapshot(cx));
         {
             let buffer = self.buffer.read(cx);
             for selection in &mut selections {
@@ -816,7 +810,7 @@ impl Editor {
 
     pub fn delete(&mut self, _: &(), cx: &mut ViewContext<Self>) {
         self.start_transaction(cx);
-        let display_map = self.display_map.snapshot(cx);
+        let display_map = self.display_map.update(cx, |map, cx| map.snapshot(cx));
         let mut selections = self.selections(cx.as_ref()).to_vec();
         {
             let buffer = self.buffer.read(cx);
@@ -840,7 +834,7 @@ impl Editor {
     pub fn delete_line(&mut self, _: &(), cx: &mut ViewContext<Self>) {
         self.start_transaction(cx);
 
-        let display_map = self.display_map.snapshot(cx);
+        let display_map = self.display_map.update(cx, |map, cx| map.snapshot(cx));
         let app = cx.as_ref();
         let buffer = self.buffer.read(app);
 
@@ -926,7 +920,7 @@ impl Editor {
         }
         self.update_selections(selections.clone(), false, cx);
 
-        let display_map = self.display_map.snapshot(cx);
+        let display_map = self.display_map.update(cx, |map, cx| map.snapshot(cx));
         let buffer = self.buffer.read(cx);
 
         let mut edits = Vec::new();
@@ -975,7 +969,7 @@ impl Editor {
     pub fn move_line_up(&mut self, _: &(), cx: &mut ViewContext<Self>) {
         self.start_transaction(cx);
 
-        let display_map = self.display_map.snapshot(cx);
+        let display_map = self.display_map.update(cx, |map, cx| map.snapshot(cx));
         let app = cx.as_ref();
         let buffer = self.buffer.read(cx);
 
@@ -1060,7 +1054,7 @@ impl Editor {
     pub fn move_line_down(&mut self, _: &(), cx: &mut ViewContext<Self>) {
         self.start_transaction(cx);
 
-        let display_map = self.display_map.snapshot(cx);
+        let display_map = self.display_map.update(cx, |map, cx| map.snapshot(cx));
         let app = cx.as_ref();
         let buffer = self.buffer.read(cx);
 
@@ -1275,7 +1269,7 @@ impl Editor {
     }
 
     pub fn move_left(&mut self, _: &(), cx: &mut ViewContext<Self>) {
-        let display_map = self.display_map.snapshot(cx);
+        let display_map = self.display_map.update(cx, |map, cx| map.snapshot(cx));
         let app = cx.as_ref();
         let mut selections = self.selections(app).to_vec();
         {
@@ -1299,7 +1293,7 @@ impl Editor {
     }
 
     pub fn select_left(&mut self, _: &(), cx: &mut ViewContext<Self>) {
-        let display_map = self.display_map.snapshot(cx);
+        let display_map = self.display_map.update(cx, |map, cx| map.snapshot(cx));
         let mut selections = self.selections(cx.as_ref()).to_vec();
         {
             let buffer = self.buffer.read(cx);
@@ -1315,7 +1309,7 @@ impl Editor {
     }
 
     pub fn move_right(&mut self, _: &(), cx: &mut ViewContext<Self>) {
-        let display_map = self.display_map.snapshot(cx);
+        let display_map = self.display_map.update(cx, |map, cx| map.snapshot(cx));
         let mut selections = self.selections(cx.as_ref()).to_vec();
         {
             for selection in &mut selections {
@@ -1338,7 +1332,7 @@ impl Editor {
     }
 
     pub fn select_right(&mut self, _: &(), cx: &mut ViewContext<Self>) {
-        let display_map = self.display_map.snapshot(cx);
+        let display_map = self.display_map.update(cx, |map, cx| map.snapshot(cx));
         let mut selections = self.selections(cx.as_ref()).to_vec();
         {
             let app = cx.as_ref();
@@ -1355,7 +1349,7 @@ impl Editor {
     }
 
     pub fn move_up(&mut self, _: &(), cx: &mut ViewContext<Self>) {
-        let display_map = self.display_map.snapshot(cx);
+        let display_map = self.display_map.update(cx, |map, cx| map.snapshot(cx));
         if self.single_line {
             cx.propagate_action();
         } else {
@@ -1381,7 +1375,7 @@ impl Editor {
     }
 
     pub fn select_up(&mut self, _: &(), cx: &mut ViewContext<Self>) {
-        let display_map = self.display_map.snapshot(cx);
+        let display_map = self.display_map.update(cx, |map, cx| map.snapshot(cx));
         let mut selections = self.selections(cx.as_ref()).to_vec();
         {
             let app = cx.as_ref();
@@ -1400,7 +1394,7 @@ impl Editor {
         if self.single_line {
             cx.propagate_action();
         } else {
-            let display_map = self.display_map.snapshot(cx);
+            let display_map = self.display_map.update(cx, |map, cx| map.snapshot(cx));
             let mut selections = self.selections(cx.as_ref()).to_vec();
             {
                 for selection in &mut selections {
@@ -1423,7 +1417,7 @@ impl Editor {
     }
 
     pub fn select_down(&mut self, _: &(), cx: &mut ViewContext<Self>) {
-        let display_map = self.display_map.snapshot(cx);
+        let display_map = self.display_map.update(cx, |map, cx| map.snapshot(cx));
         let mut selections = self.selections(cx).to_vec();
         {
             let app = cx.as_ref();
@@ -1439,7 +1433,7 @@ impl Editor {
     }
 
     pub fn move_to_previous_word_boundary(&mut self, _: &(), cx: &mut ViewContext<Self>) {
-        let display_map = self.display_map.snapshot(cx);
+        let display_map = self.display_map.update(cx, |map, cx| map.snapshot(cx));
         let mut selections = self.selections(cx).to_vec();
         {
             for selection in &mut selections {
@@ -1456,7 +1450,7 @@ impl Editor {
     }
 
     pub fn select_to_previous_word_boundary(&mut self, _: &(), cx: &mut ViewContext<Self>) {
-        let display_map = self.display_map.snapshot(cx);
+        let display_map = self.display_map.update(cx, |map, cx| map.snapshot(cx));
         let mut selections = self.selections(cx).to_vec();
         {
             let buffer = self.buffer.read(cx);
@@ -1479,7 +1473,7 @@ impl Editor {
     }
 
     pub fn move_to_next_word_boundary(&mut self, _: &(), cx: &mut ViewContext<Self>) {
-        let display_map = self.display_map.snapshot(cx);
+        let display_map = self.display_map.update(cx, |map, cx| map.snapshot(cx));
         let mut selections = self.selections(cx).to_vec();
         {
             for selection in &mut selections {
@@ -1496,7 +1490,7 @@ impl Editor {
     }
 
     pub fn select_to_next_word_boundary(&mut self, _: &(), cx: &mut ViewContext<Self>) {
-        let display_map = self.display_map.snapshot(cx);
+        let display_map = self.display_map.update(cx, |map, cx| map.snapshot(cx));
         let mut selections = self.selections(cx).to_vec();
         {
             let buffer = self.buffer.read(cx);
@@ -1519,7 +1513,7 @@ impl Editor {
     }
 
     pub fn move_to_beginning_of_line(&mut self, _: &(), cx: &mut ViewContext<Self>) {
-        let display_map = self.display_map.snapshot(cx);
+        let display_map = self.display_map.update(cx, |map, cx| map.snapshot(cx));
         let mut selections = self.selections(cx).to_vec();
         {
             for selection in &mut selections {
@@ -1540,7 +1534,7 @@ impl Editor {
         toggle_indent: &bool,
         cx: &mut ViewContext<Self>,
     ) {
-        let display_map = self.display_map.snapshot(cx);
+        let display_map = self.display_map.update(cx, |map, cx| map.snapshot(cx));
         let mut selections = self.selections(cx).to_vec();
         {
             let buffer = self.buffer.read(cx);
@@ -1564,7 +1558,7 @@ impl Editor {
     }
 
     pub fn move_to_end_of_line(&mut self, _: &(), cx: &mut ViewContext<Self>) {
-        let display_map = self.display_map.snapshot(cx);
+        let display_map = self.display_map.update(cx, |map, cx| map.snapshot(cx));
         let mut selections = self.selections(cx).to_vec();
         {
             for selection in &mut selections {
@@ -1581,7 +1575,7 @@ impl Editor {
     }
 
     pub fn select_to_end_of_line(&mut self, _: &(), cx: &mut ViewContext<Self>) {
-        let display_map = self.display_map.snapshot(cx);
+        let display_map = self.display_map.update(cx, |map, cx| map.snapshot(cx));
         let mut selections = self.selections(cx).to_vec();
         {
             let buffer = self.buffer.read(cx);
@@ -1660,7 +1654,7 @@ impl Editor {
     }
 
     pub fn select_line(&mut self, _: &(), cx: &mut ViewContext<Self>) {
-        let display_map = self.display_map.snapshot(cx);
+        let display_map = self.display_map.update(cx, |map, cx| map.snapshot(cx));
         let buffer = self.buffer.read(cx);
         let mut selections = self.selections(cx).to_vec();
         let max_point = buffer.max_point();
@@ -1722,7 +1716,7 @@ impl Editor {
     }
 
     fn add_selection(&mut self, above: bool, cx: &mut ViewContext<Self>) {
-        let display_map = self.display_map.snapshot(cx);
+        let display_map = self.display_map.update(cx, |map, cx| map.snapshot(cx));
         let mut selections = self.selections(cx).to_vec();
         let mut state = self.add_selections_state.take().unwrap_or_else(|| {
             let oldest_selection = selections.iter().min_by_key(|s| s.id).unwrap().clone();
@@ -1815,7 +1809,7 @@ impl Editor {
     }
 
     pub fn select_larger_syntax_node(&mut self, _: &(), cx: &mut ViewContext<Self>) {
-        let display_map = self.display_map.snapshot(cx);
+        let display_map = self.display_map.update(cx, |map, cx| map.snapshot(cx));
         let buffer = self.buffer.read(cx);
 
         let mut stack = mem::take(&mut self.select_larger_syntax_node_stack);
@@ -1932,7 +1926,7 @@ impl Editor {
         range: Range<DisplayPoint>,
         cx: &'a mut MutableAppContext,
     ) -> impl 'a + Iterator<Item = Range<DisplayPoint>> {
-        let display_map = self.display_map.snapshot(cx);
+        let display_map = self.display_map.update(cx, |map, cx| map.snapshot(cx));
         let buffer = self.buffer.read(cx);
         let selections = &buffer.selection_set(set_id).unwrap().selections;
         let start = display_map.anchor_before(range.start, Bias::Left);
@@ -2056,7 +2050,7 @@ impl Editor {
     pub fn fold(&mut self, _: &(), cx: &mut ViewContext<Self>) {
         let mut fold_ranges = Vec::new();
 
-        let display_map = self.display_map.snapshot(cx);
+        let display_map = self.display_map.update(cx, |map, cx| map.snapshot(cx));
         for selection in self.selections(cx) {
             let range = selection.display_range(&display_map).sorted();
             let buffer_start_row = range.start.to_buffer_point(&display_map, Bias::Left).row;
@@ -2078,7 +2072,7 @@ impl Editor {
     }
 
     pub fn unfold(&mut self, _: &(), cx: &mut ViewContext<Self>) {
-        let display_map = self.display_map.snapshot(cx);
+        let display_map = self.display_map.update(cx, |map, cx| map.snapshot(cx));
         let buffer = self.buffer.read(cx);
         let ranges = self
             .selections(cx)
@@ -2150,7 +2144,7 @@ impl Editor {
 
     fn fold_ranges<T: ToOffset>(&mut self, ranges: Vec<Range<T>>, cx: &mut ViewContext<Self>) {
         if !ranges.is_empty() {
-            self.display_map.fold(ranges, cx);
+            self.display_map.update(cx, |map, cx| map.fold(ranges, cx));
             *self.autoscroll_requested.lock() = true;
             cx.notify();
         }
@@ -2158,26 +2152,35 @@ impl Editor {
 
     fn unfold_ranges<T: ToOffset>(&mut self, ranges: Vec<Range<T>>, cx: &mut ViewContext<Self>) {
         if !ranges.is_empty() {
-            self.display_map.unfold(ranges, cx);
+            self.display_map
+                .update(cx, |map, cx| map.unfold(ranges, cx));
             *self.autoscroll_requested.lock() = true;
             cx.notify();
         }
     }
 
     pub fn line_len(&self, display_row: u32, cx: &mut MutableAppContext) -> u32 {
-        self.display_map.snapshot(cx).line_len(display_row)
+        self.display_map
+            .update(cx, |map, cx| map.snapshot(cx))
+            .line_len(display_row)
     }
 
     pub fn longest_row(&self, cx: &mut MutableAppContext) -> u32 {
-        self.display_map.snapshot(cx).longest_row()
+        self.display_map
+            .update(cx, |map, cx| map.snapshot(cx))
+            .longest_row()
     }
 
     pub fn max_point(&self, cx: &mut MutableAppContext) -> DisplayPoint {
-        self.display_map.snapshot(cx).max_point()
+        self.display_map
+            .update(cx, |map, cx| map.snapshot(cx))
+            .max_point()
     }
 
     pub fn text(&self, cx: &mut MutableAppContext) -> String {
-        self.display_map.snapshot(cx).text()
+        self.display_map
+            .update(cx, |map, cx| map.snapshot(cx))
+            .text()
     }
 
     pub fn font_size(&self) -> f32 {
@@ -2185,7 +2188,8 @@ impl Editor {
     }
 
     pub fn set_wrap_width(&self, width: f32, cx: &mut MutableAppContext) -> bool {
-        self.display_map.set_wrap_width(Some(width), cx)
+        self.display_map
+            .update(cx, |map, cx| map.set_wrap_width(Some(width), cx))
     }
 
     fn next_blink_epoch(&mut self) -> usize {
@@ -2258,6 +2262,10 @@ impl Editor {
             buffer::Event::Reloaded => cx.emit(Event::FileHandleChanged),
             buffer::Event::Reparsed => {}
         }
+    }
+
+    fn on_display_map_changed(&mut self, _: ModelHandle<DisplayMap>, cx: &mut ViewContext<Self>) {
+        cx.notify();
     }
 }
 
