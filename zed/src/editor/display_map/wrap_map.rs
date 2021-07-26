@@ -156,6 +156,14 @@ impl WrapMap {
                     }));
                 }
             }
+        } else {
+            self.snapshot.transforms = SumTree::new();
+            let summary = self.snapshot.tab_snapshot.text_summary();
+            if !summary.lines.is_zero() {
+                self.snapshot
+                    .transforms
+                    .push(Transform::isomorphic(summary), &());
+            }
         }
 
         true
@@ -227,18 +235,13 @@ impl WrapMap {
 
 impl Snapshot {
     fn new(tab_snapshot: TabSnapshot) -> Self {
+        let mut transforms = SumTree::new();
         let extent = tab_snapshot.text_summary();
+        if !extent.lines.is_zero() {
+            transforms.push(Transform::isomorphic(extent), &());
+        }
         Self {
-            transforms: SumTree::from_item(
-                Transform {
-                    summary: TransformSummary {
-                        input: extent.clone(),
-                        output: extent.clone(),
-                    },
-                    display_text: None,
-                },
-                &(),
-            ),
+            transforms,
             tab_snapshot,
         }
     }
@@ -776,7 +779,11 @@ mod tests {
             let mut rng = StdRng::seed_from_u64(seed);
             let font_cache = cx.font_cache().clone();
             let font_system = cx.platform().fonts();
-            let wrap_width = rng.gen_range(0.0..=1000.0);
+            let mut wrap_width = if rng.gen_bool(0.1) {
+                None
+            } else {
+                Some(rng.gen_range(0.0..=1000.0))
+            };
             let settings = Settings {
                 tab_size: rng.gen_range(1..=4),
                 buffer_font_family: font_cache.load_family(&["Helvetica"]).unwrap(),
@@ -784,7 +791,7 @@ mod tests {
                 ..Settings::new(&font_cache).unwrap()
             };
             log::info!("Tab size: {}", settings.tab_size);
-            log::info!("Wrap width: {}", wrap_width);
+            log::info!("Wrap width: {:?}", wrap_width);
 
             let buffer = cx.add_model(|cx| {
                 let len = rng.gen_range(0..10);
@@ -799,12 +806,7 @@ mod tests {
             );
             log::info!("Unwrapped text (expanded tabs): {:?}", tabs_snapshot.text());
             let wrap_map = cx.add_model(|cx| {
-                WrapMap::new(
-                    tabs_snapshot.clone(),
-                    settings.clone(),
-                    Some(wrap_width),
-                    cx,
-                )
+                WrapMap::new(tabs_snapshot.clone(), settings.clone(), wrap_width, cx)
             });
             let (_observer, notifications) = Observer::new(&wrap_map, &mut cx);
 
@@ -828,7 +830,21 @@ mod tests {
 
             let mut interpolated_snapshot = snapshot.clone();
             for _i in 0..operations {
-                buffer.update(&mut cx, |buffer, cx| buffer.randomly_mutate(&mut rng, cx));
+                match rng.gen_range(0..=100) {
+                    0..=19 => {
+                        wrap_width = if rng.gen_bool(0.2) {
+                            None
+                        } else {
+                            Some(rng.gen_range(0.0..=1000.0))
+                        };
+                        log::info!("Setting wrap width to {:?}", wrap_width);
+                        wrap_map.update(&mut cx, |map, cx| map.set_wrap_width(wrap_width, cx));
+                    }
+                    _ => {
+                        buffer.update(&mut cx, |buffer, cx| buffer.randomly_mutate(&mut rng, cx));
+                    }
+                }
+
                 let (folds_snapshot, edits) = cx.read(|cx| fold_map.read(cx));
                 log::info!(
                     "Unwrapped text (unexpanded tabs): {:?}",
@@ -866,22 +882,30 @@ mod tests {
         }
     }
 
-    fn wrap_text(unwrapped_text: &str, wrap_width: f32, line_wrapper: &mut LineWrapper) -> String {
-        let mut wrapped_text = String::new();
-        for (row, line) in unwrapped_text.split('\n').enumerate() {
-            if row > 0 {
-                wrapped_text.push('\n')
-            }
+    fn wrap_text(
+        unwrapped_text: &str,
+        wrap_width: Option<f32>,
+        line_wrapper: &mut LineWrapper,
+    ) -> String {
+        if let Some(wrap_width) = wrap_width {
+            let mut wrapped_text = String::new();
+            for (row, line) in unwrapped_text.split('\n').enumerate() {
+                if row > 0 {
+                    wrapped_text.push('\n')
+                }
 
-            let mut prev_ix = 0;
-            for ix in line_wrapper.wrap_line(line, wrap_width) {
-                wrapped_text.push_str(&line[prev_ix..ix]);
-                wrapped_text.push('\n');
-                prev_ix = ix;
+                let mut prev_ix = 0;
+                for ix in line_wrapper.wrap_line(line, wrap_width) {
+                    wrapped_text.push_str(&line[prev_ix..ix]);
+                    wrapped_text.push('\n');
+                    prev_ix = ix;
+                }
+                wrapped_text.push_str(&line[prev_ix..]);
             }
-            wrapped_text.push_str(&line[prev_ix..]);
+            wrapped_text
+        } else {
+            unwrapped_text.to_string()
         }
-        wrapped_text
     }
 
     impl Snapshot {
