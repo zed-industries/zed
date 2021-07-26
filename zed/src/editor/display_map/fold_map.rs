@@ -266,8 +266,7 @@ impl FoldMap {
     }
 
     fn check_invariants(&self, cx: &AppContext) {
-        #[cfg(debug_assertions)]
-        {
+        if cfg!(test) {
             let buffer = self.buffer.read(cx);
             assert_eq!(
                 self.transforms.lock().summary().input.bytes,
