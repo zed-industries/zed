@@ -162,7 +162,7 @@ impl DisplayMapSnapshot {
 
     pub fn is_line_folded(&self, display_row: u32) -> bool {
         let wrap_point = DisplayPoint::new(display_row, 0).0;
-        let row = self.wraps_snapshot.to_input_point(wrap_point).row();
+        let row = self.wraps_snapshot.to_tab_point(wrap_point).row();
         self.folds_snapshot.is_line_folded(row)
     }
 
@@ -245,14 +245,14 @@ impl DisplayPoint {
     }
 
     pub fn to_buffer_point(self, map: &DisplayMapSnapshot, bias: Bias) -> Point {
-        let unwrapped_point = map.wraps_snapshot.to_input_point(self.0);
-        let unexpanded_point = map.tabs_snapshot.to_input_point(unwrapped_point, bias).0;
+        let unwrapped_point = map.wraps_snapshot.to_tab_point(self.0);
+        let unexpanded_point = map.tabs_snapshot.to_fold_point(unwrapped_point, bias).0;
         unexpanded_point.to_buffer_point(&map.folds_snapshot)
     }
 
     pub fn to_buffer_offset(self, map: &DisplayMapSnapshot, bias: Bias) -> usize {
-        let unwrapped_point = map.wraps_snapshot.to_input_point(self.0);
-        let unexpanded_point = map.tabs_snapshot.to_input_point(unwrapped_point, bias).0;
+        let unwrapped_point = map.wraps_snapshot.to_tab_point(self.0);
+        let unexpanded_point = map.tabs_snapshot.to_fold_point(unwrapped_point, bias).0;
         unexpanded_point.to_buffer_offset(&map.folds_snapshot)
     }
 }
@@ -260,8 +260,8 @@ impl DisplayPoint {
 impl Point {
     pub fn to_display_point(self, map: &DisplayMapSnapshot) -> DisplayPoint {
         let fold_point = self.to_fold_point(&map.folds_snapshot);
-        let tab_point = map.tabs_snapshot.to_output_point(fold_point);
-        let wrap_point = map.wraps_snapshot.to_output_point(tab_point);
+        let tab_point = map.tabs_snapshot.to_tab_point(fold_point);
+        let wrap_point = map.wraps_snapshot.to_wrap_point(tab_point);
         DisplayPoint(wrap_point)
     }
 }

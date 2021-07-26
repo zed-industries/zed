@@ -467,7 +467,7 @@ impl Snapshot {
         let input_start =
             TabPoint(transforms.sum_start().0 + (output_start.0 - transforms.seek_start().0));
         let input_end = self
-            .to_input_point(output_end)
+            .to_tab_point(output_end)
             .min(self.tab_snapshot.max_point());
         HighlightedChunks {
             input_chunks: self.tab_snapshot.highlighted_chunks(input_start..input_end),
@@ -480,7 +480,7 @@ impl Snapshot {
     }
 
     pub fn max_point(&self) -> WrapPoint {
-        self.to_output_point(self.tab_snapshot.max_point())
+        self.to_wrap_point(self.tab_snapshot.max_point())
     }
 
     pub fn line_len(&self, row: u32) -> u32 {
@@ -515,13 +515,13 @@ impl Snapshot {
         }
     }
 
-    pub fn to_input_point(&self, point: WrapPoint) -> TabPoint {
+    pub fn to_tab_point(&self, point: WrapPoint) -> TabPoint {
         let mut cursor = self.transforms.cursor::<WrapPoint, TabPoint>();
         cursor.seek(&point, Bias::Right, &());
         TabPoint(cursor.sum_start().0 + (point.0 - cursor.seek_start().0))
     }
 
-    pub fn to_output_point(&self, point: TabPoint) -> WrapPoint {
+    pub fn to_wrap_point(&self, point: TabPoint) -> WrapPoint {
         let mut cursor = self.transforms.cursor::<TabPoint, WrapPoint>();
         cursor.seek(&point, Bias::Right, &());
         WrapPoint(cursor.sum_start().0 + (point.0 - cursor.seek_start().0))
@@ -537,10 +537,7 @@ impl Snapshot {
             }
         }
 
-        self.to_output_point(
-            self.tab_snapshot
-                .clip_point(self.to_input_point(point), bias),
-        )
+        self.to_wrap_point(self.tab_snapshot.clip_point(self.to_tab_point(point), bias))
     }
 }
 

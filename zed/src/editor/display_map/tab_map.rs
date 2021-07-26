@@ -1,9 +1,6 @@
 use parking_lot::Mutex;
 
-use super::fold_map::{
-    self, Chunks as InputChunks, FoldEdit, FoldPoint, HighlightedChunks as HighlightedFoldChunks,
-    Snapshot as FoldSnapshot,
-};
+use super::fold_map::{self, FoldEdit, FoldPoint, Snapshot as FoldSnapshot};
 use crate::{editor::rope, settings::StyleId, util::Bias};
 use std::{cmp, mem, ops::Range};
 
@@ -86,10 +83,8 @@ impl TabMap {
                 .end
                 .to_point(&new_snapshot.fold_snapshot);
             tab_edits.push(Edit {
-                old_lines: old_snapshot.to_output_point(old_start)
-                    ..old_snapshot.to_output_point(old_end),
-                new_lines: new_snapshot.to_output_point(new_start)
-                    ..new_snapshot.to_output_point(new_end),
+                old_lines: old_snapshot.to_tab_point(old_start)..old_snapshot.to_tab_point(old_end),
+                new_lines: new_snapshot.to_tab_point(new_start)..new_snapshot.to_tab_point(new_end),
             });
         }
 
@@ -110,8 +105,8 @@ impl Snapshot {
     }
 
     pub fn text_summary_for_range(&self, range: Range<TabPoint>) -> TextSummary {
-        let input_start = self.to_input_point(range.start, Bias::Left).0;
-        let input_end = self.to_input_point(range.end, Bias::Right).0;
+        let input_start = self.to_fold_point(range.start, Bias::Left).0;
+        let input_end = self.to_fold_point(range.end, Bias::Right).0;
         let input_summary = self
             .fold_snapshot
             .text_summary_for_range(input_start..input_end);
@@ -155,7 +150,7 @@ impl Snapshot {
     }
 
     pub fn chunks_at(&self, point: TabPoint) -> Chunks {
-        let (point, expanded_char_column, to_next_stop) = self.to_input_point(point, Bias::Left);
+        let (point, expanded_char_column, to_next_stop) = self.to_fold_point(point, Bias::Left);
         let fold_chunks = self
             .fold_snapshot
             .chunks_at(point.to_offset(&self.fold_snapshot));
@@ -170,10 +165,10 @@ impl Snapshot {
 
     pub fn highlighted_chunks(&mut self, range: Range<TabPoint>) -> HighlightedChunks {
         let (input_start, expanded_char_column, to_next_stop) =
-            self.to_input_point(range.start, Bias::Left);
+            self.to_fold_point(range.start, Bias::Left);
         let input_start = input_start.to_offset(&self.fold_snapshot);
         let input_end = self
-            .to_input_point(range.end, Bias::Right)
+            .to_fold_point(range.end, Bias::Right)
             .0
             .to_offset(&self.fold_snapshot);
         HighlightedChunks {
@@ -198,23 +193,23 @@ impl Snapshot {
     }
 
     pub fn max_point(&self) -> TabPoint {
-        self.to_output_point(self.fold_snapshot.max_point())
+        self.to_tab_point(self.fold_snapshot.max_point())
     }
 
     pub fn clip_point(&self, point: TabPoint, bias: Bias) -> TabPoint {
-        self.to_output_point(
+        self.to_tab_point(
             self.fold_snapshot
-                .clip_point(self.to_input_point(point, bias).0, bias),
+                .clip_point(self.to_fold_point(point, bias).0, bias),
         )
     }
 
-    pub fn to_output_point(&self, input: FoldPoint) -> TabPoint {
+    pub fn to_tab_point(&self, input: FoldPoint) -> TabPoint {
         let chars = self.fold_snapshot.chars_at(FoldPoint::new(input.row(), 0));
         let expanded = Self::expand_tabs(chars, input.column() as usize, self.tab_size);
         TabPoint::new(input.row(), expanded as u32)
     }
 
-    pub fn to_input_point(&self, output: TabPoint, bias: Bias) -> (FoldPoint, usize, usize) {
+    pub fn to_fold_point(&self, output: TabPoint, bias: Bias) -> (FoldPoint, usize, usize) {
         let chars = self.fold_snapshot.chars_at(FoldPoint::new(output.row(), 0));
         let expanded = output.column() as usize;
         let (collapsed, expanded_char_column, to_next_stop) =
@@ -287,9 +282,6 @@ impl Snapshot {
         (collapsed_bytes, expanded_chars, 0)
     }
 }
-
-#[derive(Copy, Clone, Debug, PartialEq, Eq)]
-pub struct OutputOffset(pub usize);
 
 #[derive(Copy, Clone, Debug, Default, Eq, Ord, PartialOrd, PartialEq)]
 pub struct TabPoint(pub super::Point);
@@ -377,7 +369,7 @@ impl<'a> std::ops::AddAssign<&'a Self> for TextSummary {
 const SPACES: &'static str = "                ";
 
 pub struct Chunks<'a> {
-    fold_chunks: InputChunks<'a>,
+    fold_chunks: fold_map::Chunks<'a>,
     chunk: &'a str,
     column: usize,
     tab_size: usize,
@@ -426,7 +418,7 @@ impl<'a> Iterator for Chunks<'a> {
 }
 
 pub struct HighlightedChunks<'a> {
-    fold_chunks: HighlightedFoldChunks<'a>,
+    fold_chunks: fold_map::HighlightedChunks<'a>,
     chunk: &'a str,
     style_id: StyleId,
     column: usize,
