@@ -3104,6 +3104,7 @@ mod tests {
         });
 
         view.update(cx, |view, cx| {
+            view.delete_to_beginning_of_line(&(), cx);
             assert_eq!(view.text(cx), "\n");
             assert_eq!(
                 view.selection_ranges(cx),
@@ -3112,7 +3113,6 @@ mod tests {
                     DisplayPoint::new(1, 0)..DisplayPoint::new(1, 0),
                 ]
             );
-            view.delete_to_beginning_of_line(&(), cx)
         });
     }
 
