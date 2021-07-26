@@ -30,6 +30,7 @@ impl Entity for WrapMap {
 pub struct Snapshot {
     tab_snapshot: TabSnapshot,
     transforms: SumTree<Transform>,
+    interpolated: bool,
 }
 
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
@@ -170,12 +171,16 @@ impl WrapMap {
     }
 
     fn flush_edits(&mut self, cx: &mut ModelContext<Self>) {
-        while let Some((tab_snapshot, _)) = self.pending_edits.front() {
-            if tab_snapshot.version() <= self.snapshot.tab_snapshot.version() {
-                self.pending_edits.pop_front();
-            } else {
-                break;
+        if !self.snapshot.interpolated {
+            let mut to_remove_len = 0;
+            for (tab_snapshot, _) in &self.pending_edits {
+                if tab_snapshot.version() <= self.snapshot.tab_snapshot.version() {
+                    to_remove_len += 1;
+                } else {
+                    break;
+                }
             }
+            self.pending_edits.drain(..to_remove_len);
         }
 
         if self.pending_edits.is_empty() {
@@ -219,16 +224,18 @@ impl WrapMap {
             }
         }
 
-        while let Some((tab_snapshot, _)) = self.pending_edits.front() {
+        let was_interpolated = self.snapshot.interpolated;
+        let mut to_remove_len = 0;
+        for (tab_snapshot, edits) in &self.pending_edits {
             if tab_snapshot.version() <= self.snapshot.tab_snapshot.version() {
-                self.pending_edits.pop_front();
+                to_remove_len += 1;
             } else {
-                break;
+                self.snapshot.interpolate(tab_snapshot.clone(), &edits);
             }
         }
 
-        for (tab_snapshot, edits) in self.pending_edits.clone() {
-            self.snapshot.interpolate(tab_snapshot, &edits);
+        if !was_interpolated {
+            self.pending_edits.drain(..to_remove_len);
         }
     }
 }
@@ -243,6 +250,7 @@ impl Snapshot {
         Self {
             transforms,
             tab_snapshot,
+            interpolated: true,
         }
     }
 
@@ -300,6 +308,8 @@ impl Snapshot {
 
         self.transforms = new_transforms;
         self.tab_snapshot = new_tab_snapshot;
+        self.interpolated = true;
+        self.check_invariants();
     }
 
     async fn update(
@@ -429,6 +439,8 @@ impl Snapshot {
 
         self.transforms = new_transforms;
         self.tab_snapshot = new_tab_snapshot;
+        self.interpolated = false;
+        self.check_invariants();
     }
 
     pub fn chunks_at(&self, point: WrapPoint) -> Chunks {
@@ -524,6 +536,27 @@ impl Snapshot {
         }
 
         self.to_wrap_point(self.tab_snapshot.clip_point(self.to_tab_point(point), bias))
+    }
+
+    fn check_invariants(&self) {
+        #[cfg(test)]
+        {
+            assert_eq!(
+                TabPoint::from(self.transforms.summary().input.lines),
+                self.tab_snapshot.max_point()
+            );
+
+            {
+                let mut transforms = self.transforms.cursor::<(), ()>().peekable();
+                while let Some(transform) = transforms.next() {
+                    let next_transform = transforms.peek();
+                    assert!(
+                        !transform.is_isomorphic()
+                            || next_transform.map_or(true, |t| !t.is_isomorphic())
+                    );
+                }
+            }
+        }
     }
 }
 
@@ -759,6 +792,8 @@ mod tests {
 
     #[gpui::test]
     async fn test_random_wraps(mut cx: gpui::TestAppContext) {
+        cx.foreground().set_block_on_ticks(0..=50);
+
         let iterations = env::var("ITERATIONS")
             .map(|i| i.parse().expect("invalid `ITERATIONS` variable"))
             .unwrap_or(100);
@@ -853,31 +888,39 @@ mod tests {
                 let (tabs_snapshot, edits) = tab_map.sync(folds_snapshot, edits);
                 log::info!("Unwrapped text (expanded tabs): {:?}", tabs_snapshot.text());
                 interpolated_snapshot.interpolate(tabs_snapshot.clone(), &edits);
-                interpolated_snapshot.check_invariants(&mut rng);
+                interpolated_snapshot.check_invariants();
+                interpolated_snapshot.verify_chunks(&mut rng);
 
                 let unwrapped_text = tabs_snapshot.text();
                 let expected_text = wrap_text(&unwrapped_text, wrap_width, &mut line_wrapper);
                 let mut snapshot = wrap_map.update(&mut cx, |map, cx| {
                     map.sync(tabs_snapshot.clone(), edits, cx)
                 });
-                snapshot.check_invariants(&mut rng);
+                snapshot.check_invariants();
+                interpolated_snapshot.verify_chunks(&mut rng);
 
-                if wrap_map.read_with(&cx, |map, _| map.is_rewrapping()) {
-                    notifications.recv().await.unwrap();
-                    snapshot =
-                        wrap_map.update(&mut cx, |map, cx| map.sync(tabs_snapshot, Vec::new(), cx));
+                if wrap_map.read_with(&cx, |map, _| map.is_rewrapping()) && rng.gen_bool(0.4) {
+                    log::info!("Waiting for wrapping to finish");
+                    while wrap_map.read_with(&cx, |map, _| map.is_rewrapping()) {
+                        notifications.recv().await.unwrap();
+                    }
                 }
 
-                snapshot.check_invariants(&mut rng);
-                let actual_text = snapshot.text();
-                assert_eq!(
-                    actual_text, expected_text,
-                    "unwrapped text is: {:?}",
-                    unwrapped_text
-                );
-                log::info!("New wrapped text: {:?}", actual_text);
-
-                interpolated_snapshot = snapshot.clone();
+                if !wrap_map.read_with(&cx, |map, _| map.is_rewrapping()) {
+                    log::info!("Wrapping finished");
+                    snapshot =
+                        wrap_map.update(&mut cx, |map, cx| map.sync(tabs_snapshot, Vec::new(), cx));
+                    snapshot.check_invariants();
+                    interpolated_snapshot.verify_chunks(&mut rng);
+                    let actual_text = snapshot.text();
+                    assert_eq!(
+                        actual_text, expected_text,
+                        "unwrapped text is: {:?}",
+                        unwrapped_text
+                    );
+                    log::info!("New wrapped text: {:?}", actual_text);
+                    interpolated_snapshot = snapshot.clone();
+                }
             }
         }
     }
@@ -913,23 +956,7 @@ mod tests {
             self.chunks_at(WrapPoint::zero()).collect()
         }
 
-        fn check_invariants(&mut self, rng: &mut impl Rng) {
-            assert_eq!(
-                TabPoint::from(self.transforms.summary().input.lines),
-                self.tab_snapshot.max_point()
-            );
-
-            {
-                let mut transforms = self.transforms.cursor::<(), ()>().peekable();
-                while let Some(transform) = transforms.next() {
-                    let next_transform = transforms.peek();
-                    assert!(
-                        !transform.is_isomorphic()
-                            || next_transform.map_or(true, |t| !t.is_isomorphic())
-                    );
-                }
-            }
-
+        fn verify_chunks(&mut self, rng: &mut impl Rng) {
             for _ in 0..5 {
                 let mut end_row = rng.gen_range(0..=self.max_point().row());
                 let start_row = rng.gen_range(0..=end_row);
