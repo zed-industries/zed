@@ -10,7 +10,7 @@ use crate::{
     util::Bias,
     Settings,
 };
-use gpui::{executor::Background, MutableAppContext, Task};
+use gpui::{MutableAppContext, Task};
 use parking_lot::Mutex;
 use postage::{prelude::Stream, sink::Sink, watch};
 use smol::future::yield_now;
@@ -118,7 +118,7 @@ impl WrapMap {
         cx: &mut MutableAppContext,
     ) -> Snapshot {
         self.0.lock().pending_edits.push_back((tab_snapshot, edits));
-        self.flush_edits(cx.background());
+        self.flush_edits(cx);
         self.0.lock().snapshot.clone()
     }
 
@@ -151,22 +151,23 @@ impl WrapMap {
                 new_snapshot
             });
 
-            let executor = cx.background();
-            match executor.block_with_timeout(Duration::from_millis(5), task) {
+            match cx
+                .background()
+                .block_with_timeout(Duration::from_millis(5), task)
+            {
                 Ok(snapshot) => {
                     state.snapshot = snapshot;
                 }
                 Err(wrap_task) => {
                     let this = self.clone();
-                    let exec = executor.clone();
-                    state.background_task = Some(executor.spawn(async move {
+                    state.background_task = Some(cx.spawn(|mut cx| async move {
                         let snapshot = wrap_task.await;
                         {
                             let mut state = this.0.lock();
                             state.snapshot = snapshot;
                             state.background_task = None;
                         }
-                        this.flush_edits(&exec);
+                        cx.update(|cx| this.flush_edits(cx));
                         this.0.lock().updates.0.blocking_send(()).ok();
                     }));
                 }
@@ -176,7 +177,7 @@ impl WrapMap {
         true
     }
 
-    fn flush_edits(&self, executor: &Arc<Background>) {
+    fn flush_edits(&self, cx: &mut MutableAppContext) {
         let mut state = self.0.lock();
 
         while let Some((tab_snapshot, _)) = state.pending_edits.front() {
@@ -197,7 +198,7 @@ impl WrapMap {
                 let mut snapshot = state.snapshot.clone();
                 let line_wrapper = state.line_wrapper.clone();
 
-                let update_task = executor.spawn(async move {
+                let update_task = cx.background().spawn(async move {
                     for (tab_snapshot, edits) in pending_edits {
                         snapshot
                             .update(tab_snapshot, &edits, wrap_width, &line_wrapper)
@@ -206,21 +207,23 @@ impl WrapMap {
                     snapshot
                 });
 
-                match executor.block_with_timeout(Duration::from_micros(500), update_task) {
+                match cx
+                    .background()
+                    .block_with_timeout(Duration::from_micros(500), update_task)
+                {
                     Ok(snapshot) => {
                         state.snapshot = snapshot;
                     }
                     Err(update_task) => {
                         let this = self.clone();
-                        let exec = executor.clone();
-                        state.background_task = Some(executor.spawn(async move {
+                        state.background_task = Some(cx.spawn(|mut cx| async move {
                             let snapshot = update_task.await;
                             {
                                 let mut state = this.0.lock();
                                 state.snapshot = snapshot;
                                 state.background_task = None;
                             }
-                            this.flush_edits(&exec);
+                            cx.update(|cx| this.flush_edits(cx));
                             this.0.lock().updates.0.blocking_send(()).ok();
                         }));
                     }
