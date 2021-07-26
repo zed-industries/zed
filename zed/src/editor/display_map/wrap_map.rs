@@ -371,6 +371,7 @@ impl Snapshot {
                 let mut line = String::new();
                 let mut remaining = None;
                 let mut chunks = new_tab_snapshot.chunks_at(TabPoint::new(edit.new_rows.start, 0));
+                let mut edit_transforms = Vec::<Transform>::new();
                 for _ in edit.new_rows.start..edit.new_rows.end {
                     while let Some(chunk) = remaining.take().or_else(|| chunks.next()) {
                         if let Some(ix) = chunk.find('\n') {
@@ -389,21 +390,27 @@ impl Snapshot {
                     let mut prev_boundary_ix = 0;
                     for boundary_ix in line_wrapper.wrap_line(&line, wrap_width) {
                         let wrapped = &line[prev_boundary_ix..boundary_ix];
-                        new_transforms
-                            .push_or_extend(Transform::isomorphic(TextSummary::from(wrapped)));
-                        new_transforms.push_or_extend(Transform::newline());
+                        push_isomorphic(&mut edit_transforms, TextSummary::from(wrapped));
+                        edit_transforms.push(Transform::newline());
                         prev_boundary_ix = boundary_ix;
                     }
 
                     if prev_boundary_ix < line.len() {
-                        new_transforms.push_or_extend(Transform::isomorphic(TextSummary::from(
-                            &line[prev_boundary_ix..],
-                        )));
+                        push_isomorphic(
+                            &mut edit_transforms,
+                            TextSummary::from(&line[prev_boundary_ix..]),
+                        );
                     }
 
                     line.clear();
                     yield_now().await;
                 }
+
+                let mut edit_transforms = edit_transforms.into_iter();
+                if let Some(transform) = edit_transforms.next() {
+                    new_transforms.push_or_extend(transform);
+                }
+                new_transforms.extend(edit_transforms, &());
 
                 old_cursor.seek_forward(&TabPoint::new(edit.old_rows.end, 0), Bias::Right, &());
                 if let Some(next_edit) = row_edits.peek() {
@@ -705,6 +712,17 @@ impl sum_tree::Item for Transform {
     fn summary(&self) -> Self::Summary {
         self.summary.clone()
     }
+}
+
+fn push_isomorphic(transforms: &mut Vec<Transform>, summary: TextSummary) {
+    if let Some(last_transform) = transforms.last_mut() {
+        if last_transform.is_isomorphic() {
+            last_transform.summary.input += &summary;
+            last_transform.summary.output += &summary;
+            return;
+        }
+    }
+    transforms.push(Transform::isomorphic(summary));
 }
 
 impl SumTree<Transform> {
