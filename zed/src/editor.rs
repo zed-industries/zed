@@ -37,6 +37,7 @@ use std::{
 };
 
 const CURSOR_BLINK_INTERVAL: Duration = Duration::from_millis(500);
+const MAX_LINE_LEN: usize = 1024;
 
 pub fn init(cx: &mut MutableAppContext) {
     cx.add_bindings(vec![
@@ -2376,23 +2377,25 @@ impl Snapshot {
         let mut line = String::new();
         let mut styles = Vec::new();
         let mut row = rows.start;
+        let mut line_exceeded_max_len = false;
         let chunks = self
             .display_snapshot
             .highlighted_chunks_for_rows(rows.clone());
 
         'outer: for (chunk, style_ix) in chunks.chain(Some(("\n", StyleId::default()))) {
-            for (ix, line_chunk) in chunk.split('\n').enumerate() {
+            for (ix, mut line_chunk) in chunk.split('\n').enumerate() {
                 if ix > 0 {
                     layouts.push(layout_cache.layout_str(&line, self.font_size, &styles));
                     line.clear();
                     styles.clear();
                     row += 1;
+                    line_exceeded_max_len = false;
                     if row == rows.end {
                         break 'outer;
                     }
                 }
 
-                if !line_chunk.is_empty() {
+                if !line_chunk.is_empty() && !line_exceeded_max_len {
                     let (color, font_properties) = self.theme.syntax_style(style_ix);
                     // Avoid a lookup if the font properties match the previous ones.
                     let font_id = if font_properties == prev_font_properties {
@@ -2400,6 +2403,16 @@ impl Snapshot {
                     } else {
                         font_cache.select_font(self.font_family, &font_properties)?
                     };
+
+                    if line.len() + line_chunk.len() > MAX_LINE_LEN {
+                        let mut chunk_len = MAX_LINE_LEN - line.len();
+                        while !line_chunk.is_char_boundary(chunk_len) {
+                            chunk_len -= 1;
+                        }
+                        line_chunk = &line_chunk[..chunk_len];
+                        line_exceeded_max_len = true;
+                    }
+
                     line.push_str(line_chunk);
                     styles.push((line_chunk.len(), font_id, color));
                     prev_font_id = font_id;
@@ -2419,7 +2432,15 @@ impl Snapshot {
     ) -> Result<text_layout::Line> {
         let font_id = font_cache.select_font(self.font_family, &FontProperties::new())?;
 
-        let line = self.display_snapshot.line(row);
+        let mut line = self.display_snapshot.line(row);
+
+        if line.len() > MAX_LINE_LEN {
+            let mut len = MAX_LINE_LEN;
+            while !line.is_char_boundary(len) {
+                len -= 1;
+            }
+            line.truncate(len);
+        }
 
         Ok(layout_cache.layout_str(
             &line,
