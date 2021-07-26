@@ -357,12 +357,11 @@ impl Element for EditorElement {
             gutter_width = 0.0
         };
 
-        let gutter_size = vec2f(gutter_width, size.y());
-        let text_size = size - vec2f(gutter_width, 0.0);
+        let text_width = size.x() - gutter_width;
         let text_offset = vec2f(-snapshot.font_descent(cx.font_cache), 0.);
         let em_width = snapshot.em_width(font_cache);
         let overscroll = vec2f(em_width, 0.);
-        let wrap_width = text_size.x() - text_offset.x() - overscroll.x() - em_width;
+        let wrap_width = text_width - text_offset.x() - overscroll.x() - em_width;
         let snapshot = self.update_view(cx.app, |view, cx| {
             if view.set_wrap_width(wrap_width, cx) {
                 view.snapshot(cx)
@@ -370,10 +369,11 @@ impl Element for EditorElement {
                 snapshot
             }
         });
-
         if size.y().is_infinite() {
             size.set_y((snapshot.max_point().row() + 1) as f32 * line_height);
         }
+        let gutter_size = vec2f(gutter_width, size.y());
+        let text_size = vec2f(text_width, size.y());
 
         let (autoscroll_horizontally, mut snapshot) = self.update_view(cx.app, |view, cx| {
             let autoscroll_horizontally = view.autoscroll_vertically(size.y(), line_height, cx);
