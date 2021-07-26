@@ -36,37 +36,42 @@ impl LineWrapper {
             .wrap_line(line, self.font_id, self.font_size, wrap_width)
     }
 
-    pub fn wrap_line(&self, line: &str, wrap_width: f32) -> Vec<usize> {
+    pub fn wrap_line<'a>(
+        &'a self,
+        line: &'a str,
+        wrap_width: f32,
+    ) -> impl Iterator<Item = usize> + 'a {
         let mut width = 0.0;
-        let mut boundaries = Vec::new();
-        let mut last_boundary_ix = 0;
-        let mut last_boundary_width = 0.0;
+        let mut last_candidate_ix = 0;
+        let mut last_candidate_width = 0.0;
+        let mut last_wrap_ix = 0;
         let mut prev_c = '\0';
-        for (ix, c) in line.char_indices() {
-            if c == '\n' {
-                break;
-            }
-
-            if self.is_boundary(prev_c, c) {
-                last_boundary_ix = ix;
-                last_boundary_width = width;
-            }
-
-            let char_width = self.width_for_char(c);
-            width += char_width;
-            if width > wrap_width && ix > *boundaries.last().unwrap_or(&0) {
-                if last_boundary_ix > 0 {
-                    boundaries.push(last_boundary_ix);
-                    width -= last_boundary_width;
-                    last_boundary_ix = 0;
-                } else {
-                    boundaries.push(ix);
-                    width = char_width;
+        let char_indices = line.char_indices();
+        char_indices.filter_map(move |(ix, c)| {
+            if c != '\n' {
+                if self.is_boundary(prev_c, c) {
+                    last_candidate_ix = ix;
+                    last_candidate_width = width;
                 }
+
+                let char_width = self.width_for_char(c);
+                width += char_width;
+                if width > wrap_width && ix > last_wrap_ix {
+                    if last_candidate_ix > 0 {
+                        last_wrap_ix = last_candidate_ix;
+                        width -= last_candidate_width;
+                        last_candidate_ix = 0;
+                    } else {
+                        last_wrap_ix = ix;
+                        width = char_width;
+                    }
+                    return Some(last_wrap_ix);
+                }
+                prev_c = c;
             }
-            prev_c = c;
-        }
-        boundaries
+
+            None
+        })
     }
 
     fn is_boundary(&self, prev: char, next: char) -> bool {
@@ -132,7 +137,9 @@ mod tests {
             &[7, 12, 18],
         );
         assert_eq!(
-            wrapper.wrap_line("aa bbb cccc ddddd eeee", 72.0),
+            wrapper
+                .wrap_line("aa bbb cccc ddddd eeee", 72.0)
+                .collect::<Vec<_>>(),
             &[7, 12, 18],
         );
 
@@ -141,7 +148,9 @@ mod tests {
             &[4, 11, 18],
         );
         assert_eq!(
-            wrapper.wrap_line("aaa aaaaaaaaaaaaaaaaaa", 72.0),
+            wrapper
+                .wrap_line("aaa aaaaaaaaaaaaaaaaaa", 72.0)
+                .collect::<Vec<_>>(),
             &[4, 11, 18],
         );
     }
