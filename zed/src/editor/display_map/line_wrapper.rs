@@ -1,17 +1,47 @@
 use crate::Settings;
 use gpui::{fonts::FontId, FontCache, FontSystem};
-use parking_lot::Mutex;
-use std::{collections::HashMap, sync::Arc};
+use std::{
+    cell::RefCell,
+    collections::HashMap,
+    ops::{Deref, DerefMut},
+    sync::Arc,
+};
+
+thread_local! {
+    static WRAPPERS: RefCell<Vec<LineWrapper>> = Default::default();
+}
 
 pub struct LineWrapper {
     font_system: Arc<dyn FontSystem>,
     font_id: FontId,
     font_size: f32,
-    cached_ascii_char_widths: Mutex<[f32; 128]>,
-    cached_other_char_widths: Mutex<HashMap<char, f32>>,
+    cached_ascii_char_widths: [f32; 128],
+    cached_other_char_widths: HashMap<char, f32>,
 }
 
 impl LineWrapper {
+    pub fn thread_local(
+        font_system: Arc<dyn FontSystem>,
+        font_cache: &FontCache,
+        settings: Settings,
+    ) -> LineWrapperHandle {
+        let wrapper =
+            if let Some(mut wrapper) = WRAPPERS.with(|wrappers| wrappers.borrow_mut().pop()) {
+                let font_id = font_cache
+                    .select_font(settings.buffer_font_family, &Default::default())
+                    .unwrap();
+                let font_size = settings.buffer_font_size;
+                if wrapper.font_id != font_id || wrapper.font_size != font_size {
+                    wrapper.cached_ascii_char_widths = [f32::NAN; 128];
+                    wrapper.cached_other_char_widths.clear();
+                }
+                wrapper
+            } else {
+                LineWrapper::new(font_system, font_cache, settings)
+            };
+        LineWrapperHandle(Some(wrapper))
+    }
+
     pub fn new(
         font_system: Arc<dyn FontSystem>,
         font_cache: &FontCache,
@@ -25,8 +55,8 @@ impl LineWrapper {
             font_system,
             font_id,
             font_size,
-            cached_ascii_char_widths: Mutex::new([f32::NAN; 128]),
-            cached_other_char_widths: Mutex::new(HashMap::new()),
+            cached_ascii_char_widths: [f32::NAN; 128],
+            cached_other_char_widths: HashMap::new(),
         }
     }
 
@@ -37,7 +67,7 @@ impl LineWrapper {
     }
 
     pub fn wrap_line<'a>(
-        &'a self,
+        &'a mut self,
         line: &'a str,
         wrap_width: f32,
     ) -> impl Iterator<Item = usize> + 'a {
@@ -81,24 +111,24 @@ impl LineWrapper {
         false
     }
 
-    fn width_for_char(&self, c: char) -> f32 {
+    #[inline(always)]
+    fn width_for_char(&mut self, c: char) -> f32 {
         if (c as u32) < 128 {
-            let mut cached_ascii_char_widths = self.cached_ascii_char_widths.lock();
-            let mut width = cached_ascii_char_widths[c as usize];
+            let mut width = self.cached_ascii_char_widths[c as usize];
             if width.is_nan() {
                 width = self.compute_width_for_char(c);
-                cached_ascii_char_widths[c as usize] = width;
+                self.cached_ascii_char_widths[c as usize] = width;
             }
             width
         } else {
-            let mut cached_other_char_widths = self.cached_other_char_widths.lock();
-            let mut width = cached_other_char_widths
+            let mut width = self
+                .cached_other_char_widths
                 .get(&c)
                 .copied()
                 .unwrap_or(f32::NAN);
             if width.is_nan() {
                 width = self.compute_width_for_char(c);
-                cached_other_char_widths.insert(c, width);
+                self.cached_other_char_widths.insert(c, width);
             }
             width
         }
@@ -112,6 +142,29 @@ impl LineWrapper {
                 &[(1, self.font_id, Default::default())],
             )
             .width
+    }
+}
+
+pub struct LineWrapperHandle(Option<LineWrapper>);
+
+impl Drop for LineWrapperHandle {
+    fn drop(&mut self) {
+        let wrapper = self.0.take().unwrap();
+        WRAPPERS.with(|wrappers| wrappers.borrow_mut().push(wrapper))
+    }
+}
+
+impl Deref for LineWrapperHandle {
+    type Target = LineWrapper;
+
+    fn deref(&self) -> &Self::Target {
+        self.0.as_ref().unwrap()
+    }
+}
+
+impl DerefMut for LineWrapperHandle {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        self.0.as_mut().unwrap()
     }
 }
 
@@ -130,7 +183,7 @@ mod tests {
             ..Settings::new(&font_cache).unwrap()
         };
 
-        let wrapper = LineWrapper::new(font_system, &font_cache, settings);
+        let mut wrapper = LineWrapper::new(font_system, &font_cache, settings);
 
         assert_eq!(
             wrapper.wrap_line_with_shaping("aa bbb cccc ddddd eeee", 72.0),

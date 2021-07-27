@@ -12,14 +12,14 @@ use crate::{
 };
 use gpui::{Entity, ModelContext, Task};
 use smol::future::yield_now;
-use std::{collections::VecDeque, ops::Range, sync::Arc, time::Duration};
+use std::{collections::VecDeque, ops::Range, time::Duration};
 
 pub struct WrapMap {
     snapshot: Snapshot,
     pending_edits: VecDeque<(TabSnapshot, Vec<TabEdit>)>,
     wrap_width: Option<f32>,
     background_task: Option<Task<()>>,
-    line_wrapper: Arc<LineWrapper>,
+    settings: Settings,
 }
 
 impl Entity for WrapMap {
@@ -84,11 +84,7 @@ impl WrapMap {
             wrap_width: None,
             pending_edits: Default::default(),
             snapshot: Snapshot::new(tab_snapshot),
-            line_wrapper: Arc::new(LineWrapper::new(
-                cx.platform().fonts(),
-                cx.font_cache(),
-                settings,
-            )),
+            settings,
         };
         this.set_wrap_width(wrap_width, cx);
         this
@@ -120,8 +116,12 @@ impl WrapMap {
 
         if let Some(wrap_width) = wrap_width {
             let mut new_snapshot = self.snapshot.clone();
-            let line_wrapper = self.line_wrapper.clone();
+            let font_system = cx.platform().fonts();
+            let font_cache = cx.font_cache().clone();
+            let settings = self.settings.clone();
             let task = cx.background().spawn(async move {
+                let mut line_wrapper =
+                    LineWrapper::thread_local(font_system, &font_cache, settings);
                 let tab_snapshot = new_snapshot.tab_snapshot.clone();
                 let range = TabPoint::zero()..tab_snapshot.max_point();
                 new_snapshot
@@ -132,7 +132,7 @@ impl WrapMap {
                             new_lines: range.clone(),
                         }],
                         wrap_width,
-                        line_wrapper.as_ref(),
+                        &mut line_wrapper,
                     )
                     .await;
                 new_snapshot
@@ -191,12 +191,15 @@ impl WrapMap {
             if self.background_task.is_none() {
                 let pending_edits = self.pending_edits.clone();
                 let mut snapshot = self.snapshot.clone();
-                let line_wrapper = self.line_wrapper.clone();
-
+                let font_system = cx.platform().fonts();
+                let font_cache = cx.font_cache().clone();
+                let settings = self.settings.clone();
                 let update_task = cx.background().spawn(async move {
+                    let mut line_wrapper =
+                        LineWrapper::thread_local(font_system, &font_cache, settings);
                     for (tab_snapshot, edits) in pending_edits {
                         snapshot
-                            .update(tab_snapshot, &edits, wrap_width, &line_wrapper)
+                            .update(tab_snapshot, &edits, wrap_width, &mut line_wrapper)
                             .await;
                     }
                     snapshot
@@ -317,7 +320,7 @@ impl Snapshot {
         new_tab_snapshot: TabSnapshot,
         edits: &[TabEdit],
         wrap_width: f32,
-        line_wrapper: &LineWrapper,
+        line_wrapper: &mut LineWrapper,
     ) {
         #[derive(Debug)]
         struct RowEdit {
