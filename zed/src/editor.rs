@@ -252,7 +252,9 @@ pub fn init(cx: &mut MutableAppContext) {
         ),
     ]);
 
-    cx.add_action("buffer:scroll", Editor::scroll);
+    cx.add_action("buffer:scroll", |this: &mut Editor, scroll_position, cx| {
+        this.set_scroll_position(*scroll_position, cx)
+    });
     cx.add_action("buffer:select", Editor::select);
     cx.add_action("buffer:cancel", Editor::cancel);
     cx.add_action("buffer:insert", Editor::insert);
@@ -375,6 +377,7 @@ pub struct Editor {
     add_selections_state: Option<AddSelectionsState>,
     select_larger_syntax_node_stack: Vec<Vec<Selection>>,
     scroll_position: Vector2F,
+    scroll_top_anchor: Anchor,
     autoscroll_requested: bool,
     settings: watch::Receiver<Settings>,
     focused: bool,
@@ -387,10 +390,11 @@ pub struct Editor {
 pub struct Snapshot {
     pub display_snapshot: DisplayMapSnapshot,
     pub gutter_visible: bool,
-    pub scroll_position: Vector2F,
     pub theme: Arc<Theme>,
     pub font_family: FamilyId,
     pub font_size: f32,
+    scroll_position: Vector2F,
+    scroll_top_anchor: Anchor,
 }
 
 struct AddSelectionsState {
@@ -446,6 +450,7 @@ impl Editor {
             add_selections_state: None,
             select_larger_syntax_node_stack: Vec::new(),
             scroll_position: Vector2F::zero(),
+            scroll_top_anchor: Anchor::min(),
             autoscroll_requested: false,
             settings,
             focused: false,
@@ -467,19 +472,24 @@ impl Editor {
             display_snapshot: self.display_map.update(cx, |map, cx| map.snapshot(cx)),
             gutter_visible: !self.single_line,
             scroll_position: self.scroll_position,
+            scroll_top_anchor: self.scroll_top_anchor.clone(),
             theme: settings.theme.clone(),
             font_family: settings.buffer_font_family,
             font_size: settings.buffer_font_size,
         }
     }
 
-    fn scroll(&mut self, scroll_position: &Vector2F, cx: &mut ViewContext<Self>) {
-        self.scroll_position = *scroll_position;
+    fn set_scroll_position(&mut self, mut scroll_position: Vector2F, cx: &mut ViewContext<Self>) {
+        let map = self.display_map.update(cx, |map, cx| map.snapshot(cx));
+        let scroll_top_buffer_offset =
+            DisplayPoint::new(scroll_position.y() as u32, 0).to_buffer_offset(&map, Bias::Right);
+        self.scroll_top_anchor = self
+            .buffer
+            .read(cx)
+            .anchor_at(scroll_top_buffer_offset, Bias::Right);
+        scroll_position.set_y(scroll_position.y().fract());
+        self.scroll_position = scroll_position;
         cx.notify();
-    }
-
-    pub fn scroll_position(&self) -> Vector2F {
-        self.scroll_position
     }
 
     pub fn clamp_scroll_left(&mut self, max: f32) -> bool {
@@ -495,12 +505,16 @@ impl Editor {
         &mut self,
         viewport_height: f32,
         line_height: f32,
-        cx: &mut MutableAppContext,
+        cx: &mut ViewContext<Self>,
     ) -> bool {
         let display_map = self.display_map.update(cx, |map, cx| map.snapshot(cx));
-        let scroll_top = self.scroll_position.y();
-        self.scroll_position
-            .set_y(scroll_top.min(display_map.max_point().row().saturating_sub(1) as f32));
+        let mut scroll_position =
+            compute_scroll_position(&display_map, self.scroll_position, &self.scroll_top_anchor);
+        let max_scroll_top = display_map.max_point().row().saturating_sub(1) as f32;
+        if scroll_position.y() > max_scroll_top {
+            scroll_position.set_y(max_scroll_top);
+            self.set_scroll_position(scroll_position, cx);
+        }
 
         if self.autoscroll_requested {
             self.autoscroll_requested = false;
@@ -534,13 +548,15 @@ impl Editor {
 
         let target_top = (first_cursor_top - margin).max(0.0);
         let target_bottom = last_cursor_bottom + margin;
-        let start_row = self.scroll_position.y();
+        let start_row = scroll_position.y();
         let end_row = start_row + visible_lines;
 
         if target_top < start_row {
-            self.scroll_position.set_y(target_top);
+            scroll_position.set_y(target_top);
+            self.set_scroll_position(scroll_position, cx);
         } else if target_bottom >= end_row {
-            self.scroll_position.set_y(target_bottom - visible_lines);
+            scroll_position.set_y(target_bottom - visible_lines);
+            self.set_scroll_position(scroll_position, cx);
         }
 
         true
@@ -641,8 +657,7 @@ impl Editor {
             return;
         }
 
-        self.scroll_position = scroll_position;
-
+        self.set_scroll_position(scroll_position, cx);
         cx.notify();
     }
 
@@ -2156,12 +2171,6 @@ impl Editor {
         }
     }
 
-    pub fn line_len(&self, display_row: u32, cx: &mut MutableAppContext) -> u32 {
-        self.display_map
-            .update(cx, |map, cx| map.snapshot(cx))
-            .line_len(display_row)
-    }
-
     pub fn longest_row(&self, cx: &mut MutableAppContext) -> u32 {
         self.display_map
             .update(cx, |map, cx| map.snapshot(cx))
@@ -2267,12 +2276,24 @@ impl Editor {
 }
 
 impl Snapshot {
+    pub fn scroll_position(&self) -> Vector2F {
+        compute_scroll_position(
+            &self.display_snapshot,
+            self.scroll_position,
+            &self.scroll_top_anchor,
+        )
+    }
+
     pub fn max_point(&self) -> DisplayPoint {
         self.display_snapshot.max_point()
     }
 
     pub fn longest_row(&self) -> u32 {
         self.display_snapshot.longest_row()
+    }
+
+    pub fn line_len(&self, display_row: u32) -> u32 {
+        self.display_snapshot.line_len(display_row)
     }
 
     pub fn font_ascent(&self, font_cache: &FontCache) -> f32 {
@@ -2327,7 +2348,7 @@ impl Snapshot {
     ) -> Result<Vec<text_layout::Line>> {
         let font_id = font_cache.select_font(self.font_family, &FontProperties::new())?;
 
-        let start_row = self.scroll_position.y() as usize;
+        let start_row = self.scroll_position().y() as usize;
         let end_row = cmp::min(
             self.display_snapshot.max_point().row() as usize,
             start_row + (viewport_height / self.line_height(font_cache)).ceil() as usize,
@@ -2450,6 +2471,16 @@ impl Snapshot {
     }
 }
 
+fn compute_scroll_position(
+    snapshot: &DisplayMapSnapshot,
+    mut scroll_position: Vector2F,
+    scroll_top_anchor: &Anchor,
+) -> Vector2F {
+    let scroll_top = scroll_top_anchor.to_display_point(snapshot).row() as f32;
+    scroll_position.set_y(scroll_top + scroll_position.y());
+    scroll_position
+}
+
 pub enum Event {
     Activate,
     Edited,
@@ -2552,6 +2583,7 @@ impl workspace::ItemView for Editor {
     {
         let mut clone = Editor::for_buffer(self.buffer.clone(), self.settings.clone(), cx);
         clone.scroll_position = self.scroll_position;
+        clone.scroll_top_anchor = self.scroll_top_anchor.clone();
         Some(clone)
     }
 

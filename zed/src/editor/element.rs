@@ -41,6 +41,10 @@ impl EditorElement {
         self.view.upgrade(cx).unwrap().update(cx, f)
     }
 
+    fn snapshot(&self, cx: &mut MutableAppContext) -> Snapshot {
+        self.update_view(cx, |view, cx| view.snapshot(cx))
+    }
+
     fn mouse_down(
         &self,
         position: Vector2F,
@@ -50,9 +54,8 @@ impl EditorElement {
         cx: &mut EventContext,
     ) -> bool {
         if paint.text_bounds.contains_point(position) {
-            let position = self.update_view(cx.app, |view, cx| {
-                paint.point_for_position(view, layout, position, cx)
-            });
+            let snapshot = self.snapshot(cx.app);
+            let position = paint.point_for_position(&snapshot, layout, position);
             cx.dispatch_action("buffer:select", SelectAction::Begin { position, add: cmd });
             true
         } else {
@@ -108,15 +111,19 @@ impl EditorElement {
 
             let font_cache = cx.font_cache.clone();
             let text_layout_cache = cx.text_layout_cache.clone();
-            let action = self.update_view(cx.app, |view, cx| SelectAction::Update {
-                position: paint.point_for_position(view, layout, position, cx),
-                scroll_position: (view.scroll_position() + scroll_delta).clamp(
-                    Vector2F::zero(),
-                    layout.scroll_max(&font_cache, &text_layout_cache),
-                ),
-            });
+            let snapshot = self.snapshot(cx.app);
+            let position = paint.point_for_position(&snapshot, layout, position);
 
-            cx.dispatch_action("buffer:select", action);
+            cx.dispatch_action(
+                "buffer:select",
+                SelectAction::Update {
+                    position,
+                    scroll_position: (snapshot.scroll_position() + scroll_delta).clamp(
+                        Vector2F::zero(),
+                        layout.scroll_max(&font_cache, &text_layout_cache),
+                    ),
+                },
+            );
             true
         } else {
             false
@@ -155,7 +162,7 @@ impl EditorElement {
             return false;
         }
 
-        let view = self.view(cx.app);
+        let snapshot = self.snapshot(cx.app);
         let font_cache = &cx.font_cache;
         let layout_cache = &cx.text_layout_cache;
         let max_glyph_width = layout.em_width;
@@ -163,8 +170,9 @@ impl EditorElement {
             delta *= vec2f(max_glyph_width, layout.line_height);
         }
 
-        let x = (view.scroll_position().x() * max_glyph_width - delta.x()) / max_glyph_width;
-        let y = (view.scroll_position().y() * layout.line_height - delta.y()) / layout.line_height;
+        let scroll_position = snapshot.scroll_position();
+        let x = (scroll_position.x() * max_glyph_width - delta.x()) / max_glyph_width;
+        let y = (scroll_position.y() * layout.line_height - delta.y()) / layout.line_height;
         let scroll_position = vec2f(x, y).clamp(
             Vector2F::zero(),
             layout.scroll_max(font_cache, layout_cache),
@@ -176,7 +184,7 @@ impl EditorElement {
     }
 
     fn paint_gutter(&mut self, rect: RectF, layout: &LayoutState, cx: &mut PaintContext) {
-        let scroll_top = layout.snapshot.scroll_position.y() * layout.line_height;
+        let scroll_top = layout.snapshot.scroll_position().y() * layout.line_height;
 
         cx.scene.push_layer(Some(rect));
         cx.scene.push_quad(Quad {
@@ -204,7 +212,7 @@ impl EditorElement {
 
     fn paint_text(&mut self, bounds: RectF, layout: &LayoutState, cx: &mut PaintContext) {
         let view = self.view(cx.app);
-        let scroll_position = layout.snapshot.scroll_position;
+        let scroll_position = layout.snapshot.scroll_position();
         let start_row = scroll_position.y() as u32;
         let scroll_top = scroll_position.y() * layout.line_height;
         let end_row = ((scroll_top + bounds.height()) / layout.line_height).ceil() as u32 + 1; // Add 1 to ensure selections bleed off screen
@@ -338,7 +346,7 @@ impl Element for EditorElement {
 
         let font_cache = &cx.font_cache;
         let layout_cache = &cx.text_layout_cache;
-        let snapshot = self.update_view(cx.app, |view, cx| view.snapshot(cx));
+        let snapshot = self.snapshot(cx.app);
         let line_height = snapshot.line_height(font_cache);
 
         let gutter_padding;
@@ -393,8 +401,9 @@ impl Element for EditorElement {
             Vec::new()
         };
 
-        let start_row = snapshot.scroll_position.y() as u32;
-        let scroll_top = snapshot.scroll_position.y() * line_height;
+        let scroll_position = snapshot.scroll_position();
+        let start_row = scroll_position.y() as u32;
+        let scroll_top = scroll_position.y() * line_height;
         let end_row = ((scroll_top + size.y()) / line_height).ceil() as u32 + 1; // Add 1 to ensure selections bleed off screen
 
         let mut max_visible_line_width = 0.0;
@@ -451,7 +460,7 @@ impl Element for EditorElement {
             let autoscrolled;
             if autoscroll_horizontally {
                 autoscrolled = view.autoscroll_horizontally(
-                    view.scroll_position().y() as u32,
+                    start_row,
                     layout.text_size.x(),
                     layout.scroll_width(font_cache, layout_cache),
                     layout.snapshot.em_width(font_cache),
@@ -592,23 +601,22 @@ pub struct PaintState {
 impl PaintState {
     fn point_for_position(
         &self,
-        view: &Editor,
+        snapshot: &Snapshot,
         layout: &LayoutState,
         position: Vector2F,
-        cx: &mut MutableAppContext,
     ) -> DisplayPoint {
-        let scroll_position = view.scroll_position();
+        let scroll_position = snapshot.scroll_position();
         let position = position - self.text_bounds.origin();
         let y = position.y().max(0.0).min(layout.size.y());
         let row = ((y / layout.line_height) + scroll_position.y()) as u32;
-        let row = cmp::min(row, view.max_point(cx).row());
+        let row = cmp::min(row, snapshot.max_point().row());
         let line = &layout.line_layouts[(row - scroll_position.y() as u32) as usize];
         let x = position.x() + (scroll_position.x() * layout.em_width);
 
         let column = if x >= 0.0 {
             line.index_for_x(x)
                 .map(|ix| ix as u32)
-                .unwrap_or(view.line_len(row, cx))
+                .unwrap_or(snapshot.line_len(row))
         } else {
             0
         };
