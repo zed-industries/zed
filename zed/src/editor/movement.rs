@@ -85,7 +85,8 @@ pub fn line_beginning(
 }
 
 pub fn line_end(map: &DisplayMapSnapshot, point: DisplayPoint) -> Result<DisplayPoint> {
-    Ok(DisplayPoint::new(point.row(), map.line_len(point.row())))
+    let line_end = DisplayPoint::new(point.row(), map.line_len(point.row()));
+    Ok(map.clip_point(line_end, Bias::Left))
 }
 
 pub fn prev_word_boundary(map: &DisplayMapSnapshot, point: DisplayPoint) -> Result<DisplayPoint> {
