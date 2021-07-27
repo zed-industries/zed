@@ -195,16 +195,18 @@ impl EditorElement {
         });
 
         for (ix, line) in layout.line_number_layouts.iter().enumerate() {
-            let line_origin = rect.origin()
-                + vec2f(
-                    rect.width() - line.width() - layout.gutter_padding,
-                    ix as f32 * layout.line_height - (scroll_top % layout.line_height),
+            if let Some(line) = line {
+                let line_origin = rect.origin()
+                    + vec2f(
+                        rect.width() - line.width() - layout.gutter_padding,
+                        ix as f32 * layout.line_height - (scroll_top % layout.line_height),
+                    );
+                line.paint(
+                    line_origin,
+                    RectF::new(vec2f(0., 0.), vec2f(line.width(), layout.line_height)),
+                    cx,
                 );
-            line.paint(
-                line_origin,
-                RectF::new(vec2f(0., 0.), vec2f(line.width(), layout.line_height)),
-                cx,
-            );
+            }
         }
 
         cx.scene.pop_layer();
@@ -560,7 +562,7 @@ pub struct LayoutState {
     text_size: Vector2F,
     snapshot: Snapshot,
     line_layouts: Vec<text_layout::Line>,
-    line_number_layouts: Vec<text_layout::Line>,
+    line_number_layouts: Vec<Option<text_layout::Line>>,
     line_height: f32,
     em_width: f32,
     selections: HashMap<ReplicaId, Vec<Range<DisplayPoint>>>,

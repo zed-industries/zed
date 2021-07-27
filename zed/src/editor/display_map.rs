@@ -349,6 +349,7 @@ mod tests {
                     assert_eq!(
                         snapshot
                             .buffer_rows(start_display_row as u32)
+                            .map(|(row, _)| row)
                             .collect::<Vec<_>>(),
                         &expected_buffer_rows[start_display_row..],
                         "invalid buffer_rows({}..)",
