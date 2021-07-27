@@ -20,7 +20,6 @@ use gpui::{
     ElementBox, Entity, FontCache, ModelHandle, MutableAppContext, Task, TextLayoutCache, View,
     ViewContext, WeakViewHandle,
 };
-use parking_lot::Mutex;
 use postage::watch;
 use serde::{Deserialize, Serialize};
 use smallvec::SmallVec;
@@ -375,8 +374,8 @@ pub struct Editor {
     next_selection_id: usize,
     add_selections_state: Option<AddSelectionsState>,
     select_larger_syntax_node_stack: Vec<Vec<Selection>>,
-    scroll_position: Mutex<Vector2F>,
-    autoscroll_requested: Mutex<bool>,
+    scroll_position: Vector2F,
+    autoscroll_requested: bool,
     settings: watch::Receiver<Settings>,
     focused: bool,
     cursors_visible: bool,
@@ -446,8 +445,8 @@ impl Editor {
             next_selection_id,
             add_selections_state: None,
             select_larger_syntax_node_stack: Vec::new(),
-            scroll_position: Mutex::new(Vector2F::zero()),
-            autoscroll_requested: Mutex::new(false),
+            scroll_position: Vector2F::zero(),
+            autoscroll_requested: false,
             settings,
             focused: false,
             cursors_visible: false,
@@ -467,7 +466,7 @@ impl Editor {
         Snapshot {
             display_snapshot: self.display_map.update(cx, |map, cx| map.snapshot(cx)),
             gutter_visible: !self.single_line,
-            scroll_position: *self.scroll_position.lock(),
+            scroll_position: self.scroll_position,
             theme: settings.theme.clone(),
             font_family: settings.buffer_font_family,
             font_size: settings.buffer_font_size,
@@ -475,18 +474,17 @@ impl Editor {
     }
 
     fn scroll(&mut self, scroll_position: &Vector2F, cx: &mut ViewContext<Self>) {
-        *self.scroll_position.lock() = *scroll_position;
+        self.scroll_position = *scroll_position;
         cx.notify();
     }
 
     pub fn scroll_position(&self) -> Vector2F {
-        *self.scroll_position.lock()
+        self.scroll_position
     }
 
     pub fn clamp_scroll_left(&mut self, max: f32) -> bool {
-        let mut scroll_position = self.scroll_position.lock();
-        if max < scroll_position.x() {
-            scroll_position.set_x(max);
+        if max < self.scroll_position.x() {
+            self.scroll_position.set_x(max);
             true
         } else {
             false
@@ -494,20 +492,18 @@ impl Editor {
     }
 
     pub fn autoscroll_vertically(
-        &self,
+        &mut self,
         viewport_height: f32,
         line_height: f32,
         cx: &mut MutableAppContext,
     ) -> bool {
         let display_map = self.display_map.update(cx, |map, cx| map.snapshot(cx));
-        let mut scroll_position = self.scroll_position.lock();
-        let scroll_top = scroll_position.y();
-        scroll_position
+        let scroll_top = self.scroll_position.y();
+        self.scroll_position
             .set_y(scroll_top.min(display_map.max_point().row().saturating_sub(1) as f32));
 
-        let mut autoscroll_requested = self.autoscroll_requested.lock();
-        if *autoscroll_requested {
-            *autoscroll_requested = false;
+        if self.autoscroll_requested {
+            self.autoscroll_requested = false;
         } else {
             return false;
         }
@@ -538,20 +534,20 @@ impl Editor {
 
         let target_top = (first_cursor_top - margin).max(0.0);
         let target_bottom = last_cursor_bottom + margin;
-        let start_row = scroll_position.y();
+        let start_row = self.scroll_position.y();
         let end_row = start_row + visible_lines;
 
         if target_top < start_row {
-            scroll_position.set_y(target_top);
+            self.scroll_position.set_y(target_top);
         } else if target_bottom >= end_row {
-            scroll_position.set_y(target_bottom - visible_lines);
+            self.scroll_position.set_y(target_bottom - visible_lines);
         }
 
         true
     }
 
     pub fn autoscroll_horizontally(
-        &self,
+        &mut self,
         start_row: u32,
         viewport_width: f32,
         scroll_width: f32,
@@ -579,15 +575,15 @@ impl Editor {
             return false;
         }
 
-        let mut scroll_position = self.scroll_position.lock();
-        let scroll_left = scroll_position.x() * max_glyph_width;
+        let scroll_left = self.scroll_position.x() * max_glyph_width;
         let scroll_right = scroll_left + viewport_width;
 
         if target_left < scroll_left {
-            scroll_position.set_x(target_left / max_glyph_width);
+            self.scroll_position.set_x(target_left / max_glyph_width);
             true
         } else if target_right > scroll_right {
-            scroll_position.set_x((target_right - viewport_width) / max_glyph_width);
+            self.scroll_position
+                .set_x((target_right - viewport_width) / max_glyph_width);
             true
         } else {
             false
@@ -645,7 +641,7 @@ impl Editor {
             return;
         }
 
-        *self.scroll_position.lock() = scroll_position;
+        self.scroll_position = scroll_position;
 
         cx.notify();
     }
@@ -2016,7 +2012,7 @@ impl Editor {
         self.pause_cursor_blinking(cx);
 
         if autoscroll {
-            *self.autoscroll_requested.lock() = true;
+            self.autoscroll_requested = true;
             cx.notify();
         }
 
@@ -2146,7 +2142,7 @@ impl Editor {
     fn fold_ranges<T: ToOffset>(&mut self, ranges: Vec<Range<T>>, cx: &mut ViewContext<Self>) {
         if !ranges.is_empty() {
             self.display_map.update(cx, |map, cx| map.fold(ranges, cx));
-            *self.autoscroll_requested.lock() = true;
+            self.autoscroll_requested = true;
             cx.notify();
         }
     }
@@ -2155,7 +2151,7 @@ impl Editor {
         if !ranges.is_empty() {
             self.display_map
                 .update(cx, |map, cx| map.unfold(ranges, cx));
-            *self.autoscroll_requested.lock() = true;
+            self.autoscroll_requested = true;
             cx.notify();
         }
     }
@@ -2554,8 +2550,8 @@ impl workspace::ItemView for Editor {
     where
         Self: Sized,
     {
-        let clone = Editor::for_buffer(self.buffer.clone(), self.settings.clone(), cx);
-        *clone.scroll_position.lock() = *self.scroll_position.lock();
+        let mut clone = Editor::for_buffer(self.buffer.clone(), self.settings.clone(), cx);
+        clone.scroll_position = self.scroll_position;
         Some(clone)
     }
 
