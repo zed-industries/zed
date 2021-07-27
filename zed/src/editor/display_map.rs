@@ -611,7 +611,8 @@ mod tests {
             [
                 ("out".to_string(), Some("fn.name")),
                 ("…\n".to_string(), None),
-                ("  fn\n \n".to_string(), Some("mod.body"))
+                ("  \nfn ".to_string(), Some("mod.body")),
+                ("i\n".to_string(), Some("fn.name"))
             ]
         );
     }
