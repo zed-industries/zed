@@ -3,12 +3,25 @@ use gpui::{fonts::FontId, FontCache, FontSystem};
 use std::{
     cell::RefCell,
     collections::HashMap,
+    iter,
     ops::{Deref, DerefMut},
     sync::Arc,
 };
 
 thread_local! {
     static WRAPPERS: RefCell<Vec<LineWrapper>> = Default::default();
+}
+
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+pub struct Boundary {
+    pub ix: usize,
+    pub next_indent: u32,
+}
+
+impl Boundary {
+    fn new(ix: usize, next_indent: u32) -> Self {
+        Self { ix, next_indent }
+    }
 }
 
 pub struct LineWrapper {
@@ -20,6 +33,8 @@ pub struct LineWrapper {
 }
 
 impl LineWrapper {
+    pub const MAX_INDENT: u32 = 256;
+
     pub fn thread_local(
         font_system: Arc<dyn FontSystem>,
         font_cache: &FontCache,
@@ -60,33 +75,44 @@ impl LineWrapper {
         }
     }
 
-    #[cfg(test)]
-    pub fn wrap_line_with_shaping(&self, line: &str, wrap_width: f32) -> Vec<usize> {
-        self.font_system
-            .wrap_line(line, self.font_id, self.font_size, wrap_width)
-    }
-
     pub fn wrap_line<'a>(
         &'a mut self,
         line: &'a str,
         wrap_width: f32,
-    ) -> impl Iterator<Item = usize> + 'a {
+    ) -> impl Iterator<Item = Boundary> + 'a {
         let mut width = 0.0;
+        let mut first_non_whitespace_ix = None;
+        let mut indent = None;
         let mut last_candidate_ix = 0;
         let mut last_candidate_width = 0.0;
         let mut last_wrap_ix = 0;
         let mut prev_c = '\0';
-        let char_indices = line.char_indices();
-        char_indices.filter_map(move |(ix, c)| {
-            if c != '\n' {
-                if self.is_boundary(prev_c, c) {
+        let mut char_indices = line.char_indices();
+        iter::from_fn(move || {
+            while let Some((ix, c)) = char_indices.next() {
+                if c == '\n' {
+                    continue;
+                }
+
+                if self.is_boundary(prev_c, c) && first_non_whitespace_ix.is_some() {
                     last_candidate_ix = ix;
                     last_candidate_width = width;
+                }
+
+                if c != ' ' && first_non_whitespace_ix.is_none() {
+                    first_non_whitespace_ix = Some(ix);
                 }
 
                 let char_width = self.width_for_char(c);
                 width += char_width;
                 if width > wrap_width && ix > last_wrap_ix {
+                    if let (None, Some(first_non_whitespace_ix)) = (indent, first_non_whitespace_ix)
+                    {
+                        indent = Some(
+                            Self::MAX_INDENT.min((first_non_whitespace_ix - last_wrap_ix) as u32),
+                        );
+                    }
+
                     if last_candidate_ix > 0 {
                         last_wrap_ix = last_candidate_ix;
                         width -= last_candidate_width;
@@ -95,7 +121,12 @@ impl LineWrapper {
                         last_wrap_ix = ix;
                         width = char_width;
                     }
-                    return Some(last_wrap_ix);
+
+                    let indent_width =
+                        indent.map(|indent| indent as f32 * self.width_for_char(' '));
+                    width += indent_width.unwrap_or(0.);
+
+                    return Some(Boundary::new(last_wrap_ix, indent.unwrap_or(0)));
                 }
                 prev_c = c;
             }
@@ -105,10 +136,7 @@ impl LineWrapper {
     }
 
     fn is_boundary(&self, prev: char, next: char) -> bool {
-        if prev == ' ' || next == ' ' {
-            return true;
-        }
-        false
+        (prev == ' ') && (next != ' ')
     }
 
     #[inline(always)]
@@ -184,27 +212,54 @@ mod tests {
         };
 
         let mut wrapper = LineWrapper::new(font_system, &font_cache, settings);
-
-        assert_eq!(
-            wrapper.wrap_line_with_shaping("aa bbb cccc ddddd eeee", 72.0),
-            &[7, 12, 18],
-        );
         assert_eq!(
             wrapper
                 .wrap_line("aa bbb cccc ddddd eeee", 72.0)
                 .collect::<Vec<_>>(),
-            &[7, 12, 18],
-        );
-
-        assert_eq!(
-            wrapper.wrap_line_with_shaping("aaa aaaaaaaaaaaaaaaaaa", 72.0),
-            &[4, 11, 18],
+            &[
+                Boundary::new(7, 0),
+                Boundary::new(12, 0),
+                Boundary::new(18, 0)
+            ],
         );
         assert_eq!(
             wrapper
                 .wrap_line("aaa aaaaaaaaaaaaaaaaaa", 72.0)
                 .collect::<Vec<_>>(),
-            &[4, 11, 18],
+            &[
+                Boundary::new(4, 0),
+                Boundary::new(11, 0),
+                Boundary::new(18, 0)
+            ],
+        );
+        assert_eq!(
+            wrapper.wrap_line("     aaaaaaa", 72.).collect::<Vec<_>>(),
+            &[
+                Boundary::new(7, 5),
+                Boundary::new(9, 5),
+                Boundary::new(11, 5),
+            ]
+        );
+        assert_eq!(
+            wrapper
+                .wrap_line("                            ", 72.)
+                .collect::<Vec<_>>(),
+            &[
+                Boundary::new(7, 0),
+                Boundary::new(14, 0),
+                Boundary::new(21, 0)
+            ]
+        );
+        assert_eq!(
+            wrapper
+                .wrap_line("          aaaaaaaaaaaaaa", 72.)
+                .collect::<Vec<_>>(),
+            &[
+                Boundary::new(7, 0),
+                Boundary::new(14, 3),
+                Boundary::new(18, 3),
+                Boundary::new(22, 3),
+            ]
         );
     }
 }

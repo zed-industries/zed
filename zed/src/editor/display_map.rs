@@ -111,22 +111,26 @@ impl DisplayMapSnapshot {
         DisplayPoint(self.wraps_snapshot.max_point())
     }
 
-    pub fn chunks_at(&self, point: DisplayPoint) -> wrap_map::Chunks {
-        self.wraps_snapshot.chunks_at(point.0)
+    pub fn chunks_at(&self, display_row: u32) -> wrap_map::Chunks {
+        self.wraps_snapshot.chunks_at(display_row)
     }
 
-    pub fn highlighted_chunks_for_rows(&mut self, rows: Range<u32>) -> wrap_map::HighlightedChunks {
-        self.wraps_snapshot.highlighted_chunks_for_rows(rows)
+    pub fn highlighted_chunks_for_rows(
+        &mut self,
+        display_rows: Range<u32>,
+    ) -> wrap_map::HighlightedChunks {
+        self.wraps_snapshot
+            .highlighted_chunks_for_rows(display_rows)
     }
 
-    pub fn chars_at<'a>(&'a self, point: DisplayPoint) -> impl Iterator<Item = char> + 'a {
-        self.chunks_at(point).flat_map(str::chars)
+    pub fn chars_at<'a>(&'a self, display_row: u32) -> impl Iterator<Item = char> + 'a {
+        self.chunks_at(display_row).flat_map(str::chars)
     }
 
     pub fn column_to_chars(&self, display_row: u32, target: u32) -> u32 {
         let mut count = 0;
         let mut column = 0;
-        for c in self.chars_at(DisplayPoint::new(display_row, 0)) {
+        for c in self.chars_at(display_row) {
             if column >= target {
                 break;
             }
@@ -139,7 +143,7 @@ impl DisplayMapSnapshot {
     pub fn column_from_chars(&self, display_row: u32, char_count: u32) -> u32 {
         let mut count = 0;
         let mut column = 0;
-        for c in self.chars_at(DisplayPoint::new(display_row, 0)) {
+        for c in self.chars_at(display_row) {
             if c == '\n' || count >= char_count {
                 break;
             }
@@ -174,12 +178,12 @@ impl DisplayMapSnapshot {
     }
 
     pub fn text(&self) -> String {
-        self.chunks_at(DisplayPoint::zero()).collect()
+        self.chunks_at(0).collect()
     }
 
     pub fn line(&self, display_row: u32) -> String {
         let mut result = String::new();
-        for chunk in self.chunks_at(DisplayPoint::new(display_row, 0)) {
+        for chunk in self.chunks_at(display_row) {
             if let Some(ix) = chunk.find('\n') {
                 result.push_str(&chunk[0..ix]);
                 break;
@@ -193,7 +197,7 @@ impl DisplayMapSnapshot {
     pub fn line_indent(&self, display_row: u32) -> (u32, bool) {
         let mut indent = 0;
         let mut is_blank = true;
-        for c in self.chars_at(DisplayPoint::new(display_row, 0)) {
+        for c in self.chars_at(display_row) {
             if c == ' ' {
                 indent += 1;
             } else {
@@ -378,10 +382,8 @@ mod tests {
 
         let snapshot = map.update(&mut cx, |map, cx| map.snapshot(cx));
         assert_eq!(
-            snapshot
-                .chunks_at(DisplayPoint::new(0, 3))
-                .collect::<String>(),
-            " two \nthree four \nfive\nsix seven \neight"
+            snapshot.chunks_at(0).collect::<String>(),
+            "one two \nthree four \nfive\nsix seven \neight"
         );
         assert_eq!(
             snapshot.clip_point(DisplayPoint::new(0, 8), Bias::Left),
@@ -399,9 +401,7 @@ mod tests {
 
         let snapshot = map.update(&mut cx, |map, cx| map.snapshot(cx));
         assert_eq!(
-            snapshot
-                .chunks_at(DisplayPoint::new(1, 0))
-                .collect::<String>(),
+            snapshot.chunks_at(1).collect::<String>(),
             "three four \nfive\nsix and \nseven eight"
         );
     }
@@ -431,22 +431,20 @@ mod tests {
         });
 
         assert_eq!(
-            &map.update(cx, |map, cx| map.snapshot(cx))
-                .chunks_at(DisplayPoint::new(1, 0))
-                .collect::<String>()[0..10],
-            "    b   bb"
+            map.update(cx, |map, cx| map.snapshot(cx))
+                .chunks_at(1)
+                .collect::<String>()
+                .lines()
+                .next(),
+            Some("    b   bbbbb")
         );
         assert_eq!(
-            &map.update(cx, |map, cx| map.snapshot(cx))
-                .chunks_at(DisplayPoint::new(1, 2))
-                .collect::<String>()[0..10],
-            "  b   bbbb"
-        );
-        assert_eq!(
-            &map.update(cx, |map, cx| map.snapshot(cx))
-                .chunks_at(DisplayPoint::new(1, 6))
-                .collect::<String>()[0..13],
-            "  bbbbb\nc   c"
+            map.update(cx, |map, cx| map.snapshot(cx))
+                .chunks_at(2)
+                .collect::<String>()
+                .lines()
+                .next(),
+            Some("c   ccccc")
         );
     }
 
@@ -676,6 +674,12 @@ mod tests {
         });
         let map = map.update(cx, |map, cx| map.snapshot(cx));
         assert_eq!(map.text(), "✅       α\nβ   \n🏀β      γ");
+        assert_eq!(
+            map.chunks_at(0).collect::<String>(),
+            "✅       α\nβ   \n🏀β      γ"
+        );
+        assert_eq!(map.chunks_at(1).collect::<String>(), "β   \n🏀β      γ");
+        assert_eq!(map.chunks_at(2).collect::<String>(), "🏀β      γ");
 
         let point = Point::new(0, "✅\t\t".len() as u32);
         let display_point = DisplayPoint::new(0, "✅       ".len() as u32);
@@ -702,22 +706,12 @@ mod tests {
             Point::new(0, "✅\t".len() as u32),
         );
         assert_eq!(
-            map.chunks_at(DisplayPoint::new(0, "✅      ".len() as u32))
-                .collect::<String>(),
-            " α\nβ   \n🏀β      γ"
-        );
-        assert_eq!(
             DisplayPoint::new(0, "✅ ".len() as u32).to_buffer_point(&map, Bias::Right),
             Point::new(0, "✅\t".len() as u32),
         );
         assert_eq!(
             DisplayPoint::new(0, "✅ ".len() as u32).to_buffer_point(&map, Bias::Left),
             Point::new(0, "✅".len() as u32),
-        );
-        assert_eq!(
-            map.chunks_at(DisplayPoint::new(0, "✅ ".len() as u32))
-                .collect::<String>(),
-            "      α\nβ   \n🏀β      γ"
         );
 
         // Clipping display points inside of multi-byte characters

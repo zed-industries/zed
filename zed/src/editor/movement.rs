@@ -94,7 +94,7 @@ pub fn prev_word_boundary(map: &DisplayMapSnapshot, point: DisplayPoint) -> Resu
         let mut boundary = DisplayPoint::new(point.row(), 0);
         let mut column = 0;
         let mut prev_c = None;
-        for c in map.chars_at(boundary) {
+        for c in map.chars_at(point.row()) {
             if column >= point.column() {
                 break;
             }
@@ -115,7 +115,7 @@ pub fn next_word_boundary(
     mut point: DisplayPoint,
 ) -> Result<DisplayPoint> {
     let mut prev_c = None;
-    for c in map.chars_at(point) {
+    for c in map.chars_at(point.row()).skip(point.column() as usize) {
         if prev_c.is_some() && (c == '\n' || char_kind(prev_c.unwrap()) != char_kind(c)) {
             break;
         }
