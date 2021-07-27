@@ -1,4 +1,4 @@
-use super::Buffer;
+use super::{Buffer, Content};
 use crate::{time, util::Bias};
 use anyhow::Result;
 use std::{cmp::Ordering, ops::Range};
@@ -27,7 +27,9 @@ impl Anchor {
         }
     }
 
-    pub fn cmp(&self, other: &Anchor, buffer: &Buffer) -> Result<Ordering> {
+    pub fn cmp<'a>(&self, other: &Anchor, buffer: impl Into<Content<'a>>) -> Result<Ordering> {
+        let buffer = buffer.into();
+
         if self == other {
             return Ok(Ordering::Equal);
         }
@@ -61,12 +63,13 @@ impl Anchor {
 }
 
 pub trait AnchorRangeExt {
-    fn cmp(&self, b: &Range<Anchor>, buffer: &Buffer) -> Result<Ordering>;
+    fn cmp<'a>(&self, b: &Range<Anchor>, buffer: impl Into<Content<'a>>) -> Result<Ordering>;
 }
 
 impl AnchorRangeExt for Range<Anchor> {
-    fn cmp(&self, other: &Range<Anchor>, buffer: &Buffer) -> Result<Ordering> {
-        Ok(match self.start.cmp(&other.start, buffer)? {
+    fn cmp<'a>(&self, other: &Range<Anchor>, buffer: impl Into<Content<'a>>) -> Result<Ordering> {
+        let buffer = buffer.into();
+        Ok(match self.start.cmp(&other.start, &buffer)? {
             Ordering::Equal => other.end.cmp(&self.end, buffer)?,
             ord @ _ => ord,
         })

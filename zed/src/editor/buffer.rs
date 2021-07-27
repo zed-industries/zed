@@ -372,28 +372,39 @@ impl UndoMap {
 }
 
 struct Edits<'a, F: Fn(&FragmentSummary) -> bool> {
+    visible_text: &'a Rope,
     deleted_text: &'a Rope,
     cursor: FilterCursor<'a, F, Fragment, FragmentTextSummary>,
     undos: &'a UndoMap,
     since: time::Global,
-    delta: isize,
+    old_offset: usize,
+    new_offset: usize,
+    old_point: Point,
+    new_point: Point,
 }
 
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
 pub struct Edit {
-    pub old_range: Range<usize>,
-    pub new_range: Range<usize>,
-    pub old_lines: Point,
+    pub old_bytes: Range<usize>,
+    pub new_bytes: Range<usize>,
+    pub old_lines: Range<Point>,
 }
 
 impl Edit {
     pub fn delta(&self) -> isize {
-        (self.new_range.end - self.new_range.start) as isize
-            - (self.old_range.end - self.old_range.start) as isize
+        self.inserted_bytes() as isize - self.deleted_bytes() as isize
     }
 
-    pub fn old_extent(&self) -> usize {
-        self.old_range.end - self.old_range.start
+    pub fn deleted_bytes(&self) -> usize {
+        self.old_bytes.end - self.old_bytes.start
+    }
+
+    pub fn inserted_bytes(&self) -> usize {
+        self.new_bytes.end - self.new_bytes.start
+    }
+
+    pub fn deleted_lines(&self) -> Point {
+        self.old_lines.end - self.old_lines.start
     }
 }
 
@@ -589,7 +600,9 @@ impl Buffer {
 
     pub fn snapshot(&self) -> Snapshot {
         Snapshot {
-            text: self.visible_text.clone(),
+            visible_text: self.visible_text.clone(),
+            fragments: self.fragments.clone(),
+            version: self.version.clone(),
             tree: self.syntax_tree(),
             language: self.language.clone(),
             query_cursor: QueryCursorHandle::new(),
@@ -776,25 +789,21 @@ impl Buffer {
         if let Some(syntax_tree) = self.syntax_tree.lock().as_mut() {
             let mut edited = false;
             let mut delta = 0_isize;
-            for Edit {
-                old_range,
-                new_range,
-                old_lines,
-            } in self.edits_since(syntax_tree.version.clone())
-            {
-                let start_offset = (old_range.start as isize + delta) as usize;
+            for edit in self.edits_since(syntax_tree.version.clone()) {
+                let start_offset = (edit.old_bytes.start as isize + delta) as usize;
                 let start_point = self.visible_text.to_point(start_offset);
-                let old_bytes = old_range.end - old_range.start;
-                let new_bytes = new_range.end - new_range.start;
                 syntax_tree.tree.edit(&InputEdit {
                     start_byte: start_offset,
-                    old_end_byte: start_offset + old_bytes,
-                    new_end_byte: start_offset + new_bytes,
+                    old_end_byte: start_offset + edit.deleted_bytes(),
+                    new_end_byte: start_offset + edit.inserted_bytes(),
                     start_position: start_point.into(),
-                    old_end_position: (start_point + old_lines).into(),
-                    new_end_position: self.visible_text.to_point(start_offset + new_bytes).into(),
+                    old_end_position: (start_point + edit.deleted_lines()).into(),
+                    new_end_position: self
+                        .visible_text
+                        .to_point(start_offset + edit.inserted_bytes())
+                        .into(),
                 });
-                delta += new_bytes as isize - old_bytes as isize;
+                delta += edit.inserted_bytes() as isize - edit.deleted_bytes() as isize;
                 edited = true;
             }
             syntax_tree.parsed &= !edited;
@@ -998,12 +1007,8 @@ impl Buffer {
         self.visible_text.summary()
     }
 
-    pub fn text_summary_for_range(&self, range: Range<usize>) -> TextSummary {
-        self.visible_text.cursor(range.start).summary(range.end)
-    }
-
     pub fn len(&self) -> usize {
-        self.fragments.extent::<usize>(&None)
+        self.content().len()
     }
 
     pub fn line_len(&self, row: u32) -> u32 {
@@ -1051,11 +1056,15 @@ impl Buffer {
         );
 
         Edits {
+            visible_text: &self.visible_text,
             deleted_text: &self.deleted_text,
             cursor,
             undos: &self.undo_map,
             since,
-            delta: 0,
+            old_offset: 0,
+            new_offset: 0,
+            old_point: Point::zero(),
+            new_point: Point::zero(),
         }
     }
 
@@ -1138,7 +1147,7 @@ impl Buffer {
         // Skip invalid ranges and coalesce contiguous ones.
         let mut ranges: Vec<Range<usize>> = Vec::new();
         for range in ranges_iter {
-            let range = range.start.to_offset(self)..range.end.to_offset(self);
+            let range = range.start.to_offset(&*self)..range.end.to_offset(&*self);
             if has_new_text || !range.is_empty() {
                 if let Some(prev_range) = ranges.last_mut() {
                     if prev_range.end >= range.start {
@@ -1849,6 +1858,14 @@ impl Buffer {
         edit
     }
 
+    fn content<'a>(&'a self) -> Content<'a> {
+        self.into()
+    }
+
+    pub fn text_summary_for_range(&self, range: Range<usize>) -> TextSummary {
+        self.content().text_summary_for_range(range)
+    }
+
     pub fn anchor_before<T: ToOffset>(&self, position: T) -> Anchor {
         self.anchor_at(position, Bias::Left)
     }
@@ -1858,51 +1875,11 @@ impl Buffer {
     }
 
     pub fn anchor_at<T: ToOffset>(&self, position: T, bias: Bias) -> Anchor {
-        let offset = position.to_offset(self);
-        let max_offset = self.len();
-        assert!(offset <= max_offset, "offset is out of range");
-        let mut cursor = self.fragments.cursor::<usize, FragmentTextSummary>();
-        cursor.seek(&offset, bias, &None);
-        Anchor {
-            offset: offset + cursor.sum_start().deleted,
-            bias,
-            version: self.version(),
-        }
-    }
-
-    fn summary_for_anchor(&self, anchor: &Anchor) -> TextSummary {
-        let cx = Some(anchor.version.clone());
-        let mut cursor = self.fragments.cursor::<VersionedOffset, usize>();
-        cursor.seek(&VersionedOffset::Offset(anchor.offset), anchor.bias, &cx);
-        let overshoot = if cursor.item().map_or(false, |fragment| fragment.visible) {
-            anchor.offset - cursor.seek_start().offset()
-        } else {
-            0
-        };
-        self.text_summary_for_range(0..*cursor.sum_start() + overshoot)
-    }
-
-    fn full_offset_for_anchor(&self, anchor: &Anchor) -> usize {
-        let cx = Some(anchor.version.clone());
-        let mut cursor = self
-            .fragments
-            .cursor::<VersionedOffset, FragmentTextSummary>();
-        cursor.seek(&VersionedOffset::Offset(anchor.offset), anchor.bias, &cx);
-        let overshoot = if cursor.item().is_some() {
-            anchor.offset - cursor.seek_start().offset()
-        } else {
-            0
-        };
-        let summary = cursor.sum_start();
-        summary.visible + summary.deleted + overshoot
+        self.content().anchor_at(position, bias)
     }
 
     pub fn point_for_offset(&self, offset: usize) -> Result<Point> {
-        if offset <= self.len() {
-            Ok(self.text_summary_for_range(0..offset).lines)
-        } else {
-            Err(anyhow!("offset out of bounds"))
-        }
+        self.content().point_for_offset(offset)
     }
 
     pub fn clip_point(&self, point: Point, bias: Bias) -> Point {
@@ -1945,7 +1922,9 @@ impl Clone for Buffer {
 }
 
 pub struct Snapshot {
-    text: Rope,
+    visible_text: Rope,
+    fragments: SumTree<Fragment>,
+    version: time::Global,
     tree: Option<Tree>,
     language: Option<Arc<Language>>,
     query_cursor: QueryCursorHandle,
@@ -1953,24 +1932,32 @@ pub struct Snapshot {
 
 impl Snapshot {
     pub fn len(&self) -> usize {
-        self.text.len()
+        self.visible_text.len()
     }
 
     pub fn text(&self) -> Rope {
-        self.text.clone()
+        self.visible_text.clone()
+    }
+
+    pub fn text_summary(&self) -> TextSummary {
+        self.visible_text.summary()
+    }
+
+    pub fn max_point(&self) -> Point {
+        self.visible_text.max_point()
     }
 
     pub fn text_for_range(&self, range: Range<usize>) -> Chunks {
-        self.text.chunks_in_range(range)
+        self.visible_text.chunks_in_range(range)
     }
 
     pub fn highlighted_text_for_range(&mut self, range: Range<usize>) -> HighlightedChunks {
-        let chunks = self.text.chunks_in_range(range.clone());
+        let chunks = self.visible_text.chunks_in_range(range.clone());
         if let Some((language, tree)) = self.language.as_ref().zip(self.tree.as_ref()) {
             let captures = self.query_cursor.set_byte_range(range.clone()).captures(
                 &language.highlight_query,
                 tree.root_node(),
-                TextProvider(&self.text),
+                TextProvider(&self.visible_text),
             );
 
             HighlightedChunks {
@@ -1992,20 +1979,144 @@ impl Snapshot {
         }
     }
 
+    pub fn text_summary_for_range(&self, range: Range<usize>) -> TextSummary {
+        self.content().text_summary_for_range(range)
+    }
+
+    pub fn point_for_offset(&self, offset: usize) -> Result<Point> {
+        self.content().point_for_offset(offset)
+    }
+
     pub fn clip_offset(&self, offset: usize, bias: Bias) -> usize {
-        self.text.clip_offset(offset, bias)
+        self.visible_text.clip_offset(offset, bias)
     }
 
     pub fn clip_point(&self, point: Point, bias: Bias) -> Point {
-        self.text.clip_point(point, bias)
+        self.visible_text.clip_point(point, bias)
     }
 
     pub fn to_offset(&self, point: Point) -> usize {
-        self.text.to_offset(point)
+        self.visible_text.to_offset(point)
     }
 
     pub fn to_point(&self, offset: usize) -> Point {
-        self.text.to_point(offset)
+        self.visible_text.to_point(offset)
+    }
+
+    pub fn anchor_before<T: ToOffset>(&self, position: T) -> Anchor {
+        self.content().anchor_at(position, Bias::Left)
+    }
+
+    pub fn anchor_after<T: ToOffset>(&self, position: T) -> Anchor {
+        self.content().anchor_at(position, Bias::Right)
+    }
+
+    fn content(&self) -> Content {
+        self.into()
+    }
+}
+
+pub struct Content<'a> {
+    visible_text: &'a Rope,
+    fragments: &'a SumTree<Fragment>,
+    version: &'a time::Global,
+}
+
+impl<'a> From<&'a Snapshot> for Content<'a> {
+    fn from(snapshot: &'a Snapshot) -> Self {
+        Self {
+            visible_text: &snapshot.visible_text,
+            fragments: &snapshot.fragments,
+            version: &snapshot.version,
+        }
+    }
+}
+
+impl<'a> From<&'a Buffer> for Content<'a> {
+    fn from(buffer: &'a Buffer) -> Self {
+        Self {
+            visible_text: &buffer.visible_text,
+            fragments: &buffer.fragments,
+            version: &buffer.version,
+        }
+    }
+}
+
+impl<'a> From<&'a mut Buffer> for Content<'a> {
+    fn from(buffer: &'a mut Buffer) -> Self {
+        Self {
+            visible_text: &buffer.visible_text,
+            fragments: &buffer.fragments,
+            version: &buffer.version,
+        }
+    }
+}
+
+impl<'a> From<&'a Content<'a>> for Content<'a> {
+    fn from(content: &'a Content) -> Self {
+        Self {
+            visible_text: &content.visible_text,
+            fragments: &content.fragments,
+            version: &content.version,
+        }
+    }
+}
+
+impl<'a> Content<'a> {
+    fn len(&self) -> usize {
+        self.fragments.extent::<usize>(&None)
+    }
+
+    fn summary_for_anchor(&self, anchor: &Anchor) -> TextSummary {
+        let cx = Some(anchor.version.clone());
+        let mut cursor = self.fragments.cursor::<VersionedOffset, usize>();
+        cursor.seek(&VersionedOffset::Offset(anchor.offset), anchor.bias, &cx);
+        let overshoot = if cursor.item().map_or(false, |fragment| fragment.visible) {
+            anchor.offset - cursor.seek_start().offset()
+        } else {
+            0
+        };
+        self.text_summary_for_range(0..*cursor.sum_start() + overshoot)
+    }
+
+    fn text_summary_for_range(&self, range: Range<usize>) -> TextSummary {
+        self.visible_text.cursor(range.start).summary(range.end)
+    }
+
+    fn anchor_at<T: ToOffset>(&self, position: T, bias: Bias) -> Anchor {
+        let offset = position.to_offset(self);
+        let max_offset = self.len();
+        assert!(offset <= max_offset, "offset is out of range");
+        let mut cursor = self.fragments.cursor::<usize, FragmentTextSummary>();
+        cursor.seek(&offset, bias, &None);
+        Anchor {
+            offset: offset + cursor.sum_start().deleted,
+            bias,
+            version: self.version.clone(),
+        }
+    }
+
+    fn full_offset_for_anchor(&self, anchor: &Anchor) -> usize {
+        let cx = Some(anchor.version.clone());
+        let mut cursor = self
+            .fragments
+            .cursor::<VersionedOffset, FragmentTextSummary>();
+        cursor.seek(&VersionedOffset::Offset(anchor.offset), anchor.bias, &cx);
+        let overshoot = if cursor.item().is_some() {
+            anchor.offset - cursor.seek_start().offset()
+        } else {
+            0
+        };
+        let summary = cursor.sum_start();
+        summary.visible + summary.deleted + overshoot
+    }
+
+    fn point_for_offset(&self, offset: usize) -> Result<Point> {
+        if offset <= self.len() {
+            Ok(self.text_summary_for_range(0..offset).lines)
+        } else {
+            Err(anyhow!("offset out of bounds"))
+        }
     }
 }
 
@@ -2089,45 +2200,53 @@ impl<'a, F: Fn(&FragmentSummary) -> bool> Iterator for Edits<'a, F> {
         let mut change: Option<Edit> = None;
 
         while let Some(fragment) = self.cursor.item() {
-            let new_offset = self.cursor.start().visible;
-            let old_offset = (new_offset as isize - self.delta) as usize;
+            let bytes = self.cursor.start().visible - self.new_offset;
+            let lines = self.visible_text.to_point(self.cursor.start().visible) - self.new_point;
+            self.old_offset += bytes;
+            self.old_point += &lines;
+            self.new_offset += bytes;
+            self.new_point += &lines;
 
             if !fragment.was_visible(&self.since, &self.undos) && fragment.visible {
+                let fragment_lines =
+                    self.visible_text.to_point(self.new_offset + fragment.len) - self.new_point;
                 if let Some(ref mut change) = change {
-                    if change.new_range.end == new_offset {
-                        change.new_range.end += fragment.len;
-                        self.delta += fragment.len as isize;
+                    if change.new_bytes.end == self.new_offset {
+                        change.new_bytes.end += fragment.len;
                     } else {
                         break;
                     }
                 } else {
                     change = Some(Edit {
-                        old_range: old_offset..old_offset,
-                        new_range: new_offset..new_offset + fragment.len,
-                        old_lines: Point::zero(),
+                        old_bytes: self.old_offset..self.old_offset,
+                        new_bytes: self.new_offset..self.new_offset + fragment.len,
+                        old_lines: self.old_point..self.old_point,
                     });
-                    self.delta += fragment.len as isize;
                 }
+
+                self.new_offset += fragment.len;
+                self.new_point += &fragment_lines;
             } else if fragment.was_visible(&self.since, &self.undos) && !fragment.visible {
                 let deleted_start = self.cursor.start().deleted;
-                let old_lines = self.deleted_text.to_point(deleted_start + fragment.len)
+                let fragment_lines = self.deleted_text.to_point(deleted_start + fragment.len)
                     - self.deleted_text.to_point(deleted_start);
                 if let Some(ref mut change) = change {
-                    if change.new_range.end == new_offset {
-                        change.old_range.end += fragment.len;
-                        change.old_lines += &old_lines;
-                        self.delta -= fragment.len as isize;
+                    if change.new_bytes.end == self.new_offset {
+                        change.old_bytes.end += fragment.len;
+                        change.old_lines.end += &fragment_lines;
                     } else {
                         break;
                     }
                 } else {
                     change = Some(Edit {
-                        old_range: old_offset..old_offset + fragment.len,
-                        new_range: new_offset..new_offset,
-                        old_lines,
+                        old_bytes: self.old_offset..self.old_offset + fragment.len,
+                        new_bytes: self.new_offset..self.new_offset,
+                        old_lines: self.old_point..self.old_point + &fragment_lines,
                     });
-                    self.delta -= fragment.len as isize;
                 }
+
+                self.old_offset += fragment.len;
+                self.old_point += &fragment_lines;
             }
 
             self.cursor.next(&None);
@@ -2685,46 +2804,46 @@ impl operation_queue::Operation for Operation {
 }
 
 pub trait ToOffset {
-    fn to_offset(&self, buffer: &Buffer) -> usize;
+    fn to_offset<'a>(&self, content: impl Into<Content<'a>>) -> usize;
 }
 
 impl ToOffset for Point {
-    fn to_offset(&self, buffer: &Buffer) -> usize {
-        buffer.visible_text.to_offset(*self)
+    fn to_offset<'a>(&self, content: impl Into<Content<'a>>) -> usize {
+        content.into().visible_text.to_offset(*self)
     }
 }
 
 impl ToOffset for usize {
-    fn to_offset(&self, _: &Buffer) -> usize {
+    fn to_offset<'a>(&self, _: impl Into<Content<'a>>) -> usize {
         *self
     }
 }
 
 impl ToOffset for Anchor {
-    fn to_offset(&self, buffer: &Buffer) -> usize {
-        buffer.summary_for_anchor(self).bytes
+    fn to_offset<'a>(&self, content: impl Into<Content<'a>>) -> usize {
+        content.into().summary_for_anchor(self).bytes
     }
 }
 
 impl<'a> ToOffset for &'a Anchor {
-    fn to_offset(&self, buffer: &Buffer) -> usize {
-        buffer.summary_for_anchor(self).bytes
+    fn to_offset<'b>(&self, content: impl Into<Content<'b>>) -> usize {
+        content.into().summary_for_anchor(self).bytes
     }
 }
 
 pub trait ToPoint {
-    fn to_point(&self, buffer: &Buffer) -> Point;
+    fn to_point<'a>(&self, content: impl Into<Content<'a>>) -> Point;
 }
 
 impl ToPoint for Anchor {
-    fn to_point(&self, buffer: &Buffer) -> Point {
-        buffer.summary_for_anchor(self).lines
+    fn to_point<'a>(&self, content: impl Into<Content<'a>>) -> Point {
+        content.into().summary_for_anchor(self).lines
     }
 }
 
 impl ToPoint for usize {
-    fn to_point(&self, buffer: &Buffer) -> Point {
-        buffer.visible_text.to_point(*self)
+    fn to_point<'a>(&self, content: impl Into<Content<'a>>) -> Point {
+        content.into().visible_text.to_point(*self)
     }
 }
 
@@ -2898,19 +3017,16 @@ mod tests {
                     );
 
                     let mut delta = 0_isize;
-                    for Edit {
-                        old_range,
-                        new_range,
-                        ..
-                    } in edits
-                    {
-                        let old_len = old_range.end - old_range.start;
-                        let new_len = new_range.end - new_range.start;
-                        let old_start = (old_range.start as isize + delta) as usize;
-                        let new_text: String = buffer.text_for_range(new_range).collect();
-                        old_buffer.edit(Some(old_start..old_start + old_len), new_text, cx);
-
-                        delta += new_len as isize - old_len as isize;
+                    for edit in edits {
+                        let old_start = (edit.old_bytes.start as isize + delta) as usize;
+                        let new_text: String =
+                            buffer.text_for_range(edit.new_bytes.clone()).collect();
+                        old_buffer.edit(
+                            Some(old_start..old_start + edit.deleted_bytes()),
+                            new_text,
+                            cx,
+                        );
+                        delta += edit.delta();
                     }
                     assert_eq!(old_buffer.text(), buffer.text());
                 }
@@ -3395,7 +3511,7 @@ mod tests {
                 .iter()
                 .map(|selection| {
                     assert_eq!(selection.start, selection.end);
-                    selection.start.to_point(&buffer)
+                    selection.start.to_point(&*buffer)
                 })
                 .collect::<Vec<_>>();
             assert_eq!(
