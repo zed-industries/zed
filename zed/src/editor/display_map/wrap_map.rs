@@ -69,6 +69,7 @@ pub struct BufferRows<'a> {
     input_buffer_rows: fold_map::BufferRows<'a>,
     input_buffer_row: u32,
     output_row: u32,
+    soft_wrapped: bool,
     max_output_row: u32,
     transforms: Cursor<'a, Transform, WrapPoint, TabPoint>,
 }
@@ -516,10 +517,14 @@ impl Snapshot {
 
     pub fn buffer_rows(&self, start_row: u32) -> BufferRows {
         let mut transforms = self.transforms.cursor::<WrapPoint, TabPoint>();
-        transforms.seek(&WrapPoint::new(start_row, 0), Bias::Right, &());
+        transforms.seek(&WrapPoint::new(start_row, 0), Bias::Left, &());
         let mut input_row = transforms.sum_start().row();
+        let soft_wrapped;
         if transforms.item().map_or(false, |t| t.is_isomorphic()) {
             input_row += start_row - transforms.seek_start().row();
+            soft_wrapped = false;
+        } else {
+            soft_wrapped = true;
         }
         let mut input_buffer_rows = self.tab_snapshot.buffer_rows(input_row);
         let input_buffer_row = input_buffer_rows.next().unwrap();
@@ -528,6 +533,7 @@ impl Snapshot {
             input_buffer_row,
             input_buffer_rows,
             output_row: start_row,
+            soft_wrapped,
             max_output_row: self.max_point().row(),
         }
     }
@@ -686,7 +692,7 @@ impl<'a> Iterator for HighlightedChunks<'a> {
 }
 
 impl<'a> Iterator for BufferRows<'a> {
-    type Item = u32;
+    type Item = (u32, bool);
 
     fn next(&mut self) -> Option<Self::Item> {
         if self.output_row > self.max_output_row {
@@ -694,14 +700,19 @@ impl<'a> Iterator for BufferRows<'a> {
         }
 
         let buffer_row = self.input_buffer_row;
+        let soft_wrapped = self.soft_wrapped;
+
         self.output_row += 1;
         self.transforms
             .seek_forward(&WrapPoint::new(self.output_row, 0), Bias::Left, &());
         if self.transforms.item().map_or(false, |t| t.is_isomorphic()) {
             self.input_buffer_row = self.input_buffer_rows.next().unwrap();
+            self.soft_wrapped = false;
+        } else {
+            self.soft_wrapped = true;
         }
 
-        Some(buffer_row)
+        Some((buffer_row, soft_wrapped))
     }
 }
 

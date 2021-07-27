@@ -2345,7 +2345,7 @@ impl Snapshot {
         viewport_height: f32,
         font_cache: &FontCache,
         layout_cache: &TextLayoutCache,
-    ) -> Result<Vec<text_layout::Line>> {
+    ) -> Result<Vec<Option<text_layout::Line>>> {
         let font_id = font_cache.select_font(self.font_family, &FontProperties::new())?;
 
         let start_row = self.scroll_position().y() as usize;
@@ -2357,18 +2357,22 @@ impl Snapshot {
 
         let mut layouts = Vec::with_capacity(line_count);
         let mut line_number = String::new();
-        for buffer_row in self
+        for (buffer_row, soft_wrapped) in self
             .display_snapshot
             .buffer_rows(start_row as u32)
             .take(line_count)
         {
-            line_number.clear();
-            write!(&mut line_number, "{}", buffer_row + 1).unwrap();
-            layouts.push(layout_cache.layout_str(
-                &line_number,
-                self.font_size,
-                &[(line_number.len(), font_id, ColorU::black())],
-            ));
+            if soft_wrapped {
+                layouts.push(None);
+            } else {
+                line_number.clear();
+                write!(&mut line_number, "{}", buffer_row + 1).unwrap();
+                layouts.push(Some(layout_cache.layout_str(
+                    &line_number,
+                    self.font_size,
+                    &[(line_number.len(), font_id, ColorU::black())],
+                )));
+            }
         }
 
         Ok(layouts)
