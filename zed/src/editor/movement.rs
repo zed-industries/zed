@@ -40,7 +40,10 @@ pub fn up(
         point = DisplayPoint::new(0, 0);
     }
 
-    Ok((point, SelectionGoal::Column(goal_column)))
+    Ok((
+        map.clip_point(point, Bias::Left),
+        SelectionGoal::Column(goal_column),
+    ))
 }
 
 pub fn down(
@@ -62,7 +65,10 @@ pub fn down(
         point = max_point;
     }
 
-    Ok((point, SelectionGoal::Column(goal_column)))
+    Ok((
+        map.clip_point(point, Bias::Left),
+        SelectionGoal::Column(goal_column),
+    ))
 }
 
 pub fn line_beginning(
