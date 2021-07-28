@@ -107,6 +107,39 @@ impl DisplayMapSnapshot {
         self.buffer_snapshot.max_point().row + 1
     }
 
+    pub fn prev_row_boundary(&self, mut display_point: DisplayPoint) -> (DisplayPoint, Point) {
+        *display_point.column_mut() = 0;
+        let mut point = display_point.to_buffer_point(self, Bias::Left);
+        while point.column != 0 {
+            point.column = 0;
+            display_point = point.to_display_point(self);
+            if display_point.column() != 0 {
+                *display_point.column_mut() = 0;
+                point = display_point.to_buffer_point(self, Bias::Left);
+            }
+        }
+
+        (display_point, point)
+    }
+
+    pub fn next_row_boundary(&self, mut display_point: DisplayPoint) -> (DisplayPoint, Point) {
+        *display_point.row_mut() += 1;
+        *display_point.column_mut() = 0;
+        let mut point = display_point.to_buffer_point(self, Bias::Right);
+        while point.column != 0 {
+            point.column = 0;
+            point.row += 1;
+            display_point = point.to_display_point(self);
+            if display_point.column() != 0 {
+                *display_point.row_mut() += 1;
+                *display_point.column_mut() = 0;
+                point = display_point.to_buffer_point(self, Bias::Right);
+            }
+        }
+
+        (display_point, point)
+    }
+
     pub fn max_point(&self) -> DisplayPoint {
         DisplayPoint(self.wraps_snapshot.max_point())
     }
