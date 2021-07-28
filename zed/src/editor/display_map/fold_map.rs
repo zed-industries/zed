@@ -1111,9 +1111,10 @@ impl FoldEdit {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::editor::buffer::ToPoint;
-    use crate::test::sample_text;
-    use std::mem;
+    use crate::{editor::ToPoint, test::sample_text, util::RandomCharIter};
+    use rand::prelude::*;
+    use std::{env, mem};
+    use Bias::{Left, Right};
 
     #[gpui::test]
     fn test_basic_folds(cx: &mut gpui::MutableAppContext) {
@@ -1295,12 +1296,6 @@ mod tests {
 
     #[gpui::test]
     fn test_random_folds(cx: &mut gpui::MutableAppContext) {
-        use crate::editor::ToPoint;
-        use crate::util::RandomCharIter;
-        use rand::prelude::*;
-        use std::env;
-        use Bias::{Left, Right};
-
         let iterations = env::var("ITERATIONS")
             .map(|i| i.parse().expect("invalid `ITERATIONS` variable"))
             .unwrap_or(100);
@@ -1331,33 +1326,8 @@ mod tests {
             for _ in 0..operations {
                 log::info!("text: {:?}", buffer.read(cx).text());
                 match rng.gen_range(0..=100) {
-                    0..=34 => {
-                        let buffer = buffer.read(cx);
-                        let mut to_fold = Vec::new();
-                        for _ in 0..rng.gen_range(1..=2) {
-                            let end = buffer.clip_offset(rng.gen_range(0..=buffer.len()), Right);
-                            let start = buffer.clip_offset(rng.gen_range(0..=end), Left);
-                            to_fold.push(start..end);
-                        }
-                        log::info!("folding {:?}", to_fold);
-                        let (mut writer, snapshot, edits) = map.write(cx.as_ref());
-                        snapshot_edits.push((snapshot, edits));
-                        let (snapshot, edits) = writer.fold(to_fold, cx.as_ref());
-                        snapshot_edits.push((snapshot, edits));
-                    }
-                    35..=59 if !map.folds.is_empty() => {
-                        let buffer = buffer.read(cx);
-                        let mut to_unfold = Vec::new();
-                        for _ in 0..rng.gen_range(1..=3) {
-                            let end = buffer.clip_offset(rng.gen_range(0..=buffer.len()), Right);
-                            let start = buffer.clip_offset(rng.gen_range(0..=end), Left);
-                            to_unfold.push(start..end);
-                        }
-                        log::info!("unfolding {:?}", to_unfold);
-                        let (mut writer, snapshot, edits) = map.write(cx.as_ref());
-                        snapshot_edits.push((snapshot, edits));
-                        let (snapshot, edits) = writer.fold(to_unfold, cx.as_ref());
-                        snapshot_edits.push((snapshot, edits));
+                    0..=59 => {
+                        snapshot_edits.extend(map.randomly_mutate(&mut rng, cx.as_ref()));
                     }
                     _ => {
                         let edits = buffer.update(cx, |buffer, cx| {
@@ -1584,6 +1554,45 @@ mod tests {
                 }
             }
             merged_ranges
+        }
+
+        pub fn randomly_mutate(
+            &mut self,
+            rng: &mut impl Rng,
+            cx: &AppContext,
+        ) -> Vec<(Snapshot, Vec<FoldEdit>)> {
+            let mut snapshot_edits = Vec::new();
+            match rng.gen_range(0..=100) {
+                0..=39 if !self.folds.is_empty() => {
+                    let buffer = self.buffer.read(cx);
+                    let mut to_unfold = Vec::new();
+                    for _ in 0..rng.gen_range(1..=3) {
+                        let end = buffer.clip_offset(rng.gen_range(0..=buffer.len()), Right);
+                        let start = buffer.clip_offset(rng.gen_range(0..=end), Left);
+                        to_unfold.push(start..end);
+                    }
+                    log::info!("unfolding {:?}", to_unfold);
+                    let (mut writer, snapshot, edits) = self.write(cx.as_ref());
+                    snapshot_edits.push((snapshot, edits));
+                    let (snapshot, edits) = writer.fold(to_unfold, cx.as_ref());
+                    snapshot_edits.push((snapshot, edits));
+                }
+                _ => {
+                    let buffer = self.buffer.read(cx);
+                    let mut to_fold = Vec::new();
+                    for _ in 0..rng.gen_range(1..=2) {
+                        let end = buffer.clip_offset(rng.gen_range(0..=buffer.len()), Right);
+                        let start = buffer.clip_offset(rng.gen_range(0..=end), Left);
+                        to_fold.push(start..end);
+                    }
+                    log::info!("folding {:?}", to_fold);
+                    let (mut writer, snapshot, edits) = self.write(cx.as_ref());
+                    snapshot_edits.push((snapshot, edits));
+                    let (snapshot, edits) = writer.fold(to_fold, cx.as_ref());
+                    snapshot_edits.push((snapshot, edits));
+                }
+            }
+            snapshot_edits
         }
     }
 }
