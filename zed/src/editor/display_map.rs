@@ -89,6 +89,11 @@ impl DisplayMap {
         self.wrap_map
             .update(cx, |map, cx| map.set_wrap_width(width, cx))
     }
+
+    #[cfg(test)]
+    pub fn is_rewrapping(&self, cx: &gpui::AppContext) -> bool {
+        self.wrap_map.read(cx).is_rewrapping()
+    }
 }
 
 pub struct DisplayMapSnapshot {
@@ -323,10 +328,139 @@ mod tests {
         language::{Language, LanguageConfig},
         settings::Theme,
         test::*,
+        util::RandomCharIter,
     };
     use buffer::History;
     use gpui::MutableAppContext;
-    use std::sync::Arc;
+    use rand::{prelude::StdRng, Rng};
+    use std::{env, sync::Arc};
+    use Bias::*;
+
+    #[gpui::test(iterations = 100, seed = 495)]
+    async fn test_random(mut cx: gpui::TestAppContext, mut rng: StdRng) {
+        cx.foreground().set_block_on_ticks(0..=50);
+        cx.foreground().forbid_parking();
+        let operations = env::var("OPERATIONS")
+            .map(|i| i.parse().expect("invalid `OPERATIONS` variable"))
+            .unwrap_or(10);
+
+        let font_cache = cx.font_cache().clone();
+        let settings = Settings {
+            tab_size: rng.gen_range(1..=4),
+            buffer_font_family: font_cache.load_family(&["Helvetica"]).unwrap(),
+            buffer_font_size: 14.0,
+            ..Settings::new(&font_cache).unwrap()
+        };
+        let max_wrap_width = 300.0;
+        let mut wrap_width = if rng.gen_bool(0.1) {
+            None
+        } else {
+            Some(rng.gen_range(0.0..=max_wrap_width))
+        };
+
+        log::info!("tab size: {}", settings.tab_size);
+        log::info!("wrap width: {:?}", wrap_width);
+
+        let buffer = cx.add_model(|cx| {
+            let len = rng.gen_range(0..10);
+            let text = RandomCharIter::new(&mut rng).take(len).collect::<String>();
+            Buffer::new(0, text, cx)
+        });
+
+        let map = cx.add_model(|cx| DisplayMap::new(buffer.clone(), settings, wrap_width, cx));
+        let (_observer, notifications) = Observer::new(&map, &mut cx);
+
+        for _i in 0..operations {
+            match rng.gen_range(0..=100) {
+                0..=19 => {
+                    wrap_width = if rng.gen_bool(0.2) {
+                        None
+                    } else {
+                        Some(rng.gen_range(0.0..=max_wrap_width))
+                    };
+                    log::info!("setting wrap width to {:?}", wrap_width);
+                    map.update(&mut cx, |map, cx| map.set_wrap_width(wrap_width, cx));
+                }
+                20..=39 => {
+                    let mut ranges = Vec::new();
+                    for _ in 0..rng.gen_range(1..=3) {
+                        buffer.read_with(&cx, |buffer, _| {
+                            let end = buffer.clip_offset(rng.gen_range(0..=buffer.len()), Right);
+                            let start = buffer.clip_offset(rng.gen_range(0..=end), Left);
+                            ranges.push(start..end);
+                        });
+                    }
+
+                    if rng.gen() {
+                        log::info!("unfolding ranges: {:?}", ranges);
+                        map.update(&mut cx, |map, cx| {
+                            map.unfold(ranges, cx);
+                        });
+                    } else {
+                        log::info!("folding ranges: {:?}", ranges);
+                        map.update(&mut cx, |map, cx| {
+                            map.fold(ranges, cx);
+                        });
+                    }
+                }
+                _ => {
+                    buffer.update(&mut cx, |buffer, cx| buffer.randomly_mutate(&mut rng, cx));
+                }
+            }
+
+            if map.read_with(&cx, |map, cx| map.is_rewrapping(cx)) {
+                notifications.recv().await.unwrap();
+            }
+
+            let snapshot = map.update(&mut cx, |map, cx| map.snapshot(cx));
+            log::info!("buffer text: {:?}", buffer.read_with(&cx, |b, _| b.text()));
+            log::info!("display text: {:?}", snapshot.text());
+
+            // line boundaries
+            for _ in 0..5 {
+                let row = rng.gen_range(0..=snapshot.max_point().row());
+                let column = rng.gen_range(0..=snapshot.line_len(row));
+                let point = snapshot.clip_point(DisplayPoint::new(row, column), Left);
+
+                let (prev_display_bound, prev_buffer_bound) = snapshot.prev_row_boundary(point);
+                let (next_display_bound, next_buffer_bound) = snapshot.next_row_boundary(point);
+
+                assert!(prev_display_bound <= point);
+                assert!(next_display_bound >= point);
+                assert_eq!(prev_buffer_bound.column, 0);
+                assert_eq!(prev_display_bound.column(), 0);
+                if next_display_bound < snapshot.max_point() {
+                    assert_eq!(next_buffer_bound.column, 0);
+                    assert_eq!(next_display_bound.column(), 0);
+                }
+
+                assert_eq!(
+                    prev_buffer_bound.to_display_point(&snapshot),
+                    prev_display_bound,
+                    "{:?} to display point",
+                    prev_buffer_bound
+                );
+                assert_eq!(
+                    next_buffer_bound.to_display_point(&snapshot),
+                    next_display_bound,
+                    "{:?} to display point",
+                    next_buffer_bound
+                );
+                assert_eq!(
+                    prev_display_bound.to_buffer_point(&snapshot, Left),
+                    prev_buffer_bound,
+                    "{:?} to buffer point",
+                    prev_display_bound
+                );
+                assert_eq!(
+                    next_display_bound.to_buffer_point(&snapshot, Left),
+                    next_buffer_bound,
+                    "{:?} to buffer point",
+                    next_display_bound
+                );
+            }
+        }
+    }
 
     #[gpui::test]
     async fn test_soft_wraps(mut cx: gpui::TestAppContext) {

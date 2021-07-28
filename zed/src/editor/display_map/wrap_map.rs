@@ -875,11 +875,10 @@ mod tests {
             display_map::{fold_map::FoldMap, tab_map::TabMap},
             Buffer,
         },
+        test::Observer,
         util::RandomCharIter,
     };
-    use gpui::ModelHandle;
     use rand::prelude::*;
-    use smol::channel;
     use std::env;
 
     #[gpui::test(iterations = 100)]
@@ -1075,28 +1074,6 @@ mod tests {
                     start_row..end_row
                 );
             }
-        }
-    }
-
-    struct Observer;
-
-    impl Entity for Observer {
-        type Event = ();
-    }
-
-    impl Observer {
-        fn new(
-            handle: &ModelHandle<WrapMap>,
-            cx: &mut gpui::TestAppContext,
-        ) -> (ModelHandle<Self>, channel::Receiver<()>) {
-            let (notify_tx, notify_rx) = channel::unbounded();
-            let observer = cx.add_model(|cx| {
-                cx.observe(handle, move |_, _, _| {
-                    let _ = notify_tx.try_send(());
-                });
-                Observer
-            });
-            (observer, notify_rx)
         }
     }
 }
