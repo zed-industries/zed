@@ -124,6 +124,7 @@ impl FileFinder {
             self.list_state.clone(),
             self.matches.len(),
             move |mut range, items, cx| {
+                let cx = cx.as_ref();
                 let finder = handle.upgrade(cx).unwrap();
                 let finder = finder.read(cx);
                 let start = range.start;
@@ -310,7 +311,8 @@ impl FileFinder {
     }
 
     fn workspace_updated(&mut self, _: ViewHandle<Workspace>, cx: &mut ViewContext<Self>) {
-        if let Some(task) = self.spawn_search(self.query_buffer.read(cx).text(cx.as_ref()), cx) {
+        let query = self.query_buffer.update(cx, |buffer, cx| buffer.text(cx));
+        if let Some(task) = self.spawn_search(query, cx) {
             task.detach();
         }
     }
@@ -323,7 +325,7 @@ impl FileFinder {
     ) {
         match event {
             editor::Event::Edited => {
-                let query = self.query_buffer.read(cx).text(cx.as_ref());
+                let query = self.query_buffer.update(cx, |buffer, cx| buffer.text(cx));
                 if query.is_empty() {
                     self.latest_search_id = util::post_inc(&mut self.search_count);
                     self.matches.clear();

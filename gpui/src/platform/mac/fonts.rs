@@ -11,7 +11,8 @@ use crate::{
 };
 use cocoa::appkit::{CGFloat, CGPoint};
 use core_foundation::{
-    attributed_string::CFMutableAttributedString,
+    array::CFIndex,
+    attributed_string::{CFAttributedStringRef, CFMutableAttributedString},
     base::{CFRange, TCFType},
     number::CFNumber,
     string::CFString,
@@ -22,7 +23,7 @@ use core_graphics::{
 use core_text::{line::CTLine, string_attributes::kCTFontAttributeName};
 use font_kit::{canvas::RasterizationOptions, hinting::HintingOptions, source::SystemSource};
 use parking_lot::RwLock;
-use std::{cell::RefCell, char, convert::TryFrom};
+use std::{cell::RefCell, char, convert::TryFrom, ffi::c_void};
 
 #[allow(non_upper_case_globals)]
 const kCGImageAlphaOnly: u32 = 7;
@@ -77,13 +78,17 @@ impl platform::FontSystem for FontSystem {
             .rasterize_glyph(font_id, font_size, glyph_id, subpixel_shift, scale_factor)
     }
 
-    fn layout_str(
+    fn layout_line(
         &self,
         text: &str,
         font_size: f32,
         runs: &[(usize, FontId, ColorU)],
     ) -> LineLayout {
-        self.0.read().layout_str(text, font_size, runs)
+        self.0.read().layout_line(text, font_size, runs)
+    }
+
+    fn wrap_line(&self, text: &str, font_id: FontId, font_size: f32, width: f32) -> Vec<usize> {
+        self.0.read().wrap_line(text, font_id, font_size, width)
     }
 }
 
@@ -182,7 +187,7 @@ impl FontSystemState {
         }
     }
 
-    fn layout_str(
+    fn layout_line(
         &self,
         text: &str,
         font_size: f32,
@@ -190,20 +195,9 @@ impl FontSystemState {
     ) -> LineLayout {
         let font_id_attr_name = CFString::from_static_string("zed_font_id");
 
-        let len = text.len();
-        let mut utf8_and_utf16_ixs = text.char_indices().chain(Some((len, '\0'))).map({
-            let mut utf16_ix = 0;
-            move |(utf8_ix, c)| {
-                let result = (utf8_ix, utf16_ix);
-                utf16_ix += c.len_utf16();
-                result
-            }
-        });
-
         // Construct the attributed string, converting UTF8 ranges to UTF16 ranges.
         let mut string = CFMutableAttributedString::new();
         {
-            let mut utf8_and_utf16_ixs = utf8_and_utf16_ixs.clone();
             string.replace_str(&CFString::new(text), CFRange::init(0, 0));
 
             let last_run: RefCell<Option<(usize, FontId)>> = Default::default();
@@ -228,19 +222,16 @@ impl FontSystemState {
                 })
                 .chain(std::iter::from_fn(|| last_run.borrow_mut().take()));
 
-            let mut utf8_ix = 0;
-            let mut utf16_ix = 0;
+            let mut ix_converter = StringIndexConverter::new(text);
             for (run_len, font_id) in font_runs {
-                let utf8_end = utf8_ix + run_len;
-                let utf16_start = utf16_ix;
-                while utf8_ix < utf8_end {
-                    let (next_utf8_ix, next_utf16_ix) = utf8_and_utf16_ixs.next().unwrap();
-                    utf8_ix = next_utf8_ix;
-                    utf16_ix = next_utf16_ix;
-                }
+                let utf8_end = ix_converter.utf8_ix + run_len;
+                let utf16_start = ix_converter.utf16_ix;
+                ix_converter.advance_to_utf8_ix(utf8_end);
 
-                let cf_range =
-                    CFRange::init(utf16_start as isize, (utf16_ix - utf16_start) as isize);
+                let cf_range = CFRange::init(
+                    utf16_start as isize,
+                    (ix_converter.utf16_ix - utf16_start) as isize,
+                );
                 let font = &self.fonts[font_id.0];
                 unsafe {
                     string.set_attribute(
@@ -260,8 +251,6 @@ impl FontSystemState {
         // Retrieve the glyphs from the shaped line, converting UTF16 offsets to UTF8 offsets.
         let line = CTLine::new_with_attributed_string(string.as_concrete_TypeRef());
 
-        let mut utf8_ix = 0;
-        let mut utf16_ix = 0;
         let mut runs = Vec::new();
         for run in line.glyph_runs().into_iter() {
             let font_id = FontId(
@@ -274,6 +263,7 @@ impl FontSystemState {
                     .unwrap() as usize,
             );
 
+            let mut ix_converter = StringIndexConverter::new(text);
             let mut glyphs = Vec::new();
             for ((glyph_id, position), glyph_utf16_ix) in run
                 .glyphs()
@@ -282,15 +272,11 @@ impl FontSystemState {
                 .zip(run.string_indices().iter())
             {
                 let glyph_utf16_ix = usize::try_from(*glyph_utf16_ix).unwrap();
-                while utf16_ix < glyph_utf16_ix {
-                    let (next_utf8_ix, next_utf16_ix) = utf8_and_utf16_ixs.next().unwrap();
-                    utf8_ix = next_utf8_ix;
-                    utf16_ix = next_utf16_ix;
-                }
+                ix_converter.advance_to_utf16_ix(glyph_utf16_ix);
                 glyphs.push(Glyph {
                     id: *glyph_id as GlyphId,
                     position: vec2f(position.x as f32, position.y as f32),
-                    index: utf8_ix,
+                    index: ix_converter.utf8_ix,
                 });
             }
 
@@ -304,9 +290,95 @@ impl FontSystemState {
             descent: typographic_bounds.descent as f32,
             runs,
             font_size,
-            len,
+            len: text.len(),
         }
     }
+
+    fn wrap_line(&self, text: &str, font_id: FontId, font_size: f32, width: f32) -> Vec<usize> {
+        let mut string = CFMutableAttributedString::new();
+        string.replace_str(&CFString::new(text), CFRange::init(0, 0));
+        let cf_range = CFRange::init(0 as isize, text.encode_utf16().count() as isize);
+        let font = &self.fonts[font_id.0];
+        unsafe {
+            string.set_attribute(
+                cf_range,
+                kCTFontAttributeName,
+                &font.native_font().clone_with_font_size(font_size as f64),
+            );
+
+            let typesetter = CTTypesetterCreateWithAttributedString(string.as_concrete_TypeRef());
+            let mut ix_converter = StringIndexConverter::new(text);
+            let mut break_indices = Vec::new();
+            while ix_converter.utf8_ix < text.len() {
+                let utf16_len = CTTypesetterSuggestLineBreak(
+                    typesetter,
+                    ix_converter.utf16_ix as isize,
+                    width as f64,
+                ) as usize;
+                ix_converter.advance_to_utf16_ix(ix_converter.utf16_ix + utf16_len);
+                if ix_converter.utf8_ix >= text.len() {
+                    break;
+                }
+                break_indices.push(ix_converter.utf8_ix as usize);
+            }
+            break_indices
+        }
+    }
+}
+
+#[derive(Clone)]
+struct StringIndexConverter<'a> {
+    text: &'a str,
+    utf8_ix: usize,
+    utf16_ix: usize,
+}
+
+impl<'a> StringIndexConverter<'a> {
+    fn new(text: &'a str) -> Self {
+        Self {
+            text,
+            utf8_ix: 0,
+            utf16_ix: 0,
+        }
+    }
+
+    fn advance_to_utf8_ix(&mut self, utf8_target: usize) {
+        for (ix, c) in self.text[self.utf8_ix..].char_indices() {
+            if self.utf8_ix + ix >= utf8_target {
+                self.utf8_ix += ix;
+                return;
+            }
+            self.utf16_ix += c.len_utf16();
+        }
+        self.utf8_ix = self.text.len();
+    }
+
+    fn advance_to_utf16_ix(&mut self, utf16_target: usize) {
+        for (ix, c) in self.text[self.utf8_ix..].char_indices() {
+            if self.utf16_ix >= utf16_target {
+                self.utf8_ix += ix;
+                return;
+            }
+            self.utf16_ix += c.len_utf16();
+        }
+        self.utf8_ix = self.text.len();
+    }
+}
+
+#[repr(C)]
+pub struct __CFTypesetter(c_void);
+
+pub type CTTypesetterRef = *const __CFTypesetter;
+
+#[link(name = "CoreText", kind = "framework")]
+extern "C" {
+    fn CTTypesetterCreateWithAttributedString(string: CFAttributedStringRef) -> CTTypesetterRef;
+
+    fn CTTypesetterSuggestLineBreak(
+        typesetter: CTTypesetterRef,
+        start_index: CFIndex,
+        width: f64,
+    ) -> CFIndex;
 }
 
 #[cfg(test)]
@@ -333,7 +405,7 @@ mod tests {
         assert_ne!(menlo_regular, menlo_bold);
         assert_ne!(menlo_italic, menlo_bold);
 
-        let line = fonts.layout_str(
+        let line = fonts.layout_line(
             "hello world",
             16.0,
             &[
@@ -360,7 +432,7 @@ mod tests {
         let menlo_regular = fonts.select_font(&menlo, &Properties::new())?;
 
         let text = "This is, m𐍈re 𐍈r less, Zapfino!𐍈";
-        let line = fonts.layout_str(
+        let line = fonts.layout_line(
             text,
             16.0,
             &[
@@ -408,5 +480,23 @@ mod tests {
             let mut writer = encoder.write_header().unwrap();
             writer.write_image_data(&bytes).unwrap();
         }
+    }
+
+    #[test]
+    fn test_layout_line() {
+        let fonts = FontSystem::new();
+        let font_ids = fonts.load_family("Helvetica").unwrap();
+        let font_id = fonts.select_font(&font_ids, &Default::default()).unwrap();
+
+        let line = "one two three four five\n";
+        let wrap_boundaries = fonts.wrap_line(line, font_id, 16., 64.0);
+        assert_eq!(wrap_boundaries, &["one two ".len(), "one two three ".len()]);
+
+        let line = "aaa ααα ✋✋✋ 🎉🎉🎉\n";
+        let wrap_boundaries = fonts.wrap_line(line, font_id, 16., 64.0);
+        assert_eq!(
+            wrap_boundaries,
+            &["aaa ααα ".len(), "aaa ααα ✋✋✋ ".len(),]
+        );
     }
 }

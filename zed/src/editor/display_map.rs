@@ -1,105 +1,136 @@
 mod fold_map;
+mod line_wrapper;
+mod tab_map;
 mod wrap_map;
 
-use crate::settings::StyleId;
-
-use super::{buffer, Anchor, Bias, Buffer, Point, ToOffset, ToPoint};
-pub use fold_map::BufferRows;
-use fold_map::{FoldMap, FoldMapSnapshot};
-use gpui::{AppContext, ModelHandle};
-use std::{mem, ops::Range};
+use super::{buffer, Anchor, Bias, Buffer, Point, Settings, ToOffset, ToPoint};
+use fold_map::FoldMap;
+use gpui::{Entity, ModelContext, ModelHandle};
+use std::ops::Range;
+use tab_map::TabMap;
+pub use wrap_map::BufferRows;
+use wrap_map::WrapMap;
 
 pub struct DisplayMap {
     buffer: ModelHandle<Buffer>,
     fold_map: FoldMap,
-    tab_size: usize,
+    tab_map: TabMap,
+    wrap_map: ModelHandle<WrapMap>,
+}
+
+impl Entity for DisplayMap {
+    type Event = ();
 }
 
 impl DisplayMap {
-    pub fn new(buffer: ModelHandle<Buffer>, tab_size: usize, cx: &AppContext) -> Self {
+    pub fn new(
+        buffer: ModelHandle<Buffer>,
+        settings: Settings,
+        wrap_width: Option<f32>,
+        cx: &mut ModelContext<Self>,
+    ) -> Self {
+        let (fold_map, snapshot) = FoldMap::new(buffer.clone(), cx);
+        let (tab_map, snapshot) = TabMap::new(snapshot, settings.tab_size);
+        let wrap_map = cx.add_model(|cx| WrapMap::new(snapshot, settings, wrap_width, cx));
+        cx.observe(&wrap_map, |_, _, cx| cx.notify());
         DisplayMap {
-            buffer: buffer.clone(),
-            fold_map: FoldMap::new(buffer, cx),
-            tab_size,
+            buffer,
+            fold_map,
+            tab_map,
+            wrap_map,
         }
     }
 
-    pub fn snapshot(&self, cx: &AppContext) -> DisplayMapSnapshot {
+    pub fn snapshot(&self, cx: &mut ModelContext<Self>) -> DisplayMapSnapshot {
+        let (folds_snapshot, edits) = self.fold_map.read(cx);
+        let (tabs_snapshot, edits) = self.tab_map.sync(folds_snapshot.clone(), edits);
+        let wraps_snapshot = self
+            .wrap_map
+            .update(cx, |map, cx| map.sync(tabs_snapshot.clone(), edits, cx));
         DisplayMapSnapshot {
             buffer_snapshot: self.buffer.read(cx).snapshot(),
-            folds_snapshot: self.fold_map.snapshot(cx),
-            tab_size: self.tab_size,
+            folds_snapshot,
+            tabs_snapshot,
+            wraps_snapshot,
         }
     }
 
     pub fn fold<T: ToOffset>(
         &mut self,
         ranges: impl IntoIterator<Item = Range<T>>,
-        cx: &AppContext,
+        cx: &mut ModelContext<Self>,
     ) {
-        self.fold_map.fold(ranges, cx)
+        let (mut fold_map, snapshot, edits) = self.fold_map.write(cx);
+        let (snapshot, edits) = self.tab_map.sync(snapshot, edits);
+        self.wrap_map
+            .update(cx, |map, cx| map.sync(snapshot, edits, cx));
+        let (snapshot, edits) = fold_map.fold(ranges, cx);
+        let (snapshot, edits) = self.tab_map.sync(snapshot, edits);
+        self.wrap_map
+            .update(cx, |map, cx| map.sync(snapshot, edits, cx));
     }
 
     pub fn unfold<T: ToOffset>(
         &mut self,
         ranges: impl IntoIterator<Item = Range<T>>,
-        cx: &AppContext,
+        cx: &mut ModelContext<Self>,
     ) {
-        self.fold_map.unfold(ranges, cx)
+        let (mut fold_map, snapshot, edits) = self.fold_map.write(cx);
+        let (snapshot, edits) = self.tab_map.sync(snapshot, edits);
+        self.wrap_map
+            .update(cx, |map, cx| map.sync(snapshot, edits, cx));
+        let (snapshot, edits) = fold_map.unfold(ranges, cx);
+        let (snapshot, edits) = self.tab_map.sync(snapshot, edits);
+        self.wrap_map
+            .update(cx, |map, cx| map.sync(snapshot, edits, cx));
+    }
+
+    pub fn set_wrap_width(&self, width: Option<f32>, cx: &mut ModelContext<Self>) -> bool {
+        self.wrap_map
+            .update(cx, |map, cx| map.set_wrap_width(width, cx))
     }
 }
 
 pub struct DisplayMapSnapshot {
     buffer_snapshot: buffer::Snapshot,
-    folds_snapshot: FoldMapSnapshot,
-    tab_size: usize,
+    folds_snapshot: fold_map::Snapshot,
+    tabs_snapshot: tab_map::Snapshot,
+    wraps_snapshot: wrap_map::Snapshot,
 }
 
 impl DisplayMapSnapshot {
     pub fn buffer_rows(&self, start_row: u32) -> BufferRows {
-        self.folds_snapshot.buffer_rows(start_row)
+        self.wraps_snapshot.buffer_rows(start_row)
+    }
+
+    pub fn buffer_row_count(&self) -> u32 {
+        self.buffer_snapshot.max_point().row + 1
     }
 
     pub fn max_point(&self) -> DisplayPoint {
-        self.expand_tabs(self.folds_snapshot.max_point())
+        DisplayPoint(self.wraps_snapshot.max_point())
     }
 
-    pub fn chunks_at(&self, point: DisplayPoint) -> Chunks {
-        let (point, expanded_char_column, to_next_stop) = self.collapse_tabs(point, Bias::Left);
-        let fold_chunks = self
-            .folds_snapshot
-            .chunks_at(self.folds_snapshot.to_display_offset(point));
-        Chunks {
-            fold_chunks,
-            column: expanded_char_column,
-            tab_size: self.tab_size,
-            chunk: &SPACES[0..to_next_stop],
-            skip_leading_tab: to_next_stop > 0,
-        }
+    pub fn chunks_at(&self, display_row: u32) -> wrap_map::Chunks {
+        self.wraps_snapshot.chunks_at(display_row)
     }
 
-    pub fn highlighted_chunks_for_rows(&mut self, rows: Range<u32>) -> HighlightedChunks {
-        let start = DisplayPoint::new(rows.start, 0);
-        let start = self.folds_snapshot.to_display_offset(start);
-        let end = DisplayPoint::new(rows.end, 0).min(self.max_point());
-        let end = self.folds_snapshot.to_display_offset(end);
-        HighlightedChunks {
-            fold_chunks: self.folds_snapshot.highlighted_chunks(start..end),
-            column: 0,
-            tab_size: self.tab_size,
-            chunk: "",
-            style_id: Default::default(),
-        }
+    pub fn highlighted_chunks_for_rows(
+        &mut self,
+        display_rows: Range<u32>,
+    ) -> wrap_map::HighlightedChunks {
+        self.wraps_snapshot
+            .highlighted_chunks_for_rows(display_rows)
     }
 
-    pub fn chars_at<'a>(&'a self, point: DisplayPoint) -> impl Iterator<Item = char> + 'a {
-        self.chunks_at(point).flat_map(str::chars)
+    pub fn chars_at<'a>(&'a self, display_row: u32) -> impl Iterator<Item = char> + 'a {
+        self.chunks_at(display_row).flat_map(str::chars)
     }
 
     pub fn column_to_chars(&self, display_row: u32, target: u32) -> u32 {
         let mut count = 0;
         let mut column = 0;
-        for c in self.chars_at(DisplayPoint::new(display_row, 0)) {
+        for c in self.chars_at(display_row) {
             if column >= target {
                 break;
             }
@@ -112,7 +143,7 @@ impl DisplayMapSnapshot {
     pub fn column_from_chars(&self, display_row: u32, char_count: u32) -> u32 {
         let mut count = 0;
         let mut column = 0;
-        for c in self.chars_at(DisplayPoint::new(display_row, 0)) {
+        for c in self.chars_at(display_row) {
             if c == '\n' || count >= char_count {
                 break;
             }
@@ -123,10 +154,7 @@ impl DisplayMapSnapshot {
     }
 
     pub fn clip_point(&self, point: DisplayPoint, bias: Bias) -> DisplayPoint {
-        self.expand_tabs(
-            self.folds_snapshot
-                .clip_point(self.collapse_tabs(point, bias).0, bias),
-        )
+        DisplayPoint(self.wraps_snapshot.clip_point(point.0, bias))
     }
 
     pub fn folds_in_range<'a, T>(
@@ -144,16 +172,18 @@ impl DisplayMapSnapshot {
     }
 
     pub fn is_line_folded(&self, display_row: u32) -> bool {
-        self.folds_snapshot.is_line_folded(display_row)
+        let wrap_point = DisplayPoint::new(display_row, 0).0;
+        let row = self.wraps_snapshot.to_tab_point(wrap_point).row();
+        self.folds_snapshot.is_line_folded(row)
     }
 
     pub fn text(&self) -> String {
-        self.chunks_at(DisplayPoint::zero()).collect()
+        self.chunks_at(0).collect()
     }
 
     pub fn line(&self, display_row: u32) -> String {
         let mut result = String::new();
-        for chunk in self.chunks_at(DisplayPoint::new(display_row, 0)) {
+        for chunk in self.chunks_at(display_row) {
             if let Some(ix) = chunk.find('\n') {
                 result.push_str(&chunk[0..ix]);
                 break;
@@ -167,7 +197,7 @@ impl DisplayMapSnapshot {
     pub fn line_indent(&self, display_row: u32) -> (u32, bool) {
         let mut indent = 0;
         let mut is_blank = true;
-        for c in self.chars_at(DisplayPoint::new(display_row, 0)) {
+        for c in self.chars_at(display_row) {
             if c == ' ' {
                 indent += 1;
             } else {
@@ -179,12 +209,11 @@ impl DisplayMapSnapshot {
     }
 
     pub fn line_len(&self, row: u32) -> u32 {
-        self.expand_tabs(DisplayPoint::new(row, self.folds_snapshot.line_len(row)))
-            .column()
+        self.wraps_snapshot.line_len(row)
     }
 
     pub fn longest_row(&self) -> u32 {
-        self.folds_snapshot.longest_row()
+        self.wraps_snapshot.longest_row()
     }
 
     pub fn anchor_before(&self, point: DisplayPoint, bias: Bias) -> Anchor {
@@ -196,34 +225,14 @@ impl DisplayMapSnapshot {
         self.buffer_snapshot
             .anchor_after(point.to_buffer_point(self, bias))
     }
-
-    fn expand_tabs(&self, mut point: DisplayPoint) -> DisplayPoint {
-        let chars = self
-            .folds_snapshot
-            .chars_at(DisplayPoint(Point::new(point.row(), 0)));
-        let expanded = expand_tabs(chars, point.column() as usize, self.tab_size);
-        *point.column_mut() = expanded as u32;
-        point
-    }
-
-    fn collapse_tabs(&self, mut point: DisplayPoint, bias: Bias) -> (DisplayPoint, usize, usize) {
-        let chars = self
-            .folds_snapshot
-            .chars_at(DisplayPoint(Point::new(point.row(), 0)));
-        let expanded = point.column() as usize;
-        let (collapsed, expanded_char_column, to_next_stop) =
-            collapse_tabs(chars, expanded, bias, self.tab_size);
-        *point.column_mut() = collapsed as u32;
-        (point, expanded_char_column, to_next_stop)
-    }
 }
 
 #[derive(Copy, Clone, Debug, Default, Eq, Ord, PartialOrd, PartialEq)]
-pub struct DisplayPoint(Point);
+pub struct DisplayPoint(wrap_map::WrapPoint);
 
 impl DisplayPoint {
     pub fn new(row: u32, column: u32) -> Self {
-        Self(Point::new(row, column))
+        Self(wrap_map::WrapPoint::new(row, column))
     }
 
     pub fn zero() -> Self {
@@ -231,41 +240,40 @@ impl DisplayPoint {
     }
 
     pub fn row(self) -> u32 {
-        self.0.row
+        self.0.row()
     }
 
     pub fn column(self) -> u32 {
-        self.0.column
+        self.0.column()
     }
 
     pub fn row_mut(&mut self) -> &mut u32 {
-        &mut self.0.row
+        self.0.row_mut()
     }
 
     pub fn column_mut(&mut self) -> &mut u32 {
-        &mut self.0.column
+        self.0.column_mut()
     }
 
     pub fn to_buffer_point(self, map: &DisplayMapSnapshot, bias: Bias) -> Point {
-        map.folds_snapshot
-            .to_buffer_point(map.collapse_tabs(self, bias).0)
+        let unwrapped_point = map.wraps_snapshot.to_tab_point(self.0);
+        let unexpanded_point = map.tabs_snapshot.to_fold_point(unwrapped_point, bias).0;
+        unexpanded_point.to_buffer_point(&map.folds_snapshot)
     }
 
     pub fn to_buffer_offset(self, map: &DisplayMapSnapshot, bias: Bias) -> usize {
-        map.folds_snapshot
-            .to_buffer_offset(map.collapse_tabs(self, bias).0)
+        let unwrapped_point = map.wraps_snapshot.to_tab_point(self.0);
+        let unexpanded_point = map.tabs_snapshot.to_fold_point(unwrapped_point, bias).0;
+        unexpanded_point.to_buffer_offset(&map.folds_snapshot)
     }
 }
 
 impl Point {
     pub fn to_display_point(self, map: &DisplayMapSnapshot) -> DisplayPoint {
-        let mut display_point = map.folds_snapshot.to_display_point(self);
-        let chars = map
-            .folds_snapshot
-            .chars_at(DisplayPoint::new(display_point.row(), 0));
-        *display_point.column_mut() =
-            expand_tabs(chars, display_point.column() as usize, map.tab_size) as u32;
-        display_point
+        let fold_point = self.to_fold_point(&map.folds_snapshot);
+        let tab_point = map.tabs_snapshot.to_tab_point(fold_point);
+        let wrap_point = map.wraps_snapshot.to_wrap_point(tab_point);
+        DisplayPoint(wrap_point)
     }
 }
 
@@ -275,163 +283,6 @@ impl Anchor {
     }
 }
 
-// Handles a tab width <= 16
-const SPACES: &'static str = "                ";
-
-pub struct Chunks<'a> {
-    fold_chunks: fold_map::Chunks<'a>,
-    chunk: &'a str,
-    column: usize,
-    tab_size: usize,
-    skip_leading_tab: bool,
-}
-
-impl<'a> Iterator for Chunks<'a> {
-    type Item = &'a str;
-
-    fn next(&mut self) -> Option<Self::Item> {
-        if self.chunk.is_empty() {
-            if let Some(chunk) = self.fold_chunks.next() {
-                self.chunk = chunk;
-                if self.skip_leading_tab {
-                    self.chunk = &self.chunk[1..];
-                    self.skip_leading_tab = false;
-                }
-            } else {
-                return None;
-            }
-        }
-
-        for (ix, c) in self.chunk.char_indices() {
-            match c {
-                '\t' => {
-                    if ix > 0 {
-                        let (prefix, suffix) = self.chunk.split_at(ix);
-                        self.chunk = suffix;
-                        return Some(prefix);
-                    } else {
-                        self.chunk = &self.chunk[1..];
-                        let len = self.tab_size - self.column % self.tab_size;
-                        self.column += len;
-                        return Some(&SPACES[0..len]);
-                    }
-                }
-                '\n' => self.column = 0,
-                _ => self.column += 1,
-            }
-        }
-
-        let result = Some(self.chunk);
-        self.chunk = "";
-        result
-    }
-}
-
-pub struct HighlightedChunks<'a> {
-    fold_chunks: fold_map::HighlightedChunks<'a>,
-    chunk: &'a str,
-    style_id: StyleId,
-    column: usize,
-    tab_size: usize,
-}
-
-impl<'a> Iterator for HighlightedChunks<'a> {
-    type Item = (&'a str, StyleId);
-
-    fn next(&mut self) -> Option<Self::Item> {
-        if self.chunk.is_empty() {
-            if let Some((chunk, style_id)) = self.fold_chunks.next() {
-                self.chunk = chunk;
-                self.style_id = style_id;
-            } else {
-                return None;
-            }
-        }
-
-        for (ix, c) in self.chunk.char_indices() {
-            match c {
-                '\t' => {
-                    if ix > 0 {
-                        let (prefix, suffix) = self.chunk.split_at(ix);
-                        self.chunk = suffix;
-                        return Some((prefix, self.style_id));
-                    } else {
-                        self.chunk = &self.chunk[1..];
-                        let len = self.tab_size - self.column % self.tab_size;
-                        self.column += len;
-                        return Some((&SPACES[0..len], self.style_id));
-                    }
-                }
-                '\n' => self.column = 0,
-                _ => self.column += 1,
-            }
-        }
-
-        Some((mem::take(&mut self.chunk), mem::take(&mut self.style_id)))
-    }
-}
-
-pub fn expand_tabs(chars: impl Iterator<Item = char>, column: usize, tab_size: usize) -> usize {
-    let mut expanded_chars = 0;
-    let mut expanded_bytes = 0;
-    let mut collapsed_bytes = 0;
-    for c in chars {
-        if collapsed_bytes == column {
-            break;
-        }
-        if c == '\t' {
-            let tab_len = tab_size - expanded_chars % tab_size;
-            expanded_bytes += tab_len;
-            expanded_chars += tab_len;
-        } else {
-            expanded_bytes += c.len_utf8();
-            expanded_chars += 1;
-        }
-        collapsed_bytes += c.len_utf8();
-    }
-    expanded_bytes
-}
-
-pub fn collapse_tabs(
-    mut chars: impl Iterator<Item = char>,
-    column: usize,
-    bias: Bias,
-    tab_size: usize,
-) -> (usize, usize, usize) {
-    let mut expanded_bytes = 0;
-    let mut expanded_chars = 0;
-    let mut collapsed_bytes = 0;
-    while let Some(c) = chars.next() {
-        if expanded_bytes >= column {
-            break;
-        }
-
-        if c == '\t' {
-            let tab_len = tab_size - (expanded_chars % tab_size);
-            expanded_chars += tab_len;
-            expanded_bytes += tab_len;
-            if expanded_bytes > column {
-                expanded_chars -= expanded_bytes - column;
-                return match bias {
-                    Bias::Left => (collapsed_bytes, expanded_chars, expanded_bytes - column),
-                    Bias::Right => (collapsed_bytes + 1, expanded_chars, 0),
-                };
-            }
-        } else {
-            expanded_chars += 1;
-            expanded_bytes += c.len_utf8();
-        }
-
-        if expanded_bytes > column && matches!(bias, Bias::Left) {
-            expanded_chars -= 1;
-            break;
-        }
-
-        collapsed_bytes += c.len_utf8();
-    }
-    (collapsed_bytes, expanded_chars, 0)
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -439,15 +290,135 @@ mod tests {
         language::{Language, LanguageConfig},
         settings::Theme,
         test::*,
+        util::RandomCharIter,
     };
     use buffer::History;
-    use std::sync::Arc;
+    use gpui::MutableAppContext;
+    use rand::prelude::*;
+    use std::{env, sync::Arc};
+
+    #[gpui::test]
+    async fn test_random(mut cx: gpui::TestAppContext) {
+        cx.foreground().set_block_on_ticks(usize::MAX..=usize::MAX);
+        let iterations = env::var("ITERATIONS")
+            .map(|i| i.parse().expect("invalid `ITERATIONS` variable"))
+            .unwrap_or(100);
+        let operations = env::var("OPERATIONS")
+            .map(|i| i.parse().expect("invalid `OPERATIONS` variable"))
+            .unwrap_or(10);
+        let seed_range = if let Ok(seed) = env::var("SEED") {
+            let seed = seed.parse().expect("invalid `SEED` variable");
+            seed..seed + 1
+        } else {
+            0..iterations
+        };
+        let font_cache = cx.font_cache();
+
+        for seed in seed_range {
+            dbg!(seed);
+            let mut rng = StdRng::seed_from_u64(seed);
+            let settings = Settings {
+                buffer_font_family: font_cache.load_family(&["Helvetica"]).unwrap(),
+                ui_font_family: font_cache.load_family(&["Helvetica"]).unwrap(),
+                buffer_font_size: 12.0,
+                ui_font_size: 12.0,
+                tab_size: rng.gen_range(1..=4),
+                theme: Arc::new(Theme::default()),
+            };
+
+            let buffer = cx.add_model(|cx| {
+                let len = rng.gen_range(0..10);
+                let text = RandomCharIter::new(&mut rng).take(len).collect::<String>();
+                log::info!("Initial buffer text: {:?}", text);
+                Buffer::new(0, text, cx)
+            });
+            let wrap_width = Some(rng.gen_range(20.0..=100.0));
+            let map = cx.add_model(|cx| DisplayMap::new(buffer.clone(), settings, wrap_width, cx));
+
+            for _op_ix in 0..operations {
+                buffer.update(&mut cx, |buffer, cx| buffer.randomly_mutate(&mut rng, cx));
+                let snapshot = map.update(&mut cx, |map, cx| map.snapshot(cx));
+                let expected_buffer_rows = (0..=snapshot.max_point().row())
+                    .map(|display_row| {
+                        DisplayPoint::new(display_row, 0)
+                            .to_buffer_point(&snapshot, Bias::Left)
+                            .row
+                    })
+                    .collect::<Vec<_>>();
+                for start_display_row in 0..expected_buffer_rows.len() {
+                    assert_eq!(
+                        snapshot
+                            .buffer_rows(start_display_row as u32)
+                            .map(|(row, _)| row)
+                            .collect::<Vec<_>>(),
+                        &expected_buffer_rows[start_display_row..],
+                        "invalid buffer_rows({}..)",
+                        start_display_row
+                    );
+                }
+            }
+        }
+    }
+
+    #[gpui::test]
+    async fn test_soft_wraps(mut cx: gpui::TestAppContext) {
+        cx.foreground().set_block_on_ticks(usize::MAX..=usize::MAX);
+        cx.foreground().forbid_parking();
+
+        let font_cache = cx.font_cache();
+
+        let settings = Settings {
+            buffer_font_family: font_cache.load_family(&["Helvetica"]).unwrap(),
+            ui_font_family: font_cache.load_family(&["Helvetica"]).unwrap(),
+            buffer_font_size: 12.0,
+            ui_font_size: 12.0,
+            tab_size: 4,
+            theme: Arc::new(Theme::default()),
+        };
+        let wrap_width = Some(64.);
+
+        let text = "one two three four five\nsix seven eight";
+        let buffer = cx.add_model(|cx| Buffer::new(0, text.to_string(), cx));
+        let map = cx.add_model(|cx| DisplayMap::new(buffer.clone(), settings, wrap_width, cx));
+
+        let snapshot = map.update(&mut cx, |map, cx| map.snapshot(cx));
+        assert_eq!(
+            snapshot.chunks_at(0).collect::<String>(),
+            "one two \nthree four \nfive\nsix seven \neight"
+        );
+        assert_eq!(
+            snapshot.clip_point(DisplayPoint::new(0, 8), Bias::Left),
+            DisplayPoint::new(0, 7)
+        );
+        assert_eq!(
+            snapshot.clip_point(DisplayPoint::new(0, 8), Bias::Right),
+            DisplayPoint::new(1, 0)
+        );
+
+        buffer.update(&mut cx, |buffer, cx| {
+            let ix = buffer.text().find("seven").unwrap();
+            buffer.edit(vec![ix..ix], "and ", cx);
+        });
+
+        let snapshot = map.update(&mut cx, |map, cx| map.snapshot(cx));
+        assert_eq!(
+            snapshot.chunks_at(1).collect::<String>(),
+            "three four \nfive\nsix and \nseven eight"
+        );
+    }
 
     #[gpui::test]
     fn test_chunks_at(cx: &mut gpui::MutableAppContext) {
         let text = sample_text(6, 6);
         let buffer = cx.add_model(|cx| Buffer::new(0, text, cx));
-        let map = DisplayMap::new(buffer.clone(), 4, cx.as_ref());
+        let map = cx.add_model(|cx| {
+            DisplayMap::new(
+                buffer.clone(),
+                Settings::new(cx.font_cache()).unwrap().with_tab_size(4),
+                None,
+                cx,
+            )
+        });
         buffer.update(cx, |buffer, cx| {
             buffer.edit(
                 vec![
@@ -461,22 +432,20 @@ mod tests {
         });
 
         assert_eq!(
-            &map.snapshot(cx.as_ref())
-                .chunks_at(DisplayPoint::new(1, 0))
-                .collect::<String>()[0..10],
-            "    b   bb"
+            map.update(cx, |map, cx| map.snapshot(cx))
+                .chunks_at(1)
+                .collect::<String>()
+                .lines()
+                .next(),
+            Some("    b   bbbbb")
         );
         assert_eq!(
-            &map.snapshot(cx.as_ref())
-                .chunks_at(DisplayPoint::new(1, 2))
-                .collect::<String>()[0..10],
-            "  b   bbbb"
-        );
-        assert_eq!(
-            &map.snapshot(cx.as_ref())
-                .chunks_at(DisplayPoint::new(1, 6))
-                .collect::<String>()[0..13],
-            "  bbbbb\nc   c"
+            map.update(cx, |map, cx| map.snapshot(cx))
+                .chunks_at(2)
+                .collect::<String>()
+                .lines()
+                .next(),
+            Some("c   ccccc")
         );
     }
 
@@ -524,9 +493,16 @@ mod tests {
         });
         buffer.condition(&cx, |buf, _| !buf.is_parsing()).await;
 
-        let mut map = cx.read(|cx| DisplayMap::new(buffer, 2, cx));
+        let map = cx.add_model(|cx| {
+            DisplayMap::new(
+                buffer,
+                Settings::new(cx.font_cache()).unwrap().with_tab_size(2),
+                None,
+                cx,
+            )
+        });
         assert_eq!(
-            cx.read(|cx| highlighted_chunks(0..5, &map, &theme, cx)),
+            cx.update(|cx| highlighted_chunks(0..5, &map, &theme, cx)),
             vec![
                 ("fn ".to_string(), None),
                 ("outer".to_string(), Some("fn.name")),
@@ -537,7 +513,7 @@ mod tests {
             ]
         );
         assert_eq!(
-            cx.read(|cx| highlighted_chunks(3..5, &map, &theme, cx)),
+            cx.update(|cx| highlighted_chunks(3..5, &map, &theme, cx)),
             vec![
                 ("    fn ".to_string(), Some("mod.body")),
                 ("inner".to_string(), Some("fn.name")),
@@ -545,9 +521,11 @@ mod tests {
             ]
         );
 
-        cx.read(|cx| map.fold(vec![Point::new(0, 6)..Point::new(3, 2)], cx));
+        map.update(&mut cx, |map, cx| {
+            map.fold(vec![Point::new(0, 6)..Point::new(3, 2)], cx)
+        });
         assert_eq!(
-            cx.read(|cx| highlighted_chunks(0..2, &map, &theme, cx)),
+            cx.update(|cx| highlighted_chunks(0..2, &map, &theme, cx)),
             vec![
                 ("fn ".to_string(), None),
                 ("out".to_string(), Some("fn.name")),
@@ -557,28 +535,87 @@ mod tests {
                 ("() {}\n}".to_string(), Some("mod.body")),
             ]
         );
+    }
 
-        fn highlighted_chunks<'a>(
-            rows: Range<u32>,
-            map: &DisplayMap,
-            theme: &'a Theme,
-            cx: &AppContext,
-        ) -> Vec<(String, Option<&'a str>)> {
-            let mut chunks: Vec<(String, Option<&str>)> = Vec::new();
-            for (chunk, style_id) in map.snapshot(cx).highlighted_chunks_for_rows(rows) {
-                let style_name = theme.syntax_style_name(style_id);
-                if let Some((last_chunk, last_style_name)) = chunks.last_mut() {
-                    if style_name == *last_style_name {
-                        last_chunk.push_str(chunk);
-                    } else {
-                        chunks.push((chunk.to_string(), style_name));
-                    }
-                } else {
-                    chunks.push((chunk.to_string(), style_name));
-                }
-            }
-            chunks
-        }
+    #[gpui::test]
+    async fn test_highlighted_chunks_with_soft_wrapping(mut cx: gpui::TestAppContext) {
+        use unindent::Unindent as _;
+
+        cx.foreground().set_block_on_ticks(usize::MAX..=usize::MAX);
+
+        let grammar = tree_sitter_rust::language();
+        let text = r#"
+            fn outer() {}
+
+            mod module {
+                fn inner() {}
+            }"#
+        .unindent();
+        let highlight_query = tree_sitter::Query::new(
+            grammar,
+            r#"
+            (mod_item name: (identifier) body: _ @mod.body)
+            (function_item name: (identifier) @fn.name)"#,
+        )
+        .unwrap();
+        let theme = Theme::parse(
+            r#"
+            [syntax]
+            "mod.body" = 0xff0000
+            "fn.name" = 0x00ff00"#,
+        )
+        .unwrap();
+        let lang = Arc::new(Language {
+            config: LanguageConfig {
+                name: "Test".to_string(),
+                path_suffixes: vec![".test".to_string()],
+                ..Default::default()
+            },
+            grammar: grammar.clone(),
+            highlight_query,
+            brackets_query: tree_sitter::Query::new(grammar, "").unwrap(),
+            theme_mapping: Default::default(),
+        });
+        lang.set_theme(&theme);
+
+        let buffer = cx.add_model(|cx| {
+            Buffer::from_history(0, History::new(text.into()), None, Some(lang), cx)
+        });
+        buffer.condition(&cx, |buf, _| !buf.is_parsing()).await;
+
+        let font_cache = cx.font_cache();
+        let settings = Settings {
+            tab_size: 4,
+            buffer_font_family: font_cache.load_family(&["Courier"]).unwrap(),
+            buffer_font_size: 16.0,
+            ..Settings::new(&font_cache).unwrap()
+        };
+        let map = cx.add_model(|cx| DisplayMap::new(buffer, settings, Some(40.0), cx));
+        assert_eq!(
+            cx.update(|cx| highlighted_chunks(0..5, &map, &theme, cx)),
+            [
+                ("fn \n".to_string(), None),
+                ("oute\nr".to_string(), Some("fn.name")),
+                ("() \n{}\n\n".to_string(), None),
+            ]
+        );
+        assert_eq!(
+            cx.update(|cx| highlighted_chunks(3..5, &map, &theme, cx)),
+            [("{}\n\n".to_string(), None)]
+        );
+
+        map.update(&mut cx, |map, cx| {
+            map.fold(vec![Point::new(0, 6)..Point::new(3, 2)], cx)
+        });
+        assert_eq!(
+            cx.update(|cx| highlighted_chunks(1..4, &map, &theme, cx)),
+            [
+                ("out".to_string(), Some("fn.name")),
+                ("…\n".to_string(), None),
+                ("  \nfn ".to_string(), Some("mod.body")),
+                ("i\n".to_string(), Some("fn.name"))
+            ]
+        );
     }
 
     #[gpui::test]
@@ -588,9 +625,15 @@ mod tests {
         let text = "\n'a', 'α',\t'✋',\t'❎', '🍐'\n";
         let display_text = "\n'a', 'α',   '✋',    '❎', '🍐'\n";
         let buffer = cx.add_model(|cx| Buffer::new(0, text, cx));
-        let cx = cx.as_ref();
-        let map = DisplayMap::new(buffer.clone(), 4, cx);
-        let map = map.snapshot(cx);
+        let map = cx.add_model(|cx| {
+            DisplayMap::new(
+                buffer.clone(),
+                Settings::new(cx.font_cache()).unwrap().with_tab_size(4),
+                None,
+                cx,
+            )
+        });
+        let map = map.update(cx, |map, cx| map.snapshot(cx));
 
         assert_eq!(map.text(), display_text);
         for (input_column, bias, output_column) in vec![
@@ -619,21 +662,26 @@ mod tests {
         }
     }
 
-    #[test]
-    fn test_expand_tabs() {
-        assert_eq!(expand_tabs("\t".chars(), 0, 4), 0);
-        assert_eq!(expand_tabs("\t".chars(), 1, 4), 4);
-        assert_eq!(expand_tabs("\ta".chars(), 2, 4), 5);
-    }
-
     #[gpui::test]
     fn test_tabs_with_multibyte_chars(cx: &mut gpui::MutableAppContext) {
         let text = "✅\t\tα\nβ\t\n🏀β\t\tγ";
         let buffer = cx.add_model(|cx| Buffer::new(0, text, cx));
-        let cx = cx.as_ref();
-        let map = DisplayMap::new(buffer.clone(), 4, cx);
-        let map = map.snapshot(cx);
+        let map = cx.add_model(|cx| {
+            DisplayMap::new(
+                buffer.clone(),
+                Settings::new(cx.font_cache()).unwrap().with_tab_size(4),
+                None,
+                cx,
+            )
+        });
+        let map = map.update(cx, |map, cx| map.snapshot(cx));
         assert_eq!(map.text(), "✅       α\nβ   \n🏀β      γ");
+        assert_eq!(
+            map.chunks_at(0).collect::<String>(),
+            "✅       α\nβ   \n🏀β      γ"
+        );
+        assert_eq!(map.chunks_at(1).collect::<String>(), "β   \n🏀β      γ");
+        assert_eq!(map.chunks_at(2).collect::<String>(), "🏀β      γ");
 
         let point = Point::new(0, "✅\t\t".len() as u32);
         let display_point = DisplayPoint::new(0, "✅       ".len() as u32);
@@ -660,22 +708,12 @@ mod tests {
             Point::new(0, "✅\t".len() as u32),
         );
         assert_eq!(
-            map.chunks_at(DisplayPoint::new(0, "✅      ".len() as u32))
-                .collect::<String>(),
-            " α\nβ   \n🏀β      γ"
-        );
-        assert_eq!(
             DisplayPoint::new(0, "✅ ".len() as u32).to_buffer_point(&map, Bias::Right),
             Point::new(0, "✅\t".len() as u32),
         );
         assert_eq!(
             DisplayPoint::new(0, "✅ ".len() as u32).to_buffer_point(&map, Bias::Left),
             Point::new(0, "✅".len() as u32),
-        );
-        assert_eq!(
-            map.chunks_at(DisplayPoint::new(0, "✅ ".len() as u32))
-                .collect::<String>(),
-            "      α\nβ   \n🏀β      γ"
         );
 
         // Clipping display points inside of multi-byte characters
@@ -692,10 +730,40 @@ mod tests {
     #[gpui::test]
     fn test_max_point(cx: &mut gpui::MutableAppContext) {
         let buffer = cx.add_model(|cx| Buffer::new(0, "aaa\n\t\tbbb", cx));
-        let map = DisplayMap::new(buffer.clone(), 4, cx.as_ref());
+        let map = cx.add_model(|cx| {
+            DisplayMap::new(
+                buffer.clone(),
+                Settings::new(cx.font_cache()).unwrap().with_tab_size(4),
+                None,
+                cx,
+            )
+        });
         assert_eq!(
-            map.snapshot(cx.as_ref()).max_point(),
+            map.update(cx, |map, cx| map.snapshot(cx)).max_point(),
             DisplayPoint::new(1, 11)
         )
+    }
+
+    fn highlighted_chunks<'a>(
+        rows: Range<u32>,
+        map: &ModelHandle<DisplayMap>,
+        theme: &'a Theme,
+        cx: &mut MutableAppContext,
+    ) -> Vec<(String, Option<&'a str>)> {
+        let mut snapshot = map.update(cx, |map, cx| map.snapshot(cx));
+        let mut chunks: Vec<(String, Option<&str>)> = Vec::new();
+        for (chunk, style_id) in snapshot.highlighted_chunks_for_rows(rows) {
+            let style_name = theme.syntax_style_name(style_id);
+            if let Some((last_chunk, last_style_name)) = chunks.last_mut() {
+                if style_name == *last_style_name {
+                    last_chunk.push_str(chunk);
+                } else {
+                    chunks.push((chunk.to_string(), style_name));
+                }
+            } else {
+                chunks.push((chunk.to_string(), style_name));
+            }
+        }
+        chunks
     }
 }

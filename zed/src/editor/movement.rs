@@ -40,7 +40,10 @@ pub fn up(
         point = DisplayPoint::new(0, 0);
     }
 
-    Ok((point, SelectionGoal::Column(goal_column)))
+    Ok((
+        map.clip_point(point, Bias::Left),
+        SelectionGoal::Column(goal_column),
+    ))
 }
 
 pub fn down(
@@ -62,7 +65,10 @@ pub fn down(
         point = max_point;
     }
 
-    Ok((point, SelectionGoal::Column(goal_column)))
+    Ok((
+        map.clip_point(point, Bias::Left),
+        SelectionGoal::Column(goal_column),
+    ))
 }
 
 pub fn line_beginning(
@@ -79,7 +85,8 @@ pub fn line_beginning(
 }
 
 pub fn line_end(map: &DisplayMapSnapshot, point: DisplayPoint) -> Result<DisplayPoint> {
-    Ok(DisplayPoint::new(point.row(), map.line_len(point.row())))
+    let line_end = DisplayPoint::new(point.row(), map.line_len(point.row()));
+    Ok(map.clip_point(line_end, Bias::Left))
 }
 
 pub fn prev_word_boundary(map: &DisplayMapSnapshot, point: DisplayPoint) -> Result<DisplayPoint> {
@@ -94,7 +101,7 @@ pub fn prev_word_boundary(map: &DisplayMapSnapshot, point: DisplayPoint) -> Resu
         let mut boundary = DisplayPoint::new(point.row(), 0);
         let mut column = 0;
         let mut prev_c = None;
-        for c in map.chars_at(boundary) {
+        for c in map.chars_at(point.row()) {
             if column >= point.column() {
                 break;
             }
@@ -115,7 +122,7 @@ pub fn next_word_boundary(
     mut point: DisplayPoint,
 ) -> Result<DisplayPoint> {
     let mut prev_c = None;
-    for c in map.chars_at(point) {
+    for c in map.chars_at(point.row()).skip(point.column() as usize) {
         if prev_c.is_some() && (c == '\n' || char_kind(prev_c.unwrap()) != char_kind(c)) {
             break;
         }

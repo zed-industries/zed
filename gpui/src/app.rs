@@ -5,7 +5,8 @@ use crate::{
     platform::{self, Platform, PromptLevel, WindowOptions},
     presenter::Presenter,
     util::{post_inc, timeout},
-    AssetCache, AssetSource, ClipboardItem, FontCache, PathPromptOptions, TextLayoutCache,
+    AssetCache, AssetSource, ClipboardItem, EventContext, FontCache, PathPromptOptions,
+    TextLayoutCache,
 };
 use anyhow::{anyhow, Result};
 use async_task::Task;
@@ -22,6 +23,7 @@ use std::{
     fmt::{self, Debug},
     hash::{Hash, Hasher},
     marker::PhantomData,
+    ops::{Deref, DerefMut},
     path::{Path, PathBuf},
     rc::{self, Rc},
     sync::{Arc, Weak},
@@ -147,7 +149,7 @@ impl App {
         let cx = app.0.clone();
         foreground_platform.on_menu_command(Box::new(move |command, arg| {
             let mut cx = cx.borrow_mut();
-            if let Some(key_window_id) = cx.platform.key_window_id() {
+            if let Some(key_window_id) = cx.cx.platform.key_window_id() {
                 if let Some((presenter, _)) = cx.presenters_and_platform_windows.get(&key_window_id)
                 {
                     let presenter = presenter.clone();
@@ -374,7 +376,7 @@ impl TestAppContext {
     }
 
     pub fn platform(&self) -> Arc<dyn platform::Platform> {
-        self.cx.borrow().platform.clone()
+        self.cx.borrow().cx.platform.clone()
     }
 
     pub fn foreground(&self) -> Rc<executor::Foreground> {
@@ -566,7 +568,6 @@ type GlobalActionCallback = dyn FnMut(&dyn Any, &mut MutableAppContext);
 pub struct MutableAppContext {
     weak_self: Option<rc::Weak<RefCell<Self>>>,
     foreground_platform: Rc<dyn platform::ForegroundPlatform>,
-    platform: Arc<dyn platform::Platform>,
     assets: Arc<AssetCache>,
     cx: AppContext,
     actions: HashMap<TypeId, HashMap<String, Vec<Box<ActionCallback>>>>,
@@ -598,7 +599,6 @@ impl MutableAppContext {
         Self {
             weak_self: None,
             foreground_platform,
-            platform,
             assets: Arc::new(AssetCache::new(asset_source)),
             cx: AppContext {
                 models: Default::default(),
@@ -608,6 +608,7 @@ impl MutableAppContext {
                 ref_counts: Arc::new(Mutex::new(RefCounts::default())),
                 background,
                 font_cache: Arc::new(FontCache::new(fonts)),
+                platform,
             },
             actions: HashMap::new(),
             global_actions: HashMap::new(),
@@ -631,7 +632,7 @@ impl MutableAppContext {
     }
 
     pub fn platform(&self) -> Arc<dyn platform::Platform> {
-        self.platform.clone()
+        self.cx.platform.clone()
     }
 
     pub fn font_cache(&self) -> &Arc<FontCache> {
@@ -992,7 +993,7 @@ impl MutableAppContext {
     }
 
     fn open_platform_window(&mut self, window_id: usize) {
-        let mut window = self.platform.open_window(
+        let mut window = self.cx.platform.open_window(
             window_id,
             WindowOptions {
                 bounds: RectF::new(vec2f(0., 0.), vec2f(1024., 768.)),
@@ -1000,7 +1001,7 @@ impl MutableAppContext {
             },
             self.foreground.clone(),
         );
-        let text_layout_cache = TextLayoutCache::new(self.platform.fonts());
+        let text_layout_cache = TextLayoutCache::new(self.cx.platform.fonts());
         let presenter = Rc::new(RefCell::new(Presenter::new(
             window_id,
             self.cx.font_cache.clone(),
@@ -1387,11 +1388,11 @@ impl MutableAppContext {
     }
 
     pub fn write_to_clipboard(&self, item: ClipboardItem) {
-        self.platform.write_to_clipboard(item);
+        self.cx.platform.write_to_clipboard(item);
     }
 
     pub fn read_from_clipboard(&self) -> Option<ClipboardItem> {
-        self.platform.read_from_clipboard()
+        self.cx.platform.read_from_clipboard()
     }
 }
 
@@ -1477,6 +1478,14 @@ impl AsRef<AppContext> for MutableAppContext {
     }
 }
 
+impl Deref for MutableAppContext {
+    type Target = AppContext;
+
+    fn deref(&self) -> &Self::Target {
+        &self.cx
+    }
+}
+
 pub struct AppContext {
     models: HashMap<usize, Box<dyn AnyModel>>,
     views: HashMap<(usize, usize), Box<dyn AnyView>>,
@@ -1485,6 +1494,7 @@ pub struct AppContext {
     background: Arc<executor::Background>,
     ref_counts: Arc<Mutex<RefCounts>>,
     font_cache: Arc<FontCache>,
+    platform: Arc<dyn Platform>,
 }
 
 impl AppContext {
@@ -1524,14 +1534,20 @@ impl AppContext {
         &self.background
     }
 
-    pub fn font_cache(&self) -> &FontCache {
+    pub fn font_cache(&self) -> &Arc<FontCache> {
         &self.font_cache
+    }
+
+    pub fn platform(&self) -> &Arc<dyn Platform> {
+        &self.platform
     }
 
     pub fn value<Tag: 'static, T: 'static + Default>(&self, id: usize) -> ValueHandle<T> {
         let key = (TypeId::of::<Tag>(), id);
-        let mut values = self.values.write();
-        values.entry(key).or_insert_with(|| Box::new(T::default()));
+        self.values
+            .write()
+            .entry(key)
+            .or_insert_with(|| Box::new(T::default()));
         ValueHandle::new(TypeId::of::<Tag>(), id, &self.ref_counts)
     }
 }
@@ -1834,6 +1850,20 @@ impl<M> UpdateModel for ModelContext<'_, M> {
     }
 }
 
+impl<M> Deref for ModelContext<'_, M> {
+    type Target = MutableAppContext;
+
+    fn deref(&self) -> &Self::Target {
+        &self.app
+    }
+}
+
+impl<M> DerefMut for ModelContext<'_, M> {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.app
+    }
+}
+
 pub struct ViewContext<'a, T: ?Sized> {
     app: &'a mut MutableAppContext,
     window_id: usize,
@@ -2083,6 +2113,20 @@ impl AsRef<AppContext> for &AppContext {
 impl<M> AsRef<AppContext> for ViewContext<'_, M> {
     fn as_ref(&self) -> &AppContext {
         &self.app.cx
+    }
+}
+
+impl<M> Deref for ViewContext<'_, M> {
+    type Target = MutableAppContext;
+
+    fn deref(&self) -> &Self::Target {
+        &self.app
+    }
+}
+
+impl<M> DerefMut for ViewContext<'_, M> {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.app
     }
 }
 
@@ -2629,8 +2673,7 @@ impl<T: View> WeakViewHandle<T> {
         }
     }
 
-    pub fn upgrade(&self, cx: impl AsRef<AppContext>) -> Option<ViewHandle<T>> {
-        let cx = cx.as_ref();
+    pub fn upgrade(&self, cx: &AppContext) -> Option<ViewHandle<T>> {
         if cx.ref_counts.lock().is_entity_alive(self.view_id) {
             Some(ViewHandle::new(
                 self.window_id,
@@ -2680,13 +2723,25 @@ impl<T: 'static> ValueHandle<T> {
             .unwrap())
     }
 
-    pub fn update<R>(&self, cx: &AppContext, f: impl FnOnce(&mut T) -> R) -> R {
-        f(cx.values
+    pub fn update<R>(
+        &self,
+        cx: &mut EventContext,
+        f: impl FnOnce(&mut T, &mut EventContext) -> R,
+    ) -> R {
+        let mut value = cx
+            .app
+            .cx
+            .values
             .write()
-            .get_mut(&(self.tag_type_id, self.id))
-            .unwrap()
-            .downcast_mut()
-            .unwrap())
+            .remove(&(self.tag_type_id, self.id))
+            .unwrap();
+        let result = f(value.downcast_mut().unwrap(), cx);
+        cx.app
+            .cx
+            .values
+            .write()
+            .insert((self.tag_type_id, self.id), value);
+        result
     }
 }
 

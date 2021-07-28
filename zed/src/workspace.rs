@@ -1329,7 +1329,7 @@ mod tests {
                 .to_any()
                 .downcast::<Editor>()
                 .unwrap();
-            assert!(editor.read(cx).text(cx.as_ref()).is_empty());
+            assert!(editor.update(cx, |editor, cx| editor.text(cx).is_empty()));
         });
     }
 

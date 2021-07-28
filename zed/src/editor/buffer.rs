@@ -374,7 +374,7 @@ impl UndoMap {
 struct Edits<'a, F: Fn(&FragmentSummary) -> bool> {
     visible_text: &'a Rope,
     deleted_text: &'a Rope,
-    cursor: FilterCursor<'a, F, Fragment, FragmentTextSummary>,
+    cursor: Option<FilterCursor<'a, F, Fragment, FragmentTextSummary>>,
     undos: &'a UndoMap,
     since: time::Global,
     old_offset: usize,
@@ -604,6 +604,7 @@ impl Buffer {
             fragments: self.fragments.clone(),
             version: self.version.clone(),
             tree: self.syntax_tree(),
+            is_parsing: self.is_parsing,
             language: self.language.clone(),
             query_cursor: QueryCursorHandle::new(),
         }
@@ -1050,10 +1051,14 @@ impl Buffer {
 
     pub fn edits_since<'a>(&'a self, since: time::Global) -> impl 'a + Iterator<Item = Edit> {
         let since_2 = since.clone();
-        let cursor = self.fragments.filter(
-            move |summary| summary.max_version.changed_since(&since_2),
-            &None,
-        );
+        let cursor = if since == self.version {
+            None
+        } else {
+            Some(self.fragments.filter(
+                move |summary| summary.max_version.changed_since(&since_2),
+                &None,
+            ))
+        };
 
         Edits {
             visible_text: &self.visible_text,
@@ -1416,7 +1421,7 @@ impl Buffer {
 
         let mut fragment_start = old_fragments.sum_start().offset();
         for range in ranges {
-            let fragment_end = old_fragments.end(&cx).offset();
+            let fragment_end = old_fragments.sum_end(&cx).offset();
 
             // If the current fragment ends before this range, then jump ahead to the first fragment
             // that extends past the start of this range, reusing any intervening fragments.
@@ -1441,7 +1446,7 @@ impl Buffer {
             }
 
             // If we are at the end of a non-concurrent fragment, advance to the next one.
-            let fragment_end = old_fragments.end(&cx).offset();
+            let fragment_end = old_fragments.sum_end(&cx).offset();
             if fragment_end == range.start && fragment_end > fragment_start {
                 let mut fragment = old_fragments.item().unwrap().clone();
                 fragment.len = fragment_end - fragment_start;
@@ -1495,7 +1500,7 @@ impl Buffer {
             // portions as deleted.
             while fragment_start < range.end {
                 let fragment = old_fragments.item().unwrap();
-                let fragment_end = old_fragments.end(&cx).offset();
+                let fragment_end = old_fragments.sum_end(&cx).offset();
                 let mut intersection = fragment.clone();
                 let intersection_end = cmp::min(range.end, fragment_end);
                 if fragment.was_visible(version, &self.undo_map) {
@@ -1517,7 +1522,7 @@ impl Buffer {
         // If the current fragment has been partially consumed, then consume the rest of it
         // and advance to the next fragment before slicing.
         if fragment_start > old_fragments.sum_start().offset() {
-            let fragment_end = old_fragments.end(&cx).offset();
+            let fragment_end = old_fragments.sum_end(&cx).offset();
             if fragment_end > fragment_start {
                 let mut suffix = old_fragments.item().unwrap().clone();
                 suffix.len = fragment_end - fragment_start;
@@ -1644,7 +1649,7 @@ impl Buffer {
         new_ropes.push_tree(new_fragments.summary().text);
 
         for range in &undo.ranges {
-            let mut end_offset = old_fragments.end(&cx).offset();
+            let mut end_offset = old_fragments.sum_end(&cx).offset();
 
             if end_offset < range.start {
                 let preceding_fragments =
@@ -1668,7 +1673,7 @@ impl Buffer {
                     new_fragments.push(fragment, &None);
 
                     old_fragments.next(&cx);
-                    if end_offset == old_fragments.end(&cx).offset() {
+                    if end_offset == old_fragments.sum_end(&cx).offset() {
                         let unseen_fragments = old_fragments.slice(
                             &VersionedOffset::Offset(end_offset),
                             Bias::Right,
@@ -1677,7 +1682,7 @@ impl Buffer {
                         new_ropes.push_tree(unseen_fragments.summary().text);
                         new_fragments.push_tree(unseen_fragments, &None);
                     }
-                    end_offset = old_fragments.end(&cx).offset();
+                    end_offset = old_fragments.sum_end(&cx).offset();
                 } else {
                     break;
                 }
@@ -1757,7 +1762,7 @@ impl Buffer {
 
         let mut fragment_start = old_fragments.sum_start().visible;
         for range in ranges {
-            let fragment_end = old_fragments.end(&None).visible;
+            let fragment_end = old_fragments.sum_end(&None).visible;
 
             // If the current fragment ends before this range, then jump ahead to the first fragment
             // that extends past the start of this range, reusing any intervening fragments.
@@ -1810,7 +1815,7 @@ impl Buffer {
             // portions as deleted.
             while fragment_start < range.end {
                 let fragment = old_fragments.item().unwrap();
-                let fragment_end = old_fragments.end(&None).visible;
+                let fragment_end = old_fragments.sum_end(&None).visible;
                 let mut intersection = fragment.clone();
                 let intersection_end = cmp::min(range.end, fragment_end);
                 if fragment.visible {
@@ -1835,7 +1840,7 @@ impl Buffer {
         // If the current fragment has been partially consumed, then consume the rest of it
         // and advance to the next fragment before slicing.
         if fragment_start > old_fragments.sum_start().visible {
-            let fragment_end = old_fragments.end(&None).visible;
+            let fragment_end = old_fragments.sum_end(&None).visible;
             if fragment_end > fragment_start {
                 let mut suffix = old_fragments.item().unwrap().clone();
                 suffix.len = fragment_end - fragment_start;
@@ -1926,8 +1931,23 @@ pub struct Snapshot {
     fragments: SumTree<Fragment>,
     version: time::Global,
     tree: Option<Tree>,
+    is_parsing: bool,
     language: Option<Arc<Language>>,
     query_cursor: QueryCursorHandle,
+}
+
+impl Clone for Snapshot {
+    fn clone(&self) -> Self {
+        Self {
+            visible_text: self.visible_text.clone(),
+            fragments: self.fragments.clone(),
+            version: self.version.clone(),
+            tree: self.tree.clone(),
+            is_parsing: self.is_parsing,
+            language: self.language.clone(),
+            query_cursor: QueryCursorHandle::new(),
+        }
+    }
 }
 
 impl Snapshot {
@@ -1979,7 +1999,11 @@ impl Snapshot {
         }
     }
 
-    pub fn text_summary_for_range(&self, range: Range<usize>) -> TextSummary {
+    pub fn text_summary_for_range<T>(&self, range: Range<T>) -> TextSummary
+    where
+        T: ToOffset,
+    {
+        let range = range.start.to_offset(self.content())..range.end.to_offset(self.content());
         self.content().text_summary_for_range(range)
     }
 
@@ -2198,10 +2222,11 @@ impl<'a, F: Fn(&FragmentSummary) -> bool> Iterator for Edits<'a, F> {
 
     fn next(&mut self) -> Option<Self::Item> {
         let mut change: Option<Edit> = None;
+        let cursor = self.cursor.as_mut()?;
 
-        while let Some(fragment) = self.cursor.item() {
-            let bytes = self.cursor.start().visible - self.new_offset;
-            let lines = self.visible_text.to_point(self.cursor.start().visible) - self.new_point;
+        while let Some(fragment) = cursor.item() {
+            let bytes = cursor.start().visible - self.new_offset;
+            let lines = self.visible_text.to_point(cursor.start().visible) - self.new_point;
             self.old_offset += bytes;
             self.old_point += &lines;
             self.new_offset += bytes;
@@ -2227,7 +2252,7 @@ impl<'a, F: Fn(&FragmentSummary) -> bool> Iterator for Edits<'a, F> {
                 self.new_offset += fragment.len;
                 self.new_point += &fragment_lines;
             } else if fragment.was_visible(&self.since, &self.undos) && !fragment.visible {
-                let deleted_start = self.cursor.start().deleted;
+                let deleted_start = cursor.start().deleted;
                 let fragment_lines = self.deleted_text.to_point(deleted_start + fragment.len)
                     - self.deleted_text.to_point(deleted_start);
                 if let Some(ref mut change) = change {
@@ -2249,7 +2274,7 @@ impl<'a, F: Fn(&FragmentSummary) -> bool> Iterator for Edits<'a, F> {
                 self.old_point += &fragment_lines;
             }
 
-            self.cursor.next(&None);
+            cursor.next(&None);
         }
 
         change

@@ -29,8 +29,8 @@ pub use uniform_list::*;
 
 use crate::{
     geometry::{rect::RectF, vector::Vector2F},
-    json, AfterLayoutContext, AppContext, DebugContext, Event, EventContext, LayoutContext,
-    PaintContext, SizeConstraint,
+    json, AfterLayoutContext, DebugContext, Event, EventContext, LayoutContext, PaintContext,
+    SizeConstraint,
 };
 use core::panic;
 use json::ToJson;

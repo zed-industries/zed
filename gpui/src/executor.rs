@@ -9,17 +9,20 @@ use std::{
     fmt::{self, Debug},
     marker::PhantomData,
     mem,
+    ops::RangeInclusive,
     pin::Pin,
     rc::Rc,
     sync::{
         atomic::{AtomicBool, Ordering::SeqCst},
-        mpsc::Sender,
         Arc,
     },
+    task::{Context, Poll},
     thread,
+    time::Duration,
 };
+use waker_fn::waker_fn;
 
-use crate::platform;
+use crate::{platform, util};
 
 pub enum Foreground {
     Platform {
@@ -41,22 +44,32 @@ pub enum Background {
 struct DeterministicState {
     rng: StdRng,
     seed: u64,
-    scheduled: Vec<(Runnable, Backtrace)>,
+    scheduled_from_foreground: Vec<(Runnable, Backtrace)>,
+    scheduled_from_background: Vec<(Runnable, Backtrace)>,
     spawned_from_foreground: Vec<(Runnable, Backtrace)>,
-    waker: Option<Sender<()>>,
+    forbid_parking: bool,
+    block_on_ticks: RangeInclusive<usize>,
 }
 
-pub struct Deterministic(Arc<Mutex<DeterministicState>>);
+pub struct Deterministic {
+    state: Arc<Mutex<DeterministicState>>,
+    parker: Mutex<parking::Parker>,
+}
 
 impl Deterministic {
     fn new(seed: u64) -> Self {
-        Self(Arc::new(Mutex::new(DeterministicState {
-            rng: StdRng::seed_from_u64(seed),
-            seed,
-            scheduled: Default::default(),
-            spawned_from_foreground: Default::default(),
-            waker: None,
-        })))
+        Self {
+            state: Arc::new(Mutex::new(DeterministicState {
+                rng: StdRng::seed_from_u64(seed),
+                seed,
+                scheduled_from_foreground: Default::default(),
+                scheduled_from_background: Default::default(),
+                spawned_from_foreground: Default::default(),
+                forbid_parking: false,
+                block_on_ticks: 0..=1000,
+            })),
+            parker: Default::default(),
+        }
     }
 
     pub fn spawn_from_foreground<F, T>(&self, future: F) -> Task<T>
@@ -66,18 +79,17 @@ impl Deterministic {
     {
         let backtrace = Backtrace::new_unresolved();
         let scheduled_once = AtomicBool::new(false);
-        let state = self.0.clone();
+        let state = self.state.clone();
+        let unparker = self.parker.lock().unparker();
         let (runnable, task) = async_task::spawn_local(future, move |runnable| {
             let mut state = state.lock();
             let backtrace = backtrace.clone();
             if scheduled_once.fetch_or(true, SeqCst) {
-                state.scheduled.push((runnable, backtrace));
+                state.scheduled_from_foreground.push((runnable, backtrace));
             } else {
                 state.spawned_from_foreground.push((runnable, backtrace));
             }
-            if let Some(waker) = state.waker.as_ref() {
-                waker.send(()).ok();
-            }
+            unparker.unpark();
         });
         runnable.schedule();
         task
@@ -89,13 +101,14 @@ impl Deterministic {
         F: 'static + Send + Future<Output = T>,
     {
         let backtrace = Backtrace::new_unresolved();
-        let state = self.0.clone();
+        let state = self.state.clone();
+        let unparker = self.parker.lock().unparker();
         let (runnable, task) = async_task::spawn(future, move |runnable| {
             let mut state = state.lock();
-            state.scheduled.push((runnable, backtrace.clone()));
-            if let Some(waker) = state.waker.as_ref() {
-                waker.send(()).ok();
-            }
+            state
+                .scheduled_from_background
+                .push((runnable, backtrace.clone()));
+            unparker.unpark();
         });
         runnable.schedule();
         task
@@ -106,43 +119,113 @@ impl Deterministic {
         T: 'static,
         F: Future<Output = T> + 'static,
     {
-        let (wake_tx, wake_rx) = std::sync::mpsc::channel();
-        let state = self.0.clone();
-        state.lock().waker = Some(wake_tx);
+        smol::pin!(future);
 
-        let (output_tx, output_rx) = std::sync::mpsc::channel();
-        self.spawn_from_foreground(async move {
-            let output = future.await;
-            output_tx.send(output).unwrap();
-        })
-        .detach();
+        let unparker = self.parker.lock().unparker();
+        let waker = waker_fn(move || {
+            unparker.unpark();
+        });
 
+        let mut cx = Context::from_waker(&waker);
         let mut trace = Trace::default();
         loop {
-            if let Ok(value) = output_rx.try_recv() {
-                state.lock().waker = None;
-                return value;
-            }
+            let mut state = self.state.lock();
+            let runnable_count = state.scheduled_from_foreground.len()
+                + state.scheduled_from_background.len()
+                + state.spawned_from_foreground.len();
 
-            wake_rx.recv().unwrap();
-            let runnable = {
-                let state = &mut *state.lock();
-                let ix = state
-                    .rng
-                    .gen_range(0..state.scheduled.len() + state.spawned_from_foreground.len());
-                if ix < state.scheduled.len() {
-                    let (_, backtrace) = &state.scheduled[ix];
-                    trace.record(&state, backtrace.clone());
-                    state.scheduled.remove(ix).0
-                } else {
-                    let (_, backtrace) = &state.spawned_from_foreground[0];
-                    trace.record(&state, backtrace.clone());
-                    state.spawned_from_foreground.remove(0).0
+            let ix = state.rng.gen_range(0..=runnable_count);
+            if ix < state.scheduled_from_foreground.len() {
+                let (_, backtrace) = &state.scheduled_from_foreground[ix];
+                trace.record(&state, backtrace.clone());
+                let runnable = state.scheduled_from_foreground.remove(ix).0;
+                drop(state);
+                runnable.run();
+            } else if ix - state.scheduled_from_foreground.len()
+                < state.scheduled_from_background.len()
+            {
+                let ix = ix - state.scheduled_from_foreground.len();
+                let (_, backtrace) = &state.scheduled_from_background[ix];
+                trace.record(&state, backtrace.clone());
+                let runnable = state.scheduled_from_background.remove(ix).0;
+                drop(state);
+                runnable.run();
+            } else if ix < runnable_count {
+                let (_, backtrace) = &state.spawned_from_foreground[0];
+                trace.record(&state, backtrace.clone());
+                let runnable = state.spawned_from_foreground.remove(0).0;
+                drop(state);
+                runnable.run();
+            } else {
+                drop(state);
+                if let Poll::Ready(result) = future.as_mut().poll(&mut cx) {
+                    return result;
                 }
-            };
+                let state = self.state.lock();
+                if state.scheduled_from_foreground.is_empty()
+                    && state.scheduled_from_background.is_empty()
+                    && state.spawned_from_foreground.is_empty()
+                {
+                    if state.forbid_parking {
+                        panic!("deterministic executor parked after a call to forbid_parking");
+                    }
+                    drop(state);
+                    self.parker.lock().park();
+                }
 
-            runnable.run();
+                continue;
+            }
         }
+    }
+
+    pub fn block_on<F, T>(&self, future: F) -> Option<T>
+    where
+        T: 'static,
+        F: Future<Output = T>,
+    {
+        smol::pin!(future);
+
+        let unparker = self.parker.lock().unparker();
+        let waker = waker_fn(move || {
+            unparker.unpark();
+        });
+        let max_ticks = {
+            let mut state = self.state.lock();
+            let range = state.block_on_ticks.clone();
+            state.rng.gen_range(range)
+        };
+
+        let mut cx = Context::from_waker(&waker);
+        let mut trace = Trace::default();
+        for _ in 0..max_ticks {
+            let mut state = self.state.lock();
+            let runnable_count = state.scheduled_from_background.len();
+            let ix = state.rng.gen_range(0..=runnable_count);
+            if ix < state.scheduled_from_background.len() {
+                let (_, backtrace) = &state.scheduled_from_background[ix];
+                trace.record(&state, backtrace.clone());
+                let runnable = state.scheduled_from_background.remove(ix).0;
+                drop(state);
+                runnable.run();
+            } else {
+                drop(state);
+                if let Poll::Ready(result) = future.as_mut().poll(&mut cx) {
+                    return Some(result);
+                }
+                let state = self.state.lock();
+                if state.scheduled_from_background.is_empty() {
+                    if state.forbid_parking {
+                        panic!("deterministic executor parked after a call to forbid_parking");
+                    }
+                    drop(state);
+                    self.parker.lock().park();
+                }
+
+                continue;
+            }
+        }
+
+        None
     }
 }
 
@@ -157,7 +240,7 @@ impl Trace {
     fn record(&mut self, state: &DeterministicState, executed: Backtrace) {
         self.scheduled.push(
             state
-                .scheduled
+                .scheduled_from_foreground
                 .iter()
                 .map(|(_, backtrace)| backtrace.clone())
                 .collect(),
@@ -307,14 +390,21 @@ impl Foreground {
         }
     }
 
-    pub fn reset(&self) {
+    pub fn forbid_parking(&self) {
         match self {
-            Self::Platform { .. } => panic!("can't call this method on a platform executor"),
-            Self::Test(_) => panic!("can't call this method on a test executor"),
             Self::Deterministic(executor) => {
-                let state = &mut *executor.0.lock();
+                let mut state = executor.state.lock();
+                state.forbid_parking = true;
                 state.rng = StdRng::seed_from_u64(state.seed);
             }
+            _ => panic!("this method can only be called on a deterministic executor"),
+        }
+    }
+
+    pub fn set_block_on_ticks(&self, range: RangeInclusive<usize>) {
+        match self {
+            Self::Deterministic(executor) => executor.state.lock().block_on_ticks = range,
+            _ => panic!("this method can only be called on a deterministic executor"),
         }
     }
 }
@@ -351,6 +441,25 @@ impl Background {
         match self {
             Self::Production { executor, .. } => executor.spawn(future),
             Self::Deterministic(executor) => executor.spawn(future),
+        }
+    }
+
+    pub fn block_with_timeout<F, T>(&self, timeout: Duration, mut future: F) -> Result<T, F>
+    where
+        T: 'static,
+        F: 'static + Unpin + Future<Output = T>,
+    {
+        let output = match self {
+            Self::Production { .. } => {
+                smol::block_on(util::timeout(timeout, Pin::new(&mut future))).ok()
+            }
+            Self::Deterministic(executor) => executor.block_on(Pin::new(&mut future)),
+        };
+
+        if let Some(output) = output {
+            Ok(output)
+        } else {
+            Err(future)
         }
     }
 

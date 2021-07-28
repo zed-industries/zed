@@ -130,10 +130,11 @@ pub trait FontSystem: Send + Sync {
         subpixel_shift: Vector2F,
         scale_factor: f32,
     ) -> Option<(RectI, Vec<u8>)>;
-    fn layout_str(
+    fn layout_line(
         &self,
         text: &str,
         font_size: f32,
         runs: &[(usize, FontId, ColorU)],
     ) -> LineLayout;
+    fn wrap_line(&self, text: &str, font_id: FontId, font_size: f32, width: f32) -> Vec<usize>;
 }

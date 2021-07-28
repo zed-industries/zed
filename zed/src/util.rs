@@ -67,7 +67,11 @@ impl<T: Rng> Iterator for RandomCharIter<T> {
 
     fn next(&mut self) -> Option<Self::Item> {
         if self.0.gen_bool(1.0 / 5.0) {
-            Some('\n')
+            match self.0.gen_range(0..=2) {
+                0 => Some('\t'),
+                1 => Some(' '),
+                _ => Some('\n'),
+            }
         }
         // two-byte greek letters
         else if self.0.gen_bool(1.0 / 8.0) {

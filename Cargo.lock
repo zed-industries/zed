@@ -2165,6 +2165,7 @@ dependencies = [
  "num_cpus",
  "objc",
  "ordered-float",
+ "parking",
  "parking_lot",
  "pathfinder_color",
  "pathfinder_geometry",
@@ -2182,6 +2183,7 @@ dependencies = [
  "tiny-skia",
  "tree-sitter",
  "usvg",
+ "waker-fn",
 ]
 
 [[package]]

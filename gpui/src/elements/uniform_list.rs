@@ -1,6 +1,5 @@
 use super::{
-    AfterLayoutContext, AppContext, Element, Event, EventContext, LayoutContext, PaintContext,
-    SizeConstraint,
+    AfterLayoutContext, Element, Event, EventContext, LayoutContext, PaintContext, SizeConstraint,
 };
 use crate::{
     geometry::{
@@ -8,7 +7,7 @@ use crate::{
         vector::{vec2f, Vector2F},
     },
     json::{self, json},
-    ElementBox,
+    AppContext, ElementBox,
 };
 use json::ToJson;
 use parking_lot::Mutex;
