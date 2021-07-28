@@ -13,9 +13,7 @@ pub fn test(args: TokenStream, function: TokenStream) -> TokenStream {
     let args = syn::parse_macro_input!(args as AttributeArgs);
     let mut max_retries = 0;
     let mut num_iterations = 1;
-    let mut starting_seed = std::env::var("SEED")
-        .map(|i| i.parse().expect("invalid `SEED`"))
-        .ok();
+    let mut starting_seed = 0;
 
     for arg in args {
         match arg {
@@ -29,18 +27,8 @@ pub fn test(args: TokenStream, function: TokenStream) -> TokenStream {
                 let result = (|| {
                     match key_name.as_ref().map(String::as_str) {
                         Some("retries") => max_retries = parse_int(&meta.lit)?,
-                        Some("iterations") => {
-                            if let Ok(iters) = std::env::var("ITERATIONS") {
-                                num_iterations = iters.parse().expect("invalid `ITERATIONS`");
-                            } else {
-                                num_iterations = parse_int(&meta.lit)?;
-                            }
-                        }
-                        Some("seed") => {
-                            if starting_seed.is_none() {
-                                starting_seed = Some(parse_int(&meta.lit)?);
-                            }
-                        }
+                        Some("iterations") => num_iterations = parse_int(&meta.lit)?,
+                        Some("seed") => starting_seed = parse_int(&meta.lit)?,
                         _ => {
                             return Err(TokenStream::from(
                                 syn::Error::new(meta.path.span(), "invalid argument")
@@ -62,7 +50,6 @@ pub fn test(args: TokenStream, function: TokenStream) -> TokenStream {
             }
         }
     }
-    let starting_seed = starting_seed.unwrap_or(0);
 
     let mut inner_fn = parse_macro_input!(function as ItemFn);
     let inner_fn_attributes = mem::take(&mut inner_fn.attrs);
@@ -111,11 +98,26 @@ pub fn test(args: TokenStream, function: TokenStream) -> TokenStream {
             fn #outer_fn_name() {
                 #inner_fn
 
+                let is_randomized = #num_iterations > 1;
+                let mut num_iterations = #num_iterations;
+                let mut starting_seed = #starting_seed;
+                if is_randomized {
+                    if let Ok(value) = std::env::var("SEED") {
+                        starting_seed = value.parse().expect("invalid SEED variable");
+                    }
+                    if let Ok(value) = std::env::var("ITERATIONS") {
+                        num_iterations = value.parse().expect("invalid ITERATIONS variable");
+                    }
+                }
+
                 let mut retries = 0;
                 let mut i = 0;
                 loop {
-                    let seed = (#starting_seed + i) as u64;
-                    dbg!(seed);
+                    let seed = (starting_seed + i) as u64;
+                    if is_randomized {
+                        dbg!(seed);
+                    }
+
                     let result = std::panic::catch_unwind(|| {
                         let (foreground, background) = #namespace::executor::deterministic(seed);
                         foreground.run(#inner_fn_name(#inner_fn_args));
@@ -125,7 +127,7 @@ pub fn test(args: TokenStream, function: TokenStream) -> TokenStream {
                         Ok(result) => {
                             retries = 0;
                             i += 1;
-                            if i == #num_iterations {
+                            if i == num_iterations {
                                 return result
                             }
                         }
@@ -134,7 +136,7 @@ pub fn test(args: TokenStream, function: TokenStream) -> TokenStream {
                                 retries += 1;
                                 println!("retrying: attempt {}", retries);
                             } else {
-                                if #num_iterations > 1 {
+                                if num_iterations > 1 {
                                     eprintln!("failing seed: {}", seed);
                                 }
                                 std::panic::resume_unwind(error);
@@ -168,11 +170,26 @@ pub fn test(args: TokenStream, function: TokenStream) -> TokenStream {
             fn #outer_fn_name() {
                 #inner_fn
 
+                let is_randomized = #num_iterations > 1;
+                let mut num_iterations = #num_iterations;
+                let mut starting_seed = #starting_seed;
+                if is_randomized {
+                    if let Ok(value) = std::env::var("SEED") {
+                        starting_seed = value.parse().expect("invalid SEED variable");
+                    }
+                    if let Ok(value) = std::env::var("ITERATIONS") {
+                        num_iterations = value.parse().expect("invalid ITERATIONS variable");
+                    }
+                }
+
                 let mut retries = 0;
                 let mut i = 0;
                 loop {
-                    let seed = (#starting_seed + i) as u64;
-                    dbg!(seed);
+                    let seed = (starting_seed + i) as u64;
+                    if is_randomized {
+                        dbg!(seed);
+                    }
+
                     let result = std::panic::catch_unwind(|| {
                         #namespace::App::test(|cx| {
                             #inner_fn_name(#inner_fn_args);
@@ -183,7 +200,7 @@ pub fn test(args: TokenStream, function: TokenStream) -> TokenStream {
                         Ok(result) => {
                             retries = 0;
                             i += 1;
-                            if i == #num_iterations {
+                            if i == num_iterations {
                                 return result
                             }
                         }
