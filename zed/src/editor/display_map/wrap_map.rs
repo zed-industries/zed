@@ -900,7 +900,7 @@ mod tests {
                 let text = RandomCharIter::new(&mut rng).take(len).collect::<String>();
                 Buffer::new(0, text, cx)
             });
-            let (fold_map, folds_snapshot) = cx.read(|cx| FoldMap::new(buffer.clone(), cx));
+            let (mut fold_map, folds_snapshot) = cx.read(|cx| FoldMap::new(buffer.clone(), cx));
             let (tab_map, tabs_snapshot) = TabMap::new(folds_snapshot.clone(), settings.tab_size);
             log::info!(
                 "Unwrapped text (unexpanded tabs): {:?}",
@@ -930,7 +930,6 @@ mod tests {
             );
             log::info!("Wrapped text: {:?}", actual_text);
 
-            let mut interpolated_snapshot = snapshot.clone();
             for _i in 0..operations {
                 match rng.gen_range(0..=100) {
                     0..=19 => {
@@ -941,6 +940,17 @@ mod tests {
                         };
                         log::info!("Setting wrap width to {:?}", wrap_width);
                         wrap_map.update(&mut cx, |map, cx| map.set_wrap_width(wrap_width, cx));
+                    }
+                    20..=39 => {
+                        for (folds_snapshot, edits) in
+                            cx.read(|cx| fold_map.randomly_mutate(&mut rng, cx))
+                        {
+                            let (tabs_snapshot, edits) = tab_map.sync(folds_snapshot, edits);
+                            let mut snapshot = wrap_map
+                                .update(&mut cx, |map, cx| map.sync(tabs_snapshot, edits, cx));
+                            snapshot.check_invariants();
+                            snapshot.verify_chunks(&mut rng);
+                        }
                     }
                     _ => {
                         buffer.update(&mut cx, |buffer, cx| buffer.randomly_mutate(&mut rng, cx));
@@ -954,9 +964,6 @@ mod tests {
                 );
                 let (tabs_snapshot, edits) = tab_map.sync(folds_snapshot, edits);
                 log::info!("Unwrapped text (expanded tabs): {:?}", tabs_snapshot.text());
-                interpolated_snapshot.interpolate(tabs_snapshot.clone(), &edits);
-                interpolated_snapshot.check_invariants();
-                interpolated_snapshot.verify_chunks(&mut rng);
 
                 let unwrapped_text = tabs_snapshot.text();
                 let expected_text = wrap_text(&unwrapped_text, wrap_width, &mut line_wrapper);
@@ -974,18 +981,17 @@ mod tests {
                 }
 
                 if !wrap_map.read_with(&cx, |map, _| map.is_rewrapping()) {
-                    snapshot =
+                    let mut wrapped_snapshot =
                         wrap_map.update(&mut cx, |map, cx| map.sync(tabs_snapshot, Vec::new(), cx));
-                    let actual_text = snapshot.text();
+                    let actual_text = wrapped_snapshot.text();
                     log::info!("Wrapping finished: {:?}", actual_text);
-                    snapshot.check_invariants();
-                    snapshot.verify_chunks(&mut rng);
+                    wrapped_snapshot.check_invariants();
+                    wrapped_snapshot.verify_chunks(&mut rng);
                     assert_eq!(
                         actual_text, expected_text,
                         "unwrapped text is: {:?}",
                         unwrapped_text
                     );
-                    interpolated_snapshot = snapshot.clone();
                 }
             }
         }
