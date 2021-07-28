@@ -583,6 +583,31 @@ impl Snapshot {
                     }
                 }
             }
+
+            let mut expected_buffer_rows = Vec::new();
+            let mut buffer_row = 0;
+            let mut prev_tab_row = 0;
+            for display_row in 0..=self.max_point().row() {
+                let tab_point = self.to_tab_point(WrapPoint::new(display_row, 0));
+                if tab_point.row() != prev_tab_row {
+                    let fold_point = self.tab_snapshot.to_fold_point(tab_point, Bias::Left).0;
+                    let buffer_point = fold_point.to_buffer_point(&self.tab_snapshot.fold_snapshot);
+                    buffer_row = buffer_point.row;
+                    prev_tab_row = tab_point.row();
+                }
+                expected_buffer_rows.push(buffer_row);
+            }
+
+            for start_display_row in 0..expected_buffer_rows.len() {
+                assert_eq!(
+                    self.buffer_rows(start_display_row as u32)
+                        .map(|(row, _)| row)
+                        .collect::<Vec<_>>(),
+                    &expected_buffer_rows[start_display_row..],
+                    "invalid buffer_rows({}..)",
+                    start_display_row
+                );
+            }
         }
     }
 }

@@ -91,8 +91,8 @@ impl TabMap {
 
 #[derive(Clone)]
 pub struct Snapshot {
-    fold_snapshot: FoldSnapshot,
-    tab_size: usize,
+    pub fold_snapshot: FoldSnapshot,
+    pub tab_size: usize,
 }
 
 impl Snapshot {
