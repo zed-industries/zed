@@ -528,14 +528,14 @@ impl Editor {
             .first()
             .unwrap()
             .head()
-            .to_display_point(&display_map)
+            .to_display_point(&display_map, Bias::Left)
             .row() as f32;
         let last_cursor_bottom = self
             .selections(cx)
             .last()
             .unwrap()
             .head()
-            .to_display_point(&display_map)
+            .to_display_point(&display_map, Bias::Right)
             .row() as f32
             + 1.0;
 
@@ -575,7 +575,7 @@ impl Editor {
         let mut target_left = std::f32::INFINITY;
         let mut target_right = 0.0_f32;
         for selection in self.selections(cx) {
-            let head = selection.head().to_display_point(&display_map);
+            let head = selection.head().to_display_point(&display_map, Bias::Left);
             let start_column = head.column().saturating_sub(3);
             let end_column = cmp::min(display_map.line_len(head.row()), head.column() + 3);
             target_left = target_left
@@ -806,7 +806,7 @@ impl Editor {
             for selection in &mut selections {
                 let range = selection.point_range(buffer);
                 if range.start == range.end {
-                    let head = selection.head().to_display_point(&display_map);
+                    let head = selection.head().to_display_point(&display_map, Bias::Left);
                     let cursor = display_map
                         .anchor_before(movement::left(&display_map, head).unwrap(), Bias::Left);
                     selection.set_head(&buffer, cursor);
@@ -829,7 +829,7 @@ impl Editor {
             for selection in &mut selections {
                 let range = selection.point_range(buffer);
                 if range.start == range.end {
-                    let head = selection.head().to_display_point(&display_map);
+                    let head = selection.head().to_display_point(&display_map, Bias::Left);
                     let cursor = display_map
                         .anchor_before(movement::right(&display_map, head).unwrap(), Bias::Right);
                     selection.set_head(&buffer, cursor);
@@ -856,7 +856,10 @@ impl Editor {
         let mut selections = self.selections(app).iter().peekable();
         while let Some(selection) = selections.next() {
             let (mut rows, _) = selection.buffer_rows_for_display_rows(false, &display_map);
-            let goal_display_column = selection.head().to_display_point(&display_map).column();
+            let goal_display_column = selection
+                .head()
+                .to_display_point(&display_map, Bias::Left)
+                .column();
 
             // Accumulate contiguous regions of rows that we want to delete.
             while let Some(next_selection) = selections.peek() {
@@ -886,7 +889,8 @@ impl Editor {
                 cursor_buffer_row = rows.start.saturating_sub(1);
             }
 
-            let mut cursor = Point::new(cursor_buffer_row, 0).to_display_point(&display_map);
+            let mut cursor =
+                Point::new(cursor_buffer_row, 0).to_display_point(&display_map, Bias::Left);
             *cursor.column_mut() =
                 cmp::min(goal_display_column, display_map.line_len(cursor.row()));
 
@@ -1286,8 +1290,8 @@ impl Editor {
         let mut selections = self.selections(app).to_vec();
         {
             for selection in &mut selections {
-                let start = selection.start.to_display_point(&display_map);
-                let end = selection.end.to_display_point(&display_map);
+                let start = selection.start.to_display_point(&display_map, Bias::Left);
+                let end = selection.end.to_display_point(&display_map, Bias::Left);
 
                 if start != end {
                     selection.end = selection.start.clone();
@@ -1310,7 +1314,7 @@ impl Editor {
         {
             let buffer = self.buffer.read(cx);
             for selection in &mut selections {
-                let head = selection.head().to_display_point(&display_map);
+                let head = selection.head().to_display_point(&display_map, Bias::Left);
                 let cursor = display_map
                     .anchor_before(movement::left(&display_map, head).unwrap(), Bias::Left);
                 selection.set_head(&buffer, cursor);
@@ -1325,8 +1329,8 @@ impl Editor {
         let mut selections = self.selections(cx.as_ref()).to_vec();
         {
             for selection in &mut selections {
-                let start = selection.start.to_display_point(&display_map);
-                let end = selection.end.to_display_point(&display_map);
+                let start = selection.start.to_display_point(&display_map, Bias::Left);
+                let end = selection.end.to_display_point(&display_map, Bias::Left);
 
                 if start != end {
                     selection.start = selection.end.clone();
@@ -1350,7 +1354,7 @@ impl Editor {
             let app = cx.as_ref();
             let buffer = self.buffer.read(app);
             for selection in &mut selections {
-                let head = selection.head().to_display_point(&display_map);
+                let head = selection.head().to_display_point(&display_map, Bias::Left);
                 let cursor = display_map
                     .anchor_before(movement::right(&display_map, head).unwrap(), Bias::Right);
                 selection.set_head(&buffer, cursor);
@@ -1368,8 +1372,8 @@ impl Editor {
             let mut selections = self.selections(cx.as_ref()).to_vec();
             {
                 for selection in &mut selections {
-                    let start = selection.start.to_display_point(&display_map);
-                    let end = selection.end.to_display_point(&display_map);
+                    let start = selection.start.to_display_point(&display_map, Bias::Left);
+                    let end = selection.end.to_display_point(&display_map, Bias::Left);
                     if start != end {
                         selection.goal = SelectionGoal::None;
                     }
@@ -1393,7 +1397,7 @@ impl Editor {
             let app = cx.as_ref();
             let buffer = self.buffer.read(app);
             for selection in &mut selections {
-                let head = selection.head().to_display_point(&display_map);
+                let head = selection.head().to_display_point(&display_map, Bias::Left);
                 let (head, goal) = movement::up(&display_map, head, selection.goal).unwrap();
                 selection.set_head(&buffer, display_map.anchor_before(head, Bias::Left));
                 selection.goal = goal;
@@ -1410,8 +1414,8 @@ impl Editor {
             let mut selections = self.selections(cx.as_ref()).to_vec();
             {
                 for selection in &mut selections {
-                    let start = selection.start.to_display_point(&display_map);
-                    let end = selection.end.to_display_point(&display_map);
+                    let start = selection.start.to_display_point(&display_map, Bias::Left);
+                    let end = selection.end.to_display_point(&display_map, Bias::Left);
                     if start != end {
                         selection.goal = SelectionGoal::None;
                     }
@@ -1435,7 +1439,7 @@ impl Editor {
             let app = cx.as_ref();
             let buffer = self.buffer.read(app);
             for selection in &mut selections {
-                let head = selection.head().to_display_point(&display_map);
+                let head = selection.head().to_display_point(&display_map, Bias::Left);
                 let (head, goal) = movement::down(&display_map, head, selection.goal).unwrap();
                 selection.set_head(&buffer, display_map.anchor_before(head, Bias::Right));
                 selection.goal = goal;
@@ -1449,7 +1453,7 @@ impl Editor {
         let mut selections = self.selections(cx).to_vec();
         {
             for selection in &mut selections {
-                let head = selection.head().to_display_point(&display_map);
+                let head = selection.head().to_display_point(&display_map, Bias::Left);
                 let new_head = movement::prev_word_boundary(&display_map, head).unwrap();
                 let anchor = display_map.anchor_before(new_head, Bias::Left);
                 selection.start = anchor.clone();
@@ -1467,7 +1471,7 @@ impl Editor {
         {
             let buffer = self.buffer.read(cx);
             for selection in &mut selections {
-                let head = selection.head().to_display_point(&display_map);
+                let head = selection.head().to_display_point(&display_map, Bias::Left);
                 let new_head = movement::prev_word_boundary(&display_map, head).unwrap();
                 let anchor = display_map.anchor_before(new_head, Bias::Left);
                 selection.set_head(buffer, anchor);
@@ -1489,7 +1493,7 @@ impl Editor {
         let mut selections = self.selections(cx).to_vec();
         {
             for selection in &mut selections {
-                let head = selection.head().to_display_point(&display_map);
+                let head = selection.head().to_display_point(&display_map, Bias::Left);
                 let new_head = movement::next_word_boundary(&display_map, head).unwrap();
                 let anchor = display_map.anchor_before(new_head, Bias::Left);
                 selection.start = anchor.clone();
@@ -1507,7 +1511,7 @@ impl Editor {
         {
             let buffer = self.buffer.read(cx);
             for selection in &mut selections {
-                let head = selection.head().to_display_point(&display_map);
+                let head = selection.head().to_display_point(&display_map, Bias::Left);
                 let new_head = movement::next_word_boundary(&display_map, head).unwrap();
                 let anchor = display_map.anchor_before(new_head, Bias::Left);
                 selection.set_head(buffer, anchor);
@@ -1529,7 +1533,7 @@ impl Editor {
         let mut selections = self.selections(cx).to_vec();
         {
             for selection in &mut selections {
-                let head = selection.head().to_display_point(&display_map);
+                let head = selection.head().to_display_point(&display_map, Bias::Left);
                 let new_head = movement::line_beginning(&display_map, head, true).unwrap();
                 let anchor = display_map.anchor_before(new_head, Bias::Left);
                 selection.start = anchor.clone();
@@ -1551,7 +1555,7 @@ impl Editor {
         {
             let buffer = self.buffer.read(cx);
             for selection in &mut selections {
-                let head = selection.head().to_display_point(&display_map);
+                let head = selection.head().to_display_point(&display_map, Bias::Left);
                 let new_head =
                     movement::line_beginning(&display_map, head, *toggle_indent).unwrap();
                 let anchor = display_map.anchor_before(new_head, Bias::Left);
@@ -1574,7 +1578,7 @@ impl Editor {
         let mut selections = self.selections(cx).to_vec();
         {
             for selection in &mut selections {
-                let head = selection.head().to_display_point(&display_map);
+                let head = selection.head().to_display_point(&display_map, Bias::Left);
                 let new_head = movement::line_end(&display_map, head).unwrap();
                 let anchor = display_map.anchor_before(new_head, Bias::Left);
                 selection.start = anchor.clone();
@@ -1592,7 +1596,7 @@ impl Editor {
         {
             let buffer = self.buffer.read(cx);
             for selection in &mut selections {
-                let head = selection.head().to_display_point(&display_map);
+                let head = selection.head().to_display_point(&display_map, Bias::Left);
                 let new_head = movement::line_end(&display_map, head).unwrap();
                 let anchor = display_map.anchor_before(new_head, Bias::Left);
                 selection.set_head(buffer, anchor);
@@ -2480,7 +2484,9 @@ fn compute_scroll_position(
     mut scroll_position: Vector2F,
     scroll_top_anchor: &Anchor,
 ) -> Vector2F {
-    let scroll_top = scroll_top_anchor.to_display_point(snapshot).row() as f32;
+    let scroll_top = scroll_top_anchor
+        .to_display_point(snapshot, Bias::Left)
+        .row() as f32;
     scroll_position.set_y(scroll_top + scroll_position.y());
     scroll_position
 }

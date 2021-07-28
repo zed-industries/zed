@@ -117,24 +117,25 @@ impl DisplayMapSnapshot {
         let mut point = display_point.to_buffer_point(self, Bias::Left);
         while point.column != 0 {
             point.column = 0;
-            display_point = point.to_display_point(self);
+            display_point = point.to_display_point(self, Bias::Left);
             if display_point.column() != 0 {
                 *display_point.column_mut() = 0;
-                point = display_point.to_buffer_point(self, Bias::Left);
             }
+            point = display_point.to_buffer_point(self, Bias::Left);
         }
 
         (display_point, point)
     }
 
     pub fn next_row_boundary(&self, mut display_point: DisplayPoint) -> (DisplayPoint, Point) {
+        let max_point = self.max_point();
         *display_point.row_mut() += 1;
         *display_point.column_mut() = 0;
         let mut point = display_point.to_buffer_point(self, Bias::Right);
-        while point.column != 0 {
+        while point.column != 0 && display_point <= max_point {
             point.column = 0;
             point.row += 1;
-            display_point = point.to_display_point(self);
+            display_point = point.to_display_point(self, Bias::Right);
             if display_point.column() != 0 {
                 *display_point.row_mut() += 1;
                 *display_point.column_mut() = 0;
@@ -142,7 +143,7 @@ impl DisplayMapSnapshot {
             }
         }
 
-        (display_point, point)
+        (display_point.min(max_point), point)
     }
 
     pub fn max_point(&self) -> DisplayPoint {
@@ -307,8 +308,8 @@ impl DisplayPoint {
 }
 
 impl Point {
-    pub fn to_display_point(self, map: &DisplayMapSnapshot) -> DisplayPoint {
-        let fold_point = self.to_fold_point(&map.folds_snapshot);
+    pub fn to_display_point(self, map: &DisplayMapSnapshot, bias: Bias) -> DisplayPoint {
+        let fold_point = self.to_fold_point(&map.folds_snapshot, bias);
         let tab_point = map.tabs_snapshot.to_tab_point(fold_point);
         let wrap_point = map.wraps_snapshot.to_wrap_point(tab_point);
         DisplayPoint(wrap_point)
@@ -316,8 +317,9 @@ impl Point {
 }
 
 impl Anchor {
-    pub fn to_display_point(&self, map: &DisplayMapSnapshot) -> DisplayPoint {
-        self.to_point(&map.buffer_snapshot).to_display_point(map)
+    pub fn to_display_point(&self, map: &DisplayMapSnapshot, bias: Bias) -> DisplayPoint {
+        self.to_point(&map.buffer_snapshot)
+            .to_display_point(map, bias)
     }
 }
 
@@ -435,13 +437,13 @@ mod tests {
                 }
 
                 assert_eq!(
-                    prev_buffer_bound.to_display_point(&snapshot),
+                    prev_buffer_bound.to_display_point(&snapshot, Left),
                     prev_display_bound,
                     "{:?} to display point",
                     prev_buffer_bound
                 );
                 assert_eq!(
-                    next_buffer_bound.to_display_point(&snapshot),
+                    next_buffer_bound.to_display_point(&snapshot, Left),
                     next_display_bound,
                     "{:?} to display point",
                     next_buffer_bound
@@ -787,40 +789,40 @@ mod tests {
 
         let point = Point::new(0, "✅\t\t".len() as u32);
         let display_point = DisplayPoint::new(0, "✅       ".len() as u32);
-        assert_eq!(point.to_display_point(&map), display_point);
-        assert_eq!(display_point.to_buffer_point(&map, Bias::Left), point,);
+        assert_eq!(point.to_display_point(&map, Left), display_point);
+        assert_eq!(display_point.to_buffer_point(&map, Left), point,);
 
         let point = Point::new(1, "β\t".len() as u32);
         let display_point = DisplayPoint::new(1, "β   ".len() as u32);
-        assert_eq!(point.to_display_point(&map), display_point);
-        assert_eq!(display_point.to_buffer_point(&map, Bias::Left), point,);
+        assert_eq!(point.to_display_point(&map, Left), display_point);
+        assert_eq!(display_point.to_buffer_point(&map, Left), point,);
 
         let point = Point::new(2, "🏀β\t\t".len() as u32);
         let display_point = DisplayPoint::new(2, "🏀β      ".len() as u32);
-        assert_eq!(point.to_display_point(&map), display_point);
-        assert_eq!(display_point.to_buffer_point(&map, Bias::Left), point,);
+        assert_eq!(point.to_display_point(&map, Left), display_point);
+        assert_eq!(display_point.to_buffer_point(&map, Left), point,);
 
         // Display points inside of expanded tabs
         assert_eq!(
-            DisplayPoint::new(0, "✅      ".len() as u32).to_buffer_point(&map, Bias::Right),
+            DisplayPoint::new(0, "✅      ".len() as u32).to_buffer_point(&map, Right),
             Point::new(0, "✅\t\t".len() as u32),
         );
         assert_eq!(
-            DisplayPoint::new(0, "✅      ".len() as u32).to_buffer_point(&map, Bias::Left),
+            DisplayPoint::new(0, "✅      ".len() as u32).to_buffer_point(&map, Left),
             Point::new(0, "✅\t".len() as u32),
         );
         assert_eq!(
-            DisplayPoint::new(0, "✅ ".len() as u32).to_buffer_point(&map, Bias::Right),
+            DisplayPoint::new(0, "✅ ".len() as u32).to_buffer_point(&map, Right),
             Point::new(0, "✅\t".len() as u32),
         );
         assert_eq!(
-            DisplayPoint::new(0, "✅ ".len() as u32).to_buffer_point(&map, Bias::Left),
+            DisplayPoint::new(0, "✅ ".len() as u32).to_buffer_point(&map, Left),
             Point::new(0, "✅".len() as u32),
         );
 
         // Clipping display points inside of multi-byte characters
         assert_eq!(
-            map.clip_point(DisplayPoint::new(0, "✅".len() as u32 - 1), Bias::Left),
+            map.clip_point(DisplayPoint::new(0, "✅".len() as u32 - 1), Left),
             DisplayPoint::new(0, 0)
         );
         assert_eq!(

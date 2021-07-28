@@ -77,14 +77,21 @@ impl FoldPoint {
 }
 
 impl Point {
-    pub fn to_fold_point(&self, snapshot: &Snapshot) -> FoldPoint {
+    pub fn to_fold_point(&self, snapshot: &Snapshot, bias: Bias) -> FoldPoint {
         let mut cursor = snapshot.transforms.cursor::<Point, FoldPoint>();
         cursor.seek(self, Bias::Right, &());
-        let overshoot = *self - cursor.seek_start();
-        FoldPoint(cmp::min(
-            cursor.sum_start().0 + overshoot,
-            cursor.sum_end(&()).0,
-        ))
+        if cursor.item().map_or(false, |t| t.is_fold()) {
+            match bias {
+                Bias::Left => *cursor.sum_start(),
+                Bias::Right => cursor.sum_end(&()),
+            }
+        } else {
+            let overshoot = *self - cursor.seek_start();
+            FoldPoint(cmp::min(
+                cursor.sum_start().0 + overshoot,
+                cursor.sum_end(&()).0,
+            ))
+        }
     }
 }
 
@@ -1365,7 +1372,7 @@ mod tests {
                 let buffer_point = fold_point.to_buffer_point(&snapshot);
                 let buffer_offset = buffer_point.to_offset(&buffer);
                 assert_eq!(
-                    buffer_point.to_fold_point(&snapshot),
+                    buffer_point.to_fold_point(&snapshot, Right),
                     fold_point,
                     "buffer_Point.to_fold_point({:?})",
                     buffer_point,
@@ -1413,7 +1420,9 @@ mod tests {
             }
 
             for (idx, buffer_row) in expected_buffer_rows.iter().enumerate() {
-                let fold_row = Point::new(*buffer_row, 0).to_fold_point(&snapshot).row();
+                let fold_row = Point::new(*buffer_row, 0)
+                    .to_fold_point(&snapshot, Right)
+                    .row();
                 assert_eq!(
                     snapshot.buffer_rows(fold_row).collect::<Vec<_>>(),
                     expected_buffer_rows[idx..],
@@ -1421,7 +1430,10 @@ mod tests {
             }
 
             for fold_range in map.merged_fold_ranges(cx.as_ref()) {
-                let fold_point = fold_range.start.to_point(&buffer).to_fold_point(&snapshot);
+                let fold_point = fold_range
+                    .start
+                    .to_point(&buffer)
+                    .to_fold_point(&snapshot, Right);
                 assert!(snapshot.is_line_folded(fold_point.row()));
             }
 
