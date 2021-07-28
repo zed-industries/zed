@@ -80,8 +80,8 @@ impl Selection {
     }
 
     pub fn display_range(&self, map: &DisplayMapSnapshot) -> Range<DisplayPoint> {
-        let start = self.start.to_display_point(map);
-        let end = self.end.to_display_point(map);
+        let start = self.start.to_display_point(map, Bias::Left);
+        let end = self.end.to_display_point(map, Bias::Left);
         if self.reversed {
             end..start
         } else {
@@ -94,11 +94,11 @@ impl Selection {
         include_end_if_at_line_start: bool,
         map: &DisplayMapSnapshot,
     ) -> (Range<u32>, Range<u32>) {
-        let display_start = self.start.to_display_point(map);
+        let display_start = self.start.to_display_point(map, Bias::Left);
         let buffer_start =
             DisplayPoint::new(display_start.row(), 0).to_buffer_point(map, Bias::Left);
 
-        let mut display_end = self.end.to_display_point(map);
+        let mut display_end = self.end.to_display_point(map, Bias::Right);
         if !include_end_if_at_line_start
             && display_end.row() != map.max_point().row()
             && display_start.row() != display_end.row()
