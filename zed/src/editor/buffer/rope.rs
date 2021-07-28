@@ -541,74 +541,61 @@ mod tests {
         assert_eq!(rope.text(), text);
     }
 
-    #[test]
-    fn test_random() {
-        let iterations = env::var("ITERATIONS")
-            .map(|i| i.parse().expect("invalid `ITERATIONS` variable"))
-            .unwrap_or(100);
+    #[gpui::test(iterations = 100)]
+    fn test_random(mut rng: StdRng) {
         let operations = env::var("OPERATIONS")
             .map(|i| i.parse().expect("invalid `OPERATIONS` variable"))
             .unwrap_or(10);
-        let seed_range = if let Ok(seed) = env::var("SEED") {
-            let seed = seed.parse().expect("invalid `SEED` variable");
-            seed..seed + 1
-        } else {
-            0..iterations
-        };
 
-        for seed in seed_range {
-            dbg!(seed);
-            let mut rng = StdRng::seed_from_u64(seed);
-            let mut expected = String::new();
-            let mut actual = Rope::new();
-            for _ in 0..operations {
+        let mut expected = String::new();
+        let mut actual = Rope::new();
+        for _ in 0..operations {
+            let end_ix = clip_offset(&expected, rng.gen_range(0..=expected.len()), Right);
+            let start_ix = clip_offset(&expected, rng.gen_range(0..=end_ix), Left);
+            let len = rng.gen_range(0..=64);
+            let new_text: String = RandomCharIter::new(&mut rng).take(len).collect();
+
+            let mut new_actual = Rope::new();
+            let mut cursor = actual.cursor(0);
+            new_actual.append(cursor.slice(start_ix));
+            new_actual.push(&new_text);
+            cursor.seek_forward(end_ix);
+            new_actual.append(cursor.suffix());
+            actual = new_actual;
+
+            expected.replace_range(start_ix..end_ix, &new_text);
+
+            assert_eq!(actual.text(), expected);
+            log::info!("text: {:?}", expected);
+
+            for _ in 0..5 {
                 let end_ix = clip_offset(&expected, rng.gen_range(0..=expected.len()), Right);
                 let start_ix = clip_offset(&expected, rng.gen_range(0..=end_ix), Left);
-                let len = rng.gen_range(0..=64);
-                let new_text: String = RandomCharIter::new(&mut rng).take(len).collect();
+                assert_eq!(
+                    actual.chunks_in_range(start_ix..end_ix).collect::<String>(),
+                    &expected[start_ix..end_ix]
+                );
+            }
 
-                let mut new_actual = Rope::new();
-                let mut cursor = actual.cursor(0);
-                new_actual.append(cursor.slice(start_ix));
-                new_actual.push(&new_text);
-                cursor.seek_forward(end_ix);
-                new_actual.append(cursor.suffix());
-                actual = new_actual;
-
-                expected.replace_range(start_ix..end_ix, &new_text);
-
-                assert_eq!(actual.text(), expected);
-                log::info!("text: {:?}", expected);
-
-                for _ in 0..5 {
-                    let end_ix = clip_offset(&expected, rng.gen_range(0..=expected.len()), Right);
-                    let start_ix = clip_offset(&expected, rng.gen_range(0..=end_ix), Left);
-                    assert_eq!(
-                        actual.chunks_in_range(start_ix..end_ix).collect::<String>(),
-                        &expected[start_ix..end_ix]
-                    );
+            let mut point = Point::new(0, 0);
+            for (ix, ch) in expected.char_indices().chain(Some((expected.len(), '\0'))) {
+                assert_eq!(actual.to_point(ix), point, "to_point({})", ix);
+                assert_eq!(actual.to_offset(point), ix, "to_offset({:?})", point);
+                if ch == '\n' {
+                    point.row += 1;
+                    point.column = 0
+                } else {
+                    point.column += ch.len_utf8() as u32;
                 }
+            }
 
-                let mut point = Point::new(0, 0);
-                for (ix, ch) in expected.char_indices().chain(Some((expected.len(), '\0'))) {
-                    assert_eq!(actual.to_point(ix), point, "to_point({})", ix);
-                    assert_eq!(actual.to_offset(point), ix, "to_offset({:?})", point);
-                    if ch == '\n' {
-                        point.row += 1;
-                        point.column = 0
-                    } else {
-                        point.column += ch.len_utf8() as u32;
-                    }
-                }
-
-                for _ in 0..5 {
-                    let end_ix = clip_offset(&expected, rng.gen_range(0..=expected.len()), Right);
-                    let start_ix = clip_offset(&expected, rng.gen_range(0..=end_ix), Left);
-                    assert_eq!(
-                        actual.cursor(start_ix).summary(end_ix),
-                        TextSummary::from(&expected[start_ix..end_ix])
-                    );
-                }
+            for _ in 0..5 {
+                let end_ix = clip_offset(&expected, rng.gen_range(0..=expected.len()), Right);
+                let start_ix = clip_offset(&expected, rng.gen_range(0..=end_ix), Left);
+                assert_eq!(
+                    actual.cursor(start_ix).summary(end_ix),
+                    TextSummary::from(&expected[start_ix..end_ix])
+                );
             }
         }
     }

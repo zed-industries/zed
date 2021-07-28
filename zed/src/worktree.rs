@@ -2955,93 +2955,80 @@ mod tests {
         });
     }
 
-    #[test]
-    fn test_random() {
-        let iterations = env::var("ITERATIONS")
-            .map(|i| i.parse().unwrap())
-            .unwrap_or(100);
+    #[gpui::test(iterations = 100)]
+    fn test_random(mut rng: StdRng) {
         let operations = env::var("OPERATIONS")
             .map(|o| o.parse().unwrap())
             .unwrap_or(40);
         let initial_entries = env::var("INITIAL_ENTRIES")
             .map(|o| o.parse().unwrap())
             .unwrap_or(20);
-        let seeds = if let Ok(seed) = env::var("SEED").map(|s| s.parse().unwrap()) {
-            seed..seed + 1
-        } else {
-            0..iterations
-        };
 
-        for seed in seeds {
-            dbg!(seed);
-            let mut rng = StdRng::seed_from_u64(seed);
-
-            let root_dir = tempdir::TempDir::new(&format!("test-{}", seed)).unwrap();
-            for _ in 0..initial_entries {
-                randomly_mutate_tree(root_dir.path(), 1.0, &mut rng).unwrap();
-            }
-            log::info!("Generated initial tree");
-
-            let (notify_tx, _notify_rx) = smol::channel::unbounded();
-            let fs = Arc::new(RealFs);
-            let next_entry_id = Arc::new(AtomicUsize::new(0));
-            let mut initial_snapshot = Snapshot {
-                id: 0,
-                scan_id: 0,
-                abs_path: root_dir.path().into(),
-                entries_by_path: Default::default(),
-                entries_by_id: Default::default(),
-                removed_entry_ids: Default::default(),
-                ignores: Default::default(),
-                root_name: Default::default(),
-                root_char_bag: Default::default(),
-                next_entry_id: next_entry_id.clone(),
-            };
-            initial_snapshot.insert_entry(Entry::new(
-                Path::new("").into(),
-                &smol::block_on(fs.metadata(root_dir.path()))
-                    .unwrap()
-                    .unwrap(),
-                &next_entry_id,
-                Default::default(),
-            ));
-            let mut scanner = BackgroundScanner::new(
-                Arc::new(Mutex::new(initial_snapshot.clone())),
-                notify_tx,
-                fs.clone(),
-                Arc::new(gpui::executor::Background::new()),
-            );
-            smol::block_on(scanner.scan_dirs()).unwrap();
-            scanner.snapshot().check_invariants();
-
-            let mut events = Vec::new();
-            let mut mutations_len = operations;
-            while mutations_len > 1 {
-                if !events.is_empty() && rng.gen_bool(0.4) {
-                    let len = rng.gen_range(0..=events.len());
-                    let to_deliver = events.drain(0..len).collect::<Vec<_>>();
-                    log::info!("Delivering events: {:#?}", to_deliver);
-                    smol::block_on(scanner.process_events(to_deliver));
-                    scanner.snapshot().check_invariants();
-                } else {
-                    events.extend(randomly_mutate_tree(root_dir.path(), 0.6, &mut rng).unwrap());
-                    mutations_len -= 1;
-                }
-            }
-            log::info!("Quiescing: {:#?}", events);
-            smol::block_on(scanner.process_events(events));
-            scanner.snapshot().check_invariants();
-
-            let (notify_tx, _notify_rx) = smol::channel::unbounded();
-            let mut new_scanner = BackgroundScanner::new(
-                Arc::new(Mutex::new(initial_snapshot)),
-                notify_tx,
-                scanner.fs.clone(),
-                scanner.executor.clone(),
-            );
-            smol::block_on(new_scanner.scan_dirs()).unwrap();
-            assert_eq!(scanner.snapshot().to_vec(), new_scanner.snapshot().to_vec());
+        let root_dir = tempdir::TempDir::new("worktree-test").unwrap();
+        for _ in 0..initial_entries {
+            randomly_mutate_tree(root_dir.path(), 1.0, &mut rng).unwrap();
         }
+        log::info!("Generated initial tree");
+
+        let (notify_tx, _notify_rx) = smol::channel::unbounded();
+        let fs = Arc::new(RealFs);
+        let next_entry_id = Arc::new(AtomicUsize::new(0));
+        let mut initial_snapshot = Snapshot {
+            id: 0,
+            scan_id: 0,
+            abs_path: root_dir.path().into(),
+            entries_by_path: Default::default(),
+            entries_by_id: Default::default(),
+            removed_entry_ids: Default::default(),
+            ignores: Default::default(),
+            root_name: Default::default(),
+            root_char_bag: Default::default(),
+            next_entry_id: next_entry_id.clone(),
+        };
+        initial_snapshot.insert_entry(Entry::new(
+            Path::new("").into(),
+            &smol::block_on(fs.metadata(root_dir.path()))
+                .unwrap()
+                .unwrap(),
+            &next_entry_id,
+            Default::default(),
+        ));
+        let mut scanner = BackgroundScanner::new(
+            Arc::new(Mutex::new(initial_snapshot.clone())),
+            notify_tx,
+            fs.clone(),
+            Arc::new(gpui::executor::Background::new()),
+        );
+        smol::block_on(scanner.scan_dirs()).unwrap();
+        scanner.snapshot().check_invariants();
+
+        let mut events = Vec::new();
+        let mut mutations_len = operations;
+        while mutations_len > 1 {
+            if !events.is_empty() && rng.gen_bool(0.4) {
+                let len = rng.gen_range(0..=events.len());
+                let to_deliver = events.drain(0..len).collect::<Vec<_>>();
+                log::info!("Delivering events: {:#?}", to_deliver);
+                smol::block_on(scanner.process_events(to_deliver));
+                scanner.snapshot().check_invariants();
+            } else {
+                events.extend(randomly_mutate_tree(root_dir.path(), 0.6, &mut rng).unwrap());
+                mutations_len -= 1;
+            }
+        }
+        log::info!("Quiescing: {:#?}", events);
+        smol::block_on(scanner.process_events(events));
+        scanner.snapshot().check_invariants();
+
+        let (notify_tx, _notify_rx) = smol::channel::unbounded();
+        let mut new_scanner = BackgroundScanner::new(
+            Arc::new(Mutex::new(initial_snapshot)),
+            notify_tx,
+            scanner.fs.clone(),
+            scanner.executor.clone(),
+        );
+        smol::block_on(new_scanner.scan_dirs()).unwrap();
+        assert_eq!(scanner.snapshot().to_vec(), new_scanner.snapshot().to_vec());
     }
 
     fn randomly_mutate_tree(

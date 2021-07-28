@@ -2,8 +2,8 @@ use proc_macro::TokenStream;
 use quote::{format_ident, quote};
 use std::mem;
 use syn::{
-    parse_macro_input, parse_quote, spanned::Spanned as _, AttributeArgs, ItemFn, Lit, Meta,
-    NestedMeta,
+    parse_macro_input, parse_quote, spanned::Spanned as _, AttributeArgs, FnArg, ItemFn, Lit, Meta,
+    NestedMeta, Type,
 };
 
 #[proc_macro_attribute]
@@ -69,16 +69,43 @@ pub fn test(args: TokenStream, function: TokenStream) -> TokenStream {
     let inner_fn_name = format_ident!("_{}", inner_fn.sig.ident);
     let outer_fn_name = mem::replace(&mut inner_fn.sig.ident, inner_fn_name.clone());
 
-    // Pass to the test function the number of app contexts that it needs,
-    // based on its parameter list.
-    let inner_fn_args = (0..inner_fn.sig.inputs.len())
-        .map(|i| {
-            let first_entity_id = i * 100_000;
-            quote!(#namespace::TestAppContext::new(foreground.clone(), background.clone(), #first_entity_id),)
-        })
-        .collect::<proc_macro2::TokenStream>();
-
     let mut outer_fn: ItemFn = if inner_fn.sig.asyncness.is_some() {
+        // Pass to the test function the number of app contexts that it needs,
+        // based on its parameter list.
+        let mut inner_fn_args = proc_macro2::TokenStream::new();
+        for (ix, arg) in inner_fn.sig.inputs.iter().enumerate() {
+            if let FnArg::Typed(arg) = arg {
+                if let Type::Path(ty) = &*arg.ty {
+                    let last_segment = ty.path.segments.last();
+                    match last_segment.map(|s| s.ident.to_string()).as_deref() {
+                        Some("TestAppContext") => {
+                            let first_entity_id = ix * 100_000;
+                            inner_fn_args.extend(
+                            quote!(#namespace::TestAppContext::new(foreground.clone(), background.clone(), #first_entity_id),)
+                        );
+                        }
+                        Some("StdRng") => {
+                            inner_fn_args.extend(quote!(rand::SeedableRng::seed_from_u64(seed)));
+                        }
+                        _ => {
+                            return TokenStream::from(
+                                syn::Error::new_spanned(arg, "invalid argument")
+                                    .into_compile_error(),
+                            )
+                        }
+                    }
+                } else {
+                    return TokenStream::from(
+                        syn::Error::new_spanned(arg, "invalid argument").into_compile_error(),
+                    );
+                }
+            } else {
+                return TokenStream::from(
+                    syn::Error::new_spanned(arg, "invalid argument").into_compile_error(),
+                );
+            }
+        }
+
         parse_quote! {
             #[test]
             fn #outer_fn_name() {
@@ -87,9 +114,10 @@ pub fn test(args: TokenStream, function: TokenStream) -> TokenStream {
                 let mut retries = 0;
                 let mut i = 0;
                 loop {
-                    let seed = #starting_seed + i;
+                    let seed = (#starting_seed + i) as u64;
+                    dbg!(seed);
                     let result = std::panic::catch_unwind(|| {
-                        let (foreground, background) = #namespace::executor::deterministic(seed as u64);
+                        let (foreground, background) = #namespace::executor::deterministic(seed);
                         foreground.run(#inner_fn_name(#inner_fn_args));
                     });
 
@@ -117,36 +145,60 @@ pub fn test(args: TokenStream, function: TokenStream) -> TokenStream {
             }
         }
     } else {
+        let mut inner_fn_args = proc_macro2::TokenStream::new();
+        for arg in inner_fn.sig.inputs.iter() {
+            if let FnArg::Typed(arg) = arg {
+                if let Type::Path(ty) = &*arg.ty {
+                    let last_segment = ty.path.segments.last();
+                    if let Some("StdRng") = last_segment.map(|s| s.ident.to_string()).as_deref() {
+                        inner_fn_args.extend(quote!(rand::SeedableRng::seed_from_u64(seed),));
+                    }
+                } else {
+                    inner_fn_args.extend(quote!(cx,));
+                }
+            } else {
+                return TokenStream::from(
+                    syn::Error::new_spanned(arg, "invalid argument").into_compile_error(),
+                );
+            }
+        }
+
         parse_quote! {
             #[test]
             fn #outer_fn_name() {
                 #inner_fn
 
-                if #max_retries > 0 {
-                    let mut retries = 0;
-                    loop {
-                        let result = std::panic::catch_unwind(|| {
-                            #namespace::App::test(|cx| {
-                                #inner_fn_name(cx);
-                            });
+                let mut retries = 0;
+                let mut i = 0;
+                loop {
+                    let seed = (#starting_seed + i) as u64;
+                    dbg!(seed);
+                    let result = std::panic::catch_unwind(|| {
+                        #namespace::App::test(|cx| {
+                            #inner_fn_name(#inner_fn_args);
                         });
+                    });
 
-                        match result {
-                            Ok(result) => return result,
-                            Err(error) => {
-                                if retries < #max_retries {
-                                    retries += 1;
-                                    println!("retrying: attempt {}", retries);
-                                } else {
-                                    std::panic::resume_unwind(error);
+                    match result {
+                        Ok(result) => {
+                            retries = 0;
+                            i += 1;
+                            if i == #num_iterations {
+                                return result
+                            }
+                        }
+                        Err(error) => {
+                            if retries < #max_retries {
+                                retries += 1;
+                                println!("retrying: attempt {}", retries);
+                            } else {
+                                if #num_iterations > 1 {
+                                    eprintln!("failing seed: {}", seed);
                                 }
+                                std::panic::resume_unwind(error);
                             }
                         }
                     }
-                } else {
-                    #namespace::App::test(|cx| {
-                        #inner_fn_name(cx);
-                    });
                 }
             }
         }

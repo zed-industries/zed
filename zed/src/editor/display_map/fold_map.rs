@@ -1294,212 +1294,197 @@ mod tests {
         );
     }
 
-    #[gpui::test]
-    fn test_random_folds(cx: &mut gpui::MutableAppContext) {
-        let iterations = env::var("ITERATIONS")
-            .map(|i| i.parse().expect("invalid `ITERATIONS` variable"))
-            .unwrap_or(100);
+    #[gpui::test(iterations = 100)]
+    fn test_random_folds(cx: &mut gpui::MutableAppContext, mut rng: StdRng) {
         let operations = env::var("OPERATIONS")
             .map(|i| i.parse().expect("invalid `OPERATIONS` variable"))
             .unwrap_or(10);
-        let seed_range = if let Ok(seed) = env::var("SEED") {
-            let seed = seed.parse().expect("invalid `SEED` variable");
-            seed..seed + 1
-        } else {
-            0..iterations
-        };
 
-        for seed in seed_range {
-            dbg!(seed);
-            let mut rng = StdRng::seed_from_u64(seed);
+        let buffer = cx.add_model(|cx| {
+            let len = rng.gen_range(0..10);
+            let text = RandomCharIter::new(&mut rng).take(len).collect::<String>();
+            Buffer::new(0, text, cx)
+        });
+        let mut map = FoldMap::new(buffer.clone(), cx.as_ref()).0;
 
-            let buffer = cx.add_model(|cx| {
-                let len = rng.gen_range(0..10);
-                let text = RandomCharIter::new(&mut rng).take(len).collect::<String>();
-                Buffer::new(0, text, cx)
-            });
-            let mut map = FoldMap::new(buffer.clone(), cx.as_ref()).0;
+        let (mut initial_snapshot, _) = map.read(cx.as_ref());
+        let mut snapshot_edits = Vec::new();
 
-            let (mut initial_snapshot, _) = map.read(cx.as_ref());
-            let mut snapshot_edits = Vec::new();
-
-            for _ in 0..operations {
-                log::info!("text: {:?}", buffer.read(cx).text());
-                match rng.gen_range(0..=100) {
-                    0..=59 => {
-                        snapshot_edits.extend(map.randomly_mutate(&mut rng, cx.as_ref()));
-                    }
-                    _ => {
-                        let edits = buffer.update(cx, |buffer, cx| {
-                            let start_version = buffer.version.clone();
-                            let edit_count = rng.gen_range(1..=5);
-                            buffer.randomly_edit(&mut rng, edit_count, cx);
-                            buffer.edits_since(start_version).collect::<Vec<_>>()
-                        });
-                        log::info!("editing {:?}", edits);
-                    }
+        for _ in 0..operations {
+            log::info!("text: {:?}", buffer.read(cx).text());
+            match rng.gen_range(0..=100) {
+                0..=59 => {
+                    snapshot_edits.extend(map.randomly_mutate(&mut rng, cx.as_ref()));
                 }
-
-                let buffer = map.buffer.read(cx).snapshot();
-                let mut expected_text: String = buffer.text().into();
-                let mut expected_buffer_rows = Vec::new();
-                let mut next_row = buffer.max_point().row;
-                for fold_range in map.merged_fold_ranges(cx.as_ref()).into_iter().rev() {
-                    let fold_start = buffer.point_for_offset(fold_range.start).unwrap();
-                    let fold_end = buffer.point_for_offset(fold_range.end).unwrap();
-                    expected_buffer_rows.extend((fold_end.row + 1..=next_row).rev());
-                    next_row = fold_start.row;
-
-                    expected_text.replace_range(fold_range.start..fold_range.end, "…");
+                _ => {
+                    let edits = buffer.update(cx, |buffer, cx| {
+                        let start_version = buffer.version.clone();
+                        let edit_count = rng.gen_range(1..=5);
+                        buffer.randomly_edit(&mut rng, edit_count, cx);
+                        buffer.edits_since(start_version).collect::<Vec<_>>()
+                    });
+                    log::info!("editing {:?}", edits);
                 }
-                expected_buffer_rows.extend((0..=next_row).rev());
-                expected_buffer_rows.reverse();
+            }
 
-                let (snapshot, edits) = map.read(cx.as_ref());
-                assert_eq!(snapshot.text(), expected_text);
-                snapshot_edits.push((snapshot.clone(), edits));
+            let buffer = map.buffer.read(cx).snapshot();
+            let mut expected_text: String = buffer.text().into();
+            let mut expected_buffer_rows = Vec::new();
+            let mut next_row = buffer.max_point().row;
+            for fold_range in map.merged_fold_ranges(cx.as_ref()).into_iter().rev() {
+                let fold_start = buffer.point_for_offset(fold_range.start).unwrap();
+                let fold_end = buffer.point_for_offset(fold_range.end).unwrap();
+                expected_buffer_rows.extend((fold_end.row + 1..=next_row).rev());
+                next_row = fold_start.row;
 
-                for (output_row, line) in expected_text.lines().enumerate() {
-                    let line_len = snapshot.line_len(output_row as u32);
-                    assert_eq!(line_len, line.len() as u32);
+                expected_text.replace_range(fold_range.start..fold_range.end, "…");
+            }
+            expected_buffer_rows.extend((0..=next_row).rev());
+            expected_buffer_rows.reverse();
+
+            let (snapshot, edits) = map.read(cx.as_ref());
+            assert_eq!(snapshot.text(), expected_text);
+            snapshot_edits.push((snapshot.clone(), edits));
+
+            for (output_row, line) in expected_text.lines().enumerate() {
+                let line_len = snapshot.line_len(output_row as u32);
+                assert_eq!(line_len, line.len() as u32);
+            }
+
+            let longest_row = snapshot.longest_row();
+            let longest_char_column = expected_text
+                .split('\n')
+                .nth(longest_row as usize)
+                .unwrap()
+                .chars()
+                .count();
+            let mut fold_point = FoldPoint::new(0, 0);
+            let mut fold_offset = FoldOffset(0);
+            let mut char_column = 0;
+            for c in expected_text.chars() {
+                let buffer_point = fold_point.to_buffer_point(&snapshot);
+                let buffer_offset = buffer_point.to_offset(&buffer);
+                assert_eq!(
+                    buffer_point.to_fold_point(&snapshot),
+                    fold_point,
+                    "buffer_Point.to_fold_point({:?})",
+                    buffer_point,
+                );
+                assert_eq!(
+                    fold_point.to_buffer_offset(&snapshot),
+                    buffer_offset,
+                    "fold_point.to_buffer_offset({:?})",
+                    fold_point,
+                );
+                assert_eq!(
+                    fold_point.to_offset(&snapshot),
+                    fold_offset,
+                    "fold_point.to_offset({:?})",
+                    fold_point,
+                );
+
+                if c == '\n' {
+                    *fold_point.row_mut() += 1;
+                    *fold_point.column_mut() = 0;
+                    char_column = 0;
+                } else {
+                    *fold_point.column_mut() += c.len_utf8() as u32;
+                    char_column += 1;
                 }
-
-                let longest_row = snapshot.longest_row();
-                let longest_char_column = expected_text
-                    .split('\n')
-                    .nth(longest_row as usize)
-                    .unwrap()
-                    .chars()
-                    .count();
-                let mut fold_point = FoldPoint::new(0, 0);
-                let mut fold_offset = FoldOffset(0);
-                let mut char_column = 0;
-                for c in expected_text.chars() {
-                    let buffer_point = fold_point.to_buffer_point(&snapshot);
-                    let buffer_offset = buffer_point.to_offset(&buffer);
-                    assert_eq!(
-                        buffer_point.to_fold_point(&snapshot),
-                        fold_point,
-                        "buffer_Point.to_fold_point({:?})",
-                        buffer_point,
-                    );
-                    assert_eq!(
-                        fold_point.to_buffer_offset(&snapshot),
-                        buffer_offset,
-                        "fold_point.to_buffer_offset({:?})",
-                        fold_point,
-                    );
-                    assert_eq!(
-                        fold_point.to_offset(&snapshot),
-                        fold_offset,
-                        "fold_point.to_offset({:?})",
-                        fold_point,
-                    );
-
-                    if c == '\n' {
-                        *fold_point.row_mut() += 1;
-                        *fold_point.column_mut() = 0;
-                        char_column = 0;
-                    } else {
-                        *fold_point.column_mut() += c.len_utf8() as u32;
-                        char_column += 1;
-                    }
-                    fold_offset.0 += c.len_utf8();
-                    if char_column > longest_char_column {
-                        panic!(
-                            "invalid longest row {:?} (chars {}), found row {:?} (chars: {})",
-                            longest_row,
-                            longest_char_column,
-                            fold_point.row(),
-                            char_column
-                        );
-                    }
-                }
-
-                for _ in 0..5 {
-                    let offset = snapshot
-                        .clip_offset(FoldOffset(rng.gen_range(0..=snapshot.len().0)), Bias::Right);
-                    assert_eq!(
-                        snapshot.chunks_at(offset).collect::<String>(),
-                        &expected_text[offset.0..],
+                fold_offset.0 += c.len_utf8();
+                if char_column > longest_char_column {
+                    panic!(
+                        "invalid longest row {:?} (chars {}), found row {:?} (chars: {})",
+                        longest_row,
+                        longest_char_column,
+                        fold_point.row(),
+                        char_column
                     );
                 }
+            }
 
-                for (idx, buffer_row) in expected_buffer_rows.iter().enumerate() {
-                    let fold_row = Point::new(*buffer_row, 0).to_fold_point(&snapshot).row();
-                    assert_eq!(
-                        snapshot.buffer_rows(fold_row).collect::<Vec<_>>(),
-                        expected_buffer_rows[idx..],
-                    );
+            for _ in 0..5 {
+                let offset = snapshot
+                    .clip_offset(FoldOffset(rng.gen_range(0..=snapshot.len().0)), Bias::Right);
+                assert_eq!(
+                    snapshot.chunks_at(offset).collect::<String>(),
+                    &expected_text[offset.0..],
+                );
+            }
+
+            for (idx, buffer_row) in expected_buffer_rows.iter().enumerate() {
+                let fold_row = Point::new(*buffer_row, 0).to_fold_point(&snapshot).row();
+                assert_eq!(
+                    snapshot.buffer_rows(fold_row).collect::<Vec<_>>(),
+                    expected_buffer_rows[idx..],
+                );
+            }
+
+            for fold_range in map.merged_fold_ranges(cx.as_ref()) {
+                let fold_point = fold_range.start.to_point(&buffer).to_fold_point(&snapshot);
+                assert!(snapshot.is_line_folded(fold_point.row()));
+            }
+
+            for _ in 0..5 {
+                let end = buffer.clip_offset(rng.gen_range(0..=buffer.len()), Right);
+                let start = buffer.clip_offset(rng.gen_range(0..=end), Left);
+                let expected_folds = map
+                    .folds
+                    .items(&buffer)
+                    .into_iter()
+                    .filter(|fold| {
+                        let start = buffer.anchor_before(start);
+                        let end = buffer.anchor_after(end);
+                        start.cmp(&fold.0.end, &buffer).unwrap() == Ordering::Less
+                            && end.cmp(&fold.0.start, &buffer).unwrap() == Ordering::Greater
+                    })
+                    .map(|fold| fold.0)
+                    .collect::<Vec<_>>();
+
+                assert_eq!(
+                    snapshot
+                        .folds_in_range(start..end)
+                        .cloned()
+                        .collect::<Vec<_>>(),
+                    expected_folds
+                );
+            }
+
+            let text = snapshot.text();
+            for _ in 0..5 {
+                let start_row = rng.gen_range(0..=snapshot.max_point().row());
+                let start_column = rng.gen_range(0..=snapshot.line_len(start_row));
+                let end_row = rng.gen_range(0..=snapshot.max_point().row());
+                let end_column = rng.gen_range(0..=snapshot.line_len(end_row));
+                let mut start =
+                    snapshot.clip_point(FoldPoint::new(start_row, start_column), Bias::Left);
+                let mut end = snapshot.clip_point(FoldPoint::new(end_row, end_column), Bias::Right);
+                if start > end {
+                    mem::swap(&mut start, &mut end);
                 }
 
-                for fold_range in map.merged_fold_ranges(cx.as_ref()) {
-                    let fold_point = fold_range.start.to_point(&buffer).to_fold_point(&snapshot);
-                    assert!(snapshot.is_line_folded(fold_point.row()));
+                let lines = start..end;
+                let bytes = start.to_offset(&snapshot)..end.to_offset(&snapshot);
+                assert_eq!(
+                    snapshot.text_summary_for_range(lines),
+                    TextSummary::from(&text[bytes.start.0..bytes.end.0])
+                )
+            }
+
+            let mut text = initial_snapshot.text();
+            for (snapshot, edits) in snapshot_edits.drain(..) {
+                let new_text = snapshot.text();
+                let mut delta = 0isize;
+                for edit in edits {
+                    let old_bytes = ((edit.old_bytes.start.0 as isize) + delta) as usize
+                        ..((edit.old_bytes.end.0 as isize) + delta) as usize;
+                    let new_bytes = edit.new_bytes.start.0..edit.new_bytes.end.0;
+                    delta += edit.delta();
+                    text.replace_range(old_bytes, &new_text[new_bytes]);
                 }
 
-                for _ in 0..5 {
-                    let end = buffer.clip_offset(rng.gen_range(0..=buffer.len()), Right);
-                    let start = buffer.clip_offset(rng.gen_range(0..=end), Left);
-                    let expected_folds = map
-                        .folds
-                        .items(&buffer)
-                        .into_iter()
-                        .filter(|fold| {
-                            let start = buffer.anchor_before(start);
-                            let end = buffer.anchor_after(end);
-                            start.cmp(&fold.0.end, &buffer).unwrap() == Ordering::Less
-                                && end.cmp(&fold.0.start, &buffer).unwrap() == Ordering::Greater
-                        })
-                        .map(|fold| fold.0)
-                        .collect::<Vec<_>>();
-
-                    assert_eq!(
-                        snapshot
-                            .folds_in_range(start..end)
-                            .cloned()
-                            .collect::<Vec<_>>(),
-                        expected_folds
-                    );
-                }
-
-                let text = snapshot.text();
-                for _ in 0..5 {
-                    let start_row = rng.gen_range(0..=snapshot.max_point().row());
-                    let start_column = rng.gen_range(0..=snapshot.line_len(start_row));
-                    let end_row = rng.gen_range(0..=snapshot.max_point().row());
-                    let end_column = rng.gen_range(0..=snapshot.line_len(end_row));
-                    let mut start =
-                        snapshot.clip_point(FoldPoint::new(start_row, start_column), Bias::Left);
-                    let mut end =
-                        snapshot.clip_point(FoldPoint::new(end_row, end_column), Bias::Right);
-                    if start > end {
-                        mem::swap(&mut start, &mut end);
-                    }
-
-                    let lines = start..end;
-                    let bytes = start.to_offset(&snapshot)..end.to_offset(&snapshot);
-                    assert_eq!(
-                        snapshot.text_summary_for_range(lines),
-                        TextSummary::from(&text[bytes.start.0..bytes.end.0])
-                    )
-                }
-
-                let mut text = initial_snapshot.text();
-                for (snapshot, edits) in snapshot_edits.drain(..) {
-                    let new_text = snapshot.text();
-                    let mut delta = 0isize;
-                    for edit in edits {
-                        let old_bytes = ((edit.old_bytes.start.0 as isize) + delta) as usize
-                            ..((edit.old_bytes.end.0 as isize) + delta) as usize;
-                        let new_bytes = edit.new_bytes.start.0..edit.new_bytes.end.0;
-                        delta += edit.delta();
-                        text.replace_range(old_bytes, &new_text[new_bytes]);
-                    }
-
-                    assert_eq!(text, new_text);
-                    initial_snapshot = snapshot;
-                }
+                assert_eq!(text, new_text);
+                initial_snapshot = snapshot;
             }
         }
     }

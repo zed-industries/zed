@@ -584,6 +584,7 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
+    use rand::{distributions, prelude::*};
     use std::cmp;
     use std::ops::Add;
 
@@ -602,108 +603,101 @@ mod tests {
         );
     }
 
-    #[test]
-    fn test_random() {
-        for seed in 0..100 {
-            use rand::{distributions, prelude::*};
+    #[gpui::test(iterations = 100)]
+    fn test_random(mut rng: StdRng) {
+        let rng = &mut rng;
+        let mut tree = SumTree::<u8>::new();
+        let count = rng.gen_range(0..10);
+        tree.extend(rng.sample_iter(distributions::Standard).take(count), &());
 
-            dbg!(seed);
-            let rng = &mut StdRng::seed_from_u64(seed);
+        for _ in 0..5 {
+            let splice_end = rng.gen_range(0..tree.extent::<Count>(&()).0 + 1);
+            let splice_start = rng.gen_range(0..splice_end + 1);
+            let count = rng.gen_range(0..3);
+            let tree_end = tree.extent::<Count>(&());
+            let new_items = rng
+                .sample_iter(distributions::Standard)
+                .take(count)
+                .collect::<Vec<u8>>();
 
-            let mut tree = SumTree::<u8>::new();
-            let count = rng.gen_range(0..10);
-            tree.extend(rng.sample_iter(distributions::Standard).take(count), &());
+            let mut reference_items = tree.items(&());
+            reference_items.splice(splice_start..splice_end, new_items.clone());
 
-            for _ in 0..5 {
-                let splice_end = rng.gen_range(0..tree.extent::<Count>(&()).0 + 1);
-                let splice_start = rng.gen_range(0..splice_end + 1);
-                let count = rng.gen_range(0..3);
-                let tree_end = tree.extent::<Count>(&());
-                let new_items = rng
-                    .sample_iter(distributions::Standard)
-                    .take(count)
-                    .collect::<Vec<u8>>();
-
-                let mut reference_items = tree.items(&());
-                reference_items.splice(splice_start..splice_end, new_items.clone());
-
-                tree = {
-                    let mut cursor = tree.cursor::<Count, ()>();
-                    let mut new_tree = cursor.slice(&Count(splice_start), Bias::Right, &());
-                    new_tree.extend(new_items, &());
-                    cursor.seek(&Count(splice_end), Bias::Right, &());
-                    new_tree.push_tree(cursor.slice(&tree_end, Bias::Right, &()), &());
-                    new_tree
-                };
-
-                assert_eq!(tree.items(&()), reference_items);
-
-                let mut filter_cursor =
-                    tree.filter::<_, Count>(|summary| summary.contains_even, &());
-                let mut reference_filter = tree
-                    .items(&())
-                    .into_iter()
-                    .enumerate()
-                    .filter(|(_, item)| (item & 1) == 0);
-                while let Some(actual_item) = filter_cursor.item() {
-                    let (reference_index, reference_item) = reference_filter.next().unwrap();
-                    assert_eq!(actual_item, &reference_item);
-                    assert_eq!(filter_cursor.start().0, reference_index);
-                    filter_cursor.next(&());
-                }
-                assert!(reference_filter.next().is_none());
-
-                let mut pos = rng.gen_range(0..tree.extent::<Count>(&()).0 + 1);
-                let mut before_start = false;
-                let mut cursor = tree.cursor::<Count, Count>();
-                cursor.seek(&Count(pos), Bias::Right, &());
-
-                for i in 0..10 {
-                    assert_eq!(cursor.sum_start().0, pos);
-
-                    if pos > 0 {
-                        assert_eq!(cursor.prev_item().unwrap(), &reference_items[pos - 1]);
-                    } else {
-                        assert_eq!(cursor.prev_item(), None);
-                    }
-
-                    if pos < reference_items.len() && !before_start {
-                        assert_eq!(cursor.item().unwrap(), &reference_items[pos]);
-                    } else {
-                        assert_eq!(cursor.item(), None);
-                    }
-
-                    if i < 5 {
-                        cursor.next(&());
-                        if pos < reference_items.len() {
-                            pos += 1;
-                            before_start = false;
-                        }
-                    } else {
-                        cursor.prev(&());
-                        if pos == 0 {
-                            before_start = true;
-                        }
-                        pos = pos.saturating_sub(1);
-                    }
-                }
-            }
-
-            for _ in 0..10 {
-                let end = rng.gen_range(0..tree.extent::<Count>(&()).0 + 1);
-                let start = rng.gen_range(0..end + 1);
-                let start_bias = if rng.gen() { Bias::Left } else { Bias::Right };
-                let end_bias = if rng.gen() { Bias::Left } else { Bias::Right };
-
+            tree = {
                 let mut cursor = tree.cursor::<Count, ()>();
-                cursor.seek(&Count(start), start_bias, &());
-                let slice = cursor.slice(&Count(end), end_bias, &());
+                let mut new_tree = cursor.slice(&Count(splice_start), Bias::Right, &());
+                new_tree.extend(new_items, &());
+                cursor.seek(&Count(splice_end), Bias::Right, &());
+                new_tree.push_tree(cursor.slice(&tree_end, Bias::Right, &()), &());
+                new_tree
+            };
 
-                cursor.seek(&Count(start), start_bias, &());
-                let summary = cursor.summary::<Sum>(&Count(end), end_bias, &());
+            assert_eq!(tree.items(&()), reference_items);
 
-                assert_eq!(summary, slice.summary().sum);
+            let mut filter_cursor = tree.filter::<_, Count>(|summary| summary.contains_even, &());
+            let mut reference_filter = tree
+                .items(&())
+                .into_iter()
+                .enumerate()
+                .filter(|(_, item)| (item & 1) == 0);
+            while let Some(actual_item) = filter_cursor.item() {
+                let (reference_index, reference_item) = reference_filter.next().unwrap();
+                assert_eq!(actual_item, &reference_item);
+                assert_eq!(filter_cursor.start().0, reference_index);
+                filter_cursor.next(&());
             }
+            assert!(reference_filter.next().is_none());
+
+            let mut pos = rng.gen_range(0..tree.extent::<Count>(&()).0 + 1);
+            let mut before_start = false;
+            let mut cursor = tree.cursor::<Count, Count>();
+            cursor.seek(&Count(pos), Bias::Right, &());
+
+            for i in 0..10 {
+                assert_eq!(cursor.sum_start().0, pos);
+
+                if pos > 0 {
+                    assert_eq!(cursor.prev_item().unwrap(), &reference_items[pos - 1]);
+                } else {
+                    assert_eq!(cursor.prev_item(), None);
+                }
+
+                if pos < reference_items.len() && !before_start {
+                    assert_eq!(cursor.item().unwrap(), &reference_items[pos]);
+                } else {
+                    assert_eq!(cursor.item(), None);
+                }
+
+                if i < 5 {
+                    cursor.next(&());
+                    if pos < reference_items.len() {
+                        pos += 1;
+                        before_start = false;
+                    }
+                } else {
+                    cursor.prev(&());
+                    if pos == 0 {
+                        before_start = true;
+                    }
+                    pos = pos.saturating_sub(1);
+                }
+            }
+        }
+
+        for _ in 0..10 {
+            let end = rng.gen_range(0..tree.extent::<Count>(&()).0 + 1);
+            let start = rng.gen_range(0..end + 1);
+            let start_bias = if rng.gen() { Bias::Left } else { Bias::Right };
+            let end_bias = if rng.gen() { Bias::Left } else { Bias::Right };
+
+            let mut cursor = tree.cursor::<Count, ()>();
+            cursor.seek(&Count(start), start_bias, &());
+            let slice = cursor.slice(&Count(end), end_bias, &());
+
+            cursor.seek(&Count(start), start_bias, &());
+            let summary = cursor.summary::<Sum>(&Count(end), end_bias, &());
+
+            assert_eq!(summary, slice.summary().sum);
         }
     }
 
