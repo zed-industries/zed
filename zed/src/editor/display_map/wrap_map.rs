@@ -903,6 +903,10 @@ mod tests {
             let (mut fold_map, folds_snapshot) = cx.read(|cx| FoldMap::new(buffer.clone(), cx));
             let (tab_map, tabs_snapshot) = TabMap::new(folds_snapshot.clone(), settings.tab_size);
             log::info!(
+                "Unwrapped text (no folds): {:?}",
+                buffer.read_with(&cx, |buf, _| buf.text())
+            );
+            log::info!(
                 "Unwrapped text (unexpanded tabs): {:?}",
                 folds_snapshot.text()
             );
@@ -957,6 +961,10 @@ mod tests {
                     }
                 }
 
+                log::info!(
+                    "Unwrapped text (no folds): {:?}",
+                    buffer.read_with(&cx, |buf, _| buf.text())
+                );
                 let (folds_snapshot, edits) = cx.read(|cx| fold_map.read(cx));
                 log::info!(
                     "Unwrapped text (unexpanded tabs): {:?}",
