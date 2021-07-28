@@ -13,7 +13,10 @@ pub fn test(args: TokenStream, function: TokenStream) -> TokenStream {
     let args = syn::parse_macro_input!(args as AttributeArgs);
     let mut max_retries = 0;
     let mut num_iterations = 1;
-    let mut starting_seed = 0;
+    let mut starting_seed = std::env::var("SEED")
+        .map(|i| i.parse().expect("invalid `SEED`"))
+        .ok();
+
     for arg in args {
         match arg {
             NestedMeta::Meta(Meta::Path(name))
@@ -23,24 +26,34 @@ pub fn test(args: TokenStream, function: TokenStream) -> TokenStream {
             }
             NestedMeta::Meta(Meta::NameValue(meta)) => {
                 let key_name = meta.path.get_ident().map(|i| i.to_string());
-                let variable = match key_name.as_ref().map(String::as_str) {
-                    Some("retries") => &mut max_retries,
-                    Some("iterations") => &mut num_iterations,
-                    Some("seed") => &mut starting_seed,
-                    _ => {
-                        return TokenStream::from(
-                            syn::Error::new(meta.path.span(), "invalid argument")
-                                .into_compile_error(),
-                        )
+                let result = (|| {
+                    match key_name.as_ref().map(String::as_str) {
+                        Some("retries") => max_retries = parse_int(&meta.lit)?,
+                        Some("iterations") => {
+                            if let Ok(iters) = std::env::var("ITERATIONS") {
+                                num_iterations = iters.parse().expect("invalid `ITERATIONS`");
+                            } else {
+                                num_iterations = parse_int(&meta.lit)?;
+                            }
+                        }
+                        Some("seed") => {
+                            if starting_seed.is_none() {
+                                starting_seed = Some(parse_int(&meta.lit)?);
+                            }
+                        }
+                        _ => {
+                            return Err(TokenStream::from(
+                                syn::Error::new(meta.path.span(), "invalid argument")
+                                    .into_compile_error(),
+                            ))
+                        }
                     }
-                };
+                    Ok(())
+                })();
 
-                *variable = match parse_int(&meta.lit) {
-                    Ok(value) => value,
-                    Err(error) => {
-                        return TokenStream::from(error.into_compile_error());
-                    }
-                };
+                if let Err(tokens) = result {
+                    return tokens;
+                }
             }
             other => {
                 return TokenStream::from(
@@ -49,6 +62,7 @@ pub fn test(args: TokenStream, function: TokenStream) -> TokenStream {
             }
         }
     }
+    let starting_seed = starting_seed.unwrap_or(0);
 
     let mut inner_fn = parse_macro_input!(function as ItemFn);
     let inner_fn_attributes = mem::take(&mut inner_fn.attrs);
@@ -142,10 +156,12 @@ pub fn test(args: TokenStream, function: TokenStream) -> TokenStream {
     TokenStream::from(quote!(#outer_fn))
 }
 
-fn parse_int(literal: &Lit) -> syn::Result<usize> {
-    if let Lit::Int(int) = &literal {
+fn parse_int(literal: &Lit) -> Result<usize, TokenStream> {
+    let result = if let Lit::Int(int) = &literal {
         int.base10_parse()
     } else {
         Err(syn::Error::new(literal.span(), "must be an integer"))
-    }
+    };
+
+    result.map_err(|err| TokenStream::from(err.into_compile_error()))
 }
