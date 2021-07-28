@@ -1,6 +1,8 @@
 use crate::{fs::RealFs, language::LanguageRegistry, rpc, settings, time::ReplicaId, AppState};
-use gpui::AppContext;
+use gpui::{AppContext, Entity, ModelHandle};
+use smol::channel;
 use std::{
+    marker::PhantomData,
     path::{Path, PathBuf},
     sync::Arc,
 };
@@ -154,4 +156,26 @@ pub fn build_app_state(cx: &AppContext) -> Arc<AppState> {
         rpc: rpc::Client::new(languages),
         fs: Arc::new(RealFs),
     })
+}
+
+pub struct Observer<T>(PhantomData<T>);
+
+impl<T: 'static + Send + Sync> Entity for Observer<T> {
+    type Event = ();
+}
+
+impl<T: Entity> Observer<T> {
+    pub fn new(
+        handle: &ModelHandle<T>,
+        cx: &mut gpui::TestAppContext,
+    ) -> (ModelHandle<Self>, channel::Receiver<()>) {
+        let (notify_tx, notify_rx) = channel::unbounded();
+        let observer = cx.add_model(|cx| {
+            cx.observe(handle, move |_, _, _| {
+                let _ = notify_tx.try_send(());
+            });
+            Observer(PhantomData)
+        });
+        (observer, notify_rx)
+    }
 }
