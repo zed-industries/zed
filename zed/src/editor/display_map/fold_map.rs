@@ -154,7 +154,7 @@ impl<'a> FoldMapWriter<'a> {
         let buffer = self.0.buffer.read(cx).snapshot();
         for range in ranges.into_iter() {
             // Remove intersecting folds and add their ranges to edits that are passed to apply_edits.
-            let mut folds_cursor = intersecting_folds(&buffer, &self.0.folds, range);
+            let mut folds_cursor = intersecting_folds(&buffer, &self.0.folds, range, true);
             while let Some(fold) = folds_cursor.item() {
                 let offset_range = fold.0.start.to_offset(&buffer)..fold.0.end.to_offset(&buffer);
                 edits.push(buffer::Edit {
@@ -590,7 +590,7 @@ impl Snapshot {
     where
         T: ToOffset,
     {
-        let mut folds = intersecting_folds(&self.buffer_snapshot, &self.folds, range);
+        let mut folds = intersecting_folds(&self.buffer_snapshot, &self.folds, range, false);
         iter::from_fn(move || {
             let item = folds.item().map(|f| &f.0);
             folds.next(&self.buffer_snapshot);
@@ -722,6 +722,7 @@ fn intersecting_folds<'a, T>(
     buffer: &'a buffer::Snapshot,
     folds: &'a SumTree<Fold>,
     range: Range<T>,
+    inclusive: bool,
 ) -> FilterCursor<'a, impl 'a + Fn(&FoldSummary) -> bool, Fold, usize>
 where
     T: ToOffset,
@@ -730,8 +731,14 @@ where
     let end = buffer.anchor_after(range.end.to_offset(buffer));
     folds.filter::<_, usize>(
         move |summary| {
-            start.cmp(&summary.max_end, buffer).unwrap() == Ordering::Less
-                && end.cmp(&summary.min_start, buffer).unwrap() == Ordering::Greater
+            let start_cmp = start.cmp(&summary.max_end, buffer).unwrap();
+            let end_cmp = end.cmp(&summary.min_start, buffer).unwrap();
+
+            if inclusive {
+                start_cmp <= Ordering::Equal && end_cmp >= Ordering::Equal
+            } else {
+                start_cmp == Ordering::Less && end_cmp == Ordering::Greater
+            }
         },
         buffer,
     )
