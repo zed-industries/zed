@@ -2,7 +2,7 @@ use parking_lot::Mutex;
 
 use super::fold_map::{self, FoldEdit, FoldPoint, Snapshot as FoldSnapshot};
 use crate::{editor::rope, settings::StyleId, util::Bias};
-use std::{cmp, mem, ops::Range};
+use std::{mem, ops::Range};
 
 pub struct TabMap(Mutex<Snapshot>);
 
@@ -36,8 +36,8 @@ impl TabMap {
                 let patterns: &[_] = &['\t', '\n'];
                 if let Some(ix) = chunk.find(patterns) {
                     if &chunk[ix..ix + 1] == "\t" {
-                        fold_edit.old_bytes.end.0 += delta + ix + old_snapshot.tab_size;
-                        fold_edit.new_bytes.end.0 += delta + ix + new_snapshot.tab_size;
+                        fold_edit.old_bytes.end.0 += delta + ix + 1;
+                        fold_edit.new_bytes.end.0 += delta + ix + 1;
                     }
 
                     break;
@@ -45,10 +45,6 @@ impl TabMap {
 
                 delta += chunk.len();
             }
-            fold_edit.old_bytes.end =
-                cmp::min(fold_edit.old_bytes.end, old_snapshot.fold_snapshot.len());
-            fold_edit.new_bytes.end =
-                cmp::min(fold_edit.new_bytes.end, new_snapshot.fold_snapshot.len());
         }
 
         let mut ix = 1;
@@ -95,8 +91,8 @@ impl TabMap {
 
 #[derive(Clone)]
 pub struct Snapshot {
-    fold_snapshot: FoldSnapshot,
-    tab_size: usize,
+    pub fold_snapshot: FoldSnapshot,
+    pub tab_size: usize,
 }
 
 impl Snapshot {

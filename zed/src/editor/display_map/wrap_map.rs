@@ -209,7 +209,7 @@ impl WrapMap {
 
                 match cx
                     .background()
-                    .block_with_timeout(Duration::from_micros(500), update_task)
+                    .block_with_timeout(Duration::from_millis(1), update_task)
                 {
                     Ok(snapshot) => {
                         self.snapshot = snapshot;
@@ -511,6 +511,18 @@ impl Snapshot {
         len as u32
     }
 
+    pub fn soft_wrap_indent(&self, row: u32) -> Option<u32> {
+        let mut cursor = self.transforms.cursor::<_, ()>();
+        cursor.seek(&WrapPoint::new(row + 1, 0), Bias::Right, &());
+        cursor.item().and_then(|transform| {
+            if transform.is_isomorphic() {
+                None
+            } else {
+                Some(transform.summary.output.lines.column)
+            }
+        })
+    }
+
     pub fn longest_row(&self) -> u32 {
         self.transforms.summary().output.longest_row
     }
@@ -582,6 +594,31 @@ impl Snapshot {
                         assert!(transform.is_isomorphic() != next_transform.is_isomorphic());
                     }
                 }
+            }
+
+            let mut expected_buffer_rows = Vec::new();
+            let mut buffer_row = 0;
+            let mut prev_tab_row = 0;
+            for display_row in 0..=self.max_point().row() {
+                let tab_point = self.to_tab_point(WrapPoint::new(display_row, 0));
+                if tab_point.row() != prev_tab_row {
+                    let fold_point = self.tab_snapshot.to_fold_point(tab_point, Bias::Left).0;
+                    let buffer_point = fold_point.to_buffer_point(&self.tab_snapshot.fold_snapshot);
+                    buffer_row = buffer_point.row;
+                    prev_tab_row = tab_point.row();
+                }
+                expected_buffer_rows.push(buffer_row);
+            }
+
+            for start_display_row in 0..expected_buffer_rows.len() {
+                assert_eq!(
+                    self.buffer_rows(start_display_row as u32)
+                        .map(|(row, _)| row)
+                        .collect::<Vec<_>>(),
+                    &expected_buffer_rows[start_display_row..],
+                    "invalid buffer_rows({}..)",
+                    start_display_row
+                );
             }
         }
     }
@@ -804,6 +841,11 @@ impl WrapPoint {
         Self(super::Point::new(row, column))
     }
 
+    #[cfg(test)]
+    pub fn is_zero(&self) -> bool {
+        self.0.is_zero()
+    }
+
     pub fn row(self) -> u32 {
         self.0.row
     }
@@ -850,143 +892,139 @@ mod tests {
             display_map::{fold_map::FoldMap, tab_map::TabMap},
             Buffer,
         },
+        test::Observer,
         util::RandomCharIter,
     };
-    use gpui::ModelHandle;
     use rand::prelude::*;
-    use smol::channel;
     use std::env;
 
-    #[gpui::test]
-    async fn test_random_wraps(mut cx: gpui::TestAppContext) {
+    #[gpui::test(iterations = 100)]
+    async fn test_random_wraps(mut cx: gpui::TestAppContext, mut rng: StdRng) {
         cx.foreground().set_block_on_ticks(0..=50);
-
-        let iterations = env::var("ITERATIONS")
-            .map(|i| i.parse().expect("invalid `ITERATIONS` variable"))
-            .unwrap_or(100);
+        cx.foreground().forbid_parking();
         let operations = env::var("OPERATIONS")
             .map(|i| i.parse().expect("invalid `OPERATIONS` variable"))
             .unwrap_or(10);
-        let seed_range = if let Ok(seed) = env::var("SEED") {
-            let seed = seed.parse().expect("invalid `SEED` variable");
-            seed..seed + 1
+
+        let font_cache = cx.font_cache().clone();
+        let font_system = cx.platform().fonts();
+        let mut wrap_width = if rng.gen_bool(0.1) {
+            None
         } else {
-            0..iterations
+            Some(rng.gen_range(0.0..=1000.0))
         };
+        let settings = Settings {
+            tab_size: rng.gen_range(1..=4),
+            buffer_font_family: font_cache.load_family(&["Helvetica"]).unwrap(),
+            buffer_font_size: 14.0,
+            ..Settings::new(&font_cache).unwrap()
+        };
+        log::info!("Tab size: {}", settings.tab_size);
+        log::info!("Wrap width: {:?}", wrap_width);
 
-        for seed in seed_range {
-            cx.foreground().forbid_parking();
+        let buffer = cx.add_model(|cx| {
+            let len = rng.gen_range(0..10);
+            let text = RandomCharIter::new(&mut rng).take(len).collect::<String>();
+            Buffer::new(0, text, cx)
+        });
+        let (mut fold_map, folds_snapshot) = cx.read(|cx| FoldMap::new(buffer.clone(), cx));
+        let (tab_map, tabs_snapshot) = TabMap::new(folds_snapshot.clone(), settings.tab_size);
+        log::info!(
+            "Unwrapped text (no folds): {:?}",
+            buffer.read_with(&cx, |buf, _| buf.text())
+        );
+        log::info!(
+            "Unwrapped text (unexpanded tabs): {:?}",
+            folds_snapshot.text()
+        );
+        log::info!("Unwrapped text (expanded tabs): {:?}", tabs_snapshot.text());
+        let wrap_map = cx
+            .add_model(|cx| WrapMap::new(tabs_snapshot.clone(), settings.clone(), wrap_width, cx));
+        let (_observer, notifications) = Observer::new(&wrap_map, &mut cx);
 
-            dbg!(seed);
-            let mut rng = StdRng::seed_from_u64(seed);
-            let font_cache = cx.font_cache().clone();
-            let font_system = cx.platform().fonts();
-            let mut wrap_width = if rng.gen_bool(0.1) {
-                None
-            } else {
-                Some(rng.gen_range(0.0..=1000.0))
-            };
-            let settings = Settings {
-                tab_size: rng.gen_range(1..=4),
-                buffer_font_family: font_cache.load_family(&["Helvetica"]).unwrap(),
-                buffer_font_size: 14.0,
-                ..Settings::new(&font_cache).unwrap()
-            };
-            log::info!("Tab size: {}", settings.tab_size);
-            log::info!("Wrap width: {:?}", wrap_width);
+        let mut line_wrapper = LineWrapper::new(font_system, &font_cache, settings);
+        let unwrapped_text = tabs_snapshot.text();
+        let expected_text = wrap_text(&unwrapped_text, wrap_width, &mut line_wrapper);
 
-            let buffer = cx.add_model(|cx| {
-                let len = rng.gen_range(0..10);
-                let text = RandomCharIter::new(&mut rng).take(len).collect::<String>();
-                Buffer::new(0, text, cx)
-            });
-            let (fold_map, folds_snapshot) = cx.read(|cx| FoldMap::new(buffer.clone(), cx));
-            let (tab_map, tabs_snapshot) = TabMap::new(folds_snapshot.clone(), settings.tab_size);
+        if wrap_map.read_with(&cx, |map, _| map.is_rewrapping()) {
+            notifications.recv().await.unwrap();
+        }
+
+        let snapshot = wrap_map.update(&mut cx, |map, cx| map.sync(tabs_snapshot, Vec::new(), cx));
+        let actual_text = snapshot.text();
+        assert_eq!(
+            actual_text, expected_text,
+            "unwrapped text is: {:?}",
+            unwrapped_text
+        );
+        log::info!("Wrapped text: {:?}", actual_text);
+
+        for _i in 0..operations {
+            match rng.gen_range(0..=100) {
+                0..=19 => {
+                    wrap_width = if rng.gen_bool(0.2) {
+                        None
+                    } else {
+                        Some(rng.gen_range(0.0..=1000.0))
+                    };
+                    log::info!("Setting wrap width to {:?}", wrap_width);
+                    wrap_map.update(&mut cx, |map, cx| map.set_wrap_width(wrap_width, cx));
+                }
+                20..=39 => {
+                    for (folds_snapshot, edits) in
+                        cx.read(|cx| fold_map.randomly_mutate(&mut rng, cx))
+                    {
+                        let (tabs_snapshot, edits) = tab_map.sync(folds_snapshot, edits);
+                        let mut snapshot =
+                            wrap_map.update(&mut cx, |map, cx| map.sync(tabs_snapshot, edits, cx));
+                        snapshot.check_invariants();
+                        snapshot.verify_chunks(&mut rng);
+                    }
+                }
+                _ => {
+                    buffer.update(&mut cx, |buffer, cx| buffer.randomly_mutate(&mut rng, cx));
+                }
+            }
+
+            log::info!(
+                "Unwrapped text (no folds): {:?}",
+                buffer.read_with(&cx, |buf, _| buf.text())
+            );
+            let (folds_snapshot, edits) = cx.read(|cx| fold_map.read(cx));
             log::info!(
                 "Unwrapped text (unexpanded tabs): {:?}",
                 folds_snapshot.text()
             );
+            let (tabs_snapshot, edits) = tab_map.sync(folds_snapshot, edits);
             log::info!("Unwrapped text (expanded tabs): {:?}", tabs_snapshot.text());
-            let wrap_map = cx.add_model(|cx| {
-                WrapMap::new(tabs_snapshot.clone(), settings.clone(), wrap_width, cx)
-            });
-            let (_observer, notifications) = Observer::new(&wrap_map, &mut cx);
 
-            let mut line_wrapper = LineWrapper::new(font_system, &font_cache, settings);
             let unwrapped_text = tabs_snapshot.text();
             let expected_text = wrap_text(&unwrapped_text, wrap_width, &mut line_wrapper);
+            let mut snapshot = wrap_map.update(&mut cx, |map, cx| {
+                map.sync(tabs_snapshot.clone(), edits, cx)
+            });
+            snapshot.check_invariants();
+            snapshot.verify_chunks(&mut rng);
 
-            if wrap_map.read_with(&cx, |map, _| map.is_rewrapping()) {
-                notifications.recv().await.unwrap();
+            if wrap_map.read_with(&cx, |map, _| map.is_rewrapping()) && rng.gen_bool(0.4) {
+                log::info!("Waiting for wrapping to finish");
+                while wrap_map.read_with(&cx, |map, _| map.is_rewrapping()) {
+                    notifications.recv().await.unwrap();
+                }
             }
 
-            let snapshot =
-                wrap_map.update(&mut cx, |map, cx| map.sync(tabs_snapshot, Vec::new(), cx));
-            let actual_text = snapshot.text();
-            assert_eq!(
-                actual_text, expected_text,
-                "unwrapped text is: {:?}",
-                unwrapped_text
-            );
-            log::info!("Wrapped text: {:?}", actual_text);
-
-            let mut interpolated_snapshot = snapshot.clone();
-            for _i in 0..operations {
-                match rng.gen_range(0..=100) {
-                    0..=19 => {
-                        wrap_width = if rng.gen_bool(0.2) {
-                            None
-                        } else {
-                            Some(rng.gen_range(0.0..=1000.0))
-                        };
-                        log::info!("Setting wrap width to {:?}", wrap_width);
-                        wrap_map.update(&mut cx, |map, cx| map.set_wrap_width(wrap_width, cx));
-                    }
-                    _ => {
-                        buffer.update(&mut cx, |buffer, cx| buffer.randomly_mutate(&mut rng, cx));
-                    }
-                }
-
-                let (folds_snapshot, edits) = cx.read(|cx| fold_map.read(cx));
-                log::info!(
-                    "Unwrapped text (unexpanded tabs): {:?}",
-                    folds_snapshot.text()
+            if !wrap_map.read_with(&cx, |map, _| map.is_rewrapping()) {
+                let mut wrapped_snapshot =
+                    wrap_map.update(&mut cx, |map, cx| map.sync(tabs_snapshot, Vec::new(), cx));
+                let actual_text = wrapped_snapshot.text();
+                log::info!("Wrapping finished: {:?}", actual_text);
+                wrapped_snapshot.check_invariants();
+                wrapped_snapshot.verify_chunks(&mut rng);
+                assert_eq!(
+                    actual_text, expected_text,
+                    "unwrapped text is: {:?}",
+                    unwrapped_text
                 );
-                let (tabs_snapshot, edits) = tab_map.sync(folds_snapshot, edits);
-                log::info!("Unwrapped text (expanded tabs): {:?}", tabs_snapshot.text());
-                interpolated_snapshot.interpolate(tabs_snapshot.clone(), &edits);
-                interpolated_snapshot.check_invariants();
-                interpolated_snapshot.verify_chunks(&mut rng);
-
-                let unwrapped_text = tabs_snapshot.text();
-                let expected_text = wrap_text(&unwrapped_text, wrap_width, &mut line_wrapper);
-                let mut snapshot = wrap_map.update(&mut cx, |map, cx| {
-                    map.sync(tabs_snapshot.clone(), edits, cx)
-                });
-                snapshot.check_invariants();
-                snapshot.verify_chunks(&mut rng);
-
-                if wrap_map.read_with(&cx, |map, _| map.is_rewrapping()) && rng.gen_bool(0.4) {
-                    log::info!("Waiting for wrapping to finish");
-                    while wrap_map.read_with(&cx, |map, _| map.is_rewrapping()) {
-                        notifications.recv().await.unwrap();
-                    }
-                }
-
-                if !wrap_map.read_with(&cx, |map, _| map.is_rewrapping()) {
-                    snapshot =
-                        wrap_map.update(&mut cx, |map, cx| map.sync(tabs_snapshot, Vec::new(), cx));
-                    let actual_text = snapshot.text();
-                    log::info!("Wrapping finished: {:?}", actual_text);
-                    snapshot.check_invariants();
-                    snapshot.verify_chunks(&mut rng);
-                    assert_eq!(
-                        actual_text, expected_text,
-                        "unwrapped text is: {:?}",
-                        unwrapped_text
-                    );
-                    interpolated_snapshot = snapshot.clone();
-                }
             }
         }
     }
@@ -1053,28 +1091,6 @@ mod tests {
                     start_row..end_row
                 );
             }
-        }
-    }
-
-    struct Observer;
-
-    impl Entity for Observer {
-        type Event = ();
-    }
-
-    impl Observer {
-        fn new(
-            handle: &ModelHandle<WrapMap>,
-            cx: &mut gpui::TestAppContext,
-        ) -> (ModelHandle<Self>, channel::Receiver<()>) {
-            let (notify_tx, notify_rx) = channel::unbounded();
-            let observer = cx.add_model(|cx| {
-                cx.observe(handle, move |_, _, _| {
-                    let _ = notify_tx.try_send(());
-                });
-                Observer
-            });
-            (observer, notify_rx)
         }
     }
 }

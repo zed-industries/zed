@@ -1013,13 +1013,7 @@ impl Buffer {
     }
 
     pub fn line_len(&self, row: u32) -> u32 {
-        let row_start_offset = Point::new(row, 0).to_offset(self);
-        let row_end_offset = if row >= self.max_point().row {
-            self.len()
-        } else {
-            Point::new(row + 1, 0).to_offset(self) - 1
-        };
-        (row_end_offset - row_start_offset) as u32
+        self.content().line_len(row)
     }
 
     pub fn max_point(&self) -> Point {
@@ -1955,6 +1949,10 @@ impl Snapshot {
         self.visible_text.len()
     }
 
+    pub fn line_len(&self, row: u32) -> u32 {
+        self.content().line_len(row)
+    }
+
     pub fn text(&self) -> Rope {
         self.visible_text.clone()
     }
@@ -2087,8 +2085,22 @@ impl<'a> From<&'a Content<'a>> for Content<'a> {
 }
 
 impl<'a> Content<'a> {
+    fn max_point(&self) -> Point {
+        self.visible_text.max_point()
+    }
+
     fn len(&self) -> usize {
         self.fragments.extent::<usize>(&None)
+    }
+
+    fn line_len(&self, row: u32) -> u32 {
+        let row_start_offset = Point::new(row, 0).to_offset(self);
+        let row_end_offset = if row >= self.max_point().row {
+            self.len()
+        } else {
+            Point::new(row + 1, 0).to_offset(self) - 1
+        };
+        (row_end_offset - row_start_offset) as u32
     }
 
     fn summary_for_anchor(&self, anchor: &Anchor) -> TextSummary {
@@ -2967,98 +2979,87 @@ mod tests {
         assert_eq!(*buffer_2_events, vec![Event::Edited, Event::Dirtied]);
     }
 
-    #[gpui::test]
-    fn test_random_edits(cx: &mut gpui::MutableAppContext) {
-        let iterations = env::var("ITERATIONS")
-            .map(|i| i.parse().expect("invalid `ITERATIONS` variable"))
-            .unwrap_or(100);
+    #[gpui::test(iterations = 100)]
+    fn test_random_edits(cx: &mut gpui::MutableAppContext, mut rng: StdRng) {
         let operations = env::var("OPERATIONS")
             .map(|i| i.parse().expect("invalid `OPERATIONS` variable"))
             .unwrap_or(10);
-        let start_seed =
-            env::var("SEED").map_or(0, |seed| seed.parse().expect("invalid `SEED` variable"));
 
-        for seed in start_seed..start_seed + iterations {
-            println!("{:?}", seed);
-            let mut rng = &mut StdRng::seed_from_u64(seed);
+        let reference_string_len = rng.gen_range(0..3);
+        let mut reference_string = RandomCharIter::new(&mut rng)
+            .take(reference_string_len)
+            .collect::<String>();
+        cx.add_model(|cx| {
+            let mut buffer = Buffer::new(0, reference_string.as_str(), cx);
+            buffer.history.group_interval = Duration::from_millis(rng.gen_range(0..=200));
+            let mut buffer_versions = Vec::new();
+            log::info!(
+                "buffer text {:?}, version: {:?}",
+                buffer.text(),
+                buffer.version()
+            );
 
-            let reference_string_len = rng.gen_range(0..3);
-            let mut reference_string = RandomCharIter::new(&mut rng)
-                .take(reference_string_len)
-                .collect::<String>();
-            cx.add_model(|cx| {
-                let mut buffer = Buffer::new(0, reference_string.as_str(), cx);
-                buffer.history.group_interval = Duration::from_millis(rng.gen_range(0..=200));
-                let mut buffer_versions = Vec::new();
+            for _i in 0..operations {
+                let (old_ranges, new_text) = buffer.randomly_mutate(&mut rng, cx);
+                for old_range in old_ranges.iter().rev() {
+                    reference_string.replace_range(old_range.clone(), &new_text);
+                }
+                assert_eq!(buffer.text(), reference_string);
                 log::info!(
                     "buffer text {:?}, version: {:?}",
                     buffer.text(),
                     buffer.version()
                 );
 
-                for _i in 0..operations {
-                    let (old_ranges, new_text) = buffer.randomly_mutate(rng, cx);
-                    for old_range in old_ranges.iter().rev() {
-                        reference_string.replace_range(old_range.clone(), &new_text);
-                    }
-                    assert_eq!(buffer.text(), reference_string);
+                if rng.gen_bool(0.25) {
+                    buffer.randomly_undo_redo(&mut rng, cx);
+                    reference_string = buffer.text();
                     log::info!(
                         "buffer text {:?}, version: {:?}",
                         buffer.text(),
                         buffer.version()
                     );
-
-                    if rng.gen_bool(0.25) {
-                        buffer.randomly_undo_redo(rng, cx);
-                        reference_string = buffer.text();
-                        log::info!(
-                            "buffer text {:?}, version: {:?}",
-                            buffer.text(),
-                            buffer.version()
-                        );
-                    }
-
-                    let range = buffer.random_byte_range(0, rng);
-                    assert_eq!(
-                        buffer.text_summary_for_range(range.clone()),
-                        TextSummary::from(&reference_string[range])
-                    );
-
-                    if rng.gen_bool(0.3) {
-                        buffer_versions.push(buffer.clone());
-                    }
                 }
 
-                for mut old_buffer in buffer_versions {
-                    let edits = buffer
-                        .edits_since(old_buffer.version.clone())
-                        .collect::<Vec<_>>();
+                let range = buffer.random_byte_range(0, &mut rng);
+                assert_eq!(
+                    buffer.text_summary_for_range(range.clone()),
+                    TextSummary::from(&reference_string[range])
+                );
 
-                    log::info!(
-                        "mutating old buffer version {:?}, text: {:?}, edits since: {:?}",
-                        old_buffer.version(),
-                        old_buffer.text(),
-                        edits,
-                    );
-
-                    let mut delta = 0_isize;
-                    for edit in edits {
-                        let old_start = (edit.old_bytes.start as isize + delta) as usize;
-                        let new_text: String =
-                            buffer.text_for_range(edit.new_bytes.clone()).collect();
-                        old_buffer.edit(
-                            Some(old_start..old_start + edit.deleted_bytes()),
-                            new_text,
-                            cx,
-                        );
-                        delta += edit.delta();
-                    }
-                    assert_eq!(old_buffer.text(), buffer.text());
+                if rng.gen_bool(0.3) {
+                    buffer_versions.push(buffer.clone());
                 }
+            }
 
-                buffer
-            });
-        }
+            for mut old_buffer in buffer_versions {
+                let edits = buffer
+                    .edits_since(old_buffer.version.clone())
+                    .collect::<Vec<_>>();
+
+                log::info!(
+                    "mutating old buffer version {:?}, text: {:?}, edits since: {:?}",
+                    old_buffer.version(),
+                    old_buffer.text(),
+                    edits,
+                );
+
+                let mut delta = 0_isize;
+                for edit in edits {
+                    let old_start = (edit.old_bytes.start as isize + delta) as usize;
+                    let new_text: String = buffer.text_for_range(edit.new_bytes.clone()).collect();
+                    old_buffer.edit(
+                        Some(old_start..old_start + edit.deleted_bytes()),
+                        new_text,
+                        cx,
+                    );
+                    delta += edit.delta();
+                }
+                assert_eq!(old_buffer.text(), buffer.text());
+            }
+
+            buffer
+        });
     }
 
     #[gpui::test]
@@ -3727,102 +3728,92 @@ mod tests {
         assert_eq!(buffer3.read(cx).text(), "a12c34e56");
     }
 
-    #[gpui::test]
-    fn test_random_concurrent_edits(cx: &mut gpui::MutableAppContext) {
+    #[gpui::test(iterations = 100)]
+    fn test_random_concurrent_edits(cx: &mut gpui::MutableAppContext, mut rng: StdRng) {
         use crate::test::Network;
 
         let peers = env::var("PEERS")
             .map(|i| i.parse().expect("invalid `PEERS` variable"))
             .unwrap_or(5);
-        let iterations = env::var("ITERATIONS")
-            .map(|i| i.parse().expect("invalid `ITERATIONS` variable"))
-            .unwrap_or(100);
         let operations = env::var("OPERATIONS")
             .map(|i| i.parse().expect("invalid `OPERATIONS` variable"))
             .unwrap_or(10);
-        let start_seed =
-            env::var("SEED").map_or(0, |seed| seed.parse().expect("invalid `SEED` variable"));
 
-        for seed in start_seed..start_seed + iterations {
-            dbg!(seed);
-            let mut rng = StdRng::seed_from_u64(seed);
+        let base_text_len = rng.gen_range(0..10);
+        let base_text = RandomCharIter::new(&mut rng)
+            .take(base_text_len)
+            .collect::<String>();
+        let mut replica_ids = Vec::new();
+        let mut buffers = Vec::new();
+        let mut network = Network::new(rng.clone());
 
-            let base_text_len = rng.gen_range(0..10);
-            let base_text = RandomCharIter::new(&mut rng)
-                .take(base_text_len)
-                .collect::<String>();
-            let mut replica_ids = Vec::new();
-            let mut buffers = Vec::new();
-            let mut network = Network::new(StdRng::seed_from_u64(seed));
+        for i in 0..peers {
+            let buffer = cx.add_model(|cx| {
+                let mut buf = Buffer::new(i as ReplicaId, base_text.as_str(), cx);
+                buf.history.group_interval = Duration::from_millis(rng.gen_range(0..=200));
+                buf
+            });
+            buffers.push(buffer);
+            replica_ids.push(i as u16);
+            network.add_peer(i as u16);
+        }
 
-            for i in 0..peers {
-                let buffer = cx.add_model(|cx| {
-                    let mut buf = Buffer::new(i as ReplicaId, base_text.as_str(), cx);
-                    buf.history.group_interval = Duration::from_millis(rng.gen_range(0..=200));
-                    buf
-                });
-                buffers.push(buffer);
-                replica_ids.push(i as u16);
-                network.add_peer(i as u16);
-            }
+        log::info!("initial text: {:?}", base_text);
 
-            log::info!("initial text: {:?}", base_text);
-
-            let mut mutation_count = operations;
-            loop {
-                let replica_index = rng.gen_range(0..peers);
-                let replica_id = replica_ids[replica_index];
-                buffers[replica_index].update(cx, |buffer, cx| match rng.gen_range(0..=100) {
-                    0..=50 if mutation_count != 0 => {
-                        buffer.randomly_mutate(&mut rng, cx);
-                        network.broadcast(buffer.replica_id, mem::take(&mut buffer.operations));
-                        log::info!("buffer {} text: {:?}", buffer.replica_id, buffer.text());
-                        mutation_count -= 1;
-                    }
-                    51..=70 if mutation_count != 0 => {
-                        buffer.randomly_undo_redo(&mut rng, cx);
-                        network.broadcast(buffer.replica_id, mem::take(&mut buffer.operations));
-                        mutation_count -= 1;
-                    }
-                    71..=100 if network.has_unreceived(replica_id) => {
-                        let ops = network.receive(replica_id);
-                        if !ops.is_empty() {
-                            log::info!(
-                                "peer {} applying {} ops from the network.",
-                                replica_id,
-                                ops.len()
-                            );
-                            buffer.apply_ops(ops, cx).unwrap();
-                        }
-                    }
-                    _ => {}
-                });
-
-                if mutation_count == 0 && network.is_idle() {
-                    break;
+        let mut mutation_count = operations;
+        loop {
+            let replica_index = rng.gen_range(0..peers);
+            let replica_id = replica_ids[replica_index];
+            buffers[replica_index].update(cx, |buffer, cx| match rng.gen_range(0..=100) {
+                0..=50 if mutation_count != 0 => {
+                    buffer.randomly_mutate(&mut rng, cx);
+                    network.broadcast(buffer.replica_id, mem::take(&mut buffer.operations));
+                    log::info!("buffer {} text: {:?}", buffer.replica_id, buffer.text());
+                    mutation_count -= 1;
                 }
-            }
+                51..=70 if mutation_count != 0 => {
+                    buffer.randomly_undo_redo(&mut rng, cx);
+                    network.broadcast(buffer.replica_id, mem::take(&mut buffer.operations));
+                    mutation_count -= 1;
+                }
+                71..=100 if network.has_unreceived(replica_id) => {
+                    let ops = network.receive(replica_id);
+                    if !ops.is_empty() {
+                        log::info!(
+                            "peer {} applying {} ops from the network.",
+                            replica_id,
+                            ops.len()
+                        );
+                        buffer.apply_ops(ops, cx).unwrap();
+                    }
+                }
+                _ => {}
+            });
 
-            let first_buffer = buffers[0].read(cx);
-            for buffer in &buffers[1..] {
-                let buffer = buffer.read(cx);
-                assert_eq!(
-                    buffer.text(),
-                    first_buffer.text(),
-                    "Replica {} text != Replica 0 text",
-                    buffer.replica_id
-                );
-                assert_eq!(
-                    buffer.selection_sets().collect::<HashMap<_, _>>(),
-                    first_buffer.selection_sets().collect::<HashMap<_, _>>()
-                );
-                assert_eq!(
-                    buffer.all_selection_ranges().collect::<HashMap<_, _>>(),
-                    first_buffer
-                        .all_selection_ranges()
-                        .collect::<HashMap<_, _>>()
-                );
+            if mutation_count == 0 && network.is_idle() {
+                break;
             }
+        }
+
+        let first_buffer = buffers[0].read(cx);
+        for buffer in &buffers[1..] {
+            let buffer = buffer.read(cx);
+            assert_eq!(
+                buffer.text(),
+                first_buffer.text(),
+                "Replica {} text != Replica 0 text",
+                buffer.replica_id
+            );
+            assert_eq!(
+                buffer.selection_sets().collect::<HashMap<_, _>>(),
+                first_buffer.selection_sets().collect::<HashMap<_, _>>()
+            );
+            assert_eq!(
+                buffer.all_selection_ranges().collect::<HashMap<_, _>>(),
+                first_buffer
+                    .all_selection_ranges()
+                    .collect::<HashMap<_, _>>()
+            );
         }
     }
 

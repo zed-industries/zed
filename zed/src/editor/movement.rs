@@ -40,8 +40,14 @@ pub fn up(
         point = DisplayPoint::new(0, 0);
     }
 
+    let clip_bias = if point.column() == map.line_len(point.row()) {
+        Bias::Left
+    } else {
+        Bias::Right
+    };
+
     Ok((
-        map.clip_point(point, Bias::Left),
+        map.clip_point(point, clip_bias),
         SelectionGoal::Column(goal_column),
     ))
 }
@@ -65,8 +71,14 @@ pub fn down(
         point = max_point;
     }
 
+    let clip_bias = if point.column() == map.line_len(point.row()) {
+        Bias::Left
+    } else {
+        Bias::Right
+    };
+
     Ok((
-        map.clip_point(point, Bias::Left),
+        map.clip_point(point, clip_bias),
         SelectionGoal::Column(goal_column),
     ))
 }
@@ -90,12 +102,19 @@ pub fn line_end(map: &DisplayMapSnapshot, point: DisplayPoint) -> Result<Display
 }
 
 pub fn prev_word_boundary(map: &DisplayMapSnapshot, point: DisplayPoint) -> Result<DisplayPoint> {
-    if point.column() == 0 {
+    let mut line_start = 0;
+    if point.row() > 0 {
+        if let Some(indent) = map.soft_wrap_indent(point.row() - 1) {
+            line_start = indent;
+        }
+    }
+
+    if point.column() == line_start {
         if point.row() == 0 {
             Ok(DisplayPoint::new(0, 0))
         } else {
             let row = point.row() - 1;
-            Ok(DisplayPoint::new(row, map.line_len(row)))
+            Ok(map.clip_point(DisplayPoint::new(row, map.line_len(row)), Bias::Left))
         }
     } else {
         let mut boundary = DisplayPoint::new(point.row(), 0);
