@@ -3374,6 +3374,61 @@ mod tests {
     }
 
     #[gpui::test]
+    fn test_prev_next_word_bounds_with_soft_wrap(cx: &mut gpui::MutableAppContext) {
+        let buffer =
+            cx.add_model(|cx| Buffer::new(0, "use one::{\n    two::three::four::five\n};", cx));
+        let settings = settings::channel(&cx.font_cache()).unwrap().1;
+        let (_, view) = cx.add_window(|cx| Editor::for_buffer(buffer, settings, cx));
+
+        view.update(cx, |view, cx| {
+            view.set_wrap_width(140., cx);
+            assert_eq!(
+                view.text(cx),
+                "use one::{\n    two::three::\n    four::five\n};"
+            );
+
+            view.select_display_ranges(&[DisplayPoint::new(1, 7)..DisplayPoint::new(1, 7)], cx)
+                .unwrap();
+
+            view.move_to_next_word_boundary(&(), cx);
+            assert_eq!(
+                view.selection_ranges(cx),
+                &[DisplayPoint::new(1, 9)..DisplayPoint::new(1, 9)]
+            );
+
+            view.move_to_next_word_boundary(&(), cx);
+            assert_eq!(
+                view.selection_ranges(cx),
+                &[DisplayPoint::new(1, 14)..DisplayPoint::new(1, 14)]
+            );
+
+            view.move_to_next_word_boundary(&(), cx);
+            assert_eq!(
+                view.selection_ranges(cx),
+                &[DisplayPoint::new(2, 4)..DisplayPoint::new(2, 4)]
+            );
+
+            view.move_to_next_word_boundary(&(), cx);
+            assert_eq!(
+                view.selection_ranges(cx),
+                &[DisplayPoint::new(2, 8)..DisplayPoint::new(2, 8)]
+            );
+
+            view.move_to_previous_word_boundary(&(), cx);
+            assert_eq!(
+                view.selection_ranges(cx),
+                &[DisplayPoint::new(2, 4)..DisplayPoint::new(2, 4)]
+            );
+
+            view.move_to_previous_word_boundary(&(), cx);
+            assert_eq!(
+                view.selection_ranges(cx),
+                &[DisplayPoint::new(1, 14)..DisplayPoint::new(1, 14)]
+            );
+        });
+    }
+
+    #[gpui::test]
     fn test_backspace(cx: &mut gpui::MutableAppContext) {
         let buffer = cx.add_model(|cx| {
             Buffer::new(
