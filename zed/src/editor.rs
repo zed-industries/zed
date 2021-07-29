@@ -855,7 +855,7 @@ impl Editor {
 
         let mut selections = self.selections(app).iter().peekable();
         while let Some(selection) = selections.next() {
-            let (mut rows, _) = selection.spanned_rows(false, &display_map);
+            let mut rows = selection.spanned_rows(false, &display_map).buffer_rows;
             let goal_display_column = selection
                 .head()
                 .to_display_point(&display_map, Bias::Left)
@@ -863,7 +863,7 @@ impl Editor {
 
             // Accumulate contiguous regions of rows that we want to delete.
             while let Some(next_selection) = selections.peek() {
-                let (next_rows, _) = next_selection.spanned_rows(false, &display_map);
+                let next_rows = next_selection.spanned_rows(false, &display_map).buffer_rows;
                 if next_rows.start <= rows.end {
                     rows.end = next_rows.end;
                     selections.next().unwrap();
@@ -942,9 +942,9 @@ impl Editor {
         let mut selections_iter = selections.iter_mut().peekable();
         while let Some(selection) = selections_iter.next() {
             // Avoid duplicating the same lines twice.
-            let (mut rows, _) = selection.spanned_rows(false, &display_map);
+            let mut rows = selection.spanned_rows(false, &display_map).buffer_rows;
             while let Some(next_selection) = selections_iter.peek() {
-                let (next_rows, _) = next_selection.spanned_rows(false, &display_map);
+                let next_rows = next_selection.spanned_rows(false, &display_map).buffer_rows;
                 if next_rows.start <= rows.end - 1 {
                     rows.end = next_rows.end;
                     selections_iter.next().unwrap();
@@ -997,10 +997,16 @@ impl Editor {
         while let Some(selection) = selections.next() {
             // Accumulate contiguous regions of rows that we want to move.
             contiguous_selections.push(selection.point_range(buffer));
-            let (mut buffer_rows, mut display_rows) = selection.spanned_rows(false, &display_map);
+            let SpannedRows {
+                mut buffer_rows,
+                mut display_rows,
+            } = selection.spanned_rows(false, &display_map);
+
             while let Some(next_selection) = selections.peek() {
-                let (next_buffer_rows, next_display_rows) =
-                    next_selection.spanned_rows(false, &display_map);
+                let SpannedRows {
+                    buffer_rows: next_buffer_rows,
+                    display_rows: next_display_rows,
+                } = next_selection.spanned_rows(false, &display_map);
                 if next_buffer_rows.start <= buffer_rows.end {
                     buffer_rows.end = next_buffer_rows.end;
                     display_rows.end = next_display_rows.end;
@@ -1014,8 +1020,11 @@ impl Editor {
             // Cut the text from the selected rows and paste it at the start of the previous line.
             if display_rows.start != 0 {
                 let start = Point::new(buffer_rows.start, 0).to_offset(buffer);
-                let end = Point::new(buffer_rows.end - 1, buffer.line_len(buffer_rows.end - 1))
-                    .to_offset(buffer);
+                let end = Point::new(
+                    buffer_rows.end - 1,
+                    buffer.line_len(buffer_rows.end - 1),
+                )
+                .to_offset(buffer);
 
                 let prev_row_display_start = DisplayPoint::new(display_rows.start - 1, 0);
                 let prev_row_buffer_start = display_map.prev_row_boundary(prev_row_display_start).1;
@@ -1081,10 +1090,15 @@ impl Editor {
         while let Some(selection) = selections.next() {
             // Accumulate contiguous regions of rows that we want to move.
             contiguous_selections.push(selection.point_range(buffer));
-            let (mut buffer_rows, mut display_rows) = selection.spanned_rows(false, &display_map);
+            let SpannedRows {
+                mut buffer_rows,
+                mut display_rows,
+            } = selection.spanned_rows(false, &display_map);
             while let Some(next_selection) = selections.peek() {
-                let (next_buffer_rows, next_display_rows) =
-                    next_selection.spanned_rows(false, &display_map);
+                let SpannedRows {
+                    buffer_rows: next_buffer_rows,
+                    display_rows: next_display_rows,
+                } = next_selection.spanned_rows(false, &display_map);
                 if next_buffer_rows.start <= buffer_rows.end {
                     buffer_rows.end = next_buffer_rows.end;
                     display_rows.end = next_display_rows.end;
@@ -1668,7 +1682,7 @@ impl Editor {
         let mut selections = self.selections(cx).to_vec();
         let max_point = buffer.max_point();
         for selection in &mut selections {
-            let (rows, _) = selection.spanned_rows(true, &display_map);
+            let rows = selection.spanned_rows(true, &display_map).buffer_rows;
             selection.start = buffer.anchor_before(Point::new(rows.start, 0));
             selection.end = buffer.anchor_before(cmp::min(max_point, Point::new(rows.end, 0)));
             selection.reversed = false;
