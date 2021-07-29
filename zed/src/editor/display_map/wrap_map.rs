@@ -209,7 +209,7 @@ impl WrapMap {
 
                 match cx
                     .background()
-                    .block_with_timeout(Duration::from_micros(500), update_task)
+                    .block_with_timeout(Duration::from_millis(1), update_task)
                 {
                     Ok(snapshot) => {
                         self.snapshot = snapshot;
