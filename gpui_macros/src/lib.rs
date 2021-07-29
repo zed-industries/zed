@@ -52,6 +52,12 @@ pub fn test(args: TokenStream, function: TokenStream) -> TokenStream {
     }
 
     let mut inner_fn = parse_macro_input!(function as ItemFn);
+    if max_retries > 0 && num_iterations > 1 {
+        return TokenStream::from(
+            syn::Error::new_spanned(inner_fn, "retries and randomized iterations can't be mixed")
+                .into_compile_error(),
+        );
+    }
     let inner_fn_attributes = mem::take(&mut inner_fn.attrs);
     let inner_fn_name = format_ident!("_{}", inner_fn.sig.ident);
     let outer_fn_name = mem::replace(&mut inner_fn.sig.ident, inner_fn_name.clone());
