@@ -89,15 +89,12 @@ impl Selection {
         }
     }
 
-    pub fn buffer_rows_for_display_rows(
+    pub fn spanned_rows(
         &self,
         include_end_if_at_line_start: bool,
         map: &DisplayMapSnapshot,
     ) -> (Range<u32>, Range<u32>) {
         let display_start = self.start.to_display_point(map, Bias::Left);
-        let buffer_start =
-            DisplayPoint::new(display_start.row(), 0).to_buffer_point(map, Bias::Left);
-
         let mut display_end = self.end.to_display_point(map, Bias::Right);
         if !include_end_if_at_line_start
             && display_end.row() != map.max_point().row()
@@ -106,8 +103,9 @@ impl Selection {
         {
             *display_end.row_mut() -= 1;
         }
-        let buffer_end = DisplayPoint::new(display_end.row(), map.line_len(display_end.row()))
-            .to_buffer_point(map, Bias::Left);
+
+        let (display_start, buffer_start) = map.prev_row_boundary(display_start);
+        let (display_end, buffer_end) = map.next_row_boundary(display_end);
 
         (
             buffer_start.row..buffer_end.row + 1,
