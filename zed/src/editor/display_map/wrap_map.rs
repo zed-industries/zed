@@ -511,13 +511,16 @@ impl Snapshot {
         len as u32
     }
 
-    #[cfg(test)]
-    pub fn is_line_wrapped(&self, row: u32) -> bool {
+    pub fn soft_wrap_indent(&self, row: u32) -> Option<u32> {
         let mut cursor = self.transforms.cursor::<_, ()>();
         cursor.seek(&WrapPoint::new(row + 1, 0), Bias::Right, &());
-        cursor
-            .item()
-            .map_or(false, |transform| !transform.is_isomorphic())
+        cursor.item().and_then(|transform| {
+            if transform.is_isomorphic() {
+                None
+            } else {
+                Some(transform.summary.output.lines.column)
+            }
+        })
     }
 
     pub fn longest_row(&self) -> u32 {
