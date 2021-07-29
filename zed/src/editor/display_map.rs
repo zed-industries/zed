@@ -104,6 +104,11 @@ pub struct DisplayMapSnapshot {
 }
 
 impl DisplayMapSnapshot {
+    #[cfg(test)]
+    pub fn fold_count(&self) -> usize {
+        self.folds_snapshot.fold_count()
+    }
+
     pub fn buffer_rows(&self, start_row: u32) -> BufferRows {
         self.wraps_snapshot.buffer_rows(start_row)
     }
@@ -113,37 +118,39 @@ impl DisplayMapSnapshot {
     }
 
     pub fn prev_row_boundary(&self, mut display_point: DisplayPoint) -> (DisplayPoint, Point) {
-        *display_point.column_mut() = 0;
-        let mut point = display_point.to_buffer_point(self, Bias::Left);
-        while point.column != 0 {
-            point.column = 0;
-            display_point = point.to_display_point(self, Bias::Left);
-            if display_point.column() != 0 {
-                *display_point.column_mut() = 0;
-            }
+        let mut point;
+        loop {
+            *display_point.column_mut() = 0;
             point = display_point.to_buffer_point(self, Bias::Left);
+            point.column = 0;
+            let next_display_point = point.to_display_point(self, Bias::Left);
+            if next_display_point == display_point {
+                return (display_point, point);
+            }
+            display_point = next_display_point;
         }
-
-        (display_point, point)
     }
 
     pub fn next_row_boundary(&self, mut display_point: DisplayPoint) -> (DisplayPoint, Point) {
         let max_point = self.max_point();
-        *display_point.row_mut() += 1;
-        *display_point.column_mut() = 0;
-        let mut point = display_point.to_buffer_point(self, Bias::Right);
-        while point.column != 0 && display_point <= max_point {
-            point.column = 0;
-            point.row += 1;
-            display_point = point.to_display_point(self, Bias::Right);
-            if display_point.column() != 0 {
-                *display_point.row_mut() += 1;
-                *display_point.column_mut() = 0;
-                point = display_point.to_buffer_point(self, Bias::Right);
+        let mut point;
+        loop {
+            *display_point.row_mut() += 1;
+            *display_point.column_mut() = 0;
+            point = display_point.to_buffer_point(self, Bias::Right);
+            if display_point >= max_point {
+                return (max_point, point);
             }
+            if point.column > 0 {
+                point.row += 1;
+                point.column = 0;
+            }
+            let next_display_point = point.to_display_point(self, Bias::Right);
+            if next_display_point == display_point {
+                return (display_point, point);
+            }
+            display_point = next_display_point;
         }
-
-        (display_point.min(max_point), point)
     }
 
     pub fn max_point(&self) -> DisplayPoint {
@@ -311,7 +318,7 @@ impl Point {
     pub fn to_display_point(self, map: &DisplayMapSnapshot, bias: Bias) -> DisplayPoint {
         let fold_point = self.to_fold_point(&map.folds_snapshot, bias);
         let tab_point = map.tabs_snapshot.to_tab_point(fold_point);
-        let wrap_point = map.wraps_snapshot.to_wrap_point(tab_point);
+        let wrap_point = map.wraps_snapshot.to_wrap_point(tab_point, bias);
         DisplayPoint(wrap_point)
     }
 }
@@ -338,7 +345,7 @@ mod tests {
     use std::{env, sync::Arc};
     use Bias::*;
 
-    #[gpui::test(iterations = 100, seed = 495)]
+    #[gpui::test(iterations = 100)]
     async fn test_random(mut cx: gpui::TestAppContext, mut rng: StdRng) {
         cx.foreground().set_block_on_ticks(0..=50);
         cx.foreground().forbid_parking();
@@ -371,9 +378,10 @@ mod tests {
 
         let map = cx.add_model(|cx| DisplayMap::new(buffer.clone(), settings, wrap_width, cx));
         let (_observer, notifications) = Observer::new(&map, &mut cx);
+        let mut fold_count = 0;
 
         for _i in 0..operations {
-            match rng.gen_range(0..=100) {
+            match rng.gen_range(0..100) {
                 0..=19 => {
                     wrap_width = if rng.gen_bool(0.2) {
                         None
@@ -383,7 +391,7 @@ mod tests {
                     log::info!("setting wrap width to {:?}", wrap_width);
                     map.update(&mut cx, |map, cx| map.set_wrap_width(wrap_width, cx));
                 }
-                20..=39 => {
+                20..=80 => {
                     let mut ranges = Vec::new();
                     for _ in 0..rng.gen_range(1..=3) {
                         buffer.read_with(&cx, |buffer, _| {
@@ -393,7 +401,7 @@ mod tests {
                         });
                     }
 
-                    if rng.gen() {
+                    if rng.gen() && fold_count > 0 {
                         log::info!("unfolding ranges: {:?}", ranges);
                         map.update(&mut cx, |map, cx| {
                             map.unfold(ranges, cx);
@@ -415,6 +423,7 @@ mod tests {
             }
 
             let snapshot = map.update(&mut cx, |map, cx| map.snapshot(cx));
+            fold_count = snapshot.fold_count();
             log::info!("buffer text: {:?}", buffer.read_with(&cx, |b, _| b.text()));
             log::info!("display text: {:?}", snapshot.text());
 
@@ -437,27 +446,31 @@ mod tests {
                 }
 
                 assert_eq!(
-                    prev_buffer_bound.to_display_point(&snapshot, Left),
                     prev_display_bound,
-                    "{:?} to display point",
+                    prev_buffer_bound.to_display_point(&snapshot, Left),
+                    "row boundary before {:?}. reported buffer row boundary: {:?}",
+                    point,
                     prev_buffer_bound
                 );
                 assert_eq!(
-                    next_buffer_bound.to_display_point(&snapshot, Left),
                     next_display_bound,
-                    "{:?} to display point",
+                    next_buffer_bound.to_display_point(&snapshot, Right),
+                    "display row boundary after {:?}. reported buffer row boundary: {:?}",
+                    point,
                     next_buffer_bound
                 );
                 assert_eq!(
-                    prev_display_bound.to_buffer_point(&snapshot, Left),
                     prev_buffer_bound,
-                    "{:?} to buffer point",
+                    prev_display_bound.to_buffer_point(&snapshot, Left),
+                    "row boundary before {:?}. reported display row boundary: {:?}",
+                    point,
                     prev_display_bound
                 );
                 assert_eq!(
-                    next_display_bound.to_buffer_point(&snapshot, Left),
                     next_buffer_bound,
-                    "{:?} to buffer point",
+                    next_display_bound.to_buffer_point(&snapshot, Right),
+                    "row boundary after {:?}. reported display row boundary: {:?}",
+                    point,
                     next_display_bound
                 );
             }

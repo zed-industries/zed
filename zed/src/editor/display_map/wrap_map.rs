@@ -495,7 +495,7 @@ impl Snapshot {
     }
 
     pub fn max_point(&self) -> WrapPoint {
-        self.to_wrap_point(self.tab_snapshot.max_point())
+        self.to_wrap_point(self.tab_snapshot.max_point(), Bias::Right)
     }
 
     pub fn line_len(&self, row: u32) -> u32 {
@@ -548,9 +548,9 @@ impl Snapshot {
         TabPoint(tab_point)
     }
 
-    pub fn to_wrap_point(&self, point: TabPoint) -> WrapPoint {
+    pub fn to_wrap_point(&self, point: TabPoint, bias: Bias) -> WrapPoint {
         let mut cursor = self.transforms.cursor::<TabPoint, WrapPoint>();
-        cursor.seek(&point, Bias::Right, &());
+        cursor.seek(&point, bias, &());
         WrapPoint(cursor.sum_start().0 + (point.0 - cursor.seek_start().0))
     }
 
@@ -564,7 +564,10 @@ impl Snapshot {
             }
         }
 
-        self.to_wrap_point(self.tab_snapshot.clip_point(self.to_tab_point(point), bias))
+        self.to_wrap_point(
+            self.tab_snapshot.clip_point(self.to_tab_point(point), bias),
+            bias,
+        )
     }
 
     fn check_invariants(&self) {

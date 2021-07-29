@@ -497,6 +497,11 @@ impl Snapshot {
         self.chunks_at(FoldOffset(0)).collect()
     }
 
+    #[cfg(test)]
+    pub fn fold_count(&self) -> usize {
+        self.folds.items(&self.buffer_snapshot).len()
+    }
+
     pub fn text_summary_for_range(&self, range: Range<FoldPoint>) -> TextSummary {
         let mut summary = TextSummary::default();
 
