@@ -9,14 +9,14 @@ use std::{
     sync::Arc,
 };
 
-pub(crate) struct Platform {
+pub struct Platform {
     dispatcher: Arc<dyn super::Dispatcher>,
     fonts: Arc<dyn super::FontSystem>,
     current_clipboard_item: Mutex<Option<ClipboardItem>>,
 }
 
 #[derive(Default)]
-pub(crate) struct ForegroundPlatform {
+pub struct ForegroundPlatform {
     last_prompt_for_new_path_args: RefCell<Option<(PathBuf, Box<dyn FnOnce(Option<PathBuf>)>)>>,
 }
 
@@ -191,10 +191,10 @@ impl super::Window for Window {
     }
 }
 
-pub(crate) fn platform() -> Platform {
+pub fn platform() -> Platform {
     Platform::new()
 }
 
-pub(crate) fn foreground_platform() -> ForegroundPlatform {
+pub fn foreground_platform() -> ForegroundPlatform {
     ForegroundPlatform::default()
 }

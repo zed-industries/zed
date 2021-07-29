@@ -67,9 +67,14 @@ pub fn test(args: TokenStream, function: TokenStream) -> TokenStream {
                     match last_segment.map(|s| s.ident.to_string()).as_deref() {
                         Some("TestAppContext") => {
                             let first_entity_id = ix * 100_000;
-                            inner_fn_args.extend(
-                            quote!(#namespace::TestAppContext::new(foreground.clone(), background.clone(), #first_entity_id),)
-                        );
+                            inner_fn_args.extend(quote!(#namespace::TestAppContext::new(
+                                foreground_platform.clone(),
+                                platform.clone(),
+                                foreground.clone(),
+                                background.clone(),
+                                font_cache.clone(),
+                                #first_entity_id),
+                            ));
                         }
                         Some("StdRng") => {
                             inner_fn_args.extend(quote!(rand::SeedableRng::seed_from_u64(seed)));
@@ -99,8 +104,8 @@ pub fn test(args: TokenStream, function: TokenStream) -> TokenStream {
                 #inner_fn
 
                 let is_randomized = #num_iterations > 1;
-                let mut num_iterations = #num_iterations;
-                let mut starting_seed = #starting_seed;
+                let mut num_iterations = #num_iterations as u64;
+                let mut starting_seed = #starting_seed as u64;
                 if is_randomized {
                     if let Ok(value) = std::env::var("SEED") {
                         starting_seed = value.parse().expect("invalid SEED variable");
@@ -110,34 +115,43 @@ pub fn test(args: TokenStream, function: TokenStream) -> TokenStream {
                     }
                 }
 
+                let mut atomic_seed = std::sync::atomic::AtomicU64::new(starting_seed as u64);
                 let mut retries = 0;
-                let mut i = 0;
-                loop {
-                    let seed = (starting_seed + i) as u64;
-                    if is_randomized {
-                        dbg!(seed);
-                    }
 
+                loop {
                     let result = std::panic::catch_unwind(|| {
-                        let (foreground, background) = #namespace::executor::deterministic(seed);
-                        foreground.run(#inner_fn_name(#inner_fn_args));
+                        let foreground_platform = std::rc::Rc::new(#namespace::platform::test::foreground_platform());
+                        let platform = std::sync::Arc::new(#namespace::platform::test::platform());
+                        let font_system = #namespace::Platform::fonts(platform.as_ref());
+                        let font_cache = std::sync::Arc::new(#namespace::FontCache::new(font_system));
+
+                        loop {
+                            let seed = atomic_seed.load(std::sync::atomic::Ordering::SeqCst);
+                            if seed >= starting_seed + num_iterations {
+                                break;
+                            }
+
+                            if is_randomized {
+                                dbg!(seed);
+                            }
+
+                            let (foreground, background) = #namespace::executor::deterministic(seed);
+                            foreground.run(#inner_fn_name(#inner_fn_args));
+                            atomic_seed.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+                        }
                     });
 
                     match result {
                         Ok(result) => {
-                            retries = 0;
-                            i += 1;
-                            if i == num_iterations {
-                                return result
-                            }
+                            break;
                         }
                         Err(error) => {
                             if retries < #max_retries {
                                 retries += 1;
                                 println!("retrying: attempt {}", retries);
                             } else {
-                                if num_iterations > 1 {
-                                    eprintln!("failing seed: {}", seed);
+                                if is_randomized {
+                                    eprintln!("failing seed: {}", atomic_seed.load(std::sync::atomic::Ordering::SeqCst));
                                 }
                                 std::panic::resume_unwind(error);
                             }
@@ -171,8 +185,8 @@ pub fn test(args: TokenStream, function: TokenStream) -> TokenStream {
                 #inner_fn
 
                 let is_randomized = #num_iterations > 1;
-                let mut num_iterations = #num_iterations;
-                let mut starting_seed = #starting_seed;
+                let mut num_iterations = #num_iterations as u64;
+                let mut starting_seed = #starting_seed as u64;
                 if is_randomized {
                     if let Ok(value) = std::env::var("SEED") {
                         starting_seed = value.parse().expect("invalid SEED variable");
@@ -182,35 +196,44 @@ pub fn test(args: TokenStream, function: TokenStream) -> TokenStream {
                     }
                 }
 
+                let mut atomic_seed = std::sync::atomic::AtomicU64::new(starting_seed as u64);
                 let mut retries = 0;
-                let mut i = 0;
-                loop {
-                    let seed = (starting_seed + i) as u64;
-                    if is_randomized {
-                        dbg!(seed);
-                    }
 
+                loop {
                     let result = std::panic::catch_unwind(|| {
-                        #namespace::App::test(|cx| {
-                            #inner_fn_name(#inner_fn_args);
-                        });
+                        let foreground_platform = std::rc::Rc::new(#namespace::platform::test::foreground_platform());
+                        let platform = std::sync::Arc::new(#namespace::platform::test::platform());
+                        let font_system = #namespace::Platform::fonts(platform.as_ref());
+                        let font_cache = std::sync::Arc::new(#namespace::FontCache::new(font_system));
+
+                        loop {
+                            let seed = atomic_seed.load(std::sync::atomic::Ordering::SeqCst);
+                            if seed >= starting_seed + num_iterations {
+                                break;
+                            }
+
+                            if is_randomized {
+                                dbg!(seed);
+                            }
+
+                            #namespace::App::test(foreground_platform.clone(), platform.clone(), font_cache.clone(), |cx| {
+                                #inner_fn_name(#inner_fn_args);
+                            });
+                            atomic_seed.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+                        }
                     });
 
                     match result {
-                        Ok(result) => {
-                            retries = 0;
-                            i += 1;
-                            if i == num_iterations {
-                                return result
-                            }
+                        Ok(_) => {
+                            break;
                         }
                         Err(error) => {
                             if retries < #max_retries {
                                 retries += 1;
                                 println!("retrying: attempt {}", retries);
                             } else {
-                                if #num_iterations > 1 {
-                                    eprintln!("failing seed: {}", seed);
+                                if is_randomized {
+                                    eprintln!("failing seed: {}", atomic_seed.load(std::sync::atomic::Ordering::SeqCst));
                                 }
                                 std::panic::resume_unwind(error);
                             }
