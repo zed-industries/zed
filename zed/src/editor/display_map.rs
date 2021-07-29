@@ -308,7 +308,7 @@ impl Point {
     pub fn to_display_point(self, map: &DisplayMapSnapshot, bias: Bias) -> DisplayPoint {
         let fold_point = self.to_fold_point(&map.folds_snapshot, bias);
         let tab_point = map.tabs_snapshot.to_tab_point(fold_point);
-        let wrap_point = map.wraps_snapshot.to_wrap_point(tab_point, bias);
+        let wrap_point = map.wraps_snapshot.to_wrap_point(tab_point);
         DisplayPoint(wrap_point)
     }
 }
