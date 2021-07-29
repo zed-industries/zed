@@ -213,9 +213,8 @@ impl DisplayMapSnapshot {
         self.folds_snapshot.is_line_folded(row)
     }
 
-    #[cfg(test)]
-    pub fn is_line_wrapped(&self, display_row: u32) -> bool {
-        self.wraps_snapshot.is_line_wrapped(display_row)
+    pub fn soft_wrap_indent(&self, display_row: u32) -> Option<u32> {
+        self.wraps_snapshot.soft_wrap_indent(display_row)
     }
 
     pub fn text(&self) -> String {
@@ -492,7 +491,7 @@ mod tests {
                 if point < snapshot.max_point() {
                     assert!(moved_right > point);
                     if point.column() == snapshot.line_len(point.row())
-                        || snapshot.is_line_wrapped(point.row())
+                        || snapshot.soft_wrap_indent(point.row()).is_some()
                             && point.column() == snapshot.line_len(point.row()) - 1
                     {
                         assert!(moved_right.row() > point.row());

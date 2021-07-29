@@ -3423,7 +3423,7 @@ mod tests {
             view.move_to_previous_word_boundary(&(), cx);
             assert_eq!(
                 view.selection_ranges(cx),
-                &[DisplayPoint::new(1, 14)..DisplayPoint::new(1, 14)]
+                &[DisplayPoint::new(1, 15)..DisplayPoint::new(1, 15)]
             );
         });
     }
