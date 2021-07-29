@@ -118,10 +118,9 @@ impl DisplayMapSnapshot {
     }
 
     pub fn prev_row_boundary(&self, mut display_point: DisplayPoint) -> (DisplayPoint, Point) {
-        let mut point;
         loop {
             *display_point.column_mut() = 0;
-            point = display_point.to_buffer_point(self, Bias::Left);
+            let mut point = display_point.to_buffer_point(self, Bias::Left);
             point.column = 0;
             let next_display_point = point.to_display_point(self, Bias::Left);
             if next_display_point == display_point {
@@ -132,19 +131,10 @@ impl DisplayMapSnapshot {
     }
 
     pub fn next_row_boundary(&self, mut display_point: DisplayPoint) -> (DisplayPoint, Point) {
-        let max_point = self.max_point();
-        let mut point;
         loop {
-            *display_point.row_mut() += 1;
-            *display_point.column_mut() = 0;
-            point = display_point.to_buffer_point(self, Bias::Right);
-            if display_point >= max_point {
-                return (max_point, point);
-            }
-            if point.column > 0 {
-                point.row += 1;
-                point.column = 0;
-            }
+            *display_point.column_mut() = self.line_len(display_point.row());
+            let mut point = display_point.to_buffer_point(self, Bias::Right);
+            point.column = self.buffer_snapshot.line_len(point.row);
             let next_display_point = point.to_display_point(self, Bias::Right);
             if next_display_point == display_point {
                 return (display_point, point);
@@ -441,8 +431,11 @@ mod tests {
                 assert_eq!(prev_buffer_bound.column, 0);
                 assert_eq!(prev_display_bound.column(), 0);
                 if next_display_bound < snapshot.max_point() {
-                    assert_eq!(next_buffer_bound.column, 0);
-                    assert_eq!(next_display_bound.column(), 0);
+                    assert_eq!(
+                        buffer
+                            .read_with(&cx, |buffer, _| buffer.chars_at(next_buffer_bound).next()),
+                        Some('\n')
+                    )
                 }
 
                 assert_eq!(

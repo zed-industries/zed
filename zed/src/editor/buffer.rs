@@ -1013,13 +1013,7 @@ impl Buffer {
     }
 
     pub fn line_len(&self, row: u32) -> u32 {
-        let row_start_offset = Point::new(row, 0).to_offset(self);
-        let row_end_offset = if row >= self.max_point().row {
-            self.len()
-        } else {
-            Point::new(row + 1, 0).to_offset(self) - 1
-        };
-        (row_end_offset - row_start_offset) as u32
+        self.content().line_len(row)
     }
 
     pub fn max_point(&self) -> Point {
@@ -1955,6 +1949,10 @@ impl Snapshot {
         self.visible_text.len()
     }
 
+    pub fn line_len(&self, row: u32) -> u32 {
+        self.content().line_len(row)
+    }
+
     pub fn text(&self) -> Rope {
         self.visible_text.clone()
     }
@@ -2087,8 +2085,22 @@ impl<'a> From<&'a Content<'a>> for Content<'a> {
 }
 
 impl<'a> Content<'a> {
+    fn max_point(&self) -> Point {
+        self.visible_text.max_point()
+    }
+
     fn len(&self) -> usize {
         self.fragments.extent::<usize>(&None)
+    }
+
+    fn line_len(&self, row: u32) -> u32 {
+        let row_start_offset = Point::new(row, 0).to_offset(self);
+        let row_end_offset = if row >= self.max_point().row {
+            self.len()
+        } else {
+            Point::new(row + 1, 0).to_offset(self) - 1
+        };
+        (row_end_offset - row_start_offset) as u32
     }
 
     fn summary_for_anchor(&self, anchor: &Anchor) -> TextSummary {
