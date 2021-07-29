@@ -81,9 +81,10 @@ impl Point {
         let mut cursor = snapshot.transforms.cursor::<Point, FoldPoint>();
         cursor.seek(self, Bias::Right, &());
         if cursor.item().map_or(false, |t| t.is_fold()) {
-            match bias {
-                Bias::Left => *cursor.sum_start(),
-                Bias::Right => cursor.sum_end(&()),
+            if bias == Bias::Left || *self == *cursor.seek_start() {
+                *cursor.sum_start()
+            } else {
+                cursor.sum_end(&())
             }
         } else {
             let overshoot = *self - cursor.seek_start();
@@ -1379,7 +1380,7 @@ mod tests {
                 assert_eq!(
                     buffer_point.to_fold_point(&snapshot, Right),
                     fold_point,
-                    "buffer_Point.to_fold_point({:?})",
+                    "{:?} -> fold point",
                     buffer_point,
                 );
                 assert_eq!(
