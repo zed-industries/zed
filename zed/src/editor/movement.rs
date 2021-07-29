@@ -40,8 +40,14 @@ pub fn up(
         point = DisplayPoint::new(0, 0);
     }
 
+    let clip_bias = if point.column() == map.line_len(point.row()) {
+        Bias::Left
+    } else {
+        Bias::Right
+    };
+
     Ok((
-        map.clip_point(point, Bias::Left),
+        map.clip_point(point, clip_bias),
         SelectionGoal::Column(goal_column),
     ))
 }
@@ -65,8 +71,14 @@ pub fn down(
         point = max_point;
     }
 
+    let clip_bias = if point.column() == map.line_len(point.row()) {
+        Bias::Left
+    } else {
+        Bias::Right
+    };
+
     Ok((
-        map.clip_point(point, Bias::Left),
+        map.clip_point(point, clip_bias),
         SelectionGoal::Column(goal_column),
     ))
 }
