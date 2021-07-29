@@ -118,15 +118,19 @@ pub struct TestAppContext {
 }
 
 impl App {
-    pub fn test<T, F: FnOnce(&mut MutableAppContext) -> T>(f: F) -> T {
-        let foreground_platform = platform::test::foreground_platform();
-        let platform = platform::test::platform();
+    pub fn test<T, F: FnOnce(&mut MutableAppContext) -> T>(
+        foreground_platform: Rc<platform::test::ForegroundPlatform>,
+        platform: Arc<dyn Platform>,
+        font_cache: Arc<FontCache>,
+        f: F,
+    ) -> T {
         let foreground = Rc::new(executor::Foreground::test());
         let cx = Rc::new(RefCell::new(MutableAppContext::new(
             foreground,
             Arc::new(executor::Background::new()),
-            Arc::new(platform),
-            Rc::new(foreground_platform),
+            platform,
+            foreground_platform,
+            font_cache,
             (),
         )));
         cx.borrow_mut().weak_self = Some(Rc::downgrade(&cx));
@@ -143,6 +147,7 @@ impl App {
             Arc::new(executor::Background::new()),
             platform.clone(),
             foreground_platform.clone(),
+            Arc::new(FontCache::new(platform.fonts())),
             asset_source,
         ))));
 
@@ -245,17 +250,19 @@ impl App {
 
 impl TestAppContext {
     pub fn new(
+        foreground_platform: Rc<platform::test::ForegroundPlatform>,
+        platform: Arc<dyn Platform>,
         foreground: Rc<executor::Foreground>,
         background: Arc<executor::Background>,
+        font_cache: Arc<FontCache>,
         first_entity_id: usize,
     ) -> Self {
-        let platform = Arc::new(platform::test::platform());
-        let foreground_platform = Rc::new(platform::test::foreground_platform());
         let mut cx = MutableAppContext::new(
             foreground.clone(),
             background,
             platform,
             foreground_platform.clone(),
+            font_cache,
             (),
         );
         cx.next_entity_id = first_entity_id;
@@ -593,9 +600,9 @@ impl MutableAppContext {
         background: Arc<executor::Background>,
         platform: Arc<dyn platform::Platform>,
         foreground_platform: Rc<dyn platform::ForegroundPlatform>,
+        font_cache: Arc<FontCache>,
         asset_source: impl AssetSource,
     ) -> Self {
-        let fonts = platform.fonts();
         Self {
             weak_self: None,
             foreground_platform,
@@ -607,7 +614,7 @@ impl MutableAppContext {
                 values: Default::default(),
                 ref_counts: Arc::new(Mutex::new(RefCounts::default())),
                 background,
-                font_cache: Arc::new(FontCache::new(fonts)),
+                font_cache,
                 platform,
             },
             actions: HashMap::new(),

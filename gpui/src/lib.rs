@@ -23,7 +23,7 @@ pub use executor::Task;
 pub mod color;
 pub mod json;
 pub mod keymap;
-mod platform;
+pub mod platform;
 pub use gpui_macros::test;
 pub use platform::FontSystem;
 pub use platform::{Event, PathPromptOptions, Platform, PromptLevel};
