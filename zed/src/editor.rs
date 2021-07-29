@@ -1020,11 +1020,8 @@ impl Editor {
             // Cut the text from the selected rows and paste it at the start of the previous line.
             if display_rows.start != 0 {
                 let start = Point::new(buffer_rows.start, 0).to_offset(buffer);
-                let end = Point::new(
-                    buffer_rows.end - 1,
-                    buffer.line_len(buffer_rows.end - 1),
-                )
-                .to_offset(buffer);
+                let end = Point::new(buffer_rows.end - 1, buffer.line_len(buffer_rows.end - 1))
+                    .to_offset(buffer);
 
                 let prev_row_display_start = DisplayPoint::new(display_rows.start - 1, 0);
                 let prev_row_buffer_start = display_map.prev_row_boundary(prev_row_display_start).1;
@@ -3842,25 +3839,25 @@ mod tests {
 
         view.update(cx, |view, cx| {
             view.split_selection_into_lines(&(), cx);
-            assert_eq!(view.text(cx), "aa…bbb\nccc…eeee\nfffff\nggggg\n…i");
+            assert_eq!(view.text(cx), "aaaaa\nbbbbb\nccc…eeee\nfffff\nggggg\n…i");
             assert_eq!(
                 view.selection_ranges(cx),
                 [
                     DisplayPoint::new(0, 1)..DisplayPoint::new(0, 1),
                     DisplayPoint::new(0, 2)..DisplayPoint::new(0, 2),
-                    DisplayPoint::new(1, 0)..DisplayPoint::new(1, 0),
-                    DisplayPoint::new(4, 4)..DisplayPoint::new(4, 4)
+                    DisplayPoint::new(2, 0)..DisplayPoint::new(2, 0),
+                    DisplayPoint::new(5, 4)..DisplayPoint::new(5, 4)
                 ]
             );
         });
 
         view.update(cx, |view, cx| {
-            view.select_display_ranges(&[DisplayPoint::new(4, 0)..DisplayPoint::new(0, 1)], cx)
+            view.select_display_ranges(&[DisplayPoint::new(5, 0)..DisplayPoint::new(0, 1)], cx)
                 .unwrap();
             view.split_selection_into_lines(&(), cx);
             assert_eq!(
                 view.text(cx),
-                "aaaaa\nbbbbb\nccccc\nddddd\neeeee\nfffff\nggggg\n…i"
+                "aaaaa\nbbbbb\nccccc\nddddd\neeeee\nfffff\nggggg\nhhhhh\niiiii"
             );
             assert_eq!(
                 view.selection_ranges(cx),
