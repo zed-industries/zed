@@ -511,6 +511,15 @@ impl Snapshot {
         len as u32
     }
 
+    #[cfg(test)]
+    pub fn is_line_wrapped(&self, row: u32) -> bool {
+        let mut cursor = self.transforms.cursor::<_, ()>();
+        cursor.seek(&WrapPoint::new(row + 1, 0), Bias::Right, &());
+        cursor
+            .item()
+            .map_or(false, |transform| !transform.is_isomorphic())
+    }
+
     pub fn longest_row(&self) -> u32 {
         self.transforms.summary().output.longest_row
     }
@@ -827,6 +836,11 @@ impl SumTree<Transform> {
 impl WrapPoint {
     pub fn new(row: u32, column: u32) -> Self {
         Self(super::Point::new(row, column))
+    }
+
+    #[cfg(test)]
+    pub fn is_zero(&self) -> bool {
+        self.0.is_zero()
     }
 
     pub fn row(self) -> u32 {

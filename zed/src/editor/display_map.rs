@@ -213,6 +213,11 @@ impl DisplayMapSnapshot {
         self.folds_snapshot.is_line_folded(row)
     }
 
+    #[cfg(test)]
+    pub fn is_line_wrapped(&self, display_row: u32) -> bool {
+        self.wraps_snapshot.is_line_wrapped(display_row)
+    }
+
     pub fn text(&self) -> String {
         self.chunks_at(0).collect()
     }
@@ -275,6 +280,11 @@ impl DisplayPoint {
         Self::new(0, 0)
     }
 
+    #[cfg(test)]
+    pub fn is_zero(&self) -> bool {
+        self.0.is_zero()
+    }
+
     pub fn row(self) -> u32 {
         self.0.row()
     }
@@ -324,12 +334,13 @@ impl Anchor {
 mod tests {
     use super::*;
     use crate::{
+        editor::movement,
         language::{Language, LanguageConfig},
         settings::Theme,
         test::*,
         util::RandomCharIter,
     };
-    use buffer::History;
+    use buffer::{History, SelectionGoal};
     use gpui::MutableAppContext;
     use rand::{prelude::StdRng, Rng};
     use std::{env, sync::Arc};
@@ -417,7 +428,7 @@ mod tests {
             log::info!("buffer text: {:?}", buffer.read_with(&cx, |b, _| b.text()));
             log::info!("display text: {:?}", snapshot.text());
 
-            // line boundaries
+            // Line boundaries
             for _ in 0..5 {
                 let row = rng.gen_range(0..=snapshot.max_point().row());
                 let column = rng.gen_range(0..=snapshot.line_len(row));
@@ -467,6 +478,40 @@ mod tests {
                     next_display_bound
                 );
             }
+
+            // Movement
+            for _ in 0..5 {
+                let row = rng.gen_range(0..=snapshot.max_point().row());
+                let column = rng.gen_range(0..=snapshot.line_len(row));
+                let point = snapshot.clip_point(DisplayPoint::new(row, column), Left);
+
+                log::info!("Moving from point {:?}", point);
+
+                let moved_right = movement::right(&snapshot, point).unwrap();
+                log::info!("Right {:?}", moved_right);
+                if point < snapshot.max_point() {
+                    assert!(moved_right > point);
+                    if point.column() == snapshot.line_len(point.row())
+                        || snapshot.is_line_wrapped(point.row())
+                            && point.column() == snapshot.line_len(point.row()) - 1
+                    {
+                        assert!(moved_right.row() > point.row());
+                    }
+                } else {
+                    assert_eq!(moved_right, point);
+                }
+
+                let moved_left = movement::left(&snapshot, point).unwrap();
+                log::info!("Left {:?}", moved_left);
+                if !point.is_zero() {
+                    assert!(moved_left < point);
+                    if point.column() == 0 {
+                        assert!(moved_left.row() < point.row());
+                    }
+                } else {
+                    assert!(moved_left.is_zero());
+                }
+            }
         }
     }
 
@@ -503,6 +548,36 @@ mod tests {
         assert_eq!(
             snapshot.clip_point(DisplayPoint::new(0, 8), Bias::Right),
             DisplayPoint::new(1, 0)
+        );
+        assert_eq!(
+            movement::right(&snapshot, DisplayPoint::new(0, 7)).unwrap(),
+            DisplayPoint::new(1, 0)
+        );
+        assert_eq!(
+            movement::left(&snapshot, DisplayPoint::new(1, 0)).unwrap(),
+            DisplayPoint::new(0, 7)
+        );
+        assert_eq!(
+            movement::up(&snapshot, DisplayPoint::new(1, 10), SelectionGoal::None).unwrap(),
+            (DisplayPoint::new(0, 7), SelectionGoal::Column(10))
+        );
+        assert_eq!(
+            movement::down(
+                &snapshot,
+                DisplayPoint::new(0, 7),
+                SelectionGoal::Column(10)
+            )
+            .unwrap(),
+            (DisplayPoint::new(1, 10), SelectionGoal::Column(10))
+        );
+        assert_eq!(
+            movement::down(
+                &snapshot,
+                DisplayPoint::new(1, 10),
+                SelectionGoal::Column(10)
+            )
+            .unwrap(),
+            (DisplayPoint::new(2, 4), SelectionGoal::Column(10))
         );
 
         buffer.update(&mut cx, |buffer, cx| {
