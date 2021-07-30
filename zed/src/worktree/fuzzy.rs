@@ -24,7 +24,7 @@ pub struct PathMatch {
     pub positions: Vec<usize>,
     pub tree_id: usize,
     pub path: Arc<Path>,
-    pub include_root_name: bool,
+    pub path_prefix: Arc<str>,
 }
 
 impl PartialEq for PathMatch {
@@ -51,23 +51,19 @@ impl Ord for PathMatch {
     }
 }
 
-pub async fn match_paths<'a, T>(
-    snapshots: T,
+pub async fn match_paths(
+    snapshots: &[Snapshot],
     query: &str,
-    include_root_name: bool,
     include_ignored: bool,
     smart_case: bool,
     max_results: usize,
     cancel_flag: Arc<AtomicBool>,
     background: Arc<executor::Background>,
-) -> Vec<PathMatch>
-where
-    T: Clone + Send + Iterator<Item = &'a Snapshot> + 'a,
-{
+) -> Vec<PathMatch> {
     let path_count: usize = if include_ignored {
-        snapshots.clone().map(Snapshot::file_count).sum()
+        snapshots.iter().map(Snapshot::file_count).sum()
     } else {
-        snapshots.clone().map(Snapshot::visible_file_count).sum()
+        snapshots.iter().map(Snapshot::visible_file_count).sum()
     };
     if path_count == 0 {
         return Vec::new();
@@ -89,7 +85,6 @@ where
     background
         .scoped(|scope| {
             for (segment_idx, results) in segment_results.iter_mut().enumerate() {
-                let snapshots = snapshots.clone();
                 let cancel_flag = &cancel_flag;
                 scope.spawn(async move {
                     let segment_start = segment_idx * segment_size;
@@ -111,9 +106,16 @@ where
                             tree_start + snapshot.visible_file_count()
                         };
 
-                        let include_root_name =
-                            include_root_name || snapshot.root_entry().is_file();
                         if tree_start < segment_end && segment_start < tree_end {
+                            let path_prefix: Arc<str> =
+                                if snapshot.root_entry().map_or(false, |e| e.is_file()) {
+                                    snapshot.root_name().into()
+                                } else if snapshots.len() > 1 {
+                                    format!("{}/", snapshot.root_name()).into()
+                                } else {
+                                    "".into()
+                                };
+
                             let start = max(tree_start, segment_start) - tree_start;
                             let end = min(tree_end, segment_end) - tree_start;
                             let entries = if include_ignored {
@@ -134,7 +136,7 @@ where
 
                             match_single_tree_paths(
                                 snapshot,
-                                include_root_name,
+                                path_prefix,
                                 paths,
                                 query,
                                 lowercase_query,
@@ -173,7 +175,7 @@ where
 
 fn match_single_tree_paths<'a>(
     snapshot: &Snapshot,
-    include_root_name: bool,
+    path_prefix: Arc<str>,
     path_entries: impl Iterator<Item = MatchCandidate<'a>>,
     query: &[char],
     lowercase_query: &[char],
@@ -191,13 +193,7 @@ fn match_single_tree_paths<'a>(
     let mut path_chars = Vec::new();
     let mut lowercase_path_chars = Vec::new();
 
-    let prefix = if include_root_name {
-        snapshot.root_name()
-    } else {
-        ""
-    }
-    .chars()
-    .collect::<Vec<_>>();
+    let prefix = path_prefix.chars().collect::<Vec<_>>();
     let lowercase_prefix = prefix
         .iter()
         .map(|c| c.to_ascii_lowercase())
@@ -223,7 +219,7 @@ fn match_single_tree_paths<'a>(
             last_positions,
             &lowercase_prefix,
             &lowercase_path_chars,
-            &lowercase_query[..],
+            lowercase_query,
         ) {
             continue;
         }
@@ -235,8 +231,8 @@ fn match_single_tree_paths<'a>(
         best_position_matrix.resize(matrix_len, 0);
 
         let score = score_match(
-            &query[..],
-            &lowercase_query[..],
+            query,
+            lowercase_query,
             &path_chars,
             &lowercase_path_chars,
             &prefix,
@@ -253,9 +249,9 @@ fn match_single_tree_paths<'a>(
             let mat = PathMatch {
                 tree_id: snapshot.id,
                 path: candidate.path.clone(),
+                path_prefix: path_prefix.clone(),
                 score,
                 positions: match_positions.clone(),
-                include_root_name,
             };
             if let Err(i) = results.binary_search_by(|m| mat.cmp(&m)) {
                 if results.len() < max_results {
@@ -630,7 +626,7 @@ mod tests {
                 root_char_bag: Default::default(),
                 next_entry_id: Default::default(),
             },
-            false,
+            "".into(),
             path_entries.into_iter(),
             &query[..],
             &lowercase_query[..],
