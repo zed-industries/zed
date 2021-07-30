@@ -15,7 +15,27 @@
 (function_item name: (identifier) @function.definition)
 (function_signature_item name: (identifier) @function.definition)
 
+; Identifier conventions
+
+; Assume uppercase names are enum constructors
+((identifier) @variant
+ (#match? @variant "^[A-Z]"))
+
+; Assume that uppercase names in paths are types
+((scoped_identifier
+  path: (identifier) @type)
+ (#match? @type "^[A-Z]"))
+((scoped_identifier
+  path: (scoped_identifier
+    name: (identifier) @type))
+ (#match? @type "^[A-Z]"))
+
+; Assume all-caps names are constants
+((identifier) @constant
+ (#match? @constant "^[A-Z][A-Z\\d_]+$'"))
+
 [
+  "as"
   "async"
   "break"
   "const"

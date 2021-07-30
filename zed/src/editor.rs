@@ -2353,6 +2353,7 @@ impl Snapshot {
         viewport_height: f32,
         font_cache: &FontCache,
         layout_cache: &TextLayoutCache,
+        theme: &Theme,
     ) -> Result<Vec<Option<text_layout::Line>>> {
         let font_id = font_cache.select_font(self.font_family, &FontProperties::new())?;
 
@@ -2378,7 +2379,7 @@ impl Snapshot {
                 layouts.push(Some(layout_cache.layout_str(
                     &line_number,
                     self.font_size,
-                    &[(line_number.len(), font_id, ColorU::black())],
+                    &[(line_number.len(), font_id, theme.editor.line_number.0)],
                 )));
             }
         }
@@ -2785,12 +2786,13 @@ mod tests {
         let buffer = cx.add_model(|cx| Buffer::new(0, sample_text(6, 6), cx));
 
         let settings = settings::channel(&font_cache).unwrap().1;
-        let (_, editor) = cx.add_window(|cx| Editor::for_buffer(buffer.clone(), settings, cx));
+        let (_, editor) =
+            cx.add_window(|cx| Editor::for_buffer(buffer.clone(), settings.clone(), cx));
 
         let layouts = editor.update(cx, |editor, cx| {
             editor
                 .snapshot(cx)
-                .layout_line_numbers(1000.0, &font_cache, &layout_cache)
+                .layout_line_numbers(1000.0, &font_cache, &layout_cache, &settings.borrow().theme)
                 .unwrap()
         });
         assert_eq!(layouts.len(), 6);
