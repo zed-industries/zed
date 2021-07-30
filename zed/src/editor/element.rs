@@ -14,7 +14,7 @@ use gpui::{
 };
 use json::json;
 use smallvec::SmallVec;
-use std::{cmp::Ordering, ops::Range};
+use std::{cmp::Ordering, collections::HashSet, ops::Range};
 use std::{
     cmp::{self},
     collections::HashMap,
@@ -387,6 +387,46 @@ impl Element for EditorElement {
             (autoscroll_horizontally, snapshot)
         });
 
+        let scroll_position = snapshot.scroll_position();
+        let start_row = scroll_position.y() as u32;
+        let scroll_top = scroll_position.y() * line_height;
+        let end_row = ((scroll_top + size.y()) / line_height).ceil() as u32 + 1; // Add 1 to ensure selections bleed off screen
+
+        let mut selections = HashMap::new();
+        let mut active_rows = HashSet::new();
+        self.update_view(cx.app, |view, cx| {
+            let replica_id = view.replica_id(cx);
+            for selection_set_id in view.active_selection_sets(cx).collect::<Vec<_>>() {
+                let mut set = Vec::new();
+                for selection in view.selections_in_range(
+                    selection_set_id,
+                    DisplayPoint::new(start_row, 0)..DisplayPoint::new(end_row, 0),
+                    cx,
+                ) {
+                    set.push(selection.clone());
+                    if selection_set_id.replica_id == replica_id {
+                        let mut selection_start;
+                        let mut selection_end;
+                        if selection.start < selection.end {
+                            selection_start = selection.start;
+                            selection_end = selection.end;
+                        } else {
+                            selection_start = selection.end;
+                            selection_end = selection.start;
+                        };
+                        selection_start = snapshot.prev_row_boundary(selection_start).0;
+                        selection_end = snapshot.next_row_boundary(selection_end).0;
+                        active_rows.extend(
+                            cmp::max(selection_start.row(), start_row)
+                                ..=cmp::min(selection_end.row(), end_row),
+                        );
+                    }
+                }
+
+                selections.insert(selection_set_id.replica_id, set);
+            }
+        });
+
         let line_number_layouts = if snapshot.gutter_visible {
             let settings = self
                 .view
@@ -396,7 +436,8 @@ impl Element for EditorElement {
                 .settings
                 .borrow();
             match snapshot.layout_line_numbers(
-                size.y(),
+                start_row..end_row,
+                &active_rows,
                 cx.font_cache,
                 cx.text_layout_cache,
                 &settings.theme,
@@ -410,11 +451,6 @@ impl Element for EditorElement {
         } else {
             Vec::new()
         };
-
-        let scroll_position = snapshot.scroll_position();
-        let start_row = scroll_position.y() as u32;
-        let scroll_top = scroll_position.y() * line_height;
-        let end_row = ((scroll_top + size.y()) / line_height).ceil() as u32 + 1; // Add 1 to ensure selections bleed off screen
 
         let mut max_visible_line_width = 0.0;
         let line_layouts = match snapshot.layout_lines(start_row..end_row, font_cache, layout_cache)
@@ -433,21 +469,6 @@ impl Element for EditorElement {
                 layouts
             }
         };
-
-        let mut selections = HashMap::new();
-        self.update_view(cx.app, |view, cx| {
-            for selection_set_id in view.active_selection_sets(cx).collect::<Vec<_>>() {
-                selections.insert(
-                    selection_set_id.replica_id,
-                    view.selections_in_range(
-                        selection_set_id,
-                        DisplayPoint::new(start_row, 0)..DisplayPoint::new(end_row, 0),
-                        cx,
-                    )
-                    .collect(),
-                );
-            }
-        });
 
         let mut layout = LayoutState {
             size,
