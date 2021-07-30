@@ -531,13 +531,10 @@ impl Snapshot {
         let mut transforms = self.transforms.cursor::<WrapPoint, TabPoint>();
         transforms.seek(&WrapPoint::new(start_row, 0), Bias::Left, &());
         let mut input_row = transforms.sum_start().row();
-        let soft_wrapped;
         if transforms.item().map_or(false, |t| t.is_isomorphic()) {
             input_row += start_row - transforms.seek_start().row();
-            soft_wrapped = false;
-        } else {
-            soft_wrapped = true;
         }
+        let soft_wrapped = transforms.item().map_or(false, |t| !t.is_isomorphic());
         let mut input_buffer_rows = self.tab_snapshot.buffer_rows(input_row);
         let input_buffer_row = input_buffer_rows.next().unwrap();
         BufferRows {
@@ -601,19 +598,22 @@ impl Snapshot {
             let mut prev_tab_row = 0;
             for display_row in 0..=self.max_point().row() {
                 let tab_point = self.to_tab_point(WrapPoint::new(display_row, 0));
-                if tab_point.row() != prev_tab_row {
+                let soft_wrapped;
+                if tab_point.row() == prev_tab_row {
+                    soft_wrapped = display_row != 0;
+                } else {
                     let fold_point = self.tab_snapshot.to_fold_point(tab_point, Bias::Left).0;
                     let buffer_point = fold_point.to_buffer_point(&self.tab_snapshot.fold_snapshot);
                     buffer_row = buffer_point.row;
                     prev_tab_row = tab_point.row();
+                    soft_wrapped = false;
                 }
-                expected_buffer_rows.push(buffer_row);
+                expected_buffer_rows.push((buffer_row, soft_wrapped));
             }
 
             for start_display_row in 0..expected_buffer_rows.len() {
                 assert_eq!(
                     self.buffer_rows(start_display_row as u32)
-                        .map(|(row, _)| row)
                         .collect::<Vec<_>>(),
                     &expected_buffer_rows[start_display_row..],
                     "invalid buffer_rows({}..)",
