@@ -6,7 +6,7 @@ use crate::{
     worktree::{match_paths, PathMatch, Worktree},
 };
 use gpui::{
-    color::{ColorF, ColorU},
+    color::ColorF,
     elements::*,
     fonts::{Properties, Weight},
     geometry::vector::vec2f,
@@ -69,6 +69,8 @@ impl View for FileFinder {
     }
 
     fn render(&self, _: &AppContext) -> ElementBox {
+        let settings = self.settings.borrow();
+
         Align::new(
             ConstrainedBox::new(
                 Container::new(
@@ -80,8 +82,8 @@ impl View for FileFinder {
                 .with_margin_top(12.0)
                 .with_uniform_padding(6.0)
                 .with_corner_radius(6.0)
-                .with_background_color(ColorU::from_u32(0xf2f2f2ff))
-                .with_shadow(vec2f(0., 4.), 12., ColorF::new(0.0, 0.0, 0.0, 0.25).to_u8())
+                .with_background_color(settings.theme.ui.modal_background)
+                .with_shadow(vec2f(0., 4.), 12., ColorF::new(0.0, 0.0, 0.0, 0.5).to_u8())
                 .boxed(),
             )
             .with_max_width(600.0)
@@ -113,6 +115,7 @@ impl FileFinder {
                     settings.ui_font_family,
                     settings.ui_font_size,
                 )
+                .with_default_color(settings.theme.editor.default_text.0)
                 .boxed(),
             )
             .with_margin_top(6.0)
@@ -136,8 +139,6 @@ impl FileFinder {
         );
 
         Container::new(list.boxed())
-            .with_background_color(ColorU::from_u32(0xf7f7f7ff))
-            .with_border(Border::all(1.0, ColorU::from_u32(0xdbdbdcff)))
             .with_margin_top(6.0)
             .named("matches")
     }
@@ -148,11 +149,12 @@ impl FileFinder {
         index: usize,
         cx: &AppContext,
     ) -> Option<ElementBox> {
+        let settings = self.settings.borrow();
+        let theme = &settings.theme.ui;
         self.labels_for_match(path_match, cx).map(
             |(file_name, file_name_positions, full_path, full_path_positions)| {
-                let settings = self.settings.borrow();
-                let highlight_color = ColorU::from_u32(0x304ee2ff);
                 let bold = *Properties::new().weight(Weight::BOLD);
+                let selected_index = self.selected_index();
                 let mut container = Container::new(
                     Flex::row()
                         .with_child(
@@ -177,7 +179,12 @@ impl FileFinder {
                                             settings.ui_font_family,
                                             settings.ui_font_size,
                                         )
-                                        .with_highlights(highlight_color, bold, file_name_positions)
+                                        .with_default_color(theme.modal_match_text.0)
+                                        .with_highlights(
+                                            theme.modal_match_text_highlight.0,
+                                            bold,
+                                            file_name_positions,
+                                        )
                                         .boxed(),
                                     )
                                     .with_child(
@@ -186,7 +193,12 @@ impl FileFinder {
                                             settings.ui_font_family,
                                             settings.ui_font_size,
                                         )
-                                        .with_highlights(highlight_color, bold, full_path_positions)
+                                        .with_default_color(theme.modal_match_text.0)
+                                        .with_highlights(
+                                            theme.modal_match_text_highlight.0,
+                                            bold,
+                                            full_path_positions,
+                                        )
                                         .boxed(),
                                     )
                                     .boxed(),
@@ -195,16 +207,16 @@ impl FileFinder {
                         )
                         .boxed(),
                 )
-                .with_uniform_padding(6.0);
+                .with_uniform_padding(6.0)
+                .with_background_color(if index == selected_index {
+                    theme.modal_match_background_active.0
+                } else {
+                    theme.modal_match_background.0
+                });
 
-                let selected_index = self.selected_index();
                 if index == selected_index || index < self.matches.len() - 1 {
                     container =
-                        container.with_border(Border::bottom(1.0, ColorU::from_u32(0xdbdbdcff)));
-                }
-
-                if index == selected_index {
-                    container = container.with_background_color(ColorU::from_u32(0xdbdbdcff));
+                        container.with_border(Border::bottom(1.0, theme.modal_match_border));
                 }
 
                 let entry = (path_match.tree_id, path_match.path.clone());

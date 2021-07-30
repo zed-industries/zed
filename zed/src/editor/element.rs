@@ -1,6 +1,5 @@
-use crate::time::ReplicaId;
-
 use super::{DisplayPoint, Editor, SelectAction, Snapshot};
+use crate::time::ReplicaId;
 use gpui::{
     color::ColorU,
     geometry::{
@@ -184,12 +183,14 @@ impl EditorElement {
     }
 
     fn paint_gutter(&mut self, rect: RectF, layout: &LayoutState, cx: &mut PaintContext) {
+        let settings = self.view(cx.app).settings.borrow();
+        let theme = &settings.theme;
         let scroll_top = layout.snapshot.scroll_position().y() * layout.line_height;
 
         cx.scene.push_layer(Some(rect));
         cx.scene.push_quad(Quad {
             bounds: rect,
-            background: Some(ColorU::white()),
+            background: Some(theme.editor.gutter_background.0),
             border: Border::new(0., ColorU::transparent_black()),
             corner_radius: 0.,
         });
@@ -214,6 +215,8 @@ impl EditorElement {
 
     fn paint_text(&mut self, bounds: RectF, layout: &LayoutState, cx: &mut PaintContext) {
         let view = self.view(cx.app);
+        let settings = self.view(cx.app).settings.borrow();
+        let theme = &settings.theme.editor;
         let scroll_position = layout.snapshot.scroll_position();
         let start_row = scroll_position.y() as u32;
         let scroll_top = scroll_position.y() * layout.line_height;
@@ -224,26 +227,19 @@ impl EditorElement {
         cx.scene.push_layer(Some(bounds));
         cx.scene.push_quad(Quad {
             bounds,
-            background: Some(ColorU::white()),
+            background: Some(theme.background.0),
             border: Border::new(0., ColorU::transparent_black()),
             corner_radius: 0.,
         });
 
         // Draw selections
         let corner_radius = 2.5;
-        let colors = [
-            (ColorU::from_u32(0xa3d6ffff), ColorU::from_u32(0x000000ff)),
-            (ColorU::from_u32(0xffaf87ff), ColorU::from_u32(0xff8e72ff)),
-            (ColorU::from_u32(0x86eaccff), ColorU::from_u32(0x377771ff)),
-            (ColorU::from_u32(0xb8b8ffff), ColorU::from_u32(0x9381ffff)),
-            (ColorU::from_u32(0xf5cce8ff), ColorU::from_u32(0x4a2040ff)),
-        ];
         let mut cursors = SmallVec::<[Cursor; 32]>::new();
 
         let content_origin = bounds.origin() + layout.text_offset;
 
         for (replica_id, selections) in &layout.selections {
-            let (selection_color, cursor_color) = colors[*replica_id as usize % colors.len()];
+            let replica_theme = theme.replicas[*replica_id as usize % theme.replicas.len()];
 
             for selection in selections {
                 if selection.start != selection.end {
@@ -257,7 +253,7 @@ impl EditorElement {
                     };
 
                     let selection = Selection {
-                        color: selection_color,
+                        color: replica_theme.selection.0,
                         line_height: layout.line_height,
                         start_y: content_origin.y() + row_range.start as f32 * layout.line_height
                             - scroll_top,
@@ -300,7 +296,7 @@ impl EditorElement {
                             - scroll_left;
                         let y = selection.end.row() as f32 * layout.line_height - scroll_top;
                         cursors.push(Cursor {
-                            color: cursor_color,
+                            color: replica_theme.cursor.0,
                             origin: content_origin + vec2f(x, y),
                             line_height: layout.line_height,
                         });
@@ -392,7 +388,19 @@ impl Element for EditorElement {
         });
 
         let line_number_layouts = if snapshot.gutter_visible {
-            match snapshot.layout_line_numbers(size.y(), cx.font_cache, cx.text_layout_cache) {
+            let settings = self
+                .view
+                .upgrade(cx.app)
+                .unwrap()
+                .read(cx.app)
+                .settings
+                .borrow();
+            match snapshot.layout_line_numbers(
+                size.y(),
+                cx.font_cache,
+                cx.text_layout_cache,
+                &settings.theme,
+            ) {
                 Err(error) => {
                     log::error!("error laying out line numbers: {}", error);
                     return (size, None);

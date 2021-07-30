@@ -12,9 +12,9 @@ use crate::{
 };
 use anyhow::{anyhow, Result};
 use gpui::{
-    color::rgbu, elements::*, json::to_string_pretty, keymap::Binding, AnyViewHandle, AppContext,
-    ClipboardItem, Entity, ModelHandle, MutableAppContext, PathPromptOptions, PromptLevel, Task,
-    View, ViewContext, ViewHandle, WeakModelHandle,
+    elements::*, json::to_string_pretty, keymap::Binding, AnyViewHandle, AppContext, ClipboardItem,
+    Entity, ModelHandle, MutableAppContext, PathPromptOptions, PromptLevel, Task, View,
+    ViewContext, ViewHandle, WeakModelHandle,
 };
 use log::error;
 pub use pane::*;
@@ -880,14 +880,14 @@ impl View for Workspace {
     }
 
     fn render(&self, _: &AppContext) -> ElementBox {
+        let settings = self.settings.borrow();
         Container::new(
-            // self.center.render(bump)
             Stack::new()
                 .with_child(self.center.render())
                 .with_children(self.modal.as_ref().map(|m| ChildView::new(m.id()).boxed()))
                 .boxed(),
         )
-        .with_background_color(rgbu(0xea, 0xea, 0xeb))
+        .with_background_color(settings.theme.editor.background)
         .named("workspace")
     }
 

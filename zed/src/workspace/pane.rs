@@ -1,5 +1,5 @@
 use super::{ItemViewHandle, SplitDirection};
-use crate::settings::Settings;
+use crate::settings::{Settings, UiTheme};
 use gpui::{
     color::ColorU,
     elements::*,
@@ -180,7 +180,7 @@ impl Pane {
 
     fn render_tabs(&self, cx: &AppContext) -> ElementBox {
         let settings = self.settings.borrow();
-        let border_color = ColorU::from_u32(0xdbdbdcff);
+        let theme = &settings.theme.ui;
         let line_height = cx.font_cache().line_height(
             cx.font_cache().default_font(settings.ui_font_family),
             settings.ui_font_size,
@@ -189,6 +189,8 @@ impl Pane {
         let mut row = Flex::row();
         let last_item_ix = self.items.len() - 1;
         for (ix, item) in self.items.iter().enumerate() {
+            let is_active = ix == self.active_item;
+
             enum Tab {}
 
             row.add_child(
@@ -197,7 +199,7 @@ impl Pane {
                     MouseEventHandler::new::<Tab, _>(item.id(), cx, |mouse_state| {
                         let title = item.title(cx);
 
-                        let mut border = Border::new(1.0, border_color);
+                        let mut border = Border::new(1.0, theme.tab_border.0);
                         border.left = ix > 0;
                         border.right = ix == last_item_ix;
                         border.bottom = ix != self.active_item;
@@ -211,6 +213,11 @@ impl Pane {
                                             settings.ui_font_family,
                                             settings.ui_font_size,
                                         )
+                                        .with_default_color(if is_active {
+                                            theme.tab_text_active.0
+                                        } else {
+                                            theme.tab_text.0
+                                        })
                                         .boxed(),
                                     )
                                     .boxed(),
@@ -222,6 +229,7 @@ impl Pane {
                                         mouse_state.hovered,
                                         item.is_dirty(cx),
                                         item.has_conflict(cx),
+                                        theme,
                                         cx,
                                     ))
                                     .right()
@@ -232,13 +240,12 @@ impl Pane {
                         .with_horizontal_padding(10.)
                         .with_border(border);
 
-                        if ix == self.active_item {
+                        if is_active {
                             container = container
-                                .with_background_color(ColorU::white())
+                                .with_background_color(theme.tab_background_active)
                                 .with_padding_bottom(border.width);
                         } else {
-                            container =
-                                container.with_background_color(ColorU::from_u32(0xeaeaebff));
+                            container = container.with_background_color(theme.tab_background);
                         }
 
                         ConstrainedBox::new(
@@ -264,7 +271,7 @@ impl Pane {
         row.add_child(
             ConstrainedBox::new(
                 Container::new(Empty::new().boxed())
-                    .with_border(Border::bottom(1.0, border_color))
+                    .with_border(Border::bottom(1.0, theme.tab_border))
                     .boxed(),
             )
             .with_min_width(20.)
@@ -275,7 +282,7 @@ impl Pane {
             Expanded::new(
                 0.0,
                 Container::new(Empty::new().boxed())
-                    .with_border(Border::bottom(1.0, border_color))
+                    .with_border(Border::bottom(1.0, theme.tab_border))
                     .boxed(),
             )
             .named("filler"),
@@ -292,25 +299,25 @@ impl Pane {
         tab_hovered: bool,
         is_dirty: bool,
         has_conflict: bool,
+        theme: &UiTheme,
         cx: &AppContext,
     ) -> ElementBox {
         enum TabCloseButton {}
 
-        let dirty_color = ColorU::from_u32(0x556de8ff);
-        let conflict_color = ColorU::from_u32(0xe45349ff);
-        let mut clicked_color = dirty_color;
+        let mut clicked_color = theme.tab_icon_dirty;
         clicked_color.a = 180;
 
         let current_color = if has_conflict {
-            Some(conflict_color)
+            Some(theme.tab_icon_conflict)
         } else if is_dirty {
-            Some(dirty_color)
+            Some(theme.tab_icon_dirty)
         } else {
             None
         };
 
         let icon = if tab_hovered {
-            let mut icon = Svg::new("icons/x.svg");
+            let close_color = current_color.unwrap_or(theme.tab_icon_close).0;
+            let icon = Svg::new("icons/x.svg").with_color(close_color);
 
             MouseEventHandler::new::<TabCloseButton, _>(item_id, cx, |mouse_state| {
                 if mouse_state.hovered {
@@ -318,14 +325,11 @@ impl Pane {
                         .with_background_color(if mouse_state.clicked {
                             clicked_color
                         } else {
-                            dirty_color
+                            theme.tab_icon_dirty
                         })
                         .with_corner_radius(close_icon_size / 2.)
                         .boxed()
                 } else {
-                    if let Some(current_color) = current_color {
-                        icon = icon.with_color(current_color);
-                    }
                     icon.boxed()
                 }
             })
@@ -339,7 +343,7 @@ impl Pane {
                         let square = RectF::new(bounds.origin(), vec2f(diameter, diameter));
                         cx.scene.push_quad(Quad {
                             bounds: square,
-                            background: Some(current_color),
+                            background: Some(current_color.0),
                             border: Default::default(),
                             corner_radius: diameter / 2.,
                         });

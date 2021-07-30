@@ -20,6 +20,7 @@ pub struct Label {
     family_id: FamilyId,
     font_properties: Properties,
     font_size: f32,
+    default_color: ColorU,
     highlights: Option<Highlights>,
 }
 
@@ -36,8 +37,14 @@ impl Label {
             family_id,
             font_properties: Properties::new(),
             font_size,
+            default_color: ColorU::black(),
             highlights: None,
         }
+    }
+
+    pub fn with_default_color(mut self, color: ColorU) -> Self {
+        self.default_color = color;
+        self
     }
 
     pub fn with_highlights(
@@ -69,7 +76,7 @@ impl Label {
 
             for (char_ix, c) in self.text.char_indices() {
                 let mut font_id = font_id;
-                let mut color = ColorU::black();
+                let mut color = self.default_color;
                 if let Some(highlight_ix) = highlight_indices.peek() {
                     if char_ix == *highlight_ix {
                         font_id = highlight_font_id;
@@ -97,7 +104,7 @@ impl Label {
 
             runs
         } else {
-            smallvec![(self.text.len(), font_id, ColorU::black())]
+            smallvec![(self.text.len(), font_id, self.default_color)]
         }
     }
 }

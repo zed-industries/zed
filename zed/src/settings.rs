@@ -7,7 +7,12 @@ use gpui::{
 };
 use postage::watch;
 use serde::Deserialize;
-use std::{collections::HashMap, sync::Arc};
+use std::{
+    collections::HashMap,
+    fmt,
+    ops::{Deref, DerefMut},
+    sync::Arc,
+};
 
 const DEFAULT_STYLE_ID: StyleId = StyleId(u32::MAX);
 
@@ -23,11 +28,49 @@ pub struct Settings {
 
 #[derive(Clone, Default)]
 pub struct Theme {
-    pub background_color: ColorU,
-    pub line_number_color: ColorU,
-    pub default_text_color: ColorU,
-    syntax_styles: Vec<(String, ColorU, FontProperties)>,
+    pub ui: UiTheme,
+    pub editor: EditorTheme,
+    syntax: Vec<(String, ColorU, FontProperties)>,
 }
+
+#[derive(Clone, Default, Deserialize)]
+#[serde(default)]
+pub struct UiTheme {
+    pub tab_background: Color,
+    pub tab_background_active: Color,
+    pub tab_text: Color,
+    pub tab_text_active: Color,
+    pub tab_border: Color,
+    pub tab_icon_close: Color,
+    pub tab_icon_dirty: Color,
+    pub tab_icon_conflict: Color,
+    pub modal_background: Color,
+    pub modal_match_background: Color,
+    pub modal_match_background_active: Color,
+    pub modal_match_border: Color,
+    pub modal_match_text: Color,
+    pub modal_match_text_highlight: Color,
+}
+
+#[derive(Clone, Default, Deserialize)]
+#[serde(default)]
+pub struct EditorTheme {
+    pub background: Color,
+    pub gutter_background: Color,
+    pub line_number: Color,
+    pub line_number_active: Color,
+    pub default_text: Color,
+    pub replicas: Vec<ReplicaTheme>,
+}
+
+#[derive(Clone, Copy, Deserialize)]
+pub struct ReplicaTheme {
+    pub cursor: Color,
+    pub selection: Color,
+}
+
+#[derive(Clone, Copy, Default)]
+pub struct Color(pub ColorU);
 
 #[derive(Clone, Debug)]
 pub struct ThemeMap(Arc<[StyleId]>);
@@ -44,7 +87,7 @@ impl Settings {
             ui_font_family: font_cache.load_family(&["SF Pro", "Helvetica"])?,
             ui_font_size: 12.0,
             theme: Arc::new(
-                Theme::parse(Assets::get("themes/light.toml").unwrap())
+                Theme::parse(Assets::get("themes/dark.toml").unwrap())
                     .expect("Failed to parse built-in theme"),
             ),
         })
@@ -61,17 +104,19 @@ impl Theme {
         #[derive(Deserialize)]
         struct ThemeToml {
             #[serde(default)]
-            syntax: HashMap<String, StyleToml>,
+            ui: UiTheme,
             #[serde(default)]
-            ui: HashMap<String, u32>,
+            editor: EditorTheme,
+            #[serde(default)]
+            syntax: HashMap<String, StyleToml>,
         }
 
         #[derive(Deserialize)]
         #[serde(untagged)]
         enum StyleToml {
-            Color(u32),
+            Color(Color),
             Full {
-                color: Option<u32>,
+                color: Option<Color>,
                 weight: Option<toml::Value>,
                 #[serde(default)]
                 italic: bool,
@@ -81,7 +126,7 @@ impl Theme {
         let theme_toml: ThemeToml =
             toml::from_slice(source.as_ref()).context("failed to parse theme TOML")?;
 
-        let mut syntax_styles = Vec::<(String, ColorU, FontProperties)>::new();
+        let mut syntax = Vec::<(String, ColorU, FontProperties)>::new();
         for (key, style) in theme_toml.syntax {
             let (color, weight, italic) = match style {
                 StyleToml::Color(color) => (color, None, false),
@@ -89,55 +134,37 @@ impl Theme {
                     color,
                     weight,
                     italic,
-                } => (color.unwrap_or(0), weight, italic),
+                } => (color.unwrap_or(Color::default()), weight, italic),
             };
-            match syntax_styles.binary_search_by_key(&&key, |e| &e.0) {
+            match syntax.binary_search_by_key(&&key, |e| &e.0) {
                 Ok(i) | Err(i) => {
                     let mut properties = FontProperties::new();
                     properties.weight = deserialize_weight(weight)?;
                     if italic {
                         properties.style = FontStyle::Italic;
                     }
-                    syntax_styles.insert(i, (key, deserialize_color(color), properties));
+                    syntax.insert(i, (key, color.0, properties));
                 }
             }
         }
 
-        let background_color = theme_toml
-            .ui
-            .get("background")
-            .copied()
-            .map_or(ColorU::from_u32(0xffffffff), deserialize_color);
-        let line_number_color = theme_toml
-            .ui
-            .get("line_numbers")
-            .copied()
-            .map_or(ColorU::black(), deserialize_color);
-        let default_text_color = theme_toml
-            .ui
-            .get("text")
-            .copied()
-            .map_or(ColorU::black(), deserialize_color);
-
         Ok(Theme {
-            background_color,
-            line_number_color,
-            default_text_color,
-            syntax_styles,
+            ui: theme_toml.ui,
+            editor: theme_toml.editor,
+            syntax,
         })
     }
 
     pub fn syntax_style(&self, id: StyleId) -> (ColorU, FontProperties) {
-        self.syntax_styles
-            .get(id.0 as usize)
-            .map_or((self.default_text_color, FontProperties::new()), |entry| {
-                (entry.1, entry.2)
-            })
+        self.syntax.get(id.0 as usize).map_or(
+            (self.editor.default_text.0, FontProperties::new()),
+            |entry| (entry.1, entry.2),
+        )
     }
 
     #[cfg(test)]
     pub fn syntax_style_name(&self, id: StyleId) -> Option<&str> {
-        self.syntax_styles.get(id.0 as usize).map(|e| e.0.as_str())
+        self.syntax.get(id.0 as usize).map(|e| e.0.as_str())
     }
 }
 
@@ -151,7 +178,7 @@ impl ThemeMap {
                 .iter()
                 .map(|capture_name| {
                     theme
-                        .syntax_styles
+                        .syntax
                         .iter()
                         .enumerate()
                         .filter_map(|(i, (key, _, _))| {
@@ -193,14 +220,51 @@ impl Default for StyleId {
     }
 }
 
+impl<'de> Deserialize<'de> for Color {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        let rgba_value = u32::deserialize(deserializer)?;
+        Ok(Self(ColorU::from_u32((rgba_value << 8) + 0xFF)))
+    }
+}
+
+impl Into<ColorU> for Color {
+    fn into(self) -> ColorU {
+        self.0
+    }
+}
+
+impl Deref for Color {
+    type Target = ColorU;
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
+}
+
+impl DerefMut for Color {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.0
+    }
+}
+
+impl fmt::Debug for Color {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        self.0.fmt(f)
+    }
+}
+
+impl PartialEq<ColorU> for Color {
+    fn eq(&self, other: &ColorU) -> bool {
+        self.0.eq(other)
+    }
+}
+
 pub fn channel(
     font_cache: &FontCache,
 ) -> Result<(watch::Sender<Settings>, watch::Receiver<Settings>)> {
     Ok(watch::channel_with(Settings::new(font_cache)?))
-}
-
-fn deserialize_color(color: u32) -> ColorU {
-    ColorU::from_u32((color << 8) + 0xFF)
 }
 
 fn deserialize_weight(weight: Option<toml::Value>) -> Result<FontWeight> {
@@ -228,8 +292,11 @@ mod tests {
         let theme = Theme::parse(
             r#"
             [ui]
+            tab_background_active = 0x100000
+
+            [editor]
             background = 0x00ed00
-            line_numbers = 0xdddddd
+            line_number = 0xdddddd
 
             [syntax]
             "beta.two" = 0xAABBCC
@@ -239,24 +306,25 @@ mod tests {
         )
         .unwrap();
 
-        assert_eq!(theme.background_color, ColorU::from_u32(0x00ED00FF));
-        assert_eq!(theme.line_number_color, ColorU::from_u32(0xddddddff));
+        assert_eq!(theme.ui.tab_background_active, ColorU::from_u32(0x100000ff));
+        assert_eq!(theme.editor.background, ColorU::from_u32(0x00ed00ff));
+        assert_eq!(theme.editor.line_number, ColorU::from_u32(0xddddddff));
         assert_eq!(
-            theme.syntax_styles,
+            theme.syntax,
             &[
                 (
                     "alpha.one".to_string(),
-                    ColorU::from_u32(0x112233FF),
+                    ColorU::from_u32(0x112233ff),
                     *FontProperties::new().weight(FontWeight::BOLD)
                 ),
                 (
                     "beta.two".to_string(),
-                    ColorU::from_u32(0xAABBCCFF),
+                    ColorU::from_u32(0xaabbccff),
                     *FontProperties::new().weight(FontWeight::NORMAL)
                 ),
                 (
                     "gamma.three".to_string(),
-                    ColorU::from_u32(0x000000FF),
+                    ColorU::from_u32(0x00000000),
                     *FontProperties::new()
                         .weight(FontWeight::LIGHT)
                         .style(FontStyle::Italic),
@@ -273,10 +341,9 @@ mod tests {
     #[test]
     fn test_theme_map() {
         let theme = Theme {
-            default_text_color: Default::default(),
-            background_color: ColorU::default(),
-            line_number_color: ColorU::default(),
-            syntax_styles: [
+            ui: Default::default(),
+            editor: Default::default(),
+            syntax: [
                 ("function", ColorU::from_u32(0x100000ff)),
                 ("function.method", ColorU::from_u32(0x200000ff)),
                 ("function.async", ColorU::from_u32(0x300000ff)),
