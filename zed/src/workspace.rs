@@ -511,7 +511,7 @@ impl Workspace {
         }
     }
 
-    pub fn open_new_file(&mut self, _: &AppState, cx: &mut ViewContext<Self>) {
+    pub fn open_new_file(&mut self, _: &Arc<AppState>, cx: &mut ViewContext<Self>) {
         let buffer = cx.add_model(|cx| Buffer::new(0, "", cx));
         let buffer_view =
             cx.add_view(|cx| Editor::for_buffer(buffer.clone(), self.settings.clone(), cx));

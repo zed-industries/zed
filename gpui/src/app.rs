@@ -723,7 +723,7 @@ impl MutableAppContext {
             if let Some(arg) = arg.downcast_ref() {
                 handler(arg, cx);
             } else {
-                log::error!("Could not downcast argument for action {}", name_clone);
+                log::error!("Could not downcast argument for global action {}", name_clone);
             }
         });
 
