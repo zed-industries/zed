@@ -27,7 +27,7 @@ use smallvec::SmallVec;
 use smol::Timer;
 use std::{
     cmp::{self, Ordering},
-    collections::HashSet,
+    collections::BTreeMap,
     fmt::Write,
     iter::FromIterator,
     mem,
@@ -2357,7 +2357,7 @@ impl Snapshot {
     pub fn layout_line_numbers(
         &self,
         rows: Range<u32>,
-        active_rows: &HashSet<u32>,
+        active_rows: &BTreeMap<u32, bool>,
         font_cache: &FontCache,
         layout_cache: &TextLayoutCache,
         theme: &Theme,
@@ -2373,7 +2373,7 @@ impl Snapshot {
             .enumerate()
         {
             let display_row = rows.start + ix as u32;
-            let color = if active_rows.contains(&display_row) {
+            let color = if active_rows.contains_key(&display_row) {
                 theme.editor.line_number_active.0
             } else {
                 theme.editor.line_number.0
