@@ -118,26 +118,6 @@ pub struct TestAppContext {
 }
 
 impl App {
-    pub fn test<T, F: FnOnce(&mut MutableAppContext) -> T>(
-        foreground_platform: Rc<platform::test::ForegroundPlatform>,
-        platform: Arc<dyn Platform>,
-        font_cache: Arc<FontCache>,
-        f: F,
-    ) -> T {
-        let foreground = Rc::new(executor::Foreground::test());
-        let cx = Rc::new(RefCell::new(MutableAppContext::new(
-            foreground,
-            Arc::new(executor::Background::new()),
-            platform,
-            foreground_platform,
-            font_cache,
-            (),
-        )));
-        cx.borrow_mut().weak_self = Some(Rc::downgrade(&cx));
-        let mut cx = cx.borrow_mut();
-        f(&mut *cx)
-    }
-
     pub fn new(asset_source: impl AssetSource) -> Result<Self> {
         let platform = platform::current::platform();
         let foreground_platform = platform::current::foreground_platform();
@@ -723,7 +703,10 @@ impl MutableAppContext {
             if let Some(arg) = arg.downcast_ref() {
                 handler(arg, cx);
             } else {
-                log::error!("Could not downcast argument for global action {}", name_clone);
+                log::error!(
+                    "Could not downcast argument for global action {}",
+                    name_clone
+                );
             }
         });
 

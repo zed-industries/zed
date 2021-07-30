@@ -73,13 +73,15 @@ pub fn test(args: TokenStream, function: TokenStream) -> TokenStream {
                     match last_segment.map(|s| s.ident.to_string()).as_deref() {
                         Some("TestAppContext") => {
                             let first_entity_id = ix * 100_000;
-                            inner_fn_args.extend(quote!(#namespace::TestAppContext::new(
-                                foreground_platform.clone(),
-                                platform.clone(),
-                                foreground.clone(),
-                                background.clone(),
-                                font_cache.clone(),
-                                #first_entity_id),
+                            inner_fn_args.extend(quote!(
+                                #namespace::TestAppContext::new(
+                                    foreground_platform.clone(),
+                                    platform.clone(),
+                                    foreground.clone(),
+                                    background.clone(),
+                                    font_cache.clone(),
+                                    #first_entity_id,
+                                ),
                             ));
                         }
                         Some("StdRng") => {
@@ -222,9 +224,17 @@ pub fn test(args: TokenStream, function: TokenStream) -> TokenStream {
                                 dbg!(seed);
                             }
 
-                            #namespace::App::test(foreground_platform.clone(), platform.clone(), font_cache.clone(), |cx| {
-                                #inner_fn_name(#inner_fn_args);
-                            });
+                            let (foreground, background) = #namespace::executor::deterministic(seed);
+                            let mut cx = #namespace::TestAppContext::new(
+                                foreground_platform.clone(),
+                                platform.clone(),
+                                foreground.clone(),
+                                background.clone(),
+                                font_cache.clone(),
+                                0,
+                            );
+                            cx.update(|cx| #inner_fn_name(#inner_fn_args));
+
                             atomic_seed.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
                         }
                     });
