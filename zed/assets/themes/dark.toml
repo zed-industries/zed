@@ -14,7 +14,6 @@ modal_match_border = 0x000000
 modal_match_text = 0xcccccc
 modal_match_text_highlight = 0x18a3ff
 
-
 [editor]
 background = 0x1c1d1e
 gutter_background = 0x1c1d1e

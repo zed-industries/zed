@@ -5,6 +5,7 @@ pub mod movement;
 
 use crate::{
     settings::{Settings, StyleId, Theme},
+    time::ReplicaId,
     util::{post_inc, Bias},
     workspace,
     worktree::{File, Worktree},
@@ -26,6 +27,7 @@ use smallvec::SmallVec;
 use smol::Timer;
 use std::{
     cmp::{self, Ordering},
+    collections::HashSet,
     fmt::Write,
     iter::FromIterator,
     mem,
@@ -459,6 +461,10 @@ impl Editor {
             blinking_paused: false,
             single_line: false,
         }
+    }
+
+    pub fn replica_id(&self, cx: &AppContext) -> ReplicaId {
+        self.buffer.read(cx).replica_id()
     }
 
     pub fn buffer(&self) -> &ModelHandle<Buffer> {
@@ -2350,27 +2356,28 @@ impl Snapshot {
 
     pub fn layout_line_numbers(
         &self,
-        viewport_height: f32,
+        rows: Range<u32>,
+        active_rows: &HashSet<u32>,
         font_cache: &FontCache,
         layout_cache: &TextLayoutCache,
         theme: &Theme,
     ) -> Result<Vec<Option<text_layout::Line>>> {
         let font_id = font_cache.select_font(self.font_family, &FontProperties::new())?;
 
-        let start_row = self.scroll_position().y() as usize;
-        let end_row = cmp::min(
-            self.display_snapshot.max_point().row() as usize,
-            start_row + (viewport_height / self.line_height(font_cache)).ceil() as usize,
-        );
-        let line_count = end_row - start_row + 1;
-
-        let mut layouts = Vec::with_capacity(line_count);
+        let mut layouts = Vec::with_capacity(rows.len());
         let mut line_number = String::new();
-        for (buffer_row, soft_wrapped) in self
+        for (ix, (buffer_row, soft_wrapped)) in self
             .display_snapshot
-            .buffer_rows(start_row as u32)
-            .take(line_count)
+            .buffer_rows(rows.start)
+            .take((rows.end - rows.start) as usize)
+            .enumerate()
         {
+            let display_row = rows.start + ix as u32;
+            let color = if active_rows.contains(&display_row) {
+                theme.editor.line_number_active.0
+            } else {
+                theme.editor.line_number.0
+            };
             if soft_wrapped {
                 layouts.push(None);
             } else {
@@ -2379,7 +2386,7 @@ impl Snapshot {
                 layouts.push(Some(layout_cache.layout_str(
                     &line_number,
                     self.font_size,
-                    &[(line_number.len(), font_id, theme.editor.line_number.0)],
+                    &[(line_number.len(), font_id, color)],
                 )));
             }
         }
@@ -2481,6 +2488,14 @@ impl Snapshot {
                 ColorU::black(),
             )],
         ))
+    }
+
+    pub fn prev_row_boundary(&self, point: DisplayPoint) -> (DisplayPoint, Point) {
+        self.display_snapshot.prev_row_boundary(point)
+    }
+
+    pub fn next_row_boundary(&self, point: DisplayPoint) -> (DisplayPoint, Point) {
+        self.display_snapshot.next_row_boundary(point)
     }
 }
 
@@ -2792,7 +2807,13 @@ mod tests {
         let layouts = editor.update(cx, |editor, cx| {
             editor
                 .snapshot(cx)
-                .layout_line_numbers(1000.0, &font_cache, &layout_cache, &settings.borrow().theme)
+                .layout_line_numbers(
+                    0..6,
+                    &Default::default(),
+                    &font_cache,
+                    &layout_cache,
+                    &settings.borrow().theme,
+                )
                 .unwrap()
         });
         assert_eq!(layouts.len(), 6);
