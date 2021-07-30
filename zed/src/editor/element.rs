@@ -14,10 +14,10 @@ use gpui::{
 };
 use json::json;
 use smallvec::SmallVec;
-use std::{cmp::Ordering, collections::HashSet, ops::Range};
 use std::{
-    cmp::{self},
-    collections::HashMap,
+    cmp::{self, Ordering},
+    collections::{BTreeMap, HashMap},
+    ops::Range,
 };
 
 pub struct EditorElement {
@@ -182,19 +182,64 @@ impl EditorElement {
         true
     }
 
-    fn paint_gutter(&mut self, rect: RectF, layout: &LayoutState, cx: &mut PaintContext) {
-        let settings = self.view(cx.app).settings.borrow();
-        let theme = &settings.theme;
+    fn paint_background(
+        &self,
+        gutter_bounds: RectF,
+        text_bounds: RectF,
+        layout: &LayoutState,
+        cx: &mut PaintContext,
+    ) {
+        let bounds = gutter_bounds.union_rect(text_bounds);
         let scroll_top = layout.snapshot.scroll_position().y() * layout.line_height;
-
-        cx.scene.push_layer(Some(rect));
+        let editor = self.view(cx.app);
+        let settings = editor.settings.borrow();
+        let theme = &settings.theme;
         cx.scene.push_quad(Quad {
-            bounds: rect,
+            bounds: gutter_bounds,
             background: Some(theme.editor.gutter_background.0),
             border: Border::new(0., ColorU::transparent_black()),
             corner_radius: 0.,
         });
+        cx.scene.push_quad(Quad {
+            bounds: text_bounds,
+            background: Some(theme.editor.background.0),
+            border: Border::new(0., ColorU::transparent_black()),
+            corner_radius: 0.,
+        });
 
+        if !editor.single_line {
+            let mut active_rows = layout.active_rows.iter().peekable();
+            while let Some((start_row, contains_non_empty_selection)) = active_rows.next() {
+                let mut end_row = *start_row;
+                while active_rows.peek().map_or(false, |r| {
+                    *r.0 == end_row + 1 && r.1 == contains_non_empty_selection
+                }) {
+                    active_rows.next().unwrap();
+                    end_row += 1;
+                }
+
+                if !contains_non_empty_selection {
+                    let origin = vec2f(
+                        bounds.origin_x(),
+                        bounds.origin_y() + (layout.line_height * *start_row as f32) - scroll_top,
+                    );
+                    let size = vec2f(
+                        bounds.width(),
+                        layout.line_height * (end_row - start_row + 1) as f32,
+                    );
+                    cx.scene.push_quad(Quad {
+                        bounds: RectF::new(origin, size),
+                        background: Some(theme.editor.active_line_background.0),
+                        border: Border::default(),
+                        corner_radius: 0.,
+                    });
+                }
+            }
+        }
+    }
+
+    fn paint_gutter(&mut self, rect: RectF, layout: &LayoutState, cx: &mut PaintContext) {
+        let scroll_top = layout.snapshot.scroll_position().y() * layout.line_height;
         for (ix, line) in layout.line_number_layouts.iter().enumerate() {
             if let Some(line) = line {
                 let line_origin = rect.origin()
@@ -209,8 +254,6 @@ impl EditorElement {
                 );
             }
         }
-
-        cx.scene.pop_layer();
     }
 
     fn paint_text(&mut self, bounds: RectF, layout: &LayoutState, cx: &mut PaintContext) {
@@ -225,12 +268,6 @@ impl EditorElement {
         let scroll_left = scroll_position.x() * max_glyph_width;
 
         cx.scene.push_layer(Some(bounds));
-        cx.scene.push_quad(Quad {
-            bounds,
-            background: Some(theme.background.0),
-            border: Border::new(0., ColorU::transparent_black()),
-            corner_radius: 0.,
-        });
 
         // Draw selections
         let corner_radius = 2.5;
@@ -393,7 +430,7 @@ impl Element for EditorElement {
         let end_row = ((scroll_top + size.y()) / line_height).ceil() as u32 + 1; // Add 1 to ensure selections bleed off screen
 
         let mut selections = HashMap::new();
-        let mut active_rows = HashSet::new();
+        let mut active_rows = BTreeMap::new();
         self.update_view(cx.app, |view, cx| {
             let replica_id = view.replica_id(cx);
             for selection_set_id in view.active_selection_sets(cx).collect::<Vec<_>>() {
@@ -405,6 +442,7 @@ impl Element for EditorElement {
                 ) {
                     set.push(selection.clone());
                     if selection_set_id.replica_id == replica_id {
+                        let is_empty = selection.start == selection.end;
                         let mut selection_start;
                         let mut selection_end;
                         if selection.start < selection.end {
@@ -416,10 +454,13 @@ impl Element for EditorElement {
                         };
                         selection_start = snapshot.prev_row_boundary(selection_start).0;
                         selection_end = snapshot.next_row_boundary(selection_end).0;
-                        active_rows.extend(
-                            cmp::max(selection_start.row(), start_row)
-                                ..=cmp::min(selection_end.row(), end_row),
-                        );
+                        for row in cmp::max(selection_start.row(), start_row)
+                            ..=cmp::min(selection_end.row(), end_row)
+                        {
+                            let contains_non_empty_selection =
+                                active_rows.entry(row).or_insert(!is_empty);
+                            *contains_non_empty_selection |= !is_empty;
+                        }
                     }
                 }
 
@@ -478,6 +519,7 @@ impl Element for EditorElement {
             overscroll,
             text_offset,
             snapshot,
+            active_rows,
             line_layouts,
             line_number_layouts,
             line_height,
@@ -520,16 +562,21 @@ impl Element for EditorElement {
         cx: &mut PaintContext,
     ) -> Self::PaintState {
         if let Some(layout) = layout {
+            cx.scene.push_layer(Some(bounds));
+
             let gutter_bounds = RectF::new(bounds.origin(), layout.gutter_size);
             let text_bounds = RectF::new(
                 bounds.origin() + vec2f(layout.gutter_size.x(), 0.0),
                 layout.text_size,
             );
 
+            self.paint_background(gutter_bounds, text_bounds, layout, cx);
             if layout.gutter_size.x() > 0. {
                 self.paint_gutter(gutter_bounds, layout, cx);
             }
             self.paint_text(text_bounds, layout, cx);
+
+            cx.scene.pop_layer();
 
             Some(PaintState {
                 bounds,
@@ -590,6 +637,7 @@ pub struct LayoutState {
     gutter_padding: f32,
     text_size: Vector2F,
     snapshot: Snapshot,
+    active_rows: BTreeMap<u32, bool>,
     line_layouts: Vec<text_layout::Line>,
     line_number_layouts: Vec<Option<text_layout::Line>>,
     line_height: f32,

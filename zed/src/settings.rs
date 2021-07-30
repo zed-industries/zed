@@ -57,6 +57,7 @@ pub struct UiTheme {
 pub struct EditorTheme {
     pub background: Color,
     pub gutter_background: Color,
+    pub active_line_background: Color,
     pub line_number: Color,
     pub line_number_active: Color,
     pub default_text: Color,
