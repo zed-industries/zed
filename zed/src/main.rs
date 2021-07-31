@@ -20,13 +20,15 @@ fn main() {
 
     let app = gpui::App::new(assets::Assets).unwrap();
 
-    let (_, settings) = settings::channel(&app.font_cache()).unwrap();
+    let themes = settings::ThemeRegistry::new(assets::Assets);
+    let (_, settings) = settings::channel_with_themes(&app.font_cache(), &themes).unwrap();
     let languages = Arc::new(language::LanguageRegistry::new());
     languages.set_theme(&settings.borrow().theme);
 
     let mut app_state = AppState {
         languages: languages.clone(),
         settings,
+        themes,
         rpc_router: Arc::new(ForegroundRouter::new()),
         rpc: rpc::Client::new(languages),
         fs: Arc::new(RealFs),

@@ -340,7 +340,7 @@ mod tests {
         util::RandomCharIter,
     };
     use buffer::{History, SelectionGoal};
-    use gpui::MutableAppContext;
+    use gpui::{color::ColorU, MutableAppContext};
     use rand::{prelude::StdRng, Rng};
     use std::{env, sync::Arc};
     use Bias::*;
@@ -652,13 +652,21 @@ mod tests {
             (function_item name: (identifier) @fn.name)"#,
         )
         .unwrap();
-        let theme = Theme::parse(
-            r#"
-            [syntax]
-            "mod.body" = 0xff0000
-            "fn.name" = 0x00ff00"#,
-        )
-        .unwrap();
+        let theme = Theme {
+            syntax: vec![
+                (
+                    "mod.body".to_string(),
+                    ColorU::from_u32(0xff0000ff),
+                    Default::default(),
+                ),
+                (
+                    "fn.name".to_string(),
+                    ColorU::from_u32(0x00ff00ff),
+                    Default::default(),
+                ),
+            ],
+            ..Default::default()
+        };
         let lang = Arc::new(Language {
             config: LanguageConfig {
                 name: "Test".to_string(),
@@ -742,13 +750,21 @@ mod tests {
             (function_item name: (identifier) @fn.name)"#,
         )
         .unwrap();
-        let theme = Theme::parse(
-            r#"
-            [syntax]
-            "mod.body" = 0xff0000
-            "fn.name" = 0x00ff00"#,
-        )
-        .unwrap();
+        let theme = Theme {
+            syntax: vec![
+                (
+                    "mod.body".to_string(),
+                    ColorU::from_u32(0xff0000ff),
+                    Default::default(),
+                ),
+                (
+                    "fn.name".to_string(),
+                    ColorU::from_u32(0x00ff00ff),
+                    Default::default(),
+                ),
+            ],
+            ..Default::default()
+        };
         let lang = Arc::new(Language {
             config: LanguageConfig {
                 name: "Test".to_string(),

@@ -14,7 +14,7 @@ name = "Zed"
 path = "src/main.rs"
 
 [features]
-test-support = ["tempdir", "serde_json", "zrpc/test-support"]
+test-support = ["tempdir", "zrpc/test-support"]
 
 [dependencies]
 anyhow = "1.0.38"
@@ -41,9 +41,7 @@ rsa = "0.4"
 rust-embed = "5.9.0"
 seahash = "4.1"
 serde = { version = "1", features = ["derive"] }
-serde_json = { version = "1.0.64", features = [
-  "preserve_order",
-], optional = true }
+serde_json = { version = "1.0.64", features = ["preserve_order"] }
 similar = "1.3"
 simplelog = "0.9"
 smallvec = { version = "1.6", features = ["union"] }

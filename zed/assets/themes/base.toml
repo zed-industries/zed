@@ -1,0 +1,28 @@
+[ui]
+background = "$elevation_1"
+tab_background = "$elevation_2"
+tab_background_active = "$elevation_3"
+tab_text = "$text_dull"
+tab_text_active = "$text_bright"
+tab_border = 0x000000
+tab_icon_close = 0x383839
+tab_icon_dirty = 0x556de8
+tab_icon_conflict = 0xe45349
+modal_background = "$elevation_4"
+modal_match_background = 0x424344
+modal_match_background_active = 0x094771
+modal_match_border = 0x000000
+modal_match_text = 0xcccccc
+modal_match_text_highlight = 0x18a3ff
+
+[editor]
+background = "$elevation_3"
+gutter_background = "$elevation_3"
+active_line_background = "$elevation_4"
+line_number = "$text_dull"
+line_number_active = "$text_bright"
+default_text = "$text_normal"
+replicas = [
+    { selection = 0x264f78, cursor = "$text_bright" },
+    { selection = 0x504f31, cursor = 0xfcf154 },
+]

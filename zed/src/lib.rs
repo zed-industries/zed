@@ -18,9 +18,11 @@ pub mod workspace;
 pub mod worktree;
 
 pub use settings::Settings;
+
 pub struct AppState {
     pub settings: postage::watch::Receiver<Settings>,
     pub languages: std::sync::Arc<language::LanguageRegistry>,
+    pub themes: std::sync::Arc<settings::ThemeRegistry>,
     pub rpc_router: std::sync::Arc<ForegroundRouter>,
     pub rpc: rpc::Client,
     pub fs: std::sync::Arc<dyn fs::Fs>,
