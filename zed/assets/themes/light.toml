@@ -1,0 +1,21 @@
+extends = "_base"
+
+[variables]
+elevation_1 = 0xffffff
+elevation_2 = 0xf3f3f3
+elevation_3 = 0xececec
+elevation_4 = 0x3a3b3c
+text_dull = 0xacacac
+text_bright = 0x111111
+text_normal = 0x333333
+
+[syntax]
+keyword = 0x0000fa
+function = 0x795e26
+string = 0xa82121
+type = 0x267f29
+number = 0xb5cea8
+comment = 0x6a9955
+property = 0x4e94ce
+variant = 0x4fc1ff
+constant = 0x9cdcfe

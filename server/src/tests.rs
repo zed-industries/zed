@@ -607,7 +607,7 @@ impl gpui::View for EmptyView {
         "empty view"
     }
 
-    fn render<'a>(&self, _: &gpui::AppContext) -> gpui::ElementBox {
+    fn render<'a>(&self, _: &gpui::RenderContext<Self>) -> gpui::ElementBox {
         gpui::Element::boxed(gpui::elements::Empty)
     }
 }

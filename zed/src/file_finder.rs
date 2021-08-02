@@ -11,8 +11,8 @@ use gpui::{
     fonts::{Properties, Weight},
     geometry::vector::vec2f,
     keymap::{self, Binding},
-    AppContext, Axis, Border, Entity, MutableAppContext, Task, View, ViewContext, ViewHandle,
-    WeakViewHandle,
+    AppContext, Axis, Border, Entity, MutableAppContext, RenderContext, Task, View, ViewContext,
+    ViewHandle, WeakViewHandle,
 };
 use postage::watch;
 use std::{
@@ -45,7 +45,6 @@ pub fn init(cx: &mut MutableAppContext) {
     cx.add_action("file_finder:select", FileFinder::select);
     cx.add_action("menu:select_prev", FileFinder::select_prev);
     cx.add_action("menu:select_next", FileFinder::select_next);
-    cx.add_action("uniform_list:scroll", FileFinder::scroll);
 
     cx.add_bindings(vec![
         Binding::new("cmd-p", "file_finder:toggle", None),
@@ -68,7 +67,7 @@ impl View for FileFinder {
         "FileFinder"
     }
 
-    fn render(&self, _: &AppContext) -> ElementBox {
+    fn render(&self, _: &RenderContext<Self>) -> ElementBox {
         let settings = self.settings.borrow();
 
         Align::new(
@@ -267,31 +266,30 @@ impl FileFinder {
         })
     }
 
-    fn toggle(workspace_view: &mut Workspace, _: &(), cx: &mut ViewContext<Workspace>) {
-        workspace_view.toggle_modal(cx, |cx, workspace_view| {
-            let workspace = cx.handle();
-            let finder =
-                cx.add_view(|cx| Self::new(workspace_view.settings.clone(), workspace, cx));
+    fn toggle(workspace: &mut Workspace, _: &(), cx: &mut ViewContext<Workspace>) {
+        workspace.toggle_modal(cx, |cx, workspace| {
+            let handle = cx.handle();
+            let finder = cx.add_view(|cx| Self::new(workspace.settings.clone(), handle, cx));
             cx.subscribe_to_view(&finder, Self::on_event);
             finder
         });
     }
 
     fn on_event(
-        workspace_view: &mut Workspace,
+        workspace: &mut Workspace,
         _: ViewHandle<FileFinder>,
         event: &Event,
         cx: &mut ViewContext<Workspace>,
     ) {
         match event {
             Event::Selected(tree_id, path) => {
-                workspace_view
+                workspace
                     .open_entry((*tree_id, path.clone()), cx)
                     .map(|d| d.detach());
-                workspace_view.dismiss_modal(cx);
+                workspace.dismiss_modal(cx);
             }
             Event::Dismissed => {
-                workspace_view.dismiss_modal(cx);
+                workspace.dismiss_modal(cx);
             }
         }
     }
@@ -318,7 +316,7 @@ impl FileFinder {
             matches: Vec::new(),
             selected: None,
             cancel_flag: Arc::new(AtomicBool::new(false)),
-            list_state: UniformListState::new(),
+            list_state: Default::default(),
         }
     }
 
@@ -388,10 +386,6 @@ impl FileFinder {
         cx.notify();
     }
 
-    fn scroll(&mut self, _: &f32, cx: &mut ViewContext<Self>) {
-        cx.notify();
-    }
-
     fn confirm(&mut self, _: &(), cx: &mut ViewContext<Self>) {
         if let Some(m) = self.matches.get(self.selected_index()) {
             cx.emit(Event::Selected(m.tree_id, m.path.clone()));
@@ -426,7 +420,7 @@ impl FileFinder {
                 false,
                 false,
                 100,
-                cancel_flag.clone(),
+                cancel_flag.as_ref(),
                 background,
             )
             .await;

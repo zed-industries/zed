@@ -18,8 +18,8 @@ pub use element::*;
 use gpui::{
     color::ColorU, font_cache::FamilyId, fonts::Properties as FontProperties,
     geometry::vector::Vector2F, keymap::Binding, text_layout, AppContext, ClipboardItem, Element,
-    ElementBox, Entity, FontCache, ModelHandle, MutableAppContext, Task, TextLayoutCache, View,
-    ViewContext, WeakViewHandle,
+    ElementBox, Entity, FontCache, ModelHandle, MutableAppContext, RenderContext, Task,
+    TextLayoutCache, View, ViewContext, WeakViewHandle,
 };
 use postage::watch;
 use serde::{Deserialize, Serialize};
@@ -2533,7 +2533,7 @@ impl Entity for Editor {
 }
 
 impl View for Editor {
-    fn render<'a>(&self, _: &AppContext) -> ElementBox {
+    fn render<'a>(&self, _: &RenderContext<Self>) -> ElementBox {
         EditorElement::new(self.handle.clone()).boxed()
     }
 

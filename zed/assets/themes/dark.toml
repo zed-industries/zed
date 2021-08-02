@@ -1,4 +1,4 @@
-extends = "base"
+extends = "_base"
 
 [variables]
 elevation_1 = 0x050101

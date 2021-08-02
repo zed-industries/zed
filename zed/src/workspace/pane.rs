@@ -5,7 +5,8 @@ use gpui::{
     elements::*,
     geometry::{rect::RectF, vector::vec2f},
     keymap::Binding,
-    AppContext, Border, Entity, MutableAppContext, Quad, View, ViewContext, ViewHandle,
+    AppContext, Border, Entity, MutableAppContext, Quad, RenderContext, View, ViewContext,
+    ViewHandle,
 };
 use postage::watch;
 use std::{cmp, path::Path, sync::Arc};
@@ -371,7 +372,7 @@ impl View for Pane {
         "Pane"
     }
 
-    fn render<'a>(&self, cx: &AppContext) -> ElementBox {
+    fn render<'a>(&self, cx: &RenderContext<Self>) -> ElementBox {
         if let Some(active_item) = self.active_item() {
             Flex::column()
                 .with_child(self.render_tabs(cx))

@@ -13,8 +13,8 @@ use crate::{
 use anyhow::{anyhow, Result};
 use gpui::{
     elements::*, json::to_string_pretty, keymap::Binding, AnyViewHandle, AppContext, ClipboardItem,
-    Entity, ModelHandle, MutableAppContext, PathPromptOptions, PromptLevel, Task, View,
-    ViewContext, ViewHandle, WeakModelHandle,
+    Entity, ModelHandle, MutableAppContext, PathPromptOptions, PromptLevel, RenderContext, Task,
+    View, ViewContext, ViewHandle, WeakModelHandle,
 };
 use log::error;
 pub use pane::*;
@@ -879,7 +879,7 @@ impl View for Workspace {
         "Workspace"
     }
 
-    fn render(&self, _: &AppContext) -> ElementBox {
+    fn render(&self, _: &RenderContext<Self>) -> ElementBox {
         let settings = self.settings.borrow();
         Container::new(
             Stack::new()
@@ -974,8 +974,8 @@ mod tests {
         })
         .await;
         assert_eq!(cx.window_ids().len(), 1);
-        let workspace_view_1 = cx.root_view::<Workspace>(cx.window_ids()[0]).unwrap();
-        workspace_view_1.read_with(&cx, |workspace, _| {
+        let workspace_1 = cx.root_view::<Workspace>(cx.window_ids()[0]).unwrap();
+        workspace_1.read_with(&cx, |workspace, _| {
             assert_eq!(workspace.worktrees().len(), 2)
         });
 
@@ -1380,9 +1380,9 @@ mod tests {
             assert_eq!(pane2_item.entry_id(cx.as_ref()), Some(file1.clone()));
 
             cx.dispatch_action(window_id, vec![pane_2.id()], "pane:close_active_item", ());
-            let workspace_view = workspace.read(cx);
-            assert_eq!(workspace_view.panes.len(), 1);
-            assert_eq!(workspace_view.active_pane(), &pane_1);
+            let workspace = workspace.read(cx);
+            assert_eq!(workspace.panes.len(), 1);
+            assert_eq!(workspace.active_pane(), &pane_1);
         });
     }
 }

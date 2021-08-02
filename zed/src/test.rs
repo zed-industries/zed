@@ -6,6 +6,7 @@ use crate::{
     time::ReplicaId,
     AppState,
 };
+use futures::lock::Mutex;
 use gpui::{AppContext, Entity, ModelHandle};
 use smol::channel;
 use std::{
@@ -154,10 +155,11 @@ fn write_tree(path: &Path, tree: serde_json::Value) {
 }
 
 pub fn build_app_state(cx: &AppContext) -> Arc<AppState> {
-    let settings = settings::channel(&cx.font_cache()).unwrap().1;
+    let (settings_tx, settings) = settings::channel(&cx.font_cache()).unwrap();
     let languages = Arc::new(LanguageRegistry::new());
     let themes = ThemeRegistry::new(());
     Arc::new(AppState {
+        settings_tx: Arc::new(Mutex::new(settings_tx)),
         settings,
         themes,
         languages: languages.clone(),

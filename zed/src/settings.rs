@@ -133,6 +133,18 @@ impl ThemeRegistry {
         })
     }
 
+    pub fn list(&self) -> impl Iterator<Item = String> {
+        self.assets.list("themes/").into_iter().filter_map(|path| {
+            let filename = path.strip_prefix("themes/")?;
+            let theme_name = filename.strip_suffix(".toml")?;
+            if theme_name.starts_with('_') {
+                None
+            } else {
+                Some(theme_name.to_string())
+            }
+        })
+    }
+
     pub fn get(&self, name: &str) -> Result<Arc<Theme>> {
         if let Some(theme) = self.themes.lock().get(name) {
             return Ok(theme.clone());
@@ -497,8 +509,10 @@ mod tests {
     fn test_parse_extended_theme() {
         let assets = TestAssets(&[
             (
-                "themes/base.toml",
+                "themes/_base.toml",
                 r#"
+                abstract = true
+
                 [ui]
                 tab_background = 0x111111
                 tab_text = "$variable_1"
@@ -511,7 +525,7 @@ mod tests {
             (
                 "themes/light.toml",
                 r#"
-                extends = "base"
+                extends = "_base"
 
                 [variables]
                 variable_1 = 0x333333
@@ -524,6 +538,16 @@ mod tests {
                 background = 0x666666
                 "#,
             ),
+            (
+                "themes/dark.toml",
+                r#"
+                extends = "_base"
+
+                [variables]
+                variable_1 = 0x555555
+                variable_2 = 0x666666
+                "#,
+            ),
         ]);
 
         let registry = ThemeRegistry::new(assets);
@@ -533,6 +557,11 @@ mod tests {
         assert_eq!(theme.ui.tab_text, ColorU::from_u32(0x333333ff));
         assert_eq!(theme.editor.background, ColorU::from_u32(0x666666ff));
         assert_eq!(theme.editor.default_text, ColorU::from_u32(0x444444ff));
+
+        assert_eq!(
+            registry.list().collect::<Vec<_>>(),
+            &["light".to_string(), "dark".to_string()]
+        );
     }
 
     #[test]
@@ -584,6 +613,20 @@ mod tests {
             } else {
                 Err(anyhow!("no such path {}", path))
             }
+        }
+
+        fn list(&self, prefix: &str) -> Vec<std::borrow::Cow<'static, str>> {
+            self.0
+                .iter()
+                .copied()
+                .filter_map(|(path, _)| {
+                    if path.starts_with(prefix) {
+                        Some(path.into())
+                    } else {
+                        None
+                    }
+                })
+                .collect()
         }
     }
 }

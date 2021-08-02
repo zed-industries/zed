@@ -1,5 +1,5 @@
 mod char_bag;
-mod fuzzy;
+pub(crate) mod fuzzy;
 mod ignore;
 
 use self::{char_bag::CharBag, ignore::IgnoreStack};
@@ -2615,6 +2615,7 @@ mod tests {
 
             tree.snapshot()
         });
+        let cancel_flag = Default::default();
         let results = cx
             .read(|cx| {
                 match_paths(
@@ -2624,7 +2625,7 @@ mod tests {
                     false,
                     false,
                     10,
-                    Default::default(),
+                    &cancel_flag,
                     cx.background().clone(),
                 )
             })
@@ -2667,6 +2668,7 @@ mod tests {
             assert_eq!(tree.file_count(), 0);
             tree.snapshot()
         });
+        let cancel_flag = Default::default();
         let results = cx
             .read(|cx| {
                 match_paths(
@@ -2676,7 +2678,7 @@ mod tests {
                     false,
                     false,
                     10,
-                    Default::default(),
+                    &cancel_flag,
                     cx.background().clone(),
                 )
             })

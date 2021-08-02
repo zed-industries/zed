@@ -2,13 +2,14 @@
 #![allow(non_snake_case)]
 
 use fs::OpenOptions;
+use futures::lock::Mutex;
 use log::LevelFilter;
 use simplelog::SimpleLogger;
 use std::{fs, path::PathBuf, sync::Arc};
 use zed::{
     self, assets, editor, file_finder,
     fs::RealFs,
-    language, menus, rpc, settings,
+    language, menus, rpc, settings, theme_picker,
     workspace::{self, OpenParams},
     worktree::{self},
     AppState,
@@ -21,12 +22,14 @@ fn main() {
     let app = gpui::App::new(assets::Assets).unwrap();
 
     let themes = settings::ThemeRegistry::new(assets::Assets);
-    let (_, settings) = settings::channel_with_themes(&app.font_cache(), &themes).unwrap();
+    let (settings_tx, settings) =
+        settings::channel_with_themes(&app.font_cache(), &themes).unwrap();
     let languages = Arc::new(language::LanguageRegistry::new());
     languages.set_theme(&settings.borrow().theme);
 
     let mut app_state = AppState {
         languages: languages.clone(),
+        settings_tx: Arc::new(Mutex::new(settings_tx)),
         settings,
         themes,
         rpc_router: Arc::new(ForegroundRouter::new()),
@@ -40,12 +43,14 @@ fn main() {
             &app_state.rpc,
             Arc::get_mut(&mut app_state.rpc_router).unwrap(),
         );
+        let app_state = Arc::new(app_state);
+
         zed::init(cx);
         workspace::init(cx);
         editor::init(cx);
         file_finder::init(cx);
+        theme_picker::init(cx, &app_state);
 
-        let app_state = Arc::new(app_state);
         cx.set_menus(menus::menus(&app_state.clone()));
 
         if stdout_is_a_pty() {

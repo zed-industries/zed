@@ -1,5 +1,3 @@
-use zrpc::ForegroundRouter;
-
 pub mod assets;
 pub mod editor;
 pub mod file_finder;
@@ -12,6 +10,7 @@ pub mod settings;
 mod sum_tree;
 #[cfg(any(test, feature = "test-support"))]
 pub mod test;
+pub mod theme_picker;
 mod time;
 mod util;
 pub mod workspace;
@@ -19,13 +18,19 @@ pub mod worktree;
 
 pub use settings::Settings;
 
+use futures::lock::Mutex;
+use postage::watch;
+use std::sync::Arc;
+use zrpc::ForegroundRouter;
+
 pub struct AppState {
-    pub settings: postage::watch::Receiver<Settings>,
-    pub languages: std::sync::Arc<language::LanguageRegistry>,
-    pub themes: std::sync::Arc<settings::ThemeRegistry>,
-    pub rpc_router: std::sync::Arc<ForegroundRouter>,
+    pub settings_tx: Arc<Mutex<watch::Sender<Settings>>>,
+    pub settings: watch::Receiver<Settings>,
+    pub languages: Arc<language::LanguageRegistry>,
+    pub themes: Arc<settings::ThemeRegistry>,
+    pub rpc_router: Arc<ForegroundRouter>,
     pub rpc: rpc::Client,
-    pub fs: std::sync::Arc<dyn fs::Fs>,
+    pub fs: Arc<dyn fs::Fs>,
 }
 
 pub fn init(cx: &mut gpui::MutableAppContext) {
