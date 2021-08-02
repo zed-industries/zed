@@ -75,7 +75,7 @@ pub struct UiTheme {
     pub modal_match_text_highlight: Color,
 }
 
-#[derive(Clone, Default, Deserialize)]
+#[derive(Clone, Deserialize)]
 #[serde(default)]
 pub struct EditorTheme {
     pub background: Color,
@@ -87,7 +87,7 @@ pub struct EditorTheme {
     pub replicas: Vec<ReplicaTheme>,
 }
 
-#[derive(Clone, Copy, Deserialize)]
+#[derive(Clone, Copy, Deserialize, Default)]
 pub struct ReplicaTheme {
     pub cursor: Color,
     pub selection: Color,
@@ -232,6 +232,20 @@ impl Theme {
     #[cfg(test)]
     pub fn syntax_style_name(&self, id: StyleId) -> Option<&str> {
         self.syntax.get(id.0 as usize).map(|e| e.0.as_str())
+    }
+}
+
+impl Default for EditorTheme {
+    fn default() -> Self {
+        Self {
+            background: Default::default(),
+            gutter_background: Default::default(),
+            active_line_background: Default::default(),
+            line_number: Default::default(),
+            line_number_active: Default::default(),
+            default_text: Default::default(),
+            replicas: vec![ReplicaTheme::default()],
+        }
     }
 }
 
