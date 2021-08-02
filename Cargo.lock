@@ -2172,7 +2172,6 @@ dependencies = [
  "png 0.16.8",
  "postage",
  "rand 0.8.3",
- "replace_with",
  "resvg",
  "seahash",
  "serde 1.0.125",
@@ -3926,12 +3925,6 @@ checksum = "3acd125665422973a33ac9d3dd2df85edad0f4ae9b00dafb1a05e43a9f5ef8e7"
 dependencies = [
  "winapi 0.3.9",
 ]
-
-[[package]]
-name = "replace_with"
-version = "0.1.7"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "e3a8614ee435691de62bcffcf4a66d91b3594bf1428a5722e79103249a095690"
 
 [[package]]
 name = "resvg"
