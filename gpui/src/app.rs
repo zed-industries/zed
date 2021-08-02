@@ -813,6 +813,16 @@ impl MutableAppContext {
             .push_back(Effect::ViewNotification { window_id, view_id });
     }
 
+    pub(crate) fn notify_all_views(&mut self) {
+        let notifications = self
+            .views
+            .keys()
+            .copied()
+            .map(|(window_id, view_id)| Effect::ViewNotification { window_id, view_id })
+            .collect::<Vec<_>>();
+        self.pending_effects.extend(notifications);
+    }
+
     pub fn dispatch_action<T: 'static + Any>(
         &mut self,
         window_id: usize,
@@ -2085,6 +2095,10 @@ impl<'a, T: View> ViewContext<'a, T> {
 
     pub fn notify(&mut self) {
         self.app.notify_view(self.window_id, self.view_id);
+    }
+
+    pub fn notify_all(&mut self) {
+        self.app.notify_all_views();
     }
 
     pub fn propagate_action(&mut self) {

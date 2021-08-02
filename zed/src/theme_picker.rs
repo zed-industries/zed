@@ -95,16 +95,19 @@ impl ThemePicker {
 
     fn confirm(&mut self, _: &(), cx: &mut ViewContext<Self>) {
         if let Some(mat) = self.matches.get(self.selected_index) {
-            let settings_tx = self.settings_tx.clone();
             if let Ok(theme) = self.registry.get(&mat.string) {
-                cx.foreground()
-                    .spawn(async move {
-                        settings_tx.lock().await.borrow_mut().theme = theme;
+                let settings_tx = self.settings_tx.clone();
+                cx.spawn(|this, mut cx| async move {
+                    let mut settings_tx = settings_tx.lock().await;
+                    this.update(&mut cx, |_, cx| {
+                        settings_tx.borrow_mut().theme = theme;
+                        cx.notify_all();
+                        cx.emit(Event::Dismissed);
                     })
-                    .detach();
+                })
+                .detach();
             }
         }
-        cx.emit(Event::Dismissed);
     }
 
     fn select_prev(&mut self, _: &(), cx: &mut ViewContext<Self>) {
