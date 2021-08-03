@@ -9,7 +9,7 @@ use std::{fs, path::PathBuf, sync::Arc};
 use zed::{
     self, assets, editor, file_finder,
     fs::RealFs,
-    language, menus, rpc, settings, theme_picker,
+    language, menus, rpc, settings, theme_selector,
     workspace::{self, OpenParams},
     worktree::{self},
     AppState,
@@ -49,7 +49,7 @@ fn main() {
         workspace::init(cx);
         editor::init(cx);
         file_finder::init(cx);
-        theme_picker::init(cx, &app_state);
+        theme_selector::init(cx, &app_state);
 
         cx.set_menus(menus::menus(&app_state.clone()));
 

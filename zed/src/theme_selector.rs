@@ -22,7 +22,7 @@ use gpui::{
 };
 use postage::watch;
 
-pub struct ThemePicker {
+pub struct ThemeSelector {
     settings_tx: Arc<Mutex<watch::Sender<Settings>>>,
     settings: watch::Receiver<Settings>,
     registry: Arc<ThemeRegistry>,
@@ -33,17 +33,17 @@ pub struct ThemePicker {
 }
 
 pub fn init(cx: &mut MutableAppContext, app_state: &Arc<AppState>) {
-    cx.add_action("theme_picker:confirm", ThemePicker::confirm);
-    // cx.add_action("file_finder:select", ThemePicker::select);
-    cx.add_action("menu:select_prev", ThemePicker::select_prev);
-    cx.add_action("menu:select_next", ThemePicker::select_next);
-    cx.add_action("theme_picker:toggle", ThemePicker::toggle);
+    cx.add_action("theme_selector:confirm", ThemeSelector::confirm);
+    // cx.add_action("file_finder:select", ThemeSelector::select);
+    cx.add_action("menu:select_prev", ThemeSelector::select_prev);
+    cx.add_action("menu:select_next", ThemeSelector::select_next);
+    cx.add_action("theme_selector:toggle", ThemeSelector::toggle);
 
     cx.add_bindings(vec![
-        Binding::new("cmd-k cmd-t", "theme_picker:toggle", None).with_arg(app_state.clone()),
-        Binding::new("escape", "theme_picker:toggle", Some("ThemePicker"))
+        Binding::new("cmd-k cmd-t", "theme_selector:toggle", None).with_arg(app_state.clone()),
+        Binding::new("escape", "theme_selector:toggle", Some("ThemeSelector"))
             .with_arg(app_state.clone()),
-        Binding::new("enter", "theme_picker:confirm", Some("ThemePicker")),
+        Binding::new("enter", "theme_selector:confirm", Some("ThemeSelector")),
     ]);
 }
 
@@ -51,7 +51,7 @@ pub enum Event {
     Dismissed,
 }
 
-impl ThemePicker {
+impl ThemeSelector {
     fn new(
         settings_tx: Arc<Mutex<watch::Sender<Settings>>>,
         settings: watch::Receiver<Settings>,
@@ -80,7 +80,7 @@ impl ThemePicker {
         cx: &mut ViewContext<Workspace>,
     ) {
         workspace.toggle_modal(cx, |cx, _| {
-            let picker = cx.add_view(|cx| {
+            let selector = cx.add_view(|cx| {
                 Self::new(
                     app_state.settings_tx.clone(),
                     app_state.settings.clone(),
@@ -88,8 +88,8 @@ impl ThemePicker {
                     cx,
                 )
             });
-            cx.subscribe_to_view(&picker, Self::on_event);
-            picker
+            cx.subscribe_to_view(&selector, Self::on_event);
+            selector
         });
     }
 
@@ -166,7 +166,7 @@ impl ThemePicker {
 
     fn on_event(
         workspace: &mut Workspace,
-        _: ViewHandle<ThemePicker>,
+        _: ViewHandle<ThemeSelector>,
         event: &Event,
         cx: &mut ViewContext<Workspace>,
     ) {
@@ -212,15 +212,15 @@ impl ThemePicker {
             self.matches.len(),
             move |mut range, items, cx| {
                 let cx = cx.as_ref();
-                let picker = handle.upgrade(cx).unwrap();
-                let picker = picker.read(cx);
+                let selector = handle.upgrade(cx).unwrap();
+                let selector = selector.read(cx);
                 let start = range.start;
-                range.end = cmp::min(range.end, picker.matches.len());
+                range.end = cmp::min(range.end, selector.matches.len());
                 items.extend(
-                    picker.matches[range]
+                    selector.matches[range]
                         .iter()
                         .enumerate()
-                        .map(move |(i, path_match)| picker.render_match(path_match, start + i)),
+                        .map(move |(i, path_match)| selector.render_match(path_match, start + i)),
                 );
             },
         );
@@ -264,13 +264,13 @@ impl ThemePicker {
     }
 }
 
-impl Entity for ThemePicker {
+impl Entity for ThemeSelector {
     type Event = Event;
 }
 
-impl View for ThemePicker {
+impl View for ThemeSelector {
     fn ui_name() -> &'static str {
-        "ThemePicker"
+        "ThemeSelector"
     }
 
     fn render(&self, cx: &RenderContext<Self>) -> ElementBox {
@@ -296,7 +296,7 @@ impl View for ThemePicker {
             .boxed(),
         )
         .top()
-        .named("theme picker")
+        .named("theme selector")
     }
 
     fn on_focus(&mut self, cx: &mut ViewContext<Self>) {
