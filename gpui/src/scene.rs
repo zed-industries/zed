@@ -59,12 +59,22 @@ pub struct Icon {
 
 #[derive(Clone, Copy, Default, Debug, Deserialize)]
 pub struct Border {
+    #[serde(default = "default_border_width")]
     pub width: f32,
+    #[serde(default)]
     pub color: Option<Color>,
+    #[serde(default)]
     pub top: bool,
+    #[serde(default)]
     pub right: bool,
+    #[serde(default)]
     pub bottom: bool,
+    #[serde(default)]
     pub left: bool,
+}
+
+fn default_border_width() -> f32 {
+    1.0
 }
 
 #[derive(Debug)]

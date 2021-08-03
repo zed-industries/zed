@@ -25,9 +25,11 @@ pub struct Label {
 
 #[derive(Clone, Debug, Default, Deserialize)]
 pub struct LabelStyle {
+    #[serde(default = "Color::black")]
     pub color: Color,
+    #[serde(default)]
     pub highlight_color: Option<Color>,
-    #[serde(deserialize_with = "deserialize_font_properties")]
+    #[serde(default, deserialize_with = "deserialize_font_properties")]
     pub font_properties: Properties,
     #[serde(default, deserialize_with = "deserialize_option_font_properties")]
     pub highlight_font_properties: Option<Properties>,

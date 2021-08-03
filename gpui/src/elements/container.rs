@@ -16,12 +16,18 @@ use crate::{
 
 #[derive(Clone, Debug, Default, Deserialize)]
 pub struct ContainerStyle {
-    margin: Margin,
-    padding: Padding,
-    background_color: Option<Color>,
-    border: Border,
-    corner_radius: f32,
-    shadow: Option<Shadow>,
+    #[serde(default)]
+    pub margin: Margin,
+    #[serde(default)]
+    pub padding: Padding,
+    #[serde(rename = "background")]
+    pub background_color: Option<Color>,
+    #[serde(default)]
+    pub border: Border,
+    #[serde(default)]
+    pub corner_radius: f32,
+    #[serde(default)]
+    pub shadow: Option<Shadow>,
 }
 
 pub struct Container {
@@ -247,9 +253,13 @@ impl ToJson for ContainerStyle {
 
 #[derive(Clone, Debug, Default, Deserialize)]
 pub struct Margin {
+    #[serde(default)]
     top: f32,
+    #[serde(default)]
     left: f32,
+    #[serde(default)]
     bottom: f32,
+    #[serde(default)]
     right: f32,
 }
 
@@ -274,9 +284,13 @@ impl ToJson for Margin {
 
 #[derive(Clone, Debug, Default, Deserialize)]
 pub struct Padding {
+    #[serde(default)]
     top: f32,
+    #[serde(default)]
     left: f32,
+    #[serde(default)]
     bottom: f32,
+    #[serde(default)]
     right: f32,
 }
 
@@ -301,9 +315,11 @@ impl ToJson for Padding {
 
 #[derive(Clone, Debug, Default, Deserialize)]
 pub struct Shadow {
-    #[serde(deserialize_with = "deserialize_vec2f")]
+    #[serde(default, deserialize_with = "deserialize_vec2f")]
     offset: Vector2F,
+    #[serde(default)]
     blur: f32,
+    #[serde(default)]
     color: Color,
 }
 

@@ -1,19 +1,36 @@
 [ui]
 background = "$elevation_1"
-tab_background = "$elevation_2"
-tab_background_active = "$elevation_3"
-tab_text = "$text_dull"
-tab_text_active = "$text_bright"
-tab_border = 0x000000
-tab_icon_close = 0x383839
-tab_icon_dirty = 0x556de8
-tab_icon_conflict = 0xe45349
-modal_background = "$elevation_4"
-modal_match_background = 0x424344
-modal_match_background_active = 0x094771
-modal_match_border = 0x000000
-modal_match_text = 0xcccccc
-modal_match_text_highlight = 0x18a3ff
+
+[ui.tab]
+background = "$elevation_2"
+color = "$text_dull"
+border.color = 0x000000
+icon_close = 0x383839
+icon_dirty = 0x556de8
+icon_conflict = 0xe45349
+
+[ui.active_tab]
+extends = ".."
+background = "$elevation_3"
+color = "$text_bright"
+
+[ui.selector]
+background = "$elevation_4"
+padding = { top = 6.0, bottom = 6.0, left = 6.0, right = 6.0 }
+margin.top = 12.0
+corner_radius = 6.0
+shadow = { offset = [0.0, 0.0], blur = 12.0, color = 0x00000088 }
+
+[ui.selector.item]
+background = 0x424344
+text = 0xcccccc
+highlight_text = 0x18a3ff
+highlight_font_properties = { weight = "bold" }
+border = { color = 0x000000, width = 1.0 }
+
+[ui.selector.active_item]
+extends = ".."
+background = 0x094771
 
 [editor]
 background = "$elevation_3"
@@ -21,7 +38,7 @@ gutter_background = "$elevation_3"
 active_line_background = "$elevation_4"
 line_number = "$text_dull"
 line_number_active = "$text_bright"
-default_text = "$text_normal"
+text = "$text_normal"
 replicas = [
     { selection = 0x264f78, cursor = "$text_bright" },
     { selection = 0x504f31, cursor = 0xfcf154 },

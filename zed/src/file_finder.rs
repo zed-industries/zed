@@ -6,12 +6,9 @@ use crate::{
     worktree::{match_paths, PathMatch, Worktree},
 };
 use gpui::{
-    color::Color,
     elements::*,
-    fonts::{Properties, Weight},
-    geometry::vector::vec2f,
     keymap::{self, Binding},
-    AppContext, Axis, Border, Entity, MutableAppContext, RenderContext, Task, View, ViewContext,
+    AppContext, Axis, Entity, MutableAppContext, RenderContext, Task, View, ViewContext,
     ViewHandle, WeakViewHandle,
 };
 use postage::watch;
@@ -78,11 +75,7 @@ impl View for FileFinder {
                         .with_child(Expanded::new(1.0, self.render_matches()).boxed())
                         .boxed(),
                 )
-                .with_margin_top(12.0)
-                .with_uniform_padding(6.0)
-                .with_corner_radius(6.0)
-                .with_background_color(settings.theme.ui.modal_background)
-                .with_shadow(vec2f(0., 4.), 12., Color::new(0, 0, 0, 128))
+                .with_style(&settings.theme.ui.selector.container)
                 .boxed(),
             )
             .with_max_width(600.0)
@@ -114,7 +107,7 @@ impl FileFinder {
                     settings.ui_font_family,
                     settings.ui_font_size,
                 )
-                .with_default_color(settings.theme.editor.default_text)
+                .with_default_color(settings.theme.editor.text)
                 .boxed(),
             )
             .with_margin_top(6.0)
@@ -152,15 +145,8 @@ impl FileFinder {
         let theme = &settings.theme.ui;
         self.labels_for_match(path_match, cx).map(
             |(file_name, file_name_positions, full_path, full_path_positions)| {
-                let bold = *Properties::new().weight(Weight::BOLD);
                 let selected_index = self.selected_index();
-                let label_style = LabelStyle {
-                    color: theme.modal_match_text,
-                    highlight_color: Some(theme.modal_match_text_highlight),
-                    highlight_font_properties: Some(bold),
-                    ..Default::default()
-                };
-                let mut container = Container::new(
+                let container = Container::new(
                     Flex::row()
                         .with_child(
                             Container::new(
@@ -184,7 +170,7 @@ impl FileFinder {
                                             settings.ui_font_family,
                                             settings.ui_font_size,
                                         )
-                                        .with_style(&label_style)
+                                        .with_style(&theme.selector.label)
                                         .with_highlights(file_name_positions)
                                         .boxed(),
                                     )
@@ -194,7 +180,7 @@ impl FileFinder {
                                             settings.ui_font_family,
                                             settings.ui_font_size,
                                         )
-                                        .with_style(&label_style)
+                                        .with_style(&theme.selector.label)
                                         .with_highlights(full_path_positions)
                                         .boxed(),
                                     )
@@ -205,16 +191,11 @@ impl FileFinder {
                         .boxed(),
                 )
                 .with_uniform_padding(6.0)
-                .with_background_color(if index == selected_index {
-                    theme.modal_match_background_active
+                .with_style(if index == selected_index {
+                    &theme.selector.active_item.container
                 } else {
-                    theme.modal_match_background
+                    &theme.selector.item.container
                 });
-
-                if index == selected_index || index < self.matches.len() - 1 {
-                    container =
-                        container.with_border(Border::bottom(1.0, theme.modal_match_border));
-                }
 
                 let entry = (path_match.tree_id, path_match.path.clone());
                 EventHandler::new(container.boxed())

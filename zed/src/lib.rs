@@ -10,6 +10,7 @@ pub mod settings;
 mod sum_tree;
 #[cfg(any(test, feature = "test-support"))]
 pub mod test;
+pub mod theme;
 pub mod theme_selector;
 mod time;
 mod util;

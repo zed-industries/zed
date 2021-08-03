@@ -11,6 +11,9 @@ use serde::{de::value::MapDeserializer, Deserialize};
 use serde_json::Value;
 use std::{collections::HashMap, sync::Arc};
 
+use crate::theme;
+pub use theme::Theme;
+
 const DEFAULT_STYLE_ID: StyleId = StyleId(u32::MAX);
 
 #[derive(Clone)]
@@ -29,13 +32,6 @@ pub struct ThemeRegistry {
     theme_data: Mutex<HashMap<String, Arc<ThemeToml>>>,
 }
 
-#[derive(Clone, Default)]
-pub struct Theme {
-    pub ui: UiTheme,
-    pub editor: EditorTheme,
-    pub syntax: Vec<(String, Color, FontProperties)>,
-}
-
 #[derive(Deserialize)]
 struct ThemeToml {
     #[serde(default)]
@@ -48,44 +44,6 @@ struct ThemeToml {
     editor: HashMap<String, Value>,
     #[serde(default)]
     syntax: HashMap<String, Value>,
-}
-
-#[derive(Clone, Default, Deserialize)]
-#[serde(default)]
-pub struct UiTheme {
-    pub background: Color,
-    pub tab_background: Color,
-    pub tab_background_active: Color,
-    pub tab_text: Color,
-    pub tab_text_active: Color,
-    pub tab_border: Color,
-    pub tab_icon_close: Color,
-    pub tab_icon_dirty: Color,
-    pub tab_icon_conflict: Color,
-    pub modal_background: Color,
-    pub modal_match_background: Color,
-    pub modal_match_background_active: Color,
-    pub modal_match_border: Color,
-    pub modal_match_text: Color,
-    pub modal_match_text_highlight: Color,
-}
-
-#[derive(Clone, Deserialize)]
-#[serde(default)]
-pub struct EditorTheme {
-    pub background: Color,
-    pub gutter_background: Color,
-    pub active_line_background: Color,
-    pub line_number: Color,
-    pub line_number_active: Color,
-    pub default_text: Color,
-    pub replicas: Vec<ReplicaTheme>,
-}
-
-#[derive(Clone, Copy, Deserialize, Default)]
-pub struct ReplicaTheme {
-    pub cursor: Color,
-    pub selection: Color,
 }
 
 #[derive(Clone, Debug)]
@@ -169,8 +127,8 @@ impl ThemeRegistry {
         }
 
         let theme = Arc::new(Theme {
-            ui: UiTheme::deserialize(MapDeserializer::new(theme_toml.ui.clone().into_iter()))?,
-            editor: EditorTheme::deserialize(MapDeserializer::new(
+            ui: theme::Ui::deserialize(MapDeserializer::new(theme_toml.ui.clone().into_iter()))?,
+            editor: theme::Editor::deserialize(MapDeserializer::new(
                 theme_toml.editor.clone().into_iter(),
             ))?,
             syntax,
@@ -229,7 +187,7 @@ impl Theme {
     pub fn syntax_style(&self, id: StyleId) -> (Color, FontProperties) {
         self.syntax
             .get(id.0 as usize)
-            .map_or((self.editor.default_text, FontProperties::new()), |entry| {
+            .map_or((self.editor.text, FontProperties::new()), |entry| {
                 (entry.1, entry.2)
             })
     }
@@ -237,20 +195,6 @@ impl Theme {
     #[cfg(test)]
     pub fn syntax_style_name(&self, id: StyleId) -> Option<&str> {
         self.syntax.get(id.0 as usize).map(|e| e.0.as_str())
-    }
-}
-
-impl Default for EditorTheme {
-    fn default() -> Self {
-        Self {
-            background: Default::default(),
-            gutter_background: Default::default(),
-            active_line_background: Default::default(),
-            line_number: Default::default(),
-            line_number_active: Default::default(),
-            default_text: Default::default(),
-            replicas: vec![ReplicaTheme::default()],
-        }
     }
 }
 
@@ -407,8 +351,8 @@ mod tests {
         let assets = TestAssets(&[(
             "themes/my-theme.toml",
             r#"
-            [ui]
-            tab_background_active = 0x100000
+            [ui.tab.active]
+            background = 0x100000
 
             [editor]
             background = 0x00ed00
@@ -424,7 +368,10 @@ mod tests {
         let registry = ThemeRegistry::new(assets);
         let theme = registry.get("my-theme").unwrap();
 
-        assert_eq!(theme.ui.tab_background_active, Color::from_u32(0x100000ff));
+        assert_eq!(
+            theme.ui.active_tab.container.background_color,
+            Some(Color::from_u32(0x100000ff))
+        );
         assert_eq!(theme.editor.background, Color::from_u32(0x00ed00ff));
         assert_eq!(theme.editor.line_number, Color::from_u32(0xddddddff));
         assert_eq!(
@@ -459,9 +406,9 @@ mod tests {
                 r#"
                 abstract = true
 
-                [ui]
-                tab_background = 0x111111
-                tab_text = "$variable_1"
+                [ui.tab]
+                background = 0x111111
+                text = "$variable_1"
 
                 [editor]
                 background = 0x222222
@@ -477,8 +424,8 @@ mod tests {
                 variable_1 = 0x333333
                 variable_2 = 0x444444
 
-                [ui]
-                tab_background = 0x555555
+                [ui.tab]
+                background = 0x555555
 
                 [editor]
                 background = 0x666666
@@ -499,10 +446,13 @@ mod tests {
         let registry = ThemeRegistry::new(assets);
         let theme = registry.get("light").unwrap();
 
-        assert_eq!(theme.ui.tab_background, Color::from_u32(0x555555ff));
-        assert_eq!(theme.ui.tab_text, Color::from_u32(0x333333ff));
+        assert_eq!(
+            theme.ui.tab.container.background_color,
+            Some(Color::from_u32(0x555555ff))
+        );
+        assert_eq!(theme.ui.tab.label.color, Color::from_u32(0x333333ff));
         assert_eq!(theme.editor.background, Color::from_u32(0x666666ff));
-        assert_eq!(theme.editor.default_text, Color::from_u32(0x444444ff));
+        assert_eq!(theme.editor.text, Color::from_u32(0x444444ff));
 
         assert_eq!(
             registry.list().collect::<Vec<_>>(),
