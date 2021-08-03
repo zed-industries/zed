@@ -11,8 +11,8 @@ use futures::lock::Mutex;
 use gpui::{
     color::ColorF,
     elements::{
-        Align, ChildView, ConstrainedBox, Container, Expanded, Flex, Label, ParentElement,
-        UniformList, UniformListState,
+        Align, ChildView, ConstrainedBox, Container, Expanded, Flex, Label, LabelStyle,
+        ParentElement, UniformList, UniformListState,
     },
     fonts::{Properties, Weight},
     geometry::vector::vec2f,
@@ -233,7 +233,6 @@ impl ThemeSelector {
     fn render_match(&self, theme_match: &StringMatch, index: usize) -> ElementBox {
         let settings = self.settings.borrow();
         let theme = &settings.theme.ui;
-        let bold = *Properties::new().weight(Weight::BOLD);
 
         let mut container = Container::new(
             Label::new(
@@ -241,12 +240,13 @@ impl ThemeSelector {
                 settings.ui_font_family,
                 settings.ui_font_size,
             )
-            .with_default_color(theme.modal_match_text.0)
-            .with_highlights(
-                theme.modal_match_text_highlight.0,
-                bold,
-                theme_match.positions.clone(),
-            )
+            .with_style(&LabelStyle {
+                default_color: theme.modal_match_text.0,
+                highlight_color: theme.modal_match_text_highlight.0,
+                highlight_font_properties: *Properties::new().weight(Weight::BOLD),
+                ..Default::default()
+            })
+            .with_highlights(theme_match.positions.clone())
             .boxed(),
         )
         .with_uniform_padding(6.0)

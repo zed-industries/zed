@@ -10,53 +10,58 @@ use crate::{
     SizeConstraint,
 };
 
-pub struct Container {
+#[derive(Clone, Debug, Default)]
+pub struct ContainerStyle {
     margin: Margin,
     padding: Padding,
     background_color: Option<ColorU>,
     border: Border,
     corner_radius: f32,
     shadow: Option<Shadow>,
+}
+
+pub struct Container {
     child: ElementBox,
+    style: ContainerStyle,
 }
 
 impl Container {
     pub fn new(child: ElementBox) -> Self {
         Self {
-            margin: Margin::default(),
-            padding: Padding::default(),
-            background_color: None,
-            border: Border::default(),
-            corner_radius: 0.0,
-            shadow: None,
             child,
+            style: Default::default(),
         }
     }
 
+    pub fn with_style(mut self, style: &ContainerStyle) -> Self {
+        self.style = style.clone();
+        self
+    }
+
     pub fn with_margin_top(mut self, margin: f32) -> Self {
-        self.margin.top = margin;
+        self.style.margin.top = margin;
         self
     }
 
     pub fn with_margin_left(mut self, margin: f32) -> Self {
-        self.margin.left = margin;
+        self.style.margin.left = margin;
         self
     }
 
     pub fn with_horizontal_padding(mut self, padding: f32) -> Self {
-        self.padding.left = padding;
-        self.padding.right = padding;
+        self.style.padding.left = padding;
+        self.style.padding.right = padding;
         self
     }
 
     pub fn with_vertical_padding(mut self, padding: f32) -> Self {
-        self.padding.top = padding;
-        self.padding.bottom = padding;
+        self.style.padding.top = padding;
+        self.style.padding.bottom = padding;
         self
     }
 
     pub fn with_uniform_padding(mut self, padding: f32) -> Self {
-        self.padding = Padding {
+        self.style.padding = Padding {
             top: padding,
             left: padding,
             bottom: padding,
@@ -66,32 +71,32 @@ impl Container {
     }
 
     pub fn with_padding_right(mut self, padding: f32) -> Self {
-        self.padding.right = padding;
+        self.style.padding.right = padding;
         self
     }
 
     pub fn with_padding_bottom(mut self, padding: f32) -> Self {
-        self.padding.bottom = padding;
+        self.style.padding.bottom = padding;
         self
     }
 
     pub fn with_background_color(mut self, color: impl Into<ColorU>) -> Self {
-        self.background_color = Some(color.into());
+        self.style.background_color = Some(color.into());
         self
     }
 
     pub fn with_border(mut self, border: Border) -> Self {
-        self.border = border;
+        self.style.border = border;
         self
     }
 
     pub fn with_corner_radius(mut self, radius: f32) -> Self {
-        self.corner_radius = radius;
+        self.style.corner_radius = radius;
         self
     }
 
     pub fn with_shadow(mut self, offset: Vector2F, blur: f32, color: impl Into<ColorU>) -> Self {
-        self.shadow = Some(Shadow {
+        self.style.shadow = Some(Shadow {
             offset,
             blur,
             color: color.into(),
@@ -101,33 +106,33 @@ impl Container {
 
     fn margin_size(&self) -> Vector2F {
         vec2f(
-            self.margin.left + self.margin.right,
-            self.margin.top + self.margin.bottom,
+            self.style.margin.left + self.style.margin.right,
+            self.style.margin.top + self.style.margin.bottom,
         )
     }
 
     fn padding_size(&self) -> Vector2F {
         vec2f(
-            self.padding.left + self.padding.right,
-            self.padding.top + self.padding.bottom,
+            self.style.padding.left + self.style.padding.right,
+            self.style.padding.top + self.style.padding.bottom,
         )
     }
 
     fn border_size(&self) -> Vector2F {
         let mut x = 0.0;
-        if self.border.left {
-            x += self.border.width;
+        if self.style.border.left {
+            x += self.style.border.width;
         }
-        if self.border.right {
-            x += self.border.width;
+        if self.style.border.right {
+            x += self.style.border.width;
         }
 
         let mut y = 0.0;
-        if self.border.top {
-            y += self.border.width;
+        if self.style.border.top {
+            y += self.style.border.width;
         }
-        if self.border.bottom {
-            y += self.border.width;
+        if self.style.border.bottom {
+            y += self.style.border.width;
         }
 
         vec2f(x, y)
@@ -168,28 +173,31 @@ impl Element for Container {
         cx: &mut PaintContext,
     ) -> Self::PaintState {
         let quad_bounds = RectF::from_points(
-            bounds.origin() + vec2f(self.margin.left, self.margin.top),
-            bounds.lower_right() - vec2f(self.margin.right, self.margin.bottom),
+            bounds.origin() + vec2f(self.style.margin.left, self.style.margin.top),
+            bounds.lower_right() - vec2f(self.style.margin.right, self.style.margin.bottom),
         );
 
-        if let Some(shadow) = self.shadow.as_ref() {
+        if let Some(shadow) = self.style.shadow.as_ref() {
             cx.scene.push_shadow(scene::Shadow {
                 bounds: quad_bounds + shadow.offset,
-                corner_radius: self.corner_radius,
+                corner_radius: self.style.corner_radius,
                 sigma: shadow.blur,
                 color: shadow.color,
             });
         }
         cx.scene.push_quad(Quad {
             bounds: quad_bounds,
-            background: self.background_color,
-            border: self.border,
-            corner_radius: self.corner_radius,
+            background: self.style.background_color,
+            border: self.style.border,
+            corner_radius: self.style.corner_radius,
         });
 
         let child_origin = quad_bounds.origin()
-            + vec2f(self.padding.left, self.padding.top)
-            + vec2f(self.border.left_width(), self.border.top_width());
+            + vec2f(self.style.padding.left, self.style.padding.top)
+            + vec2f(
+                self.style.border.left_width(),
+                self.style.border.top_width(),
+            );
         self.child.paint(child_origin, cx);
     }
 
@@ -214,20 +222,26 @@ impl Element for Container {
         json!({
             "type": "Container",
             "bounds": bounds.to_json(),
-            "details": {
-                "margin": self.margin.to_json(),
-                "padding": self.padding.to_json(),
-                "background_color": self.background_color.to_json(),
-                "border": self.border.to_json(),
-                "corner_radius": self.corner_radius,
-                "shadow": self.shadow.to_json(),
-            },
+            "details": self.style.to_json(),
             "child": self.child.debug(cx),
         })
     }
 }
 
-#[derive(Default)]
+impl ToJson for ContainerStyle {
+    fn to_json(&self) -> serde_json::Value {
+        json!({
+            "margin": self.margin.to_json(),
+            "padding": self.padding.to_json(),
+            "background_color": self.background_color.to_json(),
+            "border": self.border.to_json(),
+            "corner_radius": self.corner_radius,
+            "shadow": self.shadow.to_json(),
+        })
+    }
+}
+
+#[derive(Clone, Debug, Default)]
 pub struct Margin {
     top: f32,
     left: f32,
@@ -254,7 +268,7 @@ impl ToJson for Margin {
     }
 }
 
-#[derive(Default)]
+#[derive(Clone, Debug, Default)]
 pub struct Padding {
     top: f32,
     left: f32,
@@ -281,7 +295,7 @@ impl ToJson for Padding {
     }
 }
 
-#[derive(Default)]
+#[derive(Clone, Debug, Default)]
 pub struct Shadow {
     offset: Vector2F,
     blur: f32,

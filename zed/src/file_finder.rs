@@ -154,6 +154,12 @@ impl FileFinder {
             |(file_name, file_name_positions, full_path, full_path_positions)| {
                 let bold = *Properties::new().weight(Weight::BOLD);
                 let selected_index = self.selected_index();
+                let label_style = LabelStyle {
+                    default_color: theme.modal_match_text.0,
+                    highlight_color: theme.modal_match_text_highlight.0,
+                    highlight_font_properties: bold,
+                    ..Default::default()
+                };
                 let mut container = Container::new(
                     Flex::row()
                         .with_child(
@@ -178,12 +184,8 @@ impl FileFinder {
                                             settings.ui_font_family,
                                             settings.ui_font_size,
                                         )
-                                        .with_default_color(theme.modal_match_text.0)
-                                        .with_highlights(
-                                            theme.modal_match_text_highlight.0,
-                                            bold,
-                                            file_name_positions,
-                                        )
+                                        .with_style(&label_style)
+                                        .with_highlights(file_name_positions)
                                         .boxed(),
                                     )
                                     .with_child(
@@ -192,12 +194,8 @@ impl FileFinder {
                                             settings.ui_font_family,
                                             settings.ui_font_size,
                                         )
-                                        .with_default_color(theme.modal_match_text.0)
-                                        .with_highlights(
-                                            theme.modal_match_text_highlight.0,
-                                            bold,
-                                            full_path_positions,
-                                        )
+                                        .with_style(&label_style)
+                                        .with_highlights(full_path_positions)
                                         .boxed(),
                                     )
                                     .boxed(),
