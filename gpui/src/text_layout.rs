@@ -1,5 +1,5 @@
 use crate::{
-    color::ColorU,
+    color::Color,
     fonts::{FontId, GlyphId},
     geometry::{
         rect::RectF,
@@ -43,7 +43,7 @@ impl TextLayoutCache {
         &'a self,
         text: &'a str,
         font_size: f32,
-        runs: &'a [(usize, FontId, ColorU)],
+        runs: &'a [(usize, FontId, Color)],
     ) -> Line {
         let key = &CacheKeyRef {
             text,
@@ -94,7 +94,7 @@ impl<'a> Hash for (dyn CacheKey + 'a) {
 struct CacheKeyValue {
     text: String,
     font_size: OrderedFloat<f32>,
-    runs: SmallVec<[(usize, FontId, ColorU); 1]>,
+    runs: SmallVec<[(usize, FontId, Color); 1]>,
 }
 
 impl CacheKey for CacheKeyValue {
@@ -123,7 +123,7 @@ impl<'a> Borrow<dyn CacheKey + 'a> for CacheKeyValue {
 struct CacheKeyRef<'a> {
     text: &'a str,
     font_size: OrderedFloat<f32>,
-    runs: &'a [(usize, FontId, ColorU)],
+    runs: &'a [(usize, FontId, Color)],
 }
 
 impl<'a> CacheKey for CacheKeyRef<'a> {
@@ -135,7 +135,7 @@ impl<'a> CacheKey for CacheKeyRef<'a> {
 #[derive(Default, Debug)]
 pub struct Line {
     layout: Arc<LineLayout>,
-    color_runs: SmallVec<[(u32, ColorU); 32]>,
+    color_runs: SmallVec<[(u32, Color); 32]>,
 }
 
 #[derive(Default, Debug)]
@@ -162,7 +162,7 @@ pub struct Glyph {
 }
 
 impl Line {
-    fn new(layout: Arc<LineLayout>, runs: &[(usize, FontId, ColorU)]) -> Self {
+    fn new(layout: Arc<LineLayout>, runs: &[(usize, FontId, Color)]) -> Self {
         let mut color_runs = SmallVec::new();
         for (len, _, color) in runs {
             color_runs.push((*len as u32, *color));
@@ -206,7 +206,7 @@ impl Line {
 
         let mut color_runs = self.color_runs.iter();
         let mut color_end = 0;
-        let mut color = ColorU::black();
+        let mut color = Color::black();
 
         for run in &self.layout.runs {
             let max_glyph_width = cx
@@ -230,7 +230,7 @@ impl Line {
                         color = next_run.1;
                     } else {
                         color_end = self.layout.len;
-                        color = ColorU::black();
+                        color = Color::black();
                     }
                 }
 

@@ -16,7 +16,7 @@ pub use display_map::DisplayPoint;
 use display_map::*;
 pub use element::*;
 use gpui::{
-    color::ColorU, font_cache::FamilyId, fonts::Properties as FontProperties,
+    color::Color, font_cache::FamilyId, fonts::Properties as FontProperties,
     geometry::vector::Vector2F, keymap::Binding, text_layout, AppContext, ClipboardItem, Element,
     ElementBox, Entity, FontCache, ModelHandle, MutableAppContext, RenderContext, Task,
     TextLayoutCache, View, ViewContext, WeakViewHandle,
@@ -2349,7 +2349,7 @@ impl Snapshot {
             .layout_str(
                 "1".repeat(digit_count).as_str(),
                 font_size,
-                &[(digit_count, font_id, ColorU::black())],
+                &[(digit_count, font_id, Color::black())],
             )
             .width())
     }
@@ -2374,9 +2374,9 @@ impl Snapshot {
         {
             let display_row = rows.start + ix as u32;
             let color = if active_rows.contains_key(&display_row) {
-                theme.editor.line_number_active.0
+                theme.editor.line_number_active
             } else {
-                theme.editor.line_number.0
+                theme.editor.line_number
             };
             if soft_wrapped {
                 layouts.push(None);
@@ -2485,7 +2485,7 @@ impl Snapshot {
             &[(
                 self.display_snapshot.line_len(row) as usize,
                 font_id,
-                ColorU::black(),
+                Color::black(),
             )],
         ))
     }

@@ -1,10 +1,7 @@
-use serde_json::json;
-use smallvec::{smallvec, SmallVec};
-
 use crate::{
-    color::ColorU,
+    color::Color,
     font_cache::FamilyId,
-    fonts::{FontId, Properties},
+    fonts::{deserialize_font_properties, deserialize_option_font_properties, FontId, Properties},
     geometry::{
         rect::RectF,
         vector::{vec2f, Vector2F},
@@ -14,6 +11,9 @@ use crate::{
     AfterLayoutContext, DebugContext, Element, Event, EventContext, FontCache, LayoutContext,
     PaintContext, SizeConstraint,
 };
+use serde::Deserialize;
+use serde_json::json;
+use smallvec::{smallvec, SmallVec};
 
 pub struct Label {
     text: String,
@@ -23,12 +23,14 @@ pub struct Label {
     highlight_indices: Vec<usize>,
 }
 
-#[derive(Clone, Debug, Default)]
+#[derive(Clone, Debug, Default, Deserialize)]
 pub struct LabelStyle {
-    pub default_color: ColorU,
-    pub highlight_color: ColorU,
+    pub color: Color,
+    pub highlight_color: Option<Color>,
+    #[serde(deserialize_with = "deserialize_font_properties")]
     pub font_properties: Properties,
-    pub highlight_font_properties: Properties,
+    #[serde(default, deserialize_with = "deserialize_option_font_properties")]
+    pub highlight_font_properties: Option<Properties>,
 }
 
 impl Label {
@@ -47,8 +49,8 @@ impl Label {
         self
     }
 
-    pub fn with_default_color(mut self, color: ColorU) -> Self {
-        self.style.default_color = color;
+    pub fn with_default_color(mut self, color: Color) -> Self {
+        self.style.color = color;
         self
     }
 
@@ -61,13 +63,15 @@ impl Label {
         &self,
         font_cache: &FontCache,
         font_id: FontId,
-    ) -> SmallVec<[(usize, FontId, ColorU); 8]> {
+    ) -> SmallVec<[(usize, FontId, Color); 8]> {
         if self.highlight_indices.is_empty() {
-            return smallvec![(self.text.len(), font_id, self.style.default_color)];
+            return smallvec![(self.text.len(), font_id, self.style.color)];
         }
 
-        let highlight_font_id = font_cache
-            .select_font(self.family_id, &self.style.highlight_font_properties)
+        let highlight_font_id = self
+            .style
+            .highlight_font_properties
+            .and_then(|properties| font_cache.select_font(self.family_id, &properties).ok())
             .unwrap_or(font_id);
 
         let mut highlight_indices = self.highlight_indices.iter().copied().peekable();
@@ -75,11 +79,11 @@ impl Label {
 
         for (char_ix, c) in self.text.char_indices() {
             let mut font_id = font_id;
-            let mut color = self.style.default_color;
+            let mut color = self.style.color;
             if let Some(highlight_ix) = highlight_indices.peek() {
                 if char_ix == *highlight_ix {
                     font_id = highlight_font_id;
-                    color = self.style.highlight_color;
+                    color = self.style.highlight_color.unwrap_or(self.style.color);
                     highlight_indices.next();
                 }
             }
@@ -179,7 +183,7 @@ impl Element for Label {
 impl ToJson for LabelStyle {
     fn to_json(&self) -> Value {
         json!({
-            "default_color": self.default_color.to_json(),
+            "default_color": self.color.to_json(),
             "default_font_properties": self.font_properties.to_json(),
             "highlight_color": self.highlight_color.to_json(),
             "highlight_font_properties": self.highlight_font_properties.to_json(),
@@ -204,14 +208,14 @@ mod tests {
             .font_cache()
             .select_font(menlo, Properties::new().weight(Weight::BOLD))
             .unwrap();
-        let black = ColorU::black();
-        let red = ColorU::new(255, 0, 0, 255);
+        let black = Color::black();
+        let red = Color::new(255, 0, 0, 255);
 
         let label = Label::new(".αβγδε.ⓐⓑⓒⓓⓔ.abcde.".to_string(), menlo, 12.0)
             .with_style(&LabelStyle {
-                default_color: black,
-                highlight_color: red,
-                highlight_font_properties: *Properties::new().weight(Weight::BOLD),
+                color: black,
+                highlight_color: Some(red),
+                highlight_font_properties: Some(*Properties::new().weight(Weight::BOLD)),
                 ..Default::default()
             })
             .with_highlights(vec![

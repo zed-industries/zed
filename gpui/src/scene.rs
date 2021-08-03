@@ -1,9 +1,9 @@
+use serde::Deserialize;
+use serde_json::json;
 use std::borrow::Cow;
 
-use serde_json::json;
-
 use crate::{
-    color::ColorU,
+    color::Color,
     fonts::{FontId, GlyphId},
     geometry::{rect::RectF, vector::Vector2F},
     json::ToJson,
@@ -28,7 +28,7 @@ pub struct Layer {
 #[derive(Default, Debug)]
 pub struct Quad {
     pub bounds: RectF,
-    pub background: Option<ColorU>,
+    pub background: Option<Color>,
     pub border: Border,
     pub corner_radius: f32,
 }
@@ -38,7 +38,7 @@ pub struct Shadow {
     pub bounds: RectF,
     pub corner_radius: f32,
     pub sigma: f32,
-    pub color: ColorU,
+    pub color: Color,
 }
 
 #[derive(Debug)]
@@ -47,20 +47,20 @@ pub struct Glyph {
     pub font_size: f32,
     pub id: GlyphId,
     pub origin: Vector2F,
-    pub color: ColorU,
+    pub color: Color,
 }
 
 pub struct Icon {
     pub bounds: RectF,
     pub svg: usvg::Tree,
     pub path: Cow<'static, str>,
-    pub color: ColorU,
+    pub color: Color,
 }
 
-#[derive(Clone, Copy, Default, Debug)]
+#[derive(Clone, Copy, Default, Debug, Deserialize)]
 pub struct Border {
     pub width: f32,
-    pub color: Option<ColorU>,
+    pub color: Option<Color>,
     pub top: bool,
     pub right: bool,
     pub bottom: bool,
@@ -70,7 +70,7 @@ pub struct Border {
 #[derive(Debug)]
 pub struct Path {
     pub bounds: RectF,
-    pub color: ColorU,
+    pub color: Color,
     pub vertices: Vec<PathVertex>,
 }
 
@@ -193,10 +193,10 @@ impl Layer {
 }
 
 impl Border {
-    pub fn new(width: f32, color: impl Into<ColorU>) -> Self {
+    pub fn new(width: f32, color: Color) -> Self {
         Self {
             width,
-            color: Some(color.into()),
+            color: Some(color),
             top: false,
             left: false,
             bottom: false,
@@ -204,10 +204,10 @@ impl Border {
         }
     }
 
-    pub fn all(width: f32, color: impl Into<ColorU>) -> Self {
+    pub fn all(width: f32, color: Color) -> Self {
         Self {
             width,
-            color: Some(color.into()),
+            color: Some(color),
             top: true,
             left: true,
             bottom: true,
@@ -215,25 +215,25 @@ impl Border {
         }
     }
 
-    pub fn top(width: f32, color: impl Into<ColorU>) -> Self {
+    pub fn top(width: f32, color: Color) -> Self {
         let mut border = Self::new(width, color);
         border.top = true;
         border
     }
 
-    pub fn left(width: f32, color: impl Into<ColorU>) -> Self {
+    pub fn left(width: f32, color: Color) -> Self {
         let mut border = Self::new(width, color);
         border.left = true;
         border
     }
 
-    pub fn bottom(width: f32, color: impl Into<ColorU>) -> Self {
+    pub fn bottom(width: f32, color: Color) -> Self {
         let mut border = Self::new(width, color);
         border.bottom = true;
         border
     }
 
-    pub fn right(width: f32, color: impl Into<ColorU>) -> Self {
+    pub fn right(width: f32, color: Color) -> Self {
         let mut border = Self::new(width, color);
         border.right = true;
         border

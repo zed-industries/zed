@@ -8,7 +8,7 @@ pub mod current {
 }
 
 use crate::{
-    color::ColorU,
+    color::Color,
     executor,
     fonts::{FontId, GlyphId, Metrics as FontMetrics, Properties as FontProperties},
     geometry::{
@@ -134,7 +134,7 @@ pub trait FontSystem: Send + Sync {
         &self,
         text: &str,
         font_size: f32,
-        runs: &[(usize, FontId, ColorU)],
+        runs: &[(usize, FontId, Color)],
     ) -> LineLayout;
     fn wrap_line(&self, text: &str, font_id: FontId, font_size: f32, width: f32) -> Vec<usize>;
 }

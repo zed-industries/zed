@@ -1,9 +1,5 @@
 use anyhow::{anyhow, Result};
-use gpui::{
-    color::{rgbu, ColorU},
-    elements::*,
-    Axis, Border,
-};
+use gpui::{color::Color, elements::*, Axis, Border};
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct PaneGroup {
@@ -388,6 +384,6 @@ fn border_width() -> f32 {
 }
 
 #[inline(always)]
-fn border_color() -> ColorU {
-    rgbu(0xdb, 0xdb, 0xdc)
+fn border_color() -> Color {
+    Color::new(0xdb, 0xdb, 0xdc, 0xff)
 }

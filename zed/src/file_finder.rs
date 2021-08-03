@@ -6,7 +6,7 @@ use crate::{
     worktree::{match_paths, PathMatch, Worktree},
 };
 use gpui::{
-    color::ColorF,
+    color::Color,
     elements::*,
     fonts::{Properties, Weight},
     geometry::vector::vec2f,
@@ -82,7 +82,7 @@ impl View for FileFinder {
                 .with_uniform_padding(6.0)
                 .with_corner_radius(6.0)
                 .with_background_color(settings.theme.ui.modal_background)
-                .with_shadow(vec2f(0., 4.), 12., ColorF::new(0.0, 0.0, 0.0, 0.5).to_u8())
+                .with_shadow(vec2f(0., 4.), 12., Color::new(0, 0, 0, 128))
                 .boxed(),
             )
             .with_max_width(600.0)
@@ -114,7 +114,7 @@ impl FileFinder {
                     settings.ui_font_family,
                     settings.ui_font_size,
                 )
-                .with_default_color(settings.theme.editor.default_text.0)
+                .with_default_color(settings.theme.editor.default_text)
                 .boxed(),
             )
             .with_margin_top(6.0)
@@ -155,9 +155,9 @@ impl FileFinder {
                 let bold = *Properties::new().weight(Weight::BOLD);
                 let selected_index = self.selected_index();
                 let label_style = LabelStyle {
-                    default_color: theme.modal_match_text.0,
-                    highlight_color: theme.modal_match_text_highlight.0,
-                    highlight_font_properties: bold,
+                    color: theme.modal_match_text,
+                    highlight_color: Some(theme.modal_match_text_highlight),
+                    highlight_font_properties: Some(bold),
                     ..Default::default()
                 };
                 let mut container = Container::new(
@@ -206,9 +206,9 @@ impl FileFinder {
                 )
                 .with_uniform_padding(6.0)
                 .with_background_color(if index == selected_index {
-                    theme.modal_match_background_active.0
+                    theme.modal_match_background_active
                 } else {
-                    theme.modal_match_background.0
+                    theme.modal_match_background
                 });
 
                 if index == selected_index || index < self.matches.len() - 1 {

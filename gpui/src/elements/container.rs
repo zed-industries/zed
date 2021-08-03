@@ -1,20 +1,24 @@
 use pathfinder_geometry::rect::RectF;
+use serde::Deserialize;
 use serde_json::json;
 
 use crate::{
-    color::ColorU,
-    geometry::vector::{vec2f, Vector2F},
+    color::Color,
+    geometry::{
+        deserialize_vec2f,
+        vector::{vec2f, Vector2F},
+    },
     json::ToJson,
     scene::{self, Border, Quad},
     AfterLayoutContext, Element, ElementBox, Event, EventContext, LayoutContext, PaintContext,
     SizeConstraint,
 };
 
-#[derive(Clone, Debug, Default)]
+#[derive(Clone, Debug, Default, Deserialize)]
 pub struct ContainerStyle {
     margin: Margin,
     padding: Padding,
-    background_color: Option<ColorU>,
+    background_color: Option<Color>,
     border: Border,
     corner_radius: f32,
     shadow: Option<Shadow>,
@@ -80,8 +84,8 @@ impl Container {
         self
     }
 
-    pub fn with_background_color(mut self, color: impl Into<ColorU>) -> Self {
-        self.style.background_color = Some(color.into());
+    pub fn with_background_color(mut self, color: Color) -> Self {
+        self.style.background_color = Some(color);
         self
     }
 
@@ -95,11 +99,11 @@ impl Container {
         self
     }
 
-    pub fn with_shadow(mut self, offset: Vector2F, blur: f32, color: impl Into<ColorU>) -> Self {
+    pub fn with_shadow(mut self, offset: Vector2F, blur: f32, color: Color) -> Self {
         self.style.shadow = Some(Shadow {
             offset,
             blur,
-            color: color.into(),
+            color,
         });
         self
     }
@@ -241,7 +245,7 @@ impl ToJson for ContainerStyle {
     }
 }
 
-#[derive(Clone, Debug, Default)]
+#[derive(Clone, Debug, Default, Deserialize)]
 pub struct Margin {
     top: f32,
     left: f32,
@@ -268,7 +272,7 @@ impl ToJson for Margin {
     }
 }
 
-#[derive(Clone, Debug, Default)]
+#[derive(Clone, Debug, Default, Deserialize)]
 pub struct Padding {
     top: f32,
     left: f32,
@@ -295,11 +299,12 @@ impl ToJson for Padding {
     }
 }
 
-#[derive(Clone, Debug, Default)]
+#[derive(Clone, Debug, Default, Deserialize)]
 pub struct Shadow {
+    #[serde(deserialize_with = "deserialize_vec2f")]
     offset: Vector2F,
     blur: f32,
-    color: ColorU,
+    color: Color,
 }
 
 impl ToJson for Shadow {

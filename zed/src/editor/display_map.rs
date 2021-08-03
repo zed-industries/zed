@@ -340,7 +340,7 @@ mod tests {
         util::RandomCharIter,
     };
     use buffer::{History, SelectionGoal};
-    use gpui::{color::ColorU, MutableAppContext};
+    use gpui::{color::Color, MutableAppContext};
     use rand::{prelude::StdRng, Rng};
     use std::{env, sync::Arc};
     use Bias::*;
@@ -656,12 +656,12 @@ mod tests {
             syntax: vec![
                 (
                     "mod.body".to_string(),
-                    ColorU::from_u32(0xff0000ff),
+                    Color::from_u32(0xff0000ff),
                     Default::default(),
                 ),
                 (
                     "fn.name".to_string(),
-                    ColorU::from_u32(0x00ff00ff),
+                    Color::from_u32(0x00ff00ff),
                     Default::default(),
                 ),
             ],
@@ -754,12 +754,12 @@ mod tests {
             syntax: vec![
                 (
                     "mod.body".to_string(),
-                    ColorU::from_u32(0xff0000ff),
+                    Color::from_u32(0xff0000ff),
                     Default::default(),
                 ),
                 (
                     "fn.name".to_string(),
-                    ColorU::from_u32(0x00ff00ff),
+                    Color::from_u32(0x00ff00ff),
                     Default::default(),
                 ),
             ],

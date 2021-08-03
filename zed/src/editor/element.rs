@@ -1,7 +1,7 @@
 use super::{DisplayPoint, Editor, SelectAction, Snapshot};
 use crate::time::ReplicaId;
 use gpui::{
-    color::ColorU,
+    color::Color,
     geometry::{
         rect::RectF,
         vector::{vec2f, Vector2F},
@@ -196,14 +196,14 @@ impl EditorElement {
         let theme = &settings.theme;
         cx.scene.push_quad(Quad {
             bounds: gutter_bounds,
-            background: Some(theme.editor.gutter_background.0),
-            border: Border::new(0., ColorU::transparent_black()),
+            background: Some(theme.editor.gutter_background),
+            border: Border::new(0., Color::transparent_black()),
             corner_radius: 0.,
         });
         cx.scene.push_quad(Quad {
             bounds: text_bounds,
-            background: Some(theme.editor.background.0),
-            border: Border::new(0., ColorU::transparent_black()),
+            background: Some(theme.editor.background),
+            border: Border::new(0., Color::transparent_black()),
             corner_radius: 0.,
         });
 
@@ -229,7 +229,7 @@ impl EditorElement {
                     );
                     cx.scene.push_quad(Quad {
                         bounds: RectF::new(origin, size),
-                        background: Some(theme.editor.active_line_background.0),
+                        background: Some(theme.editor.active_line_background),
                         border: Border::default(),
                         corner_radius: 0.,
                     });
@@ -290,7 +290,7 @@ impl EditorElement {
                     };
 
                     let selection = Selection {
-                        color: replica_theme.selection.0,
+                        color: replica_theme.selection,
                         line_height: layout.line_height,
                         start_y: content_origin.y() + row_range.start as f32 * layout.line_height
                             - scroll_top,
@@ -333,7 +333,7 @@ impl EditorElement {
                             - scroll_left;
                         let y = selection.end.row() as f32 * layout.line_height - scroll_top;
                         cursors.push(Cursor {
-                            color: replica_theme.cursor.0,
+                            color: replica_theme.cursor,
                             origin: content_origin + vec2f(x, y),
                             line_height: layout.line_height,
                         });
@@ -707,7 +707,7 @@ impl PaintState {
 struct Cursor {
     origin: Vector2F,
     line_height: f32,
-    color: ColorU,
+    color: Color,
 }
 
 impl Cursor {
@@ -715,7 +715,7 @@ impl Cursor {
         cx.scene.push_quad(Quad {
             bounds: RectF::new(self.origin, vec2f(2.0, self.line_height)),
             background: Some(self.color),
-            border: Border::new(0., ColorU::black()),
+            border: Border::new(0., Color::black()),
             corner_radius: 0.,
         });
     }
@@ -726,7 +726,7 @@ struct Selection {
     start_y: f32,
     line_height: f32,
     lines: Vec<SelectionLine>,
-    color: ColorU,
+    color: Color,
 }
 
 #[derive(Debug)]

@@ -1,6 +1,6 @@
 use anyhow::{anyhow, Context, Result};
 use gpui::{
-    color::ColorU,
+    color::Color,
     font_cache::{FamilyId, FontCache},
     fonts::{Properties as FontProperties, Style as FontStyle, Weight as FontWeight},
     AssetSource,
@@ -9,12 +9,7 @@ use parking_lot::Mutex;
 use postage::watch;
 use serde::{de::value::MapDeserializer, Deserialize};
 use serde_json::Value;
-use std::{
-    collections::HashMap,
-    fmt,
-    ops::{Deref, DerefMut},
-    sync::Arc,
-};
+use std::{collections::HashMap, sync::Arc};
 
 const DEFAULT_STYLE_ID: StyleId = StyleId(u32::MAX);
 
@@ -38,7 +33,7 @@ pub struct ThemeRegistry {
 pub struct Theme {
     pub ui: UiTheme,
     pub editor: EditorTheme,
-    pub syntax: Vec<(String, ColorU, FontProperties)>,
+    pub syntax: Vec<(String, Color, FontProperties)>,
 }
 
 #[derive(Deserialize)]
@@ -92,9 +87,6 @@ pub struct ReplicaTheme {
     pub cursor: Color,
     pub selection: Color,
 }
-
-#[derive(Clone, Copy, Default)]
-pub struct Color(pub ColorU);
 
 #[derive(Clone, Debug)]
 pub struct ThemeMap(Arc<[StyleId]>);
@@ -151,7 +143,7 @@ impl ThemeRegistry {
         }
 
         let theme_toml = self.load(name)?;
-        let mut syntax = Vec::<(String, ColorU, FontProperties)>::new();
+        let mut syntax = Vec::<(String, Color, FontProperties)>::new();
         for (key, style) in theme_toml.syntax.iter() {
             let mut color = Color::default();
             let mut properties = FontProperties::new();
@@ -171,7 +163,7 @@ impl ThemeRegistry {
             }
             match syntax.binary_search_by_key(&key, |e| &e.0) {
                 Ok(i) | Err(i) => {
-                    syntax.insert(i, (key.to_string(), color.0, properties));
+                    syntax.insert(i, (key.to_string(), color, properties));
                 }
             }
         }
@@ -234,11 +226,12 @@ impl ThemeRegistry {
 }
 
 impl Theme {
-    pub fn syntax_style(&self, id: StyleId) -> (ColorU, FontProperties) {
-        self.syntax.get(id.0 as usize).map_or(
-            (self.editor.default_text.0, FontProperties::new()),
-            |entry| (entry.1, entry.2),
-        )
+    pub fn syntax_style(&self, id: StyleId) -> (Color, FontProperties) {
+        self.syntax
+            .get(id.0 as usize)
+            .map_or((self.editor.default_text, FontProperties::new()), |entry| {
+                (entry.1, entry.2)
+            })
     }
 
     #[cfg(test)]
@@ -310,53 +303,6 @@ impl Default for ThemeMap {
 impl Default for StyleId {
     fn default() -> Self {
         DEFAULT_STYLE_ID
-    }
-}
-
-impl Color {
-    fn from_u32(rgba: u32) -> Self {
-        Self(ColorU::from_u32(rgba))
-    }
-}
-
-impl<'de> Deserialize<'de> for Color {
-    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
-    where
-        D: serde::Deserializer<'de>,
-    {
-        let rgb = u32::deserialize(deserializer)?;
-        Ok(Self::from_u32((rgb << 8) + 0xFF))
-    }
-}
-
-impl Into<ColorU> for Color {
-    fn into(self) -> ColorU {
-        self.0
-    }
-}
-
-impl Deref for Color {
-    type Target = ColorU;
-    fn deref(&self) -> &Self::Target {
-        &self.0
-    }
-}
-
-impl DerefMut for Color {
-    fn deref_mut(&mut self) -> &mut Self::Target {
-        &mut self.0
-    }
-}
-
-impl fmt::Debug for Color {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        self.0.fmt(f)
-    }
-}
-
-impl PartialEq<ColorU> for Color {
-    fn eq(&self, other: &ColorU) -> bool {
-        self.0.eq(other)
     }
 }
 
@@ -478,25 +424,25 @@ mod tests {
         let registry = ThemeRegistry::new(assets);
         let theme = registry.get("my-theme").unwrap();
 
-        assert_eq!(theme.ui.tab_background_active, ColorU::from_u32(0x100000ff));
-        assert_eq!(theme.editor.background, ColorU::from_u32(0x00ed00ff));
-        assert_eq!(theme.editor.line_number, ColorU::from_u32(0xddddddff));
+        assert_eq!(theme.ui.tab_background_active, Color::from_u32(0x100000ff));
+        assert_eq!(theme.editor.background, Color::from_u32(0x00ed00ff));
+        assert_eq!(theme.editor.line_number, Color::from_u32(0xddddddff));
         assert_eq!(
             theme.syntax,
             &[
                 (
                     "alpha.one".to_string(),
-                    ColorU::from_u32(0x112233ff),
+                    Color::from_u32(0x112233ff),
                     *FontProperties::new().weight(FontWeight::BOLD)
                 ),
                 (
                     "beta.two".to_string(),
-                    ColorU::from_u32(0xaabbccff),
+                    Color::from_u32(0xaabbccff),
                     *FontProperties::new().weight(FontWeight::NORMAL)
                 ),
                 (
                     "gamma.three".to_string(),
-                    ColorU::from_u32(0x00000000),
+                    Color::from_u32(0x00000000),
                     *FontProperties::new()
                         .weight(FontWeight::LIGHT)
                         .style(FontStyle::Italic),
@@ -553,10 +499,10 @@ mod tests {
         let registry = ThemeRegistry::new(assets);
         let theme = registry.get("light").unwrap();
 
-        assert_eq!(theme.ui.tab_background, ColorU::from_u32(0x555555ff));
-        assert_eq!(theme.ui.tab_text, ColorU::from_u32(0x333333ff));
-        assert_eq!(theme.editor.background, ColorU::from_u32(0x666666ff));
-        assert_eq!(theme.editor.default_text, ColorU::from_u32(0x444444ff));
+        assert_eq!(theme.ui.tab_background, Color::from_u32(0x555555ff));
+        assert_eq!(theme.ui.tab_text, Color::from_u32(0x333333ff));
+        assert_eq!(theme.editor.background, Color::from_u32(0x666666ff));
+        assert_eq!(theme.editor.default_text, Color::from_u32(0x444444ff));
 
         assert_eq!(
             registry.list().collect::<Vec<_>>(),
@@ -577,12 +523,12 @@ mod tests {
             ui: Default::default(),
             editor: Default::default(),
             syntax: [
-                ("function", ColorU::from_u32(0x100000ff)),
-                ("function.method", ColorU::from_u32(0x200000ff)),
-                ("function.async", ColorU::from_u32(0x300000ff)),
-                ("variable.builtin.self.rust", ColorU::from_u32(0x400000ff)),
-                ("variable.builtin", ColorU::from_u32(0x500000ff)),
-                ("variable", ColorU::from_u32(0x600000ff)),
+                ("function", Color::from_u32(0x100000ff)),
+                ("function.method", Color::from_u32(0x200000ff)),
+                ("function.async", Color::from_u32(0x300000ff)),
+                ("variable.builtin.self.rust", Color::from_u32(0x400000ff)),
+                ("variable.builtin", Color::from_u32(0x500000ff)),
+                ("variable", Color::from_u32(0x600000ff)),
             ]
             .iter()
             .map(|e| (e.0.to_string(), e.1, FontProperties::new()))

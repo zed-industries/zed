@@ -1,7 +1,7 @@
 use super::{ItemViewHandle, SplitDirection};
 use crate::settings::{Settings, UiTheme};
 use gpui::{
-    color::ColorU,
+    color::Color,
     elements::*,
     geometry::{rect::RectF, vector::vec2f},
     keymap::Binding,
@@ -200,7 +200,7 @@ impl Pane {
                     MouseEventHandler::new::<Tab, _>(item.id(), cx, |mouse_state| {
                         let title = item.title(cx);
 
-                        let mut border = Border::new(1.0, theme.tab_border.0);
+                        let mut border = Border::new(1.0, theme.tab_border);
                         border.left = ix > 0;
                         border.right = ix == last_item_ix;
                         border.bottom = ix != self.active_item;
@@ -215,9 +215,9 @@ impl Pane {
                                             settings.ui_font_size,
                                         )
                                         .with_default_color(if is_active {
-                                            theme.tab_text_active.0
+                                            theme.tab_text_active
                                         } else {
-                                            theme.tab_text.0
+                                            theme.tab_text
                                         })
                                         .boxed(),
                                     )
@@ -317,12 +317,12 @@ impl Pane {
         };
 
         let icon = if tab_hovered {
-            let close_color = current_color.unwrap_or(theme.tab_icon_close).0;
+            let close_color = current_color.unwrap_or(theme.tab_icon_close);
             let icon = Svg::new("icons/x.svg").with_color(close_color);
 
             MouseEventHandler::new::<TabCloseButton, _>(item_id, cx, |mouse_state| {
                 if mouse_state.hovered {
-                    Container::new(icon.with_color(ColorU::white()).boxed())
+                    Container::new(icon.with_color(Color::white()).boxed())
                         .with_background_color(if mouse_state.clicked {
                             clicked_color
                         } else {
@@ -344,7 +344,7 @@ impl Pane {
                         let square = RectF::new(bounds.origin(), vec2f(diameter, diameter));
                         cx.scene.push_quad(Quad {
                             bounds: square,
-                            background: Some(current_color.0),
+                            background: Some(current_color),
                             border: Default::default(),
                             corner_radius: diameter / 2.,
                         });

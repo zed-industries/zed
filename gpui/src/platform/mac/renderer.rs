@@ -1,6 +1,6 @@
 use super::{atlas::AtlasAllocator, sprite_cache::SpriteCache};
 use crate::{
-    color::ColorU,
+    color::Color,
     geometry::{
         rect::RectF,
         vector::{vec2f, vec2i, Vector2F},
@@ -11,7 +11,7 @@ use crate::{
 };
 use cocoa::foundation::NSUInteger;
 use metal::{MTLPixelFormat, MTLResourceOptions, NSRange};
-use shaders::{ToFloat2 as _, ToUchar4 as _};
+use shaders::ToFloat2 as _;
 use std::{collections::HashMap, ffi::c_void, iter::Peekable, mem, sync::Arc, vec};
 
 const SHADERS_METALLIB: &'static [u8] =
@@ -438,7 +438,7 @@ impl Renderer {
                 size: bounds.size().round().to_float2(),
                 background_color: quad
                     .background
-                    .unwrap_or(ColorU::transparent_black())
+                    .unwrap_or(Color::transparent_black())
                     .to_uchar4(),
                 border_top: border_width * (quad.border.top as usize as f32),
                 border_right: border_width * (quad.border.right as usize as f32),
@@ -447,7 +447,7 @@ impl Renderer {
                 border_color: quad
                     .border
                     .color
-                    .unwrap_or(ColorU::transparent_black())
+                    .unwrap_or(Color::transparent_black())
                     .to_uchar4(),
                 corner_radius: quad.corner_radius * scene.scale_factor(),
             };
@@ -782,17 +782,13 @@ mod shaders {
 
     use pathfinder_geometry::vector::Vector2I;
 
-    use crate::{color::ColorU, geometry::vector::Vector2F};
+    use crate::{color::Color, geometry::vector::Vector2F};
     use std::mem;
 
     include!(concat!(env!("OUT_DIR"), "/shaders.rs"));
 
     pub trait ToFloat2 {
         fn to_float2(&self) -> vector_float2;
-    }
-
-    pub trait ToUchar4 {
-        fn to_uchar4(&self) -> vector_uchar4;
     }
 
     impl ToFloat2 for (f32, f32) {
@@ -823,8 +819,8 @@ mod shaders {
         }
     }
 
-    impl ToUchar4 for ColorU {
-        fn to_uchar4(&self) -> vector_uchar4 {
+    impl Color {
+        pub fn to_uchar4(&self) -> vector_uchar4 {
             let mut vec = self.a as vector_uchar4;
             vec <<= 8;
             vec |= self.b as vector_uchar4;
