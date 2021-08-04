@@ -38,7 +38,7 @@ pub fn init(cx: &mut MutableAppContext, app_state: &Arc<AppState>) {
 
     cx.add_bindings(vec![
         Binding::new("cmd-k cmd-t", "theme_selector:toggle", None).with_arg(app_state.clone()),
-        Binding::new("cmd-k shift-T", "theme_selector:reload", None).with_arg(app_state.clone()),
+        Binding::new("cmd-k t", "theme_selector:reload", None).with_arg(app_state.clone()),
         Binding::new("escape", "theme_selector:toggle", Some("ThemeSelector"))
             .with_arg(app_state.clone()),
         Binding::new("enter", "theme_selector:confirm", Some("ThemeSelector")),
