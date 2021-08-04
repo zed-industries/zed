@@ -11,11 +11,19 @@ use serde::{de, Deserialize, Deserializer};
 use serde_json as json;
 use std::{cmp::Ordering, collections::HashMap, sync::Arc};
 
+const DEFAULT_STYLE_ID: StyleId = StyleId(u32::MAX);
+
 pub struct ThemeRegistry {
     assets: Box<dyn AssetSource>,
     themes: Mutex<HashMap<String, Arc<Theme>>>,
     theme_data: Mutex<HashMap<String, Arc<Value>>>,
 }
+
+#[derive(Clone, Debug)]
+pub struct ThemeMap(Arc<[StyleId]>);
+
+#[derive(Clone, Copy, Debug)]
+pub struct StyleId(u32);
 
 #[derive(Debug, Default, Deserialize)]
 pub struct Theme {
@@ -204,6 +212,73 @@ impl ThemeRegistry {
     }
 }
 
+impl Theme {
+    pub fn syntax_style(&self, id: StyleId) -> (Color, FontProperties) {
+        self.syntax
+            .get(id.0 as usize)
+            .map_or((self.editor.text, FontProperties::new()), |entry| {
+                (entry.1, entry.2)
+            })
+    }
+
+    #[cfg(test)]
+    pub fn syntax_style_name(&self, id: StyleId) -> Option<&str> {
+        self.syntax.get(id.0 as usize).map(|e| e.0.as_str())
+    }
+}
+
+impl ThemeMap {
+    pub fn new(capture_names: &[String], theme: &Theme) -> Self {
+        // For each capture name in the highlight query, find the longest
+        // key in the theme's syntax styles that matches all of the
+        // dot-separated components of the capture name.
+        ThemeMap(
+            capture_names
+                .iter()
+                .map(|capture_name| {
+                    theme
+                        .syntax
+                        .iter()
+                        .enumerate()
+                        .filter_map(|(i, (key, _, _))| {
+                            let mut len = 0;
+                            let capture_parts = capture_name.split('.');
+                            for key_part in key.split('.') {
+                                if capture_parts.clone().any(|part| part == key_part) {
+                                    len += 1;
+                                } else {
+                                    return None;
+                                }
+                            }
+                            Some((i, len))
+                        })
+                        .max_by_key(|(_, len)| *len)
+                        .map_or(DEFAULT_STYLE_ID, |(i, _)| StyleId(i as u32))
+                })
+                .collect(),
+        )
+    }
+
+    pub fn get(&self, capture_id: u32) -> StyleId {
+        self.0
+            .get(capture_id as usize)
+            .copied()
+            .unwrap_or(DEFAULT_STYLE_ID)
+    }
+}
+
+impl Default for ThemeMap {
+    fn default() -> Self {
+        Self(Arc::new([]))
+    }
+}
+
+impl Default for StyleId {
+    fn default() -> Self {
+        DEFAULT_STYLE_ID
+    }
+}
+
 fn deep_merge_json(base: &mut Map<String, Value>, extension: Map<String, Value>) {
     for (key, extension_value) in extension {
         if let Value::Object(extension_object) = extension_value {
@@ -383,4 +458,190 @@ where
     }
 
     Ok(result)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use gpui::fonts::{Properties as FontProperties, Style as FontStyle, Weight as FontWeight};
+
+    #[test]
+    fn test_parse_simple_theme() {
+        let assets = TestAssets(&[(
+            "themes/my-theme.toml",
+            r#"
+            [ui.tab.active]
+            background = 0x100000
+
+            [editor]
+            background = 0x00ed00
+            line_number = 0xdddddd
+
+            [syntax]
+            "beta.two" = 0xAABBCC
+            "alpha.one" = {color = 0x112233, weight = "bold"}
+            "gamma.three" = {weight = "light", italic = true}
+            "#,
+        )]);
+
+        let registry = ThemeRegistry::new(assets);
+        let theme = registry.get("my-theme").unwrap();
+
+        assert_eq!(
+            theme.ui.active_tab.container.background_color,
+            Some(Color::from_u32(0x100000ff))
+        );
+        assert_eq!(theme.editor.background, Color::from_u32(0x00ed00ff));
+        assert_eq!(theme.editor.line_number, Color::from_u32(0xddddddff));
+        assert_eq!(
+            theme.syntax,
+            &[
+                (
+                    "alpha.one".to_string(),
+                    Color::from_u32(0x112233ff),
+                    *FontProperties::new().weight(FontWeight::BOLD)
+                ),
+                (
+                    "beta.two".to_string(),
+                    Color::from_u32(0xaabbccff),
+                    *FontProperties::new().weight(FontWeight::NORMAL)
+                ),
+                (
+                    "gamma.three".to_string(),
+                    Color::from_u32(0x00000000),
+                    *FontProperties::new()
+                        .weight(FontWeight::LIGHT)
+                        .style(FontStyle::Italic),
+                ),
+            ]
+        );
+    }
+
+    #[test]
+    fn test_parse_extended_theme() {
+        let assets = TestAssets(&[
+            (
+                "themes/_base.toml",
+                r#"
+                abstract = true
+
+                [ui.tab]
+                background = 0x111111
+                text = "$variable_1"
+
+                [editor]
+                background = 0x222222
+                default_text = "$variable_2"
+                "#,
+            ),
+            (
+                "themes/light.toml",
+                r#"
+                extends = "_base"
+
+                [variables]
+                variable_1 = 0x333333
+                variable_2 = 0x444444
+
+                [ui.tab]
+                background = 0x555555
+
+                [editor]
+                background = 0x666666
+                "#,
+            ),
+            (
+                "themes/dark.toml",
+                r#"
+                extends = "_base"
+
+                [variables]
+                variable_1 = 0x555555
+                variable_2 = 0x666666
+                "#,
+            ),
+        ]);
+
+        let registry = ThemeRegistry::new(assets);
+        let theme = registry.get("light").unwrap();
+
+        assert_eq!(
+            theme.ui.tab.container.background_color,
+            Some(Color::from_u32(0x555555ff))
+        );
+        assert_eq!(theme.ui.tab.label.color, Color::from_u32(0x333333ff));
+        assert_eq!(theme.editor.background, Color::from_u32(0x666666ff));
+        assert_eq!(theme.editor.text, Color::from_u32(0x444444ff));
+
+        assert_eq!(
+            registry.list().collect::<Vec<_>>(),
+            &["light".to_string(), "dark".to_string()]
+        );
+    }
+
+    #[test]
+    fn test_parse_empty_theme() {
+        let assets = TestAssets(&[("themes/my-theme.toml", "")]);
+        let registry = ThemeRegistry::new(assets);
+        registry.get("my-theme").unwrap();
+    }
+
+    #[test]
+    fn test_theme_map() {
+        let theme = Theme {
+            ui: Default::default(),
+            editor: Default::default(),
+            syntax: [
+                ("function", Color::from_u32(0x100000ff)),
+                ("function.method", Color::from_u32(0x200000ff)),
+                ("function.async", Color::from_u32(0x300000ff)),
+                ("variable.builtin.self.rust", Color::from_u32(0x400000ff)),
+                ("variable.builtin", Color::from_u32(0x500000ff)),
+                ("variable", Color::from_u32(0x600000ff)),
+            ]
+            .iter()
+            .map(|e| (e.0.to_string(), e.1, FontProperties::new()))
+            .collect(),
+        };
+
+        let capture_names = &[
+            "function.special".to_string(),
+            "function.async.rust".to_string(),
+            "variable.builtin.self".to_string(),
+        ];
+
+        let map = ThemeMap::new(capture_names, &theme);
+        assert_eq!(theme.syntax_style_name(map.get(0)), Some("function"));
+        assert_eq!(theme.syntax_style_name(map.get(1)), Some("function.async"));
+        assert_eq!(
+            theme.syntax_style_name(map.get(2)),
+            Some("variable.builtin")
+        );
+    }
+
+    struct TestAssets(&'static [(&'static str, &'static str)]);
+
+    impl AssetSource for TestAssets {
+        fn load(&self, path: &str) -> Result<std::borrow::Cow<[u8]>> {
+            if let Some(row) = self.0.iter().find(|e| e.0 == path) {
+                Ok(row.1.as_bytes().into())
+            } else {
+                Err(anyhow!("no such path {}", path))
+            }
+        }
+
+        fn list(&self, prefix: &str) -> Vec<std::borrow::Cow<'static, str>> {
+            self.0
+                .iter()
+                .copied()
+                .filter_map(|(path, _)| {
+                    if path.starts_with(prefix) {
+                        Some(path.into())
+                    } else {
+                        None
+                    }
+                })
+                .collect()
+        }
+    }
 }
