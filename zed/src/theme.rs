@@ -12,6 +12,7 @@ use serde_json as json;
 use std::{cmp::Ordering, collections::HashMap, sync::Arc};
 
 const DEFAULT_HIGHLIGHT_ID: HighlightId = HighlightId(u32::MAX);
+pub const DEFAULT_THEME_NAME: &'static str = "dark";
 
 pub struct ThemeRegistry {
     assets: Box<dyn AssetSource>,
@@ -27,6 +28,8 @@ pub struct HighlightId(u32);
 
 #[derive(Debug, Default, Deserialize)]
 pub struct Theme {
+    #[serde(default)]
+    pub name: String,
     pub ui: Ui,
     pub editor: Editor,
     #[serde(deserialize_with = "deserialize_syntax_theme")]
@@ -129,9 +132,9 @@ impl ThemeRegistry {
         }
 
         let theme_data = self.load(name)?;
-        let theme = Arc::new(serde_json::from_value::<Theme>(
-            theme_data.as_ref().clone(),
-        )?);
+        let mut theme = serde_json::from_value::<Theme>(theme_data.as_ref().clone())?;
+        theme.name = name.into();
+        let theme = Arc::new(theme);
         self.themes.lock().insert(name.to_string(), theme.clone());
         Ok(theme)
     }
@@ -455,7 +458,23 @@ where
 
 #[cfg(test)]
 mod tests {
+    use crate::assets::Assets;
+
     use super::*;
+
+    #[test]
+    fn test_bundled_themes() {
+        let registry = ThemeRegistry::new(Assets);
+        let mut has_default_theme = false;
+        for theme_name in registry.list() {
+            let theme = registry.get(&theme_name).unwrap();
+            if theme.name == DEFAULT_THEME_NAME {
+                has_default_theme = true;
+            }
+            assert_eq!(theme.name, theme_name);
+        }
+        assert!(has_default_theme);
+    }
 
     #[test]
     fn test_theme_extension() {
@@ -546,6 +565,7 @@ mod tests {
     #[test]
     fn test_highlight_map() {
         let theme = Theme {
+            name: "test".into(),
             ui: Default::default(),
             editor: Default::default(),
             syntax: [

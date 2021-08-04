@@ -1,4 +1,4 @@
-use crate::theme;
+use crate::theme::{self, DEFAULT_THEME_NAME};
 use anyhow::Result;
 use gpui::font_cache::{FamilyId, FontCache};
 use postage::watch;
@@ -48,7 +48,7 @@ pub fn channel_with_themes(
     font_cache: &FontCache,
     themes: &ThemeRegistry,
 ) -> Result<(watch::Sender<Settings>, watch::Receiver<Settings>)> {
-    let theme = match themes.get("dark") {
+    let theme = match themes.get(DEFAULT_THEME_NAME) {
         Ok(theme) => dbg!(theme),
         Err(err) => {
             panic!("failed to deserialize default theme: {:?}", err)
