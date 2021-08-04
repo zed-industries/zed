@@ -49,7 +49,7 @@ pub fn channel_with_themes(
     themes: &ThemeRegistry,
 ) -> Result<(watch::Sender<Settings>, watch::Receiver<Settings>)> {
     let theme = match themes.get(DEFAULT_THEME_NAME) {
-        Ok(theme) => dbg!(theme),
+        Ok(theme) => theme,
         Err(err) => {
             panic!("failed to deserialize default theme: {:?}", err)
         }
