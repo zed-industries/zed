@@ -23,7 +23,7 @@ use core_graphics::{
 use core_text::{line::CTLine, string_attributes::kCTFontAttributeName};
 use font_kit::{canvas::RasterizationOptions, hinting::HintingOptions, source::SystemSource};
 use parking_lot::RwLock;
-use std::{cell::RefCell, char, convert::TryFrom, ffi::c_void};
+use std::{cell::RefCell, char, cmp, convert::TryFrom, ffi::c_void};
 
 #[allow(non_upper_case_globals)]
 const kCGImageAlphaOnly: u32 = 7;
@@ -199,6 +199,7 @@ impl FontSystemState {
         let mut string = CFMutableAttributedString::new();
         {
             string.replace_str(&CFString::new(text), CFRange::init(0, 0));
+            let utf16_line_len = string.char_len() as usize;
 
             let last_run: RefCell<Option<(usize, FontId)>> = Default::default();
             let font_runs = runs
@@ -226,12 +227,16 @@ impl FontSystemState {
             for (run_len, font_id) in font_runs {
                 let utf8_end = ix_converter.utf8_ix + run_len;
                 let utf16_start = ix_converter.utf16_ix;
-                ix_converter.advance_to_utf8_ix(utf8_end);
 
-                let cf_range = CFRange::init(
-                    utf16_start as isize,
-                    (ix_converter.utf16_ix - utf16_start) as isize,
-                );
+                if utf16_start >= utf16_line_len {
+                    break;
+                }
+
+                ix_converter.advance_to_utf8_ix(utf8_end);
+                let utf16_end = cmp::min(ix_converter.utf16_ix, utf16_line_len);
+
+                let cf_range =
+                    CFRange::init(utf16_start as isize, (utf16_end - utf16_start) as isize);
                 let font = &self.fonts[font_id.0];
                 unsafe {
                     string.set_attribute(
@@ -244,6 +249,10 @@ impl FontSystemState {
                         font_id_attr_name.as_concrete_TypeRef(),
                         &CFNumber::from(font_id.0 as i64),
                     );
+                }
+
+                if utf16_end == utf16_line_len {
+                    break;
                 }
             }
         }
@@ -483,7 +492,7 @@ mod tests {
     }
 
     #[test]
-    fn test_layout_line() {
+    fn test_wrap_line() {
         let fonts = FontSystem::new();
         let font_ids = fonts.load_family("Helvetica").unwrap();
         let font_id = fonts.select_font(&font_ids, &Default::default()).unwrap();
@@ -498,5 +507,26 @@ mod tests {
             wrap_boundaries,
             &["aaa ααα ".len(), "aaa ααα ✋✋✋ ".len(),]
         );
+    }
+
+    #[test]
+    fn test_layout_line_bom_char() {
+        let fonts = FontSystem::new();
+        let font_ids = fonts.load_family("Helvetica").unwrap();
+        let font_id = fonts.select_font(&font_ids, &Default::default()).unwrap();
+
+        let line = "\u{feff}";
+        let layout = fonts.layout_line(line, 16., &[(line.len(), font_id, Default::default())]);
+        assert_eq!(layout.len, line.len());
+        assert!(layout.runs.is_empty());
+
+        let line = "a\u{feff}b";
+        let layout = fonts.layout_line(line, 16., &[(line.len(), font_id, Default::default())]);
+        assert_eq!(layout.len, line.len());
+        assert_eq!(layout.runs.len(), 1);
+        assert_eq!(layout.runs[0].glyphs.len(), 2);
+        assert_eq!(layout.runs[0].glyphs[0].id, 68); // a
+                                                     // There's no glyph for \u{feff}
+        assert_eq!(layout.runs[0].glyphs[1].id, 69); // b
     }
 }
