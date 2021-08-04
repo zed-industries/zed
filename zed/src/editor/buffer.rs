@@ -16,7 +16,7 @@ use zrpc::proto;
 use crate::{
     language::{Language, Tree},
     operation_queue::{self, OperationQueue},
-    settings::{StyleId, ThemeMap},
+    settings::{HighlightId, HighlightMap},
     sum_tree::{self, FilterCursor, SumTree},
     time::{self, ReplicaId},
     util::Bias,
@@ -1985,7 +1985,7 @@ impl Snapshot {
                     captures,
                     next_capture: None,
                     stack: Default::default(),
-                    theme_mapping: language.theme_mapping(),
+                    highlight_map: language.highlight_map(),
                 }),
             }
         } else {
@@ -2316,8 +2316,8 @@ impl<'a> tree_sitter::TextProvider<'a> for TextProvider<'a> {
 struct Highlights<'a> {
     captures: tree_sitter::QueryCaptures<'a, 'a, TextProvider<'a>>,
     next_capture: Option<(tree_sitter::QueryMatch<'a, 'a>, usize)>,
-    stack: Vec<(usize, StyleId)>,
-    theme_mapping: ThemeMap,
+    stack: Vec<(usize, HighlightId)>,
+    highlight_map: HighlightMap,
 }
 
 pub struct HighlightedChunks<'a> {
@@ -2341,7 +2341,7 @@ impl<'a> HighlightedChunks<'a> {
                     if offset < next_capture_end {
                         highlights.stack.push((
                             next_capture_end,
-                            highlights.theme_mapping.get(capture.index),
+                            highlights.highlight_map.get(capture.index),
                         ));
                     }
                     highlights.next_capture.take();
@@ -2357,7 +2357,7 @@ impl<'a> HighlightedChunks<'a> {
 }
 
 impl<'a> Iterator for HighlightedChunks<'a> {
-    type Item = (&'a str, StyleId);
+    type Item = (&'a str, HighlightId);
 
     fn next(&mut self) -> Option<Self::Item> {
         let mut next_capture_start = usize::MAX;
@@ -2381,7 +2381,7 @@ impl<'a> Iterator for HighlightedChunks<'a> {
                     next_capture_start = capture.node.start_byte();
                     break;
                 } else {
-                    let style_id = highlights.theme_mapping.get(capture.index);
+                    let style_id = highlights.highlight_map.get(capture.index);
                     highlights.stack.push((capture.node.end_byte(), style_id));
                     highlights.next_capture = highlights.captures.next();
                 }
@@ -2391,7 +2391,7 @@ impl<'a> Iterator for HighlightedChunks<'a> {
         if let Some(chunk) = self.chunks.peek() {
             let chunk_start = self.range.start;
             let mut chunk_end = (self.chunks.offset() + chunk.len()).min(next_capture_start);
-            let mut style_id = StyleId::default();
+            let mut style_id = HighlightId::default();
             if let Some((parent_capture_end, parent_style_id)) =
                 self.highlights.as_ref().and_then(|h| h.stack.last())
             {

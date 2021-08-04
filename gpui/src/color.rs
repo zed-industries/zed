@@ -1,11 +1,15 @@
 use std::{
+    borrow::Cow,
     fmt,
     ops::{Deref, DerefMut},
 };
 
 use crate::json::ToJson;
 use pathfinder_color::ColorU;
-use serde::{Deserialize, Deserializer};
+use serde::{
+    de::{self, Unexpected},
+    Deserialize, Deserializer,
+};
 use serde_json::json;
 
 #[derive(Clone, Copy, Default, PartialEq, Eq, Hash)]
@@ -39,13 +43,20 @@ impl<'de> Deserialize<'de> for Color {
     where
         D: Deserializer<'de>,
     {
-        let mut rgba = u32::deserialize(deserializer)?;
-
-        if rgba <= 0xFFFFFF {
-            rgba = (rgba << 8) + 0xFF;
+        let literal: Cow<str> = Deserialize::deserialize(deserializer)?;
+        if let Some(digits) = literal.strip_prefix('#') {
+            if let Ok(value) = u32::from_str_radix(digits, 16) {
+                if digits.len() == 6 {
+                    return Ok(Color::from_u32((value << 8) | 0xFF));
+                } else if digits.len() == 8 {
+                    return Ok(Color::from_u32(value));
+                }
+            }
         }
-
-        Ok(Self::from_u32(rgba))
+        Err(de::Error::invalid_value(
+            Unexpected::Str(literal.as_ref()),
+            &"#RRGGBB[AA]",
+        ))
     }
 }
 

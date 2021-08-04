@@ -1,7 +1,7 @@
 use crate::{
     color::Color,
     font_cache::FamilyId,
-    fonts::{deserialize_font_properties, deserialize_option_font_properties, FontId, Properties},
+    fonts::{FontId, TextStyle},
     geometry::{
         rect::RectF,
         vector::{vec2f, Vector2F},
@@ -25,14 +25,8 @@ pub struct Label {
 
 #[derive(Clone, Debug, Default, Deserialize)]
 pub struct LabelStyle {
-    #[serde(default = "Color::black")]
-    pub color: Color,
-    #[serde(default)]
-    pub highlight_color: Option<Color>,
-    #[serde(default, deserialize_with = "deserialize_font_properties")]
-    pub font_properties: Properties,
-    #[serde(default, deserialize_with = "deserialize_option_font_properties")]
-    pub highlight_font_properties: Option<Properties>,
+    pub text: TextStyle,
+    pub highlight_text: Option<TextStyle>,
 }
 
 impl Label {
@@ -52,7 +46,7 @@ impl Label {
     }
 
     pub fn with_default_color(mut self, color: Color) -> Self {
-        self.style.color = color;
+        self.style.text.color = color;
         self
     }
 
@@ -67,13 +61,18 @@ impl Label {
         font_id: FontId,
     ) -> SmallVec<[(usize, FontId, Color); 8]> {
         if self.highlight_indices.is_empty() {
-            return smallvec![(self.text.len(), font_id, self.style.color)];
+            return smallvec![(self.text.len(), font_id, self.style.text.color)];
         }
 
         let highlight_font_id = self
             .style
-            .highlight_font_properties
-            .and_then(|properties| font_cache.select_font(self.family_id, &properties).ok())
+            .highlight_text
+            .as_ref()
+            .and_then(|style| {
+                font_cache
+                    .select_font(self.family_id, &style.font_properties)
+                    .ok()
+            })
             .unwrap_or(font_id);
 
         let mut highlight_indices = self.highlight_indices.iter().copied().peekable();
@@ -81,11 +80,16 @@ impl Label {
 
         for (char_ix, c) in self.text.char_indices() {
             let mut font_id = font_id;
-            let mut color = self.style.color;
+            let mut color = self.style.text.color;
             if let Some(highlight_ix) = highlight_indices.peek() {
                 if char_ix == *highlight_ix {
                     font_id = highlight_font_id;
-                    color = self.style.highlight_color.unwrap_or(self.style.color);
+                    color = self
+                        .style
+                        .highlight_text
+                        .as_ref()
+                        .unwrap_or(&self.style.text)
+                        .color;
                     highlight_indices.next();
                 }
             }
@@ -121,7 +125,7 @@ impl Element for Label {
     ) -> (Vector2F, Self::LayoutState) {
         let font_id = cx
             .font_cache
-            .select_font(self.family_id, &self.style.font_properties)
+            .select_font(self.family_id, &self.style.text.font_properties)
             .unwrap();
         let runs = self.compute_runs(&cx.font_cache, font_id);
         let line =
@@ -185,40 +189,43 @@ impl Element for Label {
 impl ToJson for LabelStyle {
     fn to_json(&self) -> Value {
         json!({
-            "default_color": self.color.to_json(),
-            "default_font_properties": self.font_properties.to_json(),
-            "highlight_color": self.highlight_color.to_json(),
-            "highlight_font_properties": self.highlight_font_properties.to_json(),
+            "text": self.text.to_json(),
+            "highlight_text": self.highlight_text
+                .as_ref()
+                .map_or(serde_json::Value::Null, |style| style.to_json())
         })
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use font_kit::properties::Weight;
-
     use super::*;
+    use crate::fonts::{Properties as FontProperties, Weight};
 
     #[crate::test(self)]
     fn test_layout_label_with_highlights(cx: &mut crate::MutableAppContext) {
         let menlo = cx.font_cache().load_family(&["Menlo"]).unwrap();
         let menlo_regular = cx
             .font_cache()
-            .select_font(menlo, &Properties::new())
+            .select_font(menlo, &FontProperties::new())
             .unwrap();
         let menlo_bold = cx
             .font_cache()
-            .select_font(menlo, Properties::new().weight(Weight::BOLD))
+            .select_font(menlo, FontProperties::new().weight(Weight::BOLD))
             .unwrap();
         let black = Color::black();
         let red = Color::new(255, 0, 0, 255);
 
         let label = Label::new(".αβγδε.ⓐⓑⓒⓓⓔ.abcde.".to_string(), menlo, 12.0)
             .with_style(&LabelStyle {
-                color: black,
-                highlight_color: Some(red),
-                highlight_font_properties: Some(*Properties::new().weight(Weight::BOLD)),
-                ..Default::default()
+                text: TextStyle {
+                    color: black,
+                    font_properties: Default::default(),
+                },
+                highlight_text: Some(TextStyle {
+                    color: red,
+                    font_properties: *FontProperties::new().weight(Weight::BOLD),
+                }),
             })
             .with_highlights(vec![
                 ".α".len(),

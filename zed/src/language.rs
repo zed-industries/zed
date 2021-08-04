@@ -1,4 +1,4 @@
-use crate::settings::{Theme, ThemeMap};
+use crate::settings::{HighlightMap, Theme};
 use parking_lot::Mutex;
 use rust_embed::RustEmbed;
 use serde::Deserialize;
@@ -27,7 +27,7 @@ pub struct Language {
     pub grammar: Grammar,
     pub highlight_query: Query,
     pub brackets_query: Query,
-    pub theme_mapping: Mutex<ThemeMap>,
+    pub highlight_map: Mutex<HighlightMap>,
 }
 
 pub struct LanguageRegistry {
@@ -35,12 +35,12 @@ pub struct LanguageRegistry {
 }
 
 impl Language {
-    pub fn theme_mapping(&self) -> ThemeMap {
-        self.theme_mapping.lock().clone()
+    pub fn highlight_map(&self) -> HighlightMap {
+        self.highlight_map.lock().clone()
     }
 
     pub fn set_theme(&self, theme: &Theme) {
-        *self.theme_mapping.lock() = ThemeMap::new(self.highlight_query.capture_names(), theme);
+        *self.highlight_map.lock() = HighlightMap::new(self.highlight_query.capture_names(), theme);
     }
 }
 
@@ -53,7 +53,7 @@ impl LanguageRegistry {
             grammar,
             highlight_query: Self::load_query(grammar, "rust/highlights.scm"),
             brackets_query: Self::load_query(grammar, "rust/brackets.scm"),
-            theme_mapping: Mutex::new(ThemeMap::default()),
+            highlight_map: Mutex::new(HighlightMap::default()),
         };
 
         Self {
@@ -114,7 +114,7 @@ mod tests {
                     grammar,
                     highlight_query: Query::new(grammar, "").unwrap(),
                     brackets_query: Query::new(grammar, "").unwrap(),
-                    theme_mapping: Default::default(),
+                    highlight_map: Default::default(),
                 }),
                 Arc::new(Language {
                     config: LanguageConfig {
@@ -125,7 +125,7 @@ mod tests {
                     grammar,
                     highlight_query: Query::new(grammar, "").unwrap(),
                     brackets_query: Query::new(grammar, "").unwrap(),
-                    theme_mapping: Default::default(),
+                    highlight_map: Default::default(),
                 }),
             ],
         };

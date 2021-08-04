@@ -4,7 +4,7 @@ use gpui::font_cache::{FamilyId, FontCache};
 use postage::watch;
 use std::sync::Arc;
 
-pub use theme::{StyleId, Theme, ThemeMap, ThemeRegistry};
+pub use theme::{HighlightId, HighlightMap, Theme, ThemeRegistry};
 
 #[derive(Clone)]
 pub struct Settings {
@@ -48,8 +48,13 @@ pub fn channel_with_themes(
     font_cache: &FontCache,
     themes: &ThemeRegistry,
 ) -> Result<(watch::Sender<Settings>, watch::Receiver<Settings>)> {
+    let theme = match themes.get("dark") {
+        Ok(theme) => dbg!(theme),
+        Err(err) => {
+            panic!("failed to deserialize default theme: {:?}", err)
+        }
+    };
     Ok(watch::channel_with(Settings::new_with_theme(
-        font_cache,
-        themes.get("dark").expect("failed to load default theme"),
+        font_cache, theme,
     )?))
 }

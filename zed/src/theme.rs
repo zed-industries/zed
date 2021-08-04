@@ -2,16 +2,16 @@ use anyhow::{anyhow, Context, Result};
 use gpui::{
     color::Color,
     elements::{ContainerStyle, LabelStyle},
-    fonts::{font_properties_from_json, Properties as FontProperties},
+    fonts::TextStyle,
     AssetSource,
 };
 use json::{Map, Value};
 use parking_lot::Mutex;
-use serde::{de, Deserialize, Deserializer};
+use serde::{Deserialize, Deserializer};
 use serde_json as json;
 use std::{cmp::Ordering, collections::HashMap, sync::Arc};
 
-const DEFAULT_STYLE_ID: StyleId = StyleId(u32::MAX);
+const DEFAULT_HIGHLIGHT_ID: HighlightId = HighlightId(u32::MAX);
 
 pub struct ThemeRegistry {
     assets: Box<dyn AssetSource>,
@@ -20,17 +20,17 @@ pub struct ThemeRegistry {
 }
 
 #[derive(Clone, Debug)]
-pub struct ThemeMap(Arc<[StyleId]>);
+pub struct HighlightMap(Arc<[HighlightId]>);
 
 #[derive(Clone, Copy, Debug)]
-pub struct StyleId(u32);
+pub struct HighlightId(u32);
 
 #[derive(Debug, Default, Deserialize)]
 pub struct Theme {
     pub ui: Ui,
     pub editor: Editor,
     #[serde(deserialize_with = "deserialize_syntax_theme")]
-    pub syntax: Vec<(String, Color, FontProperties)>,
+    pub syntax: Vec<(String, TextStyle)>,
 }
 
 #[derive(Debug, Default, Deserialize)]
@@ -180,6 +180,7 @@ impl ThemeRegistry {
         }
         // If you extend something with an extend directive, process the source's extend directive first
         directives.sort_unstable();
+
         // Now update objects to include the fields of objects they extend
         for ExtendDirective {
             source_path,
@@ -188,8 +189,11 @@ impl ThemeRegistry {
         {
             let source = value_at(&mut theme_data, &source_path)?.clone();
             let target = value_at(&mut theme_data, &target_path)?;
-            if let Value::Object(source_object) = source {
-                deep_merge_json(target.as_object_mut().unwrap(), source_object);
+            if let (Value::Object(mut source_object), Value::Object(target_object)) =
+                (source, target.take())
+            {
+                deep_merge_json(&mut source_object, target_object);
+                *target = Value::Object(source_object);
             }
         }
 
@@ -213,26 +217,28 @@ impl ThemeRegistry {
 }
 
 impl Theme {
-    pub fn syntax_style(&self, id: StyleId) -> (Color, FontProperties) {
+    pub fn highlight_style(&self, id: HighlightId) -> TextStyle {
         self.syntax
             .get(id.0 as usize)
-            .map_or((self.editor.text, FontProperties::new()), |entry| {
-                (entry.1, entry.2)
+            .map(|entry| entry.1.clone())
+            .unwrap_or_else(|| TextStyle {
+                color: self.editor.text,
+                font_properties: Default::default(),
             })
     }
 
     #[cfg(test)]
-    pub fn syntax_style_name(&self, id: StyleId) -> Option<&str> {
+    pub fn highlight_name(&self, id: HighlightId) -> Option<&str> {
         self.syntax.get(id.0 as usize).map(|e| e.0.as_str())
     }
 }
 
-impl ThemeMap {
+impl HighlightMap {
     pub fn new(capture_names: &[String], theme: &Theme) -> Self {
         // For each capture name in the highlight query, find the longest
         // key in the theme's syntax styles that matches all of the
         // dot-separated components of the capture name.
-        ThemeMap(
+        HighlightMap(
             capture_names
                 .iter()
                 .map(|capture_name| {
@@ -240,7 +246,7 @@ impl ThemeMap {
                         .syntax
                         .iter()
                         .enumerate()
-                        .filter_map(|(i, (key, _, _))| {
+                        .filter_map(|(i, (key, _))| {
                             let mut len = 0;
                             let capture_parts = capture_name.split('.');
                             for key_part in key.split('.') {
@@ -253,29 +259,29 @@ impl ThemeMap {
                             Some((i, len))
                         })
                         .max_by_key(|(_, len)| *len)
-                        .map_or(DEFAULT_STYLE_ID, |(i, _)| StyleId(i as u32))
+                        .map_or(DEFAULT_HIGHLIGHT_ID, |(i, _)| HighlightId(i as u32))
                 })
                 .collect(),
         )
     }
 
-    pub fn get(&self, capture_id: u32) -> StyleId {
+    pub fn get(&self, capture_id: u32) -> HighlightId {
         self.0
             .get(capture_id as usize)
             .copied()
-            .unwrap_or(DEFAULT_STYLE_ID)
+            .unwrap_or(DEFAULT_HIGHLIGHT_ID)
     }
 }
 
-impl Default for ThemeMap {
+impl Default for HighlightMap {
     fn default() -> Self {
         Self(Arc::new([]))
     }
 }
 
-impl Default for StyleId {
+impl Default for HighlightId {
     fn default() -> Self {
-        DEFAULT_STYLE_ID
+        DEFAULT_HIGHLIGHT_ID
     }
 }
 
@@ -293,13 +299,13 @@ fn deep_merge_json(base: &mut Map<String, Value>, extension: Map<String, Value>)
     }
 }
 
-#[derive(Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 enum Key {
     Array(usize),
     Object(String),
 }
 
-#[derive(PartialEq, Eq)]
+#[derive(Debug, PartialEq, Eq)]
 struct ExtendDirective {
     source_path: Vec<Key>,
     target_path: Vec<Key>,
@@ -429,30 +435,17 @@ fn validate_variable_name(name: &str) -> bool {
 
 pub fn deserialize_syntax_theme<'de, D>(
     deserializer: D,
-) -> Result<Vec<(String, Color, FontProperties)>, D::Error>
+) -> Result<Vec<(String, TextStyle)>, D::Error>
 where
     D: Deserializer<'de>,
 {
-    let mut result = Vec::<(String, Color, FontProperties)>::new();
+    let mut result = Vec::<(String, TextStyle)>::new();
 
-    let syntax_data: Map<String, Value> = Deserialize::deserialize(deserializer)?;
+    let syntax_data: HashMap<String, TextStyle> = Deserialize::deserialize(deserializer)?;
     for (key, style) in syntax_data {
-        let mut color = Color::default();
-        let mut properties = FontProperties::new();
-        match &style {
-            Value::Object(object) => {
-                if let Some(value) = object.get("color") {
-                    color = serde_json::from_value(value.clone()).map_err(de::Error::custom)?;
-                }
-                properties = font_properties_from_json(style).map_err(de::Error::custom)?;
-            }
-            _ => {
-                color = serde_json::from_value(style.clone()).map_err(de::Error::custom)?;
-            }
-        }
-        match result.binary_search_by(|(needle, _, _)| needle.cmp(&key)) {
+        match result.binary_search_by(|(needle, _)| needle.cmp(&key)) {
             Ok(i) | Err(i) => {
-                result.insert(i, (key, color, properties));
+                result.insert(i, (key, style));
             }
         }
     }
@@ -463,131 +456,95 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
-    use gpui::fonts::{Properties as FontProperties, Style as FontStyle, Weight as FontWeight};
 
     #[test]
-    fn test_parse_simple_theme() {
-        let assets = TestAssets(&[(
-            "themes/my-theme.toml",
-            r#"
-            [ui.tab.active]
-            background = 0x100000
-
-            [editor]
-            background = 0x00ed00
-            line_number = 0xdddddd
-
-            [syntax]
-            "beta.two" = 0xAABBCC
-            "alpha.one" = {color = 0x112233, weight = "bold"}
-            "gamma.three" = {weight = "light", italic = true}
-            "#,
-        )]);
-
-        let registry = ThemeRegistry::new(assets);
-        let theme = registry.get("my-theme").unwrap();
-
-        assert_eq!(
-            theme.ui.active_tab.container.background_color,
-            Some(Color::from_u32(0x100000ff))
-        );
-        assert_eq!(theme.editor.background, Color::from_u32(0x00ed00ff));
-        assert_eq!(theme.editor.line_number, Color::from_u32(0xddddddff));
-        assert_eq!(
-            theme.syntax,
-            &[
-                (
-                    "alpha.one".to_string(),
-                    Color::from_u32(0x112233ff),
-                    *FontProperties::new().weight(FontWeight::BOLD)
-                ),
-                (
-                    "beta.two".to_string(),
-                    Color::from_u32(0xaabbccff),
-                    *FontProperties::new().weight(FontWeight::NORMAL)
-                ),
-                (
-                    "gamma.three".to_string(),
-                    Color::from_u32(0x00000000),
-                    *FontProperties::new()
-                        .weight(FontWeight::LIGHT)
-                        .style(FontStyle::Italic),
-                ),
-            ]
-        );
-    }
-
-    #[test]
-    fn test_parse_extended_theme() {
+    fn test_theme_extension() {
         let assets = TestAssets(&[
             (
                 "themes/_base.toml",
-                r#"
-                abstract = true
+                r##"
+                [ui.active_tab]
+                extends = "ui.tab"
+                border.color = "#666666"
+                text = "$bright_text"
 
                 [ui.tab]
-                background = 0x111111
-                text = "$variable_1"
+                extends = "ui.element"
+                text = "$dull_text"
+
+                [ui.element]
+                background = "#111111"
+                border = {width = 2.0, color = "#00000000"}
 
                 [editor]
-                background = 0x222222
-                default_text = "$variable_2"
-                "#,
+                background = "#222222"
+                default_text = "$regular_text"
+                "##,
             ),
             (
                 "themes/light.toml",
-                r#"
+                r##"
                 extends = "_base"
 
                 [variables]
-                variable_1 = 0x333333
-                variable_2 = 0x444444
-
-                [ui.tab]
-                background = 0x555555
+                bright_text = "#ffffff"
+                regular_text = "#eeeeee"
+                dull_text = "#dddddd"
 
                 [editor]
-                background = 0x666666
-                "#,
-            ),
-            (
-                "themes/dark.toml",
-                r#"
-                extends = "_base"
-
-                [variables]
-                variable_1 = 0x555555
-                variable_2 = 0x666666
-                "#,
+                background = "#232323"
+                "##,
             ),
         ]);
 
         let registry = ThemeRegistry::new(assets);
-        let theme = registry.get("light").unwrap();
-
+        let theme_data = registry.load("light").unwrap();
         assert_eq!(
-            theme.ui.tab.container.background_color,
-            Some(Color::from_u32(0x555555ff))
-        );
-        assert_eq!(theme.ui.tab.label.color, Color::from_u32(0x333333ff));
-        assert_eq!(theme.editor.background, Color::from_u32(0x666666ff));
-        assert_eq!(theme.editor.text, Color::from_u32(0x444444ff));
-
-        assert_eq!(
-            registry.list().collect::<Vec<_>>(),
-            &["light".to_string(), "dark".to_string()]
+            theme_data.as_ref(),
+            &serde_json::json!({
+              "ui": {
+                "active_tab": {
+                  "background": "#111111",
+                  "border": {
+                    "width": 2.0,
+                    "color": "#666666"
+                  },
+                  "extends": "ui.tab",
+                  "text": "#ffffff"
+                },
+                "tab": {
+                  "background": "#111111",
+                  "border": {
+                    "width": 2.0,
+                    "color": "#00000000"
+                  },
+                  "extends": "ui.element",
+                  "text": "#dddddd"
+                },
+                "element": {
+                  "background": "#111111",
+                  "border": {
+                    "width": 2.0,
+                    "color": "#00000000"
+                  }
+                }
+              },
+              "editor": {
+                "background": "#232323",
+                "default_text": "#eeeeee"
+              },
+              "extends": "_base",
+              "variables": {
+                "bright_text": "#ffffff",
+                "regular_text": "#eeeeee",
+                "dull_text": "#dddddd"
+              }
+            })
         );
     }
 
     #[test]
-    fn test_parse_empty_theme() {
-        let assets = TestAssets(&[("themes/my-theme.toml", "")]);
-        let registry = ThemeRegistry::new(assets);
-        registry.get("my-theme").unwrap();
-    }
-
-    #[test]
-    fn test_theme_map() {
+    fn test_highlight_map() {
         let theme = Theme {
             ui: Default::default(),
             editor: Default::default(),
@@ -600,7 +557,7 @@ mod tests {
                 ("variable", Color::from_u32(0x600000ff)),
             ]
             .iter()
-            .map(|e| (e.0.to_string(), e.1, FontProperties::new()))
+            .map(|(name, color)| (name.to_string(), (*color).into()))
             .collect(),
         };
 
@@ -610,13 +567,10 @@ mod tests {
             "variable.builtin.self".to_string(),
         ];
 
-        let map = ThemeMap::new(capture_names, &theme);
-        assert_eq!(theme.syntax_style_name(map.get(0)), Some("function"));
-        assert_eq!(theme.syntax_style_name(map.get(1)), Some("function.async"));
-        assert_eq!(
-            theme.syntax_style_name(map.get(2)),
-            Some("variable.builtin")
-        );
+        let map = HighlightMap::new(capture_names, &theme);
+        assert_eq!(theme.highlight_name(map.get(0)), Some("function"));
+        assert_eq!(theme.highlight_name(map.get(1)), Some("function.async"));
+        assert_eq!(theme.highlight_name(map.get(2)), Some("variable.builtin"));
     }
 
     struct TestAssets(&'static [(&'static str, &'static str)]);

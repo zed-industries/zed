@@ -141,11 +141,15 @@ impl FileFinder {
         index: usize,
         cx: &AppContext,
     ) -> Option<ElementBox> {
+        let selected_index = self.selected_index();
         let settings = self.settings.borrow();
-        let theme = &settings.theme.ui;
+        let style = if index == selected_index {
+            &settings.theme.ui.selector.active_item
+        } else {
+            &settings.theme.ui.selector.item
+        };
         self.labels_for_match(path_match, cx).map(
             |(file_name, file_name_positions, full_path, full_path_positions)| {
-                let selected_index = self.selected_index();
                 let container = Container::new(
                     Flex::row()
                         .with_child(
@@ -170,7 +174,7 @@ impl FileFinder {
                                             settings.ui_font_family,
                                             settings.ui_font_size,
                                         )
-                                        .with_style(&theme.selector.label)
+                                        .with_style(&style.label)
                                         .with_highlights(file_name_positions)
                                         .boxed(),
                                     )
@@ -180,7 +184,7 @@ impl FileFinder {
                                             settings.ui_font_family,
                                             settings.ui_font_size,
                                         )
-                                        .with_style(&theme.selector.label)
+                                        .with_style(&style.label)
                                         .with_highlights(full_path_positions)
                                         .boxed(),
                                     )
@@ -190,12 +194,7 @@ impl FileFinder {
                         )
                         .boxed(),
                 )
-                .with_uniform_padding(6.0)
-                .with_style(if index == selected_index {
-                    &theme.selector.active_item.container
-                } else {
-                    &theme.selector.item.container
-                });
+                .with_style(&style.container);
 
                 let entry = (path_match.tree_id, path_match.path.clone());
                 EventHandler::new(container.boxed())

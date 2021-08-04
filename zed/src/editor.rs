@@ -4,7 +4,7 @@ mod element;
 pub mod movement;
 
 use crate::{
-    settings::{Settings, StyleId, Theme},
+    settings::{HighlightId, Settings, Theme},
     time::ReplicaId,
     util::{post_inc, Bias},
     workspace,
@@ -2419,7 +2419,7 @@ impl Snapshot {
             .display_snapshot
             .highlighted_chunks_for_rows(rows.clone());
 
-        'outer: for (chunk, style_ix) in chunks.chain(Some(("\n", StyleId::default()))) {
+        'outer: for (chunk, style_ix) in chunks.chain(Some(("\n", HighlightId::default()))) {
             for (ix, mut line_chunk) in chunk.split('\n').enumerate() {
                 if ix > 0 {
                     layouts.push(layout_cache.layout_str(&line, self.font_size, &styles));
@@ -2433,12 +2433,12 @@ impl Snapshot {
                 }
 
                 if !line_chunk.is_empty() && !line_exceeded_max_len {
-                    let (color, font_properties) = self.theme.syntax_style(style_ix);
+                    let style = self.theme.highlight_style(style_ix);
                     // Avoid a lookup if the font properties match the previous ones.
-                    let font_id = if font_properties == prev_font_properties {
+                    let font_id = if style.font_properties == prev_font_properties {
                         prev_font_id
                     } else {
-                        font_cache.select_font(self.font_family, &font_properties)?
+                        font_cache.select_font(self.font_family, &style.font_properties)?
                     };
 
                     if line.len() + line_chunk.len() > MAX_LINE_LEN {
@@ -2451,9 +2451,9 @@ impl Snapshot {
                     }
 
                     line.push_str(line_chunk);
-                    styles.push((line_chunk.len(), font_id, color));
+                    styles.push((line_chunk.len(), font_id, style.color));
                     prev_font_id = font_id;
-                    prev_font_properties = font_properties;
+                    prev_font_properties = style.font_properties;
                 }
             }
         }

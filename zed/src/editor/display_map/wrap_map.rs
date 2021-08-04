@@ -5,7 +5,7 @@ use super::{
 };
 use crate::{
     editor::Point,
-    settings::StyleId,
+    settings::HighlightId,
     sum_tree::{self, Cursor, SumTree},
     util::Bias,
     Settings,
@@ -59,7 +59,7 @@ pub struct Chunks<'a> {
 pub struct HighlightedChunks<'a> {
     input_chunks: tab_map::HighlightedChunks<'a>,
     input_chunk: &'a str,
-    style_id: StyleId,
+    style_id: HighlightId,
     output_position: WrapPoint,
     max_output_row: u32,
     transforms: Cursor<'a, Transform, WrapPoint, TabPoint>,
@@ -487,7 +487,7 @@ impl Snapshot {
         HighlightedChunks {
             input_chunks: self.tab_snapshot.highlighted_chunks(input_start..input_end),
             input_chunk: "",
-            style_id: StyleId::default(),
+            style_id: HighlightId::default(),
             output_position: output_start,
             max_output_row: rows.end,
             transforms,
@@ -670,7 +670,7 @@ impl<'a> Iterator for Chunks<'a> {
 }
 
 impl<'a> Iterator for HighlightedChunks<'a> {
-    type Item = (&'a str, StyleId);
+    type Item = (&'a str, HighlightId);
 
     fn next(&mut self) -> Option<Self::Item> {
         if self.output_position.row() >= self.max_output_row {
