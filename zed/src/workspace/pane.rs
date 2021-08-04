@@ -244,7 +244,6 @@ impl Pane {
                         } else {
                             &theme.tab.container
                         })
-                        .with_horizontal_padding(10.)
                         .with_border(border);
 
                         if is_active {

@@ -5,6 +5,7 @@ background = "$elevation_1"
 background = "$elevation_2"
 text = "$text_dull"
 border.color = "#000000"
+padding = { left = 10, right = 10 }
 icon_close = "#383839"
 icon_dirty = "#556de8"
 icon_conflict = "#e45349"
