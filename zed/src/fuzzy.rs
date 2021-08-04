@@ -295,7 +295,7 @@ pub async fn match_paths(
                             });
 
                             matcher.match_paths(
-                                snapshot,
+                                snapshot.id(),
                                 path_prefix,
                                 paths,
                                 results,
@@ -367,13 +367,12 @@ impl<'a> Matcher<'a> {
 
     fn match_paths(
         &mut self,
-        snapshot: &Snapshot,
+        tree_id: usize,
         path_prefix: Arc<str>,
         path_entries: impl Iterator<Item = PathMatchCandidate<'a>>,
         results: &mut Vec<PathMatch>,
         cancel_flag: &AtomicBool,
     ) {
-        let tree_id = snapshot.id();
         let prefix = path_prefix.chars().collect::<Vec<_>>();
         let lowercase_prefix = prefix
             .iter()
@@ -762,18 +761,7 @@ mod tests {
         let cancel_flag = AtomicBool::new(false);
         let mut results = Vec::new();
         matcher.match_paths(
-            &Snapshot {
-                id: 0,
-                scan_id: 0,
-                abs_path: PathBuf::new().into(),
-                ignores: Default::default(),
-                entries_by_path: Default::default(),
-                entries_by_id: Default::default(),
-                removed_entry_ids: Default::default(),
-                root_name: Default::default(),
-                root_char_bag: Default::default(),
-                next_entry_id: Default::default(),
-            },
+            0,
             "".into(),
             path_entries.into_iter(),
             &mut results,
