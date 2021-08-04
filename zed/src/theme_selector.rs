@@ -204,7 +204,7 @@ impl ThemeSelector {
                     settings.ui_font_family,
                     settings.ui_font_size,
                 )
-                .with_default_color(settings.theme.editor.text)
+                .with_style(&settings.theme.ui.selector.label)
                 .boxed(),
             )
             .with_margin_top(6.0)
