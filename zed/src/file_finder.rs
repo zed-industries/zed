@@ -3,7 +3,7 @@ use crate::{
     settings::Settings,
     util,
     workspace::Workspace,
-    worktree::{match_paths, PathMatch, Worktree},
+    worktree::{match_paths, PathMatch},
 };
 use gpui::{
     elements::*,
@@ -124,9 +124,12 @@ impl FileFinder {
                 let finder = finder.read(cx);
                 let start = range.start;
                 range.end = cmp::min(range.end, finder.matches.len());
-                items.extend(finder.matches[range].iter().enumerate().filter_map(
-                    move |(i, path_match)| finder.render_match(path_match, start + i, cx),
-                ));
+                items.extend(
+                    finder.matches[range]
+                        .iter()
+                        .enumerate()
+                        .map(move |(i, path_match)| finder.render_match(path_match, start + i)),
+                );
             },
         );
 
@@ -135,12 +138,7 @@ impl FileFinder {
             .named("matches")
     }
 
-    fn render_match(
-        &self,
-        path_match: &PathMatch,
-        index: usize,
-        cx: &AppContext,
-    ) -> Option<ElementBox> {
+    fn render_match(&self, path_match: &PathMatch, index: usize) -> ElementBox {
         let selected_index = self.selected_index();
         let settings = self.settings.borrow();
         let style = if index == selected_index {
@@ -148,102 +146,88 @@ impl FileFinder {
         } else {
             &settings.theme.ui.selector.item
         };
-        self.labels_for_match(path_match, cx).map(
-            |(file_name, file_name_positions, full_path, full_path_positions)| {
-                let container = Container::new(
-                    Flex::row()
-                        .with_child(
-                            Container::new(
-                                LineBox::new(
-                                    settings.ui_font_family,
-                                    settings.ui_font_size,
-                                    Svg::new("icons/file-16.svg")
-                                        .with_color(style.label.text.color)
-                                        .boxed(),
-                                )
+        let (file_name, file_name_positions, full_path, full_path_positions) =
+            self.labels_for_match(path_match);
+        let container = Container::new(
+            Flex::row()
+                .with_child(
+                    Container::new(
+                        LineBox::new(
+                            settings.ui_font_family,
+                            settings.ui_font_size,
+                            Svg::new("icons/file-16.svg")
+                                .with_color(style.label.text.color)
                                 .boxed(),
-                            )
-                            .with_padding_right(6.0)
-                            .boxed(),
-                        )
-                        .with_child(
-                            Expanded::new(
-                                1.0,
-                                Flex::column()
-                                    .with_child(
-                                        Label::new(
-                                            file_name.to_string(),
-                                            settings.ui_font_family,
-                                            settings.ui_font_size,
-                                        )
-                                        .with_style(&style.label)
-                                        .with_highlights(file_name_positions)
-                                        .boxed(),
-                                    )
-                                    .with_child(
-                                        Label::new(
-                                            full_path,
-                                            settings.ui_font_family,
-                                            settings.ui_font_size,
-                                        )
-                                        .with_style(&style.label)
-                                        .with_highlights(full_path_positions)
-                                        .boxed(),
-                                    )
-                                    .boxed(),
-                            )
-                            .boxed(),
                         )
                         .boxed(),
+                    )
+                    .with_padding_right(6.0)
+                    .boxed(),
                 )
-                .with_style(&style.container);
-
-                let entry = (path_match.tree_id, path_match.path.clone());
-                EventHandler::new(container.boxed())
-                    .on_mouse_down(move |cx| {
-                        cx.dispatch_action("file_finder:select", entry.clone());
-                        true
-                    })
-                    .named("match")
-            },
+                .with_child(
+                    Expanded::new(
+                        1.0,
+                        Flex::column()
+                            .with_child(
+                                Label::new(
+                                    file_name.to_string(),
+                                    settings.ui_font_family,
+                                    settings.ui_font_size,
+                                )
+                                .with_style(&style.label)
+                                .with_highlights(file_name_positions)
+                                .boxed(),
+                            )
+                            .with_child(
+                                Label::new(
+                                    full_path,
+                                    settings.ui_font_family,
+                                    settings.ui_font_size,
+                                )
+                                .with_style(&style.label)
+                                .with_highlights(full_path_positions)
+                                .boxed(),
+                            )
+                            .boxed(),
+                    )
+                    .boxed(),
+                )
+                .boxed(),
         )
+        .with_style(&style.container);
+
+        let entry = (path_match.tree_id, path_match.path.clone());
+        EventHandler::new(container.boxed())
+            .on_mouse_down(move |cx| {
+                cx.dispatch_action("file_finder:select", entry.clone());
+                true
+            })
+            .named("match")
     }
 
-    fn labels_for_match(
-        &self,
-        path_match: &PathMatch,
-        cx: &AppContext,
-    ) -> Option<(String, Vec<usize>, String, Vec<usize>)> {
-        self.worktree(path_match.tree_id, cx).map(|tree| {
-            let prefix = if path_match.include_root_name {
-                tree.root_name()
-            } else {
-                ""
-            };
+    fn labels_for_match(&self, path_match: &PathMatch) -> (String, Vec<usize>, String, Vec<usize>) {
+        let path_string = path_match.path.to_string_lossy();
+        let full_path = [path_match.path_prefix.as_ref(), path_string.as_ref()].join("");
+        let path_positions = path_match.positions.clone();
 
-            let path_string = path_match.path.to_string_lossy();
-            let full_path = [prefix, path_string.as_ref()].join("");
-            let path_positions = path_match.positions.clone();
+        let file_name = path_match.path.file_name().map_or_else(
+            || path_match.path_prefix.to_string(),
+            |file_name| file_name.to_string_lossy().to_string(),
+        );
+        let file_name_start = path_match.path_prefix.chars().count() + path_string.chars().count()
+            - file_name.chars().count();
+        let file_name_positions = path_positions
+            .iter()
+            .filter_map(|pos| {
+                if pos >= &file_name_start {
+                    Some(pos - file_name_start)
+                } else {
+                    None
+                }
+            })
+            .collect();
 
-            let file_name = path_match.path.file_name().map_or_else(
-                || prefix.to_string(),
-                |file_name| file_name.to_string_lossy().to_string(),
-            );
-            let file_name_start =
-                prefix.chars().count() + path_string.chars().count() - file_name.chars().count();
-            let file_name_positions = path_positions
-                .iter()
-                .filter_map(|pos| {
-                    if pos >= &file_name_start {
-                        Some(pos - file_name_start)
-                    } else {
-                        None
-                    }
-                })
-                .collect();
-
-            (file_name, file_name_positions, full_path, path_positions)
-        })
+        (file_name, file_name_positions, full_path, path_positions)
     }
 
     fn toggle(workspace: &mut Workspace, _: &(), cx: &mut ViewContext<Workspace>) {
@@ -392,11 +376,9 @@ impl FileFinder {
         self.cancel_flag = Arc::new(AtomicBool::new(false));
         let cancel_flag = self.cancel_flag.clone();
         Some(cx.spawn(|this, mut cx| async move {
-            let include_root_name = snapshots.len() > 1;
             let matches = match_paths(
-                snapshots.iter(),
+                &snapshots,
                 &query,
-                include_root_name,
                 false,
                 false,
                 100,
@@ -428,15 +410,6 @@ impl FileFinder {
             self.list_state.scroll_to(self.selected_index());
             cx.notify();
         }
-    }
-
-    fn worktree<'a>(&'a self, tree_id: usize, cx: &'a AppContext) -> Option<&'a Worktree> {
-        self.workspace
-            .upgrade(cx)?
-            .read(cx)
-            .worktrees()
-            .get(&tree_id)
-            .map(|worktree| worktree.read(cx))
     }
 }
 
@@ -625,7 +598,7 @@ mod tests {
             assert_eq!(finder.matches.len(), 1);
 
             let (file_name, file_name_positions, full_path, full_path_positions) =
-                finder.labels_for_match(&finder.matches[0], cx).unwrap();
+                finder.labels_for_match(&finder.matches[0]);
             assert_eq!(file_name, "the-file");
             assert_eq!(file_name_positions, &[0, 1, 4]);
             assert_eq!(full_path, "the-file");

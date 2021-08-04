@@ -1322,14 +1322,31 @@ mod tests {
         cx.dispatch_global_action("workspace:new_file", app_state);
         let window_id = *cx.window_ids().first().unwrap();
         let workspace = cx.root_view::<Workspace>(window_id).unwrap();
-        workspace.update(&mut cx, |workspace, cx| {
-            let editor = workspace
+        let editor = workspace.update(&mut cx, |workspace, cx| {
+            workspace
                 .active_item(cx)
                 .unwrap()
                 .to_any()
                 .downcast::<Editor>()
-                .unwrap();
-            assert!(editor.update(cx, |editor, cx| editor.text(cx).is_empty()));
+                .unwrap()
+        });
+
+        editor.update(&mut cx, |editor, cx| {
+            assert!(editor.text(cx).is_empty());
+        });
+
+        workspace.update(&mut cx, |workspace, cx| workspace.save_active_item(&(), cx));
+
+        let dir = TempDir::new("test-new-empty-workspace").unwrap();
+        cx.simulate_new_path_selection(|_| {
+            Some(dir.path().canonicalize().unwrap().join("the-new-name"))
+        });
+
+        editor
+            .condition(&cx, |editor, cx| editor.title(cx) == "the-new-name")
+            .await;
+        editor.update(&mut cx, |editor, cx| {
+            assert!(!editor.is_dirty(cx));
         });
     }
 

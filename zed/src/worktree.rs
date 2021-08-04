@@ -586,17 +586,11 @@ impl LocalWorktree {
 
         // After determining whether the root entry is a file or a directory, populate the
         // snapshot's "root name", which will be used for the purpose of fuzzy matching.
-        let mut root_name = abs_path
+        let root_name = abs_path
             .file_name()
             .map_or(String::new(), |f| f.to_string_lossy().to_string());
         let root_char_bag = root_name.chars().map(|c| c.to_ascii_lowercase()).collect();
-        let metadata = fs
-            .metadata(&abs_path)
-            .await?
-            .ok_or_else(|| anyhow!("root entry does not exist"))?;
-        if metadata.is_dir {
-            root_name.push('/');
-        }
+        let metadata = fs.metadata(&abs_path).await?;
 
         let (scan_states_tx, scan_states_rx) = smol::channel::unbounded();
         let (mut last_scan_state_tx, last_scan_state_rx) = watch::channel_with(ScanState::Scanning);
@@ -613,12 +607,14 @@ impl LocalWorktree {
                 removed_entry_ids: Default::default(),
                 next_entry_id: Arc::new(next_entry_id),
             };
-            snapshot.insert_entry(Entry::new(
-                path.into(),
-                &metadata,
-                &snapshot.next_entry_id,
-                snapshot.root_char_bag,
-            ));
+            if let Some(metadata) = metadata {
+                snapshot.insert_entry(Entry::new(
+                    path.into(),
+                    &metadata,
+                    &snapshot.next_entry_id,
+                    snapshot.root_char_bag,
+                ));
+            }
 
             let tree = Self {
                 snapshot: snapshot.clone(),
@@ -1229,12 +1225,10 @@ impl Snapshot {
         ChildEntriesIter::new(path, self)
     }
 
-    pub fn root_entry(&self) -> &Entry {
-        self.entry_for_path("").unwrap()
+    pub fn root_entry(&self) -> Option<&Entry> {
+        self.entry_for_path("")
     }
 
-    /// Returns the filename of the snapshot's root, plus a trailing slash if the snapshot's root is
-    /// a directory.
     pub fn root_name(&self) -> &str {
         &self.root_name
     }
@@ -1856,8 +1850,8 @@ impl BackgroundScanner {
             let snapshot = self.snapshot.lock();
             root_char_bag = snapshot.root_char_bag;
             next_entry_id = snapshot.next_entry_id.clone();
-            is_dir = snapshot.root_entry().is_dir();
-        }
+            is_dir = snapshot.root_entry().map_or(false, |e| e.is_dir())
+        };
 
         if is_dir {
             let path: Arc<Path> = Arc::from(Path::new(""));
@@ -2605,23 +2599,21 @@ mod tests {
 
         cx.read(|cx| tree.read(cx).as_local().unwrap().scan_complete())
             .await;
-        let snapshot = cx.read(|cx| {
+        let snapshots = [cx.read(|cx| {
             let tree = tree.read(cx);
             assert_eq!(tree.file_count(), 5);
             assert_eq!(
                 tree.inode_for_path("fennel/grape"),
                 tree.inode_for_path("finnochio/grape")
             );
-
             tree.snapshot()
-        });
+        })];
         let cancel_flag = Default::default();
         let results = cx
             .read(|cx| {
                 match_paths(
-                    Some(&snapshot).into_iter(),
+                    &snapshots,
                     "bna",
-                    false,
                     false,
                     false,
                     10,
@@ -2663,18 +2655,17 @@ mod tests {
 
         cx.read(|cx| tree.read(cx).as_local().unwrap().scan_complete())
             .await;
-        let snapshot = cx.read(|cx| {
+        let snapshots = [cx.read(|cx| {
             let tree = tree.read(cx);
             assert_eq!(tree.file_count(), 0);
             tree.snapshot()
-        });
+        })];
         let cancel_flag = Default::default();
         let results = cx
             .read(|cx| {
                 match_paths(
-                    Some(&snapshot).into_iter(),
+                    &snapshots,
                     "dir",
-                    false,
                     false,
                     false,
                     10,
