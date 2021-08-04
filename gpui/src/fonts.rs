@@ -70,6 +70,12 @@ where
     Ok(json.into())
 }
 
+pub fn font_properties_from_json(
+    value: serde_json::Value,
+) -> Result<Properties, serde_json::Error> {
+    Ok(serde_json::from_value::<PropertiesJson>(value)?.into())
+}
+
 impl ToJson for Properties {
     fn to_json(&self) -> crate::json::Value {
         json!({

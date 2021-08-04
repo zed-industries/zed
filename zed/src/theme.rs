@@ -2,25 +2,26 @@ use anyhow::{anyhow, Context, Result};
 use gpui::{
     color::Color,
     elements::{ContainerStyle, LabelStyle},
-    fonts::Properties as FontProperties,
+    fonts::{font_properties_from_json, Properties as FontProperties},
     AssetSource,
 };
 use json::{Map, Value};
 use parking_lot::Mutex;
-use serde::Deserialize;
+use serde::{de, Deserialize, Deserializer};
 use serde_json as json;
 use std::{cmp::Ordering, collections::HashMap, sync::Arc};
 
 pub struct ThemeRegistry {
     assets: Box<dyn AssetSource>,
     themes: Mutex<HashMap<String, Arc<Theme>>>,
-    theme_data: Mutex<HashMap<String, Arc<Map<String, Value>>>>,
+    theme_data: Mutex<HashMap<String, Arc<Value>>>,
 }
 
-#[derive(Debug, Default)]
+#[derive(Debug, Default, Deserialize)]
 pub struct Theme {
     pub ui: Ui,
     pub editor: Editor,
+    #[serde(deserialize_with = "deserialize_syntax_theme")]
     pub syntax: Vec<(String, Color, FontProperties)>,
 }
 
@@ -115,50 +116,19 @@ impl ThemeRegistry {
     }
 
     pub fn get(&self, name: &str) -> Result<Arc<Theme>> {
-        todo!()
-        // if let Some(theme) = self.themes.lock().get(name) {
-        //     return Ok(theme.clone());
-        // }
+        if let Some(theme) = self.themes.lock().get(name) {
+            return Ok(theme.clone());
+        }
 
-        // let theme_toml = self.load(name)?;
-        // let mut syntax = Vec::<(String, Color, FontProperties)>::new();
-        // for (key, style) in theme_toml.syntax.iter() {
-        //     let mut color = Color::default();
-        //     let mut properties = FontProperties::new();
-        //     match style {
-        //         Value::Object(object) => {
-        //             if let Some(value) = object.get("color") {
-        //                 color = serde_json::from_value(value.clone())?;
-        //             }
-        //             if let Some(Value::Bool(true)) = object.get("italic") {
-        //                 properties.style = FontStyle::Italic;
-        //             }
-        //             properties.weight = deserialize_weight(object.get("weight"))?;
-        //         }
-        //         _ => {
-        //             color = serde_json::from_value(style.clone())?;
-        //         }
-        //     }
-        //     match syntax.binary_search_by_key(&key, |e| &e.0) {
-        //         Ok(i) | Err(i) => {
-        //             syntax.insert(i, (key.to_string(), color, properties));
-        //         }
-        //     }
-        // }
-
-        // let theme = Arc::new(Theme {
-        //     ui: theme::Ui::deserialize(MapDeserializer::new(theme_toml.ui.clone().into_iter()))?,
-        //     editor: theme::Editor::deserialize(MapDeserializer::new(
-        //         theme_toml.editor.clone().into_iter(),
-        //     ))?,
-        //     syntax,
-        // });
-
-        // self.themes.lock().insert(name.to_string(), theme.clone());
-        // Ok(theme)
+        let theme_data = self.load(name)?;
+        let theme = Arc::new(serde_json::from_value::<Theme>(
+            theme_data.as_ref().clone(),
+        )?);
+        self.themes.lock().insert(name.to_string(), theme.clone());
+        Ok(theme)
     }
 
-    fn load(&self, name: &str) -> Result<Arc<Map<String, Value>>> {
+    fn load(&self, name: &str) -> Result<Arc<Value>> {
         if let Some(data) = self.theme_data.lock().get(name) {
             return Ok(data.clone());
         }
@@ -178,16 +148,19 @@ impl ThemeRegistry {
             .and_then(|name| name.as_str())
             .map(str::to_string)
         {
-            let mut base_theme_data = self
+            let base_theme_data = self
                 .load(&base_name)
                 .with_context(|| format!("failed to load base theme {}", base_name))?
                 .as_ref()
                 .clone();
-            deep_merge_json(&mut base_theme_data, theme_data);
-            theme_data = base_theme_data;
+            if let Value::Object(mut base_theme_object) = base_theme_data {
+                deep_merge_json(&mut base_theme_object, theme_data);
+                theme_data = base_theme_object;
+            }
         }
 
         // Evaluate `extends` fields in styles
+        // First, find the key paths of all objects with `extends` directives
         let mut directives = Vec::new();
         let mut key_path = Vec::new();
         for (key, value) in theme_data.iter() {
@@ -197,7 +170,9 @@ impl ThemeRegistry {
                 key_path.pop();
             }
         }
+        // If you extend something with an extend directive, process the source's extend directive first
         directives.sort_unstable();
+        // Now update objects to include the fields of objects they extend
         for ExtendDirective {
             source_path,
             target_path,
@@ -220,7 +195,7 @@ impl ThemeRegistry {
             theme_data.insert(key, variables);
         }
 
-        let result = Arc::new(theme_data);
+        let result = Arc::new(Value::Object(theme_data));
         self.theme_data
             .lock()
             .insert(name.to_string(), result.clone());
@@ -375,4 +350,37 @@ fn validate_variable_name(name: &str) -> bool {
         }
     }
     false
+}
+
+pub fn deserialize_syntax_theme<'de, D>(
+    deserializer: D,
+) -> Result<Vec<(String, Color, FontProperties)>, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    let mut result = Vec::<(String, Color, FontProperties)>::new();
+
+    let syntax_data: Map<String, Value> = Deserialize::deserialize(deserializer)?;
+    for (key, style) in syntax_data {
+        let mut color = Color::default();
+        let mut properties = FontProperties::new();
+        match &style {
+            Value::Object(object) => {
+                if let Some(value) = object.get("color") {
+                    color = serde_json::from_value(value.clone()).map_err(de::Error::custom)?;
+                }
+                properties = font_properties_from_json(style).map_err(de::Error::custom)?;
+            }
+            _ => {
+                color = serde_json::from_value(style.clone()).map_err(de::Error::custom)?;
+            }
+        }
+        match result.binary_search_by(|(needle, _, _)| needle.cmp(&key)) {
+            Ok(i) | Err(i) => {
+                result.insert(i, (key, color, properties));
+            }
+        }
+    }
+
+    Ok(result)
 }
