@@ -1,5 +1,9 @@
-use super::{char_bag::CharBag, EntryKind, Snapshot};
-use crate::util;
+mod char_bag;
+
+use crate::{
+    util,
+    worktree::{EntryKind, Snapshot},
+};
 use gpui::executor;
 use std::{
     borrow::Cow,
@@ -8,6 +12,8 @@ use std::{
     sync::atomic::{self, AtomicBool},
     sync::Arc,
 };
+
+pub use char_bag::CharBag;
 
 const BASE_DISTANCE_PENALTY: f64 = 0.6;
 const ADDITIONAL_DISTANCE_PENALTY: f64 = 0.05;
@@ -367,7 +373,7 @@ impl<'a> Matcher<'a> {
         results: &mut Vec<PathMatch>,
         cancel_flag: &AtomicBool,
     ) {
-        let tree_id = snapshot.id;
+        let tree_id = snapshot.id();
         let prefix = path_prefix.chars().collect::<Vec<_>>();
         let lowercase_prefix = prefix
             .iter()

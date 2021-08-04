@@ -1,11 +1,11 @@
-mod char_bag;
-pub(crate) mod fuzzy;
 mod ignore;
 
-use self::{char_bag::CharBag, ignore::IgnoreStack};
+use self::ignore::IgnoreStack;
 use crate::{
     editor::{self, Buffer, History, Operation, Rope},
     fs::{self, Fs},
+    fuzzy,
+    fuzzy::CharBag,
     language::LanguageRegistry,
     rpc::{self, proto},
     sum_tree::{self, Cursor, Edit, SumTree},
@@ -1116,6 +1116,10 @@ pub struct Snapshot {
 }
 
 impl Snapshot {
+    pub fn id(&self) -> usize {
+        self.id
+    }
+
     pub fn build_update(&self, other: &Self, worktree_id: u64) -> proto::UpdateWorktree {
         let mut updated_entries = Vec::new();
         let mut removed_entries = Vec::new();
@@ -1214,7 +1218,7 @@ impl Snapshot {
         self.entries_by_path
             .cursor::<(), ()>()
             .filter(move |entry| entry.path.as_ref() != empty_path)
-            .map(|entry| entry.path())
+            .map(|entry| &entry.path)
     }
 
     pub fn visible_files(&self, start: usize) -> FileIter {
@@ -1248,17 +1252,17 @@ impl Snapshot {
     }
 
     pub fn inode_for_path(&self, path: impl AsRef<Path>) -> Option<u64> {
-        self.entry_for_path(path.as_ref()).map(|e| e.inode())
+        self.entry_for_path(path.as_ref()).map(|e| e.inode)
     }
 
     fn insert_entry(&mut self, mut entry: Entry) -> Entry {
-        if !entry.is_dir() && entry.path().file_name() == Some(&GITIGNORE) {
-            let (ignore, err) = Gitignore::new(self.abs_path.join(entry.path()));
+        if !entry.is_dir() && entry.path.file_name() == Some(&GITIGNORE) {
+            let (ignore, err) = Gitignore::new(self.abs_path.join(&entry.path));
             if let Some(err) = err {
-                log::error!("error in ignore file {:?} - {:?}", entry.path(), err);
+                log::error!("error in ignore file {:?} - {:?}", &entry.path, err);
             }
 
-            let ignore_dir_path = entry.path().parent().unwrap();
+            let ignore_dir_path = entry.path.parent().unwrap();
             self.ignores
                 .insert(ignore_dir_path.into(), (Arc::new(ignore), self.scan_id));
         }
@@ -1381,10 +1385,10 @@ impl Snapshot {
 impl fmt::Debug for Snapshot {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         for entry in self.entries_by_path.cursor::<(), ()>() {
-            for _ in entry.path().ancestors().skip(1) {
+            for _ in entry.path.ancestors().skip(1) {
                 write!(f, " ")?;
             }
-            writeln!(f, "{:?} (inode: {})", entry.path(), entry.inode())?;
+            writeln!(f, "{:?} (inode: {})", entry.path, entry.inode)?;
         }
         Ok(())
     }
@@ -1535,19 +1539,19 @@ impl File {
     }
 
     pub fn entry_id(&self) -> (usize, Arc<Path>) {
-        (self.worktree.id(), self.path())
+        (self.worktree.id(), self.path.clone())
     }
 }
 
 #[derive(Clone, Debug)]
 pub struct Entry {
-    id: usize,
-    kind: EntryKind,
-    path: Arc<Path>,
-    inode: u64,
-    mtime: SystemTime,
-    is_symlink: bool,
-    is_ignored: bool,
+    pub id: usize,
+    pub kind: EntryKind,
+    pub path: Arc<Path>,
+    pub inode: u64,
+    pub mtime: SystemTime,
+    pub is_symlink: bool,
+    pub is_ignored: bool,
 }
 
 #[derive(Clone, Debug)]
@@ -1579,23 +1583,11 @@ impl Entry {
         }
     }
 
-    pub fn path(&self) -> &Arc<Path> {
-        &self.path
-    }
-
-    pub fn inode(&self) -> u64 {
-        self.inode
-    }
-
-    pub fn is_ignored(&self) -> bool {
-        self.is_ignored
-    }
-
-    fn is_dir(&self) -> bool {
+    pub fn is_dir(&self) -> bool {
         matches!(self.kind, EntryKind::Dir | EntryKind::PendingDir)
     }
 
-    fn is_file(&self) -> bool {
+    pub fn is_file(&self) -> bool {
         matches!(self.kind, EntryKind::File(_))
     }
 }
@@ -1619,7 +1611,7 @@ impl sum_tree::Item for Entry {
         }
 
         EntrySummary {
-            max_path: self.path().clone(),
+            max_path: self.path.clone(),
             file_count,
             visible_file_count,
         }
@@ -1630,7 +1622,7 @@ impl sum_tree::KeyedItem for Entry {
     type Key = PathKey;
 
     fn key(&self) -> Self::Key {
-        PathKey(self.path().clone())
+        PathKey(self.path.clone())
     }
 }
 
@@ -2147,7 +2139,7 @@ impl BackgroundScanner {
         let mut edits = Vec::new();
         for mut entry in snapshot.child_entries(&job.path).cloned() {
             let was_ignored = entry.is_ignored;
-            entry.is_ignored = ignore_stack.is_path_ignored(entry.path(), entry.is_dir());
+            entry.is_ignored = ignore_stack.is_path_ignored(&entry.path, entry.is_dir());
             if entry.is_dir() {
                 let child_ignore_stack = if entry.is_ignored {
                     IgnoreStack::all()
@@ -2156,7 +2148,7 @@ impl BackgroundScanner {
                 };
                 job.ignore_queue
                     .send(UpdateIgnoreStatusJob {
-                        path: entry.path().clone(),
+                        path: entry.path.clone(),
                         ignore_stack: child_ignore_stack,
                         ignore_queue: job.ignore_queue.clone(),
                     })
@@ -2333,9 +2325,9 @@ impl<'a> Iterator for ChildEntriesIter<'a> {
 
     fn next(&mut self) -> Option<Self::Item> {
         if let Some(item) = self.cursor.item() {
-            if item.path().starts_with(self.parent_path) {
+            if item.path.starts_with(self.parent_path) {
                 self.cursor
-                    .seek_forward(&PathSearch::Successor(item.path()), Bias::Left, &());
+                    .seek_forward(&PathSearch::Successor(&item.path), Bias::Left, &());
                 Some(item)
             } else {
                 None
@@ -2930,8 +2922,8 @@ mod tests {
             let tree = tree.read(cx);
             let tracked = tree.entry_for_path("tracked-dir/tracked-file1").unwrap();
             let ignored = tree.entry_for_path("ignored-dir/ignored-file1").unwrap();
-            assert_eq!(tracked.is_ignored(), false);
-            assert_eq!(ignored.is_ignored(), true);
+            assert_eq!(tracked.is_ignored, false);
+            assert_eq!(ignored.is_ignored, true);
         });
 
         std::fs::write(dir.path().join("tracked-dir/tracked-file2"), "").unwrap();
@@ -2942,9 +2934,9 @@ mod tests {
             let dot_git = tree.entry_for_path(".git").unwrap();
             let tracked = tree.entry_for_path("tracked-dir/tracked-file2").unwrap();
             let ignored = tree.entry_for_path("ignored-dir/ignored-file2").unwrap();
-            assert_eq!(tracked.is_ignored(), false);
-            assert_eq!(ignored.is_ignored(), true);
-            assert_eq!(dot_git.is_ignored(), true);
+            assert_eq!(tracked.is_ignored, false);
+            assert_eq!(ignored.is_ignored, true);
+            assert_eq!(dot_git.is_ignored, true);
         });
     }
 
@@ -3177,9 +3169,9 @@ mod tests {
             let mut visible_files = self.visible_files(0);
             for entry in self.entries_by_path.cursor::<(), ()>() {
                 if entry.is_file() {
-                    assert_eq!(files.next().unwrap().inode(), entry.inode);
+                    assert_eq!(files.next().unwrap().inode, entry.inode);
                     if !entry.is_ignored {
-                        assert_eq!(visible_files.next().unwrap().inode(), entry.inode);
+                        assert_eq!(visible_files.next().unwrap().inode, entry.inode);
                     }
                 }
             }
@@ -3192,14 +3184,14 @@ mod tests {
                 bfs_paths.push(path);
                 let ix = stack.len();
                 for child_entry in self.child_entries(path) {
-                    stack.insert(ix, child_entry.path());
+                    stack.insert(ix, &child_entry.path);
                 }
             }
 
             let dfs_paths = self
                 .entries_by_path
                 .cursor::<(), ()>()
-                .map(|e| e.path().as_ref())
+                .map(|e| e.path.as_ref())
                 .collect::<Vec<_>>();
             assert_eq!(bfs_paths, dfs_paths);
 
@@ -3214,7 +3206,7 @@ mod tests {
         fn to_vec(&self) -> Vec<(&Path, u64, bool)> {
             let mut paths = Vec::new();
             for entry in self.entries_by_path.cursor::<(), ()>() {
-                paths.push((entry.path().as_ref(), entry.inode(), entry.is_ignored()));
+                paths.push((entry.path.as_ref(), entry.inode, entry.is_ignored));
             }
             paths.sort_by(|a, b| a.0.cmp(&b.0));
             paths

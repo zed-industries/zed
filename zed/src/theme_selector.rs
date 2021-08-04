@@ -2,9 +2,9 @@ use std::{cmp, sync::Arc};
 
 use crate::{
     editor::{self, Editor},
+    fuzzy::{match_strings, StringMatch, StringMatchCandidate},
     settings::ThemeRegistry,
     workspace::Workspace,
-    worktree::fuzzy::{match_strings, StringMatch, StringMatchCandidate},
     AppState, Settings,
 };
 use gpui::{

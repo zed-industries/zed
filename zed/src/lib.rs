@@ -2,6 +2,7 @@ pub mod assets;
 pub mod editor;
 pub mod file_finder;
 pub mod fs;
+mod fuzzy;
 pub mod language;
 pub mod menus;
 mod operation_queue;
