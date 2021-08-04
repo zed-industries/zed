@@ -7,7 +7,6 @@ use crate::{
     worktree::fuzzy::{match_strings, StringMatch, StringMatchCandidate},
     AppState, Settings,
 };
-use futures::lock::Mutex;
 use gpui::{
     elements::{
         Align, ChildView, ConstrainedBox, Container, Expanded, Flex, Label, ParentElement,
@@ -17,6 +16,7 @@ use gpui::{
     AppContext, Axis, Element, ElementBox, Entity, MutableAppContext, RenderContext, View,
     ViewContext, ViewHandle,
 };
+use parking_lot::Mutex;
 use postage::watch;
 
 pub struct ThemeSelector {
@@ -31,13 +31,14 @@ pub struct ThemeSelector {
 
 pub fn init(cx: &mut MutableAppContext, app_state: &Arc<AppState>) {
     cx.add_action("theme_selector:confirm", ThemeSelector::confirm);
-    // cx.add_action("file_finder:select", ThemeSelector::select);
     cx.add_action("menu:select_prev", ThemeSelector::select_prev);
     cx.add_action("menu:select_next", ThemeSelector::select_next);
     cx.add_action("theme_selector:toggle", ThemeSelector::toggle);
+    cx.add_action("theme_selector:reload", ThemeSelector::reload);
 
     cx.add_bindings(vec![
         Binding::new("cmd-k cmd-t", "theme_selector:toggle", None).with_arg(app_state.clone()),
+        Binding::new("cmd-k shift-T", "theme_selector:reload", None).with_arg(app_state.clone()),
         Binding::new("escape", "theme_selector:toggle", Some("ThemeSelector"))
             .with_arg(app_state.clone()),
         Binding::new("enter", "theme_selector:confirm", Some("ThemeSelector")),
@@ -90,19 +91,26 @@ impl ThemeSelector {
         });
     }
 
+    fn reload(_: &mut Workspace, app_state: &Arc<AppState>, cx: &mut ViewContext<Workspace>) {
+        let current_theme_name = app_state.settings.borrow().theme.name.clone();
+        app_state.themes.clear();
+        match app_state.themes.get(&current_theme_name) {
+            Ok(theme) => {
+                cx.notify_all();
+                app_state.settings_tx.lock().borrow_mut().theme = theme;
+            }
+            Err(error) => {
+                log::error!("failed to load theme {}: {:?}", current_theme_name, error)
+            }
+        }
+    }
+
     fn confirm(&mut self, _: &(), cx: &mut ViewContext<Self>) {
         if let Some(mat) = self.matches.get(self.selected_index) {
             if let Ok(theme) = self.registry.get(&mat.string) {
-                let settings_tx = self.settings_tx.clone();
-                cx.spawn(|this, mut cx| async move {
-                    let mut settings_tx = settings_tx.lock().await;
-                    this.update(&mut cx, |_, cx| {
-                        settings_tx.borrow_mut().theme = theme;
-                        cx.notify_all();
-                        cx.emit(Event::Dismissed);
-                    })
-                })
-                .detach();
+                self.settings_tx.lock().borrow_mut().theme = theme;
+                cx.notify_all();
+                cx.emit(Event::Dismissed);
             }
         }
     }

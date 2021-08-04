@@ -2,8 +2,8 @@
 #![allow(non_snake_case)]
 
 use fs::OpenOptions;
-use futures::lock::Mutex;
 use log::LevelFilter;
+use parking_lot::Mutex;
 use simplelog::SimpleLogger;
 use std::{fs, path::PathBuf, sync::Arc};
 use zed::{

@@ -19,7 +19,7 @@ pub mod worktree;
 
 pub use settings::Settings;
 
-use futures::lock::Mutex;
+use parking_lot::Mutex;
 use postage::watch;
 use std::sync::Arc;
 use zrpc::ForegroundRouter;

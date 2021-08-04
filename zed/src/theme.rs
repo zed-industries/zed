@@ -126,6 +126,11 @@ impl ThemeRegistry {
         })
     }
 
+    pub fn clear(&self) {
+        self.theme_data.lock().clear();
+        self.themes.lock().clear();
+    }
+
     pub fn get(&self, name: &str) -> Result<Arc<Theme>> {
         if let Some(theme) = self.themes.lock().get(name) {
             return Ok(theme.clone());

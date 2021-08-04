@@ -6,8 +6,8 @@ use crate::{
     time::ReplicaId,
     AppState,
 };
-use futures::lock::Mutex;
 use gpui::{AppContext, Entity, ModelHandle};
+use parking_lot::Mutex;
 use smol::channel;
 use std::{
     marker::PhantomData,
