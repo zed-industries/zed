@@ -159,14 +159,23 @@ impl DisplayMapSnapshot {
             .highlighted_chunks_for_rows(display_rows)
     }
 
-    pub fn chars_at<'a>(&'a self, display_row: u32) -> impl Iterator<Item = char> + 'a {
-        self.chunks_at(display_row).flat_map(str::chars)
+    pub fn chars_at<'a>(&'a self, point: DisplayPoint) -> impl Iterator<Item = char> + 'a {
+        let mut column = 0;
+        let mut chars = self.chunks_at(point.row()).flat_map(str::chars);
+        while column < point.column() {
+            if let Some(c) = chars.next() {
+                column += c.len_utf8() as u32;
+            } else {
+                break;
+            }
+        }
+        chars
     }
 
     pub fn column_to_chars(&self, display_row: u32, target: u32) -> u32 {
         let mut count = 0;
         let mut column = 0;
-        for c in self.chars_at(display_row) {
+        for c in self.chars_at(DisplayPoint::new(display_row, 0)) {
             if column >= target {
                 break;
             }
@@ -179,7 +188,7 @@ impl DisplayMapSnapshot {
     pub fn column_from_chars(&self, display_row: u32, char_count: u32) -> u32 {
         let mut count = 0;
         let mut column = 0;
-        for c in self.chars_at(display_row) {
+        for c in self.chars_at(DisplayPoint::new(display_row, 0)) {
             if c == '\n' || count >= char_count {
                 break;
             }
@@ -237,7 +246,7 @@ impl DisplayMapSnapshot {
     pub fn line_indent(&self, display_row: u32) -> (u32, bool) {
         let mut indent = 0;
         let mut is_blank = true;
-        for c in self.chars_at(display_row) {
+        for c in self.chars_at(DisplayPoint::new(display_row, 0)) {
             if c == ' ' {
                 indent += 1;
             } else {

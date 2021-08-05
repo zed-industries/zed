@@ -120,7 +120,7 @@ pub fn prev_word_boundary(map: &DisplayMapSnapshot, point: DisplayPoint) -> Resu
         let mut boundary = DisplayPoint::new(point.row(), 0);
         let mut column = 0;
         let mut prev_c = None;
-        for c in map.chars_at(point.row()) {
+        for c in map.chars_at(DisplayPoint::new(point.row(), 0)) {
             if column >= point.column() {
                 break;
             }
@@ -141,7 +141,7 @@ pub fn next_word_boundary(
     mut point: DisplayPoint,
 ) -> Result<DisplayPoint> {
     let mut prev_c = None;
-    for c in map.chars_at(point.row()).skip(point.column() as usize) {
+    for c in map.chars_at(point) {
         if prev_c.is_some() && (c == '\n' || char_kind(prev_c.unwrap()) != char_kind(c)) {
             break;
         }
@@ -174,5 +174,63 @@ fn char_kind(c: char) -> CharKind {
         CharKind::Word
     } else {
         CharKind::Punctuation
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::{
+        editor::{display_map::DisplayMap, Buffer},
+        test::build_app_state,
+    };
+
+    #[gpui::test]
+    fn test_prev_next_word_boundary_multibyte(cx: &mut gpui::MutableAppContext) {
+        let settings = build_app_state(cx).settings.borrow().clone();
+        let buffer = cx.add_model(|cx| Buffer::new(0, "a bcΔ defγ", cx));
+        let display_map = cx.add_model(|cx| DisplayMap::new(buffer, settings, None, cx));
+        let snapshot = display_map.update(cx, |map, cx| map.snapshot(cx));
+        assert_eq!(
+            prev_word_boundary(&snapshot, DisplayPoint::new(0, 12)).unwrap(),
+            DisplayPoint::new(0, 7)
+        );
+        assert_eq!(
+            prev_word_boundary(&snapshot, DisplayPoint::new(0, 7)).unwrap(),
+            DisplayPoint::new(0, 6)
+        );
+        assert_eq!(
+            prev_word_boundary(&snapshot, DisplayPoint::new(0, 6)).unwrap(),
+            DisplayPoint::new(0, 2)
+        );
+        assert_eq!(
+            prev_word_boundary(&snapshot, DisplayPoint::new(0, 2)).unwrap(),
+            DisplayPoint::new(0, 1)
+        );
+        assert_eq!(
+            prev_word_boundary(&snapshot, DisplayPoint::new(0, 1)).unwrap(),
+            DisplayPoint::new(0, 0)
+        );
+
+        assert_eq!(
+            next_word_boundary(&snapshot, DisplayPoint::new(0, 0)).unwrap(),
+            DisplayPoint::new(0, 1)
+        );
+        assert_eq!(
+            next_word_boundary(&snapshot, DisplayPoint::new(0, 1)).unwrap(),
+            DisplayPoint::new(0, 2)
+        );
+        assert_eq!(
+            next_word_boundary(&snapshot, DisplayPoint::new(0, 2)).unwrap(),
+            DisplayPoint::new(0, 6)
+        );
+        assert_eq!(
+            next_word_boundary(&snapshot, DisplayPoint::new(0, 6)).unwrap(),
+            DisplayPoint::new(0, 7)
+        );
+        assert_eq!(
+            next_word_boundary(&snapshot, DisplayPoint::new(0, 7)).unwrap(),
+            DisplayPoint::new(0, 12)
+        );
     }
 }
