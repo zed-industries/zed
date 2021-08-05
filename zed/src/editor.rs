@@ -4,7 +4,7 @@ mod element;
 pub mod movement;
 
 use crate::{
-    settings::{Settings, StyleId, Theme},
+    settings::{HighlightId, Settings, Theme},
     time::ReplicaId,
     util::{post_inc, Bias},
     workspace,
@@ -16,10 +16,10 @@ pub use display_map::DisplayPoint;
 use display_map::*;
 pub use element::*;
 use gpui::{
-    color::ColorU, font_cache::FamilyId, fonts::Properties as FontProperties,
+    color::Color, font_cache::FamilyId, fonts::Properties as FontProperties,
     geometry::vector::Vector2F, keymap::Binding, text_layout, AppContext, ClipboardItem, Element,
-    ElementBox, Entity, FontCache, ModelHandle, MutableAppContext, Task, TextLayoutCache, View,
-    ViewContext, WeakViewHandle,
+    ElementBox, Entity, FontCache, ModelHandle, MutableAppContext, RenderContext, Task,
+    TextLayoutCache, View, ViewContext, WeakViewHandle,
 };
 use postage::watch;
 use serde::{Deserialize, Serialize};
@@ -2349,7 +2349,7 @@ impl Snapshot {
             .layout_str(
                 "1".repeat(digit_count).as_str(),
                 font_size,
-                &[(digit_count, font_id, ColorU::black())],
+                &[(digit_count, font_id, Color::black())],
             )
             .width())
     }
@@ -2374,9 +2374,9 @@ impl Snapshot {
         {
             let display_row = rows.start + ix as u32;
             let color = if active_rows.contains_key(&display_row) {
-                theme.editor.line_number_active.0
+                theme.editor.line_number_active
             } else {
-                theme.editor.line_number.0
+                theme.editor.line_number
             };
             if soft_wrapped {
                 layouts.push(None);
@@ -2419,7 +2419,7 @@ impl Snapshot {
             .display_snapshot
             .highlighted_chunks_for_rows(rows.clone());
 
-        'outer: for (chunk, style_ix) in chunks.chain(Some(("\n", StyleId::default()))) {
+        'outer: for (chunk, style_ix) in chunks.chain(Some(("\n", HighlightId::default()))) {
             for (ix, mut line_chunk) in chunk.split('\n').enumerate() {
                 if ix > 0 {
                     layouts.push(layout_cache.layout_str(&line, self.font_size, &styles));
@@ -2433,12 +2433,12 @@ impl Snapshot {
                 }
 
                 if !line_chunk.is_empty() && !line_exceeded_max_len {
-                    let (color, font_properties) = self.theme.syntax_style(style_ix);
+                    let style = self.theme.highlight_style(style_ix);
                     // Avoid a lookup if the font properties match the previous ones.
-                    let font_id = if font_properties == prev_font_properties {
+                    let font_id = if style.font_properties == prev_font_properties {
                         prev_font_id
                     } else {
-                        font_cache.select_font(self.font_family, &font_properties)?
+                        font_cache.select_font(self.font_family, &style.font_properties)?
                     };
 
                     if line.len() + line_chunk.len() > MAX_LINE_LEN {
@@ -2451,9 +2451,9 @@ impl Snapshot {
                     }
 
                     line.push_str(line_chunk);
-                    styles.push((line_chunk.len(), font_id, color));
+                    styles.push((line_chunk.len(), font_id, style.color));
                     prev_font_id = font_id;
-                    prev_font_properties = font_properties;
+                    prev_font_properties = style.font_properties;
                 }
             }
         }
@@ -2485,7 +2485,7 @@ impl Snapshot {
             &[(
                 self.display_snapshot.line_len(row) as usize,
                 font_id,
-                ColorU::black(),
+                Color::black(),
             )],
         ))
     }
@@ -2533,7 +2533,7 @@ impl Entity for Editor {
 }
 
 impl View for Editor {
-    fn render<'a>(&self, _: &AppContext) -> ElementBox {
+    fn render<'a>(&self, _: &RenderContext<Self>) -> ElementBox {
         EditorElement::new(self.handle.clone()).boxed()
     }
 

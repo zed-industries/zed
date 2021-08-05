@@ -1,7 +1,8 @@
 use super::scene::{Path, PathVertex};
-use crate::{color::ColorU, json::ToJson};
+use crate::{color::Color, json::ToJson};
 pub use pathfinder_geometry::*;
 use rect::RectF;
+use serde::{Deserialize, Deserializer};
 use serde_json::json;
 use vector::{vec2f, Vector2F};
 
@@ -55,7 +56,7 @@ impl PathBuilder {
         self.current = point;
     }
 
-    pub fn build(mut self, color: ColorU, clip_bounds: Option<RectF>) -> Path {
+    pub fn build(mut self, color: Color, clip_bounds: Option<RectF>) -> Path {
         if let Some(clip_bounds) = clip_bounds {
             self.bounds = self
                 .bounds
@@ -106,6 +107,14 @@ impl PathBuilder {
             }
         }
     }
+}
+
+pub fn deserialize_vec2f<'de, D>(deserializer: D) -> Result<Vector2F, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    let [x, y]: [f32; 2] = Deserialize::deserialize(deserializer)?;
+    Ok(vec2f(x, y))
 }
 
 impl ToJson for Vector2F {

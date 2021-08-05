@@ -1,10 +1,7 @@
-use serde_json::json;
-use smallvec::{smallvec, SmallVec};
-
 use crate::{
-    color::ColorU,
+    color::Color,
     font_cache::FamilyId,
-    fonts::{FontId, Properties},
+    fonts::{FontId, TextStyle},
     geometry::{
         rect::RectF,
         vector::{vec2f, Vector2F},
@@ -14,20 +11,22 @@ use crate::{
     AfterLayoutContext, DebugContext, Element, Event, EventContext, FontCache, LayoutContext,
     PaintContext, SizeConstraint,
 };
+use serde::Deserialize;
+use serde_json::json;
+use smallvec::{smallvec, SmallVec};
 
 pub struct Label {
     text: String,
     family_id: FamilyId,
-    font_properties: Properties,
     font_size: f32,
-    default_color: ColorU,
-    highlights: Option<Highlights>,
+    style: LabelStyle,
+    highlight_indices: Vec<usize>,
 }
 
-pub struct Highlights {
-    color: ColorU,
-    indices: Vec<usize>,
-    font_properties: Properties,
+#[derive(Clone, Debug, Default, Deserialize)]
+pub struct LabelStyle {
+    pub text: TextStyle,
+    pub highlight_text: Option<TextStyle>,
 }
 
 impl Label {
@@ -35,29 +34,24 @@ impl Label {
         Self {
             text,
             family_id,
-            font_properties: Properties::new(),
             font_size,
-            default_color: ColorU::black(),
-            highlights: None,
+            highlight_indices: Default::default(),
+            style: Default::default(),
         }
     }
 
-    pub fn with_default_color(mut self, color: ColorU) -> Self {
-        self.default_color = color;
+    pub fn with_style(mut self, style: &LabelStyle) -> Self {
+        self.style = style.clone();
         self
     }
 
-    pub fn with_highlights(
-        mut self,
-        color: ColorU,
-        font_properties: Properties,
-        indices: Vec<usize>,
-    ) -> Self {
-        self.highlights = Some(Highlights {
-            color,
-            font_properties,
-            indices,
-        });
+    pub fn with_default_color(mut self, color: Color) -> Self {
+        self.style.text.color = color;
+        self
+    }
+
+    pub fn with_highlights(mut self, indices: Vec<usize>) -> Self {
+        self.highlight_indices = indices;
         self
     }
 
@@ -65,47 +59,58 @@ impl Label {
         &self,
         font_cache: &FontCache,
         font_id: FontId,
-    ) -> SmallVec<[(usize, FontId, ColorU); 8]> {
-        if let Some(highlights) = self.highlights.as_ref() {
-            let highlight_font_id = font_cache
-                .select_font(self.family_id, &highlights.font_properties)
-                .unwrap_or(font_id);
+    ) -> SmallVec<[(usize, FontId, Color); 8]> {
+        if self.highlight_indices.is_empty() {
+            return smallvec![(self.text.len(), font_id, self.style.text.color)];
+        }
 
-            let mut highlight_indices = highlights.indices.iter().copied().peekable();
-            let mut runs = SmallVec::new();
+        let highlight_font_id = self
+            .style
+            .highlight_text
+            .as_ref()
+            .and_then(|style| {
+                font_cache
+                    .select_font(self.family_id, &style.font_properties)
+                    .ok()
+            })
+            .unwrap_or(font_id);
 
-            for (char_ix, c) in self.text.char_indices() {
-                let mut font_id = font_id;
-                let mut color = self.default_color;
-                if let Some(highlight_ix) = highlight_indices.peek() {
-                    if char_ix == *highlight_ix {
-                        font_id = highlight_font_id;
-                        color = highlights.color;
-                        highlight_indices.next();
-                    }
-                }
+        let mut highlight_indices = self.highlight_indices.iter().copied().peekable();
+        let mut runs = SmallVec::new();
 
-                let push_new_run =
-                    if let Some((last_len, last_font_id, last_color)) = runs.last_mut() {
-                        if font_id == *last_font_id && color == *last_color {
-                            *last_len += c.len_utf8();
-                            false
-                        } else {
-                            true
-                        }
-                    } else {
-                        true
-                    };
-
-                if push_new_run {
-                    runs.push((c.len_utf8(), font_id, color));
+        for (char_ix, c) in self.text.char_indices() {
+            let mut font_id = font_id;
+            let mut color = self.style.text.color;
+            if let Some(highlight_ix) = highlight_indices.peek() {
+                if char_ix == *highlight_ix {
+                    font_id = highlight_font_id;
+                    color = self
+                        .style
+                        .highlight_text
+                        .as_ref()
+                        .unwrap_or(&self.style.text)
+                        .color;
+                    highlight_indices.next();
                 }
             }
 
-            runs
-        } else {
-            smallvec![(self.text.len(), font_id, self.default_color)]
+            let push_new_run = if let Some((last_len, last_font_id, last_color)) = runs.last_mut() {
+                if font_id == *last_font_id && color == *last_color {
+                    *last_len += c.len_utf8();
+                    false
+                } else {
+                    true
+                }
+            } else {
+                true
+            };
+
+            if push_new_run {
+                runs.push((c.len_utf8(), font_id, color));
+            }
         }
+
+        runs
     }
 }
 
@@ -120,7 +125,7 @@ impl Element for Label {
     ) -> (Vector2F, Self::LayoutState) {
         let font_id = cx
             .font_cache
-            .select_font(self.family_id, &self.font_properties)
+            .select_font(self.family_id, &self.style.text.font_properties)
             .unwrap();
         let runs = self.compute_runs(&cx.font_cache, font_id);
         let line =
@@ -172,56 +177,63 @@ impl Element for Label {
         json!({
             "type": "Label",
             "bounds": bounds.to_json(),
+            "text": &self.text,
+            "highlight_indices": self.highlight_indices,
             "font_family": cx.font_cache.family_name(self.family_id).unwrap(),
             "font_size": self.font_size,
-            "font_properties": self.font_properties.to_json(),
-            "text": &self.text,
-            "highlights": self.highlights.to_json(),
+            "style": self.style.to_json(),
         })
     }
 }
 
-impl ToJson for Highlights {
+impl ToJson for LabelStyle {
     fn to_json(&self) -> Value {
         json!({
-            "color": self.color.to_json(),
-            "indices": self.indices,
-            "font_properties": self.font_properties.to_json(),
+            "text": self.text.to_json(),
+            "highlight_text": self.highlight_text
+                .as_ref()
+                .map_or(serde_json::Value::Null, |style| style.to_json())
         })
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use font_kit::properties::Weight;
-
     use super::*;
+    use crate::fonts::{Properties as FontProperties, Weight};
 
     #[crate::test(self)]
     fn test_layout_label_with_highlights(cx: &mut crate::MutableAppContext) {
         let menlo = cx.font_cache().load_family(&["Menlo"]).unwrap();
         let menlo_regular = cx
             .font_cache()
-            .select_font(menlo, &Properties::new())
+            .select_font(menlo, &FontProperties::new())
             .unwrap();
         let menlo_bold = cx
             .font_cache()
-            .select_font(menlo, Properties::new().weight(Weight::BOLD))
+            .select_font(menlo, FontProperties::new().weight(Weight::BOLD))
             .unwrap();
-        let black = ColorU::black();
-        let red = ColorU::new(255, 0, 0, 255);
+        let black = Color::black();
+        let red = Color::new(255, 0, 0, 255);
 
-        let label = Label::new(".αβγδε.ⓐⓑⓒⓓⓔ.abcde.".to_string(), menlo, 12.0).with_highlights(
-            red,
-            *Properties::new().weight(Weight::BOLD),
-            vec![
+        let label = Label::new(".αβγδε.ⓐⓑⓒⓓⓔ.abcde.".to_string(), menlo, 12.0)
+            .with_style(&LabelStyle {
+                text: TextStyle {
+                    color: black,
+                    font_properties: Default::default(),
+                },
+                highlight_text: Some(TextStyle {
+                    color: red,
+                    font_properties: *FontProperties::new().weight(Weight::BOLD),
+                }),
+            })
+            .with_highlights(vec![
                 ".α".len(),
                 ".αβ".len(),
                 ".αβγδ".len(),
                 ".αβγδε.ⓐ".len(),
                 ".αβγδε.ⓐⓑ".len(),
-            ],
-        );
+            ]);
 
         let runs = label.compute_runs(cx.font_cache().as_ref(), menlo_regular);
         assert_eq!(

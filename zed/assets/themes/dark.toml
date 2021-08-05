@@ -1,38 +1,21 @@
-[ui]
-tab_background = 0x131415
-tab_background_active = 0x1c1d1e
-tab_text = 0x5a5a5b
-tab_text_active = 0xffffff
-tab_border = 0x000000
-tab_icon_close = 0x383839
-tab_icon_dirty = 0x556de8
-tab_icon_conflict = 0xe45349
-modal_background = 0x3a3b3c
-modal_match_background = 0x424344
-modal_match_background_active = 0x094771
-modal_match_border = 0x000000
-modal_match_text = 0xcccccc
-modal_match_text_highlight = 0x18a3ff
+extends = "_base"
 
-[editor]
-background = 0x131415
-gutter_background = 0x131415
-active_line_background = 0x1c1d1e
-line_number = 0x5a5a5b
-line_number_active = 0xffffff
-default_text = 0xd4d4d4
-replicas = [
-    { selection = 0x264f78, cursor = 0xffffff },
-    { selection = 0x504f31, cursor = 0xfcf154 },
-]
+[variables]
+elevation_1 = "#050101"
+elevation_2 = "#131415"
+elevation_3 = "#1c1d1e"
+elevation_4 = "#3a3b3c"
+text_dull = "#5a5a5b"
+text_bright = "#ffffff"
+text_normal = "#d4d4d4"
 
 [syntax]
-keyword = 0xc586c0
-function = 0xdcdcaa
-string = 0xcb8f77
-type = 0x4ec9b0
-number = 0xb5cea8
-comment = 0x6a9955
-property = 0x4e94ce
-variant = 0x4fc1ff
-constant = 0x9cdcfe
+keyword = { color = "#0086c0", weight = "bold" }
+function = "#dcdcaa"
+string = "#cb8f77"
+type = "#4ec9b0"
+number = "#b5cea8"
+comment = "#6a9955"
+property = "#4e94ce"
+variant = "#4fc1ff"
+constant = "#9cdcfe"

@@ -1,7 +1,7 @@
 use parking_lot::Mutex;
 
 use super::fold_map::{self, FoldEdit, FoldPoint, Snapshot as FoldSnapshot};
-use crate::{editor::rope, settings::StyleId, util::Bias};
+use crate::{editor::rope, settings::HighlightId, util::Bias};
 use std::{mem, ops::Range};
 
 pub struct TabMap(Mutex<Snapshot>);
@@ -416,14 +416,14 @@ impl<'a> Iterator for Chunks<'a> {
 pub struct HighlightedChunks<'a> {
     fold_chunks: fold_map::HighlightedChunks<'a>,
     chunk: &'a str,
-    style_id: StyleId,
+    style_id: HighlightId,
     column: usize,
     tab_size: usize,
     skip_leading_tab: bool,
 }
 
 impl<'a> Iterator for HighlightedChunks<'a> {
-    type Item = (&'a str, StyleId);
+    type Item = (&'a str, HighlightId);
 
     fn next(&mut self) -> Option<Self::Item> {
         if self.chunk.is_empty() {

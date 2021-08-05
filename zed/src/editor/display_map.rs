@@ -340,7 +340,7 @@ mod tests {
         util::RandomCharIter,
     };
     use buffer::{History, SelectionGoal};
-    use gpui::MutableAppContext;
+    use gpui::{color::Color, MutableAppContext};
     use rand::{prelude::StdRng, Rng};
     use std::{env, sync::Arc};
     use Bias::*;
@@ -652,13 +652,13 @@ mod tests {
             (function_item name: (identifier) @fn.name)"#,
         )
         .unwrap();
-        let theme = Theme::parse(
-            r#"
-            [syntax]
-            "mod.body" = 0xff0000
-            "fn.name" = 0x00ff00"#,
-        )
-        .unwrap();
+        let theme = Theme {
+            syntax: vec![
+                ("mod.body".to_string(), Color::from_u32(0xff0000ff).into()),
+                ("fn.name".to_string(), Color::from_u32(0x00ff00ff).into()),
+            ],
+            ..Default::default()
+        };
         let lang = Arc::new(Language {
             config: LanguageConfig {
                 name: "Test".to_string(),
@@ -668,7 +668,7 @@ mod tests {
             grammar: grammar.clone(),
             highlight_query,
             brackets_query: tree_sitter::Query::new(grammar, "").unwrap(),
-            theme_mapping: Default::default(),
+            highlight_map: Default::default(),
         });
         lang.set_theme(&theme);
 
@@ -742,13 +742,13 @@ mod tests {
             (function_item name: (identifier) @fn.name)"#,
         )
         .unwrap();
-        let theme = Theme::parse(
-            r#"
-            [syntax]
-            "mod.body" = 0xff0000
-            "fn.name" = 0x00ff00"#,
-        )
-        .unwrap();
+        let theme = Theme {
+            syntax: vec![
+                ("mod.body".to_string(), Color::from_u32(0xff0000ff).into()),
+                ("fn.name".to_string(), Color::from_u32(0x00ff00ff).into()),
+            ],
+            ..Default::default()
+        };
         let lang = Arc::new(Language {
             config: LanguageConfig {
                 name: "Test".to_string(),
@@ -758,7 +758,7 @@ mod tests {
             grammar: grammar.clone(),
             highlight_query,
             brackets_query: tree_sitter::Query::new(grammar, "").unwrap(),
-            theme_mapping: Default::default(),
+            highlight_map: Default::default(),
         });
         lang.set_theme(&theme);
 
@@ -937,7 +937,7 @@ mod tests {
         let mut snapshot = map.update(cx, |map, cx| map.snapshot(cx));
         let mut chunks: Vec<(String, Option<&str>)> = Vec::new();
         for (chunk, style_id) in snapshot.highlighted_chunks_for_rows(rows) {
-            let style_name = theme.syntax_style_name(style_id);
+            let style_name = theme.highlight_name(style_id);
             if let Some((last_chunk, last_style_name)) = chunks.last_mut() {
                 if style_name == *last_style_name {
                     last_chunk.push_str(chunk);

@@ -1,8 +1,9 @@
 use anyhow::{anyhow, Result};
 use std::{borrow::Cow, cell::RefCell, collections::HashMap};
 
-pub trait AssetSource: 'static {
+pub trait AssetSource: 'static + Send + Sync {
     fn load(&self, path: &str) -> Result<Cow<[u8]>>;
+    fn list(&self, path: &str) -> Vec<Cow<'static, str>>;
 }
 
 impl AssetSource for () {
@@ -11,6 +12,10 @@ impl AssetSource for () {
             "get called on empty asset provider with \"{}\"",
             path
         ))
+    }
+
+    fn list(&self, _: &str) -> Vec<Cow<'static, str>> {
+        vec![]
     }
 }
 

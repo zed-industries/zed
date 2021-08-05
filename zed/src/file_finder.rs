@@ -6,13 +6,10 @@ use crate::{
     worktree::{match_paths, PathMatch},
 };
 use gpui::{
-    color::ColorF,
     elements::*,
-    fonts::{Properties, Weight},
-    geometry::vector::vec2f,
     keymap::{self, Binding},
-    AppContext, Axis, Border, Entity, MutableAppContext, Task, View, ViewContext, ViewHandle,
-    WeakViewHandle,
+    AppContext, Axis, Entity, MutableAppContext, RenderContext, Task, View, ViewContext,
+    ViewHandle, WeakViewHandle,
 };
 use postage::watch;
 use std::{
@@ -45,7 +42,6 @@ pub fn init(cx: &mut MutableAppContext) {
     cx.add_action("file_finder:select", FileFinder::select);
     cx.add_action("menu:select_prev", FileFinder::select_prev);
     cx.add_action("menu:select_next", FileFinder::select_next);
-    cx.add_action("uniform_list:scroll", FileFinder::scroll);
 
     cx.add_bindings(vec![
         Binding::new("cmd-p", "file_finder:toggle", None),
@@ -68,7 +64,7 @@ impl View for FileFinder {
         "FileFinder"
     }
 
-    fn render(&self, _: &AppContext) -> ElementBox {
+    fn render(&self, _: &RenderContext<Self>) -> ElementBox {
         let settings = self.settings.borrow();
 
         Align::new(
@@ -79,11 +75,7 @@ impl View for FileFinder {
                         .with_child(Expanded::new(1.0, self.render_matches()).boxed())
                         .boxed(),
                 )
-                .with_margin_top(12.0)
-                .with_uniform_padding(6.0)
-                .with_corner_radius(6.0)
-                .with_background_color(settings.theme.ui.modal_background)
-                .with_shadow(vec2f(0., 4.), 12., ColorF::new(0.0, 0.0, 0.0, 0.5).to_u8())
+                .with_style(&settings.theme.ui.selector.container)
                 .boxed(),
             )
             .with_max_width(600.0)
@@ -115,7 +107,7 @@ impl FileFinder {
                     settings.ui_font_family,
                     settings.ui_font_size,
                 )
-                .with_default_color(settings.theme.editor.default_text.0)
+                .with_style(&settings.theme.ui.selector.label)
                 .boxed(),
             )
             .with_margin_top(6.0)
@@ -147,20 +139,25 @@ impl FileFinder {
     }
 
     fn render_match(&self, path_match: &PathMatch, index: usize) -> ElementBox {
+        let selected_index = self.selected_index();
         let settings = self.settings.borrow();
-        let theme = &settings.theme.ui;
+        let style = if index == selected_index {
+            &settings.theme.ui.selector.active_item
+        } else {
+            &settings.theme.ui.selector.item
+        };
         let (file_name, file_name_positions, full_path, full_path_positions) =
             self.labels_for_match(path_match);
-        let bold = *Properties::new().weight(Weight::BOLD);
-        let selected_index = self.selected_index();
-        let mut container = Container::new(
+        let container = Container::new(
             Flex::row()
                 .with_child(
                     Container::new(
                         LineBox::new(
                             settings.ui_font_family,
                             settings.ui_font_size,
-                            Svg::new("icons/file-16.svg").boxed(),
+                            Svg::new("icons/file-16.svg")
+                                .with_color(style.label.text.color)
+                                .boxed(),
                         )
                         .boxed(),
                     )
@@ -177,12 +174,8 @@ impl FileFinder {
                                     settings.ui_font_family,
                                     settings.ui_font_size,
                                 )
-                                .with_default_color(theme.modal_match_text.0)
-                                .with_highlights(
-                                    theme.modal_match_text_highlight.0,
-                                    bold,
-                                    file_name_positions,
-                                )
+                                .with_style(&style.label)
+                                .with_highlights(file_name_positions)
                                 .boxed(),
                             )
                             .with_child(
@@ -191,12 +184,8 @@ impl FileFinder {
                                     settings.ui_font_family,
                                     settings.ui_font_size,
                                 )
-                                .with_default_color(theme.modal_match_text.0)
-                                .with_highlights(
-                                    theme.modal_match_text_highlight.0,
-                                    bold,
-                                    full_path_positions,
-                                )
+                                .with_style(&style.label)
+                                .with_highlights(full_path_positions)
                                 .boxed(),
                             )
                             .boxed(),
@@ -205,16 +194,7 @@ impl FileFinder {
                 )
                 .boxed(),
         )
-        .with_uniform_padding(6.0)
-        .with_background_color(if index == selected_index {
-            theme.modal_match_background_active.0
-        } else {
-            theme.modal_match_background.0
-        });
-
-        if index == selected_index || index < self.matches.len() - 1 {
-            container = container.with_border(Border::bottom(1.0, theme.modal_match_border));
-        }
+        .with_style(&style.container);
 
         let entry = (path_match.tree_id, path_match.path.clone());
         EventHandler::new(container.boxed())
@@ -250,31 +230,30 @@ impl FileFinder {
         (file_name, file_name_positions, full_path, path_positions)
     }
 
-    fn toggle(workspace_view: &mut Workspace, _: &(), cx: &mut ViewContext<Workspace>) {
-        workspace_view.toggle_modal(cx, |cx, workspace_view| {
-            let workspace = cx.handle();
-            let finder =
-                cx.add_view(|cx| Self::new(workspace_view.settings.clone(), workspace, cx));
+    fn toggle(workspace: &mut Workspace, _: &(), cx: &mut ViewContext<Workspace>) {
+        workspace.toggle_modal(cx, |cx, workspace| {
+            let handle = cx.handle();
+            let finder = cx.add_view(|cx| Self::new(workspace.settings.clone(), handle, cx));
             cx.subscribe_to_view(&finder, Self::on_event);
             finder
         });
     }
 
     fn on_event(
-        workspace_view: &mut Workspace,
+        workspace: &mut Workspace,
         _: ViewHandle<FileFinder>,
         event: &Event,
         cx: &mut ViewContext<Workspace>,
     ) {
         match event {
             Event::Selected(tree_id, path) => {
-                workspace_view
+                workspace
                     .open_entry((*tree_id, path.clone()), cx)
                     .map(|d| d.detach());
-                workspace_view.dismiss_modal(cx);
+                workspace.dismiss_modal(cx);
             }
             Event::Dismissed => {
-                workspace_view.dismiss_modal(cx);
+                workspace.dismiss_modal(cx);
             }
         }
     }
@@ -301,7 +280,7 @@ impl FileFinder {
             matches: Vec::new(),
             selected: None,
             cancel_flag: Arc::new(AtomicBool::new(false)),
-            list_state: UniformListState::new(),
+            list_state: Default::default(),
         }
     }
 
@@ -371,10 +350,6 @@ impl FileFinder {
         cx.notify();
     }
 
-    fn scroll(&mut self, _: &f32, cx: &mut ViewContext<Self>) {
-        cx.notify();
-    }
-
     fn confirm(&mut self, _: &(), cx: &mut ViewContext<Self>) {
         if let Some(m) = self.matches.get(self.selected_index()) {
             cx.emit(Event::Selected(m.tree_id, m.path.clone()));
@@ -407,7 +382,7 @@ impl FileFinder {
                 false,
                 false,
                 100,
-                cancel_flag.clone(),
+                cancel_flag.as_ref(),
                 background,
             )
             .await;

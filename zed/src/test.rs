@@ -1,5 +1,13 @@
-use crate::{fs::RealFs, language::LanguageRegistry, rpc, settings, time::ReplicaId, AppState};
+use crate::{
+    fs::RealFs,
+    language::LanguageRegistry,
+    rpc,
+    settings::{self, ThemeRegistry},
+    time::ReplicaId,
+    AppState,
+};
 use gpui::{AppContext, Entity, ModelHandle};
+use parking_lot::Mutex;
 use smol::channel;
 use std::{
     marker::PhantomData,
@@ -147,10 +155,13 @@ fn write_tree(path: &Path, tree: serde_json::Value) {
 }
 
 pub fn build_app_state(cx: &AppContext) -> Arc<AppState> {
-    let settings = settings::channel(&cx.font_cache()).unwrap().1;
+    let (settings_tx, settings) = settings::channel(&cx.font_cache()).unwrap();
     let languages = Arc::new(LanguageRegistry::new());
+    let themes = ThemeRegistry::new(());
     Arc::new(AppState {
+        settings_tx: Arc::new(Mutex::new(settings_tx)),
         settings,
+        themes,
         languages: languages.clone(),
         rpc_router: Arc::new(ForegroundRouter::new()),
         rpc: rpc::Client::new(languages),

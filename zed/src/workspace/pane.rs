@@ -1,11 +1,12 @@
 use super::{ItemViewHandle, SplitDirection};
-use crate::settings::{Settings, UiTheme};
+use crate::{settings::Settings, theme};
 use gpui::{
-    color::ColorU,
+    color::Color,
     elements::*,
     geometry::{rect::RectF, vector::vec2f},
     keymap::Binding,
-    AppContext, Border, Entity, MutableAppContext, Quad, View, ViewContext, ViewHandle,
+    AppContext, Border, Entity, MutableAppContext, Quad, RenderContext, View, ViewContext,
+    ViewHandle,
 };
 use postage::watch;
 use std::{cmp, path::Path, sync::Arc};
@@ -192,6 +193,7 @@ impl Pane {
             let is_active = ix == self.active_item;
 
             enum Tab {}
+            let border = &theme.tab.container.border;
 
             row.add_child(
                 Expanded::new(
@@ -199,10 +201,10 @@ impl Pane {
                     MouseEventHandler::new::<Tab, _>(item.id(), cx, |mouse_state| {
                         let title = item.title(cx);
 
-                        let mut border = Border::new(1.0, theme.tab_border.0);
+                        let mut border = border.clone();
                         border.left = ix > 0;
                         border.right = ix == last_item_ix;
-                        border.bottom = ix != self.active_item;
+                        border.bottom = !is_active;
 
                         let mut container = Container::new(
                             Stack::new()
@@ -213,10 +215,10 @@ impl Pane {
                                             settings.ui_font_family,
                                             settings.ui_font_size,
                                         )
-                                        .with_default_color(if is_active {
-                                            theme.tab_text_active.0
+                                        .with_style(if is_active {
+                                            &theme.active_tab.label
                                         } else {
-                                            theme.tab_text.0
+                                            &theme.tab.label
                                         })
                                         .boxed(),
                                     )
@@ -237,15 +239,15 @@ impl Pane {
                                 )
                                 .boxed(),
                         )
-                        .with_horizontal_padding(10.)
+                        .with_style(if is_active {
+                            &theme.active_tab.container
+                        } else {
+                            &theme.tab.container
+                        })
                         .with_border(border);
 
                         if is_active {
-                            container = container
-                                .with_background_color(theme.tab_background_active)
-                                .with_padding_bottom(border.width);
-                        } else {
-                            container = container.with_background_color(theme.tab_background);
+                            container = container.with_padding_bottom(border.width);
                         }
 
                         ConstrainedBox::new(
@@ -268,10 +270,13 @@ impl Pane {
 
         // Ensure there's always a minimum amount of space after the last tab,
         // so that the tab's border doesn't abut the window's border.
+        let mut border = Border::bottom(1.0, Color::default());
+        border.color = theme.tab.container.border.color;
+
         row.add_child(
             ConstrainedBox::new(
                 Container::new(Empty::new().boxed())
-                    .with_border(Border::bottom(1.0, theme.tab_border))
+                    .with_border(border)
                     .boxed(),
             )
             .with_min_width(20.)
@@ -282,7 +287,7 @@ impl Pane {
             Expanded::new(
                 0.0,
                 Container::new(Empty::new().boxed())
-                    .with_border(Border::bottom(1.0, theme.tab_border))
+                    .with_border(border)
                     .boxed(),
             )
             .named("filler"),
@@ -299,33 +304,33 @@ impl Pane {
         tab_hovered: bool,
         is_dirty: bool,
         has_conflict: bool,
-        theme: &UiTheme,
+        theme: &theme::Ui,
         cx: &AppContext,
     ) -> ElementBox {
         enum TabCloseButton {}
 
-        let mut clicked_color = theme.tab_icon_dirty;
+        let mut clicked_color = theme.tab.icon_dirty;
         clicked_color.a = 180;
 
         let current_color = if has_conflict {
-            Some(theme.tab_icon_conflict)
+            Some(theme.tab.icon_conflict)
         } else if is_dirty {
-            Some(theme.tab_icon_dirty)
+            Some(theme.tab.icon_dirty)
         } else {
             None
         };
 
         let icon = if tab_hovered {
-            let close_color = current_color.unwrap_or(theme.tab_icon_close).0;
+            let close_color = current_color.unwrap_or(theme.tab.icon_close);
             let icon = Svg::new("icons/x.svg").with_color(close_color);
 
             MouseEventHandler::new::<TabCloseButton, _>(item_id, cx, |mouse_state| {
                 if mouse_state.hovered {
-                    Container::new(icon.with_color(ColorU::white()).boxed())
+                    Container::new(icon.with_color(Color::white()).boxed())
                         .with_background_color(if mouse_state.clicked {
                             clicked_color
                         } else {
-                            theme.tab_icon_dirty
+                            theme.tab.icon_dirty
                         })
                         .with_corner_radius(close_icon_size / 2.)
                         .boxed()
@@ -343,7 +348,7 @@ impl Pane {
                         let square = RectF::new(bounds.origin(), vec2f(diameter, diameter));
                         cx.scene.push_quad(Quad {
                             bounds: square,
-                            background: Some(current_color.0),
+                            background: Some(current_color),
                             border: Default::default(),
                             corner_radius: diameter / 2.,
                         });
@@ -371,7 +376,7 @@ impl View for Pane {
         "Pane"
     }
 
-    fn render<'a>(&self, cx: &AppContext) -> ElementBox {
+    fn render<'a>(&self, cx: &RenderContext<Self>) -> ElementBox {
         if let Some(active_item) = self.active_item() {
             Flex::column()
                 .with_child(self.render_tabs(cx))

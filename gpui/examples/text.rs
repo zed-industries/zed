@@ -1,5 +1,5 @@
 use gpui::{
-    color::ColorU,
+    color::Color,
     fonts::{Properties, Weight},
     DebugContext, Element as _, Quad,
 };
@@ -28,7 +28,7 @@ impl gpui::View for TextView {
         "View"
     }
 
-    fn render<'a>(&self, _: &gpui::AppContext) -> gpui::ElementBox {
+    fn render(&self, _: &gpui::RenderContext<Self>) -> gpui::ElementBox {
         TextElement.boxed()
     }
 }
@@ -82,17 +82,17 @@ impl gpui::Element for TextElement {
             text,
             font_size,
             &[
-                (1, normal, ColorU::default()),
-                (1, bold, ColorU::default()),
-                (1, normal, ColorU::default()),
-                (1, bold, ColorU::default()),
-                (text.len() - 4, normal, ColorU::default()),
+                (1, normal, Color::default()),
+                (1, bold, Color::default()),
+                (1, normal, Color::default()),
+                (1, bold, Color::default()),
+                (text.len() - 4, normal, Color::default()),
             ],
         );
 
         cx.scene.push_quad(Quad {
             bounds: bounds,
-            background: Some(ColorU::white()),
+            background: Some(Color::white()),
             ..Default::default()
         });
         line.paint(bounds.origin(), bounds, cx);

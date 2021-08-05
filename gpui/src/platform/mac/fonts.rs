@@ -1,5 +1,5 @@
 use crate::{
-    color::ColorU,
+    color::Color,
     fonts::{FontId, GlyphId, Metrics, Properties},
     geometry::{
         rect::{RectF, RectI},
@@ -82,7 +82,7 @@ impl platform::FontSystem for FontSystem {
         &self,
         text: &str,
         font_size: f32,
-        runs: &[(usize, FontId, ColorU)],
+        runs: &[(usize, FontId, Color)],
     ) -> LineLayout {
         self.0.read().layout_line(text, font_size, runs)
     }
@@ -191,7 +191,7 @@ impl FontSystemState {
         &self,
         text: &str,
         font_size: f32,
-        runs: &[(usize, FontId, ColorU)],
+        runs: &[(usize, FontId, Color)],
     ) -> LineLayout {
         let font_id_attr_name = CFString::from_static_string("zed_font_id");
 
@@ -445,9 +445,9 @@ mod tests {
             text,
             16.0,
             &[
-                (9, zapfino_regular, ColorU::default()),
-                (13, menlo_regular, ColorU::default()),
-                (text.len() - 22, zapfino_regular, ColorU::default()),
+                (9, zapfino_regular, Color::default()),
+                (13, menlo_regular, Color::default()),
+                (text.len() - 22, zapfino_regular, Color::default()),
             ],
         );
         assert_eq!(

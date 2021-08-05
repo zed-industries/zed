@@ -13,17 +13,10 @@ use json::ToJson;
 use parking_lot::Mutex;
 use std::{cmp, ops::Range, sync::Arc};
 
-#[derive(Clone)]
+#[derive(Clone, Default)]
 pub struct UniformListState(Arc<Mutex<StateInner>>);
 
 impl UniformListState {
-    pub fn new() -> Self {
-        Self(Arc::new(Mutex::new(StateInner {
-            scroll_top: 0.0,
-            scroll_to: None,
-        })))
-    }
-
     pub fn scroll_to(&self, item_ix: usize) {
         self.0.lock().scroll_to = Some(item_ix);
     }
@@ -33,6 +26,7 @@ impl UniformListState {
     }
 }
 
+#[derive(Default)]
 struct StateInner {
     scroll_top: f32,
     scroll_to: Option<usize>,
@@ -57,11 +51,11 @@ impl<F> UniformList<F>
 where
     F: Fn(Range<usize>, &mut Vec<ElementBox>, &AppContext),
 {
-    pub fn new(state: UniformListState, item_count: usize, build_items: F) -> Self {
+    pub fn new(state: UniformListState, item_count: usize, append_items: F) -> Self {
         Self {
             state,
             item_count,
-            append_items: build_items,
+            append_items,
         }
     }
 
@@ -79,7 +73,7 @@ where
 
         let mut state = self.state.0.lock();
         state.scroll_top = (state.scroll_top - delta.y()).max(0.0).min(scroll_max);
-        cx.dispatch_action("uniform_list:scroll", state.scroll_top);
+        cx.notify();
 
         true
     }

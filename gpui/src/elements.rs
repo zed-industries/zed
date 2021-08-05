@@ -34,8 +34,7 @@ use crate::{
 };
 use core::panic;
 use json::ToJson;
-use replace_with::replace_with_or_abort;
-use std::{any::Any, borrow::Cow};
+use std::{any::Any, borrow::Cow, mem};
 
 trait AnyElement {
     fn layout(&mut self, constraint: SizeConstraint, cx: &mut LayoutContext) -> Vector2F;
@@ -115,6 +114,7 @@ pub trait Element {
 }
 
 pub enum Lifecycle<T: Element> {
+    Empty,
     Init {
         element: T,
     },
@@ -139,8 +139,9 @@ pub struct ElementBox {
 
 impl<T: Element> AnyElement for Lifecycle<T> {
     fn layout(&mut self, constraint: SizeConstraint, cx: &mut LayoutContext) -> Vector2F {
-        let mut result = None;
-        replace_with_or_abort(self, |me| match me {
+        let result;
+        *self = match mem::take(self) {
+            Lifecycle::Empty => unreachable!(),
             Lifecycle::Init { mut element }
             | Lifecycle::PostLayout { mut element, .. }
             | Lifecycle::PostPaint { mut element, .. } => {
@@ -148,7 +149,7 @@ impl<T: Element> AnyElement for Lifecycle<T> {
                 debug_assert!(size.x().is_finite());
                 debug_assert!(size.y().is_finite());
 
-                result = Some(size);
+                result = size;
                 Lifecycle::PostLayout {
                     element,
                     constraint,
@@ -156,8 +157,8 @@ impl<T: Element> AnyElement for Lifecycle<T> {
                     layout,
                 }
             }
-        });
-        result.unwrap()
+        };
+        result
     }
 
     fn after_layout(&mut self, cx: &mut AfterLayoutContext) {
@@ -175,27 +176,25 @@ impl<T: Element> AnyElement for Lifecycle<T> {
     }
 
     fn paint(&mut self, origin: Vector2F, cx: &mut PaintContext) {
-        replace_with_or_abort(self, |me| {
-            if let Lifecycle::PostLayout {
-                mut element,
+        *self = if let Lifecycle::PostLayout {
+            mut element,
+            constraint,
+            size,
+            mut layout,
+        } = mem::take(self)
+        {
+            let bounds = RectF::new(origin, size);
+            let paint = element.paint(bounds, &mut layout, cx);
+            Lifecycle::PostPaint {
+                element,
                 constraint,
-                size,
-                mut layout,
-            } = me
-            {
-                let bounds = RectF::new(origin, size);
-                let paint = element.paint(bounds, &mut layout, cx);
-                Lifecycle::PostPaint {
-                    element,
-                    constraint,
-                    bounds,
-                    layout,
-                    paint,
-                }
-            } else {
-                panic!("invalid element lifecycle state");
+                bounds,
+                layout,
+                paint,
             }
-        });
+        } else {
+            panic!("invalid element lifecycle state");
+        };
     }
 
     fn dispatch_event(&mut self, event: &Event, cx: &mut EventContext) -> bool {
@@ -215,7 +214,7 @@ impl<T: Element> AnyElement for Lifecycle<T> {
 
     fn size(&self) -> Vector2F {
         match self {
-            Lifecycle::Init { .. } => panic!("invalid element lifecycle state"),
+            Lifecycle::Empty | Lifecycle::Init { .. } => panic!("invalid element lifecycle state"),
             Lifecycle::PostLayout { size, .. } => *size,
             Lifecycle::PostPaint { bounds, .. } => bounds.size(),
         }
@@ -223,6 +222,7 @@ impl<T: Element> AnyElement for Lifecycle<T> {
 
     fn metadata(&self) -> Option<&dyn Any> {
         match self {
+            Lifecycle::Empty => unreachable!(),
             Lifecycle::Init { element }
             | Lifecycle::PostLayout { element, .. }
             | Lifecycle::PostPaint { element, .. } => element.metadata(),
@@ -254,6 +254,12 @@ impl<T: Element> AnyElement for Lifecycle<T> {
             }
             _ => panic!("invalid element lifecycle state"),
         }
+    }
+}
+
+impl<T: Element> Default for Lifecycle<T> {
+    fn default() -> Self {
+        Self::Empty
     }
 }
 

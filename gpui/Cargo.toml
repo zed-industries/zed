@@ -19,7 +19,6 @@ pathfinder_color = "0.5"
 pathfinder_geometry = "0.5"
 postage = { version = "0.4.1", features = ["futures-traits"] }
 rand = "0.8.3"
-replace_with = "0.1.7"
 resvg = "0.14"
 seahash = "4.1"
 serde = { version = "1.0.125", features = ["derive"] }

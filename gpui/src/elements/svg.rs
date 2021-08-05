@@ -3,7 +3,7 @@ use std::borrow::Cow;
 use serde_json::json;
 
 use crate::{
-    color::ColorU,
+    color::Color,
     geometry::{
         rect::RectF,
         vector::{vec2f, Vector2F},
@@ -14,18 +14,18 @@ use crate::{
 
 pub struct Svg {
     path: Cow<'static, str>,
-    color: ColorU,
+    color: Color,
 }
 
 impl Svg {
     pub fn new(path: impl Into<Cow<'static, str>>) -> Self {
         Self {
             path: path.into(),
-            color: ColorU::black(),
+            color: Color::black(),
         }
     }
 
-    pub fn with_color(mut self, color: ColorU) -> Self {
+    pub fn with_color(mut self, color: Color) -> Self {
         self.color = color;
         self
     }
