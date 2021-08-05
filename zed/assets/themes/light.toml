@@ -25,13 +25,11 @@ status_info = "#2C4FCB"
 
 # Interaction
 interaction_hover = "#0000000D"
+interaction_selection = "#4E5DE24D"
 
 # Elevation
-elevation_offset_x = 0.0
-elevation_offset_y = 4.0
-elevation_shadow_alpha = "#00000052"
-elevation_shadow_blur = 16
-elevation_corner_radius = 6.0
+elevation_shadow_color = "#00000052"
+elevation_corner_radius = 8.0
 
 # Collaboration
 collab_0 = "#BD7CB4"

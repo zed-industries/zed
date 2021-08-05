@@ -2,8 +2,8 @@ extends = "_base"
 
 [variables]
 # Surface
-surface_0 = "#222324"
-surface_1 = "#131415"
+surface_0 = "#283340"
+surface_1 = "#1C2733"
 surface_2 = "#0C0C0D"
 surface_3 = "#030303"
 surface_4 = "#000000"
@@ -15,7 +15,7 @@ text_2 = "#808080"
 text_3 = "#4D4D4D"
 
 # Border
-border_0 = "#0D0E0E"
+border_0 = "#17202A"
 
 # Status
 status_good = "#349B4A"
@@ -25,13 +25,11 @@ status_info = "#2C4FCB"
 
 # Interaction
 interaction_hover = "#00000033"
+interaction_selection = "#4E5DE24D"
 
 # Elevation
-elevation_offset_x = 0.0
-elevation_offset_y = 4.0
-elevation_shadow_alpha = "#00000052"
-elevation_shadow_blur = 16
-elevation_corner_radius = 6.0
+elevation_shadow_color = "#00000052"
+elevation_corner_radius = 8.0
 
 # Collaboration
 collab_0 = "#BD7CB4"
