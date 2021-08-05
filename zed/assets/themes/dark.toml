@@ -1,21 +1,55 @@
 extends = "_base"
 
 [variables]
-elevation_1 = "#050101"
-elevation_2 = "#131415"
-elevation_3 = "#1c1d1e"
-elevation_4 = "#3a3b3c"
-text_dull = "#5a5a5b"
-text_bright = "#ffffff"
-text_normal = "#d4d4d4"
+# Surface
+surface_0 = "#222324"
+surface_1 = "#131415"
+surface_2 = "#0C0C0D"
+surface_3 = "#030303"
+surface_4 = "#000000"
+
+# Text
+text_0 = "#FFFFFF"
+text_1 = "#B3B3B3"
+text_2 = "#808080"
+text_3 = "#4D4D4D"
+
+# Border
+border_0 = "#0D0E0E"
+
+# Status
+status_good = "#349B4A"
+status_bad = "#C13227"
+status_warn = "#F8C33C"
+status_info = "#2C4FCB"
+
+# Interaction
+interaction_hover = "#00000033"
+
+# Elevation
+elevation_offset_x = 0.0
+elevation_offset_y = 4.0
+elevation_shadow_alpha = "#00000052"
+elevation_shadow_blur = 16
+elevation_corner_radius = 6.0
+
+# Collaboration
+collab_0 = "#BD7CB4"
+collab_1 = "#5A2B92"
+collab_2 = "#233D9A"
+collab_3 = "#4EACAD"
+collab_4 = "#3B874B"
+collab_5 = "#FDF351"
+collab_6 = "#EE8231"
+collab_7 = "#D0453B"
 
 [syntax]
-keyword = { color = "#0086c0", weight = "bold" }
-function = "#dcdcaa"
-string = "#cb8f77"
-type = "#4ec9b0"
-number = "#b5cea8"
-comment = "#6a9955"
-property = "#4e94ce"
-variant = "#4fc1ff"
-constant = "#9cdcfe"
+keyword = { color = "#C678DD", weight = "bold" }
+function = "#E06C75"
+string = "#4E94CE"
+type = "#89C379"
+number = "#E5C07B"
+comment = "#555555"
+property = "#41ABCC"
+variant = "#C89977"
+constant = "#5C40C9"

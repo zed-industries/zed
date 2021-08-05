@@ -1,23 +1,23 @@
 [ui]
-background = "$elevation_1"
+background = "$surface_0"
 
 [ui.tab]
-background = "$elevation_2"
-text = "$text_dull"
-border = { color = "#000000", width = 1.0 }
+background = "$surface_1"
+text = "$text_3"
+border = { color = "$border_0", width = 2.0 }
 padding = { left = 10, right = 10 }
-icon_close = "#383839"
-icon_dirty = "#556de8"
-icon_conflict = "#e45349"
+icon_close = "$text_2"
+icon_dirty = "$status_info"
+icon_conflict = "$status_warn"
 
 [ui.active_tab]
 extends = "ui.tab"
-background = "$elevation_3"
-text = "$text_bright"
+background = "$surface_3"
+text = "$text_0"
 
 [ui.selector]
-background = "$elevation_4"
-text = "$text_bright"
+background = "$surface_0"
+text = "$text_0"
 padding = { top = 6.0, bottom = 6.0, left = 6.0, right = 6.0 }
 margin.top = 12.0
 corner_radius = 6.0
@@ -27,7 +27,7 @@ shadow = { offset = [0.0, 0.0], blur = 12.0, color = "#00000088" }
 background = "#424344"
 text = "#cccccc"
 highlight_text = { color = "#18a3ff", weight = "bold" }
-border = { color = "#000000", width = 1.0 }
+border = { color = "#000000", width = 2.0 }
 padding = { top = 6.0, bottom = 6.0, left = 6.0, right = 6.0 }
 
 [ui.selector.active_item]
@@ -35,13 +35,13 @@ extends = "ui.selector.item"
 background = "#094771"
 
 [editor]
-background = "$elevation_3"
-gutter_background = "$elevation_3"
-active_line_background = "$elevation_4"
-line_number = "$text_dull"
-line_number_active = "$text_bright"
-text = "$text_normal"
+background = "$surface_3"
+gutter_background = "$surface_3"
+active_line_background = "$surface_4"
+line_number = "$text_3"
+line_number_active = "$text_0"
+text = "$text_1"
 replicas = [
-    { selection = "#264f78", cursor = "$text_bright" },
+    { selection = "#264f78", cursor = "$text_0" },
     { selection = "#504f31", cursor = "#fcf154" },
 ]
