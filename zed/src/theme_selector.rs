@@ -107,10 +107,13 @@ impl ThemeSelector {
 
     fn confirm(&mut self, _: &(), cx: &mut ViewContext<Self>) {
         if let Some(mat) = self.matches.get(self.selected_index) {
-            if let Ok(theme) = self.registry.get(&mat.string) {
-                self.settings_tx.lock().borrow_mut().theme = theme;
-                cx.notify_all();
-                cx.emit(Event::Dismissed);
+            match self.registry.get(&mat.string) {
+                Ok(theme) => {
+                    self.settings_tx.lock().borrow_mut().theme = theme;
+                    cx.notify_all();
+                    cx.emit(Event::Dismissed);
+                }
+                Err(error) => log::error!("error loading theme {}: {}", mat.string, error),
             }
         }
     }
