@@ -444,11 +444,7 @@ impl Renderer {
                 border_right: border_width * (quad.border.right as usize as f32),
                 border_bottom: border_width * (quad.border.bottom as usize as f32),
                 border_left: border_width * (quad.border.left as usize as f32),
-                border_color: quad
-                    .border
-                    .color
-                    .unwrap_or(Color::transparent_black())
-                    .to_uchar4(),
+                border_color: quad.border.color.to_uchar4(),
                 corner_radius: quad.corner_radius * scene.scale_factor(),
             };
             unsafe {

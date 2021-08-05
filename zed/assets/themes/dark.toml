@@ -10,7 +10,7 @@ text_bright = "#ffffff"
 text_normal = "#d4d4d4"
 
 [syntax]
-keyword = { color = "#c586c0", weight = "bold" }
+keyword = { color = "#0086c0", weight = "bold" }
 function = "#dcdcaa"
 string = "#cb8f77"
 type = "#4ec9b0"

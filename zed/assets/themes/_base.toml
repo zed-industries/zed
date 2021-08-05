@@ -4,7 +4,7 @@ background = "$elevation_1"
 [ui.tab]
 background = "$elevation_2"
 text = "$text_dull"
-border.color = "#000000"
+border = { color = "#000000", width = 1.0 }
 padding = { left = 10, right = 10 }
 icon_close = "#383839"
 icon_dirty = "#556de8"

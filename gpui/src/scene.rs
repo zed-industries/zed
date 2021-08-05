@@ -57,24 +57,52 @@ pub struct Icon {
     pub color: Color,
 }
 
-#[derive(Clone, Copy, Default, Debug, Deserialize)]
+#[derive(Clone, Copy, Default, Debug)]
 pub struct Border {
-    #[serde(default = "default_border_width")]
     pub width: f32,
-    #[serde(default)]
-    pub color: Option<Color>,
-    #[serde(default)]
+    pub color: Color,
     pub top: bool,
-    #[serde(default)]
     pub right: bool,
-    #[serde(default)]
     pub bottom: bool,
-    #[serde(default)]
     pub left: bool,
 }
 
-fn default_border_width() -> f32 {
-    1.0
+impl<'de> Deserialize<'de> for Border {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        #[derive(Deserialize)]
+        struct BorderData {
+            pub width: f32,
+            pub color: Color,
+            #[serde(default)]
+            pub top: bool,
+            #[serde(default)]
+            pub right: bool,
+            #[serde(default)]
+            pub bottom: bool,
+            #[serde(default)]
+            pub left: bool,
+        }
+
+        let data = BorderData::deserialize(deserializer)?;
+        let mut border = Border {
+            width: data.width,
+            color: data.color,
+            top: data.top,
+            bottom: data.bottom,
+            left: data.left,
+            right: data.right,
+        };
+        if !border.top && !border.bottom && !border.left && !border.right {
+            border.top = true;
+            border.bottom = true;
+            border.left = true;
+            border.right = true;
+        }
+        Ok(border)
+    }
 }
 
 #[derive(Debug)]
@@ -206,7 +234,7 @@ impl Border {
     pub fn new(width: f32, color: Color) -> Self {
         Self {
             width,
-            color: Some(color),
+            color,
             top: false,
             left: false,
             bottom: false,
@@ -217,7 +245,7 @@ impl Border {
     pub fn all(width: f32, color: Color) -> Self {
         Self {
             width,
-            color: Some(color),
+            color,
             top: true,
             left: true,
             bottom: true,
