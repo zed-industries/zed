@@ -153,10 +153,14 @@ impl Window {
             let pool = NSAutoreleasePool::new(nil);
 
             let frame = options.bounds.to_ns_rect();
-            let style_mask = NSWindowStyleMask::NSClosableWindowMask
+            let mut style_mask = NSWindowStyleMask::NSClosableWindowMask
                 | NSWindowStyleMask::NSMiniaturizableWindowMask
                 | NSWindowStyleMask::NSResizableWindowMask
                 | NSWindowStyleMask::NSTitledWindowMask;
+
+            if options.titlebar_appears_transparent {
+                style_mask |= NSWindowStyleMask::NSFullSizeContentViewWindowMask;
+            }
 
             let native_window: id = msg_send![WINDOW_CLASS, alloc];
             let native_window = native_window.initWithContentRect_styleMask_backing_defer_(
@@ -212,6 +216,9 @@ impl Window {
 
             if let Some(title) = options.title.as_ref() {
                 native_window.setTitle_(NSString::alloc(nil).init_str(title));
+            }
+            if options.titlebar_appears_transparent {
+                native_window.setTitlebarAppearsTransparent_(YES);
             }
             native_window.setAcceptsMouseMovedEvents_(YES);
 

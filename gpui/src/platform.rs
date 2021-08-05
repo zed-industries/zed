@@ -95,9 +95,11 @@ pub trait WindowContext {
     fn present_scene(&mut self, scene: Scene);
 }
 
+#[derive(Default)]
 pub struct WindowOptions<'a> {
     pub bounds: RectF,
     pub title: Option<&'a str>,
+    pub titlebar_appears_transparent: bool,
 }
 
 pub struct PathPromptOptions {

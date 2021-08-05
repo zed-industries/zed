@@ -12,7 +12,7 @@ fn main() {
 
     gpui::App::new(()).unwrap().run(|cx| {
         cx.platform().activate(true);
-        cx.add_window(|_| TextView);
+        cx.add_window(Default::default(), |_| TextView);
     });
 }
 

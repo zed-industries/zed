@@ -12,7 +12,6 @@ use anyhow::{anyhow, Result};
 use async_task::Task;
 use keymap::MatchResult;
 use parking_lot::{Mutex, RwLock};
-use pathfinder_geometry::{rect::RectF, vector::vec2f};
 use platform::Event;
 use postage::{mpsc, sink::Sink as _, stream::Stream as _};
 use smol::prelude::*;
@@ -300,7 +299,9 @@ impl TestAppContext {
         T: View,
         F: FnOnce(&mut ViewContext<T>) -> T,
     {
-        self.cx.borrow_mut().add_window(build_root_view)
+        self.cx
+            .borrow_mut()
+            .add_window(Default::default(), build_root_view)
     }
 
     pub fn window_ids(&self) -> Vec<usize> {
@@ -959,7 +960,11 @@ impl MutableAppContext {
         handle
     }
 
-    pub fn add_window<T, F>(&mut self, build_root_view: F) -> (usize, ViewHandle<T>)
+    pub fn add_window<T, F>(
+        &mut self,
+        window_options: WindowOptions,
+        build_root_view: F,
+    ) -> (usize, ViewHandle<T>)
     where
         T: View,
         F: FnOnce(&mut ViewContext<T>) -> T,
@@ -976,7 +981,7 @@ impl MutableAppContext {
                 invalidation: None,
             },
         );
-        self.open_platform_window(window_id);
+        self.open_platform_window(window_id, window_options);
         root_view.update(self, |view, cx| {
             view.on_focus(cx);
             cx.notify();
@@ -992,15 +997,11 @@ impl MutableAppContext {
         self.remove_dropped_entities();
     }
 
-    fn open_platform_window(&mut self, window_id: usize) {
-        let mut window = self.cx.platform.open_window(
-            window_id,
-            WindowOptions {
-                bounds: RectF::new(vec2f(0., 0.), vec2f(1024., 768.)),
-                title: "Zed".into(),
-            },
-            self.foreground.clone(),
-        );
+    fn open_platform_window(&mut self, window_id: usize, window_options: WindowOptions) {
+        let mut window =
+            self.cx
+                .platform
+                .open_window(window_id, window_options, self.foreground.clone());
         let text_layout_cache = TextLayoutCache::new(self.cx.platform.fonts());
         let presenter = Rc::new(RefCell::new(Presenter::new(
             window_id,
@@ -3070,7 +3071,7 @@ mod tests {
             }
         }
 
-        let (window_id, _) = cx.add_window(|cx| View::new(None, cx));
+        let (window_id, _) = cx.add_window(Default::default(), |cx| View::new(None, cx));
         let handle_1 = cx.add_view(window_id, |cx| View::new(None, cx));
         let handle_2 = cx.add_view(window_id, |cx| View::new(Some(handle_1.clone()), cx));
         assert_eq!(cx.cx.views.len(), 3);
@@ -3126,7 +3127,7 @@ mod tests {
         }
 
         let mouse_down_count = Arc::new(AtomicUsize::new(0));
-        let (window_id, _) = cx.add_window(|_| View {
+        let (window_id, _) = cx.add_window(Default::default(), |_| View {
             mouse_down_count: mouse_down_count.clone(),
         });
         let presenter = cx.presenters_and_platform_windows[&window_id].0.clone();
@@ -3184,7 +3185,7 @@ mod tests {
             released: model_released.clone(),
         });
 
-        let (window_id, _) = cx.add_window(|_| View {
+        let (window_id, _) = cx.add_window(Default::default(), |_| View {
             released: view_released.clone(),
         });
 
@@ -3227,7 +3228,7 @@ mod tests {
             type Event = usize;
         }
 
-        let (window_id, handle_1) = cx.add_window(|_| View::default());
+        let (window_id, handle_1) = cx.add_window(Default::default(), |_| View::default());
         let handle_2 = cx.add_view(window_id, |_| View::default());
         let handle_2b = handle_2.clone();
         let handle_3 = cx.add_model(|_| Model);
@@ -3280,7 +3281,7 @@ mod tests {
             type Event = ();
         }
 
-        let (window_id, _) = cx.add_window(|_| View);
+        let (window_id, _) = cx.add_window(Default::default(), |_| View);
         let observing_view = cx.add_view(window_id, |_| View);
         let emitting_view = cx.add_view(window_id, |_| View);
         let observing_model = cx.add_model(|_| Model);
@@ -3333,7 +3334,7 @@ mod tests {
             type Event = ();
         }
 
-        let (_, view) = cx.add_window(|_| View::default());
+        let (_, view) = cx.add_window(Default::default(), |_| View::default());
         let model = cx.add_model(|_| Model::default());
 
         view.update(cx, |_, c| {
@@ -3373,7 +3374,7 @@ mod tests {
             type Event = ();
         }
 
-        let (window_id, _) = cx.add_window(|_| View);
+        let (window_id, _) = cx.add_window(Default::default(), |_| View);
         let observing_view = cx.add_view(window_id, |_| View);
         let observing_model = cx.add_model(|_| Model);
         let observed_model = cx.add_model(|_| Model);
@@ -3423,7 +3424,7 @@ mod tests {
         }
 
         let events: Arc<Mutex<Vec<String>>> = Default::default();
-        let (window_id, view_1) = cx.add_window(|_| View {
+        let (window_id, view_1) = cx.add_window(Default::default(), |_| View {
             events: events.clone(),
             name: "view 1".to_string(),
         });
@@ -3533,7 +3534,7 @@ mod tests {
             actions_clone.borrow_mut().push(format!("{} d", view.id));
         });
 
-        let (window_id, view_1) = cx.add_window(|_| ViewA { id: 1 });
+        let (window_id, view_1) = cx.add_window(Default::default(), |_| ViewA { id: 1 });
         let view_2 = cx.add_view(window_id, |_| ViewB { id: 2 });
         let view_3 = cx.add_view(window_id, |_| ViewA { id: 3 });
         let view_4 = cx.add_view(window_id, |_| ViewB { id: 4 });
@@ -3613,7 +3614,7 @@ mod tests {
         view_2.keymap_context.set.insert("b".into());
         view_3.keymap_context.set.insert("c".into());
 
-        let (window_id, view_1) = cx.add_window(|_| view_1);
+        let (window_id, view_1) = cx.add_window(Default::default(), |_| view_1);
         let view_2 = cx.add_view(window_id, |_| view_2);
         let view_3 = cx.add_view(window_id, |_| view_3);
 
