@@ -164,6 +164,10 @@ impl super::WindowContext for Window {
         self.scale_factor
     }
 
+    fn titlebar_height(&self) -> f32 {
+        24.
+    }
+
     fn present_scene(&mut self, scene: crate::Scene) {
         self.current_scene = Some(scene);
     }

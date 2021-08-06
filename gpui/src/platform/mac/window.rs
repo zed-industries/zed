@@ -15,6 +15,7 @@ use cocoa::{
     foundation::{NSAutoreleasePool, NSInteger, NSSize, NSString},
     quartzcore::AutoresizingMask,
 };
+use core_graphics::display::CGRect;
 use ctor::ctor;
 use foreign_types::ForeignType as _;
 use objc::{
@@ -336,6 +337,10 @@ impl platform::WindowContext for Window {
     fn present_scene(&mut self, scene: Scene) {
         self.0.as_ref().borrow_mut().present_scene(scene);
     }
+
+    fn titlebar_height(&self) -> f32 {
+        self.0.as_ref().borrow().titlebar_height()
+    }
 }
 
 impl platform::WindowContext for WindowState {
@@ -349,6 +354,14 @@ impl platform::WindowContext for WindowState {
         unsafe {
             let screen: id = msg_send![self.native_window, screen];
             NSScreen::backingScaleFactor(screen) as f32
+        }
+    }
+
+    fn titlebar_height(&self) -> f32 {
+        unsafe {
+            let frame = NSWindow::frame(self.native_window);
+            let content_layout_rect: CGRect = msg_send![self.native_window, contentLayoutRect];
+            (frame.size.height - content_layout_rect.size.height) as f32
         }
     }
 
