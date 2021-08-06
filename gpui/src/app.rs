@@ -1041,6 +1041,7 @@ impl MutableAppContext {
                 app.update(|cx| {
                     let scene = presenter.borrow_mut().build_scene(
                         window.size(),
+                        window.titlebar_height(),
                         window.scale_factor(),
                         cx,
                     );
@@ -1197,7 +1198,12 @@ impl MutableAppContext {
                 {
                     let mut presenter = presenter.borrow_mut();
                     presenter.invalidate(invalidation, self.as_ref());
-                    let scene = presenter.build_scene(window.size(), window.scale_factor(), self);
+                    let scene = presenter.build_scene(
+                        window.size(),
+                        window.titlebar_height(),
+                        window.scale_factor(),
+                        self,
+                    );
                     window.present_scene(scene);
                 }
                 self.presenters_and_platform_windows

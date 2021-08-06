@@ -70,13 +70,14 @@ impl Presenter {
     pub fn build_scene(
         &mut self,
         window_size: Vector2F,
+        titlebar_height: f32,
         scale_factor: f32,
         cx: &mut MutableAppContext,
     ) -> Scene {
         let mut scene = Scene::new(scale_factor);
 
         if let Some(root_view_id) = cx.root_view_id(self.window_id) {
-            self.layout(window_size, cx);
+            self.layout(window_size, titlebar_height, cx);
             self.after_layout(cx);
             let mut paint_cx = PaintContext {
                 scene: &mut scene,
@@ -98,7 +99,7 @@ impl Presenter {
         scene
     }
 
-    fn layout(&mut self, size: Vector2F, cx: &mut MutableAppContext) {
+    fn layout(&mut self, size: Vector2F, titlebar_height: f32, cx: &mut MutableAppContext) {
         if let Some(root_view_id) = cx.root_view_id(self.window_id) {
             let mut layout_ctx = LayoutContext {
                 rendered_views: &mut self.rendered_views,
@@ -108,6 +109,7 @@ impl Presenter {
                 asset_cache: &self.asset_cache,
                 view_stack: Vec::new(),
                 app: cx,
+                titlebar_height,
             };
             layout_ctx.layout(root_view_id, SizeConstraint::strict(size));
         }
@@ -186,6 +188,7 @@ pub struct LayoutContext<'a> {
     pub asset_cache: &'a AssetCache,
     pub app: &'a mut MutableAppContext,
     view_stack: Vec<usize>,
+    pub titlebar_height: f32,
 }
 
 impl<'a> LayoutContext<'a> {
