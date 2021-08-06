@@ -513,13 +513,18 @@ async fn test_basic_chat(mut cx_a: TestAppContext, cx_b: TestAppContext) {
     )
     .await
     .unwrap();
-    assert_eq!(
-        db.get_recent_channel_messages(channel_id, 50)
-            .await
-            .unwrap()[0]
-            .body,
-        "first message!"
-    );
+
+    let channels_a = client_a.get_channels().await;
+    assert_eq!(channels_a.len(), 1);
+    assert_eq!(channels_a[0].read(&cx_a).name(), "test-channel");
+
+    // assert_eq!(
+    //     db.get_recent_channel_messages(channel_id, 50)
+    //         .await
+    //         .unwrap()[0]
+    //         .body,
+    //     "first message!"
+    // );
 }
 
 struct TestServer {

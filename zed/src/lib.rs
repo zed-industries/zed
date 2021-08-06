@@ -1,4 +1,5 @@
 pub mod assets;
+pub mod channel;
 pub mod editor;
 pub mod file_finder;
 pub mod fs;

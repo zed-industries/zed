@@ -29,6 +29,7 @@ pub struct Client {
 pub struct ClientState {
     connection_id: Option<ConnectionId>,
     pub shared_worktrees: HashMap<u64, WeakModelHandle<Worktree>>,
+    pub channel_list: Option<WeakModelHandle<ChannelList>>,
     pub languages: Arc<LanguageRegistry>,
 }
 
