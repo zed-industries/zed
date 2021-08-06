@@ -22,8 +22,18 @@ message Envelope {
         BufferSaved buffer_saved = 17;
         AddPeer add_peer = 18;
         RemovePeer remove_peer = 19;
+        GetChannels get_channels = 20;
+        GetChannelsResponse get_channels_response = 21;
+        JoinChannel join_channel = 22;
+        JoinChannelResponse join_channel_response = 23;
+        GetUsers get_users = 24;
+        GetUsersResponse get_users_response = 25;
+        SendChannelMessage send_channel_message = 26;
+        ChannelMessageSent channel_message_sent = 27;
     }
 }
+
+// Messages
 
 message Auth {
     int32 user_id = 1;
@@ -75,11 +85,6 @@ message RemovePeer {
     uint32 peer_id = 2;
 }
 
-message Peer {
-    uint32 peer_id = 1;
-    uint32 replica_id = 2;
-}
-
 message OpenBuffer {
     uint64 worktree_id = 1;
     string path = 2;
@@ -110,6 +115,45 @@ message BufferSaved {
     uint64 buffer_id = 2;
     repeated VectorClockEntry version = 3;
     Timestamp mtime = 4;
+}
+
+message GetChannels {}
+
+message GetChannelsResponse {
+    repeated Channel channels = 1;
+}
+
+message JoinChannel {
+    uint64 channel_id = 1;
+}
+
+message JoinChannelResponse {
+    repeated ChannelMessage messages = 1;
+}
+
+message GetUsers {
+    repeated uint64 user_ids = 1;
+}
+
+message GetUsersResponse {
+    repeated User users = 1;
+}
+
+message SendChannelMessage {
+    uint64 channel_id = 1;
+    string body = 2;
+}
+
+message ChannelMessageSent {
+    uint64 channel_id = 1;
+    ChannelMessage message = 2;
+}
+
+// Entities
+
+message Peer {
+    uint32 peer_id = 1;
+    uint32 replica_id = 2;
 }
 
 message User {
@@ -227,4 +271,16 @@ message Timestamp {
 message Range {
     uint64 start = 1;
     uint64 end = 2;
+}
+
+message Channel {
+    uint64 id = 1;
+    string name = 2;
+}
+
+message ChannelMessage {
+    uint64 id = 1;
+    string body = 2;
+    uint64 timestamp = 3;
+    uint64 sender_id = 4;
 }

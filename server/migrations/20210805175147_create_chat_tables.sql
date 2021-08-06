@@ -39,7 +39,7 @@ CREATE TABLE IF NOT EXISTS "channel_messages" (
     "id" SERIAL PRIMARY KEY,
     "channel_id" INTEGER REFERENCES channels (id) NOT NULL,
     "sender_id" INTEGER REFERENCES users (id) NOT NULL,
-    "content" TEXT NOT NULL,
+    "body" TEXT NOT NULL,
     "sent_at" TIMESTAMP
 );
 
