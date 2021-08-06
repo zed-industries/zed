@@ -1,7 +1,6 @@
-use crate::{auth::RequestExt as _, AppState, DbPool, LayoutData, Request, RequestExt as _};
+use crate::{auth::RequestExt as _, db, AppState, LayoutData, Request, RequestExt as _};
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
-use sqlx::{Executor, FromRow};
 use std::sync::Arc;
 use surf::http::mime;
 
@@ -41,23 +40,8 @@ pub fn add_routes(app: &mut tide::Server<Arc<AppState>>) {
 struct AdminData {
     #[serde(flatten)]
     layout: Arc<LayoutData>,
-    users: Vec<User>,
-    signups: Vec<Signup>,
-}
-
-#[derive(Debug, FromRow, Serialize)]
-pub struct User {
-    pub id: i32,
-    pub github_login: String,
-    pub admin: bool,
-}
-
-#[derive(Debug, FromRow, Serialize)]
-pub struct Signup {
-    pub id: i32,
-    pub github_login: String,
-    pub email_address: String,
-    pub about: String,
+    users: Vec<db::User>,
+    signups: Vec<db::Signup>,
 }
 
 async fn get_admin_page(mut request: Request) -> tide::Result {
@@ -65,12 +49,8 @@ async fn get_admin_page(mut request: Request) -> tide::Result {
 
     let data = AdminData {
         layout: request.layout_data().await?,
-        users: sqlx::query_as("SELECT * FROM users ORDER BY github_login ASC")
-            .fetch_all(request.db())
-            .await?,
-        signups: sqlx::query_as("SELECT * FROM signups ORDER BY id DESC")
-            .fetch_all(request.db())
-            .await?,
+        users: request.db().get_all_users().await?,
+        signups: request.db().get_all_signups().await?,
     };
 
     Ok(tide::Response::builder(200)
@@ -96,7 +76,7 @@ async fn post_user(mut request: Request) -> tide::Result {
         .unwrap_or(&form.github_login);
 
     if !github_login.is_empty() {
-        create_user(request.db(), github_login, form.admin).await?;
+        request.db().create_user(github_login, form.admin).await?;
     }
 
     Ok(tide::Redirect::new("/admin").into())
@@ -116,11 +96,7 @@ async fn put_user(mut request: Request) -> tide::Result {
 
     request
         .db()
-        .execute(
-            sqlx::query("UPDATE users SET admin = $1 WHERE id = $2;")
-                .bind(body.admin)
-                .bind(user_id),
-        )
+        .set_user_is_admin(db::UserId(user_id), body.admin)
         .await?;
 
     Ok(tide::Response::builder(200).build())
@@ -128,33 +104,14 @@ async fn put_user(mut request: Request) -> tide::Result {
 
 async fn delete_user(request: Request) -> tide::Result {
     request.require_admin().await?;
-
-    let user_id = request.param("id")?.parse::<i32>()?;
-    request
-        .db()
-        .execute(sqlx::query("DELETE FROM users WHERE id = $1;").bind(user_id))
-        .await?;
-
+    let user_id = db::UserId(request.param("id")?.parse::<i32>()?);
+    request.db().delete_user(user_id).await?;
     Ok(tide::Redirect::new("/admin").into())
-}
-
-pub async fn create_user(db: &DbPool, github_login: &str, admin: bool) -> tide::Result<i32> {
-    let id: i32 =
-        sqlx::query_scalar("INSERT INTO users (github_login, admin) VALUES ($1, $2) RETURNING id;")
-            .bind(github_login)
-            .bind(admin)
-            .fetch_one(db)
-            .await?;
-    Ok(id)
 }
 
 async fn delete_signup(request: Request) -> tide::Result {
     request.require_admin().await?;
-    let signup_id = request.param("id")?.parse::<i32>()?;
-    request
-        .db()
-        .execute(sqlx::query("DELETE FROM signups WHERE id = $1;").bind(signup_id))
-        .await?;
-
+    let signup_id = db::SignupId(request.param("id")?.parse::<i32>()?);
+    request.db().delete_signup(signup_id).await?;
     Ok(tide::Redirect::new("/admin").into())
 }

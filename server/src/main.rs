@@ -1,6 +1,7 @@
 mod admin;
 mod assets;
 mod auth;
+mod db;
 mod env;
 mod errors;
 mod expiring;
@@ -13,15 +14,14 @@ mod tests;
 
 use self::errors::TideResultExt as _;
 use anyhow::{Context, Result};
-use async_sqlx_session::PostgresSessionStore;
 use async_std::{net::TcpListener, sync::RwLock as AsyncRwLock};
 use async_trait::async_trait;
 use auth::RequestExt as _;
+use db::{Db, DbOptions};
 use handlebars::{Handlebars, TemplateRenderError};
 use parking_lot::RwLock;
 use rust_embed::RustEmbed;
 use serde::{Deserialize, Serialize};
-use sqlx::postgres::{PgPool, PgPoolOptions};
 use std::sync::Arc;
 use surf::http::cookies::SameSite;
 use tide::{log, sessions::SessionMiddleware};
@@ -29,7 +29,6 @@ use tide_compress::CompressMiddleware;
 use zrpc::Peer;
 
 type Request = tide::Request<Arc<AppState>>;
-type DbPool = PgPool;
 
 #[derive(RustEmbed)]
 #[folder = "templates"]
@@ -47,7 +46,7 @@ pub struct Config {
 }
 
 pub struct AppState {
-    db: sqlx::PgPool,
+    db: Db,
     handlebars: RwLock<Handlebars<'static>>,
     auth_client: auth::Client,
     github_client: Arc<github::AppClient>,
@@ -58,11 +57,11 @@ pub struct AppState {
 
 impl AppState {
     async fn new(config: Config) -> tide::Result<Arc<Self>> {
-        let db = PgPoolOptions::new()
+        let db = Db(DbOptions::new()
             .max_connections(5)
             .connect(&config.database_url)
             .await
-            .context("failed to connect to postgres database")?;
+            .context("failed to connect to postgres database")?);
 
         let github_client =
             github::AppClient::new(config.github_app_id, config.github_private_key.clone());
@@ -117,7 +116,7 @@ impl AppState {
 #[async_trait]
 trait RequestExt {
     async fn layout_data(&mut self) -> tide::Result<Arc<LayoutData>>;
-    fn db(&self) -> &DbPool;
+    fn db(&self) -> &Db;
 }
 
 #[async_trait]
@@ -131,7 +130,7 @@ impl RequestExt for Request {
         Ok(self.ext::<Arc<LayoutData>>().unwrap().clone())
     }
 
-    fn db(&self) -> &DbPool {
+    fn db(&self) -> &Db {
         &self.state().db
     }
 }
@@ -173,7 +172,7 @@ pub async fn run_server(
     web.with(CompressMiddleware::new());
     web.with(
         SessionMiddleware::new(
-            PostgresSessionStore::new_with_table_name(&state.config.database_url, "sessions")
+            db::SessionStore::new_with_table_name(&state.config.database_url, "sessions")
                 .await
                 .unwrap(),
             state.config.session_secret.as_bytes(),

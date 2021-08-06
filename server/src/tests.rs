@@ -1,5 +1,5 @@
 use crate::{
-    admin, auth, github,
+    auth, db, github,
     rpc::{self, add_rpc_routes},
     AppState, Config,
 };
@@ -9,7 +9,6 @@ use rand::prelude::*;
 use serde_json::json;
 use sqlx::{
     migrate::{MigrateDatabase, Migrator},
-    postgres::PgPoolOptions,
     Executor as _, Postgres,
 };
 use std::{path::Path, sync::Arc};
@@ -499,9 +498,7 @@ impl TestServer {
     }
 
     async fn create_client(&mut self, cx: &mut TestAppContext, name: &str) -> Client {
-        let user_id = admin::create_user(&self.app_state.db, name, false)
-            .await
-            .unwrap();
+        let user_id = self.app_state.db.create_user(name, false).await.unwrap();
         let lang_registry = Arc::new(LanguageRegistry::new());
         let client = Client::new(lang_registry.clone());
         let mut client_router = ForegroundRouter::new();
@@ -532,18 +529,20 @@ impl TestServer {
         config.database_url = format!("postgres://postgres@localhost/{}", db_name);
 
         Self::create_db(&config.database_url).await;
-        let db = PgPoolOptions::new()
-            .max_connections(5)
-            .connect(&config.database_url)
-            .await
-            .expect("failed to connect to postgres database");
+        let db = db::Db(
+            db::DbOptions::new()
+                .max_connections(5)
+                .connect(&config.database_url)
+                .await
+                .expect("failed to connect to postgres database"),
+        );
         let migrator = Migrator::new(Path::new(concat!(
             env!("CARGO_MANIFEST_DIR"),
             "/migrations"
         )))
         .await
         .unwrap();
-        migrator.run(&db).await.unwrap();
+        migrator.run(&db.0).await.unwrap();
 
         let github_client = github::AppClient::test();
         Arc::new(AppState {

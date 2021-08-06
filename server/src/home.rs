@@ -3,7 +3,6 @@ use crate::{
 };
 use comrak::ComrakOptions;
 use serde::{Deserialize, Serialize};
-use sqlx::Executor as _;
 use std::sync::Arc;
 use tide::{http::mime, log, Server};
 
@@ -76,14 +75,7 @@ async fn post_signup(mut request: Request) -> tide::Result {
     // Save signup in the database
     request
         .db()
-        .execute(
-            sqlx::query(
-                "INSERT INTO signups (github_login, email_address, about) VALUES ($1, $2, $3);",
-            )
-            .bind(&form.github_login)
-            .bind(&form.email_address)
-            .bind(&form.about),
-        )
+        .create_signup(&form.github_login, &form.email_address, &form.about)
         .await?;
 
     let layout_data = request.layout_data().await?;

@@ -1,6 +1,8 @@
-use crate::auth::{self, UserId};
-
-use super::{auth::PeerExt as _, AppState};
+use super::{
+    auth::{self, PeerExt as _},
+    db::UserId,
+    AppState,
+};
 use anyhow::anyhow;
 use async_std::task;
 use async_tungstenite::{
@@ -37,7 +39,7 @@ pub struct State {
 }
 
 struct ConnectionState {
-    _user_id: i32,
+    _user_id: UserId,
     worktrees: HashSet<u64>,
 }
 
@@ -68,7 +70,7 @@ impl WorktreeState {
 
 impl State {
     // Add a new connection associated with a given user.
-    pub fn add_connection(&mut self, connection_id: ConnectionId, _user_id: i32) {
+    pub fn add_connection(&mut self, connection_id: ConnectionId, _user_id: UserId) {
         self.connections.insert(
             connection_id,
             ConnectionState {
@@ -291,7 +293,7 @@ pub fn add_routes(app: &mut tide::Server<Arc<AppState>>, rpc: &Arc<Peer>) {
             let upgrade_receiver = http_res.recv_upgrade().await;
             let addr = request.remote().unwrap_or("unknown").to_string();
             let state = request.state().clone();
-            let user_id = user_id.ok_or_else(|| anyhow!("user_id is not present on request. ensure auth::VerifyToken middleware is present"))?.0;
+            let user_id = user_id.ok_or_else(|| anyhow!("user_id is not present on request. ensure auth::VerifyToken middleware is present"))?;
             task::spawn(async move {
                 if let Some(stream) = upgrade_receiver.await {
                     let stream = WebSocketStream::from_raw_socket(stream, Role::Server, None).await;
@@ -310,7 +312,7 @@ pub async fn handle_connection<Conn>(
     state: Arc<AppState>,
     addr: String,
     stream: Conn,
-    user_id: i32,
+    user_id: UserId,
 ) where
     Conn: 'static
         + futures::Sink<WebSocketMessage, Error = WebSocketError>
