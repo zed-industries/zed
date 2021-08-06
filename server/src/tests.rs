@@ -1,5 +1,7 @@
 use crate::{
-    auth, db, github,
+    auth,
+    db::{self, UserId},
+    github,
     rpc::{self, add_rpc_routes},
     AppState, Config,
 };
@@ -31,8 +33,8 @@ async fn test_share_worktree(mut cx_a: TestAppContext, mut cx_b: TestAppContext)
 
     // Connect to a server as 2 clients.
     let mut server = TestServer::start().await;
-    let client_a = server.create_client(&mut cx_a, "user_a").await;
-    let client_b = server.create_client(&mut cx_b, "user_b").await;
+    let (_, client_a) = server.create_client(&mut cx_a, "user_a").await;
+    let (_, client_b) = server.create_client(&mut cx_b, "user_b").await;
 
     cx_a.foreground().forbid_parking();
 
@@ -138,9 +140,9 @@ async fn test_propagate_saves_and_fs_changes_in_shared_worktree(
 
     // Connect to a server as 3 clients.
     let mut server = TestServer::start().await;
-    let client_a = server.create_client(&mut cx_a, "user_a").await;
-    let client_b = server.create_client(&mut cx_b, "user_b").await;
-    let client_c = server.create_client(&mut cx_c, "user_c").await;
+    let (_, client_a) = server.create_client(&mut cx_a, "user_a").await;
+    let (_, client_b) = server.create_client(&mut cx_b, "user_b").await;
+    let (_, client_c) = server.create_client(&mut cx_c, "user_c").await;
 
     cx_a.foreground().forbid_parking();
 
@@ -280,8 +282,8 @@ async fn test_buffer_conflict_after_save(mut cx_a: TestAppContext, mut cx_b: Tes
 
     // Connect to a server as 2 clients.
     let mut server = TestServer::start().await;
-    let client_a = server.create_client(&mut cx_a, "user_a").await;
-    let client_b = server.create_client(&mut cx_b, "user_b").await;
+    let (_, client_a) = server.create_client(&mut cx_a, "user_a").await;
+    let (_, client_b) = server.create_client(&mut cx_b, "user_b").await;
 
     cx_a.foreground().forbid_parking();
 
@@ -359,8 +361,8 @@ async fn test_editing_while_guest_opens_buffer(mut cx_a: TestAppContext, mut cx_
 
     // Connect to a server as 2 clients.
     let mut server = TestServer::start().await;
-    let client_a = server.create_client(&mut cx_a, "user_a").await;
-    let client_b = server.create_client(&mut cx_b, "user_b").await;
+    let (_, client_a) = server.create_client(&mut cx_a, "user_a").await;
+    let (_, client_b) = server.create_client(&mut cx_b, "user_b").await;
 
     cx_a.foreground().forbid_parking();
 
@@ -420,8 +422,8 @@ async fn test_peer_disconnection(mut cx_a: TestAppContext, cx_b: TestAppContext)
 
     // Connect to a server as 2 clients.
     let mut server = TestServer::start().await;
-    let client_a = server.create_client(&mut cx_a, "user_a").await;
-    let client_b = server.create_client(&mut cx_a, "user_b").await;
+    let (_, client_a) = server.create_client(&mut cx_a, "user_a").await;
+    let (_, client_b) = server.create_client(&mut cx_a, "user_b").await;
 
     cx_a.foreground().forbid_parking();
 
@@ -474,6 +476,36 @@ async fn test_peer_disconnection(mut cx_a: TestAppContext, cx_b: TestAppContext)
         .await;
 }
 
+#[gpui::test]
+async fn test_basic_chat(mut cx_a: TestAppContext, cx_b: TestAppContext) {
+    let lang_registry = Arc::new(LanguageRegistry::new());
+
+    // Connect to a server as 2 clients.
+    let mut server = TestServer::start().await;
+    let (user_id_a, client_a) = server.create_client(&mut cx_a, "user_a").await;
+    let (user_id_b, client_b) = server.create_client(&mut cx_a, "user_b").await;
+
+    // Create a channel that includes these 2 users and 1 other user.
+    let db = &server.app_state.db;
+    let user_id_c = db.create_user("user_c", false).await.unwrap();
+    let org_id = db.create_org("Test Org", "test-org").await.unwrap();
+    let channel_id = db.create_org_channel(org_id, "test-channel").await.unwrap();
+    db.add_channel_member(channel_id, user_id_a, false)
+        .await
+        .unwrap();
+    db.add_channel_member(channel_id, user_id_b, false)
+        .await
+        .unwrap();
+    db.add_channel_member(channel_id, user_id_c, false)
+        .await
+        .unwrap();
+    db.create_channel_message(channel_id, user_id_c, "first message!")
+        .await
+        .unwrap();
+
+    // let chatroom_a = ChatRoom::
+}
+
 struct TestServer {
     peer: Arc<Peer>,
     app_state: Arc<AppState>,
@@ -497,7 +529,7 @@ impl TestServer {
         }
     }
 
-    async fn create_client(&mut self, cx: &mut TestAppContext, name: &str) -> Client {
+    async fn create_client(&mut self, cx: &mut TestAppContext, name: &str) -> (UserId, Client) {
         let user_id = self.app_state.db.create_user(name, false).await.unwrap();
         let lang_registry = Arc::new(LanguageRegistry::new());
         let client = Client::new(lang_registry.clone());
@@ -520,7 +552,7 @@ impl TestServer {
             .await
             .unwrap();
 
-        client
+        (user_id, client)
     }
 
     async fn build_app_state(db_name: &str) -> Arc<AppState> {

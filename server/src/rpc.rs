@@ -1,6 +1,6 @@
 use super::{
     auth::{self, PeerExt as _},
-    db::UserId,
+    db::{ChannelId, UserId},
     AppState,
 };
 use anyhow::anyhow;
@@ -39,7 +39,7 @@ pub struct State {
 }
 
 struct ConnectionState {
-    _user_id: UserId,
+    user_id: UserId,
     worktrees: HashSet<u64>,
 }
 
@@ -70,11 +70,11 @@ impl WorktreeState {
 
 impl State {
     // Add a new connection associated with a given user.
-    pub fn add_connection(&mut self, connection_id: ConnectionId, _user_id: UserId) {
+    pub fn add_connection(&mut self, connection_id: ConnectionId, user_id: UserId) {
         self.connections.insert(
             connection_id,
             ConnectionState {
-                _user_id,
+                user_id,
                 worktrees: Default::default(),
             },
         );
@@ -128,6 +128,14 @@ impl State {
         } else {
             None
         }
+    }
+
+    fn user_id_for_connection(&self, connection_id: ConnectionId) -> tide::Result<UserId> {
+        Ok(self
+            .connections
+            .get(&connection_id)
+            .ok_or_else(|| anyhow!("unknown connection"))?
+            .user_id)
     }
 
     fn read_worktree(
@@ -254,6 +262,8 @@ pub fn add_rpc_routes(router: &mut Router, state: &Arc<AppState>, rpc: &Arc<Peer
     on_message(router, rpc, state, update_buffer);
     on_message(router, rpc, state, buffer_saved);
     on_message(router, rpc, state, save_buffer);
+    on_message(router, rpc, state, get_channels);
+    on_message(router, rpc, state, join_channel);
 }
 
 pub fn add_routes(app: &mut tide::Server<Arc<AppState>>, rpc: &Arc<Peer>) {
@@ -598,6 +608,54 @@ async fn buffer_saved(
     state: &Arc<AppState>,
 ) -> tide::Result<()> {
     broadcast_in_worktree(request.payload.worktree_id, request, rpc, state).await
+}
+
+async fn get_channels(
+    request: TypedEnvelope<proto::GetChannels>,
+    rpc: &Arc<Peer>,
+    state: &Arc<AppState>,
+) -> tide::Result<()> {
+    let user_id = state
+        .rpc
+        .read()
+        .await
+        .user_id_for_connection(request.sender_id)?;
+    let channels = state.db.get_channels_for_user(user_id).await?;
+    rpc.respond(
+        request.receipt(),
+        proto::GetChannelsResponse {
+            channels: channels
+                .into_iter()
+                .map(|chan| proto::Channel {
+                    id: chan.id().0 as u64,
+                    name: chan.name,
+                })
+                .collect(),
+        },
+    )
+    .await?;
+    Ok(())
+}
+
+async fn join_channel(
+    request: TypedEnvelope<proto::JoinChannel>,
+    rpc: &Arc<Peer>,
+    state: &Arc<AppState>,
+) -> tide::Result<()> {
+    let user_id = state
+        .rpc
+        .read()
+        .await
+        .user_id_for_connection(request.sender_id)?;
+    if !state
+        .db
+        .can_user_access_channel(user_id, ChannelId(request.payload.channel_id as i32))
+        .await?
+    {
+        Err(anyhow!("access denied"))?;
+    }
+
+    Ok(())
 }
 
 async fn broadcast_in_worktree<T: proto::EnvelopedMessage>(

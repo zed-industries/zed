@@ -21,6 +21,12 @@ pub struct Signup {
     pub about: String,
 }
 
+#[derive(Debug, FromRow, Serialize)]
+pub struct Channel {
+    id: i32,
+    pub name: String,
+}
+
 #[derive(Debug, FromRow)]
 pub struct ChannelMessage {
     id: i32,
@@ -158,6 +164,7 @@ impl Db {
 
     // orgs
 
+    #[cfg(test)]
     pub async fn create_org(&self, name: &str, slug: &str) -> Result<OrgId> {
         let query = "
             INSERT INTO orgs (name, slug)
@@ -172,6 +179,7 @@ impl Db {
             .map(OrgId)
     }
 
+    #[cfg(test)]
     pub async fn add_org_member(&self, org_id: OrgId, user_id: UserId) -> Result<()> {
         let query = "
             INSERT INTO org_memberships (org_id, user_id)
@@ -187,6 +195,7 @@ impl Db {
 
     // channels
 
+    #[cfg(test)]
     pub async fn create_org_channel(&self, org_id: OrgId, name: &str) -> Result<ChannelId> {
         let query = "
             INSERT INTO channels (owner_id, owner_is_user, name)
@@ -201,6 +210,42 @@ impl Db {
             .map(ChannelId)
     }
 
+    pub async fn get_channels_for_user(&self, user_id: UserId) -> Result<Vec<Channel>> {
+        let query = "
+            SELECT
+                channels.id, channels.name
+            FROM
+                channel_memberships, channels
+            WHERE
+                channel_memberships.user_id = $1 AND
+                channel_memberships.channel_id = channels.id
+        ";
+        sqlx::query_as(query)
+            .bind(user_id.0)
+            .fetch_all(&self.0)
+            .await
+    }
+
+    pub async fn can_user_access_channel(
+        &self,
+        user_id: UserId,
+        channel_id: ChannelId,
+    ) -> Result<bool> {
+        let query = "
+            SELECT id
+            FROM channel_memberships
+            WHERE user_id = $1 AND channel_id = $2
+            LIMIT 1
+        ";
+        sqlx::query_scalar::<_, i32>(query)
+            .bind(user_id.0)
+            .bind(channel_id.0)
+            .fetch_optional(&self.0)
+            .await
+            .map(|e| e.is_some())
+    }
+
+    #[cfg(test)]
     pub async fn add_channel_member(
         &self,
         channel_id: ChannelId,
@@ -266,6 +311,12 @@ impl std::ops::Deref for Db {
 
     fn deref(&self) -> &Self::Target {
         &self.0
+    }
+}
+
+impl Channel {
+    pub fn id(&self) -> ChannelId {
+        ChannelId(self.id)
     }
 }
 

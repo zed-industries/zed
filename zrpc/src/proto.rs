@@ -79,6 +79,11 @@ message!(UpdateBuffer);
 request_message!(SaveBuffer, BufferSaved);
 message!(AddPeer);
 message!(RemovePeer);
+request_message!(GetChannels, GetChannelsResponse);
+request_message!(JoinChannel, JoinChannelResponse);
+request_message!(GetUsers, GetUsersResponse);
+message!(SendChannelMessage);
+message!(ChannelMessageSent);
 
 /// A stream of protobuf messages.
 pub struct MessageStream<S> {
