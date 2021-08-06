@@ -257,7 +257,7 @@ async fn get_auth_callback(mut request: Request) -> tide::Result {
     // When signing in from the native app, generate a new access token for the current user. Return
     // a redirect so that the user's browser sends this access token to the locally-running app.
     if let Some((user, app_sign_in_params)) = user.zip(query.native_app_sign_in_params) {
-        let access_token = create_access_token(request.db(), user.id()).await?;
+        let access_token = create_access_token(request.db(), user.id).await?;
         let native_app_public_key =
             zed_auth::PublicKey::try_from(app_sign_in_params.native_app_public_key.clone())
                 .context("failed to parse app public key")?;
@@ -267,9 +267,7 @@ async fn get_auth_callback(mut request: Request) -> tide::Result {
 
         return Ok(tide::Redirect::new(&format!(
             "http://127.0.0.1:{}?user_id={}&access_token={}",
-            app_sign_in_params.native_app_port,
-            user.id().0,
-            encrypted_access_token,
+            app_sign_in_params.native_app_port, user.id.0, encrypted_access_token,
         ))
         .into());
     }

@@ -31,6 +31,7 @@ sha-1 = "0.9"
 surf = "2.2.0"
 tide = "0.16.0"
 tide-compress = "0.9.0"
+time = "0.2"
 toml = "0.5.8"
 zrpc = { path = "../zrpc" }
 
@@ -41,7 +42,7 @@ default-features = false
 
 [dependencies.sqlx]
 version = "0.5.2"
-features = ["runtime-async-std-rustls", "postgres"]
+features = ["runtime-async-std-rustls", "postgres", "time"]
 
 [dev-dependencies]
 gpui = { path = "../gpui" }

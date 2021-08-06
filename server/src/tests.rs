@@ -11,9 +11,10 @@ use rand::prelude::*;
 use serde_json::json;
 use sqlx::{
     migrate::{MigrateDatabase, Migrator},
+    types::time::OffsetDateTime,
     Executor as _, Postgres,
 };
-use std::{path::Path, sync::Arc};
+use std::{path::Path, sync::Arc, time::SystemTime};
 use zed::{
     editor::Editor,
     fs::{FakeFs, Fs as _},
@@ -485,10 +486,15 @@ async fn test_basic_chat(mut cx_a: TestAppContext, cx_b: TestAppContext) {
     let (user_id_a, client_a) = server.create_client(&mut cx_a, "user_a").await;
     let (user_id_b, client_b) = server.create_client(&mut cx_a, "user_b").await;
 
-    // Create a channel that includes these 2 users and 1 other user.
+    // Create an org that includes these 2 users and 1 other user.
     let db = &server.app_state.db;
     let user_id_c = db.create_user("user_c", false).await.unwrap();
     let org_id = db.create_org("Test Org", "test-org").await.unwrap();
+    db.add_org_member(org_id, user_id_a, false).await.unwrap();
+    db.add_org_member(org_id, user_id_b, false).await.unwrap();
+    db.add_org_member(org_id, user_id_c, false).await.unwrap();
+
+    // Create a channel that includes all the users.
     let channel_id = db.create_org_channel(org_id, "test-channel").await.unwrap();
     db.add_channel_member(channel_id, user_id_a, false)
         .await
@@ -499,11 +505,21 @@ async fn test_basic_chat(mut cx_a: TestAppContext, cx_b: TestAppContext) {
     db.add_channel_member(channel_id, user_id_c, false)
         .await
         .unwrap();
-    db.create_channel_message(channel_id, user_id_c, "first message!")
-        .await
-        .unwrap();
-
-    // let chatroom_a = ChatRoom::
+    db.create_channel_message(
+        channel_id,
+        user_id_c,
+        "first message!",
+        OffsetDateTime::now_utc(),
+    )
+    .await
+    .unwrap();
+    assert_eq!(
+        db.get_recent_channel_messages(channel_id, 50)
+            .await
+            .unwrap()[0]
+            .body,
+        "first message!"
+    );
 }
 
 struct TestServer {

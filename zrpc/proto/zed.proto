@@ -24,10 +24,10 @@ message Envelope {
         RemovePeer remove_peer = 19;
         GetChannels get_channels = 20;
         GetChannelsResponse get_channels_response = 21;
-        JoinChannel join_channel = 22;
-        JoinChannelResponse join_channel_response = 23;
-        GetUsers get_users = 24;
-        GetUsersResponse get_users_response = 25;
+        GetUsers get_users = 22;
+        GetUsersResponse get_users_response = 23;
+        JoinChannel join_channel = 24;
+        JoinChannelResponse join_channel_response = 25;
         SendChannelMessage send_channel_message = 26;
         ChannelMessageSent channel_message_sent = 27;
     }

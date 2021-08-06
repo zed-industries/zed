@@ -23,6 +23,7 @@ use tide::{
     http::headers::{HeaderName, CONNECTION, UPGRADE},
     Request, Response,
 };
+use time::OffsetDateTime;
 use zrpc::{
     auth::random_token,
     proto::{self, EnvelopedMessage},
@@ -33,17 +34,19 @@ type ReplicaId = u16;
 
 #[derive(Default)]
 pub struct State {
-    connections: HashMap<ConnectionId, ConnectionState>,
-    pub worktrees: HashMap<u64, WorktreeState>,
+    connections: HashMap<ConnectionId, Connection>,
+    pub worktrees: HashMap<u64, Worktree>,
+    channels: HashMap<ChannelId, Channel>,
     next_worktree_id: u64,
 }
 
-struct ConnectionState {
+struct Connection {
     user_id: UserId,
     worktrees: HashSet<u64>,
+    channels: HashSet<ChannelId>,
 }
 
-pub struct WorktreeState {
+pub struct Worktree {
     host_connection_id: Option<ConnectionId>,
     guest_connection_ids: HashMap<ConnectionId, ReplicaId>,
     active_replica_ids: HashSet<ReplicaId>,
@@ -52,7 +55,12 @@ pub struct WorktreeState {
     entries: HashMap<u64, proto::Entry>,
 }
 
-impl WorktreeState {
+#[derive(Default)]
+struct Channel {
+    connection_ids: HashSet<ConnectionId>,
+}
+
+impl Worktree {
     pub fn connection_ids(&self) -> Vec<ConnectionId> {
         self.guest_connection_ids
             .keys()
@@ -68,14 +76,21 @@ impl WorktreeState {
     }
 }
 
+impl Channel {
+    fn connection_ids(&self) -> Vec<ConnectionId> {
+        self.connection_ids.iter().copied().collect()
+    }
+}
+
 impl State {
     // Add a new connection associated with a given user.
     pub fn add_connection(&mut self, connection_id: ConnectionId, user_id: UserId) {
         self.connections.insert(
             connection_id,
-            ConnectionState {
+            Connection {
                 user_id,
                 worktrees: Default::default(),
+                channels: Default::default(),
             },
         );
     }
@@ -83,8 +98,13 @@ impl State {
     // Remove the given connection and its association with any worktrees.
     pub fn remove_connection(&mut self, connection_id: ConnectionId) -> Vec<u64> {
         let mut worktree_ids = Vec::new();
-        if let Some(connection_state) = self.connections.remove(&connection_id) {
-            for worktree_id in connection_state.worktrees {
+        if let Some(connection) = self.connections.remove(&connection_id) {
+            for channel_id in connection.channels {
+                if let Some(channel) = self.channels.get_mut(&channel_id) {
+                    channel.connection_ids.remove(&connection_id);
+                }
+            }
+            for worktree_id in connection.worktrees {
                 if let Some(worktree) = self.worktrees.get_mut(&worktree_id) {
                     if worktree.host_connection_id == Some(connection_id) {
                         worktree_ids.push(worktree_id);
@@ -100,28 +120,39 @@ impl State {
         worktree_ids
     }
 
+    fn join_channel(&mut self, connection_id: ConnectionId, channel_id: ChannelId) {
+        if let Some(connection) = self.connections.get_mut(&connection_id) {
+            connection.channels.insert(channel_id);
+            self.channels
+                .entry(channel_id)
+                .or_default()
+                .connection_ids
+                .insert(connection_id);
+        }
+    }
+
     // Add the given connection as a guest of the given worktree
     pub fn join_worktree(
         &mut self,
         connection_id: ConnectionId,
         worktree_id: u64,
         access_token: &str,
-    ) -> Option<(ReplicaId, &WorktreeState)> {
-        if let Some(worktree_state) = self.worktrees.get_mut(&worktree_id) {
-            if access_token == worktree_state.access_token {
-                if let Some(connection_state) = self.connections.get_mut(&connection_id) {
-                    connection_state.worktrees.insert(worktree_id);
+    ) -> Option<(ReplicaId, &Worktree)> {
+        if let Some(worktree) = self.worktrees.get_mut(&worktree_id) {
+            if access_token == worktree.access_token {
+                if let Some(connection) = self.connections.get_mut(&connection_id) {
+                    connection.worktrees.insert(worktree_id);
                 }
 
                 let mut replica_id = 1;
-                while worktree_state.active_replica_ids.contains(&replica_id) {
+                while worktree.active_replica_ids.contains(&replica_id) {
                     replica_id += 1;
                 }
-                worktree_state.active_replica_ids.insert(replica_id);
-                worktree_state
+                worktree.active_replica_ids.insert(replica_id);
+                worktree
                     .guest_connection_ids
                     .insert(connection_id, replica_id);
-                Some((replica_id, worktree_state))
+                Some((replica_id, worktree))
             } else {
                 None
             }
@@ -142,7 +173,7 @@ impl State {
         &self,
         worktree_id: u64,
         connection_id: ConnectionId,
-    ) -> tide::Result<&WorktreeState> {
+    ) -> tide::Result<&Worktree> {
         let worktree = self
             .worktrees
             .get(&worktree_id)
@@ -165,7 +196,7 @@ impl State {
         &mut self,
         worktree_id: u64,
         connection_id: ConnectionId,
-    ) -> tide::Result<&mut WorktreeState> {
+    ) -> tide::Result<&mut Worktree> {
         let worktree = self
             .worktrees
             .get_mut(&worktree_id)
@@ -263,7 +294,9 @@ pub fn add_rpc_routes(router: &mut Router, state: &Arc<AppState>, rpc: &Arc<Peer
     on_message(router, rpc, state, buffer_saved);
     on_message(router, rpc, state, save_buffer);
     on_message(router, rpc, state, get_channels);
+    on_message(router, rpc, state, get_users);
     on_message(router, rpc, state, join_channel);
+    on_message(router, rpc, state, send_channel_message);
 }
 
 pub fn add_routes(app: &mut tide::Server<Arc<AppState>>, rpc: &Arc<Peer>) {
@@ -373,7 +406,7 @@ async fn share_worktree(
         .collect();
     state.worktrees.insert(
         worktree_id,
-        WorktreeState {
+        Worktree {
             host_connection_id: Some(request.sender_id),
             guest_connection_ids: Default::default(),
             active_replica_ids: Default::default(),
@@ -627,13 +660,41 @@ async fn get_channels(
             channels: channels
                 .into_iter()
                 .map(|chan| proto::Channel {
-                    id: chan.id().0 as u64,
+                    id: chan.id.to_proto(),
                     name: chan.name,
                 })
                 .collect(),
         },
     )
     .await?;
+    Ok(())
+}
+
+async fn get_users(
+    request: TypedEnvelope<proto::GetUsers>,
+    rpc: &Arc<Peer>,
+    state: &Arc<AppState>,
+) -> tide::Result<()> {
+    let user_id = state
+        .rpc
+        .read()
+        .await
+        .user_id_for_connection(request.sender_id)?;
+    let receipt = request.receipt();
+    let user_ids = request.payload.user_ids.into_iter().map(UserId::from_proto);
+    let users = state
+        .db
+        .get_users_by_ids(user_id, user_ids)
+        .await?
+        .into_iter()
+        .map(|user| proto::User {
+            id: user.id.to_proto(),
+            github_login: user.github_login,
+            avatar_url: String::new(),
+        })
+        .collect();
+    rpc.respond(receipt, proto::GetUsersResponse { users })
+        .await?;
     Ok(())
 }
 
@@ -647,13 +708,73 @@ async fn join_channel(
         .read()
         .await
         .user_id_for_connection(request.sender_id)?;
+    let channel_id = ChannelId::from_proto(request.payload.channel_id);
     if !state
         .db
-        .can_user_access_channel(user_id, ChannelId(request.payload.channel_id as i32))
+        .can_user_access_channel(user_id, channel_id)
         .await?
     {
         Err(anyhow!("access denied"))?;
     }
+
+    state
+        .rpc
+        .write()
+        .await
+        .join_channel(request.sender_id, channel_id);
+    let messages = state
+        .db
+        .get_recent_channel_messages(channel_id, 50)
+        .await?
+        .into_iter()
+        .map(|msg| proto::ChannelMessage {
+            id: msg.id.to_proto(),
+            body: msg.body,
+            timestamp: msg.sent_at.unix_timestamp() as u64,
+            sender_id: msg.sender_id.to_proto(),
+        })
+        .collect();
+    rpc.respond(request.receipt(), proto::JoinChannelResponse { messages })
+        .await?;
+    Ok(())
+}
+
+async fn send_channel_message(
+    request: TypedEnvelope<proto::SendChannelMessage>,
+    peer: &Arc<Peer>,
+    app: &Arc<AppState>,
+) -> tide::Result<()> {
+    let channel_id = ChannelId::from_proto(request.payload.channel_id);
+    let user_id;
+    let connection_ids;
+    {
+        let state = app.rpc.read().await;
+        user_id = state.user_id_for_connection(request.sender_id)?;
+        if let Some(channel) = state.channels.get(&channel_id) {
+            connection_ids = channel.connection_ids();
+        } else {
+            return Ok(());
+        }
+    }
+
+    let timestamp = OffsetDateTime::now_utc();
+    let message_id = app
+        .db
+        .create_channel_message(channel_id, user_id, &request.payload.body, timestamp)
+        .await?;
+    let message = proto::ChannelMessageSent {
+        channel_id: channel_id.to_proto(),
+        message: Some(proto::ChannelMessage {
+            sender_id: user_id.to_proto(),
+            id: message_id.to_proto(),
+            body: request.payload.body,
+            timestamp: timestamp.unix_timestamp() as u64,
+        }),
+    };
+    broadcast(request.sender_id, connection_ids, |conn_id| {
+        peer.send(conn_id, message.clone())
+    })
+    .await?;
 
     Ok(())
 }

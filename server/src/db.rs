@@ -1,5 +1,6 @@
 use serde::Serialize;
 use sqlx::{FromRow, Result};
+use time::OffsetDateTime;
 
 pub use async_sqlx_session::PostgresSessionStore as SessionStore;
 pub use sqlx::postgres::PgPoolOptions as DbOptions;
@@ -8,14 +9,14 @@ pub struct Db(pub sqlx::PgPool);
 
 #[derive(Debug, FromRow, Serialize)]
 pub struct User {
-    id: i32,
+    pub id: UserId,
     pub github_login: String,
     pub admin: bool,
 }
 
 #[derive(Debug, FromRow, Serialize)]
 pub struct Signup {
-    id: i32,
+    pub id: SignupId,
     pub github_login: String,
     pub email_address: String,
     pub about: String,
@@ -23,32 +24,17 @@ pub struct Signup {
 
 #[derive(Debug, FromRow, Serialize)]
 pub struct Channel {
-    id: i32,
+    pub id: ChannelId,
     pub name: String,
 }
 
 #[derive(Debug, FromRow)]
 pub struct ChannelMessage {
-    id: i32,
-    sender_id: i32,
-    body: String,
-    sent_at: i64,
+    pub id: MessageId,
+    pub sender_id: UserId,
+    pub body: String,
+    pub sent_at: OffsetDateTime,
 }
-
-#[derive(Clone, Copy)]
-pub struct UserId(pub i32);
-
-#[derive(Clone, Copy)]
-pub struct OrgId(pub i32);
-
-#[derive(Clone, Copy)]
-pub struct ChannelId(pub i32);
-
-#[derive(Clone, Copy)]
-pub struct SignupId(pub i32);
-
-#[derive(Clone, Copy)]
-pub struct MessageId(pub i32);
 
 impl Db {
     // signups
@@ -108,6 +94,33 @@ impl Db {
         sqlx::query_as(query).fetch_all(&self.0).await
     }
 
+    pub async fn get_users_by_ids(
+        &self,
+        requester_id: UserId,
+        ids: impl Iterator<Item = UserId>,
+    ) -> Result<Vec<User>> {
+        // Only return users that are in a common channel with the requesting user.
+        let query = "
+            SELECT users.*
+            FROM
+                users, channel_memberships
+            WHERE
+                users.id IN $1 AND
+                channel_memberships.user_id = users.id AND
+                channel_memberships.channel_id IN (
+                    SELECT channel_id
+                    FROM channel_memberships
+                    WHERE channel_memberships.user_id = $2
+                )
+        ";
+
+        sqlx::query_as(query)
+            .bind(&ids.map(|id| id.0).collect::<Vec<_>>())
+            .bind(requester_id)
+            .fetch_all(&self.0)
+            .await
+    }
+
     pub async fn get_user_by_github_login(&self, github_login: &str) -> Result<Option<User>> {
         let query = "SELECT * FROM users WHERE github_login = $1 LIMIT 1";
         sqlx::query_as(query)
@@ -147,7 +160,7 @@ impl Db {
             VALUES ($1, $2)
         ";
         sqlx::query(query)
-            .bind(user_id.0 as i32)
+            .bind(user_id.0)
             .bind(access_token_hash)
             .execute(&self.0)
             .await
@@ -156,8 +169,8 @@ impl Db {
 
     pub async fn get_access_token_hashes(&self, user_id: UserId) -> Result<Vec<String>> {
         let query = "SELECT hash FROM access_tokens WHERE user_id = $1";
-        sqlx::query_scalar::<_, String>(query)
-            .bind(user_id.0 as i32)
+        sqlx::query_scalar(query)
+            .bind(user_id.0)
             .fetch_all(&self.0)
             .await
     }
@@ -180,14 +193,20 @@ impl Db {
     }
 
     #[cfg(test)]
-    pub async fn add_org_member(&self, org_id: OrgId, user_id: UserId) -> Result<()> {
+    pub async fn add_org_member(
+        &self,
+        org_id: OrgId,
+        user_id: UserId,
+        is_admin: bool,
+    ) -> Result<()> {
         let query = "
-            INSERT INTO org_memberships (org_id, user_id)
-            VALUES ($1, $2)
+            INSERT INTO org_memberships (org_id, user_id, admin)
+            VALUES ($1, $2, $3)
         ";
         sqlx::query(query)
             .bind(org_id.0)
             .bind(user_id.0)
+            .bind(is_admin)
             .execute(&self.0)
             .await
             .map(drop)
@@ -272,16 +291,18 @@ impl Db {
         channel_id: ChannelId,
         sender_id: UserId,
         body: &str,
+        timestamp: OffsetDateTime,
     ) -> Result<MessageId> {
         let query = "
             INSERT INTO channel_messages (channel_id, sender_id, body, sent_at)
-            VALUES ($1, $2, $3, NOW()::timestamp)
+            VALUES ($1, $2, $3, $4)
             RETURNING id
         ";
         sqlx::query_scalar(query)
             .bind(channel_id.0)
             .bind(sender_id.0)
             .bind(body)
+            .bind(timestamp)
             .fetch_one(&self.0)
             .await
             .map(MessageId)
@@ -292,12 +313,15 @@ impl Db {
         channel_id: ChannelId,
         count: usize,
     ) -> Result<Vec<ChannelMessage>> {
-        let query = "
-            SELECT id, sender_id, body, sent_at
-            FROM channel_messages
-            WHERE channel_id = $1
+        let query = r#"
+            SELECT
+                id, sender_id, body, sent_at AT TIME ZONE 'UTC' as sent_at
+            FROM
+                channel_messages
+            WHERE
+                channel_id = $1
             LIMIT $2
-        ";
+        "#;
         sqlx::query_as(query)
             .bind(channel_id.0)
             .bind(count as i64)
@@ -314,14 +338,29 @@ impl std::ops::Deref for Db {
     }
 }
 
-impl Channel {
-    pub fn id(&self) -> ChannelId {
-        ChannelId(self.id)
-    }
+macro_rules! id_type {
+    ($name:ident) => {
+        #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, sqlx::Type, Serialize)]
+        #[sqlx(transparent)]
+        #[serde(transparent)]
+        pub struct $name(pub i32);
+
+        impl $name {
+            #[allow(unused)]
+            pub fn from_proto(value: u64) -> Self {
+                Self(value as i32)
+            }
+
+            #[allow(unused)]
+            pub fn to_proto(&self) -> u64 {
+                self.0 as u64
+            }
+        }
+    };
 }
 
-impl User {
-    pub fn id(&self) -> UserId {
-        UserId(self.id)
-    }
-}
+id_type!(UserId);
+id_type!(OrgId);
+id_type!(ChannelId);
+id_type!(SignupId);
+id_type!(MessageId);
