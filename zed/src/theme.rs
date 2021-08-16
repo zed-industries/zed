@@ -136,7 +136,7 @@ impl ThemeRegistry {
             return Ok(theme.clone());
         }
 
-        let theme_data = self.load(name)?;
+        let theme_data = self.load(name, true)?;
         let mut theme = serde_json::from_value::<Theme>(theme_data.as_ref().clone())?;
         theme.name = name.into();
         let theme = Arc::new(theme);
@@ -144,7 +144,7 @@ impl ThemeRegistry {
         Ok(theme)
     }
 
-    fn load(&self, name: &str) -> Result<Arc<Value>> {
+    fn load(&self, name: &str, evaluate_references: bool) -> Result<Arc<Value>> {
         if let Some(data) = self.theme_data.lock().get(name) {
             return Ok(data.clone());
         }
@@ -165,7 +165,7 @@ impl ThemeRegistry {
             .map(str::to_string)
         {
             let base_theme_data = self
-                .load(&base_name)
+                .load(&base_name, false)
                 .with_context(|| format!("failed to load base theme {}", base_name))?
                 .as_ref()
                 .clone();
@@ -175,44 +175,44 @@ impl ThemeRegistry {
             }
         }
 
-        // Evaluate `extends` fields in styles
-        // First, find the key paths of all objects with `extends` directives
-        let mut directives = Vec::new();
-        let mut key_path = Vec::new();
-        for (key, value) in theme_data.iter() {
-            if value.is_array() || value.is_object() {
+        // Find all of the key path references in the object, and then sort them according
+        // to their dependencies.
+        if evaluate_references {
+            let mut references = Vec::new();
+            let mut key_path = Vec::new();
+            for (key, value) in theme_data.iter() {
                 key_path.push(Key::Object(key.clone()));
-                find_extensions(value, &mut key_path, &mut directives);
+                find_references(value, &mut key_path, &mut references);
                 key_path.pop();
             }
-        }
-        // If you extend something with an extend directive, process the source's extend directive first
-        directives.sort_unstable();
+            sort_references(&mut references);
 
-        // Now update objects to include the fields of objects they extend
-        for ExtendDirective {
-            source_path,
-            target_path,
-        } in directives
-        {
-            let source = value_at(&mut theme_data, &source_path)?.clone();
-            let target = value_at(&mut theme_data, &target_path)?;
-            if let (Value::Object(mut source_object), Value::Object(target_object)) =
-                (source, target.take())
+            // Now update objects to include the fields of objects they extend
+            for KeyPathReference {
+                source_path,
+                target_path,
+            } in references
             {
-                deep_merge_json(&mut source_object, target_object);
-                *target = Value::Object(source_object);
-            }
-        }
-
-        // Evaluate any variables
-        if let Some((key, variables)) = theme_data.remove_entry("variables") {
-            if let Some(variables) = variables.as_object() {
-                for value in theme_data.values_mut() {
-                    evaluate_variables(value, &variables, &mut Vec::new())?;
+                let source = value_at(&mut theme_data, &source_path).cloned();
+                let target = value_at(&mut theme_data, &target_path).unwrap();
+                if let Some(source) = source {
+                    if let Value::Object(target_object) = target.take() {
+                        if let Value::Object(mut source_object) = source {
+                            deep_merge_json(&mut source_object, target_object);
+                            *target = Value::Object(source_object);
+                        } else {
+                            Err(anyhow!(
+                                "extended key path {:?} is not an object",
+                                source_path
+                            ))?;
+                        }
+                    } else {
+                        *target = source;
+                    }
+                } else {
+                    Err(anyhow!("invalid key path {:?}", source_path))?;
                 }
             }
-            theme_data.insert(key, variables);
         }
 
         let result = Arc::new(Value::Object(theme_data));
@@ -314,47 +314,41 @@ enum Key {
 }
 
 #[derive(Debug, PartialEq, Eq)]
-struct ExtendDirective {
+struct KeyPathReference {
     source_path: Vec<Key>,
     target_path: Vec<Key>,
 }
 
-impl Ord for ExtendDirective {
-    fn cmp(&self, other: &Self) -> Ordering {
+impl PartialOrd for KeyPathReference {
+    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
         if self.target_path.starts_with(&other.source_path)
             || other.source_path.starts_with(&self.target_path)
         {
-            Ordering::Less
+            Some(Ordering::Less)
         } else if other.target_path.starts_with(&self.source_path)
             || self.source_path.starts_with(&other.target_path)
         {
-            Ordering::Greater
+            Some(Ordering::Greater)
         } else {
-            Ordering::Equal
+            None
         }
     }
 }
 
-impl PartialOrd for ExtendDirective {
-    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
-        Some(self.cmp(other))
-    }
-}
-
-fn find_extensions(value: &Value, key_path: &mut Vec<Key>, directives: &mut Vec<ExtendDirective>) {
+fn find_references(value: &Value, key_path: &mut Vec<Key>, references: &mut Vec<KeyPathReference>) {
     match value {
         Value::Array(vec) => {
             for (ix, value) in vec.iter().enumerate() {
                 key_path.push(Key::Array(ix));
-                find_extensions(value, key_path, directives);
+                find_references(value, key_path, references);
                 key_path.pop();
             }
         }
         Value::Object(map) => {
             for (key, value) in map.iter() {
                 if key == "extends" {
-                    if let Some(source_path) = value.as_str() {
-                        directives.push(ExtendDirective {
+                    if let Some(source_path) = value.as_str().and_then(|s| s.strip_prefix("$")) {
+                        references.push(KeyPathReference {
                             source_path: source_path
                                 .split(".")
                                 .map(|key| Key::Object(key.to_string()))
@@ -362,18 +356,39 @@ fn find_extensions(value: &Value, key_path: &mut Vec<Key>, directives: &mut Vec<
                             target_path: key_path.clone(),
                         });
                     }
-                } else if value.is_array() || value.is_object() {
+                } else {
                     key_path.push(Key::Object(key.to_string()));
-                    find_extensions(value, key_path, directives);
+                    find_references(value, key_path, references);
                     key_path.pop();
                 }
+            }
+        }
+        Value::String(string) => {
+            if let Some(source_path) = string.strip_prefix("$") {
+                references.push(KeyPathReference {
+                    source_path: source_path
+                        .split(".")
+                        .map(|key| Key::Object(key.to_string()))
+                        .collect(),
+                    target_path: key_path.clone(),
+                });
             }
         }
         _ => {}
     }
 }
 
-fn value_at<'a>(object: &'a mut Map<String, Value>, key_path: &Vec<Key>) -> Result<&'a mut Value> {
+fn sort_references(references: &mut Vec<KeyPathReference>) {
+    for i in 0..references.len() {
+        for j in (i + 1)..references.len() {
+            if let Some(Ordering::Greater) = &references[i].partial_cmp(&references[j]) {
+                references.swap(i, j)
+            }
+        }
+    }
+}
+
+fn value_at<'a>(object: &'a mut Map<String, Value>, key_path: &Vec<Key>) -> Option<&'a mut Value> {
     let mut key_path = key_path.iter();
     if let Some(Key::Object(first_key)) = key_path.next() {
         let mut cur_value = object.get_mut(first_key);
@@ -384,61 +399,13 @@ fn value_at<'a>(object: &'a mut Map<String, Value>, key_path: &Vec<Key>) -> Resu
                     Key::Object(key) => cur_value = value.get_mut(key),
                 }
             } else {
-                return Err(anyhow!("invalid key path"));
+                return None;
             }
         }
-        cur_value.ok_or_else(|| anyhow!("invalid key path"))
+        cur_value
     } else {
-        Err(anyhow!("invalid key path"))
+        None
     }
-}
-
-fn evaluate_variables(
-    value: &mut Value,
-    variables: &Map<String, Value>,
-    stack: &mut Vec<String>,
-) -> Result<()> {
-    match value {
-        Value::String(s) => {
-            if let Some(name) = s.strip_prefix("$") {
-                if stack.iter().any(|e| e == name) {
-                    Err(anyhow!("variable {} is defined recursively", name))?;
-                }
-                if validate_variable_name(name) {
-                    stack.push(name.to_string());
-                    if let Some(definition) = variables.get(name).cloned() {
-                        *value = definition;
-                        evaluate_variables(value, variables, stack)?;
-                    }
-                    stack.pop();
-                }
-            }
-        }
-        Value::Array(a) => {
-            for value in a.iter_mut() {
-                evaluate_variables(value, variables, stack)?;
-            }
-        }
-        Value::Object(object) => {
-            for value in object.values_mut() {
-                evaluate_variables(value, variables, stack)?;
-            }
-        }
-        _ => {}
-    }
-    Ok(())
-}
-
-fn validate_variable_name(name: &str) -> bool {
-    let mut chars = name.chars();
-    if let Some(first) = chars.next() {
-        if first.is_alphabetic() || first == '_' {
-            if chars.all(|c| c.is_alphanumeric() || c == '_') {
-                return true;
-            }
-        }
-    }
-    false
 }
 
 pub fn deserialize_syntax_theme<'de, D>(
@@ -488,13 +455,13 @@ mod tests {
                 "themes/_base.toml",
                 r##"
                 [ui.active_tab]
-                extends = "ui.tab"
+                extends = "$ui.tab"
                 border.color = "#666666"
-                text = "$bright_text"
+                text = "$text_colors.bright"
 
                 [ui.tab]
-                extends = "ui.element"
-                text = "$dull_text"
+                extends = "$ui.element"
+                text = "$text_colors.dull"
 
                 [ui.element]
                 background = "#111111"
@@ -502,7 +469,7 @@ mod tests {
 
                 [editor]
                 background = "#222222"
-                default_text = "$regular_text"
+                default_text = "$text_colors.regular"
                 "##,
             ),
             (
@@ -510,10 +477,10 @@ mod tests {
                 r##"
                 extends = "_base"
 
-                [variables]
-                bright_text = "#ffffff"
-                regular_text = "#eeeeee"
-                dull_text = "#dddddd"
+                [text_colors]
+                bright = "#ffffff"
+                regular = "#eeeeee"
+                dull = "#dddddd"
 
                 [editor]
                 background = "#232323"
@@ -522,7 +489,7 @@ mod tests {
         ]);
 
         let registry = ThemeRegistry::new(assets);
-        let theme_data = registry.load("light").unwrap();
+        let theme_data = registry.load("light", true).unwrap();
         assert_eq!(
             theme_data.as_ref(),
             &serde_json::json!({
@@ -533,7 +500,7 @@ mod tests {
                     "width": 2.0,
                     "color": "#666666"
                   },
-                  "extends": "ui.tab",
+                  "extends": "$ui.tab",
                   "text": "#ffffff"
                 },
                 "tab": {
@@ -542,7 +509,7 @@ mod tests {
                     "width": 2.0,
                     "color": "#00000000"
                   },
-                  "extends": "ui.element",
+                  "extends": "$ui.element",
                   "text": "#dddddd"
                 },
                 "element": {
@@ -558,10 +525,10 @@ mod tests {
                 "default_text": "#eeeeee"
               },
               "extends": "_base",
-              "variables": {
-                "bright_text": "#ffffff",
-                "regular_text": "#eeeeee",
-                "dull_text": "#dddddd"
+              "text_colors": {
+                "bright": "#ffffff",
+                "regular": "#eeeeee",
+                "dull": "#dddddd"
               }
             })
         );

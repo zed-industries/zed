@@ -1,13 +1,15 @@
 extends = "_base"
 
-[variables]
-elevation_1 = "#ffffff"
-elevation_2 = "#f3f3f3"
-elevation_3 = "#ececec"
-elevation_4 = "#3a3b3c"
-text_dull = "#acacac"
-text_bright = "#111111"
-text_normal = "#333333"
+[surfaces]
+1 = "#ffffff"
+2 = "#f3f3f3"
+3 = "#ececec"
+4 = "#3a3b3c"
+
+[text_colors]
+dull = "#acacac"
+bright = "#111111"
+normal = "#333333"
 
 [syntax]
 keyword = "#0000fa"
