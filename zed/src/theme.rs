@@ -328,9 +328,11 @@ impl KeyPathReferenceSet {
             }
         }
 
-        root_ids.sort_by_key(|id| &self.references[*id]);
-
         while results.len() < root_ids.len() {
+            // Just to guarantee a stable result when the inputs are randomized,
+            // sort references lexicographically in absence of any dependency relationship.
+            root_ids[results.len()..].sort_by_key(|id| &self.references[*id]);
+
             let root_id = root_ids[results.len()];
             let root = mem::take(&mut self.references[root_id]);
             results.push(root);
@@ -356,13 +358,9 @@ impl KeyPathReferenceSet {
                 for (_, successor_id) in self.dependencies.drain(first_dep_ix..last_dep_ix) {
                     self.dependency_counts[successor_id] -= 1;
                     if self.dependency_counts[successor_id] == 0 {
-                        if let Err(ix) = root_ids[results.len()..].binary_search(&successor_id) {
-                            root_ids.insert(results.len() + ix, successor_id);
-                        }
+                        root_ids.push(successor_id);
                     }
                 }
-
-                root_ids[results.len()..].sort_by_key(|id| &self.references[*id]);
             }
         }
 
@@ -899,6 +897,9 @@ mod tests {
                 ("n.d.e", "f"),
                 ("a.b.c", "n.d"),
                 ("r", "a"),
+                ("q.q.q", "r.s"),
+                ("r.t", "q"),
+                ("x.x", "r.r"),
                 ("v.w", "x"),
                 ("v.y", "x"),
                 ("v.z", "x"),
