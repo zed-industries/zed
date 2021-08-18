@@ -70,6 +70,11 @@ pub trait UpdateModel {
         F: FnOnce(&mut T, &mut ModelContext<T>) -> S;
 }
 
+pub trait UpgradeModelHandle {
+    fn upgrade_model_handle<T: Entity>(&self, handle: WeakModelHandle<T>)
+        -> Option<ModelHandle<T>>;
+}
+
 pub trait ReadView {
     fn read_view<T: View>(&self, handle: &ViewHandle<T>) -> &T;
 }
@@ -454,6 +459,15 @@ impl UpdateModel for AsyncAppContext {
         let result = state.update_model(handle, update);
         state.flush_effects();
         result
+    }
+}
+
+impl UpgradeModelHandle for AsyncAppContext {
+    fn upgrade_model_handle<T: Entity>(
+        &self,
+        handle: WeakModelHandle<T>,
+    ) -> Option<ModelHandle<T>> {
+        self.0.borrow_mut().upgrade_model_handle(handle)
     }
 }
 
@@ -1434,6 +1448,15 @@ impl UpdateModel for MutableAppContext {
     }
 }
 
+impl UpgradeModelHandle for MutableAppContext {
+    fn upgrade_model_handle<T: Entity>(
+        &self,
+        handle: WeakModelHandle<T>,
+    ) -> Option<ModelHandle<T>> {
+        self.cx.upgrade_model_handle(handle)
+    }
+}
+
 impl ReadView for MutableAppContext {
     fn read_view<T: View>(&self, handle: &ViewHandle<T>) -> &T {
         if let Some(view) = self.cx.views.get(&(handle.window_id, handle.view_id)) {
@@ -1561,6 +1584,19 @@ impl ReadModel for AppContext {
                 .expect("downcast should be type safe")
         } else {
             panic!("circular model reference");
+        }
+    }
+}
+
+impl UpgradeModelHandle for AppContext {
+    fn upgrade_model_handle<T: Entity>(
+        &self,
+        handle: WeakModelHandle<T>,
+    ) -> Option<ModelHandle<T>> {
+        if self.models.contains_key(&handle.model_id) {
+            Some(ModelHandle::new(handle.model_id, &self.ref_counts))
+        } else {
+            None
         }
     }
 }
@@ -1855,6 +1891,15 @@ impl<M> UpdateModel for ModelContext<'_, M> {
         F: FnOnce(&mut T, &mut ModelContext<T>) -> S,
     {
         self.app.update_model(handle, update)
+    }
+}
+
+impl<M> UpgradeModelHandle for ModelContext<'_, M> {
+    fn upgrade_model_handle<T: Entity>(
+        &self,
+        handle: WeakModelHandle<T>,
+    ) -> Option<ModelHandle<T>> {
+        self.cx.upgrade_model_handle(handle)
     }
 }
 
@@ -2175,6 +2220,15 @@ impl<V> ReadModel for ViewContext<'_, V> {
     }
 }
 
+impl<V> UpgradeModelHandle for ViewContext<'_, V> {
+    fn upgrade_model_handle<T: Entity>(
+        &self,
+        handle: WeakModelHandle<T>,
+    ) -> Option<ModelHandle<T>> {
+        self.cx.upgrade_model_handle(handle)
+    }
+}
+
 impl<V: View> UpdateModel for ViewContext<'_, V> {
     fn update_model<T, F, S>(&mut self, handle: &ModelHandle<T>, update: F) -> S
     where
@@ -2372,7 +2426,6 @@ impl<T> Handle<T> for ModelHandle<T> {
         EntityLocation::Model(self.model_id)
     }
 }
-
 pub struct WeakModelHandle<T> {
     model_id: usize,
     model_type: PhantomData<T>,
@@ -2386,13 +2439,8 @@ impl<T: Entity> WeakModelHandle<T> {
         }
     }
 
-    pub fn upgrade(&self, cx: impl AsRef<AppContext>) -> Option<ModelHandle<T>> {
-        let cx = cx.as_ref();
-        if cx.models.contains_key(&self.model_id) {
-            Some(ModelHandle::new(self.model_id, &cx.ref_counts))
-        } else {
-            None
-        }
+    pub fn upgrade(self, cx: &impl UpgradeModelHandle) -> Option<ModelHandle<T>> {
+        cx.upgrade_model_handle(self)
     }
 }
 
@@ -2418,6 +2466,8 @@ impl<T> Clone for WeakModelHandle<T> {
         }
     }
 }
+
+impl<T> Copy for WeakModelHandle<T> {}
 
 pub struct ViewHandle<T> {
     window_id: usize,

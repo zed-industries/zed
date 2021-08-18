@@ -2,6 +2,7 @@ use crate::{language::LanguageRegistry, worktree::Worktree};
 use anyhow::{anyhow, Context, Result};
 use async_tungstenite::tungstenite::http::Request;
 use async_tungstenite::tungstenite::{Error as WebSocketError, Message as WebSocketMessage};
+use futures::Stream;
 use gpui::{AsyncAppContext, ModelHandle, Task, WeakModelHandle};
 use lazy_static::lazy_static;
 use smol::lock::RwLock;
@@ -29,7 +30,6 @@ pub struct Client {
 pub struct ClientState {
     connection_id: Option<ConnectionId>,
     pub shared_worktrees: HashMap<u64, WeakModelHandle<Worktree>>,
-    pub channel_list: Option<WeakModelHandle<ChannelList>>,
     pub languages: Arc<LanguageRegistry>,
 }
 
@@ -80,6 +80,10 @@ impl Client {
             let handler = handler.clone();
             async move { handler.handle(message, &this, &mut cx).await }
         });
+    }
+
+    pub fn subscribe<T: EnvelopedMessage>(&self) -> impl Stream<Item = Arc<TypedEnvelope<T>>> {
+        self.peer.subscribe()
     }
 
     pub async fn log_in_and_connect(

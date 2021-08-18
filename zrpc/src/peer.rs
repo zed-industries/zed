@@ -3,15 +3,15 @@ use anyhow::{anyhow, Context, Result};
 use async_lock::{Mutex, RwLock};
 use async_tungstenite::tungstenite::{Error as WebSocketError, Message as WebSocketMessage};
 use futures::{
-    future::{BoxFuture, LocalBoxFuture},
-    FutureExt, StreamExt,
+    future::{self, BoxFuture, LocalBoxFuture},
+    FutureExt, Stream, StreamExt,
 };
 use postage::{
-    mpsc,
-    prelude::{Sink, Stream},
+    broadcast, mpsc,
+    prelude::{Sink as _, Stream as _},
 };
 use std::{
-    any::TypeId,
+    any::{Any, TypeId},
     collections::{HashMap, HashSet},
     fmt,
     future::Future,
@@ -77,6 +77,7 @@ pub struct RouterInternal<H> {
 pub struct Peer {
     connections: RwLock<HashMap<ConnectionId, Connection>>,
     next_connection_id: AtomicU32,
+    incoming_messages: broadcast::Sender<Arc<dyn Any + Send + Sync>>,
 }
 
 #[derive(Clone)]
@@ -91,6 +92,7 @@ impl Peer {
         Arc::new(Self {
             connections: Default::default(),
             next_connection_id: Default::default(),
+            incoming_messages: broadcast::channel(256).0,
         })
     }
 
@@ -187,6 +189,12 @@ impl Peer {
 
     pub async fn reset(&self) {
         self.connections.write().await.clear();
+    }
+
+    pub fn subscribe<T: EnvelopedMessage>(&self) -> impl Stream<Item = Arc<TypedEnvelope<T>>> {
+        self.incoming_messages
+            .subscribe()
+            .filter_map(|envelope| future::ready(Arc::downcast(envelope).ok()))
     }
 
     pub fn request<T: RequestMessage>(
