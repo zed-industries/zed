@@ -45,7 +45,7 @@ pub struct Receipt<T> {
 
 pub struct TypedEnvelope<T> {
     pub sender_id: ConnectionId,
-    original_sender_id: Option<PeerId>,
+    pub original_sender_id: Option<PeerId>,
     pub message_id: u32,
     pub payload: T,
 }
@@ -158,18 +158,25 @@ impl Peer {
             }
         };
 
+        let mut broadcast_incoming_messages = self.incoming_messages.clone();
         let response_channels = connection.response_channels.clone();
         let handle_messages = async move {
-            while let Some(message) = incoming_rx.recv().await {
-                if let Some(responding_to) = message.responding_to {
+            while let Some(envelope) = incoming_rx.recv().await {
+                if let Some(responding_to) = envelope.responding_to {
                     let channel = response_channels.lock().await.remove(&responding_to);
                     if let Some(mut tx) = channel {
-                        tx.send(message).await.ok();
+                        tx.send(envelope).await.ok();
                     } else {
                         log::warn!("received RPC response to unknown request {}", responding_to);
                     }
                 } else {
-                    router.handle(connection_id, message).await;
+                    router.handle(connection_id, envelope.clone()).await;
+                    match proto::build_typed_envelope(connection_id, envelope) {
+                        Ok(envelope) => {
+                            broadcast_incoming_messages.send(envelope).await.ok();
+                        }
+                        Err(error) => log::error!("{}", error),
+                    }
                 }
             }
             response_channels.lock().await.clear();

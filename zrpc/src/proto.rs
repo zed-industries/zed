@@ -1,6 +1,10 @@
+use super::{ConnectionId, PeerId, TypedEnvelope};
+use anyhow::{anyhow, Result};
 use async_tungstenite::tungstenite::{Error as WebSocketError, Message as WebSocketMessage};
 use futures::{SinkExt as _, StreamExt as _};
 use prost::Message;
+use std::any::Any;
+use std::sync::Arc;
 use std::{
     io,
     time::{Duration, SystemTime, UNIX_EPOCH},
@@ -22,6 +26,59 @@ pub trait EnvelopedMessage: Clone + Sized + Send + Sync + 'static {
 
 pub trait RequestMessage: EnvelopedMessage {
     type Response: EnvelopedMessage;
+}
+
+macro_rules! messages {
+    ($($name:ident),*) => {
+        fn unicast_message_into_typed_envelope(sender_id: ConnectionId, envelope: &mut Envelope) -> Option<Arc<dyn Any + Send + Sync>> {
+            match &mut envelope.payload {
+                $(payload @ Some(envelope::Payload::$name(_)) => Some(Arc::new(TypedEnvelope {
+                    sender_id,
+                    original_sender_id: envelope.original_sender_id.map(PeerId),
+                    message_id: envelope.id,
+                    payload: payload.take().unwrap(),
+                })), )*
+                _ => None
+            }
+        }
+
+        $(
+            message!($name);
+        )*
+    };
+}
+
+macro_rules! request_messages {
+    ($(($request_name:ident, $response_name:ident)),*) => {
+        fn request_message_into_typed_envelope(sender_id: ConnectionId, envelope: Envelope) -> Option<Arc<dyn Any + Send + Sync>> {
+            match envelope.payload {
+                $(
+                    Some(envelope::Payload::$request_name(payload)) => Some(Arc::new(TypedEnvelope {
+                        sender_id,
+                        original_sender_id: envelope.original_sender_id.map(PeerId),
+                        message_id: envelope.id,
+                        payload,
+                    })),
+                    Some(envelope::Payload::$response_name(payload)) => Some(Arc::new(TypedEnvelope {
+                        sender_id,
+                        original_sender_id: envelope.original_sender_id.map(PeerId),
+                        message_id: envelope.id,
+                        payload,
+                    })),
+                )*
+                _ => None
+            }
+        }
+
+        $(
+            message!($request_name);
+            message!($response_name);
+        )*
+
+        $(impl RequestMessage for $request_name {
+            type Response = $response_name;
+        })*
+    };
 }
 
 macro_rules! message {
@@ -58,32 +115,36 @@ macro_rules! message {
     };
 }
 
-macro_rules! request_message {
-    ($req:ident, $resp:ident) => {
-        message!($req);
-        message!($resp);
-        impl RequestMessage for $req {
-            type Response = $resp;
-        }
-    };
-}
+messages!(
+    UpdateWorktree,
+    CloseWorktree,
+    CloseBuffer,
+    UpdateBuffer,
+    AddPeer,
+    RemovePeer,
+    SendChannelMessage,
+    ChannelMessageSent
+);
 
-request_message!(Auth, AuthResponse);
-request_message!(ShareWorktree, ShareWorktreeResponse);
-request_message!(OpenWorktree, OpenWorktreeResponse);
-message!(UpdateWorktree);
-message!(CloseWorktree);
-request_message!(OpenBuffer, OpenBufferResponse);
-message!(CloseBuffer);
-message!(UpdateBuffer);
-request_message!(SaveBuffer, BufferSaved);
-message!(AddPeer);
-message!(RemovePeer);
-request_message!(GetChannels, GetChannelsResponse);
-request_message!(JoinChannel, JoinChannelResponse);
-request_message!(GetUsers, GetUsersResponse);
-message!(SendChannelMessage);
-message!(ChannelMessageSent);
+request_messages!(
+    (Auth, AuthResponse),
+    (ShareWorktree, ShareWorktreeResponse),
+    (OpenWorktree, OpenWorktreeResponse),
+    (OpenBuffer, OpenBufferResponse),
+    (SaveBuffer, BufferSaved),
+    (GetChannels, GetChannelsResponse),
+    (JoinChannel, JoinChannelResponse),
+    (GetUsers, GetUsersResponse)
+);
+
+pub fn build_typed_envelope(
+    sender_id: ConnectionId,
+    mut envelope: Envelope,
+) -> Result<Arc<dyn Any + Send + Sync>> {
+    unicast_message_into_typed_envelope(sender_id, &mut envelope)
+        .or_else(|| request_message_into_typed_envelope(sender_id, envelope))
+        .ok_or_else(|| anyhow!("unrecognized payload type"))
+}
 
 /// A stream of protobuf messages.
 pub struct MessageStream<S> {

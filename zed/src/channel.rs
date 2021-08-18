@@ -1,14 +1,11 @@
 use crate::rpc::{self, Client};
-use anyhow::{anyhow, Result};
 use futures::StreamExt;
-use gpui::{
-    AsyncAppContext, Entity, ModelContext, ModelHandle, MutableAppContext, Task, WeakModelHandle,
-};
+use gpui::{Entity, ModelContext, Task, WeakModelHandle};
 use std::{
     collections::{HashMap, VecDeque},
     sync::Arc,
 };
-use zrpc::{proto::ChannelMessageSent, ForegroundRouter, Router, TypedEnvelope};
+use zrpc::{proto::ChannelMessageSent, TypedEnvelope};
 
 pub struct ChannelList {
     available_channels: Vec<ChannelDetails>,
@@ -31,48 +28,19 @@ pub struct Channel {
 pub struct ChannelMessage {
     id: u64,
 }
-enum Event {}
+pub enum Event {}
 
 impl Entity for ChannelList {
     type Event = Event;
 }
 
 impl ChannelList {
-    fn new(
-        rpc: Arc<rpc::Client>,
-        router: &mut ForegroundRouter,
-        cx: &mut ModelContext<Self>,
-    ) -> Self {
-        // Subscribe to messages.
-        let this = cx.handle().downgrade();
-
-        // rpc.on_message(
-        //     router,
-        //     |envelope, rpc, cx: &mut AsyncAppContext| async move {
-        //         cx.update(|cx| {
-        //             if let Some(this) = this.upgrade(cx) {
-        //                 this.update(cx, |this, cx| this.receive_message(envelope, cx))
-        //             } else {
-        //                 Err(anyhow!("can't upgrade ChannelList handle"))
-        //             }
-        //         })
-        //     },
-        //     cx,
-        // );
-
+    fn new(rpc: Arc<rpc::Client>) -> Self {
         Self {
             available_channels: Default::default(),
             channels: Default::default(),
             rpc,
         }
-    }
-
-    fn receive_message(
-        &mut self,
-        envelope: TypedEnvelope<ChannelMessageSent>,
-        cx: &mut ModelContext<Self>,
-    ) -> Result<()> {
-        Ok(())
     }
 }
 
@@ -82,8 +50,8 @@ impl Entity for Channel {
 
 impl Channel {
     pub fn new(details: ChannelDetails, rpc: Arc<Client>, cx: &mut ModelContext<Self>) -> Self {
-        let messages = rpc.subscribe();
-        let receive_messages = cx.spawn_weak(|this, cx| async move {
+        let mut messages = rpc.subscribe();
+        let receive_messages = cx.spawn_weak(|this, mut cx| async move {
             while let Some(message) = messages.next().await {
                 if let Some(this) = this.upgrade(&cx) {
                     this.update(&mut cx, |this, cx| this.message_received(&message, cx));

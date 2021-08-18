@@ -18,7 +18,7 @@ use futures::{Stream, StreamExt};
 pub use fuzzy::{match_paths, PathMatch};
 use gpui::{
     executor, AppContext, AsyncAppContext, Entity, ModelContext, ModelHandle, MutableAppContext,
-    Task, WeakModelHandle,
+    Task, UpgradeModelHandle, WeakModelHandle,
 };
 use lazy_static::lazy_static;
 use parking_lot::Mutex;
@@ -373,7 +373,7 @@ impl Worktree {
                 let buffer = worktree
                     .open_buffers
                     .get(&buffer_id)
-                    .and_then(|buf| buf.upgrade(&cx))
+                    .and_then(|buf| buf.upgrade(cx))
                     .ok_or_else(|| {
                         anyhow!("invalid buffer {} in update buffer message", buffer_id)
                     })?;
@@ -382,7 +382,7 @@ impl Worktree {
             Worktree::Remote(worktree) => match worktree.open_buffers.get_mut(&buffer_id) {
                 Some(RemoteBuffer::Operations(pending_ops)) => pending_ops.extend(ops),
                 Some(RemoteBuffer::Loaded(buffer)) => {
-                    if let Some(buffer) = buffer.upgrade(&cx) {
+                    if let Some(buffer) = buffer.upgrade(cx) {
                         buffer.update(cx, |buffer, cx| buffer.apply_ops(ops, cx))?;
                     } else {
                         worktree
@@ -410,7 +410,7 @@ impl Worktree {
             if let Some(buffer) = worktree
                 .open_buffers
                 .get(&(message.buffer_id as usize))
-                .and_then(|buf| buf.upgrade(&cx))
+                .and_then(|buf| buf.upgrade(cx))
             {
                 buffer.update(cx, |buffer, cx| {
                     let version = message.version.try_into()?;
@@ -480,7 +480,7 @@ impl Worktree {
 
         let mut buffers_to_delete = Vec::new();
         for (buffer_id, buffer) in open_buffers {
-            if let Some(buffer) = buffer.upgrade(&cx) {
+            if let Some(buffer) = buffer.upgrade(cx) {
                 buffer.update(cx, |buffer, cx| {
                     let buffer_is_clean = !buffer.is_dirty();
 
@@ -633,7 +633,7 @@ impl LocalWorktree {
 
             cx.spawn_weak(|this, mut cx| async move {
                 while let Ok(scan_state) = scan_states_rx.recv().await {
-                    if let Some(handle) = cx.read(|cx| this.upgrade(&cx)) {
+                    if let Some(handle) = cx.read(|cx| this.upgrade(cx)) {
                         let to_send = handle.update(&mut cx, |this, cx| {
                             last_scan_state_tx.blocking_send(scan_state).ok();
                             this.poll_snapshot(cx);
@@ -778,7 +778,7 @@ impl LocalWorktree {
             .ok_or_else(|| anyhow!("unknown peer {:?}", peer_id))?;
         self.shared_buffers.remove(&peer_id);
         for (_, buffer) in &self.open_buffers {
-            if let Some(buffer) = buffer.upgrade(&cx) {
+            if let Some(buffer) = buffer.upgrade(cx) {
                 buffer.update(cx, |buffer, cx| buffer.remove_peer(replica_id, cx));
             }
         }
@@ -1078,7 +1078,7 @@ impl RemoteWorktree {
             .remove(&peer_id)
             .ok_or_else(|| anyhow!("unknown peer {:?}", peer_id))?;
         for (_, buffer) in &self.open_buffers {
-            if let Some(buffer) = buffer.upgrade(&cx) {
+            if let Some(buffer) = buffer.upgrade(cx) {
                 buffer.update(cx, |buffer, cx| buffer.remove_peer(replica_id, cx));
             }
         }
@@ -1093,7 +1093,7 @@ enum RemoteBuffer {
 }
 
 impl RemoteBuffer {
-    fn upgrade(&self, cx: impl AsRef<AppContext>) -> Option<ModelHandle<Buffer>> {
+    fn upgrade(&self, cx: &impl UpgradeModelHandle) -> Option<ModelHandle<Buffer>> {
         match self {
             Self::Operations(_) => None,
             Self::Loaded(buffer) => buffer.upgrade(cx),
