@@ -1,12 +1,11 @@
-use crate::{language::LanguageRegistry, worktree::Worktree};
+use crate::language::LanguageRegistry;
 use anyhow::{anyhow, Context, Result};
 use async_tungstenite::tungstenite::http::Request;
 use async_tungstenite::tungstenite::{Error as WebSocketError, Message as WebSocketMessage};
 use futures::StreamExt;
-use gpui::{AsyncAppContext, Entity, ModelContext, ModelHandle, Task, WeakModelHandle};
+use gpui::{AsyncAppContext, Entity, ModelContext, Task};
 use lazy_static::lazy_static;
 use smol::lock::RwLock;
-use std::collections::HashMap;
 use std::time::Duration;
 use std::{convert::TryFrom, future::Future, sync::Arc};
 use surf::Url;
@@ -30,26 +29,7 @@ pub struct Client {
 
 pub struct ClientState {
     connection_id: Option<ConnectionId>,
-    pub shared_worktrees: HashMap<u64, WeakModelHandle<Worktree>>,
     pub languages: Arc<LanguageRegistry>,
-}
-
-impl ClientState {
-    pub fn shared_worktree(
-        &self,
-        id: u64,
-        cx: &mut AsyncAppContext,
-    ) -> Result<ModelHandle<Worktree>> {
-        if let Some(worktree) = self.shared_worktrees.get(&id) {
-            if let Some(worktree) = cx.read(|cx| worktree.upgrade(cx)) {
-                Ok(worktree)
-            } else {
-                Err(anyhow!("worktree {} was dropped", id))
-            }
-        } else {
-            Err(anyhow!("worktree {} does not exist", id))
-        }
-    }
 }
 
 impl Client {
@@ -58,7 +38,6 @@ impl Client {
             peer: Peer::new(),
             state: Arc::new(RwLock::new(ClientState {
                 connection_id: None,
-                shared_worktrees: Default::default(),
                 languages,
             })),
         }

@@ -11,7 +11,6 @@ use zed::{
     fs::RealFs,
     language, menus, rpc, settings, theme_selector,
     workspace::{self, OpenParams},
-    worktree::{self},
     AppState,
 };
 use zrpc::ForegroundRouter;
@@ -27,7 +26,7 @@ fn main() {
     let languages = Arc::new(language::LanguageRegistry::new());
     languages.set_theme(&settings.borrow().theme);
 
-    let mut app_state = AppState {
+    let app_state = AppState {
         languages: languages.clone(),
         settings_tx: Arc::new(Mutex::new(settings_tx)),
         settings,
@@ -38,11 +37,6 @@ fn main() {
     };
 
     app.run(move |cx| {
-        worktree::init(
-            cx,
-            &app_state.rpc,
-            Arc::get_mut(&mut app_state.rpc_router).unwrap(),
-        );
         let app_state = Arc::new(app_state);
 
         zed::init(cx);

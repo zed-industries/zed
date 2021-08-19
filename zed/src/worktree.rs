@@ -42,21 +42,10 @@ use std::{
     },
     time::{Duration, SystemTime},
 };
-use zrpc::{ForegroundRouter, PeerId, TypedEnvelope};
+use zrpc::{PeerId, TypedEnvelope};
 
 lazy_static! {
     static ref GITIGNORE: &'static OsStr = OsStr::new(".gitignore");
-}
-
-pub fn init(cx: &mut MutableAppContext, rpc: &rpc::Client, router: &mut ForegroundRouter) {
-    rpc.on_message(router, remote::add_peer, cx);
-    rpc.on_message(router, remote::remove_peer, cx);
-    rpc.on_message(router, remote::update_worktree, cx);
-    rpc.on_message(router, remote::open_buffer, cx);
-    rpc.on_message(router, remote::close_buffer, cx);
-    rpc.on_message(router, remote::update_buffer, cx);
-    rpc.on_message(router, remote::buffer_saved, cx);
-    rpc.on_message(router, remote::save_buffer, cx);
 }
 
 #[derive(Clone, Debug)]
@@ -85,11 +74,6 @@ impl Entity for Worktree {
 
         if let Some((rpc, worktree_id)) = rpc {
             cx.spawn(|_| async move {
-                rpc.state
-                    .write()
-                    .await
-                    .shared_worktrees
-                    .remove(&worktree_id);
                 if let Err(err) = rpc.send(proto::CloseWorktree { worktree_id }).await {
                     log::error!("error closing worktree {}: {}", worktree_id, err);
                 }
@@ -254,11 +238,6 @@ impl Worktree {
                 })
             })
         });
-        rpc.state
-            .write()
-            .await
-            .shared_worktrees
-            .insert(open_response.worktree_id, worktree.downgrade());
 
         Ok(worktree)
     }
@@ -989,17 +968,10 @@ impl LocalWorktree {
     ) -> Task<anyhow::Result<(u64, String)>> {
         let snapshot = self.snapshot();
         let share_request = self.share_request(cx);
-        let handle = cx.handle();
         cx.spawn(|this, mut cx| async move {
             let share_request = share_request.await;
             let share_response = rpc.request(share_request).await?;
             let remote_id = share_response.worktree_id;
-
-            rpc.state
-                .write()
-                .await
-                .shared_worktrees
-                .insert(share_response.worktree_id, handle.downgrade());
 
             log::info!("sharing worktree {:?}", share_response);
             let (snapshots_to_send_tx, snapshots_to_send_rx) =
@@ -2528,172 +2500,6 @@ impl<'a> TryFrom<(&'a CharBag, proto::Entry)> for Entry {
                 entry.path
             ))
         }
-    }
-}
-
-mod remote {
-    use super::*;
-
-    pub async fn add_peer(
-        envelope: TypedEnvelope<proto::AddPeer>,
-        rpc: &rpc::Client,
-        cx: &mut AsyncAppContext,
-    ) -> anyhow::Result<()> {
-        rpc.state
-            .read()
-            .await
-            .shared_worktree(envelope.payload.worktree_id, cx)?
-            .update(cx, |worktree, cx| {
-                worktree.handle_add_peer(&envelope, rpc.clone(), cx)
-            })
-    }
-
-    pub async fn remove_peer(
-        envelope: TypedEnvelope<proto::RemovePeer>,
-        rpc: &rpc::Client,
-        cx: &mut AsyncAppContext,
-    ) -> anyhow::Result<()> {
-        rpc.state
-            .read()
-            .await
-            .shared_worktree(envelope.payload.worktree_id, cx)?
-            .update(cx, |worktree, cx| {
-                worktree.handle_remove_peer(&envelope, rpc.clone(), cx)
-            })
-    }
-
-    pub async fn update_worktree(
-        envelope: TypedEnvelope<proto::UpdateWorktree>,
-        rpc: &rpc::Client,
-        cx: &mut AsyncAppContext,
-    ) -> anyhow::Result<()> {
-        rpc.state
-            .read()
-            .await
-            .shared_worktree(envelope.payload.worktree_id, cx)?
-            .update(cx, |worktree, _| {
-                if let Some(worktree) = worktree.as_remote_mut() {
-                    let mut tx = worktree.updates_tx.clone();
-                    Ok(async move {
-                        tx.send(envelope.payload)
-                            .await
-                            .expect("receiver runs to completion");
-                    })
-                } else {
-                    Err(anyhow!(
-                        "invalid update message for local worktree {}",
-                        envelope.payload.worktree_id
-                    ))
-                }
-            })?
-            .await;
-
-        Ok(())
-    }
-
-    pub async fn open_buffer(
-        envelope: TypedEnvelope<proto::OpenBuffer>,
-        rpc: &rpc::Client,
-        cx: &mut AsyncAppContext,
-    ) -> anyhow::Result<()> {
-        let receipt = envelope.receipt();
-        let worktree = rpc
-            .state
-            .read()
-            .await
-            .shared_worktree(envelope.payload.worktree_id, cx)?;
-
-        let response = worktree
-            .update(cx, |worktree, cx| {
-                worktree
-                    .as_local_mut()
-                    .unwrap()
-                    .open_remote_buffer(&envelope, cx)
-            })
-            .await?;
-
-        rpc.respond(receipt, response).await?;
-
-        Ok(())
-    }
-
-    pub async fn close_buffer(
-        envelope: TypedEnvelope<proto::CloseBuffer>,
-        rpc: &rpc::Client,
-        cx: &mut AsyncAppContext,
-    ) -> anyhow::Result<()> {
-        let worktree = rpc
-            .state
-            .read()
-            .await
-            .shared_worktree(envelope.payload.worktree_id, cx)?;
-
-        worktree.update(cx, |worktree, cx| {
-            worktree
-                .as_local_mut()
-                .unwrap()
-                .close_remote_buffer(&envelope, cx)
-        })
-    }
-
-    pub async fn update_buffer(
-        envelope: TypedEnvelope<proto::UpdateBuffer>,
-        rpc: &rpc::Client,
-        cx: &mut AsyncAppContext,
-    ) -> anyhow::Result<()> {
-        rpc.state
-            .read()
-            .await
-            .shared_worktree(envelope.payload.worktree_id, cx)?
-            .update(cx, |tree, cx| {
-                tree.handle_update_buffer(&envelope, rpc.clone(), cx)
-            })?;
-        Ok(())
-    }
-
-    pub async fn save_buffer(
-        envelope: TypedEnvelope<proto::SaveBuffer>,
-        rpc: &rpc::Client,
-        cx: &mut AsyncAppContext,
-    ) -> anyhow::Result<()> {
-        let state = rpc.state.read().await;
-        let worktree = state.shared_worktree(envelope.payload.worktree_id, cx)?;
-        let sender_id = envelope.original_sender_id()?;
-        let buffer = worktree.read_with(cx, |tree, _| {
-            tree.as_local()
-                .unwrap()
-                .shared_buffers
-                .get(&sender_id)
-                .and_then(|shared_buffers| shared_buffers.get(&envelope.payload.buffer_id).cloned())
-                .ok_or_else(|| anyhow!("unknown buffer id {}", envelope.payload.buffer_id))
-        })?;
-        let (version, mtime) = buffer.update(cx, |buffer, cx| buffer.save(cx))?.await?;
-        rpc.respond(
-            envelope.receipt(),
-            proto::BufferSaved {
-                worktree_id: envelope.payload.worktree_id,
-                buffer_id: envelope.payload.buffer_id,
-                version: (&version).into(),
-                mtime: Some(mtime.into()),
-            },
-        )
-        .await?;
-        Ok(())
-    }
-
-    pub async fn buffer_saved(
-        envelope: TypedEnvelope<proto::BufferSaved>,
-        rpc: &rpc::Client,
-        cx: &mut AsyncAppContext,
-    ) -> anyhow::Result<()> {
-        rpc.state
-            .read()
-            .await
-            .shared_worktree(envelope.payload.worktree_id, cx)?
-            .update(cx, |worktree, cx| {
-                worktree.handle_buffer_saved(&envelope, rpc.clone(), cx)
-            })?;
-        Ok(())
     }
 }
 
