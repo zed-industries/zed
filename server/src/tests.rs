@@ -14,6 +14,7 @@ use sqlx::{
 };
 use std::{path::Path, sync::Arc};
 use zed::{
+    channel::{ChannelDetails, ChannelList},
     editor::Editor,
     fs::{FakeFs, Fs as _},
     language::LanguageRegistry,
@@ -514,17 +515,25 @@ async fn test_basic_chat(mut cx_a: TestAppContext, cx_b: TestAppContext) {
     .await
     .unwrap();
 
-    // let channels_a = client_a.get_channels().await;
-    // assert_eq!(channels_a.len(), 1);
-    // assert_eq!(channels_a[0].read(&cx_a).name(), "test-channel");
+    let channels_a = ChannelList::new(client_a, &mut cx_a.to_async())
+        .await
+        .unwrap();
+    let channels_b = ChannelList::new(client_b, &mut cx_b.to_async())
+        .await
+        .unwrap();
+    channels_a.read_with(&cx_a, |list, _| {
+        assert_eq!(
+            list.available_channels(),
+            &[ChannelDetails {
+                id: channel_id.to_proto(),
+                name: "test-channel".to_string()
+            }]
+        )
+    });
 
-    // assert_eq!(
-    //     db.get_recent_channel_messages(channel_id, 50)
-    //         .await
-    //         .unwrap()[0]
-    //         .body,
-    //     "first message!"
-    // );
+    let channel_a = channels_a.read_with(&cx_a, |this, cx| {
+        this.get_channel(channel_id.to_proto(), &cx).unwrap()
+    });
 }
 
 struct TestServer {

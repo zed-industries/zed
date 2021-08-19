@@ -46,12 +46,14 @@ pub struct Subscription {
 impl Drop for Subscription {
     fn drop(&mut self) {
         if let Some(client) = self.client.upgrade() {
-            client
-                .state
-                .write()
-                .model_handlers
-                .remove(&self.id)
-                .unwrap();
+            drop(
+                client
+                    .state
+                    .write()
+                    .model_handlers
+                    .remove(&self.id)
+                    .unwrap(),
+            );
         }
     }
 }
