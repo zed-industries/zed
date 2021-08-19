@@ -1639,7 +1639,7 @@ impl File {
             Worktree::Remote(worktree) => {
                 let rpc = worktree.rpc.clone();
                 let worktree_id = worktree.remote_id;
-                cx.background().spawn(async move {
+                cx.foreground().spawn(async move {
                     let response = rpc
                         .request(proto::SaveBuffer {
                             worktree_id,
