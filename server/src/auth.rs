@@ -137,6 +137,34 @@ impl PeerExt for Peer {
     }
 }
 
+#[async_trait]
+impl PeerExt for zrpc::peer2::Peer {
+    async fn sign_out(
+        self: &Arc<Self>,
+        connection_id: zrpc::ConnectionId,
+        state: &AppState,
+    ) -> tide::Result<()> {
+        self.disconnect(connection_id).await;
+        let worktree_ids = state.rpc.write().await.remove_connection(connection_id);
+        for worktree_id in worktree_ids {
+            let state = state.rpc.read().await;
+            if let Some(worktree) = state.worktrees.get(&worktree_id) {
+                rpc::broadcast(connection_id, worktree.connection_ids(), |conn_id| {
+                    self.send(
+                        conn_id,
+                        proto::RemovePeer {
+                            worktree_id,
+                            peer_id: connection_id.0,
+                        },
+                    )
+                })
+                .await?;
+            }
+        }
+        Ok(())
+    }
+}
+
 pub fn build_client(client_id: &str, client_secret: &str) -> Client {
     Client::new(
         ClientId::new(client_id.to_string()),
