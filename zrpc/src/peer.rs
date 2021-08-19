@@ -38,8 +38,8 @@ type ForegroundMessageHandler =
     Box<dyn Fn(&mut Option<proto::Envelope>, ConnectionId) -> Option<LocalBoxFuture<'static, ()>>>;
 
 pub struct Receipt<T> {
-    sender_id: ConnectionId,
-    message_id: u32,
+    pub sender_id: ConnectionId,
+    pub message_id: u32,
     payload_type: PhantomData<T>,
 }
 
@@ -172,7 +172,7 @@ impl Peer {
                 } else {
                     router.handle(connection_id, envelope.clone()).await;
                     if let Some(envelope) = proto::build_typed_envelope(connection_id, envelope) {
-                        broadcast_incoming_messages.send(envelope).await.ok();
+                        broadcast_incoming_messages.send(Arc::from(envelope)).await.ok();
                     } else {
                         log::error!("unable to construct a typed envelope");
                     }

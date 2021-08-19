@@ -4,7 +4,6 @@ use async_tungstenite::tungstenite::{Error as WebSocketError, Message as WebSock
 use futures::{SinkExt as _, StreamExt as _};
 use prost::Message;
 use std::any::Any;
-use std::sync::Arc;
 use std::{
     io,
     time::{Duration, SystemTime, UNIX_EPOCH},
@@ -34,14 +33,16 @@ pub trait RequestMessage: EnvelopedMessage {
 
 macro_rules! messages {
     ($($name:ident),* $(,)?) => {
-        pub fn build_typed_envelope(sender_id: ConnectionId, envelope: Envelope) -> Option<Arc<dyn Any + Send + Sync>> {
+        pub fn build_typed_envelope(sender_id: ConnectionId, envelope: Envelope) -> Option<Box<dyn Any + Send + Sync>> {
             match envelope.payload {
-                $(Some(envelope::Payload::$name(payload)) => Some(Arc::new(TypedEnvelope {
-                    sender_id,
-                    original_sender_id: envelope.original_sender_id.map(PeerId),
-                    message_id: envelope.id,
-                    payload,
-                })), )*
+                $(Some(envelope::Payload::$name(payload)) => {
+                    Some(Box::new(TypedEnvelope {
+                        sender_id,
+                        original_sender_id: envelope.original_sender_id.map(PeerId),
+                        message_id: envelope.id,
+                        payload,
+                    }))
+                }, )*
                 _ => None
             }
         }
@@ -116,6 +117,8 @@ messages!(
     OpenBufferResponse,
     OpenWorktree,
     OpenWorktreeResponse,
+    Ping,
+    Pong,
     RemovePeer,
     SaveBuffer,
     SendChannelMessage,
@@ -132,6 +135,7 @@ request_messages!(
     (JoinChannel, JoinChannelResponse),
     (OpenBuffer, OpenBufferResponse),
     (OpenWorktree, OpenWorktreeResponse),
+    (Ping, Pong),
     (SaveBuffer, BufferSaved),
     (ShareWorktree, ShareWorktreeResponse),
 );

@@ -6,34 +6,44 @@ message Envelope {
     optional uint32 responding_to = 2;
     optional uint32 original_sender_id = 3;
     oneof payload {
-        Auth auth = 4;
-        AuthResponse auth_response = 5;
-        ShareWorktree share_worktree = 6;
-        ShareWorktreeResponse share_worktree_response = 7;
-        OpenWorktree open_worktree = 8;
-        OpenWorktreeResponse open_worktree_response = 9;
-        UpdateWorktree update_worktree = 10;
-        CloseWorktree close_worktree = 11;
-        OpenBuffer open_buffer = 12;
-        OpenBufferResponse open_buffer_response = 13;
-        CloseBuffer close_buffer = 14;
-        UpdateBuffer update_buffer = 15;
-        SaveBuffer save_buffer = 16;
-        BufferSaved buffer_saved = 17;
-        AddPeer add_peer = 18;
-        RemovePeer remove_peer = 19;
-        GetChannels get_channels = 20;
-        GetChannelsResponse get_channels_response = 21;
-        GetUsers get_users = 22;
-        GetUsersResponse get_users_response = 23;
-        JoinChannel join_channel = 24;
-        JoinChannelResponse join_channel_response = 25;
-        SendChannelMessage send_channel_message = 26;
-        ChannelMessageSent channel_message_sent = 27;
+        Ping ping = 4;
+        Pong pong = 5;
+        Auth auth = 6;
+        AuthResponse auth_response = 7;
+        ShareWorktree share_worktree = 8;
+        ShareWorktreeResponse share_worktree_response = 9;
+        OpenWorktree open_worktree = 10;
+        OpenWorktreeResponse open_worktree_response = 11;
+        UpdateWorktree update_worktree = 12;
+        CloseWorktree close_worktree = 13;
+        OpenBuffer open_buffer = 14;
+        OpenBufferResponse open_buffer_response = 15;
+        CloseBuffer close_buffer = 16;
+        UpdateBuffer update_buffer = 17;
+        SaveBuffer save_buffer = 18;
+        BufferSaved buffer_saved = 19;
+        AddPeer add_peer = 20;
+        RemovePeer remove_peer = 21;
+        GetChannels get_channels = 22;
+        GetChannelsResponse get_channels_response = 23;
+        GetUsers get_users = 24;
+        GetUsersResponse get_users_response = 25;
+        JoinChannel join_channel = 26;
+        JoinChannelResponse join_channel_response = 27;
+        SendChannelMessage send_channel_message = 28;
+        ChannelMessageSent channel_message_sent = 29;
     }
 }
 
 // Messages
+
+message Ping {
+    int32 id = 1;
+}
+
+message Pong {
+    int32 id = 2;
+}
 
 message Auth {
     int32 user_id = 1;
