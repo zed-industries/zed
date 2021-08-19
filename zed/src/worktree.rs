@@ -459,7 +459,9 @@ impl Worktree {
         let receipt = envelope.receipt();
         let worktree_id = envelope.payload.worktree_id;
         let buffer_id = envelope.payload.buffer_id;
-        let save = buffer.update(cx, |buffer, cx| buffer.save(cx))?;
+        let save = cx.spawn(|_, mut cx| async move {
+            buffer.update(&mut cx, |buffer, cx| buffer.save(cx))?.await
+        });
 
         cx.background()
             .spawn(log_async_errors(async move {
