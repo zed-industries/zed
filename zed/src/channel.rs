@@ -1,5 +1,5 @@
 use crate::rpc::{self, Client};
-use futures::StreamExt;
+use anyhow::Result;
 use gpui::{Entity, ModelContext, Task, WeakModelHandle};
 use std::{
     collections::{HashMap, VecDeque},
@@ -22,7 +22,7 @@ pub struct Channel {
     first_message_id: Option<u64>,
     messages: Option<VecDeque<ChannelMessage>>,
     rpc: Arc<Client>,
-    _receive_messages: Task<()>,
+    _message_handler: Task<()>,
 }
 
 pub struct ChannelMessage {
@@ -50,28 +50,23 @@ impl Entity for Channel {
 
 impl Channel {
     pub fn new(details: ChannelDetails, rpc: Arc<Client>, cx: &mut ModelContext<Self>) -> Self {
-        let mut messages = rpc.subscribe();
-        let receive_messages = cx.spawn_weak(|this, mut cx| async move {
-            while let Some(message) = messages.next().await {
-                if let Some(this) = this.upgrade(&cx) {
-                    this.update(&mut cx, |this, cx| this.message_received(&message, cx));
-                }
-            }
-        });
+        let _message_handler = rpc.subscribe_from_model(details.id, cx, Self::handle_message_sent);
 
         Self {
             details,
             rpc,
             first_message_id: None,
             messages: None,
-            _receive_messages: receive_messages,
+            _message_handler,
         }
     }
 
-    fn message_received(
+    fn handle_message_sent(
         &mut self,
         message: &TypedEnvelope<ChannelMessageSent>,
+        rpc: rpc::Client,
         cx: &mut ModelContext<Self>,
-    ) {
+    ) -> Result<()> {
+        Ok(())
     }
 }

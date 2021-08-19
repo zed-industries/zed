@@ -2,14 +2,15 @@ use crate::{language::LanguageRegistry, worktree::Worktree};
 use anyhow::{anyhow, Context, Result};
 use async_tungstenite::tungstenite::http::Request;
 use async_tungstenite::tungstenite::{Error as WebSocketError, Message as WebSocketMessage};
-use futures::Stream;
-use gpui::{AsyncAppContext, ModelHandle, Task, WeakModelHandle};
+use futures::StreamExt;
+use gpui::{AsyncAppContext, Entity, ModelContext, ModelHandle, Task, WeakModelHandle};
 use lazy_static::lazy_static;
 use smol::lock::RwLock;
 use std::collections::HashMap;
 use std::time::Duration;
 use std::{convert::TryFrom, future::Future, sync::Arc};
 use surf::Url;
+use zrpc::proto::EntityMessage;
 pub use zrpc::{proto, ConnectionId, PeerId, TypedEnvelope};
 use zrpc::{
     proto::{EnvelopedMessage, RequestMessage},
@@ -82,8 +83,32 @@ impl Client {
         });
     }
 
-    pub fn subscribe<T: EnvelopedMessage>(&self) -> impl Stream<Item = Arc<TypedEnvelope<T>>> {
-        self.peer.subscribe()
+    pub fn subscribe_from_model<T, M, F>(
+        &self,
+        remote_id: u64,
+        cx: &mut ModelContext<M>,
+        mut handler: F,
+    ) -> Task<()>
+    where
+        T: EntityMessage,
+        M: Entity,
+        F: 'static + FnMut(&mut M, &TypedEnvelope<T>, Client, &mut ModelContext<M>) -> Result<()>,
+    {
+        let rpc = self.clone();
+        let mut incoming = self.peer.subscribe::<T>();
+        cx.spawn_weak(|model, mut cx| async move {
+            while let Some(envelope) = incoming.next().await {
+                if envelope.payload.remote_entity_id() == remote_id {
+                    if let Some(model) = model.upgrade(&cx) {
+                        model.update(&mut cx, |model, cx| {
+                            if let Err(error) = handler(model, &envelope, rpc.clone(), cx) {
+                                log::error!("error handling message: {}", error)
+                            }
+                        });
+                    }
+                }
+            }
+        })
     }
 
     pub async fn log_in_and_connect(

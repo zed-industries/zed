@@ -1,3 +1,4 @@
+use futures::Future;
 use rand::prelude::*;
 use std::cmp::Ordering;
 
@@ -77,6 +78,17 @@ impl<T: Rng> Iterator for RandomCharIter<T> {
             46..=58 => ['🍐', '🏀', '🍗', '🎉'].choose(&mut self.0).copied(),
             // ascii letters
             _ => Some(self.0.gen_range(b'a'..b'z' + 1).into()),
+        }
+    }
+}
+
+pub async fn log_async_errors<F>(f: F) -> impl Future<Output = ()>
+where
+    F: Future<Output = anyhow::Result<()>>,
+{
+    async {
+        if let Err(error) = f.await {
+            log::error!("{}", error)
         }
     }
 }

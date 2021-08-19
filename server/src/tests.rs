@@ -14,7 +14,7 @@ use sqlx::{
     types::time::OffsetDateTime,
     Executor as _, Postgres,
 };
-use std::{path::Path, sync::Arc, time::SystemTime};
+use std::{path::Path, sync::Arc};
 use zed::{
     editor::Editor,
     fs::{FakeFs, Fs as _},

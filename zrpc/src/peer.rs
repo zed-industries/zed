@@ -171,11 +171,10 @@ impl Peer {
                     }
                 } else {
                     router.handle(connection_id, envelope.clone()).await;
-                    match proto::build_typed_envelope(connection_id, envelope) {
-                        Ok(envelope) => {
-                            broadcast_incoming_messages.send(envelope).await.ok();
-                        }
-                        Err(error) => log::error!("{}", error),
+                    if let Some(envelope) = proto::build_typed_envelope(connection_id, envelope) {
+                        broadcast_incoming_messages.send(envelope).await.ok();
+                    } else {
+                        log::error!("unable to construct a typed envelope");
                     }
                 }
             }
