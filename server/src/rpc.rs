@@ -29,7 +29,7 @@ use tide::{
 use time::OffsetDateTime;
 use zrpc::{
     auth::random_token,
-    proto::{self, EnvelopedMessage},
+    proto::{self, AnyTypedEnvelope, EnvelopedMessage},
     ConnectionId, Peer, TypedEnvelope,
 };
 
@@ -38,16 +38,12 @@ type ReplicaId = u16;
 type MessageHandler = Box<
     dyn Send
         + Sync
-        + Fn(
-            &mut Option<Box<dyn Any + Send + Sync>>,
-            Arc<Server>,
-        ) -> Option<BoxFuture<'static, tide::Result<()>>>,
+        + Fn(Box<dyn AnyTypedEnvelope>, Arc<Server>) -> BoxFuture<'static, tide::Result<()>>,
 >;
 
 #[derive(Default)]
 struct ServerBuilder {
-    handlers: Vec<MessageHandler>,
-    handler_types: HashSet<TypeId>,
+    handlers: HashMap<TypeId, MessageHandler>,
 }
 
 impl ServerBuilder {
@@ -57,24 +53,17 @@ impl ServerBuilder {
         Fut: 'static + Send + Future<Output = tide::Result<()>>,
         M: EnvelopedMessage,
     {
-        if self.handler_types.insert(TypeId::of::<M>()) {
+        let prev_handler = self.handlers.insert(
+            TypeId::of::<M>(),
+            Box::new(move |envelope, server| {
+                let envelope = envelope.into_any().downcast::<TypedEnvelope<M>>().unwrap();
+                (handler)(envelope, server).boxed()
+            }),
+        );
+        if prev_handler.is_some() {
             panic!("registered a handler for the same message twice");
         }
 
-        self.handlers
-            .push(Box::new(move |untyped_envelope, server| {
-                if let Some(typed_envelope) = untyped_envelope.take() {
-                    match typed_envelope.downcast::<TypedEnvelope<M>>() {
-                        Ok(typed_envelope) => Some((handler)(typed_envelope, server).boxed()),
-                        Err(envelope) => {
-                            *untyped_envelope = Some(envelope);
-                            None
-                        }
-                    }
-                } else {
-                    None
-                }
-            }));
         self
     }
 
@@ -90,16 +79,17 @@ impl ServerBuilder {
 pub struct Server {
     rpc: Arc<Peer>,
     state: Arc<AppState>,
-    handlers: Vec<MessageHandler>,
+    handlers: HashMap<TypeId, MessageHandler>,
 }
 
 impl Server {
-    pub async fn handle_connection<Conn>(
+    pub fn handle_connection<Conn>(
         self: &Arc<Self>,
         connection: Conn,
         addr: String,
         user_id: UserId,
-    ) where
+    ) -> impl Future<Output = ()>
+    where
         Conn: 'static
             + futures::Sink<WebSocketMessage, Error = WebSocketError>
             + futures::Stream<Item = Result<WebSocketMessage, WebSocketError>>
@@ -107,54 +97,51 @@ impl Server {
             + Unpin,
     {
         let this = self.clone();
-        let (connection_id, handle_io, mut incoming_rx) = this.rpc.add_connection(connection).await;
-        this.state
-            .rpc
-            .write()
-            .await
-            .add_connection(connection_id, user_id);
+        async move {
+            let (connection_id, handle_io, mut incoming_rx) =
+                this.rpc.add_connection(connection).await;
+            this.state
+                .rpc
+                .write()
+                .await
+                .add_connection(connection_id, user_id);
 
-        let handle_io = handle_io.fuse();
-        futures::pin_mut!(handle_io);
-        loop {
-            let next_message = incoming_rx.recv().fuse();
-            futures::pin_mut!(next_message);
-            futures::select_biased! {
-                message = next_message => {
-                    if let Some(message) = message {
-                        let start_time = Instant::now();
-                        log::info!("RPC message received");
-                        let mut message = Some(message);
-                        for handler in &this.handlers {
-                            if let Some(future) = (handler)(&mut message, this.clone()) {
-                                 if let Err(err) = future.await {
+            let handle_io = handle_io.fuse();
+            futures::pin_mut!(handle_io);
+            loop {
+                let next_message = incoming_rx.recv().fuse();
+                futures::pin_mut!(next_message);
+                futures::select_biased! {
+                    message = next_message => {
+                        if let Some(message) = message {
+                            let start_time = Instant::now();
+                            log::info!("RPC message received: {}", message.payload_type_name());
+                            if let Some(handler) = this.handlers.get(&message.payload_type_id()) {
+                                if let Err(err) = (handler)(message, this.clone()).await {
                                     log::error!("error handling message: {:?}", err);
                                 } else {
                                     log::info!("RPC message handled. duration:{:?}", start_time.elapsed());
                                 }
-                                break;
+                            } else {
+                                log::warn!("unhandled message: {}", message.payload_type_name());
                             }
+                        } else {
+                            log::info!("rpc connection closed {:?}", addr);
+                            break;
                         }
-
-                        if let Some(message) = message {
-                            log::warn!("unhandled message: {:?}", message);
+                    }
+                    handle_io = handle_io => {
+                        if let Err(err) = handle_io {
+                            log::error!("error handling rpc connection {:?} - {:?}", addr, err);
                         }
-                    } else {
-                        log::info!("rpc connection closed {:?}", addr);
                         break;
                     }
                 }
-                handle_io = handle_io => {
-                    if let Err(err) = handle_io {
-                        log::error!("error handling rpc connection {:?} - {:?}", addr, err);
-                    }
-                    break;
-                }
             }
-        }
 
-        if let Err(err) = this.rpc.sign_out(connection_id, &this.state).await {
-            log::error!("error signing out connection {:?} - {:?}", addr, err);
+            if let Err(err) = this.rpc.sign_out(connection_id, &this.state).await {
+                log::error!("error signing out connection {:?} - {:?}", addr, err);
+            }
         }
     }
 }

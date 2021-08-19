@@ -82,14 +82,12 @@ impl<T: Rng> Iterator for RandomCharIter<T> {
     }
 }
 
-pub async fn log_async_errors<F>(f: F) -> impl Future<Output = ()>
+pub async fn log_async_errors<F>(f: F)
 where
     F: Future<Output = anyhow::Result<()>>,
 {
-    async {
-        if let Err(error) = f.await {
-            log::error!("{}", error)
-        }
+    if let Err(error) = f.await {
+        log::error!("{}", error)
     }
 }
 

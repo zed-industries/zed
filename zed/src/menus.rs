@@ -19,13 +19,13 @@ pub fn menus(state: &Arc<AppState>) -> Vec<Menu<'static>> {
                     name: "Share",
                     keystroke: None,
                     action: "workspace:share_worktree",
-                    arg: Some(Box::new(state.clone())),
+                    arg: None,
                 },
                 MenuItem::Action {
                     name: "Join",
                     keystroke: None,
                     action: "workspace:join_worktree",
-                    arg: Some(Box::new(state.clone())),
+                    arg: None,
                 },
                 MenuItem::Action {
                     name: "Quit",

@@ -13,7 +13,6 @@ use zed::{
     workspace::{self, OpenParams},
     AppState,
 };
-use zrpc::ForegroundRouter;
 
 fn main() {
     init_logger();
@@ -31,8 +30,7 @@ fn main() {
         settings_tx: Arc::new(Mutex::new(settings_tx)),
         settings,
         themes,
-        rpc_router: Arc::new(ForegroundRouter::new()),
-        rpc: rpc::Client::new(languages),
+        rpc: rpc::Client::new(),
         fs: Arc::new(RealFs),
     };
 

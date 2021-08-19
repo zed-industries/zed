@@ -213,7 +213,7 @@ impl Worktree {
                     .detach();
                 }
 
-                let _message_handlers = vec![
+                let _subscriptions = vec![
                     rpc.subscribe_from_model(remote_id, cx, Self::handle_add_peer),
                     rpc.subscribe_from_model(remote_id, cx, Self::handle_remove_peer),
                     rpc.subscribe_from_model(remote_id, cx, Self::handle_update),
@@ -234,7 +234,7 @@ impl Worktree {
                         .map(|p| (PeerId(p.peer_id), p.replica_id as ReplicaId))
                         .collect(),
                     languages,
-                    _message_handlers,
+                    _subscriptions,
                 })
             })
         });
@@ -282,7 +282,7 @@ impl Worktree {
 
     pub fn handle_add_peer(
         &mut self,
-        envelope: &TypedEnvelope<proto::AddPeer>,
+        envelope: TypedEnvelope<proto::AddPeer>,
         _: rpc::Client,
         cx: &mut ModelContext<Self>,
     ) -> Result<()> {
@@ -294,7 +294,7 @@ impl Worktree {
 
     pub fn handle_remove_peer(
         &mut self,
-        envelope: &TypedEnvelope<proto::RemovePeer>,
+        envelope: TypedEnvelope<proto::RemovePeer>,
         _: rpc::Client,
         cx: &mut ModelContext<Self>,
     ) -> Result<()> {
@@ -306,7 +306,7 @@ impl Worktree {
 
     pub fn handle_update(
         &mut self,
-        envelope: &TypedEnvelope<proto::UpdateWorktree>,
+        envelope: TypedEnvelope<proto::UpdateWorktree>,
         _: rpc::Client,
         cx: &mut ModelContext<Self>,
     ) -> anyhow::Result<()> {
@@ -317,7 +317,7 @@ impl Worktree {
 
     pub fn handle_open_buffer(
         &mut self,
-        envelope: &TypedEnvelope<proto::OpenBuffer>,
+        envelope: TypedEnvelope<proto::OpenBuffer>,
         rpc: rpc::Client,
         cx: &mut ModelContext<Self>,
     ) -> anyhow::Result<()> {
@@ -340,7 +340,7 @@ impl Worktree {
 
     pub fn handle_close_buffer(
         &mut self,
-        envelope: &TypedEnvelope<proto::CloseBuffer>,
+        envelope: TypedEnvelope<proto::CloseBuffer>,
         _: rpc::Client,
         cx: &mut ModelContext<Self>,
     ) -> anyhow::Result<()> {
@@ -396,7 +396,7 @@ impl Worktree {
 
     pub fn handle_update_buffer(
         &mut self,
-        envelope: &TypedEnvelope<proto::UpdateBuffer>,
+        envelope: TypedEnvelope<proto::UpdateBuffer>,
         _: rpc::Client,
         cx: &mut ModelContext<Self>,
     ) -> Result<()> {
@@ -443,7 +443,7 @@ impl Worktree {
 
     pub fn handle_save_buffer(
         &mut self,
-        envelope: &TypedEnvelope<proto::SaveBuffer>,
+        envelope: TypedEnvelope<proto::SaveBuffer>,
         rpc: rpc::Client,
         cx: &mut ModelContext<Self>,
     ) -> Result<()> {
@@ -485,7 +485,7 @@ impl Worktree {
 
     pub fn handle_buffer_saved(
         &mut self,
-        envelope: &TypedEnvelope<proto::BufferSaved>,
+        envelope: TypedEnvelope<proto::BufferSaved>,
         _: rpc::Client,
         cx: &mut ModelContext<Self>,
     ) -> Result<()> {
@@ -791,7 +791,7 @@ impl LocalWorktree {
 
     pub fn open_remote_buffer(
         &mut self,
-        envelope: &TypedEnvelope<proto::OpenBuffer>,
+        envelope: TypedEnvelope<proto::OpenBuffer>,
         cx: &mut ModelContext<Worktree>,
     ) -> Task<Result<proto::OpenBufferResponse>> {
         let peer_id = envelope.original_sender_id();
@@ -818,11 +818,12 @@ impl LocalWorktree {
 
     pub fn close_remote_buffer(
         &mut self,
-        envelope: &TypedEnvelope<proto::CloseBuffer>,
-        _: &mut ModelContext<Worktree>,
+        envelope: TypedEnvelope<proto::CloseBuffer>,
+        cx: &mut ModelContext<Worktree>,
     ) -> Result<()> {
         if let Some(shared_buffers) = self.shared_buffers.get_mut(&envelope.original_sender_id()?) {
             shared_buffers.remove(&envelope.payload.buffer_id);
+            cx.notify();
         }
 
         Ok(())
@@ -830,7 +831,7 @@ impl LocalWorktree {
 
     pub fn add_peer(
         &mut self,
-        envelope: &TypedEnvelope<proto::AddPeer>,
+        envelope: TypedEnvelope<proto::AddPeer>,
         cx: &mut ModelContext<Worktree>,
     ) -> Result<()> {
         let peer = envelope
@@ -847,7 +848,7 @@ impl LocalWorktree {
 
     pub fn remove_peer(
         &mut self,
-        envelope: &TypedEnvelope<proto::RemovePeer>,
+        envelope: TypedEnvelope<proto::RemovePeer>,
         cx: &mut ModelContext<Worktree>,
     ) -> Result<()> {
         let peer_id = PeerId(envelope.payload.peer_id);
@@ -994,7 +995,7 @@ impl LocalWorktree {
                 .detach();
 
             this.update(&mut cx, |worktree, cx| {
-                let _message_handlers = vec![
+                let _subscriptions = vec![
                     rpc.subscribe_from_model(remote_id, cx, Worktree::handle_add_peer),
                     rpc.subscribe_from_model(remote_id, cx, Worktree::handle_remove_peer),
                     rpc.subscribe_from_model(remote_id, cx, Worktree::handle_open_buffer),
@@ -1008,7 +1009,7 @@ impl LocalWorktree {
                     rpc,
                     remote_id: share_response.worktree_id,
                     snapshots_tx: snapshots_to_send_tx,
-                    _message_handlers,
+                    _subscriptions,
                 });
             });
 
@@ -1068,7 +1069,7 @@ struct ShareState {
     rpc: rpc::Client,
     remote_id: u64,
     snapshots_tx: Sender<Snapshot>,
-    _message_handlers: Vec<Task<()>>,
+    _subscriptions: Vec<rpc::Subscription>,
 }
 
 pub struct RemoteWorktree {
@@ -1081,7 +1082,7 @@ pub struct RemoteWorktree {
     open_buffers: HashMap<usize, RemoteBuffer>,
     peers: HashMap<PeerId, ReplicaId>,
     languages: Arc<LanguageRegistry>,
-    _message_handlers: Vec<Task<()>>,
+    _subscriptions: Vec<rpc::Subscription>,
 }
 
 impl RemoteWorktree {
@@ -1151,7 +1152,7 @@ impl RemoteWorktree {
 
     fn update_from_remote(
         &mut self,
-        envelope: &TypedEnvelope<proto::UpdateWorktree>,
+        envelope: TypedEnvelope<proto::UpdateWorktree>,
         cx: &mut ModelContext<Worktree>,
     ) -> Result<()> {
         let mut tx = self.updates_tx.clone();
@@ -1167,7 +1168,7 @@ impl RemoteWorktree {
 
     pub fn add_peer(
         &mut self,
-        envelope: &TypedEnvelope<proto::AddPeer>,
+        envelope: TypedEnvelope<proto::AddPeer>,
         cx: &mut ModelContext<Worktree>,
     ) -> Result<()> {
         let peer = envelope
@@ -1183,7 +1184,7 @@ impl RemoteWorktree {
 
     pub fn remove_peer(
         &mut self,
-        envelope: &TypedEnvelope<proto::RemovePeer>,
+        envelope: TypedEnvelope<proto::RemovePeer>,
         cx: &mut ModelContext<Worktree>,
     ) -> Result<()> {
         let peer_id = PeerId(envelope.payload.peer_id);
@@ -2761,7 +2762,7 @@ mod tests {
                 replica_id: 1,
                 peers: Vec::new(),
             },
-            rpc::Client::new(Default::default()),
+            rpc::Client::new(),
             Default::default(),
             &mut cx.to_async(),
         )

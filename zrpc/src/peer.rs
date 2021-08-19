@@ -1,4 +1,4 @@
-use crate::proto::{self, EnvelopedMessage, MessageStream, RequestMessage};
+use crate::proto::{self, AnyTypedEnvelope, EnvelopedMessage, MessageStream, RequestMessage};
 use anyhow::{anyhow, Context, Result};
 use async_lock::{Mutex, RwLock};
 use async_tungstenite::tungstenite::{Error as WebSocketError, Message as WebSocketMessage};
@@ -8,7 +8,6 @@ use postage::{
     prelude::{Sink as _, Stream as _},
 };
 use std::{
-    any::Any,
     collections::HashMap,
     fmt,
     future::Future,
@@ -105,7 +104,7 @@ impl Peer {
     ) -> (
         ConnectionId,
         impl Future<Output = anyhow::Result<()>> + Send,
-        mpsc::Receiver<Box<dyn Any + Sync + Send>>,
+        mpsc::Receiver<Box<dyn AnyTypedEnvelope>>,
     )
     where
         Conn: futures::Sink<WebSocketMessage, Error = WebSocketError>
@@ -409,10 +408,11 @@ mod tests {
             client2.disconnect(client1_conn_id).await;
 
             async fn handle_messages(
-                mut messages: mpsc::Receiver<Box<dyn Any + Sync + Send>>,
+                mut messages: mpsc::Receiver<Box<dyn AnyTypedEnvelope>>,
                 peer: Arc<Peer>,
             ) -> Result<()> {
                 while let Some(envelope) = messages.next().await {
+                    let envelope = envelope.into_any();
                     if let Some(envelope) = envelope.downcast_ref::<TypedEnvelope<proto::Ping>>() {
                         let receipt = envelope.receipt();
                         peer.respond(

@@ -162,7 +162,7 @@ pub fn build_app_state(cx: &AppContext) -> Arc<AppState> {
         settings,
         themes,
         languages: languages.clone(),
-        rpc: rpc::Client::new(languages),
+        rpc: rpc::Client::new(),
         fs: Arc::new(RealFs),
     })
 }

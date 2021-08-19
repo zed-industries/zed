@@ -3,7 +3,7 @@ use anyhow::Result;
 use async_tungstenite::tungstenite::{Error as WebSocketError, Message as WebSocketMessage};
 use futures::{SinkExt as _, StreamExt as _};
 use prost::Message;
-use std::any::Any;
+use std::any::{Any, TypeId};
 use std::{
     io,
     time::{Duration, SystemTime, UNIX_EPOCH},
@@ -31,9 +31,34 @@ pub trait RequestMessage: EnvelopedMessage {
     type Response: EnvelopedMessage;
 }
 
+pub trait AnyTypedEnvelope: 'static + Send + Sync {
+    fn payload_type_id(&self) -> TypeId;
+    fn payload_type_name(&self) -> &'static str;
+    fn as_any(&self) -> &dyn Any;
+    fn into_any(self: Box<Self>) -> Box<dyn Any + Send + Sync>;
+}
+
+impl<T: EnvelopedMessage> AnyTypedEnvelope for TypedEnvelope<T> {
+    fn payload_type_id(&self) -> TypeId {
+        TypeId::of::<T>()
+    }
+
+    fn payload_type_name(&self) -> &'static str {
+        T::NAME
+    }
+
+    fn as_any(&self) -> &dyn Any {
+        self
+    }
+
+    fn into_any(self: Box<Self>) -> Box<dyn Any + Send + Sync> {
+        self
+    }
+}
+
 macro_rules! messages {
     ($($name:ident),* $(,)?) => {
-        pub fn build_typed_envelope(sender_id: ConnectionId, envelope: Envelope) -> Option<Box<dyn Any + Send + Sync>> {
+        pub fn build_typed_envelope(sender_id: ConnectionId, envelope: Envelope) -> Option<Box<dyn AnyTypedEnvelope>> {
             match envelope.payload {
                 $(Some(envelope::Payload::$name(payload)) => {
                     Some(Box::new(TypedEnvelope {

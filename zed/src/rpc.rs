@@ -1,15 +1,17 @@
-use crate::language::LanguageRegistry;
 use anyhow::{anyhow, Context, Result};
 use async_tungstenite::tungstenite::http::Request;
 use async_tungstenite::tungstenite::{Error as WebSocketError, Message as WebSocketMessage};
-use futures::StreamExt;
 use gpui::{AsyncAppContext, Entity, ModelContext, Task};
 use lazy_static::lazy_static;
-use smol::lock::RwLock;
-use std::time::Duration;
+use parking_lot::RwLock;
+use postage::prelude::Stream;
+use std::any::TypeId;
+use std::collections::HashMap;
+use std::sync::Weak;
+use std::time::{Duration, Instant};
 use std::{convert::TryFrom, future::Future, sync::Arc};
 use surf::Url;
-use zrpc::proto::EntityMessage;
+use zrpc::proto::{AnyTypedEnvelope, EntityMessage};
 pub use zrpc::{proto, ConnectionId, PeerId, TypedEnvelope};
 use zrpc::{
     proto::{EnvelopedMessage, RequestMessage},
@@ -24,22 +26,37 @@ lazy_static! {
 #[derive(Clone)]
 pub struct Client {
     peer: Arc<Peer>,
-    pub state: Arc<RwLock<ClientState>>,
+    state: Arc<RwLock<ClientState>>,
 }
 
+#[derive(Default)]
 pub struct ClientState {
     connection_id: Option<ConnectionId>,
-    pub languages: Arc<LanguageRegistry>,
+    entity_id_extractors: HashMap<TypeId, Box<dyn Send + Sync + Fn(&dyn AnyTypedEnvelope) -> u64>>,
+    model_handlers: HashMap<
+        (TypeId, u64),
+        Box<dyn Send + Sync + FnMut(Box<dyn AnyTypedEnvelope>, &mut AsyncAppContext)>,
+    >,
+}
+
+pub struct Subscription {
+    state: Weak<RwLock<ClientState>>,
+    id: (TypeId, u64),
+}
+
+impl Drop for Subscription {
+    fn drop(&mut self) {
+        if let Some(state) = self.state.upgrade() {
+            let _ = state.write().model_handlers.remove(&self.id).unwrap();
+        }
+    }
 }
 
 impl Client {
-    pub fn new(languages: Arc<LanguageRegistry>) -> Self {
+    pub fn new() -> Self {
         Self {
             peer: Peer::new(),
-            state: Arc::new(RwLock::new(ClientState {
-                connection_id: None,
-                languages,
-            })),
+            state: Default::default(),
         }
     }
 
@@ -48,31 +65,56 @@ impl Client {
         remote_id: u64,
         cx: &mut ModelContext<M>,
         mut handler: F,
-    ) -> Task<()>
+    ) -> Subscription
     where
         T: EntityMessage,
         M: Entity,
-        F: 'static + FnMut(&mut M, &TypedEnvelope<T>, Client, &mut ModelContext<M>) -> Result<()>,
+        F: 'static
+            + Send
+            + Sync
+            + FnMut(&mut M, TypedEnvelope<T>, Client, &mut ModelContext<M>) -> Result<()>,
     {
-        let rpc = self.clone();
-        let mut incoming = self.peer.subscribe::<T>();
-        cx.spawn_weak(|model, mut cx| async move {
-            while let Some(envelope) = incoming.next().await {
-                if envelope.payload.remote_entity_id() == remote_id {
-                    if let Some(model) = model.upgrade(&cx) {
-                        model.update(&mut cx, |model, cx| {
-                            if let Err(error) = handler(model, &envelope, rpc.clone(), cx) {
-                                log::error!("error handling message: {}", error)
-                            }
-                        });
-                    }
+        let subscription_id = (TypeId::of::<T>(), remote_id);
+        let client = self.clone();
+        let mut state = self.state.write();
+        let model = cx.handle().downgrade();
+        state
+            .entity_id_extractors
+            .entry(subscription_id.0)
+            .or_insert_with(|| {
+                Box::new(|envelope| {
+                    let envelope = envelope
+                        .as_any()
+                        .downcast_ref::<TypedEnvelope<T>>()
+                        .unwrap();
+                    envelope.payload.remote_entity_id()
+                })
+            });
+        let prev_handler = state.model_handlers.insert(
+            subscription_id,
+            Box::new(move |envelope, cx| {
+                if let Some(model) = model.upgrade(cx) {
+                    let envelope = envelope.into_any().downcast::<TypedEnvelope<T>>().unwrap();
+                    model.update(cx, |model, cx| {
+                        if let Err(error) = handler(model, *envelope, client.clone(), cx) {
+                            log::error!("error handling message: {}", error)
+                        }
+                    });
                 }
-            }
-        })
+            }),
+        );
+        if prev_handler.is_some() {
+            panic!("registered a handler for the same entity twice")
+        }
+
+        Subscription {
+            state: Arc::downgrade(&self.state),
+            id: subscription_id,
+        }
     }
 
     pub async fn log_in_and_connect(&self, cx: AsyncAppContext) -> surf::Result<()> {
-        if self.state.read().await.connection_id.is_some() {
+        if self.state.read().connection_id.is_some() {
             return Ok(());
         }
 
@@ -110,8 +152,39 @@ impl Client {
             + Unpin
             + Send,
     {
-        let (connection_id, handle_io, handle_messages) = self.peer.add_connection(conn).await;
-        cx.foreground().spawn(handle_messages).detach();
+        let (connection_id, handle_io, mut incoming) = self.peer.add_connection(conn).await;
+        {
+            let mut cx = cx.clone();
+            let state = self.state.clone();
+            cx.foreground()
+                .spawn(async move {
+                    while let Some(message) = incoming.recv().await {
+                        let mut state = state.write();
+                        if let Some(extract_entity_id) =
+                            state.entity_id_extractors.get(&message.payload_type_id())
+                        {
+                            let entity_id = (extract_entity_id)(message.as_ref());
+                            if let Some(handler) = state
+                                .model_handlers
+                                .get_mut(&(message.payload_type_id(), entity_id))
+                            {
+                                let start_time = Instant::now();
+                                log::info!("RPC client message {}", message.payload_type_name());
+                                (handler)(message, &mut cx);
+                                log::info!(
+                                    "RPC message handled. duration:{:?}",
+                                    start_time.elapsed()
+                                );
+                            } else {
+                                log::info!("unhandled message {}", message.payload_type_name());
+                            }
+                        } else {
+                            log::info!("unhandled message {}", message.payload_type_name());
+                        }
+                    }
+                })
+                .detach();
+        }
         cx.background()
             .spawn(async move {
                 if let Err(error) = handle_io.await {
@@ -119,7 +192,7 @@ impl Client {
                 }
             })
             .detach();
-        self.state.write().await.connection_id = Some(connection_id);
+        self.state.write().connection_id = Some(connection_id);
         Ok(())
     }
 
@@ -200,27 +273,24 @@ impl Client {
     }
 
     pub async fn disconnect(&self) -> Result<()> {
-        let conn_id = self.connection_id().await?;
+        let conn_id = self.connection_id()?;
         self.peer.disconnect(conn_id).await;
         Ok(())
     }
 
-    async fn connection_id(&self) -> Result<ConnectionId> {
+    fn connection_id(&self) -> Result<ConnectionId> {
         self.state
             .read()
-            .await
             .connection_id
             .ok_or_else(|| anyhow!("not connected"))
     }
 
     pub async fn send<T: EnvelopedMessage>(&self, message: T) -> Result<()> {
-        self.peer.send(self.connection_id().await?, message).await
+        self.peer.send(self.connection_id()?, message).await
     }
 
     pub async fn request<T: RequestMessage>(&self, request: T) -> Result<T::Response> {
-        self.peer
-            .request(self.connection_id().await?, request)
-            .await
+        self.peer.request(self.connection_id()?, request).await
     }
 
     pub fn respond<T: RequestMessage>(

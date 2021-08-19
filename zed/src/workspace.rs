@@ -108,7 +108,7 @@ fn open_new(app_state: &Arc<AppState>, cx: &mut MutableAppContext) {
 fn join_worktree(app_state: &Arc<AppState>, cx: &mut MutableAppContext) {
     cx.add_window(|cx| {
         let mut view = Workspace::new(app_state.as_ref(), cx);
-        view.join_worktree(&app_state, cx);
+        view.join_worktree(&(), cx);
         view
     });
 }
@@ -725,7 +725,7 @@ impl Workspace {
         };
     }
 
-    fn share_worktree(&mut self, app_state: &Arc<AppState>, cx: &mut ViewContext<Self>) {
+    fn share_worktree(&mut self, _: &(), cx: &mut ViewContext<Self>) {
         let rpc = self.rpc.clone();
         let platform = cx.platform();
 
@@ -757,7 +757,7 @@ impl Workspace {
         .detach();
     }
 
-    fn join_worktree(&mut self, app_state: &Arc<AppState>, cx: &mut ViewContext<Self>) {
+    fn join_worktree(&mut self, _: &(), cx: &mut ViewContext<Self>) {
         let rpc = self.rpc.clone();
         let languages = self.languages.clone();
 

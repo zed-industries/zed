@@ -1,6 +1,6 @@
 use crate::rpc::{self, Client};
 use anyhow::Result;
-use gpui::{Entity, ModelContext, Task, WeakModelHandle};
+use gpui::{Entity, ModelContext, WeakModelHandle};
 use std::{
     collections::{HashMap, VecDeque},
     sync::Arc,
@@ -22,7 +22,7 @@ pub struct Channel {
     first_message_id: Option<u64>,
     messages: Option<VecDeque<ChannelMessage>>,
     rpc: Arc<Client>,
-    _message_handler: Task<()>,
+    _subscription: rpc::Subscription,
 }
 
 pub struct ChannelMessage {
@@ -50,20 +50,20 @@ impl Entity for Channel {
 
 impl Channel {
     pub fn new(details: ChannelDetails, rpc: Arc<Client>, cx: &mut ModelContext<Self>) -> Self {
-        let _message_handler = rpc.subscribe_from_model(details.id, cx, Self::handle_message_sent);
+        let _subscription = rpc.subscribe_from_model(details.id, cx, Self::handle_message_sent);
 
         Self {
             details,
             rpc,
             first_message_id: None,
             messages: None,
-            _message_handler,
+            _subscription,
         }
     }
 
     fn handle_message_sent(
         &mut self,
-        message: &TypedEnvelope<ChannelMessageSent>,
+        message: TypedEnvelope<ChannelMessageSent>,
         rpc: rpc::Client,
         cx: &mut ModelContext<Self>,
     ) -> Result<()> {
