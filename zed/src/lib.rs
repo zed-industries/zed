@@ -30,7 +30,7 @@ pub struct AppState {
     pub settings: watch::Receiver<Settings>,
     pub languages: Arc<language::LanguageRegistry>,
     pub themes: Arc<settings::ThemeRegistry>,
-    pub rpc: rpc::Client,
+    pub rpc: Arc<rpc::Client>,
     pub fs: Arc<dyn fs::Fs>,
 }
 

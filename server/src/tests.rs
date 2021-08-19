@@ -549,7 +549,11 @@ impl TestServer {
         }
     }
 
-    async fn create_client(&mut self, cx: &mut TestAppContext, name: &str) -> (UserId, Client) {
+    async fn create_client(
+        &mut self,
+        cx: &mut TestAppContext,
+        name: &str,
+    ) -> (UserId, Arc<Client>) {
         let user_id = self.app_state.db.create_user(name, false).await.unwrap();
         let client = Client::new();
         let (client_conn, server_conn) = Channel::bidirectional();

@@ -312,7 +312,7 @@ pub struct State {
 pub struct Workspace {
     pub settings: watch::Receiver<Settings>,
     languages: Arc<LanguageRegistry>,
-    rpc: rpc::Client,
+    rpc: Arc<rpc::Client>,
     fs: Arc<dyn Fs>,
     modal: Option<AnyViewHandle>,
     center: PaneGroup,

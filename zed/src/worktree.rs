@@ -107,7 +107,7 @@ impl Worktree {
     }
 
     pub async fn open_remote(
-        rpc: rpc::Client,
+        rpc: Arc<rpc::Client>,
         id: u64,
         access_token: String,
         languages: Arc<LanguageRegistry>,
@@ -125,7 +125,7 @@ impl Worktree {
 
     async fn remote(
         open_response: proto::OpenWorktreeResponse,
-        rpc: rpc::Client,
+        rpc: Arc<rpc::Client>,
         languages: Arc<LanguageRegistry>,
         cx: &mut AsyncAppContext,
     ) -> Result<ModelHandle<Self>> {
@@ -283,7 +283,7 @@ impl Worktree {
     pub fn handle_add_peer(
         &mut self,
         envelope: TypedEnvelope<proto::AddPeer>,
-        _: rpc::Client,
+        _: Arc<rpc::Client>,
         cx: &mut ModelContext<Self>,
     ) -> Result<()> {
         match self {
@@ -295,7 +295,7 @@ impl Worktree {
     pub fn handle_remove_peer(
         &mut self,
         envelope: TypedEnvelope<proto::RemovePeer>,
-        _: rpc::Client,
+        _: Arc<rpc::Client>,
         cx: &mut ModelContext<Self>,
     ) -> Result<()> {
         match self {
@@ -307,7 +307,7 @@ impl Worktree {
     pub fn handle_update(
         &mut self,
         envelope: TypedEnvelope<proto::UpdateWorktree>,
-        _: rpc::Client,
+        _: Arc<rpc::Client>,
         cx: &mut ModelContext<Self>,
     ) -> anyhow::Result<()> {
         self.as_remote_mut()
@@ -318,7 +318,7 @@ impl Worktree {
     pub fn handle_open_buffer(
         &mut self,
         envelope: TypedEnvelope<proto::OpenBuffer>,
-        rpc: rpc::Client,
+        rpc: Arc<rpc::Client>,
         cx: &mut ModelContext<Self>,
     ) -> anyhow::Result<()> {
         let receipt = envelope.receipt();
@@ -341,7 +341,7 @@ impl Worktree {
     pub fn handle_close_buffer(
         &mut self,
         envelope: TypedEnvelope<proto::CloseBuffer>,
-        _: rpc::Client,
+        _: Arc<rpc::Client>,
         cx: &mut ModelContext<Self>,
     ) -> anyhow::Result<()> {
         self.as_local_mut()
@@ -397,7 +397,7 @@ impl Worktree {
     pub fn handle_update_buffer(
         &mut self,
         envelope: TypedEnvelope<proto::UpdateBuffer>,
-        _: rpc::Client,
+        _: Arc<rpc::Client>,
         cx: &mut ModelContext<Self>,
     ) -> Result<()> {
         let payload = envelope.payload.clone();
@@ -444,7 +444,7 @@ impl Worktree {
     pub fn handle_save_buffer(
         &mut self,
         envelope: TypedEnvelope<proto::SaveBuffer>,
-        rpc: rpc::Client,
+        rpc: Arc<rpc::Client>,
         cx: &mut ModelContext<Self>,
     ) -> Result<()> {
         let sender_id = envelope.original_sender_id()?;
@@ -488,7 +488,7 @@ impl Worktree {
     pub fn handle_buffer_saved(
         &mut self,
         envelope: TypedEnvelope<proto::BufferSaved>,
-        _: rpc::Client,
+        _: Arc<rpc::Client>,
         cx: &mut ModelContext<Self>,
     ) -> Result<()> {
         let payload = envelope.payload.clone();
@@ -966,7 +966,7 @@ impl LocalWorktree {
 
     pub fn share(
         &mut self,
-        rpc: rpc::Client,
+        rpc: Arc<rpc::Client>,
         cx: &mut ModelContext<Worktree>,
     ) -> Task<anyhow::Result<(u64, String)>> {
         let snapshot = self.snapshot();
@@ -1068,7 +1068,7 @@ impl fmt::Debug for LocalWorktree {
 }
 
 struct ShareState {
-    rpc: rpc::Client,
+    rpc: Arc<rpc::Client>,
     remote_id: u64,
     snapshots_tx: Sender<Snapshot>,
     _subscriptions: Vec<rpc::Subscription>,
@@ -1078,7 +1078,7 @@ pub struct RemoteWorktree {
     remote_id: u64,
     snapshot: Snapshot,
     snapshot_rx: watch::Receiver<Snapshot>,
-    rpc: rpc::Client,
+    rpc: Arc<rpc::Client>,
     updates_tx: postage::mpsc::Sender<proto::UpdateWorktree>,
     replica_id: ReplicaId,
     open_buffers: HashMap<usize, RemoteBuffer>,

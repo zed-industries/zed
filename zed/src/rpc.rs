@@ -23,14 +23,13 @@ lazy_static! {
         std::env::var("ZED_SERVER_URL").unwrap_or("https://zed.dev:443".to_string());
 }
 
-#[derive(Clone)]
 pub struct Client {
     peer: Arc<Peer>,
-    state: Arc<RwLock<ClientState>>,
+    state: RwLock<ClientState>,
 }
 
 #[derive(Default)]
-pub struct ClientState {
+struct ClientState {
     connection_id: Option<ConnectionId>,
     entity_id_extractors: HashMap<TypeId, Box<dyn Send + Sync + Fn(&dyn AnyTypedEnvelope) -> u64>>,
     model_handlers: HashMap<
@@ -40,28 +39,33 @@ pub struct ClientState {
 }
 
 pub struct Subscription {
-    state: Weak<RwLock<ClientState>>,
+    client: Weak<Client>,
     id: (TypeId, u64),
 }
 
 impl Drop for Subscription {
     fn drop(&mut self) {
-        if let Some(state) = self.state.upgrade() {
-            let _ = state.write().model_handlers.remove(&self.id).unwrap();
+        if let Some(client) = self.client.upgrade() {
+            client
+                .state
+                .write()
+                .model_handlers
+                .remove(&self.id)
+                .unwrap();
         }
     }
 }
 
 impl Client {
-    pub fn new() -> Self {
-        Self {
+    pub fn new() -> Arc<Self> {
+        Arc::new(Self {
             peer: Peer::new(),
             state: Default::default(),
-        }
+        })
     }
 
     pub fn subscribe_from_model<T, M, F>(
-        &self,
+        self: &Arc<Self>,
         remote_id: u64,
         cx: &mut ModelContext<M>,
         mut handler: F,
@@ -72,7 +76,7 @@ impl Client {
         F: 'static
             + Send
             + Sync
-            + FnMut(&mut M, TypedEnvelope<T>, Client, &mut ModelContext<M>) -> Result<()>,
+            + FnMut(&mut M, TypedEnvelope<T>, Arc<Self>, &mut ModelContext<M>) -> Result<()>,
     {
         let subscription_id = (TypeId::of::<T>(), remote_id);
         let client = self.clone();
@@ -108,12 +112,12 @@ impl Client {
         }
 
         Subscription {
-            state: Arc::downgrade(&self.state),
+            client: Arc::downgrade(self),
             id: subscription_id,
         }
     }
 
-    pub async fn log_in_and_connect(&self, cx: AsyncAppContext) -> surf::Result<()> {
+    pub async fn log_in_and_connect(self: &Arc<Self>, cx: AsyncAppContext) -> surf::Result<()> {
         if self.state.read().connection_id.is_some() {
             return Ok(());
         }
@@ -144,7 +148,11 @@ impl Client {
         Ok(())
     }
 
-    pub async fn add_connection<Conn>(&self, conn: Conn, cx: AsyncAppContext) -> surf::Result<()>
+    pub async fn add_connection<Conn>(
+        self: &Arc<Self>,
+        conn: Conn,
+        cx: AsyncAppContext,
+    ) -> surf::Result<()>
     where
         Conn: 'static
             + futures::Sink<WebSocketMessage, Error = WebSocketError>
@@ -155,11 +163,11 @@ impl Client {
         let (connection_id, handle_io, mut incoming) = self.peer.add_connection(conn).await;
         {
             let mut cx = cx.clone();
-            let state = self.state.clone();
+            let this = self.clone();
             cx.foreground()
                 .spawn(async move {
                     while let Some(message) = incoming.recv().await {
-                        let mut state = state.write();
+                        let mut state = this.state.write();
                         if let Some(extract_entity_id) =
                             state.entity_id_extractors.get(&message.payload_type_id())
                         {

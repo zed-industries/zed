@@ -64,7 +64,7 @@ impl Channel {
     fn handle_message_sent(
         &mut self,
         message: TypedEnvelope<ChannelMessageSent>,
-        rpc: rpc::Client,
+        rpc: Arc<rpc::Client>,
         cx: &mut ModelContext<Self>,
     ) -> Result<()> {
         Ok(())
