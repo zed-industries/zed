@@ -728,10 +728,9 @@ impl Workspace {
     fn share_worktree(&mut self, app_state: &Arc<AppState>, cx: &mut ViewContext<Self>) {
         let rpc = self.rpc.clone();
         let platform = cx.platform();
-        let router = app_state.rpc_router.clone();
 
         let task = cx.spawn(|this, mut cx| async move {
-            rpc.log_in_and_connect(router, cx.clone()).await?;
+            rpc.log_in_and_connect(cx.clone()).await?;
 
             let share_task = this.update(&mut cx, |this, cx| {
                 let worktree = this.worktrees.iter().next()?;
@@ -761,10 +760,9 @@ impl Workspace {
     fn join_worktree(&mut self, app_state: &Arc<AppState>, cx: &mut ViewContext<Self>) {
         let rpc = self.rpc.clone();
         let languages = self.languages.clone();
-        let router = app_state.rpc_router.clone();
 
         let task = cx.spawn(|this, mut cx| async move {
-            rpc.log_in_and_connect(router, cx.clone()).await?;
+            rpc.log_in_and_connect(cx.clone()).await?;
 
             let worktree_url = cx
                 .platform()

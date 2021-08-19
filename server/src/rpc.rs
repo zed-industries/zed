@@ -30,13 +30,15 @@ use time::OffsetDateTime;
 use zrpc::{
     auth::random_token,
     proto::{self, EnvelopedMessage},
-    ConnectionId, Peer, Router, TypedEnvelope,
+    ConnectionId, Peer, TypedEnvelope,
 };
 
 type ReplicaId = u16;
 
 type Handler = Box<
-    dyn Fn(&mut Option<Box<dyn Any + Send + Sync>>, Arc<Server>) -> Option<BoxFuture<'static, ()>>,
+    dyn Send
+        + Sync
+        + Fn(&mut Option<Box<dyn Any + Send + Sync>>, Arc<Server>) -> Option<BoxFuture<'static, ()>>,
 >;
 
 #[derive(Default)]
@@ -48,7 +50,7 @@ struct ServerBuilder {
 impl ServerBuilder {
     pub fn on_message<F, Fut, M>(&mut self, handler: F) -> &mut Self
     where
-        F: 'static + Fn(Box<TypedEnvelope<M>>, Arc<Server>) -> Fut,
+        F: 'static + Send + Sync + Fn(Box<TypedEnvelope<M>>, Arc<Server>) -> Fut,
         Fut: 'static + Send + Future<Output = ()>,
         M: EnvelopedMessage,
     {
@@ -73,23 +75,23 @@ impl ServerBuilder {
         self
     }
 
-    pub fn build(self, rpc: Arc<zrpc::peer2::Peer>, state: Arc<AppState>) -> Arc<Server> {
+    pub fn build(self, rpc: &Arc<Peer>, state: &Arc<AppState>) -> Arc<Server> {
         Arc::new(Server {
-            rpc,
-            state,
+            rpc: rpc.clone(),
+            state: state.clone(),
             handlers: self.handlers,
         })
     }
 }
 
-struct Server {
-    rpc: Arc<zrpc::peer2::Peer>,
+pub struct Server {
+    rpc: Arc<Peer>,
     state: Arc<AppState>,
     handlers: Vec<Handler>,
 }
 
 impl Server {
-    pub async fn add_connection<Conn>(
+    pub async fn handle_connection<Conn>(
         self: &Arc<Self>,
         connection: Conn,
         addr: String,
@@ -332,99 +334,31 @@ impl State {
     }
 }
 
-trait MessageHandler<'a, M: proto::EnvelopedMessage> {
-    type Output: 'a + Send + Future<Output = tide::Result<()>>;
-
-    fn handle(
-        &self,
-        message: TypedEnvelope<M>,
-        rpc: &'a Arc<Peer>,
-        app_state: &'a Arc<AppState>,
-    ) -> Self::Output;
-}
-
-impl<'a, M, F, Fut> MessageHandler<'a, M> for F
-where
-    M: proto::EnvelopedMessage,
-    F: Fn(TypedEnvelope<M>, &'a Arc<Peer>, &'a Arc<AppState>) -> Fut,
-    Fut: 'a + Send + Future<Output = tide::Result<()>>,
-{
-    type Output = Fut;
-
-    fn handle(
-        &self,
-        message: TypedEnvelope<M>,
-        rpc: &'a Arc<Peer>,
-        app_state: &'a Arc<AppState>,
-    ) -> Self::Output {
-        (self)(message, rpc, app_state)
-    }
-}
-
-fn on_message<M, H>(router: &mut Router, rpc: &Arc<Peer>, app_state: &Arc<AppState>, handler: H)
-where
-    M: EnvelopedMessage,
-    H: 'static + Clone + Send + Sync + for<'a> MessageHandler<'a, M>,
-{
-    let rpc = rpc.clone();
-    let handler = handler.clone();
-    let app_state = app_state.clone();
-    router.add_message_handler(move |message| {
-        let rpc = rpc.clone();
-        let handler = handler.clone();
-        let app_state = app_state.clone();
-        async move {
-            let sender_id = message.sender_id;
-            let message_id = message.message_id;
-            let start_time = Instant::now();
-            log::info!(
-                "RPC message received. id: {}.{}, type:{}",
-                sender_id,
-                message_id,
-                M::NAME
-            );
-            if let Err(err) = handler.handle(message, &rpc, &app_state).await {
-                log::error!("error handling message: {:?}", err);
-            } else {
-                log::info!(
-                    "RPC message handled. id:{}.{}, duration:{:?}",
-                    sender_id,
-                    message_id,
-                    start_time.elapsed()
-                );
-            }
-
-            Ok(())
-        }
-    });
-}
-
-pub fn add_rpc_routes(router: &mut Router, state: &Arc<AppState>, rpc: &Arc<Peer>) {
-    on_message(router, rpc, state, share_worktree);
-    on_message(router, rpc, state, join_worktree);
-    on_message(router, rpc, state, update_worktree);
-    on_message(router, rpc, state, close_worktree);
-    on_message(router, rpc, state, open_buffer);
-    on_message(router, rpc, state, close_buffer);
-    on_message(router, rpc, state, update_buffer);
-    on_message(router, rpc, state, buffer_saved);
-    on_message(router, rpc, state, save_buffer);
-    on_message(router, rpc, state, get_channels);
-    on_message(router, rpc, state, get_users);
-    on_message(router, rpc, state, join_channel);
-    on_message(router, rpc, state, send_channel_message);
+pub fn build_server(state: &Arc<AppState>, rpc: &Arc<Peer>) -> Arc<Server> {
+    ServerBuilder::default()
+        // .on_message(share_worktree)
+        // .on_message(join_worktree)
+        // .on_message(update_worktree)
+        // .on_message(close_worktree)
+        // .on_message(open_buffer)
+        // .on_message(close_buffer)
+        // .on_message(update_buffer)
+        // .on_message(buffer_saved)
+        // .on_message(save_buffer)
+        // .on_message(get_channels)
+        // .on_message(get_users)
+        // .on_message(join_channel)
+        // .on_message(send_channel_message)
+        .build(rpc, state)
 }
 
 pub fn add_routes(app: &mut tide::Server<Arc<AppState>>, rpc: &Arc<Peer>) {
-    let mut router = Router::new();
-    add_rpc_routes(&mut router, app.state(), rpc);
-    let router = Arc::new(router);
+    let server = build_server(app.state(), rpc);
 
     let rpc = rpc.clone();
     app.at("/rpc").with(auth::VerifyToken).get(move |request: Request<Arc<AppState>>| {
         let user_id = request.ext::<UserId>().copied();
-        let rpc = rpc.clone();
-        let router = router.clone();
+        let server = server.clone();
         async move {
             const WEBSOCKET_GUID: &str = "258EAFA5-E914-47DA-95CA-C5AB0DC85B11";
 
@@ -451,55 +385,17 @@ pub fn add_routes(app: &mut tide::Server<Arc<AppState>>, rpc: &Arc<Peer>) {
             let http_res: &mut tide::http::Response = response.as_mut();
             let upgrade_receiver = http_res.recv_upgrade().await;
             let addr = request.remote().unwrap_or("unknown").to_string();
-            let state = request.state().clone();
             let user_id = user_id.ok_or_else(|| anyhow!("user_id is not present on request. ensure auth::VerifyToken middleware is present"))?;
             task::spawn(async move {
                 if let Some(stream) = upgrade_receiver.await {
                     let stream = WebSocketStream::from_raw_socket(stream, Role::Server, None).await;
-                    handle_connection(rpc, router, state, addr, stream, user_id).await;
+                    server.handle_connection(stream, addr, user_id).await;
                 }
             });
 
             Ok(response)
         }
     });
-}
-
-pub async fn handle_connection<Conn>(
-    rpc: Arc<Peer>,
-    router: Arc<Router>,
-    state: Arc<AppState>,
-    addr: String,
-    stream: Conn,
-    user_id: UserId,
-) where
-    Conn: 'static
-        + futures::Sink<WebSocketMessage, Error = WebSocketError>
-        + futures::Stream<Item = Result<WebSocketMessage, WebSocketError>>
-        + Send
-        + Unpin,
-{
-    log::info!("accepted rpc connection: {:?}", addr);
-    let (connection_id, handle_io, handle_messages) = rpc.add_connection(stream, router).await;
-    state
-        .rpc
-        .write()
-        .await
-        .add_connection(connection_id, user_id);
-
-    let handle_messages = async move {
-        handle_messages.await;
-        Ok(())
-    };
-
-    if let Err(e) = futures::try_join!(handle_messages, handle_io) {
-        log::error!("error handling rpc connection {:?} - {:?}", addr, e);
-    }
-
-    log::info!("closing connection to {:?}", addr);
-    if let Err(e) = rpc.sign_out(connection_id, &state).await {
-        log::error!("error signing out connection {:?} - {:?}", addr, e);
-    }
 }
 
 async fn share_worktree(

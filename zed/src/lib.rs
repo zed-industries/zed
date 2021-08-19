@@ -24,14 +24,12 @@ pub use settings::Settings;
 use parking_lot::Mutex;
 use postage::watch;
 use std::sync::Arc;
-use zrpc::ForegroundRouter;
 
 pub struct AppState {
     pub settings_tx: Arc<Mutex<watch::Sender<Settings>>>,
     pub settings: watch::Receiver<Settings>,
     pub languages: Arc<language::LanguageRegistry>,
     pub themes: Arc<settings::ThemeRegistry>,
-    pub rpc_router: Arc<ForegroundRouter>,
     pub rpc: rpc::Client,
     pub fs: Arc<dyn fs::Fs>,
 }

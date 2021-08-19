@@ -2,7 +2,7 @@ use crate::{
     auth,
     db::{self, UserId},
     github,
-    rpc::{self, add_rpc_routes},
+    rpc::{self, build_server},
     AppState, Config,
 };
 use async_std::task;
@@ -24,7 +24,7 @@ use zed::{
     test::Channel,
     worktree::Worktree,
 };
-use zrpc::{ForegroundRouter, Peer, Router};
+use zrpc::Peer;
 
 #[gpui::test]
 async fn test_share_worktree(mut cx_a: TestAppContext, mut cx_b: TestAppContext) {
@@ -541,7 +541,7 @@ impl TestServer {
         let app_state = Self::build_app_state(&db_name).await;
         let peer = Peer::new();
         let mut router = Router::new();
-        add_rpc_routes(&mut router, &app_state, &peer);
+        build_server(&mut router, &app_state, &peer);
         Self {
             peer,
             router: Arc::new(router),

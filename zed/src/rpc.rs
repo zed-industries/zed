@@ -13,7 +13,7 @@ use zrpc::proto::EntityMessage;
 pub use zrpc::{proto, ConnectionId, PeerId, TypedEnvelope};
 use zrpc::{
     proto::{EnvelopedMessage, RequestMessage},
-    ForegroundRouter, Peer, Receipt,
+    Peer, Receipt,
 };
 
 lazy_static! {
@@ -41,25 +41,6 @@ impl Client {
                 languages,
             })),
         }
-    }
-
-    pub fn on_message<H, M>(
-        &self,
-        router: &mut ForegroundRouter,
-        handler: H,
-        cx: &mut gpui::MutableAppContext,
-    ) where
-        H: 'static + Clone + for<'a> MessageHandler<'a, M>,
-        M: proto::EnvelopedMessage,
-    {
-        let this = self.clone();
-        let cx = cx.to_async();
-        router.add_message_handler(move |message| {
-            let this = this.clone();
-            let mut cx = cx.clone();
-            let handler = handler.clone();
-            async move { handler.handle(message, &this, &mut cx).await }
-        });
     }
 
     pub fn subscribe_from_model<T, M, F>(
@@ -90,11 +71,7 @@ impl Client {
         })
     }
 
-    pub async fn log_in_and_connect(
-        &self,
-        router: Arc<ForegroundRouter>,
-        cx: AsyncAppContext,
-    ) -> surf::Result<()> {
+    pub async fn log_in_and_connect(&self, cx: AsyncAppContext) -> surf::Result<()> {
         if self.state.read().await.connection_id.is_some() {
             return Ok(());
         }
@@ -111,13 +88,13 @@ impl Client {
                 .await
                 .context("websocket handshake")?;
             log::info!("connected to rpc address {}", *ZED_SERVER_URL);
-            self.add_connection(stream, router, cx).await?;
+            self.add_connection(stream, cx).await?;
         } else if let Some(host) = ZED_SERVER_URL.strip_prefix("http://") {
             let stream = smol::net::TcpStream::connect(host).await?;
             let request = request.uri(format!("ws://{}/rpc", host)).body(())?;
             let (stream, _) = async_tungstenite::client_async(request, stream).await?;
             log::info!("connected to rpc address {}", *ZED_SERVER_URL);
-            self.add_connection(stream, router, cx).await?;
+            self.add_connection(stream, cx).await?;
         } else {
             return Err(anyhow!("invalid server url: {}", *ZED_SERVER_URL))?;
         };
@@ -125,12 +102,7 @@ impl Client {
         Ok(())
     }
 
-    pub async fn add_connection<Conn>(
-        &self,
-        conn: Conn,
-        router: Arc<ForegroundRouter>,
-        cx: AsyncAppContext,
-    ) -> surf::Result<()>
+    pub async fn add_connection<Conn>(&self, conn: Conn, cx: AsyncAppContext) -> surf::Result<()>
     where
         Conn: 'static
             + futures::Sink<WebSocketMessage, Error = WebSocketError>
@@ -138,8 +110,7 @@ impl Client {
             + Unpin
             + Send,
     {
-        let (connection_id, handle_io, handle_messages) =
-            self.peer.add_connection(conn, router).await;
+        let (connection_id, handle_io, handle_messages) = self.peer.add_connection(conn).await;
         cx.foreground().spawn(handle_messages).detach();
         cx.background()
             .spawn(async move {

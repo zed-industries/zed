@@ -15,7 +15,6 @@ use std::{
     sync::Arc,
 };
 use tempdir::TempDir;
-use zrpc::ForegroundRouter;
 
 #[cfg(feature = "test-support")]
 pub use zrpc::test::Channel;
@@ -163,7 +162,6 @@ pub fn build_app_state(cx: &AppContext) -> Arc<AppState> {
         settings,
         themes,
         languages: languages.clone(),
-        rpc_router: Arc::new(ForegroundRouter::new()),
         rpc: rpc::Client::new(languages),
         fs: Arc::new(RealFs),
     })
