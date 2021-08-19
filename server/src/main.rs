@@ -14,7 +14,7 @@ mod tests;
 
 use self::errors::TideResultExt as _;
 use anyhow::{Context, Result};
-use async_std::{net::TcpListener, sync::RwLock as AsyncRwLock};
+use async_std::net::TcpListener;
 use async_trait::async_trait;
 use auth::RequestExt as _;
 use db::{Db, DbOptions};
@@ -51,7 +51,6 @@ pub struct AppState {
     auth_client: auth::Client,
     github_client: Arc<github::AppClient>,
     repo_client: github::RepoClient,
-    rpc: AsyncRwLock<rpc::State>,
     config: Config,
 }
 
@@ -76,7 +75,6 @@ impl AppState {
             auth_client: auth::build_client(&config.github_client_id, &config.github_client_secret),
             github_client,
             repo_client,
-            rpc: Default::default(),
             config,
         };
         this.register_partials();

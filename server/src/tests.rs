@@ -540,7 +540,7 @@ impl TestServer {
         let db_name = format!("zed-test-{}", rng.gen::<u128>());
         let app_state = Self::build_app_state(&db_name).await;
         let peer = Peer::new();
-        let server = rpc::build_server(&app_state, &peer);
+        let server = rpc::Server::new(app_state.clone(), peer.clone());
         Self {
             peer,
             app_state,
@@ -595,7 +595,6 @@ impl TestServer {
             auth_client: auth::build_client("", ""),
             repo_client: github::RepoClient::test(&github_client),
             github_client,
-            rpc: Default::default(),
             config,
         })
     }

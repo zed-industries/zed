@@ -2,7 +2,7 @@ use super::{
     db::{self, UserId},
     errors::TideResultExt,
 };
-use crate::{github, rpc, AppState, Request, RequestExt as _};
+use crate::{github, AppState, Request, RequestExt as _};
 use anyhow::{anyhow, Context};
 use async_trait::async_trait;
 pub use oauth2::basic::BasicClient as Client;
@@ -19,7 +19,7 @@ use serde::{Deserialize, Serialize};
 use std::{borrow::Cow, convert::TryFrom, sync::Arc};
 use surf::Url;
 use tide::Server;
-use zrpc::{auth as zed_auth, proto, Peer};
+use zrpc::auth as zed_auth;
 
 static CURRENT_GITHUB_USER: &'static str = "current_github_user";
 static GITHUB_AUTH_URL: &'static str = "https://github.com/login/oauth/authorize";
@@ -97,43 +97,6 @@ impl RequestExt for Request {
         } else {
             Ok(None)
         }
-    }
-}
-
-#[async_trait]
-pub trait PeerExt {
-    async fn sign_out(
-        self: &Arc<Self>,
-        connection_id: zrpc::ConnectionId,
-        state: &AppState,
-    ) -> tide::Result<()>;
-}
-
-#[async_trait]
-impl PeerExt for Peer {
-    async fn sign_out(
-        self: &Arc<Self>,
-        connection_id: zrpc::ConnectionId,
-        state: &AppState,
-    ) -> tide::Result<()> {
-        self.disconnect(connection_id).await;
-        let worktree_ids = state.rpc.write().await.remove_connection(connection_id);
-        for worktree_id in worktree_ids {
-            let state = state.rpc.read().await;
-            if let Some(worktree) = state.worktrees.get(&worktree_id) {
-                rpc::broadcast(connection_id, worktree.connection_ids(), |conn_id| {
-                    self.send(
-                        conn_id,
-                        proto::RemovePeer {
-                            worktree_id,
-                            peer_id: connection_id.0,
-                        },
-                    )
-                })
-                .await?;
-            }
-        }
-        Ok(())
     }
 }
 
