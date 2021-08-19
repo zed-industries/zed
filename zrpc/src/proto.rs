@@ -138,6 +138,7 @@ messages!(
     GetUsersResponse,
     JoinChannel,
     JoinChannelResponse,
+    LeaveChannel,
     OpenBuffer,
     OpenBufferResponse,
     OpenWorktree,

@@ -30,8 +30,9 @@ message Envelope {
         GetUsersResponse get_users_response = 25;
         JoinChannel join_channel = 26;
         JoinChannelResponse join_channel_response = 27;
-        SendChannelMessage send_channel_message = 28;
-        ChannelMessageSent channel_message_sent = 29;
+        LeaveChannel leave_channel = 28;
+        SendChannelMessage send_channel_message = 29;
+        ChannelMessageSent channel_message_sent = 30;
     }
 }
 
@@ -139,6 +140,10 @@ message JoinChannel {
 
 message JoinChannelResponse {
     repeated ChannelMessage messages = 1;
+}
+
+message LeaveChannel {
+    uint64 channel_id = 1;
 }
 
 message GetUsers {

@@ -480,8 +480,6 @@ async fn test_peer_disconnection(mut cx_a: TestAppContext, cx_b: TestAppContext)
 
 #[gpui::test]
 async fn test_basic_chat(mut cx_a: TestAppContext, cx_b: TestAppContext) {
-    let lang_registry = Arc::new(LanguageRegistry::new());
-
     // Connect to a server as 2 clients.
     let mut server = TestServer::start().await;
     let (user_id_a, client_a) = server.create_client(&mut cx_a, "user_a").await;
@@ -531,8 +529,14 @@ async fn test_basic_chat(mut cx_a: TestAppContext, cx_b: TestAppContext) {
         )
     });
 
-    let channel_a = channels_a.read_with(&cx_a, |this, cx| {
-        this.get_channel(channel_id.to_proto(), &cx).unwrap()
+    let channel_a = channels_a.update(&mut cx_a, |this, cx| {
+        this.get_channel(channel_id.to_proto(), cx).unwrap()
+    });
+
+    channel_a.read_with(&cx_a, |channel, _| assert!(channel.messages().is_none()));
+    channel_a.next_notification(&cx_a).await;
+    channel_a.read_with(&cx_a, |channel, _| {
+        assert_eq!(channel.messages().unwrap().len(), 1);
     });
 }
 

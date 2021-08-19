@@ -1,8 +1,11 @@
 use crate::rpc::{self, Client};
 use anyhow::{Context, Result};
-use gpui::{AppContext, AsyncAppContext, Entity, ModelContext, ModelHandle, WeakModelHandle};
+use gpui::{
+    executor, AsyncAppContext, Entity, ModelContext, ModelHandle, MutableAppContext,
+    WeakModelHandle,
+};
 use std::{
-    collections::{HashMap, VecDeque},
+    collections::{hash_map, HashMap, VecDeque},
     sync::Arc,
 };
 use zrpc::{
@@ -16,7 +19,7 @@ pub struct ChannelList {
     rpc: Arc<Client>,
 }
 
-#[derive(Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct ChannelDetails {
     pub id: u64,
     pub name: String,
@@ -28,6 +31,7 @@ pub struct Channel {
     messages: Option<VecDeque<ChannelMessage>>,
     rpc: Arc<Client>,
     _subscription: rpc::Subscription,
+    background: Arc<executor::Background>,
 }
 
 pub struct ChannelMessage {
@@ -57,11 +61,28 @@ impl ChannelList {
         &self.available_channels
     }
 
-    pub fn get_channel(&self, id: u64, cx: &AppContext) -> Option<ModelHandle<Channel>> {
-        self.channels
-            .get(&id)
-            .cloned()
-            .and_then(|handle| handle.upgrade(cx))
+    pub fn get_channel(
+        &mut self,
+        id: u64,
+        cx: &mut MutableAppContext,
+    ) -> Option<ModelHandle<Channel>> {
+        match self.channels.entry(id) {
+            hash_map::Entry::Occupied(entry) => entry.get().upgrade(cx),
+            hash_map::Entry::Vacant(entry) => {
+                if let Some(details) = self
+                    .available_channels
+                    .iter()
+                    .find(|details| details.id == id)
+                {
+                    let rpc = self.rpc.clone();
+                    let channel = cx.add_model(|cx| Channel::new(details.clone(), rpc, cx));
+                    entry.insert(channel.downgrade());
+                    Some(channel)
+                } else {
+                    None
+                }
+            }
+        }
     }
 }
 
@@ -73,12 +94,31 @@ impl Channel {
     pub fn new(details: ChannelDetails, rpc: Arc<Client>, cx: &mut ModelContext<Self>) -> Self {
         let _subscription = rpc.subscribe_from_model(details.id, cx, Self::handle_message_sent);
 
+        {
+            let rpc = rpc.clone();
+            let channel_id = details.id;
+            cx.spawn(|channel, mut cx| async move {
+                match rpc.request(proto::JoinChannel { channel_id }).await {
+                    Ok(response) => {
+                        let messages = response.messages.into_iter().map(Into::into).collect();
+                        channel.update(&mut cx, |channel, cx| {
+                            channel.messages = Some(messages);
+                            cx.notify();
+                        })
+                    }
+                    Err(error) => log::error!("error joining channel: {}", error),
+                }
+            })
+            .detach();
+        }
+
         Self {
             details,
             rpc,
             first_message_id: None,
             messages: None,
             _subscription,
+            background: cx.background().clone(),
         }
     }
 
@@ -90,6 +130,25 @@ impl Channel {
     ) -> Result<()> {
         Ok(())
     }
+
+    pub fn messages(&self) -> Option<&VecDeque<ChannelMessage>> {
+        self.messages.as_ref()
+    }
+}
+
+// TODO: Implement the server side of leaving a channel
+impl Drop for Channel {
+    fn drop(&mut self) {
+        let rpc = self.rpc.clone();
+        let channel_id = self.details.id;
+        self.background
+            .spawn(async move {
+                if let Err(error) = rpc.send(proto::LeaveChannel { channel_id }).await {
+                    log::error!("error leaving channel: {}", error);
+                };
+            })
+            .detach()
+    }
 }
 
 impl From<proto::Channel> for ChannelDetails {
@@ -98,5 +157,11 @@ impl From<proto::Channel> for ChannelDetails {
             id: message.id,
             name: message.name,
         }
+    }
+}
+
+impl From<proto::ChannelMessage> for ChannelMessage {
+    fn from(message: proto::ChannelMessage) -> Self {
+        ChannelMessage { id: message.id }
     }
 }
