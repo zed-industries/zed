@@ -1054,6 +1054,7 @@ mod tests {
         mut cx_b: TestAppContext,
         mut cx_c: TestAppContext,
     ) {
+        cx_a.foreground().forbid_parking();
         let lang_registry = Arc::new(LanguageRegistry::new());
 
         // Connect to a server as 3 clients.
@@ -1061,8 +1062,6 @@ mod tests {
         let (_, client_a) = server.create_client(&mut cx_a, "user_a").await;
         let (_, client_b) = server.create_client(&mut cx_b, "user_b").await;
         let (_, client_c) = server.create_client(&mut cx_c, "user_c").await;
-
-        cx_a.foreground().forbid_parking();
 
         let fs = Arc::new(FakeFs::new());
 
@@ -1196,14 +1195,13 @@ mod tests {
 
     #[gpui::test]
     async fn test_buffer_conflict_after_save(mut cx_a: TestAppContext, mut cx_b: TestAppContext) {
+        cx_a.foreground().forbid_parking();
         let lang_registry = Arc::new(LanguageRegistry::new());
 
         // Connect to a server as 2 clients.
         let mut server = TestServer::start().await;
         let (_, client_a) = server.create_client(&mut cx_a, "user_a").await;
         let (_, client_b) = server.create_client(&mut cx_b, "user_b").await;
-
-        cx_a.foreground().forbid_parking();
 
         // Share a local worktree as client A
         let fs = Arc::new(FakeFs::new());
@@ -1278,14 +1276,13 @@ mod tests {
         mut cx_a: TestAppContext,
         mut cx_b: TestAppContext,
     ) {
+        cx_a.foreground().forbid_parking();
         let lang_registry = Arc::new(LanguageRegistry::new());
 
         // Connect to a server as 2 clients.
         let mut server = TestServer::start().await;
         let (_, client_a) = server.create_client(&mut cx_a, "user_a").await;
         let (_, client_b) = server.create_client(&mut cx_b, "user_b").await;
-
-        cx_a.foreground().forbid_parking();
 
         // Share a local worktree as client A
         let fs = Arc::new(FakeFs::new());
@@ -1339,14 +1336,13 @@ mod tests {
 
     #[gpui::test]
     async fn test_peer_disconnection(mut cx_a: TestAppContext, cx_b: TestAppContext) {
+        cx_a.foreground().forbid_parking();
         let lang_registry = Arc::new(LanguageRegistry::new());
 
         // Connect to a server as 2 clients.
         let mut server = TestServer::start().await;
         let (_, client_a) = server.create_client(&mut cx_a, "user_a").await;
         let (_, client_b) = server.create_client(&mut cx_a, "user_b").await;
-
-        cx_a.foreground().forbid_parking();
 
         // Share a local worktree as client A
         let fs = Arc::new(FakeFs::new());
