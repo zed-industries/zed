@@ -1,6 +1,4 @@
-use super::{
-    AfterLayoutContext, Element, Event, EventContext, LayoutContext, PaintContext, SizeConstraint,
-};
+use super::{Element, Event, EventContext, LayoutContext, PaintContext, SizeConstraint};
 use crate::{
     geometry::{
         rect::RectF,
@@ -162,17 +160,6 @@ where
                 items,
             },
         )
-    }
-
-    fn after_layout(
-        &mut self,
-        _: Vector2F,
-        layout: &mut Self::LayoutState,
-        cx: &mut AfterLayoutContext,
-    ) {
-        for item in &mut layout.items {
-            item.after_layout(cx);
-        }
     }
 
     fn paint(

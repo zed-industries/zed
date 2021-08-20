@@ -1,8 +1,8 @@
 use crate::{
     geometry::{rect::RectF, vector::Vector2F},
     json::{self, json, ToJson},
-    AfterLayoutContext, DebugContext, Element, ElementBox, Event, EventContext, LayoutContext,
-    PaintContext, SizeConstraint,
+    DebugContext, Element, ElementBox, Event, EventContext, LayoutContext, PaintContext,
+    SizeConstraint,
 };
 
 pub struct Stack {
@@ -31,17 +31,6 @@ impl Element for Stack {
             size = size.max(child.layout(constraint, cx));
         }
         (size, ())
-    }
-
-    fn after_layout(
-        &mut self,
-        _: Vector2F,
-        _: &mut Self::LayoutState,
-        cx: &mut AfterLayoutContext,
-    ) {
-        for child in &mut self.children {
-            child.after_layout(cx);
-        }
     }
 
     fn paint(

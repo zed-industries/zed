@@ -398,15 +398,6 @@ impl Element for ChildView {
         (size, ())
     }
 
-    fn after_layout(
-        &mut self,
-        _: Vector2F,
-        _: &mut Self::LayoutState,
-        cx: &mut AfterLayoutContext,
-    ) {
-        cx.after_layout(self.view_id);
-    }
-
     fn paint(
         &mut self,
         bounds: pathfinder_geometry::rect::RectF,

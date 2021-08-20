@@ -59,13 +59,6 @@ pub trait Element {
         cx: &mut LayoutContext,
     ) -> (Vector2F, Self::LayoutState);
 
-    fn after_layout(
-        &mut self,
-        size: Vector2F,
-        layout: &mut Self::LayoutState,
-        cx: &mut AfterLayoutContext,
-    );
-
     fn paint(
         &mut self,
         bounds: RectF,
@@ -161,20 +154,6 @@ impl<T: Element> AnyElement for Lifecycle<T> {
             }
         };
         result
-    }
-
-    fn after_layout(&mut self, cx: &mut AfterLayoutContext) {
-        if let Lifecycle::PostLayout {
-            element,
-            size,
-            layout,
-            ..
-        } = self
-        {
-            element.after_layout(*size, layout, cx);
-        } else {
-            panic!("invalid element lifecycle state");
-        }
     }
 
     fn paint(&mut self, origin: Vector2F, cx: &mut PaintContext) {

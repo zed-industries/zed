@@ -46,14 +46,6 @@ impl gpui::Element for TextElement {
         (constraint.max, ())
     }
 
-    fn after_layout(
-        &mut self,
-        _: pathfinder_geometry::vector::Vector2F,
-        _: &mut Self::LayoutState,
-        _: &mut gpui::AfterLayoutContext,
-    ) {
-    }
-
     fn paint(
         &mut self,
         bounds: RectF,

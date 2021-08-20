@@ -56,14 +56,6 @@ where
         self.0(bounds, cx)
     }
 
-    fn after_layout(
-        &mut self,
-        _: Vector2F,
-        _: &mut Self::LayoutState,
-        _: &mut crate::AfterLayoutContext,
-    ) {
-    }
-
     fn dispatch_event(
         &mut self,
         _: &crate::Event,

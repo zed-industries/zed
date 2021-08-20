@@ -10,8 +10,7 @@ use crate::{
     },
     json::ToJson,
     scene::{self, Border, Quad},
-    AfterLayoutContext, Element, ElementBox, Event, EventContext, LayoutContext, PaintContext,
-    SizeConstraint,
+    Element, ElementBox, Event, EventContext, LayoutContext, PaintContext, SizeConstraint,
 };
 
 #[derive(Clone, Debug, Default, Deserialize)]
@@ -165,15 +164,6 @@ impl Element for Container {
         };
         let child_size = self.child.layout(child_constraint, cx);
         (child_size + size_buffer, ())
-    }
-
-    fn after_layout(
-        &mut self,
-        _: Vector2F,
-        _: &mut Self::LayoutState,
-        cx: &mut AfterLayoutContext,
-    ) {
-        self.child.after_layout(cx);
     }
 
     fn paint(

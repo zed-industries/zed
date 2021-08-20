@@ -6,9 +6,7 @@ use crate::{
     json::{json, ToJson},
     DebugContext,
 };
-use crate::{
-    AfterLayoutContext, Element, Event, EventContext, LayoutContext, PaintContext, SizeConstraint,
-};
+use crate::{Element, Event, EventContext, LayoutContext, PaintContext, SizeConstraint};
 
 pub struct Empty;
 
@@ -39,9 +37,6 @@ impl Element for Empty {
         };
 
         (vec2f(x, y), ())
-    }
-
-    fn after_layout(&mut self, _: Vector2F, _: &mut Self::LayoutState, _: &mut AfterLayoutContext) {
     }
 
     fn paint(

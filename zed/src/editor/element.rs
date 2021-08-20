@@ -9,8 +9,8 @@ use gpui::{
     },
     json::{self, ToJson},
     text_layout::{self, TextLayoutCache},
-    AfterLayoutContext, AppContext, Border, Element, Event, EventContext, FontCache, LayoutContext,
-    MutableAppContext, PaintContext, Quad, Scene, SizeConstraint, ViewContext, WeakViewHandle,
+    AppContext, Border, Element, Event, EventContext, FontCache, LayoutContext, MutableAppContext,
+    PaintContext, Quad, Scene, SizeConstraint, ViewContext, WeakViewHandle,
 };
 use json::json;
 use smallvec::SmallVec;
@@ -550,9 +550,6 @@ impl Element for EditorElement {
         });
 
         (size, Some(layout))
-    }
-
-    fn after_layout(&mut self, _: Vector2F, _: &mut Self::LayoutState, _: &mut AfterLayoutContext) {
     }
 
     fn paint(

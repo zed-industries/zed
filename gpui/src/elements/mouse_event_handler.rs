@@ -1,7 +1,7 @@
 use crate::{
     geometry::{rect::RectF, vector::Vector2F},
-    AfterLayoutContext, AppContext, DebugContext, Element, ElementBox, Event, EventContext,
-    LayoutContext, PaintContext, SizeConstraint, ValueHandle,
+    AppContext, DebugContext, Element, ElementBox, Event, EventContext, LayoutContext,
+    PaintContext, SizeConstraint, ValueHandle,
 };
 use serde_json::json;
 
@@ -49,15 +49,6 @@ impl Element for MouseEventHandler {
         cx: &mut LayoutContext,
     ) -> (Vector2F, Self::LayoutState) {
         (self.child.layout(constraint, cx), ())
-    }
-
-    fn after_layout(
-        &mut self,
-        _: Vector2F,
-        _: &mut Self::LayoutState,
-        cx: &mut AfterLayoutContext,
-    ) {
-        self.child.after_layout(cx);
     }
 
     fn paint(

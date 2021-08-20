@@ -1,6 +1,6 @@
 use crate::{
-    json, AfterLayoutContext, DebugContext, Element, ElementBox, Event, EventContext,
-    LayoutContext, PaintContext, SizeConstraint,
+    json, DebugContext, Element, ElementBox, Event, EventContext, LayoutContext, PaintContext,
+    SizeConstraint,
 };
 use json::ToJson;
 use pathfinder_geometry::vector::Vector2F;
@@ -49,15 +49,6 @@ impl Element for Align {
             size.set_y(child_size.y());
         }
         (size, ())
-    }
-
-    fn after_layout(
-        &mut self,
-        _: Vector2F,
-        _: &mut Self::LayoutState,
-        cx: &mut AfterLayoutContext,
-    ) {
-        self.child.after_layout(cx);
     }
 
     fn paint(

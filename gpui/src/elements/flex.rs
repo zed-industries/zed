@@ -2,8 +2,8 @@ use std::{any::Any, f32::INFINITY};
 
 use crate::{
     json::{self, ToJson, Value},
-    AfterLayoutContext, Axis, DebugContext, Element, ElementBox, Event, EventContext,
-    LayoutContext, PaintContext, SizeConstraint, Vector2FExt,
+    Axis, DebugContext, Element, ElementBox, Event, EventContext, LayoutContext, PaintContext,
+    SizeConstraint, Vector2FExt,
 };
 use pathfinder_geometry::{
     rect::RectF,
@@ -134,17 +134,6 @@ impl Element for Flex {
         (size, ())
     }
 
-    fn after_layout(
-        &mut self,
-        _: Vector2F,
-        _: &mut Self::LayoutState,
-        cx: &mut AfterLayoutContext,
-    ) {
-        for child in &mut self.children {
-            child.after_layout(cx);
-        }
-    }
-
     fn paint(
         &mut self,
         bounds: RectF,
@@ -221,15 +210,6 @@ impl Element for Expanded {
     ) -> (Vector2F, Self::LayoutState) {
         let size = self.child.layout(constraint, cx);
         (size, ())
-    }
-
-    fn after_layout(
-        &mut self,
-        _: Vector2F,
-        _: &mut Self::LayoutState,
-        cx: &mut AfterLayoutContext,
-    ) {
-        self.child.after_layout(cx);
     }
 
     fn paint(

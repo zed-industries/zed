@@ -44,15 +44,6 @@ impl Element for List {
         todo!()
     }
 
-    fn after_layout(
-        &mut self,
-        size: Vector2F,
-        layout: &mut Self::LayoutState,
-        cx: &mut crate::AfterLayoutContext,
-    ) {
-        todo!()
-    }
-
     fn paint(
         &mut self,
         bounds: RectF,

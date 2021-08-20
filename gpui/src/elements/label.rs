@@ -8,8 +8,8 @@ use crate::{
     },
     json::{ToJson, Value},
     text_layout::Line,
-    AfterLayoutContext, DebugContext, Element, Event, EventContext, FontCache, LayoutContext,
-    PaintContext, SizeConstraint,
+    DebugContext, Element, Event, EventContext, FontCache, LayoutContext, PaintContext,
+    SizeConstraint,
 };
 use serde::Deserialize;
 use serde_json::json;
@@ -138,9 +138,6 @@ impl Element for Label {
         );
 
         (size, line)
-    }
-
-    fn after_layout(&mut self, _: Vector2F, _: &mut Self::LayoutState, _: &mut AfterLayoutContext) {
     }
 
     fn paint(

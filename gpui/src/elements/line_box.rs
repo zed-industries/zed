@@ -6,8 +6,8 @@ use crate::{
         vector::{vec2f, Vector2F},
     },
     json::{json, ToJson},
-    AfterLayoutContext, DebugContext, Element, ElementBox, Event, EventContext, LayoutContext,
-    PaintContext, SizeConstraint,
+    DebugContext, Element, ElementBox, Event, EventContext, LayoutContext, PaintContext,
+    SizeConstraint,
 };
 
 pub struct LineBox {
@@ -58,15 +58,6 @@ impl Element for LineBox {
                 (constraint.min, 0.0)
             }
         }
-    }
-
-    fn after_layout(
-        &mut self,
-        _: Vector2F,
-        _: &mut Self::LayoutState,
-        cx: &mut AfterLayoutContext,
-    ) {
-        self.child.after_layout(cx);
     }
 
     fn paint(
