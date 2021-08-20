@@ -13,7 +13,7 @@ use crate::{
     fonts::{FontId, GlyphId, Metrics as FontMetrics, Properties as FontProperties},
     geometry::{
         rect::{RectF, RectI},
-        vector::Vector2F,
+        vector::{vec2f, Vector2F},
     },
     text_layout::LineLayout,
     ClipboardItem, Menu, Scene,
@@ -96,7 +96,6 @@ pub trait WindowContext {
     fn present_scene(&mut self, scene: Scene);
 }
 
-#[derive(Default)]
 pub struct WindowOptions<'a> {
     pub bounds: RectF,
     pub title: Option<&'a str>,
@@ -140,4 +139,14 @@ pub trait FontSystem: Send + Sync {
         runs: &[(usize, FontId, Color)],
     ) -> LineLayout;
     fn wrap_line(&self, text: &str, font_id: FontId, font_size: f32, width: f32) -> Vec<usize>;
+}
+
+impl<'a> Default for WindowOptions<'a> {
+    fn default() -> Self {
+        Self {
+            bounds: RectF::new(Default::default(), vec2f(1024.0, 768.0)),
+            title: Default::default(),
+            titlebar_appears_transparent: Default::default(),
+        }
+    }
 }
