@@ -328,13 +328,20 @@ impl Db {
             .fetch_all(&self.0)
             .await
     }
-}
 
-impl std::ops::Deref for Db {
-    type Target = sqlx::PgPool;
-
-    fn deref(&self) -> &Self::Target {
-        &self.0
+    #[cfg(test)]
+    pub async fn close(&self, db_name: &str) {
+        let query = "
+            SELECT pg_terminate_backend(pg_stat_activity.pid)
+            FROM pg_stat_activity
+            WHERE pg_stat_activity.datname = '{}' AND pid <> pg_backend_pid();
+        ";
+        sqlx::query(query)
+            .bind(db_name)
+            .execute(&self.0)
+            .await
+            .unwrap();
+        self.0.close().await;
     }
 }
 

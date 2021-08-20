@@ -920,7 +920,7 @@ mod tests {
     use crate::{
         auth,
         db::{self, UserId},
-        github, rpc, AppState, Config,
+        github, AppState, Config,
     };
     use async_std::{sync::RwLockReadGuard, task};
     use gpui::{ModelHandle, TestAppContext};
@@ -930,7 +930,7 @@ mod tests {
     use sqlx::{
         migrate::{MigrateDatabase, Migrator},
         types::time::OffsetDateTime,
-        Executor as _, Postgres,
+        Postgres,
     };
     use std::{path::Path, sync::Arc, time::Duration};
     use zed::{
@@ -1645,21 +1645,7 @@ mod tests {
         fn drop(&mut self) {
             task::block_on(async {
                 self.peer.reset().await;
-                self.app_state
-                    .db
-                    .execute(
-                        format!(
-                            "
-                        SELECT pg_terminate_backend(pg_stat_activity.pid)
-                        FROM pg_stat_activity
-                        WHERE pg_stat_activity.datname = '{}' AND pid <> pg_backend_pid();",
-                            self.db_name,
-                        )
-                        .as_str(),
-                    )
-                    .await
-                    .unwrap();
-                self.app_state.db.close().await;
+                self.app_state.db.close(&self.db_name).await;
                 Postgres::drop_database(&self.app_state.config.database_url)
                     .await
                     .unwrap();
