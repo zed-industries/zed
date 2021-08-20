@@ -28,6 +28,7 @@ pub struct Presenter {
 impl Presenter {
     pub fn new(
         window_id: usize,
+        titlebar_height: f32,
         font_cache: Arc<FontCache>,
         text_layout_cache: TextLayoutCache,
         asset_cache: Arc<AssetCache>,
@@ -35,7 +36,7 @@ impl Presenter {
     ) -> Self {
         Self {
             window_id,
-            rendered_views: cx.render_views(window_id),
+            rendered_views: cx.render_views(window_id, titlebar_height),
             parents: HashMap::new(),
             font_cache,
             text_layout_cache,
@@ -55,15 +56,23 @@ impl Presenter {
         path
     }
 
-    pub fn invalidate(&mut self, mut invalidation: WindowInvalidation, cx: &AppContext) {
+    pub fn invalidate(
+        &mut self,
+        mut invalidation: WindowInvalidation,
+        titlebar_height: f32,
+        cx: &AppContext,
+    ) {
         for view_id in invalidation.removed {
             invalidation.updated.remove(&view_id);
             self.rendered_views.remove(&view_id);
             self.parents.remove(&view_id);
         }
         for view_id in invalidation.updated {
-            self.rendered_views
-                .insert(view_id, cx.render_view(self.window_id, view_id).unwrap());
+            self.rendered_views.insert(
+                view_id,
+                cx.render_view(self.window_id, view_id, titlebar_height)
+                    .unwrap(),
+            );
         }
     }
 
