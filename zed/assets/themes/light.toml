@@ -1,12 +1,12 @@
 extends = "_base"
 
-[surfaces]
-1 = "#ffffff"
-2 = "#f3f3f3"
-3 = "#ececec"
-4 = "#3a3b3c"
+[surface]
+0 = "#ffffff"
+1 = "#f3f3f3"
+2 = "#ececec"
+3 = "#3a3b3c"
 
-[text_colors]
+[text_color]
 dull = "#acacac"
 bright = "#111111"
 normal = "#333333"

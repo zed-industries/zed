@@ -1,9 +1,9 @@
 [ui]
-background = "$surfaces.1"
+background = "$surface.0"
 
 [ui.tab]
-background = "$surfaces.2"
-text = "$text_colors.dull"
+background = "$surface.1"
+text = "$text_color.dull"
 border = { color = "#000000", width = 1.0 }
 padding = { left = 10, right = 10 }
 icon_close = "#383839"
@@ -12,12 +12,12 @@ icon_conflict = "#e45349"
 
 [ui.active_tab]
 extends = "$ui.tab"
-background = "$surfaces.3"
-text = "$text_colors.bright"
+background = "$surface.2"
+text = "$text_color.bright"
 
 [ui.selector]
-background = "$surfaces.4"
-text = "$text_colors.bright"
+background = "$surface.3"
+text = "$text_color.bright"
 padding = { top = 6.0, bottom = 6.0, left = 6.0, right = 6.0 }
 margin.top = 12.0
 corner_radius = 6.0
@@ -35,13 +35,13 @@ extends = "$ui.selector.item"
 background = "#094771"
 
 [editor]
-background = "$surfaces.3"
-gutter_background = "$surfaces.3"
-active_line_background = "$surfaces.4"
-line_number = "$text_colors.dull"
-line_number_active = "$text_colors.bright"
-text = "$text_colors.normal"
+background = "$surface.2"
+gutter_background = "$surface.2"
+active_line_background = "$surface.3"
+line_number = "$text_color.dull"
+line_number_active = "$text_color.bright"
+text = "$text_color.normal"
 replicas = [
-    { selection = "#264f78", cursor = "$text_colors.bright" },
+    { selection = "#264f78", cursor = "$text_color.bright" },
     { selection = "#504f31", cursor = "#fcf154" },
 ]
