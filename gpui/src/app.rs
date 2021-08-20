@@ -14,7 +14,7 @@ use keymap::MatchResult;
 use parking_lot::{Mutex, RwLock};
 use pathfinder_geometry::{rect::RectF, vector::vec2f};
 use platform::Event;
-use postage::{mpsc, oneshot, sink::Sink as _, stream::Stream as _};
+use postage::{mpsc, sink::Sink as _, stream::Stream as _};
 use smol::prelude::*;
 use std::{
     any::{type_name, Any, TypeId},
@@ -2308,24 +2308,6 @@ impl<T: Entity> ModelHandle<T> {
         F: FnOnce(&mut T, &mut ModelContext<T>) -> S,
     {
         cx.update_model(self, update)
-    }
-
-    pub fn next_notification(&self, cx: &TestAppContext) -> impl Future<Output = ()> {
-        let (tx, mut rx) = oneshot::channel();
-        let mut tx = Some(tx);
-
-        let mut cx = cx.cx.borrow_mut();
-        self.update(&mut *cx, |_, cx| {
-            cx.observe(self, move |_, _, _| {
-                if let Some(mut tx) = tx.take() {
-                    tx.blocking_send(()).ok();
-                }
-            });
-        });
-
-        async move {
-            rx.recv().await;
-        }
     }
 
     pub fn condition(

@@ -11,11 +11,11 @@ mod rpc;
 mod team;
 
 use self::errors::TideResultExt as _;
-use anyhow::{Context, Result};
+use anyhow::Result;
 use async_std::net::TcpListener;
 use async_trait::async_trait;
 use auth::RequestExt as _;
-use db::{Db, DbOptions};
+use db::Db;
 use handlebars::{Handlebars, TemplateRenderError};
 use parking_lot::RwLock;
 use rust_embed::RustEmbed;
@@ -54,12 +54,7 @@ pub struct AppState {
 
 impl AppState {
     async fn new(config: Config) -> tide::Result<Arc<Self>> {
-        let db = Db(DbOptions::new()
-            .max_connections(5)
-            .connect(&config.database_url)
-            .await
-            .context("failed to connect to postgres database")?);
-
+        let db = Db::new(&config.database_url, 5).await?;
         let github_client =
             github::AppClient::new(config.github_app_id, config.github_private_key.clone());
         let repo_client = github_client

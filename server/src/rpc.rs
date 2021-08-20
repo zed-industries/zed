@@ -922,16 +922,15 @@ mod tests {
         db::{self, UserId},
         github, AppState, Config,
     };
-    use async_std::{sync::RwLockReadGuard, task};
-    use gpui::{ModelHandle, TestAppContext};
+    use async_std::{
+        sync::RwLockReadGuard,
+        task::{self, block_on},
+    };
+    use gpui::TestAppContext;
     use postage::mpsc;
     use rand::prelude::*;
     use serde_json::json;
-    use sqlx::{
-        migrate::{MigrateDatabase, Migrator},
-        types::time::OffsetDateTime,
-        Postgres,
-    };
+    use sqlx::{migrate::MigrateDatabase, types::time::OffsetDateTime, Postgres};
     use std::{path::Path, sync::Arc, time::Duration};
     use zed::{
         channel::{Channel, ChannelDetails, ChannelList},
@@ -1400,6 +1399,8 @@ mod tests {
 
     #[gpui::test]
     async fn test_basic_chat(mut cx_a: TestAppContext, mut cx_b: TestAppContext) {
+        cx_a.foreground().forbid_parking();
+
         // Connect to a server as 2 clients.
         let mut server = TestServer::start().await;
         let (user_id_a, client_a) = server.create_client(&mut cx_a, "user_a").await;
@@ -1444,11 +1445,12 @@ mod tests {
             this.get_channel(channel_id.to_proto(), cx).unwrap()
         });
         channel_a.read_with(&cx_a, |channel, _| assert!(channel.messages().is_empty()));
-        channel_a.next_notification(&cx_a).await;
-        assert_eq!(
-            channel_messages(&channel_a, &cx_a),
-            &[(user_id_b.to_proto(), "hello A, it's B.".to_string())]
-        );
+        channel_a
+            .condition(&cx_a, |channel, _| {
+                channel_messages(channel)
+                    == [(user_id_b.to_proto(), "hello A, it's B.".to_string())]
+            })
+            .await;
 
         let channels_b = ChannelList::new(client_b, &mut cx_b.to_async())
             .await
@@ -1462,15 +1464,17 @@ mod tests {
                 }]
             )
         });
+
         let channel_b = channels_b.update(&mut cx_b, |this, cx| {
             this.get_channel(channel_id.to_proto(), cx).unwrap()
         });
         channel_b.read_with(&cx_b, |channel, _| assert!(channel.messages().is_empty()));
-        channel_b.next_notification(&cx_b).await;
-        assert_eq!(
-            channel_messages(&channel_b, &cx_b),
-            &[(user_id_b.to_proto(), "hello A, it's B.".to_string())]
-        );
+        channel_b
+            .condition(&cx_b, |channel, _| {
+                channel_messages(channel)
+                    == [(user_id_b.to_proto(), "hello A, it's B.".to_string())]
+            })
+            .await;
 
         channel_a.update(&mut cx_a, |channel, cx| {
             channel.send_message("oh, hi B.".to_string(), cx).unwrap();
@@ -1484,24 +1488,20 @@ mod tests {
                 &["oh, hi B.", "sup"]
             )
         });
-        channel_a.next_notification(&cx_a).await;
-        channel_a.read_with(&cx_a, |channel, _| {
-            assert_eq!(channel.pending_messages().len(), 1);
-        });
-        channel_a.next_notification(&cx_a).await;
-        channel_a.read_with(&cx_a, |channel, _| {
-            assert_eq!(channel.pending_messages().len(), 0);
-        });
 
-        channel_b.next_notification(&cx_b).await;
-        assert_eq!(
-            channel_messages(&channel_b, &cx_b),
-            &[
-                (user_id_b.to_proto(), "hello A, it's B.".to_string()),
-                (user_id_a.to_proto(), "oh, hi B.".to_string()),
-                (user_id_a.to_proto(), "sup".to_string()),
-            ]
-        );
+        channel_a
+            .condition(&cx_a, |channel, _| channel.pending_messages().is_empty())
+            .await;
+        channel_b
+            .condition(&cx_b, |channel, _| {
+                channel_messages(channel)
+                    == [
+                        (user_id_b.to_proto(), "hello A, it's B.".to_string()),
+                        (user_id_a.to_proto(), "oh, hi B.".to_string()),
+                        (user_id_a.to_proto(), "sup".to_string()),
+                    ]
+            })
+            .await;
 
         assert_eq!(
             server.state().await.channels[&channel_id]
@@ -1519,17 +1519,12 @@ mod tests {
             .condition(|state| !state.channels.contains_key(&channel_id))
             .await;
 
-        fn channel_messages(
-            channel: &ModelHandle<Channel>,
-            cx: &TestAppContext,
-        ) -> Vec<(u64, String)> {
-            channel.read_with(cx, |channel, _| {
-                channel
-                    .messages()
-                    .iter()
-                    .map(|m| (m.sender_id, m.body.clone()))
-                    .collect()
-            })
+        fn channel_messages(channel: &Channel) -> Vec<(u64, String)> {
+            channel
+                .messages()
+                .iter()
+                .map(|m| (m.sender_id, m.body.clone()))
+                .collect()
         }
     }
 
@@ -1584,21 +1579,12 @@ mod tests {
             config.session_secret = "a".repeat(32);
             config.database_url = format!("postgres://postgres@localhost/{}", db_name);
 
-            Self::create_db(&config.database_url).await;
-            let db = db::Db(
-                db::DbOptions::new()
-                    .max_connections(5)
-                    .connect(&config.database_url)
-                    .await
-                    .expect("failed to connect to postgres database"),
-            );
-            let migrator = Migrator::new(Path::new(concat!(
+            Self::create_db(&config.database_url);
+            let db = db::Db::test(&config.database_url, 5);
+            db.migrate(Path::new(concat!(
                 env!("CARGO_MANIFEST_DIR"),
                 "/migrations"
-            )))
-            .await
-            .unwrap();
-            migrator.run(&db.0).await.unwrap();
+            )));
 
             let github_client = github::AppClient::test();
             Arc::new(AppState {
@@ -1611,16 +1597,14 @@ mod tests {
             })
         }
 
-        async fn create_db(url: &str) {
+        fn create_db(url: &str) {
             // Enable tests to run in parallel by serializing the creation of each test database.
             lazy_static::lazy_static! {
-                static ref DB_CREATION: async_std::sync::Mutex<()> = async_std::sync::Mutex::new(());
+                static ref DB_CREATION: std::sync::Mutex<()> = std::sync::Mutex::new(());
             }
 
-            let _lock = DB_CREATION.lock().await;
-            Postgres::create_database(url)
-                .await
-                .expect("failed to create test database");
+            let _lock = DB_CREATION.lock();
+            block_on(Postgres::create_database(url)).expect("failed to create test database");
         }
 
         async fn state<'a>(&'a self) -> RwLockReadGuard<'a, ServerState> {
