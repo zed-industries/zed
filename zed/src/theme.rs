@@ -30,18 +30,18 @@ pub struct HighlightId(u32);
 pub struct Theme {
     #[serde(default)]
     pub name: String,
-    pub ui: Ui,
+    pub workspace: Workspace,
+    pub tab: Tab,
+    pub active_tab: Tab,
+    pub selector: Selector,
     pub editor: Editor,
     #[serde(deserialize_with = "deserialize_syntax_theme")]
     pub syntax: Vec<(String, TextStyle)>,
 }
 
 #[derive(Debug, Default, Deserialize)]
-pub struct Ui {
+pub struct Workspace {
     pub background: Color,
-    pub tab: Tab,
-    pub active_tab: Tab,
-    pub selector: Selector,
 }
 
 #[derive(Debug, Deserialize)]
@@ -800,8 +800,6 @@ mod tests {
     fn test_highlight_map() {
         let theme = Theme {
             name: "test".into(),
-            ui: Default::default(),
-            editor: Default::default(),
             syntax: [
                 ("function", Color::from_u32(0x100000ff)),
                 ("function.method", Color::from_u32(0x200000ff)),
@@ -813,6 +811,7 @@ mod tests {
             .iter()
             .map(|(name, color)| (name.to_string(), (*color).into()))
             .collect(),
+            ..Default::default()
         };
 
         let capture_names = &[

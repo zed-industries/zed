@@ -207,7 +207,7 @@ impl ThemeSelector {
                     settings.ui_font_family,
                     settings.ui_font_size,
                 )
-                .with_style(&settings.theme.ui.selector.label)
+                .with_style(&settings.theme.selector.label)
                 .boxed(),
             )
             .with_margin_top(6.0)
@@ -240,7 +240,7 @@ impl ThemeSelector {
 
     fn render_match(&self, theme_match: &StringMatch, index: usize) -> ElementBox {
         let settings = self.settings.borrow();
-        let theme = &settings.theme.ui;
+        let theme = &settings.theme;
 
         let container = Container::new(
             Label::new(
@@ -286,7 +286,7 @@ impl View for ThemeSelector {
                         .with_child(Expanded::new(1.0, self.render_matches(cx)).boxed())
                         .boxed(),
                 )
-                .with_style(&settings.theme.ui.selector.container)
+                .with_style(&settings.theme.selector.container)
                 .boxed(),
             )
             .with_max_width(600.0)

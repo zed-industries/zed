@@ -885,7 +885,7 @@ impl View for Workspace {
                 .with_children(self.modal.as_ref().map(|m| ChildView::new(m.id()).boxed()))
                 .boxed(),
         )
-        .with_background_color(settings.theme.ui.background)
+        .with_background_color(settings.theme.workspace.background)
         .named("workspace")
     }
 

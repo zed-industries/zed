@@ -181,7 +181,7 @@ impl Pane {
 
     fn render_tabs(&self, cx: &AppContext) -> ElementBox {
         let settings = self.settings.borrow();
-        let theme = &settings.theme.ui;
+        let theme = &settings.theme;
         let line_height = cx.font_cache().line_height(
             cx.font_cache().default_font(settings.ui_font_family),
             settings.ui_font_size,
@@ -304,7 +304,7 @@ impl Pane {
         tab_hovered: bool,
         is_dirty: bool,
         has_conflict: bool,
-        theme: &theme::Ui,
+        theme: &theme::Theme,
         cx: &AppContext,
     ) -> ElementBox {
         enum TabCloseButton {}

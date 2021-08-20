@@ -1,7 +1,7 @@
-[ui]
+[workspace]
 background = "$surface.0"
 
-[ui.tab]
+[tab]
 background = "$surface.1"
 text = "$text_color.dull"
 border = { color = "#000000", width = 1.0 }
@@ -10,12 +10,12 @@ icon_close = "#383839"
 icon_dirty = "#556de8"
 icon_conflict = "#e45349"
 
-[ui.active_tab]
-extends = "$ui.tab"
+[active_tab]
+extends = "$tab"
 background = "$surface.2"
 text = "$text_color.bright"
 
-[ui.selector]
+[selector]
 background = "$surface.3"
 text = "$text_color.bright"
 padding = { top = 6.0, bottom = 6.0, left = 6.0, right = 6.0 }
@@ -23,15 +23,15 @@ margin.top = 12.0
 corner_radius = 6.0
 shadow = { offset = [0.0, 0.0], blur = 12.0, color = "#00000088" }
 
-[ui.selector.item]
+[selector.item]
 background = "#424344"
 text = "#cccccc"
 highlight_text = { color = "#18a3ff", weight = "bold" }
 border = { color = "#000000", width = 1.0 }
 padding = { top = 6.0, bottom = 6.0, left = 6.0, right = 6.0 }
 
-[ui.selector.active_item]
-extends = "$ui.selector.item"
+[selector.active_item]
+extends = "$selector.item"
 background = "#094771"
 
 [editor]

@@ -75,7 +75,7 @@ impl View for FileFinder {
                         .with_child(Expanded::new(1.0, self.render_matches()).boxed())
                         .boxed(),
                 )
-                .with_style(&settings.theme.ui.selector.container)
+                .with_style(&settings.theme.selector.container)
                 .boxed(),
             )
             .with_max_width(600.0)
@@ -107,7 +107,7 @@ impl FileFinder {
                     settings.ui_font_family,
                     settings.ui_font_size,
                 )
-                .with_style(&settings.theme.ui.selector.label)
+                .with_style(&settings.theme.selector.label)
                 .boxed(),
             )
             .with_margin_top(6.0)
@@ -142,9 +142,9 @@ impl FileFinder {
         let selected_index = self.selected_index();
         let settings = self.settings.borrow();
         let style = if index == selected_index {
-            &settings.theme.ui.selector.active_item
+            &settings.theme.selector.active_item
         } else {
-            &settings.theme.ui.selector.item
+            &settings.theme.selector.item
         };
         let (file_name, file_name_positions, full_path, full_path_positions) =
             self.labels_for_match(path_match);
