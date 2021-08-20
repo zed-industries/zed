@@ -1536,7 +1536,7 @@ mod tests {
     struct TestServer {
         peer: Arc<Peer>,
         app_state: Arc<AppState>,
-        server: Arc<rpc::Server>,
+        server: Arc<Server>,
         db_name: String,
         notifications: mpsc::Receiver<()>,
     }
