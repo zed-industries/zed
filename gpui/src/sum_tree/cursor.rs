@@ -13,7 +13,7 @@ struct StackEntry<'a, T: Item, S, U> {
 #[derive(Clone)]
 pub struct Cursor<'a, T: Item, S, U> {
     tree: &'a SumTree<T>,
-    stack: ArrayVec<[StackEntry<'a, T, S, U>; 16]>,
+    stack: ArrayVec<StackEntry<'a, T, S, U>, 16>,
     seek_dimension: S,
     sum_dimension: U,
     did_seek: bool,
@@ -495,8 +495,8 @@ where
                     ref item_summaries,
                     ..
                 } => {
-                    let mut slice_items = ArrayVec::<[T; 2 * TREE_BASE]>::new();
-                    let mut slice_item_summaries = ArrayVec::<[T::Summary; 2 * TREE_BASE]>::new();
+                    let mut slice_items = ArrayVec::<T, { 2 * TREE_BASE }>::new();
+                    let mut slice_item_summaries = ArrayVec::<T::Summary, { 2 * TREE_BASE }>::new();
                     let mut slice_items_summary = match aggregate {
                         SeekAggregate::Slice(_) => Some(T::Summary::default()),
                         _ => None,

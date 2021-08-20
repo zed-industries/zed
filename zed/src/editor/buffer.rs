@@ -1,30 +1,30 @@
 mod anchor;
+mod operation_queue;
 mod point;
 pub mod rope;
 mod selection;
 
+use crate::{
+    language::{Language, Tree},
+    settings::{HighlightId, HighlightMap},
+    time::{self, ReplicaId},
+    util::Bias,
+    worktree::{File, Worktree},
+};
 pub use anchor::*;
+use anyhow::{anyhow, Result};
+use gpui::{
+    sum_tree::{self, FilterCursor, SumTree},
+    AppContext, Entity, ModelContext, ModelHandle, Task,
+};
+use lazy_static::lazy_static;
+use operation_queue::OperationQueue;
 use parking_lot::Mutex;
 pub use point::*;
 pub use rope::{Chunks, Rope, TextSummary};
 use seahash::SeaHasher;
 pub use selection::*;
 use similar::{ChangeTag, TextDiff};
-use tree_sitter::{InputEdit, Parser, QueryCursor};
-use zrpc::proto;
-
-use crate::{
-    language::{Language, Tree},
-    operation_queue::{self, OperationQueue},
-    settings::{HighlightId, HighlightMap},
-    sum_tree::{self, FilterCursor, SumTree},
-    time::{self, ReplicaId},
-    util::Bias,
-    worktree::{File, Worktree},
-};
-use anyhow::{anyhow, Result};
-use gpui::{AppContext, Entity, ModelContext, ModelHandle, Task};
-use lazy_static::lazy_static;
 use std::{
     cell::RefCell,
     cmp,
@@ -37,6 +37,8 @@ use std::{
     sync::Arc,
     time::{Duration, Instant, SystemTime, UNIX_EPOCH},
 };
+use tree_sitter::{InputEdit, Parser, QueryCursor};
+use zrpc::proto;
 
 #[derive(Clone, Default)]
 struct DeterministicState;
@@ -120,7 +122,7 @@ pub struct Buffer {
     syntax_tree: Mutex<Option<SyntaxTree>>,
     is_parsing: bool,
     selections: HashMap<SelectionSetId, SelectionSet>,
-    deferred_ops: OperationQueue<Operation>,
+    deferred_ops: OperationQueue,
     deferred_replicas: HashSet<ReplicaId>,
     replica_id: ReplicaId,
     remote_id: u64,
@@ -483,6 +485,8 @@ pub enum Operation {
         set_id: Option<SelectionSetId>,
         lamport_timestamp: time::Lamport,
     },
+    #[cfg(test)]
+    Test(time::Lamport),
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -1390,6 +1394,8 @@ impl Buffer {
                 }
                 self.lamport_clock.observe(lamport_timestamp);
             }
+            #[cfg(test)]
+            Operation::Test(_) => {}
         }
         Ok(())
     }
@@ -1731,6 +1737,8 @@ impl Buffer {
                 Operation::SetActiveSelections { set_id, .. } => {
                     set_id.map_or(true, |set_id| self.selections.contains_key(&set_id))
                 }
+                #[cfg(test)]
+                Operation::Test(_) => true,
             }
         }
     }
@@ -2564,6 +2572,8 @@ impl Operation {
             Operation::SetActiveSelections {
                 lamport_timestamp, ..
             } => *lamport_timestamp,
+            #[cfg(test)]
+            Operation::Test(lamport_timestamp) => *lamport_timestamp,
         }
     }
 
@@ -2630,6 +2640,8 @@ impl<'a> Into<proto::Operation> for &'a Operation {
                         lamport_timestamp: lamport_timestamp.value,
                     },
                 ),
+                #[cfg(test)]
+                Operation::Test(_) => unimplemented!()
             }),
         }
     }
@@ -2831,12 +2843,6 @@ impl TryFrom<proto::Selection> for Selection {
             reversed: selection.reversed,
             goal: SelectionGoal::None,
         })
-    }
-}
-
-impl operation_queue::Operation for Operation {
-    fn timestamp(&self) -> time::Lamport {
-        self.lamport_timestamp()
     }
 }
 

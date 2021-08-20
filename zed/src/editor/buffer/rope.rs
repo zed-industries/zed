@@ -1,9 +1,7 @@
 use super::Point;
-use crate::{
-    sum_tree::{self, SumTree},
-    util::Bias,
-};
+use crate::util::Bias;
 use arrayvec::ArrayString;
+use gpui::sum_tree::{self, SumTree};
 use smallvec::SmallVec;
 use std::{cmp, ops::Range, str};
 
@@ -61,7 +59,7 @@ impl Rope {
                     if last_chunk.0.len() + first_new_chunk_ref.0.len() <= 2 * CHUNK_BASE {
                         last_chunk.0.push_str(&first_new_chunk.take().unwrap().0);
                     } else {
-                        let mut text = ArrayString::<[_; 4 * CHUNK_BASE]>::new();
+                        let mut text = ArrayString::<{ 4 * CHUNK_BASE }>::new();
                         text.push_str(&last_chunk.0);
                         text.push_str(&first_new_chunk_ref.0);
                         let (left, right) = text.split_at(find_split_ix(&text));
@@ -330,7 +328,7 @@ impl<'a> Iterator for Chunks<'a> {
 }
 
 #[derive(Clone, Debug, Default)]
-struct Chunk(ArrayString<[u8; 2 * CHUNK_BASE]>);
+struct Chunk(ArrayString<{ 2 * CHUNK_BASE }>);
 
 impl Chunk {
     fn to_point(&self, target: usize) -> Point {

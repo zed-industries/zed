@@ -7,11 +7,9 @@ pub mod fs;
 mod fuzzy;
 pub mod language;
 pub mod menus;
-mod operation_queue;
 pub mod project_browser;
 pub mod rpc;
 pub mod settings;
-mod sum_tree;
 #[cfg(any(test, feature = "test-support"))]
 pub mod test;
 pub mod theme;

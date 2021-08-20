@@ -3,14 +3,11 @@ use super::{
     line_wrapper::LineWrapper,
     tab_map::{self, Edit as TabEdit, Snapshot as TabSnapshot, TabPoint, TextSummary},
 };
-use crate::{
-    editor::Point,
-    settings::HighlightId,
+use crate::{editor::Point, settings::HighlightId, util::Bias, Settings};
+use gpui::{
     sum_tree::{self, Cursor, SumTree},
-    util::Bias,
-    Settings,
+    Entity, ModelContext, Task,
 };
-use gpui::{Entity, ModelContext, Task};
 use lazy_static::lazy_static;
 use smol::future::yield_now;
 use std::{collections::VecDeque, ops::Range, time::Duration};
@@ -816,8 +813,12 @@ fn push_isomorphic(transforms: &mut Vec<Transform>, summary: TextSummary) {
     transforms.push(Transform::isomorphic(summary));
 }
 
-impl SumTree<Transform> {
-    pub fn push_or_extend(&mut self, transform: Transform) {
+trait SumTreeExt {
+    fn push_or_extend(&mut self, transform: Transform);
+}
+
+impl SumTreeExt for SumTree<Transform> {
+    fn push_or_extend(&mut self, transform: Transform) {
         let mut transform = Some(transform);
         self.update_last(
             |last_transform| {

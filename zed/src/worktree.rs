@@ -8,7 +8,6 @@ use crate::{
     fuzzy::CharBag,
     language::LanguageRegistry,
     rpc::{self, proto},
-    sum_tree::{self, Cursor, Edit, SumTree},
     time::{self, ReplicaId},
     util::{log_async_errors, Bias},
 };
@@ -17,8 +16,10 @@ use anyhow::{anyhow, Result};
 use futures::{Stream, StreamExt};
 pub use fuzzy::{match_paths, PathMatch};
 use gpui::{
-    executor, AppContext, AsyncAppContext, Entity, ModelContext, ModelHandle, MutableAppContext,
-    Task, UpgradeModelHandle, WeakModelHandle,
+    executor,
+    sum_tree::{self, Cursor, Edit, SumTree},
+    AppContext, AsyncAppContext, Entity, ModelContext, ModelHandle, MutableAppContext, Task,
+    UpgradeModelHandle, WeakModelHandle,
 };
 use lazy_static::lazy_static;
 use parking_lot::Mutex;

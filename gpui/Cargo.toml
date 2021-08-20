@@ -5,6 +5,7 @@ name = "gpui"
 version = "0.1.0"
 
 [dependencies]
+arrayvec = "0.7.1"
 async-task = "4.0.3"
 backtrace = "0.3"
 ctor = "0.1"

@@ -1,6 +1,5 @@
 mod cursor;
 
-use crate::util::Bias;
 use arrayvec::ArrayVec;
 pub use cursor::Cursor;
 pub use cursor::FilterCursor;
@@ -44,6 +43,29 @@ pub trait SeekDimension<'a, T: Summary>: Dimension<'a, T> {
 impl<'a, S: Summary, T: Dimension<'a, S> + Ord> SeekDimension<'a, S> for T {
     fn cmp(&self, other: &Self, _ctx: &S::Context) -> Ordering {
         Ord::cmp(self, other)
+    }
+}
+
+#[derive(Copy, Clone, Eq, PartialEq, Debug, Hash)]
+pub enum Bias {
+    Left,
+    Right,
+}
+
+impl PartialOrd for Bias {
+    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
+        Some(self.cmp(other))
+    }
+}
+
+impl Ord for Bias {
+    fn cmp(&self, other: &Self) -> Ordering {
+        match (self, other) {
+            (Self::Left, Self::Left) => Ordering::Equal,
+            (Self::Left, Self::Right) => Ordering::Less,
+            (Self::Right, Self::Right) => Ordering::Equal,
+            (Self::Right, Self::Left) => Ordering::Greater,
+        }
     }
 }
 
@@ -253,8 +275,8 @@ impl<T: Item> SumTree<T> {
                 summary.add_summary(other_node.summary(), cx);
 
                 let height_delta = *height - other_node.height();
-                let mut summaries_to_append = ArrayVec::<[T::Summary; 2 * TREE_BASE]>::new();
-                let mut trees_to_append = ArrayVec::<[SumTree<T>; 2 * TREE_BASE]>::new();
+                let mut summaries_to_append = ArrayVec::<T::Summary, { 2 * TREE_BASE }>::new();
+                let mut trees_to_append = ArrayVec::<SumTree<T>, { 2 * TREE_BASE }>::new();
                 if height_delta == 0 {
                     summaries_to_append.extend(other_node.child_summaries().iter().cloned());
                     trees_to_append.extend(other_node.child_trees().iter().cloned());
@@ -277,8 +299,8 @@ impl<T: Item> SumTree<T> {
 
                 let child_count = child_trees.len() + trees_to_append.len();
                 if child_count > 2 * TREE_BASE {
-                    let left_summaries: ArrayVec<_>;
-                    let right_summaries: ArrayVec<_>;
+                    let left_summaries: ArrayVec<_, { 2 * TREE_BASE }>;
+                    let right_summaries: ArrayVec<_, { 2 * TREE_BASE }>;
                     let left_trees;
                     let right_trees;
 
@@ -323,7 +345,7 @@ impl<T: Item> SumTree<T> {
                     let left_items;
                     let right_items;
                     let left_summaries;
-                    let right_summaries: ArrayVec<[T::Summary; 2 * TREE_BASE]>;
+                    let right_summaries: ArrayVec<T::Summary, { 2 * TREE_BASE }>;
 
                     let midpoint = (child_count + child_count % 2) / 2;
                     {
@@ -491,13 +513,13 @@ pub enum Node<T: Item> {
     Internal {
         height: u8,
         summary: T::Summary,
-        child_summaries: ArrayVec<[T::Summary; 2 * TREE_BASE]>,
-        child_trees: ArrayVec<[SumTree<T>; 2 * TREE_BASE]>,
+        child_summaries: ArrayVec<T::Summary, { 2 * TREE_BASE }>,
+        child_trees: ArrayVec<SumTree<T>, { 2 * TREE_BASE }>,
     },
     Leaf {
         summary: T::Summary,
-        items: ArrayVec<[T; 2 * TREE_BASE]>,
-        item_summaries: ArrayVec<[T::Summary; 2 * TREE_BASE]>,
+        items: ArrayVec<T, { 2 * TREE_BASE }>,
+        item_summaries: ArrayVec<T::Summary, { 2 * TREE_BASE }>,
     },
 }
 
@@ -532,14 +554,14 @@ impl<T: Item> Node<T> {
         }
     }
 
-    fn child_trees(&self) -> &ArrayVec<[SumTree<T>; 2 * TREE_BASE]> {
+    fn child_trees(&self) -> &ArrayVec<SumTree<T>, { 2 * TREE_BASE }> {
         match self {
             Node::Internal { child_trees, .. } => child_trees,
             Node::Leaf { .. } => panic!("Leaf nodes have no child trees"),
         }
     }
 
-    fn items(&self) -> &ArrayVec<[T; 2 * TREE_BASE]> {
+    fn items(&self) -> &ArrayVec<T, { 2 * TREE_BASE }> {
         match self {
             Node::Leaf { items, .. } => items,
             Node::Internal { .. } => panic!("Internal nodes have no items"),
@@ -603,7 +625,7 @@ mod tests {
         );
     }
 
-    #[gpui::test(iterations = 100)]
+    #[crate::test(self, iterations = 100)]
     fn test_random(mut rng: StdRng) {
         let rng = &mut rng;
         let mut tree = SumTree::<u8>::new();

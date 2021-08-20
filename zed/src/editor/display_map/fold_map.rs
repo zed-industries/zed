@@ -2,14 +2,11 @@ use super::{
     buffer::{AnchorRangeExt, TextSummary},
     Anchor, Buffer, Point, ToOffset,
 };
-use crate::{
-    editor::buffer,
-    settings::HighlightId,
+use crate::{editor::buffer, settings::HighlightId, time, util::Bias};
+use gpui::{
     sum_tree::{self, Cursor, FilterCursor, SumTree},
-    time,
-    util::Bias,
+    AppContext, ModelHandle,
 };
-use gpui::{AppContext, ModelHandle};
 use parking_lot::Mutex;
 use std::{
     cmp::{self, Ordering},
