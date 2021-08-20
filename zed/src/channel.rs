@@ -146,7 +146,7 @@ impl Channel {
 
     pub fn send_message(&mut self, body: String, cx: &mut ModelContext<Self>) -> Result<()> {
         let channel_id = self.details.id;
-        let current_user_id = self.rpc.user_id().ok_or_else(|| anyhow!("not logged in"))?;
+        let current_user_id = self.current_user_id()?;
         let local_id = self.next_local_message_id;
         self.next_local_message_id += 1;
         self.pending_messages.push(PendingChannelMessage {
@@ -187,12 +187,22 @@ impl Channel {
         &self.pending_messages
     }
 
+    fn current_user_id(&self) -> Result<u64> {
+        self.rpc.user_id().ok_or_else(|| anyhow!("not logged in"))
+    }
+
     fn handle_message_sent(
         &mut self,
         message: TypedEnvelope<ChannelMessageSent>,
-        rpc: Arc<rpc::Client>,
+        _: Arc<rpc::Client>,
         cx: &mut ModelContext<Self>,
     ) -> Result<()> {
+        let message = message
+            .payload
+            .message
+            .ok_or_else(|| anyhow!("empty message"))?;
+        self.messages.push_back(message.into());
+        cx.notify();
         Ok(())
     }
 }
