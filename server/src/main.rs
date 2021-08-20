@@ -9,8 +9,6 @@ mod github;
 mod home;
 mod rpc;
 mod team;
-#[cfg(test)]
-mod tests;
 
 use self::errors::TideResultExt as _;
 use anyhow::{Context, Result};

@@ -100,7 +100,6 @@ impl ChannelList {
 impl Entity for Channel {
     type Event = ();
 
-    // TODO: Implement the server side of leaving a channel
     fn release(&mut self, cx: &mut MutableAppContext) {
         let rpc = self.rpc.clone();
         let channel_id = self.details.id;
