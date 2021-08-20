@@ -7,7 +7,8 @@ use gpui::{
     AsyncAppContext, Entity, ModelContext, ModelHandle, MutableAppContext, WeakModelHandle,
 };
 use std::{
-    collections::{hash_map, HashMap, VecDeque},
+    cmp::Ordering,
+    collections::{hash_map, BTreeSet, HashMap},
     sync::Arc,
 };
 use zrpc::{
@@ -29,8 +30,7 @@ pub struct ChannelDetails {
 
 pub struct Channel {
     details: ChannelDetails,
-    first_message_id: Option<u64>,
-    messages: VecDeque<ChannelMessage>,
+    messages: BTreeSet<ChannelMessage>,
     pending_messages: Vec<PendingChannelMessage>,
     next_local_message_id: u64,
     rpc: Arc<Client>,
@@ -135,7 +135,6 @@ impl Channel {
         Self {
             details,
             rpc,
-            first_message_id: None,
             messages: Default::default(),
             pending_messages: Default::default(),
             next_local_message_id: 0,
@@ -163,7 +162,7 @@ impl Channel {
                         .binary_search_by_key(&local_id, |msg| msg.local_id)
                     {
                         let body = this.pending_messages.remove(i).body;
-                        this.messages.push_back(ChannelMessage {
+                        this.messages.insert(ChannelMessage {
                             id: response.message_id,
                             sender_id: current_user_id,
                             body,
@@ -178,7 +177,7 @@ impl Channel {
         Ok(())
     }
 
-    pub fn messages(&self) -> &VecDeque<ChannelMessage> {
+    pub fn messages(&self) -> &BTreeSet<ChannelMessage> {
         &self.messages
     }
 
@@ -200,7 +199,7 @@ impl Channel {
             .payload
             .message
             .ok_or_else(|| anyhow!("empty message"))?;
-        self.messages.push_back(message.into());
+        self.messages.insert(message.into());
         cx.notify();
         Ok(())
     }
@@ -224,3 +223,23 @@ impl From<proto::ChannelMessage> for ChannelMessage {
         }
     }
 }
+
+impl PartialOrd for ChannelMessage {
+    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
+        Some(self.cmp(other))
+    }
+}
+
+impl Ord for ChannelMessage {
+    fn cmp(&self, other: &Self) -> Ordering {
+        self.id.cmp(&other.id)
+    }
+}
+
+impl PartialEq for ChannelMessage {
+    fn eq(&self, other: &Self) -> bool {
+        self.id == other.id
+    }
+}
+
+impl Eq for ChannelMessage {}
