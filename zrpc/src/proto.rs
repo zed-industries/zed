@@ -126,8 +126,6 @@ macro_rules! entity_messages {
 
 messages!(
     AddPeer,
-    Auth,
-    AuthResponse,
     BufferSaved,
     ChannelMessageSent,
     CloseBuffer,
@@ -148,6 +146,7 @@ messages!(
     RemovePeer,
     SaveBuffer,
     SendChannelMessage,
+    SendChannelMessageResponse,
     ShareWorktree,
     ShareWorktreeResponse,
     UpdateBuffer,
@@ -155,7 +154,6 @@ messages!(
 );
 
 request_messages!(
-    (Auth, AuthResponse),
     (GetChannels, GetChannelsResponse),
     (GetUsers, GetUsersResponse),
     (JoinChannel, JoinChannelResponse),
@@ -164,6 +162,7 @@ request_messages!(
     (Ping, Pong),
     (SaveBuffer, BufferSaved),
     (ShareWorktree, ShareWorktreeResponse),
+    (SendChannelMessage, SendChannelMessageResponse),
 );
 
 entity_messages!(
@@ -259,12 +258,7 @@ mod tests {
     fn test_round_trip_message() {
         smol::block_on(async {
             let stream = test::Channel::new();
-            let message1 = Auth {
-                user_id: 5,
-                access_token: "the-access-token".into(),
-            }
-            .into_envelope(3, None, None);
-
+            let message1 = Ping { id: 5 }.into_envelope(3, None, None);
             let message2 = OpenBuffer {
                 worktree_id: 0,
                 path: "some/path".to_string(),

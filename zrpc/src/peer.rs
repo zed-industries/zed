@@ -514,13 +514,7 @@ mod tests {
             smol::spawn(async move { incoming.next().await }).detach();
 
             let err = client
-                .request(
-                    connection_id,
-                    proto::Auth {
-                        user_id: 42,
-                        access_token: "token".to_string(),
-                    },
-                )
+                .request(connection_id, proto::Ping { id: 42 })
                 .await
                 .unwrap_err();
             assert_eq!(err.to_string(), "connection was closed");
