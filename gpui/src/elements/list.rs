@@ -1,4 +1,8 @@
-use crate::sum_tree::{self, SumTree};
+use crate::{
+    geometry::{rect::RectF, vector::Vector2F},
+    sum_tree::{self, SumTree},
+    Element,
+};
 use parking_lot::Mutex;
 use std::sync::Arc;
 
@@ -12,7 +16,7 @@ pub struct ListState(Arc<Mutex<StateInner>>);
 
 struct StateInner {
     elements: Vec<ElementBox>,
-    element_heights: SumTree<ElementHeight>,
+    heights: SumTree<ElementHeight>,
 }
 
 #[derive(Clone, Debug)]
@@ -25,6 +29,67 @@ enum ElementHeight {
 struct ElementHeightSummary {
     pending_count: usize,
     height: f32,
+}
+
+impl Element for List {
+    type LayoutState = ();
+
+    type PaintState = ();
+
+    fn layout(
+        &mut self,
+        constraint: crate::SizeConstraint,
+        cx: &mut crate::LayoutContext,
+    ) -> (Vector2F, Self::LayoutState) {
+        todo!()
+    }
+
+    fn after_layout(
+        &mut self,
+        size: Vector2F,
+        layout: &mut Self::LayoutState,
+        cx: &mut crate::AfterLayoutContext,
+    ) {
+        todo!()
+    }
+
+    fn paint(
+        &mut self,
+        bounds: RectF,
+        layout: &mut Self::LayoutState,
+        cx: &mut crate::PaintContext,
+    ) -> Self::PaintState {
+        todo!()
+    }
+
+    fn dispatch_event(
+        &mut self,
+        event: &crate::Event,
+        bounds: RectF,
+        layout: &mut Self::LayoutState,
+        paint: &mut Self::PaintState,
+        cx: &mut crate::EventContext,
+    ) -> bool {
+        todo!()
+    }
+
+    fn debug(
+        &self,
+        bounds: RectF,
+        layout: &Self::LayoutState,
+        paint: &Self::PaintState,
+        cx: &crate::DebugContext,
+    ) -> serde_json::Value {
+        todo!()
+    }
+}
+
+impl ListState {
+    pub fn new(elements: Vec<ElementBox>) -> Self {
+        let mut heights = SumTree::new();
+        heights.extend(elements.iter().map(|_| ElementHeight::Pending), &());
+        Self(Arc::new(Mutex::new(StateInner { elements, heights })))
+    }
 }
 
 impl sum_tree::Item for ElementHeight {
