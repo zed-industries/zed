@@ -1,8 +1,7 @@
 use crate::rpc::{self, Client};
 use anyhow::{Context, Result};
 use gpui::{
-    executor, AsyncAppContext, Entity, ModelContext, ModelHandle, MutableAppContext,
-    WeakModelHandle,
+    AsyncAppContext, Entity, ModelContext, ModelHandle, MutableAppContext, WeakModelHandle,
 };
 use std::{
     collections::{hash_map, HashMap, VecDeque},
@@ -31,7 +30,6 @@ pub struct Channel {
     messages: Option<VecDeque<ChannelMessage>>,
     rpc: Arc<Client>,
     _subscription: rpc::Subscription,
-    background: Arc<executor::Background>,
 }
 
 pub struct ChannelMessage {
@@ -88,6 +86,19 @@ impl ChannelList {
 
 impl Entity for Channel {
     type Event = ();
+
+    // TODO: Implement the server side of leaving a channel
+    fn release(&mut self, cx: &mut MutableAppContext) {
+        let rpc = self.rpc.clone();
+        let channel_id = self.details.id;
+        cx.foreground()
+            .spawn(async move {
+                if let Err(error) = rpc.send(proto::LeaveChannel { channel_id }).await {
+                    log::error!("error leaving channel: {}", error);
+                };
+            })
+            .detach()
+    }
 }
 
 impl Channel {
@@ -118,8 +129,12 @@ impl Channel {
             first_message_id: None,
             messages: None,
             _subscription,
-            background: cx.background().clone(),
         }
+    }
+
+
+    pub fn messages(&self) -> Option<&VecDeque<ChannelMessage>> {
+        self.messages.as_ref()
     }
 
     fn handle_message_sent(
@@ -129,25 +144,6 @@ impl Channel {
         cx: &mut ModelContext<Self>,
     ) -> Result<()> {
         Ok(())
-    }
-
-    pub fn messages(&self) -> Option<&VecDeque<ChannelMessage>> {
-        self.messages.as_ref()
-    }
-}
-
-// TODO: Implement the server side of leaving a channel
-impl Drop for Channel {
-    fn drop(&mut self) {
-        let rpc = self.rpc.clone();
-        let channel_id = self.details.id;
-        self.background
-            .spawn(async move {
-                if let Err(error) = rpc.send(proto::LeaveChannel { channel_id }).await {
-                    log::error!("error leaving channel: {}", error);
-                };
-            })
-            .detach()
     }
 }
 
