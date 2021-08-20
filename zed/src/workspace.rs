@@ -1,10 +1,12 @@
 pub mod pane;
 pub mod pane_group;
+pub mod sidebar;
 
 use crate::{
     editor::{Buffer, Editor},
     fs::Fs,
     language::LanguageRegistry,
+    project_browser::ProjectBrowser,
     rpc,
     settings::Settings,
     worktree::{File, Worktree},
@@ -25,6 +27,7 @@ use log::error;
 pub use pane::*;
 pub use pane_group::*;
 use postage::watch;
+use sidebar::{Side, Sidebar};
 use smol::prelude::*;
 use std::{
     collections::{hash_map::Entry, HashMap, HashSet},
@@ -46,6 +49,10 @@ pub fn init(cx: &mut MutableAppContext) {
     cx.add_action("workspace:new_file", Workspace::open_new_file);
     cx.add_action("workspace:share_worktree", Workspace::share_worktree);
     cx.add_action("workspace:join_worktree", Workspace::join_worktree);
+    cx.add_action(
+        "workspace:toggle_sidebar_item",
+        Workspace::toggle_sidebar_item,
+    );
     cx.add_bindings(vec![
         Binding::new("cmd-s", "workspace:save", None),
         Binding::new("cmd-alt-i", "workspace:debug_elements", None),
@@ -318,12 +325,6 @@ impl Clone for Box<dyn ItemHandle> {
     }
 }
 
-#[derive(Debug)]
-pub struct State {
-    pub modal: Option<usize>,
-    pub center: PaneGroup,
-}
-
 pub struct Workspace {
     pub settings: watch::Receiver<Settings>,
     languages: Arc<LanguageRegistry>,
@@ -331,6 +332,8 @@ pub struct Workspace {
     fs: Arc<dyn Fs>,
     modal: Option<AnyViewHandle>,
     center: PaneGroup,
+    left_sidebar: Sidebar,
+    right_sidebar: Sidebar,
     panes: Vec<ViewHandle<Pane>>,
     active_pane: ViewHandle<Pane>,
     worktrees: HashSet<ModelHandle<Worktree>>,
@@ -350,6 +353,19 @@ impl Workspace {
         });
         cx.focus(&pane);
 
+        let mut left_sidebar = Sidebar::new(Side::Left);
+        left_sidebar.add_item(
+            "icons/folder-tree-16.svg",
+            cx.add_view(|_| ProjectBrowser).into(),
+        );
+
+        let mut right_sidebar = Sidebar::new(Side::Right);
+        right_sidebar.add_item(
+            "icons/comment-16.svg",
+            cx.add_view(|_| ProjectBrowser).into(),
+        );
+        right_sidebar.add_item("icons/user-16.svg", cx.add_view(|_| ProjectBrowser).into());
+
         Workspace {
             modal: None,
             center: PaneGroup::new(pane.id()),
@@ -359,6 +375,8 @@ impl Workspace {
             languages: app_state.languages.clone(),
             rpc: app_state.rpc.clone(),
             fs: app_state.fs.clone(),
+            left_sidebar,
+            right_sidebar,
             worktrees: Default::default(),
             items: Default::default(),
             loading_items: Default::default(),
@@ -724,6 +742,19 @@ impl Workspace {
         }
     }
 
+    pub fn toggle_sidebar_item(
+        &mut self,
+        (side, item_ix): &(Side, usize),
+        cx: &mut ViewContext<Self>,
+    ) {
+        let sidebar = match side {
+            Side::Left => &mut self.left_sidebar,
+            Side::Right => &mut self.right_sidebar,
+        };
+        sidebar.toggle_item(*item_ix);
+        cx.notify();
+    }
+
     pub fn debug_elements(&mut self, _: &(), cx: &mut ViewContext<Self>) {
         match to_string_pretty(&cx.debug_elements()) {
             Ok(json) => {
@@ -892,12 +923,47 @@ impl View for Workspace {
         "Workspace"
     }
 
-    fn render(&self, _: &RenderContext<Self>) -> ElementBox {
+    fn render(&self, cx: &RenderContext<Self>) -> ElementBox {
         let settings = self.settings.borrow();
         Container::new(
-            Stack::new()
-                .with_child(self.center.render())
-                .with_children(self.modal.as_ref().map(|m| ChildView::new(m.id()).boxed()))
+            Flex::column()
+                .with_child(
+                    ConstrainedBox::new(Empty::new().boxed())
+                        .with_height(cx.titlebar_height)
+                        .named("titlebar"),
+                )
+                .with_child(
+                    Expanded::new(
+                        1.0,
+                        Stack::new()
+                            .with_child({
+                                let mut content = Flex::row();
+                                content.add_child(self.left_sidebar.render(&settings, cx));
+                                if let Some(panel) = self.left_sidebar.active_item() {
+                                    content.add_child(
+                                        ConstrainedBox::new(ChildView::new(panel.id()).boxed())
+                                            .with_width(200.0)
+                                            .named("left panel"),
+                                    );
+                                }
+                                content.add_child(Expanded::new(1.0, self.center.render()).boxed());
+                                if let Some(panel) = self.right_sidebar.active_item() {
+                                    content.add_child(
+                                        ConstrainedBox::new(ChildView::new(panel.id()).boxed())
+                                            .with_width(200.0)
+                                            .named("right panel"),
+                                    );
+                                }
+                                content.add_child(self.right_sidebar.render(&settings, cx));
+                                content.boxed()
+                            })
+                            .with_children(
+                                self.modal.as_ref().map(|m| ChildView::new(m.id()).boxed()),
+                            )
+                            .boxed(),
+                    )
+                    .boxed(),
+                )
                 .boxed(),
         )
         .with_background_color(settings.theme.workspace.background)

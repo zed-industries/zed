@@ -33,6 +33,9 @@ pub struct Theme {
     pub workspace: Workspace,
     pub tab: Tab,
     pub active_tab: Tab,
+    pub sidebar: ContainerStyle,
+    pub sidebar_icon: SidebarIcon,
+    pub active_sidebar_icon: SidebarIcon,
     pub selector: Selector,
     pub editor: Editor,
     #[serde(deserialize_with = "deserialize_syntax_theme")]
@@ -70,6 +73,11 @@ pub struct Tab {
     pub icon_close: Color,
     pub icon_dirty: Color,
     pub icon_conflict: Color,
+}
+
+#[derive(Debug, Default, Deserialize)]
+pub struct SidebarIcon {
+    pub color: Color,
 }
 
 #[derive(Debug, Default, Deserialize)]

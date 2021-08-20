@@ -2,22 +2,29 @@
 background = "$surface.0"
 
 [tab]
-background = "$surface.1"
-text = "$text_color.dull"
-border = { color = "#000000", width = 1.0 }
+text = "$text.2"
 padding = { left = 10, right = 10 }
-icon_close = "#383839"
-icon_dirty = "#556de8"
-icon_conflict = "#e45349"
+icon_close = "$text.0"
+icon_dirty = "$status.info"
+icon_conflict = "$status.warn"
 
 [active_tab]
 extends = "$tab"
-background = "$surface.2"
-text = "$text_color.bright"
+background = "$surface.1"
+text = "$text.0"
+
+[sidebar]
+padding = { left = 10, right = 10 }
+
+[sidebar_icon]
+color = "$text.2"
+
+[active_sidebar_icon]
+color = "$text.0"
 
 [selector]
-background = "$surface.3"
-text = "$text_color.bright"
+background = "$surface.2"
+text = "$text.0"
 padding = { top = 6.0, bottom = 6.0, left = 6.0, right = 6.0 }
 margin.top = 12.0
 corner_radius = 6.0
@@ -35,13 +42,13 @@ extends = "$selector.item"
 background = "#094771"
 
 [editor]
-background = "$surface.2"
-gutter_background = "$surface.2"
-active_line_background = "$surface.3"
-line_number = "$text_color.dull"
-line_number_active = "$text_color.bright"
-text = "$text_color.normal"
+background = "$surface.1"
+gutter_background = "$surface.1"
+active_line_background = "$surface.2"
+line_number = "$text.2"
+line_number_active = "$text.0"
+text = "$text.1"
 replicas = [
-    { selection = "#264f78", cursor = "$text_color.bright" },
+    { selection = "#264f78", cursor = "$text.0" },
     { selection = "#504f31", cursor = "#fcf154" },
 ]
