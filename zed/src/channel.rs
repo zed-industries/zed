@@ -1,5 +1,8 @@
-use crate::rpc::{self, Client};
-use anyhow::{Context, Result};
+use crate::{
+    rpc::{self, Client},
+    util::log_async_errors,
+};
+use anyhow::{anyhow, Context, Result};
 use gpui::{
     AsyncAppContext, Entity, ModelContext, ModelHandle, MutableAppContext, WeakModelHandle,
 };
@@ -27,14 +30,24 @@ pub struct ChannelDetails {
 pub struct Channel {
     details: ChannelDetails,
     first_message_id: Option<u64>,
-    messages: Option<VecDeque<ChannelMessage>>,
+    messages: VecDeque<ChannelMessage>,
+    pending_messages: Vec<PendingChannelMessage>,
+    next_local_message_id: u64,
     rpc: Arc<Client>,
     _subscription: rpc::Subscription,
 }
 
 pub struct ChannelMessage {
-    id: u64,
+    pub id: u64,
+    pub sender_id: u64,
+    pub body: String,
 }
+
+pub struct PendingChannelMessage {
+    pub body: String,
+    local_id: u64,
+}
+
 pub enum Event {}
 
 impl Entity for ChannelList {
@@ -110,13 +123,10 @@ impl Channel {
             let channel_id = details.id;
             cx.spawn(|channel, mut cx| async move {
                 match rpc.request(proto::JoinChannel { channel_id }).await {
-                    Ok(response) => {
-                        let messages = response.messages.into_iter().map(Into::into).collect();
-                        channel.update(&mut cx, |channel, cx| {
-                            channel.messages = Some(messages);
-                            cx.notify();
-                        })
-                    }
+                    Ok(response) => channel.update(&mut cx, |channel, cx| {
+                        channel.messages = response.messages.into_iter().map(Into::into).collect();
+                        cx.notify();
+                    }),
                     Err(error) => log::error!("error joining channel: {}", error),
                 }
             })
@@ -127,14 +137,54 @@ impl Channel {
             details,
             rpc,
             first_message_id: None,
-            messages: None,
+            messages: Default::default(),
+            pending_messages: Default::default(),
+            next_local_message_id: 0,
             _subscription,
         }
     }
 
+    pub fn send_message(&mut self, body: String, cx: &mut ModelContext<Self>) -> Result<()> {
+        let channel_id = self.details.id;
+        let current_user_id = self.rpc.user_id().ok_or_else(|| anyhow!("not logged in"))?;
+        let local_id = self.next_local_message_id;
+        self.next_local_message_id += 1;
+        self.pending_messages.push(PendingChannelMessage {
+            local_id,
+            body: body.clone(),
+        });
+        let rpc = self.rpc.clone();
+        cx.spawn(|this, mut cx| {
+            log_async_errors(async move {
+                let request = rpc.request(proto::SendChannelMessage { channel_id, body });
+                let response = request.await?;
+                this.update(&mut cx, |this, cx| {
+                    if let Ok(i) = this
+                        .pending_messages
+                        .binary_search_by_key(&local_id, |msg| msg.local_id)
+                    {
+                        let body = this.pending_messages.remove(i).body;
+                        this.messages.push_back(ChannelMessage {
+                            id: response.message_id,
+                            sender_id: current_user_id,
+                            body,
+                        });
+                        cx.notify();
+                    }
+                });
+                Ok(())
+            })
+        })
+        .detach();
+        Ok(())
+    }
 
-    pub fn messages(&self) -> Option<&VecDeque<ChannelMessage>> {
-        self.messages.as_ref()
+    pub fn messages(&self) -> &VecDeque<ChannelMessage> {
+        &self.messages
+    }
+
+    pub fn pending_messages(&self) -> &[PendingChannelMessage] {
+        &self.pending_messages
     }
 
     fn handle_message_sent(
@@ -158,6 +208,10 @@ impl From<proto::Channel> for ChannelDetails {
 
 impl From<proto::ChannelMessage> for ChannelMessage {
     fn from(message: proto::ChannelMessage) -> Self {
-        ChannelMessage { id: message.id }
+        ChannelMessage {
+            id: message.id,
+            sender_id: message.sender_id,
+            body: message.body,
+        }
     }
 }

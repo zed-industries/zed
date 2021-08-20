@@ -485,13 +485,11 @@ async fn test_basic_chat(mut cx_a: TestAppContext, cx_b: TestAppContext) {
     let (user_id_a, client_a) = server.create_client(&mut cx_a, "user_a").await;
     let (user_id_b, client_b) = server.create_client(&mut cx_a, "user_b").await;
 
-    // Create an org that includes these 2 users and 1 other user.
+    // Create an org that includes these 2 users.
     let db = &server.app_state.db;
-    let user_id_c = db.create_user("user_c", false).await.unwrap();
     let org_id = db.create_org("Test Org", "test-org").await.unwrap();
     db.add_org_member(org_id, user_id_a, false).await.unwrap();
     db.add_org_member(org_id, user_id_b, false).await.unwrap();
-    db.add_org_member(org_id, user_id_c, false).await.unwrap();
 
     // Create a channel that includes all the users.
     let channel_id = db.create_org_channel(org_id, "test-channel").await.unwrap();
@@ -501,22 +499,16 @@ async fn test_basic_chat(mut cx_a: TestAppContext, cx_b: TestAppContext) {
     db.add_channel_member(channel_id, user_id_b, false)
         .await
         .unwrap();
-    db.add_channel_member(channel_id, user_id_c, false)
-        .await
-        .unwrap();
     db.create_channel_message(
         channel_id,
-        user_id_c,
-        "first message!",
+        user_id_b,
+        "hello A, it's B.",
         OffsetDateTime::now_utc(),
     )
     .await
     .unwrap();
 
     let channels_a = ChannelList::new(client_a, &mut cx_a.to_async())
-        .await
-        .unwrap();
-    let channels_b = ChannelList::new(client_b, &mut cx_b.to_async())
         .await
         .unwrap();
     channels_a.read_with(&cx_a, |list, _| {
@@ -532,12 +524,33 @@ async fn test_basic_chat(mut cx_a: TestAppContext, cx_b: TestAppContext) {
     let channel_a = channels_a.update(&mut cx_a, |this, cx| {
         this.get_channel(channel_id.to_proto(), cx).unwrap()
     });
-
-    channel_a.read_with(&cx_a, |channel, _| assert!(channel.messages().is_none()));
+    channel_a.read_with(&cx_a, |channel, _| assert!(channel.messages().is_empty()));
     channel_a.next_notification(&cx_a).await;
     channel_a.read_with(&cx_a, |channel, _| {
-        assert_eq!(channel.messages().unwrap().len(), 1);
+        assert_eq!(
+            channel
+                .messages()
+                .iter()
+                .map(|m| (m.sender_id, m.body.as_ref()))
+                .collect::<Vec<_>>(),
+            &[(user_id_b.to_proto(), "hello A, it's B.")]
+        );
     });
+
+    channel_a.update(&mut cx_a, |channel, cx| {
+        channel.send_message("oh, hi B.".to_string(), cx).unwrap();
+        channel.send_message("sup".to_string(), cx).unwrap();
+        assert_eq!(
+            channel
+                .pending_messages()
+                .iter()
+                .map(|m| &m.body)
+                .collect::<Vec<_>>(),
+            &["oh, hi B.", "sup"]
+        )
+    });
+
+    channel_a.next_notification(&cx_a).await;
 }
 
 struct TestServer {
@@ -577,10 +590,9 @@ impl TestServer {
             )
             .detach();
         client
-            .add_connection(client_conn, cx.to_async())
+            .add_connection(user_id.to_proto(), client_conn, cx.to_async())
             .await
             .unwrap();
-
         (user_id, client)
     }
 

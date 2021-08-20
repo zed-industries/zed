@@ -619,12 +619,14 @@ impl Server {
             .app_state
             .db
             .create_channel_message(channel_id, user_id, &request.payload.body, timestamp)
-            .await?;
+            .await?
+            .to_proto();
+        let receipt = request.receipt();
         let message = proto::ChannelMessageSent {
             channel_id: channel_id.to_proto(),
             message: Some(proto::ChannelMessage {
                 sender_id: user_id.to_proto(),
-                id: message_id.to_proto(),
+                id: message_id,
                 body: request.payload.body,
                 timestamp: timestamp.unix_timestamp() as u64,
             }),
@@ -633,7 +635,15 @@ impl Server {
             self.peer.send(conn_id, message.clone())
         })
         .await?;
-
+        self.peer
+            .respond(
+                receipt,
+                proto::SendChannelMessageResponse {
+                    message_id,
+                    timestamp: timestamp.unix_timestamp() as u64,
+                },
+            )
+            .await?;
         Ok(())
     }
 

@@ -31,6 +31,7 @@ pub struct Client {
 #[derive(Default)]
 struct ClientState {
     connection_id: Option<ConnectionId>,
+    user_id: Option<u64>,
     entity_id_extractors: HashMap<TypeId, Box<dyn Send + Sync + Fn(&dyn AnyTypedEnvelope) -> u64>>,
     model_handlers: HashMap<
         (TypeId, u64),
@@ -64,6 +65,10 @@ impl Client {
             peer: Peer::new(),
             state: Default::default(),
         })
+    }
+
+    pub fn user_id(&self) -> Option<u64> {
+        self.state.read().user_id
     }
 
     pub fn subscribe_from_model<T, M, F>(
@@ -125,7 +130,7 @@ impl Client {
         }
 
         let (user_id, access_token) = Self::login(cx.platform(), &cx.background()).await?;
-        let user_id: i32 = user_id.parse()?;
+        let user_id = user_id.parse::<u64>()?;
         let request =
             Request::builder().header("Authorization", format!("{} {}", user_id, access_token));
 
@@ -135,23 +140,25 @@ impl Client {
             let (stream, _) = async_tungstenite::async_tls::client_async_tls(request, stream)
                 .await
                 .context("websocket handshake")?;
-            log::info!("connected to rpc address {}", *ZED_SERVER_URL);
-            self.add_connection(stream, cx).await?;
+            self.add_connection(user_id, stream, cx).await?;
         } else if let Some(host) = ZED_SERVER_URL.strip_prefix("http://") {
             let stream = smol::net::TcpStream::connect(host).await?;
             let request = request.uri(format!("ws://{}/rpc", host)).body(())?;
-            let (stream, _) = async_tungstenite::client_async(request, stream).await?;
-            log::info!("connected to rpc address {}", *ZED_SERVER_URL);
-            self.add_connection(stream, cx).await?;
+            let (stream, _) = async_tungstenite::client_async(request, stream)
+                .await
+                .context("websocket handshake")?;
+            self.add_connection(user_id, stream, cx).await?;
         } else {
             return Err(anyhow!("invalid server url: {}", *ZED_SERVER_URL))?;
         };
 
+        log::info!("connected to rpc address {}", *ZED_SERVER_URL);
         Ok(())
     }
 
     pub async fn add_connection<Conn>(
         self: &Arc<Self>,
+        user_id: u64,
         conn: Conn,
         cx: AsyncAppContext,
     ) -> surf::Result<()>
@@ -202,7 +209,9 @@ impl Client {
                 }
             })
             .detach();
-        self.state.write().connection_id = Some(connection_id);
+        let mut state = self.state.write();
+        state.connection_id = Some(connection_id);
+        state.user_id = Some(user_id);
         Ok(())
     }
 

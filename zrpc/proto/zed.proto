@@ -30,7 +30,8 @@ message Envelope {
         JoinChannelResponse join_channel_response = 25;
         LeaveChannel leave_channel = 26;
         SendChannelMessage send_channel_message = 27;
-        ChannelMessageSent channel_message_sent = 28;
+        SendChannelMessageResponse send_channel_message_response = 28;
+        ChannelMessageSent channel_message_sent = 29;
     }
 }
 
@@ -146,6 +147,11 @@ message GetUsersResponse {
 message SendChannelMessage {
     uint64 channel_id = 1;
     string body = 2;
+}
+
+message SendChannelMessageResponse {
+    uint64 message_id = 1;
+    uint64 timestamp = 2;
 }
 
 message ChannelMessageSent {
