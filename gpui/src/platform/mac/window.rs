@@ -15,6 +15,7 @@ use cocoa::{
     foundation::{NSAutoreleasePool, NSInteger, NSSize, NSString},
     quartzcore::AutoresizingMask,
 };
+use core_graphics::display::CGRect;
 use ctor::ctor;
 use foreign_types::ForeignType as _;
 use objc::{
@@ -153,10 +154,14 @@ impl Window {
             let pool = NSAutoreleasePool::new(nil);
 
             let frame = options.bounds.to_ns_rect();
-            let style_mask = NSWindowStyleMask::NSClosableWindowMask
+            let mut style_mask = NSWindowStyleMask::NSClosableWindowMask
                 | NSWindowStyleMask::NSMiniaturizableWindowMask
                 | NSWindowStyleMask::NSResizableWindowMask
                 | NSWindowStyleMask::NSTitledWindowMask;
+
+            if options.titlebar_appears_transparent {
+                style_mask |= NSWindowStyleMask::NSFullSizeContentViewWindowMask;
+            }
 
             let native_window: id = msg_send![WINDOW_CLASS, alloc];
             let native_window = native_window.initWithContentRect_styleMask_backing_defer_(
@@ -212,6 +217,9 @@ impl Window {
 
             if let Some(title) = options.title.as_ref() {
                 native_window.setTitle_(NSString::alloc(nil).init_str(title));
+            }
+            if options.titlebar_appears_transparent {
+                native_window.setTitlebarAppearsTransparent_(YES);
             }
             native_window.setAcceptsMouseMovedEvents_(YES);
 
@@ -329,6 +337,10 @@ impl platform::WindowContext for Window {
     fn present_scene(&mut self, scene: Scene) {
         self.0.as_ref().borrow_mut().present_scene(scene);
     }
+
+    fn titlebar_height(&self) -> f32 {
+        self.0.as_ref().borrow().titlebar_height()
+    }
 }
 
 impl platform::WindowContext for WindowState {
@@ -342,6 +354,14 @@ impl platform::WindowContext for WindowState {
         unsafe {
             let screen: id = msg_send![self.native_window, screen];
             NSScreen::backingScaleFactor(screen) as f32
+        }
+    }
+
+    fn titlebar_height(&self) -> f32 {
+        unsafe {
+            let frame = NSWindow::frame(self.native_window);
+            let content_layout_rect: CGRect = msg_send![self.native_window, contentLayoutRect];
+            (frame.size.height - content_layout_rect.size.height) as f32
         }
     }
 

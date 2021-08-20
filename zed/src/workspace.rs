@@ -12,9 +12,14 @@ use crate::{
 };
 use anyhow::{anyhow, Result};
 use gpui::{
-    elements::*, json::to_string_pretty, keymap::Binding, AnyViewHandle, AppContext, ClipboardItem,
-    Entity, ModelHandle, MutableAppContext, PathPromptOptions, PromptLevel, RenderContext, Task,
-    View, ViewContext, ViewHandle, WeakModelHandle,
+    elements::*,
+    geometry::{rect::RectF, vector::vec2f},
+    json::to_string_pretty,
+    keymap::Binding,
+    platform::WindowOptions,
+    AnyViewHandle, AppContext, ClipboardItem, Entity, ModelHandle, MutableAppContext,
+    PathPromptOptions, PromptLevel, RenderContext, Task, View, ViewContext, ViewHandle,
+    WeakModelHandle,
 };
 use log::error;
 pub use pane::*;
@@ -93,12 +98,14 @@ fn open_paths(params: &OpenParams, cx: &mut MutableAppContext) -> Task<()> {
     log::info!("open new workspace");
 
     // Add a new workspace if necessary
-    let (_, workspace) = cx.add_window(|cx| Workspace::new(&params.app_state, cx));
+
+    let (_, workspace) =
+        cx.add_window(window_options(), |cx| Workspace::new(&params.app_state, cx));
     workspace.update(cx, |workspace, cx| workspace.open_paths(&params.paths, cx))
 }
 
 fn open_new(app_state: &Arc<AppState>, cx: &mut MutableAppContext) {
-    cx.add_window(|cx| {
+    cx.add_window(window_options(), |cx| {
         let mut view = Workspace::new(app_state.as_ref(), cx);
         view.open_new_file(&app_state, cx);
         view
@@ -106,11 +113,19 @@ fn open_new(app_state: &Arc<AppState>, cx: &mut MutableAppContext) {
 }
 
 fn join_worktree(app_state: &Arc<AppState>, cx: &mut MutableAppContext) {
-    cx.add_window(|cx| {
+    cx.add_window(window_options(), |cx| {
         let mut view = Workspace::new(app_state.as_ref(), cx);
         view.join_worktree(&(), cx);
         view
     });
+}
+
+fn window_options() -> WindowOptions<'static> {
+    WindowOptions {
+        bounds: RectF::new(vec2f(0., 0.), vec2f(1024., 768.)),
+        title: None,
+        titlebar_appears_transparent: true,
+    }
 }
 
 pub trait Item: Entity + Sized {
