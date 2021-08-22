@@ -419,6 +419,13 @@ mod tests {
         action!(B);
         action!(Ab);
 
+        impl PartialEq for A {
+            fn eq(&self, other: &Self) -> bool {
+                self.0 == other.0
+            }
+        }
+        impl Eq for A {}
+
         #[derive(Clone, Debug, Eq, PartialEq)]
         struct ActionArg {
             a: &'static str,
@@ -465,7 +472,7 @@ mod tests {
     }
 
     impl Matcher {
-        fn test_keystroke<A: Action>(
+        fn test_keystroke<A: Action + Eq>(
             &mut self,
             keystroke: &str,
             view_id: usize,

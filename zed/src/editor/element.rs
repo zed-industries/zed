@@ -1,4 +1,4 @@
-use super::{DisplayPoint, Editor, SelectPhase, Snapshot};
+use super::{DisplayPoint, Editor, Select, SelectPhase, Snapshot, Insert, Scroll};
 use crate::time::ReplicaId;
 use gpui::{
     color::Color,
@@ -55,7 +55,7 @@ impl EditorElement {
         if paint.text_bounds.contains_point(position) {
             let snapshot = self.snapshot(cx.app);
             let position = paint.point_for_position(&snapshot, layout, position);
-            cx.dispatch_action("buffer:select", SelectPhase::Begin { position, add: cmd });
+            cx.dispatch_action(Select(SelectPhase::Begin { position, add: cmd }));
             true
         } else {
             false
@@ -64,7 +64,7 @@ impl EditorElement {
 
     fn mouse_up(&self, _position: Vector2F, cx: &mut EventContext) -> bool {
         if self.view(cx.app.as_ref()).is_selecting() {
-            cx.dispatch_action("buffer:select", SelectPhase::End);
+            cx.dispatch_action(Select(SelectPhase::End));
             true
         } else {
             false
@@ -113,16 +113,13 @@ impl EditorElement {
             let snapshot = self.snapshot(cx.app);
             let position = paint.point_for_position(&snapshot, layout, position);
 
-            cx.dispatch_action(
-                "buffer:select",
-                SelectPhase::Update {
-                    position,
-                    scroll_position: (snapshot.scroll_position() + scroll_delta).clamp(
-                        Vector2F::zero(),
-                        layout.scroll_max(&font_cache, &text_layout_cache),
-                    ),
-                },
-            );
+            cx.dispatch_action(Select(SelectPhase::Update {
+                position,
+                scroll_position: (snapshot.scroll_position() + scroll_delta).clamp(
+                    Vector2F::zero(),
+                    layout.scroll_max(&font_cache, &text_layout_cache),
+                ),
+            }));
             true
         } else {
             false
@@ -139,7 +136,7 @@ impl EditorElement {
                 if chars.chars().any(|c| c.is_control()) {
                     false
                 } else {
-                    cx.dispatch_action("buffer:insert", chars.to_string());
+                    cx.dispatch_action(Insert(chars.to_string()));
                     true
                 }
             }
@@ -177,7 +174,7 @@ impl EditorElement {
             layout.scroll_max(font_cache, layout_cache),
         );
 
-        cx.dispatch_action("buffer:scroll", scroll_position);
+        cx.dispatch_action(Scroll(scroll_position));
 
         true
     }

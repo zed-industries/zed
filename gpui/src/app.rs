@@ -132,7 +132,7 @@ impl AnyAction for () {
 #[macro_export]
 macro_rules! action {
     ($name:ident, $arg:ty) => {
-        #[derive(Clone, Debug, Eq, PartialEq)]
+        #[derive(Clone, Debug)]
         pub struct $name(pub $arg);
 
         impl $crate::Action for $name {
@@ -3677,13 +3677,13 @@ mod tests {
         });
 
         let actions_clone = actions.clone();
-        cx.add_action(move |view: &mut ViewB, action: &Action, cx| {
+        cx.add_action(move |view: &mut ViewB, _: &Action, cx| {
             cx.propagate_action();
             actions_clone.borrow_mut().push(format!("{} c", view.id));
         });
 
         let actions_clone = actions.clone();
-        cx.add_action(move |view: &mut ViewB, action: &Action, cx| {
+        cx.add_action(move |view: &mut ViewB, _: &Action, cx| {
             cx.propagate_action();
             actions_clone.borrow_mut().push(format!("{} d", view.id));
         });
