@@ -16,7 +16,7 @@ pub use display_map::DisplayPoint;
 use display_map::*;
 pub use element::*;
 use gpui::{
-    color::Color, font_cache::FamilyId, fonts::Properties as FontProperties,
+    action, color::Color, font_cache::FamilyId, fonts::Properties as FontProperties,
     geometry::vector::Vector2F, keymap::Binding, text_layout, AppContext, ClipboardItem, Element,
     ElementBox, Entity, FontCache, ModelHandle, MutableAppContext, RenderContext, Task,
     TextLayoutCache, View, ViewContext, WeakViewHandle,
@@ -40,224 +40,167 @@ use std::{
 const CURSOR_BLINK_INTERVAL: Duration = Duration::from_millis(500);
 const MAX_LINE_LEN: usize = 1024;
 
+action!(Cancel);
+action!(Backspace);
+action!(Delete);
+action!(Newline);
+action!(Insert, String);
+action!(DeleteLine);
+action!(DeleteToPreviousWordBoundary);
+action!(DeleteToNextWordBoundary);
+action!(DeleteToBeginningOfLine);
+action!(DeleteToEndOfLine);
+action!(CutToEndOfLine);
+action!(DuplicateLine);
+action!(MoveLineUp);
+action!(MoveLineDown);
+action!(Cut);
+action!(Copy);
+action!(Paste);
+action!(Undo);
+action!(Redo);
+action!(MoveUp);
+action!(MoveDown);
+action!(MoveLeft);
+action!(MoveRight);
+action!(MoveToPreviousWordBoundary);
+action!(MoveToNextWordBoundary);
+action!(MoveToBeginningOfLine);
+action!(MoveToEndOfLine);
+action!(MoveToBeginning);
+action!(MoveToEnd);
+action!(SelectUp);
+action!(SelectDown);
+action!(SelectLeft);
+action!(SelectRight);
+action!(SelectToPreviousWordBoundary);
+action!(SelectToNextWordBoundary);
+action!(SelectToBeginningOfLine, bool);
+action!(SelectToEndOfLine);
+action!(SelectToBeginning);
+action!(SelectToEnd);
+action!(SelectAll);
+action!(SelectLine);
+action!(SplitSelectionIntoLines);
+action!(AddSelectionAbove);
+action!(AddSelectionBelow);
+action!(SelectLargerSyntaxNode);
+action!(SelectSmallerSyntaxNode);
+action!(MoveToEnclosingBracket);
+action!(PageUp);
+action!(PageDown);
+action!(Fold);
+action!(Unfold);
+action!(FoldSelectedRanges);
+action!(Scroll, Vector2F);
+action!(Select, SelectPhase);
+
 pub fn init(cx: &mut MutableAppContext) {
     cx.add_bindings(vec![
-        Binding::new("escape", "buffer:cancel", Some("BufferView")),
-        Binding::new("backspace", "buffer:backspace", Some("BufferView")),
-        Binding::new("ctrl-h", "buffer:backspace", Some("BufferView")),
-        Binding::new("delete", "buffer:delete", Some("BufferView")),
-        Binding::new("ctrl-d", "buffer:delete", Some("BufferView")),
-        Binding::new("enter", "buffer:newline", Some("BufferView")),
-        Binding::new("tab", "buffer:insert", Some("BufferView")).with_arg("\t".to_string()),
-        Binding::new("ctrl-shift-K", "buffer:delete_line", Some("BufferView")),
+        Binding::new("escape", Cancel, Some("BufferView")),
+        Binding::new("backspace", Backspace, Some("BufferView")),
+        Binding::new("ctrl-h", Backspace, Some("BufferView")),
+        Binding::new("delete", Delete, Some("BufferView")),
+        Binding::new("ctrl-d", Delete, Some("BufferView")),
+        Binding::new("enter", Newline, Some("BufferView")),
+        Binding::new("tab", Insert("\t".into()), Some("BufferView")),
+        Binding::new("ctrl-shift-K", DeleteLine, Some("BufferView")),
         Binding::new(
             "alt-backspace",
-            "buffer:delete_to_previous_word_boundary",
+            DeleteToPreviousWordBoundary,
             Some("BufferView"),
         ),
-        Binding::new(
-            "alt-h",
-            "buffer:delete_to_previous_word_boundary",
-            Some("BufferView"),
-        ),
-        Binding::new(
-            "alt-delete",
-            "buffer:delete_to_next_word_boundary",
-            Some("BufferView"),
-        ),
-        Binding::new(
-            "alt-d",
-            "buffer:delete_to_next_word_boundary",
-            Some("BufferView"),
-        ),
-        Binding::new(
-            "cmd-backspace",
-            "buffer:delete_to_beginning_of_line",
-            Some("BufferView"),
-        ),
-        Binding::new(
-            "cmd-delete",
-            "buffer:delete_to_end_of_line",
-            Some("BufferView"),
-        ),
-        Binding::new("ctrl-k", "buffer:cut_to_end_of_line", Some("BufferView")),
-        Binding::new("cmd-shift-D", "buffer:duplicate_line", Some("BufferView")),
-        Binding::new("ctrl-cmd-up", "buffer:move_line_up", Some("BufferView")),
-        Binding::new("ctrl-cmd-down", "buffer:move_line_down", Some("BufferView")),
-        Binding::new("cmd-x", "buffer:cut", Some("BufferView")),
-        Binding::new("cmd-c", "buffer:copy", Some("BufferView")),
-        Binding::new("cmd-v", "buffer:paste", Some("BufferView")),
-        Binding::new("cmd-z", "buffer:undo", Some("BufferView")),
-        Binding::new("cmd-shift-Z", "buffer:redo", Some("BufferView")),
-        Binding::new("up", "buffer:move_up", Some("BufferView")),
-        Binding::new("down", "buffer:move_down", Some("BufferView")),
-        Binding::new("left", "buffer:move_left", Some("BufferView")),
-        Binding::new("right", "buffer:move_right", Some("BufferView")),
-        Binding::new("ctrl-p", "buffer:move_up", Some("BufferView")),
-        Binding::new("ctrl-n", "buffer:move_down", Some("BufferView")),
-        Binding::new("ctrl-b", "buffer:move_left", Some("BufferView")),
-        Binding::new("ctrl-f", "buffer:move_right", Some("BufferView")),
-        Binding::new(
-            "alt-left",
-            "buffer:move_to_previous_word_boundary",
-            Some("BufferView"),
-        ),
-        Binding::new(
-            "alt-b",
-            "buffer:move_to_previous_word_boundary",
-            Some("BufferView"),
-        ),
-        Binding::new(
-            "alt-right",
-            "buffer:move_to_next_word_boundary",
-            Some("BufferView"),
-        ),
-        Binding::new(
-            "alt-f",
-            "buffer:move_to_next_word_boundary",
-            Some("BufferView"),
-        ),
-        Binding::new(
-            "cmd-left",
-            "buffer:move_to_beginning_of_line",
-            Some("BufferView"),
-        ),
-        Binding::new(
-            "ctrl-a",
-            "buffer:move_to_beginning_of_line",
-            Some("BufferView"),
-        ),
-        Binding::new(
-            "cmd-right",
-            "buffer:move_to_end_of_line",
-            Some("BufferView"),
-        ),
-        Binding::new("ctrl-e", "buffer:move_to_end_of_line", Some("BufferView")),
-        Binding::new("cmd-up", "buffer:move_to_beginning", Some("BufferView")),
-        Binding::new("cmd-down", "buffer:move_to_end", Some("BufferView")),
-        Binding::new("shift-up", "buffer:select_up", Some("BufferView")),
-        Binding::new("ctrl-shift-P", "buffer:select_up", Some("BufferView")),
-        Binding::new("shift-down", "buffer:select_down", Some("BufferView")),
-        Binding::new("ctrl-shift-N", "buffer:select_down", Some("BufferView")),
-        Binding::new("shift-left", "buffer:select_left", Some("BufferView")),
-        Binding::new("ctrl-shift-B", "buffer:select_left", Some("BufferView")),
-        Binding::new("shift-right", "buffer:select_right", Some("BufferView")),
-        Binding::new("ctrl-shift-F", "buffer:select_right", Some("BufferView")),
+        Binding::new("alt-h", DeleteToPreviousWordBoundary, Some("BufferView")),
+        Binding::new("alt-delete", DeleteToNextWordBoundary, Some("BufferView")),
+        Binding::new("alt-d", DeleteToNextWordBoundary, Some("BufferView")),
+        Binding::new("cmd-backspace", DeleteToBeginningOfLine, Some("BufferView")),
+        Binding::new("cmd-delete", DeleteToEndOfLine, Some("BufferView")),
+        Binding::new("ctrl-k", CutToEndOfLine, Some("BufferView")),
+        Binding::new("cmd-shift-D", DuplicateLine, Some("BufferView")),
+        Binding::new("ctrl-cmd-up", MoveLineUp, Some("BufferView")),
+        Binding::new("ctrl-cmd-down", MoveLineDown, Some("BufferView")),
+        Binding::new("cmd-x", Cut, Some("BufferView")),
+        Binding::new("cmd-c", Copy, Some("BufferView")),
+        Binding::new("cmd-v", Paste, Some("BufferView")),
+        Binding::new("cmd-z", Undo, Some("BufferView")),
+        Binding::new("cmd-shift-Z", Redo, Some("BufferView")),
+        Binding::new("up", MoveUp, Some("BufferView")),
+        Binding::new("down", MoveDown, Some("BufferView")),
+        Binding::new("left", MoveLeft, Some("BufferView")),
+        Binding::new("right", MoveRight, Some("BufferView")),
+        Binding::new("ctrl-p", MoveUp, Some("BufferView")),
+        Binding::new("ctrl-n", MoveDown, Some("BufferView")),
+        Binding::new("ctrl-b", MoveLeft, Some("BufferView")),
+        Binding::new("ctrl-f", MoveRight, Some("BufferView")),
+        Binding::new("alt-left", MoveToPreviousWordBoundary, Some("BufferView")),
+        Binding::new("alt-b", MoveToPreviousWordBoundary, Some("BufferView")),
+        Binding::new("alt-right", MoveToNextWordBoundary, Some("BufferView")),
+        Binding::new("alt-f", MoveToNextWordBoundary, Some("BufferView")),
+        Binding::new("cmd-left", MoveToBeginningOfLine, Some("BufferView")),
+        Binding::new("ctrl-a", MoveToBeginningOfLine, Some("BufferView")),
+        Binding::new("cmd-right", MoveToEndOfLine, Some("BufferView")),
+        Binding::new("ctrl-e", MoveToEndOfLine, Some("BufferView")),
+        Binding::new("cmd-up", MoveToBeginning, Some("BufferView")),
+        Binding::new("cmd-down", MoveToEnd, Some("BufferView")),
+        Binding::new("shift-up", SelectUp, Some("BufferView")),
+        Binding::new("ctrl-shift-P", SelectUp, Some("BufferView")),
+        Binding::new("shift-down", SelectDown, Some("BufferView")),
+        Binding::new("ctrl-shift-N", SelectDown, Some("BufferView")),
+        Binding::new("shift-left", SelectLeft, Some("BufferView")),
+        Binding::new("ctrl-shift-B", SelectLeft, Some("BufferView")),
+        Binding::new("shift-right", SelectRight, Some("BufferView")),
+        Binding::new("ctrl-shift-F", SelectRight, Some("BufferView")),
         Binding::new(
             "alt-shift-left",
-            "buffer:select_to_previous_word_boundary",
+            SelectToPreviousWordBoundary,
             Some("BufferView"),
         ),
         Binding::new(
             "alt-shift-B",
-            "buffer:select_to_previous_word_boundary",
+            SelectToPreviousWordBoundary,
             Some("BufferView"),
         ),
         Binding::new(
             "alt-shift-right",
-            "buffer:select_to_next_word_boundary",
+            SelectToNextWordBoundary,
             Some("BufferView"),
         ),
-        Binding::new(
-            "alt-shift-F",
-            "buffer:select_to_next_word_boundary",
-            Some("BufferView"),
-        ),
+        Binding::new("alt-shift-F", SelectToNextWordBoundary, Some("BufferView")),
         Binding::new(
             "cmd-shift-left",
-            "buffer:select_to_beginning_of_line",
+            SelectToBeginningOfLine(true),
             Some("BufferView"),
-        )
-        .with_arg(true),
+        ),
         Binding::new(
             "ctrl-shift-A",
-            "buffer:select_to_beginning_of_line",
-            Some("BufferView"),
-        )
-        .with_arg(true),
-        Binding::new(
-            "cmd-shift-right",
-            "buffer:select_to_end_of_line",
+            SelectToBeginningOfLine(true),
             Some("BufferView"),
         ),
-        Binding::new(
-            "ctrl-shift-E",
-            "buffer:select_to_end_of_line",
-            Some("BufferView"),
-        ),
-        Binding::new(
-            "cmd-shift-up",
-            "buffer:select_to_beginning",
-            Some("BufferView"),
-        ),
-        Binding::new("cmd-shift-down", "buffer:select_to_end", Some("BufferView")),
-        Binding::new("cmd-a", "buffer:select_all", Some("BufferView")),
-        Binding::new("cmd-l", "buffer:select_line", Some("BufferView")),
-        Binding::new(
-            "cmd-shift-L",
-            "buffer:split_selection_into_lines",
-            Some("BufferView"),
-        ),
-        Binding::new(
-            "cmd-alt-up",
-            "buffer:add_selection_above",
-            Some("BufferView"),
-        ),
-        Binding::new(
-            "cmd-ctrl-p",
-            "buffer:add_selection_above",
-            Some("BufferView"),
-        ),
-        Binding::new(
-            "cmd-alt-down",
-            "buffer:add_selection_below",
-            Some("BufferView"),
-        ),
-        Binding::new(
-            "cmd-ctrl-n",
-            "buffer:add_selection_below",
-            Some("BufferView"),
-        ),
-        Binding::new(
-            "alt-up",
-            "buffer:select_larger_syntax_node",
-            Some("BufferView"),
-        ),
-        Binding::new(
-            "ctrl-w",
-            "buffer:select_larger_syntax_node",
-            Some("BufferView"),
-        ),
-        Binding::new(
-            "alt-down",
-            "buffer:select_smaller_syntax_node",
-            Some("BufferView"),
-        ),
-        Binding::new(
-            "ctrl-shift-W",
-            "buffer:select_smaller_syntax_node",
-            Some("BufferView"),
-        ),
-        Binding::new(
-            "ctrl-m",
-            "buffer:move_to_enclosing_bracket",
-            Some("BufferView"),
-        ),
-        Binding::new("pageup", "buffer:page_up", Some("BufferView")),
-        Binding::new("pagedown", "buffer:page_down", Some("BufferView")),
-        Binding::new("alt-cmd-[", "buffer:fold", Some("BufferView")),
-        Binding::new("alt-cmd-]", "buffer:unfold", Some("BufferView")),
-        Binding::new(
-            "alt-cmd-f",
-            "buffer:fold_selected_ranges",
-            Some("BufferView"),
-        ),
+        Binding::new("cmd-shift-right", SelectToEndOfLine, Some("BufferView")),
+        Binding::new("ctrl-shift-E", SelectToEndOfLine, Some("BufferView")),
+        Binding::new("cmd-shift-up", SelectToBeginning, Some("BufferView")),
+        Binding::new("cmd-shift-down", SelectToEnd, Some("BufferView")),
+        Binding::new("cmd-a", SelectAll, Some("BufferView")),
+        Binding::new("cmd-l", SelectLine, Some("BufferView")),
+        Binding::new("cmd-shift-L", SplitSelectionIntoLines, Some("BufferView")),
+        Binding::new("cmd-alt-up", AddSelectionAbove, Some("BufferView")),
+        Binding::new("cmd-ctrl-p", AddSelectionAbove, Some("BufferView")),
+        Binding::new("cmd-alt-down", AddSelectionBelow, Some("BufferView")),
+        Binding::new("cmd-ctrl-n", AddSelectionBelow, Some("BufferView")),
+        Binding::new("alt-up", SelectLargerSyntaxNode, Some("BufferView")),
+        Binding::new("ctrl-w", SelectLargerSyntaxNode, Some("BufferView")),
+        Binding::new("alt-down", SelectSmallerSyntaxNode, Some("BufferView")),
+        Binding::new("ctrl-shift-W", SelectSmallerSyntaxNode, Some("BufferView")),
+        Binding::new("ctrl-m", MoveToEnclosingBracket, Some("BufferView")),
+        Binding::new("pageup", PageUp, Some("BufferView")),
+        Binding::new("pagedown", PageDown, Some("BufferView")),
+        Binding::new("alt-cmd-[", Fold, Some("BufferView")),
+        Binding::new("alt-cmd-]", Unfold, Some("BufferView")),
+        Binding::new("alt-cmd-f", FoldSelectedRanges, Some("BufferView")),
     ]);
 
-    cx.add_action("buffer:scroll", |this: &mut Editor, scroll_position, cx| {
-        this.set_scroll_position(*scroll_position, cx)
-    });
-    cx.add_action("buffer:select", Editor::select);
+    cx.add_action(|this: &mut Editor, action: &Scroll, cx| this.set_scroll_position(action.0, cx));
+    cx.add_action(Editor::select);
     cx.add_action("buffer:cancel", Editor::cancel);
     cx.add_action("buffer:insert", Editor::insert);
     cx.add_action("buffer:newline", Editor::newline);
@@ -357,7 +300,7 @@ pub fn init(cx: &mut MutableAppContext) {
     cx.add_action("buffer:fold_selected_ranges", Editor::fold_selected_ranges);
 }
 
-pub enum SelectAction {
+pub enum SelectPhase {
     Begin {
         position: DisplayPoint,
         add: bool,
@@ -612,14 +555,14 @@ impl Editor {
         }
     }
 
-    fn select(&mut self, arg: &SelectAction, cx: &mut ViewContext<Self>) {
-        match arg {
-            SelectAction::Begin { position, add } => self.begin_selection(*position, *add, cx),
-            SelectAction::Update {
+    fn select(&mut self, Select(phase): &Select, cx: &mut ViewContext<Self>) {
+        match phase {
+            SelectPhase::Begin { position, add } => self.begin_selection(*position, *add, cx),
+            SelectPhase::Update {
                 position,
                 scroll_position,
             } => self.update_selection(*position, *scroll_position, cx),
-            SelectAction::End => self.end_selection(cx),
+            SelectPhase::End => self.end_selection(cx),
         }
     }
 

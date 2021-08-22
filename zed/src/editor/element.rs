@@ -1,4 +1,4 @@
-use super::{DisplayPoint, Editor, SelectAction, Snapshot};
+use super::{DisplayPoint, Editor, SelectPhase, Snapshot};
 use crate::time::ReplicaId;
 use gpui::{
     color::Color,
@@ -55,7 +55,7 @@ impl EditorElement {
         if paint.text_bounds.contains_point(position) {
             let snapshot = self.snapshot(cx.app);
             let position = paint.point_for_position(&snapshot, layout, position);
-            cx.dispatch_action("buffer:select", SelectAction::Begin { position, add: cmd });
+            cx.dispatch_action("buffer:select", SelectPhase::Begin { position, add: cmd });
             true
         } else {
             false
@@ -64,7 +64,7 @@ impl EditorElement {
 
     fn mouse_up(&self, _position: Vector2F, cx: &mut EventContext) -> bool {
         if self.view(cx.app.as_ref()).is_selecting() {
-            cx.dispatch_action("buffer:select", SelectAction::End);
+            cx.dispatch_action("buffer:select", SelectPhase::End);
             true
         } else {
             false
@@ -115,7 +115,7 @@ impl EditorElement {
 
             cx.dispatch_action(
                 "buffer:select",
-                SelectAction::Update {
+                SelectPhase::Update {
                     position,
                     scroll_position: (snapshot.scroll_position() + scroll_delta).clamp(
                         Vector2F::zero(),

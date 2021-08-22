@@ -1,5 +1,7 @@
 use super::{BoolExt as _, Dispatcher, FontSystem, Window};
-use crate::{executor, keymap::Keystroke, platform, ClipboardItem, Event, Menu, MenuItem};
+use crate::{
+    executor, keymap::Keystroke, platform, AnyAction, ClipboardItem, Event, Menu, MenuItem,
+};
 use block::ConcreteBlock;
 use cocoa::{
     appkit::{
@@ -90,10 +92,10 @@ pub struct MacForegroundPlatformState {
     become_active: Option<Box<dyn FnMut()>>,
     resign_active: Option<Box<dyn FnMut()>>,
     event: Option<Box<dyn FnMut(crate::Event) -> bool>>,
-    menu_command: Option<Box<dyn FnMut(&str, Option<&dyn Any>)>>,
+    menu_command: Option<Box<dyn FnMut(&dyn AnyAction)>>,
     open_files: Option<Box<dyn FnMut(Vec<PathBuf>)>>,
     finish_launching: Option<Box<dyn FnOnce() -> ()>>,
-    menu_actions: Vec<(String, Option<Box<dyn Any>>)>,
+    menu_actions: Vec<Box<dyn AnyAction>>,
 }
 
 impl MacForegroundPlatform {
@@ -121,7 +123,6 @@ impl MacForegroundPlatform {
                         name,
                         keystroke,
                         action,
-                        arg,
                     } => {
                         if let Some(keystroke) = keystroke {
                             let keystroke = Keystroke::parse(keystroke).unwrap_or_else(|err| {
@@ -162,7 +163,7 @@ impl MacForegroundPlatform {
 
                         let tag = state.menu_actions.len() as NSInteger;
                         let _: () = msg_send![item, setTag: tag];
-                        state.menu_actions.push((action.to_string(), arg));
+                        state.menu_actions.push(action);
                     }
                 }
 
@@ -215,7 +216,7 @@ impl platform::ForegroundPlatform for MacForegroundPlatform {
         }
     }
 
-    fn on_menu_command(&self, callback: Box<dyn FnMut(&str, Option<&dyn Any>)>) {
+    fn on_menu_command(&self, callback: Box<dyn FnMut(&dyn AnyAction)>) {
         self.0.borrow_mut().menu_command = Some(callback);
     }
 
@@ -623,8 +624,8 @@ extern "C" fn handle_menu_item(this: &mut Object, _: Sel, item: id) {
         if let Some(mut callback) = platform.menu_command.take() {
             let tag: NSInteger = msg_send![item, tag];
             let index = tag as usize;
-            if let Some((action, arg)) = platform.menu_actions.get(index) {
-                callback(action, arg.as_ref().map(Box::as_ref));
+            if let Some(action) = platform.menu_actions.get(index) {
+                callback(action.as_ref());
             }
             platform.menu_command = Some(callback);
         }

@@ -1,4 +1,4 @@
-use crate::ClipboardItem;
+use crate::{AnyAction, ClipboardItem};
 use parking_lot::Mutex;
 use pathfinder_geometry::vector::Vector2F;
 use std::{
@@ -62,7 +62,7 @@ impl super::ForegroundPlatform for ForegroundPlatform {
         unimplemented!()
     }
 
-    fn on_menu_command(&self, _: Box<dyn FnMut(&str, Option<&dyn Any>)>) {}
+    fn on_menu_command(&self, _: Box<dyn FnMut(&dyn AnyAction)>) {}
 
     fn set_menus(&self, _: Vec<crate::Menu>) {}
 

@@ -92,6 +92,104 @@ pub trait UpdateView {
         F: FnOnce(&mut T, &mut ViewContext<T>) -> S;
 }
 
+pub trait Action: 'static + AnyAction {
+    type Argument: 'static + Clone;
+
+    const NAME: &'static str;
+}
+
+pub trait AnyAction {
+    fn id(&self) -> TypeId;
+    fn arg_as_any(&self) -> &dyn Any;
+    fn boxed_clone(&self) -> Box<dyn AnyAction>;
+    fn boxed_clone_as_any(&self) -> Box<dyn Any>;
+}
+
+impl Action for () {
+    type Argument = ();
+
+    const NAME: &'static str = "()";
+}
+
+impl AnyAction for () {
+    fn id(&self) -> TypeId {
+        TypeId::of::<()>()
+    }
+
+    fn arg_as_any(&self) -> &dyn Any {
+        &()
+    }
+
+    fn boxed_clone(&self) -> Box<dyn AnyAction> {
+        Box::new(())
+    }
+
+    fn boxed_clone_as_any(&self) -> Box<dyn Any> {
+        Box::new(())
+    }
+}
+
+#[macro_export]
+macro_rules! action {
+    ($name:ident, $arg:ty) => {
+        #[derive(Clone, Debug, Eq, PartialEq)]
+        pub struct $name(pub $arg);
+
+        impl $crate::Action for $name {
+            type Argument = $arg;
+
+            const NAME: &'static str = stringify!($name);
+        }
+
+        impl $crate::AnyAction for $name {
+            fn id(&self) -> std::any::TypeId {
+                std::any::TypeId::of::<$name>()
+            }
+
+            fn arg_as_any(&self) -> &dyn std::any::Any {
+                &self.0
+            }
+
+            fn boxed_clone(&self) -> Box<dyn $crate::AnyAction> {
+                Box::new(self.clone())
+            }
+
+            fn boxed_clone_as_any(&self) -> Box<dyn std::any::Any> {
+                Box::new(self.clone())
+            }
+        }
+    };
+
+    ($name:ident) => {
+        #[derive(Clone, Debug, Eq, PartialEq)]
+        pub struct $name;
+
+        impl $crate::Action for $name {
+            type Argument = ();
+
+            const NAME: &'static str = stringify!($name);
+        }
+
+        impl $crate::AnyAction for $name {
+            fn id(&self) -> std::any::TypeId {
+                std::any::TypeId::of::<$name>()
+            }
+
+            fn arg_as_any(&self) -> &dyn std::any::Any {
+                &()
+            }
+
+            fn boxed_clone(&self) -> Box<dyn $crate::AnyAction> {
+                Box::new(())
+            }
+
+            fn boxed_clone_as_any(&self) -> Box<dyn std::any::Any> {
+                Box::new(())
+            }
+        }
+    };
+}
+
 pub struct Menu<'a> {
     pub name: &'a str,
     pub items: Vec<MenuItem<'a>>,
@@ -101,8 +199,7 @@ pub enum MenuItem<'a> {
     Action {
         name: &'a str,
         keystroke: Option<&'a str>,
-        action: &'a str,
-        arg: Option<Box<dyn Any + 'static>>,
+        action: Box<dyn AnyAction>,
     },
     Separator,
 }
@@ -136,19 +233,19 @@ impl App {
         ))));
 
         let cx = app.0.clone();
-        foreground_platform.on_menu_command(Box::new(move |command, arg| {
+        foreground_platform.on_menu_command(Box::new(move |action| {
             let mut cx = cx.borrow_mut();
             if let Some(key_window_id) = cx.cx.platform.key_window_id() {
                 if let Some((presenter, _)) = cx.presenters_and_platform_windows.get(&key_window_id)
                 {
                     let presenter = presenter.clone();
                     let path = presenter.borrow().dispatch_path(cx.as_ref());
-                    cx.dispatch_action_any(key_window_id, &path, command, arg.unwrap_or(&()));
+                    cx.dispatch_action_any(key_window_id, &path, action);
                 } else {
-                    cx.dispatch_global_action_any(command, arg.unwrap_or(&()));
+                    cx.dispatch_global_action_any(action);
                 }
             } else {
-                cx.dispatch_global_action_any(command, arg.unwrap_or(&()));
+                cx.dispatch_global_action_any(action);
             }
         }));
 
@@ -258,23 +355,19 @@ impl TestAppContext {
         cx
     }
 
-    pub fn dispatch_action<T: 'static + Any>(
+    pub fn dispatch_action<A: Action>(
         &self,
         window_id: usize,
         responder_chain: Vec<usize>,
-        name: &str,
-        arg: T,
+        action: A,
     ) {
-        self.cx.borrow_mut().dispatch_action_any(
-            window_id,
-            &responder_chain,
-            name,
-            Box::new(arg).as_ref(),
-        );
+        self.cx
+            .borrow_mut()
+            .dispatch_action_any(window_id, &responder_chain, &action);
     }
 
-    pub fn dispatch_global_action<T: 'static + Any>(&self, name: &str, arg: T) {
-        self.cx.borrow_mut().dispatch_global_action(name, arg);
+    pub fn dispatch_global_action<A: Action>(&self, action: A) {
+        self.cx.borrow_mut().dispatch_global_action(action);
     }
 
     pub fn dispatch_keystroke(
@@ -563,17 +656,17 @@ impl ReadViewWith for TestAppContext {
 }
 
 type ActionCallback =
-    dyn FnMut(&mut dyn AnyView, &dyn Any, &mut MutableAppContext, usize, usize) -> bool;
+    dyn FnMut(&mut dyn AnyView, &dyn AnyAction, &mut MutableAppContext, usize, usize) -> bool;
 
-type GlobalActionCallback = dyn FnMut(&dyn Any, &mut MutableAppContext);
+type GlobalActionCallback = dyn FnMut(&dyn AnyAction, &mut MutableAppContext);
 
 pub struct MutableAppContext {
     weak_self: Option<rc::Weak<RefCell<Self>>>,
     foreground_platform: Rc<dyn platform::ForegroundPlatform>,
     assets: Arc<AssetCache>,
     cx: AppContext,
-    actions: HashMap<TypeId, HashMap<String, Vec<Box<ActionCallback>>>>,
-    global_actions: HashMap<String, Vec<Box<GlobalActionCallback>>>,
+    actions: HashMap<TypeId, HashMap<TypeId, Vec<Box<ActionCallback>>>>,
+    global_actions: HashMap<TypeId, Vec<Box<GlobalActionCallback>>>,
     keystroke_matcher: keymap::Matcher,
     next_entity_id: usize,
     next_window_id: usize,
@@ -663,69 +756,53 @@ impl MutableAppContext {
             .map(|debug_elements| debug_elements(&self.cx))
     }
 
-    pub fn add_action<S, V, T, F>(&mut self, name: S, mut handler: F)
+    pub fn add_action<A, V, F>(&mut self, mut handler: F)
     where
-        S: Into<String>,
+        A: Action,
         V: View,
-        T: Any,
-        F: 'static + FnMut(&mut V, &T, &mut ViewContext<V>),
+        F: 'static + FnMut(&mut V, &A, &mut ViewContext<V>),
     {
-        let name = name.into();
-        let name_clone = name.clone();
         let handler = Box::new(
             move |view: &mut dyn AnyView,
-                  arg: &dyn Any,
+                  action: &dyn AnyAction,
                   cx: &mut MutableAppContext,
                   window_id: usize,
                   view_id: usize| {
-                match arg.downcast_ref() {
-                    Some(arg) => {
-                        let mut cx = ViewContext::new(cx, window_id, view_id);
-                        handler(
-                            view.as_any_mut()
-                                .downcast_mut()
-                                .expect("downcast is type safe"),
-                            arg,
-                            &mut cx,
-                        );
-                        cx.halt_action_dispatch
-                    }
-                    None => {
-                        log::error!("Could not downcast argument for action {}", name_clone);
-                        false
-                    }
-                }
+                let arg = action.arg_as_any().downcast_ref().unwrap();
+                let mut cx = ViewContext::new(cx, window_id, view_id);
+                handler(
+                    view.as_any_mut()
+                        .downcast_mut()
+                        .expect("downcast is type safe"),
+                    arg,
+                    &mut cx,
+                );
+                cx.halt_action_dispatch
             },
         );
 
         self.actions
             .entry(TypeId::of::<V>())
             .or_default()
-            .entry(name)
+            .entry(TypeId::of::<A>())
             .or_default()
             .push(handler);
     }
 
-    pub fn add_global_action<S, T, F>(&mut self, name: S, mut handler: F)
+    pub fn add_global_action<A, F>(&mut self, mut handler: F)
     where
-        S: Into<String>,
-        T: 'static + Any,
-        F: 'static + FnMut(&T, &mut MutableAppContext),
+        A: Action,
+        F: 'static + FnMut(&A, &mut MutableAppContext),
     {
-        let name = name.into();
-        let name_clone = name.clone();
-        let handler = Box::new(move |arg: &dyn Any, cx: &mut MutableAppContext| {
-            if let Some(arg) = arg.downcast_ref() {
-                handler(arg, cx);
-            } else {
-                log::error!(
-                    "Could not downcast argument for global action {}",
-                    name_clone
-                );
-            }
+        let handler = Box::new(move |action: &dyn AnyAction, cx: &mut MutableAppContext| {
+            let arg = action.arg_as_any().downcast_ref().unwrap();
+            handler(arg, cx);
         });
 
-        self.global_actions.entry(name).or_default().push(handler);
+        self.global_actions
+            .entry(TypeId::of::<A>())
+            .or_default()
+            .push(handler);
     }
 
     pub fn window_ids(&self) -> impl Iterator<Item = usize> + '_ {
@@ -838,22 +915,20 @@ impl MutableAppContext {
         self.pending_effects.extend(notifications);
     }
 
-    pub fn dispatch_action<T: 'static + Any>(
+    pub fn dispatch_action<A: Action>(
         &mut self,
         window_id: usize,
         responder_chain: Vec<usize>,
-        name: &str,
-        arg: T,
+        action: &A,
     ) {
-        self.dispatch_action_any(window_id, &responder_chain, name, Box::new(arg).as_ref());
+        self.dispatch_action_any(window_id, &responder_chain, action);
     }
 
     pub(crate) fn dispatch_action_any(
         &mut self,
         window_id: usize,
         path: &[usize],
-        name: &str,
-        arg: &dyn Any,
+        action: &dyn AnyAction,
     ) -> bool {
         self.pending_flushes += 1;
         let mut halted_dispatch = false;
@@ -865,10 +940,11 @@ impl MutableAppContext {
                 if let Some((name, mut handlers)) = self
                     .actions
                     .get_mut(&type_id)
-                    .and_then(|h| h.remove_entry(name))
+                    .and_then(|h| h.remove_entry(&action.id()))
                 {
                     for handler in handlers.iter_mut().rev() {
-                        let halt_dispatch = handler(view.as_mut(), arg, self, window_id, *view_id);
+                        let halt_dispatch =
+                            handler(view.as_mut(), action, self, window_id, *view_id);
                         if halt_dispatch {
                             halted_dispatch = true;
                             break;
@@ -889,22 +965,22 @@ impl MutableAppContext {
         }
 
         if !halted_dispatch {
-            self.dispatch_global_action_any(name, arg);
+            self.dispatch_global_action_any(action);
         }
 
         self.flush_effects();
         halted_dispatch
     }
 
-    pub fn dispatch_global_action<T: 'static + Any>(&mut self, name: &str, arg: T) {
-        self.dispatch_global_action_any(name, Box::new(arg).as_ref());
+    pub fn dispatch_global_action<A: Action>(&mut self, action: A) {
+        self.dispatch_global_action_any(&action);
     }
 
-    fn dispatch_global_action_any(&mut self, name: &str, arg: &dyn Any) {
-        if let Some((name, mut handlers)) = self.global_actions.remove_entry(name) {
+    fn dispatch_global_action_any(&mut self, action: &dyn AnyAction) {
+        if let Some((name, mut handlers)) = self.global_actions.remove_entry(&action.id()) {
             self.pending_flushes += 1;
             for handler in handlers.iter_mut().rev() {
-                handler(arg, self);
+                handler(action, self);
             }
             self.global_actions.insert(name, handlers);
             self.flush_effects();
@@ -943,13 +1019,9 @@ impl MutableAppContext {
             {
                 MatchResult::None => {}
                 MatchResult::Pending => pending = true,
-                MatchResult::Action { name, arg } => {
-                    if self.dispatch_action_any(
-                        window_id,
-                        &responder_chain[0..=i],
-                        &name,
-                        arg.as_ref().map(|arg| arg.as_ref()).unwrap_or(&()),
-                    ) {
+                MatchResult::Action(action) => {
+                    if self.dispatch_action_any(window_id, &responder_chain[0..=i], action.as_ref())
+                    {
                         return Ok(true);
                     }
                 }
@@ -3575,31 +3647,29 @@ mod tests {
             }
         }
 
-        struct ActionArg {
-            foo: String,
-        }
+        action!(Action, &'static str);
 
         let actions = Rc::new(RefCell::new(Vec::new()));
 
         let actions_clone = actions.clone();
-        cx.add_global_action("action", move |_: &ActionArg, _: &mut MutableAppContext| {
+        cx.add_global_action(move |_: &Action, _: &mut MutableAppContext| {
             actions_clone.borrow_mut().push("global a".to_string());
         });
 
         let actions_clone = actions.clone();
-        cx.add_global_action("action", move |_: &ActionArg, _: &mut MutableAppContext| {
+        cx.add_global_action(move |_: &Action, _: &mut MutableAppContext| {
             actions_clone.borrow_mut().push("global b".to_string());
         });
 
         let actions_clone = actions.clone();
-        cx.add_action("action", move |view: &mut ViewA, arg: &ActionArg, cx| {
-            assert_eq!(arg.foo, "bar");
+        cx.add_action(move |view: &mut ViewA, action: &Action, cx| {
+            assert_eq!(action.0, "bar");
             cx.propagate_action();
             actions_clone.borrow_mut().push(format!("{} a", view.id));
         });
 
         let actions_clone = actions.clone();
-        cx.add_action("action", move |view: &mut ViewA, _: &ActionArg, cx| {
+        cx.add_action(move |view: &mut ViewA, _: &Action, cx| {
             if view.id != 1 {
                 cx.propagate_action();
             }
@@ -3607,13 +3677,13 @@ mod tests {
         });
 
         let actions_clone = actions.clone();
-        cx.add_action("action", move |view: &mut ViewB, _: &ActionArg, cx| {
+        cx.add_action(move |view: &mut ViewB, action: &Action, cx| {
             cx.propagate_action();
             actions_clone.borrow_mut().push(format!("{} c", view.id));
         });
 
         let actions_clone = actions.clone();
-        cx.add_action("action", move |view: &mut ViewB, _: &ActionArg, cx| {
+        cx.add_action(move |view: &mut ViewB, action: &Action, cx| {
             cx.propagate_action();
             actions_clone.borrow_mut().push(format!("{} d", view.id));
         });
@@ -3626,8 +3696,7 @@ mod tests {
         cx.dispatch_action(
             window_id,
             vec![view_1.id(), view_2.id(), view_3.id(), view_4.id()],
-            "action",
-            ActionArg { foo: "bar".into() },
+            &Action("bar"),
         );
 
         assert_eq!(
@@ -3640,8 +3709,7 @@ mod tests {
         cx.dispatch_action(
             window_id,
             vec![view_2.id(), view_3.id(), view_4.id()],
-            "action",
-            ActionArg { foo: "bar".into() },
+            &Action("bar"),
         );
 
         assert_eq!(
@@ -3654,10 +3722,7 @@ mod tests {
     fn test_dispatch_keystroke(cx: &mut MutableAppContext) {
         use std::cell::Cell;
 
-        #[derive(Clone)]
-        struct ActionArg {
-            key: String,
-        }
+        action!(Action, &'static str);
 
         struct View {
             id: usize,
@@ -3704,16 +3769,18 @@ mod tests {
 
         // This keymap's only binding dispatches an action on view 2 because that view will have
         // "a" and "b" in its context, but not "c".
-        let binding = keymap::Binding::new("a", "action", Some("a && b && !c"))
-            .with_arg(ActionArg { key: "a".into() });
-        cx.add_bindings(vec![binding]);
+        cx.add_bindings(vec![keymap::Binding::new(
+            "a",
+            Action("a"),
+            Some("a && b && !c"),
+        )]);
 
         let handled_action = Rc::new(Cell::new(false));
         let handled_action_clone = handled_action.clone();
-        cx.add_action("action", move |view: &mut View, arg: &ActionArg, _| {
+        cx.add_action(move |view: &mut View, action: &Action, _| {
             handled_action_clone.set(true);
             assert_eq!(view.id, 2);
-            assert_eq!(arg.key, "a");
+            assert_eq!(action.0, "a");
         });
 
         cx.dispatch_keystroke(

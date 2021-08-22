@@ -16,7 +16,7 @@ use crate::{
         vector::{vec2f, Vector2F},
     },
     text_layout::LineLayout,
-    ClipboardItem, Menu, Scene,
+    AnyAction, ClipboardItem, Menu, Scene,
 };
 use async_task::Runnable;
 pub use event::Event;
@@ -56,7 +56,7 @@ pub(crate) trait ForegroundPlatform {
     fn on_open_files(&self, callback: Box<dyn FnMut(Vec<PathBuf>)>);
     fn run(&self, on_finish_launching: Box<dyn FnOnce() -> ()>);
 
-    fn on_menu_command(&self, callback: Box<dyn FnMut(&str, Option<&dyn Any>)>);
+    fn on_menu_command(&self, callback: Box<dyn FnMut(&dyn AnyAction)>);
     fn set_menus(&self, menus: Vec<Menu>);
     fn prompt_for_paths(
         &self,

@@ -5,12 +5,11 @@ use crate::{
     json::{self, ToJson},
     platform::Event,
     text_layout::TextLayoutCache,
-    AssetCache, ElementBox, Scene,
+    Action, AnyAction, AssetCache, ElementBox, Scene,
 };
 use pathfinder_geometry::vector::{vec2f, Vector2F};
 use serde_json::json;
 use std::{
-    any::Any,
     collections::{HashMap, HashSet},
     sync::Arc,
 };
@@ -144,7 +143,7 @@ impl Presenter {
 
             let mut event_cx = EventContext {
                 rendered_views: &mut self.rendered_views,
-                actions: Default::default(),
+                dispatched_actions: Default::default(),
                 font_cache: &self.font_cache,
                 text_layout_cache: &self.text_layout_cache,
                 view_stack: Default::default(),
@@ -154,18 +153,13 @@ impl Presenter {
             event_cx.dispatch_event(root_view_id, &event);
 
             let invalidated_views = event_cx.invalidated_views;
-            let actions = event_cx.actions;
+            let dispatch_directives = event_cx.dispatched_actions;
 
             for view_id in invalidated_views {
                 cx.notify_view(self.window_id, view_id);
             }
-            for action in actions {
-                cx.dispatch_action_any(
-                    self.window_id,
-                    &action.path,
-                    action.name,
-                    action.arg.as_ref(),
-                );
+            for directive in dispatch_directives {
+                cx.dispatch_action_any(self.window_id, &directive.path, directive.action.as_ref());
             }
         }
     }
@@ -183,10 +177,9 @@ impl Presenter {
     }
 }
 
-pub struct ActionToDispatch {
+pub struct DispatchDirective {
     pub path: Vec<usize>,
-    pub name: &'static str,
-    pub arg: Box<dyn Any>,
+    pub action: Box<dyn AnyAction>,
 }
 
 pub struct LayoutContext<'a> {
@@ -249,7 +242,7 @@ impl<'a> PaintContext<'a> {
 
 pub struct EventContext<'a> {
     rendered_views: &'a mut HashMap<usize, ElementBox>,
-    actions: Vec<ActionToDispatch>,
+    dispatched_actions: Vec<DispatchDirective>,
     pub font_cache: &'a FontCache,
     pub text_layout_cache: &'a TextLayoutCache,
     pub app: &'a mut MutableAppContext,
@@ -270,11 +263,10 @@ impl<'a> EventContext<'a> {
         }
     }
 
-    pub fn dispatch_action<A: 'static + Any>(&mut self, name: &'static str, arg: A) {
-        self.actions.push(ActionToDispatch {
+    pub fn dispatch_action<A: Action>(&mut self, action: A) {
+        self.dispatched_actions.push(DispatchDirective {
             path: self.view_stack.clone(),
-            name,
-            arg: Box::new(arg),
+            action: Box::new(action),
         });
     }
 
