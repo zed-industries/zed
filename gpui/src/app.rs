@@ -2097,40 +2097,6 @@ impl<'a, T: View> ViewContext<'a, T> {
         self.app.add_option_view(self.window_id, build_view)
     }
 
-    pub fn subscribe_to_model<E, F>(&mut self, handle: &ModelHandle<E>, callback: F)
-    where
-        E: Entity,
-        E::Event: 'static,
-        F: 'static + FnMut(&mut T, ModelHandle<E>, &E::Event, &mut ViewContext<T>),
-    {
-        self.subscribe(handle, callback)
-    }
-
-    pub fn subscribe_to_view<V, F>(&mut self, handle: &ViewHandle<V>, callback: F)
-    where
-        V: View,
-        V::Event: 'static,
-        F: 'static + FnMut(&mut T, ViewHandle<V>, &V::Event, &mut ViewContext<T>),
-    {
-        self.subscribe(handle, callback)
-    }
-
-    pub fn observe_model<S, F>(&mut self, handle: &ModelHandle<S>, callback: F)
-    where
-        S: Entity,
-        F: 'static + FnMut(&mut T, ModelHandle<S>, &mut ViewContext<T>),
-    {
-        self.observe(handle, callback)
-    }
-
-    pub fn observe_view<S, F>(&mut self, handle: &ViewHandle<S>, callback: F)
-    where
-        S: View,
-        F: 'static + FnMut(&mut T, ViewHandle<S>, &mut ViewContext<T>),
-    {
-        self.observe(handle, callback)
-    }
-
     pub fn subscribe<E, H, F>(&mut self, handle: &H, mut callback: F)
     where
         E: Entity,
@@ -2152,7 +2118,7 @@ impl<'a, T: View> ViewContext<'a, T> {
             });
     }
 
-    fn observe<E, F, H>(&mut self, handle: &H, mut callback: F)
+    pub fn observe<E, F, H>(&mut self, handle: &H, mut callback: F)
     where
         E: Entity,
         H: Handle<E>,
@@ -2594,14 +2560,14 @@ impl<T: View> ViewHandle<T> {
 
         let mut cx = cx.cx.borrow_mut();
         self.update(&mut *cx, |_, cx| {
-            cx.observe_view(self, {
+            cx.observe(self, {
                 let mut tx = tx.clone();
                 move |_, _, _| {
                     tx.blocking_send(()).ok();
                 }
             });
 
-            cx.subscribe_to_view(self, {
+            cx.subscribe(self, {
                 let mut tx = tx.clone();
                 move |_, _, _, _| {
                     tx.blocking_send(()).ok();
@@ -3153,7 +3119,7 @@ mod tests {
         impl View {
             fn new(other: Option<ViewHandle<View>>, cx: &mut ViewContext<Self>) -> Self {
                 if let Some(other) = other.as_ref() {
-                    cx.subscribe_to_view(other, |me, _, event, _| {
+                    cx.subscribe(other, |me, _, event, _| {
                         me.events.push(format!("observed event {}", event));
                     });
                 }
@@ -3327,15 +3293,15 @@ mod tests {
         let handle_3 = cx.add_model(|_| Model);
 
         handle_1.update(cx, |_, c| {
-            c.subscribe_to_view(&handle_2, move |me, _, event, c| {
+            c.subscribe(&handle_2, move |me, _, event, c| {
                 me.events.push(*event);
 
-                c.subscribe_to_view(&handle_2b, |me, _, event, _| {
+                c.subscribe(&handle_2b, |me, _, event, _| {
                     me.events.push(*event * 2);
                 });
             });
 
-            c.subscribe_to_model(&handle_3, |me, _, event, _| {
+            c.subscribe(&handle_3, |me, _, event, _| {
                 me.events.push(*event);
             })
         });
@@ -3381,8 +3347,8 @@ mod tests {
         let observed_model = cx.add_model(|_| Model);
 
         observing_view.update(cx, |_, cx| {
-            cx.subscribe_to_view(&emitting_view, |_, _, _, _| {});
-            cx.subscribe_to_model(&observed_model, |_, _, _, _| {});
+            cx.subscribe(&emitting_view, |_, _, _, _| {});
+            cx.subscribe(&observed_model, |_, _, _, _| {});
         });
         observing_model.update(cx, |_, cx| {
             cx.subscribe(&observed_model, |_, _, _, _| {});
@@ -3431,7 +3397,7 @@ mod tests {
         let model = cx.add_model(|_| Model::default());
 
         view.update(cx, |_, c| {
-            c.observe_model(&model, |me, observed, c| {
+            c.observe(&model, |me, observed, c| {
                 me.events.push(observed.read(c).count)
             });
         });
@@ -3473,7 +3439,7 @@ mod tests {
         let observed_model = cx.add_model(|_| Model);
 
         observing_view.update(cx, |_, cx| {
-            cx.observe_model(&observed_model, |_, _, _| {});
+            cx.observe(&observed_model, |_, _, _| {});
         });
         observing_model.update(cx, |_, cx| {
             cx.observe(&observed_model, |_, _, _| {});

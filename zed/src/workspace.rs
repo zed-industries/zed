@@ -279,7 +279,7 @@ impl<T: ItemView> ItemViewHandle for ViewHandle<T> {
 
     fn set_parent_pane(&self, pane: &ViewHandle<Pane>, cx: &mut MutableAppContext) {
         pane.update(cx, |_, cx| {
-            cx.subscribe_to_view(self, |pane, item, event, cx| {
+            cx.subscribe(self, |pane, item, event, cx| {
                 if T::should_activate_item_on_event(event) {
                     if let Some(ix) = pane.item_index(&item) {
                         pane.activate_item(ix, cx);
@@ -358,7 +358,7 @@ impl Workspace {
     pub fn new(app_state: &AppState, cx: &mut ViewContext<Self>) -> Self {
         let pane = cx.add_view(|_| Pane::new(app_state.settings.clone()));
         let pane_id = pane.id();
-        cx.subscribe_to_view(&pane, move |me, _, event, cx| {
+        cx.subscribe(&pane, move |me, _, event, cx| {
             me.handle_pane_event(pane_id, event, cx)
         });
         cx.focus(&pane);
@@ -526,7 +526,7 @@ impl Workspace {
         cx.spawn(|this, mut cx| async move {
             let worktree = Worktree::open_local(path, languages, fs, &mut cx).await?;
             this.update(&mut cx, |this, cx| {
-                cx.observe_model(&worktree, |_, _, cx| cx.notify());
+                cx.observe(&worktree, |_, _, cx| cx.notify());
                 this.worktrees.insert(worktree.clone());
                 cx.notify();
             });
@@ -835,7 +835,7 @@ impl Workspace {
                 Worktree::open_remote(rpc.clone(), worktree_id, access_token, languages, &mut cx)
                     .await?;
             this.update(&mut cx, |workspace, cx| {
-                cx.observe_model(&worktree, |_, _, cx| cx.notify());
+                cx.observe(&worktree, |_, _, cx| cx.notify());
                 workspace.worktrees.insert(worktree);
                 cx.notify();
             });
@@ -854,7 +854,7 @@ impl Workspace {
     fn add_pane(&mut self, cx: &mut ViewContext<Self>) -> ViewHandle<Pane> {
         let pane = cx.add_view(|_| Pane::new(self.settings.clone()));
         let pane_id = pane.id();
-        cx.subscribe_to_view(&pane, move |me, _, event, cx| {
+        cx.subscribe(&pane, move |me, _, event, cx| {
             me.handle_pane_event(pane_id, event, cx)
         });
         self.panes.push(pane.clone());

@@ -61,7 +61,7 @@ impl ThemeSelector {
         cx: &mut ViewContext<Self>,
     ) -> Self {
         let query_buffer = cx.add_view(|cx| Editor::single_line(settings.clone(), cx));
-        cx.subscribe_to_view(&query_buffer, Self::on_query_editor_event);
+        cx.subscribe(&query_buffer, Self::on_query_editor_event);
 
         let mut this = Self {
             settings,
@@ -86,7 +86,7 @@ impl ThemeSelector {
                     cx,
                 )
             });
-            cx.subscribe_to_view(&selector, Self::on_event);
+            cx.subscribe(&selector, Self::on_event);
             selector
         });
     }
