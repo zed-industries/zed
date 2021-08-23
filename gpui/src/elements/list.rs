@@ -192,3 +192,14 @@ impl<'a> sum_tree::Dimension<'a, ElementHeightSummary> for Height {
         self.0 += summary.height;
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[crate::test(self)]
+    fn test_layout(cx: &mut crate::MutableAppContext) {
+        let mut presenter = cx.build_presenter(0, 20.0);
+        let layout_cx = presenter.layout_cx(cx);
+    }
+}

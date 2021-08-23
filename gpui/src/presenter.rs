@@ -22,6 +22,7 @@ pub struct Presenter {
     text_layout_cache: TextLayoutCache,
     asset_cache: Arc<AssetCache>,
     last_mouse_moved_event: Option<Event>,
+    titlebar_height: f32,
 }
 
 impl Presenter {
@@ -41,6 +42,7 @@ impl Presenter {
             text_layout_cache,
             asset_cache,
             last_mouse_moved_event: None,
+            titlebar_height,
         }
     }
 
@@ -55,12 +57,7 @@ impl Presenter {
         path
     }
 
-    pub fn invalidate(
-        &mut self,
-        mut invalidation: WindowInvalidation,
-        titlebar_height: f32,
-        cx: &AppContext,
-    ) {
+    pub fn invalidate(&mut self, mut invalidation: WindowInvalidation, cx: &AppContext) {
         for view_id in invalidation.removed {
             invalidation.updated.remove(&view_id);
             self.rendered_views.remove(&view_id);
@@ -69,7 +66,7 @@ impl Presenter {
         for view_id in invalidation.updated {
             self.rendered_views.insert(
                 view_id,
-                cx.render_view(self.window_id, view_id, titlebar_height)
+                cx.render_view(self.window_id, view_id, self.titlebar_height)
                     .unwrap(),
             );
         }
@@ -78,14 +75,13 @@ impl Presenter {
     pub fn build_scene(
         &mut self,
         window_size: Vector2F,
-        titlebar_height: f32,
         scale_factor: f32,
         cx: &mut MutableAppContext,
     ) -> Scene {
         let mut scene = Scene::new(scale_factor);
 
         if let Some(root_view_id) = cx.root_view_id(self.window_id) {
-            self.layout(window_size, titlebar_height, cx);
+            self.layout(window_size, cx);
             self.after_layout(cx);
             let mut paint_cx = PaintContext {
                 scene: &mut scene,
@@ -107,19 +103,22 @@ impl Presenter {
         scene
     }
 
-    fn layout(&mut self, size: Vector2F, titlebar_height: f32, cx: &mut MutableAppContext) {
+    fn layout(&mut self, size: Vector2F, cx: &mut MutableAppContext) {
         if let Some(root_view_id) = cx.root_view_id(self.window_id) {
-            let mut layout_ctx = LayoutContext {
-                rendered_views: &mut self.rendered_views,
-                parents: &mut self.parents,
-                font_cache: &self.font_cache,
-                text_layout_cache: &self.text_layout_cache,
-                asset_cache: &self.asset_cache,
-                view_stack: Vec::new(),
-                app: cx,
-                titlebar_height,
-            };
-            layout_ctx.layout(root_view_id, SizeConstraint::strict(size));
+            self.layout_cx(cx)
+                .layout(root_view_id, SizeConstraint::strict(size));
+        }
+    }
+
+    pub fn layout_cx<'a>(&'a mut self, cx: &'a mut MutableAppContext) -> LayoutContext<'a> {
+        LayoutContext {
+            rendered_views: &mut self.rendered_views,
+            parents: &mut self.parents,
+            font_cache: &self.font_cache,
+            text_layout_cache: &self.text_layout_cache,
+            asset_cache: &self.asset_cache,
+            view_stack: Vec::new(),
+            app: cx,
         }
     }
 
@@ -185,12 +184,11 @@ pub struct DispatchDirective {
 pub struct LayoutContext<'a> {
     rendered_views: &'a mut HashMap<usize, ElementBox>,
     parents: &'a mut HashMap<usize, usize>,
+    view_stack: Vec<usize>,
     pub font_cache: &'a FontCache,
     pub text_layout_cache: &'a TextLayoutCache,
     pub asset_cache: &'a AssetCache,
     pub app: &'a mut MutableAppContext,
-    view_stack: Vec<usize>,
-    pub titlebar_height: f32,
 }
 
 impl<'a> LayoutContext<'a> {

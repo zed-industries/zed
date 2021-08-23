@@ -1067,15 +1067,9 @@ impl MutableAppContext {
             self.cx
                 .platform
                 .open_window(window_id, window_options, self.foreground.clone());
-        let text_layout_cache = TextLayoutCache::new(self.cx.platform.fonts());
-        let presenter = Rc::new(RefCell::new(Presenter::new(
-            window_id,
-            window.titlebar_height(),
-            self.cx.font_cache.clone(),
-            text_layout_cache,
-            self.assets.clone(),
-            self,
-        )));
+        let presenter = Rc::new(RefCell::new(
+            self.build_presenter(window_id, window.titlebar_height()),
+        ));
 
         {
             let mut app = self.upgrade();
@@ -1107,7 +1101,6 @@ impl MutableAppContext {
                 app.update(|cx| {
                     let scene = presenter.borrow_mut().build_scene(
                         window.size(),
-                        window.titlebar_height(),
                         window.scale_factor(),
                         cx,
                     );
@@ -1129,6 +1122,17 @@ impl MutableAppContext {
         self.on_debug_elements(window_id, move |cx| {
             presenter.borrow().debug_elements(cx).unwrap()
         });
+    }
+
+    pub fn build_presenter(&self, window_id: usize, titlebar_height: f32) -> Presenter {
+        Presenter::new(
+            window_id,
+            titlebar_height,
+            self.cx.font_cache.clone(),
+            TextLayoutCache::new(self.cx.platform.fonts()),
+            self.assets.clone(),
+            self,
+        )
     }
 
     pub fn add_view<T, F>(&mut self, window_id: usize, build_view: F) -> ViewHandle<T>
@@ -1263,14 +1267,8 @@ impl MutableAppContext {
             {
                 {
                     let mut presenter = presenter.borrow_mut();
-                    let titlebar_height = window.titlebar_height();
-                    presenter.invalidate(invalidation, titlebar_height, self.as_ref());
-                    let scene = presenter.build_scene(
-                        window.size(),
-                        titlebar_height,
-                        window.scale_factor(),
-                        self,
-                    );
+                    presenter.invalidate(invalidation, self.as_ref());
+                    let scene = presenter.build_scene(window.size(), window.scale_factor(), self);
                     window.present_scene(scene);
                 }
                 self.presenters_and_platform_windows
