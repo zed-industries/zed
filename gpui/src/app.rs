@@ -100,7 +100,7 @@ pub trait Action: 'static + AnyAction {
 
 pub trait AnyAction {
     fn id(&self) -> TypeId;
-    fn arg_as_any(&self) -> &dyn Any;
+    fn as_any(&self) -> &dyn Any;
     fn boxed_clone(&self) -> Box<dyn AnyAction>;
     fn boxed_clone_as_any(&self) -> Box<dyn Any>;
 }
@@ -116,8 +116,8 @@ impl AnyAction for () {
         TypeId::of::<()>()
     }
 
-    fn arg_as_any(&self) -> &dyn Any {
-        &()
+    fn as_any(&self) -> &dyn Any {
+        self
     }
 
     fn boxed_clone(&self) -> Box<dyn AnyAction> {
@@ -146,8 +146,8 @@ macro_rules! action {
                 std::any::TypeId::of::<$name>()
             }
 
-            fn arg_as_any(&self) -> &dyn std::any::Any {
-                &self.0
+            fn as_any(&self) -> &dyn std::any::Any {
+                self
             }
 
             fn boxed_clone(&self) -> Box<dyn $crate::AnyAction> {
@@ -175,8 +175,8 @@ macro_rules! action {
                 std::any::TypeId::of::<$name>()
             }
 
-            fn arg_as_any(&self) -> &dyn std::any::Any {
-                &()
+            fn as_any(&self) -> &dyn std::any::Any {
+                self
             }
 
             fn boxed_clone(&self) -> Box<dyn $crate::AnyAction> {
@@ -768,13 +768,13 @@ impl MutableAppContext {
                   cx: &mut MutableAppContext,
                   window_id: usize,
                   view_id: usize| {
-                let arg = action.arg_as_any().downcast_ref().unwrap();
+                let action = action.as_any().downcast_ref().unwrap();
                 let mut cx = ViewContext::new(cx, window_id, view_id);
                 handler(
                     view.as_any_mut()
                         .downcast_mut()
                         .expect("downcast is type safe"),
-                    arg,
+                    action,
                     &mut cx,
                 );
                 cx.halt_action_dispatch
@@ -795,8 +795,8 @@ impl MutableAppContext {
         F: 'static + FnMut(&A, &mut MutableAppContext),
     {
         let handler = Box::new(move |action: &dyn AnyAction, cx: &mut MutableAppContext| {
-            let arg = action.arg_as_any().downcast_ref().unwrap();
-            handler(arg, cx);
+            let action = action.as_any().downcast_ref().unwrap();
+            handler(action, cx);
         });
 
         self.global_actions
