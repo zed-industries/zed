@@ -1,7 +1,11 @@
 use crate::{
-    geometry::{rect::RectF, vector::Vector2F},
+    geometry::{
+        rect::RectF,
+        vector::{vec2f, Vector2F},
+    },
+    json::json,
     sum_tree::{self, Bias, SumTree},
-    Element,
+    DebugContext, Element, Event, EventContext, LayoutContext, PaintContext, SizeConstraint,
 };
 use parking_lot::Mutex;
 use std::{ops::Range, sync::Arc};
@@ -19,6 +23,7 @@ struct StateInner {
     last_layout_width: f32,
     elements: Vec<ElementBox>,
     heights: SumTree<ElementHeight>,
+    scroll_top: f32,
 }
 
 #[derive(Clone, Debug)]
@@ -47,6 +52,25 @@ impl List {
     pub fn new(state: ListState) -> Self {
         Self { state }
     }
+
+    fn scroll(
+        &self,
+        _: Vector2F,
+        delta: Vector2F,
+        precise: bool,
+        scroll_max: f32,
+        cx: &mut EventContext,
+    ) -> bool {
+        if !precise {
+            todo!("still need to handle non-precise scroll events from a mouse wheel");
+        }
+
+        let mut state = self.state.0.lock();
+        state.scroll_top = (state.scroll_top - delta.y()).max(0.0).min(scroll_max);
+        cx.notify();
+
+        true
+    }
 }
 
 impl Element for List {
@@ -56,8 +80,8 @@ impl Element for List {
 
     fn layout(
         &mut self,
-        constraint: crate::SizeConstraint,
-        cx: &mut crate::LayoutContext,
+        constraint: SizeConstraint,
+        cx: &mut LayoutContext,
     ) -> (Vector2F, Self::LayoutState) {
         let state = &mut *self.state.0.lock();
         let mut item_constraint = constraint;
@@ -100,34 +124,69 @@ impl Element for List {
         (constraint.max, ())
     }
 
-    fn paint(
-        &mut self,
-        bounds: RectF,
-        layout: &mut Self::LayoutState,
-        cx: &mut crate::PaintContext,
-    ) -> Self::PaintState {
-        todo!()
+    fn paint(&mut self, bounds: RectF, _: &mut (), cx: &mut PaintContext) {
+        let state = &mut *self.state.0.lock();
+        let visible_range = state.visible_range(bounds.height());
+
+        let mut item_top = {
+            let mut cursor = state.heights.cursor::<Count, Height>();
+            cursor.seek(&Count(visible_range.start), Bias::Right, &());
+            cursor.sum_start().0
+        };
+        for element in &mut state.elements[visible_range] {
+            let origin = bounds.origin() + vec2f(0., item_top) - state.scroll_top;
+            element.paint(origin, cx);
+            item_top += element.size().y();
+        }
     }
 
     fn dispatch_event(
         &mut self,
-        event: &crate::Event,
+        event: &Event,
         bounds: RectF,
-        layout: &mut Self::LayoutState,
-        paint: &mut Self::PaintState,
-        cx: &mut crate::EventContext,
+        _: &mut (),
+        _: &mut (),
+        cx: &mut EventContext,
     ) -> bool {
-        todo!()
+        let mut handled = false;
+
+        let mut state = self.state.0.lock();
+        let visible_range = state.visible_range(bounds.height());
+        for item in &mut state.elements[visible_range] {
+            handled = item.dispatch_event(event, cx) || handled;
+        }
+
+        match event {
+            Event::ScrollWheel {
+                position,
+                delta,
+                precise,
+            } => {
+                if bounds.contains_point(*position) {
+                    let scroll_max = state.scroll_max(bounds.height());
+                    if self.scroll(*position, *delta, *precise, scroll_max, cx) {
+                        handled = true;
+                    }
+                }
+            }
+            _ => {}
+        }
+
+        handled
     }
 
-    fn debug(
-        &self,
-        bounds: RectF,
-        layout: &Self::LayoutState,
-        paint: &Self::PaintState,
-        cx: &crate::DebugContext,
-    ) -> serde_json::Value {
-        todo!()
+    fn debug(&self, bounds: RectF, _: &(), _: &(), cx: &DebugContext) -> serde_json::Value {
+        let state = self.state.0.lock();
+        let visible_range = state.visible_range(bounds.height());
+        let visible_elements = state.elements[visible_range.clone()]
+            .iter()
+            .map(|e| e.debug(cx))
+            .collect::<Vec<_>>();
+        json!({
+            "visible_range": visible_range,
+            "visible_elements": visible_elements,
+            "scroll_top": state.scroll_top,
+        })
     }
 }
 
@@ -139,6 +198,7 @@ impl ListState {
             last_layout_width: 0.,
             elements,
             heights,
+            scroll_top: 0.,
         })))
     }
 
@@ -167,6 +227,21 @@ impl ListState {
         new_heights.push_tree(old_heights.suffix(&()), &());
         drop(old_heights);
         state.heights = new_heights;
+    }
+}
+
+impl StateInner {
+    fn visible_range(&self, height: f32) -> Range<usize> {
+        let mut cursor = self.heights.cursor::<Height, Count>();
+        cursor.seek(&Height(self.scroll_top), Bias::Right, &());
+        let start_ix = cursor.sum_start().0;
+        cursor.seek(&Height(self.scroll_top + height), Bias::Left, &());
+        let end_ix = cursor.sum_start().0;
+        start_ix..end_ix + 1
+    }
+
+    fn scroll_max(&self, height: f32) -> f32 {
+        self.heights.summary().height - height
     }
 }
 
@@ -238,6 +313,12 @@ impl<'a> sum_tree::SeekDimension<'a, ElementHeightSummary> for PendingCount {
 impl<'a> sum_tree::Dimension<'a, ElementHeightSummary> for Height {
     fn add_summary(&mut self, summary: &'a ElementHeightSummary, _: &()) {
         self.0 += summary.height;
+    }
+}
+
+impl<'a> sum_tree::SeekDimension<'a, ElementHeightSummary> for Height {
+    fn cmp(&self, other: &Self, _: &()) -> std::cmp::Ordering {
+        self.0.partial_cmp(&other.0).unwrap()
     }
 }
 
