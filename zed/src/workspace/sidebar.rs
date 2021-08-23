@@ -28,8 +28,8 @@ action!(ToggleSidebarItem, ToggleArg);
 
 #[derive(Clone)]
 pub struct ToggleArg {
-    side: Side,
-    item_index: usize,
+    pub side: Side,
+    pub item_index: usize,
 }
 
 impl Sidebar {

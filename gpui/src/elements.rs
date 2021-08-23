@@ -155,25 +155,42 @@ impl<T: Element> AnyElement for Lifecycle<T> {
     }
 
     fn paint(&mut self, origin: Vector2F, cx: &mut PaintContext) {
-        *self = if let Lifecycle::PostLayout {
-            mut element,
-            constraint,
-            size,
-            mut layout,
-        } = mem::take(self)
-        {
-            let bounds = RectF::new(origin, size);
-            let paint = element.paint(bounds, &mut layout, cx);
+        *self = match mem::take(self) {
+            Lifecycle::PostLayout {
+                mut element,
+                constraint,
+                size,
+                mut layout,
+            } => {
+                let bounds = RectF::new(origin, size);
+                let paint = element.paint(bounds, &mut layout, cx);
+                Lifecycle::PostPaint {
+                    element,
+                    constraint,
+                    bounds,
+                    layout,
+                    paint,
+                }
+            }
             Lifecycle::PostPaint {
-                element,
+                mut element,
                 constraint,
                 bounds,
-                layout,
-                paint,
+                mut layout,
+                ..
+            } => {
+                let bounds = RectF::new(origin, bounds.size());
+                let paint = element.paint(bounds, &mut layout, cx);
+                Lifecycle::PostPaint {
+                    element,
+                    constraint,
+                    bounds,
+                    layout,
+                    paint,
+                }
             }
-        } else {
-            panic!("invalid element lifecycle state");
-        };
+            _ => panic!("invalid element lifecycle state"),
+        }
     }
 
     fn dispatch_event(&mut self, event: &Event, cx: &mut EventContext) -> bool {

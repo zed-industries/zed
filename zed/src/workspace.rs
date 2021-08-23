@@ -3,6 +3,7 @@ pub mod pane_group;
 pub mod sidebar;
 
 use crate::{
+    chat_panel::ChatPanel,
     editor::{Buffer, Editor},
     fs::Fs,
     language::LanguageRegistry,
@@ -28,7 +29,7 @@ use log::error;
 pub use pane::*;
 pub use pane_group::*;
 use postage::watch;
-use sidebar::{Side, Sidebar};
+use sidebar::{Side, Sidebar, ToggleSidebarItem};
 use smol::prelude::*;
 use std::{
     collections::{hash_map::Entry, HashMap, HashSet},
@@ -44,7 +45,6 @@ action!(ShareWorktree);
 action!(JoinWorktree, Arc<AppState>);
 action!(Save);
 action!(DebugElements);
-action!(ToggleSidebarItem, (Side, usize));
 
 pub fn init(cx: &mut MutableAppContext) {
     cx.add_global_action(open);
@@ -372,7 +372,8 @@ impl Workspace {
         let mut right_sidebar = Sidebar::new(Side::Right);
         right_sidebar.add_item(
             "icons/comment-16.svg",
-            cx.add_view(|_| ProjectBrowser).into(),
+            cx.add_view(|_| ChatPanel::new(app_state.settings.clone()))
+                .into(),
         );
         right_sidebar.add_item("icons/user-16.svg", cx.add_view(|_| ProjectBrowser).into());
 
@@ -752,16 +753,12 @@ impl Workspace {
         }
     }
 
-    pub fn toggle_sidebar_item(
-        &mut self,
-        ToggleSidebarItem((side, item_ix)): &ToggleSidebarItem,
-        cx: &mut ViewContext<Self>,
-    ) {
-        let sidebar = match side {
+    pub fn toggle_sidebar_item(&mut self, action: &ToggleSidebarItem, cx: &mut ViewContext<Self>) {
+        let sidebar = match action.0.side {
             Side::Left => &mut self.left_sidebar,
             Side::Right => &mut self.right_sidebar,
         };
-        sidebar.toggle_item(*item_ix);
+        sidebar.toggle_item(action.0.item_index);
         cx.notify();
     }
 
