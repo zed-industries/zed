@@ -1,9 +1,10 @@
 use super::channel::{Channel, ChannelList};
-use gpui::{Entity, ModelHandle, View};
+use gpui::{elements::*, Entity, ModelHandle, View};
 
 pub struct ChatPanel {
     channel_list: ModelHandle<ChannelList>,
     active_channel: Option<ModelHandle<Channel>>,
+    messages: ListState,
 }
 
 pub enum Event {}

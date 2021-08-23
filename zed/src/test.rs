@@ -169,7 +169,7 @@ pub fn build_app_state(cx: &AppContext) -> Arc<AppState> {
 
 pub struct Observer<T>(PhantomData<T>);
 
-impl<T: 'static + Send + Sync> Entity for Observer<T> {
+impl<T: 'static> Entity for Observer<T> {
     type Event = ();
 }
 

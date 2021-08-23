@@ -29,7 +29,7 @@ use std::{
     time::Duration,
 };
 
-pub trait Entity: 'static + Send + Sync {
+pub trait Entity: 'static {
     type Event;
 
     fn release(&mut self, _: &mut MutableAppContext) {}
@@ -1738,7 +1738,7 @@ impl Debug for Effect {
     }
 }
 
-pub trait AnyModel: Send + Sync {
+pub trait AnyModel {
     fn as_any(&self) -> &dyn Any;
     fn as_any_mut(&mut self) -> &mut dyn Any;
     fn release(&mut self, cx: &mut MutableAppContext);
@@ -1761,7 +1761,7 @@ where
     }
 }
 
-pub trait AnyView: Send + Sync {
+pub trait AnyView {
     fn as_any(&self) -> &dyn Any;
     fn as_any_mut(&mut self) -> &mut dyn Any;
     fn release(&mut self, cx: &mut MutableAppContext);
@@ -2514,6 +2514,9 @@ pub struct WeakModelHandle<T> {
     model_id: usize,
     model_type: PhantomData<T>,
 }
+
+unsafe impl<T> Send for WeakModelHandle<T> {}
+unsafe impl<T> Sync for WeakModelHandle<T> {}
 
 impl<T: Entity> WeakModelHandle<T> {
     fn new(model_id: usize) -> Self {

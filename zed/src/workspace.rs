@@ -192,7 +192,7 @@ pub trait ItemHandle: Send + Sync {
     fn downgrade(&self) -> Box<dyn WeakItemHandle>;
 }
 
-pub trait WeakItemHandle: Send + Sync {
+pub trait WeakItemHandle {
     fn file<'a>(&'a self, cx: &'a AppContext) -> Option<&'a File>;
     fn add_view(
         &self,
@@ -203,7 +203,7 @@ pub trait WeakItemHandle: Send + Sync {
     fn alive(&self, cx: &AppContext) -> bool;
 }
 
-pub trait ItemViewHandle: Send + Sync {
+pub trait ItemViewHandle {
     fn title(&self, cx: &AppContext) -> String;
     fn entry_id(&self, cx: &AppContext) -> Option<(usize, Arc<Path>)>;
     fn boxed_clone(&self) -> Box<dyn ItemViewHandle>;
