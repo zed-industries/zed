@@ -1,38 +1,48 @@
-use crate::Settings;
-
-use super::channel::{Channel, ChannelList};
+use super::{
+    channel::{Channel, ChannelList},
+    Settings,
+};
 use gpui::{elements::*, Entity, ModelHandle, RenderContext, View, ViewContext};
 use postage::watch;
 
 pub struct ChatPanel {
-    // channel_list: ModelHandle<ChannelList>,
-    // active_channel: Option<ModelHandle<Channel>>,
+    channel_list: ModelHandle<ChannelList>,
+    active_channel: Option<ModelHandle<Channel>>,
+    // active_channel_subscription: Subscription,
     messages: ListState,
 }
 
 pub enum Event {}
 
 impl ChatPanel {
-    pub fn new(settings: watch::Receiver<Settings>) -> Self {
-        let settings = settings.borrow();
-        let mut messages = Vec::new();
-        for i in 0..1000 {
-            messages.push(
-                Container::new(
-                    Label::new(
-                        format!("This is message {}", i),
-                        settings.ui_font_family,
-                        settings.ui_font_size,
-                    )
-                    .with_style(&settings.theme.selector.label)
-                    .boxed(),
-                )
-                .boxed(),
-            );
+    pub fn new(
+        channel_list: ModelHandle<ChannelList>,
+        settings: watch::Receiver<Settings>,
+        cx: &mut ViewContext<Self>,
+    ) -> Self {
+        let mut this = Self {
+            channel_list,
+            messages: ListState::new(Vec::new()),
+            active_channel: None,
+        };
+        let channel = this.channel_list.update(cx, |list, cx| {
+            if let Some(channel_id) = list
+                .available_channels()
+                .and_then(|channels| channels.first())
+                .map(|details| details.id)
+            {
+                return list.get_channel(channel_id, cx);
+            }
+            None
+        });
+        if let Some(channel) = channel {
+            this.set_active_channel(channel);
         }
-        Self {
-            messages: ListState::new(messages),
-        }
+        this
+    }
+
+    pub fn set_active_channel(&mut self, channel: ModelHandle<Channel>) {
+        //
     }
 }
 

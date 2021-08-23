@@ -19,7 +19,8 @@ mod util;
 pub mod workspace;
 pub mod worktree;
 
-use gpui::action;
+use channel::ChannelList;
+use gpui::{action, ModelHandle};
 pub use settings::Settings;
 
 use parking_lot::Mutex;
@@ -36,6 +37,7 @@ pub struct AppState {
     pub themes: Arc<settings::ThemeRegistry>,
     pub rpc: Arc<rpc::Client>,
     pub fs: Arc<dyn fs::Fs>,
+    pub channel_list: ModelHandle<ChannelList>,
 }
 
 pub fn init(cx: &mut gpui::MutableAppContext) {

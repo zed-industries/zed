@@ -2641,7 +2641,7 @@ impl<'a> Into<proto::Operation> for &'a Operation {
                     },
                 ),
                 #[cfg(test)]
-                Operation::Test(_) => unimplemented!()
+                Operation::Test(_) => unimplemented!(),
             }),
         }
     }
@@ -2895,7 +2895,8 @@ mod tests {
     use super::*;
     use crate::{
         fs::RealFs,
-        test::{build_app_state, temp_tree},
+        language::LanguageRegistry,
+        test::temp_tree,
         util::RandomCharIter,
         worktree::{Worktree, WorktreeHandle as _},
     };
@@ -3825,8 +3826,8 @@ mod tests {
 
     #[gpui::test]
     async fn test_reparse(mut cx: gpui::TestAppContext) {
-        let app_state = cx.read(build_app_state);
-        let rust_lang = app_state.languages.select_language("test.rs");
+        let languages = LanguageRegistry::new();
+        let rust_lang = languages.select_language("test.rs");
         assert!(rust_lang.is_some());
 
         let buffer = cx.add_model(|cx| {
@@ -3966,8 +3967,8 @@ mod tests {
     async fn test_enclosing_bracket_ranges(mut cx: gpui::TestAppContext) {
         use unindent::Unindent as _;
 
-        let app_state = cx.read(build_app_state);
-        let rust_lang = app_state.languages.select_language("test.rs");
+        let languages = LanguageRegistry::new();
+        let rust_lang = languages.select_language("test.rs");
         assert!(rust_lang.is_some());
 
         let buffer = cx.add_model(|cx| {

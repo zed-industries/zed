@@ -1,13 +1,15 @@
 use crate::{
+    channel::ChannelList,
     fs::RealFs,
     language::LanguageRegistry,
     rpc,
     settings::{self, ThemeRegistry},
     time::ReplicaId,
-    AppState,
+    AppState, Settings,
 };
-use gpui::{AppContext, Entity, ModelHandle};
+use gpui::{AppContext, Entity, ModelHandle, MutableAppContext};
 use parking_lot::Mutex;
+use postage::watch;
 use smol::channel;
 use std::{
     marker::PhantomData,
@@ -153,16 +155,22 @@ fn write_tree(path: &Path, tree: serde_json::Value) {
     }
 }
 
-pub fn build_app_state(cx: &AppContext) -> Arc<AppState> {
+pub fn build_settings(cx: &AppContext) -> watch::Receiver<Settings> {
+    settings::channel(&cx.font_cache()).unwrap().1
+}
+
+pub fn build_app_state(cx: &mut MutableAppContext) -> Arc<AppState> {
     let (settings_tx, settings) = settings::channel(&cx.font_cache()).unwrap();
     let languages = Arc::new(LanguageRegistry::new());
     let themes = ThemeRegistry::new(());
+    let rpc = rpc::Client::new();
     Arc::new(AppState {
         settings_tx: Arc::new(Mutex::new(settings_tx)),
         settings,
         themes,
         languages: languages.clone(),
-        rpc: rpc::Client::new(),
+        channel_list: cx.add_model(|cx| ChannelList::new(rpc.clone(), cx)),
+        rpc,
         fs: Arc::new(RealFs),
     })
 }

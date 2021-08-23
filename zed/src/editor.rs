@@ -2596,8 +2596,9 @@ mod tests {
     use super::*;
     use crate::{
         editor::Point,
+        language::LanguageRegistry,
         settings,
-        test::{build_app_state, sample_text},
+        test::{build_settings, sample_text},
     };
     use buffer::History;
     use unindent::Unindent;
@@ -4120,8 +4121,9 @@ mod tests {
 
     #[gpui::test]
     async fn test_select_larger_smaller_syntax_node(mut cx: gpui::TestAppContext) {
-        let app_state = cx.read(build_app_state);
-        let lang = app_state.languages.select_language("z.rs");
+        let settings = cx.read(build_settings);
+        let languages = LanguageRegistry::new();
+        let lang = languages.select_language("z.rs");
         let text = r#"
             use mod1::mod2::{mod3, mod4};
 
@@ -4134,8 +4136,7 @@ mod tests {
             let history = History::new(text.into());
             Buffer::from_history(0, history, None, lang.cloned(), cx)
         });
-        let (_, view) =
-            cx.add_window(|cx| Editor::for_buffer(buffer, app_state.settings.clone(), cx));
+        let (_, view) = cx.add_window(|cx| Editor::for_buffer(buffer, settings.clone(), cx));
         view.condition(&cx, |view, cx| !view.buffer.read(cx).is_parsing())
             .await;
 

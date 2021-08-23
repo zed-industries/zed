@@ -106,6 +106,7 @@ impl Element for List {
     }
 
     fn paint(&mut self, bounds: RectF, _: &mut (), cx: &mut PaintContext) {
+        cx.scene.push_layer(Some(bounds));
         let state = &mut *self.state.0.lock();
         let visible_range = state.visible_range(bounds.height());
 
@@ -119,6 +120,7 @@ impl Element for List {
             element.paint(origin, cx);
             item_top += element.size().y();
         }
+        cx.scene.pop_layer();
     }
 
     fn dispatch_event(

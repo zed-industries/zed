@@ -2640,13 +2640,12 @@ mod tests {
 
     #[gpui::test]
     async fn test_save_file(mut cx: gpui::TestAppContext) {
-        let app_state = cx.read(build_app_state);
         let dir = temp_tree(json!({
             "file1": "the old contents",
         }));
         let tree = Worktree::open_local(
             dir.path(),
-            app_state.languages.clone(),
+            Arc::new(LanguageRegistry::new()),
             Arc::new(RealFs),
             &mut cx.to_async(),
         )
@@ -2668,7 +2667,6 @@ mod tests {
 
     #[gpui::test]
     async fn test_save_in_single_file_worktree(mut cx: gpui::TestAppContext) {
-        let app_state = cx.read(build_app_state);
         let dir = temp_tree(json!({
             "file1": "the old contents",
         }));
@@ -2676,7 +2674,7 @@ mod tests {
 
         let tree = Worktree::open_local(
             file_path.clone(),
-            app_state.languages.clone(),
+            Arc::new(LanguageRegistry::new()),
             Arc::new(RealFs),
             &mut cx.to_async(),
         )

@@ -1425,12 +1425,13 @@ mod tests {
         .await
         .unwrap();
 
-        let channels_a = ChannelList::new(client_a, &mut cx_a.to_async())
-            .await
-            .unwrap();
+        let channels_a = cx_a.add_model(|cx| ChannelList::new(client_a, cx));
+        channels_a
+            .condition(&mut cx_a, |list, _| list.available_channels().is_some())
+            .await;
         channels_a.read_with(&cx_a, |list, _| {
             assert_eq!(
-                list.available_channels(),
+                list.available_channels().unwrap(),
                 &[ChannelDetails {
                     id: channel_id.to_proto(),
                     name: "test-channel".to_string()
@@ -1448,12 +1449,13 @@ mod tests {
             })
             .await;
 
-        let channels_b = ChannelList::new(client_b, &mut cx_b.to_async())
-            .await
-            .unwrap();
+        let channels_b = cx_b.add_model(|cx| ChannelList::new(client_b, cx));
+        channels_b
+            .condition(&mut cx_b, |list, _| list.available_channels().is_some())
+            .await;
         channels_b.read_with(&cx_b, |list, _| {
             assert_eq!(
-                list.available_channels(),
+                list.available_channels().unwrap(),
                 &[ChannelDetails {
                     id: channel_id.to_proto(),
                     name: "test-channel".to_string()

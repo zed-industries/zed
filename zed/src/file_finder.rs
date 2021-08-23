@@ -455,7 +455,7 @@ mod tests {
             editor::init(cx);
         });
 
-        let app_state = cx.read(build_app_state);
+        let app_state = cx.update(build_app_state);
         let (window_id, workspace) = cx.add_window(|cx| Workspace::new(&app_state, cx));
         workspace
             .update(&mut cx, |workspace, cx| {
@@ -515,7 +515,7 @@ mod tests {
         )
         .await;
 
-        let mut app_state = cx.read(build_app_state);
+        let mut app_state = cx.update(build_app_state);
         Arc::get_mut(&mut app_state).unwrap().fs = fs;
 
         let (_, workspace) = cx.add_window(|cx| Workspace::new(&app_state, cx));
@@ -577,7 +577,7 @@ mod tests {
         fs::create_dir(&dir_path).unwrap();
         fs::write(&file_path, "").unwrap();
 
-        let app_state = cx.read(build_app_state);
+        let app_state = cx.update(build_app_state);
         let (_, workspace) = cx.add_window(|cx| Workspace::new(&app_state, cx));
         workspace
             .update(&mut cx, |workspace, cx| {
@@ -624,7 +624,7 @@ mod tests {
             "dir2": { "a.txt": "" }
         }));
 
-        let app_state = cx.read(build_app_state);
+        let app_state = cx.update(build_app_state);
         let (_, workspace) = cx.add_window(|cx| Workspace::new(&app_state, cx));
 
         workspace

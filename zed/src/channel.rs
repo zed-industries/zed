@@ -3,9 +3,7 @@ use crate::{
     util::log_async_errors,
 };
 use anyhow::{anyhow, Context, Result};
-use gpui::{
-    AsyncAppContext, Entity, ModelContext, ModelHandle, MutableAppContext, WeakModelHandle,
-};
+use gpui::{Entity, ModelContext, ModelHandle, MutableAppContext, WeakModelHandle};
 use std::{
     cmp::Ordering,
     collections::{hash_map, BTreeSet, HashMap},
@@ -17,7 +15,7 @@ use zrpc::{
 };
 
 pub struct ChannelList {
-    available_channels: Vec<ChannelDetails>,
+    available_channels: Option<Vec<ChannelDetails>>,
     channels: HashMap<u64, WeakModelHandle<Channel>>,
     rpc: Arc<Client>,
 }
@@ -55,21 +53,32 @@ impl Entity for ChannelList {
 }
 
 impl ChannelList {
-    pub async fn new(rpc: Arc<rpc::Client>, cx: &mut AsyncAppContext) -> Result<ModelHandle<Self>> {
-        let response = rpc
-            .request(proto::GetChannels {})
-            .await
-            .context("failed to fetch available channels")?;
-
-        Ok(cx.add_model(|_| Self {
-            available_channels: response.channels.into_iter().map(Into::into).collect(),
+    pub fn new(rpc: Arc<rpc::Client>, cx: &mut ModelContext<Self>) -> Self {
+        cx.spawn(|this, mut cx| {
+            let rpc = rpc.clone();
+            log_async_errors(async move {
+                let response = rpc
+                    .request(proto::GetChannels {})
+                    .await
+                    .context("failed to fetch available channels")?;
+                this.update(&mut cx, |this, cx| {
+                    this.available_channels =
+                        Some(response.channels.into_iter().map(Into::into).collect());
+                    cx.notify();
+                });
+                Ok(())
+            })
+        })
+        .detach();
+        Self {
+            available_channels: None,
             channels: Default::default(),
             rpc,
-        }))
+        }
     }
 
-    pub fn available_channels(&self) -> &[ChannelDetails] {
-        &self.available_channels
+    pub fn available_channels(&self) -> Option<&[ChannelDetails]> {
+        self.available_channels.as_ref().map(Vec::as_slice)
     }
 
     pub fn get_channel(
@@ -82,8 +91,8 @@ impl ChannelList {
             hash_map::Entry::Vacant(entry) => {
                 if let Some(details) = self
                     .available_channels
-                    .iter()
-                    .find(|details| details.id == id)
+                    .as_ref()
+                    .and_then(|channels| channels.iter().find(|details| details.id == id))
                 {
                     let rpc = self.rpc.clone();
                     let channel = cx.add_model(|cx| Channel::new(details.clone(), rpc, cx));

@@ -7,7 +7,9 @@ use parking_lot::Mutex;
 use simplelog::SimpleLogger;
 use std::{fs, path::PathBuf, sync::Arc};
 use zed::{
-    self, assets, editor, file_finder,
+    self, assets,
+    channel::ChannelList,
+    editor, file_finder,
     fs::RealFs,
     language, menus, rpc, settings, theme_selector,
     workspace::{self, OpenParams, OpenPaths},
@@ -25,17 +27,17 @@ fn main() {
     let languages = Arc::new(language::LanguageRegistry::new());
     languages.set_theme(&settings.borrow().theme);
 
-    let app_state = AppState {
-        languages: languages.clone(),
-        settings_tx: Arc::new(Mutex::new(settings_tx)),
-        settings,
-        themes,
-        rpc: rpc::Client::new(),
-        fs: Arc::new(RealFs),
-    };
-
     app.run(move |cx| {
-        let app_state = Arc::new(app_state);
+        let rpc = rpc::Client::new();
+        let app_state = Arc::new(AppState {
+            languages: languages.clone(),
+            settings_tx: Arc::new(Mutex::new(settings_tx)),
+            settings,
+            themes,
+            channel_list: cx.add_model(|cx| ChannelList::new(rpc.clone(), cx)),
+            rpc,
+            fs: Arc::new(RealFs),
+        });
 
         zed::init(cx);
         workspace::init(cx);
