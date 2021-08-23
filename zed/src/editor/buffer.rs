@@ -2943,11 +2943,13 @@ mod tests {
             let buffer_1_events = buffer_1_events.clone();
             cx.subscribe(&buffer1, move |_, _, event, _| {
                 buffer_1_events.borrow_mut().push(event.clone())
-            });
+            })
+            .detach();
             let buffer_2_events = buffer_2_events.clone();
             cx.subscribe(&buffer2, move |_, _, event, _| {
                 buffer_2_events.borrow_mut().push(event.clone())
-            });
+            })
+            .detach();
 
             // An edit emits an edited event, followed by a dirtied event,
             // since the buffer was previously in a clean state.
@@ -3382,7 +3384,8 @@ mod tests {
             cx.subscribe(&buffer1, {
                 let events = events.clone();
                 move |_, _, event, _| events.borrow_mut().push(event.clone())
-            });
+            })
+            .detach();
 
             assert!(!buffer.is_dirty());
             assert!(events.borrow().is_empty());
@@ -3438,7 +3441,8 @@ mod tests {
             cx.subscribe(&buffer2, {
                 let events = events.clone();
                 move |_, _, event, _| events.borrow_mut().push(event.clone())
-            });
+            })
+            .detach();
         });
 
         fs::remove_file(dir.path().join("file2")).unwrap();
@@ -3458,7 +3462,8 @@ mod tests {
             cx.subscribe(&buffer3, {
                 let events = events.clone();
                 move |_, _, event, _| events.borrow_mut().push(event.clone())
-            });
+            })
+            .detach();
         });
 
         tree.flush_fs_events(&cx).await;

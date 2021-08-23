@@ -32,7 +32,7 @@ impl DisplayMap {
         let (fold_map, snapshot) = FoldMap::new(buffer.clone(), cx);
         let (tab_map, snapshot) = TabMap::new(snapshot, settings.tab_size);
         let wrap_map = cx.add_model(|cx| WrapMap::new(snapshot, settings, wrap_width, cx));
-        cx.observe(&wrap_map, |_, _, cx| cx.notify());
+        cx.observe(&wrap_map, |_, _, cx| cx.notify()).detach();
         DisplayMap {
             buffer,
             fold_map,

@@ -324,9 +324,10 @@ impl Editor {
     ) -> Self {
         let display_map =
             cx.add_model(|cx| DisplayMap::new(buffer.clone(), settings.borrow().clone(), None, cx));
-        cx.observe(&buffer, Self::on_buffer_changed);
-        cx.subscribe(&buffer, Self::on_buffer_event);
-        cx.observe(&display_map, Self::on_display_map_changed);
+        cx.observe(&buffer, Self::on_buffer_changed).detach();
+        cx.subscribe(&buffer, Self::on_buffer_event).detach();
+        cx.observe(&display_map, Self::on_display_map_changed)
+            .detach();
 
         let mut next_selection_id = 0;
         let selection_set_id = buffer.update(cx, |buffer, cx| {

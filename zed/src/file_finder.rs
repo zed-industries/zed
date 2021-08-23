@@ -252,7 +252,7 @@ impl FileFinder {
         workspace.toggle_modal(cx, |cx, workspace| {
             let handle = cx.handle();
             let finder = cx.add_view(|cx| Self::new(workspace.settings.clone(), handle, cx));
-            cx.subscribe(&finder, Self::on_event);
+            cx.subscribe(&finder, Self::on_event).detach();
             finder
         });
     }
@@ -281,10 +281,11 @@ impl FileFinder {
         workspace: ViewHandle<Workspace>,
         cx: &mut ViewContext<Self>,
     ) -> Self {
-        cx.observe(&workspace, Self::workspace_updated);
+        cx.observe(&workspace, Self::workspace_updated).detach();
 
         let query_buffer = cx.add_view(|cx| Editor::single_line(settings.clone(), cx));
-        cx.subscribe(&query_buffer, Self::on_query_editor_event);
+        cx.subscribe(&query_buffer, Self::on_query_editor_event)
+            .detach();
 
         Self {
             handle: cx.handle().downgrade(),

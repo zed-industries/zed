@@ -190,7 +190,8 @@ impl<T: Entity> Observer<T> {
         let observer = cx.add_model(|cx| {
             cx.observe(handle, move |_, _, _| {
                 let _ = notify_tx.try_send(());
-            });
+            })
+            .detach();
             Observer(PhantomData)
         });
         (observer, notify_rx)

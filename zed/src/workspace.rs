@@ -290,7 +290,8 @@ impl<T: ItemView> ItemViewHandle for ViewHandle<T> {
                     cx.notify()
                 }
             })
-        })
+            .detach();
+        });
     }
 
     fn save(&self, cx: &mut MutableAppContext) -> Result<Task<Result<()>>> {
@@ -360,7 +361,8 @@ impl Workspace {
         let pane_id = pane.id();
         cx.subscribe(&pane, move |me, _, event, cx| {
             me.handle_pane_event(pane_id, event, cx)
-        });
+        })
+        .detach();
         cx.focus(&pane);
 
         let mut left_sidebar = Sidebar::new(Side::Left);
@@ -526,7 +528,7 @@ impl Workspace {
         cx.spawn(|this, mut cx| async move {
             let worktree = Worktree::open_local(path, languages, fs, &mut cx).await?;
             this.update(&mut cx, |this, cx| {
-                cx.observe(&worktree, |_, _, cx| cx.notify());
+                cx.observe(&worktree, |_, _, cx| cx.notify()).detach();
                 this.worktrees.insert(worktree.clone());
                 cx.notify();
             });
@@ -835,7 +837,7 @@ impl Workspace {
                 Worktree::open_remote(rpc.clone(), worktree_id, access_token, languages, &mut cx)
                     .await?;
             this.update(&mut cx, |workspace, cx| {
-                cx.observe(&worktree, |_, _, cx| cx.notify());
+                cx.observe(&worktree, |_, _, cx| cx.notify()).detach();
                 workspace.worktrees.insert(worktree);
                 cx.notify();
             });
@@ -856,7 +858,8 @@ impl Workspace {
         let pane_id = pane.id();
         cx.subscribe(&pane, move |me, _, event, cx| {
             me.handle_pane_event(pane_id, event, cx)
-        });
+        })
+        .detach();
         self.panes.push(pane.clone());
         self.activate_pane(pane.clone(), cx);
         pane
