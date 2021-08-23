@@ -6,10 +6,16 @@ extends = "_base"
 2 = "#ececec"
 3 = "#3a3b3c"
 
-[text_color]
-dull = "#acacac"
-bright = "#111111"
-normal = "#333333"
+[text]
+0 = "#acacac"
+1 = "#111111"
+2 = "#333333"
+
+[status]
+good = "#4fac63"
+info = "#3c5dd4"
+warn = "#faca50"
+bad = "#b7372e"
 
 [syntax]
 keyword = "#0000fa"
