@@ -52,25 +52,6 @@ impl List {
     pub fn new(state: ListState) -> Self {
         Self { state }
     }
-
-    fn scroll(
-        &self,
-        _: Vector2F,
-        delta: Vector2F,
-        precise: bool,
-        scroll_max: f32,
-        cx: &mut EventContext,
-    ) -> bool {
-        if !precise {
-            todo!("still need to handle non-precise scroll events from a mouse wheel");
-        }
-
-        let mut state = self.state.0.lock();
-        state.scroll_top = (state.scroll_top - delta.y()).max(0.0).min(scroll_max);
-        cx.notify();
-
-        true
-    }
 }
 
 impl Element for List {
@@ -134,7 +115,7 @@ impl Element for List {
             cursor.sum_start().0
         };
         for element in &mut state.elements[visible_range] {
-            let origin = bounds.origin() + vec2f(0., item_top) - state.scroll_top;
+            let origin = bounds.origin() + vec2f(0., item_top - state.scroll_top);
             element.paint(origin, cx);
             item_top += element.size().y();
         }
@@ -163,8 +144,7 @@ impl Element for List {
                 precise,
             } => {
                 if bounds.contains_point(*position) {
-                    let scroll_max = state.scroll_max(bounds.height());
-                    if self.scroll(*position, *delta, *precise, scroll_max, cx) {
+                    if state.scroll(*position, *delta, *precise, bounds.height(), cx) {
                         handled = true;
                     }
                 }
@@ -240,8 +220,23 @@ impl StateInner {
         start_ix..end_ix + 1
     }
 
-    fn scroll_max(&self, height: f32) -> f32 {
-        self.heights.summary().height - height
+    fn scroll(
+        &mut self,
+        _: Vector2F,
+        delta: Vector2F,
+        precise: bool,
+        height: f32,
+        cx: &mut EventContext,
+    ) -> bool {
+        if !precise {
+            todo!("still need to handle non-precise scroll events from a mouse wheel");
+        }
+
+        let scroll_max = self.heights.summary().height - height;
+        self.scroll_top = (self.scroll_top - delta.y()).max(0.0).min(scroll_max);
+        cx.notify();
+
+        true
     }
 }
 
