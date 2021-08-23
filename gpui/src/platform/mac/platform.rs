@@ -29,7 +29,6 @@ use objc::{
 };
 use ptr::null_mut;
 use std::{
-    any::Any,
     cell::{Cell, RefCell},
     convert::TryInto,
     ffi::{c_void, CStr},

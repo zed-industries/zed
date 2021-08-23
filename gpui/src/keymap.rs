@@ -2,6 +2,7 @@ use anyhow::anyhow;
 use std::{
     any::Any,
     collections::{HashMap, HashSet},
+    fmt::Debug,
 };
 use tree_sitter::{Language, Node, Parser};
 
@@ -148,7 +149,7 @@ impl Keymap {
     }
 }
 
-mod menu {
+pub mod menu {
     use crate::action;
 
     action!(SelectPrev);
@@ -425,6 +426,11 @@ mod tests {
             }
         }
         impl Eq for A {}
+        impl Debug for A {
+            fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+                write!(f, "A({:?})", &self.0)
+            }
+        }
 
         #[derive(Clone, Debug, Eq, PartialEq)]
         struct ActionArg {
@@ -472,12 +478,10 @@ mod tests {
     }
 
     impl Matcher {
-        fn test_keystroke<A: Action + Eq>(
-            &mut self,
-            keystroke: &str,
-            view_id: usize,
-            cx: &Context,
-        ) -> Option<A> {
+        fn test_keystroke<A>(&mut self, keystroke: &str, view_id: usize, cx: &Context) -> Option<A>
+        where
+            A: Action + Debug + Eq,
+        {
             if let MatchResult::Action(action) =
                 self.push_keystroke(Keystroke::parse(keystroke).unwrap(), view_id, cx)
             {

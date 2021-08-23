@@ -934,7 +934,7 @@ mod tests {
     use std::{path::Path, sync::Arc, time::Duration};
     use zed::{
         channel::{Channel, ChannelDetails, ChannelList},
-        editor::Editor,
+        editor::{Editor, Insert},
         fs::{FakeFs, Fs as _},
         language::LanguageRegistry,
         rpc::Client,
@@ -1023,7 +1023,7 @@ mod tests {
 
         // Edit the buffer as client B and see that edit as client A.
         editor_b.update(&mut cx_b, |editor, cx| {
-            editor.insert(&"ok, ".to_string(), cx)
+            editor.insert(&Insert("ok, ".into()), cx)
         });
         buffer_a
             .condition(&cx_a, |buffer, _| buffer.text() == "ok, b-contents")

@@ -19,11 +19,15 @@ mod util;
 pub mod workspace;
 pub mod worktree;
 
+use gpui::action;
 pub use settings::Settings;
 
 use parking_lot::Mutex;
 use postage::watch;
 use std::sync::Arc;
+
+action!(About);
+action!(Quit);
 
 pub struct AppState {
     pub settings_tx: Arc<Mutex<watch::Sender<Settings>>>,
@@ -35,9 +39,9 @@ pub struct AppState {
 }
 
 pub fn init(cx: &mut gpui::MutableAppContext) {
-    cx.add_global_action("app:quit", quit);
+    cx.add_global_action(quit);
 }
 
-fn quit(_: &(), cx: &mut gpui::MutableAppContext) {
+fn quit(_: &Quit, cx: &mut gpui::MutableAppContext) {
     cx.platform().quit();
 }

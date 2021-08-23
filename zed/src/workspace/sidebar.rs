@@ -1,5 +1,6 @@
 use crate::Settings;
 use gpui::{
+    action,
     elements::{
         Align, ConstrainedBox, Container, Flex, MouseEventHandler, ParentElement as _, Svg,
     },
@@ -21,6 +22,14 @@ pub enum Side {
 struct Item {
     icon_path: &'static str,
     view: AnyViewHandle,
+}
+
+action!(ToggleSidebarItem, ToggleArg);
+
+#[derive(Clone)]
+pub struct ToggleArg {
+    side: Side,
+    item_index: usize,
 }
 
 impl Sidebar {
@@ -59,8 +68,8 @@ impl Sidebar {
 
         Container::new(
             Flex::column()
-                .with_children(self.items.iter().enumerate().map(|(item_ix, item)| {
-                    let theme = if Some(item_ix) == self.active_item_ix {
+                .with_children(self.items.iter().enumerate().map(|(item_index, item)| {
+                    let theme = if Some(item_index) == self.active_item_ix {
                         &settings.theme.active_sidebar_icon
                     } else {
                         &settings.theme.sidebar_icon
@@ -81,7 +90,7 @@ impl Sidebar {
                         .boxed()
                     })
                     .on_click(move |cx| {
-                        cx.dispatch_action("workspace:toggle_sidebar_item", (side, item_ix))
+                        cx.dispatch_action(ToggleSidebarItem(ToggleArg { side, item_index }))
                     })
                     .boxed()
                 }))

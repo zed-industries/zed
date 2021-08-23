@@ -10,7 +10,7 @@ use zed::{
     self, assets, editor, file_finder,
     fs::RealFs,
     language, menus, rpc, settings, theme_selector,
-    workspace::{self, OpenParams},
+    workspace::{self, OpenParams, OpenPaths},
     AppState,
 };
 
@@ -51,13 +51,10 @@ fn main() {
 
         let paths = collect_path_args();
         if !paths.is_empty() {
-            cx.dispatch_global_action(
-                "workspace:open_paths",
-                OpenParams {
-                    paths,
-                    app_state: app_state.clone(),
-                },
-            );
+            cx.dispatch_global_action(OpenPaths(OpenParams {
+                paths,
+                app_state: app_state.clone(),
+            }));
         }
     });
 }

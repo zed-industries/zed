@@ -1,6 +1,7 @@
 use super::{ItemViewHandle, SplitDirection};
 use crate::{settings::Settings, theme};
 use gpui::{
+    action,
     color::Color,
     elements::*,
     geometry::{rect::RectF, vector::vec2f},
@@ -11,46 +12,41 @@ use gpui::{
 use postage::watch;
 use std::{cmp, path::Path, sync::Arc};
 
+action!(Split, SplitDirection);
+action!(ActivateItem, usize);
+action!(ActivatePrevItem);
+action!(ActivateNextItem);
+action!(CloseActiveItem);
+action!(CloseItem, usize);
+
 pub fn init(cx: &mut MutableAppContext) {
-    cx.add_action(
-        "pane:activate_item",
-        |pane: &mut Pane, index: &usize, cx| {
-            pane.activate_item(*index, cx);
-        },
-    );
-    cx.add_action("pane:activate_prev_item", |pane: &mut Pane, _: &(), cx| {
+    cx.add_action(|pane: &mut Pane, action: &ActivateItem, cx| {
+        pane.activate_item(action.0, cx);
+    });
+    cx.add_action(|pane: &mut Pane, _: &ActivatePrevItem, cx| {
         pane.activate_prev_item(cx);
     });
-    cx.add_action("pane:activate_next_item", |pane: &mut Pane, _: &(), cx| {
+    cx.add_action(|pane: &mut Pane, _: &ActivateNextItem, cx| {
         pane.activate_next_item(cx);
     });
-    cx.add_action("pane:close_active_item", |pane: &mut Pane, _: &(), cx| {
+    cx.add_action(|pane: &mut Pane, _: &CloseActiveItem, cx| {
         pane.close_active_item(cx);
     });
-    cx.add_action("pane:close_item", |pane: &mut Pane, item_id: &usize, cx| {
-        pane.close_item(*item_id, cx);
+    cx.add_action(|pane: &mut Pane, action: &CloseItem, cx| {
+        pane.close_item(action.0, cx);
     });
-    cx.add_action("pane:split_up", |pane: &mut Pane, _: &(), cx| {
-        pane.split(SplitDirection::Up, cx);
-    });
-    cx.add_action("pane:split_down", |pane: &mut Pane, _: &(), cx| {
-        pane.split(SplitDirection::Down, cx);
-    });
-    cx.add_action("pane:split_left", |pane: &mut Pane, _: &(), cx| {
-        pane.split(SplitDirection::Left, cx);
-    });
-    cx.add_action("pane:split_right", |pane: &mut Pane, _: &(), cx| {
-        pane.split(SplitDirection::Right, cx);
+    cx.add_action(|pane: &mut Pane, action: &Split, cx| {
+        pane.split(action.0, cx);
     });
 
     cx.add_bindings(vec![
-        Binding::new("shift-cmd-{", "pane:activate_prev_item", Some("Pane")),
-        Binding::new("shift-cmd-}", "pane:activate_next_item", Some("Pane")),
-        Binding::new("cmd-w", "pane:close_active_item", Some("Pane")),
-        Binding::new("cmd-k up", "pane:split_up", Some("Pane")),
-        Binding::new("cmd-k down", "pane:split_down", Some("Pane")),
-        Binding::new("cmd-k left", "pane:split_left", Some("Pane")),
-        Binding::new("cmd-k right", "pane:split_right", Some("Pane")),
+        Binding::new("shift-cmd-{", ActivatePrevItem, Some("Pane")),
+        Binding::new("shift-cmd-}", ActivateNextItem, Some("Pane")),
+        Binding::new("cmd-w", CloseActiveItem, Some("Pane")),
+        Binding::new("cmd-k up", Split(SplitDirection::Up), Some("Pane")),
+        Binding::new("cmd-k down", Split(SplitDirection::Down), Some("Pane")),
+        Binding::new("cmd-k left", Split(SplitDirection::Left), Some("Pane")),
+        Binding::new("cmd-k right", Split(SplitDirection::Right), Some("Pane")),
     ]);
 }
 
@@ -253,7 +249,7 @@ impl Pane {
                         ConstrainedBox::new(
                             EventHandler::new(container.boxed())
                                 .on_mouse_down(move |cx| {
-                                    cx.dispatch_action("pane:activate_item", ix);
+                                    cx.dispatch_action(ActivateItem(ix));
                                     true
                                 })
                                 .boxed(),
@@ -338,7 +334,7 @@ impl Pane {
                     icon.boxed()
                 }
             })
-            .on_click(move |cx| cx.dispatch_action("pane:close_item", item_id))
+            .on_click(move |cx| cx.dispatch_action(CloseItem(item_id)))
             .named("close-tab-icon")
         } else {
             let diameter = 8.;

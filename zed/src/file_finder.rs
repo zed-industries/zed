@@ -6,8 +6,13 @@ use crate::{
     worktree::{match_paths, PathMatch},
 };
 use gpui::{
+    action,
     elements::*,
-    keymap::{self, Binding},
+    keymap::{
+        self,
+        menu::{SelectNext, SelectPrev},
+        Binding,
+    },
     AppContext, Axis, Entity, MutableAppContext, RenderContext, Task, View, ViewContext,
     ViewHandle, WeakViewHandle,
 };
@@ -36,17 +41,27 @@ pub struct FileFinder {
     list_state: UniformListState,
 }
 
+action!(Toggle);
+action!(Confirm);
+action!(Select, Entry);
+
+#[derive(Clone)]
+pub struct Entry {
+    worktree_id: usize,
+    path: Arc<Path>,
+}
+
 pub fn init(cx: &mut MutableAppContext) {
-    cx.add_action("file_finder:toggle", FileFinder::toggle);
-    cx.add_action("file_finder:confirm", FileFinder::confirm);
-    cx.add_action("file_finder:select", FileFinder::select);
-    cx.add_action("menu:select_prev", FileFinder::select_prev);
-    cx.add_action("menu:select_next", FileFinder::select_next);
+    cx.add_action(FileFinder::toggle);
+    cx.add_action(FileFinder::confirm);
+    cx.add_action(FileFinder::select);
+    cx.add_action(FileFinder::select_prev);
+    cx.add_action(FileFinder::select_next);
 
     cx.add_bindings(vec![
-        Binding::new("cmd-p", "file_finder:toggle", None),
-        Binding::new("escape", "file_finder:toggle", Some("FileFinder")),
-        Binding::new("enter", "file_finder:confirm", Some("FileFinder")),
+        Binding::new("cmd-p", Toggle, None),
+        Binding::new("escape", Toggle, Some("FileFinder")),
+        Binding::new("enter", Confirm, Some("FileFinder")),
     ]);
 }
 
@@ -196,10 +211,13 @@ impl FileFinder {
         )
         .with_style(&style.container);
 
-        let entry = (path_match.tree_id, path_match.path.clone());
+        let action = Select(Entry {
+            worktree_id: path_match.tree_id,
+            path: path_match.path.clone(),
+        });
         EventHandler::new(container.boxed())
             .on_mouse_down(move |cx| {
-                cx.dispatch_action("file_finder:select", entry.clone());
+                cx.dispatch_action(action.clone());
                 true
             })
             .named("match")
@@ -230,7 +248,7 @@ impl FileFinder {
         (file_name, file_name_positions, full_path, path_positions)
     }
 
-    fn toggle(workspace: &mut Workspace, _: &(), cx: &mut ViewContext<Workspace>) {
+    fn toggle(workspace: &mut Workspace, _: &Toggle, cx: &mut ViewContext<Workspace>) {
         workspace.toggle_modal(cx, |cx, workspace| {
             let handle = cx.handle();
             let finder = cx.add_view(|cx| Self::new(workspace.settings.clone(), handle, cx));
@@ -328,7 +346,7 @@ impl FileFinder {
         0
     }
 
-    fn select_prev(&mut self, _: &(), cx: &mut ViewContext<Self>) {
+    fn select_prev(&mut self, _: &SelectPrev, cx: &mut ViewContext<Self>) {
         let mut selected_index = self.selected_index();
         if selected_index > 0 {
             selected_index -= 1;
@@ -339,7 +357,7 @@ impl FileFinder {
         cx.notify();
     }
 
-    fn select_next(&mut self, _: &(), cx: &mut ViewContext<Self>) {
+    fn select_next(&mut self, _: &SelectNext, cx: &mut ViewContext<Self>) {
         let mut selected_index = self.selected_index();
         if selected_index + 1 < self.matches.len() {
             selected_index += 1;
@@ -350,14 +368,14 @@ impl FileFinder {
         cx.notify();
     }
 
-    fn confirm(&mut self, _: &(), cx: &mut ViewContext<Self>) {
+    fn confirm(&mut self, _: &Confirm, cx: &mut ViewContext<Self>) {
         if let Some(m) = self.matches.get(self.selected_index()) {
             cx.emit(Event::Selected(m.tree_id, m.path.clone()));
         }
     }
 
-    fn select(&mut self, (tree_id, path): &(usize, Arc<Path>), cx: &mut ViewContext<Self>) {
-        cx.emit(Event::Selected(*tree_id, path.clone()));
+    fn select(&mut self, Select(entry): &Select, cx: &mut ViewContext<Self>) {
+        cx.emit(Event::Selected(entry.worktree_id, entry.path.clone()));
     }
 
     #[must_use]
@@ -417,7 +435,7 @@ impl FileFinder {
 mod tests {
     use super::*;
     use crate::{
-        editor,
+        editor::{self, Insert},
         fs::FakeFs,
         test::{build_app_state, temp_tree},
         workspace::Workspace,
@@ -447,12 +465,7 @@ mod tests {
             .unwrap();
         cx.read(|cx| workspace.read(cx).worktree_scans_complete(cx))
             .await;
-        cx.dispatch_action(
-            window_id,
-            vec![workspace.id()],
-            "file_finder:toggle".into(),
-            (),
-        );
+        cx.dispatch_action(window_id, vec![workspace.id()], Toggle);
 
         let finder = cx.read(|cx| {
             workspace
@@ -466,26 +479,16 @@ mod tests {
         let query_buffer = cx.read(|cx| finder.read(cx).query_buffer.clone());
 
         let chain = vec![finder.id(), query_buffer.id()];
-        cx.dispatch_action(window_id, chain.clone(), "buffer:insert", "b".to_string());
-        cx.dispatch_action(window_id, chain.clone(), "buffer:insert", "n".to_string());
-        cx.dispatch_action(window_id, chain.clone(), "buffer:insert", "a".to_string());
+        cx.dispatch_action(window_id, chain.clone(), Insert("b".into()));
+        cx.dispatch_action(window_id, chain.clone(), Insert("n".into()));
+        cx.dispatch_action(window_id, chain.clone(), Insert("a".into()));
         finder
             .condition(&cx, |finder, _| finder.matches.len() == 2)
             .await;
 
         let active_pane = cx.read(|cx| workspace.read(cx).active_pane().clone());
-        cx.dispatch_action(
-            window_id,
-            vec![workspace.id(), finder.id()],
-            "menu:select_next",
-            (),
-        );
-        cx.dispatch_action(
-            window_id,
-            vec![workspace.id(), finder.id()],
-            "file_finder:confirm",
-            (),
-        );
+        cx.dispatch_action(window_id, vec![workspace.id(), finder.id()], SelectNext);
+        cx.dispatch_action(window_id, vec![workspace.id(), finder.id()], Confirm);
         active_pane
             .condition(&cx, |pane, _| pane.active_item().is_some())
             .await;
@@ -648,9 +651,9 @@ mod tests {
         finder.update(&mut cx, |f, cx| {
             assert_eq!(f.matches.len(), 2);
             assert_eq!(f.selected_index(), 0);
-            f.select_next(&(), cx);
+            f.select_next(&SelectNext, cx);
             assert_eq!(f.selected_index(), 1);
-            f.select_prev(&(), cx);
+            f.select_prev(&SelectPrev, cx);
             assert_eq!(f.selected_index(), 0);
         });
     }

@@ -8,11 +8,12 @@ use crate::{
     AppState, Settings,
 };
 use gpui::{
+    action,
     elements::{
         Align, ChildView, ConstrainedBox, Container, Expanded, Flex, Label, ParentElement,
         UniformList, UniformListState,
     },
-    keymap::{self, Binding},
+    keymap::{self, menu, Binding},
     AppContext, Axis, Element, ElementBox, Entity, MutableAppContext, RenderContext, View,
     ViewContext, ViewHandle,
 };
@@ -29,19 +30,22 @@ pub struct ThemeSelector {
     selected_index: usize,
 }
 
+action!(Confirm);
+action!(Toggle, Arc<AppState>);
+action!(Reload, Arc<AppState>);
+
 pub fn init(cx: &mut MutableAppContext, app_state: &Arc<AppState>) {
-    cx.add_action("theme_selector:confirm", ThemeSelector::confirm);
-    cx.add_action("menu:select_prev", ThemeSelector::select_prev);
-    cx.add_action("menu:select_next", ThemeSelector::select_next);
-    cx.add_action("theme_selector:toggle", ThemeSelector::toggle);
-    cx.add_action("theme_selector:reload", ThemeSelector::reload);
+    cx.add_action(ThemeSelector::confirm);
+    cx.add_action(ThemeSelector::select_prev);
+    cx.add_action(ThemeSelector::select_next);
+    cx.add_action(ThemeSelector::toggle);
+    cx.add_action(ThemeSelector::reload);
 
     cx.add_bindings(vec![
-        Binding::new("cmd-k cmd-t", "theme_selector:toggle", None).with_arg(app_state.clone()),
-        Binding::new("cmd-k t", "theme_selector:reload", None).with_arg(app_state.clone()),
-        Binding::new("escape", "theme_selector:toggle", Some("ThemeSelector"))
-            .with_arg(app_state.clone()),
-        Binding::new("enter", "theme_selector:confirm", Some("ThemeSelector")),
+        Binding::new("cmd-k cmd-t", Toggle(app_state.clone()), None),
+        Binding::new("cmd-k t", Reload(app_state.clone()), None),
+        Binding::new("escape", Toggle(app_state.clone()), Some("ThemeSelector")),
+        Binding::new("enter", Confirm, Some("ThemeSelector")),
     ]);
 }
 
@@ -72,17 +76,13 @@ impl ThemeSelector {
         this
     }
 
-    fn toggle(
-        workspace: &mut Workspace,
-        app_state: &Arc<AppState>,
-        cx: &mut ViewContext<Workspace>,
-    ) {
+    fn toggle(workspace: &mut Workspace, action: &Toggle, cx: &mut ViewContext<Workspace>) {
         workspace.toggle_modal(cx, |cx, _| {
             let selector = cx.add_view(|cx| {
                 Self::new(
-                    app_state.settings_tx.clone(),
-                    app_state.settings.clone(),
-                    app_state.themes.clone(),
+                    action.0.settings_tx.clone(),
+                    action.0.settings.clone(),
+                    action.0.themes.clone(),
                     cx,
                 )
             });
@@ -91,13 +91,13 @@ impl ThemeSelector {
         });
     }
 
-    fn reload(_: &mut Workspace, app_state: &Arc<AppState>, cx: &mut ViewContext<Workspace>) {
-        let current_theme_name = app_state.settings.borrow().theme.name.clone();
-        app_state.themes.clear();
-        match app_state.themes.get(&current_theme_name) {
+    fn reload(_: &mut Workspace, action: &Reload, cx: &mut ViewContext<Workspace>) {
+        let current_theme_name = action.0.settings.borrow().theme.name.clone();
+        action.0.themes.clear();
+        match action.0.themes.get(&current_theme_name) {
             Ok(theme) => {
                 cx.notify_all();
-                app_state.settings_tx.lock().borrow_mut().theme = theme;
+                action.0.settings_tx.lock().borrow_mut().theme = theme;
             }
             Err(error) => {
                 log::error!("failed to load theme {}: {:?}", current_theme_name, error)
@@ -105,7 +105,7 @@ impl ThemeSelector {
         }
     }
 
-    fn confirm(&mut self, _: &(), cx: &mut ViewContext<Self>) {
+    fn confirm(&mut self, _: &Confirm, cx: &mut ViewContext<Self>) {
         if let Some(mat) = self.matches.get(self.selected_index) {
             match self.registry.get(&mat.string) {
                 Ok(theme) => {
@@ -118,7 +118,7 @@ impl ThemeSelector {
         }
     }
 
-    fn select_prev(&mut self, _: &(), cx: &mut ViewContext<Self>) {
+    fn select_prev(&mut self, _: &menu::SelectPrev, cx: &mut ViewContext<Self>) {
         if self.selected_index > 0 {
             self.selected_index -= 1;
         }
@@ -126,7 +126,7 @@ impl ThemeSelector {
         cx.notify();
     }
 
-    fn select_next(&mut self, _: &(), cx: &mut ViewContext<Self>) {
+    fn select_next(&mut self, _: &menu::SelectNext, cx: &mut ViewContext<Self>) {
         if self.selected_index + 1 < self.matches.len() {
             self.selected_index += 1;
         }

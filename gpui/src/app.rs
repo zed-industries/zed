@@ -132,7 +132,7 @@ impl AnyAction for () {
 #[macro_export]
 macro_rules! action {
     ($name:ident, $arg:ty) => {
-        #[derive(Clone, Debug)]
+        #[derive(Clone)]
         pub struct $name(pub $arg);
 
         impl $crate::Action for $name {

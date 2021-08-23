@@ -14,6 +14,7 @@ use crate::{
 };
 use anyhow::{anyhow, Result};
 use gpui::{
+    action,
     elements::*,
     geometry::{rect::RectF, vector::vec2f},
     json::to_string_pretty,
@@ -36,37 +37,43 @@ use std::{
     sync::Arc,
 };
 
+action!(Open, Arc<AppState>);
+action!(OpenPaths, OpenParams);
+action!(OpenNew, Arc<AppState>);
+action!(ShareWorktree);
+action!(JoinWorktree, Arc<AppState>);
+action!(Save);
+action!(DebugElements);
+action!(ToggleSidebarItem, (Side, usize));
+
 pub fn init(cx: &mut MutableAppContext) {
-    cx.add_global_action("workspace:open", open);
-    cx.add_global_action(
-        "workspace:open_paths",
-        |params: &OpenParams, cx: &mut MutableAppContext| open_paths(params, cx).detach(),
-    );
-    cx.add_global_action("workspace:new_file", open_new);
-    cx.add_global_action("workspace:join_worktree", join_worktree);
-    cx.add_action("workspace:save", Workspace::save_active_item);
-    cx.add_action("workspace:debug_elements", Workspace::debug_elements);
-    cx.add_action("workspace:new_file", Workspace::open_new_file);
-    cx.add_action("workspace:share_worktree", Workspace::share_worktree);
-    cx.add_action("workspace:join_worktree", Workspace::join_worktree);
-    cx.add_action(
-        "workspace:toggle_sidebar_item",
-        Workspace::toggle_sidebar_item,
-    );
+    cx.add_global_action(open);
+    cx.add_global_action(|action: &OpenPaths, cx: &mut MutableAppContext| {
+        open_paths(action, cx).detach()
+    });
+    cx.add_global_action(open_new);
+    cx.add_global_action(join_worktree);
+    cx.add_action(Workspace::save_active_item);
+    cx.add_action(Workspace::debug_elements);
+    cx.add_action(Workspace::open_new_file);
+    cx.add_action(Workspace::share_worktree);
+    cx.add_action(Workspace::join_worktree);
+    cx.add_action(Workspace::toggle_sidebar_item);
     cx.add_bindings(vec![
-        Binding::new("cmd-s", "workspace:save", None),
-        Binding::new("cmd-alt-i", "workspace:debug_elements", None),
+        Binding::new("cmd-s", Save, None),
+        Binding::new("cmd-alt-i", DebugElements, None),
     ]);
     pane::init(cx);
 }
 
+#[derive(Clone)]
 pub struct OpenParams {
     pub paths: Vec<PathBuf>,
     pub app_state: Arc<AppState>,
 }
 
-fn open(app_state: &Arc<AppState>, cx: &mut MutableAppContext) {
-    let app_state = app_state.clone();
+fn open(action: &Open, cx: &mut MutableAppContext) {
+    let app_state = action.0.clone();
     cx.prompt_for_paths(
         PathPromptOptions {
             files: true,
@@ -75,22 +82,22 @@ fn open(app_state: &Arc<AppState>, cx: &mut MutableAppContext) {
         },
         move |paths, cx| {
             if let Some(paths) = paths {
-                cx.dispatch_global_action("workspace:open_paths", OpenParams { paths, app_state });
+                cx.dispatch_global_action(OpenPaths(OpenParams { paths, app_state }));
             }
         },
     );
 }
 
-fn open_paths(params: &OpenParams, cx: &mut MutableAppContext) -> Task<()> {
-    log::info!("open paths {:?}", params.paths);
+fn open_paths(action: &OpenPaths, cx: &mut MutableAppContext) -> Task<()> {
+    log::info!("open paths {:?}", action.0.paths);
 
     // Open paths in existing workspace if possible
     for window_id in cx.window_ids().collect::<Vec<_>>() {
         if let Some(handle) = cx.root_view::<Workspace>(window_id) {
             let task = handle.update(cx, |view, cx| {
-                if view.contains_paths(&params.paths, cx.as_ref()) {
+                if view.contains_paths(&action.0.paths, cx.as_ref()) {
                     log::info!("open paths on existing workspace");
-                    Some(view.open_paths(&params.paths, cx))
+                    Some(view.open_paths(&action.0.paths, cx))
                 } else {
                     None
                 }
@@ -106,23 +113,26 @@ fn open_paths(params: &OpenParams, cx: &mut MutableAppContext) -> Task<()> {
 
     // Add a new workspace if necessary
 
-    let (_, workspace) =
-        cx.add_window(window_options(), |cx| Workspace::new(&params.app_state, cx));
-    workspace.update(cx, |workspace, cx| workspace.open_paths(&params.paths, cx))
+    let (_, workspace) = cx.add_window(window_options(), |cx| {
+        Workspace::new(&action.0.app_state, cx)
+    });
+    workspace.update(cx, |workspace, cx| {
+        workspace.open_paths(&action.0.paths, cx)
+    })
 }
 
-fn open_new(app_state: &Arc<AppState>, cx: &mut MutableAppContext) {
+fn open_new(action: &OpenNew, cx: &mut MutableAppContext) {
     cx.add_window(window_options(), |cx| {
-        let mut view = Workspace::new(app_state.as_ref(), cx);
-        view.open_new_file(&app_state, cx);
+        let mut view = Workspace::new(action.0.as_ref(), cx);
+        view.open_new_file(&action, cx);
         view
     });
 }
 
-fn join_worktree(app_state: &Arc<AppState>, cx: &mut MutableAppContext) {
+fn join_worktree(action: &JoinWorktree, cx: &mut MutableAppContext) {
     cx.add_window(window_options(), |cx| {
-        let mut view = Workspace::new(app_state.as_ref(), cx);
-        view.join_worktree(&(), cx);
+        let mut view = Workspace::new(action.0.as_ref(), cx);
+        view.join_worktree(action, cx);
         view
     });
 }
@@ -544,7 +554,7 @@ impl Workspace {
         }
     }
 
-    pub fn open_new_file(&mut self, _: &Arc<AppState>, cx: &mut ViewContext<Self>) {
+    pub fn open_new_file(&mut self, _: &OpenNew, cx: &mut ViewContext<Self>) {
         let buffer = cx.add_model(|cx| Buffer::new(0, "", cx));
         let buffer_view =
             cx.add_view(|cx| Editor::for_buffer(buffer.clone(), self.settings.clone(), cx));
@@ -677,7 +687,7 @@ impl Workspace {
         self.active_pane().read(cx).active_item()
     }
 
-    pub fn save_active_item(&mut self, _: &(), cx: &mut ViewContext<Self>) {
+    pub fn save_active_item(&mut self, _: &Save, cx: &mut ViewContext<Self>) {
         if let Some(item) = self.active_item(cx) {
             let handle = cx.handle();
             if item.entry_id(cx.as_ref()).is_none() {
@@ -744,7 +754,7 @@ impl Workspace {
 
     pub fn toggle_sidebar_item(
         &mut self,
-        (side, item_ix): &(Side, usize),
+        ToggleSidebarItem((side, item_ix)): &ToggleSidebarItem,
         cx: &mut ViewContext<Self>,
     ) {
         let sidebar = match side {
@@ -755,7 +765,7 @@ impl Workspace {
         cx.notify();
     }
 
-    pub fn debug_elements(&mut self, _: &(), cx: &mut ViewContext<Self>) {
+    pub fn debug_elements(&mut self, _: &DebugElements, cx: &mut ViewContext<Self>) {
         match to_string_pretty(&cx.debug_elements()) {
             Ok(json) => {
                 let kib = json.len() as f32 / 1024.;
@@ -771,7 +781,7 @@ impl Workspace {
         };
     }
 
-    fn share_worktree(&mut self, _: &(), cx: &mut ViewContext<Self>) {
+    fn share_worktree(&mut self, _: &ShareWorktree, cx: &mut ViewContext<Self>) {
         let rpc = self.rpc.clone();
         let platform = cx.platform();
 
@@ -803,7 +813,7 @@ impl Workspace {
         .detach();
     }
 
-    fn join_worktree(&mut self, _: &(), cx: &mut ViewContext<Self>) {
+    fn join_worktree(&mut self, _: &JoinWorktree, cx: &mut ViewContext<Self>) {
         let rpc = self.rpc.clone();
         let languages = self.languages.clone();
 
@@ -1000,7 +1010,7 @@ impl WorkspaceHandle for ViewHandle<Workspace> {
 mod tests {
     use super::*;
     use crate::{
-        editor::Editor,
+        editor::{Editor, Insert},
         fs::FakeFs,
         test::{build_app_state, temp_tree},
         worktree::WorktreeHandle,
@@ -1029,13 +1039,13 @@ mod tests {
 
         cx.update(|cx| {
             open_paths(
-                &OpenParams {
+                &OpenPaths(OpenParams {
                     paths: vec![
                         dir.path().join("a").to_path_buf(),
                         dir.path().join("b").to_path_buf(),
                     ],
                     app_state: app_state.clone(),
-                },
+                }),
                 cx,
             )
         })
@@ -1044,10 +1054,10 @@ mod tests {
 
         cx.update(|cx| {
             open_paths(
-                &OpenParams {
+                &OpenPaths(OpenParams {
                     paths: vec![dir.path().join("a").to_path_buf()],
                     app_state: app_state.clone(),
-                },
+                }),
                 cx,
             )
         })
@@ -1060,13 +1070,13 @@ mod tests {
 
         cx.update(|cx| {
             open_paths(
-                &OpenParams {
+                &OpenPaths(OpenParams {
                     paths: vec![
                         dir.path().join("b").to_path_buf(),
                         dir.path().join("c").to_path_buf(),
                     ],
                     app_state: app_state.clone(),
-                },
+                }),
                 cx,
             )
         })
@@ -1284,14 +1294,14 @@ mod tests {
             item.to_any().downcast::<Editor>().unwrap()
         });
 
-        cx.update(|cx| editor.update(cx, |editor, cx| editor.insert(&"x".to_string(), cx)));
+        cx.update(|cx| editor.update(cx, |editor, cx| editor.insert(&Insert("x".into()), cx)));
         fs::write(dir.path().join("a.txt"), "changed").unwrap();
         editor
             .condition(&cx, |editor, cx| editor.has_conflict(cx))
             .await;
         cx.read(|cx| assert!(editor.is_dirty(cx)));
 
-        cx.update(|cx| workspace.update(cx, |w, cx| w.save_active_item(&(), cx)));
+        cx.update(|cx| workspace.update(cx, |w, cx| w.save_active_item(&Save, cx)));
         cx.simulate_prompt_answer(window_id, 0);
         editor
             .condition(&cx, |editor, cx| !editor.is_dirty(cx))
@@ -1323,7 +1333,7 @@ mod tests {
 
         // Create a new untitled buffer
         let editor = workspace.update(&mut cx, |workspace, cx| {
-            workspace.open_new_file(&app_state, cx);
+            workspace.open_new_file(&OpenNew(app_state.clone()), cx);
             workspace
                 .active_item(cx)
                 .unwrap()
@@ -1335,12 +1345,14 @@ mod tests {
         editor.update(&mut cx, |editor, cx| {
             assert!(!editor.is_dirty(cx.as_ref()));
             assert_eq!(editor.title(cx.as_ref()), "untitled");
-            editor.insert(&"hi".to_string(), cx);
+            editor.insert(&Insert("hi".into()), cx);
             assert!(editor.is_dirty(cx.as_ref()));
         });
 
         // Save the buffer. This prompts for a filename.
-        workspace.update(&mut cx, |workspace, cx| workspace.save_active_item(&(), cx));
+        workspace.update(&mut cx, |workspace, cx| {
+            workspace.save_active_item(&Save, cx)
+        });
         cx.simulate_new_path_selection(|parent_dir| {
             assert_eq!(parent_dir, dir.path());
             Some(parent_dir.join("the-new-name"))
@@ -1361,10 +1373,12 @@ mod tests {
 
         // Edit the file and save it again. This time, there is no filename prompt.
         editor.update(&mut cx, |editor, cx| {
-            editor.insert(&" there".to_string(), cx);
+            editor.insert(&Insert(" there".into()), cx);
             assert_eq!(editor.is_dirty(cx.as_ref()), true);
         });
-        workspace.update(&mut cx, |workspace, cx| workspace.save_active_item(&(), cx));
+        workspace.update(&mut cx, |workspace, cx| {
+            workspace.save_active_item(&Save, cx)
+        });
         assert!(!cx.did_prompt_for_new_path());
         editor
             .condition(&cx, |editor, cx| !editor.is_dirty(cx))
@@ -1374,7 +1388,7 @@ mod tests {
         // Open the same newly-created file in another pane item. The new editor should reuse
         // the same buffer.
         workspace.update(&mut cx, |workspace, cx| {
-            workspace.open_new_file(&app_state, cx);
+            workspace.open_new_file(&OpenNew(app_state.clone()), cx);
             workspace.split_pane(workspace.active_pane().clone(), SplitDirection::Right, cx);
             assert!(workspace
                 .open_entry((tree.id(), Path::new("the-new-name").into()), cx)
@@ -1398,7 +1412,7 @@ mod tests {
         cx.update(init);
 
         let app_state = cx.read(build_app_state);
-        cx.dispatch_global_action("workspace:new_file", app_state);
+        cx.dispatch_global_action(OpenNew(app_state));
         let window_id = *cx.window_ids().first().unwrap();
         let workspace = cx.root_view::<Workspace>(window_id).unwrap();
         let editor = workspace.update(&mut cx, |workspace, cx| {
@@ -1414,7 +1428,9 @@ mod tests {
             assert!(editor.text(cx).is_empty());
         });
 
-        workspace.update(&mut cx, |workspace, cx| workspace.save_active_item(&(), cx));
+        workspace.update(&mut cx, |workspace, cx| {
+            workspace.save_active_item(&Save, cx)
+        });
 
         let dir = TempDir::new("test-new-empty-workspace").unwrap();
         cx.simulate_new_path_selection(|_| {
@@ -1467,7 +1483,11 @@ mod tests {
             );
         });
 
-        cx.dispatch_action(window_id, vec![pane_1.id()], "pane:split_right", ());
+        cx.dispatch_action(
+            window_id,
+            vec![pane_1.id()],
+            pane::Split(SplitDirection::Right),
+        );
         cx.update(|cx| {
             let pane_2 = workspace.read(cx).active_pane().clone();
             assert_ne!(pane_1, pane_2);
@@ -1475,7 +1495,7 @@ mod tests {
             let pane2_item = pane_2.read(cx).active_item().unwrap();
             assert_eq!(pane2_item.entry_id(cx.as_ref()), Some(file1.clone()));
 
-            cx.dispatch_action(window_id, vec![pane_2.id()], "pane:close_active_item", ());
+            cx.dispatch_action(window_id, vec![pane_2.id()], &CloseActiveItem);
             let workspace = workspace.read(cx);
             assert_eq!(workspace.panes.len(), 1);
             assert_eq!(workspace.active_pane(), &pane_1);
