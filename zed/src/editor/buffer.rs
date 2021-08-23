@@ -2940,11 +2940,11 @@ mod tests {
         let buffer2 = cx.add_model(|cx| Buffer::new(1, "abcdef", cx));
         let buffer_ops = buffer1.update(cx, |buffer, cx| {
             let buffer_1_events = buffer_1_events.clone();
-            cx.subscribe(&buffer1, move |_, event, _| {
+            cx.subscribe(&buffer1, move |_, _, event, _| {
                 buffer_1_events.borrow_mut().push(event.clone())
             });
             let buffer_2_events = buffer_2_events.clone();
-            cx.subscribe(&buffer2, move |_, event, _| {
+            cx.subscribe(&buffer2, move |_, _, event, _| {
                 buffer_2_events.borrow_mut().push(event.clone())
             });
 
@@ -3380,7 +3380,7 @@ mod tests {
         buffer1.update(&mut cx, |buffer, cx| {
             cx.subscribe(&buffer1, {
                 let events = events.clone();
-                move |_, event, _| events.borrow_mut().push(event.clone())
+                move |_, _, event, _| events.borrow_mut().push(event.clone())
             });
 
             assert!(!buffer.is_dirty());
@@ -3436,7 +3436,7 @@ mod tests {
         buffer2.update(&mut cx, |_, cx| {
             cx.subscribe(&buffer2, {
                 let events = events.clone();
-                move |_, event, _| events.borrow_mut().push(event.clone())
+                move |_, _, event, _| events.borrow_mut().push(event.clone())
             });
         });
 
@@ -3456,7 +3456,7 @@ mod tests {
         buffer3.update(&mut cx, |_, cx| {
             cx.subscribe(&buffer3, {
                 let events = events.clone();
-                move |_, event, _| events.borrow_mut().push(event.clone())
+                move |_, _, event, _| events.borrow_mut().push(event.clone())
             });
         });
 

@@ -649,8 +649,8 @@ pub struct MutableAppContext {
     keystroke_matcher: keymap::Matcher,
     next_entity_id: usize,
     next_window_id: usize,
-    subscriptions: HashMap<usize, Vec<Subscription>>,
-    observations: HashMap<usize, Vec<Observation>>,
+    subscriptions: HashMap<usize, Vec<Box<dyn FnMut(&dyn Any, &mut MutableAppContext) -> bool>>>,
+    observations: HashMap<usize, Vec<Box<dyn FnMut(&mut MutableAppContext) -> bool>>>,
     presenters_and_platform_windows:
         HashMap<usize, (Rc<RefCell<Presenter>>, Box<dyn platform::Window>)>,
     debug_elements_callbacks: HashMap<usize, Box<dyn Fn(&AppContext) -> crate::json::Value>>,
@@ -877,91 +877,71 @@ impl MutableAppContext {
         );
     }
 
-    pub fn subscribe_to_model<E, F>(&mut self, handle: &ModelHandle<E>, mut callback: F)
+    pub fn subscribe<E, H, F>(&mut self, handle: &H, mut callback: F)
     where
         E: Entity,
         E::Event: 'static,
-        F: 'static + FnMut(ModelHandle<E>, &E::Event, &mut Self),
+        H: Handle<E>,
+        F: 'static + FnMut(H, &E::Event, &mut Self),
     {
-        let emitter_handle = handle.downgrade();
-        self.subscribe(handle, move |payload, cx| {
-            if let Some(emitter_handle) = emitter_handle.upgrade(cx.as_ref()) {
-                callback(emitter_handle, payload, cx);
-            }
-        });
+        self.subscribe_internal(handle, move |handle, event, cx| {
+            callback(handle, event, cx);
+            true
+        })
     }
 
-    pub fn subscribe_to_view<V, F>(&mut self, handle: &ViewHandle<V>, mut callback: F)
-    where
-        V: View,
-        V::Event: 'static,
-        F: 'static + FnMut(ViewHandle<V>, &V::Event, &mut Self),
-    {
-        let emitter_handle = handle.downgrade();
-        self.subscribe(handle, move |payload, cx| {
-            if let Some(emitter_handle) = emitter_handle.upgrade(cx.as_ref()) {
-                callback(emitter_handle, payload, cx);
-            }
-        });
-    }
-
-    pub fn observe_model<E, F>(&mut self, handle: &ModelHandle<E>, mut callback: F)
+    fn observe<E, H, F>(&mut self, handle: &H, mut callback: F)
     where
         E: Entity,
         E::Event: 'static,
-        F: 'static + FnMut(ModelHandle<E>, &mut Self),
+        H: Handle<E>,
+        F: 'static + FnMut(H, &mut Self),
     {
-        let emitter_handle = handle.downgrade();
-        self.observe(handle, move |cx| {
-            if let Some(emitter_handle) = emitter_handle.upgrade(cx.as_ref()) {
-                callback(emitter_handle, cx);
-            }
-        });
+        self.observe_internal(handle, move |handle, cx| {
+            callback(handle, cx);
+            true
+        })
     }
 
-    pub fn observe_view<V, F>(&mut self, handle: &ViewHandle<V>, mut callback: F)
-    where
-        V: View,
-        V::Event: 'static,
-        F: 'static + FnMut(ViewHandle<V>, &mut Self),
-    {
-        let emitter_handle = handle.downgrade();
-        self.observe(handle, move |cx| {
-            if let Some(emitter_handle) = emitter_handle.upgrade(cx.as_ref()) {
-                callback(emitter_handle, cx);
-            }
-        });
-    }
-
-    pub fn subscribe<E, F>(&mut self, handle: &impl Handle<E>, mut callback: F)
+    pub fn subscribe_internal<E, H, F>(&mut self, handle: &H, mut callback: F)
     where
         E: Entity,
         E::Event: 'static,
-        F: 'static + FnMut(&E::Event, &mut Self),
+        H: Handle<E>,
+        F: 'static + FnMut(H, &E::Event, &mut Self) -> bool,
     {
+        let emitter = handle.downgrade();
         self.subscriptions
             .entry(handle.id())
             .or_default()
-            .push(Subscription::Global {
-                callback: Box::new(move |payload, cx| {
+            .push(Box::new(move |payload, cx| {
+                if let Some(emitter) = H::upgrade_from(&emitter, cx.as_ref()) {
                     let payload = payload.downcast_ref().expect("downcast is type safe");
-                    callback(payload, cx);
-                }),
-            });
+                    callback(emitter, payload, cx)
+                } else {
+                    false
+                }
+            }))
     }
 
-    pub fn observe<E, F>(&mut self, handle: &impl Handle<E>, callback: F)
+    fn observe_internal<E, H, F>(&mut self, handle: &H, mut callback: F)
     where
         E: Entity,
         E::Event: 'static,
-        F: 'static + FnMut(&mut Self),
+        H: Handle<E>,
+        F: 'static + FnMut(H, &mut Self) -> bool,
     {
+        let observed = handle.downgrade();
         self.observations
             .entry(handle.id())
             .or_default()
-            .push(Observation::Global {
-                callback: Box::new(callback),
-            });
+            .push(Box::new(move |cx| {
+                if let Some(observed) = H::upgrade_from(&observed, cx) {
+                    callback(observed, cx)
+                } else {
+                    false
+                }
+            }))
     }
 
     pub(crate) fn notify_view(&mut self, window_id: usize, view_id: usize) {
@@ -1363,91 +1343,29 @@ impl MutableAppContext {
     }
 
     fn emit_event(&mut self, entity_id: usize, payload: Box<dyn Any>) {
-        if let Some(subscriptions) = self.subscriptions.remove(&entity_id) {
-            for mut subscription in subscriptions {
-                let alive = match &mut subscription {
-                    Subscription::Global { callback } => {
-                        callback(payload.as_ref(), self);
-                        true
-                    }
-                    Subscription::FromModel { model_id, callback } => {
-                        if let Some(mut model) = self.cx.models.remove(model_id) {
-                            callback(model.as_any_mut(), payload.as_ref(), self, *model_id);
-                            self.cx.models.insert(*model_id, model);
-                            true
-                        } else {
-                            false
-                        }
-                    }
-                    Subscription::FromView {
-                        window_id,
-                        view_id,
-                        callback,
-                    } => {
-                        if let Some(mut view) = self.cx.views.remove(&(*window_id, *view_id)) {
-                            callback(
-                                view.as_any_mut(),
-                                payload.as_ref(),
-                                self,
-                                *window_id,
-                                *view_id,
-                            );
-                            self.cx.views.insert((*window_id, *view_id), view);
-                            true
-                        } else {
-                            false
-                        }
-                    }
-                };
-
+        if let Some(callbacks) = self.subscriptions.remove(&entity_id) {
+            for mut callback in callbacks {
+                let alive = callback(payload.as_ref(), self);
                 if alive {
                     self.subscriptions
                         .entry(entity_id)
                         .or_default()
-                        .push(subscription);
+                        .push(callback);
                 }
             }
         }
     }
 
     fn notify_model_observers(&mut self, observed_id: usize) {
-        if let Some(observations) = self.observations.remove(&observed_id) {
+        if let Some(callbacks) = self.observations.remove(&observed_id) {
             if self.cx.models.contains_key(&observed_id) {
-                for mut observation in observations {
-                    let alive = match &mut observation {
-                        Observation::Global { callback } => {
-                            callback(self);
-                            true
-                        }
-                        Observation::FromModel { model_id, callback } => {
-                            if let Some(mut model) = self.cx.models.remove(model_id) {
-                                callback(model.as_any_mut(), self, *model_id);
-                                self.cx.models.insert(*model_id, model);
-                                true
-                            } else {
-                                false
-                            }
-                        }
-                        Observation::FromView {
-                            window_id,
-                            view_id,
-                            callback,
-                        } => {
-                            if let Some(mut view) = self.cx.views.remove(&(*window_id, *view_id)) {
-                                callback(view.as_any_mut(), self, *window_id, *view_id);
-                                self.cx.views.insert((*window_id, *view_id), view);
-                                true
-                            } else {
-                                false
-                            }
-                        }
-                    };
-
+                for mut callback in callbacks {
+                    let alive = callback(self);
                     if alive {
                         self.observations
                             .entry(observed_id)
                             .or_default()
-                            .push(observation);
+                            .push(callback);
                     }
                 }
             }
@@ -1463,46 +1381,19 @@ impl MutableAppContext {
                 .insert(observed_view_id);
         }
 
-        if let Some(observations) = self.observations.remove(&observed_view_id) {
+        if let Some(callbacks) = self.observations.remove(&observed_view_id) {
             if self
                 .cx
                 .views
                 .contains_key(&(observed_window_id, observed_view_id))
             {
-                for mut observation in observations {
-                    if let Observation::FromView {
-                        window_id: observing_window_id,
-                        view_id: observing_view_id,
-                        callback,
-                    } = &mut observation
-                    {
-                        let alive = if let Some(mut view) = self
-                            .cx
-                            .views
-                            .remove(&(*observing_window_id, *observing_view_id))
-                        {
-                            (callback)(
-                                view.as_any_mut(),
-                                self,
-                                *observing_window_id,
-                                *observing_view_id,
-                            );
-                            self.cx
-                                .views
-                                .insert((*observing_window_id, *observing_view_id), view);
-                            true
-                        } else {
-                            false
-                        };
-
-                        if alive {
-                            self.observations
-                                .entry(observed_view_id)
-                                .or_default()
-                                .push(observation);
-                        }
-                    } else {
-                        unreachable!()
+                for mut callback in callbacks {
+                    let alive = callback(self);
+                    if alive {
+                        self.observations
+                            .entry(observed_view_id)
+                            .or_default()
+                            .push(callback);
                     }
                 }
             }
@@ -1967,53 +1858,11 @@ impl<'a, T: Entity> ModelContext<'a, T> {
         self.app.add_model(build_model)
     }
 
-    pub fn subscribe<S: Entity, F>(&mut self, handle: &ModelHandle<S>, mut callback: F)
-    where
-        S::Event: 'static,
-        F: 'static + FnMut(&mut T, &S::Event, &mut ModelContext<T>),
-    {
-        self.app
-            .subscriptions
-            .entry(handle.model_id)
-            .or_default()
-            .push(Subscription::FromModel {
-                model_id: self.model_id,
-                callback: Box::new(move |model, payload, app, model_id| {
-                    let model = model.downcast_mut().expect("downcast is type safe");
-                    let payload = payload.downcast_ref().expect("downcast is type safe");
-                    let mut cx = ModelContext::new(app, model_id);
-                    callback(model, payload, &mut cx);
-                }),
-            });
-    }
-
     pub fn emit(&mut self, payload: T::Event) {
         self.app.pending_effects.push_back(Effect::Event {
             entity_id: self.model_id,
             payload: Box::new(payload),
         });
-    }
-
-    pub fn observe<S, F>(&mut self, handle: &ModelHandle<S>, mut callback: F)
-    where
-        S: Entity,
-        F: 'static + FnMut(&mut T, ModelHandle<S>, &mut ModelContext<T>),
-    {
-        let observed_handle = handle.downgrade();
-        self.app
-            .observations
-            .entry(handle.model_id)
-            .or_default()
-            .push(Observation::FromModel {
-                model_id: self.model_id,
-                callback: Box::new(move |model, app, model_id| {
-                    if let Some(observed) = observed_handle.upgrade(app) {
-                        let model = model.downcast_mut().expect("downcast is type safe");
-                        let mut cx = ModelContext::new(app, model_id);
-                        callback(model, observed, &mut cx);
-                    }
-                }),
-            });
     }
 
     pub fn notify(&mut self) {
@@ -2022,6 +1871,43 @@ impl<'a, T: Entity> ModelContext<'a, T> {
             .push_back(Effect::ModelNotification {
                 model_id: self.model_id,
             });
+    }
+
+    pub fn subscribe<S: Entity, F>(&mut self, handle: &ModelHandle<S>, mut callback: F)
+    where
+        S::Event: 'static,
+        F: 'static + FnMut(&mut T, ModelHandle<S>, &S::Event, &mut ModelContext<T>),
+    {
+        let subscriber = self.handle().downgrade();
+        self.app
+            .subscribe_internal(handle, move |emitter, event, cx| {
+                if let Some(subscriber) = subscriber.upgrade(cx) {
+                    subscriber.update(cx, |subscriber, cx| {
+                        callback(subscriber, emitter, event, cx);
+                    });
+                    true
+                } else {
+                    false
+                }
+            });
+    }
+
+    pub fn observe<S, F>(&mut self, handle: &ModelHandle<S>, mut callback: F)
+    where
+        S: Entity,
+        F: 'static + FnMut(&mut T, ModelHandle<S>, &mut ModelContext<T>),
+    {
+        let observer = self.handle().downgrade();
+        self.app.observe_internal(handle, move |observed, cx| {
+            if let Some(observer) = observer.upgrade(cx) {
+                observer.update(cx, |observer, cx| {
+                    callback(observer, observed, cx);
+                });
+                true
+            } else {
+                false
+            }
+        });
     }
 
     pub fn handle(&self) -> ModelHandle<T> {
@@ -2211,54 +2097,78 @@ impl<'a, T: View> ViewContext<'a, T> {
         self.app.add_option_view(self.window_id, build_view)
     }
 
-    pub fn subscribe_to_model<E, F>(&mut self, handle: &ModelHandle<E>, mut callback: F)
+    pub fn subscribe_to_model<E, F>(&mut self, handle: &ModelHandle<E>, callback: F)
     where
         E: Entity,
         E::Event: 'static,
         F: 'static + FnMut(&mut T, ModelHandle<E>, &E::Event, &mut ViewContext<T>),
     {
-        let emitter_handle = handle.downgrade();
-        self.subscribe(handle, move |model, payload, cx| {
-            if let Some(emitter_handle) = emitter_handle.upgrade(cx.as_ref()) {
-                callback(model, emitter_handle, payload, cx);
-            }
-        });
+        self.subscribe(handle, callback)
     }
 
-    pub fn subscribe_to_view<V, F>(&mut self, handle: &ViewHandle<V>, mut callback: F)
+    pub fn subscribe_to_view<V, F>(&mut self, handle: &ViewHandle<V>, callback: F)
     where
         V: View,
         V::Event: 'static,
         F: 'static + FnMut(&mut T, ViewHandle<V>, &V::Event, &mut ViewContext<T>),
     {
-        let emitter_handle = handle.downgrade();
-        self.subscribe(handle, move |view, payload, cx| {
-            if let Some(emitter_handle) = emitter_handle.upgrade(cx.as_ref()) {
-                callback(view, emitter_handle, payload, cx);
-            }
-        });
+        self.subscribe(handle, callback)
     }
 
-    pub fn subscribe<E, F>(&mut self, handle: &impl Handle<E>, mut callback: F)
+    pub fn observe_model<S, F>(&mut self, handle: &ModelHandle<S>, callback: F)
+    where
+        S: Entity,
+        F: 'static + FnMut(&mut T, ModelHandle<S>, &mut ViewContext<T>),
+    {
+        self.observe(handle, callback)
+    }
+
+    pub fn observe_view<S, F>(&mut self, handle: &ViewHandle<S>, callback: F)
+    where
+        S: View,
+        F: 'static + FnMut(&mut T, ViewHandle<S>, &mut ViewContext<T>),
+    {
+        self.observe(handle, callback)
+    }
+
+    pub fn subscribe<E, H, F>(&mut self, handle: &H, mut callback: F)
     where
         E: Entity,
         E::Event: 'static,
-        F: 'static + FnMut(&mut T, &E::Event, &mut ViewContext<T>),
+        H: Handle<E>,
+        F: 'static + FnMut(&mut T, H, &E::Event, &mut ViewContext<T>),
     {
+        let subscriber = self.handle().downgrade();
         self.app
-            .subscriptions
-            .entry(handle.id())
-            .or_default()
-            .push(Subscription::FromView {
-                window_id: self.window_id,
-                view_id: self.view_id,
-                callback: Box::new(move |entity, payload, app, window_id, view_id| {
-                    let entity = entity.downcast_mut().expect("downcast is type safe");
-                    let payload = payload.downcast_ref().expect("downcast is type safe");
-                    let mut cx = ViewContext::new(app, window_id, view_id);
-                    callback(entity, payload, &mut cx);
-                }),
+            .subscribe_internal(handle, move |emitter, event, cx| {
+                if let Some(subscriber) = subscriber.upgrade(cx) {
+                    subscriber.update(cx, |subscriber, cx| {
+                        callback(subscriber, emitter, event, cx);
+                    });
+                    true
+                } else {
+                    false
+                }
             });
+    }
+
+    fn observe<E, F, H>(&mut self, handle: &H, mut callback: F)
+    where
+        E: Entity,
+        H: Handle<E>,
+        F: 'static + FnMut(&mut T, H, &mut ViewContext<T>),
+    {
+        let observer = self.handle().downgrade();
+        self.app.observe_internal(handle, move |observed, cx| {
+            if let Some(observer) = observer.upgrade(cx) {
+                observer.update(cx, |observer, cx| {
+                    callback(observer, observed, cx);
+                });
+                true
+            } else {
+                false
+            }
+        });
     }
 
     pub fn emit(&mut self, payload: T::Event) {
@@ -2266,52 +2176,6 @@ impl<'a, T: View> ViewContext<'a, T> {
             entity_id: self.view_id,
             payload: Box::new(payload),
         });
-    }
-
-    pub fn observe_model<S, F>(&mut self, handle: &ModelHandle<S>, mut callback: F)
-    where
-        S: Entity,
-        F: 'static + FnMut(&mut T, ModelHandle<S>, &mut ViewContext<T>),
-    {
-        let observed_handle = handle.downgrade();
-        self.app
-            .observations
-            .entry(handle.id())
-            .or_default()
-            .push(Observation::FromView {
-                window_id: self.window_id,
-                view_id: self.view_id,
-                callback: Box::new(move |view, app, window_id, view_id| {
-                    if let Some(observed) = observed_handle.upgrade(app) {
-                        let view = view.downcast_mut().expect("downcast is type safe");
-                        let mut cx = ViewContext::new(app, window_id, view_id);
-                        callback(view, observed, &mut cx);
-                    }
-                }),
-            });
-    }
-
-    pub fn observe_view<S, F>(&mut self, handle: &ViewHandle<S>, mut callback: F)
-    where
-        S: View,
-        F: 'static + FnMut(&mut T, ViewHandle<S>, &mut ViewContext<T>),
-    {
-        let observed_handle = handle.downgrade();
-        self.app
-            .observations
-            .entry(handle.id())
-            .or_default()
-            .push(Observation::FromView {
-                window_id: self.window_id,
-                view_id: self.view_id,
-                callback: Box::new(move |view, app, observing_window_id, observing_view_id| {
-                    if let Some(observed) = observed_handle.upgrade(app) {
-                        let view = view.downcast_mut().expect("downcast is type safe");
-                        let mut cx = ViewContext::new(app, observing_window_id, observing_view_id);
-                        callback(view, observed, &mut cx);
-                    }
-                }),
-            });
     }
 
     pub fn notify(&mut self) {
@@ -2433,8 +2297,13 @@ impl<V: View> UpdateView for ViewContext<'_, V> {
 }
 
 pub trait Handle<T> {
+    type Weak: 'static;
     fn id(&self) -> usize;
     fn location(&self) -> EntityLocation;
+    fn downgrade(&self) -> Self::Weak;
+    fn upgrade_from(weak: &Self::Weak, cx: &AppContext) -> Option<Self>
+    where
+        Self: Sized;
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Hash)]
@@ -2495,13 +2364,13 @@ impl<T: Entity> ModelHandle<T> {
         let (tx, mut rx) = mpsc::channel(1024);
 
         let mut cx = cx.cx.borrow_mut();
-        cx.observe_model(self, {
+        cx.observe(self, {
             let mut tx = tx.clone();
             move |_, _| {
                 tx.blocking_send(()).ok();
             }
         });
-        cx.subscribe_to_model(self, {
+        cx.subscribe(self, {
             let mut tx = tx.clone();
             move |_, _, _| {
                 tx.blocking_send(()).ok();
@@ -2592,7 +2461,9 @@ impl<T> Drop for ModelHandle<T> {
     }
 }
 
-impl<T> Handle<T> for ModelHandle<T> {
+impl<T: Entity> Handle<T> for ModelHandle<T> {
+    type Weak = WeakModelHandle<T>;
+
     fn id(&self) -> usize {
         self.model_id
     }
@@ -2600,7 +2471,19 @@ impl<T> Handle<T> for ModelHandle<T> {
     fn location(&self) -> EntityLocation {
         EntityLocation::Model(self.model_id)
     }
+
+    fn downgrade(&self) -> Self::Weak {
+        self.downgrade()
+    }
+
+    fn upgrade_from(weak: &Self::Weak, cx: &AppContext) -> Option<Self>
+    where
+        Self: Sized,
+    {
+        weak.upgrade(cx)
+    }
 }
+
 pub struct WeakModelHandle<T> {
     model_id: usize,
     model_type: PhantomData<T>,
@@ -2718,9 +2601,9 @@ impl<T: View> ViewHandle<T> {
                 }
             });
 
-            cx.subscribe(self, {
+            cx.subscribe_to_view(self, {
                 let mut tx = tx.clone();
-                move |_, _, _| {
+                move |_, _, _, _| {
                     tx.blocking_send(()).ok();
                 }
             })
@@ -2801,13 +2684,26 @@ impl<T> Drop for ViewHandle<T> {
     }
 }
 
-impl<T> Handle<T> for ViewHandle<T> {
+impl<T: View> Handle<T> for ViewHandle<T> {
+    type Weak = WeakViewHandle<T>;
+
     fn id(&self) -> usize {
         self.view_id
     }
 
     fn location(&self) -> EntityLocation {
         EntityLocation::View(self.window_id, self.view_id)
+    }
+
+    fn downgrade(&self) -> Self::Weak {
+        self.downgrade()
+    }
+
+    fn upgrade_from(weak: &Self::Weak, cx: &AppContext) -> Option<Self>
+    where
+        Self: Sized,
+    {
+        weak.upgrade(cx)
     }
 }
 
@@ -3097,36 +2993,6 @@ impl RefCounts {
     }
 }
 
-enum Subscription {
-    Global {
-        callback: Box<dyn FnMut(&dyn Any, &mut MutableAppContext)>,
-    },
-    FromModel {
-        model_id: usize,
-        callback: Box<dyn FnMut(&mut dyn Any, &dyn Any, &mut MutableAppContext, usize)>,
-    },
-    FromView {
-        window_id: usize,
-        view_id: usize,
-        callback: Box<dyn FnMut(&mut dyn Any, &dyn Any, &mut MutableAppContext, usize, usize)>,
-    },
-}
-
-enum Observation {
-    Global {
-        callback: Box<dyn FnMut(&mut MutableAppContext)>,
-    },
-    FromModel {
-        model_id: usize,
-        callback: Box<dyn FnMut(&mut dyn Any, &mut MutableAppContext, usize)>,
-    },
-    FromView {
-        window_id: usize,
-        view_id: usize,
-        callback: Box<dyn FnMut(&mut dyn Any, &mut MutableAppContext, usize, usize)>,
-    },
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -3151,7 +3017,7 @@ mod tests {
                     cx.observe(other, |me, _, _| {
                         me.events.push("notified".into());
                     });
-                    cx.subscribe(other, |me, event, _| {
+                    cx.subscribe(other, |me, _, event, _| {
                         me.events.push(format!("observed event {}", event));
                     });
                 }
@@ -3209,10 +3075,10 @@ mod tests {
         let handle_2b = handle_2.clone();
 
         handle_1.update(cx, |_, c| {
-            c.subscribe(&handle_2, move |model: &mut Model, event, c| {
+            c.subscribe(&handle_2, move |model: &mut Model, _, event, c| {
                 model.events.push(*event);
 
-                c.subscribe(&handle_2b, |model, event, _| {
+                c.subscribe(&handle_2b, |model, _, event, _| {
                     model.events.push(*event * 2);
                 });
             });
@@ -3519,7 +3385,7 @@ mod tests {
             cx.subscribe_to_model(&observed_model, |_, _, _, _| {});
         });
         observing_model.update(cx, |_, cx| {
-            cx.subscribe(&observed_model, |_, _, _| {});
+            cx.subscribe(&observed_model, |_, _, _, _| {});
         });
 
         cx.update(|| {
