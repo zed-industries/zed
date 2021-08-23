@@ -59,36 +59,44 @@ impl Element for List {
         constraint: crate::SizeConstraint,
         cx: &mut crate::LayoutContext,
     ) -> (Vector2F, Self::LayoutState) {
-        // TODO: Fully invalidate if width has changed since the last layout.
-
         let state = &mut *self.state.0.lock();
-        let mut old_heights = state.heights.cursor::<PendingCount, ElementHeightSummary>();
-        let mut new_heights = old_heights.slice(&PendingCount(1), sum_tree::Bias::Left, &());
-
         let mut item_constraint = constraint;
         item_constraint.min.set_y(0.);
         item_constraint.max.set_y(f32::INFINITY);
 
-        while let Some(height) = old_heights.item() {
-            if height.is_pending() {
-                let size =
-                    state.elements[old_heights.sum_start().count].layout(item_constraint, cx);
-                new_heights.push(ElementHeight::Ready(size.y()), &());
-                old_heights.next(&());
-            } else {
-                new_heights.push_tree(
-                    old_heights.slice(
-                        &PendingCount(old_heights.sum_start().pending_count + 1),
-                        Bias::Left,
+        if state.last_layout_width == constraint.max.x() {
+            let mut old_heights = state.heights.cursor::<PendingCount, ElementHeightSummary>();
+            let mut new_heights = old_heights.slice(&PendingCount(1), sum_tree::Bias::Left, &());
+
+            while let Some(height) = old_heights.item() {
+                if height.is_pending() {
+                    let size =
+                        state.elements[old_heights.sum_start().count].layout(item_constraint, cx);
+                    new_heights.push(ElementHeight::Ready(size.y()), &());
+                    old_heights.next(&());
+                } else {
+                    new_heights.push_tree(
+                        old_heights.slice(
+                            &PendingCount(old_heights.sum_start().pending_count + 1),
+                            Bias::Left,
+                            &(),
+                        ),
                         &(),
-                    ),
-                    &(),
-                );
+                    );
+                }
             }
+
+            drop(old_heights);
+            state.heights = new_heights;
+        } else {
+            state.heights = SumTree::new();
+            for element in &mut state.elements {
+                let size = element.layout(item_constraint, cx);
+                state.heights.push(ElementHeight::Ready(size.y()), &());
+            }
+            state.last_layout_width = constraint.max.x();
         }
 
-        drop(old_heights);
-        state.heights = new_heights;
         (constraint.max, ())
     }
 
