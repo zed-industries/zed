@@ -82,7 +82,6 @@ impl Presenter {
 
         if let Some(root_view_id) = cx.root_view_id(self.window_id) {
             self.layout(window_size, cx);
-            self.after_layout(cx);
             let mut paint_cx = PaintContext {
                 scene: &mut scene,
                 font_cache: &self.font_cache,
@@ -119,18 +118,6 @@ impl Presenter {
             asset_cache: &self.asset_cache,
             view_stack: Vec::new(),
             app: cx,
-        }
-    }
-
-    fn after_layout(&mut self, cx: &mut MutableAppContext) {
-        if let Some(root_view_id) = cx.root_view_id(self.window_id) {
-            let mut layout_cx = AfterLayoutContext {
-                rendered_views: &mut self.rendered_views,
-                font_cache: &self.font_cache,
-                text_layout_cache: &self.text_layout_cache,
-                app: cx,
-            };
-            layout_cx.after_layout(root_view_id);
         }
     }
 
@@ -202,22 +189,6 @@ impl<'a> LayoutContext<'a> {
         self.rendered_views.insert(view_id, rendered_view);
         self.view_stack.pop();
         size
-    }
-}
-
-pub struct AfterLayoutContext<'a> {
-    rendered_views: &'a mut HashMap<usize, ElementBox>,
-    pub font_cache: &'a FontCache,
-    pub text_layout_cache: &'a TextLayoutCache,
-    pub app: &'a mut MutableAppContext,
-}
-
-impl<'a> AfterLayoutContext<'a> {
-    fn after_layout(&mut self, view_id: usize) {
-        if let Some(mut view) = self.rendered_views.remove(&view_id) {
-            view.after_layout(self);
-            self.rendered_views.insert(view_id, view);
-        }
     }
 }
 

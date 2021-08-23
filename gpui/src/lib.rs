@@ -29,6 +29,5 @@ pub use gpui_macros::test;
 pub use platform::FontSystem;
 pub use platform::{Event, PathPromptOptions, Platform, PromptLevel};
 pub use presenter::{
-    AfterLayoutContext, Axis, DebugContext, EventContext, LayoutContext, PaintContext,
-    SizeConstraint, Vector2FExt,
+    Axis, DebugContext, EventContext, LayoutContext, PaintContext, SizeConstraint, Vector2FExt,
 };

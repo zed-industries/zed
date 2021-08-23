@@ -31,8 +31,7 @@ pub use uniform_list::*;
 
 use crate::{
     geometry::{rect::RectF, vector::Vector2F},
-    json, AfterLayoutContext, DebugContext, Event, EventContext, LayoutContext, PaintContext,
-    SizeConstraint,
+    json, DebugContext, Event, EventContext, LayoutContext, PaintContext, SizeConstraint,
 };
 use core::panic;
 use json::ToJson;
@@ -40,7 +39,6 @@ use std::{any::Any, borrow::Cow, mem};
 
 trait AnyElement {
     fn layout(&mut self, constraint: SizeConstraint, cx: &mut LayoutContext) -> Vector2F;
-    fn after_layout(&mut self, _: &mut AfterLayoutContext) {}
     fn paint(&mut self, origin: Vector2F, cx: &mut PaintContext);
     fn dispatch_event(&mut self, event: &Event, cx: &mut EventContext) -> bool;
     fn debug(&self, cx: &DebugContext) -> serde_json::Value;
@@ -247,10 +245,6 @@ impl<T: Element> Default for Lifecycle<T> {
 impl ElementBox {
     pub fn layout(&mut self, constraint: SizeConstraint, cx: &mut LayoutContext) -> Vector2F {
         self.element.layout(constraint, cx)
-    }
-
-    pub fn after_layout(&mut self, cx: &mut AfterLayoutContext) {
-        self.element.after_layout(cx);
     }
 
     pub fn paint(&mut self, origin: Vector2F, cx: &mut PaintContext) {
