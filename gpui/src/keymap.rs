@@ -455,23 +455,23 @@ mod tests {
         assert_eq!(matcher.test_keystroke("a", 1, &ctx_a), Some(A("x")));
 
         // Multi-keystroke match
-        assert_eq!(matcher.test_keystroke::<()>("a", 1, &ctx_b), None);
+        assert_eq!(matcher.test_keystroke::<A>("a", 1, &ctx_b), None);
         assert_eq!(matcher.test_keystroke("b", 1, &ctx_b), Some(Ab));
 
         // Failed matches don't interfere with matching subsequent keys
-        assert_eq!(matcher.test_keystroke::<()>("x", 1, &ctx_a), None);
+        assert_eq!(matcher.test_keystroke::<A>("x", 1, &ctx_a), None);
         assert_eq!(matcher.test_keystroke("a", 1, &ctx_a), Some(A("x")));
 
         // Pending keystrokes are cleared when the context changes
-        assert_eq!(matcher.test_keystroke::<()>("a", 1, &ctx_b), None);
+        assert_eq!(matcher.test_keystroke::<A>("a", 1, &ctx_b), None);
         assert_eq!(matcher.test_keystroke("b", 1, &ctx_a), Some(B));
 
         let mut ctx_c = Context::default();
         ctx_c.set.insert("c".into());
 
         // Pending keystrokes are maintained per-view
-        assert_eq!(matcher.test_keystroke::<()>("a", 1, &ctx_b), None);
-        assert_eq!(matcher.test_keystroke::<()>("a", 2, &ctx_c), None);
+        assert_eq!(matcher.test_keystroke::<A>("a", 1, &ctx_b), None);
+        assert_eq!(matcher.test_keystroke::<A>("a", 2, &ctx_c), None);
         assert_eq!(matcher.test_keystroke("b", 1, &ctx_b), Some(Ab));
 
         Ok(())

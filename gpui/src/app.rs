@@ -94,39 +94,14 @@ pub trait UpdateView {
 
 pub trait Action: 'static + AnyAction {
     type Argument: 'static + Clone;
-
-    const NAME: &'static str;
 }
 
 pub trait AnyAction {
     fn id(&self) -> TypeId;
+    fn name(&self) -> &'static str;
     fn as_any(&self) -> &dyn Any;
     fn boxed_clone(&self) -> Box<dyn AnyAction>;
     fn boxed_clone_as_any(&self) -> Box<dyn Any>;
-}
-
-impl Action for () {
-    type Argument = ();
-
-    const NAME: &'static str = "()";
-}
-
-impl AnyAction for () {
-    fn id(&self) -> TypeId {
-        TypeId::of::<()>()
-    }
-
-    fn as_any(&self) -> &dyn Any {
-        self
-    }
-
-    fn boxed_clone(&self) -> Box<dyn AnyAction> {
-        Box::new(())
-    }
-
-    fn boxed_clone_as_any(&self) -> Box<dyn Any> {
-        Box::new(())
-    }
 }
 
 #[macro_export]
@@ -137,13 +112,15 @@ macro_rules! action {
 
         impl $crate::Action for $name {
             type Argument = $arg;
-
-            const NAME: &'static str = stringify!($name);
         }
 
         impl $crate::AnyAction for $name {
             fn id(&self) -> std::any::TypeId {
                 std::any::TypeId::of::<$name>()
+            }
+
+            fn name(&self) -> &'static str {
+                stringify!($name)
             }
 
             fn as_any(&self) -> &dyn std::any::Any {
@@ -166,8 +143,6 @@ macro_rules! action {
 
         impl $crate::Action for $name {
             type Argument = ();
-
-            const NAME: &'static str = stringify!($name);
         }
 
         impl $crate::AnyAction for $name {
@@ -175,16 +150,20 @@ macro_rules! action {
                 std::any::TypeId::of::<$name>()
             }
 
+            fn name(&self) -> &'static str {
+                stringify!($name)
+            }
+
             fn as_any(&self) -> &dyn std::any::Any {
                 self
             }
 
             fn boxed_clone(&self) -> Box<dyn $crate::AnyAction> {
-                Box::new(())
+                Box::new(self.clone())
             }
 
             fn boxed_clone_as_any(&self) -> Box<dyn std::any::Any> {
-                Box::new(())
+                Box::new(self.clone())
             }
         }
     };
