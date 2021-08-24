@@ -189,7 +189,7 @@ impl Pane {
             let is_active = ix == self.active_item;
 
             enum Tab {}
-            let border = &theme.tab.container.border;
+            let border = &theme.workspace.tab.container.border;
 
             row.add_child(
                 Expanded::new(
@@ -212,9 +212,9 @@ impl Pane {
                                             settings.ui_font_size,
                                         )
                                         .with_style(if is_active {
-                                            &theme.active_tab.label
+                                            &theme.workspace.active_tab.label
                                         } else {
-                                            &theme.tab.label
+                                            &theme.workspace.tab.label
                                         })
                                         .boxed(),
                                     )
@@ -236,9 +236,9 @@ impl Pane {
                                 .boxed(),
                         )
                         .with_style(if is_active {
-                            &theme.active_tab.container
+                            &theme.workspace.active_tab.container
                         } else {
-                            &theme.tab.container
+                            &theme.workspace.tab.container
                         })
                         .with_border(border);
 
@@ -267,7 +267,7 @@ impl Pane {
         // Ensure there's always a minimum amount of space after the last tab,
         // so that the tab's border doesn't abut the window's border.
         let mut border = Border::bottom(1.0, Color::default());
-        border.color = theme.tab.container.border.color;
+        border.color = theme.workspace.tab.container.border.color;
 
         row.add_child(
             ConstrainedBox::new(
@@ -305,19 +305,19 @@ impl Pane {
     ) -> ElementBox {
         enum TabCloseButton {}
 
-        let mut clicked_color = theme.tab.icon_dirty;
+        let mut clicked_color = theme.workspace.tab.icon_dirty;
         clicked_color.a = 180;
 
         let current_color = if has_conflict {
-            Some(theme.tab.icon_conflict)
+            Some(theme.workspace.tab.icon_conflict)
         } else if is_dirty {
-            Some(theme.tab.icon_dirty)
+            Some(theme.workspace.tab.icon_dirty)
         } else {
             None
         };
 
         let icon = if tab_hovered {
-            let close_color = current_color.unwrap_or(theme.tab.icon_close);
+            let close_color = current_color.unwrap_or(theme.workspace.tab.icon_close);
             let icon = Svg::new("icons/x.svg").with_color(close_color);
 
             MouseEventHandler::new::<TabCloseButton, _>(item_id, cx, |mouse_state| {
@@ -326,7 +326,7 @@ impl Pane {
                         .with_background_color(if mouse_state.clicked {
                             clicked_color
                         } else {
-                            theme.tab.icon_dirty
+                            theme.workspace.tab.icon_dirty
                         })
                         .with_corner_radius(close_icon_size / 2.)
                         .boxed()

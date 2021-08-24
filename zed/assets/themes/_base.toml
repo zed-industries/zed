@@ -1,25 +1,25 @@
 [workspace]
 background = "$surface.0"
 
-[tab]
+[workspace.tab]
 text = "$text.2"
 padding = { left = 10, right = 10 }
 icon_close = "$text.0"
 icon_dirty = "$status.info"
 icon_conflict = "$status.warn"
 
-[active_tab]
+[workspace.active_tab]
 extends = "$tab"
 background = "$surface.1"
 text = "$text.0"
 
-[sidebar]
+[workspace.sidebar]
 padding = { left = 10, right = 10 }
 
-[sidebar_icon]
+[workspace.sidebar_icon]
 color = "$text.2"
 
-[active_sidebar_icon]
+[workspace.active_sidebar_icon]
 color = "$text.0"
 
 [selector]

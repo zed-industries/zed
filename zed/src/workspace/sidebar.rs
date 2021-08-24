@@ -70,9 +70,9 @@ impl Sidebar {
             Flex::column()
                 .with_children(self.items.iter().enumerate().map(|(item_index, item)| {
                     let theme = if Some(item_index) == self.active_item_ix {
-                        &settings.theme.active_sidebar_icon
+                        &settings.theme.workspace.active_sidebar_icon
                     } else {
-                        &settings.theme.sidebar_icon
+                        &settings.theme.workspace.sidebar_icon
                     };
                     enum SidebarButton {}
                     MouseEventHandler::new::<SidebarButton, _>(item.view.id(), cx, |_| {
@@ -96,7 +96,7 @@ impl Sidebar {
                 }))
                 .boxed(),
         )
-        .with_style(&settings.theme.sidebar)
+        .with_style(&settings.theme.workspace.sidebar)
         .boxed()
     }
 }

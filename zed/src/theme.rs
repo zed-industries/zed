@@ -20,11 +20,6 @@ pub struct Theme {
     #[serde(default)]
     pub name: String,
     pub workspace: Workspace,
-    pub tab: Tab,
-    pub active_tab: Tab,
-    pub sidebar: ContainerStyle,
-    pub sidebar_icon: SidebarIcon,
-    pub active_sidebar_icon: SidebarIcon,
     pub selector: Selector,
     pub editor: Editor,
     #[serde(deserialize_with = "deserialize_syntax_theme")]
@@ -34,6 +29,11 @@ pub struct Theme {
 #[derive(Debug, Default, Deserialize)]
 pub struct Workspace {
     pub background: Color,
+    pub tab: Tab,
+    pub active_tab: Tab,
+    pub sidebar: ContainerStyle,
+    pub sidebar_icon: SidebarIcon,
+    pub active_sidebar_icon: SidebarIcon,
 }
 
 #[derive(Debug, Deserialize)]
