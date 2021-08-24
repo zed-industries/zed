@@ -5,6 +5,7 @@ use gpui::{AsyncAppContext, Entity, ModelContext, Task};
 use lazy_static::lazy_static;
 use parking_lot::RwLock;
 use postage::prelude::Stream;
+use postage::sink::Sink;
 use postage::watch;
 use std::any::TypeId;
 use std::collections::HashMap;
@@ -225,7 +226,7 @@ impl Client {
             .detach();
         let mut state = self.state.write();
         state.connection_id = Some(connection_id);
-        state.user_id = watch::channel_with(Some(user_id));
+        state.user_id.0.send(Some(user_id)).await?;
         Ok(())
     }
 
