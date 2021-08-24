@@ -98,6 +98,9 @@ impl ChannelList {
 
                     this.update(&mut cx, |this, cx| {
                         if available_channels.is_none() {
+                            if this.available_channels.is_none() {
+                                return;
+                            }
                             this.channels.clear();
                         }
                         this.available_channels = available_channels;
