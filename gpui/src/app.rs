@@ -2356,6 +2356,53 @@ impl<T: Entity> ModelHandle<T> {
         cx.update_model(self, update)
     }
 
+    pub fn next_notification(&self, cx: &TestAppContext) -> impl Future<Output = ()> {
+        let (mut tx, mut rx) = mpsc::channel(1);
+        let mut cx = cx.cx.borrow_mut();
+        let subscription = cx.observe(self, move |_, _| {
+            tx.blocking_send(()).ok();
+        });
+
+        let duration = if std::env::var("CI").is_ok() {
+            Duration::from_secs(5)
+        } else {
+            Duration::from_secs(1)
+        };
+
+        async move {
+            let notification = timeout(duration, rx.recv())
+                .await
+                .expect("next notification timed out");
+            drop(subscription);
+            notification.expect("model dropped while test was waiting for its next notification")
+        }
+    }
+
+    pub fn next_event(&self, cx: &TestAppContext) -> impl Future<Output = T::Event>
+    where
+        T::Event: Clone,
+    {
+        let (mut tx, mut rx) = mpsc::channel(1);
+        let mut cx = cx.cx.borrow_mut();
+        let subscription = cx.subscribe(self, move |_, event, _| {
+            tx.blocking_send(event.clone()).ok();
+        });
+
+        let duration = if std::env::var("CI").is_ok() {
+            Duration::from_secs(5)
+        } else {
+            Duration::from_secs(1)
+        };
+
+        async move {
+            let event = timeout(duration, rx.recv())
+                .await
+                .expect("next event timed out");
+            drop(subscription);
+            event.expect("model dropped while test was waiting for its next event")
+        }
+    }
+
     pub fn condition(
         &self,
         cx: &TestAppContext,

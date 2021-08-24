@@ -19,7 +19,6 @@ pub trait EnvelopedMessage: Clone + Sized + Send + Sync + 'static {
         responding_to: Option<u32>,
         original_sender_id: Option<u32>,
     ) -> Envelope;
-    fn matches_envelope(envelope: &Envelope) -> bool;
     fn from_envelope(envelope: Envelope) -> Option<Self>;
 }
 
@@ -88,10 +87,6 @@ macro_rules! messages {
                         original_sender_id,
                         payload: Some(envelope::Payload::$name(self)),
                     }
-                }
-
-                fn matches_envelope(envelope: &Envelope) -> bool {
-                    matches!(&envelope.payload, Some(envelope::Payload::$name(_)))
                 }
 
                 fn from_envelope(envelope: Envelope) -> Option<Self> {

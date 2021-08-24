@@ -89,14 +89,22 @@ impl ChatPanel {
 
     fn channel_did_change(
         &mut self,
-        _: ModelHandle<Channel>,
+        channel: ModelHandle<Channel>,
         event: &ChannelEvent,
         cx: &mut ViewContext<Self>,
     ) {
         match event {
-            ChannelEvent::Message { old_range, message } => {
-                self.messages
-                    .splice(old_range.clone(), Some(self.render_message(message)));
+            ChannelEvent::Message {
+                old_range,
+                new_count,
+            } => {
+                self.messages.splice(
+                    old_range.clone(),
+                    channel
+                        .read(cx)
+                        .messages_in_range(old_range.start..(old_range.start + new_count))
+                        .map(|message| self.render_message(message)),
+                );
             }
         }
         cx.notify();
