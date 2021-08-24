@@ -14,10 +14,19 @@ pub struct FontId(pub usize);
 
 pub type GlyphId = u32;
 
-#[derive(Clone, Debug, Default, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct TextStyle {
     pub color: Color,
     pub font_properties: Properties,
+}
+
+impl Default for TextStyle {
+    fn default() -> Self {
+        Self {
+            color: Color::from_u32(0xff0000ff),
+            font_properties: Default::default(),
+        }
+    }
 }
 
 #[allow(non_camel_case_types)]
