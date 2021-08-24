@@ -8,6 +8,9 @@
             "type": "lldb",
             "request": "launch",
             "name": "Debug executable 'Zed'",
+            "env": {
+                "ZED_SERVER_URL": "http://localhost:8080"
+            },
             "cargo": {
                 "args": [
                     "build",
