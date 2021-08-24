@@ -3,10 +3,13 @@ use crate::{
     util::log_async_errors,
 };
 use anyhow::{anyhow, Context, Result};
-use gpui::{Entity, ModelContext, ModelHandle, MutableAppContext, WeakModelHandle};
+use gpui::{
+    sum_tree::{self, Bias, SumTree},
+    Entity, ModelContext, ModelHandle, MutableAppContext, WeakModelHandle,
+};
 use std::{
-    cmp::Ordering,
-    collections::{hash_map, BTreeSet, HashMap},
+    collections::{hash_map, HashMap},
+    ops::Range,
     sync::Arc,
 };
 use zrpc::{
@@ -28,13 +31,14 @@ pub struct ChannelDetails {
 
 pub struct Channel {
     details: ChannelDetails,
-    messages: BTreeSet<ChannelMessage>,
+    messages: SumTree<ChannelMessage>,
     pending_messages: Vec<PendingChannelMessage>,
     next_local_message_id: u64,
     rpc: Arc<Client>,
     _subscription: rpc::Subscription,
 }
 
+#[derive(Clone, Debug)]
 pub struct ChannelMessage {
     pub id: u64,
     pub sender_id: u64,
@@ -46,10 +50,26 @@ pub struct PendingChannelMessage {
     local_id: u64,
 }
 
-pub enum Event {}
+#[derive(Clone, Debug, Default)]
+pub struct ChannelMessageSummary {
+    max_id: u64,
+    count: Count,
+}
+
+#[derive(Copy, Clone, Debug, Default)]
+struct Count(usize);
+
+pub enum ChannelListEvent {}
+
+pub enum ChannelEvent {
+    Message {
+        old_range: Range<usize>,
+        message: ChannelMessage,
+    },
+}
 
 impl Entity for ChannelList {
-    type Event = Event;
+    type Event = ChannelListEvent;
 }
 
 impl ChannelList {
@@ -107,7 +127,7 @@ impl ChannelList {
 }
 
 impl Entity for Channel {
-    type Event = ();
+    type Event = ChannelEvent;
 
     fn release(&mut self, cx: &mut MutableAppContext) {
         let rpc = self.rpc.clone();
@@ -132,7 +152,10 @@ impl Channel {
             cx.spawn(|channel, mut cx| async move {
                 match rpc.request(proto::JoinChannel { channel_id }).await {
                     Ok(response) => channel.update(&mut cx, |channel, cx| {
-                        channel.messages = response.messages.into_iter().map(Into::into).collect();
+                        channel.messages = SumTree::new();
+                        channel
+                            .messages
+                            .extend(response.messages.into_iter().map(Into::into), &());
                         cx.notify();
                     }),
                     Err(error) => log::error!("error joining channel: {}", error),
@@ -171,12 +194,14 @@ impl Channel {
                         .binary_search_by_key(&local_id, |msg| msg.local_id)
                     {
                         let body = this.pending_messages.remove(i).body;
-                        this.messages.insert(ChannelMessage {
-                            id: response.message_id,
-                            sender_id: current_user_id,
-                            body,
-                        });
-                        cx.notify();
+                        this.insert_message(
+                            ChannelMessage {
+                                id: response.message_id,
+                                sender_id: current_user_id,
+                                body,
+                            },
+                            cx,
+                        );
                     }
                 });
                 Ok(())
@@ -187,7 +212,7 @@ impl Channel {
         Ok(())
     }
 
-    pub fn messages(&self) -> &BTreeSet<ChannelMessage> {
+    pub fn messages(&self) -> &SumTree<ChannelMessage> {
         &self.messages
     }
 
@@ -209,9 +234,30 @@ impl Channel {
             .payload
             .message
             .ok_or_else(|| anyhow!("empty message"))?;
-        self.messages.insert(message.into());
-        cx.notify();
+        self.insert_message(message.into(), cx);
         Ok(())
+    }
+
+    fn insert_message(&mut self, message: ChannelMessage, cx: &mut ModelContext<Self>) {
+        let mut old_cursor = self.messages.cursor::<u64, Count>();
+        let mut new_messages = old_cursor.slice(&message.id, Bias::Left, &());
+        let start_ix = old_cursor.sum_start().0;
+        let mut end_ix = start_ix;
+        if old_cursor.item().map_or(false, |m| m.id == message.id) {
+            old_cursor.next(&());
+            end_ix += 1;
+        }
+
+        new_messages.push(message.clone(), &());
+        new_messages.push_tree(old_cursor.suffix(&()), &());
+        drop(old_cursor);
+        self.messages = new_messages;
+
+        cx.emit(ChannelEvent::Message {
+            old_range: start_ix..end_ix,
+            message,
+        });
+        cx.notify();
     }
 }
 
@@ -234,22 +280,35 @@ impl From<proto::ChannelMessage> for ChannelMessage {
     }
 }
 
-impl PartialOrd for ChannelMessage {
-    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
-        Some(self.cmp(other))
+impl sum_tree::Item for ChannelMessage {
+    type Summary = ChannelMessageSummary;
+
+    fn summary(&self) -> Self::Summary {
+        ChannelMessageSummary {
+            max_id: self.id,
+            count: Count(1),
+        }
     }
 }
 
-impl Ord for ChannelMessage {
-    fn cmp(&self, other: &Self) -> Ordering {
-        self.id.cmp(&other.id)
+impl sum_tree::Summary for ChannelMessageSummary {
+    type Context = ();
+
+    fn add_summary(&mut self, summary: &Self, _: &()) {
+        self.max_id = summary.max_id;
+        self.count.0 += summary.count.0;
     }
 }
 
-impl PartialEq for ChannelMessage {
-    fn eq(&self, other: &Self) -> bool {
-        self.id == other.id
+impl<'a> sum_tree::Dimension<'a, ChannelMessageSummary> for u64 {
+    fn add_summary(&mut self, summary: &'a ChannelMessageSummary, _: &()) {
+        debug_assert!(summary.max_id > *self);
+        *self = summary.max_id;
     }
 }
 
-impl Eq for ChannelMessage {}
+impl<'a> sum_tree::Dimension<'a, ChannelMessageSummary> for Count {
+    fn add_summary(&mut self, summary: &'a ChannelMessageSummary, _: &()) {
+        self.0 += summary.count.0;
+    }
+}

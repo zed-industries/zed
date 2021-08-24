@@ -1,20 +1,30 @@
-use super::channel::{Channel, ChannelList};
+use crate::{
+    channel::{Channel, ChannelEvent, ChannelList, ChannelMessage},
+    Settings,
+};
 use gpui::{elements::*, Entity, ModelHandle, RenderContext, Subscription, View, ViewContext};
+use postage::watch;
 
 pub struct ChatPanel {
     channel_list: ModelHandle<ChannelList>,
     active_channel: Option<(ModelHandle<Channel>, Subscription)>,
     messages: ListState,
+    settings: watch::Receiver<Settings>,
 }
 
 pub enum Event {}
 
 impl ChatPanel {
-    pub fn new(channel_list: ModelHandle<ChannelList>, cx: &mut ViewContext<Self>) -> Self {
+    pub fn new(
+        channel_list: ModelHandle<ChannelList>,
+        settings: watch::Receiver<Settings>,
+        cx: &mut ViewContext<Self>,
+    ) -> Self {
         let mut this = Self {
             channel_list,
             messages: ListState::new(Vec::new()),
             active_channel: None,
+            settings,
         };
 
         this.assign_active_channel(cx);
@@ -39,7 +49,15 @@ impl ChatPanel {
         });
         if let Some(channel) = channel {
             if self.active_channel.as_ref().map(|e| &e.0) != Some(&channel) {
-                let subscription = cx.observe(&channel, Self::channel_did_change);
+                let subscription = cx.subscribe(&channel, Self::channel_did_change);
+                self.messages = ListState::new(
+                    channel
+                        .read(cx)
+                        .messages()
+                        .cursor::<(), ()>()
+                        .map(|m| self.render_message(m))
+                        .collect(),
+                );
                 self.active_channel = Some((channel, subscription));
             }
         } else {
@@ -47,8 +65,41 @@ impl ChatPanel {
         }
     }
 
-    fn channel_did_change(&mut self, _: ModelHandle<Channel>, cx: &mut ViewContext<Self>) {
+    fn channel_did_change(
+        &mut self,
+        _: ModelHandle<Channel>,
+        event: &ChannelEvent,
+        cx: &mut ViewContext<Self>,
+    ) {
+        match event {
+            ChannelEvent::Message { old_range, message } => {
+                self.messages
+                    .splice(old_range.clone(), Some(self.render_message(message)));
+            }
+        }
         cx.notify();
+    }
+
+    fn render_active_channel_messages(&self) -> ElementBox {
+        Expanded::new(0.8, List::new(self.messages.clone()).boxed()).boxed()
+    }
+
+    fn render_message(&self, message: &ChannelMessage) -> ElementBox {
+        let settings = self.settings.borrow();
+        Flex::column()
+            .with_child(
+                Label::new(
+                    message.body.clone(),
+                    settings.ui_font_family,
+                    settings.ui_font_size,
+                )
+                .boxed(),
+            )
+            .boxed()
+    }
+
+    fn render_input_box(&self) -> ElementBox {
+        Empty::new().boxed()
     }
 }
 
@@ -61,7 +112,10 @@ impl View for ChatPanel {
         "ChatPanel"
     }
 
-    fn render(&self, _: &RenderContext<Self>) -> gpui::ElementBox {
-        List::new(self.messages.clone()).boxed()
+    fn render(&self, _: &RenderContext<Self>) -> ElementBox {
+        Flex::column()
+            .with_child(self.render_active_channel_messages())
+            .with_child(self.render_input_box())
+            .boxed()
     }
 }

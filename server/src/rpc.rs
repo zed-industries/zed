@@ -1520,7 +1520,7 @@ mod tests {
         fn channel_messages(channel: &Channel) -> Vec<(u64, String)> {
             channel
                 .messages()
-                .iter()
+                .cursor::<(), ()>()
                 .map(|m| (m.sender_id, m.body.clone()))
                 .collect()
         }

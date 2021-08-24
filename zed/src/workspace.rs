@@ -374,8 +374,14 @@ impl Workspace {
         let mut right_sidebar = Sidebar::new(Side::Right);
         right_sidebar.add_item(
             "icons/comment-16.svg",
-            cx.add_view(|cx| ChatPanel::new(app_state.channel_list.clone(), cx))
-                .into(),
+            cx.add_view(|cx| {
+                ChatPanel::new(
+                    app_state.channel_list.clone(),
+                    app_state.settings.clone(),
+                    cx,
+                )
+            })
+            .into(),
         );
         right_sidebar.add_item("icons/user-16.svg", cx.add_view(|_| ProjectBrowser).into());
 
