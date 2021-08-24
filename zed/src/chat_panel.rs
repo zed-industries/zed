@@ -5,8 +5,8 @@ use crate::{
     Settings,
 };
 use gpui::{
-    action, elements::*, Entity, ModelHandle, MutableAppContext, RenderContext, Subscription, View,
-    ViewContext, ViewHandle,
+    action, elements::*, keymap::Binding, Entity, ModelHandle, MutableAppContext, RenderContext,
+    Subscription, View, ViewContext, ViewHandle,
 };
 use postage::watch;
 
@@ -24,6 +24,8 @@ action!(Send);
 
 pub fn init(cx: &mut MutableAppContext) {
     cx.add_action(ChatPanel::send);
+
+    cx.add_bindings(vec![Binding::new("enter", Send, Some("ChatPanel"))]);
 }
 
 impl ChatPanel {
@@ -41,41 +43,47 @@ impl ChatPanel {
             settings,
         };
 
-        this.assign_active_channel(cx);
+        this.init_active_channel(cx);
         cx.observe(&this.channel_list, |this, _, cx| {
-            this.assign_active_channel(cx);
+            this.init_active_channel(cx);
         })
         .detach();
 
         this
     }
 
-    pub fn assign_active_channel(&mut self, cx: &mut ViewContext<Self>) {
-        let channel = self.channel_list.update(cx, |list, cx| {
-            if let Some(channel_id) = list
-                .available_channels()
-                .and_then(|channels| channels.first())
-                .map(|details| details.id)
-            {
-                return list.get_channel(channel_id, cx);
+    fn init_active_channel(&mut self, cx: &mut ViewContext<Self>) {
+        if self.active_channel.is_none() {
+            let channel = self.channel_list.update(cx, |list, cx| {
+                if let Some(channel_id) = list
+                    .available_channels()
+                    .and_then(|channels| channels.first())
+                    .map(|details| details.id)
+                {
+                    return list.get_channel(channel_id, cx);
+                }
+                None
+            });
+            if let Some(channel) = channel {
+                self.set_active_channel(channel, cx);
             }
-            None
-        });
-        if let Some(channel) = channel {
-            if self.active_channel.as_ref().map(|e| &e.0) != Some(&channel) {
-                let subscription = cx.subscribe(&channel, Self::channel_did_change);
-                self.messages = ListState::new(
-                    channel
-                        .read(cx)
-                        .messages()
-                        .cursor::<(), ()>()
-                        .map(|m| self.render_message(m))
-                        .collect(),
-                );
-                self.active_channel = Some((channel, subscription));
-            }
-        } else {
+        } else if self.channel_list.read(cx).available_channels().is_none() {
             self.active_channel = None;
+        }
+    }
+
+    fn set_active_channel(&mut self, channel: ModelHandle<Channel>, cx: &mut ViewContext<Self>) {
+        if self.active_channel.as_ref().map(|e| &e.0) != Some(&channel) {
+            let subscription = cx.subscribe(&channel, Self::channel_did_change);
+            self.messages = ListState::new(
+                channel
+                    .read(cx)
+                    .messages()
+                    .cursor::<(), ()>()
+                    .map(|m| self.render_message(m))
+                    .collect(),
+            );
+            self.active_channel = Some((channel, subscription));
         }
     }
 

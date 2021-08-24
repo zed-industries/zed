@@ -5,8 +5,9 @@ use crate::{
 use anyhow::{anyhow, Context, Result};
 use gpui::{
     sum_tree::{self, Bias, SumTree},
-    Entity, ModelContext, ModelHandle, MutableAppContext, WeakModelHandle,
+    Entity, ModelContext, ModelHandle, MutableAppContext, Task, WeakModelHandle,
 };
+use postage::prelude::Stream;
 use std::{
     collections::{hash_map, HashMap},
     ops::Range,
@@ -21,6 +22,7 @@ pub struct ChannelList {
     available_channels: Option<Vec<ChannelDetails>>,
     channels: HashMap<u64, WeakModelHandle<Channel>>,
     rpc: Arc<Client>,
+    _task: Task<Option<()>>,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -74,27 +76,42 @@ impl Entity for ChannelList {
 
 impl ChannelList {
     pub fn new(rpc: Arc<rpc::Client>, cx: &mut ModelContext<Self>) -> Self {
-        cx.spawn(|this, mut cx| {
+        let _task = cx.spawn(|this, mut cx| {
             let rpc = rpc.clone();
             async move {
-                let response = rpc
-                    .request(proto::GetChannels {})
-                    .await
-                    .context("failed to fetch available channels")?;
-                this.update(&mut cx, |this, cx| {
-                    this.available_channels =
-                        Some(response.channels.into_iter().map(Into::into).collect());
-                    cx.notify();
-                });
-                Ok(())
+                let mut user_id = rpc.user_id();
+                loop {
+                    let available_channels = if user_id.recv().await.unwrap().is_some() {
+                        Some(
+                            rpc.request(proto::GetChannels {})
+                                .await
+                                .context("failed to fetch available channels")?
+                                .channels
+                                .into_iter()
+                                .map(Into::into)
+                                .collect(),
+                        )
+                    } else {
+                        None
+                    };
+
+                    this.update(&mut cx, |this, cx| {
+                        if available_channels.is_none() {
+                            this.channels.clear();
+                        }
+                        this.available_channels = available_channels;
+                        cx.notify();
+                    });
+                }
             }
             .log_err()
-        })
-        .detach();
+        });
+
         Self {
             available_channels: None,
             channels: Default::default(),
             rpc,
+            _task,
         }
     }
 
@@ -223,8 +240,7 @@ impl Channel {
     }
 
     fn current_user_id(&self) -> Result<u64> {
-        self
-            .rpc
+        self.rpc
             .user_id()
             .borrow()
             .ok_or_else(|| anyhow!("not logged in"))
