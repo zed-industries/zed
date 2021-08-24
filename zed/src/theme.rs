@@ -20,6 +20,7 @@ pub struct Theme {
     #[serde(default)]
     pub name: String,
     pub workspace: Workspace,
+    pub chat_panel: ChatPanel,
     pub selector: Selector,
     pub editor: Editor,
     #[serde(deserialize_with = "deserialize_syntax_theme")]
@@ -50,6 +51,17 @@ pub struct Tab {
 #[derive(Debug, Default, Deserialize)]
 pub struct SidebarIcon {
     pub color: Color,
+}
+
+#[derive(Debug, Default, Deserialize)]
+pub struct ChatPanel {
+    pub message: ChatMessage,
+}
+
+#[derive(Debug, Default, Deserialize)]
+pub struct ChatMessage {
+    #[serde(flatten)]
+    pub label: LabelStyle,
 }
 
 #[derive(Debug, Default, Deserialize)]

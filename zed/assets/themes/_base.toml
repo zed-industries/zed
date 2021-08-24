@@ -22,6 +22,9 @@ color = "$text.2"
 [workspace.active_sidebar_icon]
 color = "$text.0"
 
+[chat_panel.message]
+text = "$text.0"
+
 [selector]
 background = "$surface.2"
 text = "$text.0"

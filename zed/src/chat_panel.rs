@@ -116,16 +116,13 @@ impl ChatPanel {
 
     fn render_message(&self, message: &ChannelMessage) -> ElementBox {
         let settings = self.settings.borrow();
-        Flex::column()
-            .with_child(
-                Label::new(
-                    message.body.clone(),
-                    settings.ui_font_family,
-                    settings.ui_font_size,
-                )
-                .boxed(),
-            )
-            .boxed()
+        Label::new(
+            message.body.clone(),
+            settings.ui_font_family,
+            settings.ui_font_size,
+        )
+        .with_style(&settings.theme.chat_panel.message.label)
+        .boxed()
     }
 
     fn render_input_box(&self) -> ElementBox {
