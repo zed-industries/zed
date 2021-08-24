@@ -9,7 +9,7 @@ use std::{fs, path::PathBuf, sync::Arc};
 use zed::{
     self, assets,
     channel::ChannelList,
-    editor, file_finder,
+    chat_panel, editor, file_finder,
     fs::RealFs,
     language, menus, rpc, settings, theme_selector,
     workspace::{self, OpenParams, OpenPaths},
@@ -43,6 +43,7 @@ fn main() {
         workspace::init(cx);
         editor::init(cx);
         file_finder::init(cx);
+        chat_panel::init(cx);
         theme_selector::init(&app_state, cx);
 
         cx.set_menus(menus::menus(&app_state.clone()));
