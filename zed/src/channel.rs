@@ -206,7 +206,8 @@ impl Channel {
                     }
                 });
                 Ok(())
-            }.log_err()
+            }
+            .log_err()
         })
         .detach();
         cx.notify();
@@ -222,7 +223,11 @@ impl Channel {
     }
 
     fn current_user_id(&self) -> Result<u64> {
-        self.rpc.user_id().ok_or_else(|| anyhow!("not logged in"))
+        self
+            .rpc
+            .user_id()
+            .borrow()
+            .ok_or_else(|| anyhow!("not logged in"))
     }
 
     fn handle_message_sent(

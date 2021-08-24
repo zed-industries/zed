@@ -5,6 +5,7 @@ use gpui::{AsyncAppContext, Entity, ModelContext, Task};
 use lazy_static::lazy_static;
 use parking_lot::RwLock;
 use postage::prelude::Stream;
+use postage::watch;
 use std::any::TypeId;
 use std::collections::HashMap;
 use std::sync::Weak;
@@ -28,15 +29,25 @@ pub struct Client {
     state: RwLock<ClientState>,
 }
 
-#[derive(Default)]
 struct ClientState {
     connection_id: Option<ConnectionId>,
-    user_id: Option<u64>,
+    user_id: (watch::Sender<Option<u64>>, watch::Receiver<Option<u64>>),
     entity_id_extractors: HashMap<TypeId, Box<dyn Send + Sync + Fn(&dyn AnyTypedEnvelope) -> u64>>,
     model_handlers: HashMap<
         (TypeId, u64),
         Box<dyn Send + Sync + FnMut(Box<dyn AnyTypedEnvelope>, &mut AsyncAppContext)>,
     >,
+}
+
+impl Default for ClientState {
+    fn default() -> Self {
+        Self {
+            connection_id: Default::default(),
+            user_id: watch::channel(),
+            entity_id_extractors: Default::default(),
+            model_handlers: Default::default(),
+        }
+    }
 }
 
 pub struct Subscription {
@@ -67,8 +78,8 @@ impl Client {
         })
     }
 
-    pub fn user_id(&self) -> Option<u64> {
-        self.state.read().user_id
+    pub fn user_id(&self) -> watch::Receiver<Option<u64>> {
+        self.state.read().user_id.1.clone()
     }
 
     pub fn subscribe_from_model<T, M, F>(
@@ -214,7 +225,7 @@ impl Client {
             .detach();
         let mut state = self.state.write();
         state.connection_id = Some(connection_id);
-        state.user_id = Some(user_id);
+        state.user_id = watch::channel_with(Some(user_id));
         Ok(())
     }
 
