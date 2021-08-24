@@ -9,7 +9,7 @@ icon_dirty = "$status.info"
 icon_conflict = "$status.warn"
 
 [workspace.active_tab]
-extends = "$tab"
+extends = "$workspace.tab"
 background = "$surface.1"
 text = "$text.0"
 

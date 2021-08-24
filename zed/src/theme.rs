@@ -36,23 +36,6 @@ pub struct Workspace {
     pub active_sidebar_icon: SidebarIcon,
 }
 
-#[derive(Debug, Deserialize)]
-pub struct Editor {
-    pub background: Color,
-    pub gutter_background: Color,
-    pub active_line_background: Color,
-    pub line_number: Color,
-    pub line_number_active: Color,
-    pub text: Color,
-    pub replicas: Vec<Replica>,
-}
-
-#[derive(Clone, Copy, Debug, Default, Deserialize)]
-pub struct Replica {
-    pub cursor: Color,
-    pub selection: Color,
-}
-
 #[derive(Debug, Default, Deserialize)]
 pub struct Tab {
     #[serde(flatten)]
@@ -88,18 +71,21 @@ pub struct SelectorItem {
     pub label: LabelStyle,
 }
 
-impl Default for Editor {
-    fn default() -> Self {
-        Self {
-            background: Default::default(),
-            gutter_background: Default::default(),
-            active_line_background: Default::default(),
-            line_number: Default::default(),
-            line_number_active: Default::default(),
-            text: Default::default(),
-            replicas: vec![Replica::default()],
-        }
-    }
+#[derive(Debug, Deserialize)]
+pub struct Editor {
+    pub background: Color,
+    pub gutter_background: Color,
+    pub active_line_background: Color,
+    pub line_number: Color,
+    pub line_number_active: Color,
+    pub text: Color,
+    pub replicas: Vec<Replica>,
+}
+
+#[derive(Clone, Copy, Debug, Default, Deserialize)]
+pub struct Replica {
+    pub cursor: Color,
+    pub selection: Color,
 }
 
 impl Theme {
@@ -116,6 +102,20 @@ impl Theme {
     #[cfg(test)]
     pub fn highlight_name(&self, id: HighlightId) -> Option<&str> {
         self.syntax.get(id.0 as usize).map(|e| e.0.as_str())
+    }
+}
+
+impl Default for Editor {
+    fn default() -> Self {
+        Self {
+            background: Default::default(),
+            gutter_background: Default::default(),
+            active_line_background: Default::default(),
+            line_number: Default::default(),
+            line_number_active: Default::default(),
+            text: Default::default(),
+            replicas: vec![Replica::default()],
+        }
     }
 }
 
