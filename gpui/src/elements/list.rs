@@ -219,7 +219,7 @@ impl StateInner {
         let start_ix = cursor.sum_start().0;
         cursor.seek(&Height(self.scroll_top + height), Bias::Left, &());
         let end_ix = cursor.sum_start().0;
-        start_ix..end_ix + 1
+        start_ix..self.elements.len().min(end_ix + 1)
     }
 
     fn scroll(

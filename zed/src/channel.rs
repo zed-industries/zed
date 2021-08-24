@@ -183,6 +183,7 @@ impl Channel {
             })
         })
         .detach();
+        cx.notify();
         Ok(())
     }
 

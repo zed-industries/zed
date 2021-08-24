@@ -1,31 +1,33 @@
-use super::{
-    channel::{Channel, ChannelList},
-    Settings,
-};
-use gpui::{elements::*, Entity, ModelHandle, RenderContext, View, ViewContext};
-use postage::watch;
+use super::channel::{Channel, ChannelList};
+use gpui::{elements::*, Entity, ModelHandle, RenderContext, Subscription, View, ViewContext};
 
 pub struct ChatPanel {
     channel_list: ModelHandle<ChannelList>,
-    active_channel: Option<ModelHandle<Channel>>,
-    // active_channel_subscription: Subscription,
+    active_channel: Option<(ModelHandle<Channel>, Subscription)>,
     messages: ListState,
 }
 
 pub enum Event {}
 
 impl ChatPanel {
-    pub fn new(
-        channel_list: ModelHandle<ChannelList>,
-        settings: watch::Receiver<Settings>,
-        cx: &mut ViewContext<Self>,
-    ) -> Self {
+    pub fn new(channel_list: ModelHandle<ChannelList>, cx: &mut ViewContext<Self>) -> Self {
         let mut this = Self {
             channel_list,
             messages: ListState::new(Vec::new()),
             active_channel: None,
         };
-        let channel = this.channel_list.update(cx, |list, cx| {
+
+        this.assign_active_channel(cx);
+        cx.observe(&this.channel_list, |this, _, cx| {
+            this.assign_active_channel(cx);
+        })
+        .detach();
+
+        this
+    }
+
+    pub fn assign_active_channel(&mut self, cx: &mut ViewContext<Self>) {
+        let channel = self.channel_list.update(cx, |list, cx| {
             if let Some(channel_id) = list
                 .available_channels()
                 .and_then(|channels| channels.first())
@@ -36,13 +38,17 @@ impl ChatPanel {
             None
         });
         if let Some(channel) = channel {
-            this.set_active_channel(channel);
+            if self.active_channel.as_ref().map(|e| &e.0) != Some(&channel) {
+                let subscription = cx.observe(&channel, Self::channel_did_change);
+                self.active_channel = Some((channel, subscription));
+            }
+        } else {
+            self.active_channel = None;
         }
-        this
     }
 
-    pub fn set_active_channel(&mut self, channel: ModelHandle<Channel>) {
-        //
+    fn channel_did_change(&mut self, _: ModelHandle<Channel>, cx: &mut ViewContext<Self>) {
+        cx.notify();
     }
 }
 
@@ -55,7 +61,7 @@ impl View for ChatPanel {
         "ChatPanel"
     }
 
-    fn render(&self, cx: &RenderContext<Self>) -> gpui::ElementBox {
+    fn render(&self, _: &RenderContext<Self>) -> gpui::ElementBox {
         List::new(self.messages.clone()).boxed()
     }
 }
