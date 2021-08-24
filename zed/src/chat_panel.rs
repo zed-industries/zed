@@ -1,14 +1,18 @@
 use crate::{
     channel::{Channel, ChannelEvent, ChannelList, ChannelMessage},
+    editor::Editor,
     Settings,
 };
-use gpui::{elements::*, Entity, ModelHandle, RenderContext, Subscription, View, ViewContext};
+use gpui::{
+    elements::*, Entity, ModelHandle, RenderContext, Subscription, View, ViewContext, ViewHandle,
+};
 use postage::watch;
 
 pub struct ChatPanel {
     channel_list: ModelHandle<ChannelList>,
     active_channel: Option<(ModelHandle<Channel>, Subscription)>,
     messages: ListState,
+    input_editor: ViewHandle<Editor>,
     settings: watch::Receiver<Settings>,
 }
 
@@ -20,10 +24,12 @@ impl ChatPanel {
         settings: watch::Receiver<Settings>,
         cx: &mut ViewContext<Self>,
     ) -> Self {
+        let input_editor = cx.add_view(|cx| Editor::auto_height(settings.clone(), cx));
         let mut this = Self {
             channel_list,
-            messages: ListState::new(Vec::new()),
             active_channel: None,
+            messages: ListState::new(Vec::new()),
+            input_editor,
             settings,
         };
 
@@ -81,7 +87,7 @@ impl ChatPanel {
     }
 
     fn render_active_channel_messages(&self) -> ElementBox {
-        Expanded::new(0.8, List::new(self.messages.clone()).boxed()).boxed()
+        Expanded::new(1., List::new(self.messages.clone()).boxed()).boxed()
     }
 
     fn render_message(&self, message: &ChannelMessage) -> ElementBox {
@@ -99,7 +105,9 @@ impl ChatPanel {
     }
 
     fn render_input_box(&self) -> ElementBox {
-        Empty::new().boxed()
+        ConstrainedBox::new(ChildView::new(self.input_editor.id()).boxed())
+            .with_max_height(100.)
+            .boxed()
     }
 }
 

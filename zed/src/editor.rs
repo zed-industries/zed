@@ -43,7 +43,7 @@ const MAX_LINE_LEN: usize = 1024;
 action!(Cancel);
 action!(Backspace);
 action!(Delete);
-action!(Newline);
+action!(Newline, bool);
 action!(Insert, String);
 action!(DeleteLine);
 action!(DeleteToPreviousWordBoundary);
@@ -102,7 +102,8 @@ pub fn init(cx: &mut MutableAppContext) {
         Binding::new("ctrl-h", Backspace, Some("BufferView")),
         Binding::new("delete", Delete, Some("BufferView")),
         Binding::new("ctrl-d", Delete, Some("BufferView")),
-        Binding::new("enter", Newline, Some("BufferView")),
+        Binding::new("enter", Newline(false), Some("BufferView")),
+        Binding::new("alt-enter", Newline(true), Some("BufferView")),
         Binding::new("tab", Insert("\t".into()), Some("BufferView")),
         Binding::new("ctrl-shift-K", DeleteLine, Some("BufferView")),
         Binding::new(
@@ -268,6 +269,12 @@ pub enum SelectPhase {
     End,
 }
 
+enum EditorMode {
+    SingleLine,
+    AutoHeight,
+    Full,
+}
+
 pub struct Editor {
     handle: WeakViewHandle<Self>,
     buffer: ModelHandle<Buffer>,
@@ -285,12 +292,13 @@ pub struct Editor {
     cursors_visible: bool,
     blink_epoch: usize,
     blinking_paused: bool,
-    single_line: bool,
+    mode: EditorMode,
 }
 
 pub struct Snapshot {
     pub display_snapshot: DisplayMapSnapshot,
     pub gutter_visible: bool,
+    pub auto_height: bool,
     pub theme: Arc<Theme>,
     pub font_family: FamilyId,
     pub font_size: f32,
@@ -313,7 +321,14 @@ impl Editor {
     pub fn single_line(settings: watch::Receiver<Settings>, cx: &mut ViewContext<Self>) -> Self {
         let buffer = cx.add_model(|cx| Buffer::new(0, String::new(), cx));
         let mut view = Self::for_buffer(buffer, settings, cx);
-        view.single_line = true;
+        view.mode = EditorMode::SingleLine;
+        view
+    }
+
+    pub fn auto_height(settings: watch::Receiver<Settings>, cx: &mut ViewContext<Self>) -> Self {
+        let buffer = cx.add_model(|cx| Buffer::new(0, String::new(), cx));
+        let mut view = Self::for_buffer(buffer, settings, cx);
+        view.mode = EditorMode::AutoHeight;
         view
     }
 
@@ -359,7 +374,7 @@ impl Editor {
             cursors_visible: false,
             blink_epoch: 0,
             blinking_paused: false,
-            single_line: false,
+            mode: EditorMode::Full,
         }
     }
 
@@ -376,7 +391,8 @@ impl Editor {
 
         Snapshot {
             display_snapshot: self.display_map.update(cx, |map, cx| map.snapshot(cx)),
-            gutter_visible: !self.single_line,
+            gutter_visible: matches!(self.mode, EditorMode::Full),
+            auto_height: matches!(self.mode, EditorMode::AutoHeight),
             scroll_position: self.scroll_position,
             scroll_top_anchor: self.scroll_top_anchor.clone(),
             theme: settings.theme.clone(),
@@ -413,10 +429,15 @@ impl Editor {
         line_height: f32,
         cx: &mut ViewContext<Self>,
     ) -> bool {
+        let visible_lines = viewport_height / line_height;
         let display_map = self.display_map.update(cx, |map, cx| map.snapshot(cx));
         let mut scroll_position =
             compute_scroll_position(&display_map, self.scroll_position, &self.scroll_top_anchor);
-        let max_scroll_top = display_map.max_point().row().saturating_sub(1) as f32;
+        let max_scroll_top = if matches!(self.mode, EditorMode::AutoHeight) {
+            (display_map.max_point().row() as f32 - visible_lines + 1.).max(0.)
+        } else {
+            display_map.max_point().row().saturating_sub(1) as f32
+        };
         if scroll_position.y() > max_scroll_top {
             scroll_position.set_y(max_scroll_top);
             self.set_scroll_position(scroll_position, cx);
@@ -428,7 +449,6 @@ impl Editor {
             return false;
         }
 
-        let visible_lines = viewport_height / line_height;
         let first_cursor_top = self
             .selections(cx)
             .first()
@@ -445,9 +465,13 @@ impl Editor {
             .row() as f32
             + 1.0;
 
-        let margin = ((visible_lines - (last_cursor_bottom - first_cursor_top)) / 2.0)
-            .floor()
-            .min(3.0);
+        let margin = if matches!(self.mode, EditorMode::AutoHeight) {
+            0.
+        } else {
+            ((visible_lines - (last_cursor_bottom - first_cursor_top)) / 2.0)
+                .floor()
+                .min(3.0)
+        };
         if margin < 0.0 {
             return false;
         }
@@ -695,11 +719,17 @@ impl Editor {
         self.end_transaction(cx);
     }
 
-    fn newline(&mut self, _: &Newline, cx: &mut ViewContext<Self>) {
-        if self.single_line {
-            cx.propagate_action();
-        } else {
-            self.insert(&Insert("\n".into()), cx);
+    fn newline(&mut self, Newline(insert_newline): &Newline, cx: &mut ViewContext<Self>) {
+        match self.mode {
+            EditorMode::SingleLine => cx.propagate_action(),
+            EditorMode::AutoHeight => {
+                if *insert_newline {
+                    self.insert(&Insert("\n".into()), cx);
+                } else {
+                    cx.propagate_action();
+                }
+            }
+            EditorMode::Full => self.insert(&Insert("\n".into()), cx),
         }
     }
 
@@ -1276,7 +1306,7 @@ impl Editor {
 
     pub fn move_up(&mut self, _: &MoveUp, cx: &mut ViewContext<Self>) {
         let display_map = self.display_map.update(cx, |map, cx| map.snapshot(cx));
-        if self.single_line {
+        if matches!(self.mode, EditorMode::SingleLine) {
             cx.propagate_action();
         } else {
             let mut selections = self.selections(cx.as_ref()).to_vec();
@@ -1317,7 +1347,7 @@ impl Editor {
     }
 
     pub fn move_down(&mut self, _: &MoveDown, cx: &mut ViewContext<Self>) {
-        if self.single_line {
+        if matches!(self.mode, EditorMode::SingleLine) {
             cx.propagate_action();
         } else {
             let display_map = self.display_map.update(cx, |map, cx| map.snapshot(cx));

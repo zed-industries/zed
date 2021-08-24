@@ -325,6 +325,13 @@ impl SizeConstraint {
             Axis::Vertical => self.max.y(),
         }
     }
+
+    pub fn min_along(&self, axis: Axis) -> f32 {
+        match axis {
+            Axis::Horizontal => self.min.x(),
+            Axis::Vertical => self.min.y(),
+        }
+    }
 }
 
 impl ToJson for SizeConstraint {

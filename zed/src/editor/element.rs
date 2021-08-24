@@ -1,4 +1,4 @@
-use super::{DisplayPoint, Editor, Select, SelectPhase, Snapshot, Insert, Scroll};
+use super::{DisplayPoint, Editor, EditorMode, Insert, Scroll, Select, SelectPhase, Snapshot};
 use crate::time::ReplicaId;
 use gpui::{
     color::Color,
@@ -9,8 +9,8 @@ use gpui::{
     },
     json::{self, ToJson},
     text_layout::{self, TextLayoutCache},
-    AppContext, Border, Element, Event, EventContext, FontCache, LayoutContext, MutableAppContext,
-    PaintContext, Quad, Scene, SizeConstraint, ViewContext, WeakViewHandle,
+    AppContext, Axis, Border, Element, Event, EventContext, FontCache, LayoutContext,
+    MutableAppContext, PaintContext, Quad, Scene, SizeConstraint, ViewContext, WeakViewHandle,
 };
 use json::json;
 use smallvec::SmallVec;
@@ -204,7 +204,7 @@ impl EditorElement {
             corner_radius: 0.,
         });
 
-        if !editor.single_line {
+        if let EditorMode::Full = editor.mode {
             let mut active_rows = layout.active_rows.iter().peekable();
             while let Some((start_row, contains_non_empty_selection)) = active_rows.next() {
                 let mut end_row = *start_row;
@@ -409,8 +409,16 @@ impl Element for EditorElement {
                 snapshot
             }
         });
-        if size.y().is_infinite() {
-            size.set_y((snapshot.max_point().row() + 1) as f32 * line_height);
+
+        let scroll_height = (snapshot.max_point().row() + 1) as f32 * line_height;
+        if snapshot.auto_height {
+            size.set_y(
+                scroll_height
+                    .min(constraint.max_along(Axis::Vertical))
+                    .max(constraint.min_along(Axis::Vertical)),
+            )
+        } else if size.y().is_infinite() {
+            size.set_y(scroll_height);
         }
         let gutter_size = vec2f(gutter_width, size.y());
         let text_size = vec2f(text_width, size.y());
