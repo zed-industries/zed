@@ -19,16 +19,18 @@ mod util;
 pub mod workspace;
 pub mod worktree;
 
+use crate::util::TryFutureExt;
 use channel::ChannelList;
 use gpui::{action, ModelHandle};
-pub use settings::Settings;
-
 use parking_lot::Mutex;
 use postage::watch;
 use std::sync::Arc;
 
+pub use settings::Settings;
+
 action!(About);
 action!(Quit);
+action!(Authenticate);
 
 pub struct AppState {
     pub settings_tx: Arc<Mutex<watch::Sender<Settings>>>,
@@ -40,8 +42,17 @@ pub struct AppState {
     pub channel_list: ModelHandle<ChannelList>,
 }
 
-pub fn init(cx: &mut gpui::MutableAppContext) {
+pub fn init(app_state: &Arc<AppState>, cx: &mut gpui::MutableAppContext) {
     cx.add_global_action(quit);
+
+    cx.add_global_action({
+        let rpc = app_state.rpc.clone();
+        move |_: &Authenticate, cx| {
+            let rpc = rpc.clone();
+            cx.spawn(|cx| async move { rpc.authenticate_and_connect(cx).log_err().await })
+                .detach();
+        }
+    });
 }
 
 fn quit(_: &Quit, cx: &mut gpui::MutableAppContext) {

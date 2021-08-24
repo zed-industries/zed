@@ -791,7 +791,7 @@ impl Workspace {
         let platform = cx.platform();
 
         let task = cx.spawn(|this, mut cx| async move {
-            rpc.log_in_and_connect(cx.clone()).await?;
+            rpc.authenticate_and_connect(cx.clone()).await?;
 
             let share_task = this.update(&mut cx, |this, cx| {
                 let worktree = this.worktrees.iter().next()?;
@@ -823,7 +823,7 @@ impl Workspace {
         let languages = self.languages.clone();
 
         let task = cx.spawn(|this, mut cx| async move {
-            rpc.log_in_and_connect(cx.clone()).await?;
+            rpc.authenticate_and_connect(cx.clone()).await?;
 
             let worktree_url = cx
                 .platform()

@@ -17,6 +17,11 @@ pub fn menus(state: &Arc<AppState>) -> Vec<Menu<'static>> {
                 },
                 MenuItem::Separator,
                 MenuItem::Action {
+                    name: "Sign In",
+                    keystroke: None,
+                    action: Box::new(super::Authenticate),
+                },
+                MenuItem::Action {
                     name: "Share",
                     keystroke: None,
                     action: Box::new(workspace::ShareWorktree),

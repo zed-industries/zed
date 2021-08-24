@@ -124,7 +124,10 @@ impl Client {
         }
     }
 
-    pub async fn log_in_and_connect(self: &Arc<Self>, cx: AsyncAppContext) -> surf::Result<()> {
+    pub async fn authenticate_and_connect(
+        self: &Arc<Self>,
+        cx: AsyncAppContext,
+    ) -> anyhow::Result<()> {
         if self.state.read().connection_id.is_some() {
             return Ok(());
         }
@@ -161,7 +164,7 @@ impl Client {
         user_id: u64,
         conn: Conn,
         cx: AsyncAppContext,
-    ) -> surf::Result<()>
+    ) -> anyhow::Result<()>
     where
         Conn: 'static
             + futures::Sink<WebSocketMessage, Error = WebSocketError>

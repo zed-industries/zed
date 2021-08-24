@@ -34,7 +34,7 @@ action!(Confirm);
 action!(Toggle, Arc<AppState>);
 action!(Reload, Arc<AppState>);
 
-pub fn init(cx: &mut MutableAppContext, app_state: &Arc<AppState>) {
+pub fn init(app_state: &Arc<AppState>, cx: &mut MutableAppContext) {
     cx.add_action(ThemeSelector::confirm);
     cx.add_action(ThemeSelector::select_prev);
     cx.add_action(ThemeSelector::select_next);

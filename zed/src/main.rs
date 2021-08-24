@@ -39,11 +39,11 @@ fn main() {
             fs: Arc::new(RealFs),
         });
 
-        zed::init(cx);
+        zed::init(&app_state, cx);
         workspace::init(cx);
         editor::init(cx);
         file_finder::init(cx);
-        theme_selector::init(cx, &app_state);
+        theme_selector::init(&app_state, cx);
 
         cx.set_menus(menus::menus(&app_state.clone()));
 
