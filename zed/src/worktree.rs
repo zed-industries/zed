@@ -9,7 +9,7 @@ use crate::{
     language::LanguageRegistry,
     rpc::{self, proto},
     time::{self, ReplicaId},
-    util::{log_async_errors, Bias},
+    util::{Bias, TryFutureExt},
 };
 use ::ignore::gitignore::Gitignore;
 use anyhow::{anyhow, Result};
@@ -330,10 +330,13 @@ impl Worktree {
             .open_remote_buffer(envelope, cx);
 
         cx.background()
-            .spawn(log_async_errors(async move {
-                rpc.respond(receipt, response.await?).await?;
-                Ok(())
-            }))
+            .spawn(
+                async move {
+                    rpc.respond(receipt, response.await?).await?;
+                    Ok(())
+                }
+                .log_err(),
+            )
             .detach();
 
         Ok(())
@@ -465,22 +468,25 @@ impl Worktree {
         });
 
         cx.background()
-            .spawn(log_async_errors(async move {
-                let (version, mtime) = save.await?;
+            .spawn(
+                async move {
+                    let (version, mtime) = save.await?;
 
-                rpc.respond(
-                    receipt,
-                    proto::BufferSaved {
-                        worktree_id,
-                        buffer_id,
-                        version: (&version).into(),
-                        mtime: Some(mtime.into()),
-                    },
-                )
-                .await?;
+                    rpc.respond(
+                        receipt,
+                        proto::BufferSaved {
+                            worktree_id,
+                            buffer_id,
+                            version: (&version).into(),
+                            mtime: Some(mtime.into()),
+                        },
+                    )
+                    .await?;
 
-                Ok(())
-            }))
+                    Ok(())
+                }
+                .log_err(),
+            )
             .detach();
 
         Ok(())

@@ -1,7 +1,11 @@
-use futures::Future;
+use futures::{Future};
 pub use gpui::sum_tree::Bias;
 use rand::prelude::*;
-use std::cmp::Ordering;
+use std::{
+    cmp::Ordering,
+    pin::Pin,
+    task::{Context, Poll},
+};
 
 pub fn post_inc(value: &mut usize) -> usize {
     let prev = *value;
@@ -60,12 +64,58 @@ impl<T: Rng> Iterator for RandomCharIter<T> {
     }
 }
 
-pub async fn log_async_errors<F>(f: F)
+pub trait ResultExt {
+    type Ok;
+
+    fn log_err(self) -> Option<Self::Ok>;
+}
+
+impl<T> ResultExt for anyhow::Result<T> {
+    type Ok = T;
+
+    fn log_err(self) -> Option<T> {
+        match self {
+            Ok(value) => Some(value),
+            Err(error) => {
+                log::error!("{:?}", error);
+                None
+            }
+        }
+    }
+}
+
+pub trait TryFutureExt {
+    fn log_err(self) -> LogErrorFuture<Self>
+    where
+        Self: Sized;
+}
+
+impl<F, T> TryFutureExt for F
 where
-    F: Future<Output = anyhow::Result<()>>,
+    F: Future<Output = anyhow::Result<T>>,
 {
-    if let Err(error) = f.await {
-        log::error!("{}", error)
+    fn log_err(self) -> LogErrorFuture<Self>
+    where
+        Self: Sized,
+    {
+        LogErrorFuture(self)
+    }
+}
+
+pub struct LogErrorFuture<F>(F);
+
+impl<F, T> Future for LogErrorFuture<F>
+where
+    F: Future<Output = anyhow::Result<T>>,
+{
+    type Output = Option<T>;
+
+    fn poll(self: std::pin::Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
+        let inner = unsafe { Pin::new_unchecked(&mut self.get_unchecked_mut().0) };
+        match inner.poll(cx) {
+            Poll::Ready(output) => Poll::Ready(output.log_err()),
+            Poll::Pending => Poll::Pending,
+        }
     }
 }
 

@@ -1,6 +1,6 @@
 use crate::{
     rpc::{self, Client},
-    util::log_async_errors,
+    util::TryFutureExt,
 };
 use anyhow::{anyhow, Context, Result};
 use gpui::{
@@ -76,7 +76,7 @@ impl ChannelList {
     pub fn new(rpc: Arc<rpc::Client>, cx: &mut ModelContext<Self>) -> Self {
         cx.spawn(|this, mut cx| {
             let rpc = rpc.clone();
-            log_async_errors(async move {
+            async move {
                 let response = rpc
                     .request(proto::GetChannels {})
                     .await
@@ -87,7 +87,8 @@ impl ChannelList {
                     cx.notify();
                 });
                 Ok(())
-            })
+            }
+            .log_err()
         })
         .detach();
         Self {
@@ -185,7 +186,7 @@ impl Channel {
         });
         let rpc = self.rpc.clone();
         cx.spawn(|this, mut cx| {
-            log_async_errors(async move {
+            async move {
                 let request = rpc.request(proto::SendChannelMessage { channel_id, body });
                 let response = request.await?;
                 this.update(&mut cx, |this, cx| {
@@ -205,7 +206,7 @@ impl Channel {
                     }
                 });
                 Ok(())
-            })
+            }.log_err()
         })
         .detach();
         cx.notify();
