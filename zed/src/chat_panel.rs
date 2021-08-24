@@ -1,10 +1,12 @@
 use crate::{
     channel::{Channel, ChannelEvent, ChannelList, ChannelMessage},
     editor::Editor,
+    util::ResultExt,
     Settings,
 };
 use gpui::{
-    elements::*, Entity, ModelHandle, RenderContext, Subscription, View, ViewContext, ViewHandle,
+    action, elements::*, Entity, ModelHandle, MutableAppContext, RenderContext, Subscription, View,
+    ViewContext, ViewHandle,
 };
 use postage::watch;
 
@@ -17,6 +19,12 @@ pub struct ChatPanel {
 }
 
 pub enum Event {}
+
+action!(Send);
+
+pub fn init(cx: &mut MutableAppContext) {
+    cx.add_action(ChatPanel::send);
+}
 
 impl ChatPanel {
     pub fn new(
@@ -108,6 +116,20 @@ impl ChatPanel {
         ConstrainedBox::new(ChildView::new(self.input_editor.id()).boxed())
             .with_max_height(100.)
             .boxed()
+    }
+
+    fn send(&mut self, _: &Send, cx: &mut ViewContext<Self>) {
+        if let Some((channel, _)) = self.active_channel.as_ref() {
+            let body = self.input_editor.update(cx, |editor, cx| {
+                let body = editor.text(cx);
+                editor.clear(cx);
+                body
+            });
+
+            channel
+                .update(cx, |channel, cx| channel.send_message(body, cx))
+                .log_err();
+        }
     }
 }
 

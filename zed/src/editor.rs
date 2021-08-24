@@ -719,6 +719,13 @@ impl Editor {
         self.end_transaction(cx);
     }
 
+    pub fn clear(&mut self, cx: &mut ViewContext<Self>) {
+        self.start_transaction(cx);
+        self.select_all(&SelectAll, cx);
+        self.insert(&Insert(String::new()), cx);
+        self.end_transaction(cx);
+    }
+
     fn newline(&mut self, Newline(insert_newline): &Newline, cx: &mut ViewContext<Self>) {
         match self.mode {
             EditorMode::SingleLine => cx.propagate_action(),
