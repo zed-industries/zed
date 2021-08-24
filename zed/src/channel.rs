@@ -243,7 +243,7 @@ impl Channel {
 
     pub fn messages_in_range(&self, range: Range<usize>) -> impl Iterator<Item = &ChannelMessage> {
         let mut cursor = self.messages.cursor::<Count, ()>();
-        cursor.seek(&Count(range.start), Bias::Left, &());
+        cursor.seek(&Count(range.start), Bias::Right, &());
         cursor.take(range.len())
     }
 
@@ -459,6 +459,15 @@ mod tests {
                 new_count: 1,
             }
         );
+        channel.read_with(&cx, |channel, _| {
+            assert_eq!(
+                channel
+                    .messages_in_range(2..3)
+                    .map(|message| &message.body)
+                    .collect::<Vec<_>>(),
+                &["c"]
+            )
+        })
     }
 
     struct FakeServer {
