@@ -234,8 +234,9 @@ impl StateInner {
             todo!("still need to handle non-precise scroll events from a mouse wheel");
         }
 
-        let scroll_max = self.heights.summary().height - height;
-        self.scroll_top = (self.scroll_top - delta.y()).max(0.0).min(scroll_max);
+        let scroll_max = (self.heights.summary().height - height).max(0.);
+        self.scroll_top = (self.scroll_top - delta.y()).max(0.).min(scroll_max);
+
         cx.notify();
 
         true
