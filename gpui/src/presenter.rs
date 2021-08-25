@@ -5,7 +5,7 @@ use crate::{
     json::{self, ToJson},
     platform::Event,
     text_layout::TextLayoutCache,
-    Action, AnyAction, AssetCache, ElementBox, Scene,
+    Action, AnyAction, AssetCache, ElementBox, FontSystem, Scene,
 };
 use pathfinder_geometry::vector::{vec2f, Vector2F};
 use serde_json::json;
@@ -114,6 +114,7 @@ impl Presenter {
             rendered_views: &mut self.rendered_views,
             parents: &mut self.parents,
             font_cache: &self.font_cache,
+            font_system: cx.platform().fonts(),
             text_layout_cache: &self.text_layout_cache,
             asset_cache: &self.asset_cache,
             view_stack: Vec::new(),
@@ -173,6 +174,7 @@ pub struct LayoutContext<'a> {
     parents: &'a mut HashMap<usize, usize>,
     view_stack: Vec<usize>,
     pub font_cache: &'a FontCache,
+    pub font_system: Arc<dyn FontSystem>,
     pub text_layout_cache: &'a TextLayoutCache,
     pub asset_cache: &'a AssetCache,
     pub app: &'a mut MutableAppContext,

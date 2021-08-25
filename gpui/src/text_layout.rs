@@ -251,6 +251,54 @@ impl Line {
             }
         }
     }
+
+    pub fn paint_wrapped(
+        &self,
+        origin: Vector2F,
+        line_height: f32,
+        boundaries: impl IntoIterator<Item = ShapedBoundary>,
+        cx: &mut PaintContext,
+    ) {
+        let padding_top = (line_height - self.layout.ascent - self.layout.descent) / 2.;
+        let baseline_origin = vec2f(0., padding_top + self.layout.ascent);
+
+        let mut boundaries = boundaries.into_iter().peekable();
+        let mut color_runs = self.color_runs.iter();
+        let mut color_end = 0;
+        let mut color = Color::black();
+
+        let mut glyph_origin = baseline_origin;
+        let mut prev_position = 0.;
+        for run in &self.layout.runs {
+            for (glyph_ix, glyph) in run.glyphs.iter().enumerate() {
+                if boundaries.peek().map_or(false, |b| b.glyph_ix == glyph_ix) {
+                    boundaries.next();
+                    glyph_origin = vec2f(0., glyph_origin.y() + line_height);
+                } else {
+                    glyph_origin.set_x(glyph_origin.x() + glyph.position.x() - prev_position);
+                }
+                prev_position = glyph.position.x();
+
+                if glyph.index >= color_end {
+                    if let Some(next_run) = color_runs.next() {
+                        color_end += next_run.0 as usize;
+                        color = next_run.1;
+                    } else {
+                        color_end = self.layout.len;
+                        color = Color::black();
+                    }
+                }
+
+                cx.scene.push_glyph(scene::Glyph {
+                    font_id: run.font_id,
+                    font_size: self.layout.font_size,
+                    id: glyph.id,
+                    origin: origin + glyph_origin,
+                    color,
+                });
+            }
+        }
+    }
 }
 
 impl Run {

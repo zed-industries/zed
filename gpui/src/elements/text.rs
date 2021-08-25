@@ -1,25 +1,28 @@
 use crate::{
     color::Color,
     font_cache::FamilyId,
-    fonts::{FontId, TextStyle},
+    fonts::TextStyle,
     geometry::{
         rect::RectF,
         vector::{vec2f, Vector2F},
     },
     json::{ToJson, Value},
-    text_layout::Line,
-    DebugContext, Element, Event, EventContext, FontCache, LayoutContext, PaintContext,
-    SizeConstraint,
+    text_layout::{Line, LineWrapper, ShapedBoundary},
+    DebugContext, Element, Event, EventContext, LayoutContext, PaintContext, SizeConstraint,
 };
-use serde::Deserialize;
 use serde_json::json;
-use smallvec::{smallvec, SmallVec};
 
 pub struct Text {
     text: String,
     family_id: FamilyId,
     font_size: f32,
     style: TextStyle,
+}
+
+pub struct LayoutState {
+    line: Line,
+    wrap_boundaries: Vec<ShapedBoundary>,
+    line_height: f32,
 }
 
 impl Text {
@@ -44,7 +47,7 @@ impl Text {
 }
 
 impl Element for Text {
-    type LayoutState = Line;
+    type LayoutState = LayoutState;
     type PaintState = ();
 
     fn layout(
@@ -56,30 +59,44 @@ impl Element for Text {
             .font_cache
             .select_font(self.family_id, &self.style.font_properties)
             .unwrap();
-        todo!()
-        // let line =
-        //     cx.text_layout_cache
-        //         .layout_str(self.text.as_str(), self.font_size, runs.as_slice());
+        let line_height = cx.font_cache.line_height(font_id, self.font_size);
+        let line = cx.text_layout_cache.layout_str(
+            self.text.as_str(),
+            self.font_size,
+            &[(self.text.len(), font_id, self.style.color)],
+        );
+        let mut wrapper = LineWrapper::acquire(font_id, self.font_size, cx.font_system.clone());
+        let wrap_boundaries = wrapper
+            .wrap_shaped_line(&self.text, &line, constraint.max.x())
+            .collect::<Vec<_>>();
+        let size = vec2f(
+            line.width()
+                .ceil()
+                .max(constraint.min.x())
+                .min(constraint.max.x()),
+            (line_height * (wrap_boundaries.len() + 1) as f32).ceil(),
+        );
+        let layout = LayoutState {
+            line,
+            wrap_boundaries,
+            line_height,
+        };
 
-        // let size = vec2f(
-        //     line.width().max(constraint.min.x()).min(constraint.max.x()),
-        //     cx.font_cache.line_height(font_id, self.font_size).ceil(),
-        // );
-
-        // (size, line)
+        (size, layout)
     }
 
     fn paint(
         &mut self,
         bounds: RectF,
-        line: &mut Self::LayoutState,
+        layout: &mut Self::LayoutState,
         cx: &mut PaintContext,
     ) -> Self::PaintState {
-        line.paint(
+        layout.line.paint_wrapped(
             bounds.origin(),
-            RectF::new(vec2f(0., 0.), bounds.size()),
+            layout.line_height,
+            layout.wrap_boundaries.iter().copied(),
             cx,
-        )
+        );
     }
 
     fn dispatch_event(
