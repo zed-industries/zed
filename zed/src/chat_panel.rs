@@ -116,12 +116,12 @@ impl ChatPanel {
 
     fn render_message(&self, message: &ChannelMessage) -> ElementBox {
         let settings = self.settings.borrow();
-        Label::new(
+        Text::new(
             message.body.clone(),
             settings.ui_font_family,
             settings.ui_font_size,
         )
-        .with_style(&settings.theme.chat_panel.message.label)
+        .with_style(&settings.theme.chat_panel.message.body)
         .boxed()
     }
 

@@ -60,8 +60,7 @@ pub struct ChatPanel {
 
 #[derive(Debug, Default, Deserialize)]
 pub struct ChatMessage {
-    #[serde(flatten)]
-    pub label: LabelStyle,
+    pub body: TextStyle,
 }
 
 #[derive(Debug, Default, Deserialize)]

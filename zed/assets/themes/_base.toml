@@ -23,7 +23,7 @@ color = "$text.2"
 color = "$text.0"
 
 [chat_panel.message]
-text = "$text.0"
+body = "$text.0"
 
 [selector]
 background = "$surface.2"
