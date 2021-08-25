@@ -18,7 +18,7 @@ use smol::prelude::*;
 use std::{
     any::{type_name, Any, TypeId},
     cell::RefCell,
-    collections::{hash_map::Entry, HashMap, HashSet, VecDeque},
+    collections::{hash_map::Entry, BTreeMap, HashMap, HashSet, VecDeque},
     fmt::{self, Debug},
     hash::{Hash, Hasher},
     marker::PhantomData,
@@ -652,8 +652,8 @@ pub struct MutableAppContext {
     next_entity_id: usize,
     next_window_id: usize,
     next_subscription_id: usize,
-    subscriptions: Arc<Mutex<HashMap<usize, HashMap<usize, SubscriptionCallback>>>>,
-    observations: Arc<Mutex<HashMap<usize, HashMap<usize, ObservationCallback>>>>,
+    subscriptions: Arc<Mutex<HashMap<usize, BTreeMap<usize, SubscriptionCallback>>>>,
+    observations: Arc<Mutex<HashMap<usize, BTreeMap<usize, ObservationCallback>>>>,
     presenters_and_platform_windows:
         HashMap<usize, (Rc<RefCell<Presenter>>, Box<dyn platform::Window>)>,
     debug_elements_callbacks: HashMap<usize, Box<dyn Fn(&AppContext) -> crate::json::Value>>,
@@ -2967,12 +2967,12 @@ pub enum Subscription {
     Subscription {
         id: usize,
         entity_id: usize,
-        subscriptions: Option<Weak<Mutex<HashMap<usize, HashMap<usize, SubscriptionCallback>>>>>,
+        subscriptions: Option<Weak<Mutex<HashMap<usize, BTreeMap<usize, SubscriptionCallback>>>>>,
     },
     Observation {
         id: usize,
         entity_id: usize,
-        observations: Option<Weak<Mutex<HashMap<usize, HashMap<usize, ObservationCallback>>>>>,
+        observations: Option<Weak<Mutex<HashMap<usize, BTreeMap<usize, ObservationCallback>>>>>,
     },
 }
 
@@ -3200,7 +3200,7 @@ mod tests {
         assert_eq!(handle_1.read(cx).events, vec![7]);
 
         handle_2.update(cx, |_, c| c.emit(5));
-        assert_eq!(handle_1.read(cx).events, vec![7, 10, 5]);
+        assert_eq!(handle_1.read(cx).events, vec![7, 5, 10]);
     }
 
     #[crate::test(self)]
@@ -3240,7 +3240,7 @@ mod tests {
             model.count = 5;
             c.notify()
         });
-        assert_eq!(handle_1.read(cx).events, vec![7, 10, 5])
+        assert_eq!(handle_1.read(cx).events, vec![7, 5, 10])
     }
 
     #[crate::test(self)]
@@ -3462,10 +3462,10 @@ mod tests {
         assert_eq!(handle_1.read(cx).events, vec![7]);
 
         handle_2.update(cx, |_, c| c.emit(5));
-        assert_eq!(handle_1.read(cx).events, vec![7, 10, 5]);
+        assert_eq!(handle_1.read(cx).events, vec![7, 5, 10]);
 
         handle_3.update(cx, |_, c| c.emit(9));
-        assert_eq!(handle_1.read(cx).events, vec![7, 10, 5, 9]);
+        assert_eq!(handle_1.read(cx).events, vec![7, 5, 10, 9]);
     }
 
     #[crate::test(self)]
