@@ -1,15 +1,16 @@
 use crate::Settings;
 use gpui::{fonts::FontId, FontCache, FontSystem};
+use lazy_static::lazy_static;
+use parking_lot::Mutex;
 use std::{
-    cell::RefCell,
     collections::HashMap,
     iter,
     ops::{Deref, DerefMut},
     sync::Arc,
 };
 
-thread_local! {
-    static WRAPPERS: RefCell<Vec<LineWrapper>> = Default::default();
+lazy_static! {
+    static ref POOL: Mutex<Vec<LineWrapper>> = Default::default();
 }
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
@@ -35,25 +36,24 @@ pub struct LineWrapper {
 impl LineWrapper {
     pub const MAX_INDENT: u32 = 256;
 
-    pub fn thread_local(
+    pub fn acquire(
         font_system: Arc<dyn FontSystem>,
         font_cache: &FontCache,
         settings: Settings,
     ) -> LineWrapperHandle {
-        let wrapper =
-            if let Some(mut wrapper) = WRAPPERS.with(|wrappers| wrappers.borrow_mut().pop()) {
-                let font_id = font_cache
-                    .select_font(settings.buffer_font_family, &Default::default())
-                    .unwrap();
-                let font_size = settings.buffer_font_size;
-                if wrapper.font_id != font_id || wrapper.font_size != font_size {
-                    wrapper.cached_ascii_char_widths = [f32::NAN; 128];
-                    wrapper.cached_other_char_widths.clear();
-                }
-                wrapper
-            } else {
-                LineWrapper::new(font_system, font_cache, settings)
-            };
+        let wrapper = if let Some(mut wrapper) = POOL.lock().pop() {
+            let font_id = font_cache
+                .select_font(settings.buffer_font_family, &Default::default())
+                .unwrap();
+            let font_size = settings.buffer_font_size;
+            if wrapper.font_id != font_id || wrapper.font_size != font_size {
+                wrapper.cached_ascii_char_widths = [f32::NAN; 128];
+                wrapper.cached_other_char_widths.clear();
+            }
+            wrapper
+        } else {
+            LineWrapper::new(font_system, font_cache, settings)
+        };
         LineWrapperHandle(Some(wrapper))
     }
 
@@ -163,6 +163,7 @@ impl LineWrapper {
     }
 
     fn compute_width_for_char(&self, c: char) -> f32 {
+        log::info!("cache miss {}", c);
         self.font_system
             .layout_line(
                 &c.to_string(),
@@ -178,7 +179,7 @@ pub struct LineWrapperHandle(Option<LineWrapper>);
 impl Drop for LineWrapperHandle {
     fn drop(&mut self) {
         let wrapper = self.0.take().unwrap();
-        WRAPPERS.with(|wrappers| wrappers.borrow_mut().push(wrapper))
+        POOL.lock().push(wrapper)
     }
 }
 

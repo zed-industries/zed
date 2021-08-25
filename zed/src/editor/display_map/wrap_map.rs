@@ -119,8 +119,7 @@ impl WrapMap {
             let font_cache = cx.font_cache().clone();
             let settings = self.settings.clone();
             let task = cx.background().spawn(async move {
-                let mut line_wrapper =
-                    LineWrapper::thread_local(font_system, &font_cache, settings);
+                let mut line_wrapper = LineWrapper::acquire(font_system, &font_cache, settings);
                 let tab_snapshot = new_snapshot.tab_snapshot.clone();
                 let range = TabPoint::zero()..tab_snapshot.max_point();
                 new_snapshot
@@ -194,8 +193,7 @@ impl WrapMap {
                 let font_cache = cx.font_cache().clone();
                 let settings = self.settings.clone();
                 let update_task = cx.background().spawn(async move {
-                    let mut line_wrapper =
-                        LineWrapper::thread_local(font_system, &font_cache, settings);
+                    let mut line_wrapper = LineWrapper::acquire(font_system, &font_cache, settings);
                     for (tab_snapshot, edits) in pending_edits {
                         snapshot
                             .update(tab_snapshot, &edits, wrap_width, &mut line_wrapper)
