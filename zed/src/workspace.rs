@@ -958,7 +958,7 @@ impl View for Workspace {
                                 if let Some(panel) = self.left_sidebar.active_item() {
                                     content.add_child(
                                         ConstrainedBox::new(ChildView::new(panel.id()).boxed())
-                                            .with_width(200.0)
+                                            .with_width(300.0)
                                             .named("left panel"),
                                     );
                                 }
@@ -966,7 +966,7 @@ impl View for Workspace {
                                 if let Some(panel) = self.right_sidebar.active_item() {
                                     content.add_child(
                                         ConstrainedBox::new(ChildView::new(panel.id()).boxed())
-                                            .with_width(200.0)
+                                            .with_width(300.0)
                                             .named("right panel"),
                                     );
                                 }

@@ -55,12 +55,16 @@ pub struct SidebarIcon {
 
 #[derive(Debug, Default, Deserialize)]
 pub struct ChatPanel {
+    #[serde(flatten)]
+    pub container: ContainerStyle,
     pub message: ChatMessage,
 }
 
 #[derive(Debug, Default, Deserialize)]
 pub struct ChatMessage {
     pub body: TextStyle,
+    pub sender: ContainedLabel,
+    pub timestamp: ContainedLabel,
 }
 
 #[derive(Debug, Default, Deserialize)]
@@ -70,12 +74,12 @@ pub struct Selector {
     #[serde(flatten)]
     pub label: LabelStyle,
 
-    pub item: SelectorItem,
-    pub active_item: SelectorItem,
+    pub item: ContainedLabel,
+    pub active_item: ContainedLabel,
 }
 
 #[derive(Debug, Default, Deserialize)]
-pub struct SelectorItem {
+pub struct ContainedLabel {
     #[serde(flatten)]
     pub container: ContainerStyle,
     #[serde(flatten)]

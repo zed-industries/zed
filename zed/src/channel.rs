@@ -14,6 +14,7 @@ use std::{
     ops::Range,
     sync::Arc,
 };
+use time::OffsetDateTime;
 use zrpc::{
     proto::{self, ChannelMessageSent},
     TypedEnvelope,
@@ -47,6 +48,7 @@ pub struct Channel {
 pub struct ChannelMessage {
     pub id: u64,
     pub body: String,
+    pub timestamp: OffsetDateTime,
     pub sender: Arc<User>,
 }
 
@@ -261,14 +263,17 @@ impl Channel {
                         this.insert_message(
                             ChannelMessage {
                                 id: response.message_id,
+                                timestamp: OffsetDateTime::from_unix_timestamp(
+                                    response.timestamp as i64,
+                                )?,
                                 body,
                                 sender,
                             },
                             cx,
                         );
                     }
-                });
-                Ok(())
+                    Ok(())
+                })
             }
             .log_err()
         })
@@ -363,6 +368,7 @@ impl ChannelMessage {
         Ok(ChannelMessage {
             id: message.id,
             body: message.body,
+            timestamp: OffsetDateTime::from_unix_timestamp(message.timestamp as i64)?,
             sender,
         })
     }

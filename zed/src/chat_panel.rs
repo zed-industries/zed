@@ -9,6 +9,7 @@ use gpui::{
     Subscription, View, ViewContext, ViewHandle,
 };
 use postage::watch;
+use time::{OffsetDateTime, UtcOffset};
 
 pub struct ChatPanel {
     channel_list: ModelHandle<ChannelList>,
@@ -75,12 +76,13 @@ impl ChatPanel {
     fn set_active_channel(&mut self, channel: ModelHandle<Channel>, cx: &mut ViewContext<Self>) {
         if self.active_channel.as_ref().map(|e| &e.0) != Some(&channel) {
             let subscription = cx.subscribe(&channel, Self::channel_did_change);
+            let now = OffsetDateTime::now_utc();
             self.messages = ListState::new(
                 channel
                     .read(cx)
                     .messages()
                     .cursor::<(), ()>()
-                    .map(|m| self.render_message(m))
+                    .map(|m| self.render_message(m, now))
                     .collect(),
                 Orientation::Bottom,
             );
@@ -99,12 +101,13 @@ impl ChatPanel {
                 old_range,
                 new_count,
             } => {
+                let now = OffsetDateTime::now_utc();
                 self.messages.splice(
                     old_range.clone(),
                     channel
                         .read(cx)
                         .messages_in_range(old_range.start..(old_range.start + new_count))
-                        .map(|message| self.render_message(message)),
+                        .map(|message| self.render_message(message, now)),
                 );
             }
         }
@@ -115,15 +118,50 @@ impl ChatPanel {
         Expanded::new(1., List::new(self.messages.clone()).boxed()).boxed()
     }
 
-    fn render_message(&self, message: &ChannelMessage) -> ElementBox {
+    fn render_message(&self, message: &ChannelMessage, now: OffsetDateTime) -> ElementBox {
         let settings = self.settings.borrow();
-        Text::new(
-            message.body.clone(),
-            settings.ui_font_family,
-            settings.ui_font_size,
-        )
-        .with_style(&settings.theme.chat_panel.message.body)
-        .boxed()
+        let theme = &settings.theme.chat_panel.message;
+        Flex::column()
+            .with_child(
+                Flex::row()
+                    .with_child(
+                        Container::new(
+                            Label::new(
+                                message.sender.github_login.clone(),
+                                settings.ui_font_family,
+                                settings.ui_font_size,
+                            )
+                            .with_style(&theme.sender.label)
+                            .boxed(),
+                        )
+                        .with_style(&theme.sender.container)
+                        .boxed(),
+                    )
+                    .with_child(
+                        Container::new(
+                            Label::new(
+                                format_timestamp(message.timestamp, now),
+                                settings.ui_font_family,
+                                settings.ui_font_size,
+                            )
+                            .with_style(&theme.timestamp.label)
+                            .boxed(),
+                        )
+                        .with_style(&theme.timestamp.container)
+                        .boxed(),
+                    )
+                    .boxed(),
+            )
+            .with_child(
+                Text::new(
+                    message.body.clone(),
+                    settings.ui_font_family,
+                    settings.ui_font_size,
+                )
+                .with_style(&theme.body)
+                .boxed(),
+            )
+            .boxed()
     }
 
     fn render_input_box(&self) -> ElementBox {
@@ -157,9 +195,36 @@ impl View for ChatPanel {
     }
 
     fn render(&self, _: &RenderContext<Self>) -> ElementBox {
-        Flex::column()
-            .with_child(self.render_active_channel_messages())
-            .with_child(self.render_input_box())
-            .boxed()
+        let theme = &self.settings.borrow().theme;
+        Container::new(
+            Flex::column()
+                .with_child(self.render_active_channel_messages())
+                .with_child(self.render_input_box())
+                .boxed(),
+        )
+        .with_style(&theme.chat_panel.container)
+        .boxed()
+    }
+}
+
+fn format_timestamp(mut timestamp: OffsetDateTime, mut now: OffsetDateTime) -> String {
+    let local_offset = UtcOffset::current_local_offset().unwrap_or(UtcOffset::UTC);
+    timestamp = timestamp.to_offset(local_offset);
+    now = now.to_offset(local_offset);
+
+    let today = now.date();
+    let date = timestamp.date();
+    let mut hour = timestamp.hour();
+    let mut part = "am";
+    if hour > 12 {
+        hour -= 12;
+        part = "pm";
+    }
+    if date == today {
+        format!("{}:{}{}", hour, timestamp.minute(), part)
+    } else if date.next_day() == Some(today) {
+        format!("yesterday at {}:{}{}", hour, timestamp.minute(), part)
+    } else {
+        format!("{}/{}/{}", date.month(), date.day(), date.year())
     }
 }

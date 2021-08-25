@@ -99,6 +99,7 @@ impl ThemeSelector {
             Ok(theme) => {
                 cx.notify_all();
                 action.0.settings_tx.lock().borrow_mut().theme = theme;
+                log::info!("reloaded theme {}", current_theme_name);
             }
             Err(error) => {
                 log::error!("failed to load theme {}: {:?}", current_theme_name, error)

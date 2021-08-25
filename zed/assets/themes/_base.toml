@@ -22,8 +22,14 @@ color = "$text.2"
 [workspace.active_sidebar_icon]
 color = "$text.0"
 
+[chat_panel]
+padding = { top = 10.0, bottom = 10.0, left = 10.0, right = 10.0 }
+
 [chat_panel.message]
 body = "$text.0"
+sender.margin.right = 10.0
+sender.text = { color = "#ff0000", weight = "bold", italic = true }
+timestamp.text = "$text.2"
 
 [selector]
 background = "$surface.2"

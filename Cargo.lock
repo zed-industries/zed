@@ -5143,6 +5143,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "time"
+version = "0.3.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "3e0a10c9a9fb3a5dce8c2239ed670f1a2569fcf42da035f5face1b19860d52b0"
+dependencies = [
+ "libc",
+]
+
+[[package]]
 name = "time-macros"
 version = "0.1.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -5832,6 +5841,7 @@ dependencies = [
  "smol",
  "surf",
  "tempdir",
+ "time 0.3.2",
  "tiny_http",
  "toml 0.5.8",
  "tree-sitter",
