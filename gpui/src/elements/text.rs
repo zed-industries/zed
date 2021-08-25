@@ -20,8 +20,7 @@ pub struct Text {
 }
 
 pub struct LayoutState {
-    line: Line,
-    wrap_boundaries: Vec<ShapedBoundary>,
+    lines: Vec<(Line, Vec<ShapedBoundary>)>,
     line_height: f32,
 }
 
@@ -60,29 +59,34 @@ impl Element for Text {
             .select_font(self.family_id, &self.style.font_properties)
             .unwrap();
         let line_height = cx.font_cache.line_height(font_id, self.font_size);
-        let line = cx.text_layout_cache.layout_str(
-            self.text.as_str(),
-            self.font_size,
-            &[(self.text.len(), font_id, self.style.color)],
-        );
+
         let mut wrapper = LineWrapper::acquire(font_id, self.font_size, cx.font_system.clone());
-        let wrap_boundaries = wrapper
-            .wrap_shaped_line(&self.text, &line, constraint.max.x())
-            .collect::<Vec<_>>();
+        let mut lines = Vec::new();
+        let mut line_count = 0;
+        let mut max_line_width = 0_f32;
+        for line in self.text.lines() {
+            let shaped_line = cx.text_layout_cache.layout_str(
+                line,
+                self.font_size,
+                &[(line.len(), font_id, self.style.color)],
+            );
+            let wrap_boundaries = wrapper
+                .wrap_shaped_line(line, &shaped_line, constraint.max.x())
+                .collect::<Vec<_>>();
+
+            max_line_width = max_line_width.max(shaped_line.width());
+            line_count += wrap_boundaries.len() + 1;
+            lines.push((shaped_line, wrap_boundaries));
+        }
+
         let size = vec2f(
-            line.width()
+            max_line_width
                 .ceil()
                 .max(constraint.min.x())
                 .min(constraint.max.x()),
-            (line_height * (wrap_boundaries.len() + 1) as f32).ceil(),
+            (line_height * line_count as f32).ceil(),
         );
-        let layout = LayoutState {
-            line,
-            wrap_boundaries,
-            line_height,
-        };
-
-        (size, layout)
+        (size, LayoutState { lines, line_height })
     }
 
     fn paint(
@@ -91,12 +95,16 @@ impl Element for Text {
         layout: &mut Self::LayoutState,
         cx: &mut PaintContext,
     ) -> Self::PaintState {
-        layout.line.paint_wrapped(
-            bounds.origin(),
-            layout.line_height,
-            layout.wrap_boundaries.iter().copied(),
-            cx,
-        );
+        let mut origin = bounds.origin();
+        for (line, wrap_boundaries) in &layout.lines {
+            line.paint_wrapped(
+                origin,
+                layout.line_height,
+                wrap_boundaries.iter().copied(),
+                cx,
+            );
+            origin.set_y(origin.y() + (wrap_boundaries.len() + 1) as f32 * layout.line_height);
+        }
     }
 
     fn dispatch_event(
