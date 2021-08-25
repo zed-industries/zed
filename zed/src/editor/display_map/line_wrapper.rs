@@ -1,5 +1,5 @@
 use crate::Settings;
-use gpui::{fonts::FontId, FontCache, FontSystem};
+use gpui::{fonts::FontId, text_layout::Line, FontCache, FontSystem};
 use lazy_static::lazy_static;
 use parking_lot::Mutex;
 use std::{
@@ -17,6 +17,12 @@ lazy_static! {
 pub struct Boundary {
     pub ix: usize,
     pub next_indent: u32,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
+pub struct ShapedBoundary {
+    pub run_ix: usize,
+    pub glyph_ix: usize,
 }
 
 impl Boundary {
@@ -135,6 +141,74 @@ impl LineWrapper {
         })
     }
 
+    pub fn wrap_shaped_line<'a>(
+        &'a mut self,
+        str: &'a str,
+        line: &'a Line,
+        wrap_width: f32,
+    ) -> impl Iterator<Item = ShapedBoundary> + 'a {
+        let mut width = 0.0;
+        let mut first_non_whitespace_ix = None;
+        let mut last_candidate_ix = None;
+        let mut last_candidate_x = 0.0;
+        let mut last_wrap_ix = ShapedBoundary {
+            run_ix: 0,
+            glyph_ix: 0,
+        };
+        let mut last_wrap_x = 0.;
+        let mut prev_c = '\0';
+        let mut glyphs = line
+            .runs()
+            .iter()
+            .enumerate()
+            .flat_map(move |(run_ix, run)| {
+                run.glyphs()
+                    .iter()
+                    .enumerate()
+                    .map(move |(glyph_ix, glyph)| {
+                        let character = str[glyph.index..].chars().next().unwrap();
+                        (
+                            ShapedBoundary { run_ix, glyph_ix },
+                            character,
+                            glyph.position.x(),
+                        )
+                    })
+            });
+
+        iter::from_fn(move || {
+            while let Some((ix, c, x)) = glyphs.next() {
+                if c == '\n' {
+                    continue;
+                }
+
+                if self.is_boundary(prev_c, c) && first_non_whitespace_ix.is_some() {
+                    last_candidate_ix = Some(ix);
+                    last_candidate_x = x;
+                }
+
+                if c != ' ' && first_non_whitespace_ix.is_none() {
+                    first_non_whitespace_ix = Some(ix);
+                }
+
+                let width = x - last_wrap_x;
+                if width > wrap_width && ix > last_wrap_ix {
+                    if let Some(last_candidate_ix) = last_candidate_ix.take() {
+                        last_wrap_ix = last_candidate_ix;
+                        last_wrap_x = last_candidate_x;
+                    } else {
+                        last_wrap_ix = ix;
+                        last_wrap_x = x;
+                    }
+
+                    return Some(last_wrap_ix);
+                }
+                prev_c = c;
+            }
+
+            None
+        })
+    }
+
     fn is_boundary(&self, prev: char, next: char) -> bool {
         (prev == ' ') && (next != ' ')
     }
@@ -163,7 +237,6 @@ impl LineWrapper {
     }
 
     fn compute_width_for_char(&self, c: char) -> f32 {
-        log::info!("cache miss {}", c);
         self.font_system
             .layout_line(
                 &c.to_string(),
@@ -200,9 +273,14 @@ impl DerefMut for LineWrapperHandle {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use gpui::{
+        color::Color,
+        fonts::{Properties, Weight},
+        TextLayoutCache,
+    };
 
     #[gpui::test]
-    fn test_line_wrapper(cx: &mut gpui::MutableAppContext) {
+    fn test_wrap_line(cx: &mut gpui::MutableAppContext) {
         let font_cache = cx.font_cache().clone();
         let font_system = cx.platform().fonts();
         let settings = Settings {
@@ -261,6 +339,65 @@ mod tests {
                 Boundary::new(18, 3),
                 Boundary::new(22, 3),
             ]
+        );
+    }
+
+    #[gpui::test]
+    fn test_wrap_layout_line(cx: &mut gpui::MutableAppContext) {
+        let font_cache = cx.font_cache().clone();
+        let font_system = cx.platform().fonts();
+        let text_layout_cache = TextLayoutCache::new(font_system.clone());
+
+        let family = font_cache.load_family(&["Helvetica"]).unwrap();
+        let settings = Settings {
+            tab_size: 4,
+            buffer_font_family: family,
+            buffer_font_size: 16.0,
+            ..Settings::new(&font_cache).unwrap()
+        };
+        let normal = font_cache.select_font(family, &Default::default()).unwrap();
+        let bold = font_cache
+            .select_font(
+                family,
+                &Properties {
+                    weight: Weight::BOLD,
+                    ..Default::default()
+                },
+            )
+            .unwrap();
+
+        let text = "aa bbb cccc ddddd eeee";
+        let line = text_layout_cache.layout_str(
+            text,
+            16.0,
+            &[
+                (4, normal, Color::default()),
+                (5, bold, Color::default()),
+                (6, normal, Color::default()),
+                (1, bold, Color::default()),
+                (7, normal, Color::default()),
+            ],
+        );
+
+        let mut wrapper = LineWrapper::new(font_system, &font_cache, settings);
+        assert_eq!(
+            wrapper
+                .wrap_shaped_line(&text, &line, 72.0)
+                .collect::<Vec<_>>(),
+            &[
+                ShapedBoundary {
+                    run_ix: 1,
+                    glyph_ix: 3
+                },
+                ShapedBoundary {
+                    run_ix: 2,
+                    glyph_ix: 3
+                },
+                ShapedBoundary {
+                    run_ix: 4,
+                    glyph_ix: 2
+                }
+            ],
         );
     }
 }

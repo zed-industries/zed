@@ -170,6 +170,10 @@ impl Line {
         Self { layout, color_runs }
     }
 
+    pub fn runs(&self) -> &[Run] {
+        &self.layout.runs
+    }
+
     pub fn width(&self) -> f32 {
         self.layout.width
     }
@@ -243,5 +247,11 @@ impl Line {
                 });
             }
         }
+    }
+}
+
+impl Run {
+    pub fn glyphs(&self) -> &[Glyph] {
+        &self.glyphs
     }
 }
