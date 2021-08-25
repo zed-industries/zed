@@ -458,7 +458,8 @@ impl LineWrapper {
                             glyph.position.x(),
                         )
                     })
-            });
+            })
+            .peekable();
 
         iter::from_fn(move || {
             while let Some((ix, c, x)) = glyphs.next() {
@@ -475,7 +476,8 @@ impl LineWrapper {
                     first_non_whitespace_ix = Some(ix);
                 }
 
-                let width = x - last_wrap_x;
+                let next_x = glyphs.peek().map_or(line.width(), |(_, _, x)| *x);
+                let width = next_x - last_wrap_x;
                 if width > wrap_width && ix > last_wrap_ix {
                     if let Some(last_candidate_ix) = last_candidate_ix.take() {
                         last_wrap_ix = last_candidate_ix;
@@ -623,7 +625,7 @@ mod tests {
     }
 
     #[crate::test(self)]
-    fn test_wrap_layout_line(cx: &mut crate::MutableAppContext) {
+    fn test_wrap_shaped_line(cx: &mut crate::MutableAppContext) {
         let font_cache = cx.font_cache().clone();
         let font_system = cx.platform().fonts();
         let text_layout_cache = TextLayoutCache::new(font_system.clone());
