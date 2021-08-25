@@ -7,7 +7,6 @@ use crate::{
     },
     platform, scene, FontSystem, PaintContext,
 };
-use lazy_static::lazy_static;
 use ordered_float::OrderedFloat;
 use parking_lot::{Mutex, RwLock, RwLockUpgradableReadGuard};
 use smallvec::SmallVec;
@@ -16,7 +15,6 @@ use std::{
     collections::HashMap,
     hash::{Hash, Hasher},
     iter,
-    ops::{Deref, DerefMut},
     sync::Arc,
 };
 
@@ -307,10 +305,6 @@ impl Run {
     }
 }
 
-lazy_static! {
-    static ref WRAPPER_POOL: Mutex<Vec<LineWrapper>> = Default::default();
-}
-
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
 pub struct Boundary {
     pub ix: usize,
@@ -331,31 +325,14 @@ impl Boundary {
 
 pub struct LineWrapper {
     font_system: Arc<dyn FontSystem>,
-    font_id: FontId,
-    font_size: f32,
+    pub(crate) font_id: FontId,
+    pub(crate) font_size: f32,
     cached_ascii_char_widths: [f32; 128],
     cached_other_char_widths: HashMap<char, f32>,
 }
 
 impl LineWrapper {
     pub const MAX_INDENT: u32 = 256;
-
-    pub fn acquire(
-        font_id: FontId,
-        font_size: f32,
-        font_system: Arc<dyn FontSystem>,
-    ) -> LineWrapperHandle {
-        let wrapper = if let Some(mut wrapper) = WRAPPER_POOL.lock().pop() {
-            if wrapper.font_id != font_id || wrapper.font_size != font_size {
-                wrapper.cached_ascii_char_widths = [f32::NAN; 128];
-                wrapper.cached_other_char_widths.clear();
-            }
-            wrapper
-        } else {
-            LineWrapper::new(font_id, font_size, font_system)
-        };
-        LineWrapperHandle(Some(wrapper))
-    }
 
     pub fn new(font_id: FontId, font_size: f32, font_system: Arc<dyn FontSystem>) -> Self {
         Self {
@@ -531,29 +508,6 @@ impl LineWrapper {
                 &[(1, self.font_id, Default::default())],
             )
             .width
-    }
-}
-
-pub struct LineWrapperHandle(Option<LineWrapper>);
-
-impl Drop for LineWrapperHandle {
-    fn drop(&mut self) {
-        let wrapper = self.0.take().unwrap();
-        WRAPPER_POOL.lock().push(wrapper)
-    }
-}
-
-impl Deref for LineWrapperHandle {
-    type Target = LineWrapper;
-
-    fn deref(&self) -> &Self::Target {
-        self.0.as_ref().unwrap()
-    }
-}
-
-impl DerefMut for LineWrapperHandle {
-    fn deref_mut(&mut self) -> &mut Self::Target {
-        self.0.as_mut().unwrap()
     }
 }
 

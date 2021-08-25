@@ -173,7 +173,7 @@ pub struct LayoutContext<'a> {
     rendered_views: &'a mut HashMap<usize, ElementBox>,
     parents: &'a mut HashMap<usize, usize>,
     view_stack: Vec<usize>,
-    pub font_cache: &'a FontCache,
+    pub font_cache: &'a Arc<FontCache>,
     pub font_system: Arc<dyn FontSystem>,
     pub text_layout_cache: &'a TextLayoutCache,
     pub asset_cache: &'a AssetCache,

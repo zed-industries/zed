@@ -115,15 +115,13 @@ impl WrapMap {
 
         if let Some(wrap_width) = wrap_width {
             let mut new_snapshot = self.snapshot.clone();
-            let font_system = cx.platform().fonts();
             let font_cache = cx.font_cache().clone();
             let settings = self.settings.clone();
             let task = cx.background().spawn(async move {
                 let font_id = font_cache
                     .select_font(settings.buffer_font_family, &Default::default())
                     .unwrap();
-                let mut line_wrapper =
-                    LineWrapper::acquire(font_id, settings.buffer_font_size, font_system);
+                let mut line_wrapper = font_cache.line_wrapper(font_id, settings.buffer_font_size);
                 let tab_snapshot = new_snapshot.tab_snapshot.clone();
                 let range = TabPoint::zero()..tab_snapshot.max_point();
                 new_snapshot
@@ -193,7 +191,6 @@ impl WrapMap {
             if self.background_task.is_none() {
                 let pending_edits = self.pending_edits.clone();
                 let mut snapshot = self.snapshot.clone();
-                let font_system = cx.platform().fonts();
                 let font_cache = cx.font_cache().clone();
                 let settings = self.settings.clone();
                 let update_task = cx.background().spawn(async move {
@@ -201,7 +198,7 @@ impl WrapMap {
                         .select_font(settings.buffer_font_family, &Default::default())
                         .unwrap();
                     let mut line_wrapper =
-                        LineWrapper::acquire(font_id, settings.buffer_font_size, font_system);
+                        font_cache.line_wrapper(font_id, settings.buffer_font_size);
                     for (tab_snapshot, edits) in pending_edits {
                         snapshot
                             .update(tab_snapshot, &edits, wrap_width, &mut line_wrapper)

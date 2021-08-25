@@ -7,7 +7,7 @@ use crate::{
         vector::{vec2f, Vector2F},
     },
     json::{ToJson, Value},
-    text_layout::{Line, LineWrapper, ShapedBoundary},
+    text_layout::{Line, ShapedBoundary},
     DebugContext, Element, Event, EventContext, LayoutContext, PaintContext, SizeConstraint,
 };
 use serde_json::json;
@@ -60,7 +60,7 @@ impl Element for Text {
             .unwrap();
         let line_height = cx.font_cache.line_height(font_id, self.font_size);
 
-        let mut wrapper = LineWrapper::acquire(font_id, self.font_size, cx.font_system.clone());
+        let mut wrapper = cx.font_cache.line_wrapper(font_id, self.font_size);
         let mut lines = Vec::new();
         let mut line_count = 0;
         let mut max_line_width = 0_f32;
