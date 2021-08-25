@@ -56,16 +56,18 @@ impl Element for Text {
             .font_cache
             .select_font(self.family_id, &self.style.font_properties)
             .unwrap();
-        let line =
-            cx.text_layout_cache
-                .layout_str(self.text.as_str(), self.font_size, runs.as_slice());
 
-        let size = vec2f(
-            line.width().max(constraint.min.x()).min(constraint.max.x()),
-            cx.font_cache.line_height(font_id, self.font_size).ceil(),
-        );
+        todo!()
+        // let line =
+        //     cx.text_layout_cache
+        //         .layout_str(self.text.as_str(), self.font_size, runs.as_slice());
 
-        (size, line)
+        // let size = vec2f(
+        //     line.width().max(constraint.min.x()).min(constraint.max.x()),
+        //     cx.font_cache.line_height(font_id, self.font_size).ceil(),
+        // );
+
+        // (size, line)
     }
 
     fn paint(
@@ -103,64 +105,9 @@ impl Element for Text {
             "type": "Label",
             "bounds": bounds.to_json(),
             "text": &self.text,
-            "highlight_indices": self.highlight_indices,
             "font_family": cx.font_cache.family_name(self.family_id).unwrap(),
             "font_size": self.font_size,
             "style": self.style.to_json(),
         })
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::fonts::{Properties as FontProperties, Weight};
-
-    #[crate::test(self)]
-    fn test_layout_label_with_highlights(cx: &mut crate::MutableAppContext) {
-        let menlo = cx.font_cache().load_family(&["Menlo"]).unwrap();
-        let menlo_regular = cx
-            .font_cache()
-            .select_font(menlo, &FontProperties::new())
-            .unwrap();
-        let menlo_bold = cx
-            .font_cache()
-            .select_font(menlo, FontProperties::new().weight(Weight::BOLD))
-            .unwrap();
-        let black = Color::black();
-        let red = Color::new(255, 0, 0, 255);
-
-        let label = Text::new(".αβγδε.ⓐⓑⓒⓓⓔ.abcde.".to_string(), menlo, 12.0)
-            .with_style(&TextStyle {
-                text: TextStyle {
-                    color: black,
-                    font_properties: Default::default(),
-                },
-                highlight_text: Some(TextStyle {
-                    color: red,
-                    font_properties: *FontProperties::new().weight(Weight::BOLD),
-                }),
-            })
-            .with_highlights(vec![
-                ".α".len(),
-                ".αβ".len(),
-                ".αβγδ".len(),
-                ".αβγδε.ⓐ".len(),
-                ".αβγδε.ⓐⓑ".len(),
-            ]);
-
-        let runs = label.compute_runs(cx.font_cache().as_ref(), menlo_regular);
-        assert_eq!(
-            runs.as_slice(),
-            &[
-                (".α".len(), menlo_regular, black),
-                ("βγ".len(), menlo_bold, red),
-                ("δ".len(), menlo_regular, black),
-                ("ε".len(), menlo_bold, red),
-                (".ⓐ".len(), menlo_regular, black),
-                ("ⓑⓒ".len(), menlo_bold, red),
-                ("ⓓⓔ.abcde.".len(), menlo_regular, black),
-            ]
-        );
     }
 }
