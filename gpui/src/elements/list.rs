@@ -19,11 +19,18 @@ pub struct List {
 #[derive(Clone)]
 pub struct ListState(Arc<Mutex<StateInner>>);
 
+#[derive(Eq, PartialEq)]
+pub enum Orientation {
+    Top,
+    Bottom,
+}
+
 struct StateInner {
     last_layout_width: f32,
     elements: Vec<ElementBox>,
     heights: SumTree<ElementHeight>,
-    scroll_top: f32,
+    scroll_position: f32,
+    orientation: Orientation,
 }
 
 #[derive(Clone, Debug)]
@@ -69,6 +76,11 @@ impl Element for List {
         item_constraint.min.set_y(0.);
         item_constraint.max.set_y(f32::INFINITY);
 
+        let size = constraint.max;
+
+        let visible_top = state.scroll_top(size.y());
+        let visible_bottom = visible_top + size.y();
+
         if state.last_layout_width == constraint.max.x() {
             let mut old_heights = state.heights.cursor::<PendingCount, ElementHeightSummary>();
             let mut new_heights = old_heights.slice(&PendingCount(1), sum_tree::Bias::Left, &());
@@ -78,6 +90,21 @@ impl Element for List {
                     let size =
                         state.elements[old_heights.sum_start().count].layout(item_constraint, cx);
                     new_heights.push(ElementHeight::Ready(size.y()), &());
+
+                    // Adjust scroll position to keep visible elements stable
+                    match state.orientation {
+                        Orientation::Top => {
+                            if new_heights.summary().height < visible_top {
+                                state.scroll_position += size.y();
+                            }
+                        }
+                        Orientation::Bottom => {
+                            if new_heights.summary().height - size.y() > visible_bottom {
+                                state.scroll_position += size.y();
+                            }
+                        }
+                    }
+
                     old_heights.next(&());
                 } else {
                     new_heights.push_tree(
@@ -102,7 +129,7 @@ impl Element for List {
             state.last_layout_width = constraint.max.x();
         }
 
-        (constraint.max, ())
+        (size, ())
     }
 
     fn paint(&mut self, bounds: RectF, _: &mut (), cx: &mut PaintContext) {
@@ -115,8 +142,15 @@ impl Element for List {
             cursor.seek(&Count(visible_range.start), Bias::Right, &());
             cursor.sum_start().0
         };
+        if state.orientation == Orientation::Bottom
+            && bounds.height() > state.heights.summary().height
+        {
+            item_top += bounds.height() - state.heights.summary().height;
+        }
+        let scroll_top = state.scroll_top(bounds.height());
+
         for element in &mut state.elements[visible_range] {
-            let origin = bounds.origin() + vec2f(0., item_top - state.scroll_top);
+            let origin = bounds.origin() + vec2f(0., item_top - scroll_top);
             element.paint(origin, cx);
             item_top += element.size().y();
         }
@@ -167,20 +201,21 @@ impl Element for List {
         json!({
             "visible_range": visible_range,
             "visible_elements": visible_elements,
-            "scroll_top": state.scroll_top,
+            "scroll_position": state.scroll_position,
         })
     }
 }
 
 impl ListState {
-    pub fn new(elements: Vec<ElementBox>) -> Self {
+    pub fn new(elements: Vec<ElementBox>, orientation: Orientation) -> Self {
         let mut heights = SumTree::new();
         heights.extend(elements.iter().map(|_| ElementHeight::Pending), &());
         Self(Arc::new(Mutex::new(StateInner {
             last_layout_width: 0.,
             elements,
             heights,
-            scroll_top: 0.,
+            scroll_position: 0.,
+            orientation,
         })))
     }
 
@@ -215,9 +250,9 @@ impl ListState {
 impl StateInner {
     fn visible_range(&self, height: f32) -> Range<usize> {
         let mut cursor = self.heights.cursor::<Height, Count>();
-        cursor.seek(&Height(self.scroll_top), Bias::Right, &());
+        cursor.seek(&Height(self.scroll_top(height)), Bias::Right, &());
         let start_ix = cursor.sum_start().0;
-        cursor.seek(&Height(self.scroll_top + height), Bias::Left, &());
+        cursor.seek(&Height(self.scroll_top(height) + height), Bias::Left, &());
         let end_ix = cursor.sum_start().0;
         start_ix..self.elements.len().min(end_ix + 1)
     }
@@ -235,11 +270,23 @@ impl StateInner {
         }
 
         let scroll_max = (self.heights.summary().height - height).max(0.);
-        self.scroll_top = (self.scroll_top - delta.y()).max(0.).min(scroll_max);
-
+        let delta_y = match self.orientation {
+            Orientation::Top => -delta.y(),
+            Orientation::Bottom => delta.y(),
+        };
+        self.scroll_position = (self.scroll_position + delta_y).max(0.).min(scroll_max);
         cx.notify();
 
         true
+    }
+
+    fn scroll_top(&self, height: f32) -> f32 {
+        match self.orientation {
+            Orientation::Top => self.scroll_position,
+            Orientation::Bottom => {
+                (self.heights.summary().height - height - self.scroll_position).max(0.)
+            }
+        }
     }
 }
 
@@ -329,7 +376,7 @@ mod tests {
     fn test_layout(cx: &mut crate::MutableAppContext) {
         let mut presenter = cx.build_presenter(0, 20.0);
         let mut layout_cx = presenter.layout_cx(cx);
-        let state = ListState::new(vec![item(20.), item(30.), item(10.)]);
+        let state = ListState::new(vec![item(20.), item(30.), item(10.)], Orientation::Top);
         let mut list = List::new(state.clone()).boxed();
 
         let size = list.layout(

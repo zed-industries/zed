@@ -38,7 +38,7 @@ impl ChatPanel {
         let mut this = Self {
             channel_list,
             active_channel: None,
-            messages: ListState::new(Vec::new()),
+            messages: ListState::new(Vec::new(), Orientation::Bottom),
             input_editor,
             settings,
         };
@@ -82,6 +82,7 @@ impl ChatPanel {
                     .cursor::<(), ()>()
                     .map(|m| self.render_message(m))
                     .collect(),
+                Orientation::Bottom,
             );
             self.active_channel = Some((channel, subscription));
         }
