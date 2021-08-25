@@ -939,6 +939,7 @@ mod tests {
         language::LanguageRegistry,
         rpc::Client,
         settings, test,
+        user::UserStore,
         worktree::Worktree,
     };
     use zrpc::Peer;
@@ -1425,7 +1426,8 @@ mod tests {
         .await
         .unwrap();
 
-        let channels_a = cx_a.add_model(|cx| ChannelList::new(client_a, cx));
+        let user_store_a = Arc::new(UserStore::new(client_a.clone()));
+        let channels_a = cx_a.add_model(|cx| ChannelList::new(user_store_a, client_a, cx));
         channels_a
             .condition(&mut cx_a, |list, _| list.available_channels().is_some())
             .await;
@@ -1445,11 +1447,12 @@ mod tests {
         channel_a
             .condition(&cx_a, |channel, _| {
                 channel_messages(channel)
-                    == [(user_id_b.to_proto(), "hello A, it's B.".to_string())]
+                    == [("user_b".to_string(), "hello A, it's B.".to_string())]
             })
             .await;
 
-        let channels_b = cx_b.add_model(|cx| ChannelList::new(client_b, cx));
+        let user_store_b = Arc::new(UserStore::new(client_b.clone()));
+        let channels_b = cx_b.add_model(|cx| ChannelList::new(user_store_b, client_b, cx));
         channels_b
             .condition(&mut cx_b, |list, _| list.available_channels().is_some())
             .await;
@@ -1470,7 +1473,7 @@ mod tests {
         channel_b
             .condition(&cx_b, |channel, _| {
                 channel_messages(channel)
-                    == [(user_id_b.to_proto(), "hello A, it's B.".to_string())]
+                    == [("user_b".to_string(), "hello A, it's B.".to_string())]
             })
             .await;
 
@@ -1494,9 +1497,9 @@ mod tests {
             .condition(&cx_b, |channel, _| {
                 channel_messages(channel)
                     == [
-                        (user_id_b.to_proto(), "hello A, it's B.".to_string()),
-                        (user_id_a.to_proto(), "oh, hi B.".to_string()),
-                        (user_id_a.to_proto(), "sup".to_string()),
+                        ("user_b".to_string(), "hello A, it's B.".to_string()),
+                        ("user_a".to_string(), "oh, hi B.".to_string()),
+                        ("user_a".to_string(), "sup".to_string()),
                     ]
             })
             .await;
@@ -1517,11 +1520,11 @@ mod tests {
             .condition(|state| !state.channels.contains_key(&channel_id))
             .await;
 
-        fn channel_messages(channel: &Channel) -> Vec<(u64, String)> {
+        fn channel_messages(channel: &Channel) -> Vec<(String, String)> {
             channel
                 .messages()
                 .cursor::<(), ()>()
-                .map(|m| (m.sender_id, m.body.clone()))
+                .map(|m| (m.sender.github_login.clone(), m.body.clone()))
                 .collect()
         }
     }

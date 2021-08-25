@@ -1,5 +1,6 @@
 use crate::{
     rpc::{self, Client},
+    user::{User, UserStore},
     util::TryFutureExt,
 };
 use anyhow::{anyhow, Context, Result};
@@ -9,7 +10,7 @@ use gpui::{
 };
 use postage::prelude::Stream;
 use std::{
-    collections::{hash_map, HashMap},
+    collections::{hash_map, HashMap, HashSet},
     ops::Range,
     sync::Arc,
 };
@@ -22,6 +23,7 @@ pub struct ChannelList {
     available_channels: Option<Vec<ChannelDetails>>,
     channels: HashMap<u64, WeakModelHandle<Channel>>,
     rpc: Arc<Client>,
+    user_store: Arc<UserStore>,
     _task: Task<Option<()>>,
 }
 
@@ -36,6 +38,7 @@ pub struct Channel {
     messages: SumTree<ChannelMessage>,
     pending_messages: Vec<PendingChannelMessage>,
     next_local_message_id: u64,
+    user_store: Arc<UserStore>,
     rpc: Arc<Client>,
     _subscription: rpc::Subscription,
 }
@@ -43,8 +46,8 @@ pub struct Channel {
 #[derive(Clone, Debug, PartialEq)]
 pub struct ChannelMessage {
     pub id: u64,
-    pub sender_id: u64,
     pub body: String,
+    pub sender: Arc<User>,
 }
 
 pub struct PendingChannelMessage {
@@ -76,7 +79,11 @@ impl Entity for ChannelList {
 }
 
 impl ChannelList {
-    pub fn new(rpc: Arc<rpc::Client>, cx: &mut ModelContext<Self>) -> Self {
+    pub fn new(
+        user_store: Arc<UserStore>,
+        rpc: Arc<rpc::Client>,
+        cx: &mut ModelContext<Self>,
+    ) -> Self {
         let _task = cx.spawn(|this, mut cx| {
             let rpc = rpc.clone();
             async move {
@@ -114,6 +121,7 @@ impl ChannelList {
         Self {
             available_channels: None,
             channels: Default::default(),
+            user_store,
             rpc,
             _task,
         }
@@ -136,8 +144,10 @@ impl ChannelList {
                     .as_ref()
                     .and_then(|channels| channels.iter().find(|details| details.id == id))
                 {
+                    let user_store = self.user_store.clone();
                     let rpc = self.rpc.clone();
-                    let channel = cx.add_model(|cx| Channel::new(details.clone(), rpc, cx));
+                    let channel =
+                        cx.add_model(|cx| Channel::new(details.clone(), user_store, rpc, cx));
                     entry.insert(channel.downgrade());
                     Some(channel)
                 } else {
@@ -165,34 +175,58 @@ impl Entity for Channel {
 }
 
 impl Channel {
-    pub fn new(details: ChannelDetails, rpc: Arc<Client>, cx: &mut ModelContext<Self>) -> Self {
+    pub fn new(
+        details: ChannelDetails,
+        user_store: Arc<UserStore>,
+        rpc: Arc<Client>,
+        cx: &mut ModelContext<Self>,
+    ) -> Self {
         let _subscription = rpc.subscribe_from_model(details.id, cx, Self::handle_message_sent);
 
         {
+            let user_store = user_store.clone();
             let rpc = rpc.clone();
             let channel_id = details.id;
-            cx.spawn(|channel, mut cx| async move {
-                match rpc.request(proto::JoinChannel { channel_id }).await {
-                    Ok(response) => channel.update(&mut cx, |channel, cx| {
+            cx.spawn(|channel, mut cx| {
+                async move {
+                    let response = rpc.request(proto::JoinChannel { channel_id }).await?;
+
+                    let unique_user_ids = response
+                        .messages
+                        .iter()
+                        .map(|m| m.sender_id)
+                        .collect::<HashSet<_>>()
+                        .into_iter()
+                        .collect();
+                    user_store.load_users(unique_user_ids).await?;
+
+                    let mut messages = Vec::with_capacity(response.messages.len());
+                    for message in response.messages {
+                        messages.push(ChannelMessage::from_proto(message, &user_store).await?);
+                    }
+
+                    channel.update(&mut cx, |channel, cx| {
                         let old_count = channel.messages.summary().count.0;
-                        let new_count = response.messages.len();
+                        let new_count = messages.len();
+
                         channel.messages = SumTree::new();
-                        channel
-                            .messages
-                            .extend(response.messages.into_iter().map(Into::into), &());
+                        channel.messages.extend(messages, &());
                         cx.emit(ChannelEvent::Message {
                             old_range: 0..old_count,
                             new_count,
                         });
-                    }),
-                    Err(error) => log::error!("error joining channel: {}", error),
+                    });
+
+                    Ok(())
                 }
+                .log_err()
             })
             .detach();
         }
 
         Self {
             details,
+            user_store,
             rpc,
             messages: Default::default(),
             pending_messages: Default::default(),
@@ -210,11 +244,14 @@ impl Channel {
             local_id,
             body: body.clone(),
         });
+        let user_store = self.user_store.clone();
         let rpc = self.rpc.clone();
         cx.spawn(|this, mut cx| {
             async move {
                 let request = rpc.request(proto::SendChannelMessage { channel_id, body });
                 let response = request.await?;
+                let sender = user_store.get_user(current_user_id).await?;
+
                 this.update(&mut cx, |this, cx| {
                     if let Ok(i) = this
                         .pending_messages
@@ -224,8 +261,8 @@ impl Channel {
                         this.insert_message(
                             ChannelMessage {
                                 id: response.message_id,
-                                sender_id: current_user_id,
                                 body,
+                                sender,
                             },
                             cx,
                         );
@@ -267,11 +304,21 @@ impl Channel {
         _: Arc<rpc::Client>,
         cx: &mut ModelContext<Self>,
     ) -> Result<()> {
+        let user_store = self.user_store.clone();
         let message = message
             .payload
             .message
             .ok_or_else(|| anyhow!("empty message"))?;
-        self.insert_message(message.into(), cx);
+
+        cx.spawn(|this, mut cx| {
+            async move {
+                let message = ChannelMessage::from_proto(message, &user_store).await?;
+                this.update(&mut cx, |this, cx| this.insert_message(message, cx));
+                Ok(())
+            }
+            .log_err()
+        })
+        .detach();
         Ok(())
     }
 
@@ -307,13 +354,17 @@ impl From<proto::Channel> for ChannelDetails {
     }
 }
 
-impl From<proto::ChannelMessage> for ChannelMessage {
-    fn from(message: proto::ChannelMessage) -> Self {
-        ChannelMessage {
+impl ChannelMessage {
+    pub async fn from_proto(
+        message: proto::ChannelMessage,
+        user_store: &UserStore,
+    ) -> Result<Self> {
+        let sender = user_store.get_user(message.sender_id).await?;
+        Ok(ChannelMessage {
             id: message.id,
-            sender_id: message.sender_id,
             body: message.body,
-        }
+            sender,
+        })
     }
 }
 
@@ -368,15 +419,16 @@ mod tests {
         let user_id = 5;
         let client = Client::new();
         let mut server = FakeServer::for_client(user_id, &client, &cx).await;
+        let user_store = Arc::new(UserStore::new(client.clone()));
 
-        let channel_list = cx.add_model(|cx| ChannelList::new(client.clone(), cx));
+        let channel_list = cx.add_model(|cx| ChannelList::new(user_store, client.clone(), cx));
         channel_list.read_with(&cx, |list, _| assert_eq!(list.available_channels(), None));
 
         // Get the available channels.
-        let message = server.receive::<proto::GetChannels>().await;
+        let get_channels = server.receive::<proto::GetChannels>().await;
         server
             .respond(
-                message.receipt(),
+                get_channels.receipt(),
                 proto::GetChannelsResponse {
                     channels: vec![proto::Channel {
                         id: 5,
@@ -404,10 +456,10 @@ mod tests {
             })
             .unwrap();
         channel.read_with(&cx, |channel, _| assert!(channel.messages().is_empty()));
-        let message = server.receive::<proto::JoinChannel>().await;
+        let join_channel = server.receive::<proto::JoinChannel>().await;
         server
             .respond(
-                message.receipt(),
+                join_channel.receipt(),
                 proto::JoinChannelResponse {
                     messages: vec![
                         proto::ChannelMessage {
@@ -420,12 +472,36 @@ mod tests {
                             id: 11,
                             body: "b".into(),
                             timestamp: 1001,
-                            sender_id: 5,
+                            sender_id: 6,
                         },
                     ],
                 },
             )
             .await;
+        // Client requests all users for the received messages
+        let mut get_users = server.receive::<proto::GetUsers>().await;
+        get_users.payload.user_ids.sort();
+        assert_eq!(get_users.payload.user_ids, vec![5, 6]);
+        server
+            .respond(
+                get_users.receipt(),
+                proto::GetUsersResponse {
+                    users: vec![
+                        proto::User {
+                            id: 5,
+                            github_login: "nathansobo".into(),
+                            avatar_url: "http://avatar.com/nathansobo".into(),
+                        },
+                        proto::User {
+                            id: 6,
+                            github_login: "maxbrunsfeld".into(),
+                            avatar_url: "http://avatar.com/maxbrunsfeld".into(),
+                        },
+                    ],
+                },
+            )
+            .await;
+
         assert_eq!(
             channel.next_event(&cx).await,
             ChannelEvent::Message {
@@ -437,9 +513,12 @@ mod tests {
             assert_eq!(
                 channel
                     .messages_in_range(0..2)
-                    .map(|message| &message.body)
+                    .map(|message| (message.sender.github_login.clone(), message.body.clone()))
                     .collect::<Vec<_>>(),
-                &["a", "b"]
+                &[
+                    ("nathansobo".into(), "a".into()),
+                    ("maxbrunsfeld".into(), "b".into())
+                ]
             );
         });
 
@@ -451,10 +530,27 @@ mod tests {
                     id: 12,
                     body: "c".into(),
                     timestamp: 1002,
-                    sender_id: 5,
+                    sender_id: 7,
                 }),
             })
             .await;
+
+        // Client requests user for message since they haven't seen them yet
+        let get_users = server.receive::<proto::GetUsers>().await;
+        assert_eq!(get_users.payload.user_ids, vec![7]);
+        server
+            .respond(
+                get_users.receipt(),
+                proto::GetUsersResponse {
+                    users: vec![proto::User {
+                        id: 7,
+                        github_login: "as-cii".into(),
+                        avatar_url: "http://avatar.com/as-cii".into(),
+                    }],
+                },
+            )
+            .await;
+
         assert_eq!(
             channel.next_event(&cx).await,
             ChannelEvent::Message {
@@ -466,9 +562,9 @@ mod tests {
             assert_eq!(
                 channel
                     .messages_in_range(2..3)
-                    .map(|message| &message.body)
+                    .map(|message| (message.sender.github_login.clone(), message.body.clone()))
                     .collect::<Vec<_>>(),
-                &["c"]
+                &[("as-cii".into(), "c".into())]
             )
         })
     }

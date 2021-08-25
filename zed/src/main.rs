@@ -12,6 +12,7 @@ use zed::{
     chat_panel, editor, file_finder,
     fs::RealFs,
     language, menus, rpc, settings, theme_selector,
+    user::UserStore,
     workspace::{self, OpenParams, OpenPaths},
     AppState,
 };
@@ -29,12 +30,13 @@ fn main() {
 
     app.run(move |cx| {
         let rpc = rpc::Client::new();
+        let user_store = Arc::new(UserStore::new(rpc.clone()));
         let app_state = Arc::new(AppState {
             languages: languages.clone(),
             settings_tx: Arc::new(Mutex::new(settings_tx)),
             settings,
             themes,
-            channel_list: cx.add_model(|cx| ChannelList::new(rpc.clone(), cx)),
+            channel_list: cx.add_model(|cx| ChannelList::new(user_store, rpc.clone(), cx)),
             rpc,
             fs: Arc::new(RealFs),
         });

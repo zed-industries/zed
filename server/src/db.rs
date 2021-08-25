@@ -162,7 +162,7 @@ impl Db {
                 FROM
                     users, channel_memberships
                 WHERE
-                    users.id IN $1 AND
+                    users.id = ANY ($1) AND
                     channel_memberships.user_id = users.id AND
                     channel_memberships.channel_id IN (
                         SELECT channel_id

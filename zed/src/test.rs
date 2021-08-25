@@ -5,6 +5,7 @@ use crate::{
     rpc,
     settings::{self, ThemeRegistry},
     time::ReplicaId,
+    user::UserStore,
     AppState, Settings,
 };
 use gpui::{AppContext, Entity, ModelHandle, MutableAppContext};
@@ -164,12 +165,13 @@ pub fn build_app_state(cx: &mut MutableAppContext) -> Arc<AppState> {
     let languages = Arc::new(LanguageRegistry::new());
     let themes = ThemeRegistry::new(());
     let rpc = rpc::Client::new();
+    let user_store = Arc::new(UserStore::new(rpc.clone()));
     Arc::new(AppState {
         settings_tx: Arc::new(Mutex::new(settings_tx)),
         settings,
         themes,
         languages: languages.clone(),
-        channel_list: cx.add_model(|cx| ChannelList::new(rpc.clone(), cx)),
+        channel_list: cx.add_model(|cx| ChannelList::new(user_store, rpc.clone(), cx)),
         rpc,
         fs: Arc::new(RealFs),
     })

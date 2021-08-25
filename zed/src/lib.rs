@@ -15,6 +15,7 @@ pub mod test;
 pub mod theme;
 pub mod theme_selector;
 mod time;
+pub mod user;
 mod util;
 pub mod workspace;
 pub mod worktree;
