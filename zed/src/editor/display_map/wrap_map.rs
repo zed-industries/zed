@@ -1,11 +1,11 @@
 use super::{
     fold_map,
-    line_wrapper::LineWrapper,
     tab_map::{self, Edit as TabEdit, Snapshot as TabSnapshot, TabPoint, TextSummary},
 };
 use crate::{editor::Point, settings::HighlightId, util::Bias, Settings};
 use gpui::{
     sum_tree::{self, Cursor, SumTree},
+    text_layout::LineWrapper,
     Entity, ModelContext, Task,
 };
 use lazy_static::lazy_static;
@@ -119,7 +119,11 @@ impl WrapMap {
             let font_cache = cx.font_cache().clone();
             let settings = self.settings.clone();
             let task = cx.background().spawn(async move {
-                let mut line_wrapper = LineWrapper::acquire(font_system, &font_cache, settings);
+                let font_id = font_cache
+                    .select_font(settings.buffer_font_family, &Default::default())
+                    .unwrap();
+                let mut line_wrapper =
+                    LineWrapper::acquire(font_id, settings.buffer_font_size, font_system);
                 let tab_snapshot = new_snapshot.tab_snapshot.clone();
                 let range = TabPoint::zero()..tab_snapshot.max_point();
                 new_snapshot
@@ -193,7 +197,11 @@ impl WrapMap {
                 let font_cache = cx.font_cache().clone();
                 let settings = self.settings.clone();
                 let update_task = cx.background().spawn(async move {
-                    let mut line_wrapper = LineWrapper::acquire(font_system, &font_cache, settings);
+                    let font_id = font_cache
+                        .select_font(settings.buffer_font_family, &Default::default())
+                        .unwrap();
+                    let mut line_wrapper =
+                        LineWrapper::acquire(font_id, settings.buffer_font_size, font_system);
                     for (tab_snapshot, edits) in pending_edits {
                         snapshot
                             .update(tab_snapshot, &edits, wrap_width, &mut line_wrapper)
@@ -941,7 +949,10 @@ mod tests {
             .add_model(|cx| WrapMap::new(tabs_snapshot.clone(), settings.clone(), wrap_width, cx));
         let (_observer, notifications) = Observer::new(&wrap_map, &mut cx);
 
-        let mut line_wrapper = LineWrapper::new(font_system, &font_cache, settings);
+        let font_id = font_cache
+            .select_font(settings.buffer_font_family, &Default::default())
+            .unwrap();
+        let mut line_wrapper = LineWrapper::new(font_id, settings.buffer_font_size, font_system);
         let unwrapped_text = tabs_snapshot.text();
         let expected_text = wrap_text(&unwrapped_text, wrap_width, &mut line_wrapper);
 

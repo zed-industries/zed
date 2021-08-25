@@ -56,7 +56,6 @@ impl Element for Text {
             .font_cache
             .select_font(self.family_id, &self.style.font_properties)
             .unwrap();
-
         todo!()
         // let line =
         //     cx.text_layout_cache

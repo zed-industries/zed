@@ -1,5 +1,4 @@
 mod fold_map;
-mod line_wrapper;
 mod tab_map;
 mod wrap_map;
 
