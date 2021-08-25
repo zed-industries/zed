@@ -11,6 +11,7 @@ mod list;
 mod mouse_event_handler;
 mod stack;
 mod svg;
+mod text;
 mod uniform_list;
 
 pub use crate::presenter::ChildView;
@@ -27,6 +28,7 @@ pub use list::*;
 pub use mouse_event_handler::*;
 pub use stack::*;
 pub use svg::*;
+pub use text::*;
 pub use uniform_list::*;
 
 use crate::{
