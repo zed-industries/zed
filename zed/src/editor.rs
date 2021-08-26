@@ -2182,7 +2182,11 @@ impl Editor {
             .max_point()
     }
 
-    pub fn text(&self, cx: &mut MutableAppContext) -> String {
+    pub fn text(&self, cx: &AppContext) -> String {
+        self.buffer.read(cx).text()
+    }
+
+    pub fn display_text(&self, cx: &mut MutableAppContext) -> String {
         self.display_map
             .update(cx, |map, cx| map.snapshot(cx))
             .text()
@@ -2843,7 +2847,7 @@ mod tests {
                 .unwrap();
             view.fold(&Fold, cx);
             assert_eq!(
-                view.text(cx),
+                view.display_text(cx),
                 "
                     impl Foo {
                         // Hello!
@@ -2864,7 +2868,7 @@ mod tests {
 
             view.fold(&Fold, cx);
             assert_eq!(
-                view.text(cx),
+                view.display_text(cx),
                 "
                     impl Foo {…
                     }
@@ -2874,7 +2878,7 @@ mod tests {
 
             view.unfold(&Unfold, cx);
             assert_eq!(
-                view.text(cx),
+                view.display_text(cx),
                 "
                     impl Foo {
                         // Hello!
@@ -2894,7 +2898,7 @@ mod tests {
             );
 
             view.unfold(&Unfold, cx);
-            assert_eq!(view.text(cx), buffer.read(cx).text());
+            assert_eq!(view.display_text(cx), buffer.read(cx).text());
         });
     }
 
@@ -2995,7 +2999,7 @@ mod tests {
                 ],
                 cx,
             );
-            assert_eq!(view.text(cx), "ⓐⓑ…ⓔ\nab…e\nαβ…ε\n");
+            assert_eq!(view.display_text(cx), "ⓐⓑ…ⓔ\nab…e\nαβ…ε\n");
 
             view.move_right(&MoveRight, cx);
             assert_eq!(view.selection_ranges(cx), &[empty_range(0, "ⓐ".len())]);
@@ -3185,7 +3189,7 @@ mod tests {
 
         view.update(cx, |view, cx| {
             view.delete_to_end_of_line(&DeleteToEndOfLine, cx);
-            assert_eq!(view.text(cx), "ab\n  de");
+            assert_eq!(view.display_text(cx), "ab\n  de");
             assert_eq!(
                 view.selection_ranges(cx),
                 &[
@@ -3197,7 +3201,7 @@ mod tests {
 
         view.update(cx, |view, cx| {
             view.delete_to_beginning_of_line(&DeleteToBeginningOfLine, cx);
-            assert_eq!(view.text(cx), "\n");
+            assert_eq!(view.display_text(cx), "\n");
             assert_eq!(
                 view.selection_ranges(cx),
                 &[
@@ -3373,7 +3377,10 @@ mod tests {
 
         view.update(cx, |view, cx| {
             view.delete_to_next_word_boundary(&DeleteToNextWordBoundary, cx);
-            assert_eq!(view.text(cx), "use std::s::{foo, bar}\n\n  {az.qux()}");
+            assert_eq!(
+                view.display_text(cx),
+                "use std::s::{foo, bar}\n\n  {az.qux()}"
+            );
             assert_eq!(
                 view.selection_ranges(cx),
                 &[
@@ -3385,7 +3392,10 @@ mod tests {
 
         view.update(cx, |view, cx| {
             view.delete_to_previous_word_boundary(&DeleteToPreviousWordBoundary, cx);
-            assert_eq!(view.text(cx), "use std::::{foo, bar}\n\n  az.qux()}");
+            assert_eq!(
+                view.display_text(cx),
+                "use std::::{foo, bar}\n\n  az.qux()}"
+            );
             assert_eq!(
                 view.selection_ranges(cx),
                 &[
@@ -3408,7 +3418,7 @@ mod tests {
         view.update(cx, |view, cx| {
             view.set_wrap_width(140., cx);
             assert_eq!(
-                view.text(cx),
+                view.display_text(cx),
                 "use one::{\n    two::three::\n    four::five\n};"
             );
 
@@ -3543,7 +3553,7 @@ mod tests {
             )
             .unwrap();
             view.delete_line(&DeleteLine, cx);
-            assert_eq!(view.text(cx), "ghi");
+            assert_eq!(view.display_text(cx), "ghi");
             assert_eq!(
                 view.selection_ranges(cx),
                 vec![
@@ -3562,7 +3572,7 @@ mod tests {
             view.select_display_ranges(&[DisplayPoint::new(2, 0)..DisplayPoint::new(0, 1)], cx)
                 .unwrap();
             view.delete_line(&DeleteLine, cx);
-            assert_eq!(view.text(cx), "ghi\n");
+            assert_eq!(view.display_text(cx), "ghi\n");
             assert_eq!(
                 view.selection_ranges(cx),
                 vec![DisplayPoint::new(0, 1)..DisplayPoint::new(0, 1)]
@@ -3589,7 +3599,7 @@ mod tests {
             )
             .unwrap();
             view.duplicate_line(&DuplicateLine, cx);
-            assert_eq!(view.text(cx), "abc\nabc\ndef\ndef\nghi\n\n");
+            assert_eq!(view.display_text(cx), "abc\nabc\ndef\ndef\nghi\n\n");
             assert_eq!(
                 view.selection_ranges(cx),
                 vec![
@@ -3616,7 +3626,7 @@ mod tests {
             )
             .unwrap();
             view.duplicate_line(&DuplicateLine, cx);
-            assert_eq!(view.text(cx), "abc\ndef\nghi\nabc\ndef\nghi\n");
+            assert_eq!(view.display_text(cx), "abc\ndef\nghi\nabc\ndef\nghi\n");
             assert_eq!(
                 view.selection_ranges(cx),
                 vec![
@@ -3653,10 +3663,16 @@ mod tests {
                 cx,
             )
             .unwrap();
-            assert_eq!(view.text(cx), "aa…bbb\nccc…eeee\nfffff\nggggg\n…i\njjjjj");
+            assert_eq!(
+                view.display_text(cx),
+                "aa…bbb\nccc…eeee\nfffff\nggggg\n…i\njjjjj"
+            );
 
             view.move_line_up(&MoveLineUp, cx);
-            assert_eq!(view.text(cx), "aa…bbb\nccc…eeee\nggggg\n…i\njjjjj\nfffff");
+            assert_eq!(
+                view.display_text(cx),
+                "aa…bbb\nccc…eeee\nggggg\n…i\njjjjj\nfffff"
+            );
             assert_eq!(
                 view.selection_ranges(cx),
                 vec![
@@ -3670,7 +3686,10 @@ mod tests {
 
         view.update(cx, |view, cx| {
             view.move_line_down(&MoveLineDown, cx);
-            assert_eq!(view.text(cx), "ccc…eeee\naa…bbb\nfffff\nggggg\n…i\njjjjj");
+            assert_eq!(
+                view.display_text(cx),
+                "ccc…eeee\naa…bbb\nfffff\nggggg\n…i\njjjjj"
+            );
             assert_eq!(
                 view.selection_ranges(cx),
                 vec![
@@ -3684,7 +3703,10 @@ mod tests {
 
         view.update(cx, |view, cx| {
             view.move_line_down(&MoveLineDown, cx);
-            assert_eq!(view.text(cx), "ccc…eeee\nfffff\naa…bbb\nggggg\n…i\njjjjj");
+            assert_eq!(
+                view.display_text(cx),
+                "ccc…eeee\nfffff\naa…bbb\nggggg\n…i\njjjjj"
+            );
             assert_eq!(
                 view.selection_ranges(cx),
                 vec![
@@ -3698,7 +3720,10 @@ mod tests {
 
         view.update(cx, |view, cx| {
             view.move_line_up(&MoveLineUp, cx);
-            assert_eq!(view.text(cx), "ccc…eeee\naa…bbb\nggggg\n…i\njjjjj\nfffff");
+            assert_eq!(
+                view.display_text(cx),
+                "ccc…eeee\naa…bbb\nggggg\n…i\njjjjj\nfffff"
+            );
             assert_eq!(
                 view.selection_ranges(cx),
                 vec![
@@ -3725,14 +3750,14 @@ mod tests {
         view.update(cx, |view, cx| {
             view.select_ranges(vec![0..4, 8..14, 19..24], false, cx);
             view.cut(&Cut, cx);
-            assert_eq!(view.text(cx), "two four six ");
+            assert_eq!(view.display_text(cx), "two four six ");
         });
 
         // Paste with three cursors. Each cursor pastes one slice of the clipboard text.
         view.update(cx, |view, cx| {
             view.select_ranges(vec![4..4, 9..9, 13..13], false, cx);
             view.paste(&Paste, cx);
-            assert_eq!(view.text(cx), "two one four three six five ");
+            assert_eq!(view.display_text(cx), "two one four three six five ");
             assert_eq!(
                 view.selection_ranges(cx),
                 &[
@@ -3752,7 +3777,7 @@ mod tests {
             view.paste(&Paste, cx);
             view.insert(&Insert(") ".into()), cx);
             assert_eq!(
-                view.text(cx),
+                view.display_text(cx),
                 "( one three five ) two one four three six five ( one three five ) "
             );
         });
@@ -3761,7 +3786,7 @@ mod tests {
             view.select_ranges(vec![0..0], false, cx);
             view.insert(&Insert("123\n4567\n89\n".into()), cx);
             assert_eq!(
-                view.text(cx),
+                view.display_text(cx),
                 "123\n4567\n89\n( one three five ) two one four three six five ( one three five ) "
             );
         });
@@ -3779,7 +3804,7 @@ mod tests {
             .unwrap();
             view.cut(&Cut, cx);
             assert_eq!(
-                view.text(cx),
+                view.display_text(cx),
                 "13\n9\n( one three five ) two one four three six five ( one three five ) "
             );
         });
@@ -3798,7 +3823,7 @@ mod tests {
             .unwrap();
             view.paste(&Paste, cx);
             assert_eq!(
-                view.text(cx),
+                view.display_text(cx),
                 "123\n4567\n9\n( 8ne three five ) two one four three six five ( one three five ) "
             );
             assert_eq!(
@@ -3832,7 +3857,7 @@ mod tests {
             .unwrap();
             view.paste(&Paste, cx);
             assert_eq!(
-                view.text(cx),
+                view.display_text(cx),
                 "123\n123\n123\n67\n123\n9\n( 8ne three five ) two one four three six five ( one three five ) "
             );
             assert_eq!(
@@ -3936,12 +3961,15 @@ mod tests {
                 cx,
             )
             .unwrap();
-            assert_eq!(view.text(cx), "aa…bbb\nccc…eeee\nfffff\nggggg\n…i");
+            assert_eq!(view.display_text(cx), "aa…bbb\nccc…eeee\nfffff\nggggg\n…i");
         });
 
         view.update(cx, |view, cx| {
             view.split_selection_into_lines(&SplitSelectionIntoLines, cx);
-            assert_eq!(view.text(cx), "aaaaa\nbbbbb\nccc…eeee\nfffff\nggggg\n…i");
+            assert_eq!(
+                view.display_text(cx),
+                "aaaaa\nbbbbb\nccc…eeee\nfffff\nggggg\n…i"
+            );
             assert_eq!(
                 view.selection_ranges(cx),
                 [
@@ -3958,7 +3986,7 @@ mod tests {
                 .unwrap();
             view.split_selection_into_lines(&SplitSelectionIntoLines, cx);
             assert_eq!(
-                view.text(cx),
+                view.display_text(cx),
                 "aaaaa\nbbbbb\nccccc\nddddd\neeeee\nfffff\nggggg\nhhhhh\niiiii"
             );
             assert_eq!(
