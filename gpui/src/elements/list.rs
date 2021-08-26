@@ -5,19 +5,17 @@ use crate::{
     },
     json::json,
     sum_tree::{self, Bias, SumTree},
-    DebugContext, Element, Event, EventContext, LayoutContext, PaintContext, SizeConstraint,
+    DebugContext, Element, ElementBox, ElementRc, Event, EventContext, LayoutContext, PaintContext,
+    RenderContext, SizeConstraint, View,
 };
-use parking_lot::Mutex;
-use std::{ops::Range, sync::Arc};
-
-use crate::ElementBox;
+use std::{cell::RefCell, ops::Range, rc::Rc};
 
 pub struct List {
     state: ListState,
 }
 
 #[derive(Clone)]
-pub struct ListState(Arc<Mutex<StateInner>>);
+pub struct ListState(Rc<RefCell<StateInner>>);
 
 #[derive(Eq, PartialEq)]
 pub enum Orientation {
@@ -27,7 +25,7 @@ pub enum Orientation {
 
 struct StateInner {
     last_layout_width: f32,
-    elements: Vec<ElementBox>,
+    elements: Vec<Option<ElementRc>>,
     heights: SumTree<ElementHeight>,
     scroll_position: f32,
     orientation: Orientation,
@@ -56,13 +54,55 @@ struct PendingCount(usize);
 struct Height(f32);
 
 impl List {
-    pub fn new(state: ListState) -> Self {
+    pub fn new<F, I, V>(state: ListState, cx: &RenderContext<V>, build_items: F) -> Self
+    where
+        F: Fn(Range<usize>) -> I,
+        I: IntoIterator<Item = ElementBox>,
+        V: View,
+    {
+        {
+            let state = &mut *state.0.borrow_mut();
+            if cx.refreshing {
+                let elements = (build_items)(0..state.elements.len());
+                state.elements.clear();
+                state
+                    .elements
+                    .extend(elements.into_iter().map(|e| Some(e.into())));
+                state.heights = SumTree::new();
+                state.heights.extend(
+                    (0..state.elements.len()).map(|_| ElementHeight::Pending),
+                    &(),
+                );
+            } else {
+                let mut cursor = state.heights.cursor::<PendingCount, Count>();
+                cursor.seek(&PendingCount(1), sum_tree::Bias::Left, &());
+
+                while cursor.item().is_some() {
+                    let start_ix = cursor.sum_start().0;
+                    while cursor.item().map_or(false, |h| h.is_pending()) {
+                        cursor.next(&());
+                    }
+                    let end_ix = cursor.sum_start().0;
+                    if end_ix > start_ix {
+                        state.elements.splice(
+                            start_ix..end_ix,
+                            (build_items)(start_ix..end_ix)
+                                .into_iter()
+                                .map(|e| Some(e.into())),
+                        );
+                    }
+
+                    cursor.seek(&PendingCount(cursor.seek_start().0 + 1), Bias::Left, &());
+                }
+            }
+        }
+
         Self { state }
     }
 }
 
 impl Element for List {
-    type LayoutState = ();
+    type LayoutState = Vec<ElementRc>;
 
     type PaintState = ();
 
@@ -71,7 +111,7 @@ impl Element for List {
         constraint: SizeConstraint,
         cx: &mut LayoutContext,
     ) -> (Vector2F, Self::LayoutState) {
-        let state = &mut *self.state.0.lock();
+        let state = &mut *self.state.0.borrow_mut();
         let mut item_constraint = constraint;
         item_constraint.min.set_y(0.);
         item_constraint.max.set_y(f32::INFINITY);
@@ -87,8 +127,8 @@ impl Element for List {
 
             while let Some(height) = old_heights.item() {
                 if height.is_pending() {
-                    let size =
-                        state.elements[old_heights.sum_start().count].layout(item_constraint, cx);
+                    let element = &mut state.elements[old_heights.sum_start().count];
+                    let size = element.as_mut().unwrap().layout(item_constraint, cx);
                     new_heights.push(ElementHeight::Ready(size.y()), &());
 
                     // Adjust scroll position to keep visible elements stable
@@ -123,18 +163,28 @@ impl Element for List {
         } else {
             state.heights = SumTree::new();
             for element in &mut state.elements {
+                let element = element.as_mut().unwrap();
                 let size = element.layout(item_constraint, cx);
                 state.heights.push(ElementHeight::Ready(size.y()), &());
             }
             state.last_layout_width = constraint.max.x();
         }
 
-        (size, ())
+        let visible_elements = state.elements[state.visible_range(size.y())]
+            .iter()
+            .map(|e| e.clone().unwrap())
+            .collect();
+        (size, visible_elements)
     }
 
-    fn paint(&mut self, bounds: RectF, _: &mut (), cx: &mut PaintContext) {
+    fn paint(
+        &mut self,
+        bounds: RectF,
+        visible_elements: &mut Self::LayoutState,
+        cx: &mut PaintContext,
+    ) {
         cx.scene.push_layer(Some(bounds));
-        let state = &mut *self.state.0.lock();
+        let state = &mut *self.state.0.borrow_mut();
         let visible_range = state.visible_range(bounds.height());
 
         let mut item_top = {
@@ -149,7 +199,7 @@ impl Element for List {
         }
         let scroll_top = state.scroll_top(bounds.height());
 
-        for element in &mut state.elements[visible_range] {
+        for element in visible_elements {
             let origin = bounds.origin() + vec2f(0., item_top - scroll_top);
             element.paint(origin, cx);
             item_top += element.size().y();
@@ -161,16 +211,15 @@ impl Element for List {
         &mut self,
         event: &Event,
         bounds: RectF,
-        _: &mut (),
+        visible_elements: &mut Self::LayoutState,
         _: &mut (),
         cx: &mut EventContext,
     ) -> bool {
         let mut handled = false;
 
-        let mut state = self.state.0.lock();
-        let visible_range = state.visible_range(bounds.height());
-        for item in &mut state.elements[visible_range] {
-            handled = item.dispatch_event(event, cx) || handled;
+        let mut state = self.state.0.borrow_mut();
+        for element in visible_elements {
+            handled = element.dispatch_event(event, cx) || handled;
         }
 
         match event {
@@ -191,10 +240,16 @@ impl Element for List {
         handled
     }
 
-    fn debug(&self, bounds: RectF, _: &(), _: &(), cx: &DebugContext) -> serde_json::Value {
-        let state = self.state.0.lock();
+    fn debug(
+        &self,
+        bounds: RectF,
+        visible_elements: &Self::LayoutState,
+        _: &(),
+        cx: &DebugContext,
+    ) -> serde_json::Value {
+        let state = self.state.0.borrow_mut();
         let visible_range = state.visible_range(bounds.height());
-        let visible_elements = state.elements[visible_range.clone()]
+        let visible_elements = visible_elements
             .iter()
             .map(|e| e.debug(cx))
             .collect::<Vec<_>>();
@@ -207,40 +262,29 @@ impl Element for List {
 }
 
 impl ListState {
-    pub fn new(elements: Vec<ElementBox>, orientation: Orientation) -> Self {
+    pub fn new(element_count: usize, orientation: Orientation) -> Self {
         let mut heights = SumTree::new();
-        heights.extend(elements.iter().map(|_| ElementHeight::Pending), &());
-        Self(Arc::new(Mutex::new(StateInner {
+        heights.extend((0..element_count).map(|_| ElementHeight::Pending), &());
+        Self(Rc::new(RefCell::new(StateInner {
             last_layout_width: 0.,
-            elements,
+            elements: (0..element_count).map(|_| None).collect(),
             heights,
             scroll_position: 0.,
             orientation,
         })))
     }
 
-    pub fn splice(
-        &self,
-        old_range: Range<usize>,
-        new_elements: impl IntoIterator<Item = ElementBox>,
-    ) {
-        let state = &mut *self.0.lock();
+    pub fn splice(&self, old_range: Range<usize>, count: usize) {
+        let state = &mut *self.0.borrow_mut();
 
         let mut old_heights = state.heights.cursor::<Count, ()>();
         let mut new_heights = old_heights.slice(&Count(old_range.start), Bias::Right, &());
         old_heights.seek_forward(&Count(old_range.end), Bias::Right, &());
 
-        let mut len = 0;
-        let old_elements = state.elements.splice(
-            old_range,
-            new_elements.into_iter().map(|e| {
-                len += 1;
-                e
-            }),
-        );
+        let old_elements = state.elements.splice(old_range, (0..count).map(|_| None));
         drop(old_elements);
 
-        new_heights.extend((0..len).map(|_| ElementHeight::Pending), &());
+        new_heights.extend((0..count).map(|_| ElementHeight::Pending), &());
         new_heights.push_tree(old_heights.suffix(&()), &());
         drop(old_heights);
         state.heights = new_heights;
@@ -370,22 +414,28 @@ impl<'a> sum_tree::SeekDimension<'a, ElementHeightSummary> for Height {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{elements::*, geometry::vector::vec2f};
+    use crate::{elements::*, geometry::vector::vec2f, Entity};
 
     #[crate::test(self)]
     fn test_layout(cx: &mut crate::MutableAppContext) {
-        let mut presenter = cx.build_presenter(0, 20.0);
-        let mut layout_cx = presenter.layout_cx(cx);
-        let state = ListState::new(vec![item(20.), item(30.), item(10.)], Orientation::Top);
-        let mut list = List::new(state.clone()).boxed();
+        let mut presenter = cx.build_presenter(0, 0.);
 
+        let mut elements = vec![20., 30., 10.];
+        let state = ListState::new(elements.len(), Orientation::Top);
+
+        let mut list = List::new(
+            state.clone(),
+            &cx.render_cx::<TestView>(0, 0, 0., false),
+            |range| elements[range].iter().copied().map(item),
+        )
+        .boxed();
         let size = list.layout(
             SizeConstraint::new(vec2f(0., 0.), vec2f(100., 40.)),
-            &mut layout_cx,
+            &mut presenter.layout_cx(cx),
         );
         assert_eq!(size, vec2f(100., 40.));
         assert_eq!(
-            state.0.lock().heights.summary(),
+            state.0.borrow().heights.summary(),
             ElementHeightSummary {
                 count: 3,
                 pending_count: 0,
@@ -393,23 +443,32 @@ mod tests {
             }
         );
 
-        state.splice(1..2, vec![item(40.), item(50.)]);
-        state.splice(3..3, vec![item(60.)]);
+        elements.splice(1..2, vec![40., 50.]);
+        elements.push(60.);
+        state.splice(1..2, 2);
+        state.splice(4..4, 1);
         assert_eq!(
-            state.0.lock().heights.summary(),
+            state.0.borrow().heights.summary(),
             ElementHeightSummary {
                 count: 5,
                 pending_count: 3,
                 height: 30.
             }
         );
+
+        let mut list = List::new(
+            state.clone(),
+            &cx.render_cx::<TestView>(0, 0, 0., false),
+            |range| elements[range].iter().copied().map(item),
+        )
+        .boxed();
         let size = list.layout(
             SizeConstraint::new(vec2f(0., 0.), vec2f(100., 40.)),
-            &mut layout_cx,
+            &mut presenter.layout_cx(cx),
         );
         assert_eq!(size, vec2f(100., 40.));
         assert_eq!(
-            state.0.lock().heights.summary(),
+            state.0.borrow().heights.summary(),
             ElementHeightSummary {
                 count: 5,
                 pending_count: 0,
@@ -423,5 +482,21 @@ mod tests {
             .with_height(height)
             .with_width(100.)
             .boxed()
+    }
+
+    struct TestView;
+
+    impl Entity for TestView {
+        type Event = ();
+    }
+
+    impl View for TestView {
+        fn ui_name() -> &'static str {
+            "TestView"
+        }
+
+        fn render(&self, _: &RenderContext<'_, Self>) -> ElementBox {
+            unimplemented!()
+        }
     }
 }

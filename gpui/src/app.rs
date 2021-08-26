@@ -1305,7 +1305,7 @@ impl MutableAppContext {
         if !self.flushing_effects && self.pending_flushes == 0 {
             self.flushing_effects = true;
 
-            let mut full_refresh = false;
+            let mut refreshing = false;
             loop {
                 if let Some(effect) = self.pending_effects.pop_front() {
                     match effect {
@@ -1320,13 +1320,13 @@ impl MutableAppContext {
                             self.focus(window_id, view_id);
                         }
                         Effect::RefreshWindows => {
-                            full_refresh = true;
+                            refreshing = true;
                         }
                     }
                     self.remove_dropped_entities();
                 } else {
                     self.remove_dropped_entities();
-                    if full_refresh {
+                    if refreshing {
                         self.perform_window_refresh();
                     } else {
                         self.update_windows();
@@ -1336,7 +1336,7 @@ impl MutableAppContext {
                         self.flushing_effects = false;
                         break;
                     } else {
-                        full_refresh = false;
+                        refreshing = false;
                     }
                 }
             }
@@ -1638,11 +1638,11 @@ impl AppContext {
         window_id: usize,
         view_id: usize,
         titlebar_height: f32,
-        refresh: bool,
+        refreshing: bool,
     ) -> Result<ElementBox> {
         self.views
             .get(&(window_id, view_id))
-            .map(|v| v.render(window_id, view_id, titlebar_height, refresh, self))
+            .map(|v| v.render(window_id, view_id, titlebar_height, refreshing, self))
             .ok_or(anyhow!("view not found"))
     }
 
@@ -1664,6 +1664,23 @@ impl AppContext {
                 }
             })
             .collect::<HashMap<_, ElementBox>>()
+    }
+
+    pub fn render_cx<V: View>(
+        &self,
+        window_id: usize,
+        view_id: usize,
+        titlebar_height: f32,
+        refreshing: bool,
+    ) -> RenderContext<V> {
+        RenderContext {
+            app: self,
+            titlebar_height,
+            refreshing,
+            window_id,
+            view_id,
+            view_type: PhantomData,
+        }
     }
 
     pub fn background(&self) -> &Arc<executor::Background> {
@@ -1816,7 +1833,7 @@ pub trait AnyView {
         window_id: usize,
         view_id: usize,
         titlebar_height: f32,
-        refresh: bool,
+        refreshing: bool,
         cx: &AppContext,
     ) -> ElementBox;
     fn on_focus(&mut self, cx: &mut MutableAppContext, window_id: usize, view_id: usize);
@@ -1849,7 +1866,7 @@ where
         window_id: usize,
         view_id: usize,
         titlebar_height: f32,
-        refresh: bool,
+        refreshing: bool,
         cx: &AppContext,
     ) -> ElementBox {
         View::render(
@@ -1860,7 +1877,7 @@ where
                 app: cx,
                 view_type: PhantomData::<T>,
                 titlebar_height,
-                refresh,
+                refreshing,
             },
         )
     }
@@ -2229,7 +2246,7 @@ impl<'a, T: View> ViewContext<'a, T> {
 pub struct RenderContext<'a, T: View> {
     pub app: &'a AppContext,
     pub titlebar_height: f32,
-    pub refresh: bool,
+    pub refreshing: bool,
     window_id: usize,
     view_id: usize,
     view_type: PhantomData<T>,
@@ -2252,6 +2269,12 @@ impl<V: View> Deref for RenderContext<'_, V> {
 
     fn deref(&self) -> &Self::Target {
         &self.app
+    }
+}
+
+impl<V: View> ReadModel for RenderContext<'_, V> {
+    fn read_model<T: Entity>(&self, handle: &ModelHandle<T>) -> &T {
+        self.app.read_model(handle)
     }
 }
 

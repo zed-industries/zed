@@ -37,7 +37,14 @@ use crate::{
 };
 use core::panic;
 use json::ToJson;
-use std::{any::Any, borrow::Cow, mem};
+use std::{
+    any::Any,
+    borrow::Cow,
+    cell::RefCell,
+    mem,
+    ops::{Deref, DerefMut},
+    rc::Rc,
+};
 
 trait AnyElement {
     fn layout(&mut self, constraint: SizeConstraint, cx: &mut LayoutContext) -> Vector2F;
@@ -91,20 +98,20 @@ pub trait Element {
     where
         Self: 'static + Sized,
     {
-        ElementBox {
+        ElementBox(ElementRc {
             name: None,
-            element: Box::new(Lifecycle::Init { element: self }),
-        }
+            element: Rc::new(RefCell::new(Lifecycle::Init { element: self })),
+        })
     }
 
     fn named(self, name: impl Into<Cow<'static, str>>) -> ElementBox
     where
         Self: 'static + Sized,
     {
-        ElementBox {
+        ElementBox(ElementRc {
             name: Some(name.into()),
-            element: Box::new(Lifecycle::Init { element: self }),
-        }
+            element: Rc::new(RefCell::new(Lifecycle::Init { element: self })),
+        })
     }
 }
 
@@ -127,9 +134,12 @@ pub enum Lifecycle<T: Element> {
         paint: T::PaintState,
     },
 }
-pub struct ElementBox {
+pub struct ElementBox(ElementRc);
+
+#[derive(Clone)]
+pub struct ElementRc {
     name: Option<Cow<'static, str>>,
-    element: Box<dyn AnyElement>,
+    element: Rc<RefCell<dyn AnyElement>>,
 }
 
 impl<T: Element> AnyElement for Lifecycle<T> {
@@ -262,28 +272,51 @@ impl<T: Element> Default for Lifecycle<T> {
 }
 
 impl ElementBox {
+    pub fn metadata(&self) -> Option<&dyn Any> {
+        let element = unsafe { &*self.0.element.as_ptr() };
+        element.metadata()
+    }
+}
+
+impl Into<ElementRc> for ElementBox {
+    fn into(self) -> ElementRc {
+        self.0
+    }
+}
+
+impl Deref for ElementBox {
+    type Target = ElementRc;
+
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
+}
+
+impl DerefMut for ElementBox {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.0
+    }
+}
+
+impl ElementRc {
     pub fn layout(&mut self, constraint: SizeConstraint, cx: &mut LayoutContext) -> Vector2F {
-        self.element.layout(constraint, cx)
+        self.element.borrow_mut().layout(constraint, cx)
     }
 
     pub fn paint(&mut self, origin: Vector2F, cx: &mut PaintContext) {
-        self.element.paint(origin, cx);
+        self.element.borrow_mut().paint(origin, cx);
     }
 
     pub fn dispatch_event(&mut self, event: &Event, cx: &mut EventContext) -> bool {
-        self.element.dispatch_event(event, cx)
+        self.element.borrow_mut().dispatch_event(event, cx)
     }
 
     pub fn size(&self) -> Vector2F {
-        self.element.size()
-    }
-
-    pub fn metadata(&self) -> Option<&dyn Any> {
-        self.element.metadata()
+        self.element.borrow().size()
     }
 
     pub fn debug(&self, cx: &DebugContext) -> json::Value {
-        let mut value = self.element.debug(cx);
+        let mut value = self.element.borrow().debug(cx);
 
         if let Some(name) = &self.name {
             if let json::Value::Object(map) = &mut value {

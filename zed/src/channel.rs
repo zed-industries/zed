@@ -60,7 +60,7 @@ pub struct PendingChannelMessage {
 #[derive(Clone, Debug, Default)]
 pub struct ChannelMessageSummary {
     max_id: u64,
-    count: Count,
+    count: usize,
 }
 
 #[derive(Copy, Clone, Debug, Default)]
@@ -208,7 +208,7 @@ impl Channel {
                     }
 
                     channel.update(&mut cx, |channel, cx| {
-                        let old_count = channel.messages.summary().count.0;
+                        let old_count = channel.messages.summary().count;
                         let new_count = messages.len();
 
                         channel.messages = SumTree::new();
@@ -280,6 +280,10 @@ impl Channel {
         .detach();
         cx.notify();
         Ok(())
+    }
+
+    pub fn message_count(&self) -> usize {
+        self.messages.summary().count
     }
 
     pub fn messages(&self) -> &SumTree<ChannelMessage> {
@@ -380,7 +384,7 @@ impl sum_tree::Item for ChannelMessage {
     fn summary(&self) -> Self::Summary {
         ChannelMessageSummary {
             max_id: self.id,
-            count: Count(1),
+            count: 1,
         }
     }
 }
@@ -390,7 +394,7 @@ impl sum_tree::Summary for ChannelMessageSummary {
 
     fn add_summary(&mut self, summary: &Self, _: &()) {
         self.max_id = summary.max_id;
-        self.count.0 += summary.count.0;
+        self.count += summary.count;
     }
 }
 
@@ -403,7 +407,7 @@ impl<'a> sum_tree::Dimension<'a, ChannelMessageSummary> for u64 {
 
 impl<'a> sum_tree::Dimension<'a, ChannelMessageSummary> for Count {
     fn add_summary(&mut self, summary: &'a ChannelMessageSummary, _: &()) {
-        self.0 += summary.count.0;
+        self.0 += summary.count;
     }
 }
 
