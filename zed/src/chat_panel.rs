@@ -207,10 +207,10 @@ fn format_timestamp(mut timestamp: OffsetDateTime, mut now: OffsetDateTime) -> S
         part = "pm";
     }
     if date == today {
-        format!("{}:{}{}", hour, timestamp.minute(), part)
+        format!("{:02}:{:02}{}", hour, timestamp.minute(), part)
     } else if date.next_day() == Some(today) {
-        format!("yesterday at {}:{}{}", hour, timestamp.minute(), part)
+        format!("yesterday at {:02}:{:02}{}", hour, timestamp.minute(), part)
     } else {
-        format!("{}/{}/{}", date.month(), date.day(), date.year())
+        format!("{:02}/{}/{}", date.month() as u32, date.day(), date.year())
     }
 }
