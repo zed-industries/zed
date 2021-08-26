@@ -919,18 +919,14 @@ mod tests {
     use super::*;
     use crate::{
         auth,
-        db::{self, UserId},
+        db::{tests::TestDb, Db, UserId},
         github, AppState, Config,
     };
-    use async_std::{
-        sync::RwLockReadGuard,
-        task::{self, block_on},
-    };
+    use async_std::{sync::RwLockReadGuard, task};
     use gpui::TestAppContext;
     use postage::mpsc;
-    use rand::prelude::*;
     use serde_json::json;
-    use sqlx::{migrate::MigrateDatabase, types::time::OffsetDateTime, Postgres};
+    use sqlx::types::time::OffsetDateTime;
     use std::{path::Path, sync::Arc, time::Duration};
     use zed::{
         channel::{Channel, ChannelDetails, ChannelList},
@@ -1533,15 +1529,14 @@ mod tests {
         peer: Arc<Peer>,
         app_state: Arc<AppState>,
         server: Arc<Server>,
-        db_name: String,
+        test_db: TestDb,
         notifications: mpsc::Receiver<()>,
     }
 
     impl TestServer {
         async fn start() -> Self {
-            let mut rng = StdRng::from_entropy();
-            let db_name = format!("zed-test-{}", rng.gen::<u128>());
-            let app_state = Self::build_app_state(&db_name).await;
+            let (test_db, db) = TestDb::new();
+            let app_state = Self::build_app_state(&test_db, db).await;
             let peer = Peer::new();
             let notifications = mpsc::channel(128);
             let server = Server::new(app_state.clone(), peer.clone(), Some(notifications.0));
@@ -1549,7 +1544,7 @@ mod tests {
                 peer,
                 app_state,
                 server,
-                db_name,
+                test_db,
                 notifications: notifications.1,
             }
         }
@@ -1575,18 +1570,10 @@ mod tests {
             (user_id, client)
         }
 
-        async fn build_app_state(db_name: &str) -> Arc<AppState> {
+        async fn build_app_state(test_db: &TestDb, db: Db) -> Arc<AppState> {
             let mut config = Config::default();
             config.session_secret = "a".repeat(32);
-            config.database_url = format!("postgres://postgres@localhost/{}", db_name);
-
-            Self::create_db(&config.database_url);
-            let db = db::Db::test(&config.database_url, 5);
-            db.migrate(Path::new(concat!(
-                env!("CARGO_MANIFEST_DIR"),
-                "/migrations"
-            )));
-
+            config.database_url = test_db.url.clone();
             let github_client = github::AppClient::test();
             Arc::new(AppState {
                 db,
@@ -1596,16 +1583,6 @@ mod tests {
                 github_client,
                 config,
             })
-        }
-
-        fn create_db(url: &str) {
-            // Enable tests to run in parallel by serializing the creation of each test database.
-            lazy_static::lazy_static! {
-                static ref DB_CREATION: std::sync::Mutex<()> = std::sync::Mutex::new(());
-            }
-
-            let _lock = DB_CREATION.lock();
-            block_on(Postgres::create_database(url)).expect("failed to create test database");
         }
 
         async fn state<'a>(&'a self) -> RwLockReadGuard<'a, ServerState> {
@@ -1630,10 +1607,7 @@ mod tests {
         fn drop(&mut self) {
             task::block_on(async {
                 self.peer.reset().await;
-                self.app_state.db.close(&self.db_name).await;
-                Postgres::drop_database(&self.app_state.config.database_url)
-                    .await
-                    .unwrap();
+                self.app_state.db.close(&self.test_db.name).await;
             });
         }
     }

@@ -68,21 +68,6 @@ impl Db {
         })
     }
 
-    #[cfg(test)]
-    pub fn test(url: &str, max_connections: u32) -> Self {
-        let mut db = block_on(Self::new(url, max_connections)).unwrap();
-        db.test_mode = true;
-        db
-    }
-
-    #[cfg(test)]
-    pub fn migrate(&self, path: &std::path::Path) {
-        block_on(async {
-            let migrator = sqlx::migrate::Migrator::new(path).await.unwrap();
-            migrator.run(&self.db).await.unwrap();
-        });
-    }
-
     // signups
 
     pub async fn create_signup(
@@ -457,3 +442,54 @@ id_type!(OrgId);
 id_type!(ChannelId);
 id_type!(SignupId);
 id_type!(MessageId);
+
+#[cfg(test)]
+pub mod tests {
+    use super::*;
+    use rand::prelude::*;
+    use sqlx::{
+        migrate::{MigrateDatabase, Migrator},
+        Postgres,
+    };
+    use std::path::Path;
+
+    pub struct TestDb {
+        pub name: String,
+        pub url: String,
+    }
+
+    impl TestDb {
+        pub fn new() -> (Self, Db) {
+            // Enable tests to run in parallel by serializing the creation of each test database.
+            lazy_static::lazy_static! {
+                static ref DB_CREATION: std::sync::Mutex<()> = std::sync::Mutex::new(());
+            }
+
+            let mut rng = StdRng::from_entropy();
+            let name = format!("zed-test-{}", rng.gen::<u128>());
+            let url = format!("postgres://postgres@localhost/{}", name);
+            let migrations_path = Path::new(concat!(env!("CARGO_MANIFEST_DIR"), "/migrations"));
+            let db = block_on(async {
+                {
+                    let _lock = DB_CREATION.lock();
+                    Postgres::create_database(&url)
+                        .await
+                        .expect("failed to create test db");
+                }
+                let mut db = Db::new(&url, 5).await.unwrap();
+                db.test_mode = true;
+                let migrator = Migrator::new(migrations_path).await.unwrap();
+                migrator.run(&db.db).await.unwrap();
+                db
+            });
+
+            (Self { name, url }, db)
+        }
+    }
+
+    impl Drop for TestDb {
+        fn drop(&mut self) {
+            block_on(Postgres::drop_database(&self.url)).unwrap();
+        }
+    }
+}
