@@ -919,7 +919,7 @@ mod tests {
     use super::*;
     use crate::{
         auth,
-        db::{tests::TestDb, Db, UserId},
+        db::{tests::TestDb, UserId},
         github, AppState, Config,
     };
     use async_std::{sync::RwLockReadGuard, task};
@@ -1529,14 +1529,14 @@ mod tests {
         peer: Arc<Peer>,
         app_state: Arc<AppState>,
         server: Arc<Server>,
-        test_db: TestDb,
         notifications: mpsc::Receiver<()>,
+        _test_db: TestDb,
     }
 
     impl TestServer {
         async fn start() -> Self {
-            let (test_db, db) = TestDb::new();
-            let app_state = Self::build_app_state(&test_db, db).await;
+            let test_db = TestDb::new();
+            let app_state = Self::build_app_state(&test_db).await;
             let peer = Peer::new();
             let notifications = mpsc::channel(128);
             let server = Server::new(app_state.clone(), peer.clone(), Some(notifications.0));
@@ -1544,8 +1544,8 @@ mod tests {
                 peer,
                 app_state,
                 server,
-                test_db,
                 notifications: notifications.1,
+                _test_db: test_db,
             }
         }
 
@@ -1570,13 +1570,13 @@ mod tests {
             (user_id, client)
         }
 
-        async fn build_app_state(test_db: &TestDb, db: Db) -> Arc<AppState> {
+        async fn build_app_state(test_db: &TestDb) -> Arc<AppState> {
             let mut config = Config::default();
             config.session_secret = "a".repeat(32);
             config.database_url = test_db.url.clone();
             let github_client = github::AppClient::test();
             Arc::new(AppState {
-                db,
+                db: test_db.db().clone(),
                 handlebars: Default::default(),
                 auth_client: auth::build_client("", ""),
                 repo_client: github::RepoClient::test(&github_client),
@@ -1605,10 +1605,7 @@ mod tests {
 
     impl Drop for TestServer {
         fn drop(&mut self) {
-            task::block_on(async {
-                self.peer.reset().await;
-                self.app_state.db.close(&self.test_db.name).await;
-            });
+            task::block_on(self.peer.reset());
         }
     }
 
