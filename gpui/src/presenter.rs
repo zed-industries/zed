@@ -66,9 +66,24 @@ impl Presenter {
         for view_id in invalidation.updated {
             self.rendered_views.insert(
                 view_id,
-                cx.render_view(self.window_id, view_id, self.titlebar_height)
+                cx.render_view(self.window_id, view_id, self.titlebar_height, false)
                     .unwrap(),
             );
+        }
+    }
+
+    pub fn refresh(&mut self, invalidation: Option<WindowInvalidation>, cx: &AppContext) {
+        if let Some(invalidation) = invalidation {
+            for view_id in invalidation.removed {
+                self.rendered_views.remove(&view_id);
+                self.parents.remove(&view_id);
+            }
+        }
+
+        for (view_id, view) in &mut self.rendered_views {
+            *view = cx
+                .render_view(self.window_id, *view_id, self.titlebar_height, true)
+                .unwrap();
         }
     }
 

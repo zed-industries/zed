@@ -97,7 +97,7 @@ impl ThemeSelector {
         action.0.themes.clear();
         match action.0.themes.get(&current_theme_name) {
             Ok(theme) => {
-                cx.notify_all();
+                cx.refresh_windows();
                 action.0.settings_tx.lock().borrow_mut().theme = theme;
                 log::info!("reloaded theme {}", current_theme_name);
             }
@@ -112,7 +112,7 @@ impl ThemeSelector {
             match self.registry.get(&mat.string) {
                 Ok(theme) => {
                     self.settings_tx.lock().borrow_mut().theme = theme;
-                    cx.notify_all();
+                    cx.refresh_windows();
                     cx.emit(Event::Dismissed);
                 }
                 Err(error) => log::error!("error loading theme {}: {}", mat.string, error),

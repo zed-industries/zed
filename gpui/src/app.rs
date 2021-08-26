@@ -22,6 +22,7 @@ use std::{
     fmt::{self, Debug},
     hash::{Hash, Hasher},
     marker::PhantomData,
+    mem,
     ops::{Deref, DerefMut},
     path::{Path, PathBuf},
     rc::{self, Rc},
@@ -973,16 +974,6 @@ impl MutableAppContext {
             .push_back(Effect::ViewNotification { window_id, view_id });
     }
 
-    pub(crate) fn notify_all_views(&mut self) {
-        let notifications = self
-            .views
-            .keys()
-            .copied()
-            .map(|(window_id, view_id)| Effect::ViewNotification { window_id, view_id })
-            .collect::<Vec<_>>();
-        self.pending_effects.extend(notifications);
-    }
-
     pub fn dispatch_action<A: Action>(
         &mut self,
         window_id: usize,
@@ -1314,6 +1305,7 @@ impl MutableAppContext {
         if !self.flushing_effects && self.pending_flushes == 0 {
             self.flushing_effects = true;
 
+            let mut full_refresh = false;
             loop {
                 if let Some(effect) = self.pending_effects.pop_front() {
                     match effect {
@@ -1327,15 +1319,24 @@ impl MutableAppContext {
                         Effect::Focus { window_id, view_id } => {
                             self.focus(window_id, view_id);
                         }
+                        Effect::RefreshWindows => {
+                            full_refresh = true;
+                        }
                     }
                     self.remove_dropped_entities();
                 } else {
                     self.remove_dropped_entities();
-                    self.update_windows();
+                    if full_refresh {
+                        self.perform_window_refresh();
+                    } else {
+                        self.update_windows();
+                    }
 
                     if self.pending_effects.is_empty() {
                         self.flushing_effects = false;
                         break;
+                    } else {
+                        full_refresh = false;
                     }
                 }
             }
@@ -1364,6 +1365,28 @@ impl MutableAppContext {
                     .insert(window_id, (presenter, window));
             }
         }
+    }
+
+    pub fn refresh_windows(&mut self) {
+        self.pending_effects.push_back(Effect::RefreshWindows);
+    }
+
+    fn perform_window_refresh(&mut self) {
+        let mut presenters = mem::take(&mut self.presenters_and_platform_windows);
+        for (window_id, (presenter, window)) in &mut presenters {
+            let invalidation = self
+                .cx
+                .windows
+                .get_mut(&window_id)
+                .unwrap()
+                .invalidation
+                .take();
+            let mut presenter = presenter.borrow_mut();
+            presenter.refresh(invalidation, self.as_ref());
+            let scene = presenter.build_scene(window.size(), window.scale_factor(), self);
+            window.present_scene(scene);
+        }
+        self.presenters_and_platform_windows = presenters;
     }
 
     fn emit_event(&mut self, entity_id: usize, payload: Box<dyn Any>) {
@@ -1615,10 +1638,11 @@ impl AppContext {
         window_id: usize,
         view_id: usize,
         titlebar_height: f32,
+        refresh: bool,
     ) -> Result<ElementBox> {
         self.views
             .get(&(window_id, view_id))
-            .map(|v| v.render(window_id, view_id, titlebar_height, self))
+            .map(|v| v.render(window_id, view_id, titlebar_height, refresh, self))
             .ok_or(anyhow!("view not found"))
     }
 
@@ -1633,7 +1657,7 @@ impl AppContext {
                 if *win_id == window_id {
                     Some((
                         *view_id,
-                        view.render(*win_id, *view_id, titlebar_height, self),
+                        view.render(*win_id, *view_id, titlebar_height, false, self),
                     ))
                 } else {
                     None
@@ -1730,6 +1754,7 @@ pub enum Effect {
         window_id: usize,
         view_id: usize,
     },
+    RefreshWindows,
 }
 
 impl Debug for Effect {
@@ -1753,6 +1778,7 @@ impl Debug for Effect {
                 .field("window_id", window_id)
                 .field("view_id", view_id)
                 .finish(),
+            Effect::RefreshWindows => f.debug_struct("Effect::FullViewRefresh").finish(),
         }
     }
 }
@@ -1790,6 +1816,7 @@ pub trait AnyView {
         window_id: usize,
         view_id: usize,
         titlebar_height: f32,
+        refresh: bool,
         cx: &AppContext,
     ) -> ElementBox;
     fn on_focus(&mut self, cx: &mut MutableAppContext, window_id: usize, view_id: usize);
@@ -1822,6 +1849,7 @@ where
         window_id: usize,
         view_id: usize,
         titlebar_height: f32,
+        refresh: bool,
         cx: &AppContext,
     ) -> ElementBox {
         View::render(
@@ -1832,6 +1860,7 @@ where
                 app: cx,
                 view_type: PhantomData::<T>,
                 titlebar_height,
+                refresh,
             },
         )
     }
@@ -2182,10 +2211,6 @@ impl<'a, T: View> ViewContext<'a, T> {
         self.app.notify_view(self.window_id, self.view_id);
     }
 
-    pub fn notify_all(&mut self) {
-        self.app.notify_all_views();
-    }
-
     pub fn propagate_action(&mut self) {
         self.halt_action_dispatch = false;
     }
@@ -2204,6 +2229,7 @@ impl<'a, T: View> ViewContext<'a, T> {
 pub struct RenderContext<'a, T: View> {
     pub app: &'a AppContext,
     pub titlebar_height: f32,
+    pub refresh: bool,
     window_id: usize,
     view_id: usize,
     view_type: PhantomData<T>,
