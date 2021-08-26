@@ -1,32 +1,35 @@
 use crate::{
     color::Color,
     json::{json, ToJson},
+    FontCache,
 };
+use anyhow::anyhow;
 pub use font_kit::{
     metrics::Metrics,
     properties::{Properties, Stretch, Style, Weight},
 };
 use serde::{de, Deserialize};
 use serde_json::Value;
+use std::{cell::RefCell, sync::Arc};
 
 #[derive(Copy, Clone, Debug, Eq, PartialEq, Hash)]
 pub struct FontId(pub usize);
 
 pub type GlyphId = u32;
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug)]
 pub struct TextStyle {
     pub color: Color,
+    pub font_family_name: Arc<str>,
+    pub font_id: FontId,
+    pub font_size: f32,
     pub font_properties: Properties,
 }
 
-impl Default for TextStyle {
-    fn default() -> Self {
-        Self {
-            color: Color::from_u32(0xff0000ff),
-            font_properties: Default::default(),
-        }
-    }
+#[derive(Clone, Debug, Default)]
+pub struct HighlightStyle {
+    pub color: Color,
+    pub font_properties: Properties,
 }
 
 #[allow(non_camel_case_types)]
@@ -43,12 +46,85 @@ enum WeightJson {
     black,
 }
 
+thread_local! {
+    static FONT_CACHE: RefCell<Option<Arc<FontCache>>> = Default::default();
+}
+
 #[derive(Deserialize)]
 struct TextStyleJson {
+    color: Color,
+    family: String,
+    weight: Option<WeightJson>,
+    #[serde(default)]
+    italic: bool,
+    size: f32,
+}
+
+#[derive(Deserialize)]
+struct HighlightStyleJson {
     color: Color,
     weight: Option<WeightJson>,
     #[serde(default)]
     italic: bool,
+}
+
+impl TextStyle {
+    pub fn new(
+        font_family_name: impl Into<Arc<str>>,
+        font_size: f32,
+        font_properties: Properties,
+        color: Color,
+        font_cache: &FontCache,
+    ) -> anyhow::Result<Self> {
+        let font_family_name = font_family_name.into();
+        let family_id = font_cache.load_family(&[&font_family_name])?;
+        let font_id = font_cache.select_font(family_id, &font_properties)?;
+        Ok(Self {
+            color,
+            font_family_name,
+            font_id,
+            font_size,
+            font_properties,
+        })
+    }
+
+    fn from_json(json: TextStyleJson) -> anyhow::Result<Self> {
+        FONT_CACHE.with(|font_cache| {
+            if let Some(font_cache) = font_cache.borrow().as_ref() {
+                let font_properties = properties_from_json(json.weight, json.italic);
+                Self::new(
+                    json.family,
+                    json.size,
+                    font_properties,
+                    json.color,
+                    font_cache,
+                )
+            } else {
+                Err(anyhow!(
+                    "TextStyle can only be deserialized within a call to with_font_cache"
+                ))
+            }
+        })
+    }
+}
+
+impl HighlightStyle {
+    fn from_json(json: HighlightStyleJson) -> Self {
+        let font_properties = properties_from_json(json.weight, json.italic);
+        Self {
+            color: json.color,
+            font_properties,
+        }
+    }
+}
+
+impl From<Color> for HighlightStyle {
+    fn from(color: Color) -> Self {
+        Self {
+            color,
+            font_properties: Default::default(),
+        }
+    }
 }
 
 impl<'de> Deserialize<'de> for TextStyle {
@@ -56,11 +132,31 @@ impl<'de> Deserialize<'de> for TextStyle {
     where
         D: serde::Deserializer<'de>,
     {
-        let json = Value::deserialize(deserializer)?;
+        Ok(Self::from_json(TextStyleJson::deserialize(deserializer)?)
+            .map_err(|e| de::Error::custom(e))?)
+    }
+}
+
+impl ToJson for TextStyle {
+    fn to_json(&self) -> Value {
+        json!({
+            "color": self.color.to_json(),
+            "font_family": self.font_family_name.as_ref(),
+            "font_properties": self.font_properties.to_json(),
+        })
+    }
+}
+
+impl<'de> Deserialize<'de> for HighlightStyle {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        let json = serde_json::Value::deserialize(deserializer)?;
         if json.is_object() {
-            let style_json: TextStyleJson =
-                serde_json::from_value(json).map_err(de::Error::custom)?;
-            Ok(style_json.into())
+            Ok(Self::from_json(
+                serde_json::from_value(json).map_err(de::Error::custom)?,
+            ))
         } else {
             Ok(Self {
                 color: serde_json::from_value(json).map_err(de::Error::custom)?,
@@ -70,47 +166,20 @@ impl<'de> Deserialize<'de> for TextStyle {
     }
 }
 
-impl From<Color> for TextStyle {
-    fn from(color: Color) -> Self {
-        Self {
-            color,
-            font_properties: Default::default(),
-        }
-    }
-}
-
-impl ToJson for TextStyle {
-    fn to_json(&self) -> Value {
-        json!({
-            "color": self.color.to_json(),
-            "font_properties": self.font_properties.to_json(),
-        })
-    }
-}
-
-impl Into<TextStyle> for TextStyleJson {
-    fn into(self) -> TextStyle {
-        let weight = match self.weight.unwrap_or(WeightJson::normal) {
-            WeightJson::thin => Weight::THIN,
-            WeightJson::extra_light => Weight::EXTRA_LIGHT,
-            WeightJson::light => Weight::LIGHT,
-            WeightJson::normal => Weight::NORMAL,
-            WeightJson::medium => Weight::MEDIUM,
-            WeightJson::semibold => Weight::SEMIBOLD,
-            WeightJson::bold => Weight::BOLD,
-            WeightJson::extra_bold => Weight::EXTRA_BOLD,
-            WeightJson::black => Weight::BLACK,
-        };
-        let style = if self.italic {
-            Style::Italic
-        } else {
-            Style::Normal
-        };
-        TextStyle {
-            color: self.color,
-            font_properties: *Properties::new().weight(weight).style(style),
-        }
-    }
+fn properties_from_json(weight: Option<WeightJson>, italic: bool) -> Properties {
+    let weight = match weight.unwrap_or(WeightJson::normal) {
+        WeightJson::thin => Weight::THIN,
+        WeightJson::extra_light => Weight::EXTRA_LIGHT,
+        WeightJson::light => Weight::LIGHT,
+        WeightJson::normal => Weight::NORMAL,
+        WeightJson::medium => Weight::MEDIUM,
+        WeightJson::semibold => Weight::SEMIBOLD,
+        WeightJson::bold => Weight::BOLD,
+        WeightJson::extra_bold => Weight::EXTRA_BOLD,
+        WeightJson::black => Weight::BLACK,
+    };
+    let style = if italic { Style::Italic } else { Style::Normal };
+    *Properties::new().weight(weight).style(style)
 }
 
 impl ToJson for Properties {
@@ -163,4 +232,16 @@ impl ToJson for Stretch {
     fn to_json(&self) -> serde_json::Value {
         json!(self.0)
     }
+}
+
+pub fn with_font_cache<F, T>(font_cache: Arc<FontCache>, callback: F) -> T
+where
+    F: FnOnce() -> T,
+{
+    FONT_CACHE.with(|cache| {
+        *cache.borrow_mut() = Some(font_cache);
+        let result = callback();
+        cache.borrow_mut().take();
+        result
+    })
 }

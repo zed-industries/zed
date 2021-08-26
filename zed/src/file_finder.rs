@@ -117,13 +117,7 @@ impl FileFinder {
         if self.matches.is_empty() {
             let settings = self.settings.borrow();
             return Container::new(
-                Label::new(
-                    "No matches".into(),
-                    settings.ui_font_family,
-                    settings.ui_font_size,
-                )
-                .with_style(&settings.theme.selector.label)
-                .boxed(),
+                Label::new("No matches".into(), settings.theme.selector.label.clone()).boxed(),
             )
             .with_margin_top(6.0)
             .named("empty matches");
@@ -184,24 +178,14 @@ impl FileFinder {
                         1.0,
                         Flex::column()
                             .with_child(
-                                Label::new(
-                                    file_name.to_string(),
-                                    settings.ui_font_family,
-                                    settings.ui_font_size,
-                                )
-                                .with_style(&style.label)
-                                .with_highlights(file_name_positions)
-                                .boxed(),
+                                Label::new(file_name.to_string(), style.label.clone())
+                                    .with_highlights(file_name_positions)
+                                    .boxed(),
                             )
                             .with_child(
-                                Label::new(
-                                    full_path,
-                                    settings.ui_font_family,
-                                    settings.ui_font_size,
-                                )
-                                .with_style(&style.label)
-                                .with_highlights(full_path_positions)
-                                .boxed(),
+                                Label::new(full_path, style.label.clone())
+                                    .with_highlights(full_path_positions)
+                                    .boxed(),
                             )
                             .boxed(),
                     )
@@ -438,7 +422,7 @@ mod tests {
     use crate::{
         editor::{self, Insert},
         fs::FakeFs,
-        test::{build_app_state, temp_tree},
+        test::{temp_tree, test_app_state},
         workspace::Workspace,
     };
     use serde_json::json;
@@ -456,7 +440,7 @@ mod tests {
             editor::init(cx);
         });
 
-        let app_state = cx.update(build_app_state);
+        let app_state = cx.update(test_app_state);
         let (window_id, workspace) = cx.add_window(|cx| Workspace::new(&app_state, cx));
         workspace
             .update(&mut cx, |workspace, cx| {
@@ -516,7 +500,7 @@ mod tests {
         )
         .await;
 
-        let mut app_state = cx.update(build_app_state);
+        let mut app_state = cx.update(test_app_state);
         Arc::get_mut(&mut app_state).unwrap().fs = fs;
 
         let (_, workspace) = cx.add_window(|cx| Workspace::new(&app_state, cx));
@@ -578,7 +562,7 @@ mod tests {
         fs::create_dir(&dir_path).unwrap();
         fs::write(&file_path, "").unwrap();
 
-        let app_state = cx.update(build_app_state);
+        let app_state = cx.update(test_app_state);
         let (_, workspace) = cx.add_window(|cx| Workspace::new(&app_state, cx));
         workspace
             .update(&mut cx, |workspace, cx| {
@@ -625,7 +609,7 @@ mod tests {
             "dir2": { "a.txt": "" }
         }));
 
-        let app_state = cx.update(build_app_state);
+        let app_state = cx.update(test_app_state);
         let (_, workspace) = cx.add_window(|cx| Workspace::new(&app_state, cx));
 
         workspace

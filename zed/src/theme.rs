@@ -5,9 +5,9 @@ use anyhow::Result;
 use gpui::{
     color::Color,
     elements::{ContainerStyle, LabelStyle},
-    fonts::TextStyle,
+    fonts::{HighlightStyle, TextStyle},
 };
-use serde::{Deserialize, Deserializer};
+use serde::{de, Deserialize};
 use std::collections::HashMap;
 
 pub use highlight_map::*;
@@ -15,7 +15,7 @@ pub use theme_registry::*;
 
 pub const DEFAULT_THEME_NAME: &'static str = "dark";
 
-#[derive(Debug, Default, Deserialize)]
+#[derive(Deserialize)]
 pub struct Theme {
     #[serde(default)]
     pub name: String,
@@ -23,11 +23,15 @@ pub struct Theme {
     pub chat_panel: ChatPanel,
     pub selector: Selector,
     pub editor: Editor,
-    #[serde(deserialize_with = "deserialize_syntax_theme")]
-    pub syntax: Vec<(String, TextStyle)>,
+    pub syntax: SyntaxTheme,
 }
 
-#[derive(Debug, Default, Deserialize)]
+pub struct SyntaxTheme {
+    highlights: Vec<(String, HighlightStyle)>,
+    default_style: HighlightStyle,
+}
+
+#[derive(Deserialize)]
 pub struct Workspace {
     pub background: Color,
     pub tab: Tab,
@@ -37,7 +41,7 @@ pub struct Workspace {
     pub active_sidebar_icon: SidebarIcon,
 }
 
-#[derive(Debug, Default, Deserialize)]
+#[derive(Deserialize)]
 pub struct Tab {
     #[serde(flatten)]
     pub container: ContainerStyle,
@@ -48,26 +52,26 @@ pub struct Tab {
     pub icon_conflict: Color,
 }
 
-#[derive(Debug, Default, Deserialize)]
+#[derive(Deserialize)]
 pub struct SidebarIcon {
     pub color: Color,
 }
 
-#[derive(Debug, Default, Deserialize)]
+#[derive(Deserialize)]
 pub struct ChatPanel {
     #[serde(flatten)]
     pub container: ContainerStyle,
     pub message: ChatMessage,
 }
 
-#[derive(Debug, Default, Deserialize)]
+#[derive(Deserialize)]
 pub struct ChatMessage {
     pub body: TextStyle,
     pub sender: ContainedLabel,
     pub timestamp: ContainedLabel,
 }
 
-#[derive(Debug, Default, Deserialize)]
+#[derive(Deserialize)]
 pub struct Selector {
     #[serde(flatten)]
     pub container: ContainerStyle,
@@ -78,7 +82,7 @@ pub struct Selector {
     pub active_item: ContainedLabel,
 }
 
-#[derive(Debug, Default, Deserialize)]
+#[derive(Deserialize)]
 pub struct ContainedLabel {
     #[serde(flatten)]
     pub container: ContainerStyle,
@@ -86,70 +90,69 @@ pub struct ContainedLabel {
     pub label: LabelStyle,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Deserialize)]
 pub struct Editor {
     pub background: Color,
     pub gutter_background: Color,
     pub active_line_background: Color,
     pub line_number: Color,
     pub line_number_active: Color,
-    pub text: Color,
     pub replicas: Vec<Replica>,
 }
 
-#[derive(Clone, Copy, Debug, Default, Deserialize)]
+#[derive(Clone, Copy, Deserialize)]
 pub struct Replica {
     pub cursor: Color,
     pub selection: Color,
 }
 
-impl Theme {
-    pub fn highlight_style(&self, id: HighlightId) -> TextStyle {
-        self.syntax
+impl SyntaxTheme {
+    pub fn new(default_style: HighlightStyle, highlights: Vec<(String, HighlightStyle)>) -> Self {
+        Self {
+            default_style,
+            highlights,
+        }
+    }
+
+    pub fn highlight_style(&self, id: HighlightId) -> HighlightStyle {
+        self.highlights
             .get(id.0 as usize)
             .map(|entry| entry.1.clone())
-            .unwrap_or_else(|| TextStyle {
-                color: self.editor.text,
-                font_properties: Default::default(),
-            })
+            .unwrap_or_else(|| self.default_style.clone())
     }
 
     #[cfg(test)]
     pub fn highlight_name(&self, id: HighlightId) -> Option<&str> {
-        self.syntax.get(id.0 as usize).map(|e| e.0.as_str())
+        self.highlights.get(id.0 as usize).map(|e| e.0.as_str())
     }
 }
 
-impl Default for Editor {
-    fn default() -> Self {
-        Self {
-            background: Default::default(),
-            gutter_background: Default::default(),
-            active_line_background: Default::default(),
-            line_number: Default::default(),
-            line_number_active: Default::default(),
-            text: Default::default(),
-            replicas: vec![Replica::default()],
-        }
-    }
-}
+impl<'de> Deserialize<'de> for SyntaxTheme {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        let mut syntax_data: HashMap<String, HighlightStyle> =
+            Deserialize::deserialize(deserializer)?;
 
-pub fn deserialize_syntax_theme<'de, D>(
-    deserializer: D,
-) -> Result<Vec<(String, TextStyle)>, D::Error>
-where
-    D: Deserializer<'de>,
-{
-    let mut result = Vec::<(String, TextStyle)>::new();
+        let mut result = Self {
+            highlights: Vec::<(String, HighlightStyle)>::new(),
+            default_style: syntax_data
+                .remove("default")
+                .ok_or_else(|| de::Error::custom("must specify a default color in syntax theme"))?,
+        };
 
-    let syntax_data: HashMap<String, TextStyle> = Deserialize::deserialize(deserializer)?;
-    for (key, style) in syntax_data {
-        match result.binary_search_by(|(needle, _)| needle.cmp(&key)) {
-            Ok(i) | Err(i) => {
-                result.insert(i, (key, style));
+        for (key, style) in syntax_data {
+            match result
+                .highlights
+                .binary_search_by(|(needle, _)| needle.cmp(&key))
+            {
+                Ok(i) | Err(i) => {
+                    result.highlights.insert(i, (key, style));
+                }
             }
         }
-    }
 
-    Ok(result)
+        Ok(result)
+    }
 }

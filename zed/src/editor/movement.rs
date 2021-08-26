@@ -182,12 +182,12 @@ mod tests {
     use super::*;
     use crate::{
         editor::{display_map::DisplayMap, Buffer},
-        test::build_app_state,
+        test::test_app_state,
     };
 
     #[gpui::test]
     fn test_prev_next_word_boundary_multibyte(cx: &mut gpui::MutableAppContext) {
-        let settings = build_app_state(cx).settings.borrow().clone();
+        let settings = test_app_state(cx).settings.borrow().clone();
         let buffer = cx.add_model(|cx| Buffer::new(0, "a bcΔ defγ", cx));
         let display_map = cx.add_model(|cx| DisplayMap::new(buffer, settings, None, cx));
         let snapshot = display_map.update(cx, |map, cx| map.snapshot(cx));

@@ -22,11 +22,10 @@ fn main() {
 
     let app = gpui::App::new(assets::Assets).unwrap();
 
-    let themes = settings::ThemeRegistry::new(assets::Assets);
-    let (settings_tx, settings) =
-        settings::channel_with_themes(&app.font_cache(), &themes).unwrap();
+    let themes = settings::ThemeRegistry::new(assets::Assets, app.font_cache());
+    let (settings_tx, settings) = settings::channel(&app.font_cache(), &themes).unwrap();
     let languages = Arc::new(language::LanguageRegistry::new());
-    languages.set_theme(&settings.borrow().theme);
+    languages.set_theme(&settings.borrow().theme.syntax);
 
     app.run(move |cx| {
         let rpc = rpc::Client::new();

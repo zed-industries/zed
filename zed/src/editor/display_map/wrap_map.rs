@@ -921,7 +921,7 @@ mod tests {
             tab_size: rng.gen_range(1..=4),
             buffer_font_family: font_cache.load_family(&["Helvetica"]).unwrap(),
             buffer_font_size: 14.0,
-            ..Settings::new(&font_cache).unwrap()
+            ..cx.read(Settings::test)
         };
         log::info!("Tab size: {}", settings.tab_size);
         log::info!("Wrap width: {:?}", wrap_width);

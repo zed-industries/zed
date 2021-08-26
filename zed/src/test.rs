@@ -6,11 +6,10 @@ use crate::{
     settings::{self, ThemeRegistry},
     time::ReplicaId,
     user::UserStore,
-    AppState, Settings,
+    AppState,
 };
-use gpui::{AppContext, Entity, ModelHandle, MutableAppContext};
+use gpui::{Entity, ModelHandle, MutableAppContext};
 use parking_lot::Mutex;
-use postage::watch;
 use smol::channel;
 use std::{
     marker::PhantomData,
@@ -156,14 +155,10 @@ fn write_tree(path: &Path, tree: serde_json::Value) {
     }
 }
 
-pub fn build_settings(cx: &AppContext) -> watch::Receiver<Settings> {
-    settings::channel(&cx.font_cache()).unwrap().1
-}
-
-pub fn build_app_state(cx: &mut MutableAppContext) -> Arc<AppState> {
-    let (settings_tx, settings) = settings::channel(&cx.font_cache()).unwrap();
+pub fn test_app_state(cx: &mut MutableAppContext) -> Arc<AppState> {
+    let (settings_tx, settings) = settings::test(cx);
     let languages = Arc::new(LanguageRegistry::new());
-    let themes = ThemeRegistry::new(());
+    let themes = ThemeRegistry::new((), cx.font_cache().clone());
     let rpc = rpc::Client::new();
     let user_store = Arc::new(UserStore::new(rpc.clone()));
     Arc::new(AppState {

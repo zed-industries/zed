@@ -1,4 +1,4 @@
-use super::Theme;
+use super::SyntaxTheme;
 use std::sync::Arc;
 
 #[derive(Clone, Debug)]
@@ -10,7 +10,7 @@ pub struct HighlightId(pub u32);
 const DEFAULT_HIGHLIGHT_ID: HighlightId = HighlightId(u32::MAX);
 
 impl HighlightMap {
-    pub fn new(capture_names: &[String], theme: &Theme) -> Self {
+    pub fn new(capture_names: &[String], theme: &SyntaxTheme) -> Self {
         // For each capture name in the highlight query, find the longest
         // key in the theme's syntax styles that matches all of the
         // dot-separated components of the capture name.
@@ -19,7 +19,7 @@ impl HighlightMap {
                 .iter()
                 .map(|capture_name| {
                     theme
-                        .syntax
+                        .highlights
                         .iter()
                         .enumerate()
                         .filter_map(|(i, (key, _))| {
@@ -68,9 +68,9 @@ mod tests {
 
     #[test]
     fn test_highlight_map() {
-        let theme = Theme {
-            name: "test".into(),
-            syntax: [
+        let theme = SyntaxTheme::new(
+            Default::default(),
+            [
                 ("function", Color::from_u32(0x100000ff)),
                 ("function.method", Color::from_u32(0x200000ff)),
                 ("function.async", Color::from_u32(0x300000ff)),
@@ -81,8 +81,7 @@ mod tests {
             .iter()
             .map(|(name, color)| (name.to_string(), (*color).into()))
             .collect(),
-            ..Default::default()
-        };
+        );
 
         let capture_names = &[
             "function.special".to_string(),

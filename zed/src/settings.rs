@@ -17,11 +17,27 @@ pub struct Settings {
 }
 
 impl Settings {
-    pub fn new(font_cache: &FontCache) -> Result<Self> {
-        Self::new_with_theme(font_cache, Arc::new(Theme::default()))
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn test(cx: &gpui::AppContext) -> Self {
+        lazy_static::lazy_static! {
+            static ref DEFAULT_THEME: parking_lot::Mutex<Option<Arc<Theme>>> = Default::default();
+        }
+
+        let mut theme_guard = DEFAULT_THEME.lock();
+        let theme = if let Some(theme) = theme_guard.as_ref() {
+            theme.clone()
+        } else {
+            let theme = ThemeRegistry::new(crate::assets::Assets, cx.font_cache().clone())
+                .get(DEFAULT_THEME_NAME)
+                .expect("failed to load default theme in tests");
+            *theme_guard = Some(theme.clone());
+            theme
+        };
+
+        Self::new(cx.font_cache(), theme).unwrap()
     }
 
-    pub fn new_with_theme(font_cache: &FontCache, theme: Arc<Theme>) -> Result<Self> {
+    pub fn new(font_cache: &FontCache, theme: Arc<Theme>) -> Result<Self> {
         Ok(Self {
             buffer_font_family: font_cache.load_family(&["Fira Code", "Monaco"])?,
             buffer_font_size: 14.0,
@@ -38,13 +54,12 @@ impl Settings {
     }
 }
 
-pub fn channel(
-    font_cache: &FontCache,
-) -> Result<(watch::Sender<Settings>, watch::Receiver<Settings>)> {
-    Ok(watch::channel_with(Settings::new(font_cache)?))
+#[cfg(any(test, feature = "test-support"))]
+pub fn test(cx: &gpui::AppContext) -> (watch::Sender<Settings>, watch::Receiver<Settings>) {
+    watch::channel_with(Settings::test(cx))
 }
 
-pub fn channel_with_themes(
+pub fn channel(
     font_cache: &FontCache,
     themes: &ThemeRegistry,
 ) -> Result<(watch::Sender<Settings>, watch::Receiver<Settings>)> {
@@ -54,7 +69,5 @@ pub fn channel_with_themes(
             panic!("failed to deserialize default theme: {:?}", err)
         }
     };
-    Ok(watch::channel_with(Settings::new_with_theme(
-        font_cache, theme,
-    )?))
+    Ok(watch::channel_with(Settings::new(font_cache, theme)?))
 }

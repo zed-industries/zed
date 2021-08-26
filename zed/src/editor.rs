@@ -2418,7 +2418,7 @@ impl Snapshot {
                 }
 
                 if !line_chunk.is_empty() && !line_exceeded_max_len {
-                    let style = self.theme.highlight_style(style_ix);
+                    let style = self.theme.syntax.highlight_style(style_ix);
                     // Avoid a lookup if the font properties match the previous ones.
                     let font_id = if style.font_properties == prev_font_properties {
                         prev_font_id
@@ -2632,19 +2632,14 @@ impl workspace::ItemView for Editor {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{
-        editor::Point,
-        language::LanguageRegistry,
-        settings,
-        test::{build_settings, sample_text},
-    };
+    use crate::{editor::Point, language::LanguageRegistry, settings, test::sample_text};
     use buffer::History;
     use unindent::Unindent;
 
     #[gpui::test]
     fn test_selection_with_mouse(cx: &mut gpui::MutableAppContext) {
         let buffer = cx.add_model(|cx| Buffer::new(0, "aaaaaa\nbbbbbb\ncccccc\ndddddd\n", cx));
-        let settings = settings::channel(&cx.font_cache()).unwrap().1;
+        let settings = settings::test(&cx).1;
         let (_, editor) = cx.add_window(Default::default(), |cx| {
             Editor::for_buffer(buffer, settings, cx)
         });
@@ -2712,7 +2707,7 @@ mod tests {
     #[gpui::test]
     fn test_canceling_pending_selection(cx: &mut gpui::MutableAppContext) {
         let buffer = cx.add_model(|cx| Buffer::new(0, "aaaaaa\nbbbbbb\ncccccc\ndddddd\n", cx));
-        let settings = settings::channel(&cx.font_cache()).unwrap().1;
+        let settings = settings::test(&cx).1;
         let (_, view) = cx.add_window(Default::default(), |cx| {
             Editor::for_buffer(buffer, settings, cx)
         });
@@ -2746,7 +2741,7 @@ mod tests {
     #[gpui::test]
     fn test_cancel(cx: &mut gpui::MutableAppContext) {
         let buffer = cx.add_model(|cx| Buffer::new(0, "aaaaaa\nbbbbbb\ncccccc\ndddddd\n", cx));
-        let settings = settings::channel(&cx.font_cache()).unwrap().1;
+        let settings = settings::test(&cx).1;
         let (_, view) = cx.add_window(Default::default(), |cx| {
             Editor::for_buffer(buffer, settings, cx)
         });
@@ -2792,7 +2787,7 @@ mod tests {
 
         let buffer = cx.add_model(|cx| Buffer::new(0, sample_text(6, 6), cx));
 
-        let settings = settings::channel(&font_cache).unwrap().1;
+        let settings = settings::test(&cx).1;
         let (_, editor) = cx.add_window(Default::default(), |cx| {
             Editor::for_buffer(buffer.clone(), settings.clone(), cx)
         });
@@ -2838,7 +2833,7 @@ mod tests {
                 cx,
             )
         });
-        let settings = settings::channel(&cx.font_cache()).unwrap().1;
+        let settings = settings::test(&cx).1;
         let (_, view) = cx.add_window(Default::default(), |cx| {
             Editor::for_buffer(buffer.clone(), settings, cx)
         });
@@ -2906,7 +2901,7 @@ mod tests {
     #[gpui::test]
     fn test_move_cursor(cx: &mut gpui::MutableAppContext) {
         let buffer = cx.add_model(|cx| Buffer::new(0, sample_text(6, 6), cx));
-        let settings = settings::channel(&cx.font_cache()).unwrap().1;
+        let settings = settings::test(&cx).1;
         let (_, view) = cx.add_window(Default::default(), |cx| {
             Editor::for_buffer(buffer.clone(), settings, cx)
         });
@@ -2983,7 +2978,7 @@ mod tests {
     #[gpui::test]
     fn test_move_cursor_multibyte(cx: &mut gpui::MutableAppContext) {
         let buffer = cx.add_model(|cx| Buffer::new(0, "ⓐⓑⓒⓓⓔ\nabcde\nαβγδε\n", cx));
-        let settings = settings::channel(&cx.font_cache()).unwrap().1;
+        let settings = settings::test(&cx).1;
         let (_, view) = cx.add_window(Default::default(), |cx| {
             Editor::for_buffer(buffer.clone(), settings, cx)
         });
@@ -3041,7 +3036,7 @@ mod tests {
     #[gpui::test]
     fn test_move_cursor_different_line_lengths(cx: &mut gpui::MutableAppContext) {
         let buffer = cx.add_model(|cx| Buffer::new(0, "ⓐⓑⓒⓓⓔ\nabcd\nαβγ\nabcd\nⓐⓑⓒⓓⓔ\n", cx));
-        let settings = settings::channel(&cx.font_cache()).unwrap().1;
+        let settings = settings::test(&cx).1;
         let (_, view) = cx.add_window(Default::default(), |cx| {
             Editor::for_buffer(buffer.clone(), settings, cx)
         });
@@ -3072,7 +3067,7 @@ mod tests {
     #[gpui::test]
     fn test_beginning_end_of_line(cx: &mut gpui::MutableAppContext) {
         let buffer = cx.add_model(|cx| Buffer::new(0, "abc\n  def", cx));
-        let settings = settings::channel(&cx.font_cache()).unwrap().1;
+        let settings = settings::test(&cx).1;
         let (_, view) = cx.add_window(Default::default(), |cx| {
             Editor::for_buffer(buffer, settings, cx)
         });
@@ -3217,7 +3212,7 @@ mod tests {
     fn test_prev_next_word_boundary(cx: &mut gpui::MutableAppContext) {
         let buffer =
             cx.add_model(|cx| Buffer::new(0, "use std::str::{foo, bar}\n\n  {baz.qux()}", cx));
-        let settings = settings::channel(&cx.font_cache()).unwrap().1;
+        let settings = settings::test(&cx).1;
         let (_, view) = cx.add_window(Default::default(), |cx| {
             Editor::for_buffer(buffer, settings, cx)
         });
@@ -3405,7 +3400,7 @@ mod tests {
     fn test_prev_next_word_bounds_with_soft_wrap(cx: &mut gpui::MutableAppContext) {
         let buffer =
             cx.add_model(|cx| Buffer::new(0, "use one::{\n    two::three::four::five\n};", cx));
-        let settings = settings::channel(&cx.font_cache()).unwrap().1;
+        let settings = settings::test(&cx).1;
         let (_, view) = cx.add_window(Default::default(), |cx| {
             Editor::for_buffer(buffer, settings, cx)
         });
@@ -3467,7 +3462,7 @@ mod tests {
                 cx,
             )
         });
-        let settings = settings::channel(&cx.font_cache()).unwrap().1;
+        let settings = settings::test(&cx).1;
         let (_, view) = cx.add_window(Default::default(), |cx| {
             Editor::for_buffer(buffer.clone(), settings, cx)
         });
@@ -3503,7 +3498,7 @@ mod tests {
                 cx,
             )
         });
-        let settings = settings::channel(&cx.font_cache()).unwrap().1;
+        let settings = settings::test(&cx).1;
         let (_, view) = cx.add_window(Default::default(), |cx| {
             Editor::for_buffer(buffer.clone(), settings, cx)
         });
@@ -3532,7 +3527,7 @@ mod tests {
 
     #[gpui::test]
     fn test_delete_line(cx: &mut gpui::MutableAppContext) {
-        let settings = settings::channel(&cx.font_cache()).unwrap().1;
+        let settings = settings::test(&cx).1;
         let buffer = cx.add_model(|cx| Buffer::new(0, "abc\ndef\nghi\n", cx));
         let (_, view) = cx.add_window(Default::default(), |cx| {
             Editor::for_buffer(buffer, settings, cx)
@@ -3558,7 +3553,7 @@ mod tests {
             );
         });
 
-        let settings = settings::channel(&cx.font_cache()).unwrap().1;
+        let settings = settings::test(&cx).1;
         let buffer = cx.add_model(|cx| Buffer::new(0, "abc\ndef\nghi\n", cx));
         let (_, view) = cx.add_window(Default::default(), |cx| {
             Editor::for_buffer(buffer, settings, cx)
@@ -3577,7 +3572,7 @@ mod tests {
 
     #[gpui::test]
     fn test_duplicate_line(cx: &mut gpui::MutableAppContext) {
-        let settings = settings::channel(&cx.font_cache()).unwrap().1;
+        let settings = settings::test(&cx).1;
         let buffer = cx.add_model(|cx| Buffer::new(0, "abc\ndef\nghi\n", cx));
         let (_, view) = cx.add_window(Default::default(), |cx| {
             Editor::for_buffer(buffer, settings, cx)
@@ -3606,7 +3601,7 @@ mod tests {
             );
         });
 
-        let settings = settings::channel(&cx.font_cache()).unwrap().1;
+        let settings = settings::test(&cx).1;
         let buffer = cx.add_model(|cx| Buffer::new(0, "abc\ndef\nghi\n", cx));
         let (_, view) = cx.add_window(Default::default(), |cx| {
             Editor::for_buffer(buffer, settings, cx)
@@ -3634,7 +3629,7 @@ mod tests {
 
     #[gpui::test]
     fn test_move_line_up_down(cx: &mut gpui::MutableAppContext) {
-        let settings = settings::channel(&cx.font_cache()).unwrap().1;
+        let settings = settings::test(&cx).1;
         let buffer = cx.add_model(|cx| Buffer::new(0, sample_text(10, 5), cx));
         let (_, view) = cx.add_window(Default::default(), |cx| {
             Editor::for_buffer(buffer, settings, cx)
@@ -3719,7 +3714,7 @@ mod tests {
     #[gpui::test]
     fn test_clipboard(cx: &mut gpui::MutableAppContext) {
         let buffer = cx.add_model(|cx| Buffer::new(0, "one two three four five six ", cx));
-        let settings = settings::channel(&cx.font_cache()).unwrap().1;
+        let settings = settings::test(&cx).1;
         let view = cx
             .add_window(Default::default(), |cx| {
                 Editor::for_buffer(buffer.clone(), settings, cx)
@@ -3854,7 +3849,7 @@ mod tests {
     #[gpui::test]
     fn test_select_all(cx: &mut gpui::MutableAppContext) {
         let buffer = cx.add_model(|cx| Buffer::new(0, "abc\nde\nfgh", cx));
-        let settings = settings::channel(&cx.font_cache()).unwrap().1;
+        let settings = settings::test(&cx).1;
         let (_, view) = cx.add_window(Default::default(), |cx| {
             Editor::for_buffer(buffer, settings, cx)
         });
@@ -3869,7 +3864,7 @@ mod tests {
 
     #[gpui::test]
     fn test_select_line(cx: &mut gpui::MutableAppContext) {
-        let settings = settings::channel(&cx.font_cache()).unwrap().1;
+        let settings = settings::test(&cx).1;
         let buffer = cx.add_model(|cx| Buffer::new(0, sample_text(6, 5), cx));
         let (_, view) = cx.add_window(Default::default(), |cx| {
             Editor::for_buffer(buffer, settings, cx)
@@ -3917,7 +3912,7 @@ mod tests {
 
     #[gpui::test]
     fn test_split_selection_into_lines(cx: &mut gpui::MutableAppContext) {
-        let settings = settings::channel(&cx.font_cache()).unwrap().1;
+        let settings = settings::test(&cx).1;
         let buffer = cx.add_model(|cx| Buffer::new(0, sample_text(9, 5), cx));
         let (_, view) = cx.add_window(Default::default(), |cx| {
             Editor::for_buffer(buffer, settings, cx)
@@ -3984,7 +3979,7 @@ mod tests {
 
     #[gpui::test]
     fn test_add_selection_above_below(cx: &mut gpui::MutableAppContext) {
-        let settings = settings::channel(&cx.font_cache()).unwrap().1;
+        let settings = settings::test(&cx).1;
         let buffer = cx.add_model(|cx| Buffer::new(0, "abc\ndefghi\n\njk\nlmno\n", cx));
         let (_, view) = cx.add_window(Default::default(), |cx| {
             Editor::for_buffer(buffer, settings, cx)
@@ -4159,7 +4154,7 @@ mod tests {
 
     #[gpui::test]
     async fn test_select_larger_smaller_syntax_node(mut cx: gpui::TestAppContext) {
-        let settings = cx.read(build_settings);
+        let settings = cx.read(settings::test).1;
         let languages = LanguageRegistry::new();
         let lang = languages.select_language("z.rs");
         let text = r#"

@@ -126,10 +126,8 @@ impl ChatPanel {
                         Container::new(
                             Label::new(
                                 message.sender.github_login.clone(),
-                                settings.ui_font_family,
-                                settings.ui_font_size,
+                                theme.sender.label.clone(),
                             )
-                            .with_style(&theme.sender.label)
                             .boxed(),
                         )
                         .with_style(&theme.sender.container)
@@ -139,10 +137,8 @@ impl ChatPanel {
                         Container::new(
                             Label::new(
                                 format_timestamp(message.timestamp, now),
-                                settings.ui_font_family,
-                                settings.ui_font_size,
+                                theme.timestamp.label.clone(),
                             )
-                            .with_style(&theme.timestamp.label)
                             .boxed(),
                         )
                         .with_style(&theme.timestamp.container)
@@ -150,15 +146,7 @@ impl ChatPanel {
                     )
                     .boxed(),
             )
-            .with_child(
-                Text::new(
-                    message.body.clone(),
-                    settings.ui_font_family,
-                    settings.ui_font_size,
-                )
-                .with_style(&theme.body)
-                .boxed(),
-            )
+            .with_child(Text::new(message.body.clone(), theme.body.clone()).boxed())
             .boxed()
     }
 

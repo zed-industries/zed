@@ -1,6 +1,5 @@
 use crate::{
     color::Color,
-    font_cache::FamilyId,
     fonts::TextStyle,
     geometry::{
         rect::RectF,
@@ -14,8 +13,6 @@ use serde_json::json;
 
 pub struct Text {
     text: String,
-    family_id: FamilyId,
-    font_size: f32,
     style: TextStyle,
 }
 
@@ -25,18 +22,8 @@ pub struct LayoutState {
 }
 
 impl Text {
-    pub fn new(text: String, family_id: FamilyId, font_size: f32) -> Self {
-        Self {
-            text,
-            family_id,
-            font_size,
-            style: Default::default(),
-        }
-    }
-
-    pub fn with_style(mut self, style: &TextStyle) -> Self {
-        self.style = style.clone();
-        self
+    pub fn new(text: String, style: TextStyle) -> Self {
+        Self { text, style }
     }
 
     pub fn with_default_color(mut self, color: Color) -> Self {
@@ -54,20 +41,17 @@ impl Element for Text {
         constraint: SizeConstraint,
         cx: &mut LayoutContext,
     ) -> (Vector2F, Self::LayoutState) {
-        let font_id = cx
-            .font_cache
-            .select_font(self.family_id, &self.style.font_properties)
-            .unwrap();
-        let line_height = cx.font_cache.line_height(font_id, self.font_size);
+        let font_id = self.style.font_id;
+        let line_height = cx.font_cache.line_height(font_id, self.style.font_size);
 
-        let mut wrapper = cx.font_cache.line_wrapper(font_id, self.font_size);
+        let mut wrapper = cx.font_cache.line_wrapper(font_id, self.style.font_size);
         let mut lines = Vec::new();
         let mut line_count = 0;
         let mut max_line_width = 0_f32;
         for line in self.text.lines() {
             let shaped_line = cx.text_layout_cache.layout_str(
                 line,
-                self.font_size,
+                self.style.font_size,
                 &[(line.len(), font_id, self.style.color)],
             );
             let wrap_boundaries = wrapper
@@ -123,14 +107,12 @@ impl Element for Text {
         bounds: RectF,
         _: &Self::LayoutState,
         _: &Self::PaintState,
-        cx: &DebugContext,
+        _: &DebugContext,
     ) -> Value {
         json!({
-            "type": "Label",
+            "type": "Text",
             "bounds": bounds.to_json(),
             "text": &self.text,
-            "font_family": cx.font_cache.family_name(self.family_id).unwrap(),
-            "font_size": self.font_size,
             "style": self.style.to_json(),
         })
     }

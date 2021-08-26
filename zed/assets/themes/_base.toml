@@ -4,7 +4,7 @@ background = "$surface.0"
 [workspace.tab]
 text = "$text.2"
 padding = { left = 10, right = 10 }
-icon_close = "$text.0"
+icon_close = "$text.0.color"
 icon_dirty = "$status.info"
 icon_conflict = "$status.warn"
 
@@ -17,10 +17,10 @@ text = "$text.0"
 padding = { left = 10, right = 10 }
 
 [workspace.sidebar_icon]
-color = "$text.2"
+color = "$text.2.color"
 
 [workspace.active_sidebar_icon]
-color = "$text.0"
+color = "$text.0.color"
 
 [chat_panel]
 padding = { top = 10.0, bottom = 10.0, left = 10.0, right = 10.0 }
@@ -28,7 +28,7 @@ padding = { top = 10.0, bottom = 10.0, left = 10.0, right = 10.0 }
 [chat_panel.message]
 body = "$text.0"
 sender.margin.right = 10.0
-sender.text = { color = "$text.0", weight = "bold" }
+sender.text = { extends = "$text.0", weight = "bold" }
 timestamp.text = "$text.2"
 
 [selector]
@@ -41,8 +41,8 @@ shadow = { offset = [0.0, 0.0], blur = 12.0, color = "#00000088" }
 
 [selector.item]
 background = "#424344"
-text = "#cccccc"
-highlight_text = { color = "#18a3ff", weight = "bold" }
+text = "$text.1"
+highlight_text = { extends = "$text.base", color = "#18a3ff", weight = "bold" }
 border = { color = "#000000", width = 1.0 }
 padding = { top = 6.0, bottom = 6.0, left = 6.0, right = 6.0 }
 
@@ -54,10 +54,12 @@ background = "#094771"
 background = "$surface.1"
 gutter_background = "$surface.1"
 active_line_background = "$surface.2"
-line_number = "$text.2"
-line_number_active = "$text.0"
-text = "$text.1"
+line_number = "$text.2.color"
+line_number_active = "$text.0.color"
 replicas = [
-    { selection = "#264f78", cursor = "$text.0" },
+    { selection = "#264f78", cursor = "$text.0.color" },
     { selection = "#504f31", cursor = "#fcf154" },
 ]
+
+[syntax]
+default = "$text.1.color"

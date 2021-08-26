@@ -208,14 +208,12 @@ impl Pane {
                                     Align::new(
                                         Label::new(
                                             title,
-                                            settings.ui_font_family,
-                                            settings.ui_font_size,
+                                            if is_active {
+                                                theme.workspace.active_tab.label.clone()
+                                            } else {
+                                                theme.workspace.tab.label.clone()
+                                            },
                                         )
-                                        .with_style(if is_active {
-                                            &theme.workspace.active_tab.label
-                                        } else {
-                                            &theme.workspace.tab.label
-                                        })
                                         .boxed(),
                                     )
                                     .boxed(),

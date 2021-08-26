@@ -943,7 +943,7 @@ mod tests {
     #[gpui::test]
     async fn test_share_worktree(mut cx_a: TestAppContext, mut cx_b: TestAppContext) {
         let (window_b, _) = cx_b.add_window(|_| EmptyView);
-        let settings = settings::channel(&cx_b.font_cache()).unwrap().1;
+        let settings = cx_b.read(settings::test).1;
         let lang_registry = Arc::new(LanguageRegistry::new());
 
         // Connect to a server as 2 clients.

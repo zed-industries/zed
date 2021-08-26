@@ -1018,7 +1018,7 @@ mod tests {
     use crate::{
         editor::{Editor, Insert},
         fs::FakeFs,
-        test::{build_app_state, temp_tree},
+        test::{temp_tree, test_app_state},
         worktree::WorktreeHandle,
     };
     use serde_json::json;
@@ -1027,7 +1027,7 @@ mod tests {
 
     #[gpui::test]
     async fn test_open_paths_action(mut cx: gpui::TestAppContext) {
-        let app_state = cx.update(build_app_state);
+        let app_state = cx.update(test_app_state);
         let dir = temp_tree(json!({
             "a": {
                 "aa": null,
@@ -1100,7 +1100,7 @@ mod tests {
             },
         }));
 
-        let app_state = cx.update(build_app_state);
+        let app_state = cx.update(test_app_state);
 
         let (_, workspace) = cx.add_window(|cx| Workspace::new(&app_state, cx));
         workspace
@@ -1204,7 +1204,7 @@ mod tests {
         fs.insert_file("/dir1/a.txt", "".into()).await.unwrap();
         fs.insert_file("/dir2/b.txt", "".into()).await.unwrap();
 
-        let mut app_state = cx.update(build_app_state);
+        let mut app_state = cx.update(test_app_state);
         Arc::get_mut(&mut app_state).unwrap().fs = Arc::new(fs);
 
         let (_, workspace) = cx.add_window(|cx| Workspace::new(&app_state, cx));
@@ -1273,7 +1273,7 @@ mod tests {
             "a.txt": "",
         }));
 
-        let app_state = cx.update(build_app_state);
+        let app_state = cx.update(test_app_state);
         let (window_id, workspace) = cx.add_window(|cx| Workspace::new(&app_state, cx));
         workspace
             .update(&mut cx, |workspace, cx| {
@@ -1318,7 +1318,7 @@ mod tests {
     #[gpui::test]
     async fn test_open_and_save_new_file(mut cx: gpui::TestAppContext) {
         let dir = TempDir::new("test-new-file").unwrap();
-        let app_state = cx.update(build_app_state);
+        let app_state = cx.update(test_app_state);
         let (_, workspace) = cx.add_window(|cx| Workspace::new(&app_state, cx));
         workspace
             .update(&mut cx, |workspace, cx| {
@@ -1417,7 +1417,7 @@ mod tests {
     async fn test_new_empty_workspace(mut cx: gpui::TestAppContext) {
         cx.update(init);
 
-        let app_state = cx.update(build_app_state);
+        let app_state = cx.update(test_app_state);
         cx.dispatch_global_action(OpenNew(app_state));
         let window_id = *cx.window_ids().first().unwrap();
         let workspace = cx.root_view::<Workspace>(window_id).unwrap();
@@ -1463,7 +1463,7 @@ mod tests {
             },
         }));
 
-        let app_state = cx.update(build_app_state);
+        let app_state = cx.update(test_app_state);
         let (window_id, workspace) = cx.add_window(|cx| Workspace::new(&app_state, cx));
         workspace
             .update(&mut cx, |workspace, cx| {

@@ -1,5 +1,5 @@
 use anyhow::{anyhow, Context, Result};
-use gpui::AssetSource;
+use gpui::{fonts, AssetSource, FontCache};
 use json::{Map, Value};
 use parking_lot::Mutex;
 use serde_json as json;
@@ -11,6 +11,7 @@ pub struct ThemeRegistry {
     assets: Box<dyn AssetSource>,
     themes: Mutex<HashMap<String, Arc<Theme>>>,
     theme_data: Mutex<HashMap<String, Arc<Value>>>,
+    font_cache: Arc<FontCache>,
 }
 
 #[derive(Default)]
@@ -38,11 +39,12 @@ enum Key {
 }
 
 impl ThemeRegistry {
-    pub fn new(source: impl AssetSource) -> Arc<Self> {
+    pub fn new(source: impl AssetSource, font_cache: Arc<FontCache>) -> Arc<Self> {
         Arc::new(Self {
             assets: Box::new(source),
             themes: Default::default(),
             theme_data: Default::default(),
+            font_cache,
         })
     }
 
@@ -69,7 +71,10 @@ impl ThemeRegistry {
         }
 
         let theme_data = self.load(name, true)?;
-        let mut theme = serde_json::from_value::<Theme>(theme_data.as_ref().clone())?;
+        let mut theme = fonts::with_font_cache(self.font_cache.clone(), || {
+            serde_json::from_value::<Theme>(theme_data.as_ref().clone())
+        })?;
+
         theme.name = name.into();
         let theme = Arc::new(theme);
         self.themes.lock().insert(name.to_string(), theme.clone());
@@ -512,11 +517,12 @@ fn value_at<'a>(object: &'a mut Map<String, Value>, key_path: &KeyPath) -> Optio
 mod tests {
     use super::*;
     use crate::{assets::Assets, theme::DEFAULT_THEME_NAME};
+    use gpui::MutableAppContext;
     use rand::{prelude::StdRng, Rng};
 
-    #[test]
-    fn test_bundled_themes() {
-        let registry = ThemeRegistry::new(Assets);
+    #[gpui::test]
+    fn test_bundled_themes(cx: &mut MutableAppContext) {
+        let registry = ThemeRegistry::new(Assets, cx.font_cache().clone());
         let mut has_default_theme = false;
         for theme_name in registry.list() {
             let theme = registry.get(&theme_name).unwrap();
@@ -528,8 +534,8 @@ mod tests {
         assert!(has_default_theme);
     }
 
-    #[test]
-    fn test_theme_extension() {
+    #[gpui::test]
+    fn test_theme_extension(cx: &mut MutableAppContext) {
         let assets = TestAssets(&[
             (
                 "themes/_base.toml",
@@ -568,7 +574,7 @@ mod tests {
             ),
         ]);
 
-        let registry = ThemeRegistry::new(assets);
+        let registry = ThemeRegistry::new(assets, cx.font_cache().clone());
         let theme_data = registry.load("light", true).unwrap();
         assert_eq!(
             theme_data.as_ref(),

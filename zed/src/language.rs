@@ -1,4 +1,4 @@
-use crate::settings::{HighlightMap, Theme};
+use crate::{settings::HighlightMap, theme::SyntaxTheme};
 use parking_lot::Mutex;
 use rust_embed::RustEmbed;
 use serde::Deserialize;
@@ -39,7 +39,7 @@ impl Language {
         self.highlight_map.lock().clone()
     }
 
-    pub fn set_theme(&self, theme: &Theme) {
+    pub fn set_theme(&self, theme: &SyntaxTheme) {
         *self.highlight_map.lock() = HighlightMap::new(self.highlight_query.capture_names(), theme);
     }
 }
@@ -61,7 +61,7 @@ impl LanguageRegistry {
         }
     }
 
-    pub fn set_theme(&self, theme: &Theme) {
+    pub fn set_theme(&self, theme: &SyntaxTheme) {
         for language in &self.languages {
             language.set_theme(theme);
         }

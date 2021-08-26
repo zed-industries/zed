@@ -204,13 +204,7 @@ impl ThemeSelector {
         if self.matches.is_empty() {
             let settings = self.settings.borrow();
             return Container::new(
-                Label::new(
-                    "No matches".into(),
-                    settings.ui_font_family,
-                    settings.ui_font_size,
-                )
-                .with_style(&settings.theme.selector.label)
-                .boxed(),
+                Label::new("No matches".into(), settings.theme.selector.label.clone()).boxed(),
             )
             .with_margin_top(6.0)
             .named("empty matches");
@@ -247,14 +241,12 @@ impl ThemeSelector {
         let container = Container::new(
             Label::new(
                 theme_match.string.clone(),
-                settings.ui_font_family,
-                settings.ui_font_size,
+                if index == self.selected_index {
+                    theme.selector.active_item.label.clone()
+                } else {
+                    theme.selector.item.label.clone()
+                },
             )
-            .with_style(if index == self.selected_index {
-                &theme.selector.active_item.label
-            } else {
-                &theme.selector.item.label
-            })
             .with_highlights(theme_match.positions.clone())
             .boxed(),
         )

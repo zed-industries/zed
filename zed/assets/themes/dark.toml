@@ -6,9 +6,10 @@ extends = "_base"
 2 = "#131415"
 
 [text]
-0 = "#ffffff"
-1 = "#b3b3b3"
-2 = "#7b7d80"
+base = { family = "Helvetica", size = 12.0 }
+0 = { extends = "$text.base", color = "#ffffff" }
+1 = { extends = "$text.base", color = "#b3b3b3" }
+2 = { extends = "$text.base", color = "#7b7d80" }
 
 [status]
 good = "#4fac63"
