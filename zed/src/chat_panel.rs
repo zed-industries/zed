@@ -99,6 +99,28 @@ impl ChatPanel {
         cx.notify();
     }
 
+    fn render_channel_name(&self, cx: &RenderContext<Self>) -> ElementBox {
+        let settings = self.settings.borrow();
+        let theme = &settings.theme.chat_panel;
+        if let Some((channel, _)) = self.active_channel.as_ref() {
+            let channel = channel.read(cx);
+            Flex::row()
+                .with_child(
+                    Container::new(
+                        Label::new("#".to_string(), theme.channel_name_hash.label.clone()).boxed(),
+                    )
+                    .with_style(&theme.channel_name_hash.container)
+                    .boxed(),
+                )
+                .with_child(
+                    Label::new(channel.name().to_string(), theme.channel_name.clone()).boxed(),
+                )
+                .boxed()
+        } else {
+            Empty::new().boxed()
+        }
+    }
+
     fn render_active_channel_messages(&self, cx: &RenderContext<Self>) -> ElementBox {
         let messages = if let Some((channel, _)) = self.active_channel.as_ref() {
             let channel = channel.read(cx);
@@ -184,6 +206,7 @@ impl View for ChatPanel {
         let theme = &self.settings.borrow().theme;
         Container::new(
             Flex::column()
+                .with_child(self.render_channel_name(cx))
                 .with_child(self.render_active_channel_messages(cx))
                 .with_child(self.render_input_box())
                 .boxed(),

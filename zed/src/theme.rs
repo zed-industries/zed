@@ -62,6 +62,8 @@ pub struct ChatPanel {
     #[serde(flatten)]
     pub container: ContainerStyle,
     pub message: ChatMessage,
+    pub channel_name: TextStyle,
+    pub channel_name_hash: ContainedLabel,
 }
 
 #[derive(Deserialize)]

@@ -6,7 +6,7 @@ extends = "_base"
 2 = "#131415"
 
 [text]
-base = { family = "Helvetica", size = 12.0 }
+base = { family = "Helvetica", size = 14.0 }
 0 = { extends = "$text.base", color = "#ffffff" }
 1 = { extends = "$text.base", color = "#b3b3b3" }
 2 = { extends = "$text.base", color = "#7b7d80" }

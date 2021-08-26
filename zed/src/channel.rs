@@ -237,6 +237,10 @@ impl Channel {
         }
     }
 
+    pub fn name(&self) -> &str {
+        &self.details.name
+    }
+
     pub fn send_message(&mut self, body: String, cx: &mut ModelContext<Self>) -> Result<()> {
         let channel_id = self.details.id;
         let current_user_id = self.current_user_id()?;
