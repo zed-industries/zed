@@ -5835,6 +5835,7 @@ dependencies = [
  "seahash",
  "serde 1.0.125",
  "serde_json 1.0.64",
+ "serde_path_to_error",
  "similar",
  "simplelog",
  "smallvec",

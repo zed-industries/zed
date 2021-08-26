@@ -42,6 +42,7 @@ rust-embed = "5.9.0"
 seahash = "4.1"
 serde = { version = "1", features = ["derive"] }
 serde_json = { version = "1.0.64", features = ["preserve_order"] }
+serde_path_to_error = "0.1.4"
 similar = "1.3"
 simplelog = "0.9"
 smallvec = { version = "1.6", features = ["union"] }

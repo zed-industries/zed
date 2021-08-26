@@ -1,8 +1,7 @@
 use anyhow::{anyhow, Context, Result};
 use gpui::{fonts, AssetSource, FontCache};
-use json::{Map, Value};
 use parking_lot::Mutex;
-use serde_json as json;
+use serde_json::{Map, Value};
 use std::{collections::HashMap, fmt, mem, sync::Arc};
 
 use super::Theme;
@@ -71,8 +70,8 @@ impl ThemeRegistry {
         }
 
         let theme_data = self.load(name, true)?;
-        let mut theme = fonts::with_font_cache(self.font_cache.clone(), || {
-            serde_json::from_value::<Theme>(theme_data.as_ref().clone())
+        let mut theme: Theme = fonts::with_font_cache(self.font_cache.clone(), || {
+            serde_path_to_error::deserialize(theme_data.as_ref())
         })?;
 
         theme.name = name.into();
