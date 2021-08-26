@@ -24,7 +24,7 @@ pub enum Orientation {
 }
 
 struct StateInner {
-    last_layout_width: f32,
+    last_layout_width: Option<f32>,
     elements: Vec<Option<ElementRc>>,
     heights: SumTree<ElementHeight>,
     scroll_position: f32,
@@ -64,6 +64,7 @@ impl List {
             let state = &mut *state.0.borrow_mut();
             if cx.refreshing {
                 let elements = (build_items)(0..state.elements.len());
+                state.last_layout_width = None;
                 state.elements.clear();
                 state
                     .elements
@@ -121,26 +122,26 @@ impl Element for List {
         let visible_top = state.scroll_top(size.y());
         let visible_bottom = visible_top + size.y();
 
-        if state.last_layout_width == constraint.max.x() {
+        if state.last_layout_width == Some(constraint.max.x()) {
             let mut old_heights = state.heights.cursor::<PendingCount, ElementHeightSummary>();
             let mut new_heights = old_heights.slice(&PendingCount(1), sum_tree::Bias::Left, &());
 
             while let Some(height) = old_heights.item() {
                 if height.is_pending() {
                     let element = &mut state.elements[old_heights.sum_start().count];
-                    let size = element.as_mut().unwrap().layout(item_constraint, cx);
-                    new_heights.push(ElementHeight::Ready(size.y()), &());
+                    let element_size = element.as_mut().unwrap().layout(item_constraint, cx);
+                    new_heights.push(ElementHeight::Ready(element_size.y()), &());
 
                     // Adjust scroll position to keep visible elements stable
                     match state.orientation {
                         Orientation::Top => {
                             if new_heights.summary().height < visible_top {
-                                state.scroll_position += size.y();
+                                state.scroll_position += element_size.y();
                             }
                         }
                         Orientation::Bottom => {
-                            if new_heights.summary().height - size.y() > visible_bottom {
-                                state.scroll_position += size.y();
+                            if new_heights.summary().height - element_size.y() > visible_bottom {
+                                state.scroll_position += element_size.y();
                             }
                         }
                     }
@@ -167,7 +168,7 @@ impl Element for List {
                 let size = element.layout(item_constraint, cx);
                 state.heights.push(ElementHeight::Ready(size.y()), &());
             }
-            state.last_layout_width = constraint.max.x();
+            state.last_layout_width = Some(constraint.max.x());
         }
 
         let visible_elements = state.elements[state.visible_range(size.y())]
@@ -266,7 +267,7 @@ impl ListState {
         let mut heights = SumTree::new();
         heights.extend((0..element_count).map(|_| ElementHeight::Pending), &());
         Self(Rc::new(RefCell::new(StateInner {
-            last_layout_width: 0.,
+            last_layout_width: None,
             elements: (0..element_count).map(|_| None).collect(),
             heights,
             scroll_position: 0.,
