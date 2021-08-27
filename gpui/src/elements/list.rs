@@ -29,6 +29,7 @@ struct StateInner {
     heights: SumTree<ElementHeight>,
     scroll_position: f32,
     orientation: Orientation,
+    scroll_handler: Option<Box<dyn FnMut(Range<usize>, &mut EventContext)>>,
 }
 
 #[derive(Clone, Debug)]
@@ -272,6 +273,7 @@ impl ListState {
             heights,
             scroll_position: 0.,
             orientation,
+            scroll_handler: None,
         })))
     }
 
@@ -289,6 +291,13 @@ impl ListState {
         new_heights.push_tree(old_heights.suffix(&()), &());
         drop(old_heights);
         state.heights = new_heights;
+    }
+
+    pub fn set_scroll_handler(
+        &mut self,
+        handler: impl FnMut(Range<usize>, &mut EventContext) + 'static,
+    ) {
+        self.0.borrow_mut().scroll_handler = Some(Box::new(handler))
     }
 }
 
@@ -320,6 +329,11 @@ impl StateInner {
             Orientation::Bottom => delta.y(),
         };
         self.scroll_position = (self.scroll_position + delta_y).max(0.).min(scroll_max);
+
+        if self.scroll_handler.is_some() {
+            let range = self.visible_range(height);
+            self.scroll_handler.as_mut().unwrap()(range, cx);
+        }
         cx.notify();
 
         true

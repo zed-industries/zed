@@ -37,6 +37,7 @@ pub struct ChannelDetails {
 pub struct Channel {
     details: ChannelDetails,
     messages: SumTree<ChannelMessage>,
+    loaded_all_messages: bool,
     pending_messages: Vec<PendingChannelMessage>,
     next_local_message_id: u64,
     user_store: Arc<UserStore>,
@@ -70,7 +71,7 @@ pub enum ChannelListEvent {}
 
 #[derive(Clone, Debug, PartialEq)]
 pub enum ChannelEvent {
-    Message {
+    MessagesAdded {
         old_range: Range<usize>,
         new_count: usize,
     },
@@ -192,31 +193,12 @@ impl Channel {
             cx.spawn(|channel, mut cx| {
                 async move {
                     let response = rpc.request(proto::JoinChannel { channel_id }).await?;
-
-                    let unique_user_ids = response
-                        .messages
-                        .iter()
-                        .map(|m| m.sender_id)
-                        .collect::<HashSet<_>>()
-                        .into_iter()
-                        .collect();
-                    user_store.load_users(unique_user_ids).await?;
-
-                    let mut messages = Vec::with_capacity(response.messages.len());
-                    for message in response.messages {
-                        messages.push(ChannelMessage::from_proto(message, &user_store).await?);
-                    }
+                    let messages = messages_from_proto(response.messages, &user_store).await?;
+                    let loaded_all_messages = response.done;
 
                     channel.update(&mut cx, |channel, cx| {
-                        let old_count = channel.messages.summary().count;
-                        let new_count = messages.len();
-
-                        channel.messages = SumTree::new();
-                        channel.messages.extend(messages, &());
-                        cx.emit(ChannelEvent::Message {
-                            old_range: 0..old_count,
-                            new_count,
-                        });
+                        channel.insert_messages(messages, cx);
+                        channel.loaded_all_messages = loaded_all_messages;
                     });
 
                     Ok(())
@@ -232,6 +214,7 @@ impl Channel {
             rpc,
             messages: Default::default(),
             pending_messages: Default::default(),
+            loaded_all_messages: false,
             next_local_message_id: 0,
             _subscription,
         }
@@ -264,15 +247,18 @@ impl Channel {
                         .binary_search_by_key(&local_id, |msg| msg.local_id)
                     {
                         let body = this.pending_messages.remove(i).body;
-                        this.insert_message(
-                            ChannelMessage {
-                                id: response.message_id,
-                                timestamp: OffsetDateTime::from_unix_timestamp(
-                                    response.timestamp as i64,
-                                )?,
-                                body,
-                                sender,
-                            },
+                        this.insert_messages(
+                            SumTree::from_item(
+                                ChannelMessage {
+                                    id: response.message_id,
+                                    timestamp: OffsetDateTime::from_unix_timestamp(
+                                        response.timestamp as i64,
+                                    )?,
+                                    body,
+                                    sender,
+                                },
+                                &(),
+                            ),
                             cx,
                         );
                     }
@@ -284,6 +270,37 @@ impl Channel {
         .detach();
         cx.notify();
         Ok(())
+    }
+
+    pub fn load_more_messages(&mut self, cx: &mut ModelContext<Self>) -> bool {
+        if !self.loaded_all_messages {
+            let rpc = self.rpc.clone();
+            let user_store = self.user_store.clone();
+            let channel_id = self.details.id;
+            if let Some(before_message_id) = self.messages.first().map(|message| message.id) {
+                cx.spawn(|this, mut cx| {
+                    async move {
+                        let response = rpc
+                            .request(proto::GetChannelMessages {
+                                channel_id,
+                                before_message_id,
+                            })
+                            .await?;
+                        let loaded_all_messages = response.done;
+                        let messages = messages_from_proto(response.messages, &user_store).await?;
+                        this.update(&mut cx, |this, cx| {
+                            this.loaded_all_messages = loaded_all_messages;
+                            this.insert_messages(messages, cx);
+                        });
+                        Ok(())
+                    }
+                    .log_err()
+                })
+                .detach();
+                return true;
+            }
+        }
+        false
     }
 
     pub fn message_count(&self) -> usize {
@@ -326,7 +343,9 @@ impl Channel {
         cx.spawn(|this, mut cx| {
             async move {
                 let message = ChannelMessage::from_proto(message, &user_store).await?;
-                this.update(&mut cx, |this, cx| this.insert_message(message, cx));
+                this.update(&mut cx, |this, cx| {
+                    this.insert_messages(SumTree::from_item(message, &()), cx)
+                });
                 Ok(())
             }
             .log_err()
@@ -335,27 +354,49 @@ impl Channel {
         Ok(())
     }
 
-    fn insert_message(&mut self, message: ChannelMessage, cx: &mut ModelContext<Self>) {
-        let mut old_cursor = self.messages.cursor::<u64, Count>();
-        let mut new_messages = old_cursor.slice(&message.id, Bias::Left, &());
-        let start_ix = old_cursor.sum_start().0;
-        let mut end_ix = start_ix;
-        if old_cursor.item().map_or(false, |m| m.id == message.id) {
-            old_cursor.next(&());
-            end_ix += 1;
+    fn insert_messages(&mut self, messages: SumTree<ChannelMessage>, cx: &mut ModelContext<Self>) {
+        if let Some((first_message, last_message)) = messages.first().zip(messages.last()) {
+            let mut old_cursor = self.messages.cursor::<u64, Count>();
+            let mut new_messages = old_cursor.slice(&first_message.id, Bias::Left, &());
+            let start_ix = old_cursor.sum_start().0;
+            let removed_messages = old_cursor.slice(&last_message.id, Bias::Right, &());
+            let removed_count = removed_messages.summary().count;
+            let new_count = messages.summary().count;
+            let end_ix = start_ix + removed_count;
+
+            new_messages.push_tree(messages, &());
+            new_messages.push_tree(old_cursor.suffix(&()), &());
+            drop(old_cursor);
+            self.messages = new_messages;
+
+            cx.emit(ChannelEvent::MessagesAdded {
+                old_range: start_ix..end_ix,
+                new_count,
+            });
+            cx.notify();
         }
-
-        new_messages.push(message.clone(), &());
-        new_messages.push_tree(old_cursor.suffix(&()), &());
-        drop(old_cursor);
-        self.messages = new_messages;
-
-        cx.emit(ChannelEvent::Message {
-            old_range: start_ix..end_ix,
-            new_count: 1,
-        });
-        cx.notify();
     }
+}
+
+async fn messages_from_proto(
+    proto_messages: Vec<proto::ChannelMessage>,
+    user_store: &UserStore,
+) -> Result<SumTree<ChannelMessage>> {
+    let unique_user_ids = proto_messages
+        .iter()
+        .map(|m| m.sender_id)
+        .collect::<HashSet<_>>()
+        .into_iter()
+        .collect();
+    user_store.load_users(unique_user_ids).await?;
+
+    let mut messages = Vec::with_capacity(proto_messages.len());
+    for message in proto_messages {
+        messages.push(ChannelMessage::from_proto(message, &user_store).await?);
+    }
+    let mut result = SumTree::new();
+    result.extend(messages, &());
+    Ok(result)
 }
 
 impl From<proto::Channel> for ChannelDetails {
@@ -489,9 +530,11 @@ mod tests {
                             sender_id: 6,
                         },
                     ],
+                    done: false,
                 },
             )
             .await;
+
         // Client requests all users for the received messages
         let mut get_users = server.receive::<proto::GetUsers>().await;
         get_users.payload.user_ids.sort();
@@ -518,7 +561,7 @@ mod tests {
 
         assert_eq!(
             channel.next_event(&cx).await,
-            ChannelEvent::Message {
+            ChannelEvent::MessagesAdded {
                 old_range: 0..0,
                 new_count: 2,
             }
@@ -567,7 +610,7 @@ mod tests {
 
         assert_eq!(
             channel.next_event(&cx).await,
-            ChannelEvent::Message {
+            ChannelEvent::MessagesAdded {
                 old_range: 2..2,
                 new_count: 1,
             }
@@ -580,7 +623,57 @@ mod tests {
                     .collect::<Vec<_>>(),
                 &[("as-cii".into(), "c".into())]
             )
-        })
+        });
+
+        // Scroll up to view older messages.
+        channel.update(&mut cx, |channel, cx| {
+            assert!(channel.load_more_messages(cx));
+        });
+        let get_messages = server.receive::<proto::GetChannelMessages>().await;
+        assert_eq!(get_messages.payload.channel_id, 5);
+        assert_eq!(get_messages.payload.before_message_id, 10);
+        server
+            .respond(
+                get_messages.receipt(),
+                proto::GetChannelMessagesResponse {
+                    done: true,
+                    messages: vec![
+                        proto::ChannelMessage {
+                            id: 8,
+                            body: "y".into(),
+                            timestamp: 998,
+                            sender_id: 5,
+                        },
+                        proto::ChannelMessage {
+                            id: 9,
+                            body: "z".into(),
+                            timestamp: 999,
+                            sender_id: 6,
+                        },
+                    ],
+                },
+            )
+            .await;
+
+        assert_eq!(
+            channel.next_event(&cx).await,
+            ChannelEvent::MessagesAdded {
+                old_range: 0..0,
+                new_count: 2,
+            }
+        );
+        channel.read_with(&cx, |channel, _| {
+            assert_eq!(
+                channel
+                    .messages_in_range(0..2)
+                    .map(|message| (message.sender.github_login.clone(), message.body.clone()))
+                    .collect::<Vec<_>>(),
+                &[
+                    ("nathansobo".into(), "y".into()),
+                    ("maxbrunsfeld".into(), "z".into())
+                ]
+            );
+        });
     }
 
     struct FakeServer {

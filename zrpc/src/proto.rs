@@ -125,6 +125,8 @@ messages!(
     ChannelMessageSent,
     CloseBuffer,
     CloseWorktree,
+    GetChannelMessages,
+    GetChannelMessagesResponse,
     GetChannels,
     GetChannelsResponse,
     GetUsers,
@@ -158,6 +160,7 @@ request_messages!(
     (SaveBuffer, BufferSaved),
     (ShareWorktree, ShareWorktreeResponse),
     (SendChannelMessage, SendChannelMessageResponse),
+    (GetChannelMessages, GetChannelMessagesResponse),
 );
 
 entity_messages!(

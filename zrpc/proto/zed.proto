@@ -32,6 +32,8 @@ message Envelope {
         SendChannelMessage send_channel_message = 27;
         SendChannelMessageResponse send_channel_message_response = 28;
         ChannelMessageSent channel_message_sent = 29;
+        GetChannelMessages get_channel_messages = 30;
+        GetChannelMessagesResponse get_channel_messages_response = 31;
     }
 }
 
@@ -130,6 +132,7 @@ message JoinChannel {
 
 message JoinChannelResponse {
     repeated ChannelMessage messages = 1;
+    bool done = 2;
 }
 
 message LeaveChannel {
@@ -157,6 +160,16 @@ message SendChannelMessageResponse {
 message ChannelMessageSent {
     uint64 channel_id = 1;
     ChannelMessage message = 2;
+}
+
+message GetChannelMessages {
+    uint64 channel_id = 1;
+    uint64 before_message_id = 2;
+}
+
+message GetChannelMessagesResponse {
+    repeated ChannelMessage messages = 1;
+    bool done = 2;
 }
 
 // Entities

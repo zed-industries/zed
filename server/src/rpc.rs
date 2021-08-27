@@ -1,6 +1,6 @@
 use super::{
     auth,
-    db::{ChannelId, UserId},
+    db::{ChannelId, MessageId, UserId},
     AppState,
 };
 use anyhow::anyhow;
@@ -77,6 +77,8 @@ struct Channel {
     connection_ids: HashSet<ConnectionId>,
 }
 
+const MESSAGE_COUNT_PER_PAGE: usize = 50;
+
 impl Server {
     pub fn new(
         app_state: Arc<AppState>,
@@ -105,7 +107,8 @@ impl Server {
             .add_handler(Server::get_users)
             .add_handler(Server::join_channel)
             .add_handler(Server::leave_channel)
-            .add_handler(Server::send_channel_message);
+            .add_handler(Server::send_channel_message)
+            .add_handler(Server::get_channel_messages);
 
         Arc::new(server)
     }
@@ -592,7 +595,7 @@ impl Server {
         let messages = self
             .app_state
             .db
-            .get_recent_channel_messages(channel_id, 50)
+            .get_recent_channel_messages(channel_id, MESSAGE_COUNT_PER_PAGE, None)
             .await?
             .into_iter()
             .map(|msg| proto::ChannelMessage {
@@ -601,9 +604,15 @@ impl Server {
                 timestamp: msg.sent_at.unix_timestamp() as u64,
                 sender_id: msg.sender_id.to_proto(),
             })
-            .collect();
+            .collect::<Vec<_>>();
         self.peer
-            .respond(request.receipt(), proto::JoinChannelResponse { messages })
+            .respond(
+                request.receipt(),
+                proto::JoinChannelResponse {
+                    done: messages.len() < MESSAGE_COUNT_PER_PAGE,
+                    messages,
+                },
+            )
             .await?;
         Ok(())
     }
@@ -679,6 +688,54 @@ impl Server {
                 proto::SendChannelMessageResponse {
                     message_id,
                     timestamp: timestamp.unix_timestamp() as u64,
+                },
+            )
+            .await?;
+        Ok(())
+    }
+
+    async fn get_channel_messages(
+        self: Arc<Self>,
+        request: TypedEnvelope<proto::GetChannelMessages>,
+    ) -> tide::Result<()> {
+        let user_id = self
+            .state
+            .read()
+            .await
+            .user_id_for_connection(request.sender_id)?;
+        let channel_id = ChannelId::from_proto(request.payload.channel_id);
+        if !self
+            .app_state
+            .db
+            .can_user_access_channel(user_id, channel_id)
+            .await?
+        {
+            Err(anyhow!("access denied"))?;
+        }
+
+        let messages = self
+            .app_state
+            .db
+            .get_recent_channel_messages(
+                channel_id,
+                MESSAGE_COUNT_PER_PAGE,
+                Some(MessageId::from_proto(request.payload.before_message_id)),
+            )
+            .await?
+            .into_iter()
+            .map(|msg| proto::ChannelMessage {
+                id: msg.id.to_proto(),
+                body: msg.body,
+                timestamp: msg.sent_at.unix_timestamp() as u64,
+                sender_id: msg.sender_id.to_proto(),
+            })
+            .collect::<Vec<_>>();
+        self.peer
+            .respond(
+                request.receipt(),
+                proto::GetChannelMessagesResponse {
+                    done: messages.len() < MESSAGE_COUNT_PER_PAGE,
+                    messages,
                 },
             )
             .await?;

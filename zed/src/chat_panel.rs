@@ -22,9 +22,11 @@ pub struct ChatPanel {
 pub enum Event {}
 
 action!(Send);
+action!(LoadMoreMessages);
 
 pub fn init(cx: &mut MutableAppContext) {
     cx.add_action(ChatPanel::send);
+    cx.add_action(ChatPanel::load_more_messages);
 
     cx.add_bindings(vec![Binding::new("enter", Send, Some("ChatPanel"))]);
 }
@@ -78,6 +80,11 @@ impl ChatPanel {
             let subscription = cx.subscribe(&channel, Self::channel_did_change);
             self.message_list =
                 ListState::new(channel.read(cx).message_count(), Orientation::Bottom);
+            self.message_list.set_scroll_handler(|visible_range, cx| {
+                if visible_range.start < 5 {
+                    cx.dispatch_action(LoadMoreMessages);
+                }
+            });
             self.active_channel = Some((channel, subscription));
         }
     }
@@ -89,7 +96,7 @@ impl ChatPanel {
         cx: &mut ViewContext<Self>,
     ) {
         match event {
-            ChannelEvent::Message {
+            ChannelEvent::MessagesAdded {
                 old_range,
                 new_count,
             } => {
@@ -189,6 +196,14 @@ impl ChatPanel {
             channel
                 .update(cx, |channel, cx| channel.send_message(body, cx))
                 .log_err();
+        }
+    }
+
+    fn load_more_messages(&mut self, _: &LoadMoreMessages, cx: &mut ViewContext<Self>) {
+        if let Some((channel, _)) = self.active_channel.as_ref() {
+            channel.update(cx, |channel, cx| {
+                channel.load_more_messages(cx);
+            })
         }
     }
 }

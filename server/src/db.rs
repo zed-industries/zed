@@ -380,6 +380,7 @@ impl Db {
         &self,
         channel_id: ChannelId,
         count: usize,
+        before_id: Option<MessageId>,
     ) -> Result<Vec<ChannelMessage>> {
         test_support!(self, {
             let query = r#"
@@ -389,14 +390,16 @@ impl Db {
                     FROM
                         channel_messages
                     WHERE
-                        channel_id = $1
+                        channel_id = $1 AND
+                        id < $2
                     ORDER BY id DESC
-                    LIMIT $2
+                    LIMIT $3
                 ) as recent_messages
                 ORDER BY id ASC
             "#;
             sqlx::query_as(query)
                 .bind(channel_id.0)
+                .bind(before_id.unwrap_or(MessageId::MAX))
                 .bind(count as i64)
                 .fetch_all(&self.pool)
                 .await
@@ -412,6 +415,9 @@ macro_rules! id_type {
         pub struct $name(pub i32);
 
         impl $name {
+            #[allow(unused)]
+            pub const MAX: Self = Self(i32::MAX);
+
             #[allow(unused)]
             pub fn from_proto(value: u64) -> Self {
                 Self(value as i32)
@@ -512,10 +518,22 @@ pub mod tests {
                 .unwrap();
         }
 
-        let messages = db.get_recent_channel_messages(channel, 5).await.unwrap();
+        let messages = db
+            .get_recent_channel_messages(channel, 5, None)
+            .await
+            .unwrap();
         assert_eq!(
             messages.iter().map(|m| &m.body).collect::<Vec<_>>(),
             ["5", "6", "7", "8", "9"]
+        );
+
+        let prev_messages = db
+            .get_recent_channel_messages(channel, 4, Some(messages[0].id))
+            .await
+            .unwrap();
+        assert_eq!(
+            prev_messages.iter().map(|m| &m.body).collect::<Vec<_>>(),
+            ["1", "2", "3", "4"]
         );
     }
 }
