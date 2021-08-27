@@ -94,24 +94,29 @@ impl Element for MouseEventHandler {
         let handled_in_child = self.child.dispatch_event(event, cx);
 
         self.state.update(cx, |state, cx| match event {
-            Event::MouseMoved { position } => {
-                let mouse_in = bounds.contains_point(*position);
-                if state.hovered != mouse_in {
-                    state.hovered = mouse_in;
-                    if let Some(cursor_style) = cursor_style {
-                        if !state.clicked {
-                            if state.hovered {
-                                state.cursor_style_handle = Some(cx.set_cursor_style(cursor_style));
-                            } else {
-                                state.cursor_style_handle = None;
+            Event::MouseMoved {
+                position,
+                left_mouse_down,
+            } => {
+                if !left_mouse_down {
+                    let mouse_in = bounds.contains_point(*position);
+                    if state.hovered != mouse_in {
+                        state.hovered = mouse_in;
+                        if let Some(cursor_style) = cursor_style {
+                            if !state.clicked {
+                                if state.hovered {
+                                    state.cursor_style_handle =
+                                        Some(cx.set_cursor_style(cursor_style));
+                                } else {
+                                    state.cursor_style_handle = None;
+                                }
                             }
                         }
+                        cx.notify();
+                        return true;
                     }
-                    cx.notify();
-                    true
-                } else {
-                    handled_in_child
                 }
+                handled_in_child
             }
             Event::LeftMouseDown { position, .. } => {
                 if !handled_in_child && bounds.contains_point(*position) {

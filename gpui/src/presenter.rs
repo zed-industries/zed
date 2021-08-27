@@ -145,8 +145,14 @@ impl Presenter {
     pub fn dispatch_event(&mut self, event: Event, cx: &mut MutableAppContext) {
         if let Some(root_view_id) = cx.root_view_id(self.window_id) {
             match event {
-                Event::MouseMoved { position, .. } | Event::LeftMouseDragged { position } => {
-                    self.last_mouse_moved_event = Some(Event::MouseMoved { position });
+                Event::MouseMoved { .. } => {
+                    self.last_mouse_moved_event = Some(event.clone());
+                }
+                Event::LeftMouseDragged { position } => {
+                    self.last_mouse_moved_event = Some(Event::MouseMoved {
+                        position,
+                        left_mouse_down: true,
+                    });
                 }
                 _ => {}
             }

@@ -6,8 +6,8 @@ use cocoa::appkit::{
     NSUpArrowFunctionKey as ARROW_UP_KEY,
 };
 use cocoa::{
-    appkit::{NSEvent as _, NSEventModifierFlags, NSEventType},
-    base::{id, YES},
+    appkit::{NSEvent, NSEventModifierFlags, NSEventType},
+    base::{id, nil, YES},
     foundation::NSString as _,
 };
 use std::{ffi::CStr, os::raw::c_char};
@@ -116,6 +116,7 @@ impl Event {
                     native_event.locationInWindow().x as f32,
                     window_height - native_event.locationInWindow().y as f32,
                 ),
+                left_mouse_down: NSEvent::pressedMouseButtons(nil) & 1 != 0,
             }),
             _ => None,
         }

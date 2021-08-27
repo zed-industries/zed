@@ -24,5 +24,6 @@ pub enum Event {
     },
     MouseMoved {
         position: Vector2F,
+        left_mouse_down: bool,
     },
 }
