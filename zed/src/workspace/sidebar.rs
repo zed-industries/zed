@@ -127,9 +127,10 @@ impl Sidebar {
                 .boxed()
         })
         .on_drag(move |delta, cx| {
+            let prev_width = *width.borrow();
             match side {
-                Side::Left => *width.borrow_mut() += delta.x(),
-                Side::Right => *width.borrow_mut() -= delta.x(),
+                Side::Left => *width.borrow_mut() = 0f32.max(prev_width + delta.x()),
+                Side::Right => *width.borrow_mut() = 0f32.max(prev_width - delta.x()),
             }
 
             cx.notify();
