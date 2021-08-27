@@ -1,16 +1,12 @@
 use crate::Settings;
-use gpui::{
-    action,
-    elements::{
-        Align, ConstrainedBox, Container, Flex, MouseEventHandler, ParentElement as _, Svg,
-    },
-    AnyViewHandle, AppContext, Element as _, ElementBox,
-};
+use gpui::{action, color::Color, elements::*, AnyViewHandle, AppContext, Border};
+use std::{cell::RefCell, rc::Rc};
 
 pub struct Sidebar {
     side: Side,
     items: Vec<Item>,
     active_item_ix: Option<usize>,
+    width: Rc<RefCell<f32>>,
 }
 
 #[derive(Clone, Copy)]
@@ -38,6 +34,7 @@ impl Sidebar {
             side,
             items: Default::default(),
             active_item_ix: None,
+            width: Rc::new(RefCell::new(100.)),
         }
     }
 
@@ -99,5 +96,53 @@ impl Sidebar {
         )
         .with_style(&settings.theme.workspace.sidebar)
         .boxed()
+    }
+
+    pub fn render_active_item(&self, cx: &AppContext) -> Option<ElementBox> {
+        if let Some(active_item) = self.active_item() {
+            let mut container = Flex::row();
+            if matches!(self.side, Side::Right) {
+                container.add_child(self.render_resize_handle(cx));
+            }
+            container.add_child(
+                ConstrainedBox::new(ChildView::new(active_item.id()).boxed())
+                    .with_width(*self.width.borrow())
+                    .boxed(),
+            );
+            if matches!(self.side, Side::Left) {
+                container.add_child(self.render_resize_handle(cx));
+            }
+            Some(container.boxed())
+        } else {
+            None
+        }
+    }
+
+    fn render_resize_handle(&self, cx: &AppContext) -> ElementBox {
+        let width = self.width.clone();
+        let side = self.side;
+        MouseEventHandler::new::<Self, _>(self.side.id(), cx, |_| {
+            Container::new(Empty::new().boxed())
+                .with_border(Border::left(3., Color::white()))
+                .boxed()
+        })
+        .on_drag(move |delta, cx| {
+            match side {
+                Side::Left => *width.borrow_mut() += delta.x(),
+                Side::Right => *width.borrow_mut() -= delta.x(),
+            }
+
+            cx.notify();
+        })
+        .boxed()
+    }
+}
+
+impl Side {
+    fn id(self) -> usize {
+        match self {
+            Side::Left => 0,
+            Side::Right => 1,
+        }
     }
 }

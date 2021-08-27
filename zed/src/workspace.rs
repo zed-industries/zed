@@ -960,20 +960,12 @@ impl View for Workspace {
                             .with_child({
                                 let mut content = Flex::row();
                                 content.add_child(self.left_sidebar.render(&settings, cx));
-                                if let Some(panel) = self.left_sidebar.active_item() {
-                                    content.add_child(
-                                        ConstrainedBox::new(ChildView::new(panel.id()).boxed())
-                                            .with_width(300.0)
-                                            .named("left panel"),
-                                    );
+                                if let Some(element) = self.left_sidebar.render_active_item(cx) {
+                                    content.add_child(element);
                                 }
                                 content.add_child(Expanded::new(1.0, self.center.render()).boxed());
-                                if let Some(panel) = self.right_sidebar.active_item() {
-                                    content.add_child(
-                                        ConstrainedBox::new(ChildView::new(panel.id()).boxed())
-                                            .with_width(300.0)
-                                            .named("right panel"),
-                                    );
+                                if let Some(element) = self.right_sidebar.render_active_item(cx) {
+                                    content.add_child(element);
                                 }
                                 content.add_child(self.right_sidebar.render(&settings, cx));
                                 content.boxed()
