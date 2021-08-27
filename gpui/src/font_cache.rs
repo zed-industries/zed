@@ -147,9 +147,13 @@ impl FontCache {
     }
 
     pub fn em_width(&self, font_id: FontId, font_size: f32) -> f32 {
-        let state = self.0.read();
-        let glyph_id = state.fonts.glyph_for_char(font_id, 'm').unwrap();
-        let bounds = state.fonts.typographic_bounds(font_id, glyph_id).unwrap();
+        let glyph_id;
+        let bounds;
+        {
+            let state = self.0.read();
+            glyph_id = state.fonts.glyph_for_char(font_id, 'm').unwrap();
+            bounds = state.fonts.typographic_bounds(font_id, glyph_id).unwrap();
+        }
         self.scale_metric(bounds.width(), font_id, font_size)
     }
 
