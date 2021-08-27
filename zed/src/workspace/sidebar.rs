@@ -61,9 +61,10 @@ impl Sidebar {
 
     pub fn render(&self, settings: &Settings, cx: &AppContext) -> ElementBox {
         let side = self.side;
+        let theme = &settings.theme;
         let line_height = cx.font_cache().line_height(
-            cx.font_cache().default_font(settings.ui_font_family),
-            settings.ui_font_size,
+            theme.workspace.tab.label.text.font_id,
+            theme.workspace.tab.label.text.font_size,
         );
 
         Container::new(

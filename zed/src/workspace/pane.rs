@@ -179,8 +179,8 @@ impl Pane {
         let settings = self.settings.borrow();
         let theme = &settings.theme;
         let line_height = cx.font_cache().line_height(
-            cx.font_cache().default_font(settings.ui_font_family),
-            settings.ui_font_size,
+            theme.workspace.tab.label.text.font_id,
+            theme.workspace.tab.label.text.font_size,
         );
 
         let mut row = Flex::row();

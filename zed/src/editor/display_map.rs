@@ -531,9 +531,7 @@ mod tests {
 
         let settings = Settings {
             buffer_font_family: font_cache.load_family(&["Helvetica"]).unwrap(),
-            ui_font_family: font_cache.load_family(&["Helvetica"]).unwrap(),
             buffer_font_size: 12.0,
-            ui_font_size: 12.0,
             tab_size: 4,
             ..cx.read(Settings::test)
         };

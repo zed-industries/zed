@@ -162,11 +162,10 @@ impl FileFinder {
                 .with_child(
                     Container::new(
                         LineBox::new(
-                            settings.ui_font_family,
-                            settings.ui_font_size,
                             Svg::new("icons/file-16.svg")
                                 .with_color(style.label.text.color)
                                 .boxed(),
+                            style.label.text.clone(),
                         )
                         .boxed(),
                     )

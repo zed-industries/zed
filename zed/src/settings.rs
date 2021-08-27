@@ -11,8 +11,6 @@ pub struct Settings {
     pub buffer_font_family: FamilyId,
     pub buffer_font_size: f32,
     pub tab_size: usize,
-    pub ui_font_family: FamilyId,
-    pub ui_font_size: f32,
     pub theme: Arc<Theme>,
 }
 
@@ -42,8 +40,6 @@ impl Settings {
             buffer_font_family: font_cache.load_family(&["Fira Code", "Monaco"])?,
             buffer_font_size: 14.0,
             tab_size: 4,
-            ui_font_family: font_cache.load_family(&["SF Pro", "Helvetica"])?,
-            ui_font_size: 12.0,
             theme,
         })
     }
