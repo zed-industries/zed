@@ -238,8 +238,12 @@ impl Peer {
                 .recv()
                 .await
                 .ok_or_else(|| anyhow!("connection was closed"))?;
-            T::Response::from_envelope(response)
-                .ok_or_else(|| anyhow!("received response of the wrong type"))
+            if let Some(proto::envelope::Payload::Error(error)) = &response.payload {
+                Err(anyhow!("request failed").context(error.message.clone()))
+            } else {
+                T::Response::from_envelope(response)
+                    .ok_or_else(|| anyhow!("received response of the wrong type"))
+            }
         }
     }
 
@@ -286,6 +290,25 @@ impl Peer {
         self: &Arc<Self>,
         receipt: Receipt<T>,
         response: T::Response,
+    ) -> impl Future<Output = Result<()>> {
+        let this = self.clone();
+        async move {
+            let mut connection = this.connection(receipt.sender_id).await?;
+            let message_id = connection
+                .next_message_id
+                .fetch_add(1, atomic::Ordering::SeqCst);
+            connection
+                .outgoing_tx
+                .send(response.into_envelope(message_id, Some(receipt.message_id), None))
+                .await?;
+            Ok(())
+        }
+    }
+
+    pub fn respond_with_error<T: RequestMessage>(
+        self: &Arc<Self>,
+        receipt: Receipt<T>,
+        response: proto::Error,
     ) -> impl Future<Output = Result<()>> {
         let this = self.clone();
         async move {

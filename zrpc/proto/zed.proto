@@ -6,34 +6,35 @@ message Envelope {
     optional uint32 responding_to = 2;
     optional uint32 original_sender_id = 3;
     oneof payload {
-        Ping ping = 4;
-        Pong pong = 5;
-        ShareWorktree share_worktree = 6;
-        ShareWorktreeResponse share_worktree_response = 7;
-        OpenWorktree open_worktree = 8;
-        OpenWorktreeResponse open_worktree_response = 9;
-        UpdateWorktree update_worktree = 10;
-        CloseWorktree close_worktree = 11;
-        OpenBuffer open_buffer = 12;
-        OpenBufferResponse open_buffer_response = 13;
-        CloseBuffer close_buffer = 14;
-        UpdateBuffer update_buffer = 15;
-        SaveBuffer save_buffer = 16;
-        BufferSaved buffer_saved = 17;
-        AddPeer add_peer = 18;
-        RemovePeer remove_peer = 19;
-        GetChannels get_channels = 20;
-        GetChannelsResponse get_channels_response = 21;
-        GetUsers get_users = 22;
-        GetUsersResponse get_users_response = 23;
-        JoinChannel join_channel = 24;
-        JoinChannelResponse join_channel_response = 25;
-        LeaveChannel leave_channel = 26;
-        SendChannelMessage send_channel_message = 27;
-        SendChannelMessageResponse send_channel_message_response = 28;
-        ChannelMessageSent channel_message_sent = 29;
-        GetChannelMessages get_channel_messages = 30;
-        GetChannelMessagesResponse get_channel_messages_response = 31;
+        Error error = 4;
+        Ping ping = 5;
+        Pong pong = 6;
+        ShareWorktree share_worktree = 7;
+        ShareWorktreeResponse share_worktree_response = 8;
+        OpenWorktree open_worktree = 9;
+        OpenWorktreeResponse open_worktree_response = 10;
+        UpdateWorktree update_worktree = 11;
+        CloseWorktree close_worktree = 12;
+        OpenBuffer open_buffer = 13;
+        OpenBufferResponse open_buffer_response = 14;
+        CloseBuffer close_buffer = 15;
+        UpdateBuffer update_buffer = 16;
+        SaveBuffer save_buffer = 17;
+        BufferSaved buffer_saved = 18;
+        AddPeer add_peer = 19;
+        RemovePeer remove_peer = 20;
+        GetChannels get_channels = 21;
+        GetChannelsResponse get_channels_response = 22;
+        GetUsers get_users = 23;
+        GetUsersResponse get_users_response = 24;
+        JoinChannel join_channel = 25;
+        JoinChannelResponse join_channel_response = 26;
+        LeaveChannel leave_channel = 27;
+        SendChannelMessage send_channel_message = 28;
+        SendChannelMessageResponse send_channel_message_response = 29;
+        ChannelMessageSent channel_message_sent = 30;
+        GetChannelMessages get_channel_messages = 31;
+        GetChannelMessagesResponse get_channel_messages_response = 32;
     }
 }
 
@@ -45,6 +46,10 @@ message Ping {
 
 message Pong {
     int32 id = 2;
+}
+
+message Error {
+    string message = 1;
 }
 
 message ShareWorktree {

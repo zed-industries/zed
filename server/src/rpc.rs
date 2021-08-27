@@ -77,7 +77,13 @@ struct Channel {
     connection_ids: HashSet<ConnectionId>,
 }
 
+#[cfg(debug_assertions)]
+const MESSAGE_COUNT_PER_PAGE: usize = 10;
+
+#[cfg(not(debug_assertions))]
 const MESSAGE_COUNT_PER_PAGE: usize = 50;
+
+const MAX_MESSAGE_LEN: usize = 1024;
 
 impl Server {
     pub fn new(
@@ -661,20 +667,33 @@ impl Server {
             }
         }
 
+        let receipt = request.receipt();
+        let body = request.payload.body.trim().to_string();
+        if body.len() > MAX_MESSAGE_LEN {
+            self.peer
+                .respond_with_error(
+                    receipt,
+                    proto::Error {
+                        message: "message is too long".to_string(),
+                    },
+                )
+                .await?;
+            return Ok(());
+        }
+
         let timestamp = OffsetDateTime::now_utc();
         let message_id = self
             .app_state
             .db
-            .create_channel_message(channel_id, user_id, &request.payload.body, timestamp)
+            .create_channel_message(channel_id, user_id, &body, timestamp)
             .await?
             .to_proto();
-        let receipt = request.receipt();
         let message = proto::ChannelMessageSent {
             channel_id: channel_id.to_proto(),
             message: Some(proto::ChannelMessage {
                 sender_id: user_id.to_proto(),
                 id: message_id,
-                body: request.payload.body,
+                body,
                 timestamp: timestamp.unix_timestamp() as u64,
             }),
         };
@@ -1530,18 +1549,25 @@ mod tests {
             })
             .await;
 
-        channel_a.update(&mut cx_a, |channel, cx| {
-            channel.send_message("oh, hi B.".to_string(), cx).unwrap();
-            channel.send_message("sup".to_string(), cx).unwrap();
-            assert_eq!(
+        channel_a
+            .update(&mut cx_a, |channel, cx| {
                 channel
-                    .pending_messages()
-                    .iter()
-                    .map(|m| &m.body)
-                    .collect::<Vec<_>>(),
-                &["oh, hi B.", "sup"]
-            )
-        });
+                    .send_message("oh, hi B.".to_string(), cx)
+                    .unwrap()
+                    .detach();
+                let task = channel.send_message("sup".to_string(), cx).unwrap();
+                assert_eq!(
+                    channel
+                        .pending_messages()
+                        .iter()
+                        .map(|m| &m.body)
+                        .collect::<Vec<_>>(),
+                    &["oh, hi B.", "sup"]
+                );
+                task
+            })
+            .await
+            .unwrap();
 
         channel_a
             .condition(&cx_a, |channel, _| channel.pending_messages().is_empty())
@@ -1580,6 +1606,59 @@ mod tests {
                 .map(|m| (m.sender.github_login.clone(), m.body.clone()))
                 .collect()
         }
+    }
+
+    #[gpui::test]
+    async fn test_chat_message_validation(mut cx_a: TestAppContext) {
+        cx_a.foreground().forbid_parking();
+
+        let mut server = TestServer::start().await;
+        let (user_id_a, client_a) = server.create_client(&mut cx_a, "user_a").await;
+
+        let db = &server.app_state.db;
+        let org_id = db.create_org("Test Org", "test-org").await.unwrap();
+        let channel_id = db.create_org_channel(org_id, "test-channel").await.unwrap();
+        db.add_org_member(org_id, user_id_a, false).await.unwrap();
+        db.add_channel_member(channel_id, user_id_a, false)
+            .await
+            .unwrap();
+
+        let user_store_a = Arc::new(UserStore::new(client_a.clone()));
+        let channels_a = cx_a.add_model(|cx| ChannelList::new(user_store_a, client_a, cx));
+        channels_a
+            .condition(&mut cx_a, |list, _| list.available_channels().is_some())
+            .await;
+        let channel_a = channels_a.update(&mut cx_a, |this, cx| {
+            this.get_channel(channel_id.to_proto(), cx).unwrap()
+        });
+
+        // Leading and trailing whitespace are trimmed.
+        channel_a
+            .update(&mut cx_a, |channel, cx| {
+                channel
+                    .send_message("\n surrounded by whitespace  \n".to_string(), cx)
+                    .unwrap()
+            })
+            .await
+            .unwrap();
+        assert_eq!(
+            db.get_channel_messages(channel_id, 10, None)
+                .await
+                .unwrap()
+                .iter()
+                .map(|m| &m.body)
+                .collect::<Vec<_>>(),
+            &["surrounded by whitespace"]
+        );
+
+        // Messages aren't allowed to be too long.
+        channel_a
+            .update(&mut cx_a, |channel, cx| {
+                let long_body = "this is long.\n".repeat(1024);
+                channel.send_message(long_body, cx).unwrap()
+            })
+            .await
+            .unwrap_err();
     }
 
     struct TestServer {

@@ -224,7 +224,11 @@ impl Channel {
         &self.details.name
     }
 
-    pub fn send_message(&mut self, body: String, cx: &mut ModelContext<Self>) -> Result<()> {
+    pub fn send_message(
+        &mut self,
+        body: String,
+        cx: &mut ModelContext<Self>,
+    ) -> Result<Task<Result<()>>> {
         let channel_id = self.details.id;
         let current_user_id = self.current_user_id()?;
         let local_id = self.next_local_message_id;
@@ -235,41 +239,35 @@ impl Channel {
         });
         let user_store = self.user_store.clone();
         let rpc = self.rpc.clone();
-        cx.spawn(|this, mut cx| {
-            async move {
-                let request = rpc.request(proto::SendChannelMessage { channel_id, body });
-                let response = request.await?;
-                let sender = user_store.get_user(current_user_id).await?;
+        Ok(cx.spawn(|this, mut cx| async move {
+            let request = rpc.request(proto::SendChannelMessage { channel_id, body });
+            let response = request.await?;
+            let sender = user_store.get_user(current_user_id).await?;
 
-                this.update(&mut cx, |this, cx| {
-                    if let Ok(i) = this
-                        .pending_messages
-                        .binary_search_by_key(&local_id, |msg| msg.local_id)
-                    {
-                        let body = this.pending_messages.remove(i).body;
-                        this.insert_messages(
-                            SumTree::from_item(
-                                ChannelMessage {
-                                    id: response.message_id,
-                                    timestamp: OffsetDateTime::from_unix_timestamp(
-                                        response.timestamp as i64,
-                                    )?,
-                                    body,
-                                    sender,
-                                },
-                                &(),
-                            ),
-                            cx,
-                        );
-                    }
-                    Ok(())
-                })
-            }
-            .log_err()
-        })
-        .detach();
-        cx.notify();
-        Ok(())
+            this.update(&mut cx, |this, cx| {
+                if let Ok(i) = this
+                    .pending_messages
+                    .binary_search_by_key(&local_id, |msg| msg.local_id)
+                {
+                    let body = this.pending_messages.remove(i).body;
+                    this.insert_messages(
+                        SumTree::from_item(
+                            ChannelMessage {
+                                id: response.message_id,
+                                timestamp: OffsetDateTime::from_unix_timestamp(
+                                    response.timestamp as i64,
+                                )?,
+                                body,
+                                sender,
+                            },
+                            &(),
+                        ),
+                        cx,
+                    );
+                }
+                Ok(())
+            })
+        }))
     }
 
     pub fn load_more_messages(&mut self, cx: &mut ModelContext<Self>) -> bool {

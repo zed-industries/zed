@@ -193,9 +193,12 @@ impl ChatPanel {
                 body
             });
 
-            channel
+            if let Some(task) = channel
                 .update(cx, |channel, cx| channel.send_message(body, cx))
-                .log_err();
+                .log_err()
+            {
+                task.detach();
+            }
         }
     }
 

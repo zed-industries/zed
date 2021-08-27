@@ -125,6 +125,7 @@ messages!(
     ChannelMessageSent,
     CloseBuffer,
     CloseWorktree,
+    Error,
     GetChannelMessages,
     GetChannelMessagesResponse,
     GetChannels,
