@@ -376,7 +376,7 @@ impl Db {
         })
     }
 
-    pub async fn get_recent_channel_messages(
+    pub async fn get_channel_messages(
         &self,
         channel_id: ChannelId,
         count: usize,
@@ -518,17 +518,14 @@ pub mod tests {
                 .unwrap();
         }
 
-        let messages = db
-            .get_recent_channel_messages(channel, 5, None)
-            .await
-            .unwrap();
+        let messages = db.get_channel_messages(channel, 5, None).await.unwrap();
         assert_eq!(
             messages.iter().map(|m| &m.body).collect::<Vec<_>>(),
             ["5", "6", "7", "8", "9"]
         );
 
         let prev_messages = db
-            .get_recent_channel_messages(channel, 4, Some(messages[0].id))
+            .get_channel_messages(channel, 4, Some(messages[0].id))
             .await
             .unwrap();
         assert_eq!(

@@ -595,7 +595,7 @@ impl Server {
         let messages = self
             .app_state
             .db
-            .get_recent_channel_messages(channel_id, MESSAGE_COUNT_PER_PAGE, None)
+            .get_channel_messages(channel_id, MESSAGE_COUNT_PER_PAGE, None)
             .await?
             .into_iter()
             .map(|msg| proto::ChannelMessage {
@@ -716,7 +716,7 @@ impl Server {
         let messages = self
             .app_state
             .db
-            .get_recent_channel_messages(
+            .get_channel_messages(
                 channel_id,
                 MESSAGE_COUNT_PER_PAGE,
                 Some(MessageId::from_proto(request.payload.before_message_id)),
