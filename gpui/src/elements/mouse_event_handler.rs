@@ -2,23 +2,26 @@ use std::ops::DerefMut;
 
 use crate::{
     geometry::{rect::RectF, vector::Vector2F},
-    DebugContext, Element, ElementBox, ElementStateHandle, Event, EventContext, LayoutContext,
-    MutableAppContext, PaintContext, SizeConstraint,
+    platform::CursorStyle,
+    CursorStyleHandle, DebugContext, Element, ElementBox, ElementStateHandle, Event, EventContext,
+    LayoutContext, MutableAppContext, PaintContext, SizeConstraint,
 };
 use serde_json::json;
 
 pub struct MouseEventHandler {
     state: ElementStateHandle<MouseState>,
     child: ElementBox,
+    cursor_style: Option<CursorStyle>,
     click_handler: Option<Box<dyn FnMut(&mut EventContext)>>,
     drag_handler: Option<Box<dyn FnMut(Vector2F, &mut EventContext)>>,
 }
 
-#[derive(Clone, Copy, Debug, Default)]
+#[derive(Default)]
 pub struct MouseState {
     pub hovered: bool,
     pub clicked: bool,
     prev_drag_position: Option<Vector2F>,
+    cursor_style_handle: Option<CursorStyleHandle>,
 }
 
 impl MouseEventHandler {
@@ -33,9 +36,15 @@ impl MouseEventHandler {
         Self {
             state: state_handle,
             child,
+            cursor_style: None,
             click_handler: None,
             drag_handler: None,
         }
+    }
+
+    pub fn with_cursor_style(mut self, cursor: CursorStyle) -> Self {
+        self.cursor_style = Some(cursor);
+        self
     }
 
     pub fn on_click(mut self, handler: impl FnMut(&mut EventContext) + 'static) -> Self {
@@ -78,6 +87,7 @@ impl Element for MouseEventHandler {
         _: &mut Self::PaintState,
         cx: &mut EventContext,
     ) -> bool {
+        let cursor_style = self.cursor_style;
         let click_handler = self.click_handler.as_mut();
         let drag_handler = self.drag_handler.as_mut();
 
@@ -88,6 +98,15 @@ impl Element for MouseEventHandler {
                 let mouse_in = bounds.contains_point(*position);
                 if state.hovered != mouse_in {
                     state.hovered = mouse_in;
+                    if let Some(cursor_style) = cursor_style {
+                        if !state.clicked {
+                            if state.hovered {
+                                state.cursor_style_handle = Some(cx.set_cursor_style(cursor_style));
+                            } else {
+                                state.cursor_style_handle = None;
+                            }
+                        }
+                    }
                     cx.notify();
                     true
                 } else {
@@ -108,6 +127,9 @@ impl Element for MouseEventHandler {
                 state.prev_drag_position = None;
                 if !handled_in_child && state.clicked {
                     state.clicked = false;
+                    if !state.hovered {
+                        state.cursor_style_handle = None;
+                    }
                     cx.notify();
                     if let Some(handler) = click_handler {
                         if bounds.contains_point(*position) {

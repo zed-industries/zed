@@ -47,6 +47,8 @@ pub trait Platform: Send + Sync {
 
     fn write_credentials(&self, url: &str, username: &str, password: &[u8]);
     fn read_credentials(&self, url: &str) -> Option<(String, Vec<u8>)>;
+
+    fn set_cursor_style(&self, style: CursorStyle);
 }
 
 pub(crate) trait ForegroundPlatform {
@@ -112,6 +114,13 @@ pub enum PromptLevel {
     Info,
     Warning,
     Critical,
+}
+
+#[derive(Copy, Clone, Debug)]
+pub enum CursorStyle {
+    Arrow,
+    ResizeLeftRight,
+    PointingHand,
 }
 
 pub trait FontSystem: Send + Sync {

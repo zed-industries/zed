@@ -1,6 +1,8 @@
 use super::Workspace;
 use crate::Settings;
-use gpui::{action, elements::*, AnyViewHandle, MutableAppContext, RenderContext};
+use gpui::{
+    action, elements::*, platform::CursorStyle, AnyViewHandle, MutableAppContext, RenderContext,
+};
 use std::{cell::RefCell, rc::Rc};
 
 pub struct Sidebar {
@@ -88,6 +90,7 @@ impl Sidebar {
                         .with_height(line_height + 16.0)
                         .boxed()
                     })
+                    .with_cursor_style(CursorStyle::PointingHand)
                     .on_click(move |cx| {
                         cx.dispatch_action(ToggleSidebarItem(ToggleArg { side, item_index }))
                     })
@@ -135,6 +138,7 @@ impl Sidebar {
                 .with_style(&settings.theme.workspace.sidebar.resize_handle)
                 .boxed()
         })
+        .with_cursor_style(CursorStyle::ResizeLeftRight)
         .on_drag(move |delta, cx| {
             let prev_width = *width.borrow();
             match side {

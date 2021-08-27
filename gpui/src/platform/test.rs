@@ -1,3 +1,4 @@
+use super::CursorStyle;
 use crate::{AnyAction, ClipboardItem};
 use parking_lot::Mutex;
 use pathfinder_geometry::vector::Vector2F;
@@ -13,6 +14,7 @@ pub struct Platform {
     dispatcher: Arc<dyn super::Dispatcher>,
     fonts: Arc<dyn super::FontSystem>,
     current_clipboard_item: Mutex<Option<ClipboardItem>>,
+    cursor: Mutex<CursorStyle>,
 }
 
 #[derive(Default)]
@@ -84,6 +86,7 @@ impl Platform {
             dispatcher: Arc::new(Dispatcher),
             fonts: Arc::new(super::current::FontSystem::new()),
             current_clipboard_item: Default::default(),
+            cursor: Mutex::new(CursorStyle::Arrow),
         }
     }
 }
@@ -128,6 +131,10 @@ impl super::Platform for Platform {
 
     fn read_credentials(&self, _: &str) -> Option<(String, Vec<u8>)> {
         None
+    }
+
+    fn set_cursor_style(&self, style: CursorStyle) {
+        *self.cursor.lock() = style;
     }
 }
 

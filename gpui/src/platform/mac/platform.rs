@@ -1,6 +1,9 @@
 use super::{BoolExt as _, Dispatcher, FontSystem, Window};
 use crate::{
-    executor, keymap::Keystroke, platform, AnyAction, ClipboardItem, Event, Menu, MenuItem,
+    executor,
+    keymap::Keystroke,
+    platform::{self, CursorStyle},
+    AnyAction, ClipboardItem, Event, Menu, MenuItem,
 };
 use block::ConcreteBlock;
 use cocoa::{
@@ -542,6 +545,17 @@ impl platform::Platform for MacPlatform {
                 .expect("password was not a string");
 
             Some((username.to_string(), password.bytes().to_vec()))
+        }
+    }
+
+    fn set_cursor_style(&self, style: CursorStyle) {
+        unsafe {
+            let cursor: id = match style {
+                CursorStyle::Arrow => msg_send![class!(NSCursor), arrowCursor],
+                CursorStyle::ResizeLeftRight => msg_send![class!(NSCursor), resizeLeftRightCursor],
+                CursorStyle::PointingHand => msg_send![class!(NSCursor), pointingHandCursor],
+            };
+            let _: () = msg_send![cursor, set];
         }
     }
 }

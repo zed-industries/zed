@@ -2,7 +2,7 @@ use crate::{
     elements::ElementBox,
     executor,
     keymap::{self, Keystroke},
-    platform::{self, Platform, PromptLevel, WindowOptions},
+    platform::{self, CursorStyle, Platform, PromptLevel, WindowOptions},
     presenter::Presenter,
     util::{post_inc, timeout},
     AssetCache, AssetSource, ClipboardItem, FontCache, PathPromptOptions, TextLayoutCache,
@@ -25,7 +25,10 @@ use std::{
     ops::{Deref, DerefMut},
     path::{Path, PathBuf},
     rc::{self, Rc},
-    sync::{Arc, Weak},
+    sync::{
+        atomic::{AtomicUsize, Ordering::SeqCst},
+        Arc, Weak,
+    },
     time::Duration,
 };
 
@@ -661,6 +664,7 @@ pub struct MutableAppContext {
     pending_effects: VecDeque<Effect>,
     pending_flushes: usize,
     flushing_effects: bool,
+    next_cursor_style_handle_id: Arc<AtomicUsize>,
 }
 
 impl MutableAppContext {
@@ -700,6 +704,7 @@ impl MutableAppContext {
             pending_effects: VecDeque::new(),
             pending_flushes: 0,
             flushing_effects: false,
+            next_cursor_style_handle_id: Default::default(),
         }
     }
 
@@ -1454,6 +1459,16 @@ impl MutableAppContext {
             window.present_scene(scene);
         }
         self.presenters_and_platform_windows = presenters;
+    }
+
+    pub fn set_cursor_style(&mut self, style: CursorStyle) -> CursorStyleHandle {
+        self.platform.set_cursor_style(style);
+        let id = self.next_cursor_style_handle_id.fetch_add(1, SeqCst);
+        CursorStyleHandle {
+            id,
+            next_cursor_style_handle_id: self.next_cursor_style_handle_id.clone(),
+            platform: self.platform(),
+        }
     }
 
     fn emit_event(&mut self, entity_id: usize, payload: Box<dyn Any>) {
@@ -3025,6 +3040,20 @@ impl<T> Drop for ElementStateHandle<T> {
             ref_counts
                 .lock()
                 .dec_element_state(self.tag_type_id, self.id);
+        }
+    }
+}
+
+pub struct CursorStyleHandle {
+    id: usize,
+    next_cursor_style_handle_id: Arc<AtomicUsize>,
+    platform: Arc<dyn Platform>,
+}
+
+impl Drop for CursorStyleHandle {
+    fn drop(&mut self) {
+        if self.id + 1 == self.next_cursor_style_handle_id.load(SeqCst) {
+            self.platform.set_cursor_style(CursorStyle::Arrow);
         }
     }
 }
