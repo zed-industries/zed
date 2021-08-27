@@ -9,12 +9,14 @@ pub struct MouseEventHandler {
     state: ValueHandle<MouseState>,
     child: ElementBox,
     click_handler: Option<Box<dyn FnMut(&mut EventContext)>>,
+    drag_handler: Option<Box<dyn FnMut(Vector2F, &mut EventContext)>>,
 }
 
 #[derive(Clone, Copy, Debug, Default)]
 pub struct MouseState {
     pub hovered: bool,
     pub clicked: bool,
+    prev_drag_position: Option<Vector2F>,
 }
 
 impl MouseEventHandler {
@@ -30,11 +32,17 @@ impl MouseEventHandler {
             state: state_handle,
             child,
             click_handler: None,
+            drag_handler: None,
         }
     }
 
     pub fn on_click(mut self, handler: impl FnMut(&mut EventContext) + 'static) -> Self {
         self.click_handler = Some(Box::new(handler));
+        self
+    }
+
+    pub fn on_drag(mut self, handler: impl FnMut(Vector2F, &mut EventContext) + 'static) -> Self {
+        self.drag_handler = Some(Box::new(handler));
         self
     }
 }
@@ -69,6 +77,7 @@ impl Element for MouseEventHandler {
         cx: &mut EventContext,
     ) -> bool {
         let click_handler = self.click_handler.as_mut();
+        let drag_handler = self.drag_handler.as_mut();
 
         let handled_in_child = self.child.dispatch_event(event, cx);
 
@@ -86,6 +95,7 @@ impl Element for MouseEventHandler {
             Event::LeftMouseDown { position, .. } => {
                 if !handled_in_child && bounds.contains_point(*position) {
                     state.clicked = true;
+                    state.prev_drag_position = Some(*position);
                     cx.notify();
                     true
                 } else {
@@ -93,12 +103,27 @@ impl Element for MouseEventHandler {
                 }
             }
             Event::LeftMouseUp { position, .. } => {
+                state.prev_drag_position = None;
                 if !handled_in_child && state.clicked {
                     state.clicked = false;
                     cx.notify();
                     if let Some(handler) = click_handler {
                         if bounds.contains_point(*position) {
                             handler(cx);
+                        }
+                    }
+                    true
+                } else {
+                    handled_in_child
+                }
+            }
+            Event::LeftMouseDragged { position, .. } => {
+                if !handled_in_child && state.clicked {
+                    let prev_drag_position = state.prev_drag_position.replace(*position);
+                    if let Some((handler, prev_position)) = drag_handler.zip(prev_drag_position) {
+                        let delta = *position - prev_position;
+                        if !delta.is_zero() {
+                            (handler)(delta, cx);
                         }
                     }
                     true
