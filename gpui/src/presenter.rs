@@ -11,6 +11,7 @@ use pathfinder_geometry::vector::{vec2f, Vector2F};
 use serde_json::json;
 use std::{
     collections::{HashMap, HashSet},
+    ops::{Deref, DerefMut},
     sync::Arc,
 };
 
@@ -266,6 +267,20 @@ impl<'a> EventContext<'a> {
     pub fn notify(&mut self) {
         self.invalidated_views
             .insert(*self.view_stack.last().unwrap());
+    }
+}
+
+impl<'a> Deref for EventContext<'a> {
+    type Target = MutableAppContext;
+
+    fn deref(&self) -> &Self::Target {
+        self.app
+    }
+}
+
+impl<'a> DerefMut for EventContext<'a> {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        self.app
     }
 }
 

@@ -1620,7 +1620,7 @@ mod tests {
             "empty view"
         }
 
-        fn render<'a>(&self, _: &gpui::RenderContext<Self>) -> gpui::ElementBox {
+        fn render(&self, _: &mut gpui::RenderContext<Self>) -> gpui::ElementBox {
             gpui::Element::boxed(gpui::elements::Empty)
         }
     }

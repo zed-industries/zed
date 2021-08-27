@@ -496,7 +496,7 @@ mod tests {
             "TestView"
         }
 
-        fn render(&self, _: &RenderContext<'_, Self>) -> ElementBox {
+        fn render(&self, _: &mut RenderContext<'_, Self>) -> ElementBox {
             unimplemented!()
         }
     }

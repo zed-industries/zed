@@ -5,13 +5,12 @@ use crate::{
     platform::{self, Platform, PromptLevel, WindowOptions},
     presenter::Presenter,
     util::{post_inc, timeout},
-    AssetCache, AssetSource, ClipboardItem, EventContext, FontCache, PathPromptOptions,
-    TextLayoutCache,
+    AssetCache, AssetSource, ClipboardItem, FontCache, PathPromptOptions, TextLayoutCache,
 };
 use anyhow::{anyhow, Result};
 use async_task::Task;
 use keymap::MatchResult;
-use parking_lot::{Mutex, RwLock};
+use parking_lot::Mutex;
 use platform::Event;
 use postage::{mpsc, sink::Sink as _, stream::Stream as _};
 use smol::prelude::*;
@@ -38,7 +37,7 @@ pub trait Entity: 'static {
 
 pub trait View: Entity + Sized {
     fn ui_name() -> &'static str;
-    fn render(&self, cx: &RenderContext<'_, Self>) -> ElementBox;
+    fn render(&self, cx: &mut RenderContext<'_, Self>) -> ElementBox;
     fn on_focus(&mut self, _: &mut ViewContext<Self>) {}
     fn on_blur(&mut self, _: &mut ViewContext<Self>) {}
     fn keymap_context(&self, _: &AppContext) -> keymap::Context {
@@ -681,7 +680,7 @@ impl MutableAppContext {
                 models: Default::default(),
                 views: Default::default(),
                 windows: Default::default(),
-                values: Default::default(),
+                element_states: Default::default(),
                 ref_counts: Arc::new(Mutex::new(RefCounts::default())),
                 background,
                 font_cache,
@@ -1308,11 +1307,26 @@ impl MutableAppContext {
         handle
     }
 
+    pub fn element_state<Tag: 'static, T: 'static + Default>(
+        &mut self,
+        id: usize,
+    ) -> ElementStateHandle<T> {
+        let key = (TypeId::of::<Tag>(), id);
+        self.cx
+            .element_states
+            .entry(key)
+            .or_insert_with(|| Box::new(T::default()));
+        ElementStateHandle::new(TypeId::of::<Tag>(), id, &self.cx.ref_counts)
+    }
+
     fn remove_dropped_entities(&mut self) {
         loop {
-            let (dropped_models, dropped_views, dropped_values) =
+            let (dropped_models, dropped_views, dropped_element_states) =
                 self.cx.ref_counts.lock().take_dropped();
-            if dropped_models.is_empty() && dropped_views.is_empty() && dropped_values.is_empty() {
+            if dropped_models.is_empty()
+                && dropped_views.is_empty()
+                && dropped_element_states.is_empty()
+            {
                 break;
             }
 
@@ -1346,9 +1360,8 @@ impl MutableAppContext {
                 }
             }
 
-            let mut values = self.cx.values.write();
-            for key in dropped_values {
-                values.remove(&key);
+            for key in dropped_element_states {
+                self.cx.element_states.remove(&key);
             }
         }
     }
@@ -1667,7 +1680,7 @@ pub struct AppContext {
     models: HashMap<usize, Box<dyn AnyModel>>,
     views: HashMap<(usize, usize), Box<dyn AnyView>>,
     windows: HashMap<usize, Window>,
-    values: RwLock<HashMap<(TypeId, usize), Box<dyn Any>>>,
+    element_states: HashMap<(TypeId, usize), Box<dyn Any>>,
     background: Arc<executor::Background>,
     ref_counts: Arc<Mutex<RefCounts>>,
     font_cache: Arc<FontCache>,
@@ -1697,15 +1710,6 @@ impl AppContext {
 
     pub fn platform(&self) -> &Arc<dyn Platform> {
         &self.platform
-    }
-
-    pub fn value<Tag: 'static, T: 'static + Default>(&self, id: usize) -> ValueHandle<T> {
-        let key = (TypeId::of::<Tag>(), id);
-        self.values
-            .write()
-            .entry(key)
-            .or_insert_with(|| Box::new(T::default()));
-        ValueHandle::new(TypeId::of::<Tag>(), id, &self.ref_counts)
     }
 }
 
@@ -1875,7 +1879,7 @@ where
     ) -> ElementBox {
         View::render(
             self,
-            &RenderContext {
+            &mut RenderContext {
                 window_id,
                 view_id,
                 app: cx,
@@ -2269,10 +2273,16 @@ impl AsRef<AppContext> for &AppContext {
 }
 
 impl<V: View> Deref for RenderContext<'_, V> {
-    type Target = AppContext;
+    type Target = MutableAppContext;
 
     fn deref(&self) -> &Self::Target {
-        &self.app
+        self.app
+    }
+}
+
+impl<V: View> DerefMut for RenderContext<'_, V> {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        self.app
     }
 }
 
@@ -2964,16 +2974,16 @@ impl<T> Clone for WeakViewHandle<T> {
     }
 }
 
-pub struct ValueHandle<T> {
+pub struct ElementStateHandle<T> {
     value_type: PhantomData<T>,
     tag_type_id: TypeId,
     id: usize,
     ref_counts: Weak<Mutex<RefCounts>>,
 }
 
-impl<T: 'static> ValueHandle<T> {
+impl<T: 'static> ElementStateHandle<T> {
     fn new(tag_type_id: TypeId, id: usize, ref_counts: &Arc<Mutex<RefCounts>>) -> Self {
-        ref_counts.lock().inc_value(tag_type_id, id);
+        ref_counts.lock().inc_element_state(tag_type_id, id);
         Self {
             value_type: PhantomData,
             tag_type_id,
@@ -2982,41 +2992,39 @@ impl<T: 'static> ValueHandle<T> {
         }
     }
 
-    pub fn read<R>(&self, cx: &AppContext, f: impl FnOnce(&T) -> R) -> R {
-        f(cx.values
-            .read()
+    pub fn read<'a>(&self, cx: &'a AppContext) -> &'a T {
+        cx.element_states
             .get(&(self.tag_type_id, self.id))
             .unwrap()
             .downcast_ref()
-            .unwrap())
+            .unwrap()
     }
 
-    pub fn update<R>(
-        &self,
-        cx: &mut EventContext,
-        f: impl FnOnce(&mut T, &mut EventContext) -> R,
-    ) -> R {
-        let mut value = cx
-            .app
+    pub fn update<C, R>(&self, cx: &mut C, f: impl FnOnce(&mut T, &mut C) -> R) -> R
+    where
+        C: DerefMut<Target = MutableAppContext>,
+    {
+        let mut element_state = cx
+            .deref_mut()
             .cx
-            .values
-            .write()
+            .element_states
             .remove(&(self.tag_type_id, self.id))
             .unwrap();
-        let result = f(value.downcast_mut().unwrap(), cx);
-        cx.app
+        let result = f(element_state.downcast_mut().unwrap(), cx);
+        cx.deref_mut()
             .cx
-            .values
-            .write()
-            .insert((self.tag_type_id, self.id), value);
+            .element_states
+            .insert((self.tag_type_id, self.id), element_state);
         result
     }
 }
 
-impl<T> Drop for ValueHandle<T> {
+impl<T> Drop for ElementStateHandle<T> {
     fn drop(&mut self) {
         if let Some(ref_counts) = self.ref_counts.upgrade() {
-            ref_counts.lock().dec_value(self.tag_type_id, self.id);
+            ref_counts
+                .lock()
+                .dec_element_state(self.tag_type_id, self.id);
         }
     }
 }
@@ -3080,10 +3088,10 @@ impl Drop for Subscription {
 #[derive(Default)]
 struct RefCounts {
     entity_counts: HashMap<usize, usize>,
-    value_counts: HashMap<(TypeId, usize), usize>,
+    element_state_counts: HashMap<(TypeId, usize), usize>,
     dropped_models: HashSet<usize>,
     dropped_views: HashSet<(usize, usize)>,
-    dropped_values: HashSet<(TypeId, usize)>,
+    dropped_element_states: HashSet<(TypeId, usize)>,
 }
 
 impl RefCounts {
@@ -3107,8 +3115,11 @@ impl RefCounts {
         }
     }
 
-    fn inc_value(&mut self, tag_type_id: TypeId, id: usize) {
-        *self.value_counts.entry((tag_type_id, id)).or_insert(0) += 1;
+    fn inc_element_state(&mut self, tag_type_id: TypeId, id: usize) {
+        *self
+            .element_state_counts
+            .entry((tag_type_id, id))
+            .or_insert(0) += 1;
     }
 
     fn dec_model(&mut self, model_id: usize) {
@@ -3129,13 +3140,13 @@ impl RefCounts {
         }
     }
 
-    fn dec_value(&mut self, tag_type_id: TypeId, id: usize) {
+    fn dec_element_state(&mut self, tag_type_id: TypeId, id: usize) {
         let key = (tag_type_id, id);
-        let count = self.value_counts.get_mut(&key).unwrap();
+        let count = self.element_state_counts.get_mut(&key).unwrap();
         *count -= 1;
         if *count == 0 {
-            self.value_counts.remove(&key);
-            self.dropped_values.insert(key);
+            self.element_state_counts.remove(&key);
+            self.dropped_element_states.insert(key);
         }
     }
 
@@ -3152,11 +3163,14 @@ impl RefCounts {
     ) {
         let mut dropped_models = HashSet::new();
         let mut dropped_views = HashSet::new();
-        let mut dropped_values = HashSet::new();
+        let mut dropped_element_states = HashSet::new();
         std::mem::swap(&mut self.dropped_models, &mut dropped_models);
         std::mem::swap(&mut self.dropped_views, &mut dropped_views);
-        std::mem::swap(&mut self.dropped_values, &mut dropped_values);
-        (dropped_models, dropped_views, dropped_values)
+        std::mem::swap(
+            &mut self.dropped_element_states,
+            &mut dropped_element_states,
+        );
+        (dropped_models, dropped_views, dropped_element_states)
     }
 }
 
@@ -3314,7 +3328,7 @@ mod tests {
         }
 
         impl super::View for View {
-            fn render<'a>(&self, _: &RenderContext<Self>) -> ElementBox {
+            fn render<'a>(&self, _: &mut RenderContext<Self>) -> ElementBox {
                 Empty::new().boxed()
             }
 
@@ -3378,7 +3392,7 @@ mod tests {
         }
 
         impl super::View for View {
-            fn render<'a>(&self, _: &RenderContext<Self>) -> ElementBox {
+            fn render<'a>(&self, _: &mut RenderContext<Self>) -> ElementBox {
                 let mouse_down_count = self.mouse_down_count.clone();
                 EventHandler::new(Empty::new().boxed())
                     .on_mouse_down(move |_| {
@@ -3440,7 +3454,7 @@ mod tests {
                 "View"
             }
 
-            fn render<'a>(&self, _: &RenderContext<Self>) -> ElementBox {
+            fn render<'a>(&self, _: &mut RenderContext<Self>) -> ElementBox {
                 Empty::new().boxed()
             }
         }
@@ -3480,7 +3494,7 @@ mod tests {
         }
 
         impl super::View for View {
-            fn render<'a>(&self, _: &RenderContext<Self>) -> ElementBox {
+            fn render<'a>(&self, _: &mut RenderContext<Self>) -> ElementBox {
                 Empty::new().boxed()
             }
 
@@ -3536,7 +3550,7 @@ mod tests {
         }
 
         impl super::View for View {
-            fn render<'a>(&self, _: &RenderContext<Self>) -> ElementBox {
+            fn render<'a>(&self, _: &mut RenderContext<Self>) -> ElementBox {
                 Empty::new().boxed()
             }
 
@@ -3586,7 +3600,7 @@ mod tests {
         }
 
         impl super::View for View {
-            fn render<'a>(&self, _: &RenderContext<Self>) -> ElementBox {
+            fn render<'a>(&self, _: &mut RenderContext<Self>) -> ElementBox {
                 Empty::new().boxed()
             }
 
@@ -3630,7 +3644,7 @@ mod tests {
         }
 
         impl super::View for View {
-            fn render<'a>(&self, _: &RenderContext<Self>) -> ElementBox {
+            fn render<'a>(&self, _: &mut RenderContext<Self>) -> ElementBox {
                 Empty::new().boxed()
             }
 
@@ -3677,7 +3691,7 @@ mod tests {
         }
 
         impl super::View for View {
-            fn render<'a>(&self, _: &RenderContext<Self>) -> ElementBox {
+            fn render<'a>(&self, _: &mut RenderContext<Self>) -> ElementBox {
                 Empty::new().boxed()
             }
 
@@ -3735,7 +3749,7 @@ mod tests {
         }
 
         impl View for ViewA {
-            fn render<'a>(&self, _: &RenderContext<Self>) -> ElementBox {
+            fn render<'a>(&self, _: &mut RenderContext<Self>) -> ElementBox {
                 Empty::new().boxed()
             }
 
@@ -3753,7 +3767,7 @@ mod tests {
         }
 
         impl View for ViewB {
-            fn render<'a>(&self, _: &RenderContext<Self>) -> ElementBox {
+            fn render<'a>(&self, _: &mut RenderContext<Self>) -> ElementBox {
                 Empty::new().boxed()
             }
 
@@ -3849,7 +3863,7 @@ mod tests {
         }
 
         impl super::View for View {
-            fn render<'a>(&self, _: &RenderContext<Self>) -> ElementBox {
+            fn render<'a>(&self, _: &mut RenderContext<Self>) -> ElementBox {
                 Empty::new().boxed()
             }
 
@@ -3984,7 +3998,7 @@ mod tests {
                 "test view"
             }
 
-            fn render(&self, _: &RenderContext<Self>) -> ElementBox {
+            fn render(&self, _: &mut RenderContext<Self>) -> ElementBox {
                 Empty::new().boxed()
             }
         }
@@ -4029,7 +4043,7 @@ mod tests {
                 "test view"
             }
 
-            fn render(&self, _: &RenderContext<Self>) -> ElementBox {
+            fn render(&self, _: &mut RenderContext<Self>) -> ElementBox {
                 Empty::new().boxed()
             }
         }
@@ -4052,7 +4066,7 @@ mod tests {
                 "test view"
             }
 
-            fn render(&self, _: &RenderContext<Self>) -> ElementBox {
+            fn render(&self, _: &mut RenderContext<Self>) -> ElementBox {
                 Empty::new().boxed()
             }
         }

@@ -99,7 +99,7 @@ impl ChatPanel {
         cx.notify();
     }
 
-    fn render_channel_name(&self, cx: &RenderContext<Self>) -> ElementBox {
+    fn render_channel_name(&self, cx: &mut RenderContext<Self>) -> ElementBox {
         let settings = self.settings.borrow();
         let theme = &settings.theme.chat_panel;
         if let Some((channel, _)) = self.active_channel.as_ref() {
@@ -121,7 +121,7 @@ impl ChatPanel {
         }
     }
 
-    fn render_active_channel_messages(&self, cx: &RenderContext<Self>) -> ElementBox {
+    fn render_active_channel_messages(&self, cx: &mut RenderContext<Self>) -> ElementBox {
         let messages = if let Some((channel, _)) = self.active_channel.as_ref() {
             let channel = channel.read(cx);
             let now = OffsetDateTime::now_utc();
@@ -202,7 +202,7 @@ impl View for ChatPanel {
         "ChatPanel"
     }
 
-    fn render(&self, cx: &RenderContext<Self>) -> ElementBox {
+    fn render(&self, cx: &mut RenderContext<Self>) -> ElementBox {
         let theme = &self.settings.borrow().theme;
         Container::new(
             Flex::column()

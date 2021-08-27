@@ -6,8 +6,7 @@ use gpui::{
     elements::*,
     geometry::{rect::RectF, vector::vec2f},
     keymap::Binding,
-    AppContext, Border, Entity, MutableAppContext, Quad, RenderContext, View, ViewContext,
-    ViewHandle,
+    Border, Entity, MutableAppContext, Quad, RenderContext, View, ViewContext, ViewHandle,
 };
 use postage::watch;
 use std::{cmp, path::Path, sync::Arc};
@@ -175,7 +174,7 @@ impl Pane {
         cx.emit(Event::Split(direction));
     }
 
-    fn render_tabs(&self, cx: &AppContext) -> ElementBox {
+    fn render_tabs(&self, cx: &mut RenderContext<Self>) -> ElementBox {
         let settings = self.settings.borrow();
         let theme = &settings.theme;
         let line_height = cx.font_cache().line_height(
@@ -194,7 +193,7 @@ impl Pane {
             row.add_child(
                 Expanded::new(
                     1.0,
-                    MouseEventHandler::new::<Tab, _>(item.id(), cx, |mouse_state| {
+                    MouseEventHandler::new::<Tab, _, _>(item.id(), cx, |mouse_state, cx| {
                         let title = item.title(cx);
 
                         let mut border = border.clone();
@@ -299,7 +298,7 @@ impl Pane {
         is_dirty: bool,
         has_conflict: bool,
         theme: &theme::Theme,
-        cx: &AppContext,
+        cx: &mut RenderContext<Self>,
     ) -> ElementBox {
         enum TabCloseButton {}
 
@@ -318,7 +317,7 @@ impl Pane {
             let close_color = current_color.unwrap_or(theme.workspace.tab.icon_close);
             let icon = Svg::new("icons/x.svg").with_color(close_color);
 
-            MouseEventHandler::new::<TabCloseButton, _>(item_id, cx, |mouse_state| {
+            MouseEventHandler::new::<TabCloseButton, _, _>(item_id, cx, |mouse_state, _| {
                 if mouse_state.hovered {
                     Container::new(icon.with_color(Color::white()).boxed())
                         .with_background_color(if mouse_state.clicked {
@@ -370,7 +369,7 @@ impl View for Pane {
         "Pane"
     }
 
-    fn render<'a>(&self, cx: &RenderContext<Self>) -> ElementBox {
+    fn render(&self, cx: &mut RenderContext<Self>) -> ElementBox {
         if let Some(active_item) = self.active_item() {
             Flex::column()
                 .with_child(self.render_tabs(cx))

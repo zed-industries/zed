@@ -1,5 +1,6 @@
+use super::Workspace;
 use crate::Settings;
-use gpui::{action, elements::*, AnyViewHandle, AppContext};
+use gpui::{action, elements::*, AnyViewHandle, MutableAppContext, RenderContext};
 use std::{cell::RefCell, rc::Rc};
 
 pub struct Sidebar {
@@ -56,7 +57,7 @@ impl Sidebar {
             .map(|item| &item.view)
     }
 
-    pub fn render(&self, settings: &Settings, cx: &AppContext) -> ElementBox {
+    pub fn render(&self, settings: &Settings, cx: &mut RenderContext<Workspace>) -> ElementBox {
         let side = self.side;
         let theme = &settings.theme;
         let line_height = cx.font_cache().line_height(
@@ -73,7 +74,7 @@ impl Sidebar {
                         &settings.theme.workspace.sidebar_icon
                     };
                     enum SidebarButton {}
-                    MouseEventHandler::new::<SidebarButton, _>(item.view.id(), cx, |_| {
+                    MouseEventHandler::new::<SidebarButton, _, _>(item.view.id(), cx, |_, _| {
                         ConstrainedBox::new(
                             Align::new(
                                 ConstrainedBox::new(
@@ -98,7 +99,11 @@ impl Sidebar {
         .boxed()
     }
 
-    pub fn render_active_item(&self, settings: &Settings, cx: &AppContext) -> Option<ElementBox> {
+    pub fn render_active_item(
+        &self,
+        settings: &Settings,
+        cx: &mut MutableAppContext,
+    ) -> Option<ElementBox> {
         if let Some(active_item) = self.active_item() {
             let mut container = Flex::row();
             if matches!(self.side, Side::Right) {
@@ -118,10 +123,14 @@ impl Sidebar {
         }
     }
 
-    fn render_resize_handle(&self, settings: &Settings, cx: &AppContext) -> ElementBox {
+    fn render_resize_handle(
+        &self,
+        settings: &Settings,
+        mut cx: &mut MutableAppContext,
+    ) -> ElementBox {
         let width = self.width.clone();
         let side = self.side;
-        MouseEventHandler::new::<Self, _>(self.side.id(), cx, |_| {
+        MouseEventHandler::new::<Self, _, _>(self.side.id(), &mut cx, |_, _| {
             Container::new(Empty::new().boxed())
                 .with_style(&settings.theme.workspace.sidebar.resize_handle)
                 .boxed()

@@ -1,12 +1,14 @@
+use std::ops::DerefMut;
+
 use crate::{
     geometry::{rect::RectF, vector::Vector2F},
-    AppContext, DebugContext, Element, ElementBox, Event, EventContext, LayoutContext,
-    PaintContext, SizeConstraint, ValueHandle,
+    DebugContext, Element, ElementBox, ElementStateHandle, Event, EventContext, LayoutContext,
+    MutableAppContext, PaintContext, SizeConstraint,
 };
 use serde_json::json;
 
 pub struct MouseEventHandler {
-    state: ValueHandle<MouseState>,
+    state: ElementStateHandle<MouseState>,
     child: ElementBox,
     click_handler: Option<Box<dyn FnMut(&mut EventContext)>>,
     drag_handler: Option<Box<dyn FnMut(Vector2F, &mut EventContext)>>,
@@ -20,14 +22,14 @@ pub struct MouseState {
 }
 
 impl MouseEventHandler {
-    pub fn new<Tag, F>(id: usize, cx: &AppContext, render_child: F) -> Self
+    pub fn new<Tag, F, C>(id: usize, cx: &mut C, render_child: F) -> Self
     where
         Tag: 'static,
-        F: FnOnce(MouseState) -> ElementBox,
+        F: FnOnce(&MouseState, &mut C) -> ElementBox,
+        C: DerefMut<Target = MutableAppContext>,
     {
-        let state_handle = cx.value::<Tag, _>(id);
-        let state = state_handle.read(cx.as_ref(), |state| *state);
-        let child = render_child(state);
+        let state_handle = cx.element_state::<Tag, _>(id);
+        let child = state_handle.update(cx, |state, cx| render_child(state, cx));
         Self {
             state: state_handle,
             child,

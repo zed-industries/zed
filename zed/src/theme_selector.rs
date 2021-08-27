@@ -200,7 +200,7 @@ impl ThemeSelector {
         }
     }
 
-    fn render_matches(&self, cx: &RenderContext<Self>) -> ElementBox {
+    fn render_matches(&self, cx: &mut RenderContext<Self>) -> ElementBox {
         if self.matches.is_empty() {
             let settings = self.settings.borrow();
             return Container::new(
@@ -269,7 +269,7 @@ impl View for ThemeSelector {
         "ThemeSelector"
     }
 
-    fn render(&self, cx: &RenderContext<Self>) -> ElementBox {
+    fn render(&self, cx: &mut RenderContext<Self>) -> ElementBox {
         let settings = self.settings.borrow();
 
         Align::new(
