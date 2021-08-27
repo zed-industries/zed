@@ -36,7 +36,7 @@ pub struct Workspace {
     pub background: Color,
     pub tab: Tab,
     pub active_tab: Tab,
-    pub sidebar: ContainerStyle,
+    pub sidebar: Sidebar,
     pub sidebar_icon: SidebarIcon,
     pub active_sidebar_icon: SidebarIcon,
 }
@@ -50,6 +50,12 @@ pub struct Tab {
     pub icon_close: Color,
     pub icon_dirty: Color,
     pub icon_conflict: Color,
+}
+
+#[derive(Deserialize)]
+pub struct Sidebar {
+    pub icons: ContainerStyle,
+    pub resize_handle: ContainerStyle,
 }
 
 #[derive(Deserialize)]

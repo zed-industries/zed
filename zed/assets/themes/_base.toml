@@ -13,8 +13,11 @@ extends = "$workspace.tab"
 background = "$surface.1"
 text = "$text.0"
 
-[workspace.sidebar]
+[workspace.sidebar.icons]
 padding = { left = 10, right = 10 }
+
+[workspace.sidebar.resize_handle]
+margin = { left = 6 }
 
 [workspace.sidebar_icon]
 color = "$text.2.color"

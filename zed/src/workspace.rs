@@ -960,11 +960,15 @@ impl View for Workspace {
                             .with_child({
                                 let mut content = Flex::row();
                                 content.add_child(self.left_sidebar.render(&settings, cx));
-                                if let Some(element) = self.left_sidebar.render_active_item(cx) {
+                                if let Some(element) =
+                                    self.left_sidebar.render_active_item(&settings, cx)
+                                {
                                     content.add_child(element);
                                 }
                                 content.add_child(Expanded::new(1.0, self.center.render()).boxed());
-                                if let Some(element) = self.right_sidebar.render_active_item(cx) {
+                                if let Some(element) =
+                                    self.right_sidebar.render_active_item(&settings, cx)
+                                {
                                     content.add_child(element);
                                 }
                                 content.add_child(self.right_sidebar.render(&settings, cx));

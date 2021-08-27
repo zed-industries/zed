@@ -1,5 +1,5 @@
 use crate::Settings;
-use gpui::{action, color::Color, elements::*, AnyViewHandle, AppContext, Border};
+use gpui::{action, elements::*, AnyViewHandle, AppContext};
 use std::{cell::RefCell, rc::Rc};
 
 pub struct Sidebar {
@@ -94,15 +94,15 @@ impl Sidebar {
                 }))
                 .boxed(),
         )
-        .with_style(&settings.theme.workspace.sidebar)
+        .with_style(&settings.theme.workspace.sidebar.icons)
         .boxed()
     }
 
-    pub fn render_active_item(&self, cx: &AppContext) -> Option<ElementBox> {
+    pub fn render_active_item(&self, settings: &Settings, cx: &AppContext) -> Option<ElementBox> {
         if let Some(active_item) = self.active_item() {
             let mut container = Flex::row();
             if matches!(self.side, Side::Right) {
-                container.add_child(self.render_resize_handle(cx));
+                container.add_child(self.render_resize_handle(settings, cx));
             }
             container.add_child(
                 ConstrainedBox::new(ChildView::new(active_item.id()).boxed())
@@ -110,7 +110,7 @@ impl Sidebar {
                     .boxed(),
             );
             if matches!(self.side, Side::Left) {
-                container.add_child(self.render_resize_handle(cx));
+                container.add_child(self.render_resize_handle(settings, cx));
             }
             Some(container.boxed())
         } else {
@@ -118,12 +118,12 @@ impl Sidebar {
         }
     }
 
-    fn render_resize_handle(&self, cx: &AppContext) -> ElementBox {
+    fn render_resize_handle(&self, settings: &Settings, cx: &AppContext) -> ElementBox {
         let width = self.width.clone();
         let side = self.side;
         MouseEventHandler::new::<Self, _>(self.side.id(), cx, |_| {
             Container::new(Empty::new().boxed())
-                .with_border(Border::left(3., Color::white()))
+                .with_style(&settings.theme.workspace.sidebar.resize_handle)
                 .boxed()
         })
         .on_drag(move |delta, cx| {
