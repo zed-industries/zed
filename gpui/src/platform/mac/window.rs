@@ -130,7 +130,7 @@ struct WindowState {
     id: usize,
     native_window: id,
     event_callback: Option<Box<dyn FnMut(Event)>>,
-    resize_callback: Option<Box<dyn FnMut(&mut dyn platform::WindowContext)>>,
+    resize_callback: Option<Box<dyn FnMut()>>,
     close_callback: Option<Box<dyn FnOnce()>>,
     synthetic_drag_counter: usize,
     executor: Rc<executor::Foreground>,
@@ -280,7 +280,7 @@ impl platform::Window for Window {
         self.0.as_ref().borrow_mut().event_callback = Some(callback);
     }
 
-    fn on_resize(&mut self, callback: Box<dyn FnMut(&mut dyn platform::WindowContext)>) {
+    fn on_resize(&mut self, callback: Box<dyn FnMut()>) {
         self.0.as_ref().borrow_mut().resize_callback = Some(callback);
     }
 
@@ -489,24 +489,24 @@ extern "C" fn make_backing_layer(this: &Object, _: Sel) -> id {
 
 extern "C" fn view_did_change_backing_properties(this: &Object, _: Sel) {
     let window_state = unsafe { get_window_state(this) };
-    let mut window_state = window_state.as_ref().borrow_mut();
+    let mut window_state_borrow = window_state.as_ref().borrow_mut();
 
     unsafe {
-        let _: () =
-            msg_send![window_state.layer, setContentsScale: window_state.scale_factor() as f64];
+        let _: () = msg_send![window_state_borrow.layer, setContentsScale: window_state_borrow.scale_factor() as f64];
     }
 
-    if let Some(mut callback) = window_state.resize_callback.take() {
-        callback(&mut *window_state);
-        window_state.resize_callback = Some(callback);
+    if let Some(mut callback) = window_state_borrow.resize_callback.take() {
+        drop(window_state_borrow);
+        callback();
+        window_state.as_ref().borrow_mut().resize_callback = Some(callback);
     };
 }
 
 extern "C" fn set_frame_size(this: &Object, _: Sel, size: NSSize) {
     let window_state = unsafe { get_window_state(this) };
-    let mut window_state = window_state.as_ref().borrow_mut();
+    let mut window_state_borrow = window_state.as_ref().borrow_mut();
 
-    if window_state.size() == vec2f(size.width as f32, size.height as f32) {
+    if window_state_borrow.size() == vec2f(size.width as f32, size.height as f32) {
         return;
     }
 
@@ -514,19 +514,20 @@ extern "C" fn set_frame_size(this: &Object, _: Sel, size: NSSize) {
         let _: () = msg_send![super(this, class!(NSView)), setFrameSize: size];
     }
 
-    let scale_factor = window_state.scale_factor() as f64;
+    let scale_factor = window_state_borrow.scale_factor() as f64;
     let drawable_size: NSSize = NSSize {
         width: size.width * scale_factor,
         height: size.height * scale_factor,
     };
 
     unsafe {
-        let _: () = msg_send![window_state.layer, setDrawableSize: drawable_size];
+        let _: () = msg_send![window_state_borrow.layer, setDrawableSize: drawable_size];
     }
 
-    if let Some(mut callback) = window_state.resize_callback.take() {
-        callback(&mut *window_state);
-        window_state.resize_callback = Some(callback);
+    if let Some(mut callback) = window_state_borrow.resize_callback.take() {
+        drop(window_state_borrow);
+        callback();
+        window_state.borrow_mut().resize_callback = Some(callback);
     };
 }
 

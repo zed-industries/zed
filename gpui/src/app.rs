@@ -1217,16 +1217,8 @@ impl MutableAppContext {
 
         {
             let mut app = self.upgrade();
-            let presenter = presenter.clone();
-            window.on_resize(Box::new(move |window| {
-                app.update(|cx| {
-                    let scene = presenter.borrow_mut().build_scene(
-                        window.size(),
-                        window.scale_factor(),
-                        cx,
-                    );
-                    window.present_scene(scene);
-                })
+            window.on_resize(Box::new(move || {
+                app.update(|cx| cx.resize_window(window_id))
             }));
         }
 
@@ -1391,6 +1383,13 @@ impl MutableAppContext {
                         Effect::Focus { window_id, view_id } => {
                             self.focus(window_id, view_id);
                         }
+                        Effect::ResizeWindow { window_id } => {
+                            if let Some(window) = self.cx.windows.get_mut(&window_id) {
+                                window
+                                    .invalidation
+                                    .get_or_insert(WindowInvalidation::default());
+                            }
+                        }
                         Effect::RefreshWindows => {
                             refreshing = true;
                         }
@@ -1437,6 +1436,11 @@ impl MutableAppContext {
                     .insert(window_id, (presenter, window));
             }
         }
+    }
+
+    fn resize_window(&mut self, window_id: usize) {
+        self.pending_effects
+            .push_back(Effect::ResizeWindow { window_id });
     }
 
     pub fn refresh_windows(&mut self) {
@@ -1794,6 +1798,9 @@ pub enum Effect {
         window_id: usize,
         view_id: usize,
     },
+    ResizeWindow {
+        window_id: usize,
+    },
     RefreshWindows,
 }
 
@@ -1817,6 +1824,10 @@ impl Debug for Effect {
                 .debug_struct("Effect::Focus")
                 .field("window_id", window_id)
                 .field("view_id", view_id)
+                .finish(),
+            Effect::ResizeWindow { window_id } => f
+                .debug_struct("Effect::RefreshWindow")
+                .field("window_id", window_id)
                 .finish(),
             Effect::RefreshWindows => f.debug_struct("Effect::FullViewRefresh").finish(),
         }
