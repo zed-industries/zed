@@ -806,12 +806,49 @@ impl MutableAppContext {
         self.cx.focused_view_id(window_id)
     }
 
+    pub fn render_view(
+        &mut self,
+        window_id: usize,
+        view_id: usize,
+        titlebar_height: f32,
+        refreshing: bool,
+    ) -> Result<ElementBox> {
+        let view = self
+            .cx
+            .views
+            .remove(&(window_id, view_id))
+            .ok_or(anyhow!("view not found"))?;
+        let element = view.render(window_id, view_id, titlebar_height, refreshing, self);
+        self.cx.views.insert((window_id, view_id), view);
+        Ok(element)
+    }
+
     pub fn render_views(
-        &self,
+        &mut self,
         window_id: usize,
         titlebar_height: f32,
     ) -> HashMap<usize, ElementBox> {
-        self.cx.render_views(window_id, titlebar_height)
+        let view_ids = self
+            .views
+            .keys()
+            .filter_map(|(win_id, view_id)| {
+                if *win_id == window_id {
+                    Some(*view_id)
+                } else {
+                    None
+                }
+            })
+            .collect::<Vec<_>>();
+        view_ids
+            .into_iter()
+            .map(|view_id| {
+                (
+                    view_id,
+                    self.render_view(window_id, view_id, titlebar_height, false)
+                        .unwrap(),
+                )
+            })
+            .collect()
     }
 
     pub fn update<T, F: FnOnce() -> T>(&mut self, callback: F) -> T {
@@ -1204,7 +1241,7 @@ impl MutableAppContext {
         });
     }
 
-    pub fn build_presenter(&self, window_id: usize, titlebar_height: f32) -> Presenter {
+    pub fn build_presenter(&mut self, window_id: usize, titlebar_height: f32) -> Presenter {
         Presenter::new(
             window_id,
             titlebar_height,
@@ -1213,6 +1250,23 @@ impl MutableAppContext {
             self.assets.clone(),
             self,
         )
+    }
+
+    pub fn render_cx<V: View>(
+        &mut self,
+        window_id: usize,
+        view_id: usize,
+        titlebar_height: f32,
+        refreshing: bool,
+    ) -> RenderContext<V> {
+        RenderContext {
+            app: self,
+            titlebar_height,
+            refreshing,
+            window_id,
+            view_id,
+            view_type: PhantomData,
+        }
     }
 
     pub fn add_view<T, F>(&mut self, window_id: usize, build_view: F) -> ViewHandle<T>
@@ -1357,7 +1411,7 @@ impl MutableAppContext {
             {
                 {
                     let mut presenter = presenter.borrow_mut();
-                    presenter.invalidate(invalidation, self.as_ref());
+                    presenter.invalidate(invalidation, self);
                     let scene = presenter.build_scene(window.size(), window.scale_factor(), self);
                     window.present_scene(scene);
                 }
@@ -1382,7 +1436,7 @@ impl MutableAppContext {
                 .invalidation
                 .take();
             let mut presenter = presenter.borrow_mut();
-            presenter.refresh(invalidation, self.as_ref());
+            presenter.refresh(invalidation, self);
             let scene = presenter.build_scene(window.size(), window.scale_factor(), self);
             window.present_scene(scene);
         }
@@ -1633,56 +1687,6 @@ impl AppContext {
             .map(|window| window.focused_view_id)
     }
 
-    pub fn render_view(
-        &self,
-        window_id: usize,
-        view_id: usize,
-        titlebar_height: f32,
-        refreshing: bool,
-    ) -> Result<ElementBox> {
-        self.views
-            .get(&(window_id, view_id))
-            .map(|v| v.render(window_id, view_id, titlebar_height, refreshing, self))
-            .ok_or(anyhow!("view not found"))
-    }
-
-    pub fn render_views(
-        &self,
-        window_id: usize,
-        titlebar_height: f32,
-    ) -> HashMap<usize, ElementBox> {
-        self.views
-            .iter()
-            .filter_map(|((win_id, view_id), view)| {
-                if *win_id == window_id {
-                    Some((
-                        *view_id,
-                        view.render(*win_id, *view_id, titlebar_height, false, self),
-                    ))
-                } else {
-                    None
-                }
-            })
-            .collect::<HashMap<_, ElementBox>>()
-    }
-
-    pub fn render_cx<V: View>(
-        &self,
-        window_id: usize,
-        view_id: usize,
-        titlebar_height: f32,
-        refreshing: bool,
-    ) -> RenderContext<V> {
-        RenderContext {
-            app: self,
-            titlebar_height,
-            refreshing,
-            window_id,
-            view_id,
-            view_type: PhantomData,
-        }
-    }
-
     pub fn background(&self) -> &Arc<executor::Background> {
         &self.background
     }
@@ -1834,7 +1838,7 @@ pub trait AnyView {
         view_id: usize,
         titlebar_height: f32,
         refreshing: bool,
-        cx: &AppContext,
+        cx: &mut MutableAppContext,
     ) -> ElementBox;
     fn on_focus(&mut self, cx: &mut MutableAppContext, window_id: usize, view_id: usize);
     fn on_blur(&mut self, cx: &mut MutableAppContext, window_id: usize, view_id: usize);
@@ -1867,7 +1871,7 @@ where
         view_id: usize,
         titlebar_height: f32,
         refreshing: bool,
-        cx: &AppContext,
+        cx: &mut MutableAppContext,
     ) -> ElementBox {
         View::render(
             self,
@@ -2244,7 +2248,7 @@ impl<'a, T: View> ViewContext<'a, T> {
 }
 
 pub struct RenderContext<'a, T: View> {
-    pub app: &'a AppContext,
+    pub app: &'a mut MutableAppContext,
     pub titlebar_height: f32,
     pub refreshing: bool,
     window_id: usize,

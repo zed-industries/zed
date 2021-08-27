@@ -32,7 +32,7 @@ impl Presenter {
         font_cache: Arc<FontCache>,
         text_layout_cache: TextLayoutCache,
         asset_cache: Arc<AssetCache>,
-        cx: &MutableAppContext,
+        cx: &mut MutableAppContext,
     ) -> Self {
         Self {
             window_id,
@@ -57,7 +57,7 @@ impl Presenter {
         path
     }
 
-    pub fn invalidate(&mut self, mut invalidation: WindowInvalidation, cx: &AppContext) {
+    pub fn invalidate(&mut self, mut invalidation: WindowInvalidation, cx: &mut MutableAppContext) {
         for view_id in invalidation.removed {
             invalidation.updated.remove(&view_id);
             self.rendered_views.remove(&view_id);
@@ -72,7 +72,11 @@ impl Presenter {
         }
     }
 
-    pub fn refresh(&mut self, invalidation: Option<WindowInvalidation>, cx: &AppContext) {
+    pub fn refresh(
+        &mut self,
+        invalidation: Option<WindowInvalidation>,
+        cx: &mut MutableAppContext,
+    ) {
         if let Some(invalidation) = invalidation {
             for view_id in invalidation.removed {
                 self.rendered_views.remove(&view_id);
