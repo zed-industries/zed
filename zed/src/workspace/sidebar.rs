@@ -49,7 +49,7 @@ impl Sidebar {
         if self.active_item_ix == Some(item_ix) {
             self.active_item_ix = None;
         } else {
-            self.active_item_ix = Some(item_ix)
+            self.active_item_ix = Some(item_ix);
         }
     }
 

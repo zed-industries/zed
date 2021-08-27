@@ -2857,6 +2857,12 @@ impl Clone for AnyViewHandle {
     }
 }
 
+impl From<&AnyViewHandle> for AnyViewHandle {
+    fn from(handle: &AnyViewHandle) -> Self {
+        handle.clone()
+    }
+}
+
 impl<T: View> From<&ViewHandle<T>> for AnyViewHandle {
     fn from(handle: &ViewHandle<T>) -> Self {
         handle

@@ -767,6 +767,11 @@ impl Workspace {
             Side::Right => &mut self.right_sidebar,
         };
         sidebar.toggle_item(action.0.item_index);
+        if let Some(active_item) = sidebar.active_item() {
+            cx.focus(active_item);
+        } else {
+            cx.focus_self();
+        }
         cx.notify();
     }
 

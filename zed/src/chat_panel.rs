@@ -214,6 +214,10 @@ impl View for ChatPanel {
         .with_style(&theme.chat_panel.container)
         .boxed()
     }
+
+    fn on_focus(&mut self, cx: &mut ViewContext<Self>) {
+        cx.focus(&self.input_editor);
+    }
 }
 
 fn format_timestamp(mut timestamp: OffsetDateTime, mut now: OffsetDateTime) -> String {
