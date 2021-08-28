@@ -654,6 +654,7 @@ impl Server {
         self: Arc<Self>,
         request: TypedEnvelope<proto::SendChannelMessage>,
     ) -> tide::Result<()> {
+        let receipt = request.receipt();
         let channel_id = ChannelId::from_proto(request.payload.channel_id);
         let user_id;
         let connection_ids;
@@ -667,7 +668,7 @@ impl Server {
             }
         }
 
-        let receipt = request.receipt();
+        // Validate the message body.
         let body = request.payload.body.trim().to_string();
         if body.len() > MAX_MESSAGE_LEN {
             self.peer
@@ -675,6 +676,17 @@ impl Server {
                     receipt,
                     proto::Error {
                         message: "message is too long".to_string(),
+                    },
+                )
+                .await?;
+            return Ok(());
+        }
+        if body.is_empty() {
+            self.peer
+                .respond_with_error(
+                    receipt,
+                    proto::Error {
+                        message: "message can't be blank".to_string(),
                     },
                 )
                 .await?;
@@ -1632,6 +1644,23 @@ mod tests {
             this.get_channel(channel_id.to_proto(), cx).unwrap()
         });
 
+        // Messages aren't allowed to be too long.
+        channel_a
+            .update(&mut cx_a, |channel, cx| {
+                let long_body = "this is long.\n".repeat(1024);
+                channel.send_message(long_body, cx).unwrap()
+            })
+            .await
+            .unwrap_err();
+
+        // Messages aren't allowed to be blank.
+        channel_a
+            .update(&mut cx_a, |channel, cx| {
+                channel.send_message(String::new(), cx).unwrap()
+            })
+            .await
+            .unwrap_err();
+
         // Leading and trailing whitespace are trimmed.
         channel_a
             .update(&mut cx_a, |channel, cx| {
@@ -1650,15 +1679,6 @@ mod tests {
                 .collect::<Vec<_>>(),
             &["surrounded by whitespace"]
         );
-
-        // Messages aren't allowed to be too long.
-        channel_a
-            .update(&mut cx_a, |channel, cx| {
-                let long_body = "this is long.\n".repeat(1024);
-                channel.send_message(long_body, cx).unwrap()
-            })
-            .await
-            .unwrap_err();
     }
 
     struct TestServer {

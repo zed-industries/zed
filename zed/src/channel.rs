@@ -229,6 +229,10 @@ impl Channel {
         body: String,
         cx: &mut ModelContext<Self>,
     ) -> Result<Task<Result<()>>> {
+        if body.is_empty() {
+            Err(anyhow!("message body can't be empty"))?;
+        }
+
         let channel_id = self.details.id;
         let current_user_id = self.current_user_id()?;
         let local_id = self.next_local_message_id;
