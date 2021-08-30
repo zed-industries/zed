@@ -29,9 +29,9 @@ impl Element for Overlay {
 
     fn paint(&mut self, bounds: RectF, size: &mut Self::LayoutState, cx: &mut PaintContext) {
         let bounds = RectF::new(bounds.origin(), *size);
-        cx.scene.push_foreground_layer(Some(bounds));
+        cx.scene.push_stacking_context(None);
         self.child.paint(bounds.origin(), cx);
-        cx.scene.pop_layer();
+        cx.scene.pop_stacking_context();
     }
 
     fn dispatch_event(

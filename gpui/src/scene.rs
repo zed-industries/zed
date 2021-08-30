@@ -11,10 +11,13 @@ use crate::{
 
 pub struct Scene {
     scale_factor: f32,
+    stacking_contexts: Vec<StackingContext>,
+    active_stacking_context_stack: Vec<usize>,
+}
+
+struct StackingContext {
     layers: Vec<Layer>,
-    foreground_layers: Vec<Layer>,
-    active_layer_stack: Vec<(usize, bool)>,
-    pending_foreground_layers: usize,
+    active_layer_stack: Vec<usize>,
 }
 
 #[derive(Default)]
@@ -122,12 +125,11 @@ pub struct PathVertex {
 
 impl Scene {
     pub fn new(scale_factor: f32) -> Self {
+        let stacking_context = StackingContext::new(None);
         Scene {
             scale_factor,
-            layers: vec![Layer::new(None)],
-            foreground_layers: Default::default(),
-            active_layer_stack: vec![(0, false)],
-            pending_foreground_layers: 0,
+            stacking_contexts: vec![stacking_context],
+            active_stacking_context_stack: vec![0],
         }
     }
 
@@ -136,31 +138,27 @@ impl Scene {
     }
 
     pub fn layers(&self) -> impl Iterator<Item = &Layer> {
-        self.layers.iter().chain(self.foreground_layers.iter())
+        self.stacking_contexts.iter().flat_map(|s| &s.layers)
+    }
+
+    pub fn push_stacking_context(&mut self, clip_bounds: Option<RectF>) {
+        self.active_stacking_context_stack
+            .push(self.stacking_contexts.len());
+        self.stacking_contexts
+            .push(StackingContext::new(clip_bounds))
+    }
+
+    pub fn pop_stacking_context(&mut self) {
+        self.active_stacking_context_stack.pop();
+        assert!(!self.active_stacking_context_stack.is_empty());
     }
 
     pub fn push_layer(&mut self, clip_bounds: Option<RectF>) {
-        if self.pending_foreground_layers == 0 {
-            let ix = self.layers.len();
-            self.layers.push(Layer::new(clip_bounds));
-            self.active_layer_stack.push((ix, false));
-        } else {
-            let ix = self.foreground_layers.len();
-            self.foreground_layers.push(Layer::new(clip_bounds));
-            self.active_layer_stack.push((ix, true));
-        }
-    }
-
-    pub fn push_foreground_layer(&mut self, clip_bounds: Option<RectF>) {
-        self.pending_foreground_layers += 1;
-        self.push_layer(clip_bounds);
+        self.active_stacking_context().push_layer(clip_bounds);
     }
 
     pub fn pop_layer(&mut self) {
-        let (_, foreground) = self.active_layer_stack.pop().unwrap();
-        if foreground {
-            self.pending_foreground_layers -= 1;
-        }
+        self.active_stacking_context().pop_layer();
     }
 
     pub fn push_quad(&mut self, quad: Quad) {
@@ -183,13 +181,46 @@ impl Scene {
         self.active_layer().push_path(path);
     }
 
+    fn active_stacking_context(&mut self) -> &mut StackingContext {
+        let ix = *self.active_stacking_context_stack.last().unwrap();
+        &mut self.stacking_contexts[ix]
+    }
+
     fn active_layer(&mut self) -> &mut Layer {
-        let (ix, foreground) = *self.active_layer_stack.last().unwrap();
-        if foreground {
-            &mut self.foreground_layers[ix]
-        } else {
-            &mut self.layers[ix]
+        self.active_stacking_context().active_layer()
+    }
+}
+
+impl StackingContext {
+    fn new(clip_bounds: Option<RectF>) -> Self {
+        Self {
+            layers: vec![Layer::new(clip_bounds)],
+            active_layer_stack: vec![0],
         }
+    }
+
+    fn active_layer(&mut self) -> &mut Layer {
+        &mut self.layers[*self.active_layer_stack.last().unwrap()]
+    }
+
+    fn push_layer(&mut self, clip_bounds: Option<RectF>) {
+        let clip_bounds = clip_bounds.map(|clip_bounds| {
+            clip_bounds
+                .intersection(self.active_layer().clip_bounds.unwrap_or(clip_bounds))
+                .unwrap_or_else(|| {
+                    log::warn!("specified clip bounds are disjoint from parent layer");
+                    RectF::default()
+                })
+        });
+
+        let ix = self.layers.len();
+        self.layers.push(Layer::new(clip_bounds));
+        self.active_layer_stack.push(ix);
+    }
+
+    fn pop_layer(&mut self) {
+        self.active_layer_stack.pop().unwrap();
+        assert!(!self.active_layer_stack.is_empty());
     }
 }
 
