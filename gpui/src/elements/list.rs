@@ -440,13 +440,13 @@ mod tests {
 
         let mut list = List::new(
             state.clone(),
-            &cx.render_cx::<TestView>(0, 0, 0., false),
+            &cx.build_render_context::<TestView>(0, 0, 0., false),
             |range| elements[range].iter().copied().map(item),
         )
         .boxed();
         let size = list.layout(
             SizeConstraint::new(vec2f(0., 0.), vec2f(100., 40.)),
-            &mut presenter.layout_cx(cx),
+            &mut presenter.build_layout_context(cx),
         );
         assert_eq!(size, vec2f(100., 40.));
         assert_eq!(
@@ -473,13 +473,13 @@ mod tests {
 
         let mut list = List::new(
             state.clone(),
-            &cx.render_cx::<TestView>(0, 0, 0., false),
+            &cx.build_render_context::<TestView>(0, 0, 0., false),
             |range| elements[range].iter().copied().map(item),
         )
         .boxed();
         let size = list.layout(
             SizeConstraint::new(vec2f(0., 0.), vec2f(100., 40.)),
-            &mut presenter.layout_cx(cx),
+            &mut presenter.build_layout_context(cx),
         );
         assert_eq!(size, vec2f(100., 40.));
         assert_eq!(

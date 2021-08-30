@@ -124,12 +124,15 @@ impl Presenter {
 
     fn layout(&mut self, size: Vector2F, cx: &mut MutableAppContext) {
         if let Some(root_view_id) = cx.root_view_id(self.window_id) {
-            self.layout_cx(cx)
+            self.build_layout_context(cx)
                 .layout(root_view_id, SizeConstraint::strict(size));
         }
     }
 
-    pub fn layout_cx<'a>(&'a mut self, cx: &'a mut MutableAppContext) -> LayoutContext<'a> {
+    pub fn build_layout_context<'a>(
+        &'a mut self,
+        cx: &'a mut MutableAppContext,
+    ) -> LayoutContext<'a> {
         LayoutContext {
             rendered_views: &mut self.rendered_views,
             parents: &mut self.parents,

@@ -1248,7 +1248,7 @@ impl MutableAppContext {
         )
     }
 
-    pub fn render_cx<V: View>(
+    pub fn build_render_context<V: View>(
         &mut self,
         window_id: usize,
         view_id: usize,
