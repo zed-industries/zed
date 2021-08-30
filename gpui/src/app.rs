@@ -40,7 +40,7 @@ pub trait Entity: 'static {
 
 pub trait View: Entity + Sized {
     fn ui_name() -> &'static str;
-    fn render(&self, cx: &mut RenderContext<'_, Self>) -> ElementBox;
+    fn render(&mut self, cx: &mut RenderContext<'_, Self>) -> ElementBox;
     fn on_focus(&mut self, _: &mut ViewContext<Self>) {}
     fn on_blur(&mut self, _: &mut ViewContext<Self>) {}
     fn keymap_context(&self, _: &AppContext) -> keymap::Context {
@@ -817,7 +817,7 @@ impl MutableAppContext {
         titlebar_height: f32,
         refreshing: bool,
     ) -> Result<ElementBox> {
-        let view = self
+        let mut view = self
             .cx
             .views
             .remove(&(window_id, view_id))
@@ -1863,7 +1863,7 @@ pub trait AnyView {
     fn release(&mut self, cx: &mut MutableAppContext);
     fn ui_name(&self) -> &'static str;
     fn render<'a>(
-        &self,
+        &mut self,
         window_id: usize,
         view_id: usize,
         titlebar_height: f32,
@@ -1896,7 +1896,7 @@ where
     }
 
     fn render<'a>(
-        &self,
+        &mut self,
         window_id: usize,
         view_id: usize,
         titlebar_height: f32,
@@ -3368,7 +3368,7 @@ mod tests {
         }
 
         impl super::View for View {
-            fn render<'a>(&self, _: &mut RenderContext<Self>) -> ElementBox {
+            fn render(&mut self, _: &mut RenderContext<Self>) -> ElementBox {
                 Empty::new().boxed()
             }
 
@@ -3432,7 +3432,7 @@ mod tests {
         }
 
         impl super::View for View {
-            fn render<'a>(&self, _: &mut RenderContext<Self>) -> ElementBox {
+            fn render(&mut self, _: &mut RenderContext<Self>) -> ElementBox {
                 let mouse_down_count = self.mouse_down_count.clone();
                 EventHandler::new(Empty::new().boxed())
                     .on_mouse_down(move |_| {
@@ -3494,7 +3494,7 @@ mod tests {
                 "View"
             }
 
-            fn render<'a>(&self, _: &mut RenderContext<Self>) -> ElementBox {
+            fn render(&mut self, _: &mut RenderContext<Self>) -> ElementBox {
                 Empty::new().boxed()
             }
         }
@@ -3534,7 +3534,7 @@ mod tests {
         }
 
         impl super::View for View {
-            fn render<'a>(&self, _: &mut RenderContext<Self>) -> ElementBox {
+            fn render(&mut self, _: &mut RenderContext<Self>) -> ElementBox {
                 Empty::new().boxed()
             }
 
@@ -3590,7 +3590,7 @@ mod tests {
         }
 
         impl super::View for View {
-            fn render<'a>(&self, _: &mut RenderContext<Self>) -> ElementBox {
+            fn render(&mut self, _: &mut RenderContext<Self>) -> ElementBox {
                 Empty::new().boxed()
             }
 
@@ -3640,7 +3640,7 @@ mod tests {
         }
 
         impl super::View for View {
-            fn render<'a>(&self, _: &mut RenderContext<Self>) -> ElementBox {
+            fn render(&mut self, _: &mut RenderContext<Self>) -> ElementBox {
                 Empty::new().boxed()
             }
 
@@ -3684,7 +3684,7 @@ mod tests {
         }
 
         impl super::View for View {
-            fn render<'a>(&self, _: &mut RenderContext<Self>) -> ElementBox {
+            fn render(&mut self, _: &mut RenderContext<Self>) -> ElementBox {
                 Empty::new().boxed()
             }
 
@@ -3731,7 +3731,7 @@ mod tests {
         }
 
         impl super::View for View {
-            fn render<'a>(&self, _: &mut RenderContext<Self>) -> ElementBox {
+            fn render(&mut self, _: &mut RenderContext<Self>) -> ElementBox {
                 Empty::new().boxed()
             }
 
@@ -3789,7 +3789,7 @@ mod tests {
         }
 
         impl View for ViewA {
-            fn render<'a>(&self, _: &mut RenderContext<Self>) -> ElementBox {
+            fn render(&mut self, _: &mut RenderContext<Self>) -> ElementBox {
                 Empty::new().boxed()
             }
 
@@ -3807,7 +3807,7 @@ mod tests {
         }
 
         impl View for ViewB {
-            fn render<'a>(&self, _: &mut RenderContext<Self>) -> ElementBox {
+            fn render(&mut self, _: &mut RenderContext<Self>) -> ElementBox {
                 Empty::new().boxed()
             }
 
@@ -3903,7 +3903,7 @@ mod tests {
         }
 
         impl super::View for View {
-            fn render<'a>(&self, _: &mut RenderContext<Self>) -> ElementBox {
+            fn render(&mut self, _: &mut RenderContext<Self>) -> ElementBox {
                 Empty::new().boxed()
             }
 
@@ -4038,7 +4038,7 @@ mod tests {
                 "test view"
             }
 
-            fn render(&self, _: &mut RenderContext<Self>) -> ElementBox {
+            fn render(&mut self, _: &mut RenderContext<Self>) -> ElementBox {
                 Empty::new().boxed()
             }
         }
@@ -4083,7 +4083,7 @@ mod tests {
                 "test view"
             }
 
-            fn render(&self, _: &mut RenderContext<Self>) -> ElementBox {
+            fn render(&mut self, _: &mut RenderContext<Self>) -> ElementBox {
                 Empty::new().boxed()
             }
         }
@@ -4106,7 +4106,7 @@ mod tests {
                 "test view"
             }
 
-            fn render(&self, _: &mut RenderContext<Self>) -> ElementBox {
+            fn render(&mut self, _: &mut RenderContext<Self>) -> ElementBox {
                 Empty::new().boxed()
             }
         }

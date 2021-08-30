@@ -13,7 +13,7 @@ impl View for ProjectBrowser {
         "ProjectBrowser"
     }
 
-    fn render(&self, _: &mut gpui::RenderContext<'_, Self>) -> gpui::ElementBox {
+    fn render(&mut self, _: &mut gpui::RenderContext<'_, Self>) -> gpui::ElementBox {
         Empty::new().boxed()
     }
 }

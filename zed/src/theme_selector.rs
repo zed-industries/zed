@@ -269,7 +269,7 @@ impl View for ThemeSelector {
         "ThemeSelector"
     }
 
-    fn render(&self, cx: &mut RenderContext<Self>) -> ElementBox {
+    fn render(&mut self, cx: &mut RenderContext<Self>) -> ElementBox {
         let settings = self.settings.borrow();
 
         Align::new(

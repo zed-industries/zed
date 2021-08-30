@@ -2522,7 +2522,7 @@ impl Entity for Editor {
 }
 
 impl View for Editor {
-    fn render<'a>(&self, _: &mut RenderContext<Self>) -> ElementBox {
+    fn render(&mut self, _: &mut RenderContext<Self>) -> ElementBox {
         EditorElement::new(self.handle.clone()).boxed()
     }
 

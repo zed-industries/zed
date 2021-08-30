@@ -369,7 +369,7 @@ impl View for Pane {
         "Pane"
     }
 
-    fn render(&self, cx: &mut RenderContext<Self>) -> ElementBox {
+    fn render(&mut self, cx: &mut RenderContext<Self>) -> ElementBox {
         if let Some(active_item) = self.active_item() {
             Flex::column()
                 .with_child(self.render_tabs(cx))

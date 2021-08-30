@@ -79,7 +79,7 @@ impl View for FileFinder {
         "FileFinder"
     }
 
-    fn render(&self, _: &mut RenderContext<Self>) -> ElementBox {
+    fn render(&mut self, _: &mut RenderContext<Self>) -> ElementBox {
         let settings = self.settings.borrow();
 
         Align::new(

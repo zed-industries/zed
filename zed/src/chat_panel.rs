@@ -220,7 +220,7 @@ impl View for ChatPanel {
         "ChatPanel"
     }
 
-    fn render(&self, cx: &mut RenderContext<Self>) -> ElementBox {
+    fn render(&mut self, cx: &mut RenderContext<Self>) -> ElementBox {
         let theme = &self.settings.borrow().theme;
         Container::new(
             Flex::column()
