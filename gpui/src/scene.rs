@@ -12,7 +12,9 @@ use crate::{
 pub struct Scene {
     scale_factor: f32,
     layers: Vec<Layer>,
-    active_layer_stack: Vec<usize>,
+    foreground_layers: Vec<Layer>,
+    active_layer_stack: Vec<(usize, bool)>,
+    pending_foreground_layers: usize,
 }
 
 #[derive(Default)]
@@ -123,7 +125,9 @@ impl Scene {
         Scene {
             scale_factor,
             layers: vec![Layer::new(None)],
-            active_layer_stack: vec![0],
+            foreground_layers: Default::default(),
+            active_layer_stack: vec![(0, false)],
+            pending_foreground_layers: 0,
         }
     }
 
@@ -131,19 +135,32 @@ impl Scene {
         self.scale_factor
     }
 
-    pub fn layers(&self) -> &[Layer] {
-        self.layers.as_slice()
+    pub fn layers(&self) -> impl Iterator<Item = &Layer> {
+        self.layers.iter().chain(self.foreground_layers.iter())
     }
 
     pub fn push_layer(&mut self, clip_bounds: Option<RectF>) {
-        let ix = self.layers.len();
-        self.layers.push(Layer::new(clip_bounds));
-        self.active_layer_stack.push(ix);
+        if self.pending_foreground_layers == 0 {
+            let ix = self.layers.len();
+            self.layers.push(Layer::new(clip_bounds));
+            self.active_layer_stack.push((ix, false));
+        } else {
+            let ix = self.foreground_layers.len();
+            self.foreground_layers.push(Layer::new(clip_bounds));
+            self.active_layer_stack.push((ix, true));
+        }
+    }
+
+    pub fn push_foreground_layer(&mut self, clip_bounds: Option<RectF>) {
+        self.pending_foreground_layers += 1;
+        self.push_layer(clip_bounds);
     }
 
     pub fn pop_layer(&mut self) {
-        assert!(self.active_layer_stack.len() > 1);
-        self.active_layer_stack.pop();
+        let (_, foreground) = self.active_layer_stack.pop().unwrap();
+        if foreground {
+            self.pending_foreground_layers -= 1;
+        }
     }
 
     pub fn push_quad(&mut self, quad: Quad) {
@@ -167,7 +184,12 @@ impl Scene {
     }
 
     fn active_layer(&mut self) -> &mut Layer {
-        &mut self.layers[*self.active_layer_stack.last().unwrap()]
+        let (ix, foreground) = *self.active_layer_stack.last().unwrap();
+        if foreground {
+            &mut self.foreground_layers[ix]
+        } else {
+            &mut self.layers[ix]
+        }
     }
 }
 

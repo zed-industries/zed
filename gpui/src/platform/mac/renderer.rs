@@ -142,7 +142,7 @@ impl Renderer {
         let mut sprites = Vec::new();
         let mut vertices = Vec::<shaders::GPUIPathVertex>::new();
         let mut current_atlas_id = None;
-        for (layer_id, layer) in scene.layers().iter().enumerate() {
+        for (layer_id, layer) in scene.layers().enumerate() {
             for path in layer.paths() {
                 let origin = path.bounds.origin() * scene.scale_factor();
                 let size = (path.bounds.size() * scene.scale_factor()).ceil();
@@ -285,7 +285,7 @@ impl Renderer {
 
         let mut path_sprites = path_sprites.into_iter().peekable();
 
-        for (layer_id, layer) in scene.layers().iter().enumerate() {
+        for (layer_id, layer) in scene.layers().enumerate() {
             self.clip(scene, layer, drawable_size, command_encoder);
             self.render_shadows(scene, layer, offset, drawable_size, command_encoder);
             self.render_quads(scene, layer, offset, drawable_size, command_encoder);
