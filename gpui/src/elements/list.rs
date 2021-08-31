@@ -261,6 +261,15 @@ impl ListState {
     pub fn splice(&self, old_range: Range<usize>, count: usize) {
         let state = &mut *self.0.borrow_mut();
 
+        if let Some((ix, offset)) = state.scroll_top.as_mut() {
+            if old_range.contains(ix) {
+                *ix = old_range.start;
+                *offset = 0.;
+            } else if old_range.end <= *ix {
+                *ix = *ix - (old_range.end - old_range.start) + count;
+            }
+        }
+
         let mut old_heights = state.heights.cursor::<Count, ()>();
         let mut new_heights = old_heights.slice(&Count(old_range.start), Bias::Right, &());
         old_heights.seek_forward(&Count(old_range.end), Bias::Right, &());
@@ -439,7 +448,7 @@ mod tests {
     fn test_layout(cx: &mut crate::MutableAppContext) {
         let mut presenter = cx.build_presenter(0, 0.);
 
-        let mut elements = vec![20., 30., 10.];
+        let mut elements = vec![20., 30., 100.];
         let state = ListState::new(elements.len(), Orientation::Top);
 
         let mut list = List::new(
@@ -458,9 +467,19 @@ mod tests {
             ElementHeightSummary {
                 count: 3,
                 pending_count: 0,
-                height: 60.
+                height: 150.
             }
         );
+
+        state.0.borrow_mut().scroll(
+            Default::default(),
+            vec2f(0., 54.),
+            true,
+            size.y(),
+            &mut presenter.build_event_context(cx),
+        );
+        assert_eq!(state.0.borrow().scroll_top, Some((2, 4.)));
+        assert_eq!(state.0.borrow().scroll_top(size.y()), 54.);
 
         elements.splice(1..2, vec![40., 50.]);
         elements.push(60.);
@@ -471,7 +490,7 @@ mod tests {
             ElementHeightSummary {
                 count: 5,
                 pending_count: 3,
-                height: 30.
+                height: 120.
             }
         );
 
@@ -491,9 +510,11 @@ mod tests {
             ElementHeightSummary {
                 count: 5,
                 pending_count: 0,
-                height: 180.
+                height: 270.
             }
         );
+        assert_eq!(state.0.borrow().scroll_top, Some((3, 4.)));
+        assert_eq!(state.0.borrow().scroll_top(size.y()), 114.);
     }
 
     fn item(height: f32) -> ElementBox {

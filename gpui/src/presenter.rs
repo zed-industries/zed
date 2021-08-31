@@ -160,15 +160,7 @@ impl Presenter {
                 _ => {}
             }
 
-            let mut event_cx = EventContext {
-                rendered_views: &mut self.rendered_views,
-                dispatched_actions: Default::default(),
-                font_cache: &self.font_cache,
-                text_layout_cache: &self.text_layout_cache,
-                view_stack: Default::default(),
-                invalidated_views: Default::default(),
-                app: cx,
-            };
+            let mut event_cx = self.build_event_context(cx);
             event_cx.dispatch_event(root_view_id, &event);
 
             let invalidated_views = event_cx.invalidated_views;
@@ -180,6 +172,21 @@ impl Presenter {
             for directive in dispatch_directives {
                 cx.dispatch_action_any(self.window_id, &directive.path, directive.action.as_ref());
             }
+        }
+    }
+
+    pub fn build_event_context<'a>(
+        &'a mut self,
+        cx: &'a mut MutableAppContext,
+    ) -> EventContext<'a> {
+        EventContext {
+            rendered_views: &mut self.rendered_views,
+            dispatched_actions: Default::default(),
+            font_cache: &self.font_cache,
+            text_layout_cache: &self.text_layout_cache,
+            view_stack: Default::default(),
+            invalidated_views: Default::default(),
+            app: cx,
         }
     }
 
@@ -274,8 +281,9 @@ impl<'a> EventContext<'a> {
     }
 
     pub fn notify(&mut self) {
-        self.invalidated_views
-            .insert(*self.view_stack.last().unwrap());
+        if let Some(view_id) = self.view_stack.last() {
+            self.invalidated_views.insert(*view_id);
+        }
     }
 }
 
