@@ -46,7 +46,6 @@ impl ChatPanel {
         let input_editor = cx.add_view(|cx| Editor::auto_height(settings.clone(), cx));
         let channel_select = cx.add_view(|cx| {
             let channel_list = channel_list.clone();
-            let theme = &settings.borrow().theme.chat_panel.channel_select;
             Select::new(0, cx, {
                 let settings = settings.clone();
                 move |ix, item_type, is_hovered, cx| {
@@ -60,9 +59,15 @@ impl ChatPanel {
                     )
                 }
             })
-            .with_style(&SelectStyle {
-                header: theme.header.container.clone(),
-                menu: theme.menu.clone(),
+            .with_style({
+                let settings = settings.clone();
+                move |_| {
+                    let theme = &settings.borrow().theme.chat_panel.channel_select;
+                    SelectStyle {
+                        header: theme.header.container.clone(),
+                        menu: theme.menu.clone(),
+                    }
+                }
             })
         });
         let mut this = Self {

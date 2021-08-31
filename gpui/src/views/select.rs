@@ -10,7 +10,7 @@ pub struct Select {
     item_count: usize,
     is_open: bool,
     list_state: UniformListState,
-    style: SelectStyle,
+    build_style: Option<Box<dyn FnMut(&mut MutableAppContext) -> SelectStyle>>,
 }
 
 #[derive(Clone, Default)]
@@ -48,12 +48,15 @@ impl Select {
             item_count,
             is_open: false,
             list_state: UniformListState::default(),
-            style: Default::default(),
+            build_style: Default::default(),
         }
     }
 
-    pub fn with_style(mut self, style: &SelectStyle) -> Self {
-        self.style = style.clone();
+    pub fn with_style(
+        mut self,
+        f: impl 'static + FnMut(&mut MutableAppContext) -> SelectStyle,
+    ) -> Self {
+        self.build_style = Some(Box::new(f));
         self
     }
 
@@ -91,6 +94,11 @@ impl View for Select {
         enum Header {}
         enum Item {}
 
+        let style = if let Some(build_style) = self.build_style.as_mut() {
+            (build_style)(cx)
+        } else {
+            Default::default()
+        };
         let mut result = Flex::column().with_child(
             MouseEventHandler::new::<Header, _, _, _>(self.handle.id(), cx, |mouse_state, cx| {
                 Container::new((self.render_item)(
@@ -99,7 +107,7 @@ impl View for Select {
                     mouse_state.hovered,
                     cx,
                 ))
-                .with_style(&self.style.header)
+                .with_style(&style.header)
                 .boxed()
             })
             .on_click(move |cx| cx.dispatch_action(ToggleSelect))
@@ -146,7 +154,7 @@ impl View for Select {
                         .with_max_height(200.)
                         .boxed(),
                     )
-                    .with_style(&self.style.menu)
+                    .with_style(&style.menu)
                     .boxed(),
                 )
                 .boxed(),
