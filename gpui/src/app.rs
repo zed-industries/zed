@@ -294,7 +294,9 @@ impl App {
         let platform = self.0.borrow().foreground_platform.clone();
         platform.run(Box::new(move || {
             let mut cx = self.0.borrow_mut();
-            on_finish_launching(&mut *cx);
+            let cx = &mut *cx;
+            crate::views::init(cx);
+            on_finish_launching(cx);
         }))
     }
 
@@ -1306,7 +1308,7 @@ impl MutableAppContext {
 
     pub fn element_state<Tag: 'static, T: 'static + Default>(
         &mut self,
-        id: usize,
+        id: ElementStateId,
     ) -> ElementStateHandle<T> {
         let key = (TypeId::of::<Tag>(), id);
         self.cx
@@ -1699,7 +1701,7 @@ pub struct AppContext {
     models: HashMap<usize, Box<dyn AnyModel>>,
     views: HashMap<(usize, usize), Box<dyn AnyView>>,
     windows: HashMap<usize, Window>,
-    element_states: HashMap<(TypeId, usize), Box<dyn Any>>,
+    element_states: HashMap<(TypeId, ElementStateId), Box<dyn Any>>,
     background: Arc<executor::Background>,
     ref_counts: Arc<Mutex<RefCounts>>,
     font_cache: Arc<FontCache>,
@@ -2977,6 +2979,10 @@ impl<T: View> WeakViewHandle<T> {
         }
     }
 
+    pub fn id(&self) -> usize {
+        self.view_id
+    }
+
     pub fn upgrade(&self, cx: &AppContext) -> Option<ViewHandle<T>> {
         if cx.ref_counts.lock().is_entity_alive(self.view_id) {
             Some(ViewHandle::new(
@@ -3000,15 +3006,30 @@ impl<T> Clone for WeakViewHandle<T> {
     }
 }
 
+#[derive(Clone, Copy, PartialEq, Eq, Hash)]
+pub struct ElementStateId(usize, usize);
+
+impl From<usize> for ElementStateId {
+    fn from(id: usize) -> Self {
+        Self(id, 0)
+    }
+}
+
+impl From<(usize, usize)> for ElementStateId {
+    fn from(id: (usize, usize)) -> Self {
+        Self(id.0, id.1)
+    }
+}
+
 pub struct ElementStateHandle<T> {
     value_type: PhantomData<T>,
     tag_type_id: TypeId,
-    id: usize,
+    id: ElementStateId,
     ref_counts: Weak<Mutex<RefCounts>>,
 }
 
 impl<T: 'static> ElementStateHandle<T> {
-    fn new(tag_type_id: TypeId, id: usize, ref_counts: &Arc<Mutex<RefCounts>>) -> Self {
+    fn new(tag_type_id: TypeId, id: ElementStateId, ref_counts: &Arc<Mutex<RefCounts>>) -> Self {
         ref_counts.lock().inc_element_state(tag_type_id, id);
         Self {
             value_type: PhantomData,
@@ -3128,10 +3149,10 @@ impl Drop for Subscription {
 #[derive(Default)]
 struct RefCounts {
     entity_counts: HashMap<usize, usize>,
-    element_state_counts: HashMap<(TypeId, usize), usize>,
+    element_state_counts: HashMap<(TypeId, ElementStateId), usize>,
     dropped_models: HashSet<usize>,
     dropped_views: HashSet<(usize, usize)>,
-    dropped_element_states: HashSet<(TypeId, usize)>,
+    dropped_element_states: HashSet<(TypeId, ElementStateId)>,
 }
 
 impl RefCounts {
@@ -3155,11 +3176,14 @@ impl RefCounts {
         }
     }
 
-    fn inc_element_state(&mut self, tag_type_id: TypeId, id: usize) {
-        *self
-            .element_state_counts
-            .entry((tag_type_id, id))
-            .or_insert(0) += 1;
+    fn inc_element_state(&mut self, tag_type_id: TypeId, id: ElementStateId) {
+        match self.element_state_counts.entry((tag_type_id, id)) {
+            Entry::Occupied(mut entry) => *entry.get_mut() += 1,
+            Entry::Vacant(entry) => {
+                entry.insert(1);
+                self.dropped_element_states.remove(&(tag_type_id, id));
+            }
+        }
     }
 
     fn dec_model(&mut self, model_id: usize) {
@@ -3180,7 +3204,7 @@ impl RefCounts {
         }
     }
 
-    fn dec_element_state(&mut self, tag_type_id: TypeId, id: usize) {
+    fn dec_element_state(&mut self, tag_type_id: TypeId, id: ElementStateId) {
         let key = (tag_type_id, id);
         let count = self.element_state_counts.get_mut(&key).unwrap();
         *count -= 1;
@@ -3199,7 +3223,7 @@ impl RefCounts {
     ) -> (
         HashSet<usize>,
         HashSet<(usize, usize)>,
-        HashSet<(TypeId, usize)>,
+        HashSet<(TypeId, ElementStateId)>,
     ) {
         let mut dropped_models = HashSet::new();
         let mut dropped_views = HashSet::new();

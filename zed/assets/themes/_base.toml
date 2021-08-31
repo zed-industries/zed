@@ -26,15 +26,42 @@ color = "$text.2.color"
 color = "$text.0.color"
 
 [chat_panel]
-padding = { top = 10.0, bottom = 10.0, left = 10.0, right = 10.0 }
 channel_name = { extends = "$text.0", weight = "bold" }
-channel_name_hash = { text = "$text.2", padding.right = 5.0 }
+channel_name_hash = { text = "$text.2", padding.right = 5 }
 
 [chat_panel.message]
 body = "$text.1"
-sender.margin.right = 10.0
-sender.text = { extends = "$text.0", weight = "bold" }
-timestamp.text = "$text.2"
+sender = { extends = "$text.0", weight = "bold", margin.right = 10.0 }
+timestamp = "$text.2"
+padding = { top = 10, bottom = 10, left = 10, right = 10 }
+
+[chat_panel.channel_select.item]
+padding = { top = 4, bottom = 4, left = 4, right = 4 }
+name = "$text.1"
+hash = { extends = "$text.2", margin.right = 5.0 }
+
+[chat_panel.channel_select.hovered_item]
+extends = "$chat_panel.channel_select.item"
+background = "$surface.2"
+corner_radius = 6.0
+
+[chat_panel.channel_select.active_item]
+extends = "$chat_panel.channel_select.item"
+name = "$text.0"
+
+[chat_panel.channel_select.hovered_active_item]
+extends = "$chat_panel.channel_select.hovered_item"
+name = "$text.0"
+
+[chat_panel.channel_select.header]
+extends = "$chat_panel.channel_select.active_item"
+padding.bottom = 0
+
+[chat_panel.channel_select.menu]
+padding = { top = 4, bottom = 4, left = 4, right = 4 }
+corner_radius = 6.0
+border = { color = "#000000", width = 1.0 }
+background = "$surface.0"
 
 [selector]
 background = "$surface.2"

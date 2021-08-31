@@ -1,12 +1,17 @@
 use crate::{
     channel::{Channel, ChannelEvent, ChannelList, ChannelMessage},
     editor::Editor,
+    theme,
     util::ResultExt,
     Settings,
 };
 use gpui::{
-    action, elements::*, keymap::Binding, Entity, ModelHandle, MutableAppContext, RenderContext,
-    Subscription, View, ViewContext, ViewHandle,
+    action,
+    elements::*,
+    keymap::Binding,
+    views::{ItemType, Select, SelectStyle},
+    AppContext, Entity, ModelHandle, MutableAppContext, RenderContext, Subscription, View,
+    ViewContext, ViewHandle,
 };
 use postage::watch;
 use time::{OffsetDateTime, UtcOffset};
@@ -16,6 +21,7 @@ pub struct ChatPanel {
     active_channel: Option<(ModelHandle<Channel>, Subscription)>,
     message_list: ListState,
     input_editor: ViewHandle<Editor>,
+    channel_select: ViewHandle<Select>,
     settings: watch::Receiver<Settings>,
 }
 
@@ -38,11 +44,33 @@ impl ChatPanel {
         cx: &mut ViewContext<Self>,
     ) -> Self {
         let input_editor = cx.add_view(|cx| Editor::auto_height(settings.clone(), cx));
+        let channel_select = cx.add_view(|cx| {
+            let channel_list = channel_list.clone();
+            let theme = &settings.borrow().theme.chat_panel.channel_select;
+            Select::new(0, cx, {
+                let settings = settings.clone();
+                move |ix, item_type, is_hovered, cx| {
+                    Self::render_channel_name(
+                        &channel_list,
+                        ix,
+                        item_type,
+                        is_hovered,
+                        &settings.borrow().theme.chat_panel.channel_select,
+                        cx,
+                    )
+                }
+            })
+            .with_style(&SelectStyle {
+                header: theme.header.container.clone(),
+                menu: theme.menu.clone(),
+            })
+        });
         let mut this = Self {
             channel_list,
             active_channel: Default::default(),
             message_list: ListState::new(0, Orientation::Bottom),
             input_editor,
+            channel_select,
             settings,
         };
 
@@ -56,23 +84,33 @@ impl ChatPanel {
     }
 
     fn init_active_channel(&mut self, cx: &mut ViewContext<Self>) {
-        if self.active_channel.is_none() {
-            let channel = self.channel_list.update(cx, |list, cx| {
-                if let Some(channel_id) = list
-                    .available_channels()
-                    .and_then(|channels| channels.first())
-                    .map(|details| details.id)
-                {
-                    return list.get_channel(channel_id, cx);
+        let (active_channel, channel_count) = self.channel_list.update(cx, |list, cx| {
+            let channel_count;
+            let mut active_channel = None;
+
+            if let Some(available_channels) = list.available_channels() {
+                channel_count = available_channels.len();
+                if self.active_channel.is_none() {
+                    if let Some(channel_id) = available_channels.first().map(|channel| channel.id) {
+                        active_channel = list.get_channel(channel_id, cx);
+                    }
                 }
-                None
-            });
-            if let Some(channel) = channel {
-                self.set_active_channel(channel, cx);
+            } else {
+                channel_count = 0;
             }
-        } else if self.channel_list.read(cx).available_channels().is_none() {
+
+            (active_channel, channel_count)
+        });
+
+        if let Some(active_channel) = active_channel {
+            self.set_active_channel(active_channel, cx);
+        } else {
             self.active_channel = None;
         }
+
+        self.channel_select.update(cx, |select, cx| {
+            select.set_item_count(channel_count, cx);
+        });
     }
 
     fn set_active_channel(&mut self, channel: ModelHandle<Channel>, cx: &mut ViewContext<Self>) {
@@ -106,28 +144,6 @@ impl ChatPanel {
         cx.notify();
     }
 
-    fn render_channel_name(&self, cx: &mut RenderContext<Self>) -> ElementBox {
-        let settings = self.settings.borrow();
-        let theme = &settings.theme.chat_panel;
-        if let Some((channel, _)) = self.active_channel.as_ref() {
-            let channel = channel.read(cx);
-            Flex::row()
-                .with_child(
-                    Container::new(
-                        Label::new("#".to_string(), theme.channel_name_hash.label.clone()).boxed(),
-                    )
-                    .with_style(&theme.channel_name_hash.container)
-                    .boxed(),
-                )
-                .with_child(
-                    Label::new(channel.name().to_string(), theme.channel_name.clone()).boxed(),
-                )
-                .boxed()
-        } else {
-            Empty::new().boxed()
-        }
-    }
-
     fn render_active_channel_messages(&self, cx: &mut RenderContext<Self>) -> ElementBox {
         let messages = if let Some((channel, _)) = self.active_channel.as_ref() {
             let channel = channel.read(cx);
@@ -155,7 +171,7 @@ impl ChatPanel {
                         Container::new(
                             Label::new(
                                 message.sender.github_login.clone(),
-                                theme.sender.label.clone(),
+                                theme.sender.text.clone(),
                             )
                             .boxed(),
                         )
@@ -166,7 +182,7 @@ impl ChatPanel {
                         Container::new(
                             Label::new(
                                 format_timestamp(message.timestamp, now),
-                                theme.timestamp.label.clone(),
+                                theme.timestamp.text.clone(),
                             )
                             .boxed(),
                         )
@@ -183,6 +199,36 @@ impl ChatPanel {
         ConstrainedBox::new(ChildView::new(self.input_editor.id()).boxed())
             .with_max_height(100.)
             .boxed()
+    }
+
+    fn render_channel_name(
+        channel_list: &ModelHandle<ChannelList>,
+        ix: usize,
+        item_type: ItemType,
+        is_hovered: bool,
+        theme: &theme::ChannelSelect,
+        cx: &AppContext,
+    ) -> ElementBox {
+        let channel = &channel_list.read(cx).available_channels().unwrap()[ix];
+        let theme = match (item_type, is_hovered) {
+            (ItemType::Header, _) => &theme.header,
+            (ItemType::Selected, false) => &theme.active_item,
+            (ItemType::Selected, true) => &theme.hovered_active_item,
+            (ItemType::Unselected, false) => &theme.item,
+            (ItemType::Unselected, true) => &theme.hovered_item,
+        };
+        Container::new(
+            Flex::row()
+                .with_child(
+                    Container::new(Label::new("#".to_string(), theme.hash.text.clone()).boxed())
+                        .with_style(&theme.hash.container)
+                        .boxed(),
+                )
+                .with_child(Label::new(channel.name.clone(), theme.name.clone()).boxed())
+                .boxed(),
+        )
+        .with_style(&theme.container)
+        .boxed()
     }
 
     fn send(&mut self, _: &Send, cx: &mut ViewContext<Self>) {
@@ -224,7 +270,11 @@ impl View for ChatPanel {
         let theme = &self.settings.borrow().theme;
         Container::new(
             Flex::column()
-                .with_child(self.render_channel_name(cx))
+                .with_child(
+                    Container::new(ChildView::new(self.channel_select.id()).boxed())
+                        .with_style(&theme.chat_panel.channel_select.container)
+                        .boxed(),
+                )
                 .with_child(self.render_active_channel_messages(cx))
                 .with_child(self.render_input_box())
                 .boxed(),

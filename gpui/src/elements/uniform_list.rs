@@ -5,7 +5,7 @@ use crate::{
         vector::{vec2f, Vector2F},
     },
     json::{self, json},
-    AppContext, ElementBox,
+    ElementBox, MutableAppContext,
 };
 use json::ToJson;
 use parking_lot::Mutex;
@@ -38,7 +38,7 @@ pub struct LayoutState {
 
 pub struct UniformList<F>
 where
-    F: Fn(Range<usize>, &mut Vec<ElementBox>, &AppContext),
+    F: Fn(Range<usize>, &mut Vec<ElementBox>, &mut MutableAppContext),
 {
     state: UniformListState,
     item_count: usize,
@@ -47,7 +47,7 @@ where
 
 impl<F> UniformList<F>
 where
-    F: Fn(Range<usize>, &mut Vec<ElementBox>, &AppContext),
+    F: Fn(Range<usize>, &mut Vec<ElementBox>, &mut MutableAppContext),
 {
     pub fn new(state: UniformListState, item_count: usize, append_items: F) -> Self {
         Self {
@@ -102,7 +102,7 @@ where
 
 impl<F> Element for UniformList<F>
 where
-    F: Fn(Range<usize>, &mut Vec<ElementBox>, &AppContext),
+    F: Fn(Range<usize>, &mut Vec<ElementBox>, &mut MutableAppContext),
 {
     type LayoutState = LayoutState;
     type PaintState = ();

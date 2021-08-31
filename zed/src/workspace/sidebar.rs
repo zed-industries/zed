@@ -76,7 +76,7 @@ impl Sidebar {
                         &settings.theme.workspace.sidebar_icon
                     };
                     enum SidebarButton {}
-                    MouseEventHandler::new::<SidebarButton, _, _>(item.view.id(), cx, |_, _| {
+                    MouseEventHandler::new::<SidebarButton, _, _, _>(item.view.id(), cx, |_, _| {
                         ConstrainedBox::new(
                             Align::new(
                                 ConstrainedBox::new(
@@ -133,7 +133,7 @@ impl Sidebar {
     ) -> ElementBox {
         let width = self.width.clone();
         let side = self.side;
-        MouseEventHandler::new::<Self, _, _>(self.side.id(), &mut cx, |_, _| {
+        MouseEventHandler::new::<Self, _, _, _>(self.side.id(), &mut cx, |_, _| {
             Container::new(Empty::new().boxed())
                 .with_style(&settings.theme.workspace.sidebar.resize_handle)
                 .boxed()

@@ -68,15 +68,34 @@ pub struct ChatPanel {
     #[serde(flatten)]
     pub container: ContainerStyle,
     pub message: ChatMessage,
-    pub channel_name: TextStyle,
-    pub channel_name_hash: ContainedLabel,
+    pub channel_select: ChannelSelect,
 }
 
 #[derive(Deserialize)]
 pub struct ChatMessage {
     pub body: TextStyle,
-    pub sender: ContainedLabel,
-    pub timestamp: ContainedLabel,
+    pub sender: ContainedText,
+    pub timestamp: ContainedText,
+}
+
+#[derive(Deserialize)]
+pub struct ChannelSelect {
+    #[serde(flatten)]
+    pub container: ContainerStyle,
+    pub header: ChannelName,
+    pub item: ChannelName,
+    pub active_item: ChannelName,
+    pub hovered_item: ChannelName,
+    pub hovered_active_item: ChannelName,
+    pub menu: ContainerStyle,
+}
+
+#[derive(Deserialize)]
+pub struct ChannelName {
+    #[serde(flatten)]
+    pub container: ContainerStyle,
+    pub hash: ContainedText,
+    pub name: TextStyle,
 }
 
 #[derive(Deserialize)]
@@ -88,6 +107,14 @@ pub struct Selector {
 
     pub item: ContainedLabel,
     pub active_item: ContainedLabel,
+}
+
+#[derive(Deserialize)]
+pub struct ContainedText {
+    #[serde(flatten)]
+    pub container: ContainerStyle,
+    #[serde(flatten)]
+    pub text: TextStyle,
 }
 
 #[derive(Deserialize)]

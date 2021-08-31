@@ -193,7 +193,7 @@ impl Pane {
             row.add_child(
                 Expanded::new(
                     1.0,
-                    MouseEventHandler::new::<Tab, _, _>(item.id(), cx, |mouse_state, cx| {
+                    MouseEventHandler::new::<Tab, _, _, _>(item.id(), cx, |mouse_state, cx| {
                         let title = item.title(cx);
 
                         let mut border = border.clone();
@@ -317,7 +317,7 @@ impl Pane {
             let close_color = current_color.unwrap_or(theme.workspace.tab.icon_close);
             let icon = Svg::new("icons/x.svg").with_color(close_color);
 
-            MouseEventHandler::new::<TabCloseButton, _, _>(item_id, cx, |mouse_state, _| {
+            MouseEventHandler::new::<TabCloseButton, _, _, _>(item_id, cx, |mouse_state, _| {
                 if mouse_state.hovered {
                     Container::new(icon.with_color(Color::white()).boxed())
                         .with_background_color(if mouse_state.clicked {

@@ -3,8 +3,8 @@ use std::ops::DerefMut;
 use crate::{
     geometry::{rect::RectF, vector::Vector2F},
     platform::CursorStyle,
-    CursorStyleHandle, DebugContext, Element, ElementBox, ElementStateHandle, Event, EventContext,
-    LayoutContext, MutableAppContext, PaintContext, SizeConstraint,
+    CursorStyleHandle, DebugContext, Element, ElementBox, ElementStateHandle, ElementStateId,
+    Event, EventContext, LayoutContext, MutableAppContext, PaintContext, SizeConstraint,
 };
 use serde_json::json;
 
@@ -25,13 +25,14 @@ pub struct MouseState {
 }
 
 impl MouseEventHandler {
-    pub fn new<Tag, F, C>(id: usize, cx: &mut C, render_child: F) -> Self
+    pub fn new<Tag, F, C, Id>(id: Id, cx: &mut C, render_child: F) -> Self
     where
         Tag: 'static,
         F: FnOnce(&MouseState, &mut C) -> ElementBox,
         C: DerefMut<Target = MutableAppContext>,
+        Id: Into<ElementStateId>,
     {
-        let state_handle = cx.element_state::<Tag, _>(id);
+        let state_handle = cx.element_state::<Tag, _>(id.into());
         let child = state_handle.update(cx, |state, cx| render_child(state, cx));
         Self {
             state: state_handle,
