@@ -27,7 +27,7 @@ struct StateInner {
     last_layout_width: Option<f32>,
     elements: Vec<Option<ElementRc>>,
     heights: SumTree<ElementHeight>,
-    scroll_position: f32,
+    scroll_top: Option<(usize, f32)>,
     orientation: Orientation,
     scroll_handler: Option<Box<dyn FnMut(Range<usize>, &mut EventContext)>>,
 }
@@ -118,11 +118,6 @@ impl Element for List {
         item_constraint.min.set_y(0.);
         item_constraint.max.set_y(f32::INFINITY);
 
-        let size = constraint.max;
-
-        let visible_top = state.scroll_top(size.y());
-        let visible_bottom = visible_top + size.y();
-
         if state.last_layout_width == Some(constraint.max.x()) {
             let mut old_heights = state.heights.cursor::<PendingCount, ElementHeightSummary>();
             let mut new_heights = old_heights.slice(&PendingCount(1), sum_tree::Bias::Left, &());
@@ -132,21 +127,6 @@ impl Element for List {
                     let element = &mut state.elements[old_heights.sum_start().count];
                     let element_size = element.as_mut().unwrap().layout(item_constraint, cx);
                     new_heights.push(ElementHeight::Ready(element_size.y()), &());
-
-                    // Adjust scroll position to keep visible elements stable
-                    match state.orientation {
-                        Orientation::Top => {
-                            if new_heights.summary().height < visible_top {
-                                state.scroll_position += element_size.y();
-                            }
-                        }
-                        Orientation::Bottom => {
-                            if new_heights.summary().height - element_size.y() > visible_bottom {
-                                state.scroll_position += element_size.y();
-                            }
-                        }
-                    }
-
                     old_heights.next(&());
                 } else {
                     new_heights.push_tree(
@@ -172,6 +152,7 @@ impl Element for List {
             state.last_layout_width = Some(constraint.max.x());
         }
 
+        let size = constraint.max;
         let visible_elements = state.elements[state.visible_range(size.y())]
             .iter()
             .map(|e| e.clone().unwrap())
@@ -258,7 +239,7 @@ impl Element for List {
         json!({
             "visible_range": visible_range,
             "visible_elements": visible_elements,
-            "scroll_position": state.scroll_position,
+            "scroll_top": state.scroll_top,
         })
     }
 }
@@ -271,7 +252,7 @@ impl ListState {
             last_layout_width: None,
             elements: (0..element_count).map(|_| None).collect(),
             heights,
-            scroll_position: 0.,
+            scroll_top: None,
             orientation,
             scroll_handler: None,
         })))
@@ -314,21 +295,39 @@ impl StateInner {
     fn scroll(
         &mut self,
         _: Vector2F,
-        delta: Vector2F,
+        mut delta: Vector2F,
         precise: bool,
         height: f32,
         cx: &mut EventContext,
     ) -> bool {
         if !precise {
-            todo!("still need to handle non-precise scroll events from a mouse wheel");
+            delta *= 20.;
         }
 
-        let scroll_max = (self.heights.summary().height - height).max(0.);
-        let delta_y = match self.orientation {
-            Orientation::Top => -delta.y(),
-            Orientation::Bottom => delta.y(),
+        let delta_y;
+        let seek_bias;
+        match self.orientation {
+            Orientation::Top => {
+                delta_y = delta.y();
+                seek_bias = Bias::Right;
+            }
+            Orientation::Bottom => {
+                delta_y = -delta.y();
+                seek_bias = Bias::Left;
+            }
         };
-        self.scroll_position = (self.scroll_position + delta_y).max(0.).min(scroll_max);
+
+        let scroll_max = (self.heights.summary().height - height).max(0.);
+        let new_scroll_top = (self.scroll_top(height) + delta_y).max(0.).min(scroll_max);
+        if self.orientation == Orientation::Bottom && new_scroll_top == scroll_max {
+            self.scroll_top = None;
+        } else {
+            let mut cursor = self.heights.cursor::<Height, Count>();
+            cursor.seek(&Height(new_scroll_top), seek_bias, &());
+            let ix = cursor.sum_start().0;
+            let offset = new_scroll_top - cursor.seek_start().0;
+            self.scroll_top = Some((ix, offset));
+        }
 
         if self.scroll_handler.is_some() {
             let range = self.visible_range(height);
@@ -340,10 +339,15 @@ impl StateInner {
     }
 
     fn scroll_top(&self, height: f32) -> f32 {
-        match self.orientation {
-            Orientation::Top => self.scroll_position,
-            Orientation::Bottom => {
-                (self.heights.summary().height - height - self.scroll_position).max(0.)
+        let scroll_max = (self.heights.summary().height - height).max(0.);
+        if let Some((ix, offset)) = self.scroll_top {
+            let mut cursor = self.heights.cursor::<Count, Height>();
+            cursor.seek(&Count(ix), Bias::Right, &());
+            (cursor.sum_start().0 + offset).min(scroll_max)
+        } else {
+            match self.orientation {
+                Orientation::Top => 0.,
+                Orientation::Bottom => scroll_max,
             }
         }
     }

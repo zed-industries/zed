@@ -60,13 +60,13 @@ where
     fn scroll(
         &self,
         _: Vector2F,
-        delta: Vector2F,
+        mut delta: Vector2F,
         precise: bool,
         scroll_max: f32,
         cx: &mut EventContext,
     ) -> bool {
         if !precise {
-            todo!("still need to handle non-precise scroll events from a mouse wheel");
+            delta *= 20.;
         }
 
         let mut state = self.state.0.lock();
