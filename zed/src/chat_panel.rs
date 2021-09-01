@@ -172,35 +172,39 @@ impl ChatPanel {
         let now = OffsetDateTime::now_utc();
         let settings = self.settings.borrow();
         let theme = &settings.theme.chat_panel.message;
-        Flex::column()
-            .with_child(
-                Flex::row()
-                    .with_child(
-                        Container::new(
-                            Label::new(
-                                message.sender.github_login.clone(),
-                                theme.sender.text.clone(),
+        Container::new(
+            Flex::column()
+                .with_child(
+                    Flex::row()
+                        .with_child(
+                            Container::new(
+                                Label::new(
+                                    message.sender.github_login.clone(),
+                                    theme.sender.text.clone(),
+                                )
+                                .boxed(),
                             )
+                            .with_style(&theme.sender.container)
                             .boxed(),
                         )
-                        .with_style(&theme.sender.container)
-                        .boxed(),
-                    )
-                    .with_child(
-                        Container::new(
-                            Label::new(
-                                format_timestamp(message.timestamp, now),
-                                theme.timestamp.text.clone(),
+                        .with_child(
+                            Container::new(
+                                Label::new(
+                                    format_timestamp(message.timestamp, now),
+                                    theme.timestamp.text.clone(),
+                                )
+                                .boxed(),
                             )
+                            .with_style(&theme.timestamp.container)
                             .boxed(),
                         )
-                        .with_style(&theme.timestamp.container)
                         .boxed(),
-                    )
-                    .boxed(),
-            )
-            .with_child(Text::new(message.body.clone(), theme.body.clone()).boxed())
-            .boxed()
+                )
+                .with_child(Text::new(message.body.clone(), theme.body.clone()).boxed())
+                .boxed(),
+        )
+        .with_style(&theme.container)
+        .boxed()
     }
 
     fn render_input_box(&self) -> ElementBox {

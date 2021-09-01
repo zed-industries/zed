@@ -73,6 +73,8 @@ pub struct ChatPanel {
 
 #[derive(Deserialize)]
 pub struct ChatMessage {
+    #[serde(flatten)]
+    pub container: ContainerStyle,
     pub body: TextStyle,
     pub sender: ContainedText,
     pub timestamp: ContainedText,
