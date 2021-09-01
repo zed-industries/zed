@@ -439,7 +439,7 @@ impl StateInner {
         }
 
         let scroll_max = (self.items.summary().height - height).max(0.);
-        let new_scroll_top = (self.scroll_top(scroll_top) + delta.y())
+        let new_scroll_top = (self.scroll_top(scroll_top) - delta.y())
             .max(0.)
             .min(scroll_max);
 
