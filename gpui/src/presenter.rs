@@ -5,7 +5,8 @@ use crate::{
     json::{self, ToJson},
     platform::Event,
     text_layout::TextLayoutCache,
-    Action, AnyAction, AssetCache, ElementBox, FontSystem, Scene,
+    Action, AnyAction, AssetCache, ElementBox, Entity, FontSystem, ModelHandle, ReadModel,
+    ReadView, Scene, View, ViewHandle,
 };
 use pathfinder_geometry::vector::{vec2f, Vector2F};
 use serde_json::json;
@@ -230,6 +231,32 @@ impl<'a> LayoutContext<'a> {
         self.rendered_views.insert(view_id, rendered_view);
         self.view_stack.pop();
         size
+    }
+}
+
+impl<'a> Deref for LayoutContext<'a> {
+    type Target = MutableAppContext;
+
+    fn deref(&self) -> &Self::Target {
+        self.app
+    }
+}
+
+impl<'a> DerefMut for LayoutContext<'a> {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        self.app
+    }
+}
+
+impl<'a> ReadView for LayoutContext<'a> {
+    fn read_view<T: View>(&self, handle: &ViewHandle<T>) -> &T {
+        self.app.read_view(handle)
+    }
+}
+
+impl<'a> ReadModel for LayoutContext<'a> {
+    fn read_model<T: Entity>(&self, handle: &ModelHandle<T>) -> &T {
+        self.app.read_model(handle)
     }
 }
 

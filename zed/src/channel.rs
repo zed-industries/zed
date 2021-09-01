@@ -313,6 +313,12 @@ impl Channel {
         &self.messages
     }
 
+    pub fn message(&self, ix: usize) -> &ChannelMessage {
+        let mut cursor = self.messages.cursor::<Count, ()>();
+        cursor.seek(&Count(ix), Bias::Right, &());
+        cursor.item().unwrap()
+    }
+
     pub fn messages_in_range(&self, range: Range<usize>) -> impl Iterator<Item = &ChannelMessage> {
         let mut cursor = self.messages.cursor::<Count, ()>();
         cursor.seek(&Count(range.start), Bias::Right, &());

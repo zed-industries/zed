@@ -10,7 +10,7 @@ const TREE_BASE: usize = 2;
 #[cfg(not(test))]
 const TREE_BASE: usize = 6;
 
-pub trait Item: Clone + fmt::Debug {
+pub trait Item: Clone {
     type Summary: Summary;
 
     fn summary(&self) -> Self::Summary;
@@ -84,6 +84,15 @@ impl<T: Item> SumTree<T> {
     pub fn from_item(item: T, cx: &<T::Summary as Summary>::Context) -> Self {
         let mut tree = Self::new();
         tree.push(item, cx);
+        tree
+    }
+
+    pub fn from_iter<I: IntoIterator<Item = T>>(
+        iter: I,
+        cx: &<T::Summary as Summary>::Context,
+    ) -> Self {
+        let mut tree = Self::new();
+        tree.extend(iter, cx);
         tree
     }
 

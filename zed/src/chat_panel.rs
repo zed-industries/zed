@@ -70,10 +70,25 @@ impl ChatPanel {
                 }
             })
         });
+
+        let mut message_list = ListState::new(0, Orientation::Bottom, 100, {
+            let this = cx.handle().downgrade();
+            move |ix, cx| {
+                let this = this.upgrade(cx).unwrap().read(cx);
+                let message = this.active_channel.as_ref().unwrap().0.read(cx).message(ix);
+                this.render_message(message)
+            }
+        });
+        message_list.set_scroll_handler(|visible_range, cx| {
+            if visible_range.start < 5 {
+                cx.dispatch_action(LoadMoreMessages);
+            }
+        });
+
         let mut this = Self {
             channel_list,
             active_channel: Default::default(),
-            message_list: ListState::new(0, Orientation::Bottom),
+            message_list,
             input_editor,
             channel_select,
             settings,
@@ -120,14 +135,8 @@ impl ChatPanel {
 
     fn set_active_channel(&mut self, channel: ModelHandle<Channel>, cx: &mut ViewContext<Self>) {
         if self.active_channel.as_ref().map(|e| &e.0) != Some(&channel) {
+            self.message_list.reset(channel.read(cx).message_count());
             let subscription = cx.subscribe(&channel, Self::channel_did_change);
-            self.message_list =
-                ListState::new(channel.read(cx).message_count(), Orientation::Bottom);
-            self.message_list.set_scroll_handler(|visible_range, cx| {
-                if visible_range.start < 5 {
-                    cx.dispatch_action(LoadMoreMessages);
-                }
-            });
             self.active_channel = Some((channel, subscription));
         }
     }
@@ -149,16 +158,9 @@ impl ChatPanel {
         cx.notify();
     }
 
-    fn render_active_channel_messages(&self, cx: &mut RenderContext<Self>) -> ElementBox {
-        let messages = if let Some((channel, _)) = self.active_channel.as_ref() {
-            let channel = channel.read(cx);
-            let now = OffsetDateTime::now_utc();
-            List::new(self.message_list.clone(), cx, |range| {
-                channel
-                    .messages_in_range(range)
-                    .map(|message| self.render_message(message, now))
-            })
-            .boxed()
+    fn render_active_channel_messages(&self) -> ElementBox {
+        let messages = if self.active_channel.is_some() {
+            List::new(self.message_list.clone()).boxed()
         } else {
             Empty::new().boxed()
         };
@@ -166,7 +168,8 @@ impl ChatPanel {
         Expanded::new(1., messages).boxed()
     }
 
-    fn render_message(&self, message: &ChannelMessage, now: OffsetDateTime) -> ElementBox {
+    fn render_message(&self, message: &ChannelMessage) -> ElementBox {
+        let now = OffsetDateTime::now_utc();
         let settings = self.settings.borrow();
         let theme = &settings.theme.chat_panel.message;
         Flex::column()
@@ -271,7 +274,7 @@ impl View for ChatPanel {
         "ChatPanel"
     }
 
-    fn render(&mut self, cx: &mut RenderContext<Self>) -> ElementBox {
+    fn render(&mut self, _: &mut RenderContext<Self>) -> ElementBox {
         let theme = &self.settings.borrow().theme;
         Container::new(
             Flex::column()
@@ -280,7 +283,7 @@ impl View for ChatPanel {
                         .with_style(&theme.chat_panel.channel_select.container)
                         .boxed(),
                 )
-                .with_child(self.render_active_channel_messages(cx))
+                .with_child(self.render_active_channel_messages())
                 .with_child(self.render_input_box())
                 .boxed(),
         )

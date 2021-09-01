@@ -10,6 +10,22 @@ struct StackEntry<'a, T: Item, S, U> {
     sum_dimension: U,
 }
 
+impl<'a, T, S, U> StackEntry<'a, T, S, U>
+where
+    T: Item,
+    S: SeekDimension<'a, T::Summary>,
+    U: SeekDimension<'a, T::Summary>,
+{
+    fn swap_dimensions(self) -> StackEntry<'a, T, U, S> {
+        StackEntry {
+            tree: self.tree,
+            index: self.index,
+            seek_dimension: self.sum_dimension,
+            sum_dimension: self.seek_dimension,
+        }
+    }
+}
+
 #[derive(Clone)]
 pub struct Cursor<'a, T: Item, S, U> {
     tree: &'a SumTree<T>,
@@ -598,6 +614,28 @@ where
             Some(item)
         } else {
             None
+        }
+    }
+}
+
+impl<'a, T, S, U> Cursor<'a, T, S, U>
+where
+    T: Item,
+    S: SeekDimension<'a, T::Summary>,
+    U: SeekDimension<'a, T::Summary>,
+{
+    pub fn swap_dimensions(self) -> Cursor<'a, T, U, S> {
+        Cursor {
+            tree: self.tree,
+            stack: self
+                .stack
+                .into_iter()
+                .map(StackEntry::swap_dimensions)
+                .collect(),
+            seek_dimension: self.sum_dimension,
+            sum_dimension: self.seek_dimension,
+            did_seek: self.did_seek,
+            at_end: self.at_end,
         }
     }
 }
