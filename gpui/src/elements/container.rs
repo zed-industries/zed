@@ -241,15 +241,11 @@ impl ToJson for ContainerStyle {
     }
 }
 
-#[derive(Clone, Debug, Default, Deserialize)]
+#[derive(Clone, Debug, Default)]
 pub struct Margin {
-    #[serde(default)]
     top: f32,
-    #[serde(default)]
     left: f32,
-    #[serde(default)]
     bottom: f32,
-    #[serde(default)]
     right: f32,
 }
 
@@ -272,16 +268,83 @@ impl ToJson for Margin {
     }
 }
 
-#[derive(Clone, Debug, Default, Deserialize)]
+#[derive(Clone, Debug, Default)]
 pub struct Padding {
-    #[serde(default)]
     top: f32,
-    #[serde(default)]
     left: f32,
-    #[serde(default)]
     bottom: f32,
-    #[serde(default)]
     right: f32,
+}
+
+impl<'de> Deserialize<'de> for Padding {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        let spacing = Spacing::deserialize(deserializer)?;
+        Ok(match spacing {
+            Spacing::Uniform(size) => Padding {
+                top: size,
+                left: size,
+                bottom: size,
+                right: size,
+            },
+            Spacing::Specific {
+                top,
+                left,
+                bottom,
+                right,
+            } => Padding {
+                top,
+                left,
+                bottom,
+                right,
+            },
+        })
+    }
+}
+
+impl<'de> Deserialize<'de> for Margin {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        let spacing = Spacing::deserialize(deserializer)?;
+        Ok(match spacing {
+            Spacing::Uniform(size) => Margin {
+                top: size,
+                left: size,
+                bottom: size,
+                right: size,
+            },
+            Spacing::Specific {
+                top,
+                left,
+                bottom,
+                right,
+            } => Margin {
+                top,
+                left,
+                bottom,
+                right,
+            },
+        })
+    }
+}
+#[derive(Deserialize)]
+#[serde(untagged)]
+enum Spacing {
+    Uniform(f32),
+    Specific {
+        #[serde(default)]
+        top: f32,
+        #[serde(default)]
+        left: f32,
+        #[serde(default)]
+        bottom: f32,
+        #[serde(default)]
+        right: f32,
+    },
 }
 
 impl ToJson for Padding {
