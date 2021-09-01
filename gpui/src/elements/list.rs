@@ -17,7 +17,7 @@ pub struct List {
 #[derive(Clone)]
 pub struct ListState(Rc<RefCell<StateInner>>);
 
-#[derive(Clone, Copy, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum Orientation {
     Top,
     Bottom,
@@ -45,6 +45,16 @@ enum ListItem {
     Unrendered,
     Rendered(ElementRc),
     Removed(f32),
+}
+
+impl std::fmt::Debug for ListItem {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Unrendered => write!(f, "Unrendered"),
+            Self::Rendered(_) => f.debug_tuple("Rendered").finish(),
+            Self::Removed(height) => f.debug_tuple("Removed").field(height).finish(),
+        }
+    }
 }
 
 #[derive(Clone, Debug, Default, PartialEq)]
@@ -228,7 +238,8 @@ impl Element for List {
         drop(cursor);
         state.items = new_items;
         state.rendered_range = new_rendered_range_start..new_rendered_range_end;
-        (constraint.max, scroll_top)
+        state.last_layout_width = Some(size.x());
+        (size, scroll_top)
     }
 
     fn paint(&mut self, bounds: RectF, scroll_top: &mut ScrollTop, cx: &mut PaintContext) {
