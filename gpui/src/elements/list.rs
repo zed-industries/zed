@@ -30,7 +30,7 @@ struct StateInner {
     items: SumTree<ListItem>,
     scroll_top: Option<ScrollTop>,
     orientation: Orientation,
-    overdraw: usize,
+    overdraw: f32,
     scroll_handler: Option<Box<dyn FnMut(Range<usize>, &mut EventContext)>>,
 }
 
@@ -98,7 +98,7 @@ impl Element for List {
         item_constraint.min.set_y(0.);
         item_constraint.max.set_y(f32::INFINITY);
 
-        if state.last_layout_width != Some(constraint.max.x()) {
+        if state.last_layout_width != Some(size.x()) {
             state.rendered_range = 0..0;
             state.items = SumTree::from_iter(
                 (0..state.items.summary().count).map(|_| ListItem::Unrendered),
@@ -124,50 +124,94 @@ impl Element for List {
             element
         };
 
-        // Determine the scroll top. When parked at the end of a bottom-oriented
-        // list, this requires rendering items starting from the end of the list
-        // until the visible region is full. In other cases, the stored scroll
-        // can be used.
+        // Determine the items that need to be rendered in order to cover the visible area plus the
+        // overdraw. When parked at the end of a bottom-oriented list, this requires rendering items
+        // starting from the end of the list until the visible region is full. In other cases, the
+        // stored scroll can be used.
+        let mut new_rendered_start_ix;
+        let mut rendered_items = Vec::new();
         let scroll_top;
-        let trailing_items;
         if let (Orientation::Bottom, None) = (orientation, stored_scroll_top) {
             let mut rendered_height = 0.;
             let mut cursor = old_items.cursor::<Count, ()>();
-
-            let mut visible_items = Vec::new();
             cursor.seek(&Count(old_items.summary().count), Bias::Left, &());
+
             while let Some(item) = cursor.item() {
+                let element = render_item(cursor.seek_start().0, item);
+                rendered_height += element.size().y();
+                rendered_items.push(ListItem::Rendered(element));
                 if rendered_height >= size.y() {
+                    break;
+                } else {
+                    cursor.prev(&());
+                }
+            }
+            scroll_top = ScrollTop {
+                item_ix: cursor.seek_start().0,
+                offset_in_item: rendered_height - size.y(),
+            };
+
+            cursor.prev(&());
+            while let Some(item) = cursor.item() {
+                let element = render_item(cursor.seek_start().0, item);
+                rendered_height += element.size().y();
+                rendered_items.push(ListItem::Rendered(element));
+                if rendered_height >= size.y() + overdraw {
+                    break;
+                } else {
+                    cursor.prev(&());
+                }
+            }
+
+            rendered_items.reverse();
+            new_rendered_start_ix = cursor.seek_start().0;
+        } else {
+            scroll_top = stored_scroll_top.unwrap_or_default();
+            new_rendered_start_ix = scroll_top.item_ix;
+            let mut cursor = old_items.cursor::<Count, ()>();
+            cursor.seek(&Count(scroll_top.item_ix), Bias::Right, &());
+            cursor.prev(&());
+            let mut rendered_height = scroll_top.offset_in_item;
+            while let Some(item) = cursor.item() {
+                if rendered_height >= overdraw {
                     break;
                 }
 
                 let element = render_item(cursor.seek_start().0, item);
                 rendered_height += element.size().y();
-                visible_items.push(ListItem::Rendered(element));
+                rendered_items.push(ListItem::Rendered(element));
+                new_rendered_start_ix -= 1;
                 cursor.prev(&());
             }
+            rendered_items.reverse();
 
-            scroll_top = ScrollTop {
-                item_ix: cursor.seek_start().0,
-                offset_in_item: rendered_height - size.y(),
-            };
-            visible_items.reverse();
-            trailing_items = Some(visible_items);
-        } else {
-            scroll_top = stored_scroll_top.unwrap_or_default();
-            trailing_items = None;
+            let mut rendered_height = 0.;
+            cursor.seek(&Count(scroll_top.item_ix), Bias::Right, &());
+            for (ix, item) in cursor.enumerate() {
+                if rendered_height >= size.y() + overdraw {
+                    break;
+                }
+
+                let element = render_item(scroll_top.item_ix + ix, item);
+                rendered_height += element.size().y();
+                if ix == 0 {
+                    rendered_height -= scroll_top.offset_in_item;
+                }
+                rendered_items.push(ListItem::Rendered(element));
+            }
         }
+        let new_rendered_range =
+            new_rendered_start_ix..new_rendered_start_ix + rendered_items.len();
 
-        let new_rendered_range_start = scroll_top.item_ix.saturating_sub(overdraw);
         let mut cursor = old_items.cursor::<Count, ()>();
 
-        // Discard any rendered elements before the overdraw window.
-        if old_rendered_range.start < new_rendered_range_start {
+        // Discard any rendered elements before the new rendered range.
+        if old_rendered_range.start < new_rendered_range.start {
             new_items.push_tree(
                 cursor.slice(&Count(old_rendered_range.start), Bias::Right, &()),
                 &(),
             );
-            let remove_to = old_rendered_range.end.min(new_rendered_range_start);
+            let remove_to = old_rendered_range.end.min(new_rendered_range.start);
             while cursor.seek_start().0 < remove_to {
                 new_items.push(cursor.item().unwrap().remove(), &());
                 cursor.next(&());
@@ -175,69 +219,29 @@ impl Element for List {
         }
 
         new_items.push_tree(
-            cursor.slice(&Count(new_rendered_range_start), Bias::Right, &()),
+            cursor.slice(&Count(new_rendered_range.start), Bias::Right, &()),
             &(),
         );
+        new_items.extend(rendered_items, &());
+        cursor.seek(&Count(new_rendered_range.end), Bias::Right, &());
 
-        // Ensure that all items in the overdraw window before the visible range are rendered.
-        while cursor.seek_start().0 < scroll_top.item_ix {
-            new_items.push(
-                ListItem::Rendered(render_item(cursor.seek_start().0, cursor.item().unwrap())),
+        if new_rendered_range.end < old_rendered_range.start {
+            new_items.push_tree(
+                cursor.slice(&Count(old_rendered_range.start), Bias::Right, &()),
                 &(),
             );
+        }
+
+        while cursor.seek_start().0 < old_rendered_range.end {
+            new_items.push(cursor.item().unwrap().remove(), &());
             cursor.next(&());
         }
 
-        // The remaining items may have already been rendered, when parked at the
-        // end of a bottom-oriented list. If so, append them.
-        let new_rendered_range_end;
-        if let Some(trailing_items) = trailing_items {
-            new_rendered_range_end = new_rendered_range_start + trailing_items.len();
-            new_items.extend(trailing_items, &());
-        } else {
-            // Ensure that enough items are rendered to fill the visible range.
-            let mut rendered_top = -scroll_top.offset_in_item;
-            while let Some(item) = cursor.item() {
-                if rendered_top >= size.y() {
-                    break;
-                }
-
-                let element = render_item(cursor.seek_start().0, item);
-                rendered_top += element.size().y();
-                new_items.push(ListItem::Rendered(element), &());
-                cursor.next(&());
-            }
-
-            // Ensure that all items in the overdraw window after the visible range
-            // are rendered.
-            new_rendered_range_end =
-                (cursor.seek_start().0 + overdraw).min(old_items.summary().count);
-            while cursor.seek_start().0 < new_rendered_range_end {
-                new_items.push(
-                    ListItem::Rendered(render_item(cursor.seek_start().0, cursor.item().unwrap())),
-                    &(),
-                );
-                cursor.next(&());
-            }
-
-            // Preserve the remainder of the items, but discard any rendered items after
-            // the overdraw window.
-            if cursor.seek_start().0 < old_rendered_range.start {
-                new_items.push_tree(
-                    cursor.slice(&Count(old_rendered_range.start), Bias::Right, &()),
-                    &(),
-                );
-            }
-            while cursor.seek_start().0 < old_rendered_range.end {
-                new_items.push(cursor.item().unwrap().remove(), &());
-                cursor.next(&());
-            }
-            new_items.push_tree(cursor.suffix(&()), &());
-        }
+        new_items.push_tree(cursor.suffix(&()), &());
 
         drop(cursor);
         state.items = new_items;
-        state.rendered_range = new_rendered_range_start..new_rendered_range_end;
+        state.rendered_range = new_rendered_range;
         state.last_layout_width = Some(size.x());
         (size, scroll_top)
     }
@@ -311,7 +315,7 @@ impl ListState {
     pub fn new<F>(
         element_count: usize,
         orientation: Orientation,
-        min_overdraw: usize,
+        overdraw: f32,
         render_item: F,
     ) -> Self
     where
@@ -326,7 +330,7 @@ impl ListState {
             items,
             scroll_top: None,
             orientation,
-            overdraw: min_overdraw,
+            overdraw,
             scroll_handler: None,
         })))
     }
@@ -567,11 +571,7 @@ impl<'a> sum_tree::SeekDimension<'a, ListItemSummary> for Height {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{
-        elements::{ConstrainedBox, Empty},
-        geometry::vector::vec2f,
-        Entity, RenderContext, View,
-    };
+    use crate::geometry::vector::vec2f;
     use rand::prelude::*;
     use std::env;
 
@@ -579,10 +579,13 @@ mod tests {
     fn test_layout(cx: &mut crate::MutableAppContext) {
         let mut presenter = cx.build_presenter(0, 0.);
 
-        let elements = Rc::new(RefCell::new(vec![20., 30., 100.]));
-        let state = ListState::new(elements.borrow().len(), Orientation::Top, 1000, {
+        let elements = Rc::new(RefCell::new(vec![(0, 20.), (1, 30.), (2, 100.)]));
+        let state = ListState::new(elements.borrow().len(), Orientation::Top, 1000.0, {
             let elements = elements.clone();
-            move |ix, _| item(elements.borrow()[ix])
+            move |ix, _| {
+                let (id, height) = elements.borrow()[ix];
+                TestElement::new(id, height).boxed()
+            }
         });
 
         let mut list = List::new(state.clone()).boxed();
@@ -620,8 +623,8 @@ mod tests {
         );
         assert_eq!(state.0.borrow().scroll_top(size.y()), 54.);
 
-        elements.borrow_mut().splice(1..2, vec![40., 50.]);
-        elements.borrow_mut().push(60.);
+        elements.borrow_mut().splice(1..2, vec![(3, 40.), (4, 50.)]);
+        elements.borrow_mut().push((5, 60.));
         state.splice(1..2, 2);
         state.splice(4..4, 1);
         assert_eq!(
@@ -659,31 +662,40 @@ mod tests {
         assert_eq!(state.0.borrow().scroll_top(size.y()), 114.);
     }
 
-    #[crate::test(self, iterations = 10000, seed = 2515)]
+    #[crate::test(self, iterations = 10000, seed = 119)]
     fn test_random(cx: &mut crate::MutableAppContext, mut rng: StdRng) {
         let operations = env::var("OPERATIONS")
             .map(|i| i.parse().expect("invalid `OPERATIONS` variable"))
             .unwrap_or(10);
+        let operations = 3;
 
         let mut presenter = cx.build_presenter(0, 0.);
+        let mut next_id = 0;
         let elements = Rc::new(RefCell::new(
             (0..rng.gen_range(0..=20))
-                .map(|_| rng.gen_range(0_f32..=100_f32))
+                .map(|_| {
+                    let id = next_id;
+                    next_id += 1;
+                    (id, rng.gen_range(0_f32..=100_f32))
+                })
                 .collect::<Vec<_>>(),
         ));
         let orientation = *[Orientation::Top, Orientation::Bottom]
             .choose(&mut rng)
             .unwrap();
-        let min_overdraw = rng.gen_range(0..=20);
-        let state = ListState::new(elements.borrow().len(), orientation, min_overdraw, {
+        let overdraw = rng.gen_range(1_f32..=100_f32);
+        let state = ListState::new(elements.borrow().len(), orientation, overdraw, {
             let elements = elements.clone();
-            move |ix, _| item(elements.borrow()[ix])
+            move |ix, _| {
+                let (id, height) = elements.borrow()[ix];
+                TestElement::new(id, height).boxed()
+            }
         });
 
         let mut width = rng.gen_range(0_f32..=1000_f32);
         let mut height = rng.gen_range(0_f32..=1000_f32);
         log::info!("orientation: {:?}", orientation);
-        log::info!("min_overdraw: {}", min_overdraw);
+        log::info!("overdraw: {}", overdraw);
         log::info!("elements: {:?}", elements.borrow());
         log::info!("size: ({:?}, {:?})", width, height);
         log::info!("==================");
@@ -692,7 +704,7 @@ mod tests {
         for _ in 0..operations {
             match rng.gen_range(0..=100) {
                 0..=29 if scroll_top.is_some() => {
-                    let delta = vec2f(0., rng.gen_range(-100_f32..=100_f32));
+                    let delta = vec2f(0., rng.gen_range(-overdraw..=overdraw));
                     log::info!(
                         "Scrolling by {:?}, previous scroll top: {:?}",
                         delta,
@@ -719,11 +731,23 @@ mod tests {
                     let end_ix = rng.gen_range(0..=elements.len());
                     let start_ix = rng.gen_range(0..=end_ix);
                     let new_elements = (0..rng.gen_range(0..10))
-                        .map(|_| rng.gen_range(0_f32..=100_f32))
+                        .map(|_| {
+                            let id = next_id;
+                            next_id += 1;
+                            (id, rng.gen_range(0_f32..=100_f32))
+                        })
                         .collect::<Vec<_>>();
                     log::info!("splice({:?}, {:?})", start_ix..end_ix, new_elements);
                     state.splice(start_ix..end_ix, new_elements.len());
                     elements.splice(start_ix..end_ix, new_elements);
+                    for (ix, item) in state.0.borrow().items.cursor::<(), ()>().enumerate() {
+                        if let ListItem::Rendered(element) = item {
+                            let (expected_id, _) = elements[ix];
+                            element.with_metadata(|metadata: Option<&usize>| {
+                                assert_eq!(*metadata.unwrap(), expected_id);
+                            });
+                        }
+                    }
                 }
             }
 
@@ -736,49 +760,92 @@ mod tests {
             scroll_top = Some(new_scroll_top);
 
             let state = state.0.borrow();
-            let visible_range = state.visible_range(height, &new_scroll_top);
-            let rendered_range =
-                visible_range.start.saturating_sub(min_overdraw)..visible_range.end + min_overdraw;
-            log::info!("visible range {:?}", visible_range);
+            let rendered_top = (state.scroll_top(height) - overdraw).max(0.);
+            let rendered_bottom = state.scroll_top(height) + height + overdraw;
+            let mut item_top = 0.;
+            log::info!(
+                "rendered top {:?}, rendered bottom {:?}",
+                rendered_top,
+                rendered_bottom
+            );
             log::info!("items {:?}", state.items.items(&()));
-            for (ix, item) in state.items.cursor::<Count, ()>().enumerate() {
-                if rendered_range.contains(&ix) {
-                    assert!(
-                        matches!(item, ListItem::Rendered(_)),
-                        "item {:?} was not rendered",
-                        ix
-                    );
-                } else {
-                    assert!(
-                        !matches!(item, ListItem::Rendered(_)),
-                        "item {:?} was incorrectly rendered",
-                        ix
-                    );
+            assert_eq!(state.items.summary().count, elements.borrow().len());
+            for (ix, item) in state.items.cursor::<(), ()>().enumerate() {
+                match item {
+                    ListItem::Unrendered => {
+                        let item_bottom = item_top;
+                        assert!(item_bottom <= rendered_top || item_top >= rendered_bottom);
+                        item_top = item_bottom;
+                    }
+                    ListItem::Removed(height) => {
+                        let (id, expected_height) = elements.borrow()[ix];
+                        assert_eq!(
+                            *height, expected_height,
+                            "element {} height didn't match",
+                            id
+                        );
+                        let item_bottom = item_top + height;
+                        assert!(item_bottom <= rendered_top || item_top >= rendered_bottom);
+                        item_top = item_bottom;
+                    }
+                    ListItem::Rendered(element) => {
+                        let (expected_id, expected_height) = elements.borrow()[ix];
+                        element.with_metadata(|metadata: Option<&usize>| {
+                            assert_eq!(*metadata.unwrap(), expected_id);
+                        });
+                        assert_eq!(element.size().y(), expected_height);
+                        let item_bottom = item_top + element.size().y();
+                        assert!(item_bottom > rendered_top || item_top < rendered_bottom);
+                        item_top = item_bottom;
+                    }
                 }
             }
         }
     }
 
-    fn item(height: f32) -> ElementBox {
-        ConstrainedBox::new(Empty::new().boxed())
-            .with_height(height)
-            .with_width(100.)
-            .boxed()
+    struct TestElement {
+        id: usize,
+        size: Vector2F,
     }
 
-    struct TestView;
-
-    impl Entity for TestView {
-        type Event = ();
+    impl TestElement {
+        fn new(id: usize, height: f32) -> Self {
+            Self {
+                id,
+                size: vec2f(100., height),
+            }
+        }
     }
 
-    impl View for TestView {
-        fn ui_name() -> &'static str {
-            "TestView"
+    impl Element for TestElement {
+        type LayoutState = ();
+        type PaintState = ();
+
+        fn layout(&mut self, _: SizeConstraint, _: &mut LayoutContext) -> (Vector2F, ()) {
+            (self.size, ())
         }
 
-        fn render(&mut self, _: &mut RenderContext<'_, Self>) -> ElementBox {
-            unimplemented!()
+        fn paint(&mut self, _: RectF, _: &mut (), _: &mut PaintContext) {
+            todo!()
+        }
+
+        fn dispatch_event(
+            &mut self,
+            _: &Event,
+            _: RectF,
+            _: &mut (),
+            _: &mut (),
+            _: &mut EventContext,
+        ) -> bool {
+            todo!()
+        }
+
+        fn debug(&self, _: RectF, _: &(), _: &(), _: &DebugContext) -> serde_json::Value {
+            self.id.into()
+        }
+
+        fn metadata(&self) -> Option<&dyn std::any::Any> {
+            Some(&self.id)
         }
     }
 }

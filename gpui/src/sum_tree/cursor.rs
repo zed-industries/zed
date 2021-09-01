@@ -163,7 +163,6 @@ where
         None
     }
 
-    #[allow(unused)]
     pub fn prev(&mut self, cx: &<T::Summary as Summary>::Context) {
         assert!(self.did_seek, "Must seek before calling this method");
 

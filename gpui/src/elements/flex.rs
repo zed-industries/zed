@@ -33,10 +33,7 @@ impl Flex {
     }
 
     fn child_flex<'b>(child: &ElementBox) -> Option<f32> {
-        child
-            .metadata()
-            .and_then(|d| d.downcast_ref::<FlexParentData>())
-            .map(|data| data.flex)
+        child.metadata::<FlexParentData>().map(|data| data.flex)
     }
 }
 

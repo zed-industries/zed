@@ -274,9 +274,9 @@ impl<T: Element> Default for Lifecycle<T> {
 }
 
 impl ElementBox {
-    pub fn metadata(&self) -> Option<&dyn Any> {
+    pub fn metadata<T: 'static>(&self) -> Option<&T> {
         let element = unsafe { &*self.0.element.as_ptr() };
-        element.metadata()
+        element.metadata().and_then(|m| m.downcast_ref())
     }
 }
 
@@ -330,6 +330,15 @@ impl ElementRc {
         }
 
         value
+    }
+
+    pub fn with_metadata<T, F, R>(&self, f: F) -> R
+    where
+        T: 'static,
+        F: FnOnce(Option<&T>) -> R,
+    {
+        let element = self.element.borrow();
+        f(element.metadata().and_then(|m| m.downcast_ref()))
     }
 }
 

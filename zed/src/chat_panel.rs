@@ -71,7 +71,7 @@ impl ChatPanel {
             })
         });
 
-        let mut message_list = ListState::new(0, Orientation::Bottom, 100, {
+        let mut message_list = ListState::new(0, Orientation::Bottom, 1000., {
             let this = cx.handle().downgrade();
             move |ix, cx| {
                 let this = this.upgrade(cx).unwrap().read(cx);
