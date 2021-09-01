@@ -110,7 +110,7 @@ impl Element for List {
         let old_rendered_range = state.rendered_range.clone();
         let old_items = state.items.clone();
         let orientation = state.orientation;
-        let stored_scroll_top = state.scroll_top;
+        let mut stored_scroll_top = state.scroll_top;
         let mut new_items = SumTree::new();
 
         let mut render_item = |ix, old_item: &ListItem| {
@@ -130,7 +130,7 @@ impl Element for List {
         // stored scroll can be used.
         let mut new_rendered_start_ix;
         let mut rendered_items = Vec::new();
-        let scroll_top;
+        let mut scroll_top;
         if let (Orientation::Bottom, None) = (orientation, stored_scroll_top) {
             let mut rendered_height = 0.;
             let mut cursor = old_items.cursor::<Count, ()>();
@@ -167,37 +167,54 @@ impl Element for List {
             new_rendered_start_ix = cursor.seek_start().0;
         } else {
             scroll_top = stored_scroll_top.unwrap_or_default();
-            new_rendered_start_ix = scroll_top.item_ix;
+            let mut rendered_height = 0.;
             let mut cursor = old_items.cursor::<Count, ()>();
             cursor.seek(&Count(scroll_top.item_ix), Bias::Right, &());
-            cursor.prev(&());
-            let mut rendered_height = scroll_top.offset_in_item;
-            while let Some(item) = cursor.item() {
-                if rendered_height >= overdraw {
+            for (ix, item) in cursor.by_ref().enumerate() {
+                if rendered_height >= scroll_top.offset_in_item + size.y() + overdraw {
                     break;
                 }
 
-                let element = render_item(cursor.seek_start().0, item);
+                let element = render_item(scroll_top.item_ix + ix, item);
                 rendered_height += element.size().y();
+                rendered_items.push(ListItem::Rendered(element));
+            }
+            rendered_items.reverse();
+
+            new_rendered_start_ix = scroll_top.item_ix;
+            cursor.seek(&Count(scroll_top.item_ix), Bias::Right, &());
+            cursor.prev(&());
+            let mut remaining_overdraw = overdraw - scroll_top.offset_in_item;
+            while let Some(item) = cursor.item() {
+                let element = render_item(cursor.seek_start().0, item);
+                if rendered_height < size.y() && rendered_height + element.size().y() >= size.y() {
+                    let new_scroll_top = ScrollTop {
+                        item_ix: cursor.seek_start().0,
+                        offset_in_item: rendered_height + element.size().y() - size.y(),
+                    };
+                    stored_scroll_top = Some(new_scroll_top);
+                    remaining_overdraw = overdraw + (size.y() - rendered_height);
+                } else if rendered_height >= size.y() && remaining_overdraw <= 0. {
+                    break;
+                }
+
+                rendered_height += element.size().y();
+                remaining_overdraw -= element.size().y();
                 rendered_items.push(ListItem::Rendered(element));
                 new_rendered_start_ix -= 1;
                 cursor.prev(&());
             }
             rendered_items.reverse();
 
-            let mut rendered_height = 0.;
-            cursor.seek(&Count(scroll_top.item_ix), Bias::Right, &());
-            for (ix, item) in cursor.enumerate() {
-                if rendered_height >= size.y() + overdraw {
-                    break;
-                }
-
-                let element = render_item(scroll_top.item_ix + ix, item);
-                rendered_height += element.size().y();
-                if ix == 0 {
-                    rendered_height -= scroll_top.offset_in_item;
-                }
-                rendered_items.push(ListItem::Rendered(element));
+            if rendered_height < size.y() {
+                stored_scroll_top = None;
+                scroll_top = match orientation {
+                    Orientation::Top => Default::default(),
+                    Orientation::Bottom => ScrollTop {
+                        item_ix: cursor.seek_start().0,
+                        offset_in_item: rendered_height - size.y(),
+                    },
+                };
             }
         }
         let new_rendered_range =
@@ -243,6 +260,7 @@ impl Element for List {
         state.items = new_items;
         state.rendered_range = new_rendered_range;
         state.last_layout_width = Some(size.x());
+        state.scroll_top = stored_scroll_top;
         (size, scroll_top)
     }
 
@@ -662,12 +680,11 @@ mod tests {
         assert_eq!(state.0.borrow().scroll_top(size.y()), 114.);
     }
 
-    #[crate::test(self, iterations = 10000, seed = 119)]
+    #[crate::test(self, iterations = 10000)]
     fn test_random(cx: &mut crate::MutableAppContext, mut rng: StdRng) {
         let operations = env::var("OPERATIONS")
             .map(|i| i.parse().expect("invalid `OPERATIONS` variable"))
             .unwrap_or(10);
-        let operations = 3;
 
         let mut presenter = cx.build_presenter(0, 0.);
         let mut next_id = 0;
