@@ -28,14 +28,14 @@ struct StateInner {
     render_item: Box<dyn FnMut(usize, &mut LayoutContext) -> ElementBox>,
     rendered_range: Range<usize>,
     items: SumTree<ListItem>,
-    scroll_top: Option<ScrollTop>,
+    logical_scroll_top: Option<ListOffset>,
     orientation: Orientation,
     overdraw: f32,
     scroll_handler: Option<Box<dyn FnMut(Range<usize>, &mut EventContext)>>,
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
-pub struct ScrollTop {
+pub struct ListOffset {
     item_ix: usize,
     offset_in_item: f32,
 }
@@ -84,7 +84,7 @@ impl List {
 }
 
 impl Element for List {
-    type LayoutState = ScrollTop;
+    type LayoutState = ListOffset;
     type PaintState = ();
 
     fn layout(
@@ -110,7 +110,7 @@ impl Element for List {
         let old_rendered_range = state.rendered_range.clone();
         let old_items = state.items.clone();
         let orientation = state.orientation;
-        let mut stored_scroll_top = state.scroll_top;
+        let mut stored_scroll_top = state.logical_scroll_top;
         let mut new_items = SumTree::new();
 
         let mut render_item = |ix, old_item: &ListItem| {
@@ -146,7 +146,7 @@ impl Element for List {
                     cursor.prev(&());
                 }
             }
-            scroll_top = ScrollTop {
+            scroll_top = ListOffset {
                 item_ix: cursor.seek_start().0,
                 offset_in_item: rendered_height - size.y(),
             };
@@ -190,10 +190,11 @@ impl Element for List {
 
             if adjust_scroll_top && rendered_height >= size.y() {
                 let offset_in_item = rendered_height - size.y();
-                stored_scroll_top = Some(ScrollTop {
+                scroll_top = ListOffset {
                     item_ix: new_rendered_start_ix,
                     offset_in_item,
-                });
+                };
+                stored_scroll_top = Some(scroll_top);
                 remaining_overdraw = overdraw - offset_in_item;
                 adjust_scroll_top = false;
             }
@@ -204,10 +205,11 @@ impl Element for List {
 
                 if adjust_scroll_top && next_rendered_height >= size.y() {
                     let offset_in_item = next_rendered_height - size.y();
-                    stored_scroll_top = Some(ScrollTop {
+                    scroll_top = ListOffset {
                         item_ix: new_rendered_start_ix - 1,
                         offset_in_item,
-                    });
+                    };
+                    stored_scroll_top = Some(scroll_top);
                     remaining_overdraw = overdraw + (element.size().y() - offset_in_item);
                     adjust_scroll_top = false;
                 }
@@ -230,7 +232,7 @@ impl Element for List {
                 stored_scroll_top = None;
                 scroll_top = match orientation {
                     Orientation::Top => Default::default(),
-                    Orientation::Bottom => ScrollTop {
+                    Orientation::Bottom => ListOffset {
                         item_ix: cursor.seek_start().0,
                         offset_in_item: rendered_height - size.y(),
                     },
@@ -280,11 +282,11 @@ impl Element for List {
         state.items = new_items;
         state.rendered_range = new_rendered_range;
         state.last_layout_width = Some(size.x());
-        state.scroll_top = stored_scroll_top;
+        state.logical_scroll_top = stored_scroll_top;
         (size, scroll_top)
     }
 
-    fn paint(&mut self, bounds: RectF, scroll_top: &mut ScrollTop, cx: &mut PaintContext) {
+    fn paint(&mut self, bounds: RectF, scroll_top: &mut ListOffset, cx: &mut PaintContext) {
         cx.scene.push_layer(Some(bounds));
 
         let state = &mut *self.state.0.borrow_mut();
@@ -299,7 +301,7 @@ impl Element for List {
         &mut self,
         event: &Event,
         bounds: RectF,
-        scroll_top: &mut ScrollTop,
+        scroll_top: &mut ListOffset,
         _: &mut (),
         cx: &mut EventContext,
     ) -> bool {
@@ -344,7 +346,7 @@ impl Element for List {
         json!({
             "visible_range": visible_range,
             "visible_elements": visible_elements,
-            "scroll_top": state.scroll_top.map(|top| (top.item_ix, top.offset_in_item)),
+            "scroll_top": state.logical_scroll_top.map(|top| (top.item_ix, top.offset_in_item)),
         })
     }
 }
@@ -366,7 +368,7 @@ impl ListState {
             render_item: Box::new(render_item),
             rendered_range: 0..0,
             items,
-            scroll_top: None,
+            logical_scroll_top: None,
             orientation,
             overdraw,
             scroll_handler: None,
@@ -375,7 +377,7 @@ impl ListState {
 
     pub fn reset(&self, element_count: usize) {
         let state = &mut *self.0.borrow_mut();
-        state.scroll_top = None;
+        state.logical_scroll_top = None;
         state.items = SumTree::new();
         state
             .items
@@ -385,10 +387,10 @@ impl ListState {
     pub fn splice(&self, old_range: Range<usize>, count: usize) {
         let state = &mut *self.0.borrow_mut();
 
-        if let Some(ScrollTop {
+        if let Some(ListOffset {
             item_ix,
             offset_in_item,
-        }) = state.scroll_top.as_mut()
+        }) = state.logical_scroll_top.as_mut()
         {
             if old_range.contains(item_ix) {
                 *item_ix = old_range.start;
@@ -427,7 +429,7 @@ impl ListState {
 }
 
 impl StateInner {
-    fn visible_range(&self, height: f32, scroll_top: &ScrollTop) -> Range<usize> {
+    fn visible_range(&self, height: f32, scroll_top: &ListOffset) -> Range<usize> {
         let mut cursor = self.items.cursor::<Count, Height>();
         cursor.seek(&Count(scroll_top.item_ix), Bias::Right, &());
         let start_y = cursor.sum_start().0 + scroll_top.offset_in_item;
@@ -439,7 +441,7 @@ impl StateInner {
     fn visible_elements<'a>(
         &'a self,
         bounds: RectF,
-        scroll_top: &ScrollTop,
+        scroll_top: &ListOffset,
     ) -> impl Iterator<Item = (ElementRc, Vector2F)> + 'a {
         let mut item_origin = bounds.origin() - vec2f(0., scroll_top.offset_in_item);
         let mut cursor = self.items.cursor::<Count, ()>();
@@ -466,7 +468,7 @@ impl StateInner {
 
     fn scroll(
         &mut self,
-        scroll_top: &ScrollTop,
+        scroll_top: &ListOffset,
         height: f32,
         mut delta: Vector2F,
         precise: bool,
@@ -477,18 +479,18 @@ impl StateInner {
         }
 
         let scroll_max = (self.items.summary().height - height).max(0.);
-        let new_scroll_top = (self.scroll_top(height) + delta.y())
+        let new_scroll_top = (self.scroll_top(scroll_top) + delta.y())
             .max(0.)
             .min(scroll_max);
 
         if self.orientation == Orientation::Bottom && new_scroll_top == scroll_max {
-            self.scroll_top = None;
+            self.logical_scroll_top = None;
         } else {
             let mut cursor = self.items.cursor::<Height, Count>();
             cursor.seek(&Height(new_scroll_top), Bias::Right, &());
             let item_ix = cursor.sum_start().0;
             let offset_in_item = new_scroll_top - cursor.seek_start().0;
-            self.scroll_top = Some(ScrollTop {
+            self.logical_scroll_top = Some(ListOffset {
                 item_ix,
                 offset_in_item,
             });
@@ -503,24 +505,10 @@ impl StateInner {
         true
     }
 
-    fn scroll_top(&self, height: f32) -> f32 {
-        let scroll_max = (self.items.summary().height - height).max(0.);
-        if let Some(ScrollTop {
-            item_ix,
-            offset_in_item,
-        }) = self.scroll_top
-        {
-            let mut cursor = self.items.cursor::<Count, Height>();
-            cursor.seek(&Count(item_ix), Bias::Right, &());
-            let scroll_top = cursor.sum_start().0 + offset_in_item;
-            assert!(scroll_top <= scroll_max);
-            scroll_top
-        } else {
-            match self.orientation {
-                Orientation::Top => 0.,
-                Orientation::Bottom => scroll_max,
-            }
-        }
+    fn scroll_top(&self, logical_scroll_top: &ListOffset) -> f32 {
+        let mut cursor = self.items.cursor::<Count, Height>();
+        cursor.seek(&Count(logical_scroll_top.item_ix), Bias::Right, &());
+        cursor.sum_start().0 + logical_scroll_top.offset_in_item
     }
 }
 
@@ -618,6 +606,7 @@ mod tests {
     #[crate::test(self)]
     fn test_layout(cx: &mut crate::MutableAppContext) {
         let mut presenter = cx.build_presenter(0, 0.);
+        let constraint = SizeConstraint::new(vec2f(0., 0.), vec2f(100., 40.));
 
         let elements = Rc::new(RefCell::new(vec![(0, 20.), (1, 30.), (2, 100.)]));
         let state = ListState::new(elements.borrow().len(), Orientation::Top, 1000.0, {
@@ -628,11 +617,8 @@ mod tests {
             }
         });
 
-        let mut list = List::new(state.clone()).boxed();
-        let size = list.layout(
-            SizeConstraint::new(vec2f(0., 0.), vec2f(100., 40.)),
-            &mut presenter.build_layout_context(cx),
-        );
+        let mut list = List::new(state.clone());
+        let (size, _) = list.layout(constraint, &mut presenter.build_layout_context(cx));
         assert_eq!(size, vec2f(100., 40.));
         assert_eq!(
             state.0.borrow().items.summary(),
@@ -645,7 +631,7 @@ mod tests {
         );
 
         state.0.borrow_mut().scroll(
-            &ScrollTop {
+            &ListOffset {
                 item_ix: 0,
                 offset_in_item: 0.,
             },
@@ -654,14 +640,16 @@ mod tests {
             true,
             &mut presenter.build_event_context(cx),
         );
+        let (_, logical_scroll_top) =
+            list.layout(constraint, &mut presenter.build_layout_context(cx));
         assert_eq!(
-            state.0.borrow().scroll_top,
-            Some(ScrollTop {
+            logical_scroll_top,
+            ListOffset {
                 item_ix: 2,
                 offset_in_item: 4.
-            })
+            }
         );
-        assert_eq!(state.0.borrow().scroll_top(size.y()), 54.);
+        assert_eq!(state.0.borrow().scroll_top(&logical_scroll_top), 54.);
 
         elements.borrow_mut().splice(1..2, vec![(3, 40.), (4, 50.)]);
         elements.borrow_mut().push((5, 60.));
@@ -677,11 +665,8 @@ mod tests {
             }
         );
 
-        let mut list = List::new(state.clone()).boxed();
-        let size = list.layout(
-            SizeConstraint::new(vec2f(0., 0.), vec2f(100., 40.)),
-            &mut presenter.build_layout_context(cx),
-        );
+        let (size, logical_scroll_top) =
+            list.layout(constraint, &mut presenter.build_layout_context(cx));
         assert_eq!(size, vec2f(100., 40.));
         assert_eq!(
             state.0.borrow().items.summary(),
@@ -693,13 +678,13 @@ mod tests {
             }
         );
         assert_eq!(
-            state.0.borrow().scroll_top,
-            Some(ScrollTop {
+            logical_scroll_top,
+            ListOffset {
                 item_ix: 3,
                 offset_in_item: 4.
-            })
+            }
         );
-        assert_eq!(state.0.borrow().scroll_top(size.y()), 114.);
+        assert_eq!(state.0.borrow().scroll_top(&logical_scroll_top), 114.);
     }
 
     #[crate::test(self, iterations = 10000, seed = 0)]
@@ -739,18 +724,18 @@ mod tests {
         log::info!("size: ({:?}, {:?})", width, height);
         log::info!("==================");
 
-        let mut scroll_top = None;
+        let mut last_logical_scroll_top = None;
         for _ in 0..operations {
             match rng.gen_range(0..=100) {
-                0..=29 if scroll_top.is_some() => {
+                0..=29 if last_logical_scroll_top.is_some() => {
                     let delta = vec2f(0., rng.gen_range(-overdraw..=overdraw));
                     log::info!(
                         "Scrolling by {:?}, previous scroll top: {:?}",
                         delta,
-                        scroll_top.unwrap()
+                        last_logical_scroll_top.unwrap()
                     );
                     state.0.borrow_mut().scroll(
-                        scroll_top.as_ref().unwrap(),
+                        last_logical_scroll_top.as_ref().unwrap(),
                         height,
                         delta,
                         true,
@@ -791,26 +776,30 @@ mod tests {
             }
 
             let mut list = List::new(state.clone());
-            let (size, new_scroll_top) = list.layout(
+            let (size, logical_scroll_top) = list.layout(
                 SizeConstraint::new(vec2f(0., 0.), vec2f(width, height)),
                 &mut presenter.build_layout_context(cx),
             );
             assert_eq!(size, vec2f(width, height));
-            scroll_top = Some(new_scroll_top);
+            last_logical_scroll_top = Some(logical_scroll_top);
 
             let state = state.0.borrow();
             log::info!("items {:?}", state.items.items(&()));
 
-            let rendered_top = (state.scroll_top(height) - overdraw).max(0.);
-            let rendered_bottom = state.scroll_top(height) + height + overdraw;
+            let scroll_top = state.scroll_top(&logical_scroll_top);
+            let rendered_top = (scroll_top - overdraw).max(0.);
+            let rendered_bottom = scroll_top + height + overdraw;
             let mut item_top = 0.;
 
             log::info!(
-                "rendered top {:?}, rendered bottom {:?}",
+                "rendered top {:?}, rendered bottom {:?}, scroll top {:?}",
                 rendered_top,
-                rendered_bottom
+                rendered_bottom,
+                scroll_top,
             );
 
+            let mut first_rendered_element_top = None;
+            let mut last_rendered_element_bottom = None;
             assert_eq!(state.items.summary().count, elements.borrow().len());
             for (ix, item) in state.items.cursor::<(), ()>().enumerate() {
                 match item {
@@ -837,8 +826,23 @@ mod tests {
                         });
                         assert_eq!(element.size().y(), expected_height);
                         let item_bottom = item_top + element.size().y();
+                        first_rendered_element_top.get_or_insert(item_top);
+                        last_rendered_element_bottom = Some(item_bottom);
                         assert!(item_bottom > rendered_top || item_top < rendered_bottom);
                         item_top = item_bottom;
+                    }
+                }
+            }
+
+            match orientation {
+                Orientation::Top => {
+                    if let Some(first_rendered_element_top) = first_rendered_element_top {
+                        assert!(first_rendered_element_top <= scroll_top);
+                    }
+                }
+                Orientation::Bottom => {
+                    if let Some(last_rendered_element_bottom) = last_rendered_element_bottom {
+                        assert!(last_rendered_element_bottom >= scroll_top + height);
                     }
                 }
             }
