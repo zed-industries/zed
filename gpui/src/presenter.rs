@@ -97,12 +97,13 @@ impl Presenter {
         &mut self,
         window_size: Vector2F,
         scale_factor: f32,
+        refreshing: bool,
         cx: &mut MutableAppContext,
     ) -> Scene {
         let mut scene = Scene::new(scale_factor);
 
         if let Some(root_view_id) = cx.root_view_id(self.window_id) {
-            self.layout(window_size, cx);
+            self.layout(window_size, refreshing, cx);
             let mut paint_cx = PaintContext {
                 scene: &mut scene,
                 font_cache: &self.font_cache,
@@ -123,20 +124,22 @@ impl Presenter {
         scene
     }
 
-    fn layout(&mut self, size: Vector2F, cx: &mut MutableAppContext) {
+    fn layout(&mut self, size: Vector2F, refreshing: bool, cx: &mut MutableAppContext) {
         if let Some(root_view_id) = cx.root_view_id(self.window_id) {
-            self.build_layout_context(cx)
+            self.build_layout_context(refreshing, cx)
                 .layout(root_view_id, SizeConstraint::strict(size));
         }
     }
 
     pub fn build_layout_context<'a>(
         &'a mut self,
+        refreshing: bool,
         cx: &'a mut MutableAppContext,
     ) -> LayoutContext<'a> {
         LayoutContext {
             rendered_views: &mut self.rendered_views,
             parents: &mut self.parents,
+            refreshing,
             font_cache: &self.font_cache,
             font_system: cx.platform().fonts(),
             text_layout_cache: &self.text_layout_cache,
@@ -213,6 +216,7 @@ pub struct LayoutContext<'a> {
     rendered_views: &'a mut HashMap<usize, ElementBox>,
     parents: &'a mut HashMap<usize, usize>,
     view_stack: Vec<usize>,
+    pub refreshing: bool,
     pub font_cache: &'a Arc<FontCache>,
     pub font_system: Arc<dyn FontSystem>,
     pub text_layout_cache: &'a TextLayoutCache,

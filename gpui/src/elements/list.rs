@@ -98,7 +98,7 @@ impl Element for List {
         item_constraint.min.set_y(0.);
         item_constraint.max.set_y(f32::INFINITY);
 
-        if state.last_layout_width != Some(size.x()) {
+        if cx.refreshing || state.last_layout_width != Some(size.x()) {
             state.rendered_range = 0..0;
             state.items = SumTree::from_iter(
                 (0..state.items.summary().count).map(|_| ListItem::Unrendered),
@@ -578,7 +578,7 @@ mod tests {
         });
 
         let mut list = List::new(state.clone());
-        let (size, _) = list.layout(constraint, &mut presenter.build_layout_context(cx));
+        let (size, _) = list.layout(constraint, &mut presenter.build_layout_context(false, cx));
         assert_eq!(size, vec2f(100., 40.));
         assert_eq!(
             state.0.borrow().items.summary(),
@@ -601,7 +601,7 @@ mod tests {
             &mut presenter.build_event_context(cx),
         );
         let (_, logical_scroll_top) =
-            list.layout(constraint, &mut presenter.build_layout_context(cx));
+            list.layout(constraint, &mut presenter.build_layout_context(false, cx));
         assert_eq!(
             logical_scroll_top,
             ListOffset {
@@ -626,7 +626,7 @@ mod tests {
         );
 
         let (size, logical_scroll_top) =
-            list.layout(constraint, &mut presenter.build_layout_context(cx));
+            list.layout(constraint, &mut presenter.build_layout_context(false, cx));
         assert_eq!(size, vec2f(100., 40.));
         assert_eq!(
             state.0.borrow().items.summary(),
@@ -738,7 +738,7 @@ mod tests {
             let mut list = List::new(state.clone());
             let (size, logical_scroll_top) = list.layout(
                 SizeConstraint::new(vec2f(0., 0.), vec2f(width, height)),
-                &mut presenter.build_layout_context(cx),
+                &mut presenter.build_layout_context(false, cx),
             );
             assert_eq!(size, vec2f(width, height));
             last_logical_scroll_top = Some(logical_scroll_top);
