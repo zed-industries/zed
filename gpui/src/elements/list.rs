@@ -390,8 +390,8 @@ impl StateInner {
         cursor.seek(&Count(scroll_top.item_ix), Bias::Right, &());
         let start_y = cursor.sum_start().0 + scroll_top.offset_in_item;
         let mut cursor = cursor.swap_dimensions();
-        cursor.seek_forward(&Height(start_y + height), Bias::Right, &());
-        scroll_top.item_ix..cursor.sum_start().0
+        cursor.seek_forward(&Height(start_y + height), Bias::Left, &());
+        scroll_top.item_ix..cursor.sum_start().0 + 1
     }
 
     fn visible_elements<'a>(
