@@ -181,27 +181,47 @@ impl Element for List {
             }
             rendered_items.reverse();
 
+            let mut adjust_scroll_top = (rendered_height - scroll_top.offset_in_item) < size.y();
+
             new_rendered_start_ix = scroll_top.item_ix;
             cursor.seek(&Count(scroll_top.item_ix), Bias::Right, &());
             cursor.prev(&());
             let mut remaining_overdraw = overdraw - scroll_top.offset_in_item;
+
+            if adjust_scroll_top && rendered_height >= size.y() {
+                let offset_in_item = rendered_height - size.y();
+                stored_scroll_top = Some(ScrollTop {
+                    item_ix: new_rendered_start_ix,
+                    offset_in_item,
+                });
+                remaining_overdraw = overdraw - offset_in_item;
+                adjust_scroll_top = false;
+            }
+
             while let Some(item) = cursor.item() {
                 let element = render_item(cursor.seek_start().0, item);
-                if rendered_height < size.y() && rendered_height + element.size().y() >= size.y() {
-                    let new_scroll_top = ScrollTop {
-                        item_ix: cursor.seek_start().0,
-                        offset_in_item: rendered_height + element.size().y() - size.y(),
-                    };
-                    stored_scroll_top = Some(new_scroll_top);
-                    remaining_overdraw = overdraw + (size.y() - rendered_height);
-                } else if rendered_height >= size.y() && remaining_overdraw <= 0. {
+                let next_rendered_height = rendered_height + element.size().y();
+
+                if adjust_scroll_top && next_rendered_height >= size.y() {
+                    let offset_in_item = next_rendered_height - size.y();
+                    stored_scroll_top = Some(ScrollTop {
+                        item_ix: new_rendered_start_ix - 1,
+                        offset_in_item,
+                    });
+                    remaining_overdraw = overdraw + (element.size().y() - offset_in_item);
+                    adjust_scroll_top = false;
+                }
+
+                if !adjust_scroll_top && remaining_overdraw <= 0. {
                     break;
                 }
 
-                rendered_height += element.size().y();
+                rendered_height = next_rendered_height;
                 remaining_overdraw -= element.size().y();
                 rendered_items.push(ListItem::Rendered(element));
+
                 new_rendered_start_ix -= 1;
+
                 cursor.prev(&());
             }
             rendered_items.reverse();
@@ -492,7 +512,9 @@ impl StateInner {
         {
             let mut cursor = self.items.cursor::<Count, Height>();
             cursor.seek(&Count(item_ix), Bias::Right, &());
-            (cursor.sum_start().0 + offset_in_item).min(scroll_max)
+            let scroll_top = cursor.sum_start().0 + offset_in_item;
+            assert!(scroll_top <= scroll_max);
+            scroll_top
         } else {
             match self.orientation {
                 Orientation::Top => 0.,
@@ -680,7 +702,7 @@ mod tests {
         assert_eq!(state.0.borrow().scroll_top(size.y()), 114.);
     }
 
-    #[crate::test(self, iterations = 10000)]
+    #[crate::test(self, iterations = 10000, seed = 0)]
     fn test_random(cx: &mut crate::MutableAppContext, mut rng: StdRng) {
         let operations = env::var("OPERATIONS")
             .map(|i| i.parse().expect("invalid `OPERATIONS` variable"))
@@ -693,14 +715,14 @@ mod tests {
                 .map(|_| {
                     let id = next_id;
                     next_id += 1;
-                    (id, rng.gen_range(0_f32..=100_f32))
+                    (id, rng.gen_range(0..=200) as f32 / 2.0)
                 })
                 .collect::<Vec<_>>(),
         ));
         let orientation = *[Orientation::Top, Orientation::Bottom]
             .choose(&mut rng)
             .unwrap();
-        let overdraw = rng.gen_range(1_f32..=100_f32);
+        let overdraw = rng.gen_range(1..=100) as f32;
         let state = ListState::new(elements.borrow().len(), orientation, overdraw, {
             let elements = elements.clone();
             move |ix, _| {
@@ -709,8 +731,8 @@ mod tests {
             }
         });
 
-        let mut width = rng.gen_range(0_f32..=1000_f32);
-        let mut height = rng.gen_range(0_f32..=1000_f32);
+        let mut width = rng.gen_range(0..=2000) as f32 / 2.;
+        let mut height = rng.gen_range(0..=2000) as f32 / 2.;
         log::info!("orientation: {:?}", orientation);
         log::info!("overdraw: {}", overdraw);
         log::info!("elements: {:?}", elements.borrow());
@@ -736,11 +758,11 @@ mod tests {
                     );
                 }
                 30..=34 => {
-                    width = rng.gen_range(0_f32..=1000_f32);
+                    width = rng.gen_range(0..=2000) as f32 / 2.;
                     log::info!("changing width: {:?}", width);
                 }
                 35..=54 => {
-                    height = rng.gen_range(0_f32..=1000_f32);
+                    height = rng.gen_range(0..=1000) as f32 / 2.;
                     log::info!("changing height: {:?}", height);
                 }
                 _ => {
@@ -751,7 +773,7 @@ mod tests {
                         .map(|_| {
                             let id = next_id;
                             next_id += 1;
-                            (id, rng.gen_range(0_f32..=100_f32))
+                            (id, rng.gen_range(0..=200) as f32 / 2.)
                         })
                         .collect::<Vec<_>>();
                     log::info!("splice({:?}, {:?})", start_ix..end_ix, new_elements);
@@ -777,15 +799,18 @@ mod tests {
             scroll_top = Some(new_scroll_top);
 
             let state = state.0.borrow();
+            log::info!("items {:?}", state.items.items(&()));
+
             let rendered_top = (state.scroll_top(height) - overdraw).max(0.);
             let rendered_bottom = state.scroll_top(height) + height + overdraw;
             let mut item_top = 0.;
+
             log::info!(
                 "rendered top {:?}, rendered bottom {:?}",
                 rendered_top,
                 rendered_bottom
             );
-            log::info!("items {:?}", state.items.items(&()));
+
             assert_eq!(state.items.summary().count, elements.borrow().len());
             for (ix, item) in state.items.cursor::<(), ()>().enumerate() {
                 match item {
