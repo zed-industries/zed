@@ -567,7 +567,13 @@ impl<'a> sum_tree::SeekDimension<'a, ListItemSummary> for Height {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{elements::*, geometry::vector::vec2f, Entity, RenderContext, View};
+    use crate::{
+        elements::{ConstrainedBox, Empty},
+        geometry::vector::vec2f,
+        Entity, RenderContext, View,
+    };
+    use rand::prelude::*;
+    use std::env;
 
     #[crate::test(self)]
     fn test_layout(cx: &mut crate::MutableAppContext) {
@@ -651,6 +657,106 @@ mod tests {
             })
         );
         assert_eq!(state.0.borrow().scroll_top(size.y()), 114.);
+    }
+
+    #[crate::test(self, iterations = 10000, seed = 2515)]
+    fn test_random(cx: &mut crate::MutableAppContext, mut rng: StdRng) {
+        let operations = env::var("OPERATIONS")
+            .map(|i| i.parse().expect("invalid `OPERATIONS` variable"))
+            .unwrap_or(10);
+
+        let mut presenter = cx.build_presenter(0, 0.);
+        let elements = Rc::new(RefCell::new(
+            (0..rng.gen_range(0..=20))
+                .map(|_| rng.gen_range(0_f32..=100_f32))
+                .collect::<Vec<_>>(),
+        ));
+        let orientation = *[Orientation::Top, Orientation::Bottom]
+            .choose(&mut rng)
+            .unwrap();
+        let min_overdraw = rng.gen_range(0..=20);
+        let state = ListState::new(elements.borrow().len(), orientation, min_overdraw, {
+            let elements = elements.clone();
+            move |ix, _| item(elements.borrow()[ix])
+        });
+
+        let mut width = rng.gen_range(0_f32..=1000_f32);
+        let mut height = rng.gen_range(0_f32..=1000_f32);
+        log::info!("orientation: {:?}", orientation);
+        log::info!("min_overdraw: {}", min_overdraw);
+        log::info!("elements: {:?}", elements.borrow());
+        log::info!("size: ({:?}, {:?})", width, height);
+        log::info!("==================");
+
+        let mut scroll_top = None;
+        for _ in 0..operations {
+            match rng.gen_range(0..=100) {
+                0..=29 if scroll_top.is_some() => {
+                    let delta = vec2f(0., rng.gen_range(-100_f32..=100_f32));
+                    log::info!(
+                        "Scrolling by {:?}, previous scroll top: {:?}",
+                        delta,
+                        scroll_top.unwrap()
+                    );
+                    state.0.borrow_mut().scroll(
+                        scroll_top.as_ref().unwrap(),
+                        height,
+                        delta,
+                        true,
+                        &mut presenter.build_event_context(cx),
+                    );
+                }
+                30..=34 => {
+                    width = rng.gen_range(0_f32..=1000_f32);
+                    log::info!("changing width: {:?}", width);
+                }
+                35..=54 => {
+                    height = rng.gen_range(0_f32..=1000_f32);
+                    log::info!("changing height: {:?}", height);
+                }
+                _ => {
+                    let mut elements = elements.borrow_mut();
+                    let end_ix = rng.gen_range(0..=elements.len());
+                    let start_ix = rng.gen_range(0..=end_ix);
+                    let new_elements = (0..rng.gen_range(0..10))
+                        .map(|_| rng.gen_range(0_f32..=100_f32))
+                        .collect::<Vec<_>>();
+                    log::info!("splice({:?}, {:?})", start_ix..end_ix, new_elements);
+                    state.splice(start_ix..end_ix, new_elements.len());
+                    elements.splice(start_ix..end_ix, new_elements);
+                }
+            }
+
+            let mut list = List::new(state.clone());
+            let (size, new_scroll_top) = list.layout(
+                SizeConstraint::new(vec2f(0., 0.), vec2f(width, height)),
+                &mut presenter.build_layout_context(cx),
+            );
+            assert_eq!(size, vec2f(width, height));
+            scroll_top = Some(new_scroll_top);
+
+            let state = state.0.borrow();
+            let visible_range = state.visible_range(height, &new_scroll_top);
+            let rendered_range =
+                visible_range.start.saturating_sub(min_overdraw)..visible_range.end + min_overdraw;
+            log::info!("visible range {:?}", visible_range);
+            log::info!("items {:?}", state.items.items(&()));
+            for (ix, item) in state.items.cursor::<Count, ()>().enumerate() {
+                if rendered_range.contains(&ix) {
+                    assert!(
+                        matches!(item, ListItem::Rendered(_)),
+                        "item {:?} was not rendered",
+                        ix
+                    );
+                } else {
+                    assert!(
+                        !matches!(item, ListItem::Rendered(_)),
+                        "item {:?} was incorrectly rendered",
+                        ix
+                    );
+                }
+            }
+        }
     }
 
     fn item(height: f32) -> ElementBox {
