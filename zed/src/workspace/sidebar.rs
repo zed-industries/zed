@@ -91,7 +91,7 @@ impl Sidebar {
                         .boxed()
                     })
                     .with_cursor_style(CursorStyle::PointingHand)
-                    .on_click(move |cx| {
+                    .on_mouse_down(move |cx| {
                         cx.dispatch_action(ToggleSidebarItem(ToggleArg { side, item_index }))
                     })
                     .boxed()

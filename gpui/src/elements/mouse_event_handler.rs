@@ -12,6 +12,7 @@ pub struct MouseEventHandler {
     state: ElementStateHandle<MouseState>,
     child: ElementBox,
     cursor_style: Option<CursorStyle>,
+    mouse_down_handler: Option<Box<dyn FnMut(&mut EventContext)>>,
     click_handler: Option<Box<dyn FnMut(&mut EventContext)>>,
     drag_handler: Option<Box<dyn FnMut(Vector2F, &mut EventContext)>>,
 }
@@ -38,6 +39,7 @@ impl MouseEventHandler {
             state: state_handle,
             child,
             cursor_style: None,
+            mouse_down_handler: None,
             click_handler: None,
             drag_handler: None,
         }
@@ -45,6 +47,11 @@ impl MouseEventHandler {
 
     pub fn with_cursor_style(mut self, cursor: CursorStyle) -> Self {
         self.cursor_style = Some(cursor);
+        self
+    }
+
+    pub fn on_mouse_down(mut self, handler: impl FnMut(&mut EventContext) + 'static) -> Self {
+        self.mouse_down_handler = Some(Box::new(handler));
         self
     }
 
@@ -89,6 +96,7 @@ impl Element for MouseEventHandler {
         cx: &mut EventContext,
     ) -> bool {
         let cursor_style = self.cursor_style;
+        let mouse_down_handler = self.mouse_down_handler.as_mut();
         let click_handler = self.click_handler.as_mut();
         let drag_handler = self.drag_handler.as_mut();
 
@@ -124,6 +132,9 @@ impl Element for MouseEventHandler {
                     state.clicked = true;
                     state.prev_drag_position = Some(*position);
                     cx.notify();
+                    if let Some(handler) = mouse_down_handler {
+                        handler(cx);
+                    }
                     true
                 } else {
                     handled_in_child
