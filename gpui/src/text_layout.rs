@@ -272,7 +272,7 @@ impl Line {
         let mut color_end = 0;
         let mut color = Color::black();
 
-        let mut glyph_origin = baseline_origin;
+        let mut glyph_origin = vec2f(0., 0.);
         let mut prev_position = 0.;
         for run in &self.layout.runs {
             for (glyph_ix, glyph) in run.glyphs.iter().enumerate() {
@@ -304,7 +304,7 @@ impl Line {
                         font_id: run.font_id,
                         font_size: self.layout.font_size,
                         id: glyph.id,
-                        origin: origin + glyph_origin,
+                        origin: glyph_bounds.origin() + baseline_origin,
                         color,
                     });
                 }
