@@ -22,7 +22,7 @@ pub struct Theme {
     pub workspace: Workspace,
     pub chat_panel: ChatPanel,
     pub selector: Selector,
-    pub editor: Editor,
+    pub editor: EditorStyle,
     pub syntax: SyntaxTheme,
 }
 
@@ -127,8 +127,8 @@ pub struct ContainedLabel {
     pub label: LabelStyle,
 }
 
-#[derive(Deserialize)]
-pub struct Editor {
+#[derive(Clone, Deserialize)]
+pub struct EditorStyle {
     pub background: Color,
     pub gutter_background: Color,
     pub active_line_background: Color,
@@ -137,7 +137,7 @@ pub struct Editor {
     pub replicas: Vec<Replica>,
 }
 
-#[derive(Clone, Copy, Deserialize)]
+#[derive(Clone, Copy, Default, Deserialize)]
 pub struct Replica {
     pub cursor: Color,
     pub selection: Color,
@@ -161,6 +161,19 @@ impl SyntaxTheme {
     #[cfg(test)]
     pub fn highlight_name(&self, id: HighlightId) -> Option<&str> {
         self.highlights.get(id.0 as usize).map(|e| e.0.as_str())
+    }
+}
+
+impl Default for EditorStyle {
+    fn default() -> Self {
+        Self {
+            background: Default::default(),
+            gutter_background: Default::default(),
+            active_line_background: Default::default(),
+            line_number: Default::default(),
+            line_number_active: Default::default(),
+            replicas: vec![Default::default()],
+        }
     }
 }
 

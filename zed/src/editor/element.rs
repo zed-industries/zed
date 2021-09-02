@@ -1,5 +1,5 @@
 use super::{DisplayPoint, Editor, EditorMode, Insert, Scroll, Select, SelectPhase, Snapshot};
-use crate::time::ReplicaId;
+use crate::{theme::EditorStyle, time::ReplicaId};
 use gpui::{
     color::Color,
     geometry::{
@@ -22,11 +22,12 @@ use std::{
 
 pub struct EditorElement {
     view: WeakViewHandle<Editor>,
+    style: EditorStyle,
 }
 
 impl EditorElement {
-    pub fn new(view: WeakViewHandle<Editor>) -> Self {
-        Self { view }
+    pub fn new(view: WeakViewHandle<Editor>, style: EditorStyle) -> Self {
+        Self { view, style }
     }
 
     fn view<'a>(&self, cx: &'a AppContext) -> &'a Editor {
@@ -189,17 +190,15 @@ impl EditorElement {
         let bounds = gutter_bounds.union_rect(text_bounds);
         let scroll_top = layout.snapshot.scroll_position().y() * layout.line_height;
         let editor = self.view(cx.app);
-        let settings = editor.settings.borrow();
-        let theme = &settings.theme;
         cx.scene.push_quad(Quad {
             bounds: gutter_bounds,
-            background: Some(theme.editor.gutter_background),
+            background: Some(self.style.gutter_background),
             border: Border::new(0., Color::transparent_black()),
             corner_radius: 0.,
         });
         cx.scene.push_quad(Quad {
             bounds: text_bounds,
-            background: Some(theme.editor.background),
+            background: Some(self.style.background),
             border: Border::new(0., Color::transparent_black()),
             corner_radius: 0.,
         });
@@ -226,7 +225,7 @@ impl EditorElement {
                     );
                     cx.scene.push_quad(Quad {
                         bounds: RectF::new(origin, size),
-                        background: Some(theme.editor.active_line_background),
+                        background: Some(self.style.active_line_background),
                         border: Border::default(),
                         corner_radius: 0.,
                     });

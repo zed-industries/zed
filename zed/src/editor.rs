@@ -4,7 +4,8 @@ mod element;
 pub mod movement;
 
 use crate::{
-    settings::{HighlightId, Settings, Theme},
+    settings::{HighlightId, Settings},
+    theme::{EditorStyle, Theme},
     time::ReplicaId,
     util::{post_inc, Bias},
     workspace,
@@ -287,6 +288,7 @@ pub struct Editor {
     scroll_position: Vector2F,
     scroll_top_anchor: Anchor,
     autoscroll_requested: bool,
+    build_style: Option<Box<dyn FnMut(&mut MutableAppContext) -> EditorStyle>>,
     settings: watch::Receiver<Settings>,
     focused: bool,
     cursors_visible: bool,
@@ -366,6 +368,7 @@ impl Editor {
             next_selection_id,
             add_selections_state: None,
             select_larger_syntax_node_stack: Vec::new(),
+            build_style: None,
             scroll_position: Vector2F::zero(),
             scroll_top_anchor: Anchor::min(),
             autoscroll_requested: false,
@@ -376,6 +379,14 @@ impl Editor {
             blinking_paused: false,
             mode: EditorMode::Full,
         }
+    }
+
+    pub fn with_style(
+        mut self,
+        f: impl 'static + FnMut(&mut MutableAppContext) -> EditorStyle,
+    ) -> Self {
+        self.build_style = Some(Box::new(f));
+        self
     }
 
     pub fn replica_id(&self, cx: &AppContext) -> ReplicaId {
@@ -2522,8 +2533,12 @@ impl Entity for Editor {
 }
 
 impl View for Editor {
-    fn render(&mut self, _: &mut RenderContext<Self>) -> ElementBox {
-        EditorElement::new(self.handle.clone()).boxed()
+    fn render(&mut self, cx: &mut RenderContext<Self>) -> ElementBox {
+        let style = self
+            .build_style
+            .as_mut()
+            .map_or(Default::default(), |build| build(cx));
+        EditorElement::new(self.handle.clone(), style).boxed()
     }
 
     fn ui_name() -> &'static str {
@@ -2563,7 +2578,8 @@ impl workspace::Item for Buffer {
         settings: watch::Receiver<Settings>,
         cx: &mut ViewContext<Self::View>,
     ) -> Self::View {
-        Editor::for_buffer(handle, settings, cx)
+        Editor::for_buffer(handle, settings.clone(), cx)
+            .with_style(move |_| settings.borrow().theme.editor.clone())
     }
 }
 

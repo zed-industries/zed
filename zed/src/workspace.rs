@@ -4,7 +4,7 @@ pub mod sidebar;
 
 use crate::{
     chat_panel::ChatPanel,
-    editor::{Buffer, Editor},
+    editor::Buffer,
     fs::Fs,
     language::LanguageRegistry,
     project_browser::ProjectBrowser,
@@ -565,11 +565,12 @@ impl Workspace {
 
     pub fn open_new_file(&mut self, _: &OpenNew, cx: &mut ViewContext<Self>) {
         let buffer = cx.add_model(|cx| Buffer::new(0, "", cx));
-        let buffer_view =
-            cx.add_view(|cx| Editor::for_buffer(buffer.clone(), self.settings.clone(), cx));
-        self.items.push(ItemHandle::downgrade(&buffer));
-        self.active_pane()
-            .add_item_view(Box::new(buffer_view), cx.as_mut());
+        let item_handle = ItemHandle::downgrade(&buffer);
+        let view = item_handle
+            .add_view(cx.window_id(), self.settings.clone(), cx)
+            .unwrap();
+        self.items.push(item_handle);
+        self.active_pane().add_item_view(view, cx.as_mut());
     }
 
     #[must_use]
