@@ -27,35 +27,6 @@ pub struct Db {
     test_mode: bool,
 }
 
-#[derive(Debug, FromRow, Serialize)]
-pub struct User {
-    pub id: UserId,
-    pub github_login: String,
-    pub admin: bool,
-}
-
-#[derive(Debug, FromRow, Serialize)]
-pub struct Signup {
-    pub id: SignupId,
-    pub github_login: String,
-    pub email_address: String,
-    pub about: String,
-}
-
-#[derive(Debug, FromRow, Serialize)]
-pub struct Channel {
-    pub id: ChannelId,
-    pub name: String,
-}
-
-#[derive(Debug, FromRow)]
-pub struct ChannelMessage {
-    pub id: MessageId,
-    pub sender_id: UserId,
-    pub body: String,
-    pub sent_at: OffsetDateTime,
-}
-
 impl Db {
     pub async fn new(url: &str, max_connections: u32) -> tide::Result<Self> {
         let pool = DbOptions::new()
@@ -112,6 +83,22 @@ impl Db {
     }
 
     // users
+
+    #[allow(unused)] // Help rust-analyzer
+    #[cfg(any(test, feature = "seed-support"))]
+    pub async fn get_user(&self, github_login: &str) -> Result<Option<UserId>> {
+        test_support!(self, {
+            let query = "
+                SELECT id
+                FROM users
+                WHERE github_login = $1
+            ";
+            sqlx::query_scalar(query)
+                .bind(github_login)
+                .fetch_optional(&self.pool)
+                .await
+        })
+    }
 
     pub async fn create_user(&self, github_login: &str, admin: bool) -> Result<UserId> {
         test_support!(self, {
@@ -231,7 +218,23 @@ impl Db {
 
     // orgs
 
-    #[cfg(test)]
+    #[allow(unused)] // Help rust-analyzer
+    #[cfg(any(test, feature = "seed-support"))]
+    pub async fn find_org_by_slug(&self, slug: &str) -> Result<Option<Org>> {
+        test_support!(self, {
+            let query = "
+                SELECT *
+                FROM orgs
+                WHERE slug = $1
+            ";
+            sqlx::query_as(query)
+                .bind(slug)
+                .fetch_optional(&self.pool)
+                .await
+        })
+    }
+
+    #[cfg(any(test, feature = "seed-support"))]
     pub async fn create_org(&self, name: &str, slug: &str) -> Result<OrgId> {
         test_support!(self, {
             let query = "
@@ -248,7 +251,7 @@ impl Db {
         })
     }
 
-    #[cfg(test)]
+    #[cfg(any(test, feature = "seed-support"))]
     pub async fn add_org_member(
         &self,
         org_id: OrgId,
@@ -259,6 +262,7 @@ impl Db {
             let query = "
                 INSERT INTO org_memberships (org_id, user_id, admin)
                 VALUES ($1, $2, $3)
+                ON CONFLICT DO NOTHING
             ";
             sqlx::query(query)
                 .bind(org_id.0)
@@ -272,7 +276,7 @@ impl Db {
 
     // channels
 
-    #[cfg(test)]
+    #[cfg(any(test, feature = "seed-support"))]
     pub async fn create_org_channel(&self, org_id: OrgId, name: &str) -> Result<ChannelId> {
         test_support!(self, {
             let query = "
@@ -289,7 +293,25 @@ impl Db {
         })
     }
 
-    pub async fn get_channels_for_user(&self, user_id: UserId) -> Result<Vec<Channel>> {
+    #[allow(unused)] // Help rust-analyzer
+    #[cfg(any(test, feature = "seed-support"))]
+    pub async fn get_org_channels(&self, org_id: OrgId) -> Result<Vec<Channel>> {
+        test_support!(self, {
+            let query = "
+                SELECT *
+                FROM channels
+                WHERE
+                    channels.owner_is_user = false AND
+                    channels.owner_id = $1
+            ";
+            sqlx::query_as(query)
+                .bind(org_id.0)
+                .fetch_all(&self.pool)
+                .await
+        })
+    }
+
+    pub async fn get_accessible_channels(&self, user_id: UserId) -> Result<Vec<Channel>> {
         test_support!(self, {
             let query = "
                 SELECT
@@ -328,7 +350,7 @@ impl Db {
         })
     }
 
-    #[cfg(test)]
+    #[cfg(any(test, feature = "seed-support"))]
     pub async fn add_channel_member(
         &self,
         channel_id: ChannelId,
@@ -339,6 +361,7 @@ impl Db {
             let query = "
                 INSERT INTO channel_memberships (channel_id, user_id, admin)
                 VALUES ($1, $2, $3)
+                ON CONFLICT DO NOTHING
             ";
             sqlx::query(query)
                 .bind(channel_id.0)
@@ -432,10 +455,45 @@ macro_rules! id_type {
 }
 
 id_type!(UserId);
+#[derive(Debug, FromRow, Serialize)]
+pub struct User {
+    pub id: UserId,
+    pub github_login: String,
+    pub admin: bool,
+}
+
 id_type!(OrgId);
-id_type!(ChannelId);
+#[derive(FromRow)]
+pub struct Org {
+    pub id: OrgId,
+    pub name: String,
+    pub slug: String,
+}
+
 id_type!(SignupId);
+#[derive(Debug, FromRow, Serialize)]
+pub struct Signup {
+    pub id: SignupId,
+    pub github_login: String,
+    pub email_address: String,
+    pub about: String,
+}
+
+id_type!(ChannelId);
+#[derive(Debug, FromRow, Serialize)]
+pub struct Channel {
+    pub id: ChannelId,
+    pub name: String,
+}
+
 id_type!(MessageId);
+#[derive(Debug, FromRow)]
+pub struct ChannelMessage {
+    pub id: MessageId,
+    pub sender_id: UserId,
+    pub body: String,
+    pub sent_at: OffsetDateTime,
+}
 
 #[cfg(test)]
 pub mod tests {

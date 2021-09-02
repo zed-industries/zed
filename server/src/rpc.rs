@@ -77,12 +77,7 @@ struct Channel {
     connection_ids: HashSet<ConnectionId>,
 }
 
-#[cfg(debug_assertions)]
-const MESSAGE_COUNT_PER_PAGE: usize = 10;
-
-#[cfg(not(debug_assertions))]
-const MESSAGE_COUNT_PER_PAGE: usize = 50;
-
+const MESSAGE_COUNT_PER_PAGE: usize = 100;
 const MAX_MESSAGE_LEN: usize = 1024;
 
 impl Server {
@@ -528,7 +523,7 @@ impl Server {
             .read()
             .await
             .user_id_for_connection(request.sender_id)?;
-        let channels = self.app_state.db.get_channels_for_user(user_id).await?;
+        let channels = self.app_state.db.get_accessible_channels(user_id).await?;
         self.peer
             .respond(
                 request.receipt(),

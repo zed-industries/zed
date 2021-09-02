@@ -2737,6 +2737,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "lipsum"
+version = "0.8.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "42ee7271c76a89032dcc7e595c0a739a9c5514eab483deb0e82981fe2098c56a"
+dependencies = [
+ "rand 0.8.3",
+ "rand_chacha 0.3.0",
+]
+
+[[package]]
 name = "lock_api"
 version = "0.4.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -5872,6 +5882,7 @@ dependencies = [
  "http-auth-basic",
  "jwt-simple",
  "lazy_static",
+ "lipsum",
  "oauth2",
  "oauth2-surf",
  "parking_lot",

@@ -16,6 +16,8 @@ use gpui::{
 use postage::watch;
 use time::{OffsetDateTime, UtcOffset};
 
+const MESSAGE_LOADING_THRESHOLD: usize = 50;
+
 pub struct ChatPanel {
     channel_list: ModelHandle<ChannelList>,
     active_channel: Option<(ModelHandle<Channel>, Subscription)>,
@@ -80,7 +82,7 @@ impl ChatPanel {
             }
         });
         message_list.set_scroll_handler(|visible_range, cx| {
-            if visible_range.start < 5 {
+            if visible_range.start < MESSAGE_LOADING_THRESHOLD {
                 cx.dispatch_action(LoadMoreMessages);
             }
         });

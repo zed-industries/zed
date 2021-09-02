@@ -2,4 +2,4 @@
 
 set -e
 cd server
-cargo run --bin seed
+cargo run --features seed-dependencies --bin seed

@@ -1,6 +1,11 @@
-use sqlx::postgres::PgPoolOptions;
+use db::{Db, UserId};
+use rand::prelude::*;
 use tide::log;
+use time::{Duration, OffsetDateTime};
 
+#[allow(unused)]
+#[path = "../db.rs"]
+mod db;
 #[path = "../env.rs"]
 mod env;
 
@@ -13,95 +18,74 @@ async fn main() {
         );
     }
 
+    let mut rng = StdRng::from_entropy();
     let database_url = std::env::var("DATABASE_URL").expect("missing DATABASE_URL env var");
-    let db = PgPoolOptions::new()
-        .max_connections(5)
-        .connect(&database_url)
+    let db = Db::new(&database_url, 5)
         .await
         .expect("failed to connect to postgres database");
 
     let zed_users = ["nathansobo", "maxbrunsfeld", "as-cii", "iamnbutler"];
-    let mut zed_user_ids = Vec::<i32>::new();
+    let mut zed_user_ids = Vec::<UserId>::new();
     for zed_user in zed_users {
-        zed_user_ids.push(
-            sqlx::query_scalar(
-                r#"
-                INSERT INTO users
-                    (github_login, admin)
-                VALUES
-                    ($1, true)
-                ON CONFLICT (github_login) DO UPDATE SET
-                    github_login=EXCLUDED.github_login
-                RETURNING id
-                "#,
-            )
-            .bind(zed_user)
-            .fetch_one(&db)
-            .await
-            .expect("failed to insert user"),
-        )
+        if let Some(user_id) = db.get_user(zed_user).await.expect("failed to fetch user") {
+            zed_user_ids.push(user_id);
+        } else {
+            zed_user_ids.push(
+                db.create_user(zed_user, true)
+                    .await
+                    .expect("failed to insert user"),
+            );
+        }
     }
 
-    let zed_org_id: i32 = sqlx::query_scalar(
-        r#"
-        INSERT INTO orgs
-            (name, slug)
-        VALUES
-            ('Zed', 'zed')
-        ON CONFLICT (slug) DO UPDATE SET
-            slug=EXCLUDED.slug
-        RETURNING id
-        "#,
-    )
-    .fetch_one(&db)
-    .await
-    .expect("failed to insert org");
+    let zed_org_id = if let Some(org) = db
+        .find_org_by_slug("zed")
+        .await
+        .expect("failed to fetch org")
+    {
+        org.id
+    } else {
+        db.create_org("Zed", "zed")
+            .await
+            .expect("failed to insert org")
+    };
 
-    let general_channel_id: i32 = sqlx::query_scalar(
-        r#"
-        INSERT INTO channels
-            (owner_is_user, owner_id, name)
-        VALUES
-            (false, $1, 'General')
-        ON CONFLICT (owner_is_user, owner_id, name) DO UPDATE SET
-            name=EXCLUDED.name
-        RETURNING id
-        "#,
-    )
-    .bind(zed_org_id)
-    .fetch_one(&db)
-    .await
-    .expect("failed to insert channel");
+    let general_channel_id = if let Some(channel) = db
+        .get_org_channels(zed_org_id)
+        .await
+        .expect("failed to fetch channels")
+        .iter()
+        .find(|c| c.name == "General")
+    {
+        channel.id
+    } else {
+        let channel_id = db
+            .create_org_channel(zed_org_id, "General")
+            .await
+            .expect("failed to insert channel");
+
+        let now = OffsetDateTime::now_utc();
+        let max_seconds = Duration::days(100).as_seconds_f64();
+        let mut timestamps = (0..1000)
+            .map(|_| now - Duration::seconds_f64(rng.gen_range(0_f64..=max_seconds)))
+            .collect::<Vec<_>>();
+        timestamps.sort();
+        for timestamp in timestamps {
+            let sender_id = *zed_user_ids.choose(&mut rng).unwrap();
+            let body = lipsum::lipsum_words(rng.gen_range(1..=50));
+            db.create_channel_message(channel_id, sender_id, &body, timestamp)
+                .await
+                .expect("failed to insert message");
+        }
+        channel_id
+    };
 
     for user_id in zed_user_ids {
-        sqlx::query(
-            r#"
-            INSERT INTO org_memberships
-                (org_id, user_id, admin)
-            VALUES
-                ($1, $2, true)
-            ON CONFLICT DO NOTHING
-            "#,
-        )
-        .bind(zed_org_id)
-        .bind(user_id)
-        .execute(&db)
-        .await
-        .expect("failed to insert org membership");
-
-        sqlx::query(
-            r#"
-            INSERT INTO channel_memberships
-                (channel_id, user_id, admin)
-            VALUES
-                ($1, $2, true)
-            ON CONFLICT DO NOTHING
-            "#,
-        )
-        .bind(general_channel_id)
-        .bind(user_id)
-        .execute(&db)
-        .await
-        .expect("failed to insert channel membership");
+        db.add_org_member(zed_org_id, user_id, true)
+            .await
+            .expect("failed to insert org membership");
+        db.add_channel_member(general_channel_id, user_id, true)
+            .await
+            .expect("failed to insert channel membership");
     }
 }

@@ -5,6 +5,10 @@ edition = "2018"
 name = "zed-server"
 version = "0.1.0"
 
+[[bin]]
+name = "seed"
+required-features = ["seed-support"]
+
 [dependencies]
 anyhow = "1.0.40"
 async-std = { version = "1.8.0", features = ["attributes"] }
@@ -19,6 +23,7 @@ futures = "0.3"
 handlebars = "3.5"
 http-auth-basic = "0.1.3"
 jwt-simple = "0.10.0"
+lipsum = { version = "0.8", optional = true }
 oauth2 = { version = "4.0.0", default_features = false }
 oauth2-surf = "0.1.1"
 parking_lot = "0.11.1"
@@ -46,6 +51,9 @@ features = ["runtime-async-std-rustls", "postgres", "time"]
 
 [dev-dependencies]
 gpui = { path = "../gpui" }
-zed = { path = "../zed", features = ["test-support"] }
 lazy_static = "1.4"
 serde_json = { version = "1.0.64", features = ["preserve_order"] }
+zed = { path = "../zed", features = ["test-support"] }
+
+[features]
+seed-support = ["lipsum"]
