@@ -70,10 +70,11 @@ impl Element for ConstrainedBox {
     fn paint(
         &mut self,
         bounds: RectF,
+        visible_bounds: RectF,
         _: &mut Self::LayoutState,
         cx: &mut PaintContext,
     ) -> Self::PaintState {
-        self.child.paint(bounds.origin(), cx);
+        self.child.paint(bounds.origin(), visible_bounds, cx);
     }
 
     fn dispatch_event(

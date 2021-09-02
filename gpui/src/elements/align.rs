@@ -1,9 +1,10 @@
 use crate::{
+    geometry::{rect::RectF, vector::Vector2F},
     json, DebugContext, Element, ElementBox, Event, EventContext, LayoutContext, PaintContext,
     SizeConstraint,
 };
 use json::ToJson;
-use pathfinder_geometry::vector::Vector2F;
+
 use serde_json::json;
 
 pub struct Align {
@@ -53,7 +54,8 @@ impl Element for Align {
 
     fn paint(
         &mut self,
-        bounds: pathfinder_geometry::rect::RectF,
+        bounds: RectF,
+        visible_bounds: RectF,
         _: &mut Self::LayoutState,
         cx: &mut PaintContext,
     ) -> Self::PaintState {
@@ -63,8 +65,11 @@ impl Element for Align {
         let child_center = self.child.size() / 2.;
         let child_target = child_center + child_center * self.alignment;
 
-        self.child
-            .paint(bounds.origin() - (child_target - my_target), cx);
+        self.child.paint(
+            bounds.origin() - (child_target - my_target),
+            visible_bounds,
+            cx,
+        );
     }
 
     fn dispatch_event(

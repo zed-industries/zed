@@ -230,12 +230,18 @@ impl Element for List {
         (size, scroll_top)
     }
 
-    fn paint(&mut self, bounds: RectF, scroll_top: &mut ListOffset, cx: &mut PaintContext) {
+    fn paint(
+        &mut self,
+        bounds: RectF,
+        visible_bounds: RectF,
+        scroll_top: &mut ListOffset,
+        cx: &mut PaintContext,
+    ) {
         cx.scene.push_layer(Some(bounds));
 
         let state = &mut *self.state.0.borrow_mut();
         for (mut element, origin) in state.visible_elements(bounds, scroll_top) {
-            element.paint(origin, cx);
+            element.paint(origin, visible_bounds, cx);
         }
 
         cx.scene.pop_layer();
@@ -832,7 +838,7 @@ mod tests {
             (self.size, ())
         }
 
-        fn paint(&mut self, _: RectF, _: &mut (), _: &mut PaintContext) {
+        fn paint(&mut self, _: RectF, _: RectF, _: &mut (), _: &mut PaintContext) {
             todo!()
         }
 

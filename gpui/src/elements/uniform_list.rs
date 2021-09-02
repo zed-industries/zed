@@ -165,6 +165,7 @@ where
     fn paint(
         &mut self,
         bounds: RectF,
+        visible_bounds: RectF,
         layout: &mut Self::LayoutState,
         cx: &mut PaintContext,
     ) -> Self::PaintState {
@@ -174,7 +175,7 @@ where
             bounds.origin() - vec2f(0.0, self.state.scroll_top() % layout.item_height);
 
         for item in &mut layout.items {
-            item.paint(item_origin, cx);
+            item.paint(item_origin, visible_bounds, cx);
             item_origin += vec2f(0.0, layout.item_height);
         }
 

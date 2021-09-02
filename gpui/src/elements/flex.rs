@@ -134,12 +134,13 @@ impl Element for Flex {
     fn paint(
         &mut self,
         bounds: RectF,
+        visible_bounds: RectF,
         _: &mut Self::LayoutState,
         cx: &mut PaintContext,
     ) -> Self::PaintState {
         let mut child_origin = bounds.origin();
         for child in &mut self.children {
-            child.paint(child_origin, cx);
+            child.paint(child_origin, visible_bounds, cx);
             match self.axis {
                 Axis::Horizontal => child_origin += vec2f(child.size().x(), 0.0),
                 Axis::Vertical => child_origin += vec2f(0.0, child.size().y()),
@@ -212,10 +213,11 @@ impl Element for Expanded {
     fn paint(
         &mut self,
         bounds: RectF,
+        visible_bounds: RectF,
         _: &mut Self::LayoutState,
         cx: &mut PaintContext,
     ) -> Self::PaintState {
-        self.child.paint(bounds.origin(), cx)
+        self.child.paint(bounds.origin(), visible_bounds, cx)
     }
 
     fn dispatch_event(

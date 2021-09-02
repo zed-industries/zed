@@ -76,6 +76,7 @@ impl Element for Text {
     fn paint(
         &mut self,
         bounds: RectF,
+        visible_bounds: RectF,
         layout: &mut Self::LayoutState,
         cx: &mut PaintContext,
     ) -> Self::PaintState {

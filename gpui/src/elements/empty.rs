@@ -42,6 +42,7 @@ impl Element for Empty {
     fn paint(
         &mut self,
         _: RectF,
+        _: RectF,
         _: &mut Self::LayoutState,
         _: &mut PaintContext,
     ) -> Self::PaintState {

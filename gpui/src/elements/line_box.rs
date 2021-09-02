@@ -48,18 +48,22 @@ impl Element for LineBox {
 
     fn paint(
         &mut self,
-        bounds: pathfinder_geometry::rect::RectF,
+        bounds: RectF,
+        visible_bounds: RectF,
         padding_top: &mut f32,
         cx: &mut PaintContext,
     ) -> Self::PaintState {
-        self.child
-            .paint(bounds.origin() + vec2f(0., *padding_top), cx);
+        self.child.paint(
+            bounds.origin() + vec2f(0., *padding_top),
+            visible_bounds,
+            cx,
+        );
     }
 
     fn dispatch_event(
         &mut self,
         event: &Event,
-        _: pathfinder_geometry::rect::RectF,
+        _: RectF,
         _: &mut Self::LayoutState,
         _: &mut Self::PaintState,
         cx: &mut EventContext,

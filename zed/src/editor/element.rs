@@ -559,6 +559,7 @@ impl Element for EditorElement {
     fn paint(
         &mut self,
         bounds: RectF,
+        _: RectF,
         layout: &mut Self::LayoutState,
         cx: &mut PaintContext,
     ) -> Self::PaintState {

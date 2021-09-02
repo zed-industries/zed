@@ -2,6 +2,7 @@ use crate::{
     app::{AppContext, MutableAppContext, WindowInvalidation},
     elements::Element,
     font_cache::FontCache,
+    geometry::rect::RectF,
     json::{self, ToJson},
     platform::Event,
     text_layout::TextLayoutCache,
@@ -111,7 +112,11 @@ impl Presenter {
                 rendered_views: &mut self.rendered_views,
                 app: cx.as_ref(),
             };
-            paint_cx.paint(root_view_id, Vector2F::zero());
+            paint_cx.paint(
+                root_view_id,
+                Vector2F::zero(),
+                RectF::new(Vector2F::zero(), window_size),
+            );
             self.text_layout_cache.finish_frame();
 
             if let Some(event) = self.last_mouse_moved_event.clone() {
@@ -273,9 +278,9 @@ pub struct PaintContext<'a> {
 }
 
 impl<'a> PaintContext<'a> {
-    fn paint(&mut self, view_id: usize, origin: Vector2F) {
+    fn paint(&mut self, view_id: usize, origin: Vector2F, visible_bounds: RectF) {
         if let Some(mut tree) = self.rendered_views.remove(&view_id) {
-            tree.paint(origin, self);
+            tree.paint(origin, visible_bounds, self);
             self.rendered_views.insert(view_id, tree);
         }
     }
@@ -455,17 +460,18 @@ impl Element for ChildView {
 
     fn paint(
         &mut self,
-        bounds: pathfinder_geometry::rect::RectF,
+        bounds: RectF,
+        visible_bounds: RectF,
         _: &mut Self::LayoutState,
         cx: &mut PaintContext,
     ) -> Self::PaintState {
-        cx.paint(self.view_id, bounds.origin());
+        cx.paint(self.view_id, bounds.origin(), visible_bounds);
     }
 
     fn dispatch_event(
         &mut self,
         event: &Event,
-        _: pathfinder_geometry::rect::RectF,
+        _: RectF,
         _: &mut Self::LayoutState,
         _: &mut Self::PaintState,
         cx: &mut EventContext,
@@ -475,7 +481,7 @@ impl Element for ChildView {
 
     fn debug(
         &self,
-        bounds: pathfinder_geometry::rect::RectF,
+        bounds: RectF,
         _: &Self::LayoutState,
         _: &Self::PaintState,
         cx: &DebugContext,

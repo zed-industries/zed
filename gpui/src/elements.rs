@@ -50,7 +50,7 @@ use std::{
 
 trait AnyElement {
     fn layout(&mut self, constraint: SizeConstraint, cx: &mut LayoutContext) -> Vector2F;
-    fn paint(&mut self, origin: Vector2F, cx: &mut PaintContext);
+    fn paint(&mut self, origin: Vector2F, visible_bounds: RectF, cx: &mut PaintContext);
     fn dispatch_event(&mut self, event: &Event, cx: &mut EventContext) -> bool;
     fn debug(&self, cx: &DebugContext) -> serde_json::Value;
 
@@ -71,6 +71,7 @@ pub trait Element {
     fn paint(
         &mut self,
         bounds: RectF,
+        visible_bounds: RectF,
         layout: &mut Self::LayoutState,
         cx: &mut PaintContext,
     ) -> Self::PaintState;
@@ -168,7 +169,7 @@ impl<T: Element> AnyElement for Lifecycle<T> {
         result
     }
 
-    fn paint(&mut self, origin: Vector2F, cx: &mut PaintContext) {
+    fn paint(&mut self, origin: Vector2F, visible_bounds: RectF, cx: &mut PaintContext) {
         *self = match mem::take(self) {
             Lifecycle::PostLayout {
                 mut element,
@@ -177,7 +178,10 @@ impl<T: Element> AnyElement for Lifecycle<T> {
                 mut layout,
             } => {
                 let bounds = RectF::new(origin, size);
-                let paint = element.paint(bounds, &mut layout, cx);
+                let visible_bounds = visible_bounds
+                    .intersection(bounds)
+                    .unwrap_or_else(|| RectF::new(bounds.origin(), Vector2F::default()));
+                let paint = element.paint(bounds, visible_bounds, &mut layout, cx);
                 Lifecycle::PostPaint {
                     element,
                     constraint,
@@ -194,7 +198,10 @@ impl<T: Element> AnyElement for Lifecycle<T> {
                 ..
             } => {
                 let bounds = RectF::new(origin, bounds.size());
-                let paint = element.paint(bounds, &mut layout, cx);
+                let visible_bounds = visible_bounds
+                    .intersection(bounds)
+                    .unwrap_or_else(|| RectF::new(bounds.origin(), Vector2F::default()));
+                let paint = element.paint(bounds, visible_bounds, &mut layout, cx);
                 Lifecycle::PostPaint {
                     element,
                     constraint,
@@ -305,8 +312,8 @@ impl ElementRc {
         self.element.borrow_mut().layout(constraint, cx)
     }
 
-    pub fn paint(&mut self, origin: Vector2F, cx: &mut PaintContext) {
-        self.element.borrow_mut().paint(origin, cx);
+    pub fn paint(&mut self, origin: Vector2F, visible_bounds: RectF, cx: &mut PaintContext) {
+        self.element.borrow_mut().paint(origin, visible_bounds, cx);
     }
 
     pub fn dispatch_event(&mut self, event: &Event, cx: &mut EventContext) -> bool {

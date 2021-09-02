@@ -65,7 +65,13 @@ impl Element for Svg {
         }
     }
 
-    fn paint(&mut self, bounds: RectF, svg: &mut Self::LayoutState, cx: &mut PaintContext) {
+    fn paint(
+        &mut self,
+        bounds: RectF,
+        _visible_bounds: RectF,
+        svg: &mut Self::LayoutState,
+        cx: &mut PaintContext,
+    ) {
         if let Some(svg) = svg.clone() {
             cx.scene.push_icon(scene::Icon {
                 bounds,

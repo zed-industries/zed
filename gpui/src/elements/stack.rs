@@ -36,12 +36,13 @@ impl Element for Stack {
     fn paint(
         &mut self,
         bounds: RectF,
+        visible_bounds: RectF,
         _: &mut Self::LayoutState,
         cx: &mut PaintContext,
     ) -> Self::PaintState {
         for child in &mut self.children {
             cx.scene.push_layer(None);
-            child.paint(bounds.origin(), cx);
+            child.paint(bounds.origin(), visible_bounds, cx);
             cx.scene.pop_layer();
         }
     }

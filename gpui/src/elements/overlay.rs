@@ -27,10 +27,16 @@ impl Element for Overlay {
         (Vector2F::zero(), size)
     }
 
-    fn paint(&mut self, bounds: RectF, size: &mut Self::LayoutState, cx: &mut PaintContext) {
+    fn paint(
+        &mut self,
+        bounds: RectF,
+        visible_bounds: RectF,
+        size: &mut Self::LayoutState,
+        cx: &mut PaintContext,
+    ) {
         let bounds = RectF::new(bounds.origin(), *size);
         cx.scene.push_stacking_context(None);
-        self.child.paint(bounds.origin(), cx);
+        self.child.paint(bounds.origin(), visible_bounds, cx);
         cx.scene.pop_stacking_context();
     }
 

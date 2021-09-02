@@ -49,6 +49,7 @@ impl gpui::Element for TextElement {
     fn paint(
         &mut self,
         bounds: RectF,
+        _: RectF,
         _: &mut Self::LayoutState,
         cx: &mut gpui::PaintContext,
     ) -> Self::PaintState {

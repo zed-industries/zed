@@ -169,6 +169,7 @@ impl Element for Container {
     fn paint(
         &mut self,
         bounds: RectF,
+        visible_bounds: RectF,
         _: &mut Self::LayoutState,
         cx: &mut PaintContext,
     ) -> Self::PaintState {
@@ -198,7 +199,7 @@ impl Element for Container {
                 self.style.border.left_width(),
                 self.style.border.top_width(),
             );
-        self.child.paint(child_origin, cx);
+        self.child.paint(child_origin, visible_bounds, cx);
     }
 
     fn dispatch_event(

@@ -336,7 +336,7 @@ impl Pane {
         } else {
             let diameter = 8.;
             ConstrainedBox::new(
-                Canvas::new(move |bounds, cx| {
+                Canvas::new(move |bounds, _, cx| {
                     if let Some(current_color) = current_color {
                         let square = RectF::new(bounds.origin(), vec2f(diameter, diameter));
                         cx.scene.push_quad(Quad {

@@ -128,6 +128,7 @@ impl Element for Label {
     fn paint(
         &mut self,
         bounds: RectF,
+        visible_bounds: RectF,
         line: &mut Self::LayoutState,
         cx: &mut PaintContext,
     ) -> Self::PaintState {
