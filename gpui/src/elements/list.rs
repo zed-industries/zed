@@ -321,6 +321,7 @@ impl ListState {
 
     pub fn reset(&self, element_count: usize) {
         let state = &mut *self.0.borrow_mut();
+        state.rendered_range = 0..0;
         state.logical_scroll_top = None;
         state.items = SumTree::new();
         state
