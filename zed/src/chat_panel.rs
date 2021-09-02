@@ -99,6 +99,18 @@ impl ChatPanel {
             this.init_active_channel(cx);
         })
         .detach();
+        cx.observe(&this.channel_select, |this, channel_select, cx| {
+            let selected_ix = channel_select.read(cx).selected_index();
+            let selected_channel = this.channel_list.update(cx, |channel_list, cx| {
+                let available_channels = channel_list.available_channels()?;
+                let channel_id = available_channels.get(selected_ix)?.id;
+                channel_list.get_channel(channel_id, cx)
+            });
+            if let Some(selected_channel) = selected_channel {
+                this.set_active_channel(selected_channel, cx);
+            }
+        })
+        .detach();
 
         this
     }

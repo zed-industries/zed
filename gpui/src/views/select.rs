@@ -75,6 +75,10 @@ impl Select {
         self.is_open = false;
         cx.notify();
     }
+
+    pub fn selected_index(&self) -> usize {
+        self.selected_item_ix
+    }
 }
 
 impl Entity for Select {
