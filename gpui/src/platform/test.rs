@@ -9,6 +9,7 @@ use std::{
     rc::Rc,
     sync::Arc,
 };
+use time::UtcOffset;
 
 pub struct Platform {
     dispatcher: Arc<dyn super::Dispatcher>,
@@ -135,6 +136,10 @@ impl super::Platform for Platform {
 
     fn set_cursor_style(&self, style: CursorStyle) {
         *self.cursor.lock() = style;
+    }
+
+    fn local_timezone(&self) -> UtcOffset {
+        UtcOffset::UTC
     }
 }
 

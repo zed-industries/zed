@@ -49,7 +49,7 @@ smallvec = { version = "1.6", features = ["union"] }
 smol = "1.2.5"
 surf = "2.2"
 tempdir = { version = "0.3.7", optional = true }
-time = { version = "0.3", features = ["local-offset"] }
+time = { version = "0.3" }
 tiny_http = "0.8"
 toml = "0.5"
 tree-sitter = "0.19.5"

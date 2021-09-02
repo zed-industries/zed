@@ -42,6 +42,7 @@ use std::{
     slice, str,
     sync::Arc,
 };
+use time::UtcOffset;
 
 const MAC_PLATFORM_IVAR: &'static str = "platform";
 static mut APP_CLASS: *const Class = ptr::null();
@@ -556,6 +557,14 @@ impl platform::Platform for MacPlatform {
                 CursorStyle::PointingHand => msg_send![class!(NSCursor), pointingHandCursor],
             };
             let _: () = msg_send![cursor, set];
+        }
+    }
+
+    fn local_timezone(&self) -> UtcOffset {
+        unsafe {
+            let local_timezone: id = msg_send![class!(NSTimeZone), localTimeZone];
+            let seconds_from_gmt: NSInteger = msg_send![local_timezone, secondsFromGMT];
+            UtcOffset::from_whole_seconds(seconds_from_gmt.try_into().unwrap()).unwrap()
         }
     }
 }

@@ -25,6 +25,7 @@ pub struct ChatPanel {
     input_editor: ViewHandle<Editor>,
     channel_select: ViewHandle<Select>,
     settings: watch::Receiver<Settings>,
+    local_timezone: UtcOffset,
 }
 
 pub enum Event {}
@@ -94,6 +95,7 @@ impl ChatPanel {
             input_editor,
             channel_select,
             settings,
+            local_timezone: cx.platform().local_timezone(),
         };
 
         this.init_active_channel(cx);
@@ -204,7 +206,7 @@ impl ChatPanel {
                         .with_child(
                             Container::new(
                                 Label::new(
-                                    format_timestamp(message.timestamp, now),
+                                    format_timestamp(message.timestamp, now, self.local_timezone),
                                     theme.timestamp.text.clone(),
                                 )
                                 .boxed(),
@@ -314,10 +316,13 @@ impl View for ChatPanel {
     }
 }
 
-fn format_timestamp(mut timestamp: OffsetDateTime, mut now: OffsetDateTime) -> String {
-    let local_offset = UtcOffset::current_local_offset().unwrap_or(UtcOffset::UTC);
-    timestamp = timestamp.to_offset(local_offset);
-    now = now.to_offset(local_offset);
+fn format_timestamp(
+    mut timestamp: OffsetDateTime,
+    mut now: OffsetDateTime,
+    local_timezone: UtcOffset,
+) -> String {
+    timestamp = timestamp.to_offset(local_timezone);
+    now = now.to_offset(local_timezone);
 
     let today = now.date();
     let date = timestamp.date();

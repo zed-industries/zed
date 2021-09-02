@@ -2187,6 +2187,7 @@ dependencies = [
  "simplelog",
  "smallvec",
  "smol",
+ "time 0.3.2",
  "tiny-skia",
  "tree-sitter",
  "usvg",

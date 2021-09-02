@@ -26,6 +26,7 @@ use std::{
     rc::Rc,
     sync::Arc,
 };
+use time::UtcOffset;
 
 pub trait Platform: Send + Sync {
     fn dispatcher(&self) -> Arc<dyn Dispatcher>;
@@ -49,6 +50,8 @@ pub trait Platform: Send + Sync {
     fn read_credentials(&self, url: &str) -> Option<(String, Vec<u8>)>;
 
     fn set_cursor_style(&self, style: CursorStyle);
+
+    fn local_timezone(&self) -> UtcOffset;
 }
 
 pub(crate) trait ForegroundPlatform {
