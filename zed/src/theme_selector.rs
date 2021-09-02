@@ -25,7 +25,7 @@ pub struct ThemeSelector {
     settings: watch::Receiver<Settings>,
     registry: Arc<ThemeRegistry>,
     matches: Vec<StringMatch>,
-    query_buffer: ViewHandle<Editor>,
+    query_editor: ViewHandle<Editor>,
     list_state: UniformListState,
     selected_index: usize,
 }
@@ -60,15 +60,21 @@ impl ThemeSelector {
         registry: Arc<ThemeRegistry>,
         cx: &mut ViewContext<Self>,
     ) -> Self {
-        let query_buffer = cx.add_view(|cx| Editor::single_line(settings.clone(), cx));
-        cx.subscribe(&query_buffer, Self::on_query_editor_event)
+        let query_editor = cx.add_view(|cx| {
+            Editor::single_line(settings.clone(), cx).with_style({
+                let settings = settings.clone();
+                move |_| settings.borrow().theme.selector.input_editor.as_editor()
+            })
+        });
+
+        cx.subscribe(&query_editor, Self::on_query_editor_event)
             .detach();
 
         let mut this = Self {
             settings,
             settings_tx,
             registry,
-            query_buffer,
+            query_editor,
             matches: Vec::new(),
             list_state: Default::default(),
             selected_index: 0,
@@ -151,7 +157,7 @@ impl ThemeSelector {
                 string: name,
             })
             .collect::<Vec<_>>();
-        let query = self.query_buffer.update(cx, |buffer, cx| buffer.text(cx));
+        let query = self.query_editor.update(cx, |buffer, cx| buffer.text(cx));
 
         self.matches = if query.is_empty() {
             candidates
@@ -276,7 +282,7 @@ impl View for ThemeSelector {
             ConstrainedBox::new(
                 Container::new(
                     Flex::new(Axis::Vertical)
-                        .with_child(ChildView::new(self.query_buffer.id()).boxed())
+                        .with_child(ChildView::new(self.query_editor.id()).boxed())
                         .with_child(Expanded::new(1.0, self.render_matches(cx)).boxed())
                         .boxed(),
                 )
@@ -292,7 +298,7 @@ impl View for ThemeSelector {
     }
 
     fn on_focus(&mut self, cx: &mut ViewContext<Self>) {
-        cx.focus(&self.query_buffer);
+        cx.focus(&self.query_editor);
     }
 
     fn keymap_context(&self, _: &AppContext) -> keymap::Context {

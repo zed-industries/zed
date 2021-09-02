@@ -46,7 +46,12 @@ impl ChatPanel {
         settings: watch::Receiver<Settings>,
         cx: &mut ViewContext<Self>,
     ) -> Self {
-        let input_editor = cx.add_view(|cx| Editor::auto_height(settings.clone(), cx));
+        let input_editor = cx.add_view(|cx| {
+            Editor::auto_height(settings.clone(), cx).with_style({
+                let settings = settings.clone();
+                move |_| settings.borrow().theme.chat_panel.input_editor.as_editor()
+            })
+        });
         let channel_select = cx.add_view(|cx| {
             let channel_list = channel_list.clone();
             Select::new(0, cx, {

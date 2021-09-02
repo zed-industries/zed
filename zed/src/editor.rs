@@ -2397,6 +2397,7 @@ impl Snapshot {
     pub fn layout_lines(
         &mut self,
         mut rows: Range<u32>,
+        style: &EditorStyle,
         font_cache: &FontCache,
         layout_cache: &TextLayoutCache,
     ) -> Result<Vec<text_layout::Line>> {
@@ -2433,7 +2434,11 @@ impl Snapshot {
                 }
 
                 if !line_chunk.is_empty() && !line_exceeded_max_len {
-                    let style = self.theme.syntax.highlight_style(style_ix);
+                    let style = self
+                        .theme
+                        .syntax
+                        .highlight_style(style_ix)
+                        .unwrap_or(style.text.clone());
                     // Avoid a lookup if the font properties match the previous ones.
                     let font_id = if style.font_properties == prev_font_properties {
                         prev_font_id

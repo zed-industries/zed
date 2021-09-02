@@ -65,6 +65,11 @@ corner_radius = 6
 border = { color = "#000000", width = 1 }
 background = "$surface.0"
 
+[chat_panel.input_editor]
+text = "$text.1.color"
+background = "$surface.1"
+selection = "$selection.host"
+
 [selector]
 background = "$surface.2"
 text = "$text.0"
@@ -72,6 +77,7 @@ padding = 6
 margin.top = 12
 corner_radius = 6
 shadow = { offset = [0, 0], blur = 12, color = "#00000088" }
+input_editor = "$chat_panel.input_editor"
 
 [selector.item]
 background = "#424344"
@@ -85,15 +91,11 @@ extends = "$selector.item"
 background = "#094771"
 
 [editor]
+text = "$text.1.color"
 background = "$surface.1"
 gutter_background = "$surface.1"
 active_line_background = "$surface.2"
 line_number = "$text.2.color"
 line_number_active = "$text.0.color"
-replicas = [
-    { selection = "#264f78", cursor = "$text.0.color" },
-    { selection = "#504f31", cursor = "#fcf154" },
-]
-
-[syntax]
-default = "$text.1.color"
+selection = "$selection.host"
+guest_selections = "$selection.guests"

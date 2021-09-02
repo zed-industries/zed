@@ -69,7 +69,6 @@ mod tests {
     #[test]
     fn test_highlight_map() {
         let theme = SyntaxTheme::new(
-            Default::default(),
             [
                 ("function", Color::from_u32(0x100000ff)),
                 ("function.method", Color::from_u32(0x200000ff)),

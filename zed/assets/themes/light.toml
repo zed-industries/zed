@@ -12,6 +12,10 @@ base = { family = "Helvetica", size = 14.0 }
 1 = { extends = "$text.base", color = "#111111" }
 2 = { extends = "$text.base", color = "#333333" }
 
+[selection]
+host = { selection = "#264f78", cursor = "$text.0.color" }
+guests = [{ selection = "#504f31", cursor = "#fcf154" }]
+
 [status]
 good = "#4fac63"
 info = "#3c5dd4"

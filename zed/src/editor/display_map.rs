@@ -661,13 +661,10 @@ mod tests {
             (function_item name: (identifier) @fn.name)"#,
         )
         .unwrap();
-        let theme = SyntaxTheme::new(
-            Default::default(),
-            vec![
-                ("mod.body".to_string(), Color::from_u32(0xff0000ff).into()),
-                ("fn.name".to_string(), Color::from_u32(0x00ff00ff).into()),
-            ],
-        );
+        let theme = SyntaxTheme::new(vec![
+            ("mod.body".to_string(), Color::from_u32(0xff0000ff).into()),
+            ("fn.name".to_string(), Color::from_u32(0x00ff00ff).into()),
+        ]);
         let lang = Arc::new(Language {
             config: LanguageConfig {
                 name: "Test".to_string(),
@@ -754,13 +751,10 @@ mod tests {
             (function_item name: (identifier) @fn.name)"#,
         )
         .unwrap();
-        let theme = SyntaxTheme::new(
-            Default::default(),
-            vec![
-                ("mod.body".to_string(), Color::from_u32(0xff0000ff).into()),
-                ("fn.name".to_string(), Color::from_u32(0x00ff00ff).into()),
-            ],
-        );
+        let theme = SyntaxTheme::new(vec![
+            ("mod.body".to_string(), Color::from_u32(0xff0000ff).into()),
+            ("fn.name".to_string(), Color::from_u32(0x00ff00ff).into()),
+        ]);
         let lang = Arc::new(Language {
             config: LanguageConfig {
                 name: "Test".to_string(),

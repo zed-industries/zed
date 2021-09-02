@@ -280,7 +280,12 @@ impl EditorElement {
         let content_origin = bounds.origin() + layout.text_offset;
 
         for (replica_id, selections) in &layout.selections {
-            let replica_theme = theme.replicas[*replica_id as usize % theme.replicas.len()];
+            let style_ix = *replica_id as usize % (theme.guest_selections.len() + 1);
+            let style = if style_ix == 0 {
+                &theme.selection
+            } else {
+                &theme.guest_selections[style_ix - 1]
+            };
 
             for selection in selections {
                 if selection.start != selection.end {
@@ -294,7 +299,7 @@ impl EditorElement {
                     };
 
                     let selection = Selection {
-                        color: replica_theme.selection,
+                        color: style.selection,
                         line_height: layout.line_height,
                         start_y: content_origin.y() + row_range.start as f32 * layout.line_height
                             - scroll_top,
@@ -337,7 +342,7 @@ impl EditorElement {
                             - scroll_left;
                         let y = selection.end.row() as f32 * layout.line_height - scroll_top;
                         cursors.push(Cursor {
-                            color: replica_theme.cursor,
+                            color: style.cursor,
                             origin: content_origin + vec2f(x, y),
                             line_height: layout.line_height,
                         });
@@ -507,8 +512,12 @@ impl Element for EditorElement {
         };
 
         let mut max_visible_line_width = 0.0;
-        let line_layouts = match snapshot.layout_lines(start_row..end_row, font_cache, layout_cache)
-        {
+        let line_layouts = match snapshot.layout_lines(
+            start_row..end_row,
+            &self.style,
+            font_cache,
+            layout_cache,
+        ) {
             Err(error) => {
                 log::error!("error laying out lines: {}", error);
                 return (size, None);

@@ -30,7 +30,7 @@ pub struct FileFinder {
     handle: WeakViewHandle<Self>,
     settings: watch::Receiver<Settings>,
     workspace: WeakViewHandle<Workspace>,
-    query_buffer: ViewHandle<Editor>,
+    query_editor: ViewHandle<Editor>,
     search_count: usize,
     latest_search_id: usize,
     latest_search_did_cancel: bool,
@@ -86,7 +86,7 @@ impl View for FileFinder {
             ConstrainedBox::new(
                 Container::new(
                     Flex::new(Axis::Vertical)
-                        .with_child(ChildView::new(self.query_buffer.id()).boxed())
+                        .with_child(ChildView::new(self.query_editor.id()).boxed())
                         .with_child(Expanded::new(1.0, self.render_matches()).boxed())
                         .boxed(),
                 )
@@ -102,7 +102,7 @@ impl View for FileFinder {
     }
 
     fn on_focus(&mut self, cx: &mut ViewContext<Self>) {
-        cx.focus(&self.query_buffer);
+        cx.focus(&self.query_editor);
     }
 
     fn keymap_context(&self, _: &AppContext) -> keymap::Context {
@@ -266,15 +266,20 @@ impl FileFinder {
     ) -> Self {
         cx.observe(&workspace, Self::workspace_updated).detach();
 
-        let query_buffer = cx.add_view(|cx| Editor::single_line(settings.clone(), cx));
-        cx.subscribe(&query_buffer, Self::on_query_editor_event)
+        let query_editor = cx.add_view(|cx| {
+            Editor::single_line(settings.clone(), cx).with_style({
+                let settings = settings.clone();
+                move |_| settings.borrow().theme.selector.input_editor.as_editor()
+            })
+        });
+        cx.subscribe(&query_editor, Self::on_query_editor_event)
             .detach();
 
         Self {
             handle: cx.handle().downgrade(),
             settings,
             workspace: workspace.downgrade(),
-            query_buffer,
+            query_editor,
             search_count: 0,
             latest_search_id: 0,
             latest_search_did_cancel: false,
@@ -287,7 +292,7 @@ impl FileFinder {
     }
 
     fn workspace_updated(&mut self, _: ViewHandle<Workspace>, cx: &mut ViewContext<Self>) {
-        let query = self.query_buffer.update(cx, |buffer, cx| buffer.text(cx));
+        let query = self.query_editor.update(cx, |buffer, cx| buffer.text(cx));
         if let Some(task) = self.spawn_search(query, cx) {
             task.detach();
         }
@@ -301,7 +306,7 @@ impl FileFinder {
     ) {
         match event {
             editor::Event::Edited => {
-                let query = self.query_buffer.update(cx, |buffer, cx| buffer.text(cx));
+                let query = self.query_editor.update(cx, |buffer, cx| buffer.text(cx));
                 if query.is_empty() {
                     self.latest_search_id = util::post_inc(&mut self.search_count);
                     self.matches.clear();
@@ -460,7 +465,7 @@ mod tests {
                 .downcast::<FileFinder>()
                 .unwrap()
         });
-        let query_buffer = cx.read(|cx| finder.read(cx).query_buffer.clone());
+        let query_buffer = cx.read(|cx| finder.read(cx).query_editor.clone());
 
         let chain = vec![finder.id(), query_buffer.id()];
         cx.dispatch_action(window_id, chain.clone(), Insert("b".into()));
