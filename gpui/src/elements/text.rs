@@ -82,13 +82,24 @@ impl Element for Text {
     ) -> Self::PaintState {
         let mut origin = bounds.origin();
         for (line, wrap_boundaries) in &layout.lines {
-            line.paint_wrapped(
+            let wrapped_line_boundaries = RectF::new(
                 origin,
-                layout.line_height,
-                wrap_boundaries.iter().copied(),
-                cx,
+                vec2f(
+                    bounds.width(),
+                    (wrap_boundaries.len() + 1) as f32 * layout.line_height,
+                ),
             );
-            origin.set_y(origin.y() + (wrap_boundaries.len() + 1) as f32 * layout.line_height);
+
+            if wrapped_line_boundaries.intersects(visible_bounds) {
+                line.paint_wrapped(
+                    origin,
+                    visible_bounds,
+                    layout.line_height,
+                    wrap_boundaries.iter().copied(),
+                    cx,
+                );
+            }
+            origin.set_y(wrapped_line_boundaries.max_y());
         }
     }
 

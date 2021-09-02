@@ -253,6 +253,7 @@ impl Line {
     pub fn paint_wrapped(
         &self,
         origin: Vector2F,
+        visible_bounds: RectF,
         line_height: f32,
         boundaries: impl IntoIterator<Item = ShapedBoundary>,
         cx: &mut PaintContext,
@@ -287,13 +288,20 @@ impl Line {
                     }
                 }
 
-                cx.scene.push_glyph(scene::Glyph {
-                    font_id: run.font_id,
-                    font_size: self.layout.font_size,
-                    id: glyph.id,
-                    origin: origin + glyph_origin,
-                    color,
-                });
+                let glyph_bounds = RectF::new(
+                    origin + glyph_origin,
+                    cx.font_cache
+                        .bounding_box(run.font_id, self.layout.font_size),
+                );
+                if glyph_bounds.intersects(visible_bounds) {
+                    cx.scene.push_glyph(scene::Glyph {
+                        font_id: run.font_id,
+                        font_size: self.layout.font_size,
+                        id: glyph.id,
+                        origin: origin + glyph_origin,
+                        color,
+                    });
+                }
             }
         }
     }
