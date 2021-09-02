@@ -10,7 +10,7 @@ use gpui::{
 };
 use postage::prelude::Stream;
 use std::{
-    collections::{hash_map, HashMap, HashSet},
+    collections::{HashMap, HashSet},
     ops::Range,
     sync::Arc,
 };
@@ -139,25 +139,16 @@ impl ChannelList {
         id: u64,
         cx: &mut MutableAppContext,
     ) -> Option<ModelHandle<Channel>> {
-        match self.channels.entry(id) {
-            hash_map::Entry::Occupied(entry) => entry.get().upgrade(cx),
-            hash_map::Entry::Vacant(entry) => {
-                if let Some(details) = self
-                    .available_channels
-                    .as_ref()
-                    .and_then(|channels| channels.iter().find(|details| details.id == id))
-                {
-                    let user_store = self.user_store.clone();
-                    let rpc = self.rpc.clone();
-                    let channel =
-                        cx.add_model(|cx| Channel::new(details.clone(), user_store, rpc, cx));
-                    entry.insert(channel.downgrade());
-                    Some(channel)
-                } else {
-                    None
-                }
-            }
+        if let Some(channel) = self.channels.get(&id).and_then(|c| c.upgrade(cx)) {
+            return Some(channel);
         }
+
+        let channels = self.available_channels.as_ref()?;
+        let details = channels.iter().find(|details| details.id == id)?.clone();
+        let channel =
+            cx.add_model(|cx| Channel::new(details, self.user_store.clone(), self.rpc.clone(), cx));
+        self.channels.insert(id, channel.downgrade());
+        Some(channel)
     }
 }
 
