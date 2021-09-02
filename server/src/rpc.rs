@@ -695,25 +695,27 @@ impl Server {
             .create_channel_message(channel_id, user_id, &body, timestamp)
             .await?
             .to_proto();
-        let message = proto::ChannelMessageSent {
-            channel_id: channel_id.to_proto(),
-            message: Some(proto::ChannelMessage {
-                sender_id: user_id.to_proto(),
-                id: message_id,
-                body,
-                timestamp: timestamp.unix_timestamp() as u64,
-            }),
+        let message = proto::ChannelMessage {
+            sender_id: user_id.to_proto(),
+            id: message_id,
+            body,
+            timestamp: timestamp.unix_timestamp() as u64,
         };
         broadcast(request.sender_id, connection_ids, |conn_id| {
-            self.peer.send(conn_id, message.clone())
+            self.peer.send(
+                conn_id,
+                proto::ChannelMessageSent {
+                    channel_id: channel_id.to_proto(),
+                    message: Some(message.clone()),
+                },
+            )
         })
         .await?;
         self.peer
             .respond(
                 receipt,
                 proto::SendChannelMessageResponse {
-                    message_id,
-                    timestamp: timestamp.unix_timestamp() as u64,
+                    message: Some(message),
                 },
             )
             .await?;
@@ -1649,12 +1651,9 @@ mod tests {
             .unwrap_err();
 
         // Messages aren't allowed to be blank.
-        channel_a
-            .update(&mut cx_a, |channel, cx| {
-                channel.send_message(String::new(), cx).unwrap()
-            })
-            .await
-            .unwrap_err();
+        channel_a.update(&mut cx_a, |channel, cx| {
+            channel.send_message(String::new(), cx).unwrap_err()
+        });
 
         // Leading and trailing whitespace are trimmed.
         channel_a

@@ -158,8 +158,7 @@ message SendChannelMessage {
 }
 
 message SendChannelMessageResponse {
-    uint64 message_id = 1;
-    uint64 timestamp = 2;
+    ChannelMessage message = 1;
 }
 
 message ChannelMessageSent {

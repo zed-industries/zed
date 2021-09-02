@@ -225,7 +225,6 @@ impl Channel {
         }
 
         let channel_id = self.details.id;
-        let current_user_id = self.current_user_id()?;
         let local_id = self.next_local_message_id;
         self.next_local_message_id += 1;
         self.pending_messages.push(PendingChannelMessage {
@@ -237,28 +236,18 @@ impl Channel {
         Ok(cx.spawn(|this, mut cx| async move {
             let request = rpc.request(proto::SendChannelMessage { channel_id, body });
             let response = request.await?;
-            let sender = user_store.get_user(current_user_id).await?;
-
+            let message = ChannelMessage::from_proto(
+                response.message.ok_or_else(|| anyhow!("invalid message"))?,
+                &user_store,
+            )
+            .await?;
             this.update(&mut cx, |this, cx| {
                 if let Ok(i) = this
                     .pending_messages
                     .binary_search_by_key(&local_id, |msg| msg.local_id)
                 {
-                    let body = this.pending_messages.remove(i).body;
-                    this.insert_messages(
-                        SumTree::from_item(
-                            ChannelMessage {
-                                id: response.message_id,
-                                timestamp: OffsetDateTime::from_unix_timestamp(
-                                    response.timestamp as i64,
-                                )?,
-                                body,
-                                sender,
-                            },
-                            &(),
-                        ),
-                        cx,
-                    );
+                    this.pending_messages.remove(i);
+                    this.insert_messages(SumTree::from_item(message, &()), cx);
                 }
                 Ok(())
             })
@@ -318,13 +307,6 @@ impl Channel {
 
     pub fn pending_messages(&self) -> &[PendingChannelMessage] {
         &self.pending_messages
-    }
-
-    fn current_user_id(&self) -> Result<u64> {
-        self.rpc
-            .user_id()
-            .borrow()
-            .ok_or_else(|| anyhow!("not logged in"))
     }
 
     fn handle_message_sent(
