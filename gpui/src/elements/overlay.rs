@@ -30,13 +30,13 @@ impl Element for Overlay {
     fn paint(
         &mut self,
         bounds: RectF,
-        visible_bounds: RectF,
+        _: RectF,
         size: &mut Self::LayoutState,
         cx: &mut PaintContext,
     ) {
         let bounds = RectF::new(bounds.origin(), *size);
         cx.scene.push_stacking_context(None);
-        self.child.paint(bounds.origin(), visible_bounds, cx);
+        self.child.paint(bounds.origin(), bounds, cx);
         cx.scene.pop_stacking_context();
     }
 
