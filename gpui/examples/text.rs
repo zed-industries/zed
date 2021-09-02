@@ -49,7 +49,7 @@ impl gpui::Element for TextElement {
     fn paint(
         &mut self,
         bounds: RectF,
-        _: RectF,
+        visible_bounds: RectF,
         _: &mut Self::LayoutState,
         cx: &mut gpui::PaintContext,
     ) -> Self::PaintState {
@@ -84,11 +84,11 @@ impl gpui::Element for TextElement {
         );
 
         cx.scene.push_quad(Quad {
-            bounds: bounds,
+            bounds,
             background: Some(Color::white()),
             ..Default::default()
         });
-        line.paint(bounds.origin(), bounds, cx);
+        line.paint(bounds.origin(), visible_bounds, bounds.height(), cx);
     }
 
     fn dispatch_event(

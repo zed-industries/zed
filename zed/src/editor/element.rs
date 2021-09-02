@@ -234,25 +234,33 @@ impl EditorElement {
         }
     }
 
-    fn paint_gutter(&mut self, rect: RectF, layout: &LayoutState, cx: &mut PaintContext) {
+    fn paint_gutter(
+        &mut self,
+        bounds: RectF,
+        visible_bounds: RectF,
+        layout: &LayoutState,
+        cx: &mut PaintContext,
+    ) {
         let scroll_top = layout.snapshot.scroll_position().y() * layout.line_height;
         for (ix, line) in layout.line_number_layouts.iter().enumerate() {
             if let Some(line) = line {
-                let line_origin = rect.origin()
+                let line_origin = bounds.origin()
                     + vec2f(
-                        rect.width() - line.width() - layout.gutter_padding,
+                        bounds.width() - line.width() - layout.gutter_padding,
                         ix as f32 * layout.line_height - (scroll_top % layout.line_height),
                     );
-                line.paint(
-                    line_origin,
-                    RectF::new(vec2f(0., 0.), vec2f(line.width(), layout.line_height)),
-                    cx,
-                );
+                line.paint(line_origin, visible_bounds, layout.line_height, cx);
             }
         }
     }
 
-    fn paint_text(&mut self, bounds: RectF, layout: &LayoutState, cx: &mut PaintContext) {
+    fn paint_text(
+        &mut self,
+        bounds: RectF,
+        visible_bounds: RectF,
+        layout: &LayoutState,
+        cx: &mut PaintContext,
+    ) {
         let view = self.view(cx.app);
         let settings = self.view(cx.app).settings.borrow();
         let theme = &settings.theme.editor;
@@ -338,17 +346,18 @@ impl EditorElement {
             }
         }
 
-        // Draw glyphs
-        for (ix, line) in layout.line_layouts.iter().enumerate() {
-            let row = start_row + ix as u32;
-            line.paint(
-                content_origin + vec2f(-scroll_left, row as f32 * layout.line_height - scroll_top),
-                RectF::new(
-                    vec2f(scroll_left, 0.),
-                    vec2f(bounds.width(), layout.line_height),
-                ),
-                cx,
-            );
+        if let Some(visible_text_bounds) = bounds.intersection(visible_bounds) {
+            // Draw glyphs
+            for (ix, line) in layout.line_layouts.iter().enumerate() {
+                let row = start_row + ix as u32;
+                line.paint(
+                    content_origin
+                        + vec2f(-scroll_left, row as f32 * layout.line_height - scroll_top),
+                    visible_text_bounds,
+                    layout.line_height,
+                    cx,
+                );
+            }
         }
 
         cx.scene.push_layer(Some(bounds));
@@ -559,7 +568,7 @@ impl Element for EditorElement {
     fn paint(
         &mut self,
         bounds: RectF,
-        _: RectF,
+        visible_bounds: RectF,
         layout: &mut Self::LayoutState,
         cx: &mut PaintContext,
     ) -> Self::PaintState {
@@ -574,9 +583,9 @@ impl Element for EditorElement {
 
             self.paint_background(gutter_bounds, text_bounds, layout, cx);
             if layout.gutter_size.x() > 0. {
-                self.paint_gutter(gutter_bounds, layout, cx);
+                self.paint_gutter(gutter_bounds, visible_bounds, layout, cx);
             }
-            self.paint_text(text_bounds, layout, cx);
+            self.paint_text(text_bounds, visible_bounds, layout, cx);
 
             cx.scene.pop_layer();
 
