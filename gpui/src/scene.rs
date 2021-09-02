@@ -204,14 +204,17 @@ impl StackingContext {
     }
 
     fn push_layer(&mut self, clip_bounds: Option<RectF>) {
-        let clip_bounds = clip_bounds.map(|clip_bounds| {
-            clip_bounds
-                .intersection(self.active_layer().clip_bounds.unwrap_or(clip_bounds))
-                .unwrap_or_else(|| {
-                    log::warn!("specified clip bounds are disjoint from parent layer");
-                    RectF::default()
-                })
-        });
+        let parent_clip_bounds = self.active_layer().clip_bounds();
+        let clip_bounds = clip_bounds
+            .map(|clip_bounds| {
+                clip_bounds
+                    .intersection(parent_clip_bounds.unwrap_or(clip_bounds))
+                    .unwrap_or_else(|| {
+                        log::warn!("specified clip bounds are disjoint from parent layer");
+                        RectF::default()
+                    })
+            })
+            .or(parent_clip_bounds);
 
         let ix = self.layers.len();
         self.layers.push(Layer::new(clip_bounds));
