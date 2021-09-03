@@ -68,6 +68,7 @@ pub struct ChatPanel {
     pub container: ContainerStyle,
     pub message: ChatMessage,
     pub channel_select: ChannelSelect,
+    pub input_editor_container: ContainerStyle,
     pub input_editor: InputEditorStyle,
 }
 

@@ -236,9 +236,14 @@ impl ChatPanel {
     }
 
     fn render_input_box(&self) -> ElementBox {
-        ConstrainedBox::new(ChildView::new(self.input_editor.id()).boxed())
-            .with_max_height(100.)
-            .boxed()
+        let theme = &self.settings.borrow().theme;
+        Container::new(
+            ConstrainedBox::new(ChildView::new(self.input_editor.id()).boxed())
+                .with_max_height(100.)
+                .boxed(),
+        )
+        .with_style(&theme.chat_panel.input_editor_container)
+        .boxed()
     }
 
     fn render_channel_name(

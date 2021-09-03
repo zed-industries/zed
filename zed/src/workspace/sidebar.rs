@@ -37,7 +37,7 @@ impl Sidebar {
             side,
             items: Default::default(),
             active_item_ix: None,
-            width: Rc::new(RefCell::new(100.)),
+            width: Rc::new(RefCell::new(200.)),
         }
     }
 
