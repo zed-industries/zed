@@ -108,6 +108,10 @@ impl DisplayMapSnapshot {
         self.folds_snapshot.fold_count()
     }
 
+    pub fn is_empty(&self) -> bool {
+        self.buffer_snapshot.len() == 0
+    }
+
     pub fn buffer_rows(&self, start_row: u32) -> BufferRows {
         self.wraps_snapshot.buffer_rows(start_row)
     }

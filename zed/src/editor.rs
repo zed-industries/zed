@@ -295,15 +295,18 @@ pub struct Editor {
     blink_epoch: usize,
     blinking_paused: bool,
     mode: EditorMode,
+    placeholder_text: Option<Arc<str>>,
 }
 
 pub struct Snapshot {
     pub display_snapshot: DisplayMapSnapshot,
+    pub placeholder_text: Option<Arc<str>>,
     pub gutter_visible: bool,
     pub auto_height: bool,
     pub theme: Arc<Theme>,
     pub font_family: FamilyId,
     pub font_size: f32,
+    is_focused: bool,
     scroll_position: Vector2F,
     scroll_top_anchor: Anchor,
 }
@@ -378,6 +381,7 @@ impl Editor {
             blink_epoch: 0,
             blinking_paused: false,
             mode: EditorMode::Full,
+            placeholder_text: None,
         }
     }
 
@@ -407,9 +411,23 @@ impl Editor {
             scroll_position: self.scroll_position,
             scroll_top_anchor: self.scroll_top_anchor.clone(),
             theme: settings.theme.clone(),
+            placeholder_text: self.placeholder_text.clone(),
             font_family: settings.buffer_font_family,
             font_size: settings.buffer_font_size,
+            is_focused: self
+                .handle
+                .upgrade(cx)
+                .map_or(false, |handle| handle.is_focused(cx)),
         }
+    }
+
+    pub fn set_placeholder_text(
+        &mut self,
+        placeholder_text: impl Into<Arc<str>>,
+        cx: &mut ViewContext<Self>,
+    ) {
+        self.placeholder_text = Some(placeholder_text.into());
+        cx.notify();
     }
 
     fn set_scroll_position(&mut self, mut scroll_position: Vector2F, cx: &mut ViewContext<Self>) {
@@ -2404,6 +2422,29 @@ impl Snapshot {
         rows.end = cmp::min(rows.end, self.display_snapshot.max_point().row() + 1);
         if rows.start >= rows.end {
             return Ok(Vec::new());
+        }
+
+        // When the editor is empty and unfocused, then show the placeholder.
+        if self.display_snapshot.is_empty() && !self.is_focused {
+            let placeholder_lines = self
+                .placeholder_text
+                .as_ref()
+                .map_or("", AsRef::as_ref)
+                .split('\n')
+                .skip(rows.start as usize)
+                .take(rows.len());
+            let font_id = font_cache
+                .select_font(self.font_family, &style.placeholder_text.font_properties)?;
+            return Ok(placeholder_lines
+                .into_iter()
+                .map(|line| {
+                    layout_cache.layout_str(
+                        line,
+                        self.font_size,
+                        &[(line.len(), font_id, style.placeholder_text.color)],
+                    )
+                })
+                .collect());
         }
 
         let mut prev_font_properties = FontProperties::new();

@@ -156,7 +156,14 @@ impl ChatPanel {
 
     fn set_active_channel(&mut self, channel: ModelHandle<Channel>, cx: &mut ViewContext<Self>) {
         if self.active_channel.as_ref().map(|e| &e.0) != Some(&channel) {
-            self.message_list.reset(channel.read(cx).message_count());
+            {
+                let channel = channel.read(cx);
+                self.message_list.reset(channel.message_count());
+                let placeholder = format!("Message #{}", channel.name());
+                self.input_editor.update(cx, move |editor, cx| {
+                    editor.set_placeholder_text(placeholder, cx);
+                });
+            }
             let subscription = cx.subscribe(&channel, Self::channel_did_change);
             self.active_channel = Some((channel, subscription));
         }

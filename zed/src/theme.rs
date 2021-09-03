@@ -131,6 +131,8 @@ pub struct ContainedLabel {
 #[derive(Clone, Deserialize)]
 pub struct EditorStyle {
     pub text: HighlightStyle,
+    #[serde(default)]
+    pub placeholder_text: HighlightStyle,
     pub background: Color,
     pub selection: SelectionStyle,
     pub gutter_background: Color,
@@ -143,6 +145,7 @@ pub struct EditorStyle {
 #[derive(Clone, Deserialize)]
 pub struct InputEditorStyle {
     pub text: HighlightStyle,
+    pub placeholder_text: HighlightStyle,
     pub background: Color,
     pub selection: SelectionStyle,
 }
@@ -177,6 +180,10 @@ impl Default for EditorStyle {
                 color: Color::from_u32(0xff0000ff),
                 font_properties: Default::default(),
             },
+            placeholder_text: HighlightStyle {
+                color: Color::from_u32(0x00ff00ff),
+                font_properties: Default::default(),
+            },
             background: Default::default(),
             gutter_background: Default::default(),
             active_line_background: Default::default(),
@@ -192,6 +199,7 @@ impl InputEditorStyle {
     pub fn as_editor(&self) -> EditorStyle {
         EditorStyle {
             text: self.text.clone(),
+            placeholder_text: self.placeholder_text.clone(),
             background: self.background,
             selection: self.selection,
             ..Default::default()

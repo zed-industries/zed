@@ -67,6 +67,7 @@ background = "$surface.0"
 
 [chat_panel.input_editor]
 text = "$text.1.color"
+placeholder_text = "$text.2.color"
 background = "$surface.1"
 selection = "$selection.host"
 

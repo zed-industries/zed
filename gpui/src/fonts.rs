@@ -26,7 +26,7 @@ pub struct TextStyle {
     pub font_properties: Properties,
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Default)]
 pub struct HighlightStyle {
     pub color: Color,
     pub font_properties: Properties,
