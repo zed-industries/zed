@@ -313,18 +313,22 @@ impl View for ChatPanel {
 
     fn render(&mut self, _: &mut RenderContext<Self>) -> ElementBox {
         let theme = &self.settings.borrow().theme;
-        Container::new(
-            Flex::column()
-                .with_child(
-                    Container::new(ChildView::new(self.channel_select.id()).boxed())
-                        .with_style(&theme.chat_panel.channel_select.container)
-                        .boxed(),
-                )
-                .with_child(self.render_active_channel_messages())
-                .with_child(self.render_input_box())
-                .boxed(),
+        ConstrainedBox::new(
+            Container::new(
+                Flex::column()
+                    .with_child(
+                        Container::new(ChildView::new(self.channel_select.id()).boxed())
+                            .with_style(&theme.chat_panel.channel_select.container)
+                            .boxed(),
+                    )
+                    .with_child(self.render_active_channel_messages())
+                    .with_child(self.render_input_box())
+                    .boxed(),
+            )
+            .with_style(&theme.chat_panel.container)
+            .boxed(),
         )
-        .with_style(&theme.chat_panel.container)
+        .with_min_width(150.)
         .boxed()
     }
 
