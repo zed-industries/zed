@@ -175,6 +175,7 @@ impl ThemeSelector {
                 background,
             ))
         };
+        cx.notify();
     }
 
     fn on_event(
