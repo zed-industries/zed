@@ -27,6 +27,7 @@ use serde::{Deserialize, Serialize};
 use smallvec::SmallVec;
 use smol::Timer;
 use std::{
+    cell::RefCell,
     cmp::{self, Ordering},
     collections::BTreeMap,
     fmt::Write,
@@ -34,6 +35,7 @@ use std::{
     mem,
     ops::{Range, RangeInclusive},
     path::Path,
+    rc::Rc,
     sync::Arc,
     time::Duration,
 };
@@ -288,7 +290,7 @@ pub struct Editor {
     scroll_position: Vector2F,
     scroll_top_anchor: Anchor,
     autoscroll_requested: bool,
-    build_style: Option<Box<dyn FnMut(&mut MutableAppContext) -> EditorStyle>>,
+    build_style: Option<Rc<RefCell<dyn FnMut(&mut MutableAppContext) -> EditorStyle>>>,
     settings: watch::Receiver<Settings>,
     focused: bool,
     cursors_visible: bool,
@@ -389,7 +391,7 @@ impl Editor {
         mut self,
         f: impl 'static + FnMut(&mut MutableAppContext) -> EditorStyle,
     ) -> Self {
-        self.build_style = Some(Box::new(f));
+        self.build_style = Some(Rc::new(RefCell::new(f)));
         self
     }
 
@@ -2582,8 +2584,8 @@ impl View for Editor {
     fn render(&mut self, cx: &mut RenderContext<Self>) -> ElementBox {
         let style = self
             .build_style
-            .as_mut()
-            .map_or(Default::default(), |build| build(cx));
+            .as_ref()
+            .map_or(Default::default(), |build| (build.borrow_mut())(cx));
         EditorElement::new(self.handle.clone(), style).boxed()
     }
 
@@ -2665,6 +2667,7 @@ impl workspace::ItemView for Editor {
         let mut clone = Editor::for_buffer(self.buffer.clone(), self.settings.clone(), cx);
         clone.scroll_position = self.scroll_position;
         clone.scroll_top_anchor = self.scroll_top_anchor.clone();
+        clone.build_style = self.build_style.clone();
         Some(clone)
     }
 
