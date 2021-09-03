@@ -191,7 +191,7 @@ impl Pane {
             let border = &theme.workspace.tab.container.border;
 
             row.add_child(
-                Expanded::new(
+                Flexible::new(
                     1.0,
                     MouseEventHandler::new::<Tab, _, _, _>(item.id(), cx, |mouse_state, cx| {
                         let title = item.title(cx);

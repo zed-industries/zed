@@ -113,9 +113,13 @@ impl Sidebar {
                 container.add_child(self.render_resize_handle(settings, cx));
             }
             container.add_child(
-                ConstrainedBox::new(ChildView::new(active_item.id()).boxed())
-                    .with_width(*self.width.borrow())
-                    .boxed(),
+                Flexible::new(
+                    1.,
+                    ConstrainedBox::new(ChildView::new(active_item.id()).boxed())
+                        .with_max_width(*self.width.borrow())
+                        .boxed(),
+                )
+                .boxed(),
             );
             if matches!(self.side, Side::Left) {
                 container.add_child(self.render_resize_handle(settings, cx));

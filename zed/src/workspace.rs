@@ -964,13 +964,13 @@ impl View for Workspace {
                                 if let Some(element) =
                                     self.left_sidebar.render_active_item(&settings, cx)
                                 {
-                                    content.add_child(element);
+                                    content.add_child(Flexible::new(0.8, element).boxed());
                                 }
                                 content.add_child(Expanded::new(1.0, self.center.render()).boxed());
                                 if let Some(element) =
                                     self.right_sidebar.render_active_item(&settings, cx)
                                 {
-                                    content.add_child(element);
+                                    content.add_child(Flexible::new(0.8, element).boxed());
                                 }
                                 content.add_child(self.right_sidebar.render(&settings, cx));
                                 content.boxed()
