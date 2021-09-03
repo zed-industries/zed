@@ -450,7 +450,6 @@ impl Element for EditorElement {
         let mut selections = HashMap::new();
         let mut active_rows = BTreeMap::new();
         self.update_view(cx.app, |view, cx| {
-            let replica_id = view.replica_id(cx);
             for selection_set_id in view.active_selection_sets(cx).collect::<Vec<_>>() {
                 let mut set = Vec::new();
                 for selection in view.selections_in_range(
@@ -459,7 +458,7 @@ impl Element for EditorElement {
                     cx,
                 ) {
                     set.push(selection.clone());
-                    if selection_set_id.replica_id == replica_id {
+                    if selection_set_id == view.selection_set_id {
                         let is_empty = selection.start == selection.end;
                         let mut selection_start;
                         let mut selection_end;

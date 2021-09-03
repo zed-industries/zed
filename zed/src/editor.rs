@@ -1955,10 +1955,13 @@ impl Editor {
         &'a self,
         cx: &'a AppContext,
     ) -> impl 'a + Iterator<Item = SelectionSetId> {
-        self.buffer
-            .read(cx)
+        let buffer = self.buffer.read(cx);
+        let replica_id = buffer.replica_id();
+        buffer
             .selection_sets()
-            .filter(|(_, set)| set.active)
+            .filter(move |(set_id, set)| {
+                set.active && (set_id.replica_id != replica_id || **set_id == self.selection_set_id)
+            })
             .map(|(set_id, _)| *set_id)
     }
 
