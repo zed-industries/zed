@@ -116,7 +116,7 @@ impl Sidebar {
             container.add_child(
                 Flexible::new(
                     1.,
-                    Hooks::new(
+                    Hook::new(
                         ConstrainedBox::new(ChildView::new(active_item.id()).boxed())
                             .with_max_width(*self.width.borrow())
                             .boxed(),

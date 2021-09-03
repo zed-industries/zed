@@ -5,12 +5,12 @@ use crate::{
     SizeConstraint,
 };
 
-pub struct Hooks {
+pub struct Hook {
     child: ElementBox,
     after_layout: Option<Box<dyn FnMut(Vector2F, &mut LayoutContext)>>,
 }
 
-impl Hooks {
+impl Hook {
     pub fn new(child: ElementBox) -> Self {
         Self {
             child,
@@ -27,7 +27,7 @@ impl Hooks {
     }
 }
 
-impl Element for Hooks {
+impl Element for Hook {
     type LayoutState = ();
     type PaintState = ();
 
