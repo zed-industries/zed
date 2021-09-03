@@ -82,7 +82,7 @@ impl Extend<ElementBox> for Flex {
 }
 
 impl Element for Flex {
-    type LayoutState = ();
+    type LayoutState = bool;
     type PaintState = ();
 
     fn layout(
@@ -153,21 +153,33 @@ impl Element for Flex {
         if constraint.min.x().is_finite() {
             size.set_x(size.x().max(constraint.min.x()));
         }
-
         if constraint.min.y().is_finite() {
             size.set_y(size.y().max(constraint.min.y()));
         }
 
-        (size, ())
+        let mut overflowing = false;
+        if size.x() > constraint.max.x() {
+            size.set_x(constraint.max.x());
+            overflowing = true;
+        }
+        if size.y() > constraint.max.y() {
+            size.set_y(constraint.max.y());
+            overflowing = true;
+        }
+
+        (size, overflowing)
     }
 
     fn paint(
         &mut self,
         bounds: RectF,
         visible_bounds: RectF,
-        _: &mut Self::LayoutState,
+        overflowing: &mut Self::LayoutState,
         cx: &mut PaintContext,
     ) -> Self::PaintState {
+        if *overflowing {
+            cx.scene.push_layer(Some(bounds));
+        }
         let mut child_origin = bounds.origin();
         for child in &mut self.children {
             child.paint(child_origin, visible_bounds, cx);
@@ -175,6 +187,9 @@ impl Element for Flex {
                 Axis::Horizontal => child_origin += vec2f(child.size().x(), 0.0),
                 Axis::Vertical => child_origin += vec2f(0.0, child.size().y()),
             }
+        }
+        if *overflowing {
+            cx.scene.pop_layer();
         }
     }
 
