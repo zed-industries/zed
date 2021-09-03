@@ -7,22 +7,22 @@ use crate::{
 
 pub struct Hooks {
     child: ElementBox,
-    before_layout: Option<Box<dyn FnMut(SizeConstraint, &mut LayoutContext)>>,
+    after_layout: Option<Box<dyn FnMut(Vector2F, &mut LayoutContext)>>,
 }
 
 impl Hooks {
     pub fn new(child: ElementBox) -> Self {
         Self {
             child,
-            before_layout: None,
+            after_layout: None,
         }
     }
 
-    pub fn on_before_layout(
+    pub fn on_after_layout(
         mut self,
-        f: impl 'static + FnMut(SizeConstraint, &mut LayoutContext),
+        f: impl 'static + FnMut(Vector2F, &mut LayoutContext),
     ) -> Self {
-        self.before_layout = Some(Box::new(f));
+        self.after_layout = Some(Box::new(f));
         self
     }
 }
@@ -36,10 +36,10 @@ impl Element for Hooks {
         constraint: SizeConstraint,
         cx: &mut LayoutContext,
     ) -> (Vector2F, Self::LayoutState) {
-        if let Some(handler) = self.before_layout.as_mut() {
-            handler(constraint, cx);
-        }
         let size = self.child.layout(constraint, cx);
+        if let Some(handler) = self.after_layout.as_mut() {
+            handler(size, cx);
+        }
         (size, ())
     }
 

@@ -113,7 +113,6 @@ impl Sidebar {
                 container.add_child(self.render_resize_handle(settings, cx));
             }
 
-            let width = self.width.clone();
             container.add_child(
                 Flexible::new(
                     1.,
@@ -122,9 +121,11 @@ impl Sidebar {
                             .with_max_width(*self.width.borrow())
                             .boxed(),
                     )
-                    .on_before_layout(move |constraint, _| {
-                        let mut width = width.borrow_mut();
-                        *width = width.min(constraint.max.x());
+                    .on_after_layout({
+                        let width = self.width.clone();
+                        move |size, _| {
+                            *width.borrow_mut() = size.x();
+                        }
                     })
                     .boxed(),
                 )
