@@ -9,10 +9,7 @@ use crate::{
 };
 use gpui::{
     action,
-    elements::{
-        Align, ChildView, ConstrainedBox, Container, Expanded, Flex, Label, ParentElement,
-        UniformList, UniformListState,
-    },
+    elements::*,
     keymap::{self, menu, Binding},
     AppContext, Axis, Element, ElementBox, Entity, MutableAppContext, RenderContext, View,
     ViewContext, ViewHandle,
@@ -283,7 +280,7 @@ impl View for ThemeSelector {
                 Container::new(
                     Flex::new(Axis::Vertical)
                         .with_child(ChildView::new(self.query_editor.id()).boxed())
-                        .with_child(Expanded::new(1.0, self.render_matches(cx)).boxed())
+                        .with_child(Flexible::new(1.0, self.render_matches(cx)).boxed())
                         .boxed(),
                 )
                 .with_style(&settings.theme.selector.container)

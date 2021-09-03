@@ -150,6 +150,8 @@ where
             for item in &mut items {
                 item.layout(item_constraint, cx);
             }
+        } else {
+            size = constraint.min;
         }
 
         (

@@ -87,7 +87,7 @@ impl View for FileFinder {
                 Container::new(
                     Flex::new(Axis::Vertical)
                         .with_child(ChildView::new(self.query_editor.id()).boxed())
-                        .with_child(Expanded::new(1.0, self.render_matches()).boxed())
+                        .with_child(Flexible::new(1.0, self.render_matches()).boxed())
                         .boxed(),
                 )
                 .with_style(&settings.theme.selector.container)
@@ -173,7 +173,7 @@ impl FileFinder {
                     .boxed(),
                 )
                 .with_child(
-                    Expanded::new(
+                    Flexible::new(
                         1.0,
                         Flex::column()
                             .with_child(
