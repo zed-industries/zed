@@ -90,14 +90,14 @@ impl Element for Flex {
         constraint: SizeConstraint,
         cx: &mut LayoutContext,
     ) -> (Vector2F, Self::LayoutState) {
-        let mut total_flex = 0.0;
+        let mut total_flex = None;
         let mut fixed_space = 0.0;
 
         let cross_axis = self.axis.invert();
         let mut cross_axis_max: f32 = 0.0;
         for child in &mut self.children {
             if let Some(metadata) = child.metadata::<FlexParentData>() {
-                total_flex += metadata.flex;
+                *total_flex.get_or_insert(0.) += metadata.flex;
             } else {
                 let child_constraint = match self.axis {
                     Axis::Horizontal => SizeConstraint::new(
@@ -115,13 +115,12 @@ impl Element for Flex {
             }
         }
 
-        let mut size = if total_flex > 0.0 {
+        let mut size = if let Some(mut remaining_flex) = total_flex {
             if constraint.max_along(self.axis).is_infinite() {
                 panic!("flex contains flexible children but has an infinite constraint along the flex axis");
             }
 
             let mut remaining_space = constraint.max_along(self.axis) - fixed_space;
-            let mut remaining_flex = total_flex;
             self.layout_flex_children(
                 false,
                 constraint,
