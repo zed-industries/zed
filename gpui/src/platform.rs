@@ -127,6 +127,7 @@ pub enum CursorStyle {
 }
 
 pub trait FontSystem: Send + Sync {
+    fn add_fonts(&self, fonts: Vec<Arc<Vec<u8>>>) -> anyhow::Result<()>;
     fn load_family(&self, name: &str) -> anyhow::Result<Vec<FontId>>;
     fn select_font(
         &self,

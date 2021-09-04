@@ -21,9 +21,12 @@ use core_graphics::{
     base::CGGlyph, color_space::CGColorSpace, context::CGContext, geometry::CGAffineTransform,
 };
 use core_text::{line::CTLine, string_attributes::kCTFontAttributeName};
-use font_kit::{canvas::RasterizationOptions, hinting::HintingOptions, source::SystemSource};
+use font_kit::{
+    canvas::RasterizationOptions, handle::Handle, hinting::HintingOptions, source::SystemSource,
+    sources::mem::MemSource,
+};
 use parking_lot::RwLock;
-use std::{cell::RefCell, char, cmp, convert::TryFrom, ffi::c_void};
+use std::{cell::RefCell, char, cmp, convert::TryFrom, ffi::c_void, sync::Arc};
 
 #[allow(non_upper_case_globals)]
 const kCGImageAlphaOnly: u32 = 7;
@@ -31,20 +34,26 @@ const kCGImageAlphaOnly: u32 = 7;
 pub struct FontSystem(RwLock<FontSystemState>);
 
 struct FontSystemState {
-    source: SystemSource,
+    memory_source: MemSource,
+    system_source: SystemSource,
     fonts: Vec<font_kit::font::Font>,
 }
 
 impl FontSystem {
     pub fn new() -> Self {
         Self(RwLock::new(FontSystemState {
-            source: SystemSource::new(),
+            memory_source: MemSource::empty(),
+            system_source: SystemSource::new(),
             fonts: Vec::new(),
         }))
     }
 }
 
 impl platform::FontSystem for FontSystem {
+    fn add_fonts(&self, fonts: Vec<Arc<Vec<u8>>>) -> anyhow::Result<()> {
+        self.0.write().add_fonts(fonts)
+    }
+
     fn load_family(&self, name: &str) -> anyhow::Result<Vec<FontId>> {
         self.0.write().load_family(name)
     }
@@ -93,9 +102,20 @@ impl platform::FontSystem for FontSystem {
 }
 
 impl FontSystemState {
+    fn add_fonts(&mut self, fonts: Vec<Arc<Vec<u8>>>) -> anyhow::Result<()> {
+        self.memory_source
+            .add_fonts(fonts.into_iter().map(|bytes| Handle::from_memory(bytes, 0)))?;
+        Ok(())
+    }
+
     fn load_family(&mut self, name: &str) -> anyhow::Result<Vec<FontId>> {
         let mut font_ids = Vec::new();
-        for font in self.source.select_family_by_name(name)?.fonts() {
+
+        let family = self
+            .memory_source
+            .select_family_by_name(name)
+            .or_else(|_| self.system_source.select_family_by_name(name))?;
+        for font in family.fonts() {
             let font = font.load()?;
             font_ids.push(FontId(self.fonts.len()));
             self.fonts.push(font);

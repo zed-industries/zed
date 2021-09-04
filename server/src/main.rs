@@ -83,7 +83,7 @@ impl AppState {
                 let partial = Templates::get(path.as_ref()).unwrap();
                 self.handlebars
                     .write()
-                    .register_partial(partial_name, std::str::from_utf8(partial.as_ref()).unwrap())
+                    .register_partial(partial_name, std::str::from_utf8(&partial.data).unwrap())
                     .unwrap()
             }
         }
@@ -98,7 +98,7 @@ impl AppState {
         self.register_partials();
 
         self.handlebars.read().render_template(
-            std::str::from_utf8(Templates::get(path).unwrap().as_ref()).unwrap(),
+            std::str::from_utf8(&Templates::get(path).unwrap().data).unwrap(),
             data,
         )
     }

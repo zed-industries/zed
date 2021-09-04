@@ -37,8 +37,8 @@ impl Settings {
 
     pub fn new(font_cache: &FontCache, theme: Arc<Theme>) -> Result<Self> {
         Ok(Self {
-            buffer_font_family: font_cache.load_family(&["Fira Code", "Monaco"])?,
-            buffer_font_size: 14.0,
+            buffer_font_family: font_cache.load_family(&["Inconsolata"])?,
+            buffer_font_size: 16.,
             tab_size: 4,
             theme,
         })

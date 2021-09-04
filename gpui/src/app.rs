@@ -300,6 +300,10 @@ impl App {
         }))
     }
 
+    pub fn platform(&self) -> Arc<dyn Platform> {
+        self.0.borrow().platform()
+    }
+
     pub fn font_cache(&self) -> Arc<FontCache> {
         self.0.borrow().cx.font_cache.clone()
     }

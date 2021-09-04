@@ -47,7 +47,8 @@ impl Language {
 impl LanguageRegistry {
     pub fn new() -> Self {
         let grammar = tree_sitter_rust::language();
-        let rust_config = toml::from_slice(&LanguageDir::get("rust/config.toml").unwrap()).unwrap();
+        let rust_config =
+            toml::from_slice(&LanguageDir::get("rust/config.toml").unwrap().data).unwrap();
         let rust_language = Language {
             config: rust_config,
             grammar,
@@ -84,7 +85,7 @@ impl LanguageRegistry {
     fn load_query(grammar: tree_sitter::Language, path: &str) -> Query {
         Query::new(
             grammar,
-            str::from_utf8(LanguageDir::get(path).unwrap().as_ref()).unwrap(),
+            str::from_utf8(&LanguageDir::get(path).unwrap().data).unwrap(),
         )
         .unwrap()
     }

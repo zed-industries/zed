@@ -2,12 +2,14 @@
 #![allow(non_snake_case)]
 
 use fs::OpenOptions;
+use gpui::AssetSource;
 use log::LevelFilter;
 use parking_lot::Mutex;
 use simplelog::SimpleLogger;
 use std::{fs, path::PathBuf, sync::Arc};
 use zed::{
-    self, assets,
+    self,
+    assets::Assets,
     channel::ChannelList,
     chat_panel, editor, file_finder,
     fs::RealFs,
@@ -20,9 +22,15 @@ use zed::{
 fn main() {
     init_logger();
 
-    let app = gpui::App::new(assets::Assets).unwrap();
+    let app = gpui::App::new(Assets).unwrap();
+    let embedded_fonts = Assets
+        .list("fonts")
+        .into_iter()
+        .map(|f| Arc::new(Assets.load(&f).unwrap().to_vec()))
+        .collect();
+    app.platform().fonts().add_fonts(embedded_fonts).unwrap();
 
-    let themes = settings::ThemeRegistry::new(assets::Assets, app.font_cache());
+    let themes = settings::ThemeRegistry::new(Assets, app.font_cache());
     let (settings_tx, settings) = settings::channel(&app.font_cache(), &themes).unwrap();
     let languages = Arc::new(language::LanguageRegistry::new());
     languages.set_theme(&settings.borrow().theme.syntax);
