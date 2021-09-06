@@ -180,10 +180,12 @@ impl Default for EditorStyle {
             text: HighlightStyle {
                 color: Color::from_u32(0xff0000ff),
                 font_properties: Default::default(),
+                underline: false,
             },
             placeholder_text: HighlightStyle {
                 color: Color::from_u32(0x00ff00ff),
                 font_properties: Default::default(),
+                underline: false,
             },
             background: Default::default(),
             gutter_background: Default::default(),

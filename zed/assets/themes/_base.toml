@@ -2,7 +2,7 @@
 background = "$surface.0"
 
 [workspace.tab]
-text = "$text.2"
+text = { extends = "$text.2", underline = true }
 padding = { left = 10, right = 10 }
 icon_close = "$text.0.color"
 icon_dirty = "$status.info"

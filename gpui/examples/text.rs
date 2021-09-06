@@ -1,6 +1,7 @@
 use gpui::{
     color::Color,
     fonts::{Properties, Weight},
+    text_layout::RunStyle,
     DebugContext, Element as _, Quad,
 };
 use log::LevelFilter;
@@ -55,31 +56,39 @@ impl gpui::Element for TextElement {
     ) -> Self::PaintState {
         let font_size = 12.;
         let family = cx.font_cache.load_family(&["SF Pro Display"]).unwrap();
-        let normal = cx
-            .font_cache
-            .select_font(family, &Default::default())
-            .unwrap();
-        let bold = cx
-            .font_cache
-            .select_font(
-                family,
-                &Properties {
-                    weight: Weight::BOLD,
-                    ..Default::default()
-                },
-            )
-            .unwrap();
+        let normal = RunStyle {
+            font_id: cx
+                .font_cache
+                .select_font(family, &Default::default())
+                .unwrap(),
+            color: Color::default(),
+            underline: false,
+        };
+        let bold = RunStyle {
+            font_id: cx
+                .font_cache
+                .select_font(
+                    family,
+                    &Properties {
+                        weight: Weight::BOLD,
+                        ..Default::default()
+                    },
+                )
+                .unwrap(),
+            color: Color::default(),
+            underline: false,
+        };
 
         let text = "Hello world!";
         let line = cx.text_layout_cache.layout_str(
             text,
             font_size,
             &[
-                (1, normal, Color::default()),
-                (1, bold, Color::default()),
-                (1, normal, Color::default()),
-                (1, bold, Color::default()),
-                (text.len() - 4, normal, Color::default()),
+                (1, normal.clone()),
+                (1, bold.clone()),
+                (1, normal.clone()),
+                (1, bold.clone()),
+                (text.len() - 4, normal.clone()),
             ],
         );
 

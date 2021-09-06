@@ -24,6 +24,13 @@ pub struct TextLayoutCache {
     fonts: Arc<dyn platform::FontSystem>,
 }
 
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+pub struct RunStyle {
+    pub color: Color,
+    pub font_id: FontId,
+    pub underline: bool,
+}
+
 impl TextLayoutCache {
     pub fn new(fonts: Arc<dyn platform::FontSystem>) -> Self {
         Self {
@@ -44,7 +51,7 @@ impl TextLayoutCache {
         &'a self,
         text: &'a str,
         font_size: f32,
-        runs: &'a [(usize, FontId, Color)],
+        runs: &'a [(usize, RunStyle)],
     ) -> Line {
         let key = &CacheKeyRef {
             text,
@@ -95,7 +102,7 @@ impl<'a> Hash for (dyn CacheKey + 'a) {
 struct CacheKeyValue {
     text: String,
     font_size: OrderedFloat<f32>,
-    runs: SmallVec<[(usize, FontId, Color); 1]>,
+    runs: SmallVec<[(usize, RunStyle); 1]>,
 }
 
 impl CacheKey for CacheKeyValue {
@@ -120,11 +127,11 @@ impl<'a> Borrow<dyn CacheKey + 'a> for CacheKeyValue {
     }
 }
 
-#[derive(Copy, Clone, PartialEq, Eq, Hash)]
+#[derive(Copy, Clone)]
 struct CacheKeyRef<'a> {
     text: &'a str,
     font_size: OrderedFloat<f32>,
-    runs: &'a [(usize, FontId, Color)],
+    runs: &'a [(usize, RunStyle)],
 }
 
 impl<'a> CacheKey for CacheKeyRef<'a> {
@@ -133,10 +140,34 @@ impl<'a> CacheKey for CacheKeyRef<'a> {
     }
 }
 
+impl<'a> PartialEq for CacheKeyRef<'a> {
+    fn eq(&self, other: &Self) -> bool {
+        self.text == other.text
+            && self.font_size == other.font_size
+            && self.runs.len() == other.runs.len()
+            && self.runs.iter().zip(other.runs.iter()).all(
+                |((len_a, style_a), (len_b, style_b))| {
+                    len_a == len_b && style_a.font_id == style_b.font_id
+                },
+            )
+    }
+}
+
+impl<'a> Hash for CacheKeyRef<'a> {
+    fn hash<H: Hasher>(&self, state: &mut H) {
+        self.text.hash(state);
+        self.font_size.hash(state);
+        for (len, style_id) in self.runs {
+            len.hash(state);
+            style_id.font_id.hash(state);
+        }
+    }
+}
+
 #[derive(Default, Debug)]
 pub struct Line {
     layout: Arc<LineLayout>,
-    color_runs: SmallVec<[(u32, Color); 32]>,
+    style_runs: SmallVec<[(u32, Color, bool); 32]>,
 }
 
 #[derive(Default, Debug)]
@@ -163,12 +194,12 @@ pub struct Glyph {
 }
 
 impl Line {
-    fn new(layout: Arc<LineLayout>, runs: &[(usize, FontId, Color)]) -> Self {
-        let mut color_runs = SmallVec::new();
-        for (len, _, color) in runs {
-            color_runs.push((*len as u32, *color));
+    fn new(layout: Arc<LineLayout>, runs: &[(usize, RunStyle)]) -> Self {
+        let mut style_runs = SmallVec::new();
+        for (len, style) in runs {
+            style_runs.push((*len as u32, style.color, style.underline));
         }
-        Self { layout, color_runs }
+        Self { layout, style_runs }
     }
 
     pub fn runs(&self) -> &[Run] {
@@ -213,11 +244,12 @@ impl Line {
         cx: &mut PaintContext,
     ) {
         let padding_top = (line_height - self.layout.ascent - self.layout.descent) / 2.;
-        let baseline_origin = vec2f(0., padding_top + self.layout.ascent);
+        let baseline_offset = vec2f(0., padding_top + self.layout.ascent);
 
-        let mut color_runs = self.color_runs.iter();
-        let mut color_end = 0;
+        let mut style_runs = self.style_runs.iter();
+        let mut run_end = 0;
         let mut color = Color::black();
+        let mut underline_start = None;
 
         for run in &self.layout.runs {
             let max_glyph_width = cx
@@ -226,7 +258,7 @@ impl Line {
                 .x();
 
             for glyph in &run.glyphs {
-                let glyph_origin = origin + baseline_origin + glyph.position;
+                let glyph_origin = origin + baseline_offset + glyph.position;
 
                 if glyph_origin.x() + max_glyph_width < visible_bounds.origin().x() {
                     continue;
@@ -235,12 +267,31 @@ impl Line {
                     break;
                 }
 
-                if glyph.index >= color_end {
-                    if let Some(next_run) = color_runs.next() {
-                        color_end += next_run.0 as usize;
-                        color = next_run.1;
+                if glyph.index >= run_end {
+                    if let Some((run_len, run_color, run_underlined)) = style_runs.next() {
+                        if let Some(underline_origin) = underline_start {
+                            if !*run_underlined || *run_color != color {
+                                cx.scene.push_quad(scene::Quad {
+                                    bounds: RectF::from_points(
+                                        underline_origin,
+                                        glyph_origin + vec2f(0., 1.),
+                                    ),
+                                    background: Some(color),
+                                    border: Default::default(),
+                                    corner_radius: 0.,
+                                });
+                                underline_start = None;
+                            }
+                        }
+
+                        if *run_underlined {
+                            underline_start.get_or_insert(glyph_origin);
+                        }
+
+                        run_end += *run_len as usize;
+                        color = *run_color;
                     } else {
-                        color_end = self.layout.len;
+                        run_end = self.layout.len;
                         color = Color::black();
                     }
                 }
@@ -251,6 +302,16 @@ impl Line {
                     id: glyph.id,
                     origin: glyph_origin,
                     color,
+                });
+            }
+
+            if let Some(underline_start) = underline_start.take() {
+                let line_end = origin + baseline_offset + vec2f(self.layout.width, 0.);
+                cx.scene.push_quad(scene::Quad {
+                    bounds: RectF::from_points(underline_start, line_end + vec2f(0., 1.)),
+                    background: Some(color),
+                    border: Default::default(),
+                    corner_radius: 0.,
                 });
             }
         }
@@ -268,7 +329,7 @@ impl Line {
         let baseline_origin = vec2f(0., padding_top + self.layout.ascent);
 
         let mut boundaries = boundaries.into_iter().peekable();
-        let mut color_runs = self.color_runs.iter();
+        let mut color_runs = self.style_runs.iter();
         let mut color_end = 0;
         let mut color = Color::black();
 
@@ -519,7 +580,14 @@ impl LineWrapper {
             .layout_line(
                 &c.to_string(),
                 self.font_size,
-                &[(1, self.font_id, Default::default())],
+                &[(
+                    1,
+                    RunStyle {
+                        font_id: self.font_id,
+                        color: Default::default(),
+                        underline: false,
+                    },
+                )],
             )
             .width
     }
@@ -528,10 +596,7 @@ impl LineWrapper {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{
-        color::Color,
-        fonts::{Properties, Weight},
-    };
+    use crate::fonts::{Properties, Weight};
 
     #[crate::test(self)]
     fn test_wrap_line(cx: &mut crate::MutableAppContext) {
@@ -600,28 +665,30 @@ mod tests {
 
         let family = font_cache.load_family(&["Helvetica"]).unwrap();
         let font_id = font_cache.select_font(family, &Default::default()).unwrap();
-        let normal = font_cache.select_font(family, &Default::default()).unwrap();
-        let bold = font_cache
-            .select_font(
-                family,
-                &Properties {
-                    weight: Weight::BOLD,
-                    ..Default::default()
-                },
-            )
-            .unwrap();
+        let normal = RunStyle {
+            font_id,
+            color: Default::default(),
+            underline: false,
+        };
+        let bold = RunStyle {
+            font_id: font_cache
+                .select_font(
+                    family,
+                    &Properties {
+                        weight: Weight::BOLD,
+                        ..Default::default()
+                    },
+                )
+                .unwrap(),
+            color: Default::default(),
+            underline: false,
+        };
 
         let text = "aa bbb cccc ddddd eeee";
         let line = text_layout_cache.layout_str(
             text,
             16.0,
-            &[
-                (4, normal, Color::default()),
-                (5, bold, Color::default()),
-                (6, normal, Color::default()),
-                (1, bold, Color::default()),
-                (7, normal, Color::default()),
-            ],
+            &[(4, normal), (5, bold), (6, normal), (1, bold), (7, normal)],
         );
 
         let mut wrapper = LineWrapper::new(font_id, 16., font_system);

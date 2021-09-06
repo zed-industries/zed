@@ -17,10 +17,15 @@ pub use display_map::DisplayPoint;
 use display_map::*;
 pub use element::*;
 use gpui::{
-    action, color::Color, font_cache::FamilyId, fonts::Properties as FontProperties,
-    geometry::vector::Vector2F, keymap::Binding, text_layout, AppContext, ClipboardItem, Element,
-    ElementBox, Entity, FontCache, ModelHandle, MutableAppContext, RenderContext, Task,
-    TextLayoutCache, View, ViewContext, WeakViewHandle,
+    action,
+    color::Color,
+    font_cache::FamilyId,
+    fonts::Properties as FontProperties,
+    geometry::vector::Vector2F,
+    keymap::Binding,
+    text_layout::{self, RunStyle},
+    AppContext, ClipboardItem, Element, ElementBox, Entity, FontCache, ModelHandle,
+    MutableAppContext, RenderContext, Task, TextLayoutCache, View, ViewContext, WeakViewHandle,
 };
 use postage::watch;
 use serde::{Deserialize, Serialize};
@@ -2330,7 +2335,7 @@ impl Snapshot {
 
     pub fn line_height(&self, font_cache: &FontCache) -> f32 {
         let font_id = font_cache.default_font(self.font_family);
-        font_cache.line_height(font_id, self.font_size)
+        font_cache.line_height(font_id, self.font_size).ceil()
     }
 
     pub fn em_width(&self, font_cache: &FontCache) -> f32 {
@@ -2355,7 +2360,14 @@ impl Snapshot {
             .layout_str(
                 "1".repeat(digit_count).as_str(),
                 font_size,
-                &[(digit_count, font_id, Color::black())],
+                &[(
+                    digit_count,
+                    RunStyle {
+                        font_id,
+                        color: Color::black(),
+                        underline: false,
+                    },
+                )],
             )
             .width())
     }
@@ -2392,7 +2404,14 @@ impl Snapshot {
                 layouts.push(Some(layout_cache.layout_str(
                     &line_number,
                     self.font_size,
-                    &[(line_number.len(), font_id, color)],
+                    &[(
+                        line_number.len(),
+                        RunStyle {
+                            font_id,
+                            color,
+                            underline: false,
+                        },
+                    )],
                 )));
             }
         }
@@ -2429,7 +2448,14 @@ impl Snapshot {
                     layout_cache.layout_str(
                         line,
                         self.font_size,
-                        &[(line.len(), font_id, style.placeholder_text.color)],
+                        &[(
+                            line.len(),
+                            RunStyle {
+                                font_id,
+                                color: style.placeholder_text.color,
+                                underline: false,
+                            },
+                        )],
                     )
                 })
                 .collect());
@@ -2485,7 +2511,14 @@ impl Snapshot {
                     }
 
                     line.push_str(line_chunk);
-                    styles.push((line_chunk.len(), font_id, style.color));
+                    styles.push((
+                        line_chunk.len(),
+                        RunStyle {
+                            font_id,
+                            color: style.color,
+                            underline: style.underline,
+                        },
+                    ));
                     prev_font_id = font_id;
                     prev_font_properties = style.font_properties;
                 }
@@ -2518,8 +2551,11 @@ impl Snapshot {
             self.font_size,
             &[(
                 self.display_snapshot.line_len(row) as usize,
-                font_id,
-                Color::black(),
+                RunStyle {
+                    font_id,
+                    color: Color::black(),
+                    underline: false,
+                },
             )],
         ))
     }

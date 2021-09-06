@@ -52,7 +52,7 @@ impl Element for Text {
             let shaped_line = cx.text_layout_cache.layout_str(
                 line,
                 self.style.font_size,
-                &[(line.len(), font_id, self.style.color)],
+                &[(line.len(), self.style.to_run())],
             );
             let wrap_boundaries = wrapper
                 .wrap_shaped_line(line, &shaped_line, constraint.max.x())
