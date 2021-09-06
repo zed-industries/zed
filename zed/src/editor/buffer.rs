@@ -121,6 +121,7 @@ pub struct Buffer {
     language: Option<Arc<Language>>,
     syntax_tree: Mutex<Option<SyntaxTree>>,
     is_parsing: bool,
+    parse_count: usize,
     selections: HashMap<SelectionSetId, SelectionSet>,
     deferred_ops: OperationQueue,
     deferred_replicas: HashSet<ReplicaId>,
@@ -141,7 +142,7 @@ pub struct SelectionSet {
 #[derive(Clone)]
 struct SyntaxTree {
     tree: Tree,
-    parsed: bool,
+    dirty: bool,
     version: time::Global,
 }
 
@@ -581,6 +582,7 @@ impl Buffer {
             file,
             syntax_tree: Mutex::new(None),
             is_parsing: false,
+            parse_count: 0,
             language,
             saved_mtime,
             selections: HashMap::default(),
@@ -790,9 +792,12 @@ impl Buffer {
         cx.emit(Event::FileHandleChanged);
     }
 
+    pub fn parse_count(&self) -> usize {
+        self.parse_count
+    }
+
     pub fn syntax_tree(&self) -> Option<Tree> {
         if let Some(syntax_tree) = self.syntax_tree.lock().as_mut() {
-            let mut edited = false;
             let mut delta = 0_isize;
             for edit in self.edits_since(syntax_tree.version.clone()) {
                 let start_offset = (edit.old_bytes.start as isize + delta) as usize;
@@ -809,9 +814,8 @@ impl Buffer {
                         .into(),
                 });
                 delta += edit.inserted_bytes() as isize - edit.deleted_bytes() as isize;
-                edited = true;
+                syntax_tree.dirty = true;
             }
-            syntax_tree.parsed &= !edited;
             syntax_tree.version = self.version();
             Some(syntax_tree.tree.clone())
         } else {
@@ -819,13 +823,14 @@ impl Buffer {
         }
     }
 
+    #[cfg(test)]
     pub fn is_parsing(&self) -> bool {
         self.is_parsing
     }
 
     fn should_reparse(&self) -> bool {
         if let Some(syntax_tree) = self.syntax_tree.lock().as_ref() {
-            !syntax_tree.parsed || syntax_tree.version != self.version
+            syntax_tree.dirty || syntax_tree.version != self.version
         } else {
             self.language.is_some()
         }
@@ -841,7 +846,7 @@ impl Buffer {
         if let Some(language) = self.language.clone() {
             self.is_parsing = true;
             cx.spawn(|handle, mut cx| async move {
-                while handle.read_with(&cx, |this, _| this.should_reparse()) {
+                loop {
                     // The parse tree is out of date, so grab the syntax tree to synchronously
                     // splice all the edits that have happened since the last parse.
                     let new_tree = handle.update(&mut cx, |this, _| this.syntax_tree());
@@ -857,17 +862,28 @@ impl Buffer {
                         })
                         .await;
 
-                    handle.update(&mut cx, |this, cx| {
+                    let parse_again = handle.update(&mut cx, |this, cx| {
                         *this.syntax_tree.lock() = Some(SyntaxTree {
                             tree: new_tree,
-                            parsed: true,
+                            dirty: false,
                             version: new_version,
                         });
+                        this.parse_count += 1;
                         cx.emit(Event::Reparsed);
                         cx.notify();
+
+                        if this.should_reparse() {
+                            true
+                        } else {
+                            this.is_parsing = false;
+                            false
+                        }
                     });
+
+                    if !parse_again {
+                        break;
+                    }
                 }
-                handle.update(&mut cx, |this, _| this.is_parsing = false);
             })
             .detach();
         }
@@ -1916,6 +1932,7 @@ impl Clone for Buffer {
             language: self.language.clone(),
             syntax_tree: Mutex::new(self.syntax_tree.lock().clone()),
             is_parsing: false,
+            parse_count: self.parse_count,
             deferred_replicas: self.deferred_replicas.clone(),
             replica_id: self.replica_id,
             remote_id: self.remote_id.clone(),
