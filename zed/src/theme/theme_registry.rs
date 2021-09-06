@@ -515,16 +515,16 @@ fn value_at<'a>(object: &'a mut Map<String, Value>, key_path: &KeyPath) -> Optio
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{assets::Assets, theme::DEFAULT_THEME_NAME};
+    use crate::{test::test_app_state, theme::DEFAULT_THEME_NAME};
     use gpui::MutableAppContext;
     use rand::{prelude::StdRng, Rng};
 
     #[gpui::test]
     fn test_bundled_themes(cx: &mut MutableAppContext) {
-        let registry = ThemeRegistry::new(Assets, cx.font_cache().clone());
+        let app_state = test_app_state(cx);
         let mut has_default_theme = false;
-        for theme_name in registry.list() {
-            let theme = registry.get(&theme_name).unwrap();
+        for theme_name in app_state.themes.list() {
+            let theme = app_state.themes.get(&theme_name).unwrap();
             if theme.name == DEFAULT_THEME_NAME {
                 has_default_theme = true;
             }

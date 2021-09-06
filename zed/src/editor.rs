@@ -3478,7 +3478,7 @@ mod tests {
         });
 
         view.update(cx, |view, cx| {
-            view.set_wrap_width(140., cx);
+            view.set_wrap_width(130., cx);
             assert_eq!(
                 view.display_text(cx),
                 "use one::{\n    two::three::\n    four::five\n};"

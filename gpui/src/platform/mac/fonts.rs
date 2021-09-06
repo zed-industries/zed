@@ -50,7 +50,7 @@ impl FontSystem {
 }
 
 impl platform::FontSystem for FontSystem {
-    fn add_fonts(&self, fonts: Vec<Arc<Vec<u8>>>) -> anyhow::Result<()> {
+    fn add_fonts(&self, fonts: &[Arc<Vec<u8>>]) -> anyhow::Result<()> {
         self.0.write().add_fonts(fonts)
     }
 
@@ -102,9 +102,12 @@ impl platform::FontSystem for FontSystem {
 }
 
 impl FontSystemState {
-    fn add_fonts(&mut self, fonts: Vec<Arc<Vec<u8>>>) -> anyhow::Result<()> {
-        self.memory_source
-            .add_fonts(fonts.into_iter().map(|bytes| Handle::from_memory(bytes, 0)))?;
+    fn add_fonts(&mut self, fonts: &[Arc<Vec<u8>>]) -> anyhow::Result<()> {
+        self.memory_source.add_fonts(
+            fonts
+                .iter()
+                .map(|bytes| Handle::from_memory(bytes.clone(), 0)),
+        )?;
         Ok(())
     }
 

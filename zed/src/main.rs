@@ -27,8 +27,8 @@ fn main() {
         .list("fonts")
         .into_iter()
         .map(|f| Arc::new(Assets.load(&f).unwrap().to_vec()))
-        .collect();
-    app.platform().fonts().add_fonts(embedded_fonts).unwrap();
+        .collect::<Vec<_>>();
+    app.platform().fonts().add_fonts(&embedded_fonts).unwrap();
 
     let themes = settings::ThemeRegistry::new(Assets, app.font_cache());
     let (settings_tx, settings) = settings::channel(&app.font_cache(), &themes).unwrap();

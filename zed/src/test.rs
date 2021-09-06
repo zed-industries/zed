@@ -1,4 +1,5 @@
 use crate::{
+    assets::Assets,
     channel::ChannelList,
     fs::RealFs,
     language::LanguageRegistry,
@@ -158,7 +159,7 @@ fn write_tree(path: &Path, tree: serde_json::Value) {
 pub fn test_app_state(cx: &mut MutableAppContext) -> Arc<AppState> {
     let (settings_tx, settings) = settings::test(cx);
     let languages = Arc::new(LanguageRegistry::new());
-    let themes = ThemeRegistry::new((), cx.font_cache().clone());
+    let themes = ThemeRegistry::new(Assets, cx.font_cache().clone());
     let rpc = rpc::Client::new();
     let user_store = Arc::new(UserStore::new(rpc.clone()));
     Arc::new(AppState {
