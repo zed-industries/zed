@@ -120,7 +120,7 @@ pub struct Buffer {
     file: Option<File>,
     language: Option<Arc<Language>>,
     syntax_tree: Mutex<Option<SyntaxTree>>,
-    is_parsing: bool,
+    parsing_in_background: bool,
     parse_count: usize,
     selections: HashMap<SelectionSetId, SelectionSet>,
     deferred_ops: OperationQueue,
@@ -581,7 +581,7 @@ impl Buffer {
             history,
             file,
             syntax_tree: Mutex::new(None),
-            is_parsing: false,
+            parsing_in_background: false,
             parse_count: 0,
             language,
             saved_mtime,
@@ -610,7 +610,7 @@ impl Buffer {
             fragments: self.fragments.clone(),
             version: self.version.clone(),
             tree: self.syntax_tree(),
-            is_parsing: self.is_parsing,
+            is_parsing: self.parsing_in_background,
             language: self.language.clone(),
             query_cursor: QueryCursorHandle::new(),
         }
@@ -825,68 +825,67 @@ impl Buffer {
 
     #[cfg(test)]
     pub fn is_parsing(&self) -> bool {
-        self.is_parsing
+        self.parsing_in_background
     }
 
-    fn should_reparse(&self) -> bool {
-        if let Some(syntax_tree) = self.syntax_tree.lock().as_ref() {
-            syntax_tree.dirty || syntax_tree.version != self.version
-        } else {
-            self.language.is_some()
-        }
-    }
-
-    fn reparse(&mut self, cx: &mut ModelContext<Self>) {
-        // Avoid spawning a new parsing task if the buffer is already being reparsed
-        // due to an earlier edit.
-        if self.is_parsing {
-            return;
+    fn reparse(&mut self, cx: &mut ModelContext<Self>) -> bool {
+        if self.parsing_in_background {
+            return false;
         }
 
         if let Some(language) = self.language.clone() {
-            self.is_parsing = true;
-            cx.spawn(|handle, mut cx| async move {
-                loop {
-                    // The parse tree is out of date, so grab the syntax tree to synchronously
-                    // splice all the edits that have happened since the last parse.
-                    let new_tree = handle.update(&mut cx, |this, _| this.syntax_tree());
-                    let (new_text, new_version) = handle
-                        .read_with(&cx, |this, _| (this.visible_text.clone(), this.version()));
+            // The parse tree is out of date, so grab the syntax tree to synchronously
+            // splice all the edits that have happened since the last parse.
+            let old_tree = self.syntax_tree();
+            let parsed_text = self.visible_text.clone();
+            let parsed_version = self.version();
+            let parse_task = cx.background().spawn({
+                let language = language.clone();
+                async move { Self::parse_text(&parsed_text, old_tree, &language) }
+            });
 
-                    // Parse the current text in a background thread.
-                    let new_tree = cx
-                        .background()
-                        .spawn({
-                            let language = language.clone();
-                            async move { Self::parse_text(&new_text, new_tree, &language) }
-                        })
-                        .await;
-
-                    let parse_again = handle.update(&mut cx, |this, cx| {
-                        *this.syntax_tree.lock() = Some(SyntaxTree {
-                            tree: new_tree,
-                            dirty: false,
-                            version: new_version,
-                        });
-                        this.parse_count += 1;
-                        cx.emit(Event::Reparsed);
-                        cx.notify();
-
-                        if this.should_reparse() {
-                            true
-                        } else {
-                            this.is_parsing = false;
-                            false
-                        }
+            match cx
+                .background()
+                .block_with_timeout(Duration::from_millis(1), parse_task)
+            {
+                Ok(new_tree) => {
+                    *self.syntax_tree.lock() = Some(SyntaxTree {
+                        tree: new_tree,
+                        dirty: false,
+                        version: parsed_version,
                     });
-
-                    if !parse_again {
-                        break;
-                    }
+                    self.parse_count += 1;
+                    cx.emit(Event::Reparsed);
+                    cx.notify();
+                    return true;
                 }
-            })
-            .detach();
+                Err(parse_task) => {
+                    self.parsing_in_background = true;
+                    cx.spawn(move |this, mut cx| async move {
+                        let new_tree = parse_task.await;
+                        this.update(&mut cx, move |this, cx| {
+                            let parse_again = this.version > parsed_version;
+                            *this.syntax_tree.lock() = Some(SyntaxTree {
+                                tree: new_tree,
+                                dirty: false,
+                                version: parsed_version,
+                            });
+                            this.parse_count += 1;
+                            this.parsing_in_background = false;
+
+                            if parse_again && this.reparse(cx) {
+                                return;
+                            }
+
+                            cx.emit(Event::Reparsed);
+                            cx.notify();
+                        });
+                    })
+                    .detach();
+                }
+            }
         }
+        false
     }
 
     fn parse_text(text: &Rope, old_tree: Option<Tree>, language: &Language) -> Tree {
@@ -1931,7 +1930,7 @@ impl Clone for Buffer {
             file: self.file.clone(),
             language: self.language.clone(),
             syntax_tree: Mutex::new(self.syntax_tree.lock().clone()),
-            is_parsing: false,
+            parsing_in_background: false,
             parse_count: self.parse_count,
             deferred_replicas: self.deferred_replicas.clone(),
             replica_id: self.replica_id,
