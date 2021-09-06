@@ -47,7 +47,7 @@ impl ChatPanel {
         cx: &mut ViewContext<Self>,
     ) -> Self {
         let input_editor = cx.add_view(|cx| {
-            Editor::auto_height(settings.clone(), cx).with_style({
+            Editor::auto_height(4, settings.clone(), cx).with_style({
                 let settings = settings.clone();
                 move |_| settings.borrow().theme.chat_panel.input_editor.as_editor()
             })
@@ -237,13 +237,9 @@ impl ChatPanel {
 
     fn render_input_box(&self) -> ElementBox {
         let theme = &self.settings.borrow().theme;
-        Container::new(
-            ConstrainedBox::new(ChildView::new(self.input_editor.id()).boxed())
-                .with_max_height(100.)
-                .boxed(),
-        )
-        .with_style(&theme.chat_panel.input_editor_container)
-        .boxed()
+        Container::new(ChildView::new(self.input_editor.id()).boxed())
+            .with_style(&theme.chat_panel.input_editor_container)
+            .boxed()
     }
 
     fn render_channel_name(

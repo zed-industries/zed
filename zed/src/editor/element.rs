@@ -396,7 +396,7 @@ impl Element for EditorElement {
 
         let gutter_padding;
         let gutter_width;
-        if snapshot.gutter_visible {
+        if snapshot.mode == EditorMode::Full {
             gutter_padding = snapshot.em_width(cx.font_cache);
             match snapshot.max_line_number_width(cx.font_cache, cx.text_layout_cache) {
                 Err(error) => {
@@ -424,11 +424,12 @@ impl Element for EditorElement {
         });
 
         let scroll_height = (snapshot.max_point().row() + 1) as f32 * line_height;
-        if snapshot.auto_height {
+        if let EditorMode::AutoHeight { max_lines } = snapshot.mode {
             size.set_y(
                 scroll_height
                     .min(constraint.max_along(Axis::Vertical))
-                    .max(constraint.min_along(Axis::Vertical)),
+                    .max(constraint.min_along(Axis::Vertical))
+                    .min(line_height * max_lines as f32),
             )
         } else if size.y().is_infinite() {
             size.set_y(scroll_height);
@@ -485,7 +486,7 @@ impl Element for EditorElement {
             }
         });
 
-        let line_number_layouts = if snapshot.gutter_visible {
+        let line_number_layouts = if snapshot.mode == EditorMode::Full {
             let settings = self
                 .view
                 .upgrade(cx.app)
