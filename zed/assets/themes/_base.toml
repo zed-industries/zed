@@ -4,6 +4,7 @@ background = "$surface.0"
 [workspace.tab]
 text = "$text.2"
 padding = { left = 10, right = 10 }
+border = { bottom = true, left = true, width = 1, color = "$border.0"}
 icon_close = "$text.0.color"
 icon_dirty = "$status.info"
 icon_conflict = "$status.warn"
@@ -15,6 +16,7 @@ text = "$text.0"
 
 [workspace.sidebar.icons]
 padding = { left = 10, right = 10 }
+border = { right = true, width = 1, color = "#FF0000"}
 
 [workspace.sidebar.resize_handle]
 margin = { left = 6 }
@@ -25,9 +27,13 @@ color = "$text.2.color"
 [workspace.active_sidebar_icon]
 color = "$text.0.color"
 
+[project_browser]
+border = { right = true, width = 1, color = "$border.0"}
+
 [chat_panel]
 channel_name = { extends = "$text.0", weight = "bold" }
 channel_name_hash = { text = "$text.2", padding.right = 5 }
+border = { left = true, width = 1, color = "$border.0"}
 padding = 10
 
 [chat_panel.message]

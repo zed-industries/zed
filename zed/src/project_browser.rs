@@ -1,6 +1,17 @@
-use gpui::{elements::Empty, Element, Entity, View};
+use gpui::{Element, Entity, View, elements::{Container, Empty}};
+use postage::watch;
 
-pub struct ProjectBrowser;
+use crate::Settings;
+
+pub struct ProjectBrowser {
+    settings: watch::Receiver<Settings>
+}
+
+impl ProjectBrowser {
+    pub fn new(settings: watch::Receiver<Settings>) -> Self { 
+        Self { settings }
+    }
+}
 
 pub enum Event {}
 
@@ -14,6 +25,13 @@ impl View for ProjectBrowser {
     }
 
     fn render(&mut self, _: &mut gpui::RenderContext<'_, Self>) -> gpui::ElementBox {
-        Empty::new().boxed()
+        let settings = self.settings.borrow();
+        let theme = &settings.theme;
+
+        Container::new(
+            Empty::new().boxed()
+        )
+        .with_style(&theme.project_browser.container)
+        .boxed()
     }
 }

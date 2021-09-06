@@ -21,6 +21,7 @@ pub struct Theme {
     pub name: String,
     pub workspace: Workspace,
     pub chat_panel: ChatPanel,
+    pub project_browser: ProjectBrowser,
     pub selector: Selector,
     pub editor: EditorStyle,
     pub syntax: SyntaxTheme,
@@ -37,7 +38,7 @@ pub struct Workspace {
     pub active_tab: Tab,
     pub sidebar: Sidebar,
     pub sidebar_icon: SidebarIcon,
-    pub active_sidebar_icon: SidebarIcon,
+    pub active_sidebar_icon: SidebarIcon
 }
 
 #[derive(Deserialize)]
@@ -60,6 +61,12 @@ pub struct Sidebar {
 #[derive(Deserialize)]
 pub struct SidebarIcon {
     pub color: Color,
+}
+
+#[derive(Deserialize)]
+pub struct ProjectBrowser {
+    #[serde(flatten)]
+    pub container: ContainerStyle,
 }
 
 #[derive(Deserialize)]

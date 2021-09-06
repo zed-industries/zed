@@ -368,7 +368,8 @@ impl Workspace {
         let mut left_sidebar = Sidebar::new(Side::Left);
         left_sidebar.add_item(
             "icons/folder-tree-16.svg",
-            cx.add_view(|_| ProjectBrowser).into(),
+            cx.add_view(|_| ProjectBrowser::new(app_state.settings.clone()))
+                .into(),
         );
 
         let mut right_sidebar = Sidebar::new(Side::Right);
@@ -383,7 +384,7 @@ impl Workspace {
             })
             .into(),
         );
-        right_sidebar.add_item("icons/user-16.svg", cx.add_view(|_| ProjectBrowser).into());
+        // right_sidebar.add_item("icons/user-16.svg", cx.add_view(|_| ProjectBrowser).into());
 
         Workspace {
             modal: None,
