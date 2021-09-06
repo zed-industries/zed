@@ -46,7 +46,7 @@ const MAX_LINE_LEN: usize = 1024;
 action!(Cancel);
 action!(Backspace);
 action!(Delete);
-action!(Newline, bool);
+action!(Newline);
 action!(Insert, String);
 action!(DeleteLine);
 action!(DeleteToPreviousWordBoundary);
@@ -105,8 +105,8 @@ pub fn init(cx: &mut MutableAppContext) {
         Binding::new("ctrl-h", Backspace, Some("Editor")),
         Binding::new("delete", Delete, Some("Editor")),
         Binding::new("ctrl-d", Delete, Some("Editor")),
-        Binding::new("enter", Newline(false), Some("Editor")),
-        Binding::new("alt-enter", Newline(true), Some("Editor")),
+        Binding::new("enter", Newline, Some("Editor && mode == full")),
+        Binding::new("alt-enter", Newline, Some("Editor && mode == auto_height")),
         Binding::new("tab", Insert("\t".into()), Some("Editor")),
         Binding::new("ctrl-shift-K", DeleteLine, Some("Editor")),
         Binding::new(
@@ -752,18 +752,8 @@ impl Editor {
         self.end_transaction(cx);
     }
 
-    fn newline(&mut self, Newline(insert_newline): &Newline, cx: &mut ViewContext<Self>) {
-        match self.mode {
-            EditorMode::SingleLine => cx.propagate_action(),
-            EditorMode::AutoHeight { .. } => {
-                if *insert_newline {
-                    self.insert(&Insert("\n".into()), cx);
-                } else {
-                    cx.propagate_action();
-                }
-            }
-            EditorMode::Full => self.insert(&Insert("\n".into()), cx),
-        }
+    fn newline(&mut self, _: &Newline, cx: &mut ViewContext<Self>) {
+        self.insert(&Insert("\n".into()), cx);
     }
 
     pub fn backspace(&mut self, _: &Backspace, cx: &mut ViewContext<Self>) {
@@ -2609,6 +2599,17 @@ impl View for Editor {
         });
         cx.emit(Event::Blurred);
         cx.notify();
+    }
+
+    fn keymap_context(&self, _: &AppContext) -> gpui::keymap::Context {
+        let mut cx = Self::default_keymap_context();
+        let mode = match self.mode {
+            EditorMode::SingleLine => "single_line",
+            EditorMode::AutoHeight { .. } => "auto_height",
+            EditorMode::Full => "full",
+        };
+        cx.map.insert("mode".into(), mode.into());
+        cx
     }
 }
 
