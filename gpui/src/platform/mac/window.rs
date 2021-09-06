@@ -253,11 +253,11 @@ impl Window {
         unsafe {
             let app = NSApplication::sharedApplication(nil);
             let key_window: id = msg_send![app, keyWindow];
-            if key_window.is_null() {
-                None
-            } else {
+            if msg_send![key_window, isKindOfClass: WINDOW_CLASS] {
                 let id = get_window_state(&*key_window).borrow().id;
                 Some(id)
+            } else {
+                None
             }
         }
     }
