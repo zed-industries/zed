@@ -16,7 +16,7 @@ text = "$text.0"
 
 [workspace.sidebar.icons]
 padding = { left = 10, right = 10 }
-border = { right = true, width = 1, color = "#FF0000"}
+border = { right = true, width = 1, color = "$border.0"}
 
 [workspace.sidebar.resize_handle]
 margin = { left = 6 }
