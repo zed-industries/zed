@@ -396,11 +396,13 @@ impl Renderer {
         drawable_size: Vector2F,
         command_encoder: &metal::RenderCommandEncoderRef,
     ) {
-        if layer.quads().is_empty() {
+        if layer.quads().is_empty() && layer.underlines().is_empty() {
             return;
         }
         align_offset(offset);
-        let next_offset = *offset + layer.quads().len() * mem::size_of::<shaders::GPUIQuad>();
+        let next_offset = *offset
+            + (layer.quads().len() + layer.underlines().len())
+                * mem::size_of::<shaders::GPUIQuad>();
         assert!(
             next_offset <= INSTANCE_BUFFER_SIZE,
             "instance buffer exhausted"
@@ -430,7 +432,7 @@ impl Renderer {
             (self.instances.contents() as *mut u8).offset(*offset as isize)
                 as *mut shaders::GPUIQuad
         };
-        for (ix, quad) in layer.quads().iter().enumerate() {
+        for (ix, quad) in layer.quads().iter().chain(layer.underlines()).enumerate() {
             let bounds = quad.bounds * scene.scale_factor();
             let border_width = quad.border.width * scene.scale_factor();
             let shader_quad = shaders::GPUIQuad {
@@ -456,7 +458,7 @@ impl Renderer {
             metal::MTLPrimitiveType::Triangle,
             0,
             6,
-            layer.quads().len() as u64,
+            (layer.quads().len() + layer.underlines().len()) as u64,
         );
         *offset = next_offset;
     }

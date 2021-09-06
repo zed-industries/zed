@@ -24,6 +24,7 @@ struct StackingContext {
 pub struct Layer {
     clip_bounds: Option<RectF>,
     quads: Vec<Quad>,
+    underlines: Vec<Quad>,
     shadows: Vec<Shadow>,
     glyphs: Vec<Glyph>,
     icons: Vec<Icon>,
@@ -165,6 +166,10 @@ impl Scene {
         self.active_layer().push_quad(quad)
     }
 
+    pub fn push_underline(&mut self, underline: Quad) {
+        self.active_layer().push_underline(underline)
+    }
+
     pub fn push_shadow(&mut self, shadow: Shadow) {
         self.active_layer().push_shadow(shadow)
     }
@@ -234,6 +239,7 @@ impl Layer {
         Self {
             clip_bounds,
             quads: Vec::new(),
+            underlines: Vec::new(),
             shadows: Vec::new(),
             glyphs: Vec::new(),
             icons: Vec::new(),
@@ -251,6 +257,14 @@ impl Layer {
 
     pub fn quads(&self) -> &[Quad] {
         self.quads.as_slice()
+    }
+
+    fn push_underline(&mut self, underline: Quad) {
+        self.underlines.push(underline);
+    }
+
+    pub fn underlines(&self) -> &[Quad] {
+        self.underlines.as_slice()
     }
 
     fn push_shadow(&mut self, shadow: Shadow) {
