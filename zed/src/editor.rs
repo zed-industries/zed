@@ -46,7 +46,6 @@ const MAX_LINE_LEN: usize = 1024;
 action!(Cancel);
 action!(Backspace);
 action!(Delete);
-action!(Newline);
 action!(Insert, String);
 action!(DeleteLine);
 action!(DeleteToPreviousWordBoundary);
@@ -105,8 +104,12 @@ pub fn init(cx: &mut MutableAppContext) {
         Binding::new("ctrl-h", Backspace, Some("Editor")),
         Binding::new("delete", Delete, Some("Editor")),
         Binding::new("ctrl-d", Delete, Some("Editor")),
-        Binding::new("enter", Newline, Some("Editor && mode == full")),
-        Binding::new("alt-enter", Newline, Some("Editor && mode == auto_height")),
+        Binding::new("enter", Insert("\n".into()), Some("Editor && mode == full")),
+        Binding::new(
+            "alt-enter",
+            Insert("\n".into()),
+            Some("Editor && mode == auto_height"),
+        ),
         Binding::new("tab", Insert("\t".into()), Some("Editor")),
         Binding::new("ctrl-shift-K", DeleteLine, Some("Editor")),
         Binding::new(
@@ -199,7 +202,6 @@ pub fn init(cx: &mut MutableAppContext) {
     cx.add_action(Editor::select);
     cx.add_action(Editor::cancel);
     cx.add_action(Editor::insert);
-    cx.add_action(Editor::newline);
     cx.add_action(Editor::backspace);
     cx.add_action(Editor::delete);
     cx.add_action(Editor::delete_line);
@@ -750,10 +752,6 @@ impl Editor {
         self.select_all(&SelectAll, cx);
         self.insert(&Insert(String::new()), cx);
         self.end_transaction(cx);
-    }
-
-    fn newline(&mut self, _: &Newline, cx: &mut ViewContext<Self>) {
-        self.insert(&Insert("\n".into()), cx);
     }
 
     pub fn backspace(&mut self, _: &Backspace, cx: &mut ViewContext<Self>) {
