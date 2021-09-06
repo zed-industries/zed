@@ -3,11 +3,14 @@ background = "$surface.0"
 
 [workspace.tab]
 text = "$text.2"
-padding = { left = 10, right = 10 }
+padding = { top = 7, bottom = 7, left = 24, right = 8 }
 border = { bottom = true, left = true, width = 1, color = "$border.0"}
 icon_close = "$text.0.color"
 icon_dirty = "$status.info"
 icon_conflict = "$status.warn"
+
+[workspace.tab.label]
+padding = { right = 4 }
 
 [workspace.active_tab]
 extends = "$workspace.tab"

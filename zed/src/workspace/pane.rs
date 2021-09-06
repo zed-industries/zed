@@ -202,32 +202,28 @@ impl Pane {
                         border.bottom = !is_active;
 
                         let mut container = Container::new(
-                            Stack::new()
+                            Flex::row()
                                 .with_child(
-                                    Align::new(
-                                        Label::new(
-                                            title,
-                                            if is_active {
-                                                theme.workspace.active_tab.label.clone()
-                                            } else {
-                                                theme.workspace.tab.label.clone()
-                                            },
-                                        )
-                                        .boxed(),
+                                    Label::new(
+                                        title,
+                                        if is_active {
+                                            theme.workspace.active_tab.label.clone()
+                                        } else {
+                                            theme.workspace.tab.label.clone()
+                                        },
                                     )
                                     .boxed(),
                                 )
                                 .with_child(
-                                    Align::new(Self::render_tab_icon(
+                                    Container::new(Self::render_tab_icon(
                                         item.id(),
-                                        line_height - 2.,
+                                        line_height - 4.,
                                         mouse_state.hovered,
                                         item.is_dirty(cx),
                                         item.has_conflict(cx),
                                         theme,
                                         cx,
                                     ))
-                                    .right()
                                     .boxed(),
                                 )
                                 .boxed(),
@@ -251,7 +247,7 @@ impl Pane {
                                 })
                                 .boxed(),
                         )
-                        .with_min_width(80.0)
+                        .with_min_width(32.0)
                         .with_max_width(264.0)
                         .boxed()
                     })
