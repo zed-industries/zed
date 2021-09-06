@@ -87,24 +87,29 @@ background = "$surface.1"
 selection = "$selection.host"
 
 [selector]
-background = "$surface.2"
+background = "$surface.0"
 text = "$text.0"
-padding = 6
+padding = 8
 margin.top = 12
 corner_radius = 6
-shadow = { offset = [0, 0], blur = 12, color = "#00000088" }
+shadow = { offset = [0, 2], blur = 16, color = "$shadow.0" }
 input_editor = "$chat_panel.input_editor"
+border = { width = 1, color = "$border.0"}
+
+[selector.input_editor_container]
+background = "FF0000"
+padding = 10
 
 [selector.item]
-background = "#424344"
 text = "$text.1"
-highlight_text = { extends = "$text.base", color = "#18a3ff", weight = "bold" }
-border = { color = "#000000", width = 1 }
-padding = 6
+highlight_text = { extends = "$text.base", color = "$syntax.keyword.color", weight = "$syntax.keyword.weight" }
+padding = { left = 16, right = 16, top = 4, bottom = 4 }
+corner_radius = 6
 
 [selector.active_item]
 extends = "$selector.item"
-background = "#094771"
+background = "$state.hover"
+text = "$text.0"
 
 [editor]
 text = "$text.1.color"

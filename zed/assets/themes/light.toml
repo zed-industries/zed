@@ -15,6 +15,9 @@ base = { family = "Inconsolata", size = 14 }
 2 = { extends = "$text.base", color = "#7E7E83" }
 3 = { extends = "$text.base", color = "#939393" }
 
+[shadow]
+0 = "#00000052"
+
 [selection]
 host = { selection = "#D4D9EE", cursor = "$text.0.color" }
 guests = [{ selection = "#504f31", cursor = "#fcf154" }]
@@ -27,9 +30,10 @@ bad = "#b7372e"
 
 [state]
 active_line = "#EAECF2"
+hover = "#0000000D"
 
 [syntax]
-keyword = "#0000fa"
+keyword = { color = "#0000fa", weight = "bold" }
 function = "#795e26"
 string = "#a82121"
 type = "#267f29"
