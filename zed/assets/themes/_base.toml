@@ -78,6 +78,7 @@ background = "$surface.0"
 background = "$surface.1"
 corner_radius = 6
 padding = 6
+border = { color = "$border.0", width = 1 }
 
 [chat_panel.input_editor]
 text = "$text.1.color"
