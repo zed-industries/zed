@@ -224,6 +224,7 @@ impl Pane {
                                         theme,
                                         cx,
                                     ))
+                                    .with_margin_left(4.0)
                                     .boxed(),
                                 )
                                 .boxed(),
