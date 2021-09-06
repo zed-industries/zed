@@ -16,7 +16,7 @@ base = { family = "Inconsolata", size = 14 }
 3 = { extends = "$text.base", color = "#939393" }
 
 [shadow]
-0 = "#00000052"
+0 = "#0000000D"
 
 [selection]
 host = { selection = "#D4D9EE", cursor = "$text.0.color" }
