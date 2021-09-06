@@ -1,5 +1,6 @@
 use super::CursorStyle;
 use crate::{AnyAction, ClipboardItem};
+use anyhow::Result;
 use parking_lot::Mutex;
 use pathfinder_geometry::vector::Vector2F;
 use std::{
@@ -128,10 +129,12 @@ impl super::Platform for Platform {
 
     fn open_url(&self, _: &str) {}
 
-    fn write_credentials(&self, _: &str, _: &str, _: &[u8]) {}
+    fn write_credentials(&self, _: &str, _: &str, _: &[u8]) -> Result<()> {
+        Ok(())
+    }
 
-    fn read_credentials(&self, _: &str) -> Option<(String, Vec<u8>)> {
-        None
+    fn read_credentials(&self, _: &str) -> Result<Option<(String, Vec<u8>)>> {
+        Ok(None)
     }
 
     fn set_cursor_style(&self, style: CursorStyle) {

@@ -18,6 +18,7 @@ use crate::{
     text_layout::LineLayout,
     AnyAction, ClipboardItem, Menu, Scene,
 };
+use anyhow::Result;
 use async_task::Runnable;
 pub use event::Event;
 use std::{
@@ -46,8 +47,8 @@ pub trait Platform: Send + Sync {
     fn read_from_clipboard(&self) -> Option<ClipboardItem>;
     fn open_url(&self, url: &str);
 
-    fn write_credentials(&self, url: &str, username: &str, password: &[u8]);
-    fn read_credentials(&self, url: &str) -> Option<(String, Vec<u8>)>;
+    fn write_credentials(&self, url: &str, username: &str, password: &[u8]) -> Result<()>;
+    fn read_credentials(&self, url: &str) -> Result<Option<(String, Vec<u8>)>>;
 
     fn set_cursor_style(&self, style: CursorStyle);
 

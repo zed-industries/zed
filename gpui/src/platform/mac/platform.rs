@@ -5,6 +5,7 @@ use crate::{
     platform::{self, CursorStyle},
     AnyAction, ClipboardItem, Event, Menu, MenuItem,
 };
+use anyhow::{anyhow, Result};
 use block::ConcreteBlock;
 use cocoa::{
     appkit::{
@@ -469,7 +470,7 @@ impl platform::Platform for MacPlatform {
         }
     }
 
-    fn write_credentials(&self, url: &str, username: &str, password: &[u8]) {
+    fn write_credentials(&self, url: &str, username: &str, password: &[u8]) -> Result<()> {
         let url = CFString::from(url);
         let username = CFString::from(username);
         let password = CFData::from_buffer(password);
@@ -502,12 +503,13 @@ impl platform::Platform for MacPlatform {
             }
 
             if status != errSecSuccess {
-                panic!("{} password failed: {}", verb, status);
+                return Err(anyhow!("{} password failed: {}", verb, status));
             }
         }
+        Ok(())
     }
 
-    fn read_credentials(&self, url: &str) -> Option<(String, Vec<u8>)> {
+    fn read_credentials(&self, url: &str) -> Result<Option<(String, Vec<u8>)>> {
         let url = CFString::from(url);
         let cf_true = CFBoolean::true_value().as_CFTypeRef();
 
@@ -525,27 +527,27 @@ impl platform::Platform for MacPlatform {
             let status = SecItemCopyMatching(attrs.as_concrete_TypeRef(), &mut result);
             match status {
                 security::errSecSuccess => {}
-                security::errSecItemNotFound | security::errSecUserCanceled => return None,
-                _ => panic!("reading password failed: {}", status),
+                security::errSecItemNotFound | security::errSecUserCanceled => return Ok(None),
+                _ => return Err(anyhow!("reading password failed: {}", status)),
             }
 
             let result = CFType::wrap_under_create_rule(result)
                 .downcast::<CFDictionary>()
-                .expect("keychain item was not a dictionary");
+                .ok_or_else(|| anyhow!("keychain item was not a dictionary"))?;
             let username = result
                 .find(kSecAttrAccount as *const _)
-                .expect("account was missing from keychain item");
+                .ok_or_else(|| anyhow!("account was missing from keychain item"))?;
             let username = CFType::wrap_under_get_rule(*username)
                 .downcast::<CFString>()
-                .expect("account was not a string");
+                .ok_or_else(|| anyhow!("account was not a string"))?;
             let password = result
                 .find(kSecValueData as *const _)
-                .expect("password was missing from keychain item");
+                .ok_or_else(|| anyhow!("password was missing from keychain item"))?;
             let password = CFType::wrap_under_get_rule(*password)
                 .downcast::<CFData>()
-                .expect("password was not a string");
+                .ok_or_else(|| anyhow!("password was not a string"))?;
 
-            Some((username.to_string(), password.bytes().to_vec()))
+            Ok(Some((username.to_string(), password.bytes().to_vec())))
         }
     }
 

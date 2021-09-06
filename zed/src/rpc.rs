@@ -1,3 +1,4 @@
+use crate::util::ResultExt;
 use anyhow::{anyhow, Context, Result};
 use async_tungstenite::tungstenite::http::Request;
 use async_tungstenite::tungstenite::{Error as WebSocketError, Message as WebSocketMessage};
@@ -236,7 +237,11 @@ impl Client {
     ) -> Task<Result<(String, String)>> {
         let executor = executor.clone();
         executor.clone().spawn(async move {
-            if let Some((user_id, access_token)) = platform.read_credentials(&ZED_SERVER_URL) {
+            if let Some((user_id, access_token)) = platform
+                .read_credentials(&ZED_SERVER_URL)
+                .log_err()
+                .flatten()
+            {
                 log::info!("already signed in. user_id: {}", user_id);
                 return Ok((user_id, String::from_utf8(access_token).unwrap()));
             }
@@ -301,7 +306,9 @@ impl Client {
                 .decrypt_string(&access_token)
                 .context("failed to decrypt access token")?;
             platform.activate(true);
-            platform.write_credentials(&ZED_SERVER_URL, &user_id, access_token.as_bytes());
+            platform
+                .write_credentials(&ZED_SERVER_URL, &user_id, access_token.as_bytes())
+                .log_err();
             Ok((user_id.to_string(), access_token))
         })
     }
