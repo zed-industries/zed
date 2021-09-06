@@ -1,22 +1,22 @@
 extends = "_base"
 
 [surface]
-0 = "#ffffff"
-1 = "#f3f3f3"
-2 = "#ececec"
-3 = "#3a3b3c"
+0 = "#EAEAEB"
+1 = "#FAFAFA"
+2 = "#FFFFFF"
 
 [border]
 0 = "#DBDBDC"
 
 [text]
 base = { family = "Inconsolata", size = 14 }
-0 = { extends = "$text.base", color = "#acacac" }
-1 = { extends = "$text.base", color = "#111111" }
-2 = { extends = "$text.base", color = "#333333" }
+0 = { extends = "$text.base", color = "#000000" }
+1 = { extends = "$text.base", color = "#29292B" }
+2 = { extends = "$text.base", color = "#7E7E83" }
+3 = { extends = "$text.base", color = "#939393" }
 
 [selection]
-host = { selection = "#264f78", cursor = "$text.0.color" }
+host = { selection = "#D4D9EE", cursor = "$text.0.color" }
 guests = [{ selection = "#504f31", cursor = "#fcf154" }]
 
 [status]
@@ -24,6 +24,9 @@ good = "#4fac63"
 info = "#3c5dd4"
 warn = "#faca50"
 bad = "#b7372e"
+
+[state]
+active_line = "#EAECF2"
 
 [syntax]
 keyword = "#0000fa"

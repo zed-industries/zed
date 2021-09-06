@@ -24,6 +24,9 @@ info = "#3c5dd4"
 warn = "#faca50"
 bad = "#b7372e"
 
+[state]
+active_line = "#1F2022"
+
 [syntax]
 keyword = { color = "#0086c0", weight = "bold" }
 function = "#dcdcaa"
