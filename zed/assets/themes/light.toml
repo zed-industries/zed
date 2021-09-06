@@ -6,6 +6,9 @@ extends = "_base"
 2 = "#ececec"
 3 = "#3a3b3c"
 
+[border]
+0 = "#DBDBDC"
+
 [text]
 base = { family = "Inconsolata", size = 14 }
 0 = { extends = "$text.base", color = "#acacac" }
