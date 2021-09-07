@@ -1,0 +1,44 @@
+extends = "_base"
+
+[surface]
+0 = "#222324"
+1 = "#141516"
+2 = "#131415"
+
+[border]
+0 = "#0F1011"
+
+[text]
+base = { family = "Inconsolata", size = 14 }
+0 = { extends = "$text.base", color = "#ffffff" }
+1 = { extends = "$text.base", color = "#b3b3b3" }
+2 = { extends = "$text.base", color = "#7b7d80" }
+3 = { extends = "$text.base", color = "#66686A" }
+
+[shadow]
+0 = "#00000052"
+
+[selection]
+host = { selection = "#264f78", cursor = "$text.0.color" }
+guests = [{ selection = "#504f31", cursor = "#fcf154" }]
+
+[status]
+good = "#4fac63"
+info = "#3c5dd4"
+warn = "#faca50"
+bad = "#b7372e"
+
+[state]
+active_line = "#1F2022"
+hover = "#00000033"
+
+[syntax]
+keyword = { color = "#0086c0", weight = "bold" }
+function = "#dcdcaa"
+string = "#cb8f77"
+type = "#4ec9b0"
+number = "#b5cea8"
+comment = "#6a9955"
+property = "#4e94ce"
+variant = "#4fc1ff"
+constant = "#9cdcfe"
