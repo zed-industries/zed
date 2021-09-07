@@ -1,19 +1,19 @@
 extends = "_base"
 
 [surface]
-0 = "#283340"
-1 = "#1C2733"
-2 = "#1C2733"
+0 = "#222324"
+1 = "#141516"
+2 = "#131415"
 
 [border]
-0 = "#1B222B"
+0 = "#0F1011"
 
 [text]
 base = { family = "Inconsolata", size = 14 }
-0 = { extends = "$text.base", color = "#FFFFFF" }
-1 = { extends = "$text.base", color = "#CDD1E2" }
-2 = { extends = "$text.base", color = "#9BA8BE" }
-3 = { extends = "$text.base", color = "#6E7483" }
+0 = { extends = "$text.base", color = "#ffffff" }
+1 = { extends = "$text.base", color = "#b3b3b3" }
+2 = { extends = "$text.base", color = "#7b7d80" }
+3 = { extends = "$text.base", color = "#66686A" }
 
 [shadow]
 0 = "#00000052"
@@ -29,7 +29,7 @@ warn = "#faca50"
 bad = "#b7372e"
 
 [state]
-active_line = "#19222D"
+active_line = "#1F2022"
 hover = "#00000033"
 
 [syntax]
