@@ -1,14 +1,18 @@
+use std::sync::Arc;
+
 use crate::{
     channel::{Channel, ChannelEvent, ChannelList, ChannelMessage},
     editor::Editor,
+    rpc::Client,
     theme,
-    util::ResultExt,
+    util::{ResultExt, TryFutureExt},
     Settings,
 };
 use gpui::{
     action,
     elements::*,
     keymap::Binding,
+    platform::CursorStyle,
     views::{ItemType, Select, SelectStyle},
     AppContext, Entity, ModelHandle, MutableAppContext, RenderContext, Subscription, View,
     ViewContext, ViewHandle,
@@ -19,6 +23,7 @@ use time::{OffsetDateTime, UtcOffset};
 const MESSAGE_LOADING_THRESHOLD: usize = 50;
 
 pub struct ChatPanel {
+    rpc: Arc<Client>,
     channel_list: ModelHandle<ChannelList>,
     active_channel: Option<(ModelHandle<Channel>, Subscription)>,
     message_list: ListState,
@@ -42,6 +47,7 @@ pub fn init(cx: &mut MutableAppContext) {
 
 impl ChatPanel {
     pub fn new(
+        rpc: Arc<Client>,
         channel_list: ModelHandle<ChannelList>,
         settings: watch::Receiver<Settings>,
         cx: &mut ViewContext<Self>,
@@ -94,6 +100,7 @@ impl ChatPanel {
         });
 
         let mut this = Self {
+            rpc,
             channel_list,
             active_channel: Default::default(),
             message_list,
@@ -307,9 +314,38 @@ impl View for ChatPanel {
         "ChatPanel"
     }
 
-    fn render(&mut self, _: &mut RenderContext<Self>) -> ElementBox {
+    fn render(&mut self, cx: &mut RenderContext<Self>) -> ElementBox {
         let theme = &self.settings.borrow().theme;
-        ConstrainedBox::new(
+        let element = if self.rpc.user_id().borrow().is_none() {
+            enum SignInPromptLabel {}
+
+            Align::new(
+                MouseEventHandler::new::<SignInPromptLabel, _, _, _>(0, cx, |mouse_state, _| {
+                    Label::new(
+                        "Sign in to use chat".to_string(),
+                        if mouse_state.hovered {
+                            theme.chat_panel.hovered_sign_in_prompt.clone()
+                        } else {
+                            theme.chat_panel.sign_in_prompt.clone()
+                        },
+                    )
+                    .boxed()
+                })
+                .with_cursor_style(CursorStyle::PointingHand)
+                .on_click({
+                    let rpc = self.rpc.clone();
+                    move |cx| {
+                        let rpc = rpc.clone();
+                        cx.spawn(|cx| async move {
+                            rpc.authenticate_and_connect(cx).log_err().await;
+                        })
+                        .detach();
+                    }
+                })
+                .boxed(),
+            )
+            .boxed()
+        } else {
             Container::new(
                 Flex::column()
                     .with_child(
@@ -322,10 +358,9 @@ impl View for ChatPanel {
                     .boxed(),
             )
             .with_style(&theme.chat_panel.container)
-            .boxed(),
-        )
-        .with_min_width(150.)
-        .boxed()
+            .boxed()
+        };
+        ConstrainedBox::new(element).with_min_width(150.).boxed()
     }
 
     fn on_focus(&mut self, cx: &mut ViewContext<Self>) {

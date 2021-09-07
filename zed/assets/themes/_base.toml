@@ -76,6 +76,14 @@ placeholder_text = "$text.2.color"
 background = "$surface.1"
 selection = "$selection.host"
 
+[chat_panel.sign_in_prompt]
+extends = "$text.0"
+underline = true
+
+[chat_panel.hovered_sign_in_prompt]
+extends = "$chat_panel.sign_in_prompt"
+color = "$text.1.color"
+
 [selector]
 background = "$surface.2"
 text = "$text.0"

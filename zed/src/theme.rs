@@ -70,6 +70,8 @@ pub struct ChatPanel {
     pub channel_select: ChannelSelect,
     pub input_editor_container: ContainerStyle,
     pub input_editor: InputEditorStyle,
+    pub sign_in_prompt: TextStyle,
+    pub hovered_sign_in_prompt: TextStyle,
 }
 
 #[derive(Deserialize)]

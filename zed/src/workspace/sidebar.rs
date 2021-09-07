@@ -37,7 +37,7 @@ impl Sidebar {
             side,
             items: Default::default(),
             active_item_ix: None,
-            width: Rc::new(RefCell::new(200.)),
+            width: Rc::new(RefCell::new(220.)),
         }
     }
 
@@ -123,9 +123,7 @@ impl Sidebar {
                     )
                     .on_after_layout({
                         let width = self.width.clone();
-                        move |size, _| {
-                            *width.borrow_mut() = size.x();
-                        }
+                        move |size, _| *width.borrow_mut() = size.x()
                     })
                     .boxed(),
                 )

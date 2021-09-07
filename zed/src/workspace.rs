@@ -376,6 +376,7 @@ impl Workspace {
             "icons/comment-16.svg",
             cx.add_view(|cx| {
                 ChatPanel::new(
+                    app_state.rpc.clone(),
                     app_state.channel_list.clone(),
                     app_state.settings.clone(),
                     cx,
