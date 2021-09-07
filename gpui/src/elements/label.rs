@@ -1,12 +1,11 @@
 use crate::{
-    color::Color,
-    fonts::{FontId, TextStyle},
+    fonts::TextStyle,
     geometry::{
         rect::RectF,
         vector::{vec2f, Vector2F},
     },
     json::{ToJson, Value},
-    text_layout::Line,
+    text_layout::{Line, RunStyle},
     DebugContext, Element, Event, EventContext, LayoutContext, PaintContext, SizeConstraint,
 };
 use serde::Deserialize;
@@ -48,10 +47,17 @@ impl Label {
         self
     }
 
-    fn compute_runs(&self) -> SmallVec<[(usize, FontId, Color); 8]> {
+    fn compute_runs(&self) -> SmallVec<[(usize, RunStyle); 8]> {
         let font_id = self.style.text.font_id;
         if self.highlight_indices.is_empty() {
-            return smallvec![(self.text.len(), font_id, self.style.text.color)];
+            return smallvec![(
+                self.text.len(),
+                RunStyle {
+                    font_id,
+                    color: self.style.text.color,
+                    underline: self.style.text.underline,
+                }
+            )];
         }
 
         let highlight_font_id = self
@@ -62,25 +68,31 @@ impl Label {
 
         let mut highlight_indices = self.highlight_indices.iter().copied().peekable();
         let mut runs = SmallVec::new();
+        let highlight_style = self
+            .style
+            .highlight_text
+            .as_ref()
+            .unwrap_or(&self.style.text);
 
         for (char_ix, c) in self.text.char_indices() {
             let mut font_id = font_id;
             let mut color = self.style.text.color;
+            let mut underline = self.style.text.underline;
             if let Some(highlight_ix) = highlight_indices.peek() {
                 if char_ix == *highlight_ix {
                     font_id = highlight_font_id;
-                    color = self
-                        .style
-                        .highlight_text
-                        .as_ref()
-                        .unwrap_or(&self.style.text)
-                        .color;
+                    color = highlight_style.color;
+                    underline = highlight_style.underline;
                     highlight_indices.next();
                 }
             }
 
-            let push_new_run = if let Some((last_len, last_font_id, last_color)) = runs.last_mut() {
-                if font_id == *last_font_id && color == *last_color {
+            let last_run: Option<&mut (usize, RunStyle)> = runs.last_mut();
+            let push_new_run = if let Some((last_len, last_style)) = last_run {
+                if font_id == last_style.font_id
+                    && color == last_style.color
+                    && underline == last_style.underline
+                {
                     *last_len += c.len_utf8();
                     false
                 } else {
@@ -91,7 +103,14 @@ impl Label {
             };
 
             if push_new_run {
-                runs.push((c.len_utf8(), font_id, color));
+                runs.push((
+                    c.len_utf8(),
+                    RunStyle {
+                        font_id,
+                        color,
+                        underline,
+                    },
+                ));
             }
         }
 
@@ -177,6 +196,7 @@ impl ToJson for LabelStyle {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::color::Color;
     use crate::fonts::{Properties as FontProperties, Weight};
 
     #[crate::test(self)]
@@ -185,6 +205,7 @@ mod tests {
             "Menlo",
             12.,
             Default::default(),
+            false,
             Color::black(),
             cx.font_cache(),
         )
@@ -193,6 +214,7 @@ mod tests {
             "Menlo",
             12.,
             *FontProperties::new().weight(Weight::BOLD),
+            false,
             Color::new(255, 0, 0, 255),
             cx.font_cache(),
         )
@@ -212,21 +234,27 @@ mod tests {
             ".αβγδε.ⓐⓑ".len(),
         ]);
 
+        let default_run_style = RunStyle {
+            font_id: default_style.font_id,
+            color: default_style.color,
+            underline: default_style.underline,
+        };
+        let highlight_run_style = RunStyle {
+            font_id: highlight_style.font_id,
+            color: highlight_style.color,
+            underline: highlight_style.underline,
+        };
         let runs = label.compute_runs();
         assert_eq!(
             runs.as_slice(),
             &[
-                (".α".len(), default_style.font_id, default_style.color),
-                ("βγ".len(), highlight_style.font_id, highlight_style.color),
-                ("δ".len(), default_style.font_id, default_style.color),
-                ("ε".len(), highlight_style.font_id, highlight_style.color),
-                (".ⓐ".len(), default_style.font_id, default_style.color),
-                ("ⓑⓒ".len(), highlight_style.font_id, highlight_style.color),
-                (
-                    "ⓓⓔ.abcde.".len(),
-                    default_style.font_id,
-                    default_style.color
-                ),
+                (".α".len(), default_run_style),
+                ("βγ".len(), highlight_run_style),
+                ("δ".len(), default_run_style),
+                ("ε".len(), highlight_run_style),
+                (".ⓐ".len(), default_run_style),
+                ("ⓑⓒ".len(), highlight_run_style),
+                ("ⓓⓔ.abcde.".len(), default_run_style),
             ]
         );
     }

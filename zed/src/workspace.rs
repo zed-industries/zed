@@ -377,6 +377,7 @@ impl Workspace {
             "icons/comment-16.svg",
             cx.add_view(|cx| {
                 ChatPanel::new(
+                    app_state.rpc.clone(),
                     app_state.channel_list.clone(),
                     app_state.settings.clone(),
                     cx,
@@ -798,7 +799,7 @@ impl Workspace {
         let platform = cx.platform();
 
         let task = cx.spawn(|this, mut cx| async move {
-            rpc.authenticate_and_connect(cx.clone()).await?;
+            rpc.authenticate_and_connect(&cx).await?;
 
             let share_task = this.update(&mut cx, |this, cx| {
                 let worktree = this.worktrees.iter().next()?;
@@ -830,7 +831,7 @@ impl Workspace {
         let languages = self.languages.clone();
 
         let task = cx.spawn(|this, mut cx| async move {
-            rpc.authenticate_and_connect(cx.clone()).await?;
+            rpc.authenticate_and_connect(&cx).await?;
 
             let worktree_url = cx
                 .platform()

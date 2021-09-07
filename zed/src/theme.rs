@@ -80,6 +80,8 @@ pub struct ChatPanel {
     pub channel_select: ChannelSelect,
     pub input_editor_container: ContainerStyle,
     pub input_editor: InputEditorStyle,
+    pub sign_in_prompt: TextStyle,
+    pub hovered_sign_in_prompt: TextStyle,
 }
 
 #[derive(Deserialize)]
@@ -190,10 +192,12 @@ impl Default for EditorStyle {
             text: HighlightStyle {
                 color: Color::from_u32(0xff0000ff),
                 font_properties: Default::default(),
+                underline: false,
             },
             placeholder_text: HighlightStyle {
                 color: Color::from_u32(0x00ff00ff),
                 font_properties: Default::default(),
+                underline: false,
             },
             background: Default::default(),
             gutter_background: Default::default(),

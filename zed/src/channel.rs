@@ -671,7 +671,7 @@ mod tests {
             cx.background().spawn(io).detach();
 
             client
-                .add_connection(user_id, client_conn, cx.to_async())
+                .add_connection(user_id, client_conn, &cx.to_async())
                 .await
                 .unwrap();
 

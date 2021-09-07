@@ -1,6 +1,7 @@
 use crate::{
     color::Color,
     json::{json, ToJson},
+    text_layout::RunStyle,
     FontCache,
 };
 use anyhow::anyhow;
@@ -24,12 +25,14 @@ pub struct TextStyle {
     pub font_id: FontId,
     pub font_size: f32,
     pub font_properties: Properties,
+    pub underline: bool,
 }
 
 #[derive(Clone, Debug, Default)]
 pub struct HighlightStyle {
     pub color: Color,
     pub font_properties: Properties,
+    pub underline: bool,
 }
 
 #[allow(non_camel_case_types)]
@@ -55,9 +58,11 @@ struct TextStyleJson {
     color: Color,
     family: String,
     weight: Option<WeightJson>,
+    size: f32,
     #[serde(default)]
     italic: bool,
-    size: f32,
+    #[serde(default)]
+    underline: bool,
 }
 
 #[derive(Deserialize)]
@@ -66,6 +71,8 @@ struct HighlightStyleJson {
     weight: Option<WeightJson>,
     #[serde(default)]
     italic: bool,
+    #[serde(default)]
+    underline: bool,
 }
 
 impl TextStyle {
@@ -73,6 +80,7 @@ impl TextStyle {
         font_family_name: impl Into<Arc<str>>,
         font_size: f32,
         font_properties: Properties,
+        underline: bool,
         color: Color,
         font_cache: &FontCache,
     ) -> anyhow::Result<Self> {
@@ -85,7 +93,16 @@ impl TextStyle {
             font_id,
             font_size,
             font_properties,
+            underline,
         })
+    }
+
+    pub fn to_run(&self) -> RunStyle {
+        RunStyle {
+            font_id: self.font_id,
+            color: self.color,
+            underline: self.underline,
+        }
     }
 
     fn from_json(json: TextStyleJson) -> anyhow::Result<Self> {
@@ -96,6 +113,7 @@ impl TextStyle {
                     json.family,
                     json.size,
                     font_properties,
+                    json.underline,
                     json.color,
                     font_cache,
                 )
@@ -114,6 +132,7 @@ impl HighlightStyle {
         Self {
             color: json.color,
             font_properties,
+            underline: json.underline,
         }
     }
 }
@@ -123,6 +142,7 @@ impl From<Color> for HighlightStyle {
         Self {
             color,
             font_properties: Default::default(),
+            underline: false,
         }
     }
 }
@@ -161,6 +181,7 @@ impl<'de> Deserialize<'de> for HighlightStyle {
             Ok(Self {
                 color: serde_json::from_value(json).map_err(de::Error::custom)?,
                 font_properties: Properties::new(),
+                underline: false,
             })
         }
     }

@@ -6,7 +6,7 @@ use crate::{
         vector::{vec2f, vec2i, Vector2F},
     },
     platform,
-    scene::Layer,
+    scene::{Glyph, Icon, Layer, Quad, Shadow},
     Scene,
 };
 use cocoa::foundation::NSUInteger;
@@ -283,12 +283,24 @@ impl Renderer {
             zfar: 1.0,
         });
 
+        let scale_factor = scene.scale_factor();
         let mut path_sprites = path_sprites.into_iter().peekable();
-
         for (layer_id, layer) in scene.layers().enumerate() {
             self.clip(scene, layer, drawable_size, command_encoder);
-            self.render_shadows(scene, layer, offset, drawable_size, command_encoder);
-            self.render_quads(scene, layer, offset, drawable_size, command_encoder);
+            self.render_shadows(
+                layer.shadows(),
+                scale_factor,
+                offset,
+                drawable_size,
+                command_encoder,
+            );
+            self.render_quads(
+                layer.quads(),
+                scale_factor,
+                offset,
+                drawable_size,
+                command_encoder,
+            );
             self.render_path_sprites(
                 layer_id,
                 &mut path_sprites,
@@ -296,7 +308,21 @@ impl Renderer {
                 drawable_size,
                 command_encoder,
             );
-            self.render_sprites(scene, layer, offset, drawable_size, command_encoder);
+            self.render_sprites(
+                layer.glyphs(),
+                layer.icons(),
+                scale_factor,
+                offset,
+                drawable_size,
+                command_encoder,
+            );
+            self.render_quads(
+                layer.underlines(),
+                scale_factor,
+                offset,
+                drawable_size,
+                command_encoder,
+            );
         }
 
         command_encoder.end_encoding();
@@ -324,18 +350,18 @@ impl Renderer {
 
     fn render_shadows(
         &mut self,
-        scene: &Scene,
-        layer: &Layer,
+        shadows: &[Shadow],
+        scale_factor: f32,
         offset: &mut usize,
         drawable_size: Vector2F,
         command_encoder: &metal::RenderCommandEncoderRef,
     ) {
-        if layer.shadows().is_empty() {
+        if shadows.is_empty() {
             return;
         }
 
         align_offset(offset);
-        let next_offset = *offset + layer.shadows().len() * mem::size_of::<shaders::GPUIShadow>();
+        let next_offset = *offset + shadows.len() * mem::size_of::<shaders::GPUIShadow>();
         assert!(
             next_offset <= INSTANCE_BUFFER_SIZE,
             "instance buffer exhausted"
@@ -365,12 +391,12 @@ impl Renderer {
             (self.instances.contents() as *mut u8).offset(*offset as isize)
                 as *mut shaders::GPUIShadow
         };
-        for (ix, shadow) in layer.shadows().iter().enumerate() {
-            let shape_bounds = shadow.bounds * scene.scale_factor();
+        for (ix, shadow) in shadows.iter().enumerate() {
+            let shape_bounds = shadow.bounds * scale_factor;
             let shader_shadow = shaders::GPUIShadow {
                 origin: shape_bounds.origin().to_float2(),
                 size: shape_bounds.size().to_float2(),
-                corner_radius: shadow.corner_radius * scene.scale_factor(),
+                corner_radius: shadow.corner_radius * scale_factor,
                 sigma: shadow.sigma,
                 color: shadow.color.to_uchar4(),
             };
@@ -383,24 +409,24 @@ impl Renderer {
             metal::MTLPrimitiveType::Triangle,
             0,
             6,
-            layer.shadows().len() as u64,
+            shadows.len() as u64,
         );
         *offset = next_offset;
     }
 
     fn render_quads(
         &mut self,
-        scene: &Scene,
-        layer: &Layer,
+        quads: &[Quad],
+        scale_factor: f32,
         offset: &mut usize,
         drawable_size: Vector2F,
         command_encoder: &metal::RenderCommandEncoderRef,
     ) {
-        if layer.quads().is_empty() {
+        if quads.is_empty() {
             return;
         }
         align_offset(offset);
-        let next_offset = *offset + layer.quads().len() * mem::size_of::<shaders::GPUIQuad>();
+        let next_offset = *offset + quads.len() * mem::size_of::<shaders::GPUIQuad>();
         assert!(
             next_offset <= INSTANCE_BUFFER_SIZE,
             "instance buffer exhausted"
@@ -430,9 +456,9 @@ impl Renderer {
             (self.instances.contents() as *mut u8).offset(*offset as isize)
                 as *mut shaders::GPUIQuad
         };
-        for (ix, quad) in layer.quads().iter().enumerate() {
-            let bounds = quad.bounds * scene.scale_factor();
-            let border_width = quad.border.width * scene.scale_factor();
+        for (ix, quad) in quads.iter().enumerate() {
+            let bounds = quad.bounds * scale_factor;
+            let border_width = quad.border.width * scale_factor;
             let shader_quad = shaders::GPUIQuad {
                 origin: bounds.origin().round().to_float2(),
                 size: bounds.size().round().to_float2(),
@@ -445,7 +471,7 @@ impl Renderer {
                 border_bottom: border_width * (quad.border.bottom as usize as f32),
                 border_left: border_width * (quad.border.left as usize as f32),
                 border_color: quad.border.color.to_uchar4(),
-                corner_radius: quad.corner_radius * scene.scale_factor(),
+                corner_radius: quad.corner_radius * scale_factor,
             };
             unsafe {
                 *(buffer_contents.offset(ix as isize)) = shader_quad;
@@ -456,35 +482,36 @@ impl Renderer {
             metal::MTLPrimitiveType::Triangle,
             0,
             6,
-            layer.quads().len() as u64,
+            quads.len() as u64,
         );
         *offset = next_offset;
     }
 
     fn render_sprites(
         &mut self,
-        scene: &Scene,
-        layer: &Layer,
+        glyphs: &[Glyph],
+        icons: &[Icon],
+        scale_factor: f32,
         offset: &mut usize,
         drawable_size: Vector2F,
         command_encoder: &metal::RenderCommandEncoderRef,
     ) {
-        if layer.glyphs().is_empty() && layer.icons().is_empty() {
+        if glyphs.is_empty() && icons.is_empty() {
             return;
         }
 
         let mut sprites_by_atlas = HashMap::new();
 
-        for glyph in layer.glyphs() {
+        for glyph in glyphs {
             if let Some(sprite) = self.sprite_cache.render_glyph(
                 glyph.font_id,
                 glyph.font_size,
                 glyph.id,
                 glyph.origin,
-                scene.scale_factor(),
+                scale_factor,
             ) {
                 // Snap sprite to pixel grid.
-                let origin = (glyph.origin * scene.scale_factor()).floor() + sprite.offset.to_f32();
+                let origin = (glyph.origin * scale_factor).floor() + sprite.offset.to_f32();
                 sprites_by_atlas
                     .entry(sprite.atlas_id)
                     .or_insert_with(Vec::new)
@@ -499,9 +526,9 @@ impl Renderer {
             }
         }
 
-        for icon in layer.icons() {
-            let origin = icon.bounds.origin() * scene.scale_factor();
-            let target_size = icon.bounds.size() * scene.scale_factor();
+        for icon in icons {
+            let origin = icon.bounds.origin() * scale_factor;
+            let target_size = icon.bounds.size() * scale_factor;
             let source_size = (target_size * 2.).ceil().to_i32();
 
             let sprite =

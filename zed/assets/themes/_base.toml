@@ -2,7 +2,7 @@
 background = "$surface.0"
 
 [workspace.tab]
-text = "$text.2"
+text = { extends = "$text.2", underline = true }
 padding = { top = 7, bottom = 7, left = 24, right = 8 }
 border = { bottom = true, left = true, width = 1, color = "$border.0"}
 icon_close = "$text.0.color"
@@ -91,6 +91,14 @@ text = "$text.1.color"
 placeholder_text = "$text.2.color"
 background = "$surface.1"
 selection = "$selection.host"
+
+[chat_panel.sign_in_prompt]
+extends = "$text.0"
+underline = true
+
+[chat_panel.hovered_sign_in_prompt]
+extends = "$chat_panel.sign_in_prompt"
+color = "$text.1.color"
 
 [selector]
 background = "$surface.0"
