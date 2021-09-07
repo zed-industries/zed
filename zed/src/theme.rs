@@ -40,13 +40,16 @@ pub struct Workspace {
     pub right_sidebar: Sidebar,
 }
 
-#[derive(Deserialize)]
+#[derive(Clone, Deserialize)]
 pub struct Tab {
     #[serde(flatten)]
     pub container: ContainerStyle,
     #[serde(flatten)]
     pub label: LabelStyle,
+    pub spacing: f32,
+    pub icon_width: f32,
     pub icon_close: Color,
+    pub icon_close_active: Color,
     pub icon_dirty: Color,
     pub icon_conflict: Color,
 }

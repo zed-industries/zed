@@ -10,9 +10,13 @@ border = { width = 1, bottom = true, color = "$surface.1" }
 [workspace.tab]
 text = "$text.2"
 padding = { left = 10, right = 10 }
-icon_close = "$text.0.color"
+icon_width = 12
+spacing = 6
+icon_close = "$text.2.color"
+icon_close_active = "$text.0.color"
 icon_dirty = "$status.info"
 icon_conflict = "$status.warn"
+border = { left = true, bottom = true, width = 1, color = "$border.0" }
 
 [workspace.active_tab]
 extends = "$workspace.tab"
@@ -21,7 +25,7 @@ text = "$text.0"
 
 [workspace.sidebar]
 padding = { left = 10, right = 10 }
-border = { right = true, width = 1, color = "$border.0"}
+border = { right = true, width = 1, color = "$border.0" }
 
 [workspace.sidebar.resize_handle]
 padding = { left = 1 }
@@ -46,7 +50,7 @@ border = { width = 1, color = "$surface.1", left = true }
 [chat_panel]
 channel_name = { extends = "$text.0", weight = "bold" }
 channel_name_hash = { text = "$text.2", padding.right = 5 }
-border = { left = true, width = 1, color = "$border.0"}
+border = { left = true, width = 1, color = "$border.0" }
 padding = 10
 
 [chat_panel.message]
@@ -111,7 +115,7 @@ margin.top = 12
 corner_radius = 6
 shadow = { offset = [0, 2], blur = 16, color = "$shadow.0" }
 input_editor = "$chat_panel.input_editor"
-border = { width = 1, color = "$border.0"}
+border = { width = 1, color = "$border.0" }
 
 [selector.item]
 text = "$text.1"

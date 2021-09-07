@@ -1,5 +1,5 @@
 use super::{ItemViewHandle, SplitDirection};
-use crate::{settings::Settings, theme};
+use crate::settings::Settings;
 use gpui::{
     action,
     color::Color,
@@ -54,6 +54,8 @@ pub enum Event {
     Remove,
     Split(SplitDirection),
 }
+
+const MAX_TAB_TITLE_LEN: usize = 24;
 
 #[derive(Debug, Eq, PartialEq)]
 pub struct State {
@@ -183,82 +185,137 @@ impl Pane {
         );
 
         let mut row = Flex::row();
-        let last_item_ix = self.items.len() - 1;
         for (ix, item) in self.items.iter().enumerate() {
             let is_active = ix == self.active_item;
 
             enum Tab {}
-            let border = &theme.workspace.tab.container.border;
-
             row.add_child(
-                Flexible::new(
-                    1.0,
-                    MouseEventHandler::new::<Tab, _, _, _>(item.id(), cx, |mouse_state, cx| {
-                        let title = item.title(cx);
+                MouseEventHandler::new::<Tab, _, _, _>(item.id(), cx, |mouse_state, cx| {
+                    let mut title = item.title(cx);
+                    if title.len() > MAX_TAB_TITLE_LEN {
+                        let mut truncated_len = MAX_TAB_TITLE_LEN;
+                        while !title.is_char_boundary(truncated_len) {
+                            truncated_len -= 1;
+                        }
+                        title.truncate(truncated_len);
+                        title.push('…');
+                    }
 
-                        let mut border = border.clone();
-                        border.left = ix > 0;
-                        border.right = ix == last_item_ix;
-                        border.bottom = !is_active;
+                    let mut style = theme.workspace.tab.clone();
+                    if is_active {
+                        style = theme.workspace.active_tab.clone();
+                        style.container.border.bottom = false;
+                        style.container.padding.bottom += style.container.border.width;
+                    }
+                    if ix == 0 {
+                        style.container.border.left = false;
+                    }
 
-                        let mut container = Container::new(
-                            Stack::new()
+                    EventHandler::new(
+                        Container::new(
+                            Flex::row()
+                                .with_child(
+                                    Align::new({
+                                        let diameter = 6.0;
+                                        let icon_color = if item.has_conflict(cx) {
+                                            Some(style.icon_conflict)
+                                        } else if item.is_dirty(cx) {
+                                            Some(style.icon_dirty)
+                                        } else {
+                                            None
+                                        };
+
+                                        ConstrainedBox::new(
+                                            Canvas::new(move |bounds, _, cx| {
+                                                if let Some(color) = icon_color {
+                                                    let square = RectF::new(
+                                                        bounds.origin(),
+                                                        vec2f(diameter, diameter),
+                                                    );
+                                                    cx.scene.push_quad(Quad {
+                                                        bounds: square,
+                                                        background: Some(color),
+                                                        border: Default::default(),
+                                                        corner_radius: diameter / 2.,
+                                                    });
+                                                }
+                                            })
+                                            .boxed(),
+                                        )
+                                        .with_width(diameter)
+                                        .with_height(diameter)
+                                        .boxed()
+                                    })
+                                    .boxed(),
+                                )
+                                .with_child(
+                                    Container::new(
+                                        Align::new(
+                                            Label::new(
+                                                title,
+                                                if is_active {
+                                                    theme.workspace.active_tab.label.clone()
+                                                } else {
+                                                    theme.workspace.tab.label.clone()
+                                                },
+                                            )
+                                            .boxed(),
+                                        )
+                                        .boxed(),
+                                    )
+                                    .with_style(&ContainerStyle {
+                                        margin: Margin {
+                                            left: style.spacing,
+                                            right: style.spacing,
+                                            ..Default::default()
+                                        },
+                                        ..Default::default()
+                                    })
+                                    .boxed(),
+                                )
                                 .with_child(
                                     Align::new(
-                                        Label::new(
-                                            title,
-                                            if is_active {
-                                                theme.workspace.active_tab.label.clone()
-                                            } else {
-                                                theme.workspace.tab.label.clone()
-                                            },
-                                        )
+                                        ConstrainedBox::new(if is_active || mouse_state.hovered {
+                                            let item_id = item.id();
+                                            enum TabCloseButton {}
+                                            let icon = Svg::new("icons/x.svg");
+                                            MouseEventHandler::new::<TabCloseButton, _, _, _>(
+                                                item_id,
+                                                cx,
+                                                |mouse_state, _| {
+                                                    if mouse_state.hovered {
+                                                        icon.with_color(style.icon_close_active)
+                                                            .boxed()
+                                                    } else {
+                                                        icon.with_color(style.icon_close).boxed()
+                                                    }
+                                                },
+                                            )
+                                            .on_click(move |cx| {
+                                                cx.dispatch_action(CloseItem(item_id))
+                                            })
+                                            .named("close-tab-icon")
+                                        } else {
+                                            Empty::new().boxed()
+                                        })
+                                        .with_width(style.icon_width)
                                         .boxed(),
                                     )
                                     .boxed(),
                                 )
-                                .with_child(
-                                    Align::new(Self::render_tab_icon(
-                                        item.id(),
-                                        line_height - 2.,
-                                        mouse_state.hovered,
-                                        item.is_dirty(cx),
-                                        item.has_conflict(cx),
-                                        theme,
-                                        cx,
-                                    ))
-                                    .right()
-                                    .boxed(),
-                                )
                                 .boxed(),
                         )
-                        .with_style(if is_active {
-                            &theme.workspace.active_tab.container
-                        } else {
-                            &theme.workspace.tab.container
-                        })
-                        .with_border(border);
-
-                        if is_active {
-                            container = container.with_padding_bottom(border.width);
-                        }
-
-                        ConstrainedBox::new(
-                            EventHandler::new(container.boxed())
-                                .on_mouse_down(move |cx| {
-                                    cx.dispatch_action(ActivateItem(ix));
-                                    true
-                                })
-                                .boxed(),
-                        )
-                        .with_min_width(80.0)
-                        .with_max_width(264.0)
-                        .boxed()
+                        .with_style(&style.container)
+                        .boxed(),
+                    )
+                    .on_mouse_down(move |cx| {
+                        cx.dispatch_action(ActivateItem(ix));
+                        true
                     })
-                    .boxed(),
-                )
-                .named("tab"),
-            );
+                    .boxed()
+                })
+                .boxed(),
+            )
         }
 
         // Ensure there's always a minimum amount of space after the last tab,
@@ -289,74 +346,6 @@ impl Pane {
         ConstrainedBox::new(row.boxed())
             .with_height(line_height + 16.)
             .named("tabs")
-    }
-
-    fn render_tab_icon(
-        item_id: usize,
-        close_icon_size: f32,
-        tab_hovered: bool,
-        is_dirty: bool,
-        has_conflict: bool,
-        theme: &theme::Theme,
-        cx: &mut RenderContext<Self>,
-    ) -> ElementBox {
-        enum TabCloseButton {}
-
-        let mut clicked_color = theme.workspace.tab.icon_dirty;
-        clicked_color.a = 180;
-
-        let current_color = if has_conflict {
-            Some(theme.workspace.tab.icon_conflict)
-        } else if is_dirty {
-            Some(theme.workspace.tab.icon_dirty)
-        } else {
-            None
-        };
-
-        let icon = if tab_hovered {
-            let close_color = current_color.unwrap_or(theme.workspace.tab.icon_close);
-            let icon = Svg::new("icons/x.svg").with_color(close_color);
-
-            MouseEventHandler::new::<TabCloseButton, _, _, _>(item_id, cx, |mouse_state, _| {
-                if mouse_state.hovered {
-                    Container::new(icon.with_color(Color::white()).boxed())
-                        .with_background_color(if mouse_state.clicked {
-                            clicked_color
-                        } else {
-                            theme.workspace.tab.icon_dirty
-                        })
-                        .with_corner_radius(close_icon_size / 2.)
-                        .boxed()
-                } else {
-                    icon.boxed()
-                }
-            })
-            .on_click(move |cx| cx.dispatch_action(CloseItem(item_id)))
-            .named("close-tab-icon")
-        } else {
-            let diameter = 8.;
-            ConstrainedBox::new(
-                Canvas::new(move |bounds, _, cx| {
-                    if let Some(current_color) = current_color {
-                        let square = RectF::new(bounds.origin(), vec2f(diameter, diameter));
-                        cx.scene.push_quad(Quad {
-                            bounds: square,
-                            background: Some(current_color),
-                            border: Default::default(),
-                            corner_radius: diameter / 2.,
-                        });
-                    }
-                })
-                .boxed(),
-            )
-            .with_width(diameter)
-            .with_height(diameter)
-            .named("unsaved-tab-icon")
-        };
-
-        ConstrainedBox::new(Align::new(icon).boxed())
-            .with_width(close_icon_size)
-            .named("tab-icon")
     }
 }
 
