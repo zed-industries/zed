@@ -3,8 +3,8 @@ use serde_json::json;
 
 use crate::{
     geometry::{rect::RectF, vector::Vector2F},
-    json, AfterLayoutContext, DebugContext, Element, ElementBox, Event, EventContext,
-    LayoutContext, PaintContext, SizeConstraint,
+    json, DebugContext, Element, ElementBox, Event, EventContext, LayoutContext, PaintContext,
+    SizeConstraint,
 };
 
 pub struct ConstrainedBox {
@@ -67,22 +67,14 @@ impl Element for ConstrainedBox {
         (size, ())
     }
 
-    fn after_layout(
-        &mut self,
-        _: Vector2F,
-        _: &mut Self::LayoutState,
-        cx: &mut AfterLayoutContext,
-    ) {
-        self.child.after_layout(cx);
-    }
-
     fn paint(
         &mut self,
         bounds: RectF,
+        visible_bounds: RectF,
         _: &mut Self::LayoutState,
         cx: &mut PaintContext,
     ) -> Self::PaintState {
-        self.child.paint(bounds.origin(), cx);
+        self.child.paint(bounds.origin(), visible_bounds, cx);
     }
 
     fn dispatch_event(

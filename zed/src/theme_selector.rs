@@ -8,11 +8,9 @@ use crate::{
     AppState, Settings,
 };
 use gpui::{
-    elements::{
-        Align, ChildView, ConstrainedBox, Container, Expanded, Flex, Label, ParentElement,
-        UniformList, UniformListState,
-    },
-    keymap::{self, Binding},
+    action,
+    elements::*,
+    keymap::{self, menu, Binding},
     AppContext, Axis, Element, ElementBox, Entity, MutableAppContext, RenderContext, View,
     ViewContext, ViewHandle,
 };
@@ -24,24 +22,27 @@ pub struct ThemeSelector {
     settings: watch::Receiver<Settings>,
     registry: Arc<ThemeRegistry>,
     matches: Vec<StringMatch>,
-    query_buffer: ViewHandle<Editor>,
+    query_editor: ViewHandle<Editor>,
     list_state: UniformListState,
     selected_index: usize,
 }
 
-pub fn init(cx: &mut MutableAppContext, app_state: &Arc<AppState>) {
-    cx.add_action("theme_selector:confirm", ThemeSelector::confirm);
-    cx.add_action("menu:select_prev", ThemeSelector::select_prev);
-    cx.add_action("menu:select_next", ThemeSelector::select_next);
-    cx.add_action("theme_selector:toggle", ThemeSelector::toggle);
-    cx.add_action("theme_selector:reload", ThemeSelector::reload);
+action!(Confirm);
+action!(Toggle, Arc<AppState>);
+action!(Reload, Arc<AppState>);
+
+pub fn init(app_state: &Arc<AppState>, cx: &mut MutableAppContext) {
+    cx.add_action(ThemeSelector::confirm);
+    cx.add_action(ThemeSelector::select_prev);
+    cx.add_action(ThemeSelector::select_next);
+    cx.add_action(ThemeSelector::toggle);
+    cx.add_action(ThemeSelector::reload);
 
     cx.add_bindings(vec![
-        Binding::new("cmd-k cmd-t", "theme_selector:toggle", None).with_arg(app_state.clone()),
-        Binding::new("cmd-k t", "theme_selector:reload", None).with_arg(app_state.clone()),
-        Binding::new("escape", "theme_selector:toggle", Some("ThemeSelector"))
-            .with_arg(app_state.clone()),
-        Binding::new("enter", "theme_selector:confirm", Some("ThemeSelector")),
+        Binding::new("cmd-k cmd-t", Toggle(app_state.clone()), None),
+        Binding::new("cmd-k t", Reload(app_state.clone()), None),
+        Binding::new("escape", Toggle(app_state.clone()), Some("ThemeSelector")),
+        Binding::new("enter", Confirm, Some("ThemeSelector")),
     ]);
 }
 
@@ -56,14 +57,21 @@ impl ThemeSelector {
         registry: Arc<ThemeRegistry>,
         cx: &mut ViewContext<Self>,
     ) -> Self {
-        let query_buffer = cx.add_view(|cx| Editor::single_line(settings.clone(), cx));
-        cx.subscribe_to_view(&query_buffer, Self::on_query_editor_event);
+        let query_editor = cx.add_view(|cx| {
+            Editor::single_line(settings.clone(), cx).with_style({
+                let settings = settings.clone();
+                move |_| settings.borrow().theme.selector.input_editor.as_editor()
+            })
+        });
+
+        cx.subscribe(&query_editor, Self::on_query_editor_event)
+            .detach();
 
         let mut this = Self {
             settings,
             settings_tx,
             registry,
-            query_buffer,
+            query_editor,
             matches: Vec::new(),
             list_state: Default::default(),
             selected_index: 0,
@@ -72,32 +80,29 @@ impl ThemeSelector {
         this
     }
 
-    fn toggle(
-        workspace: &mut Workspace,
-        app_state: &Arc<AppState>,
-        cx: &mut ViewContext<Workspace>,
-    ) {
+    fn toggle(workspace: &mut Workspace, action: &Toggle, cx: &mut ViewContext<Workspace>) {
         workspace.toggle_modal(cx, |cx, _| {
             let selector = cx.add_view(|cx| {
                 Self::new(
-                    app_state.settings_tx.clone(),
-                    app_state.settings.clone(),
-                    app_state.themes.clone(),
+                    action.0.settings_tx.clone(),
+                    action.0.settings.clone(),
+                    action.0.themes.clone(),
                     cx,
                 )
             });
-            cx.subscribe_to_view(&selector, Self::on_event);
+            cx.subscribe(&selector, Self::on_event).detach();
             selector
         });
     }
 
-    fn reload(_: &mut Workspace, app_state: &Arc<AppState>, cx: &mut ViewContext<Workspace>) {
-        let current_theme_name = app_state.settings.borrow().theme.name.clone();
-        app_state.themes.clear();
-        match app_state.themes.get(&current_theme_name) {
+    fn reload(_: &mut Workspace, action: &Reload, cx: &mut ViewContext<Workspace>) {
+        let current_theme_name = action.0.settings.borrow().theme.name.clone();
+        action.0.themes.clear();
+        match action.0.themes.get(&current_theme_name) {
             Ok(theme) => {
-                cx.notify_all();
-                app_state.settings_tx.lock().borrow_mut().theme = theme;
+                cx.refresh_windows();
+                action.0.settings_tx.lock().borrow_mut().theme = theme;
+                log::info!("reloaded theme {}", current_theme_name);
             }
             Err(error) => {
                 log::error!("failed to load theme {}: {:?}", current_theme_name, error)
@@ -105,12 +110,12 @@ impl ThemeSelector {
         }
     }
 
-    fn confirm(&mut self, _: &(), cx: &mut ViewContext<Self>) {
+    fn confirm(&mut self, _: &Confirm, cx: &mut ViewContext<Self>) {
         if let Some(mat) = self.matches.get(self.selected_index) {
             match self.registry.get(&mat.string) {
                 Ok(theme) => {
                     self.settings_tx.lock().borrow_mut().theme = theme;
-                    cx.notify_all();
+                    cx.refresh_windows();
                     cx.emit(Event::Dismissed);
                 }
                 Err(error) => log::error!("error loading theme {}: {}", mat.string, error),
@@ -118,7 +123,7 @@ impl ThemeSelector {
         }
     }
 
-    fn select_prev(&mut self, _: &(), cx: &mut ViewContext<Self>) {
+    fn select_prev(&mut self, _: &menu::SelectPrev, cx: &mut ViewContext<Self>) {
         if self.selected_index > 0 {
             self.selected_index -= 1;
         }
@@ -126,7 +131,7 @@ impl ThemeSelector {
         cx.notify();
     }
 
-    fn select_next(&mut self, _: &(), cx: &mut ViewContext<Self>) {
+    fn select_next(&mut self, _: &menu::SelectNext, cx: &mut ViewContext<Self>) {
         if self.selected_index + 1 < self.matches.len() {
             self.selected_index += 1;
         }
@@ -149,7 +154,7 @@ impl ThemeSelector {
                 string: name,
             })
             .collect::<Vec<_>>();
-        let query = self.query_buffer.update(cx, |buffer, cx| buffer.text(cx));
+        let query = self.query_editor.update(cx, |buffer, cx| buffer.text(cx));
 
         self.matches = if query.is_empty() {
             candidates
@@ -170,6 +175,7 @@ impl ThemeSelector {
                 background,
             ))
         };
+        cx.notify();
     }
 
     fn on_event(
@@ -198,17 +204,11 @@ impl ThemeSelector {
         }
     }
 
-    fn render_matches(&self, cx: &RenderContext<Self>) -> ElementBox {
+    fn render_matches(&self, cx: &mut RenderContext<Self>) -> ElementBox {
         if self.matches.is_empty() {
             let settings = self.settings.borrow();
             return Container::new(
-                Label::new(
-                    "No matches".into(),
-                    settings.ui_font_family,
-                    settings.ui_font_size,
-                )
-                .with_style(&settings.theme.ui.selector.label)
-                .boxed(),
+                Label::new("No matches".into(), settings.theme.selector.label.clone()).boxed(),
             )
             .with_margin_top(6.0)
             .named("empty matches");
@@ -240,19 +240,17 @@ impl ThemeSelector {
 
     fn render_match(&self, theme_match: &StringMatch, index: usize) -> ElementBox {
         let settings = self.settings.borrow();
-        let theme = &settings.theme.ui;
+        let theme = &settings.theme;
 
         let container = Container::new(
             Label::new(
                 theme_match.string.clone(),
-                settings.ui_font_family,
-                settings.ui_font_size,
+                if index == self.selected_index {
+                    theme.selector.active_item.label.clone()
+                } else {
+                    theme.selector.item.label.clone()
+                },
             )
-            .with_style(if index == self.selected_index {
-                &theme.selector.active_item.label
-            } else {
-                &theme.selector.item.label
-            })
             .with_highlights(theme_match.positions.clone())
             .boxed(),
         )
@@ -275,18 +273,18 @@ impl View for ThemeSelector {
         "ThemeSelector"
     }
 
-    fn render(&self, cx: &RenderContext<Self>) -> ElementBox {
+    fn render(&mut self, cx: &mut RenderContext<Self>) -> ElementBox {
         let settings = self.settings.borrow();
 
         Align::new(
             ConstrainedBox::new(
                 Container::new(
                     Flex::new(Axis::Vertical)
-                        .with_child(ChildView::new(self.query_buffer.id()).boxed())
-                        .with_child(Expanded::new(1.0, self.render_matches(cx)).boxed())
+                        .with_child(ChildView::new(self.query_editor.id()).boxed())
+                        .with_child(Flexible::new(1.0, self.render_matches(cx)).boxed())
                         .boxed(),
                 )
-                .with_style(&settings.theme.ui.selector.container)
+                .with_style(&settings.theme.selector.container)
                 .boxed(),
             )
             .with_max_width(600.0)
@@ -298,7 +296,7 @@ impl View for ThemeSelector {
     }
 
     fn on_focus(&mut self, cx: &mut ViewContext<Self>) {
-        cx.focus(&self.query_buffer);
+        cx.focus(&self.query_editor);
     }
 
     fn keymap_context(&self, _: &AppContext) -> keymap::Context {

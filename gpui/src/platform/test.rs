@@ -1,4 +1,6 @@
-use crate::ClipboardItem;
+use super::CursorStyle;
+use crate::{AnyAction, ClipboardItem};
+use anyhow::Result;
 use parking_lot::Mutex;
 use pathfinder_geometry::vector::Vector2F;
 use std::{
@@ -8,11 +10,13 @@ use std::{
     rc::Rc,
     sync::Arc,
 };
+use time::UtcOffset;
 
 pub struct Platform {
     dispatcher: Arc<dyn super::Dispatcher>,
     fonts: Arc<dyn super::FontSystem>,
     current_clipboard_item: Mutex<Option<ClipboardItem>>,
+    cursor: Mutex<CursorStyle>,
 }
 
 #[derive(Default)]
@@ -27,7 +31,7 @@ pub struct Window {
     scale_factor: f32,
     current_scene: Option<crate::Scene>,
     event_handlers: Vec<Box<dyn FnMut(super::Event)>>,
-    resize_handlers: Vec<Box<dyn FnMut(&mut dyn super::WindowContext)>>,
+    resize_handlers: Vec<Box<dyn FnMut()>>,
     close_handlers: Vec<Box<dyn FnOnce()>>,
     pub(crate) last_prompt: RefCell<Option<Box<dyn FnOnce(usize)>>>,
 }
@@ -62,7 +66,7 @@ impl super::ForegroundPlatform for ForegroundPlatform {
         unimplemented!()
     }
 
-    fn on_menu_command(&self, _: Box<dyn FnMut(&str, Option<&dyn Any>)>) {}
+    fn on_menu_command(&self, _: Box<dyn FnMut(&dyn AnyAction)>) {}
 
     fn set_menus(&self, _: Vec<crate::Menu>) {}
 
@@ -84,6 +88,7 @@ impl Platform {
             dispatcher: Arc::new(Dispatcher),
             fonts: Arc::new(super::current::FontSystem::new()),
             current_clipboard_item: Default::default(),
+            cursor: Mutex::new(CursorStyle::Arrow),
         }
     }
 }
@@ -124,10 +129,20 @@ impl super::Platform for Platform {
 
     fn open_url(&self, _: &str) {}
 
-    fn write_credentials(&self, _: &str, _: &str, _: &[u8]) {}
+    fn write_credentials(&self, _: &str, _: &str, _: &[u8]) -> Result<()> {
+        Ok(())
+    }
 
-    fn read_credentials(&self, _: &str) -> Option<(String, Vec<u8>)> {
-        None
+    fn read_credentials(&self, _: &str) -> Result<Option<(String, Vec<u8>)>> {
+        Ok(None)
+    }
+
+    fn set_cursor_style(&self, style: CursorStyle) {
+        *self.cursor.lock() = style;
+    }
+
+    fn local_timezone(&self) -> UtcOffset {
+        UtcOffset::UTC
     }
 }
 
@@ -164,6 +179,10 @@ impl super::WindowContext for Window {
         self.scale_factor
     }
 
+    fn titlebar_height(&self) -> f32 {
+        24.
+    }
+
     fn present_scene(&mut self, scene: crate::Scene) {
         self.current_scene = Some(scene);
     }
@@ -178,7 +197,7 @@ impl super::Window for Window {
         self.event_handlers.push(callback);
     }
 
-    fn on_resize(&mut self, callback: Box<dyn FnMut(&mut dyn super::WindowContext)>) {
+    fn on_resize(&mut self, callback: Box<dyn FnMut()>) {
         self.resize_handlers.push(callback);
     }
 

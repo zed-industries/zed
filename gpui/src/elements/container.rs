@@ -10,8 +10,7 @@ use crate::{
     },
     json::ToJson,
     scene::{self, Border, Quad},
-    AfterLayoutContext, Element, ElementBox, Event, EventContext, LayoutContext, PaintContext,
-    SizeConstraint,
+    Element, ElementBox, Event, EventContext, LayoutContext, PaintContext, SizeConstraint,
 };
 
 #[derive(Clone, Debug, Default, Deserialize)]
@@ -167,18 +166,10 @@ impl Element for Container {
         (child_size + size_buffer, ())
     }
 
-    fn after_layout(
-        &mut self,
-        _: Vector2F,
-        _: &mut Self::LayoutState,
-        cx: &mut AfterLayoutContext,
-    ) {
-        self.child.after_layout(cx);
-    }
-
     fn paint(
         &mut self,
         bounds: RectF,
+        visible_bounds: RectF,
         _: &mut Self::LayoutState,
         cx: &mut PaintContext,
     ) -> Self::PaintState {
@@ -208,7 +199,7 @@ impl Element for Container {
                 self.style.border.left_width(),
                 self.style.border.top_width(),
             );
-        self.child.paint(child_origin, cx);
+        self.child.paint(child_origin, visible_bounds, cx);
     }
 
     fn dispatch_event(
@@ -251,15 +242,11 @@ impl ToJson for ContainerStyle {
     }
 }
 
-#[derive(Clone, Debug, Default, Deserialize)]
+#[derive(Clone, Debug, Default)]
 pub struct Margin {
-    #[serde(default)]
     top: f32,
-    #[serde(default)]
     left: f32,
-    #[serde(default)]
     bottom: f32,
-    #[serde(default)]
     right: f32,
 }
 
@@ -282,16 +269,83 @@ impl ToJson for Margin {
     }
 }
 
-#[derive(Clone, Debug, Default, Deserialize)]
+#[derive(Clone, Debug, Default)]
 pub struct Padding {
-    #[serde(default)]
     top: f32,
-    #[serde(default)]
     left: f32,
-    #[serde(default)]
     bottom: f32,
-    #[serde(default)]
     right: f32,
+}
+
+impl<'de> Deserialize<'de> for Padding {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        let spacing = Spacing::deserialize(deserializer)?;
+        Ok(match spacing {
+            Spacing::Uniform(size) => Padding {
+                top: size,
+                left: size,
+                bottom: size,
+                right: size,
+            },
+            Spacing::Specific {
+                top,
+                left,
+                bottom,
+                right,
+            } => Padding {
+                top,
+                left,
+                bottom,
+                right,
+            },
+        })
+    }
+}
+
+impl<'de> Deserialize<'de> for Margin {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        let spacing = Spacing::deserialize(deserializer)?;
+        Ok(match spacing {
+            Spacing::Uniform(size) => Margin {
+                top: size,
+                left: size,
+                bottom: size,
+                right: size,
+            },
+            Spacing::Specific {
+                top,
+                left,
+                bottom,
+                right,
+            } => Margin {
+                top,
+                left,
+                bottom,
+                right,
+            },
+        })
+    }
+}
+#[derive(Deserialize)]
+#[serde(untagged)]
+enum Spacing {
+    Uniform(f32),
+    Specific {
+        #[serde(default)]
+        top: f32,
+        #[serde(default)]
+        left: f32,
+        #[serde(default)]
+        bottom: f32,
+        #[serde(default)]
+        right: f32,
+    },
 }
 
 impl ToJson for Padding {

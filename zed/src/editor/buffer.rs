@@ -1,30 +1,30 @@
 mod anchor;
+mod operation_queue;
 mod point;
 pub mod rope;
 mod selection;
 
+use crate::{
+    language::{Language, Tree},
+    settings::{HighlightId, HighlightMap},
+    time::{self, ReplicaId},
+    util::Bias,
+    worktree::{File, Worktree},
+};
 pub use anchor::*;
+use anyhow::{anyhow, Result};
+use gpui::{
+    sum_tree::{self, FilterCursor, SumTree},
+    AppContext, Entity, ModelContext, ModelHandle, Task,
+};
+use lazy_static::lazy_static;
+use operation_queue::OperationQueue;
 use parking_lot::Mutex;
 pub use point::*;
 pub use rope::{Chunks, Rope, TextSummary};
 use seahash::SeaHasher;
 pub use selection::*;
 use similar::{ChangeTag, TextDiff};
-use tree_sitter::{InputEdit, Parser, QueryCursor};
-use zrpc::proto;
-
-use crate::{
-    language::{Language, Tree},
-    operation_queue::{self, OperationQueue},
-    settings::{HighlightId, HighlightMap},
-    sum_tree::{self, FilterCursor, SumTree},
-    time::{self, ReplicaId},
-    util::Bias,
-    worktree::{File, Worktree},
-};
-use anyhow::{anyhow, Result};
-use gpui::{AppContext, Entity, ModelContext, ModelHandle, Task};
-use lazy_static::lazy_static;
 use std::{
     cell::RefCell,
     cmp,
@@ -37,6 +37,8 @@ use std::{
     sync::Arc,
     time::{Duration, Instant, SystemTime, UNIX_EPOCH},
 };
+use tree_sitter::{InputEdit, Parser, QueryCursor};
+use zrpc::proto;
 
 #[derive(Clone, Default)]
 struct DeterministicState;
@@ -118,9 +120,10 @@ pub struct Buffer {
     file: Option<File>,
     language: Option<Arc<Language>>,
     syntax_tree: Mutex<Option<SyntaxTree>>,
-    is_parsing: bool,
+    parsing_in_background: bool,
+    parse_count: usize,
     selections: HashMap<SelectionSetId, SelectionSet>,
-    deferred_ops: OperationQueue<Operation>,
+    deferred_ops: OperationQueue,
     deferred_replicas: HashSet<ReplicaId>,
     replica_id: ReplicaId,
     remote_id: u64,
@@ -139,7 +142,7 @@ pub struct SelectionSet {
 #[derive(Clone)]
 struct SyntaxTree {
     tree: Tree,
-    parsed: bool,
+    dirty: bool,
     version: time::Global,
 }
 
@@ -483,6 +486,8 @@ pub enum Operation {
         set_id: Option<SelectionSetId>,
         lamport_timestamp: time::Lamport,
     },
+    #[cfg(test)]
+    Test(time::Lamport),
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -576,7 +581,8 @@ impl Buffer {
             history,
             file,
             syntax_tree: Mutex::new(None),
-            is_parsing: false,
+            parsing_in_background: false,
+            parse_count: 0,
             language,
             saved_mtime,
             selections: HashMap::default(),
@@ -604,7 +610,7 @@ impl Buffer {
             fragments: self.fragments.clone(),
             version: self.version.clone(),
             tree: self.syntax_tree(),
-            is_parsing: self.is_parsing,
+            is_parsing: self.parsing_in_background,
             language: self.language.clone(),
             query_cursor: QueryCursorHandle::new(),
         }
@@ -786,9 +792,12 @@ impl Buffer {
         cx.emit(Event::FileHandleChanged);
     }
 
+    pub fn parse_count(&self) -> usize {
+        self.parse_count
+    }
+
     pub fn syntax_tree(&self) -> Option<Tree> {
         if let Some(syntax_tree) = self.syntax_tree.lock().as_mut() {
-            let mut edited = false;
             let mut delta = 0_isize;
             for edit in self.edits_since(syntax_tree.version.clone()) {
                 let start_offset = (edit.old_bytes.start as isize + delta) as usize;
@@ -805,9 +814,8 @@ impl Buffer {
                         .into(),
                 });
                 delta += edit.inserted_bytes() as isize - edit.deleted_bytes() as isize;
-                edited = true;
+                syntax_tree.dirty = true;
             }
-            syntax_tree.parsed &= !edited;
             syntax_tree.version = self.version();
             Some(syntax_tree.tree.clone())
         } else {
@@ -815,58 +823,69 @@ impl Buffer {
         }
     }
 
+    #[cfg(test)]
     pub fn is_parsing(&self) -> bool {
-        self.is_parsing
+        self.parsing_in_background
     }
 
-    fn should_reparse(&self) -> bool {
-        if let Some(syntax_tree) = self.syntax_tree.lock().as_ref() {
-            !syntax_tree.parsed || syntax_tree.version != self.version
-        } else {
-            self.language.is_some()
-        }
-    }
-
-    fn reparse(&mut self, cx: &mut ModelContext<Self>) {
-        // Avoid spawning a new parsing task if the buffer is already being reparsed
-        // due to an earlier edit.
-        if self.is_parsing {
-            return;
+    fn reparse(&mut self, cx: &mut ModelContext<Self>) -> bool {
+        if self.parsing_in_background {
+            return false;
         }
 
         if let Some(language) = self.language.clone() {
-            self.is_parsing = true;
-            cx.spawn(|handle, mut cx| async move {
-                while handle.read_with(&cx, |this, _| this.should_reparse()) {
-                    // The parse tree is out of date, so grab the syntax tree to synchronously
-                    // splice all the edits that have happened since the last parse.
-                    let new_tree = handle.update(&mut cx, |this, _| this.syntax_tree());
-                    let (new_text, new_version) = handle
-                        .read_with(&cx, |this, _| (this.visible_text.clone(), this.version()));
+            // The parse tree is out of date, so grab the syntax tree to synchronously
+            // splice all the edits that have happened since the last parse.
+            let old_tree = self.syntax_tree();
+            let parsed_text = self.visible_text.clone();
+            let parsed_version = self.version();
+            let parse_task = cx.background().spawn({
+                let language = language.clone();
+                async move { Self::parse_text(&parsed_text, old_tree, &language) }
+            });
 
-                    // Parse the current text in a background thread.
-                    let new_tree = cx
-                        .background()
-                        .spawn({
-                            let language = language.clone();
-                            async move { Self::parse_text(&new_text, new_tree, &language) }
-                        })
-                        .await;
-
-                    handle.update(&mut cx, |this, cx| {
-                        *this.syntax_tree.lock() = Some(SyntaxTree {
-                            tree: new_tree,
-                            parsed: true,
-                            version: new_version,
-                        });
-                        cx.emit(Event::Reparsed);
-                        cx.notify();
+            match cx
+                .background()
+                .block_with_timeout(Duration::from_millis(1), parse_task)
+            {
+                Ok(new_tree) => {
+                    *self.syntax_tree.lock() = Some(SyntaxTree {
+                        tree: new_tree,
+                        dirty: false,
+                        version: parsed_version,
                     });
+                    self.parse_count += 1;
+                    cx.emit(Event::Reparsed);
+                    cx.notify();
+                    return true;
                 }
-                handle.update(&mut cx, |this, _| this.is_parsing = false);
-            })
-            .detach();
+                Err(parse_task) => {
+                    self.parsing_in_background = true;
+                    cx.spawn(move |this, mut cx| async move {
+                        let new_tree = parse_task.await;
+                        this.update(&mut cx, move |this, cx| {
+                            let parse_again = this.version > parsed_version;
+                            *this.syntax_tree.lock() = Some(SyntaxTree {
+                                tree: new_tree,
+                                dirty: false,
+                                version: parsed_version,
+                            });
+                            this.parse_count += 1;
+                            this.parsing_in_background = false;
+
+                            if parse_again && this.reparse(cx) {
+                                return;
+                            }
+
+                            cx.emit(Event::Reparsed);
+                            cx.notify();
+                        });
+                    })
+                    .detach();
+                }
+            }
         }
+        false
     }
 
     fn parse_text(text: &Rope, old_tree: Option<Tree>, language: &Language) -> Tree {
@@ -1390,6 +1409,8 @@ impl Buffer {
                 }
                 self.lamport_clock.observe(lamport_timestamp);
             }
+            #[cfg(test)]
+            Operation::Test(_) => {}
         }
         Ok(())
     }
@@ -1731,6 +1752,8 @@ impl Buffer {
                 Operation::SetActiveSelections { set_id, .. } => {
                     set_id.map_or(true, |set_id| self.selections.contains_key(&set_id))
                 }
+                #[cfg(test)]
+                Operation::Test(_) => true,
             }
         }
     }
@@ -1907,7 +1930,8 @@ impl Clone for Buffer {
             file: self.file.clone(),
             language: self.language.clone(),
             syntax_tree: Mutex::new(self.syntax_tree.lock().clone()),
-            is_parsing: false,
+            parsing_in_background: false,
+            parse_count: self.parse_count,
             deferred_replicas: self.deferred_replicas.clone(),
             replica_id: self.replica_id,
             remote_id: self.remote_id.clone(),
@@ -2564,6 +2588,8 @@ impl Operation {
             Operation::SetActiveSelections {
                 lamport_timestamp, ..
             } => *lamport_timestamp,
+            #[cfg(test)]
+            Operation::Test(lamport_timestamp) => *lamport_timestamp,
         }
     }
 
@@ -2630,6 +2656,8 @@ impl<'a> Into<proto::Operation> for &'a Operation {
                         lamport_timestamp: lamport_timestamp.value,
                     },
                 ),
+                #[cfg(test)]
+                Operation::Test(_) => unimplemented!(),
             }),
         }
     }
@@ -2834,12 +2862,6 @@ impl TryFrom<proto::Selection> for Selection {
     }
 }
 
-impl operation_queue::Operation for Operation {
-    fn timestamp(&self) -> time::Lamport {
-        self.lamport_timestamp()
-    }
-}
-
 pub trait ToOffset {
     fn to_offset<'a>(&self, content: impl Into<Content<'a>>) -> usize;
 }
@@ -2889,7 +2911,8 @@ mod tests {
     use super::*;
     use crate::{
         fs::RealFs,
-        test::{build_app_state, temp_tree},
+        language::LanguageRegistry,
+        test::temp_tree,
         util::RandomCharIter,
         worktree::{Worktree, WorktreeHandle as _},
     };
@@ -2934,13 +2957,15 @@ mod tests {
         let buffer2 = cx.add_model(|cx| Buffer::new(1, "abcdef", cx));
         let buffer_ops = buffer1.update(cx, |buffer, cx| {
             let buffer_1_events = buffer_1_events.clone();
-            cx.subscribe(&buffer1, move |_, event, _| {
+            cx.subscribe(&buffer1, move |_, _, event, _| {
                 buffer_1_events.borrow_mut().push(event.clone())
-            });
+            })
+            .detach();
             let buffer_2_events = buffer_2_events.clone();
-            cx.subscribe(&buffer2, move |_, event, _| {
+            cx.subscribe(&buffer2, move |_, _, event, _| {
                 buffer_2_events.borrow_mut().push(event.clone())
-            });
+            })
+            .detach();
 
             // An edit emits an edited event, followed by a dirtied event,
             // since the buffer was previously in a clean state.
@@ -3374,8 +3399,9 @@ mod tests {
         buffer1.update(&mut cx, |buffer, cx| {
             cx.subscribe(&buffer1, {
                 let events = events.clone();
-                move |_, event, _| events.borrow_mut().push(event.clone())
-            });
+                move |_, _, event, _| events.borrow_mut().push(event.clone())
+            })
+            .detach();
 
             assert!(!buffer.is_dirty());
             assert!(events.borrow().is_empty());
@@ -3430,8 +3456,9 @@ mod tests {
         buffer2.update(&mut cx, |_, cx| {
             cx.subscribe(&buffer2, {
                 let events = events.clone();
-                move |_, event, _| events.borrow_mut().push(event.clone())
-            });
+                move |_, _, event, _| events.borrow_mut().push(event.clone())
+            })
+            .detach();
         });
 
         fs::remove_file(dir.path().join("file2")).unwrap();
@@ -3450,8 +3477,9 @@ mod tests {
         buffer3.update(&mut cx, |_, cx| {
             cx.subscribe(&buffer3, {
                 let events = events.clone();
-                move |_, event, _| events.borrow_mut().push(event.clone())
-            });
+                move |_, _, event, _| events.borrow_mut().push(event.clone())
+            })
+            .detach();
         });
 
         tree.flush_fs_events(&cx).await;
@@ -3819,8 +3847,8 @@ mod tests {
 
     #[gpui::test]
     async fn test_reparse(mut cx: gpui::TestAppContext) {
-        let app_state = cx.read(build_app_state);
-        let rust_lang = app_state.languages.select_language("test.rs");
+        let languages = LanguageRegistry::new();
+        let rust_lang = languages.select_language("test.rs");
         assert!(rust_lang.is_some());
 
         let buffer = cx.add_model(|cx| {
@@ -3960,8 +3988,8 @@ mod tests {
     async fn test_enclosing_bracket_ranges(mut cx: gpui::TestAppContext) {
         use unindent::Unindent as _;
 
-        let app_state = cx.read(build_app_state);
-        let rust_lang = app_state.languages.select_language("test.rs");
+        let languages = LanguageRegistry::new();
+        let rust_lang = languages.select_language("test.rs");
         assert!(rust_lang.is_some());
 
         let buffer = cx.add_model(|cx| {

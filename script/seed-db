@@ -1,0 +1,5 @@
+#!/bin/bash
+
+set -e
+cd server
+cargo run --features seed-support --bin seed

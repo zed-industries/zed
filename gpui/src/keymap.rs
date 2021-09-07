@@ -2,8 +2,11 @@ use anyhow::anyhow;
 use std::{
     any::Any,
     collections::{HashMap, HashSet},
+    fmt::Debug,
 };
 use tree_sitter::{Language, Node, Parser};
+
+use crate::{Action, AnyAction};
 
 extern "C" {
     fn tree_sitter_context_predicate() -> Language;
@@ -24,8 +27,7 @@ pub struct Keymap(Vec<Binding>);
 
 pub struct Binding {
     keystrokes: Vec<Keystroke>,
-    action: String,
-    action_arg: Option<Box<dyn ActionArg>>,
+    action: Box<dyn AnyAction>,
     context: Option<ContextPredicate>,
 }
 
@@ -70,10 +72,7 @@ where
 pub enum MatchResult {
     None,
     Pending,
-    Action {
-        name: String,
-        arg: Option<Box<dyn Any>>,
-    },
+    Action(Box<dyn AnyAction>),
 }
 
 impl Matcher {
@@ -117,10 +116,7 @@ impl Matcher {
             {
                 if binding.keystrokes.len() == pending.keystrokes.len() {
                     self.pending.remove(&view_id);
-                    return MatchResult::Action {
-                        name: binding.action.clone(),
-                        arg: binding.action_arg.as_ref().map(|arg| (*arg).boxed_clone()),
-                    };
+                    return MatchResult::Action(binding.action.boxed_clone());
                 } else {
                     retain_pending = true;
                     pending.context = Some(cx.clone());
@@ -153,19 +149,26 @@ impl Keymap {
     }
 }
 
+pub mod menu {
+    use crate::action;
+
+    action!(SelectPrev);
+    action!(SelectNext);
+}
+
 impl Default for Keymap {
     fn default() -> Self {
         Self(vec![
-            Binding::new("up", "menu:select_prev", Some("menu")),
-            Binding::new("ctrl-p", "menu:select_prev", Some("menu")),
-            Binding::new("down", "menu:select_next", Some("menu")),
-            Binding::new("ctrl-n", "menu:select_next", Some("menu")),
+            Binding::new("up", menu::SelectPrev, Some("menu")),
+            Binding::new("ctrl-p", menu::SelectPrev, Some("menu")),
+            Binding::new("down", menu::SelectNext, Some("menu")),
+            Binding::new("ctrl-n", menu::SelectNext, Some("menu")),
         ])
     }
 }
 
 impl Binding {
-    pub fn new<S: Into<String>>(keystrokes: &str, action: S, context: Option<&str>) -> Self {
+    pub fn new<A: Action>(keystrokes: &str, action: A, context: Option<&str>) -> Self {
         let context = if let Some(context) = context {
             Some(ContextPredicate::parse(context).unwrap())
         } else {
@@ -177,15 +180,9 @@ impl Binding {
                 .split_whitespace()
                 .map(|key| Keystroke::parse(key).unwrap())
                 .collect(),
-            action: action.into(),
-            action_arg: None,
+            action: Box::new(action),
             context,
         }
-    }
-
-    pub fn with_arg<T: 'static + Any + Clone>(mut self, arg: T) -> Self {
-        self.action_arg = Some(Box::new(arg));
-        self
     }
 }
 
@@ -328,6 +325,8 @@ impl ContextPredicate {
 
 #[cfg(test)]
 mod tests {
+    use crate::action;
+
     use super::*;
 
     #[test]
@@ -417,15 +416,31 @@ mod tests {
 
     #[test]
     fn test_matcher() -> anyhow::Result<()> {
+        action!(A, &'static str);
+        action!(B);
+        action!(Ab);
+
+        impl PartialEq for A {
+            fn eq(&self, other: &Self) -> bool {
+                self.0 == other.0
+            }
+        }
+        impl Eq for A {}
+        impl Debug for A {
+            fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+                write!(f, "A({:?})", &self.0)
+            }
+        }
+
         #[derive(Clone, Debug, Eq, PartialEq)]
         struct ActionArg {
             a: &'static str,
         }
 
         let keymap = Keymap(vec![
-            Binding::new("a", "a", Some("a")).with_arg(ActionArg { a: "b" }),
-            Binding::new("b", "b", Some("a")),
-            Binding::new("a b", "a_b", Some("a || b")),
+            Binding::new("a", A("x"), Some("a")),
+            Binding::new("b", B, Some("a")),
+            Binding::new("a b", Ab, Some("a || b")),
         ]);
 
         let mut ctx_a = Context::default();
@@ -437,57 +452,40 @@ mod tests {
         let mut matcher = Matcher::new(keymap);
 
         // Basic match
-        assert_eq!(
-            matcher.test_keystroke("a", 1, &ctx_a),
-            Some(("a".to_string(), Some(ActionArg { a: "b" })))
-        );
+        assert_eq!(matcher.test_keystroke("a", 1, &ctx_a), Some(A("x")));
 
         // Multi-keystroke match
-        assert_eq!(matcher.test_keystroke::<()>("a", 1, &ctx_b), None);
-        assert_eq!(
-            matcher.test_keystroke::<()>("b", 1, &ctx_b),
-            Some(("a_b".to_string(), None))
-        );
+        assert_eq!(matcher.test_keystroke::<A>("a", 1, &ctx_b), None);
+        assert_eq!(matcher.test_keystroke("b", 1, &ctx_b), Some(Ab));
 
         // Failed matches don't interfere with matching subsequent keys
-        assert_eq!(matcher.test_keystroke::<()>("x", 1, &ctx_a), None);
-        assert_eq!(
-            matcher.test_keystroke("a", 1, &ctx_a),
-            Some(("a".to_string(), Some(ActionArg { a: "b" })))
-        );
+        assert_eq!(matcher.test_keystroke::<A>("x", 1, &ctx_a), None);
+        assert_eq!(matcher.test_keystroke("a", 1, &ctx_a), Some(A("x")));
 
         // Pending keystrokes are cleared when the context changes
-        assert_eq!(matcher.test_keystroke::<()>("a", 1, &ctx_b), None);
-        assert_eq!(
-            matcher.test_keystroke::<()>("b", 1, &ctx_a),
-            Some(("b".to_string(), None))
-        );
+        assert_eq!(matcher.test_keystroke::<A>("a", 1, &ctx_b), None);
+        assert_eq!(matcher.test_keystroke("b", 1, &ctx_a), Some(B));
 
         let mut ctx_c = Context::default();
         ctx_c.set.insert("c".into());
 
         // Pending keystrokes are maintained per-view
-        assert_eq!(matcher.test_keystroke::<()>("a", 1, &ctx_b), None);
-        assert_eq!(matcher.test_keystroke::<()>("a", 2, &ctx_c), None);
-        assert_eq!(
-            matcher.test_keystroke::<()>("b", 1, &ctx_b),
-            Some(("a_b".to_string(), None))
-        );
+        assert_eq!(matcher.test_keystroke::<A>("a", 1, &ctx_b), None);
+        assert_eq!(matcher.test_keystroke::<A>("a", 2, &ctx_c), None);
+        assert_eq!(matcher.test_keystroke("b", 1, &ctx_b), Some(Ab));
 
         Ok(())
     }
 
     impl Matcher {
-        fn test_keystroke<A: Any + Clone>(
-            &mut self,
-            keystroke: &str,
-            view_id: usize,
-            cx: &Context,
-        ) -> Option<(String, Option<A>)> {
-            if let MatchResult::Action { name, arg } =
+        fn test_keystroke<A>(&mut self, keystroke: &str, view_id: usize, cx: &Context) -> Option<A>
+        where
+            A: Action + Debug + Eq,
+        {
+            if let MatchResult::Action(action) =
                 self.push_keystroke(Keystroke::parse(keystroke).unwrap(), view_id, cx)
             {
-                Some((name, arg.and_then(|arg| arg.downcast_ref::<A>().cloned())))
+                Some(*action.boxed_clone_as_any().downcast().unwrap())
             } else {
                 None
             }

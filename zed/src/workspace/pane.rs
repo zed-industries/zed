@@ -1,56 +1,51 @@
 use super::{ItemViewHandle, SplitDirection};
 use crate::{settings::Settings, theme};
 use gpui::{
+    action,
     color::Color,
     elements::*,
     geometry::{rect::RectF, vector::vec2f},
     keymap::Binding,
-    AppContext, Border, Entity, MutableAppContext, Quad, RenderContext, View, ViewContext,
-    ViewHandle,
+    Border, Entity, MutableAppContext, Quad, RenderContext, View, ViewContext, ViewHandle,
 };
 use postage::watch;
 use std::{cmp, path::Path, sync::Arc};
 
+action!(Split, SplitDirection);
+action!(ActivateItem, usize);
+action!(ActivatePrevItem);
+action!(ActivateNextItem);
+action!(CloseActiveItem);
+action!(CloseItem, usize);
+
 pub fn init(cx: &mut MutableAppContext) {
-    cx.add_action(
-        "pane:activate_item",
-        |pane: &mut Pane, index: &usize, cx| {
-            pane.activate_item(*index, cx);
-        },
-    );
-    cx.add_action("pane:activate_prev_item", |pane: &mut Pane, _: &(), cx| {
+    cx.add_action(|pane: &mut Pane, action: &ActivateItem, cx| {
+        pane.activate_item(action.0, cx);
+    });
+    cx.add_action(|pane: &mut Pane, _: &ActivatePrevItem, cx| {
         pane.activate_prev_item(cx);
     });
-    cx.add_action("pane:activate_next_item", |pane: &mut Pane, _: &(), cx| {
+    cx.add_action(|pane: &mut Pane, _: &ActivateNextItem, cx| {
         pane.activate_next_item(cx);
     });
-    cx.add_action("pane:close_active_item", |pane: &mut Pane, _: &(), cx| {
+    cx.add_action(|pane: &mut Pane, _: &CloseActiveItem, cx| {
         pane.close_active_item(cx);
     });
-    cx.add_action("pane:close_item", |pane: &mut Pane, item_id: &usize, cx| {
-        pane.close_item(*item_id, cx);
+    cx.add_action(|pane: &mut Pane, action: &CloseItem, cx| {
+        pane.close_item(action.0, cx);
     });
-    cx.add_action("pane:split_up", |pane: &mut Pane, _: &(), cx| {
-        pane.split(SplitDirection::Up, cx);
-    });
-    cx.add_action("pane:split_down", |pane: &mut Pane, _: &(), cx| {
-        pane.split(SplitDirection::Down, cx);
-    });
-    cx.add_action("pane:split_left", |pane: &mut Pane, _: &(), cx| {
-        pane.split(SplitDirection::Left, cx);
-    });
-    cx.add_action("pane:split_right", |pane: &mut Pane, _: &(), cx| {
-        pane.split(SplitDirection::Right, cx);
+    cx.add_action(|pane: &mut Pane, action: &Split, cx| {
+        pane.split(action.0, cx);
     });
 
     cx.add_bindings(vec![
-        Binding::new("shift-cmd-{", "pane:activate_prev_item", Some("Pane")),
-        Binding::new("shift-cmd-}", "pane:activate_next_item", Some("Pane")),
-        Binding::new("cmd-w", "pane:close_active_item", Some("Pane")),
-        Binding::new("cmd-k up", "pane:split_up", Some("Pane")),
-        Binding::new("cmd-k down", "pane:split_down", Some("Pane")),
-        Binding::new("cmd-k left", "pane:split_left", Some("Pane")),
-        Binding::new("cmd-k right", "pane:split_right", Some("Pane")),
+        Binding::new("shift-cmd-{", ActivatePrevItem, Some("Pane")),
+        Binding::new("shift-cmd-}", ActivateNextItem, Some("Pane")),
+        Binding::new("cmd-w", CloseActiveItem, Some("Pane")),
+        Binding::new("cmd-k up", Split(SplitDirection::Up), Some("Pane")),
+        Binding::new("cmd-k down", Split(SplitDirection::Down), Some("Pane")),
+        Binding::new("cmd-k left", Split(SplitDirection::Left), Some("Pane")),
+        Binding::new("cmd-k right", Split(SplitDirection::Right), Some("Pane")),
     ]);
 }
 
@@ -179,12 +174,12 @@ impl Pane {
         cx.emit(Event::Split(direction));
     }
 
-    fn render_tabs(&self, cx: &AppContext) -> ElementBox {
+    fn render_tabs(&self, cx: &mut RenderContext<Self>) -> ElementBox {
         let settings = self.settings.borrow();
-        let theme = &settings.theme.ui;
+        let theme = &settings.theme;
         let line_height = cx.font_cache().line_height(
-            cx.font_cache().default_font(settings.ui_font_family),
-            settings.ui_font_size,
+            theme.workspace.tab.label.text.font_id,
+            theme.workspace.tab.label.text.font_size,
         );
 
         let mut row = Flex::row();
@@ -193,12 +188,12 @@ impl Pane {
             let is_active = ix == self.active_item;
 
             enum Tab {}
-            let border = &theme.tab.container.border;
+            let border = &theme.workspace.tab.container.border;
 
             row.add_child(
-                Expanded::new(
+                Flexible::new(
                     1.0,
-                    MouseEventHandler::new::<Tab, _>(item.id(), cx, |mouse_state| {
+                    MouseEventHandler::new::<Tab, _, _, _>(item.id(), cx, |mouse_state, cx| {
                         let title = item.title(cx);
 
                         let mut border = border.clone();
@@ -212,14 +207,12 @@ impl Pane {
                                     Align::new(
                                         Label::new(
                                             title,
-                                            settings.ui_font_family,
-                                            settings.ui_font_size,
+                                            if is_active {
+                                                theme.workspace.active_tab.label.clone()
+                                            } else {
+                                                theme.workspace.tab.label.clone()
+                                            },
                                         )
-                                        .with_style(if is_active {
-                                            &theme.active_tab.label
-                                        } else {
-                                            &theme.tab.label
-                                        })
                                         .boxed(),
                                     )
                                     .boxed(),
@@ -240,9 +233,9 @@ impl Pane {
                                 .boxed(),
                         )
                         .with_style(if is_active {
-                            &theme.active_tab.container
+                            &theme.workspace.active_tab.container
                         } else {
-                            &theme.tab.container
+                            &theme.workspace.tab.container
                         })
                         .with_border(border);
 
@@ -253,7 +246,7 @@ impl Pane {
                         ConstrainedBox::new(
                             EventHandler::new(container.boxed())
                                 .on_mouse_down(move |cx| {
-                                    cx.dispatch_action("pane:activate_item", ix);
+                                    cx.dispatch_action(ActivateItem(ix));
                                     true
                                 })
                                 .boxed(),
@@ -271,7 +264,7 @@ impl Pane {
         // Ensure there's always a minimum amount of space after the last tab,
         // so that the tab's border doesn't abut the window's border.
         let mut border = Border::bottom(1.0, Color::default());
-        border.color = theme.tab.container.border.color;
+        border.color = theme.workspace.tab.container.border.color;
 
         row.add_child(
             ConstrainedBox::new(
@@ -304,33 +297,33 @@ impl Pane {
         tab_hovered: bool,
         is_dirty: bool,
         has_conflict: bool,
-        theme: &theme::Ui,
-        cx: &AppContext,
+        theme: &theme::Theme,
+        cx: &mut RenderContext<Self>,
     ) -> ElementBox {
         enum TabCloseButton {}
 
-        let mut clicked_color = theme.tab.icon_dirty;
+        let mut clicked_color = theme.workspace.tab.icon_dirty;
         clicked_color.a = 180;
 
         let current_color = if has_conflict {
-            Some(theme.tab.icon_conflict)
+            Some(theme.workspace.tab.icon_conflict)
         } else if is_dirty {
-            Some(theme.tab.icon_dirty)
+            Some(theme.workspace.tab.icon_dirty)
         } else {
             None
         };
 
         let icon = if tab_hovered {
-            let close_color = current_color.unwrap_or(theme.tab.icon_close);
+            let close_color = current_color.unwrap_or(theme.workspace.tab.icon_close);
             let icon = Svg::new("icons/x.svg").with_color(close_color);
 
-            MouseEventHandler::new::<TabCloseButton, _>(item_id, cx, |mouse_state| {
+            MouseEventHandler::new::<TabCloseButton, _, _, _>(item_id, cx, |mouse_state, _| {
                 if mouse_state.hovered {
                     Container::new(icon.with_color(Color::white()).boxed())
                         .with_background_color(if mouse_state.clicked {
                             clicked_color
                         } else {
-                            theme.tab.icon_dirty
+                            theme.workspace.tab.icon_dirty
                         })
                         .with_corner_radius(close_icon_size / 2.)
                         .boxed()
@@ -338,12 +331,12 @@ impl Pane {
                     icon.boxed()
                 }
             })
-            .on_click(move |cx| cx.dispatch_action("pane:close_item", item_id))
+            .on_click(move |cx| cx.dispatch_action(CloseItem(item_id)))
             .named("close-tab-icon")
         } else {
             let diameter = 8.;
             ConstrainedBox::new(
-                Canvas::new(move |bounds, cx| {
+                Canvas::new(move |bounds, _, cx| {
                     if let Some(current_color) = current_color {
                         let square = RectF::new(bounds.origin(), vec2f(diameter, diameter));
                         cx.scene.push_quad(Quad {
@@ -376,7 +369,7 @@ impl View for Pane {
         "Pane"
     }
 
-    fn render<'a>(&self, cx: &RenderContext<Self>) -> ElementBox {
+    fn render(&mut self, cx: &mut RenderContext<Self>) -> ElementBox {
         if let Some(active_item) = self.active_item() {
             Flex::column()
                 .with_child(self.render_tabs(cx))

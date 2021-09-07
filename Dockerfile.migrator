@@ -4,7 +4,7 @@ FROM rust as builder
 WORKDIR app
 RUN --mount=type=cache,target=/usr/local/cargo/registry \
     --mount=type=cache,target=./target \
-    cargo install sqlx-cli --root=/app --target-dir=/app/target --version 0.5.5
+    cargo install sqlx-cli --root=/app --target-dir=/app/target --version 0.5.7
 
 FROM debian:buster-slim as runtime
 RUN apt-get update; \

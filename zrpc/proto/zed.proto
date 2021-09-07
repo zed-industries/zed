@@ -6,32 +6,50 @@ message Envelope {
     optional uint32 responding_to = 2;
     optional uint32 original_sender_id = 3;
     oneof payload {
-        Auth auth = 4;
-        AuthResponse auth_response = 5;
-        ShareWorktree share_worktree = 6;
-        ShareWorktreeResponse share_worktree_response = 7;
-        OpenWorktree open_worktree = 8;
-        OpenWorktreeResponse open_worktree_response = 9;
-        UpdateWorktree update_worktree = 10;
-        CloseWorktree close_worktree = 11;
-        OpenBuffer open_buffer = 12;
-        OpenBufferResponse open_buffer_response = 13;
-        CloseBuffer close_buffer = 14;
-        UpdateBuffer update_buffer = 15;
-        SaveBuffer save_buffer = 16;
-        BufferSaved buffer_saved = 17;
-        AddPeer add_peer = 18;
-        RemovePeer remove_peer = 19;
+        Error error = 4;
+        Ping ping = 5;
+        Pong pong = 6;
+        ShareWorktree share_worktree = 7;
+        ShareWorktreeResponse share_worktree_response = 8;
+        OpenWorktree open_worktree = 9;
+        OpenWorktreeResponse open_worktree_response = 10;
+        UpdateWorktree update_worktree = 11;
+        CloseWorktree close_worktree = 12;
+        OpenBuffer open_buffer = 13;
+        OpenBufferResponse open_buffer_response = 14;
+        CloseBuffer close_buffer = 15;
+        UpdateBuffer update_buffer = 16;
+        SaveBuffer save_buffer = 17;
+        BufferSaved buffer_saved = 18;
+        AddPeer add_peer = 19;
+        RemovePeer remove_peer = 20;
+        GetChannels get_channels = 21;
+        GetChannelsResponse get_channels_response = 22;
+        GetUsers get_users = 23;
+        GetUsersResponse get_users_response = 24;
+        JoinChannel join_channel = 25;
+        JoinChannelResponse join_channel_response = 26;
+        LeaveChannel leave_channel = 27;
+        SendChannelMessage send_channel_message = 28;
+        SendChannelMessageResponse send_channel_message_response = 29;
+        ChannelMessageSent channel_message_sent = 30;
+        GetChannelMessages get_channel_messages = 31;
+        GetChannelMessagesResponse get_channel_messages_response = 32;
     }
 }
 
-message Auth {
-    int32 user_id = 1;
-    string access_token = 2;
+// Messages
+
+message Ping {
+    int32 id = 1;
 }
 
-message AuthResponse {
-    bool credentials_valid = 1;
+message Pong {
+    int32 id = 2;
+}
+
+message Error {
+    string message = 1;
 }
 
 message ShareWorktree {
@@ -75,11 +93,6 @@ message RemovePeer {
     uint32 peer_id = 2;
 }
 
-message Peer {
-    uint32 peer_id = 1;
-    uint32 replica_id = 2;
-}
-
 message OpenBuffer {
     uint64 worktree_id = 1;
     string path = 2;
@@ -110,6 +123,64 @@ message BufferSaved {
     uint64 buffer_id = 2;
     repeated VectorClockEntry version = 3;
     Timestamp mtime = 4;
+}
+
+message GetChannels {}
+
+message GetChannelsResponse {
+    repeated Channel channels = 1;
+}
+
+message JoinChannel {
+    uint64 channel_id = 1;
+}
+
+message JoinChannelResponse {
+    repeated ChannelMessage messages = 1;
+    bool done = 2;
+}
+
+message LeaveChannel {
+    uint64 channel_id = 1;
+}
+
+message GetUsers {
+    repeated uint64 user_ids = 1;
+}
+
+message GetUsersResponse {
+    repeated User users = 1;
+}
+
+message SendChannelMessage {
+    uint64 channel_id = 1;
+    string body = 2;
+}
+
+message SendChannelMessageResponse {
+    ChannelMessage message = 1;
+}
+
+message ChannelMessageSent {
+    uint64 channel_id = 1;
+    ChannelMessage message = 2;
+}
+
+message GetChannelMessages {
+    uint64 channel_id = 1;
+    uint64 before_message_id = 2;
+}
+
+message GetChannelMessagesResponse {
+    repeated ChannelMessage messages = 1;
+    bool done = 2;
+}
+
+// Entities
+
+message Peer {
+    uint32 peer_id = 1;
+    uint32 replica_id = 2;
 }
 
 message User {
@@ -227,4 +298,16 @@ message Timestamp {
 message Range {
     uint64 start = 1;
     uint64 end = 2;
+}
+
+message Channel {
+    uint64 id = 1;
+    string name = 2;
+}
+
+message ChannelMessage {
+    uint64 id = 1;
+    string body = 2;
+    uint64 timestamp = 3;
+    uint64 sender_id = 4;
 }

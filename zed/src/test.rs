@@ -1,12 +1,15 @@
 use crate::{
+    assets::Assets,
+    channel::ChannelList,
     fs::RealFs,
     language::LanguageRegistry,
     rpc,
     settings::{self, ThemeRegistry},
     time::ReplicaId,
+    user::UserStore,
     AppState,
 };
-use gpui::{AppContext, Entity, ModelHandle};
+use gpui::{Entity, ModelHandle, MutableAppContext};
 use parking_lot::Mutex;
 use smol::channel;
 use std::{
@@ -15,7 +18,6 @@ use std::{
     sync::Arc,
 };
 use tempdir::TempDir;
-use zrpc::ForegroundRouter;
 
 #[cfg(feature = "test-support")]
 pub use zrpc::test::Channel;
@@ -154,24 +156,26 @@ fn write_tree(path: &Path, tree: serde_json::Value) {
     }
 }
 
-pub fn build_app_state(cx: &AppContext) -> Arc<AppState> {
-    let (settings_tx, settings) = settings::channel(&cx.font_cache()).unwrap();
+pub fn test_app_state(cx: &mut MutableAppContext) -> Arc<AppState> {
+    let (settings_tx, settings) = settings::test(cx);
     let languages = Arc::new(LanguageRegistry::new());
-    let themes = ThemeRegistry::new(());
+    let themes = ThemeRegistry::new(Assets, cx.font_cache().clone());
+    let rpc = rpc::Client::new();
+    let user_store = Arc::new(UserStore::new(rpc.clone()));
     Arc::new(AppState {
         settings_tx: Arc::new(Mutex::new(settings_tx)),
         settings,
         themes,
         languages: languages.clone(),
-        rpc_router: Arc::new(ForegroundRouter::new()),
-        rpc: rpc::Client::new(languages),
+        channel_list: cx.add_model(|cx| ChannelList::new(user_store, rpc.clone(), cx)),
+        rpc,
         fs: Arc::new(RealFs),
     })
 }
 
 pub struct Observer<T>(PhantomData<T>);
 
-impl<T: 'static + Send + Sync> Entity for Observer<T> {
+impl<T: 'static> Entity for Observer<T> {
     type Event = ();
 }
 
@@ -184,7 +188,8 @@ impl<T: Entity> Observer<T> {
         let observer = cx.add_model(|cx| {
             cx.observe(handle, move |_, _, _| {
                 let _ = notify_tx.try_send(());
-            });
+            })
+            .detach();
             Observer(PhantomData)
         });
         (observer, notify_rx)

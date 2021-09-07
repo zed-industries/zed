@@ -1,5 +1,5 @@
-use super::{DisplayPoint, Editor, SelectAction, Snapshot};
-use crate::time::ReplicaId;
+use super::{DisplayPoint, Editor, EditorMode, Insert, Scroll, Select, SelectPhase, Snapshot};
+use crate::{theme::EditorStyle, time::ReplicaId};
 use gpui::{
     color::Color,
     geometry::{
@@ -9,7 +9,7 @@ use gpui::{
     },
     json::{self, ToJson},
     text_layout::{self, TextLayoutCache},
-    AfterLayoutContext, AppContext, Border, Element, Event, EventContext, FontCache, LayoutContext,
+    AppContext, Axis, Border, Element, Event, EventContext, FontCache, LayoutContext,
     MutableAppContext, PaintContext, Quad, Scene, SizeConstraint, ViewContext, WeakViewHandle,
 };
 use json::json;
@@ -22,11 +22,12 @@ use std::{
 
 pub struct EditorElement {
     view: WeakViewHandle<Editor>,
+    style: EditorStyle,
 }
 
 impl EditorElement {
-    pub fn new(view: WeakViewHandle<Editor>) -> Self {
-        Self { view }
+    pub fn new(view: WeakViewHandle<Editor>, style: EditorStyle) -> Self {
+        Self { view, style }
     }
 
     fn view<'a>(&self, cx: &'a AppContext) -> &'a Editor {
@@ -55,7 +56,7 @@ impl EditorElement {
         if paint.text_bounds.contains_point(position) {
             let snapshot = self.snapshot(cx.app);
             let position = paint.point_for_position(&snapshot, layout, position);
-            cx.dispatch_action("buffer:select", SelectAction::Begin { position, add: cmd });
+            cx.dispatch_action(Select(SelectPhase::Begin { position, add: cmd }));
             true
         } else {
             false
@@ -64,7 +65,7 @@ impl EditorElement {
 
     fn mouse_up(&self, _position: Vector2F, cx: &mut EventContext) -> bool {
         if self.view(cx.app.as_ref()).is_selecting() {
-            cx.dispatch_action("buffer:select", SelectAction::End);
+            cx.dispatch_action(Select(SelectPhase::End));
             true
         } else {
             false
@@ -113,16 +114,13 @@ impl EditorElement {
             let snapshot = self.snapshot(cx.app);
             let position = paint.point_for_position(&snapshot, layout, position);
 
-            cx.dispatch_action(
-                "buffer:select",
-                SelectAction::Update {
-                    position,
-                    scroll_position: (snapshot.scroll_position() + scroll_delta).clamp(
-                        Vector2F::zero(),
-                        layout.scroll_max(&font_cache, &text_layout_cache),
-                    ),
-                },
-            );
+            cx.dispatch_action(Select(SelectPhase::Update {
+                position,
+                scroll_position: (snapshot.scroll_position() + scroll_delta).clamp(
+                    Vector2F::zero(),
+                    layout.scroll_max(&font_cache, &text_layout_cache),
+                ),
+            }));
             true
         } else {
             false
@@ -139,7 +137,7 @@ impl EditorElement {
                 if chars.chars().any(|c| c.is_control()) {
                     false
                 } else {
-                    cx.dispatch_action("buffer:insert", chars.to_string());
+                    cx.dispatch_action(Insert(chars.to_string()));
                     true
                 }
             }
@@ -177,7 +175,7 @@ impl EditorElement {
             layout.scroll_max(font_cache, layout_cache),
         );
 
-        cx.dispatch_action("buffer:scroll", scroll_position);
+        cx.dispatch_action(Scroll(scroll_position));
 
         true
     }
@@ -192,22 +190,20 @@ impl EditorElement {
         let bounds = gutter_bounds.union_rect(text_bounds);
         let scroll_top = layout.snapshot.scroll_position().y() * layout.line_height;
         let editor = self.view(cx.app);
-        let settings = editor.settings.borrow();
-        let theme = &settings.theme;
         cx.scene.push_quad(Quad {
             bounds: gutter_bounds,
-            background: Some(theme.editor.gutter_background),
+            background: Some(self.style.gutter_background),
             border: Border::new(0., Color::transparent_black()),
             corner_radius: 0.,
         });
         cx.scene.push_quad(Quad {
             bounds: text_bounds,
-            background: Some(theme.editor.background),
+            background: Some(self.style.background),
             border: Border::new(0., Color::transparent_black()),
             corner_radius: 0.,
         });
 
-        if !editor.single_line {
+        if let EditorMode::Full = editor.mode {
             let mut active_rows = layout.active_rows.iter().peekable();
             while let Some((start_row, contains_non_empty_selection)) = active_rows.next() {
                 let mut end_row = *start_row;
@@ -229,7 +225,7 @@ impl EditorElement {
                     );
                     cx.scene.push_quad(Quad {
                         bounds: RectF::new(origin, size),
-                        background: Some(theme.editor.active_line_background),
+                        background: Some(self.style.active_line_background),
                         border: Border::default(),
                         corner_radius: 0.,
                     });
@@ -238,25 +234,33 @@ impl EditorElement {
         }
     }
 
-    fn paint_gutter(&mut self, rect: RectF, layout: &LayoutState, cx: &mut PaintContext) {
+    fn paint_gutter(
+        &mut self,
+        bounds: RectF,
+        visible_bounds: RectF,
+        layout: &LayoutState,
+        cx: &mut PaintContext,
+    ) {
         let scroll_top = layout.snapshot.scroll_position().y() * layout.line_height;
         for (ix, line) in layout.line_number_layouts.iter().enumerate() {
             if let Some(line) = line {
-                let line_origin = rect.origin()
+                let line_origin = bounds.origin()
                     + vec2f(
-                        rect.width() - line.width() - layout.gutter_padding,
+                        bounds.width() - line.width() - layout.gutter_padding,
                         ix as f32 * layout.line_height - (scroll_top % layout.line_height),
                     );
-                line.paint(
-                    line_origin,
-                    RectF::new(vec2f(0., 0.), vec2f(line.width(), layout.line_height)),
-                    cx,
-                );
+                line.paint(line_origin, visible_bounds, layout.line_height, cx);
             }
         }
     }
 
-    fn paint_text(&mut self, bounds: RectF, layout: &LayoutState, cx: &mut PaintContext) {
+    fn paint_text(
+        &mut self,
+        bounds: RectF,
+        visible_bounds: RectF,
+        layout: &LayoutState,
+        cx: &mut PaintContext,
+    ) {
         let view = self.view(cx.app);
         let settings = self.view(cx.app).settings.borrow();
         let theme = &settings.theme.editor;
@@ -276,7 +280,12 @@ impl EditorElement {
         let content_origin = bounds.origin() + layout.text_offset;
 
         for (replica_id, selections) in &layout.selections {
-            let replica_theme = theme.replicas[*replica_id as usize % theme.replicas.len()];
+            let style_ix = *replica_id as usize % (theme.guest_selections.len() + 1);
+            let style = if style_ix == 0 {
+                &theme.selection
+            } else {
+                &theme.guest_selections[style_ix - 1]
+            };
 
             for selection in selections {
                 if selection.start != selection.end {
@@ -290,7 +299,7 @@ impl EditorElement {
                     };
 
                     let selection = Selection {
-                        color: replica_theme.selection,
+                        color: style.selection,
                         line_height: layout.line_height,
                         start_y: content_origin.y() + row_range.start as f32 * layout.line_height
                             - scroll_top,
@@ -333,7 +342,7 @@ impl EditorElement {
                             - scroll_left;
                         let y = selection.end.row() as f32 * layout.line_height - scroll_top;
                         cursors.push(Cursor {
-                            color: replica_theme.cursor,
+                            color: style.cursor,
                             origin: content_origin + vec2f(x, y),
                             line_height: layout.line_height,
                         });
@@ -342,17 +351,18 @@ impl EditorElement {
             }
         }
 
-        // Draw glyphs
-        for (ix, line) in layout.line_layouts.iter().enumerate() {
-            let row = start_row + ix as u32;
-            line.paint(
-                content_origin + vec2f(-scroll_left, row as f32 * layout.line_height - scroll_top),
-                RectF::new(
-                    vec2f(scroll_left, 0.),
-                    vec2f(bounds.width(), layout.line_height),
-                ),
-                cx,
-            );
+        if let Some(visible_text_bounds) = bounds.intersection(visible_bounds) {
+            // Draw glyphs
+            for (ix, line) in layout.line_layouts.iter().enumerate() {
+                let row = start_row + ix as u32;
+                line.paint(
+                    content_origin
+                        + vec2f(-scroll_left, row as f32 * layout.line_height - scroll_top),
+                    visible_text_bounds,
+                    layout.line_height,
+                    cx,
+                );
+            }
         }
 
         cx.scene.push_layer(Some(bounds));
@@ -386,7 +396,7 @@ impl Element for EditorElement {
 
         let gutter_padding;
         let gutter_width;
-        if snapshot.gutter_visible {
+        if snapshot.mode == EditorMode::Full {
             gutter_padding = snapshot.em_width(cx.font_cache);
             match snapshot.max_line_number_width(cx.font_cache, cx.text_layout_cache) {
                 Err(error) => {
@@ -412,8 +422,17 @@ impl Element for EditorElement {
                 snapshot
             }
         });
-        if size.y().is_infinite() {
-            size.set_y((snapshot.max_point().row() + 1) as f32 * line_height);
+
+        let scroll_height = (snapshot.max_point().row() + 1) as f32 * line_height;
+        if let EditorMode::AutoHeight { max_lines } = snapshot.mode {
+            size.set_y(
+                scroll_height
+                    .min(constraint.max_along(Axis::Vertical))
+                    .max(constraint.min_along(Axis::Vertical))
+                    .min(line_height * max_lines as f32),
+            )
+        } else if size.y().is_infinite() {
+            size.set_y(scroll_height);
         }
         let gutter_size = vec2f(gutter_width, size.y());
         let text_size = vec2f(text_width, size.y());
@@ -432,7 +451,6 @@ impl Element for EditorElement {
         let mut selections = HashMap::new();
         let mut active_rows = BTreeMap::new();
         self.update_view(cx.app, |view, cx| {
-            let replica_id = view.replica_id(cx);
             for selection_set_id in view.active_selection_sets(cx).collect::<Vec<_>>() {
                 let mut set = Vec::new();
                 for selection in view.selections_in_range(
@@ -441,7 +459,7 @@ impl Element for EditorElement {
                     cx,
                 ) {
                     set.push(selection.clone());
-                    if selection_set_id.replica_id == replica_id {
+                    if selection_set_id == view.selection_set_id {
                         let is_empty = selection.start == selection.end;
                         let mut selection_start;
                         let mut selection_end;
@@ -468,7 +486,7 @@ impl Element for EditorElement {
             }
         });
 
-        let line_number_layouts = if snapshot.gutter_visible {
+        let line_number_layouts = if snapshot.mode == EditorMode::Full {
             let settings = self
                 .view
                 .upgrade(cx.app)
@@ -494,8 +512,12 @@ impl Element for EditorElement {
         };
 
         let mut max_visible_line_width = 0.0;
-        let line_layouts = match snapshot.layout_lines(start_row..end_row, font_cache, layout_cache)
-        {
+        let line_layouts = match snapshot.layout_lines(
+            start_row..end_row,
+            &self.style,
+            font_cache,
+            layout_cache,
+        ) {
             Err(error) => {
                 log::error!("error laying out lines: {}", error);
                 return (size, None);
@@ -552,12 +574,10 @@ impl Element for EditorElement {
         (size, Some(layout))
     }
 
-    fn after_layout(&mut self, _: Vector2F, _: &mut Self::LayoutState, _: &mut AfterLayoutContext) {
-    }
-
     fn paint(
         &mut self,
         bounds: RectF,
+        visible_bounds: RectF,
         layout: &mut Self::LayoutState,
         cx: &mut PaintContext,
     ) -> Self::PaintState {
@@ -572,9 +592,9 @@ impl Element for EditorElement {
 
             self.paint_background(gutter_bounds, text_bounds, layout, cx);
             if layout.gutter_size.x() > 0. {
-                self.paint_gutter(gutter_bounds, layout, cx);
+                self.paint_gutter(gutter_bounds, visible_bounds, layout, cx);
             }
-            self.paint_text(text_bounds, layout, cx);
+            self.paint_text(text_bounds, visible_bounds, layout, cx);
 
             cx.scene.pop_layer();
 

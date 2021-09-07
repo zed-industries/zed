@@ -1,5 +1,4 @@
 use crate::{
-    color::Color,
     fonts::{FontId, GlyphId, Metrics, Properties},
     geometry::{
         rect::{RectF, RectI},
@@ -7,7 +6,7 @@ use crate::{
         vector::{vec2f, vec2i, Vector2F},
     },
     platform,
-    text_layout::{Glyph, LineLayout, Run},
+    text_layout::{Glyph, LineLayout, Run, RunStyle},
 };
 use cocoa::appkit::{CGFloat, CGPoint};
 use core_foundation::{
@@ -21,9 +20,12 @@ use core_graphics::{
     base::CGGlyph, color_space::CGColorSpace, context::CGContext, geometry::CGAffineTransform,
 };
 use core_text::{line::CTLine, string_attributes::kCTFontAttributeName};
-use font_kit::{canvas::RasterizationOptions, hinting::HintingOptions, source::SystemSource};
+use font_kit::{
+    canvas::RasterizationOptions, handle::Handle, hinting::HintingOptions, source::SystemSource,
+    sources::mem::MemSource,
+};
 use parking_lot::RwLock;
-use std::{cell::RefCell, char, cmp, convert::TryFrom, ffi::c_void};
+use std::{cell::RefCell, char, cmp, convert::TryFrom, ffi::c_void, sync::Arc};
 
 #[allow(non_upper_case_globals)]
 const kCGImageAlphaOnly: u32 = 7;
@@ -31,20 +33,26 @@ const kCGImageAlphaOnly: u32 = 7;
 pub struct FontSystem(RwLock<FontSystemState>);
 
 struct FontSystemState {
-    source: SystemSource,
+    memory_source: MemSource,
+    system_source: SystemSource,
     fonts: Vec<font_kit::font::Font>,
 }
 
 impl FontSystem {
     pub fn new() -> Self {
         Self(RwLock::new(FontSystemState {
-            source: SystemSource::new(),
+            memory_source: MemSource::empty(),
+            system_source: SystemSource::new(),
             fonts: Vec::new(),
         }))
     }
 }
 
 impl platform::FontSystem for FontSystem {
+    fn add_fonts(&self, fonts: &[Arc<Vec<u8>>]) -> anyhow::Result<()> {
+        self.0.write().add_fonts(fonts)
+    }
+
     fn load_family(&self, name: &str) -> anyhow::Result<Vec<FontId>> {
         self.0.write().load_family(name)
     }
@@ -78,12 +86,7 @@ impl platform::FontSystem for FontSystem {
             .rasterize_glyph(font_id, font_size, glyph_id, subpixel_shift, scale_factor)
     }
 
-    fn layout_line(
-        &self,
-        text: &str,
-        font_size: f32,
-        runs: &[(usize, FontId, Color)],
-    ) -> LineLayout {
+    fn layout_line(&self, text: &str, font_size: f32, runs: &[(usize, RunStyle)]) -> LineLayout {
         self.0.read().layout_line(text, font_size, runs)
     }
 
@@ -93,9 +96,23 @@ impl platform::FontSystem for FontSystem {
 }
 
 impl FontSystemState {
+    fn add_fonts(&mut self, fonts: &[Arc<Vec<u8>>]) -> anyhow::Result<()> {
+        self.memory_source.add_fonts(
+            fonts
+                .iter()
+                .map(|bytes| Handle::from_memory(bytes.clone(), 0)),
+        )?;
+        Ok(())
+    }
+
     fn load_family(&mut self, name: &str) -> anyhow::Result<Vec<FontId>> {
         let mut font_ids = Vec::new();
-        for font in self.source.select_family_by_name(name)?.fonts() {
+
+        let family = self
+            .memory_source
+            .select_family_by_name(name)
+            .or_else(|_| self.system_source.select_family_by_name(name))?;
+        for font in family.fonts() {
             let font = font.load()?;
             font_ids.push(FontId(self.fonts.len()));
             self.fonts.push(font);
@@ -187,12 +204,7 @@ impl FontSystemState {
         }
     }
 
-    fn layout_line(
-        &self,
-        text: &str,
-        font_size: f32,
-        runs: &[(usize, FontId, Color)],
-    ) -> LineLayout {
+    fn layout_line(&self, text: &str, font_size: f32, runs: &[(usize, RunStyle)]) -> LineLayout {
         let font_id_attr_name = CFString::from_static_string("zed_font_id");
 
         // Construct the attributed string, converting UTF8 ranges to UTF16 ranges.
@@ -204,20 +216,20 @@ impl FontSystemState {
             let last_run: RefCell<Option<(usize, FontId)>> = Default::default();
             let font_runs = runs
                 .iter()
-                .filter_map(|(len, font_id, _)| {
+                .filter_map(|(len, style)| {
                     let mut last_run = last_run.borrow_mut();
                     if let Some((last_len, last_font_id)) = last_run.as_mut() {
-                        if font_id == last_font_id {
+                        if style.font_id == *last_font_id {
                             *last_len += *len;
                             None
                         } else {
                             let result = (*last_len, *last_font_id);
                             *last_len = *len;
-                            *last_font_id = *font_id;
+                            *last_font_id = style.font_id;
                             Some(result)
                         }
                     } else {
-                        *last_run = Some((*len, *font_id));
+                        *last_run = Some((*len, style.font_id));
                         None
                     }
                 })
@@ -392,9 +404,8 @@ extern "C" {
 
 #[cfg(test)]
 mod tests {
-    use crate::MutableAppContext;
-
     use super::*;
+    use crate::MutableAppContext;
     use font_kit::properties::{Style, Weight};
     use platform::FontSystem as _;
 
@@ -403,13 +414,25 @@ mod tests {
         // This is failing intermittently on CI and we don't have time to figure it out
         let fonts = FontSystem::new();
         let menlo = fonts.load_family("Menlo").unwrap();
-        let menlo_regular = fonts.select_font(&menlo, &Properties::new()).unwrap();
-        let menlo_italic = fonts
-            .select_font(&menlo, &Properties::new().style(Style::Italic))
-            .unwrap();
-        let menlo_bold = fonts
-            .select_font(&menlo, &Properties::new().weight(Weight::BOLD))
-            .unwrap();
+        let menlo_regular = RunStyle {
+            font_id: fonts.select_font(&menlo, &Properties::new()).unwrap(),
+            color: Default::default(),
+            underline: false,
+        };
+        let menlo_italic = RunStyle {
+            font_id: fonts
+                .select_font(&menlo, &Properties::new().style(Style::Italic))
+                .unwrap(),
+            color: Default::default(),
+            underline: false,
+        };
+        let menlo_bold = RunStyle {
+            font_id: fonts
+                .select_font(&menlo, &Properties::new().weight(Weight::BOLD))
+                .unwrap(),
+            color: Default::default(),
+            underline: false,
+        };
         assert_ne!(menlo_regular, menlo_italic);
         assert_ne!(menlo_regular, menlo_bold);
         assert_ne!(menlo_italic, menlo_bold);
@@ -417,18 +440,14 @@ mod tests {
         let line = fonts.layout_line(
             "hello world",
             16.0,
-            &[
-                (2, menlo_bold, Default::default()),
-                (4, menlo_italic, Default::default()),
-                (5, menlo_regular, Default::default()),
-            ],
+            &[(2, menlo_bold), (4, menlo_italic), (5, menlo_regular)],
         );
         assert_eq!(line.runs.len(), 3);
-        assert_eq!(line.runs[0].font_id, menlo_bold);
+        assert_eq!(line.runs[0].font_id, menlo_bold.font_id);
         assert_eq!(line.runs[0].glyphs.len(), 2);
-        assert_eq!(line.runs[1].font_id, menlo_italic);
+        assert_eq!(line.runs[1].font_id, menlo_italic.font_id);
         assert_eq!(line.runs[1].glyphs.len(), 4);
-        assert_eq!(line.runs[2].font_id, menlo_regular);
+        assert_eq!(line.runs[2].font_id, menlo_regular.font_id);
         assert_eq!(line.runs[2].glyphs.len(), 5);
     }
 
@@ -436,18 +455,26 @@ mod tests {
     fn test_glyph_offsets() -> anyhow::Result<()> {
         let fonts = FontSystem::new();
         let zapfino = fonts.load_family("Zapfino")?;
-        let zapfino_regular = fonts.select_font(&zapfino, &Properties::new())?;
+        let zapfino_regular = RunStyle {
+            font_id: fonts.select_font(&zapfino, &Properties::new())?,
+            color: Default::default(),
+            underline: false,
+        };
         let menlo = fonts.load_family("Menlo")?;
-        let menlo_regular = fonts.select_font(&menlo, &Properties::new())?;
+        let menlo_regular = RunStyle {
+            font_id: fonts.select_font(&menlo, &Properties::new())?,
+            color: Default::default(),
+            underline: false,
+        };
 
         let text = "This is, m𐍈re 𐍈r less, Zapfino!𐍈";
         let line = fonts.layout_line(
             text,
             16.0,
             &[
-                (9, zapfino_regular, Color::default()),
-                (13, menlo_regular, Color::default()),
-                (text.len() - 22, zapfino_regular, Color::default()),
+                (9, zapfino_regular),
+                (13, menlo_regular),
+                (text.len() - 22, zapfino_regular),
             ],
         );
         assert_eq!(
@@ -513,15 +540,19 @@ mod tests {
     fn test_layout_line_bom_char() {
         let fonts = FontSystem::new();
         let font_ids = fonts.load_family("Helvetica").unwrap();
-        let font_id = fonts.select_font(&font_ids, &Default::default()).unwrap();
+        let style = RunStyle {
+            font_id: fonts.select_font(&font_ids, &Default::default()).unwrap(),
+            color: Default::default(),
+            underline: false,
+        };
 
         let line = "\u{feff}";
-        let layout = fonts.layout_line(line, 16., &[(line.len(), font_id, Default::default())]);
+        let layout = fonts.layout_line(line, 16., &[(line.len(), style)]);
         assert_eq!(layout.len, line.len());
         assert!(layout.runs.is_empty());
 
         let line = "a\u{feff}b";
-        let layout = fonts.layout_line(line, 16., &[(line.len(), font_id, Default::default())]);
+        let layout = fonts.layout_line(line, 16., &[(line.len(), style)]);
         assert_eq!(layout.len, line.len());
         assert_eq!(layout.runs.len(), 1);
         assert_eq!(layout.runs[0].glyphs.len(), 2);

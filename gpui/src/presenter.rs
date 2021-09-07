@@ -2,16 +2,18 @@ use crate::{
     app::{AppContext, MutableAppContext, WindowInvalidation},
     elements::Element,
     font_cache::FontCache,
+    geometry::rect::RectF,
     json::{self, ToJson},
     platform::Event,
     text_layout::TextLayoutCache,
-    AssetCache, ElementBox, Scene,
+    Action, AnyAction, AssetCache, ElementBox, Entity, FontSystem, ModelHandle, ReadModel,
+    ReadView, Scene, View, ViewHandle,
 };
 use pathfinder_geometry::vector::{vec2f, Vector2F};
 use serde_json::json;
 use std::{
-    any::Any,
     collections::{HashMap, HashSet},
+    ops::{Deref, DerefMut},
     sync::Arc,
 };
 
@@ -23,24 +25,27 @@ pub struct Presenter {
     text_layout_cache: TextLayoutCache,
     asset_cache: Arc<AssetCache>,
     last_mouse_moved_event: Option<Event>,
+    titlebar_height: f32,
 }
 
 impl Presenter {
     pub fn new(
         window_id: usize,
+        titlebar_height: f32,
         font_cache: Arc<FontCache>,
         text_layout_cache: TextLayoutCache,
         asset_cache: Arc<AssetCache>,
-        cx: &MutableAppContext,
+        cx: &mut MutableAppContext,
     ) -> Self {
         Self {
             window_id,
-            rendered_views: cx.render_views(window_id),
+            rendered_views: cx.render_views(window_id, titlebar_height),
             parents: HashMap::new(),
             font_cache,
             text_layout_cache,
             asset_cache,
             last_mouse_moved_event: None,
+            titlebar_height,
         }
     }
 
@@ -55,15 +60,37 @@ impl Presenter {
         path
     }
 
-    pub fn invalidate(&mut self, mut invalidation: WindowInvalidation, cx: &AppContext) {
+    pub fn invalidate(&mut self, mut invalidation: WindowInvalidation, cx: &mut MutableAppContext) {
         for view_id in invalidation.removed {
             invalidation.updated.remove(&view_id);
             self.rendered_views.remove(&view_id);
             self.parents.remove(&view_id);
         }
         for view_id in invalidation.updated {
-            self.rendered_views
-                .insert(view_id, cx.render_view(self.window_id, view_id).unwrap());
+            self.rendered_views.insert(
+                view_id,
+                cx.render_view(self.window_id, view_id, self.titlebar_height, false)
+                    .unwrap(),
+            );
+        }
+    }
+
+    pub fn refresh(
+        &mut self,
+        invalidation: Option<WindowInvalidation>,
+        cx: &mut MutableAppContext,
+    ) {
+        if let Some(invalidation) = invalidation {
+            for view_id in invalidation.removed {
+                self.rendered_views.remove(&view_id);
+                self.parents.remove(&view_id);
+            }
+        }
+
+        for (view_id, view) in &mut self.rendered_views {
+            *view = cx
+                .render_view(self.window_id, *view_id, self.titlebar_height, true)
+                .unwrap();
         }
     }
 
@@ -71,13 +98,13 @@ impl Presenter {
         &mut self,
         window_size: Vector2F,
         scale_factor: f32,
+        refreshing: bool,
         cx: &mut MutableAppContext,
     ) -> Scene {
         let mut scene = Scene::new(scale_factor);
 
         if let Some(root_view_id) = cx.root_view_id(self.window_id) {
-            self.layout(window_size, cx);
-            self.after_layout(cx);
+            self.layout(window_size, refreshing, cx);
             let mut paint_cx = PaintContext {
                 scene: &mut scene,
                 font_cache: &self.font_cache,
@@ -85,7 +112,11 @@ impl Presenter {
                 rendered_views: &mut self.rendered_views,
                 app: cx.as_ref(),
             };
-            paint_cx.paint(root_view_id, Vector2F::zero());
+            paint_cx.paint(
+                root_view_id,
+                Vector2F::zero(),
+                RectF::new(Vector2F::zero(), window_size),
+            );
             self.text_layout_cache.finish_frame();
 
             if let Some(event) = self.last_mouse_moved_event.clone() {
@@ -98,64 +129,73 @@ impl Presenter {
         scene
     }
 
-    fn layout(&mut self, size: Vector2F, cx: &mut MutableAppContext) {
+    fn layout(&mut self, size: Vector2F, refreshing: bool, cx: &mut MutableAppContext) {
         if let Some(root_view_id) = cx.root_view_id(self.window_id) {
-            let mut layout_ctx = LayoutContext {
-                rendered_views: &mut self.rendered_views,
-                parents: &mut self.parents,
-                font_cache: &self.font_cache,
-                text_layout_cache: &self.text_layout_cache,
-                asset_cache: &self.asset_cache,
-                view_stack: Vec::new(),
-                app: cx,
-            };
-            layout_ctx.layout(root_view_id, SizeConstraint::strict(size));
+            self.build_layout_context(refreshing, cx)
+                .layout(root_view_id, SizeConstraint::strict(size));
         }
     }
 
-    fn after_layout(&mut self, cx: &mut MutableAppContext) {
-        if let Some(root_view_id) = cx.root_view_id(self.window_id) {
-            let mut layout_cx = AfterLayoutContext {
-                rendered_views: &mut self.rendered_views,
-                font_cache: &self.font_cache,
-                text_layout_cache: &self.text_layout_cache,
-                app: cx,
-            };
-            layout_cx.after_layout(root_view_id);
+    pub fn build_layout_context<'a>(
+        &'a mut self,
+        refreshing: bool,
+        cx: &'a mut MutableAppContext,
+    ) -> LayoutContext<'a> {
+        LayoutContext {
+            rendered_views: &mut self.rendered_views,
+            parents: &mut self.parents,
+            refreshing,
+            font_cache: &self.font_cache,
+            font_system: cx.platform().fonts(),
+            text_layout_cache: &self.text_layout_cache,
+            asset_cache: &self.asset_cache,
+            view_stack: Vec::new(),
+            app: cx,
         }
     }
 
     pub fn dispatch_event(&mut self, event: Event, cx: &mut MutableAppContext) {
         if let Some(root_view_id) = cx.root_view_id(self.window_id) {
-            if matches!(event, Event::MouseMoved { .. }) {
-                self.last_mouse_moved_event = Some(event.clone());
+            match event {
+                Event::MouseMoved { .. } => {
+                    self.last_mouse_moved_event = Some(event.clone());
+                }
+                Event::LeftMouseDragged { position } => {
+                    self.last_mouse_moved_event = Some(Event::MouseMoved {
+                        position,
+                        left_mouse_down: true,
+                    });
+                }
+                _ => {}
             }
 
-            let mut event_cx = EventContext {
-                rendered_views: &mut self.rendered_views,
-                actions: Default::default(),
-                font_cache: &self.font_cache,
-                text_layout_cache: &self.text_layout_cache,
-                view_stack: Default::default(),
-                invalidated_views: Default::default(),
-                app: cx,
-            };
+            let mut event_cx = self.build_event_context(cx);
             event_cx.dispatch_event(root_view_id, &event);
 
             let invalidated_views = event_cx.invalidated_views;
-            let actions = event_cx.actions;
+            let dispatch_directives = event_cx.dispatched_actions;
 
             for view_id in invalidated_views {
                 cx.notify_view(self.window_id, view_id);
             }
-            for action in actions {
-                cx.dispatch_action_any(
-                    self.window_id,
-                    &action.path,
-                    action.name,
-                    action.arg.as_ref(),
-                );
+            for directive in dispatch_directives {
+                cx.dispatch_action_any(self.window_id, &directive.path, directive.action.as_ref());
             }
+        }
+    }
+
+    pub fn build_event_context<'a>(
+        &'a mut self,
+        cx: &'a mut MutableAppContext,
+    ) -> EventContext<'a> {
+        EventContext {
+            rendered_views: &mut self.rendered_views,
+            dispatched_actions: Default::default(),
+            font_cache: &self.font_cache,
+            text_layout_cache: &self.text_layout_cache,
+            view_stack: Default::default(),
+            invalidated_views: Default::default(),
+            app: cx,
         }
     }
 
@@ -172,20 +212,21 @@ impl Presenter {
     }
 }
 
-pub struct ActionToDispatch {
+pub struct DispatchDirective {
     pub path: Vec<usize>,
-    pub name: &'static str,
-    pub arg: Box<dyn Any>,
+    pub action: Box<dyn AnyAction>,
 }
 
 pub struct LayoutContext<'a> {
     rendered_views: &'a mut HashMap<usize, ElementBox>,
     parents: &'a mut HashMap<usize, usize>,
-    pub font_cache: &'a FontCache,
+    view_stack: Vec<usize>,
+    pub refreshing: bool,
+    pub font_cache: &'a Arc<FontCache>,
+    pub font_system: Arc<dyn FontSystem>,
     pub text_layout_cache: &'a TextLayoutCache,
     pub asset_cache: &'a AssetCache,
     pub app: &'a mut MutableAppContext,
-    view_stack: Vec<usize>,
 }
 
 impl<'a> LayoutContext<'a> {
@@ -202,19 +243,29 @@ impl<'a> LayoutContext<'a> {
     }
 }
 
-pub struct AfterLayoutContext<'a> {
-    rendered_views: &'a mut HashMap<usize, ElementBox>,
-    pub font_cache: &'a FontCache,
-    pub text_layout_cache: &'a TextLayoutCache,
-    pub app: &'a mut MutableAppContext,
+impl<'a> Deref for LayoutContext<'a> {
+    type Target = MutableAppContext;
+
+    fn deref(&self) -> &Self::Target {
+        self.app
+    }
 }
 
-impl<'a> AfterLayoutContext<'a> {
-    fn after_layout(&mut self, view_id: usize) {
-        if let Some(mut view) = self.rendered_views.remove(&view_id) {
-            view.after_layout(self);
-            self.rendered_views.insert(view_id, view);
-        }
+impl<'a> DerefMut for LayoutContext<'a> {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        self.app
+    }
+}
+
+impl<'a> ReadView for LayoutContext<'a> {
+    fn read_view<T: View>(&self, handle: &ViewHandle<T>) -> &T {
+        self.app.read_view(handle)
+    }
+}
+
+impl<'a> ReadModel for LayoutContext<'a> {
+    fn read_model<T: Entity>(&self, handle: &ModelHandle<T>) -> &T {
+        self.app.read_model(handle)
     }
 }
 
@@ -227,9 +278,9 @@ pub struct PaintContext<'a> {
 }
 
 impl<'a> PaintContext<'a> {
-    fn paint(&mut self, view_id: usize, origin: Vector2F) {
+    fn paint(&mut self, view_id: usize, origin: Vector2F, visible_bounds: RectF) {
         if let Some(mut tree) = self.rendered_views.remove(&view_id) {
-            tree.paint(origin, self);
+            tree.paint(origin, visible_bounds, self);
             self.rendered_views.insert(view_id, tree);
         }
     }
@@ -237,7 +288,7 @@ impl<'a> PaintContext<'a> {
 
 pub struct EventContext<'a> {
     rendered_views: &'a mut HashMap<usize, ElementBox>,
-    actions: Vec<ActionToDispatch>,
+    dispatched_actions: Vec<DispatchDirective>,
     pub font_cache: &'a FontCache,
     pub text_layout_cache: &'a TextLayoutCache,
     pub app: &'a mut MutableAppContext,
@@ -258,17 +309,31 @@ impl<'a> EventContext<'a> {
         }
     }
 
-    pub fn dispatch_action<A: 'static + Any>(&mut self, name: &'static str, arg: A) {
-        self.actions.push(ActionToDispatch {
+    pub fn dispatch_action<A: Action>(&mut self, action: A) {
+        self.dispatched_actions.push(DispatchDirective {
             path: self.view_stack.clone(),
-            name,
-            arg: Box::new(arg),
+            action: Box::new(action),
         });
     }
 
     pub fn notify(&mut self) {
-        self.invalidated_views
-            .insert(*self.view_stack.last().unwrap());
+        if let Some(view_id) = self.view_stack.last() {
+            self.invalidated_views.insert(*view_id);
+        }
+    }
+}
+
+impl<'a> Deref for EventContext<'a> {
+    type Target = MutableAppContext;
+
+    fn deref(&self) -> &Self::Target {
+        self.app
+    }
+}
+
+impl<'a> DerefMut for EventContext<'a> {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        self.app
     }
 }
 
@@ -352,6 +417,13 @@ impl SizeConstraint {
             Axis::Vertical => self.max.y(),
         }
     }
+
+    pub fn min_along(&self, axis: Axis) -> f32 {
+        match axis {
+            Axis::Horizontal => self.min.x(),
+            Axis::Vertical => self.min.y(),
+        }
+    }
 }
 
 impl ToJson for SizeConstraint {
@@ -386,28 +458,20 @@ impl Element for ChildView {
         (size, ())
     }
 
-    fn after_layout(
-        &mut self,
-        _: Vector2F,
-        _: &mut Self::LayoutState,
-        cx: &mut AfterLayoutContext,
-    ) {
-        cx.after_layout(self.view_id);
-    }
-
     fn paint(
         &mut self,
-        bounds: pathfinder_geometry::rect::RectF,
+        bounds: RectF,
+        visible_bounds: RectF,
         _: &mut Self::LayoutState,
         cx: &mut PaintContext,
     ) -> Self::PaintState {
-        cx.paint(self.view_id, bounds.origin());
+        cx.paint(self.view_id, bounds.origin(), visible_bounds);
     }
 
     fn dispatch_event(
         &mut self,
         event: &Event,
-        _: pathfinder_geometry::rect::RectF,
+        _: RectF,
         _: &mut Self::LayoutState,
         _: &mut Self::PaintState,
         cx: &mut EventContext,
@@ -417,7 +481,7 @@ impl Element for ChildView {
 
     fn debug(
         &self,
-        bounds: pathfinder_geometry::rect::RectF,
+        bounds: RectF,
         _: &Self::LayoutState,
         _: &Self::PaintState,
         cx: &DebugContext,

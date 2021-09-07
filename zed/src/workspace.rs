@@ -1,10 +1,13 @@
 pub mod pane;
 pub mod pane_group;
+pub mod sidebar;
 
 use crate::{
-    editor::{Buffer, Editor},
+    chat_panel::ChatPanel,
+    editor::Buffer,
     fs::Fs,
     language::LanguageRegistry,
+    project_browser::ProjectBrowser,
     rpc,
     settings::Settings,
     worktree::{File, Worktree},
@@ -12,14 +15,21 @@ use crate::{
 };
 use anyhow::{anyhow, Result};
 use gpui::{
-    elements::*, json::to_string_pretty, keymap::Binding, AnyViewHandle, AppContext, ClipboardItem,
-    Entity, ModelHandle, MutableAppContext, PathPromptOptions, PromptLevel, RenderContext, Task,
-    View, ViewContext, ViewHandle, WeakModelHandle,
+    action,
+    elements::*,
+    geometry::{rect::RectF, vector::vec2f},
+    json::to_string_pretty,
+    keymap::Binding,
+    platform::WindowOptions,
+    AnyViewHandle, AppContext, ClipboardItem, Entity, ModelHandle, MutableAppContext,
+    PathPromptOptions, PromptLevel, RenderContext, Task, View, ViewContext, ViewHandle,
+    WeakModelHandle,
 };
 use log::error;
 pub use pane::*;
 pub use pane_group::*;
 use postage::watch;
+use sidebar::{Side, Sidebar, ToggleSidebarItem};
 use smol::prelude::*;
 use std::{
     collections::{hash_map::Entry, HashMap, HashSet},
@@ -28,33 +38,42 @@ use std::{
     sync::Arc,
 };
 
+action!(Open, Arc<AppState>);
+action!(OpenPaths, OpenParams);
+action!(OpenNew, Arc<AppState>);
+action!(ShareWorktree);
+action!(JoinWorktree, Arc<AppState>);
+action!(Save);
+action!(DebugElements);
+
 pub fn init(cx: &mut MutableAppContext) {
-    cx.add_global_action("workspace:open", open);
-    cx.add_global_action(
-        "workspace:open_paths",
-        |params: &OpenParams, cx: &mut MutableAppContext| open_paths(params, cx).detach(),
-    );
-    cx.add_global_action("workspace:new_file", open_new);
-    cx.add_global_action("workspace:join_worktree", join_worktree);
-    cx.add_action("workspace:save", Workspace::save_active_item);
-    cx.add_action("workspace:debug_elements", Workspace::debug_elements);
-    cx.add_action("workspace:new_file", Workspace::open_new_file);
-    cx.add_action("workspace:share_worktree", Workspace::share_worktree);
-    cx.add_action("workspace:join_worktree", Workspace::join_worktree);
+    cx.add_global_action(open);
+    cx.add_global_action(|action: &OpenPaths, cx: &mut MutableAppContext| {
+        open_paths(action, cx).detach()
+    });
+    cx.add_global_action(open_new);
+    cx.add_global_action(join_worktree);
+    cx.add_action(Workspace::save_active_item);
+    cx.add_action(Workspace::debug_elements);
+    cx.add_action(Workspace::open_new_file);
+    cx.add_action(Workspace::share_worktree);
+    cx.add_action(Workspace::join_worktree);
+    cx.add_action(Workspace::toggle_sidebar_item);
     cx.add_bindings(vec![
-        Binding::new("cmd-s", "workspace:save", None),
-        Binding::new("cmd-alt-i", "workspace:debug_elements", None),
+        Binding::new("cmd-s", Save, None),
+        Binding::new("cmd-alt-i", DebugElements, None),
     ]);
     pane::init(cx);
 }
 
+#[derive(Clone)]
 pub struct OpenParams {
     pub paths: Vec<PathBuf>,
     pub app_state: Arc<AppState>,
 }
 
-fn open(app_state: &Arc<AppState>, cx: &mut MutableAppContext) {
-    let app_state = app_state.clone();
+fn open(action: &Open, cx: &mut MutableAppContext) {
+    let app_state = action.0.clone();
     cx.prompt_for_paths(
         PathPromptOptions {
             files: true,
@@ -63,22 +82,22 @@ fn open(app_state: &Arc<AppState>, cx: &mut MutableAppContext) {
         },
         move |paths, cx| {
             if let Some(paths) = paths {
-                cx.dispatch_global_action("workspace:open_paths", OpenParams { paths, app_state });
+                cx.dispatch_global_action(OpenPaths(OpenParams { paths, app_state }));
             }
         },
     );
 }
 
-fn open_paths(params: &OpenParams, cx: &mut MutableAppContext) -> Task<()> {
-    log::info!("open paths {:?}", params.paths);
+fn open_paths(action: &OpenPaths, cx: &mut MutableAppContext) -> Task<()> {
+    log::info!("open paths {:?}", action.0.paths);
 
     // Open paths in existing workspace if possible
     for window_id in cx.window_ids().collect::<Vec<_>>() {
         if let Some(handle) = cx.root_view::<Workspace>(window_id) {
             let task = handle.update(cx, |view, cx| {
-                if view.contains_paths(&params.paths, cx.as_ref()) {
+                if view.contains_paths(&action.0.paths, cx.as_ref()) {
                     log::info!("open paths on existing workspace");
-                    Some(view.open_paths(&params.paths, cx))
+                    Some(view.open_paths(&action.0.paths, cx))
                 } else {
                     None
                 }
@@ -93,24 +112,38 @@ fn open_paths(params: &OpenParams, cx: &mut MutableAppContext) -> Task<()> {
     log::info!("open new workspace");
 
     // Add a new workspace if necessary
-    let (_, workspace) = cx.add_window(|cx| Workspace::new(&params.app_state, cx));
-    workspace.update(cx, |workspace, cx| workspace.open_paths(&params.paths, cx))
+
+    let (_, workspace) = cx.add_window(window_options(), |cx| {
+        Workspace::new(&action.0.app_state, cx)
+    });
+    workspace.update(cx, |workspace, cx| {
+        workspace.open_paths(&action.0.paths, cx)
+    })
 }
 
-fn open_new(app_state: &Arc<AppState>, cx: &mut MutableAppContext) {
-    cx.add_window(|cx| {
-        let mut view = Workspace::new(app_state.as_ref(), cx);
-        view.open_new_file(&app_state, cx);
+fn open_new(action: &OpenNew, cx: &mut MutableAppContext) {
+    cx.add_window(window_options(), |cx| {
+        let mut view = Workspace::new(action.0.as_ref(), cx);
+        view.open_new_file(&action, cx);
         view
     });
 }
 
-fn join_worktree(app_state: &Arc<AppState>, cx: &mut MutableAppContext) {
-    cx.add_window(|cx| {
-        let mut view = Workspace::new(app_state.as_ref(), cx);
-        view.join_worktree(&app_state, cx);
+fn join_worktree(action: &JoinWorktree, cx: &mut MutableAppContext) {
+    cx.add_window(window_options(), |cx| {
+        let mut view = Workspace::new(action.0.as_ref(), cx);
+        view.join_worktree(action, cx);
         view
     });
+}
+
+fn window_options() -> WindowOptions<'static> {
+    WindowOptions {
+        bounds: RectF::new(vec2f(0., 0.), vec2f(1024., 768.)),
+        title: None,
+        titlebar_appears_transparent: true,
+        traffic_light_position: Some(vec2f(8., 8.)),
+    }
 }
 
 pub trait Item: Entity + Sized {
@@ -160,7 +193,7 @@ pub trait ItemHandle: Send + Sync {
     fn downgrade(&self) -> Box<dyn WeakItemHandle>;
 }
 
-pub trait WeakItemHandle: Send + Sync {
+pub trait WeakItemHandle {
     fn file<'a>(&'a self, cx: &'a AppContext) -> Option<&'a File>;
     fn add_view(
         &self,
@@ -171,7 +204,7 @@ pub trait WeakItemHandle: Send + Sync {
     fn alive(&self, cx: &AppContext) -> bool;
 }
 
-pub trait ItemViewHandle: Send + Sync {
+pub trait ItemViewHandle {
     fn title(&self, cx: &AppContext) -> String;
     fn entry_id(&self, cx: &AppContext) -> Option<(usize, Arc<Path>)>;
     fn boxed_clone(&self) -> Box<dyn ItemViewHandle>;
@@ -247,7 +280,7 @@ impl<T: ItemView> ItemViewHandle for ViewHandle<T> {
 
     fn set_parent_pane(&self, pane: &ViewHandle<Pane>, cx: &mut MutableAppContext) {
         pane.update(cx, |_, cx| {
-            cx.subscribe_to_view(self, |pane, item, event, cx| {
+            cx.subscribe(self, |pane, item, event, cx| {
                 if T::should_activate_item_on_event(event) {
                     if let Some(ix) = pane.item_index(&item) {
                         pane.activate_item(ix, cx);
@@ -258,7 +291,8 @@ impl<T: ItemView> ItemViewHandle for ViewHandle<T> {
                     cx.notify()
                 }
             })
-        })
+            .detach();
+        });
     }
 
     fn save(&self, cx: &mut MutableAppContext) -> Result<Task<Result<()>>> {
@@ -303,19 +337,15 @@ impl Clone for Box<dyn ItemHandle> {
     }
 }
 
-#[derive(Debug)]
-pub struct State {
-    pub modal: Option<usize>,
-    pub center: PaneGroup,
-}
-
 pub struct Workspace {
     pub settings: watch::Receiver<Settings>,
     languages: Arc<LanguageRegistry>,
-    rpc: rpc::Client,
+    rpc: Arc<rpc::Client>,
     fs: Arc<dyn Fs>,
     modal: Option<AnyViewHandle>,
     center: PaneGroup,
+    left_sidebar: Sidebar,
+    right_sidebar: Sidebar,
     panes: Vec<ViewHandle<Pane>>,
     active_pane: ViewHandle<Pane>,
     worktrees: HashSet<ModelHandle<Worktree>>,
@@ -330,10 +360,32 @@ impl Workspace {
     pub fn new(app_state: &AppState, cx: &mut ViewContext<Self>) -> Self {
         let pane = cx.add_view(|_| Pane::new(app_state.settings.clone()));
         let pane_id = pane.id();
-        cx.subscribe_to_view(&pane, move |me, _, event, cx| {
+        cx.subscribe(&pane, move |me, _, event, cx| {
             me.handle_pane_event(pane_id, event, cx)
-        });
+        })
+        .detach();
         cx.focus(&pane);
+
+        let mut left_sidebar = Sidebar::new(Side::Left);
+        left_sidebar.add_item(
+            "icons/folder-tree-16.svg",
+            cx.add_view(|_| ProjectBrowser).into(),
+        );
+
+        let mut right_sidebar = Sidebar::new(Side::Right);
+        right_sidebar.add_item(
+            "icons/comment-16.svg",
+            cx.add_view(|cx| {
+                ChatPanel::new(
+                    app_state.rpc.clone(),
+                    app_state.channel_list.clone(),
+                    app_state.settings.clone(),
+                    cx,
+                )
+            })
+            .into(),
+        );
+        right_sidebar.add_item("icons/user-16.svg", cx.add_view(|_| ProjectBrowser).into());
 
         Workspace {
             modal: None,
@@ -344,6 +396,8 @@ impl Workspace {
             languages: app_state.languages.clone(),
             rpc: app_state.rpc.clone(),
             fs: app_state.fs.clone(),
+            left_sidebar,
+            right_sidebar,
             worktrees: Default::default(),
             items: Default::default(),
             loading_items: Default::default(),
@@ -476,7 +530,7 @@ impl Workspace {
         cx.spawn(|this, mut cx| async move {
             let worktree = Worktree::open_local(path, languages, fs, &mut cx).await?;
             this.update(&mut cx, |this, cx| {
-                cx.observe_model(&worktree, |_, _, cx| cx.notify());
+                cx.observe(&worktree, |_, _, cx| cx.notify()).detach();
                 this.worktrees.insert(worktree.clone());
                 cx.notify();
             });
@@ -511,13 +565,14 @@ impl Workspace {
         }
     }
 
-    pub fn open_new_file(&mut self, _: &Arc<AppState>, cx: &mut ViewContext<Self>) {
+    pub fn open_new_file(&mut self, _: &OpenNew, cx: &mut ViewContext<Self>) {
         let buffer = cx.add_model(|cx| Buffer::new(0, "", cx));
-        let buffer_view =
-            cx.add_view(|cx| Editor::for_buffer(buffer.clone(), self.settings.clone(), cx));
-        self.items.push(ItemHandle::downgrade(&buffer));
-        self.active_pane()
-            .add_item_view(Box::new(buffer_view), cx.as_mut());
+        let item_handle = ItemHandle::downgrade(&buffer);
+        let view = item_handle
+            .add_view(cx.window_id(), self.settings.clone(), cx)
+            .unwrap();
+        self.items.push(item_handle);
+        self.active_pane().add_item_view(view, cx.as_mut());
     }
 
     #[must_use]
@@ -644,7 +699,7 @@ impl Workspace {
         self.active_pane().read(cx).active_item()
     }
 
-    pub fn save_active_item(&mut self, _: &(), cx: &mut ViewContext<Self>) {
+    pub fn save_active_item(&mut self, _: &Save, cx: &mut ViewContext<Self>) {
         if let Some(item) = self.active_item(cx) {
             let handle = cx.handle();
             if item.entry_id(cx.as_ref()).is_none() {
@@ -709,7 +764,21 @@ impl Workspace {
         }
     }
 
-    pub fn debug_elements(&mut self, _: &(), cx: &mut ViewContext<Self>) {
+    pub fn toggle_sidebar_item(&mut self, action: &ToggleSidebarItem, cx: &mut ViewContext<Self>) {
+        let sidebar = match action.0.side {
+            Side::Left => &mut self.left_sidebar,
+            Side::Right => &mut self.right_sidebar,
+        };
+        sidebar.toggle_item(action.0.item_index);
+        if let Some(active_item) = sidebar.active_item() {
+            cx.focus(active_item);
+        } else {
+            cx.focus_self();
+        }
+        cx.notify();
+    }
+
+    pub fn debug_elements(&mut self, _: &DebugElements, cx: &mut ViewContext<Self>) {
         match to_string_pretty(&cx.debug_elements()) {
             Ok(json) => {
                 let kib = json.len() as f32 / 1024.;
@@ -725,13 +794,12 @@ impl Workspace {
         };
     }
 
-    fn share_worktree(&mut self, app_state: &Arc<AppState>, cx: &mut ViewContext<Self>) {
+    fn share_worktree(&mut self, _: &ShareWorktree, cx: &mut ViewContext<Self>) {
         let rpc = self.rpc.clone();
         let platform = cx.platform();
-        let router = app_state.rpc_router.clone();
 
         let task = cx.spawn(|this, mut cx| async move {
-            rpc.log_in_and_connect(router, cx.clone()).await?;
+            rpc.authenticate_and_connect(&cx).await?;
 
             let share_task = this.update(&mut cx, |this, cx| {
                 let worktree = this.worktrees.iter().next()?;
@@ -758,13 +826,12 @@ impl Workspace {
         .detach();
     }
 
-    fn join_worktree(&mut self, app_state: &Arc<AppState>, cx: &mut ViewContext<Self>) {
+    fn join_worktree(&mut self, _: &JoinWorktree, cx: &mut ViewContext<Self>) {
         let rpc = self.rpc.clone();
         let languages = self.languages.clone();
-        let router = app_state.rpc_router.clone();
 
         let task = cx.spawn(|this, mut cx| async move {
-            rpc.log_in_and_connect(router, cx.clone()).await?;
+            rpc.authenticate_and_connect(&cx).await?;
 
             let worktree_url = cx
                 .platform()
@@ -778,7 +845,7 @@ impl Workspace {
                 Worktree::open_remote(rpc.clone(), worktree_id, access_token, languages, &mut cx)
                     .await?;
             this.update(&mut cx, |workspace, cx| {
-                cx.observe_model(&worktree, |_, _, cx| cx.notify());
+                cx.observe(&worktree, |_, _, cx| cx.notify()).detach();
                 workspace.worktrees.insert(worktree);
                 cx.notify();
             });
@@ -797,9 +864,10 @@ impl Workspace {
     fn add_pane(&mut self, cx: &mut ViewContext<Self>) -> ViewHandle<Pane> {
         let pane = cx.add_view(|_| Pane::new(self.settings.clone()));
         let pane_id = pane.id();
-        cx.subscribe_to_view(&pane, move |me, _, event, cx| {
+        cx.subscribe(&pane, move |me, _, event, cx| {
             me.handle_pane_event(pane_id, event, cx)
-        });
+        })
+        .detach();
         self.panes.push(pane.clone());
         self.activate_pane(pane.clone(), cx);
         pane
@@ -879,15 +947,46 @@ impl View for Workspace {
         "Workspace"
     }
 
-    fn render(&self, _: &RenderContext<Self>) -> ElementBox {
+    fn render(&mut self, cx: &mut RenderContext<Self>) -> ElementBox {
         let settings = self.settings.borrow();
         Container::new(
-            Stack::new()
-                .with_child(self.center.render())
-                .with_children(self.modal.as_ref().map(|m| ChildView::new(m.id()).boxed()))
+            Flex::column()
+                .with_child(
+                    ConstrainedBox::new(Empty::new().boxed())
+                        .with_height(32.)
+                        .named("titlebar"),
+                )
+                .with_child(
+                    Expanded::new(
+                        1.0,
+                        Stack::new()
+                            .with_child({
+                                let mut content = Flex::row();
+                                content.add_child(self.left_sidebar.render(&settings, cx));
+                                if let Some(element) =
+                                    self.left_sidebar.render_active_item(&settings, cx)
+                                {
+                                    content.add_child(Flexible::new(0.8, element).boxed());
+                                }
+                                content.add_child(Expanded::new(1.0, self.center.render()).boxed());
+                                if let Some(element) =
+                                    self.right_sidebar.render_active_item(&settings, cx)
+                                {
+                                    content.add_child(Flexible::new(0.8, element).boxed());
+                                }
+                                content.add_child(self.right_sidebar.render(&settings, cx));
+                                content.boxed()
+                            })
+                            .with_children(
+                                self.modal.as_ref().map(|m| ChildView::new(m.id()).boxed()),
+                            )
+                            .boxed(),
+                    )
+                    .boxed(),
+                )
                 .boxed(),
         )
-        .with_background_color(settings.theme.ui.background)
+        .with_background_color(settings.theme.workspace.background)
         .named("workspace")
     }
 
@@ -921,9 +1020,9 @@ impl WorkspaceHandle for ViewHandle<Workspace> {
 mod tests {
     use super::*;
     use crate::{
-        editor::Editor,
+        editor::{Editor, Insert},
         fs::FakeFs,
-        test::{build_app_state, temp_tree},
+        test::{temp_tree, test_app_state},
         worktree::WorktreeHandle,
     };
     use serde_json::json;
@@ -932,7 +1031,7 @@ mod tests {
 
     #[gpui::test]
     async fn test_open_paths_action(mut cx: gpui::TestAppContext) {
-        let app_state = cx.read(build_app_state);
+        let app_state = cx.update(test_app_state);
         let dir = temp_tree(json!({
             "a": {
                 "aa": null,
@@ -950,13 +1049,13 @@ mod tests {
 
         cx.update(|cx| {
             open_paths(
-                &OpenParams {
+                &OpenPaths(OpenParams {
                     paths: vec![
                         dir.path().join("a").to_path_buf(),
                         dir.path().join("b").to_path_buf(),
                     ],
                     app_state: app_state.clone(),
-                },
+                }),
                 cx,
             )
         })
@@ -965,10 +1064,10 @@ mod tests {
 
         cx.update(|cx| {
             open_paths(
-                &OpenParams {
+                &OpenPaths(OpenParams {
                     paths: vec![dir.path().join("a").to_path_buf()],
                     app_state: app_state.clone(),
-                },
+                }),
                 cx,
             )
         })
@@ -981,13 +1080,13 @@ mod tests {
 
         cx.update(|cx| {
             open_paths(
-                &OpenParams {
+                &OpenPaths(OpenParams {
                     paths: vec![
                         dir.path().join("b").to_path_buf(),
                         dir.path().join("c").to_path_buf(),
                     ],
                     app_state: app_state.clone(),
-                },
+                }),
                 cx,
             )
         })
@@ -1005,7 +1104,7 @@ mod tests {
             },
         }));
 
-        let app_state = cx.read(build_app_state);
+        let app_state = cx.update(test_app_state);
 
         let (_, workspace) = cx.add_window(|cx| Workspace::new(&app_state, cx));
         workspace
@@ -1109,7 +1208,7 @@ mod tests {
         fs.insert_file("/dir1/a.txt", "".into()).await.unwrap();
         fs.insert_file("/dir2/b.txt", "".into()).await.unwrap();
 
-        let mut app_state = cx.read(build_app_state);
+        let mut app_state = cx.update(test_app_state);
         Arc::get_mut(&mut app_state).unwrap().fs = Arc::new(fs);
 
         let (_, workspace) = cx.add_window(|cx| Workspace::new(&app_state, cx));
@@ -1178,7 +1277,7 @@ mod tests {
             "a.txt": "",
         }));
 
-        let app_state = cx.read(build_app_state);
+        let app_state = cx.update(test_app_state);
         let (window_id, workspace) = cx.add_window(|cx| Workspace::new(&app_state, cx));
         workspace
             .update(&mut cx, |workspace, cx| {
@@ -1205,14 +1304,14 @@ mod tests {
             item.to_any().downcast::<Editor>().unwrap()
         });
 
-        cx.update(|cx| editor.update(cx, |editor, cx| editor.insert(&"x".to_string(), cx)));
+        cx.update(|cx| editor.update(cx, |editor, cx| editor.insert(&Insert("x".into()), cx)));
         fs::write(dir.path().join("a.txt"), "changed").unwrap();
         editor
             .condition(&cx, |editor, cx| editor.has_conflict(cx))
             .await;
         cx.read(|cx| assert!(editor.is_dirty(cx)));
 
-        cx.update(|cx| workspace.update(cx, |w, cx| w.save_active_item(&(), cx)));
+        cx.update(|cx| workspace.update(cx, |w, cx| w.save_active_item(&Save, cx)));
         cx.simulate_prompt_answer(window_id, 0);
         editor
             .condition(&cx, |editor, cx| !editor.is_dirty(cx))
@@ -1223,7 +1322,7 @@ mod tests {
     #[gpui::test]
     async fn test_open_and_save_new_file(mut cx: gpui::TestAppContext) {
         let dir = TempDir::new("test-new-file").unwrap();
-        let app_state = cx.read(build_app_state);
+        let app_state = cx.update(test_app_state);
         let (_, workspace) = cx.add_window(|cx| Workspace::new(&app_state, cx));
         workspace
             .update(&mut cx, |workspace, cx| {
@@ -1244,7 +1343,7 @@ mod tests {
 
         // Create a new untitled buffer
         let editor = workspace.update(&mut cx, |workspace, cx| {
-            workspace.open_new_file(&app_state, cx);
+            workspace.open_new_file(&OpenNew(app_state.clone()), cx);
             workspace
                 .active_item(cx)
                 .unwrap()
@@ -1256,12 +1355,14 @@ mod tests {
         editor.update(&mut cx, |editor, cx| {
             assert!(!editor.is_dirty(cx.as_ref()));
             assert_eq!(editor.title(cx.as_ref()), "untitled");
-            editor.insert(&"hi".to_string(), cx);
+            editor.insert(&Insert("hi".into()), cx);
             assert!(editor.is_dirty(cx.as_ref()));
         });
 
         // Save the buffer. This prompts for a filename.
-        workspace.update(&mut cx, |workspace, cx| workspace.save_active_item(&(), cx));
+        workspace.update(&mut cx, |workspace, cx| {
+            workspace.save_active_item(&Save, cx)
+        });
         cx.simulate_new_path_selection(|parent_dir| {
             assert_eq!(parent_dir, dir.path());
             Some(parent_dir.join("the-new-name"))
@@ -1282,10 +1383,12 @@ mod tests {
 
         // Edit the file and save it again. This time, there is no filename prompt.
         editor.update(&mut cx, |editor, cx| {
-            editor.insert(&" there".to_string(), cx);
+            editor.insert(&Insert(" there".into()), cx);
             assert_eq!(editor.is_dirty(cx.as_ref()), true);
         });
-        workspace.update(&mut cx, |workspace, cx| workspace.save_active_item(&(), cx));
+        workspace.update(&mut cx, |workspace, cx| {
+            workspace.save_active_item(&Save, cx)
+        });
         assert!(!cx.did_prompt_for_new_path());
         editor
             .condition(&cx, |editor, cx| !editor.is_dirty(cx))
@@ -1295,7 +1398,7 @@ mod tests {
         // Open the same newly-created file in another pane item. The new editor should reuse
         // the same buffer.
         workspace.update(&mut cx, |workspace, cx| {
-            workspace.open_new_file(&app_state, cx);
+            workspace.open_new_file(&OpenNew(app_state.clone()), cx);
             workspace.split_pane(workspace.active_pane().clone(), SplitDirection::Right, cx);
             assert!(workspace
                 .open_entry((tree.id(), Path::new("the-new-name").into()), cx)
@@ -1318,8 +1421,8 @@ mod tests {
     async fn test_new_empty_workspace(mut cx: gpui::TestAppContext) {
         cx.update(init);
 
-        let app_state = cx.read(build_app_state);
-        cx.dispatch_global_action("workspace:new_file", app_state);
+        let app_state = cx.update(test_app_state);
+        cx.dispatch_global_action(OpenNew(app_state));
         let window_id = *cx.window_ids().first().unwrap();
         let workspace = cx.root_view::<Workspace>(window_id).unwrap();
         let editor = workspace.update(&mut cx, |workspace, cx| {
@@ -1335,7 +1438,9 @@ mod tests {
             assert!(editor.text(cx).is_empty());
         });
 
-        workspace.update(&mut cx, |workspace, cx| workspace.save_active_item(&(), cx));
+        workspace.update(&mut cx, |workspace, cx| {
+            workspace.save_active_item(&Save, cx)
+        });
 
         let dir = TempDir::new("test-new-empty-workspace").unwrap();
         cx.simulate_new_path_selection(|_| {
@@ -1362,7 +1467,7 @@ mod tests {
             },
         }));
 
-        let app_state = cx.read(build_app_state);
+        let app_state = cx.update(test_app_state);
         let (window_id, workspace) = cx.add_window(|cx| Workspace::new(&app_state, cx));
         workspace
             .update(&mut cx, |workspace, cx| {
@@ -1388,7 +1493,11 @@ mod tests {
             );
         });
 
-        cx.dispatch_action(window_id, vec![pane_1.id()], "pane:split_right", ());
+        cx.dispatch_action(
+            window_id,
+            vec![pane_1.id()],
+            pane::Split(SplitDirection::Right),
+        );
         cx.update(|cx| {
             let pane_2 = workspace.read(cx).active_pane().clone();
             assert_ne!(pane_1, pane_2);
@@ -1396,7 +1505,7 @@ mod tests {
             let pane2_item = pane_2.read(cx).active_item().unwrap();
             assert_eq!(pane2_item.entry_id(cx.as_ref()), Some(file1.clone()));
 
-            cx.dispatch_action(window_id, vec![pane_2.id()], "pane:close_active_item", ());
+            cx.dispatch_action(window_id, vec![pane_2.id()], &CloseActiveItem);
             let workspace = workspace.read(cx);
             assert_eq!(workspace.panes.len(), 1);
             assert_eq!(workspace.active_pane(), &pane_1);

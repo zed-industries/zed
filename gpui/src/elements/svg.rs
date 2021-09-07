@@ -8,8 +8,7 @@ use crate::{
         rect::RectF,
         vector::{vec2f, Vector2F},
     },
-    scene, AfterLayoutContext, DebugContext, Element, Event, EventContext, LayoutContext,
-    PaintContext, SizeConstraint,
+    scene, DebugContext, Element, Event, EventContext, LayoutContext, PaintContext, SizeConstraint,
 };
 
 pub struct Svg {
@@ -66,10 +65,13 @@ impl Element for Svg {
         }
     }
 
-    fn after_layout(&mut self, _: Vector2F, _: &mut Self::LayoutState, _: &mut AfterLayoutContext) {
-    }
-
-    fn paint(&mut self, bounds: RectF, svg: &mut Self::LayoutState, cx: &mut PaintContext) {
+    fn paint(
+        &mut self,
+        bounds: RectF,
+        _visible_bounds: RectF,
+        svg: &mut Self::LayoutState,
+        cx: &mut PaintContext,
+    ) {
         if let Some(svg) = svg.clone() {
             cx.scene.push_icon(scene::Icon {
                 bounds,

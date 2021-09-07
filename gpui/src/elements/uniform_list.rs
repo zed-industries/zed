@@ -1,13 +1,11 @@
-use super::{
-    AfterLayoutContext, Element, Event, EventContext, LayoutContext, PaintContext, SizeConstraint,
-};
+use super::{Element, Event, EventContext, LayoutContext, PaintContext, SizeConstraint};
 use crate::{
     geometry::{
         rect::RectF,
         vector::{vec2f, Vector2F},
     },
     json::{self, json},
-    AppContext, ElementBox,
+    ElementBox, MutableAppContext,
 };
 use json::ToJson;
 use parking_lot::Mutex;
@@ -40,7 +38,7 @@ pub struct LayoutState {
 
 pub struct UniformList<F>
 where
-    F: Fn(Range<usize>, &mut Vec<ElementBox>, &AppContext),
+    F: Fn(Range<usize>, &mut Vec<ElementBox>, &mut MutableAppContext),
 {
     state: UniformListState,
     item_count: usize,
@@ -49,7 +47,7 @@ where
 
 impl<F> UniformList<F>
 where
-    F: Fn(Range<usize>, &mut Vec<ElementBox>, &AppContext),
+    F: Fn(Range<usize>, &mut Vec<ElementBox>, &mut MutableAppContext),
 {
     pub fn new(state: UniformListState, item_count: usize, append_items: F) -> Self {
         Self {
@@ -62,13 +60,13 @@ where
     fn scroll(
         &self,
         _: Vector2F,
-        delta: Vector2F,
+        mut delta: Vector2F,
         precise: bool,
         scroll_max: f32,
         cx: &mut EventContext,
     ) -> bool {
         if !precise {
-            todo!("still need to handle non-precise scroll events from a mouse wheel");
+            delta *= 20.;
         }
 
         let mut state = self.state.0.lock();
@@ -104,7 +102,7 @@ where
 
 impl<F> Element for UniformList<F>
 where
-    F: Fn(Range<usize>, &mut Vec<ElementBox>, &AppContext),
+    F: Fn(Range<usize>, &mut Vec<ElementBox>, &mut MutableAppContext),
 {
     type LayoutState = LayoutState;
     type PaintState = ();
@@ -152,6 +150,8 @@ where
             for item in &mut items {
                 item.layout(item_constraint, cx);
             }
+        } else {
+            size = constraint.min;
         }
 
         (
@@ -164,20 +164,10 @@ where
         )
     }
 
-    fn after_layout(
-        &mut self,
-        _: Vector2F,
-        layout: &mut Self::LayoutState,
-        cx: &mut AfterLayoutContext,
-    ) {
-        for item in &mut layout.items {
-            item.after_layout(cx);
-        }
-    }
-
     fn paint(
         &mut self,
         bounds: RectF,
+        visible_bounds: RectF,
         layout: &mut Self::LayoutState,
         cx: &mut PaintContext,
     ) -> Self::PaintState {
@@ -187,7 +177,7 @@ where
             bounds.origin() - vec2f(0.0, self.state.scroll_top() % layout.item_height);
 
         for item in &mut layout.items {
-            item.paint(item_origin, cx);
+            item.paint(item_origin, visible_bounds, cx);
             item_origin += vec2f(0.0, layout.item_height);
         }
 

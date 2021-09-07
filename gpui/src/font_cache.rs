@@ -2,10 +2,16 @@ use crate::{
     fonts::{FontId, Metrics, Properties},
     geometry::vector::{vec2f, Vector2F},
     platform,
+    text_layout::LineWrapper,
 };
 use anyhow::{anyhow, Result};
+use ordered_float::OrderedFloat;
 use parking_lot::{RwLock, RwLockUpgradableReadGuard};
-use std::{collections::HashMap, sync::Arc};
+use std::{
+    collections::HashMap,
+    ops::{Deref, DerefMut},
+    sync::Arc,
+};
 
 #[derive(Copy, Clone, Debug, Eq, PartialEq, Hash)]
 pub struct FamilyId(usize);
@@ -22,6 +28,12 @@ pub struct FontCacheState {
     families: Vec<Family>,
     font_selections: HashMap<FamilyId, HashMap<Properties, FontId>>,
     metrics: HashMap<FontId, Metrics>,
+    wrapper_pool: HashMap<(FontId, OrderedFloat<f32>), Vec<LineWrapper>>,
+}
+
+pub struct LineWrapperHandle {
+    wrapper: Option<LineWrapper>,
+    font_cache: Arc<FontCache>,
 }
 
 unsafe impl Send for FontCache {}
@@ -30,9 +42,10 @@ impl FontCache {
     pub fn new(fonts: Arc<dyn platform::FontSystem>) -> Self {
         Self(RwLock::new(FontCacheState {
             fonts,
-            families: Vec::new(),
-            font_selections: HashMap::new(),
-            metrics: HashMap::new(),
+            families: Default::default(),
+            font_selections: Default::default(),
+            metrics: Default::default(),
+            wrapper_pool: Default::default(),
         }))
     }
 
@@ -134,9 +147,13 @@ impl FontCache {
     }
 
     pub fn em_width(&self, font_id: FontId, font_size: f32) -> f32 {
-        let state = self.0.read();
-        let glyph_id = state.fonts.glyph_for_char(font_id, 'm').unwrap();
-        let bounds = state.fonts.typographic_bounds(font_id, glyph_id).unwrap();
+        let glyph_id;
+        let bounds;
+        {
+            let state = self.0.read();
+            glyph_id = state.fonts.glyph_for_char(font_id, 'm').unwrap();
+            bounds = state.fonts.typographic_bounds(font_id, glyph_id).unwrap();
+        }
         self.scale_metric(bounds.width(), font_id, font_size)
     }
 
@@ -159,6 +176,47 @@ impl FontCache {
 
     pub fn scale_metric(&self, metric: f32, font_id: FontId, font_size: f32) -> f32 {
         metric * font_size / self.metric(font_id, |m| m.units_per_em as f32)
+    }
+
+    pub fn line_wrapper(self: &Arc<Self>, font_id: FontId, font_size: f32) -> LineWrapperHandle {
+        let mut state = self.0.write();
+        let wrappers = state
+            .wrapper_pool
+            .entry((font_id, OrderedFloat(font_size)))
+            .or_default();
+        let wrapper = wrappers
+            .pop()
+            .unwrap_or_else(|| LineWrapper::new(font_id, font_size, state.fonts.clone()));
+        LineWrapperHandle {
+            wrapper: Some(wrapper),
+            font_cache: self.clone(),
+        }
+    }
+}
+
+impl Drop for LineWrapperHandle {
+    fn drop(&mut self) {
+        let mut state = self.font_cache.0.write();
+        let wrapper = self.wrapper.take().unwrap();
+        state
+            .wrapper_pool
+            .get_mut(&(wrapper.font_id, OrderedFloat(wrapper.font_size)))
+            .unwrap()
+            .push(wrapper);
+    }
+}
+
+impl Deref for LineWrapperHandle {
+    type Target = LineWrapper;
+
+    fn deref(&self) -> &Self::Target {
+        self.wrapper.as_ref().unwrap()
+    }
+}
+
+impl DerefMut for LineWrapperHandle {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        self.wrapper.as_mut().unwrap()
     }
 }
 

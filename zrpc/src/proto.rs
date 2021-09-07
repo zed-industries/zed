@@ -1,6 +1,9 @@
+use super::{ConnectionId, PeerId, TypedEnvelope};
+use anyhow::Result;
 use async_tungstenite::tungstenite::{Error as WebSocketError, Message as WebSocketMessage};
 use futures::{SinkExt as _, StreamExt as _};
 use prost::Message;
+use std::any::{Any, TypeId};
 use std::{
     io,
     time::{Duration, SystemTime, UNIX_EPOCH},
@@ -8,7 +11,7 @@ use std::{
 
 include!(concat!(env!("OUT_DIR"), "/zed.messages.rs"));
 
-pub trait EnvelopedMessage: Clone + Sized + Send + 'static {
+pub trait EnvelopedMessage: Clone + Sized + Send + Sync + 'static {
     const NAME: &'static str;
     fn into_envelope(
         self,
@@ -16,69 +19,166 @@ pub trait EnvelopedMessage: Clone + Sized + Send + 'static {
         responding_to: Option<u32>,
         original_sender_id: Option<u32>,
     ) -> Envelope;
-    fn matches_envelope(envelope: &Envelope) -> bool;
     fn from_envelope(envelope: Envelope) -> Option<Self>;
+}
+
+pub trait EntityMessage: EnvelopedMessage {
+    fn remote_entity_id(&self) -> u64;
 }
 
 pub trait RequestMessage: EnvelopedMessage {
     type Response: EnvelopedMessage;
 }
 
-macro_rules! message {
-    ($name:ident) => {
-        impl EnvelopedMessage for $name {
-            const NAME: &'static str = std::stringify!($name);
+pub trait AnyTypedEnvelope: 'static + Send + Sync {
+    fn payload_type_id(&self) -> TypeId;
+    fn payload_type_name(&self) -> &'static str;
+    fn as_any(&self) -> &dyn Any;
+    fn into_any(self: Box<Self>) -> Box<dyn Any + Send + Sync>;
+}
 
-            fn into_envelope(
-                self,
-                id: u32,
-                responding_to: Option<u32>,
-                original_sender_id: Option<u32>,
-            ) -> Envelope {
-                Envelope {
-                    id,
-                    responding_to,
-                    original_sender_id,
-                    payload: Some(envelope::Payload::$name(self)),
-                }
-            }
+impl<T: EnvelopedMessage> AnyTypedEnvelope for TypedEnvelope<T> {
+    fn payload_type_id(&self) -> TypeId {
+        TypeId::of::<T>()
+    }
 
-            fn matches_envelope(envelope: &Envelope) -> bool {
-                matches!(&envelope.payload, Some(envelope::Payload::$name(_)))
-            }
+    fn payload_type_name(&self) -> &'static str {
+        T::NAME
+    }
 
-            fn from_envelope(envelope: Envelope) -> Option<Self> {
-                if let Some(envelope::Payload::$name(msg)) = envelope.payload {
-                    Some(msg)
-                } else {
-                    None
-                }
+    fn as_any(&self) -> &dyn Any {
+        self
+    }
+
+    fn into_any(self: Box<Self>) -> Box<dyn Any + Send + Sync> {
+        self
+    }
+}
+
+macro_rules! messages {
+    ($($name:ident),* $(,)?) => {
+        pub fn build_typed_envelope(sender_id: ConnectionId, envelope: Envelope) -> Option<Box<dyn AnyTypedEnvelope>> {
+            match envelope.payload {
+                $(Some(envelope::Payload::$name(payload)) => {
+                    Some(Box::new(TypedEnvelope {
+                        sender_id,
+                        original_sender_id: envelope.original_sender_id.map(PeerId),
+                        message_id: envelope.id,
+                        payload,
+                    }))
+                }, )*
+                _ => None
             }
         }
+
+        $(
+            impl EnvelopedMessage for $name {
+                const NAME: &'static str = std::stringify!($name);
+
+                fn into_envelope(
+                    self,
+                    id: u32,
+                    responding_to: Option<u32>,
+                    original_sender_id: Option<u32>,
+                ) -> Envelope {
+                    Envelope {
+                        id,
+                        responding_to,
+                        original_sender_id,
+                        payload: Some(envelope::Payload::$name(self)),
+                    }
+                }
+
+                fn from_envelope(envelope: Envelope) -> Option<Self> {
+                    if let Some(envelope::Payload::$name(msg)) = envelope.payload {
+                        Some(msg)
+                    } else {
+                        None
+                    }
+                }
+            }
+        )*
     };
 }
 
-macro_rules! request_message {
-    ($req:ident, $resp:ident) => {
-        message!($req);
-        message!($resp);
-        impl RequestMessage for $req {
-            type Response = $resp;
-        }
+macro_rules! request_messages {
+    ($(($request_name:ident, $response_name:ident)),* $(,)?) => {
+        $(impl RequestMessage for $request_name {
+            type Response = $response_name;
+        })*
     };
 }
 
-request_message!(Auth, AuthResponse);
-request_message!(ShareWorktree, ShareWorktreeResponse);
-request_message!(OpenWorktree, OpenWorktreeResponse);
-message!(UpdateWorktree);
-message!(CloseWorktree);
-request_message!(OpenBuffer, OpenBufferResponse);
-message!(CloseBuffer);
-message!(UpdateBuffer);
-request_message!(SaveBuffer, BufferSaved);
-message!(AddPeer);
-message!(RemovePeer);
+macro_rules! entity_messages {
+    ($id_field:ident, $($name:ident),* $(,)?) => {
+        $(impl EntityMessage for $name {
+            fn remote_entity_id(&self) -> u64 {
+                self.$id_field
+            }
+        })*
+    };
+}
+
+messages!(
+    AddPeer,
+    BufferSaved,
+    ChannelMessageSent,
+    CloseBuffer,
+    CloseWorktree,
+    Error,
+    GetChannelMessages,
+    GetChannelMessagesResponse,
+    GetChannels,
+    GetChannelsResponse,
+    GetUsers,
+    GetUsersResponse,
+    JoinChannel,
+    JoinChannelResponse,
+    LeaveChannel,
+    OpenBuffer,
+    OpenBufferResponse,
+    OpenWorktree,
+    OpenWorktreeResponse,
+    Ping,
+    Pong,
+    RemovePeer,
+    SaveBuffer,
+    SendChannelMessage,
+    SendChannelMessageResponse,
+    ShareWorktree,
+    ShareWorktreeResponse,
+    UpdateBuffer,
+    UpdateWorktree,
+);
+
+request_messages!(
+    (GetChannels, GetChannelsResponse),
+    (GetUsers, GetUsersResponse),
+    (JoinChannel, JoinChannelResponse),
+    (OpenBuffer, OpenBufferResponse),
+    (OpenWorktree, OpenWorktreeResponse),
+    (Ping, Pong),
+    (SaveBuffer, BufferSaved),
+    (ShareWorktree, ShareWorktreeResponse),
+    (SendChannelMessage, SendChannelMessageResponse),
+    (GetChannelMessages, GetChannelMessagesResponse),
+);
+
+entity_messages!(
+    worktree_id,
+    AddPeer,
+    BufferSaved,
+    CloseBuffer,
+    CloseWorktree,
+    OpenBuffer,
+    OpenWorktree,
+    RemovePeer,
+    SaveBuffer,
+    UpdateBuffer,
+    UpdateWorktree,
+);
+
+entity_messages!(channel_id, ChannelMessageSent);
 
 /// A stream of protobuf messages.
 pub struct MessageStream<S> {
@@ -157,12 +257,7 @@ mod tests {
     fn test_round_trip_message() {
         smol::block_on(async {
             let stream = test::Channel::new();
-            let message1 = Auth {
-                user_id: 5,
-                access_token: "the-access-token".into(),
-            }
-            .into_envelope(3, None, None);
-
+            let message1 = Ping { id: 5 }.into_envelope(3, None, None);
             let message2 = OpenBuffer {
                 worktree_id: 0,
                 path: "some/path".to_string(),

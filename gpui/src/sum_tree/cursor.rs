@@ -10,10 +10,26 @@ struct StackEntry<'a, T: Item, S, U> {
     sum_dimension: U,
 }
 
+impl<'a, T, S, U> StackEntry<'a, T, S, U>
+where
+    T: Item,
+    S: SeekDimension<'a, T::Summary>,
+    U: SeekDimension<'a, T::Summary>,
+{
+    fn swap_dimensions(self) -> StackEntry<'a, T, U, S> {
+        StackEntry {
+            tree: self.tree,
+            index: self.index,
+            seek_dimension: self.sum_dimension,
+            sum_dimension: self.seek_dimension,
+        }
+    }
+}
+
 #[derive(Clone)]
 pub struct Cursor<'a, T: Item, S, U> {
     tree: &'a SumTree<T>,
-    stack: ArrayVec<[StackEntry<'a, T, S, U>; 16]>,
+    stack: ArrayVec<StackEntry<'a, T, S, U>, 16>,
     seek_dimension: S,
     sum_dimension: U,
     did_seek: bool,
@@ -147,7 +163,6 @@ where
         None
     }
 
-    #[allow(unused)]
     pub fn prev(&mut self, cx: &<T::Summary as Summary>::Context) {
         assert!(self.did_seek, "Must seek before calling this method");
 
@@ -495,8 +510,8 @@ where
                     ref item_summaries,
                     ..
                 } => {
-                    let mut slice_items = ArrayVec::<[T; 2 * TREE_BASE]>::new();
-                    let mut slice_item_summaries = ArrayVec::<[T::Summary; 2 * TREE_BASE]>::new();
+                    let mut slice_items = ArrayVec::<T, { 2 * TREE_BASE }>::new();
+                    let mut slice_item_summaries = ArrayVec::<T::Summary, { 2 * TREE_BASE }>::new();
                     let mut slice_items_summary = match aggregate {
                         SeekAggregate::Slice(_) => Some(T::Summary::default()),
                         _ => None,
@@ -598,6 +613,28 @@ where
             Some(item)
         } else {
             None
+        }
+    }
+}
+
+impl<'a, T, S, U> Cursor<'a, T, S, U>
+where
+    T: Item,
+    S: SeekDimension<'a, T::Summary>,
+    U: SeekDimension<'a, T::Summary>,
+{
+    pub fn swap_dimensions(self) -> Cursor<'a, T, U, S> {
+        Cursor {
+            tree: self.tree,
+            stack: self
+                .stack
+                .into_iter()
+                .map(StackEntry::swap_dimensions)
+                .collect(),
+            seek_dimension: self.sum_dimension,
+            sum_dimension: self.seek_dimension,
+            did_seek: self.did_seek,
+            at_end: self.at_end,
         }
     }
 }

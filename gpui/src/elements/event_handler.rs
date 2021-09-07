@@ -2,8 +2,8 @@ use pathfinder_geometry::rect::RectF;
 use serde_json::json;
 
 use crate::{
-    geometry::vector::Vector2F, AfterLayoutContext, DebugContext, Element, ElementBox, Event,
-    EventContext, LayoutContext, PaintContext, SizeConstraint,
+    geometry::vector::Vector2F, DebugContext, Element, ElementBox, Event, EventContext,
+    LayoutContext, PaintContext, SizeConstraint,
 };
 
 pub struct EventHandler {
@@ -41,22 +41,14 @@ impl Element for EventHandler {
         (size, ())
     }
 
-    fn after_layout(
-        &mut self,
-        _: Vector2F,
-        _: &mut Self::LayoutState,
-        cx: &mut AfterLayoutContext,
-    ) {
-        self.child.after_layout(cx);
-    }
-
     fn paint(
         &mut self,
         bounds: RectF,
+        visible_bounds: RectF,
         _: &mut Self::LayoutState,
         cx: &mut PaintContext,
     ) -> Self::PaintState {
-        self.child.paint(bounds.origin(), cx);
+        self.child.paint(bounds.origin(), visible_bounds, cx);
     }
 
     fn dispatch_event(

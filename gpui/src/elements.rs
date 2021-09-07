@@ -5,11 +5,15 @@ mod container;
 mod empty;
 mod event_handler;
 mod flex;
+mod hook;
 mod label;
 mod line_box;
+mod list;
 mod mouse_event_handler;
+mod overlay;
 mod stack;
 mod svg;
+mod text;
 mod uniform_list;
 
 pub use crate::presenter::ChildView;
@@ -20,26 +24,35 @@ pub use container::*;
 pub use empty::*;
 pub use event_handler::*;
 pub use flex::*;
+pub use hook::*;
 pub use label::*;
 pub use line_box::*;
+pub use list::*;
 pub use mouse_event_handler::*;
+pub use overlay::*;
 pub use stack::*;
 pub use svg::*;
+pub use text::*;
 pub use uniform_list::*;
 
 use crate::{
     geometry::{rect::RectF, vector::Vector2F},
-    json, AfterLayoutContext, DebugContext, Event, EventContext, LayoutContext, PaintContext,
-    SizeConstraint,
+    json, DebugContext, Event, EventContext, LayoutContext, PaintContext, SizeConstraint,
 };
 use core::panic;
 use json::ToJson;
-use std::{any::Any, borrow::Cow, mem};
+use std::{
+    any::Any,
+    borrow::Cow,
+    cell::RefCell,
+    mem,
+    ops::{Deref, DerefMut},
+    rc::Rc,
+};
 
 trait AnyElement {
     fn layout(&mut self, constraint: SizeConstraint, cx: &mut LayoutContext) -> Vector2F;
-    fn after_layout(&mut self, _: &mut AfterLayoutContext) {}
-    fn paint(&mut self, origin: Vector2F, cx: &mut PaintContext);
+    fn paint(&mut self, origin: Vector2F, visible_bounds: RectF, cx: &mut PaintContext);
     fn dispatch_event(&mut self, event: &Event, cx: &mut EventContext) -> bool;
     fn debug(&self, cx: &DebugContext) -> serde_json::Value;
 
@@ -57,16 +70,10 @@ pub trait Element {
         cx: &mut LayoutContext,
     ) -> (Vector2F, Self::LayoutState);
 
-    fn after_layout(
-        &mut self,
-        size: Vector2F,
-        layout: &mut Self::LayoutState,
-        cx: &mut AfterLayoutContext,
-    );
-
     fn paint(
         &mut self,
         bounds: RectF,
+        visible_bounds: RectF,
         layout: &mut Self::LayoutState,
         cx: &mut PaintContext,
     ) -> Self::PaintState;
@@ -96,20 +103,20 @@ pub trait Element {
     where
         Self: 'static + Sized,
     {
-        ElementBox {
+        ElementBox(ElementRc {
             name: None,
-            element: Box::new(Lifecycle::Init { element: self }),
-        }
+            element: Rc::new(RefCell::new(Lifecycle::Init { element: self })),
+        })
     }
 
     fn named(self, name: impl Into<Cow<'static, str>>) -> ElementBox
     where
         Self: 'static + Sized,
     {
-        ElementBox {
+        ElementBox(ElementRc {
             name: Some(name.into()),
-            element: Box::new(Lifecycle::Init { element: self }),
-        }
+            element: Rc::new(RefCell::new(Lifecycle::Init { element: self })),
+        })
     }
 }
 
@@ -132,9 +139,12 @@ pub enum Lifecycle<T: Element> {
         paint: T::PaintState,
     },
 }
-pub struct ElementBox {
+pub struct ElementBox(ElementRc);
+
+#[derive(Clone)]
+pub struct ElementRc {
     name: Option<Cow<'static, str>>,
-    element: Box<dyn AnyElement>,
+    element: Rc<RefCell<dyn AnyElement>>,
 }
 
 impl<T: Element> AnyElement for Lifecycle<T> {
@@ -161,40 +171,49 @@ impl<T: Element> AnyElement for Lifecycle<T> {
         result
     }
 
-    fn after_layout(&mut self, cx: &mut AfterLayoutContext) {
-        if let Lifecycle::PostLayout {
-            element,
-            size,
-            layout,
-            ..
-        } = self
-        {
-            element.after_layout(*size, layout, cx);
-        } else {
-            panic!("invalid element lifecycle state");
-        }
-    }
-
-    fn paint(&mut self, origin: Vector2F, cx: &mut PaintContext) {
-        *self = if let Lifecycle::PostLayout {
-            mut element,
-            constraint,
-            size,
-            mut layout,
-        } = mem::take(self)
-        {
-            let bounds = RectF::new(origin, size);
-            let paint = element.paint(bounds, &mut layout, cx);
+    fn paint(&mut self, origin: Vector2F, visible_bounds: RectF, cx: &mut PaintContext) {
+        *self = match mem::take(self) {
+            Lifecycle::PostLayout {
+                mut element,
+                constraint,
+                size,
+                mut layout,
+            } => {
+                let bounds = RectF::new(origin, size);
+                let visible_bounds = visible_bounds
+                    .intersection(bounds)
+                    .unwrap_or_else(|| RectF::new(bounds.origin(), Vector2F::default()));
+                let paint = element.paint(bounds, visible_bounds, &mut layout, cx);
+                Lifecycle::PostPaint {
+                    element,
+                    constraint,
+                    bounds,
+                    layout,
+                    paint,
+                }
+            }
             Lifecycle::PostPaint {
-                element,
+                mut element,
                 constraint,
                 bounds,
-                layout,
-                paint,
+                mut layout,
+                ..
+            } => {
+                let bounds = RectF::new(origin, bounds.size());
+                let visible_bounds = visible_bounds
+                    .intersection(bounds)
+                    .unwrap_or_else(|| RectF::new(bounds.origin(), Vector2F::default()));
+                let paint = element.paint(bounds, visible_bounds, &mut layout, cx);
+                Lifecycle::PostPaint {
+                    element,
+                    constraint,
+                    bounds,
+                    layout,
+                    paint,
+                }
             }
-        } else {
-            panic!("invalid element lifecycle state");
-        };
+            _ => panic!("invalid element lifecycle state"),
+        }
     }
 
     fn dispatch_event(&mut self, event: &Event, cx: &mut EventContext) -> bool {
@@ -264,32 +283,51 @@ impl<T: Element> Default for Lifecycle<T> {
 }
 
 impl ElementBox {
+    pub fn metadata<T: 'static>(&self) -> Option<&T> {
+        let element = unsafe { &*self.0.element.as_ptr() };
+        element.metadata().and_then(|m| m.downcast_ref())
+    }
+}
+
+impl Into<ElementRc> for ElementBox {
+    fn into(self) -> ElementRc {
+        self.0
+    }
+}
+
+impl Deref for ElementBox {
+    type Target = ElementRc;
+
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
+}
+
+impl DerefMut for ElementBox {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.0
+    }
+}
+
+impl ElementRc {
     pub fn layout(&mut self, constraint: SizeConstraint, cx: &mut LayoutContext) -> Vector2F {
-        self.element.layout(constraint, cx)
+        self.element.borrow_mut().layout(constraint, cx)
     }
 
-    pub fn after_layout(&mut self, cx: &mut AfterLayoutContext) {
-        self.element.after_layout(cx);
-    }
-
-    pub fn paint(&mut self, origin: Vector2F, cx: &mut PaintContext) {
-        self.element.paint(origin, cx);
+    pub fn paint(&mut self, origin: Vector2F, visible_bounds: RectF, cx: &mut PaintContext) {
+        self.element.borrow_mut().paint(origin, visible_bounds, cx);
     }
 
     pub fn dispatch_event(&mut self, event: &Event, cx: &mut EventContext) -> bool {
-        self.element.dispatch_event(event, cx)
+        self.element.borrow_mut().dispatch_event(event, cx)
     }
 
     pub fn size(&self) -> Vector2F {
-        self.element.size()
-    }
-
-    pub fn metadata(&self) -> Option<&dyn Any> {
-        self.element.metadata()
+        self.element.borrow().size()
     }
 
     pub fn debug(&self, cx: &DebugContext) -> json::Value {
-        let mut value = self.element.debug(cx);
+        let mut value = self.element.borrow().debug(cx);
 
         if let Some(name) = &self.name {
             if let json::Value::Object(map) = &mut value {
@@ -301,6 +339,15 @@ impl ElementBox {
         }
 
         value
+    }
+
+    pub fn with_metadata<T, F, R>(&self, f: F) -> R
+    where
+        T: 'static,
+        F: FnOnce(Option<&T>) -> R,
+    {
+        let element = self.element.borrow();
+        f(element.metadata().and_then(|m| m.downcast_ref()))
     }
 }
 

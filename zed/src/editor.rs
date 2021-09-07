@@ -4,7 +4,8 @@ mod element;
 pub mod movement;
 
 use crate::{
-    settings::{HighlightId, Settings, Theme},
+    settings::{HighlightId, Settings},
+    theme::{EditorStyle, Theme},
     time::ReplicaId,
     util::{post_inc, Bias},
     workspace,
@@ -16,16 +17,22 @@ pub use display_map::DisplayPoint;
 use display_map::*;
 pub use element::*;
 use gpui::{
-    color::Color, font_cache::FamilyId, fonts::Properties as FontProperties,
-    geometry::vector::Vector2F, keymap::Binding, text_layout, AppContext, ClipboardItem, Element,
-    ElementBox, Entity, FontCache, ModelHandle, MutableAppContext, RenderContext, Task,
-    TextLayoutCache, View, ViewContext, WeakViewHandle,
+    action,
+    color::Color,
+    font_cache::FamilyId,
+    fonts::Properties as FontProperties,
+    geometry::vector::Vector2F,
+    keymap::Binding,
+    text_layout::{self, RunStyle},
+    AppContext, ClipboardItem, Element, ElementBox, Entity, FontCache, ModelHandle,
+    MutableAppContext, RenderContext, Task, TextLayoutCache, View, ViewContext, WeakViewHandle,
 };
 use postage::watch;
 use serde::{Deserialize, Serialize};
 use smallvec::SmallVec;
 use smol::Timer;
 use std::{
+    cell::RefCell,
     cmp::{self, Ordering},
     collections::BTreeMap,
     fmt::Write,
@@ -33,6 +40,7 @@ use std::{
     mem,
     ops::{Range, RangeInclusive},
     path::Path,
+    rc::Rc,
     sync::Arc,
     time::Duration,
 };
@@ -40,324 +48,218 @@ use std::{
 const CURSOR_BLINK_INTERVAL: Duration = Duration::from_millis(500);
 const MAX_LINE_LEN: usize = 1024;
 
+action!(Cancel);
+action!(Backspace);
+action!(Delete);
+action!(Insert, String);
+action!(DeleteLine);
+action!(DeleteToPreviousWordBoundary);
+action!(DeleteToNextWordBoundary);
+action!(DeleteToBeginningOfLine);
+action!(DeleteToEndOfLine);
+action!(CutToEndOfLine);
+action!(DuplicateLine);
+action!(MoveLineUp);
+action!(MoveLineDown);
+action!(Cut);
+action!(Copy);
+action!(Paste);
+action!(Undo);
+action!(Redo);
+action!(MoveUp);
+action!(MoveDown);
+action!(MoveLeft);
+action!(MoveRight);
+action!(MoveToPreviousWordBoundary);
+action!(MoveToNextWordBoundary);
+action!(MoveToBeginningOfLine);
+action!(MoveToEndOfLine);
+action!(MoveToBeginning);
+action!(MoveToEnd);
+action!(SelectUp);
+action!(SelectDown);
+action!(SelectLeft);
+action!(SelectRight);
+action!(SelectToPreviousWordBoundary);
+action!(SelectToNextWordBoundary);
+action!(SelectToBeginningOfLine, bool);
+action!(SelectToEndOfLine);
+action!(SelectToBeginning);
+action!(SelectToEnd);
+action!(SelectAll);
+action!(SelectLine);
+action!(SplitSelectionIntoLines);
+action!(AddSelectionAbove);
+action!(AddSelectionBelow);
+action!(SelectLargerSyntaxNode);
+action!(SelectSmallerSyntaxNode);
+action!(MoveToEnclosingBracket);
+action!(PageUp);
+action!(PageDown);
+action!(Fold);
+action!(Unfold);
+action!(FoldSelectedRanges);
+action!(Scroll, Vector2F);
+action!(Select, SelectPhase);
+
 pub fn init(cx: &mut MutableAppContext) {
     cx.add_bindings(vec![
-        Binding::new("escape", "buffer:cancel", Some("BufferView")),
-        Binding::new("backspace", "buffer:backspace", Some("BufferView")),
-        Binding::new("ctrl-h", "buffer:backspace", Some("BufferView")),
-        Binding::new("delete", "buffer:delete", Some("BufferView")),
-        Binding::new("ctrl-d", "buffer:delete", Some("BufferView")),
-        Binding::new("enter", "buffer:newline", Some("BufferView")),
-        Binding::new("tab", "buffer:insert", Some("BufferView")).with_arg("\t".to_string()),
-        Binding::new("ctrl-shift-K", "buffer:delete_line", Some("BufferView")),
+        Binding::new("escape", Cancel, Some("Editor")),
+        Binding::new("backspace", Backspace, Some("Editor")),
+        Binding::new("ctrl-h", Backspace, Some("Editor")),
+        Binding::new("delete", Delete, Some("Editor")),
+        Binding::new("ctrl-d", Delete, Some("Editor")),
+        Binding::new("enter", Insert("\n".into()), Some("Editor && mode == full")),
+        Binding::new(
+            "alt-enter",
+            Insert("\n".into()),
+            Some("Editor && mode == auto_height"),
+        ),
+        Binding::new("tab", Insert("\t".into()), Some("Editor")),
+        Binding::new("ctrl-shift-K", DeleteLine, Some("Editor")),
         Binding::new(
             "alt-backspace",
-            "buffer:delete_to_previous_word_boundary",
-            Some("BufferView"),
+            DeleteToPreviousWordBoundary,
+            Some("Editor"),
         ),
-        Binding::new(
-            "alt-h",
-            "buffer:delete_to_previous_word_boundary",
-            Some("BufferView"),
-        ),
-        Binding::new(
-            "alt-delete",
-            "buffer:delete_to_next_word_boundary",
-            Some("BufferView"),
-        ),
-        Binding::new(
-            "alt-d",
-            "buffer:delete_to_next_word_boundary",
-            Some("BufferView"),
-        ),
-        Binding::new(
-            "cmd-backspace",
-            "buffer:delete_to_beginning_of_line",
-            Some("BufferView"),
-        ),
-        Binding::new(
-            "cmd-delete",
-            "buffer:delete_to_end_of_line",
-            Some("BufferView"),
-        ),
-        Binding::new("ctrl-k", "buffer:cut_to_end_of_line", Some("BufferView")),
-        Binding::new("cmd-shift-D", "buffer:duplicate_line", Some("BufferView")),
-        Binding::new("ctrl-cmd-up", "buffer:move_line_up", Some("BufferView")),
-        Binding::new("ctrl-cmd-down", "buffer:move_line_down", Some("BufferView")),
-        Binding::new("cmd-x", "buffer:cut", Some("BufferView")),
-        Binding::new("cmd-c", "buffer:copy", Some("BufferView")),
-        Binding::new("cmd-v", "buffer:paste", Some("BufferView")),
-        Binding::new("cmd-z", "buffer:undo", Some("BufferView")),
-        Binding::new("cmd-shift-Z", "buffer:redo", Some("BufferView")),
-        Binding::new("up", "buffer:move_up", Some("BufferView")),
-        Binding::new("down", "buffer:move_down", Some("BufferView")),
-        Binding::new("left", "buffer:move_left", Some("BufferView")),
-        Binding::new("right", "buffer:move_right", Some("BufferView")),
-        Binding::new("ctrl-p", "buffer:move_up", Some("BufferView")),
-        Binding::new("ctrl-n", "buffer:move_down", Some("BufferView")),
-        Binding::new("ctrl-b", "buffer:move_left", Some("BufferView")),
-        Binding::new("ctrl-f", "buffer:move_right", Some("BufferView")),
-        Binding::new(
-            "alt-left",
-            "buffer:move_to_previous_word_boundary",
-            Some("BufferView"),
-        ),
-        Binding::new(
-            "alt-b",
-            "buffer:move_to_previous_word_boundary",
-            Some("BufferView"),
-        ),
-        Binding::new(
-            "alt-right",
-            "buffer:move_to_next_word_boundary",
-            Some("BufferView"),
-        ),
-        Binding::new(
-            "alt-f",
-            "buffer:move_to_next_word_boundary",
-            Some("BufferView"),
-        ),
-        Binding::new(
-            "cmd-left",
-            "buffer:move_to_beginning_of_line",
-            Some("BufferView"),
-        ),
-        Binding::new(
-            "ctrl-a",
-            "buffer:move_to_beginning_of_line",
-            Some("BufferView"),
-        ),
-        Binding::new(
-            "cmd-right",
-            "buffer:move_to_end_of_line",
-            Some("BufferView"),
-        ),
-        Binding::new("ctrl-e", "buffer:move_to_end_of_line", Some("BufferView")),
-        Binding::new("cmd-up", "buffer:move_to_beginning", Some("BufferView")),
-        Binding::new("cmd-down", "buffer:move_to_end", Some("BufferView")),
-        Binding::new("shift-up", "buffer:select_up", Some("BufferView")),
-        Binding::new("ctrl-shift-P", "buffer:select_up", Some("BufferView")),
-        Binding::new("shift-down", "buffer:select_down", Some("BufferView")),
-        Binding::new("ctrl-shift-N", "buffer:select_down", Some("BufferView")),
-        Binding::new("shift-left", "buffer:select_left", Some("BufferView")),
-        Binding::new("ctrl-shift-B", "buffer:select_left", Some("BufferView")),
-        Binding::new("shift-right", "buffer:select_right", Some("BufferView")),
-        Binding::new("ctrl-shift-F", "buffer:select_right", Some("BufferView")),
+        Binding::new("alt-h", DeleteToPreviousWordBoundary, Some("Editor")),
+        Binding::new("alt-delete", DeleteToNextWordBoundary, Some("Editor")),
+        Binding::new("alt-d", DeleteToNextWordBoundary, Some("Editor")),
+        Binding::new("cmd-backspace", DeleteToBeginningOfLine, Some("Editor")),
+        Binding::new("cmd-delete", DeleteToEndOfLine, Some("Editor")),
+        Binding::new("ctrl-k", CutToEndOfLine, Some("Editor")),
+        Binding::new("cmd-shift-D", DuplicateLine, Some("Editor")),
+        Binding::new("ctrl-cmd-up", MoveLineUp, Some("Editor")),
+        Binding::new("ctrl-cmd-down", MoveLineDown, Some("Editor")),
+        Binding::new("cmd-x", Cut, Some("Editor")),
+        Binding::new("cmd-c", Copy, Some("Editor")),
+        Binding::new("cmd-v", Paste, Some("Editor")),
+        Binding::new("cmd-z", Undo, Some("Editor")),
+        Binding::new("cmd-shift-Z", Redo, Some("Editor")),
+        Binding::new("up", MoveUp, Some("Editor")),
+        Binding::new("down", MoveDown, Some("Editor")),
+        Binding::new("left", MoveLeft, Some("Editor")),
+        Binding::new("right", MoveRight, Some("Editor")),
+        Binding::new("ctrl-p", MoveUp, Some("Editor")),
+        Binding::new("ctrl-n", MoveDown, Some("Editor")),
+        Binding::new("ctrl-b", MoveLeft, Some("Editor")),
+        Binding::new("ctrl-f", MoveRight, Some("Editor")),
+        Binding::new("alt-left", MoveToPreviousWordBoundary, Some("Editor")),
+        Binding::new("alt-b", MoveToPreviousWordBoundary, Some("Editor")),
+        Binding::new("alt-right", MoveToNextWordBoundary, Some("Editor")),
+        Binding::new("alt-f", MoveToNextWordBoundary, Some("Editor")),
+        Binding::new("cmd-left", MoveToBeginningOfLine, Some("Editor")),
+        Binding::new("ctrl-a", MoveToBeginningOfLine, Some("Editor")),
+        Binding::new("cmd-right", MoveToEndOfLine, Some("Editor")),
+        Binding::new("ctrl-e", MoveToEndOfLine, Some("Editor")),
+        Binding::new("cmd-up", MoveToBeginning, Some("Editor")),
+        Binding::new("cmd-down", MoveToEnd, Some("Editor")),
+        Binding::new("shift-up", SelectUp, Some("Editor")),
+        Binding::new("ctrl-shift-P", SelectUp, Some("Editor")),
+        Binding::new("shift-down", SelectDown, Some("Editor")),
+        Binding::new("ctrl-shift-N", SelectDown, Some("Editor")),
+        Binding::new("shift-left", SelectLeft, Some("Editor")),
+        Binding::new("ctrl-shift-B", SelectLeft, Some("Editor")),
+        Binding::new("shift-right", SelectRight, Some("Editor")),
+        Binding::new("ctrl-shift-F", SelectRight, Some("Editor")),
         Binding::new(
             "alt-shift-left",
-            "buffer:select_to_previous_word_boundary",
-            Some("BufferView"),
+            SelectToPreviousWordBoundary,
+            Some("Editor"),
         ),
-        Binding::new(
-            "alt-shift-B",
-            "buffer:select_to_previous_word_boundary",
-            Some("BufferView"),
-        ),
-        Binding::new(
-            "alt-shift-right",
-            "buffer:select_to_next_word_boundary",
-            Some("BufferView"),
-        ),
-        Binding::new(
-            "alt-shift-F",
-            "buffer:select_to_next_word_boundary",
-            Some("BufferView"),
-        ),
+        Binding::new("alt-shift-B", SelectToPreviousWordBoundary, Some("Editor")),
+        Binding::new("alt-shift-right", SelectToNextWordBoundary, Some("Editor")),
+        Binding::new("alt-shift-F", SelectToNextWordBoundary, Some("Editor")),
         Binding::new(
             "cmd-shift-left",
-            "buffer:select_to_beginning_of_line",
-            Some("BufferView"),
-        )
-        .with_arg(true),
+            SelectToBeginningOfLine(true),
+            Some("Editor"),
+        ),
         Binding::new(
             "ctrl-shift-A",
-            "buffer:select_to_beginning_of_line",
-            Some("BufferView"),
-        )
-        .with_arg(true),
-        Binding::new(
-            "cmd-shift-right",
-            "buffer:select_to_end_of_line",
-            Some("BufferView"),
+            SelectToBeginningOfLine(true),
+            Some("Editor"),
         ),
-        Binding::new(
-            "ctrl-shift-E",
-            "buffer:select_to_end_of_line",
-            Some("BufferView"),
-        ),
-        Binding::new(
-            "cmd-shift-up",
-            "buffer:select_to_beginning",
-            Some("BufferView"),
-        ),
-        Binding::new("cmd-shift-down", "buffer:select_to_end", Some("BufferView")),
-        Binding::new("cmd-a", "buffer:select_all", Some("BufferView")),
-        Binding::new("cmd-l", "buffer:select_line", Some("BufferView")),
-        Binding::new(
-            "cmd-shift-L",
-            "buffer:split_selection_into_lines",
-            Some("BufferView"),
-        ),
-        Binding::new(
-            "cmd-alt-up",
-            "buffer:add_selection_above",
-            Some("BufferView"),
-        ),
-        Binding::new(
-            "cmd-ctrl-p",
-            "buffer:add_selection_above",
-            Some("BufferView"),
-        ),
-        Binding::new(
-            "cmd-alt-down",
-            "buffer:add_selection_below",
-            Some("BufferView"),
-        ),
-        Binding::new(
-            "cmd-ctrl-n",
-            "buffer:add_selection_below",
-            Some("BufferView"),
-        ),
-        Binding::new(
-            "alt-up",
-            "buffer:select_larger_syntax_node",
-            Some("BufferView"),
-        ),
-        Binding::new(
-            "ctrl-w",
-            "buffer:select_larger_syntax_node",
-            Some("BufferView"),
-        ),
-        Binding::new(
-            "alt-down",
-            "buffer:select_smaller_syntax_node",
-            Some("BufferView"),
-        ),
-        Binding::new(
-            "ctrl-shift-W",
-            "buffer:select_smaller_syntax_node",
-            Some("BufferView"),
-        ),
-        Binding::new(
-            "ctrl-m",
-            "buffer:move_to_enclosing_bracket",
-            Some("BufferView"),
-        ),
-        Binding::new("pageup", "buffer:page_up", Some("BufferView")),
-        Binding::new("pagedown", "buffer:page_down", Some("BufferView")),
-        Binding::new("alt-cmd-[", "buffer:fold", Some("BufferView")),
-        Binding::new("alt-cmd-]", "buffer:unfold", Some("BufferView")),
-        Binding::new(
-            "alt-cmd-f",
-            "buffer:fold_selected_ranges",
-            Some("BufferView"),
-        ),
+        Binding::new("cmd-shift-right", SelectToEndOfLine, Some("Editor")),
+        Binding::new("ctrl-shift-E", SelectToEndOfLine, Some("Editor")),
+        Binding::new("cmd-shift-up", SelectToBeginning, Some("Editor")),
+        Binding::new("cmd-shift-down", SelectToEnd, Some("Editor")),
+        Binding::new("cmd-a", SelectAll, Some("Editor")),
+        Binding::new("cmd-l", SelectLine, Some("Editor")),
+        Binding::new("cmd-shift-L", SplitSelectionIntoLines, Some("Editor")),
+        Binding::new("cmd-alt-up", AddSelectionAbove, Some("Editor")),
+        Binding::new("cmd-ctrl-p", AddSelectionAbove, Some("Editor")),
+        Binding::new("cmd-alt-down", AddSelectionBelow, Some("Editor")),
+        Binding::new("cmd-ctrl-n", AddSelectionBelow, Some("Editor")),
+        Binding::new("alt-up", SelectLargerSyntaxNode, Some("Editor")),
+        Binding::new("ctrl-w", SelectLargerSyntaxNode, Some("Editor")),
+        Binding::new("alt-down", SelectSmallerSyntaxNode, Some("Editor")),
+        Binding::new("ctrl-shift-W", SelectSmallerSyntaxNode, Some("Editor")),
+        Binding::new("ctrl-m", MoveToEnclosingBracket, Some("Editor")),
+        Binding::new("pageup", PageUp, Some("Editor")),
+        Binding::new("pagedown", PageDown, Some("Editor")),
+        Binding::new("alt-cmd-[", Fold, Some("Editor")),
+        Binding::new("alt-cmd-]", Unfold, Some("Editor")),
+        Binding::new("alt-cmd-f", FoldSelectedRanges, Some("Editor")),
     ]);
 
-    cx.add_action("buffer:scroll", |this: &mut Editor, scroll_position, cx| {
-        this.set_scroll_position(*scroll_position, cx)
-    });
-    cx.add_action("buffer:select", Editor::select);
-    cx.add_action("buffer:cancel", Editor::cancel);
-    cx.add_action("buffer:insert", Editor::insert);
-    cx.add_action("buffer:newline", Editor::newline);
-    cx.add_action("buffer:backspace", Editor::backspace);
-    cx.add_action("buffer:delete", Editor::delete);
-    cx.add_action("buffer:delete_line", Editor::delete_line);
-    cx.add_action(
-        "buffer:delete_to_previous_word_boundary",
-        Editor::delete_to_previous_word_boundary,
-    );
-    cx.add_action(
-        "buffer:delete_to_next_word_boundary",
-        Editor::delete_to_next_word_boundary,
-    );
-    cx.add_action(
-        "buffer:delete_to_beginning_of_line",
-        Editor::delete_to_beginning_of_line,
-    );
-    cx.add_action(
-        "buffer:delete_to_end_of_line",
-        Editor::delete_to_end_of_line,
-    );
-    cx.add_action("buffer:cut_to_end_of_line", Editor::cut_to_end_of_line);
-    cx.add_action("buffer:duplicate_line", Editor::duplicate_line);
-    cx.add_action("buffer:move_line_up", Editor::move_line_up);
-    cx.add_action("buffer:move_line_down", Editor::move_line_down);
-    cx.add_action("buffer:cut", Editor::cut);
-    cx.add_action("buffer:copy", Editor::copy);
-    cx.add_action("buffer:paste", Editor::paste);
-    cx.add_action("buffer:undo", Editor::undo);
-    cx.add_action("buffer:redo", Editor::redo);
-    cx.add_action("buffer:move_up", Editor::move_up);
-    cx.add_action("buffer:move_down", Editor::move_down);
-    cx.add_action("buffer:move_left", Editor::move_left);
-    cx.add_action("buffer:move_right", Editor::move_right);
-    cx.add_action(
-        "buffer:move_to_previous_word_boundary",
-        Editor::move_to_previous_word_boundary,
-    );
-    cx.add_action(
-        "buffer:move_to_next_word_boundary",
-        Editor::move_to_next_word_boundary,
-    );
-    cx.add_action(
-        "buffer:move_to_beginning_of_line",
-        Editor::move_to_beginning_of_line,
-    );
-    cx.add_action("buffer:move_to_end_of_line", Editor::move_to_end_of_line);
-    cx.add_action("buffer:move_to_beginning", Editor::move_to_beginning);
-    cx.add_action("buffer:move_to_end", Editor::move_to_end);
-    cx.add_action("buffer:select_up", Editor::select_up);
-    cx.add_action("buffer:select_down", Editor::select_down);
-    cx.add_action("buffer:select_left", Editor::select_left);
-    cx.add_action("buffer:select_right", Editor::select_right);
-    cx.add_action(
-        "buffer:select_to_previous_word_boundary",
-        Editor::select_to_previous_word_boundary,
-    );
-    cx.add_action(
-        "buffer:select_to_next_word_boundary",
-        Editor::select_to_next_word_boundary,
-    );
-    cx.add_action(
-        "buffer:select_to_beginning_of_line",
-        Editor::select_to_beginning_of_line,
-    );
-    cx.add_action(
-        "buffer:select_to_end_of_line",
-        Editor::select_to_end_of_line,
-    );
-    cx.add_action("buffer:select_to_beginning", Editor::select_to_beginning);
-    cx.add_action("buffer:select_to_end", Editor::select_to_end);
-    cx.add_action("buffer:select_all", Editor::select_all);
-    cx.add_action("buffer:select_line", Editor::select_line);
-    cx.add_action(
-        "buffer:split_selection_into_lines",
-        Editor::split_selection_into_lines,
-    );
-    cx.add_action("buffer:add_selection_above", Editor::add_selection_above);
-    cx.add_action("buffer:add_selection_below", Editor::add_selection_below);
-    cx.add_action(
-        "buffer:select_larger_syntax_node",
-        Editor::select_larger_syntax_node,
-    );
-    cx.add_action(
-        "buffer:select_smaller_syntax_node",
-        Editor::select_smaller_syntax_node,
-    );
-    cx.add_action(
-        "buffer:move_to_enclosing_bracket",
-        Editor::move_to_enclosing_bracket,
-    );
-    cx.add_action("buffer:page_up", Editor::page_up);
-    cx.add_action("buffer:page_down", Editor::page_down);
-    cx.add_action("buffer:fold", Editor::fold);
-    cx.add_action("buffer:unfold", Editor::unfold);
-    cx.add_action("buffer:fold_selected_ranges", Editor::fold_selected_ranges);
+    cx.add_action(|this: &mut Editor, action: &Scroll, cx| this.set_scroll_position(action.0, cx));
+    cx.add_action(Editor::select);
+    cx.add_action(Editor::cancel);
+    cx.add_action(Editor::insert);
+    cx.add_action(Editor::backspace);
+    cx.add_action(Editor::delete);
+    cx.add_action(Editor::delete_line);
+    cx.add_action(Editor::delete_to_previous_word_boundary);
+    cx.add_action(Editor::delete_to_next_word_boundary);
+    cx.add_action(Editor::delete_to_beginning_of_line);
+    cx.add_action(Editor::delete_to_end_of_line);
+    cx.add_action(Editor::cut_to_end_of_line);
+    cx.add_action(Editor::duplicate_line);
+    cx.add_action(Editor::move_line_up);
+    cx.add_action(Editor::move_line_down);
+    cx.add_action(Editor::cut);
+    cx.add_action(Editor::copy);
+    cx.add_action(Editor::paste);
+    cx.add_action(Editor::undo);
+    cx.add_action(Editor::redo);
+    cx.add_action(Editor::move_up);
+    cx.add_action(Editor::move_down);
+    cx.add_action(Editor::move_left);
+    cx.add_action(Editor::move_right);
+    cx.add_action(Editor::move_to_previous_word_boundary);
+    cx.add_action(Editor::move_to_next_word_boundary);
+    cx.add_action(Editor::move_to_beginning_of_line);
+    cx.add_action(Editor::move_to_end_of_line);
+    cx.add_action(Editor::move_to_beginning);
+    cx.add_action(Editor::move_to_end);
+    cx.add_action(Editor::select_up);
+    cx.add_action(Editor::select_down);
+    cx.add_action(Editor::select_left);
+    cx.add_action(Editor::select_right);
+    cx.add_action(Editor::select_to_previous_word_boundary);
+    cx.add_action(Editor::select_to_next_word_boundary);
+    cx.add_action(Editor::select_to_beginning_of_line);
+    cx.add_action(Editor::select_to_end_of_line);
+    cx.add_action(Editor::select_to_beginning);
+    cx.add_action(Editor::select_to_end);
+    cx.add_action(Editor::select_all);
+    cx.add_action(Editor::select_line);
+    cx.add_action(Editor::split_selection_into_lines);
+    cx.add_action(Editor::add_selection_above);
+    cx.add_action(Editor::add_selection_below);
+    cx.add_action(Editor::select_larger_syntax_node);
+    cx.add_action(Editor::select_smaller_syntax_node);
+    cx.add_action(Editor::move_to_enclosing_bracket);
+    cx.add_action(Editor::page_up);
+    cx.add_action(Editor::page_down);
+    cx.add_action(Editor::fold);
+    cx.add_action(Editor::unfold);
+    cx.add_action(Editor::fold_selected_ranges);
 }
 
-pub enum SelectAction {
+#[derive(Clone, Debug)]
+pub enum SelectPhase {
     Begin {
         position: DisplayPoint,
         add: bool,
@@ -367,6 +269,13 @@ pub enum SelectAction {
         scroll_position: Vector2F,
     },
     End,
+}
+
+#[derive(Copy, Clone, PartialEq, Eq)]
+pub enum EditorMode {
+    SingleLine,
+    AutoHeight { max_lines: usize },
+    Full,
 }
 
 pub struct Editor {
@@ -381,20 +290,24 @@ pub struct Editor {
     scroll_position: Vector2F,
     scroll_top_anchor: Anchor,
     autoscroll_requested: bool,
+    build_style: Option<Rc<RefCell<dyn FnMut(&mut MutableAppContext) -> EditorStyle>>>,
     settings: watch::Receiver<Settings>,
     focused: bool,
     cursors_visible: bool,
     blink_epoch: usize,
     blinking_paused: bool,
-    single_line: bool,
+    mode: EditorMode,
+    placeholder_text: Option<Arc<str>>,
 }
 
 pub struct Snapshot {
+    pub mode: EditorMode,
     pub display_snapshot: DisplayMapSnapshot,
-    pub gutter_visible: bool,
+    pub placeholder_text: Option<Arc<str>>,
     pub theme: Arc<Theme>,
     pub font_family: FamilyId,
     pub font_size: f32,
+    is_focused: bool,
     scroll_position: Vector2F,
     scroll_top_anchor: Anchor,
 }
@@ -414,7 +327,18 @@ impl Editor {
     pub fn single_line(settings: watch::Receiver<Settings>, cx: &mut ViewContext<Self>) -> Self {
         let buffer = cx.add_model(|cx| Buffer::new(0, String::new(), cx));
         let mut view = Self::for_buffer(buffer, settings, cx);
-        view.single_line = true;
+        view.mode = EditorMode::SingleLine;
+        view
+    }
+
+    pub fn auto_height(
+        max_lines: usize,
+        settings: watch::Receiver<Settings>,
+        cx: &mut ViewContext<Self>,
+    ) -> Self {
+        let buffer = cx.add_model(|cx| Buffer::new(0, String::new(), cx));
+        let mut view = Self::for_buffer(buffer, settings, cx);
+        view.mode = EditorMode::AutoHeight { max_lines };
         view
     }
 
@@ -425,9 +349,10 @@ impl Editor {
     ) -> Self {
         let display_map =
             cx.add_model(|cx| DisplayMap::new(buffer.clone(), settings.borrow().clone(), None, cx));
-        cx.observe_model(&buffer, Self::on_buffer_changed);
-        cx.subscribe_to_model(&buffer, Self::on_buffer_event);
-        cx.observe_model(&display_map, Self::on_display_map_changed);
+        cx.observe(&buffer, Self::on_buffer_changed).detach();
+        cx.subscribe(&buffer, Self::on_buffer_event).detach();
+        cx.observe(&display_map, Self::on_display_map_changed)
+            .detach();
 
         let mut next_selection_id = 0;
         let selection_set_id = buffer.update(cx, |buffer, cx| {
@@ -451,6 +376,7 @@ impl Editor {
             next_selection_id,
             add_selections_state: None,
             select_larger_syntax_node_stack: Vec::new(),
+            build_style: None,
             scroll_position: Vector2F::zero(),
             scroll_top_anchor: Anchor::min(),
             autoscroll_requested: false,
@@ -459,8 +385,17 @@ impl Editor {
             cursors_visible: false,
             blink_epoch: 0,
             blinking_paused: false,
-            single_line: false,
+            mode: EditorMode::Full,
+            placeholder_text: None,
         }
+    }
+
+    pub fn with_style(
+        mut self,
+        f: impl 'static + FnMut(&mut MutableAppContext) -> EditorStyle,
+    ) -> Self {
+        self.build_style = Some(Rc::new(RefCell::new(f)));
+        self
     }
 
     pub fn replica_id(&self, cx: &AppContext) -> ReplicaId {
@@ -475,14 +410,28 @@ impl Editor {
         let settings = self.settings.borrow();
 
         Snapshot {
+            mode: self.mode,
             display_snapshot: self.display_map.update(cx, |map, cx| map.snapshot(cx)),
-            gutter_visible: !self.single_line,
             scroll_position: self.scroll_position,
             scroll_top_anchor: self.scroll_top_anchor.clone(),
             theme: settings.theme.clone(),
+            placeholder_text: self.placeholder_text.clone(),
             font_family: settings.buffer_font_family,
             font_size: settings.buffer_font_size,
+            is_focused: self
+                .handle
+                .upgrade(cx)
+                .map_or(false, |handle| handle.is_focused(cx)),
         }
+    }
+
+    pub fn set_placeholder_text(
+        &mut self,
+        placeholder_text: impl Into<Arc<str>>,
+        cx: &mut ViewContext<Self>,
+    ) {
+        self.placeholder_text = Some(placeholder_text.into());
+        cx.notify();
     }
 
     fn set_scroll_position(&mut self, mut scroll_position: Vector2F, cx: &mut ViewContext<Self>) {
@@ -513,10 +462,15 @@ impl Editor {
         line_height: f32,
         cx: &mut ViewContext<Self>,
     ) -> bool {
+        let visible_lines = viewport_height / line_height;
         let display_map = self.display_map.update(cx, |map, cx| map.snapshot(cx));
         let mut scroll_position =
             compute_scroll_position(&display_map, self.scroll_position, &self.scroll_top_anchor);
-        let max_scroll_top = display_map.max_point().row().saturating_sub(1) as f32;
+        let max_scroll_top = if matches!(self.mode, EditorMode::AutoHeight { .. }) {
+            (display_map.max_point().row() as f32 - visible_lines + 1.).max(0.)
+        } else {
+            display_map.max_point().row().saturating_sub(1) as f32
+        };
         if scroll_position.y() > max_scroll_top {
             scroll_position.set_y(max_scroll_top);
             self.set_scroll_position(scroll_position, cx);
@@ -528,7 +482,6 @@ impl Editor {
             return false;
         }
 
-        let visible_lines = viewport_height / line_height;
         let first_cursor_top = self
             .selections(cx)
             .first()
@@ -545,9 +498,13 @@ impl Editor {
             .row() as f32
             + 1.0;
 
-        let margin = ((visible_lines - (last_cursor_bottom - first_cursor_top)) / 2.0)
-            .floor()
-            .min(3.0);
+        let margin = if matches!(self.mode, EditorMode::AutoHeight { .. }) {
+            0.
+        } else {
+            ((visible_lines - (last_cursor_bottom - first_cursor_top)) / 2.0)
+                .floor()
+                .min(3.0)
+        };
         if margin < 0.0 {
             return false;
         }
@@ -612,14 +569,14 @@ impl Editor {
         }
     }
 
-    fn select(&mut self, arg: &SelectAction, cx: &mut ViewContext<Self>) {
-        match arg {
-            SelectAction::Begin { position, add } => self.begin_selection(*position, *add, cx),
-            SelectAction::Update {
+    fn select(&mut self, Select(phase): &Select, cx: &mut ViewContext<Self>) {
+        match phase {
+            SelectPhase::Begin { position, add } => self.begin_selection(*position, *add, cx),
+            SelectPhase::Update {
                 position,
                 scroll_position,
             } => self.update_selection(*position, *scroll_position, cx),
-            SelectAction::End => self.end_selection(cx),
+            SelectPhase::End => self.end_selection(cx),
         }
     }
 
@@ -682,7 +639,7 @@ impl Editor {
         self.pending_selection.is_some()
     }
 
-    pub fn cancel(&mut self, _: &(), cx: &mut ViewContext<Self>) {
+    pub fn cancel(&mut self, _: &Cancel, cx: &mut ViewContext<Self>) {
         let selections = self.selections(cx.as_ref());
         if let Some(pending_selection) = self.pending_selection.take() {
             if selections.is_empty() {
@@ -754,7 +711,7 @@ impl Editor {
         Ok(())
     }
 
-    pub fn insert(&mut self, text: &String, cx: &mut ViewContext<Self>) {
+    pub fn insert(&mut self, action: &Insert, cx: &mut ViewContext<Self>) {
         let mut old_selections = SmallVec::<[_; 32]>::new();
         {
             let buffer = self.buffer.read(cx);
@@ -769,8 +726,8 @@ impl Editor {
         let mut new_selections = Vec::new();
         self.buffer.update(cx, |buffer, cx| {
             let edit_ranges = old_selections.iter().map(|(_, range)| range.clone());
-            buffer.edit(edit_ranges, text.as_str(), cx);
-            let text_len = text.len() as isize;
+            buffer.edit(edit_ranges, action.0.as_str(), cx);
+            let text_len = action.0.len() as isize;
             let mut delta = 0_isize;
             new_selections = old_selections
                 .into_iter()
@@ -795,15 +752,14 @@ impl Editor {
         self.end_transaction(cx);
     }
 
-    fn newline(&mut self, _: &(), cx: &mut ViewContext<Self>) {
-        if self.single_line {
-            cx.propagate_action();
-        } else {
-            self.insert(&"\n".into(), cx);
-        }
+    pub fn clear(&mut self, cx: &mut ViewContext<Self>) {
+        self.start_transaction(cx);
+        self.select_all(&SelectAll, cx);
+        self.insert(&Insert(String::new()), cx);
+        self.end_transaction(cx);
     }
 
-    pub fn backspace(&mut self, _: &(), cx: &mut ViewContext<Self>) {
+    pub fn backspace(&mut self, _: &Backspace, cx: &mut ViewContext<Self>) {
         self.start_transaction(cx);
         let mut selections = self.selections(cx.as_ref()).to_vec();
         let display_map = self.display_map.update(cx, |map, cx| map.snapshot(cx));
@@ -822,11 +778,11 @@ impl Editor {
         }
 
         self.update_selections(selections, true, cx);
-        self.insert(&String::new(), cx);
+        self.insert(&Insert(String::new()), cx);
         self.end_transaction(cx);
     }
 
-    pub fn delete(&mut self, _: &(), cx: &mut ViewContext<Self>) {
+    pub fn delete(&mut self, _: &Delete, cx: &mut ViewContext<Self>) {
         self.start_transaction(cx);
         let display_map = self.display_map.update(cx, |map, cx| map.snapshot(cx));
         let mut selections = self.selections(cx.as_ref()).to_vec();
@@ -845,11 +801,11 @@ impl Editor {
         }
 
         self.update_selections(selections, true, cx);
-        self.insert(&String::new(), cx);
+        self.insert(&Insert(String::new()), cx);
         self.end_transaction(cx);
     }
 
-    pub fn delete_line(&mut self, _: &(), cx: &mut ViewContext<Self>) {
+    pub fn delete_line(&mut self, _: &DeleteLine, cx: &mut ViewContext<Self>) {
         self.start_transaction(cx);
 
         let display_map = self.display_map.update(cx, |map, cx| map.snapshot(cx));
@@ -926,7 +882,7 @@ impl Editor {
         self.end_transaction(cx);
     }
 
-    pub fn duplicate_line(&mut self, _: &(), cx: &mut ViewContext<Self>) {
+    pub fn duplicate_line(&mut self, _: &DuplicateLine, cx: &mut ViewContext<Self>) {
         self.start_transaction(cx);
 
         let mut selections = self.selections(cx.as_ref()).to_vec();
@@ -986,7 +942,7 @@ impl Editor {
         self.end_transaction(cx);
     }
 
-    pub fn move_line_up(&mut self, _: &(), cx: &mut ViewContext<Self>) {
+    pub fn move_line_up(&mut self, _: &MoveLineUp, cx: &mut ViewContext<Self>) {
         self.start_transaction(cx);
 
         let display_map = self.display_map.update(cx, |map, cx| map.snapshot(cx));
@@ -1076,7 +1032,7 @@ impl Editor {
         self.end_transaction(cx);
     }
 
-    pub fn move_line_down(&mut self, _: &(), cx: &mut ViewContext<Self>) {
+    pub fn move_line_down(&mut self, _: &MoveLineDown, cx: &mut ViewContext<Self>) {
         self.start_transaction(cx);
 
         let display_map = self.display_map.update(cx, |map, cx| map.snapshot(cx));
@@ -1163,7 +1119,7 @@ impl Editor {
         self.end_transaction(cx);
     }
 
-    pub fn cut(&mut self, _: &(), cx: &mut ViewContext<Self>) {
+    pub fn cut(&mut self, _: &Cut, cx: &mut ViewContext<Self>) {
         self.start_transaction(cx);
         let mut text = String::new();
         let mut selections = self.selections(cx.as_ref()).to_vec();
@@ -1193,14 +1149,14 @@ impl Editor {
             }
         }
         self.update_selections(selections, true, cx);
-        self.insert(&String::new(), cx);
+        self.insert(&Insert(String::new()), cx);
         self.end_transaction(cx);
 
         cx.as_mut()
             .write_to_clipboard(ClipboardItem::new(text).with_metadata(clipboard_selections));
     }
 
-    pub fn copy(&mut self, _: &(), cx: &mut ViewContext<Self>) {
+    pub fn copy(&mut self, _: &Copy, cx: &mut ViewContext<Self>) {
         let buffer = self.buffer.read(cx);
         let max_point = buffer.max_point();
         let mut text = String::new();
@@ -1229,7 +1185,7 @@ impl Editor {
             .write_to_clipboard(ClipboardItem::new(text).with_metadata(clipboard_selections));
     }
 
-    pub fn paste(&mut self, _: &(), cx: &mut ViewContext<Self>) {
+    pub fn paste(&mut self, _: &Paste, cx: &mut ViewContext<Self>) {
         if let Some(item) = cx.as_mut().read_from_clipboard() {
             let clipboard_text = item.text();
             if let Some(mut clipboard_selections) = item.metadata::<Vec<ClipboardSelection>>() {
@@ -1281,20 +1237,20 @@ impl Editor {
                 self.update_selections(new_selections, true, cx);
                 self.end_transaction(cx);
             } else {
-                self.insert(clipboard_text, cx);
+                self.insert(&Insert(clipboard_text.into()), cx);
             }
         }
     }
 
-    pub fn undo(&mut self, _: &(), cx: &mut ViewContext<Self>) {
+    pub fn undo(&mut self, _: &Undo, cx: &mut ViewContext<Self>) {
         self.buffer.update(cx, |buffer, cx| buffer.undo(cx));
     }
 
-    pub fn redo(&mut self, _: &(), cx: &mut ViewContext<Self>) {
+    pub fn redo(&mut self, _: &Redo, cx: &mut ViewContext<Self>) {
         self.buffer.update(cx, |buffer, cx| buffer.redo(cx));
     }
 
-    pub fn move_left(&mut self, _: &(), cx: &mut ViewContext<Self>) {
+    pub fn move_left(&mut self, _: &MoveLeft, cx: &mut ViewContext<Self>) {
         let display_map = self.display_map.update(cx, |map, cx| map.snapshot(cx));
         let app = cx.as_ref();
         let mut selections = self.selections(app).to_vec();
@@ -1318,7 +1274,7 @@ impl Editor {
         self.update_selections(selections, true, cx);
     }
 
-    pub fn select_left(&mut self, _: &(), cx: &mut ViewContext<Self>) {
+    pub fn select_left(&mut self, _: &SelectLeft, cx: &mut ViewContext<Self>) {
         let display_map = self.display_map.update(cx, |map, cx| map.snapshot(cx));
         let mut selections = self.selections(cx.as_ref()).to_vec();
         {
@@ -1334,7 +1290,7 @@ impl Editor {
         self.update_selections(selections, true, cx);
     }
 
-    pub fn move_right(&mut self, _: &(), cx: &mut ViewContext<Self>) {
+    pub fn move_right(&mut self, _: &MoveRight, cx: &mut ViewContext<Self>) {
         let display_map = self.display_map.update(cx, |map, cx| map.snapshot(cx));
         let mut selections = self.selections(cx.as_ref()).to_vec();
         {
@@ -1357,7 +1313,7 @@ impl Editor {
         self.update_selections(selections, true, cx);
     }
 
-    pub fn select_right(&mut self, _: &(), cx: &mut ViewContext<Self>) {
+    pub fn select_right(&mut self, _: &SelectRight, cx: &mut ViewContext<Self>) {
         let display_map = self.display_map.update(cx, |map, cx| map.snapshot(cx));
         let mut selections = self.selections(cx.as_ref()).to_vec();
         {
@@ -1374,9 +1330,9 @@ impl Editor {
         self.update_selections(selections, true, cx);
     }
 
-    pub fn move_up(&mut self, _: &(), cx: &mut ViewContext<Self>) {
+    pub fn move_up(&mut self, _: &MoveUp, cx: &mut ViewContext<Self>) {
         let display_map = self.display_map.update(cx, |map, cx| map.snapshot(cx));
-        if self.single_line {
+        if matches!(self.mode, EditorMode::SingleLine) {
             cx.propagate_action();
         } else {
             let mut selections = self.selections(cx.as_ref()).to_vec();
@@ -1400,7 +1356,7 @@ impl Editor {
         }
     }
 
-    pub fn select_up(&mut self, _: &(), cx: &mut ViewContext<Self>) {
+    pub fn select_up(&mut self, _: &SelectUp, cx: &mut ViewContext<Self>) {
         let display_map = self.display_map.update(cx, |map, cx| map.snapshot(cx));
         let mut selections = self.selections(cx.as_ref()).to_vec();
         {
@@ -1416,8 +1372,8 @@ impl Editor {
         self.update_selections(selections, true, cx);
     }
 
-    pub fn move_down(&mut self, _: &(), cx: &mut ViewContext<Self>) {
-        if self.single_line {
+    pub fn move_down(&mut self, _: &MoveDown, cx: &mut ViewContext<Self>) {
+        if matches!(self.mode, EditorMode::SingleLine) {
             cx.propagate_action();
         } else {
             let display_map = self.display_map.update(cx, |map, cx| map.snapshot(cx));
@@ -1442,7 +1398,7 @@ impl Editor {
         }
     }
 
-    pub fn select_down(&mut self, _: &(), cx: &mut ViewContext<Self>) {
+    pub fn select_down(&mut self, _: &SelectDown, cx: &mut ViewContext<Self>) {
         let display_map = self.display_map.update(cx, |map, cx| map.snapshot(cx));
         let mut selections = self.selections(cx).to_vec();
         {
@@ -1458,7 +1414,11 @@ impl Editor {
         self.update_selections(selections, true, cx);
     }
 
-    pub fn move_to_previous_word_boundary(&mut self, _: &(), cx: &mut ViewContext<Self>) {
+    pub fn move_to_previous_word_boundary(
+        &mut self,
+        _: &MoveToPreviousWordBoundary,
+        cx: &mut ViewContext<Self>,
+    ) {
         let display_map = self.display_map.update(cx, |map, cx| map.snapshot(cx));
         let mut selections = self.selections(cx).to_vec();
         {
@@ -1475,7 +1435,11 @@ impl Editor {
         self.update_selections(selections, true, cx);
     }
 
-    pub fn select_to_previous_word_boundary(&mut self, _: &(), cx: &mut ViewContext<Self>) {
+    pub fn select_to_previous_word_boundary(
+        &mut self,
+        _: &SelectToPreviousWordBoundary,
+        cx: &mut ViewContext<Self>,
+    ) {
         let display_map = self.display_map.update(cx, |map, cx| map.snapshot(cx));
         let mut selections = self.selections(cx).to_vec();
         {
@@ -1491,14 +1455,22 @@ impl Editor {
         self.update_selections(selections, true, cx);
     }
 
-    pub fn delete_to_previous_word_boundary(&mut self, _: &(), cx: &mut ViewContext<Self>) {
+    pub fn delete_to_previous_word_boundary(
+        &mut self,
+        _: &DeleteToPreviousWordBoundary,
+        cx: &mut ViewContext<Self>,
+    ) {
         self.start_transaction(cx);
-        self.select_to_previous_word_boundary(&(), cx);
-        self.backspace(&(), cx);
+        self.select_to_previous_word_boundary(&SelectToPreviousWordBoundary, cx);
+        self.backspace(&Backspace, cx);
         self.end_transaction(cx);
     }
 
-    pub fn move_to_next_word_boundary(&mut self, _: &(), cx: &mut ViewContext<Self>) {
+    pub fn move_to_next_word_boundary(
+        &mut self,
+        _: &MoveToNextWordBoundary,
+        cx: &mut ViewContext<Self>,
+    ) {
         let display_map = self.display_map.update(cx, |map, cx| map.snapshot(cx));
         let mut selections = self.selections(cx).to_vec();
         {
@@ -1515,7 +1487,11 @@ impl Editor {
         self.update_selections(selections, true, cx);
     }
 
-    pub fn select_to_next_word_boundary(&mut self, _: &(), cx: &mut ViewContext<Self>) {
+    pub fn select_to_next_word_boundary(
+        &mut self,
+        _: &SelectToNextWordBoundary,
+        cx: &mut ViewContext<Self>,
+    ) {
         let display_map = self.display_map.update(cx, |map, cx| map.snapshot(cx));
         let mut selections = self.selections(cx).to_vec();
         {
@@ -1531,14 +1507,22 @@ impl Editor {
         self.update_selections(selections, true, cx);
     }
 
-    pub fn delete_to_next_word_boundary(&mut self, _: &(), cx: &mut ViewContext<Self>) {
+    pub fn delete_to_next_word_boundary(
+        &mut self,
+        _: &DeleteToNextWordBoundary,
+        cx: &mut ViewContext<Self>,
+    ) {
         self.start_transaction(cx);
-        self.select_to_next_word_boundary(&(), cx);
-        self.delete(&(), cx);
+        self.select_to_next_word_boundary(&SelectToNextWordBoundary, cx);
+        self.delete(&Delete, cx);
         self.end_transaction(cx);
     }
 
-    pub fn move_to_beginning_of_line(&mut self, _: &(), cx: &mut ViewContext<Self>) {
+    pub fn move_to_beginning_of_line(
+        &mut self,
+        _: &MoveToBeginningOfLine,
+        cx: &mut ViewContext<Self>,
+    ) {
         let display_map = self.display_map.update(cx, |map, cx| map.snapshot(cx));
         let mut selections = self.selections(cx).to_vec();
         {
@@ -1557,7 +1541,7 @@ impl Editor {
 
     pub fn select_to_beginning_of_line(
         &mut self,
-        toggle_indent: &bool,
+        SelectToBeginningOfLine(toggle_indent): &SelectToBeginningOfLine,
         cx: &mut ViewContext<Self>,
     ) {
         let display_map = self.display_map.update(cx, |map, cx| map.snapshot(cx));
@@ -1576,14 +1560,18 @@ impl Editor {
         self.update_selections(selections, true, cx);
     }
 
-    pub fn delete_to_beginning_of_line(&mut self, _: &(), cx: &mut ViewContext<Self>) {
+    pub fn delete_to_beginning_of_line(
+        &mut self,
+        _: &DeleteToBeginningOfLine,
+        cx: &mut ViewContext<Self>,
+    ) {
         self.start_transaction(cx);
-        self.select_to_beginning_of_line(&false, cx);
-        self.backspace(&(), cx);
+        self.select_to_beginning_of_line(&SelectToBeginningOfLine(false), cx);
+        self.backspace(&Backspace, cx);
         self.end_transaction(cx);
     }
 
-    pub fn move_to_end_of_line(&mut self, _: &(), cx: &mut ViewContext<Self>) {
+    pub fn move_to_end_of_line(&mut self, _: &MoveToEndOfLine, cx: &mut ViewContext<Self>) {
         let display_map = self.display_map.update(cx, |map, cx| map.snapshot(cx));
         let mut selections = self.selections(cx).to_vec();
         {
@@ -1600,7 +1588,7 @@ impl Editor {
         self.update_selections(selections, true, cx);
     }
 
-    pub fn select_to_end_of_line(&mut self, _: &(), cx: &mut ViewContext<Self>) {
+    pub fn select_to_end_of_line(&mut self, _: &SelectToEndOfLine, cx: &mut ViewContext<Self>) {
         let display_map = self.display_map.update(cx, |map, cx| map.snapshot(cx));
         let mut selections = self.selections(cx).to_vec();
         {
@@ -1616,21 +1604,21 @@ impl Editor {
         self.update_selections(selections, true, cx);
     }
 
-    pub fn delete_to_end_of_line(&mut self, _: &(), cx: &mut ViewContext<Self>) {
+    pub fn delete_to_end_of_line(&mut self, _: &DeleteToEndOfLine, cx: &mut ViewContext<Self>) {
         self.start_transaction(cx);
-        self.select_to_end_of_line(&(), cx);
-        self.delete(&(), cx);
+        self.select_to_end_of_line(&SelectToEndOfLine, cx);
+        self.delete(&Delete, cx);
         self.end_transaction(cx);
     }
 
-    pub fn cut_to_end_of_line(&mut self, _: &(), cx: &mut ViewContext<Self>) {
+    pub fn cut_to_end_of_line(&mut self, _: &CutToEndOfLine, cx: &mut ViewContext<Self>) {
         self.start_transaction(cx);
-        self.select_to_end_of_line(&(), cx);
-        self.cut(&(), cx);
+        self.select_to_end_of_line(&SelectToEndOfLine, cx);
+        self.cut(&Cut, cx);
         self.end_transaction(cx);
     }
 
-    pub fn move_to_beginning(&mut self, _: &(), cx: &mut ViewContext<Self>) {
+    pub fn move_to_beginning(&mut self, _: &MoveToBeginning, cx: &mut ViewContext<Self>) {
         let buffer = self.buffer.read(cx);
         let cursor = buffer.anchor_before(Point::new(0, 0));
         let selection = Selection {
@@ -1643,13 +1631,13 @@ impl Editor {
         self.update_selections(vec![selection], true, cx);
     }
 
-    pub fn select_to_beginning(&mut self, _: &(), cx: &mut ViewContext<Self>) {
+    pub fn select_to_beginning(&mut self, _: &SelectToBeginning, cx: &mut ViewContext<Self>) {
         let mut selection = self.selections(cx.as_ref()).last().unwrap().clone();
         selection.set_head(self.buffer.read(cx), Anchor::min());
         self.update_selections(vec![selection], true, cx);
     }
 
-    pub fn move_to_end(&mut self, _: &(), cx: &mut ViewContext<Self>) {
+    pub fn move_to_end(&mut self, _: &MoveToEnd, cx: &mut ViewContext<Self>) {
         let buffer = self.buffer.read(cx);
         let cursor = buffer.anchor_before(buffer.max_point());
         let selection = Selection {
@@ -1662,13 +1650,13 @@ impl Editor {
         self.update_selections(vec![selection], true, cx);
     }
 
-    pub fn select_to_end(&mut self, _: &(), cx: &mut ViewContext<Self>) {
+    pub fn select_to_end(&mut self, _: &SelectToEnd, cx: &mut ViewContext<Self>) {
         let mut selection = self.selections(cx.as_ref()).last().unwrap().clone();
         selection.set_head(self.buffer.read(cx), Anchor::max());
         self.update_selections(vec![selection], true, cx);
     }
 
-    pub fn select_all(&mut self, _: &(), cx: &mut ViewContext<Self>) {
+    pub fn select_all(&mut self, _: &SelectAll, cx: &mut ViewContext<Self>) {
         let selection = Selection {
             id: post_inc(&mut self.next_selection_id),
             start: Anchor::min(),
@@ -1679,7 +1667,7 @@ impl Editor {
         self.update_selections(vec![selection], false, cx);
     }
 
-    pub fn select_line(&mut self, _: &(), cx: &mut ViewContext<Self>) {
+    pub fn select_line(&mut self, _: &SelectLine, cx: &mut ViewContext<Self>) {
         let display_map = self.display_map.update(cx, |map, cx| map.snapshot(cx));
         let buffer = self.buffer.read(cx);
         let mut selections = self.selections(cx).to_vec();
@@ -1693,7 +1681,11 @@ impl Editor {
         self.update_selections(selections, true, cx);
     }
 
-    pub fn split_selection_into_lines(&mut self, _: &(), cx: &mut ViewContext<Self>) {
+    pub fn split_selection_into_lines(
+        &mut self,
+        _: &SplitSelectionIntoLines,
+        cx: &mut ViewContext<Self>,
+    ) {
         let app = cx.as_ref();
         let buffer = self.buffer.read(app);
 
@@ -1733,11 +1725,11 @@ impl Editor {
         self.update_selections(new_selections, true, cx);
     }
 
-    pub fn add_selection_above(&mut self, _: &(), cx: &mut ViewContext<Self>) {
+    pub fn add_selection_above(&mut self, _: &AddSelectionAbove, cx: &mut ViewContext<Self>) {
         self.add_selection(true, cx);
     }
 
-    pub fn add_selection_below(&mut self, _: &(), cx: &mut ViewContext<Self>) {
+    pub fn add_selection_below(&mut self, _: &AddSelectionBelow, cx: &mut ViewContext<Self>) {
         self.add_selection(false, cx);
     }
 
@@ -1834,7 +1826,11 @@ impl Editor {
         }
     }
 
-    pub fn select_larger_syntax_node(&mut self, _: &(), cx: &mut ViewContext<Self>) {
+    pub fn select_larger_syntax_node(
+        &mut self,
+        _: &SelectLargerSyntaxNode,
+        cx: &mut ViewContext<Self>,
+    ) {
         let display_map = self.display_map.update(cx, |map, cx| map.snapshot(cx));
         let buffer = self.buffer.read(cx);
 
@@ -1876,7 +1872,11 @@ impl Editor {
         self.select_larger_syntax_node_stack = stack;
     }
 
-    pub fn select_smaller_syntax_node(&mut self, _: &(), cx: &mut ViewContext<Self>) {
+    pub fn select_smaller_syntax_node(
+        &mut self,
+        _: &SelectSmallerSyntaxNode,
+        cx: &mut ViewContext<Self>,
+    ) {
         let mut stack = mem::take(&mut self.select_larger_syntax_node_stack);
         if let Some(selections) = stack.pop() {
             self.update_selections(selections, true, cx);
@@ -1884,7 +1884,11 @@ impl Editor {
         self.select_larger_syntax_node_stack = stack;
     }
 
-    pub fn move_to_enclosing_bracket(&mut self, _: &(), cx: &mut ViewContext<Self>) {
+    pub fn move_to_enclosing_bracket(
+        &mut self,
+        _: &MoveToEnclosingBracket,
+        cx: &mut ViewContext<Self>,
+    ) {
         let buffer = self.buffer.read(cx.as_ref());
         let mut selections = self.selections(cx.as_ref()).to_vec();
         for selection in &mut selections {
@@ -1939,10 +1943,13 @@ impl Editor {
         &'a self,
         cx: &'a AppContext,
     ) -> impl 'a + Iterator<Item = SelectionSetId> {
-        self.buffer
-            .read(cx)
+        let buffer = self.buffer.read(cx);
+        let replica_id = buffer.replica_id();
+        buffer
             .selection_sets()
-            .filter(|(_, set)| set.active)
+            .filter(move |(set_id, set)| {
+                set.active && (set_id.replica_id != replica_id || **set_id == self.selection_set_id)
+            })
             .map(|(set_id, _)| *set_id)
     }
 
@@ -2065,15 +2072,15 @@ impl Editor {
         });
     }
 
-    pub fn page_up(&mut self, _: &(), _: &mut ViewContext<Self>) {
-        log::info!("BufferView::page_up");
+    pub fn page_up(&mut self, _: &PageUp, _: &mut ViewContext<Self>) {
+        log::info!("Editor::page_up");
     }
 
-    pub fn page_down(&mut self, _: &(), _: &mut ViewContext<Self>) {
-        log::info!("BufferView::page_down");
+    pub fn page_down(&mut self, _: &PageDown, _: &mut ViewContext<Self>) {
+        log::info!("Editor::page_down");
     }
 
-    pub fn fold(&mut self, _: &(), cx: &mut ViewContext<Self>) {
+    pub fn fold(&mut self, _: &Fold, cx: &mut ViewContext<Self>) {
         let mut fold_ranges = Vec::new();
 
         let display_map = self.display_map.update(cx, |map, cx| map.snapshot(cx));
@@ -2097,7 +2104,7 @@ impl Editor {
         self.fold_ranges(fold_ranges, cx);
     }
 
-    pub fn unfold(&mut self, _: &(), cx: &mut ViewContext<Self>) {
+    pub fn unfold(&mut self, _: &Unfold, cx: &mut ViewContext<Self>) {
         let display_map = self.display_map.update(cx, |map, cx| map.snapshot(cx));
         let buffer = self.buffer.read(cx);
         let ranges = self
@@ -2158,7 +2165,7 @@ impl Editor {
             ..end.to_buffer_point(display_map, Bias::Left);
     }
 
-    pub fn fold_selected_ranges(&mut self, _: &(), cx: &mut ViewContext<Self>) {
+    pub fn fold_selected_ranges(&mut self, _: &FoldSelectedRanges, cx: &mut ViewContext<Self>) {
         let buffer = self.buffer.read(cx);
         let ranges = self
             .selections(cx.as_ref())
@@ -2197,7 +2204,11 @@ impl Editor {
             .max_point()
     }
 
-    pub fn text(&self, cx: &mut MutableAppContext) -> String {
+    pub fn text(&self, cx: &AppContext) -> String {
+        self.buffer.read(cx).text()
+    }
+
+    pub fn display_text(&self, cx: &mut MutableAppContext) -> String {
         self.display_map
             .update(cx, |map, cx| map.snapshot(cx))
             .text()
@@ -2324,7 +2335,7 @@ impl Snapshot {
 
     pub fn line_height(&self, font_cache: &FontCache) -> f32 {
         let font_id = font_cache.default_font(self.font_family);
-        font_cache.line_height(font_id, self.font_size)
+        font_cache.line_height(font_id, self.font_size).ceil()
     }
 
     pub fn em_width(&self, font_cache: &FontCache) -> f32 {
@@ -2349,7 +2360,14 @@ impl Snapshot {
             .layout_str(
                 "1".repeat(digit_count).as_str(),
                 font_size,
-                &[(digit_count, font_id, Color::black())],
+                &[(
+                    digit_count,
+                    RunStyle {
+                        font_id,
+                        color: Color::black(),
+                        underline: false,
+                    },
+                )],
             )
             .width())
     }
@@ -2386,7 +2404,14 @@ impl Snapshot {
                 layouts.push(Some(layout_cache.layout_str(
                     &line_number,
                     self.font_size,
-                    &[(line_number.len(), font_id, color)],
+                    &[(
+                        line_number.len(),
+                        RunStyle {
+                            font_id,
+                            color,
+                            underline: false,
+                        },
+                    )],
                 )));
             }
         }
@@ -2397,12 +2422,43 @@ impl Snapshot {
     pub fn layout_lines(
         &mut self,
         mut rows: Range<u32>,
+        style: &EditorStyle,
         font_cache: &FontCache,
         layout_cache: &TextLayoutCache,
     ) -> Result<Vec<text_layout::Line>> {
         rows.end = cmp::min(rows.end, self.display_snapshot.max_point().row() + 1);
         if rows.start >= rows.end {
             return Ok(Vec::new());
+        }
+
+        // When the editor is empty and unfocused, then show the placeholder.
+        if self.display_snapshot.is_empty() && !self.is_focused {
+            let placeholder_lines = self
+                .placeholder_text
+                .as_ref()
+                .map_or("", AsRef::as_ref)
+                .split('\n')
+                .skip(rows.start as usize)
+                .take(rows.len());
+            let font_id = font_cache
+                .select_font(self.font_family, &style.placeholder_text.font_properties)?;
+            return Ok(placeholder_lines
+                .into_iter()
+                .map(|line| {
+                    layout_cache.layout_str(
+                        line,
+                        self.font_size,
+                        &[(
+                            line.len(),
+                            RunStyle {
+                                font_id,
+                                color: style.placeholder_text.color,
+                                underline: false,
+                            },
+                        )],
+                    )
+                })
+                .collect());
         }
 
         let mut prev_font_properties = FontProperties::new();
@@ -2433,7 +2489,11 @@ impl Snapshot {
                 }
 
                 if !line_chunk.is_empty() && !line_exceeded_max_len {
-                    let style = self.theme.highlight_style(style_ix);
+                    let style = self
+                        .theme
+                        .syntax
+                        .highlight_style(style_ix)
+                        .unwrap_or(style.text.clone());
                     // Avoid a lookup if the font properties match the previous ones.
                     let font_id = if style.font_properties == prev_font_properties {
                         prev_font_id
@@ -2451,7 +2511,14 @@ impl Snapshot {
                     }
 
                     line.push_str(line_chunk);
-                    styles.push((line_chunk.len(), font_id, style.color));
+                    styles.push((
+                        line_chunk.len(),
+                        RunStyle {
+                            font_id,
+                            color: style.color,
+                            underline: style.underline,
+                        },
+                    ));
                     prev_font_id = font_id;
                     prev_font_properties = style.font_properties;
                 }
@@ -2484,8 +2551,11 @@ impl Snapshot {
             self.font_size,
             &[(
                 self.display_snapshot.line_len(row) as usize,
-                font_id,
-                Color::black(),
+                RunStyle {
+                    font_id,
+                    color: Color::black(),
+                    underline: false,
+                },
             )],
         ))
     }
@@ -2533,12 +2603,16 @@ impl Entity for Editor {
 }
 
 impl View for Editor {
-    fn render<'a>(&self, _: &RenderContext<Self>) -> ElementBox {
-        EditorElement::new(self.handle.clone()).boxed()
+    fn render(&mut self, cx: &mut RenderContext<Self>) -> ElementBox {
+        let style = self
+            .build_style
+            .as_ref()
+            .map_or(Default::default(), |build| (build.borrow_mut())(cx));
+        EditorElement::new(self.handle.clone(), style).boxed()
     }
 
     fn ui_name() -> &'static str {
-        "BufferView"
+        "Editor"
     }
 
     fn on_focus(&mut self, cx: &mut ViewContext<Self>) {
@@ -2560,6 +2634,17 @@ impl View for Editor {
         cx.emit(Event::Blurred);
         cx.notify();
     }
+
+    fn keymap_context(&self, _: &AppContext) -> gpui::keymap::Context {
+        let mut cx = Self::default_keymap_context();
+        let mode = match self.mode {
+            EditorMode::SingleLine => "single_line",
+            EditorMode::AutoHeight { .. } => "auto_height",
+            EditorMode::Full => "full",
+        };
+        cx.map.insert("mode".into(), mode.into());
+        cx
+    }
 }
 
 impl workspace::Item for Buffer {
@@ -2574,7 +2659,8 @@ impl workspace::Item for Buffer {
         settings: watch::Receiver<Settings>,
         cx: &mut ViewContext<Self::View>,
     ) -> Self::View {
-        Editor::for_buffer(handle, settings, cx)
+        Editor::for_buffer(handle, settings.clone(), cx)
+            .with_style(move |_| settings.borrow().theme.editor.clone())
     }
 }
 
@@ -2614,6 +2700,7 @@ impl workspace::ItemView for Editor {
         let mut clone = Editor::for_buffer(self.buffer.clone(), self.settings.clone(), cx);
         clone.scroll_position = self.scroll_position;
         clone.scroll_top_anchor = self.scroll_top_anchor.clone();
+        clone.build_style = self.build_style.clone();
         Some(clone)
     }
 
@@ -2647,19 +2734,17 @@ impl workspace::ItemView for Editor {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{
-        editor::Point,
-        settings,
-        test::{build_app_state, sample_text},
-    };
+    use crate::{editor::Point, language::LanguageRegistry, settings, test::sample_text};
     use buffer::History;
     use unindent::Unindent;
 
     #[gpui::test]
     fn test_selection_with_mouse(cx: &mut gpui::MutableAppContext) {
         let buffer = cx.add_model(|cx| Buffer::new(0, "aaaaaa\nbbbbbb\ncccccc\ndddddd\n", cx));
-        let settings = settings::channel(&cx.font_cache()).unwrap().1;
-        let (_, editor) = cx.add_window(|cx| Editor::for_buffer(buffer, settings, cx));
+        let settings = settings::test(&cx).1;
+        let (_, editor) = cx.add_window(Default::default(), |cx| {
+            Editor::for_buffer(buffer, settings, cx)
+        });
 
         editor.update(cx, |view, cx| {
             view.begin_selection(DisplayPoint::new(2, 2), false, cx);
@@ -2724,8 +2809,10 @@ mod tests {
     #[gpui::test]
     fn test_canceling_pending_selection(cx: &mut gpui::MutableAppContext) {
         let buffer = cx.add_model(|cx| Buffer::new(0, "aaaaaa\nbbbbbb\ncccccc\ndddddd\n", cx));
-        let settings = settings::channel(&cx.font_cache()).unwrap().1;
-        let (_, view) = cx.add_window(|cx| Editor::for_buffer(buffer, settings, cx));
+        let settings = settings::test(&cx).1;
+        let (_, view) = cx.add_window(Default::default(), |cx| {
+            Editor::for_buffer(buffer, settings, cx)
+        });
 
         view.update(cx, |view, cx| {
             view.begin_selection(DisplayPoint::new(2, 2), false, cx);
@@ -2744,7 +2831,7 @@ mod tests {
         });
 
         view.update(cx, |view, cx| {
-            view.cancel(&(), cx);
+            view.cancel(&Cancel, cx);
             view.update_selection(DisplayPoint::new(1, 1), Vector2F::zero(), cx);
             assert_eq!(
                 view.selection_ranges(cx),
@@ -2756,8 +2843,10 @@ mod tests {
     #[gpui::test]
     fn test_cancel(cx: &mut gpui::MutableAppContext) {
         let buffer = cx.add_model(|cx| Buffer::new(0, "aaaaaa\nbbbbbb\ncccccc\ndddddd\n", cx));
-        let settings = settings::channel(&cx.font_cache()).unwrap().1;
-        let (_, view) = cx.add_window(|cx| Editor::for_buffer(buffer, settings, cx));
+        let settings = settings::test(&cx).1;
+        let (_, view) = cx.add_window(Default::default(), |cx| {
+            Editor::for_buffer(buffer, settings, cx)
+        });
 
         view.update(cx, |view, cx| {
             view.begin_selection(DisplayPoint::new(3, 4), false, cx);
@@ -2777,7 +2866,7 @@ mod tests {
         });
 
         view.update(cx, |view, cx| {
-            view.cancel(&(), cx);
+            view.cancel(&Cancel, cx);
             assert_eq!(
                 view.selection_ranges(cx),
                 [DisplayPoint::new(3, 4)..DisplayPoint::new(1, 1)]
@@ -2785,7 +2874,7 @@ mod tests {
         });
 
         view.update(cx, |view, cx| {
-            view.cancel(&(), cx);
+            view.cancel(&Cancel, cx);
             assert_eq!(
                 view.selection_ranges(cx),
                 [DisplayPoint::new(1, 1)..DisplayPoint::new(1, 1)]
@@ -2800,9 +2889,10 @@ mod tests {
 
         let buffer = cx.add_model(|cx| Buffer::new(0, sample_text(6, 6), cx));
 
-        let settings = settings::channel(&font_cache).unwrap().1;
-        let (_, editor) =
-            cx.add_window(|cx| Editor::for_buffer(buffer.clone(), settings.clone(), cx));
+        let settings = settings::test(&cx).1;
+        let (_, editor) = cx.add_window(Default::default(), |cx| {
+            Editor::for_buffer(buffer.clone(), settings.clone(), cx)
+        });
 
         let layouts = editor.update(cx, |editor, cx| {
             editor
@@ -2845,15 +2935,17 @@ mod tests {
                 cx,
             )
         });
-        let settings = settings::channel(&cx.font_cache()).unwrap().1;
-        let (_, view) = cx.add_window(|cx| Editor::for_buffer(buffer.clone(), settings, cx));
+        let settings = settings::test(&cx).1;
+        let (_, view) = cx.add_window(Default::default(), |cx| {
+            Editor::for_buffer(buffer.clone(), settings, cx)
+        });
 
         view.update(cx, |view, cx| {
             view.select_display_ranges(&[DisplayPoint::new(8, 0)..DisplayPoint::new(12, 0)], cx)
                 .unwrap();
-            view.fold(&(), cx);
+            view.fold(&Fold, cx);
             assert_eq!(
-                view.text(cx),
+                view.display_text(cx),
                 "
                     impl Foo {
                         // Hello!
@@ -2872,9 +2964,9 @@ mod tests {
                 .unindent(),
             );
 
-            view.fold(&(), cx);
+            view.fold(&Fold, cx);
             assert_eq!(
-                view.text(cx),
+                view.display_text(cx),
                 "
                     impl Foo {…
                     }
@@ -2882,9 +2974,9 @@ mod tests {
                 .unindent(),
             );
 
-            view.unfold(&(), cx);
+            view.unfold(&Unfold, cx);
             assert_eq!(
-                view.text(cx),
+                view.display_text(cx),
                 "
                     impl Foo {
                         // Hello!
@@ -2903,16 +2995,18 @@ mod tests {
                 .unindent(),
             );
 
-            view.unfold(&(), cx);
-            assert_eq!(view.text(cx), buffer.read(cx).text());
+            view.unfold(&Unfold, cx);
+            assert_eq!(view.display_text(cx), buffer.read(cx).text());
         });
     }
 
     #[gpui::test]
     fn test_move_cursor(cx: &mut gpui::MutableAppContext) {
         let buffer = cx.add_model(|cx| Buffer::new(0, sample_text(6, 6), cx));
-        let settings = settings::channel(&cx.font_cache()).unwrap().1;
-        let (_, view) = cx.add_window(|cx| Editor::for_buffer(buffer.clone(), settings, cx));
+        let settings = settings::test(&cx).1;
+        let (_, view) = cx.add_window(Default::default(), |cx| {
+            Editor::for_buffer(buffer.clone(), settings, cx)
+        });
 
         buffer.update(cx, |buffer, cx| {
             buffer.edit(
@@ -2931,37 +3025,37 @@ mod tests {
                 &[DisplayPoint::new(0, 0)..DisplayPoint::new(0, 0)]
             );
 
-            view.move_down(&(), cx);
+            view.move_down(&MoveDown, cx);
             assert_eq!(
                 view.selection_ranges(cx),
                 &[DisplayPoint::new(1, 0)..DisplayPoint::new(1, 0)]
             );
 
-            view.move_right(&(), cx);
+            view.move_right(&MoveRight, cx);
             assert_eq!(
                 view.selection_ranges(cx),
                 &[DisplayPoint::new(1, 4)..DisplayPoint::new(1, 4)]
             );
 
-            view.move_left(&(), cx);
+            view.move_left(&MoveLeft, cx);
             assert_eq!(
                 view.selection_ranges(cx),
                 &[DisplayPoint::new(1, 0)..DisplayPoint::new(1, 0)]
             );
 
-            view.move_up(&(), cx);
+            view.move_up(&MoveUp, cx);
             assert_eq!(
                 view.selection_ranges(cx),
                 &[DisplayPoint::new(0, 0)..DisplayPoint::new(0, 0)]
             );
 
-            view.move_to_end(&(), cx);
+            view.move_to_end(&MoveToEnd, cx);
             assert_eq!(
                 view.selection_ranges(cx),
                 &[DisplayPoint::new(5, 6)..DisplayPoint::new(5, 6)]
             );
 
-            view.move_to_beginning(&(), cx);
+            view.move_to_beginning(&MoveToBeginning, cx);
             assert_eq!(
                 view.selection_ranges(cx),
                 &[DisplayPoint::new(0, 0)..DisplayPoint::new(0, 0)]
@@ -2969,13 +3063,13 @@ mod tests {
 
             view.select_display_ranges(&[DisplayPoint::new(0, 1)..DisplayPoint::new(0, 2)], cx)
                 .unwrap();
-            view.select_to_beginning(&(), cx);
+            view.select_to_beginning(&SelectToBeginning, cx);
             assert_eq!(
                 view.selection_ranges(cx),
                 &[DisplayPoint::new(0, 1)..DisplayPoint::new(0, 0)]
             );
 
-            view.select_to_end(&(), cx);
+            view.select_to_end(&SelectToEnd, cx);
             assert_eq!(
                 view.selection_ranges(cx),
                 &[DisplayPoint::new(0, 1)..DisplayPoint::new(5, 6)]
@@ -2986,8 +3080,10 @@ mod tests {
     #[gpui::test]
     fn test_move_cursor_multibyte(cx: &mut gpui::MutableAppContext) {
         let buffer = cx.add_model(|cx| Buffer::new(0, "ⓐⓑⓒⓓⓔ\nabcde\nαβγδε\n", cx));
-        let settings = settings::channel(&cx.font_cache()).unwrap().1;
-        let (_, view) = cx.add_window(|cx| Editor::for_buffer(buffer.clone(), settings, cx));
+        let settings = settings::test(&cx).1;
+        let (_, view) = cx.add_window(Default::default(), |cx| {
+            Editor::for_buffer(buffer.clone(), settings, cx)
+        });
 
         assert_eq!('ⓐ'.len_utf8(), 3);
         assert_eq!('α'.len_utf8(), 2);
@@ -3001,40 +3097,40 @@ mod tests {
                 ],
                 cx,
             );
-            assert_eq!(view.text(cx), "ⓐⓑ…ⓔ\nab…e\nαβ…ε\n");
+            assert_eq!(view.display_text(cx), "ⓐⓑ…ⓔ\nab…e\nαβ…ε\n");
 
-            view.move_right(&(), cx);
+            view.move_right(&MoveRight, cx);
             assert_eq!(view.selection_ranges(cx), &[empty_range(0, "ⓐ".len())]);
-            view.move_right(&(), cx);
+            view.move_right(&MoveRight, cx);
             assert_eq!(view.selection_ranges(cx), &[empty_range(0, "ⓐⓑ".len())]);
-            view.move_right(&(), cx);
+            view.move_right(&MoveRight, cx);
             assert_eq!(view.selection_ranges(cx), &[empty_range(0, "ⓐⓑ…".len())]);
 
-            view.move_down(&(), cx);
+            view.move_down(&MoveDown, cx);
             assert_eq!(view.selection_ranges(cx), &[empty_range(1, "ab…".len())]);
-            view.move_left(&(), cx);
+            view.move_left(&MoveLeft, cx);
             assert_eq!(view.selection_ranges(cx), &[empty_range(1, "ab".len())]);
-            view.move_left(&(), cx);
+            view.move_left(&MoveLeft, cx);
             assert_eq!(view.selection_ranges(cx), &[empty_range(1, "a".len())]);
 
-            view.move_down(&(), cx);
+            view.move_down(&MoveDown, cx);
             assert_eq!(view.selection_ranges(cx), &[empty_range(2, "α".len())]);
-            view.move_right(&(), cx);
+            view.move_right(&MoveRight, cx);
             assert_eq!(view.selection_ranges(cx), &[empty_range(2, "αβ".len())]);
-            view.move_right(&(), cx);
+            view.move_right(&MoveRight, cx);
             assert_eq!(view.selection_ranges(cx), &[empty_range(2, "αβ…".len())]);
-            view.move_right(&(), cx);
+            view.move_right(&MoveRight, cx);
             assert_eq!(view.selection_ranges(cx), &[empty_range(2, "αβ…ε".len())]);
 
-            view.move_up(&(), cx);
+            view.move_up(&MoveUp, cx);
             assert_eq!(view.selection_ranges(cx), &[empty_range(1, "ab…e".len())]);
-            view.move_up(&(), cx);
+            view.move_up(&MoveUp, cx);
             assert_eq!(view.selection_ranges(cx), &[empty_range(0, "ⓐⓑ…ⓔ".len())]);
-            view.move_left(&(), cx);
+            view.move_left(&MoveLeft, cx);
             assert_eq!(view.selection_ranges(cx), &[empty_range(0, "ⓐⓑ…".len())]);
-            view.move_left(&(), cx);
+            view.move_left(&MoveLeft, cx);
             assert_eq!(view.selection_ranges(cx), &[empty_range(0, "ⓐⓑ".len())]);
-            view.move_left(&(), cx);
+            view.move_left(&MoveLeft, cx);
             assert_eq!(view.selection_ranges(cx), &[empty_range(0, "ⓐ".len())]);
         });
     }
@@ -3042,28 +3138,30 @@ mod tests {
     #[gpui::test]
     fn test_move_cursor_different_line_lengths(cx: &mut gpui::MutableAppContext) {
         let buffer = cx.add_model(|cx| Buffer::new(0, "ⓐⓑⓒⓓⓔ\nabcd\nαβγ\nabcd\nⓐⓑⓒⓓⓔ\n", cx));
-        let settings = settings::channel(&cx.font_cache()).unwrap().1;
-        let (_, view) = cx.add_window(|cx| Editor::for_buffer(buffer.clone(), settings, cx));
+        let settings = settings::test(&cx).1;
+        let (_, view) = cx.add_window(Default::default(), |cx| {
+            Editor::for_buffer(buffer.clone(), settings, cx)
+        });
         view.update(cx, |view, cx| {
             view.select_display_ranges(&[empty_range(0, "ⓐⓑⓒⓓⓔ".len())], cx)
                 .unwrap();
 
-            view.move_down(&(), cx);
+            view.move_down(&MoveDown, cx);
             assert_eq!(view.selection_ranges(cx), &[empty_range(1, "abcd".len())]);
 
-            view.move_down(&(), cx);
+            view.move_down(&MoveDown, cx);
             assert_eq!(view.selection_ranges(cx), &[empty_range(2, "αβγ".len())]);
 
-            view.move_down(&(), cx);
+            view.move_down(&MoveDown, cx);
             assert_eq!(view.selection_ranges(cx), &[empty_range(3, "abcd".len())]);
 
-            view.move_down(&(), cx);
+            view.move_down(&MoveDown, cx);
             assert_eq!(view.selection_ranges(cx), &[empty_range(4, "ⓐⓑⓒⓓⓔ".len())]);
 
-            view.move_up(&(), cx);
+            view.move_up(&MoveUp, cx);
             assert_eq!(view.selection_ranges(cx), &[empty_range(3, "abcd".len())]);
 
-            view.move_up(&(), cx);
+            view.move_up(&MoveUp, cx);
             assert_eq!(view.selection_ranges(cx), &[empty_range(2, "αβγ".len())]);
         });
     }
@@ -3071,8 +3169,10 @@ mod tests {
     #[gpui::test]
     fn test_beginning_end_of_line(cx: &mut gpui::MutableAppContext) {
         let buffer = cx.add_model(|cx| Buffer::new(0, "abc\n  def", cx));
-        let settings = settings::channel(&cx.font_cache()).unwrap().1;
-        let (_, view) = cx.add_window(|cx| Editor::for_buffer(buffer, settings, cx));
+        let settings = settings::test(&cx).1;
+        let (_, view) = cx.add_window(Default::default(), |cx| {
+            Editor::for_buffer(buffer, settings, cx)
+        });
         view.update(cx, |view, cx| {
             view.select_display_ranges(
                 &[
@@ -3085,7 +3185,7 @@ mod tests {
         });
 
         view.update(cx, |view, cx| {
-            view.move_to_beginning_of_line(&(), cx);
+            view.move_to_beginning_of_line(&MoveToBeginningOfLine, cx);
             assert_eq!(
                 view.selection_ranges(cx),
                 &[
@@ -3096,7 +3196,7 @@ mod tests {
         });
 
         view.update(cx, |view, cx| {
-            view.move_to_beginning_of_line(&(), cx);
+            view.move_to_beginning_of_line(&MoveToBeginningOfLine, cx);
             assert_eq!(
                 view.selection_ranges(cx),
                 &[
@@ -3107,7 +3207,7 @@ mod tests {
         });
 
         view.update(cx, |view, cx| {
-            view.move_to_beginning_of_line(&(), cx);
+            view.move_to_beginning_of_line(&MoveToBeginningOfLine, cx);
             assert_eq!(
                 view.selection_ranges(cx),
                 &[
@@ -3118,7 +3218,7 @@ mod tests {
         });
 
         view.update(cx, |view, cx| {
-            view.move_to_end_of_line(&(), cx);
+            view.move_to_end_of_line(&MoveToEndOfLine, cx);
             assert_eq!(
                 view.selection_ranges(cx),
                 &[
@@ -3130,7 +3230,7 @@ mod tests {
 
         // Moving to the end of line again is a no-op.
         view.update(cx, |view, cx| {
-            view.move_to_end_of_line(&(), cx);
+            view.move_to_end_of_line(&MoveToEndOfLine, cx);
             assert_eq!(
                 view.selection_ranges(cx),
                 &[
@@ -3141,8 +3241,8 @@ mod tests {
         });
 
         view.update(cx, |view, cx| {
-            view.move_left(&(), cx);
-            view.select_to_beginning_of_line(&true, cx);
+            view.move_left(&MoveLeft, cx);
+            view.select_to_beginning_of_line(&SelectToBeginningOfLine(true), cx);
             assert_eq!(
                 view.selection_ranges(cx),
                 &[
@@ -3153,7 +3253,7 @@ mod tests {
         });
 
         view.update(cx, |view, cx| {
-            view.select_to_beginning_of_line(&true, cx);
+            view.select_to_beginning_of_line(&SelectToBeginningOfLine(true), cx);
             assert_eq!(
                 view.selection_ranges(cx),
                 &[
@@ -3164,7 +3264,7 @@ mod tests {
         });
 
         view.update(cx, |view, cx| {
-            view.select_to_beginning_of_line(&true, cx);
+            view.select_to_beginning_of_line(&SelectToBeginningOfLine(true), cx);
             assert_eq!(
                 view.selection_ranges(cx),
                 &[
@@ -3175,7 +3275,7 @@ mod tests {
         });
 
         view.update(cx, |view, cx| {
-            view.select_to_end_of_line(&(), cx);
+            view.select_to_end_of_line(&SelectToEndOfLine, cx);
             assert_eq!(
                 view.selection_ranges(cx),
                 &[
@@ -3186,8 +3286,8 @@ mod tests {
         });
 
         view.update(cx, |view, cx| {
-            view.delete_to_end_of_line(&(), cx);
-            assert_eq!(view.text(cx), "ab\n  de");
+            view.delete_to_end_of_line(&DeleteToEndOfLine, cx);
+            assert_eq!(view.display_text(cx), "ab\n  de");
             assert_eq!(
                 view.selection_ranges(cx),
                 &[
@@ -3198,8 +3298,8 @@ mod tests {
         });
 
         view.update(cx, |view, cx| {
-            view.delete_to_beginning_of_line(&(), cx);
-            assert_eq!(view.text(cx), "\n");
+            view.delete_to_beginning_of_line(&DeleteToBeginningOfLine, cx);
+            assert_eq!(view.display_text(cx), "\n");
             assert_eq!(
                 view.selection_ranges(cx),
                 &[
@@ -3214,8 +3314,10 @@ mod tests {
     fn test_prev_next_word_boundary(cx: &mut gpui::MutableAppContext) {
         let buffer =
             cx.add_model(|cx| Buffer::new(0, "use std::str::{foo, bar}\n\n  {baz.qux()}", cx));
-        let settings = settings::channel(&cx.font_cache()).unwrap().1;
-        let (_, view) = cx.add_window(|cx| Editor::for_buffer(buffer, settings, cx));
+        let settings = settings::test(&cx).1;
+        let (_, view) = cx.add_window(Default::default(), |cx| {
+            Editor::for_buffer(buffer, settings, cx)
+        });
         view.update(cx, |view, cx| {
             view.select_display_ranges(
                 &[
@@ -3228,7 +3330,7 @@ mod tests {
         });
 
         view.update(cx, |view, cx| {
-            view.move_to_previous_word_boundary(&(), cx);
+            view.move_to_previous_word_boundary(&MoveToPreviousWordBoundary, cx);
             assert_eq!(
                 view.selection_ranges(cx),
                 &[
@@ -3239,7 +3341,7 @@ mod tests {
         });
 
         view.update(cx, |view, cx| {
-            view.move_to_previous_word_boundary(&(), cx);
+            view.move_to_previous_word_boundary(&MoveToPreviousWordBoundary, cx);
             assert_eq!(
                 view.selection_ranges(cx),
                 &[
@@ -3250,7 +3352,7 @@ mod tests {
         });
 
         view.update(cx, |view, cx| {
-            view.move_to_previous_word_boundary(&(), cx);
+            view.move_to_previous_word_boundary(&MoveToPreviousWordBoundary, cx);
             assert_eq!(
                 view.selection_ranges(cx),
                 &[
@@ -3261,7 +3363,7 @@ mod tests {
         });
 
         view.update(cx, |view, cx| {
-            view.move_to_previous_word_boundary(&(), cx);
+            view.move_to_previous_word_boundary(&MoveToPreviousWordBoundary, cx);
             assert_eq!(
                 view.selection_ranges(cx),
                 &[
@@ -3272,7 +3374,7 @@ mod tests {
         });
 
         view.update(cx, |view, cx| {
-            view.move_to_previous_word_boundary(&(), cx);
+            view.move_to_previous_word_boundary(&MoveToPreviousWordBoundary, cx);
             assert_eq!(
                 view.selection_ranges(cx),
                 &[
@@ -3283,7 +3385,7 @@ mod tests {
         });
 
         view.update(cx, |view, cx| {
-            view.move_to_previous_word_boundary(&(), cx);
+            view.move_to_previous_word_boundary(&MoveToPreviousWordBoundary, cx);
             assert_eq!(
                 view.selection_ranges(cx),
                 &[
@@ -3294,7 +3396,7 @@ mod tests {
         });
 
         view.update(cx, |view, cx| {
-            view.move_to_next_word_boundary(&(), cx);
+            view.move_to_next_word_boundary(&MoveToNextWordBoundary, cx);
             assert_eq!(
                 view.selection_ranges(cx),
                 &[
@@ -3305,7 +3407,7 @@ mod tests {
         });
 
         view.update(cx, |view, cx| {
-            view.move_to_next_word_boundary(&(), cx);
+            view.move_to_next_word_boundary(&MoveToNextWordBoundary, cx);
             assert_eq!(
                 view.selection_ranges(cx),
                 &[
@@ -3316,7 +3418,7 @@ mod tests {
         });
 
         view.update(cx, |view, cx| {
-            view.move_to_next_word_boundary(&(), cx);
+            view.move_to_next_word_boundary(&MoveToNextWordBoundary, cx);
             assert_eq!(
                 view.selection_ranges(cx),
                 &[
@@ -3327,7 +3429,7 @@ mod tests {
         });
 
         view.update(cx, |view, cx| {
-            view.move_to_next_word_boundary(&(), cx);
+            view.move_to_next_word_boundary(&MoveToNextWordBoundary, cx);
             assert_eq!(
                 view.selection_ranges(cx),
                 &[
@@ -3338,8 +3440,8 @@ mod tests {
         });
 
         view.update(cx, |view, cx| {
-            view.move_right(&(), cx);
-            view.select_to_previous_word_boundary(&(), cx);
+            view.move_right(&MoveRight, cx);
+            view.select_to_previous_word_boundary(&SelectToPreviousWordBoundary, cx);
             assert_eq!(
                 view.selection_ranges(cx),
                 &[
@@ -3350,7 +3452,7 @@ mod tests {
         });
 
         view.update(cx, |view, cx| {
-            view.select_to_previous_word_boundary(&(), cx);
+            view.select_to_previous_word_boundary(&SelectToPreviousWordBoundary, cx);
             assert_eq!(
                 view.selection_ranges(cx),
                 &[
@@ -3361,7 +3463,7 @@ mod tests {
         });
 
         view.update(cx, |view, cx| {
-            view.select_to_next_word_boundary(&(), cx);
+            view.select_to_next_word_boundary(&SelectToNextWordBoundary, cx);
             assert_eq!(
                 view.selection_ranges(cx),
                 &[
@@ -3372,8 +3474,11 @@ mod tests {
         });
 
         view.update(cx, |view, cx| {
-            view.delete_to_next_word_boundary(&(), cx);
-            assert_eq!(view.text(cx), "use std::s::{foo, bar}\n\n  {az.qux()}");
+            view.delete_to_next_word_boundary(&DeleteToNextWordBoundary, cx);
+            assert_eq!(
+                view.display_text(cx),
+                "use std::s::{foo, bar}\n\n  {az.qux()}"
+            );
             assert_eq!(
                 view.selection_ranges(cx),
                 &[
@@ -3384,8 +3489,11 @@ mod tests {
         });
 
         view.update(cx, |view, cx| {
-            view.delete_to_previous_word_boundary(&(), cx);
-            assert_eq!(view.text(cx), "use std::::{foo, bar}\n\n  az.qux()}");
+            view.delete_to_previous_word_boundary(&DeleteToPreviousWordBoundary, cx);
+            assert_eq!(
+                view.display_text(cx),
+                "use std::::{foo, bar}\n\n  az.qux()}"
+            );
             assert_eq!(
                 view.selection_ranges(cx),
                 &[
@@ -3400,50 +3508,52 @@ mod tests {
     fn test_prev_next_word_bounds_with_soft_wrap(cx: &mut gpui::MutableAppContext) {
         let buffer =
             cx.add_model(|cx| Buffer::new(0, "use one::{\n    two::three::four::five\n};", cx));
-        let settings = settings::channel(&cx.font_cache()).unwrap().1;
-        let (_, view) = cx.add_window(|cx| Editor::for_buffer(buffer, settings, cx));
+        let settings = settings::test(&cx).1;
+        let (_, view) = cx.add_window(Default::default(), |cx| {
+            Editor::for_buffer(buffer, settings, cx)
+        });
 
         view.update(cx, |view, cx| {
-            view.set_wrap_width(140., cx);
+            view.set_wrap_width(130., cx);
             assert_eq!(
-                view.text(cx),
+                view.display_text(cx),
                 "use one::{\n    two::three::\n    four::five\n};"
             );
 
             view.select_display_ranges(&[DisplayPoint::new(1, 7)..DisplayPoint::new(1, 7)], cx)
                 .unwrap();
 
-            view.move_to_next_word_boundary(&(), cx);
+            view.move_to_next_word_boundary(&MoveToNextWordBoundary, cx);
             assert_eq!(
                 view.selection_ranges(cx),
                 &[DisplayPoint::new(1, 9)..DisplayPoint::new(1, 9)]
             );
 
-            view.move_to_next_word_boundary(&(), cx);
+            view.move_to_next_word_boundary(&MoveToNextWordBoundary, cx);
             assert_eq!(
                 view.selection_ranges(cx),
                 &[DisplayPoint::new(1, 14)..DisplayPoint::new(1, 14)]
             );
 
-            view.move_to_next_word_boundary(&(), cx);
+            view.move_to_next_word_boundary(&MoveToNextWordBoundary, cx);
             assert_eq!(
                 view.selection_ranges(cx),
                 &[DisplayPoint::new(2, 4)..DisplayPoint::new(2, 4)]
             );
 
-            view.move_to_next_word_boundary(&(), cx);
+            view.move_to_next_word_boundary(&MoveToNextWordBoundary, cx);
             assert_eq!(
                 view.selection_ranges(cx),
                 &[DisplayPoint::new(2, 8)..DisplayPoint::new(2, 8)]
             );
 
-            view.move_to_previous_word_boundary(&(), cx);
+            view.move_to_previous_word_boundary(&MoveToPreviousWordBoundary, cx);
             assert_eq!(
                 view.selection_ranges(cx),
                 &[DisplayPoint::new(2, 4)..DisplayPoint::new(2, 4)]
             );
 
-            view.move_to_previous_word_boundary(&(), cx);
+            view.move_to_previous_word_boundary(&MoveToPreviousWordBoundary, cx);
             assert_eq!(
                 view.selection_ranges(cx),
                 &[DisplayPoint::new(1, 15)..DisplayPoint::new(1, 15)]
@@ -3460,8 +3570,10 @@ mod tests {
                 cx,
             )
         });
-        let settings = settings::channel(&cx.font_cache()).unwrap().1;
-        let (_, view) = cx.add_window(|cx| Editor::for_buffer(buffer.clone(), settings, cx));
+        let settings = settings::test(&cx).1;
+        let (_, view) = cx.add_window(Default::default(), |cx| {
+            Editor::for_buffer(buffer.clone(), settings, cx)
+        });
 
         view.update(cx, |view, cx| {
             view.select_display_ranges(
@@ -3476,7 +3588,7 @@ mod tests {
                 cx,
             )
             .unwrap();
-            view.backspace(&(), cx);
+            view.backspace(&Backspace, cx);
         });
 
         assert_eq!(
@@ -3494,8 +3606,10 @@ mod tests {
                 cx,
             )
         });
-        let settings = settings::channel(&cx.font_cache()).unwrap().1;
-        let (_, view) = cx.add_window(|cx| Editor::for_buffer(buffer.clone(), settings, cx));
+        let settings = settings::test(&cx).1;
+        let (_, view) = cx.add_window(Default::default(), |cx| {
+            Editor::for_buffer(buffer.clone(), settings, cx)
+        });
 
         view.update(cx, |view, cx| {
             view.select_display_ranges(
@@ -3510,7 +3624,7 @@ mod tests {
                 cx,
             )
             .unwrap();
-            view.delete(&(), cx);
+            view.delete(&Delete, cx);
         });
 
         assert_eq!(
@@ -3521,9 +3635,11 @@ mod tests {
 
     #[gpui::test]
     fn test_delete_line(cx: &mut gpui::MutableAppContext) {
-        let settings = settings::channel(&cx.font_cache()).unwrap().1;
+        let settings = settings::test(&cx).1;
         let buffer = cx.add_model(|cx| Buffer::new(0, "abc\ndef\nghi\n", cx));
-        let (_, view) = cx.add_window(|cx| Editor::for_buffer(buffer, settings, cx));
+        let (_, view) = cx.add_window(Default::default(), |cx| {
+            Editor::for_buffer(buffer, settings, cx)
+        });
         view.update(cx, |view, cx| {
             view.select_display_ranges(
                 &[
@@ -3534,8 +3650,8 @@ mod tests {
                 cx,
             )
             .unwrap();
-            view.delete_line(&(), cx);
-            assert_eq!(view.text(cx), "ghi");
+            view.delete_line(&DeleteLine, cx);
+            assert_eq!(view.display_text(cx), "ghi");
             assert_eq!(
                 view.selection_ranges(cx),
                 vec![
@@ -3545,14 +3661,16 @@ mod tests {
             );
         });
 
-        let settings = settings::channel(&cx.font_cache()).unwrap().1;
+        let settings = settings::test(&cx).1;
         let buffer = cx.add_model(|cx| Buffer::new(0, "abc\ndef\nghi\n", cx));
-        let (_, view) = cx.add_window(|cx| Editor::for_buffer(buffer, settings, cx));
+        let (_, view) = cx.add_window(Default::default(), |cx| {
+            Editor::for_buffer(buffer, settings, cx)
+        });
         view.update(cx, |view, cx| {
             view.select_display_ranges(&[DisplayPoint::new(2, 0)..DisplayPoint::new(0, 1)], cx)
                 .unwrap();
-            view.delete_line(&(), cx);
-            assert_eq!(view.text(cx), "ghi\n");
+            view.delete_line(&DeleteLine, cx);
+            assert_eq!(view.display_text(cx), "ghi\n");
             assert_eq!(
                 view.selection_ranges(cx),
                 vec![DisplayPoint::new(0, 1)..DisplayPoint::new(0, 1)]
@@ -3562,9 +3680,11 @@ mod tests {
 
     #[gpui::test]
     fn test_duplicate_line(cx: &mut gpui::MutableAppContext) {
-        let settings = settings::channel(&cx.font_cache()).unwrap().1;
+        let settings = settings::test(&cx).1;
         let buffer = cx.add_model(|cx| Buffer::new(0, "abc\ndef\nghi\n", cx));
-        let (_, view) = cx.add_window(|cx| Editor::for_buffer(buffer, settings, cx));
+        let (_, view) = cx.add_window(Default::default(), |cx| {
+            Editor::for_buffer(buffer, settings, cx)
+        });
         view.update(cx, |view, cx| {
             view.select_display_ranges(
                 &[
@@ -3576,8 +3696,8 @@ mod tests {
                 cx,
             )
             .unwrap();
-            view.duplicate_line(&(), cx);
-            assert_eq!(view.text(cx), "abc\nabc\ndef\ndef\nghi\n\n");
+            view.duplicate_line(&DuplicateLine, cx);
+            assert_eq!(view.display_text(cx), "abc\nabc\ndef\ndef\nghi\n\n");
             assert_eq!(
                 view.selection_ranges(cx),
                 vec![
@@ -3589,9 +3709,11 @@ mod tests {
             );
         });
 
-        let settings = settings::channel(&cx.font_cache()).unwrap().1;
+        let settings = settings::test(&cx).1;
         let buffer = cx.add_model(|cx| Buffer::new(0, "abc\ndef\nghi\n", cx));
-        let (_, view) = cx.add_window(|cx| Editor::for_buffer(buffer, settings, cx));
+        let (_, view) = cx.add_window(Default::default(), |cx| {
+            Editor::for_buffer(buffer, settings, cx)
+        });
         view.update(cx, |view, cx| {
             view.select_display_ranges(
                 &[
@@ -3601,8 +3723,8 @@ mod tests {
                 cx,
             )
             .unwrap();
-            view.duplicate_line(&(), cx);
-            assert_eq!(view.text(cx), "abc\ndef\nghi\nabc\ndef\nghi\n");
+            view.duplicate_line(&DuplicateLine, cx);
+            assert_eq!(view.display_text(cx), "abc\ndef\nghi\nabc\ndef\nghi\n");
             assert_eq!(
                 view.selection_ranges(cx),
                 vec![
@@ -3615,9 +3737,11 @@ mod tests {
 
     #[gpui::test]
     fn test_move_line_up_down(cx: &mut gpui::MutableAppContext) {
-        let settings = settings::channel(&cx.font_cache()).unwrap().1;
+        let settings = settings::test(&cx).1;
         let buffer = cx.add_model(|cx| Buffer::new(0, sample_text(10, 5), cx));
-        let (_, view) = cx.add_window(|cx| Editor::for_buffer(buffer, settings, cx));
+        let (_, view) = cx.add_window(Default::default(), |cx| {
+            Editor::for_buffer(buffer, settings, cx)
+        });
         view.update(cx, |view, cx| {
             view.fold_ranges(
                 vec![
@@ -3637,10 +3761,16 @@ mod tests {
                 cx,
             )
             .unwrap();
-            assert_eq!(view.text(cx), "aa…bbb\nccc…eeee\nfffff\nggggg\n…i\njjjjj");
+            assert_eq!(
+                view.display_text(cx),
+                "aa…bbb\nccc…eeee\nfffff\nggggg\n…i\njjjjj"
+            );
 
-            view.move_line_up(&(), cx);
-            assert_eq!(view.text(cx), "aa…bbb\nccc…eeee\nggggg\n…i\njjjjj\nfffff");
+            view.move_line_up(&MoveLineUp, cx);
+            assert_eq!(
+                view.display_text(cx),
+                "aa…bbb\nccc…eeee\nggggg\n…i\njjjjj\nfffff"
+            );
             assert_eq!(
                 view.selection_ranges(cx),
                 vec![
@@ -3653,8 +3783,11 @@ mod tests {
         });
 
         view.update(cx, |view, cx| {
-            view.move_line_down(&(), cx);
-            assert_eq!(view.text(cx), "ccc…eeee\naa…bbb\nfffff\nggggg\n…i\njjjjj");
+            view.move_line_down(&MoveLineDown, cx);
+            assert_eq!(
+                view.display_text(cx),
+                "ccc…eeee\naa…bbb\nfffff\nggggg\n…i\njjjjj"
+            );
             assert_eq!(
                 view.selection_ranges(cx),
                 vec![
@@ -3667,8 +3800,11 @@ mod tests {
         });
 
         view.update(cx, |view, cx| {
-            view.move_line_down(&(), cx);
-            assert_eq!(view.text(cx), "ccc…eeee\nfffff\naa…bbb\nggggg\n…i\njjjjj");
+            view.move_line_down(&MoveLineDown, cx);
+            assert_eq!(
+                view.display_text(cx),
+                "ccc…eeee\nfffff\naa…bbb\nggggg\n…i\njjjjj"
+            );
             assert_eq!(
                 view.selection_ranges(cx),
                 vec![
@@ -3681,8 +3817,11 @@ mod tests {
         });
 
         view.update(cx, |view, cx| {
-            view.move_line_up(&(), cx);
-            assert_eq!(view.text(cx), "ccc…eeee\naa…bbb\nggggg\n…i\njjjjj\nfffff");
+            view.move_line_up(&MoveLineUp, cx);
+            assert_eq!(
+                view.display_text(cx),
+                "ccc…eeee\naa…bbb\nggggg\n…i\njjjjj\nfffff"
+            );
             assert_eq!(
                 view.selection_ranges(cx),
                 vec![
@@ -3698,23 +3837,25 @@ mod tests {
     #[gpui::test]
     fn test_clipboard(cx: &mut gpui::MutableAppContext) {
         let buffer = cx.add_model(|cx| Buffer::new(0, "one two three four five six ", cx));
-        let settings = settings::channel(&cx.font_cache()).unwrap().1;
+        let settings = settings::test(&cx).1;
         let view = cx
-            .add_window(|cx| Editor::for_buffer(buffer.clone(), settings, cx))
+            .add_window(Default::default(), |cx| {
+                Editor::for_buffer(buffer.clone(), settings, cx)
+            })
             .1;
 
         // Cut with three selections. Clipboard text is divided into three slices.
         view.update(cx, |view, cx| {
             view.select_ranges(vec![0..4, 8..14, 19..24], false, cx);
-            view.cut(&(), cx);
-            assert_eq!(view.text(cx), "two four six ");
+            view.cut(&Cut, cx);
+            assert_eq!(view.display_text(cx), "two four six ");
         });
 
         // Paste with three cursors. Each cursor pastes one slice of the clipboard text.
         view.update(cx, |view, cx| {
             view.select_ranges(vec![4..4, 9..9, 13..13], false, cx);
-            view.paste(&(), cx);
-            assert_eq!(view.text(cx), "two one four three six five ");
+            view.paste(&Paste, cx);
+            assert_eq!(view.display_text(cx), "two one four three six five ");
             assert_eq!(
                 view.selection_ranges(cx),
                 &[
@@ -3730,20 +3871,20 @@ mod tests {
         // is pasted at each cursor.
         view.update(cx, |view, cx| {
             view.select_ranges(vec![0..0, 28..28], false, cx);
-            view.insert(&"( ".to_string(), cx);
-            view.paste(&(), cx);
-            view.insert(&") ".to_string(), cx);
+            view.insert(&Insert("( ".into()), cx);
+            view.paste(&Paste, cx);
+            view.insert(&Insert(") ".into()), cx);
             assert_eq!(
-                view.text(cx),
+                view.display_text(cx),
                 "( one three five ) two one four three six five ( one three five ) "
             );
         });
 
         view.update(cx, |view, cx| {
             view.select_ranges(vec![0..0], false, cx);
-            view.insert(&"123\n4567\n89\n".to_string(), cx);
+            view.insert(&Insert("123\n4567\n89\n".into()), cx);
             assert_eq!(
-                view.text(cx),
+                view.display_text(cx),
                 "123\n4567\n89\n( one three five ) two one four three six five ( one three five ) "
             );
         });
@@ -3759,9 +3900,9 @@ mod tests {
                 cx,
             )
             .unwrap();
-            view.cut(&(), cx);
+            view.cut(&Cut, cx);
             assert_eq!(
-                view.text(cx),
+                view.display_text(cx),
                 "13\n9\n( one three five ) two one four three six five ( one three five ) "
             );
         });
@@ -3778,9 +3919,9 @@ mod tests {
                 cx,
             )
             .unwrap();
-            view.paste(&(), cx);
+            view.paste(&Paste, cx);
             assert_eq!(
-                view.text(cx),
+                view.display_text(cx),
                 "123\n4567\n9\n( 8ne three five ) two one four three six five ( one three five ) "
             );
             assert_eq!(
@@ -3797,7 +3938,7 @@ mod tests {
         view.update(cx, |view, cx| {
             view.select_display_ranges(&[DisplayPoint::new(0, 1)..DisplayPoint::new(0, 1)], cx)
                 .unwrap();
-            view.copy(&(), cx);
+            view.copy(&Copy, cx);
         });
 
         // Paste with three selections, noticing how the copied full-line selection is inserted
@@ -3812,9 +3953,9 @@ mod tests {
                 cx,
             )
             .unwrap();
-            view.paste(&(), cx);
+            view.paste(&Paste, cx);
             assert_eq!(
-                view.text(cx),
+                view.display_text(cx),
                 "123\n123\n123\n67\n123\n9\n( 8ne three five ) two one four three six five ( one three five ) "
             );
             assert_eq!(
@@ -3831,10 +3972,12 @@ mod tests {
     #[gpui::test]
     fn test_select_all(cx: &mut gpui::MutableAppContext) {
         let buffer = cx.add_model(|cx| Buffer::new(0, "abc\nde\nfgh", cx));
-        let settings = settings::channel(&cx.font_cache()).unwrap().1;
-        let (_, view) = cx.add_window(|cx| Editor::for_buffer(buffer, settings, cx));
+        let settings = settings::test(&cx).1;
+        let (_, view) = cx.add_window(Default::default(), |cx| {
+            Editor::for_buffer(buffer, settings, cx)
+        });
         view.update(cx, |view, cx| {
-            view.select_all(&(), cx);
+            view.select_all(&SelectAll, cx);
             assert_eq!(
                 view.selection_ranges(cx),
                 &[DisplayPoint::new(0, 0)..DisplayPoint::new(2, 3)]
@@ -3844,9 +3987,11 @@ mod tests {
 
     #[gpui::test]
     fn test_select_line(cx: &mut gpui::MutableAppContext) {
-        let settings = settings::channel(&cx.font_cache()).unwrap().1;
+        let settings = settings::test(&cx).1;
         let buffer = cx.add_model(|cx| Buffer::new(0, sample_text(6, 5), cx));
-        let (_, view) = cx.add_window(|cx| Editor::for_buffer(buffer, settings, cx));
+        let (_, view) = cx.add_window(Default::default(), |cx| {
+            Editor::for_buffer(buffer, settings, cx)
+        });
         view.update(cx, |view, cx| {
             view.select_display_ranges(
                 &[
@@ -3858,7 +4003,7 @@ mod tests {
                 cx,
             )
             .unwrap();
-            view.select_line(&(), cx);
+            view.select_line(&SelectLine, cx);
             assert_eq!(
                 view.selection_ranges(cx),
                 vec![
@@ -3869,7 +4014,7 @@ mod tests {
         });
 
         view.update(cx, |view, cx| {
-            view.select_line(&(), cx);
+            view.select_line(&SelectLine, cx);
             assert_eq!(
                 view.selection_ranges(cx),
                 vec![
@@ -3880,7 +4025,7 @@ mod tests {
         });
 
         view.update(cx, |view, cx| {
-            view.select_line(&(), cx);
+            view.select_line(&SelectLine, cx);
             assert_eq!(
                 view.selection_ranges(cx),
                 vec![DisplayPoint::new(0, 0)..DisplayPoint::new(5, 5)]
@@ -3890,9 +4035,11 @@ mod tests {
 
     #[gpui::test]
     fn test_split_selection_into_lines(cx: &mut gpui::MutableAppContext) {
-        let settings = settings::channel(&cx.font_cache()).unwrap().1;
+        let settings = settings::test(&cx).1;
         let buffer = cx.add_model(|cx| Buffer::new(0, sample_text(9, 5), cx));
-        let (_, view) = cx.add_window(|cx| Editor::for_buffer(buffer, settings, cx));
+        let (_, view) = cx.add_window(Default::default(), |cx| {
+            Editor::for_buffer(buffer, settings, cx)
+        });
         view.update(cx, |view, cx| {
             view.fold_ranges(
                 vec![
@@ -3912,12 +4059,15 @@ mod tests {
                 cx,
             )
             .unwrap();
-            assert_eq!(view.text(cx), "aa…bbb\nccc…eeee\nfffff\nggggg\n…i");
+            assert_eq!(view.display_text(cx), "aa…bbb\nccc…eeee\nfffff\nggggg\n…i");
         });
 
         view.update(cx, |view, cx| {
-            view.split_selection_into_lines(&(), cx);
-            assert_eq!(view.text(cx), "aaaaa\nbbbbb\nccc…eeee\nfffff\nggggg\n…i");
+            view.split_selection_into_lines(&SplitSelectionIntoLines, cx);
+            assert_eq!(
+                view.display_text(cx),
+                "aaaaa\nbbbbb\nccc…eeee\nfffff\nggggg\n…i"
+            );
             assert_eq!(
                 view.selection_ranges(cx),
                 [
@@ -3932,9 +4082,9 @@ mod tests {
         view.update(cx, |view, cx| {
             view.select_display_ranges(&[DisplayPoint::new(5, 0)..DisplayPoint::new(0, 1)], cx)
                 .unwrap();
-            view.split_selection_into_lines(&(), cx);
+            view.split_selection_into_lines(&SplitSelectionIntoLines, cx);
             assert_eq!(
-                view.text(cx),
+                view.display_text(cx),
                 "aaaaa\nbbbbb\nccccc\nddddd\neeeee\nfffff\nggggg\nhhhhh\niiiii"
             );
             assert_eq!(
@@ -3955,16 +4105,18 @@ mod tests {
 
     #[gpui::test]
     fn test_add_selection_above_below(cx: &mut gpui::MutableAppContext) {
-        let settings = settings::channel(&cx.font_cache()).unwrap().1;
+        let settings = settings::test(&cx).1;
         let buffer = cx.add_model(|cx| Buffer::new(0, "abc\ndefghi\n\njk\nlmno\n", cx));
-        let (_, view) = cx.add_window(|cx| Editor::for_buffer(buffer, settings, cx));
+        let (_, view) = cx.add_window(Default::default(), |cx| {
+            Editor::for_buffer(buffer, settings, cx)
+        });
 
         view.update(cx, |view, cx| {
             view.select_display_ranges(&[DisplayPoint::new(1, 3)..DisplayPoint::new(1, 3)], cx)
                 .unwrap();
         });
         view.update(cx, |view, cx| {
-            view.add_selection_above(&(), cx);
+            view.add_selection_above(&AddSelectionAbove, cx);
             assert_eq!(
                 view.selection_ranges(cx),
                 vec![
@@ -3975,7 +4127,7 @@ mod tests {
         });
 
         view.update(cx, |view, cx| {
-            view.add_selection_above(&(), cx);
+            view.add_selection_above(&AddSelectionAbove, cx);
             assert_eq!(
                 view.selection_ranges(cx),
                 vec![
@@ -3986,7 +4138,7 @@ mod tests {
         });
 
         view.update(cx, |view, cx| {
-            view.add_selection_below(&(), cx);
+            view.add_selection_below(&AddSelectionBelow, cx);
             assert_eq!(
                 view.selection_ranges(cx),
                 vec![DisplayPoint::new(1, 3)..DisplayPoint::new(1, 3)]
@@ -3994,7 +4146,7 @@ mod tests {
         });
 
         view.update(cx, |view, cx| {
-            view.add_selection_below(&(), cx);
+            view.add_selection_below(&AddSelectionBelow, cx);
             assert_eq!(
                 view.selection_ranges(cx),
                 vec![
@@ -4005,7 +4157,7 @@ mod tests {
         });
 
         view.update(cx, |view, cx| {
-            view.add_selection_below(&(), cx);
+            view.add_selection_below(&AddSelectionBelow, cx);
             assert_eq!(
                 view.selection_ranges(cx),
                 vec![
@@ -4020,7 +4172,7 @@ mod tests {
                 .unwrap();
         });
         view.update(cx, |view, cx| {
-            view.add_selection_below(&(), cx);
+            view.add_selection_below(&AddSelectionBelow, cx);
             assert_eq!(
                 view.selection_ranges(cx),
                 vec![
@@ -4031,7 +4183,7 @@ mod tests {
         });
 
         view.update(cx, |view, cx| {
-            view.add_selection_below(&(), cx);
+            view.add_selection_below(&AddSelectionBelow, cx);
             assert_eq!(
                 view.selection_ranges(cx),
                 vec![
@@ -4042,7 +4194,7 @@ mod tests {
         });
 
         view.update(cx, |view, cx| {
-            view.add_selection_above(&(), cx);
+            view.add_selection_above(&AddSelectionAbove, cx);
             assert_eq!(
                 view.selection_ranges(cx),
                 vec![DisplayPoint::new(1, 4)..DisplayPoint::new(1, 3)]
@@ -4050,7 +4202,7 @@ mod tests {
         });
 
         view.update(cx, |view, cx| {
-            view.add_selection_above(&(), cx);
+            view.add_selection_above(&AddSelectionAbove, cx);
             assert_eq!(
                 view.selection_ranges(cx),
                 vec![DisplayPoint::new(1, 4)..DisplayPoint::new(1, 3)]
@@ -4060,7 +4212,7 @@ mod tests {
         view.update(cx, |view, cx| {
             view.select_display_ranges(&[DisplayPoint::new(0, 1)..DisplayPoint::new(1, 4)], cx)
                 .unwrap();
-            view.add_selection_below(&(), cx);
+            view.add_selection_below(&AddSelectionBelow, cx);
             assert_eq!(
                 view.selection_ranges(cx),
                 vec![
@@ -4072,7 +4224,7 @@ mod tests {
         });
 
         view.update(cx, |view, cx| {
-            view.add_selection_below(&(), cx);
+            view.add_selection_below(&AddSelectionBelow, cx);
             assert_eq!(
                 view.selection_ranges(cx),
                 vec![
@@ -4085,7 +4237,7 @@ mod tests {
         });
 
         view.update(cx, |view, cx| {
-            view.add_selection_above(&(), cx);
+            view.add_selection_above(&AddSelectionAbove, cx);
             assert_eq!(
                 view.selection_ranges(cx),
                 vec![
@@ -4101,7 +4253,7 @@ mod tests {
                 .unwrap();
         });
         view.update(cx, |view, cx| {
-            view.add_selection_above(&(), cx);
+            view.add_selection_above(&AddSelectionAbove, cx);
             assert_eq!(
                 view.selection_ranges(cx),
                 vec![
@@ -4114,7 +4266,7 @@ mod tests {
         });
 
         view.update(cx, |view, cx| {
-            view.add_selection_below(&(), cx);
+            view.add_selection_below(&AddSelectionBelow, cx);
             assert_eq!(
                 view.selection_ranges(cx),
                 vec![
@@ -4128,8 +4280,9 @@ mod tests {
 
     #[gpui::test]
     async fn test_select_larger_smaller_syntax_node(mut cx: gpui::TestAppContext) {
-        let app_state = cx.read(build_app_state);
-        let lang = app_state.languages.select_language("z.rs");
+        let settings = cx.read(settings::test).1;
+        let languages = LanguageRegistry::new();
+        let lang = languages.select_language("z.rs");
         let text = r#"
             use mod1::mod2::{mod3, mod4};
 
@@ -4142,8 +4295,7 @@ mod tests {
             let history = History::new(text.into());
             Buffer::from_history(0, history, None, lang.cloned(), cx)
         });
-        let (_, view) =
-            cx.add_window(|cx| Editor::for_buffer(buffer, app_state.settings.clone(), cx));
+        let (_, view) = cx.add_window(|cx| Editor::for_buffer(buffer, settings.clone(), cx));
         view.condition(&cx, |view, cx| !view.buffer.read(cx).is_parsing())
             .await;
 
@@ -4157,7 +4309,7 @@ mod tests {
                 cx,
             )
             .unwrap();
-            view.select_larger_syntax_node(&(), cx);
+            view.select_larger_syntax_node(&SelectLargerSyntaxNode, cx);
         });
         assert_eq!(
             view.update(&mut cx, |view, cx| view.selection_ranges(cx)),
@@ -4169,7 +4321,7 @@ mod tests {
         );
 
         view.update(&mut cx, |view, cx| {
-            view.select_larger_syntax_node(&(), cx);
+            view.select_larger_syntax_node(&SelectLargerSyntaxNode, cx);
         });
         assert_eq!(
             view.update(&mut cx, |view, cx| view.selection_ranges(cx)),
@@ -4180,7 +4332,7 @@ mod tests {
         );
 
         view.update(&mut cx, |view, cx| {
-            view.select_larger_syntax_node(&(), cx);
+            view.select_larger_syntax_node(&SelectLargerSyntaxNode, cx);
         });
         assert_eq!(
             view.update(&mut cx, |view, cx| view.selection_ranges(cx)),
@@ -4189,7 +4341,7 @@ mod tests {
 
         // Trying to expand the selected syntax node one more time has no effect.
         view.update(&mut cx, |view, cx| {
-            view.select_larger_syntax_node(&(), cx);
+            view.select_larger_syntax_node(&SelectLargerSyntaxNode, cx);
         });
         assert_eq!(
             view.update(&mut cx, |view, cx| view.selection_ranges(cx)),
@@ -4197,7 +4349,7 @@ mod tests {
         );
 
         view.update(&mut cx, |view, cx| {
-            view.select_smaller_syntax_node(&(), cx);
+            view.select_smaller_syntax_node(&SelectSmallerSyntaxNode, cx);
         });
         assert_eq!(
             view.update(&mut cx, |view, cx| view.selection_ranges(cx)),
@@ -4208,7 +4360,7 @@ mod tests {
         );
 
         view.update(&mut cx, |view, cx| {
-            view.select_smaller_syntax_node(&(), cx);
+            view.select_smaller_syntax_node(&SelectSmallerSyntaxNode, cx);
         });
         assert_eq!(
             view.update(&mut cx, |view, cx| view.selection_ranges(cx)),
@@ -4220,7 +4372,7 @@ mod tests {
         );
 
         view.update(&mut cx, |view, cx| {
-            view.select_smaller_syntax_node(&(), cx);
+            view.select_smaller_syntax_node(&SelectSmallerSyntaxNode, cx);
         });
         assert_eq!(
             view.update(&mut cx, |view, cx| view.selection_ranges(cx)),
@@ -4233,7 +4385,7 @@ mod tests {
 
         // Trying to shrink the selected syntax node one more time has no effect.
         view.update(&mut cx, |view, cx| {
-            view.select_smaller_syntax_node(&(), cx);
+            view.select_smaller_syntax_node(&SelectSmallerSyntaxNode, cx);
         });
         assert_eq!(
             view.update(&mut cx, |view, cx| view.selection_ranges(cx)),
@@ -4254,7 +4406,7 @@ mod tests {
                 ],
                 cx,
             );
-            view.select_larger_syntax_node(&(), cx);
+            view.select_larger_syntax_node(&SelectLargerSyntaxNode, cx);
         });
         assert_eq!(
             view.update(&mut cx, |view, cx| view.selection_ranges(cx)),

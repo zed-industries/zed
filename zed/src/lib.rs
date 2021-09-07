@@ -1,44 +1,61 @@
 pub mod assets;
+pub mod channel;
+pub mod chat_panel;
 pub mod editor;
 pub mod file_finder;
 pub mod fs;
 mod fuzzy;
 pub mod language;
 pub mod menus;
-mod operation_queue;
+pub mod project_browser;
 pub mod rpc;
 pub mod settings;
-mod sum_tree;
 #[cfg(any(test, feature = "test-support"))]
 pub mod test;
 pub mod theme;
 pub mod theme_selector;
 mod time;
+pub mod user;
 mod util;
 pub mod workspace;
 pub mod worktree;
 
-pub use settings::Settings;
-
+use crate::util::TryFutureExt;
+use channel::ChannelList;
+use gpui::{action, ModelHandle};
 use parking_lot::Mutex;
 use postage::watch;
 use std::sync::Arc;
-use zrpc::ForegroundRouter;
+
+pub use settings::Settings;
+
+action!(About);
+action!(Quit);
+action!(Authenticate);
 
 pub struct AppState {
     pub settings_tx: Arc<Mutex<watch::Sender<Settings>>>,
     pub settings: watch::Receiver<Settings>,
     pub languages: Arc<language::LanguageRegistry>,
     pub themes: Arc<settings::ThemeRegistry>,
-    pub rpc_router: Arc<ForegroundRouter>,
-    pub rpc: rpc::Client,
+    pub rpc: Arc<rpc::Client>,
     pub fs: Arc<dyn fs::Fs>,
+    pub channel_list: ModelHandle<ChannelList>,
 }
 
-pub fn init(cx: &mut gpui::MutableAppContext) {
-    cx.add_global_action("app:quit", quit);
+pub fn init(app_state: &Arc<AppState>, cx: &mut gpui::MutableAppContext) {
+    cx.add_global_action(quit);
+
+    cx.add_global_action({
+        let rpc = app_state.rpc.clone();
+        move |_: &Authenticate, cx| {
+            let rpc = rpc.clone();
+            cx.spawn(|cx| async move { rpc.authenticate_and_connect(&cx).log_err().await })
+                .detach();
+        }
+    });
 }
 
-fn quit(_: &(), cx: &mut gpui::MutableAppContext) {
+fn quit(_: &Quit, cx: &mut gpui::MutableAppContext) {
     cx.platform().quit();
 }

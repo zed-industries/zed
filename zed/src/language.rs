@@ -1,4 +1,4 @@
-use crate::settings::{HighlightMap, Theme};
+use crate::{settings::HighlightMap, theme::SyntaxTheme};
 use parking_lot::Mutex;
 use rust_embed::RustEmbed;
 use serde::Deserialize;
@@ -39,7 +39,7 @@ impl Language {
         self.highlight_map.lock().clone()
     }
 
-    pub fn set_theme(&self, theme: &Theme) {
+    pub fn set_theme(&self, theme: &SyntaxTheme) {
         *self.highlight_map.lock() = HighlightMap::new(self.highlight_query.capture_names(), theme);
     }
 }
@@ -47,7 +47,8 @@ impl Language {
 impl LanguageRegistry {
     pub fn new() -> Self {
         let grammar = tree_sitter_rust::language();
-        let rust_config = toml::from_slice(&LanguageDir::get("rust/config.toml").unwrap()).unwrap();
+        let rust_config =
+            toml::from_slice(&LanguageDir::get("rust/config.toml").unwrap().data).unwrap();
         let rust_language = Language {
             config: rust_config,
             grammar,
@@ -61,7 +62,7 @@ impl LanguageRegistry {
         }
     }
 
-    pub fn set_theme(&self, theme: &Theme) {
+    pub fn set_theme(&self, theme: &SyntaxTheme) {
         for language in &self.languages {
             language.set_theme(theme);
         }
@@ -84,7 +85,7 @@ impl LanguageRegistry {
     fn load_query(grammar: tree_sitter::Language, path: &str) -> Query {
         Query::new(
             grammar,
-            str::from_utf8(LanguageDir::get(path).unwrap().as_ref()).unwrap(),
+            str::from_utf8(&LanguageDir::get(path).unwrap().data).unwrap(),
         )
         .unwrap()
     }

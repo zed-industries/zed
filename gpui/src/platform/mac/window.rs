@@ -8,13 +8,14 @@ use crate::{
 use block::ConcreteBlock;
 use cocoa::{
     appkit::{
-        NSApplication, NSBackingStoreBuffered, NSScreen, NSView, NSViewHeightSizable,
-        NSViewWidthSizable, NSWindow, NSWindowStyleMask,
+        CGPoint, NSApplication, NSBackingStoreBuffered, NSScreen, NSView, NSViewHeightSizable,
+        NSViewWidthSizable, NSWindow, NSWindowButton, NSWindowStyleMask,
     },
     base::{id, nil},
     foundation::{NSAutoreleasePool, NSInteger, NSSize, NSString},
     quartzcore::AutoresizingMask,
 };
+use core_graphics::display::CGRect;
 use ctor::ctor;
 use foreign_types::ForeignType as _;
 use objc::{
@@ -64,6 +65,10 @@ unsafe fn build_classes() {
         decl.add_method(
             sel!(sendEvent:),
             send_event as extern "C" fn(&Object, Sel, id),
+        );
+        decl.add_method(
+            sel!(windowDidResize:),
+            window_did_resize as extern "C" fn(&Object, Sel, id),
         );
         decl.add_method(sel!(close), close_window as extern "C" fn(&Object, Sel));
         decl.register()
@@ -129,7 +134,7 @@ struct WindowState {
     id: usize,
     native_window: id,
     event_callback: Option<Box<dyn FnMut(Event)>>,
-    resize_callback: Option<Box<dyn FnMut(&mut dyn platform::WindowContext)>>,
+    resize_callback: Option<Box<dyn FnMut()>>,
     close_callback: Option<Box<dyn FnOnce()>>,
     synthetic_drag_counter: usize,
     executor: Rc<executor::Foreground>,
@@ -138,6 +143,7 @@ struct WindowState {
     command_queue: metal::CommandQueue,
     last_fresh_keydown: Option<(Keystroke, String)>,
     layer: id,
+    traffic_light_position: Option<Vector2F>,
 }
 
 impl Window {
@@ -153,10 +159,14 @@ impl Window {
             let pool = NSAutoreleasePool::new(nil);
 
             let frame = options.bounds.to_ns_rect();
-            let style_mask = NSWindowStyleMask::NSClosableWindowMask
+            let mut style_mask = NSWindowStyleMask::NSClosableWindowMask
                 | NSWindowStyleMask::NSMiniaturizableWindowMask
                 | NSWindowStyleMask::NSResizableWindowMask
                 | NSWindowStyleMask::NSTitledWindowMask;
+
+            if options.titlebar_appears_transparent {
+                style_mask |= NSWindowStyleMask::NSFullSizeContentViewWindowMask;
+            }
 
             let native_window: id = msg_send![WINDOW_CLASS, alloc];
             let native_window = native_window.initWithContentRect_styleMask_backing_defer_(
@@ -199,12 +209,14 @@ impl Window {
                 command_queue: device.new_command_queue(),
                 last_fresh_keydown: None,
                 layer,
+                traffic_light_position: options.traffic_light_position,
             })));
 
             (*native_window).set_ivar(
                 WINDOW_STATE_IVAR,
                 Rc::into_raw(window.0.clone()) as *const c_void,
             );
+            native_window.setDelegate_(native_window);
             (*native_view).set_ivar(
                 WINDOW_STATE_IVAR,
                 Rc::into_raw(window.0.clone()) as *const c_void,
@@ -212,6 +224,9 @@ impl Window {
 
             if let Some(title) = options.title.as_ref() {
                 native_window.setTitle_(NSString::alloc(nil).init_str(title));
+            }
+            if options.titlebar_appears_transparent {
+                native_window.setTitlebarAppearsTransparent_(YES);
             }
             native_window.setAcceptsMouseMovedEvents_(YES);
 
@@ -235,6 +250,7 @@ impl Window {
             native_window.center();
             native_window.makeKeyAndOrderFront_(nil);
 
+            window.0.borrow().move_traffic_light();
             pool.drain();
 
             window
@@ -272,7 +288,7 @@ impl platform::Window for Window {
         self.0.as_ref().borrow_mut().event_callback = Some(callback);
     }
 
-    fn on_resize(&mut self, callback: Box<dyn FnMut(&mut dyn platform::WindowContext)>) {
+    fn on_resize(&mut self, callback: Box<dyn FnMut()>) {
         self.0.as_ref().borrow_mut().resize_callback = Some(callback);
     }
 
@@ -329,6 +345,56 @@ impl platform::WindowContext for Window {
     fn present_scene(&mut self, scene: Scene) {
         self.0.as_ref().borrow_mut().present_scene(scene);
     }
+
+    fn titlebar_height(&self) -> f32 {
+        self.0.as_ref().borrow().titlebar_height()
+    }
+}
+
+impl WindowState {
+    fn move_traffic_light(&self) {
+        if let Some(traffic_light_position) = self.traffic_light_position {
+            let titlebar_height = self.titlebar_height();
+
+            unsafe {
+                let close_button: id = msg_send![
+                    self.native_window,
+                    standardWindowButton: NSWindowButton::NSWindowCloseButton
+                ];
+                let min_button: id = msg_send![
+                    self.native_window,
+                    standardWindowButton: NSWindowButton::NSWindowMiniaturizeButton
+                ];
+                let zoom_button: id = msg_send![
+                    self.native_window,
+                    standardWindowButton: NSWindowButton::NSWindowZoomButton
+                ];
+
+                let mut close_button_frame: CGRect = msg_send![close_button, frame];
+                let mut min_button_frame: CGRect = msg_send![min_button, frame];
+                let mut zoom_button_frame: CGRect = msg_send![zoom_button, frame];
+                let mut origin = vec2f(
+                    traffic_light_position.x(),
+                    titlebar_height
+                        - traffic_light_position.y()
+                        - close_button_frame.size.height as f32,
+                );
+                let button_spacing =
+                    (min_button_frame.origin.x - close_button_frame.origin.x) as f32;
+
+                close_button_frame.origin = CGPoint::new(origin.x() as f64, origin.y() as f64);
+                let _: () = msg_send![close_button, setFrame: close_button_frame];
+                origin.set_x(origin.x() + button_spacing);
+
+                min_button_frame.origin = CGPoint::new(origin.x() as f64, origin.y() as f64);
+                let _: () = msg_send![min_button, setFrame: min_button_frame];
+                origin.set_x(origin.x() + button_spacing);
+
+                zoom_button_frame.origin = CGPoint::new(origin.x() as f64, origin.y() as f64);
+                let _: () = msg_send![zoom_button, setFrame: zoom_button_frame];
+            }
+        }
+    }
 }
 
 impl platform::WindowContext for WindowState {
@@ -342,6 +408,14 @@ impl platform::WindowContext for WindowState {
         unsafe {
             let screen: id = msg_send![self.native_window, screen];
             NSScreen::backingScaleFactor(screen) as f32
+        }
+    }
+
+    fn titlebar_height(&self) -> f32 {
+        unsafe {
+            let frame = NSWindow::frame(self.native_window);
+            let content_layout_rect: CGRect = msg_send![self.native_window, contentLayoutRect];
+            (frame.size.height - content_layout_rect.size.height) as f32
         }
     }
 
@@ -442,6 +516,11 @@ extern "C" fn send_event(this: &Object, _: Sel, native_event: id) {
     }
 }
 
+extern "C" fn window_did_resize(this: &Object, _: Sel, _: id) {
+    let window_state = unsafe { get_window_state(this) };
+    window_state.as_ref().borrow().move_traffic_light();
+}
+
 extern "C" fn close_window(this: &Object, _: Sel) {
     unsafe {
         let close_callback = {
@@ -469,24 +548,24 @@ extern "C" fn make_backing_layer(this: &Object, _: Sel) -> id {
 
 extern "C" fn view_did_change_backing_properties(this: &Object, _: Sel) {
     let window_state = unsafe { get_window_state(this) };
-    let mut window_state = window_state.as_ref().borrow_mut();
+    let mut window_state_borrow = window_state.as_ref().borrow_mut();
 
     unsafe {
-        let _: () =
-            msg_send![window_state.layer, setContentsScale: window_state.scale_factor() as f64];
+        let _: () = msg_send![window_state_borrow.layer, setContentsScale: window_state_borrow.scale_factor() as f64];
     }
 
-    if let Some(mut callback) = window_state.resize_callback.take() {
-        callback(&mut *window_state);
-        window_state.resize_callback = Some(callback);
+    if let Some(mut callback) = window_state_borrow.resize_callback.take() {
+        drop(window_state_borrow);
+        callback();
+        window_state.as_ref().borrow_mut().resize_callback = Some(callback);
     };
 }
 
 extern "C" fn set_frame_size(this: &Object, _: Sel, size: NSSize) {
     let window_state = unsafe { get_window_state(this) };
-    let mut window_state = window_state.as_ref().borrow_mut();
+    let mut window_state_borrow = window_state.as_ref().borrow_mut();
 
-    if window_state.size() == vec2f(size.width as f32, size.height as f32) {
+    if window_state_borrow.size() == vec2f(size.width as f32, size.height as f32) {
         return;
     }
 
@@ -494,19 +573,20 @@ extern "C" fn set_frame_size(this: &Object, _: Sel, size: NSSize) {
         let _: () = msg_send![super(this, class!(NSView)), setFrameSize: size];
     }
 
-    let scale_factor = window_state.scale_factor() as f64;
+    let scale_factor = window_state_borrow.scale_factor() as f64;
     let drawable_size: NSSize = NSSize {
         width: size.width * scale_factor,
         height: size.height * scale_factor,
     };
 
     unsafe {
-        let _: () = msg_send![window_state.layer, setDrawableSize: drawable_size];
+        let _: () = msg_send![window_state_borrow.layer, setDrawableSize: drawable_size];
     }
 
-    if let Some(mut callback) = window_state.resize_callback.take() {
-        callback(&mut *window_state);
-        window_state.resize_callback = Some(callback);
+    if let Some(mut callback) = window_state_borrow.resize_callback.take() {
+        drop(window_state_borrow);
+        callback();
+        window_state.borrow_mut().resize_callback = Some(callback);
     };
 }
 

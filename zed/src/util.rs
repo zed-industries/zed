@@ -1,28 +1,11 @@
+use futures::{Future};
+pub use gpui::sum_tree::Bias;
 use rand::prelude::*;
-use std::cmp::Ordering;
-
-#[derive(Copy, Clone, Eq, PartialEq, Debug, Hash)]
-pub enum Bias {
-    Left,
-    Right,
-}
-
-impl PartialOrd for Bias {
-    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
-        Some(self.cmp(other))
-    }
-}
-
-impl Ord for Bias {
-    fn cmp(&self, other: &Self) -> Ordering {
-        match (self, other) {
-            (Self::Left, Self::Left) => Ordering::Equal,
-            (Self::Left, Self::Right) => Ordering::Less,
-            (Self::Right, Self::Right) => Ordering::Equal,
-            (Self::Right, Self::Left) => Ordering::Greater,
-        }
-    }
-}
+use std::{
+    cmp::Ordering,
+    pin::Pin,
+    task::{Context, Poll},
+};
 
 pub fn post_inc(value: &mut usize) -> usize {
     let prev = *value;
@@ -77,6 +60,61 @@ impl<T: Rng> Iterator for RandomCharIter<T> {
             46..=58 => ['🍐', '🏀', '🍗', '🎉'].choose(&mut self.0).copied(),
             // ascii letters
             _ => Some(self.0.gen_range(b'a'..b'z' + 1).into()),
+        }
+    }
+}
+
+pub trait ResultExt {
+    type Ok;
+
+    fn log_err(self) -> Option<Self::Ok>;
+}
+
+impl<T> ResultExt for anyhow::Result<T> {
+    type Ok = T;
+
+    fn log_err(self) -> Option<T> {
+        match self {
+            Ok(value) => Some(value),
+            Err(error) => {
+                log::error!("{:?}", error);
+                None
+            }
+        }
+    }
+}
+
+pub trait TryFutureExt {
+    fn log_err(self) -> LogErrorFuture<Self>
+    where
+        Self: Sized;
+}
+
+impl<F, T> TryFutureExt for F
+where
+    F: Future<Output = anyhow::Result<T>>,
+{
+    fn log_err(self) -> LogErrorFuture<Self>
+    where
+        Self: Sized,
+    {
+        LogErrorFuture(self)
+    }
+}
+
+pub struct LogErrorFuture<F>(F);
+
+impl<F, T> Future for LogErrorFuture<F>
+where
+    F: Future<Output = anyhow::Result<T>>,
+{
+    type Output = Option<T>;
+
+    fn poll(self: std::pin::Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
+        let inner = unsafe { Pin::new_unchecked(&mut self.get_unchecked_mut().0) };
+        match inner.poll(cx) {
+            Poll::Ready(output) => Poll::Ready(output.log_err()),
+            Poll::Pending => Poll::Pending,
         }
     }
 }

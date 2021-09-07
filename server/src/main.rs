@@ -1,6 +1,7 @@
 mod admin;
 mod assets;
 mod auth;
+mod db;
 mod env;
 mod errors;
 mod expiring;
@@ -8,20 +9,17 @@ mod github;
 mod home;
 mod rpc;
 mod team;
-#[cfg(test)]
-mod tests;
 
 use self::errors::TideResultExt as _;
-use anyhow::{Context, Result};
-use async_sqlx_session::PostgresSessionStore;
-use async_std::{net::TcpListener, sync::RwLock as AsyncRwLock};
+use anyhow::Result;
+use async_std::net::TcpListener;
 use async_trait::async_trait;
 use auth::RequestExt as _;
+use db::Db;
 use handlebars::{Handlebars, TemplateRenderError};
 use parking_lot::RwLock;
 use rust_embed::RustEmbed;
 use serde::{Deserialize, Serialize};
-use sqlx::postgres::{PgPool, PgPoolOptions};
 use std::sync::Arc;
 use surf::http::cookies::SameSite;
 use tide::{log, sessions::SessionMiddleware};
@@ -29,7 +27,6 @@ use tide_compress::CompressMiddleware;
 use zrpc::Peer;
 
 type Request = tide::Request<Arc<AppState>>;
-type DbPool = PgPool;
 
 #[derive(RustEmbed)]
 #[folder = "templates"]
@@ -47,23 +44,17 @@ pub struct Config {
 }
 
 pub struct AppState {
-    db: sqlx::PgPool,
+    db: Db,
     handlebars: RwLock<Handlebars<'static>>,
     auth_client: auth::Client,
     github_client: Arc<github::AppClient>,
     repo_client: github::RepoClient,
-    rpc: AsyncRwLock<rpc::State>,
     config: Config,
 }
 
 impl AppState {
     async fn new(config: Config) -> tide::Result<Arc<Self>> {
-        let db = PgPoolOptions::new()
-            .max_connections(5)
-            .connect(&config.database_url)
-            .await
-            .context("failed to connect to postgres database")?;
-
+        let db = Db::new(&config.database_url, 5).await?;
         let github_client =
             github::AppClient::new(config.github_app_id, config.github_private_key.clone());
         let repo_client = github_client
@@ -77,7 +68,6 @@ impl AppState {
             auth_client: auth::build_client(&config.github_client_id, &config.github_client_secret),
             github_client,
             repo_client,
-            rpc: Default::default(),
             config,
         };
         this.register_partials();
@@ -93,7 +83,7 @@ impl AppState {
                 let partial = Templates::get(path.as_ref()).unwrap();
                 self.handlebars
                     .write()
-                    .register_partial(partial_name, std::str::from_utf8(partial.as_ref()).unwrap())
+                    .register_partial(partial_name, std::str::from_utf8(&partial.data).unwrap())
                     .unwrap()
             }
         }
@@ -108,7 +98,7 @@ impl AppState {
         self.register_partials();
 
         self.handlebars.read().render_template(
-            std::str::from_utf8(Templates::get(path).unwrap().as_ref()).unwrap(),
+            std::str::from_utf8(&Templates::get(path).unwrap().data).unwrap(),
             data,
         )
     }
@@ -117,7 +107,7 @@ impl AppState {
 #[async_trait]
 trait RequestExt {
     async fn layout_data(&mut self) -> tide::Result<Arc<LayoutData>>;
-    fn db(&self) -> &DbPool;
+    fn db(&self) -> &Db;
 }
 
 #[async_trait]
@@ -131,7 +121,7 @@ impl RequestExt for Request {
         Ok(self.ext::<Arc<LayoutData>>().unwrap().clone())
     }
 
-    fn db(&self) -> &DbPool {
+    fn db(&self) -> &Db {
         &self.state().db
     }
 }
@@ -173,7 +163,7 @@ pub async fn run_server(
     web.with(CompressMiddleware::new());
     web.with(
         SessionMiddleware::new(
-            PostgresSessionStore::new_with_table_name(&state.config.database_url, "sessions")
+            db::SessionStore::new_with_table_name(&state.config.database_url, "sessions")
                 .await
                 .unwrap(),
             state.config.session_secret.as_bytes(),

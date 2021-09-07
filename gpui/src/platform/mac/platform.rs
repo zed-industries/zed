@@ -1,5 +1,11 @@
 use super::{BoolExt as _, Dispatcher, FontSystem, Window};
-use crate::{executor, keymap::Keystroke, platform, ClipboardItem, Event, Menu, MenuItem};
+use crate::{
+    executor,
+    keymap::Keystroke,
+    platform::{self, CursorStyle},
+    AnyAction, ClipboardItem, Event, Menu, MenuItem,
+};
+use anyhow::{anyhow, Result};
 use block::ConcreteBlock;
 use cocoa::{
     appkit::{
@@ -27,7 +33,6 @@ use objc::{
 };
 use ptr::null_mut;
 use std::{
-    any::Any,
     cell::{Cell, RefCell},
     convert::TryInto,
     ffi::{c_void, CStr},
@@ -38,6 +43,7 @@ use std::{
     slice, str,
     sync::Arc,
 };
+use time::UtcOffset;
 
 const MAC_PLATFORM_IVAR: &'static str = "platform";
 static mut APP_CLASS: *const Class = ptr::null();
@@ -90,10 +96,10 @@ pub struct MacForegroundPlatformState {
     become_active: Option<Box<dyn FnMut()>>,
     resign_active: Option<Box<dyn FnMut()>>,
     event: Option<Box<dyn FnMut(crate::Event) -> bool>>,
-    menu_command: Option<Box<dyn FnMut(&str, Option<&dyn Any>)>>,
+    menu_command: Option<Box<dyn FnMut(&dyn AnyAction)>>,
     open_files: Option<Box<dyn FnMut(Vec<PathBuf>)>>,
     finish_launching: Option<Box<dyn FnOnce() -> ()>>,
-    menu_actions: Vec<(String, Option<Box<dyn Any>>)>,
+    menu_actions: Vec<Box<dyn AnyAction>>,
 }
 
 impl MacForegroundPlatform {
@@ -121,7 +127,6 @@ impl MacForegroundPlatform {
                         name,
                         keystroke,
                         action,
-                        arg,
                     } => {
                         if let Some(keystroke) = keystroke {
                             let keystroke = Keystroke::parse(keystroke).unwrap_or_else(|err| {
@@ -162,7 +167,7 @@ impl MacForegroundPlatform {
 
                         let tag = state.menu_actions.len() as NSInteger;
                         let _: () = msg_send![item, setTag: tag];
-                        state.menu_actions.push((action.to_string(), arg));
+                        state.menu_actions.push(action);
                     }
                 }
 
@@ -215,7 +220,7 @@ impl platform::ForegroundPlatform for MacForegroundPlatform {
         }
     }
 
-    fn on_menu_command(&self, callback: Box<dyn FnMut(&str, Option<&dyn Any>)>) {
+    fn on_menu_command(&self, callback: Box<dyn FnMut(&dyn AnyAction)>) {
         self.0.borrow_mut().menu_command = Some(callback);
     }
 
@@ -465,7 +470,7 @@ impl platform::Platform for MacPlatform {
         }
     }
 
-    fn write_credentials(&self, url: &str, username: &str, password: &[u8]) {
+    fn write_credentials(&self, url: &str, username: &str, password: &[u8]) -> Result<()> {
         let url = CFString::from(url);
         let username = CFString::from(username);
         let password = CFData::from_buffer(password);
@@ -498,12 +503,13 @@ impl platform::Platform for MacPlatform {
             }
 
             if status != errSecSuccess {
-                panic!("{} password failed: {}", verb, status);
+                return Err(anyhow!("{} password failed: {}", verb, status));
             }
         }
+        Ok(())
     }
 
-    fn read_credentials(&self, url: &str) -> Option<(String, Vec<u8>)> {
+    fn read_credentials(&self, url: &str) -> Result<Option<(String, Vec<u8>)>> {
         let url = CFString::from(url);
         let cf_true = CFBoolean::true_value().as_CFTypeRef();
 
@@ -521,27 +527,46 @@ impl platform::Platform for MacPlatform {
             let status = SecItemCopyMatching(attrs.as_concrete_TypeRef(), &mut result);
             match status {
                 security::errSecSuccess => {}
-                security::errSecItemNotFound | security::errSecUserCanceled => return None,
-                _ => panic!("reading password failed: {}", status),
+                security::errSecItemNotFound | security::errSecUserCanceled => return Ok(None),
+                _ => return Err(anyhow!("reading password failed: {}", status)),
             }
 
             let result = CFType::wrap_under_create_rule(result)
                 .downcast::<CFDictionary>()
-                .expect("keychain item was not a dictionary");
+                .ok_or_else(|| anyhow!("keychain item was not a dictionary"))?;
             let username = result
                 .find(kSecAttrAccount as *const _)
-                .expect("account was missing from keychain item");
+                .ok_or_else(|| anyhow!("account was missing from keychain item"))?;
             let username = CFType::wrap_under_get_rule(*username)
                 .downcast::<CFString>()
-                .expect("account was not a string");
+                .ok_or_else(|| anyhow!("account was not a string"))?;
             let password = result
                 .find(kSecValueData as *const _)
-                .expect("password was missing from keychain item");
+                .ok_or_else(|| anyhow!("password was missing from keychain item"))?;
             let password = CFType::wrap_under_get_rule(*password)
                 .downcast::<CFData>()
-                .expect("password was not a string");
+                .ok_or_else(|| anyhow!("password was not a string"))?;
 
-            Some((username.to_string(), password.bytes().to_vec()))
+            Ok(Some((username.to_string(), password.bytes().to_vec())))
+        }
+    }
+
+    fn set_cursor_style(&self, style: CursorStyle) {
+        unsafe {
+            let cursor: id = match style {
+                CursorStyle::Arrow => msg_send![class!(NSCursor), arrowCursor],
+                CursorStyle::ResizeLeftRight => msg_send![class!(NSCursor), resizeLeftRightCursor],
+                CursorStyle::PointingHand => msg_send![class!(NSCursor), pointingHandCursor],
+            };
+            let _: () = msg_send![cursor, set];
+        }
+    }
+
+    fn local_timezone(&self) -> UtcOffset {
+        unsafe {
+            let local_timezone: id = msg_send![class!(NSTimeZone), localTimeZone];
+            let seconds_from_gmt: NSInteger = msg_send![local_timezone, secondsFromGMT];
+            UtcOffset::from_whole_seconds(seconds_from_gmt.try_into().unwrap()).unwrap()
         }
     }
 }
@@ -623,8 +648,8 @@ extern "C" fn handle_menu_item(this: &mut Object, _: Sel, item: id) {
         if let Some(mut callback) = platform.menu_command.take() {
             let tag: NSInteger = msg_send![item, tag];
             let index = tag as usize;
-            if let Some((action, arg)) = platform.menu_actions.get(index) {
-                callback(action, arg.as_ref().map(Box::as_ref));
+            if let Some(action) = platform.menu_actions.get(index) {
+                callback(action.as_ref());
             }
             platform.menu_command = Some(callback);
         }

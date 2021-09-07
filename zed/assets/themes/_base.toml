@@ -1,47 +1,115 @@
-[ui]
-background = "$surfaces.1"
+[workspace]
+background = "$surface.0"
 
-[ui.tab]
-background = "$surfaces.2"
-text = "$text_colors.dull"
-border = { color = "#000000", width = 1.0 }
+[workspace.tab]
+text = "$text.2"
 padding = { left = 10, right = 10 }
-icon_close = "#383839"
-icon_dirty = "#556de8"
-icon_conflict = "#e45349"
+icon_close = "$text.0.color"
+icon_dirty = "$status.info"
+icon_conflict = "$status.warn"
 
-[ui.active_tab]
-extends = "$ui.tab"
-background = "$surfaces.3"
-text = "$text_colors.bright"
+[workspace.active_tab]
+extends = "$workspace.tab"
+background = "$surface.1"
+text = "$text.0"
 
-[ui.selector]
-background = "$surfaces.4"
-text = "$text_colors.bright"
-padding = { top = 6.0, bottom = 6.0, left = 6.0, right = 6.0 }
-margin.top = 12.0
-corner_radius = 6.0
-shadow = { offset = [0.0, 0.0], blur = 12.0, color = "#00000088" }
+[workspace.sidebar.icons]
+padding = { left = 10, right = 10 }
 
-[ui.selector.item]
+[workspace.sidebar.resize_handle]
+margin = { left = 6 }
+
+[workspace.sidebar_icon]
+color = "$text.2.color"
+
+[workspace.active_sidebar_icon]
+color = "$text.0.color"
+
+[chat_panel]
+channel_name = { extends = "$text.0", weight = "bold" }
+channel_name_hash = { text = "$text.2", padding.right = 5 }
+padding = 10
+
+[chat_panel.message]
+body = "$text.1"
+sender = { extends = "$text.0", weight = "bold", margin.right = 10 }
+timestamp = "$text.2"
+padding.bottom = 10
+
+[chat_panel.channel_select.item]
+padding = 4
+name = "$text.1"
+hash = { extends = "$text.2", margin.right = 5 }
+
+[chat_panel.channel_select.hovered_item]
+extends = "$chat_panel.channel_select.item"
+background = "$surface.2"
+corner_radius = 6
+
+[chat_panel.channel_select.active_item]
+extends = "$chat_panel.channel_select.item"
+name = "$text.0"
+
+[chat_panel.channel_select.hovered_active_item]
+extends = "$chat_panel.channel_select.hovered_item"
+name = "$text.0"
+
+[chat_panel.channel_select.header]
+extends = "$chat_panel.channel_select.active_item"
+padding.bottom = 0
+padding.left = 0
+
+[chat_panel.channel_select.menu]
+padding = 4
+corner_radius = 6
+border = { color = "#000000", width = 1 }
+background = "$surface.0"
+
+[chat_panel.input_editor_container]
+background = "$surface.1"
+corner_radius = 6
+padding = 6
+
+[chat_panel.input_editor]
+text = "$text.1.color"
+placeholder_text = "$text.2.color"
+background = "$surface.1"
+selection = "$selection.host"
+
+[chat_panel.sign_in_prompt]
+extends = "$text.0"
+underline = true
+
+[chat_panel.hovered_sign_in_prompt]
+extends = "$chat_panel.sign_in_prompt"
+color = "$text.1.color"
+
+[selector]
+background = "$surface.2"
+text = "$text.0"
+padding = 6
+margin.top = 12
+corner_radius = 6
+shadow = { offset = [0, 0], blur = 12, color = "#00000088" }
+input_editor = "$chat_panel.input_editor"
+
+[selector.item]
 background = "#424344"
-text = "#cccccc"
-highlight_text = { color = "#18a3ff", weight = "bold" }
-border = { color = "#000000", width = 1.0 }
-padding = { top = 6.0, bottom = 6.0, left = 6.0, right = 6.0 }
+text = "$text.1"
+highlight_text = { extends = "$text.base", color = "#18a3ff", weight = "bold" }
+border = { color = "#000000", width = 1 }
+padding = 6
 
-[ui.selector.active_item]
-extends = "$ui.selector.item"
+[selector.active_item]
+extends = "$selector.item"
 background = "#094771"
 
 [editor]
-background = "$surfaces.3"
-gutter_background = "$surfaces.3"
-active_line_background = "$surfaces.4"
-line_number = "$text_colors.dull"
-line_number_active = "$text_colors.bright"
-text = "$text_colors.normal"
-replicas = [
-    { selection = "#264f78", cursor = "$text_colors.bright" },
-    { selection = "#504f31", cursor = "#fcf154" },
-]
+text = "$text.1.color"
+background = "$surface.1"
+gutter_background = "$surface.1"
+active_line_background = "$surface.2"
+line_number = "$text.2.color"
+line_number_active = "$text.0.color"
+selection = "$selection.host"
+guest_selections = "$selection.guests"

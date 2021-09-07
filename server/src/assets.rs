@@ -26,6 +26,6 @@ async fn get_static_asset(request: Request) -> tide::Result {
 
     Ok(tide::Response::builder(200)
         .content_type(content_type)
-        .body(content.as_ref())
+        .body(content.data.as_ref())
         .build())
 }

@@ -1,6 +1,7 @@
 use gpui::{
     color::Color,
     fonts::{Properties, Weight},
+    text_layout::RunStyle,
     DebugContext, Element as _, Quad,
 };
 use log::LevelFilter;
@@ -12,7 +13,7 @@ fn main() {
 
     gpui::App::new(()).unwrap().run(|cx| {
         cx.platform().activate(true);
-        cx.add_window(|_| TextView);
+        cx.add_window(Default::default(), |_| TextView);
     });
 }
 
@@ -28,7 +29,7 @@ impl gpui::View for TextView {
         "View"
     }
 
-    fn render(&self, _: &gpui::RenderContext<Self>) -> gpui::ElementBox {
+    fn render(&mut self, _: &mut gpui::RenderContext<Self>) -> gpui::ElementBox {
         TextElement.boxed()
     }
 }
@@ -46,56 +47,57 @@ impl gpui::Element for TextElement {
         (constraint.max, ())
     }
 
-    fn after_layout(
-        &mut self,
-        _: pathfinder_geometry::vector::Vector2F,
-        _: &mut Self::LayoutState,
-        _: &mut gpui::AfterLayoutContext,
-    ) {
-    }
-
     fn paint(
         &mut self,
         bounds: RectF,
+        visible_bounds: RectF,
         _: &mut Self::LayoutState,
         cx: &mut gpui::PaintContext,
     ) -> Self::PaintState {
         let font_size = 12.;
         let family = cx.font_cache.load_family(&["SF Pro Display"]).unwrap();
-        let normal = cx
-            .font_cache
-            .select_font(family, &Default::default())
-            .unwrap();
-        let bold = cx
-            .font_cache
-            .select_font(
-                family,
-                &Properties {
-                    weight: Weight::BOLD,
-                    ..Default::default()
-                },
-            )
-            .unwrap();
+        let normal = RunStyle {
+            font_id: cx
+                .font_cache
+                .select_font(family, &Default::default())
+                .unwrap(),
+            color: Color::default(),
+            underline: false,
+        };
+        let bold = RunStyle {
+            font_id: cx
+                .font_cache
+                .select_font(
+                    family,
+                    &Properties {
+                        weight: Weight::BOLD,
+                        ..Default::default()
+                    },
+                )
+                .unwrap(),
+            color: Color::default(),
+            underline: false,
+        };
 
         let text = "Hello world!";
         let line = cx.text_layout_cache.layout_str(
             text,
             font_size,
             &[
-                (1, normal, Color::default()),
-                (1, bold, Color::default()),
-                (1, normal, Color::default()),
-                (1, bold, Color::default()),
-                (text.len() - 4, normal, Color::default()),
+                (1, normal.clone()),
+                (1, bold.clone()),
+                (1, normal.clone()),
+                (1, bold.clone()),
+                (text.len() - 4, normal.clone()),
             ],
         );
 
         cx.scene.push_quad(Quad {
-            bounds: bounds,
+            bounds,
             background: Some(Color::white()),
             ..Default::default()
         });
-        line.paint(bounds.origin(), bounds, cx);
+        line.paint(bounds.origin(), visible_bounds, bounds.height(), cx);
     }
 
     fn dispatch_event(

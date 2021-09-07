@@ -8,16 +8,16 @@ pub mod current {
 }
 
 use crate::{
-    color::Color,
     executor,
     fonts::{FontId, GlyphId, Metrics as FontMetrics, Properties as FontProperties},
     geometry::{
         rect::{RectF, RectI},
-        vector::Vector2F,
+        vector::{vec2f, Vector2F},
     },
-    text_layout::LineLayout,
-    ClipboardItem, Menu, Scene,
+    text_layout::{LineLayout, RunStyle},
+    AnyAction, ClipboardItem, Menu, Scene,
 };
+use anyhow::Result;
 use async_task::Runnable;
 pub use event::Event;
 use std::{
@@ -26,6 +26,7 @@ use std::{
     rc::Rc,
     sync::Arc,
 };
+use time::UtcOffset;
 
 pub trait Platform: Send + Sync {
     fn dispatcher(&self) -> Arc<dyn Dispatcher>;
@@ -45,8 +46,12 @@ pub trait Platform: Send + Sync {
     fn read_from_clipboard(&self) -> Option<ClipboardItem>;
     fn open_url(&self, url: &str);
 
-    fn write_credentials(&self, url: &str, username: &str, password: &[u8]);
-    fn read_credentials(&self, url: &str) -> Option<(String, Vec<u8>)>;
+    fn write_credentials(&self, url: &str, username: &str, password: &[u8]) -> Result<()>;
+    fn read_credentials(&self, url: &str) -> Result<Option<(String, Vec<u8>)>>;
+
+    fn set_cursor_style(&self, style: CursorStyle);
+
+    fn local_timezone(&self) -> UtcOffset;
 }
 
 pub(crate) trait ForegroundPlatform {
@@ -56,7 +61,7 @@ pub(crate) trait ForegroundPlatform {
     fn on_open_files(&self, callback: Box<dyn FnMut(Vec<PathBuf>)>);
     fn run(&self, on_finish_launching: Box<dyn FnOnce() -> ()>);
 
-    fn on_menu_command(&self, callback: Box<dyn FnMut(&str, Option<&dyn Any>)>);
+    fn on_menu_command(&self, callback: Box<dyn FnMut(&dyn AnyAction)>);
     fn set_menus(&self, menus: Vec<Menu>);
     fn prompt_for_paths(
         &self,
@@ -78,7 +83,7 @@ pub trait Dispatcher: Send + Sync {
 pub trait Window: WindowContext {
     fn as_any_mut(&mut self) -> &mut dyn Any;
     fn on_event(&mut self, callback: Box<dyn FnMut(Event)>);
-    fn on_resize(&mut self, callback: Box<dyn FnMut(&mut dyn WindowContext)>);
+    fn on_resize(&mut self, callback: Box<dyn FnMut()>);
     fn on_close(&mut self, callback: Box<dyn FnOnce()>);
     fn prompt(
         &self,
@@ -92,12 +97,15 @@ pub trait Window: WindowContext {
 pub trait WindowContext {
     fn size(&self) -> Vector2F;
     fn scale_factor(&self) -> f32;
+    fn titlebar_height(&self) -> f32;
     fn present_scene(&mut self, scene: Scene);
 }
 
 pub struct WindowOptions<'a> {
     pub bounds: RectF,
     pub title: Option<&'a str>,
+    pub titlebar_appears_transparent: bool,
+    pub traffic_light_position: Option<Vector2F>,
 }
 
 pub struct PathPromptOptions {
@@ -112,7 +120,15 @@ pub enum PromptLevel {
     Critical,
 }
 
+#[derive(Copy, Clone, Debug)]
+pub enum CursorStyle {
+    Arrow,
+    ResizeLeftRight,
+    PointingHand,
+}
+
 pub trait FontSystem: Send + Sync {
+    fn add_fonts(&self, fonts: &[Arc<Vec<u8>>]) -> anyhow::Result<()>;
     fn load_family(&self, name: &str) -> anyhow::Result<Vec<FontId>>;
     fn select_font(
         &self,
@@ -130,11 +146,17 @@ pub trait FontSystem: Send + Sync {
         subpixel_shift: Vector2F,
         scale_factor: f32,
     ) -> Option<(RectI, Vec<u8>)>;
-    fn layout_line(
-        &self,
-        text: &str,
-        font_size: f32,
-        runs: &[(usize, FontId, Color)],
-    ) -> LineLayout;
+    fn layout_line(&self, text: &str, font_size: f32, runs: &[(usize, RunStyle)]) -> LineLayout;
     fn wrap_line(&self, text: &str, font_id: FontId, font_size: f32, width: f32) -> Vec<usize>;
+}
+
+impl<'a> Default for WindowOptions<'a> {
+    fn default() -> Self {
+        Self {
+            bounds: RectF::new(Default::default(), vec2f(1024.0, 768.0)),
+            title: Default::default(),
+            titlebar_appears_transparent: Default::default(),
+            traffic_light_position: Default::default(),
+        }
+    }
 }

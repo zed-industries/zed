@@ -2,14 +2,11 @@ use super::{
     buffer::{AnchorRangeExt, TextSummary},
     Anchor, Buffer, Point, ToOffset,
 };
-use crate::{
-    editor::buffer,
-    settings::HighlightId,
+use crate::{editor::buffer, settings::HighlightId, time, util::Bias};
+use gpui::{
     sum_tree::{self, Cursor, FilterCursor, SumTree},
-    time,
-    util::Bias,
+    AppContext, ModelHandle,
 };
-use gpui::{AppContext, ModelHandle};
 use parking_lot::Mutex;
 use std::{
     cmp::{self, Ordering},
@@ -204,7 +201,7 @@ pub struct FoldMap {
 #[derive(Clone)]
 struct SyncState {
     version: time::Global,
-    is_parsing: bool,
+    parse_count: usize,
 }
 
 impl FoldMap {
@@ -225,7 +222,7 @@ impl FoldMap {
             )),
             last_sync: Mutex::new(SyncState {
                 version: buffer.version(),
-                is_parsing: buffer.is_parsing(),
+                parse_count: buffer.parse_count(),
             }),
             version: AtomicUsize::new(0),
         };
@@ -256,7 +253,7 @@ impl FoldMap {
             &mut *self.last_sync.lock(),
             SyncState {
                 version: buffer.version(),
-                is_parsing: buffer.is_parsing(),
+                parse_count: buffer.parse_count(),
             },
         );
         let edits = buffer
@@ -264,7 +261,7 @@ impl FoldMap {
             .map(Into::into)
             .collect::<Vec<_>>();
         if edits.is_empty() {
-            if last_sync.is_parsing != buffer.is_parsing() {
+            if last_sync.parse_count != buffer.parse_count() {
                 self.version.fetch_add(1, SeqCst);
             }
             Vec::new()

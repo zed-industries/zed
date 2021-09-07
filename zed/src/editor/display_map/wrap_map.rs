@@ -1,16 +1,13 @@
 use super::{
     fold_map,
-    line_wrapper::LineWrapper,
     tab_map::{self, Edit as TabEdit, Snapshot as TabSnapshot, TabPoint, TextSummary},
 };
-use crate::{
-    editor::Point,
-    settings::HighlightId,
+use crate::{editor::Point, settings::HighlightId, util::Bias, Settings};
+use gpui::{
     sum_tree::{self, Cursor, SumTree},
-    util::Bias,
-    Settings,
+    text_layout::LineWrapper,
+    Entity, ModelContext, Task,
 };
-use gpui::{Entity, ModelContext, Task};
 use lazy_static::lazy_static;
 use smol::future::yield_now;
 use std::{collections::VecDeque, ops::Range, time::Duration};
@@ -118,12 +115,13 @@ impl WrapMap {
 
         if let Some(wrap_width) = wrap_width {
             let mut new_snapshot = self.snapshot.clone();
-            let font_system = cx.platform().fonts();
             let font_cache = cx.font_cache().clone();
             let settings = self.settings.clone();
             let task = cx.background().spawn(async move {
-                let mut line_wrapper =
-                    LineWrapper::thread_local(font_system, &font_cache, settings);
+                let font_id = font_cache
+                    .select_font(settings.buffer_font_family, &Default::default())
+                    .unwrap();
+                let mut line_wrapper = font_cache.line_wrapper(font_id, settings.buffer_font_size);
                 let tab_snapshot = new_snapshot.tab_snapshot.clone();
                 let range = TabPoint::zero()..tab_snapshot.max_point();
                 new_snapshot
@@ -193,12 +191,14 @@ impl WrapMap {
             if self.background_task.is_none() {
                 let pending_edits = self.pending_edits.clone();
                 let mut snapshot = self.snapshot.clone();
-                let font_system = cx.platform().fonts();
                 let font_cache = cx.font_cache().clone();
                 let settings = self.settings.clone();
                 let update_task = cx.background().spawn(async move {
+                    let font_id = font_cache
+                        .select_font(settings.buffer_font_family, &Default::default())
+                        .unwrap();
                     let mut line_wrapper =
-                        LineWrapper::thread_local(font_system, &font_cache, settings);
+                        font_cache.line_wrapper(font_id, settings.buffer_font_size);
                     for (tab_snapshot, edits) in pending_edits {
                         snapshot
                             .update(tab_snapshot, &edits, wrap_width, &mut line_wrapper)
@@ -816,8 +816,12 @@ fn push_isomorphic(transforms: &mut Vec<Transform>, summary: TextSummary) {
     transforms.push(Transform::isomorphic(summary));
 }
 
-impl SumTree<Transform> {
-    pub fn push_or_extend(&mut self, transform: Transform) {
+trait SumTreeExt {
+    fn push_or_extend(&mut self, transform: Transform);
+}
+
+impl SumTreeExt for SumTree<Transform> {
+    fn push_or_extend(&mut self, transform: Transform) {
         let mut transform = Some(transform);
         self.update_last(
             |last_transform| {
@@ -917,7 +921,7 @@ mod tests {
             tab_size: rng.gen_range(1..=4),
             buffer_font_family: font_cache.load_family(&["Helvetica"]).unwrap(),
             buffer_font_size: 14.0,
-            ..Settings::new(&font_cache).unwrap()
+            ..cx.read(Settings::test)
         };
         log::info!("Tab size: {}", settings.tab_size);
         log::info!("Wrap width: {:?}", wrap_width);
@@ -942,7 +946,10 @@ mod tests {
             .add_model(|cx| WrapMap::new(tabs_snapshot.clone(), settings.clone(), wrap_width, cx));
         let (_observer, notifications) = Observer::new(&wrap_map, &mut cx);
 
-        let mut line_wrapper = LineWrapper::new(font_system, &font_cache, settings);
+        let font_id = font_cache
+            .select_font(settings.buffer_font_family, &Default::default())
+            .unwrap();
+        let mut line_wrapper = LineWrapper::new(font_id, settings.buffer_font_size, font_system);
         let unwrapped_text = tabs_snapshot.text();
         let expected_text = wrap_text(&unwrapped_text, wrap_width, &mut line_wrapper);
 

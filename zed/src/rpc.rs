@@ -1,18 +1,24 @@
-use crate::{language::LanguageRegistry, worktree::Worktree};
+use crate::util::ResultExt;
 use anyhow::{anyhow, Context, Result};
 use async_tungstenite::tungstenite::http::Request;
 use async_tungstenite::tungstenite::{Error as WebSocketError, Message as WebSocketMessage};
-use gpui::{AsyncAppContext, ModelHandle, Task, WeakModelHandle};
+use gpui::{AsyncAppContext, Entity, ModelContext, Task};
 use lazy_static::lazy_static;
-use smol::lock::RwLock;
+use parking_lot::RwLock;
+use postage::prelude::Stream;
+use postage::sink::Sink;
+use postage::watch;
+use std::any::TypeId;
 use std::collections::HashMap;
-use std::time::Duration;
+use std::sync::Weak;
+use std::time::{Duration, Instant};
 use std::{convert::TryFrom, future::Future, sync::Arc};
 use surf::Url;
+use zrpc::proto::{AnyTypedEnvelope, EntityMessage};
 pub use zrpc::{proto, ConnectionId, PeerId, TypedEnvelope};
 use zrpc::{
     proto::{EnvelopedMessage, RequestMessage},
-    ForegroundRouter, Peer, Receipt,
+    Peer, Receipt,
 };
 
 lazy_static! {
@@ -20,78 +26,127 @@ lazy_static! {
         std::env::var("ZED_SERVER_URL").unwrap_or("https://zed.dev:443".to_string());
 }
 
-#[derive(Clone)]
 pub struct Client {
     peer: Arc<Peer>,
-    pub state: Arc<RwLock<ClientState>>,
+    state: RwLock<ClientState>,
 }
 
-pub struct ClientState {
+struct ClientState {
     connection_id: Option<ConnectionId>,
-    pub shared_worktrees: HashMap<u64, WeakModelHandle<Worktree>>,
-    pub languages: Arc<LanguageRegistry>,
+    user_id: (watch::Sender<Option<u64>>, watch::Receiver<Option<u64>>),
+    entity_id_extractors: HashMap<TypeId, Box<dyn Send + Sync + Fn(&dyn AnyTypedEnvelope) -> u64>>,
+    model_handlers: HashMap<
+        (TypeId, u64),
+        Box<dyn Send + Sync + FnMut(Box<dyn AnyTypedEnvelope>, &mut AsyncAppContext)>,
+    >,
 }
 
-impl ClientState {
-    pub fn shared_worktree(
-        &self,
-        id: u64,
-        cx: &mut AsyncAppContext,
-    ) -> Result<ModelHandle<Worktree>> {
-        if let Some(worktree) = self.shared_worktrees.get(&id) {
-            if let Some(worktree) = cx.read(|cx| worktree.upgrade(cx)) {
-                Ok(worktree)
-            } else {
-                Err(anyhow!("worktree {} was dropped", id))
-            }
-        } else {
-            Err(anyhow!("worktree {} does not exist", id))
+impl Default for ClientState {
+    fn default() -> Self {
+        Self {
+            connection_id: Default::default(),
+            user_id: watch::channel(),
+            entity_id_extractors: Default::default(),
+            model_handlers: Default::default(),
+        }
+    }
+}
+
+pub struct Subscription {
+    client: Weak<Client>,
+    id: (TypeId, u64),
+}
+
+impl Drop for Subscription {
+    fn drop(&mut self) {
+        if let Some(client) = self.client.upgrade() {
+            drop(
+                client
+                    .state
+                    .write()
+                    .model_handlers
+                    .remove(&self.id)
+                    .unwrap(),
+            );
         }
     }
 }
 
 impl Client {
-    pub fn new(languages: Arc<LanguageRegistry>) -> Self {
-        Self {
+    pub fn new() -> Arc<Self> {
+        Arc::new(Self {
             peer: Peer::new(),
-            state: Arc::new(RwLock::new(ClientState {
-                connection_id: None,
-                shared_worktrees: Default::default(),
-                languages,
-            })),
+            state: Default::default(),
+        })
+    }
+
+    pub fn user_id(&self) -> watch::Receiver<Option<u64>> {
+        self.state.read().user_id.1.clone()
+    }
+
+    pub fn subscribe_from_model<T, M, F>(
+        self: &Arc<Self>,
+        remote_id: u64,
+        cx: &mut ModelContext<M>,
+        mut handler: F,
+    ) -> Subscription
+    where
+        T: EntityMessage,
+        M: Entity,
+        F: 'static
+            + Send
+            + Sync
+            + FnMut(&mut M, TypedEnvelope<T>, Arc<Self>, &mut ModelContext<M>) -> Result<()>,
+    {
+        let subscription_id = (TypeId::of::<T>(), remote_id);
+        let client = self.clone();
+        let mut state = self.state.write();
+        let model = cx.handle().downgrade();
+        state
+            .entity_id_extractors
+            .entry(subscription_id.0)
+            .or_insert_with(|| {
+                Box::new(|envelope| {
+                    let envelope = envelope
+                        .as_any()
+                        .downcast_ref::<TypedEnvelope<T>>()
+                        .unwrap();
+                    envelope.payload.remote_entity_id()
+                })
+            });
+        let prev_handler = state.model_handlers.insert(
+            subscription_id,
+            Box::new(move |envelope, cx| {
+                if let Some(model) = model.upgrade(cx) {
+                    let envelope = envelope.into_any().downcast::<TypedEnvelope<T>>().unwrap();
+                    model.update(cx, |model, cx| {
+                        if let Err(error) = handler(model, *envelope, client.clone(), cx) {
+                            log::error!("error handling message: {}", error)
+                        }
+                    });
+                }
+            }),
+        );
+        if prev_handler.is_some() {
+            panic!("registered a handler for the same entity twice")
+        }
+
+        Subscription {
+            client: Arc::downgrade(self),
+            id: subscription_id,
         }
     }
 
-    pub fn on_message<H, M>(
-        &self,
-        router: &mut ForegroundRouter,
-        handler: H,
-        cx: &mut gpui::MutableAppContext,
-    ) where
-        H: 'static + Clone + for<'a> MessageHandler<'a, M>,
-        M: proto::EnvelopedMessage,
-    {
-        let this = self.clone();
-        let cx = cx.to_async();
-        router.add_message_handler(move |message| {
-            let this = this.clone();
-            let mut cx = cx.clone();
-            let handler = handler.clone();
-            async move { handler.handle(message, &this, &mut cx).await }
-        });
-    }
-
-    pub async fn log_in_and_connect(
-        &self,
-        router: Arc<ForegroundRouter>,
-        cx: AsyncAppContext,
-    ) -> surf::Result<()> {
-        if self.state.read().await.connection_id.is_some() {
+    pub async fn authenticate_and_connect(
+        self: &Arc<Self>,
+        cx: &AsyncAppContext,
+    ) -> anyhow::Result<()> {
+        if self.state.read().connection_id.is_some() {
             return Ok(());
         }
 
         let (user_id, access_token) = Self::login(cx.platform(), &cx.background()).await?;
-        let user_id: i32 = user_id.parse()?;
+        let user_id = user_id.parse::<u64>()?;
         let request =
             Request::builder().header("Authorization", format!("{} {}", user_id, access_token));
 
@@ -101,27 +156,28 @@ impl Client {
             let (stream, _) = async_tungstenite::async_tls::client_async_tls(request, stream)
                 .await
                 .context("websocket handshake")?;
-            log::info!("connected to rpc address {}", *ZED_SERVER_URL);
-            self.add_connection(stream, router, cx).await?;
+            self.add_connection(user_id, stream, cx).await?;
         } else if let Some(host) = ZED_SERVER_URL.strip_prefix("http://") {
             let stream = smol::net::TcpStream::connect(host).await?;
             let request = request.uri(format!("ws://{}/rpc", host)).body(())?;
-            let (stream, _) = async_tungstenite::client_async(request, stream).await?;
-            log::info!("connected to rpc address {}", *ZED_SERVER_URL);
-            self.add_connection(stream, router, cx).await?;
+            let (stream, _) = async_tungstenite::client_async(request, stream)
+                .await
+                .context("websocket handshake")?;
+            self.add_connection(user_id, stream, cx).await?;
         } else {
             return Err(anyhow!("invalid server url: {}", *ZED_SERVER_URL))?;
         };
 
+        log::info!("connected to rpc address {}", *ZED_SERVER_URL);
         Ok(())
     }
 
     pub async fn add_connection<Conn>(
-        &self,
+        self: &Arc<Self>,
+        user_id: u64,
         conn: Conn,
-        router: Arc<ForegroundRouter>,
-        cx: AsyncAppContext,
-    ) -> surf::Result<()>
+        cx: &AsyncAppContext,
+    ) -> anyhow::Result<()>
     where
         Conn: 'static
             + futures::Sink<WebSocketMessage, Error = WebSocketError>
@@ -129,9 +185,39 @@ impl Client {
             + Unpin
             + Send,
     {
-        let (connection_id, handle_io, handle_messages) =
-            self.peer.add_connection(conn, router).await;
-        cx.foreground().spawn(handle_messages).detach();
+        let (connection_id, handle_io, mut incoming) = self.peer.add_connection(conn).await;
+        {
+            let mut cx = cx.clone();
+            let this = self.clone();
+            cx.foreground()
+                .spawn(async move {
+                    while let Some(message) = incoming.recv().await {
+                        let mut state = this.state.write();
+                        if let Some(extract_entity_id) =
+                            state.entity_id_extractors.get(&message.payload_type_id())
+                        {
+                            let entity_id = (extract_entity_id)(message.as_ref());
+                            if let Some(handler) = state
+                                .model_handlers
+                                .get_mut(&(message.payload_type_id(), entity_id))
+                            {
+                                let start_time = Instant::now();
+                                log::info!("RPC client message {}", message.payload_type_name());
+                                (handler)(message, &mut cx);
+                                log::info!(
+                                    "RPC message handled. duration:{:?}",
+                                    start_time.elapsed()
+                                );
+                            } else {
+                                log::info!("unhandled message {}", message.payload_type_name());
+                            }
+                        } else {
+                            log::info!("unhandled message {}", message.payload_type_name());
+                        }
+                    }
+                })
+                .detach();
+        }
         cx.background()
             .spawn(async move {
                 if let Err(error) = handle_io.await {
@@ -139,7 +225,9 @@ impl Client {
                 }
             })
             .detach();
-        self.state.write().await.connection_id = Some(connection_id);
+        let mut state = self.state.write();
+        state.connection_id = Some(connection_id);
+        state.user_id.0.send(Some(user_id)).await?;
         Ok(())
     }
 
@@ -149,7 +237,11 @@ impl Client {
     ) -> Task<Result<(String, String)>> {
         let executor = executor.clone();
         executor.clone().spawn(async move {
-            if let Some((user_id, access_token)) = platform.read_credentials(&ZED_SERVER_URL) {
+            if let Some((user_id, access_token)) = platform
+                .read_credentials(&ZED_SERVER_URL)
+                .log_err()
+                .flatten()
+            {
                 log::info!("already signed in. user_id: {}", user_id);
                 return Ok((user_id, String::from_utf8(access_token).unwrap()));
             }
@@ -214,33 +306,32 @@ impl Client {
                 .decrypt_string(&access_token)
                 .context("failed to decrypt access token")?;
             platform.activate(true);
-            platform.write_credentials(&ZED_SERVER_URL, &user_id, access_token.as_bytes());
+            platform
+                .write_credentials(&ZED_SERVER_URL, &user_id, access_token.as_bytes())
+                .log_err();
             Ok((user_id.to_string(), access_token))
         })
     }
 
     pub async fn disconnect(&self) -> Result<()> {
-        let conn_id = self.connection_id().await?;
+        let conn_id = self.connection_id()?;
         self.peer.disconnect(conn_id).await;
         Ok(())
     }
 
-    async fn connection_id(&self) -> Result<ConnectionId> {
+    fn connection_id(&self) -> Result<ConnectionId> {
         self.state
             .read()
-            .await
             .connection_id
             .ok_or_else(|| anyhow!("not connected"))
     }
 
     pub async fn send<T: EnvelopedMessage>(&self, message: T) -> Result<()> {
-        self.peer.send(self.connection_id().await?, message).await
+        self.peer.send(self.connection_id()?, message).await
     }
 
     pub async fn request<T: RequestMessage>(&self, request: T) -> Result<T::Response> {
-        self.peer
-            .request(self.connection_id().await?, request)
-            .await
+        self.peer.request(self.connection_id()?, request).await
     }
 
     pub fn respond<T: RequestMessage>(

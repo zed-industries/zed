@@ -18,7 +18,7 @@ RUN --mount=type=cache,target=./script/node_modules \
 RUN --mount=type=cache,target=./script/node_modules \
     --mount=type=cache,target=/usr/local/cargo/registry \
     --mount=type=cache,target=./target \
-    cargo build --release --bin zed-server
+    cargo build --release --package zed-server --bin zed-server
 
 # Copy server binary out of cached directory
 RUN --mount=type=cache,target=./target \

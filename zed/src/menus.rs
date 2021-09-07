@@ -1,9 +1,11 @@
-use crate::AppState;
+use crate::{workspace, AppState};
 use gpui::{Menu, MenuItem};
 use std::sync::Arc;
 
 #[cfg(target_os = "macos")]
 pub fn menus(state: &Arc<AppState>) -> Vec<Menu<'static>> {
+    use crate::editor;
+
     vec![
         Menu {
             name: "Zed",
@@ -11,27 +13,28 @@ pub fn menus(state: &Arc<AppState>) -> Vec<Menu<'static>> {
                 MenuItem::Action {
                     name: "About Zed…",
                     keystroke: None,
-                    action: "app:about-zed",
-                    arg: None,
+                    action: Box::new(super::About),
                 },
                 MenuItem::Separator,
                 MenuItem::Action {
+                    name: "Sign In",
+                    keystroke: None,
+                    action: Box::new(super::Authenticate),
+                },
+                MenuItem::Action {
                     name: "Share",
                     keystroke: None,
-                    action: "workspace:share_worktree",
-                    arg: Some(Box::new(state.clone())),
+                    action: Box::new(workspace::ShareWorktree),
                 },
                 MenuItem::Action {
                     name: "Join",
                     keystroke: None,
-                    action: "workspace:join_worktree",
-                    arg: Some(Box::new(state.clone())),
+                    action: Box::new(workspace::JoinWorktree(state.clone())),
                 },
                 MenuItem::Action {
                     name: "Quit",
                     keystroke: Some("cmd-q"),
-                    action: "app:quit",
-                    arg: None,
+                    action: Box::new(super::Quit),
                 },
             ],
         },
@@ -41,15 +44,13 @@ pub fn menus(state: &Arc<AppState>) -> Vec<Menu<'static>> {
                 MenuItem::Action {
                     name: "New",
                     keystroke: Some("cmd-n"),
-                    action: "workspace:new_file",
-                    arg: Some(Box::new(state.clone())),
+                    action: Box::new(workspace::OpenNew(state.clone())),
                 },
                 MenuItem::Separator,
                 MenuItem::Action {
                     name: "Open…",
                     keystroke: Some("cmd-o"),
-                    action: "workspace:open",
-                    arg: Some(Box::new(state.clone())),
+                    action: Box::new(workspace::Open(state.clone())),
                 },
             ],
         },
@@ -59,33 +60,28 @@ pub fn menus(state: &Arc<AppState>) -> Vec<Menu<'static>> {
                 MenuItem::Action {
                     name: "Undo",
                     keystroke: Some("cmd-z"),
-                    action: "buffer:undo",
-                    arg: None,
+                    action: Box::new(editor::Undo),
                 },
                 MenuItem::Action {
                     name: "Redo",
                     keystroke: Some("cmd-Z"),
-                    action: "buffer:redo",
-                    arg: None,
+                    action: Box::new(editor::Redo),
                 },
                 MenuItem::Separator,
                 MenuItem::Action {
                     name: "Cut",
                     keystroke: Some("cmd-x"),
-                    action: "buffer:cut",
-                    arg: None,
+                    action: Box::new(editor::Cut),
                 },
                 MenuItem::Action {
                     name: "Copy",
                     keystroke: Some("cmd-c"),
-                    action: "buffer:copy",
-                    arg: None,
+                    action: Box::new(editor::Copy),
                 },
                 MenuItem::Action {
                     name: "Paste",
                     keystroke: Some("cmd-v"),
-                    action: "buffer:paste",
-                    arg: None,
+                    action: Box::new(editor::Paste),
                 },
             ],
         },

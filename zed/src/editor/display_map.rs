@@ -1,5 +1,4 @@
 mod fold_map;
-mod line_wrapper;
 mod tab_map;
 mod wrap_map;
 
@@ -32,7 +31,7 @@ impl DisplayMap {
         let (fold_map, snapshot) = FoldMap::new(buffer.clone(), cx);
         let (tab_map, snapshot) = TabMap::new(snapshot, settings.tab_size);
         let wrap_map = cx.add_model(|cx| WrapMap::new(snapshot, settings, wrap_width, cx));
-        cx.observe(&wrap_map, |_, _, cx| cx.notify());
+        cx.observe(&wrap_map, |_, _, cx| cx.notify()).detach();
         DisplayMap {
             buffer,
             fold_map,
@@ -107,6 +106,10 @@ impl DisplayMapSnapshot {
     #[cfg(test)]
     pub fn fold_count(&self) -> usize {
         self.folds_snapshot.fold_count()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.buffer_snapshot.len() == 0
     }
 
     pub fn buffer_rows(&self, start_row: u32) -> BufferRows {
@@ -344,8 +347,8 @@ mod tests {
     use crate::{
         editor::movement,
         language::{Language, LanguageConfig},
-        settings::Theme,
         test::*,
+        theme::SyntaxTheme,
         util::RandomCharIter,
     };
     use buffer::{History, SelectionGoal};
@@ -367,7 +370,7 @@ mod tests {
             tab_size: rng.gen_range(1..=4),
             buffer_font_family: font_cache.load_family(&["Helvetica"]).unwrap(),
             buffer_font_size: 14.0,
-            ..Settings::new(&font_cache).unwrap()
+            ..cx.read(Settings::test)
         };
         let max_wrap_width = 300.0;
         let mut wrap_width = if rng.gen_bool(0.1) {
@@ -532,11 +535,9 @@ mod tests {
 
         let settings = Settings {
             buffer_font_family: font_cache.load_family(&["Helvetica"]).unwrap(),
-            ui_font_family: font_cache.load_family(&["Helvetica"]).unwrap(),
             buffer_font_size: 12.0,
-            ui_font_size: 12.0,
             tab_size: 4,
-            theme: Arc::new(Theme::default()),
+            ..cx.read(Settings::test)
         };
         let wrap_width = Some(64.);
 
@@ -607,7 +608,10 @@ mod tests {
         let map = cx.add_model(|cx| {
             DisplayMap::new(
                 buffer.clone(),
-                Settings::new(cx.font_cache()).unwrap().with_tab_size(4),
+                Settings {
+                    tab_size: 4,
+                    ..Settings::test(cx)
+                },
                 None,
                 cx,
             )
@@ -661,13 +665,10 @@ mod tests {
             (function_item name: (identifier) @fn.name)"#,
         )
         .unwrap();
-        let theme = Theme {
-            syntax: vec![
-                ("mod.body".to_string(), Color::from_u32(0xff0000ff).into()),
-                ("fn.name".to_string(), Color::from_u32(0x00ff00ff).into()),
-            ],
-            ..Default::default()
-        };
+        let theme = SyntaxTheme::new(vec![
+            ("mod.body".to_string(), Color::from_u32(0xff0000ff).into()),
+            ("fn.name".to_string(), Color::from_u32(0x00ff00ff).into()),
+        ]);
         let lang = Arc::new(Language {
             config: LanguageConfig {
                 name: "Test".to_string(),
@@ -689,7 +690,10 @@ mod tests {
         let map = cx.add_model(|cx| {
             DisplayMap::new(
                 buffer,
-                Settings::new(cx.font_cache()).unwrap().with_tab_size(2),
+                Settings {
+                    tab_size: 2,
+                    ..Settings::test(cx)
+                },
                 None,
                 cx,
             )
@@ -751,13 +755,10 @@ mod tests {
             (function_item name: (identifier) @fn.name)"#,
         )
         .unwrap();
-        let theme = Theme {
-            syntax: vec![
-                ("mod.body".to_string(), Color::from_u32(0xff0000ff).into()),
-                ("fn.name".to_string(), Color::from_u32(0x00ff00ff).into()),
-            ],
-            ..Default::default()
-        };
+        let theme = SyntaxTheme::new(vec![
+            ("mod.body".to_string(), Color::from_u32(0xff0000ff).into()),
+            ("fn.name".to_string(), Color::from_u32(0x00ff00ff).into()),
+        ]);
         let lang = Arc::new(Language {
             config: LanguageConfig {
                 name: "Test".to_string(),
@@ -781,7 +782,7 @@ mod tests {
             tab_size: 4,
             buffer_font_family: font_cache.load_family(&["Courier"]).unwrap(),
             buffer_font_size: 16.0,
-            ..Settings::new(&font_cache).unwrap()
+            ..cx.read(Settings::test)
         };
         let map = cx.add_model(|cx| DisplayMap::new(buffer, settings, Some(40.0), cx));
         assert_eq!(
@@ -821,7 +822,10 @@ mod tests {
         let map = cx.add_model(|cx| {
             DisplayMap::new(
                 buffer.clone(),
-                Settings::new(cx.font_cache()).unwrap().with_tab_size(4),
+                Settings {
+                    tab_size: 4,
+                    ..Settings::test(cx)
+                },
                 None,
                 cx,
             )
@@ -862,7 +866,10 @@ mod tests {
         let map = cx.add_model(|cx| {
             DisplayMap::new(
                 buffer.clone(),
-                Settings::new(cx.font_cache()).unwrap().with_tab_size(4),
+                Settings {
+                    tab_size: 4,
+                    ..Settings::test(cx)
+                },
                 None,
                 cx,
             )
@@ -926,7 +933,10 @@ mod tests {
         let map = cx.add_model(|cx| {
             DisplayMap::new(
                 buffer.clone(),
-                Settings::new(cx.font_cache()).unwrap().with_tab_size(4),
+                Settings {
+                    tab_size: 4,
+                    ..Settings::test(cx)
+                },
                 None,
                 cx,
             )
@@ -940,7 +950,7 @@ mod tests {
     fn highlighted_chunks<'a>(
         rows: Range<u32>,
         map: &ModelHandle<DisplayMap>,
-        theme: &'a Theme,
+        theme: &'a SyntaxTheme,
         cx: &mut MutableAppContext,
     ) -> Vec<(String, Option<&'a str>)> {
         let mut snapshot = map.update(cx, |map, cx| map.snapshot(cx));

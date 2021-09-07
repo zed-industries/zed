@@ -9,13 +9,11 @@ use pathfinder_geometry::{
     vector::{vec2f, Vector2F},
 };
 
-pub struct Canvas<F>(F)
-where
-    F: FnMut(RectF, &mut PaintContext);
+pub struct Canvas<F>(F);
 
 impl<F> Canvas<F>
 where
-    F: FnMut(RectF, &mut PaintContext),
+    F: FnMut(RectF, RectF, &mut PaintContext),
 {
     pub fn new(f: F) -> Self {
         Self(f)
@@ -24,7 +22,7 @@ where
 
 impl<F> Element for Canvas<F>
 where
-    F: FnMut(RectF, &mut PaintContext),
+    F: FnMut(RectF, RectF, &mut PaintContext),
 {
     type LayoutState = ();
     type PaintState = ();
@@ -50,18 +48,11 @@ where
     fn paint(
         &mut self,
         bounds: RectF,
+        visible_bounds: RectF,
         _: &mut Self::LayoutState,
         cx: &mut PaintContext,
     ) -> Self::PaintState {
-        self.0(bounds, cx)
-    }
-
-    fn after_layout(
-        &mut self,
-        _: Vector2F,
-        _: &mut Self::LayoutState,
-        _: &mut crate::AfterLayoutContext,
-    ) {
+        self.0(bounds, visible_bounds, cx)
     }
 
     fn dispatch_event(

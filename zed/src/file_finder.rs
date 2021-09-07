@@ -6,8 +6,13 @@ use crate::{
     worktree::{match_paths, PathMatch},
 };
 use gpui::{
+    action,
     elements::*,
-    keymap::{self, Binding},
+    keymap::{
+        self,
+        menu::{SelectNext, SelectPrev},
+        Binding,
+    },
     AppContext, Axis, Entity, MutableAppContext, RenderContext, Task, View, ViewContext,
     ViewHandle, WeakViewHandle,
 };
@@ -25,7 +30,7 @@ pub struct FileFinder {
     handle: WeakViewHandle<Self>,
     settings: watch::Receiver<Settings>,
     workspace: WeakViewHandle<Workspace>,
-    query_buffer: ViewHandle<Editor>,
+    query_editor: ViewHandle<Editor>,
     search_count: usize,
     latest_search_id: usize,
     latest_search_did_cancel: bool,
@@ -36,17 +41,27 @@ pub struct FileFinder {
     list_state: UniformListState,
 }
 
+action!(Toggle);
+action!(Confirm);
+action!(Select, Entry);
+
+#[derive(Clone)]
+pub struct Entry {
+    worktree_id: usize,
+    path: Arc<Path>,
+}
+
 pub fn init(cx: &mut MutableAppContext) {
-    cx.add_action("file_finder:toggle", FileFinder::toggle);
-    cx.add_action("file_finder:confirm", FileFinder::confirm);
-    cx.add_action("file_finder:select", FileFinder::select);
-    cx.add_action("menu:select_prev", FileFinder::select_prev);
-    cx.add_action("menu:select_next", FileFinder::select_next);
+    cx.add_action(FileFinder::toggle);
+    cx.add_action(FileFinder::confirm);
+    cx.add_action(FileFinder::select);
+    cx.add_action(FileFinder::select_prev);
+    cx.add_action(FileFinder::select_next);
 
     cx.add_bindings(vec![
-        Binding::new("cmd-p", "file_finder:toggle", None),
-        Binding::new("escape", "file_finder:toggle", Some("FileFinder")),
-        Binding::new("enter", "file_finder:confirm", Some("FileFinder")),
+        Binding::new("cmd-p", Toggle, None),
+        Binding::new("escape", Toggle, Some("FileFinder")),
+        Binding::new("enter", Confirm, Some("FileFinder")),
     ]);
 }
 
@@ -64,18 +79,18 @@ impl View for FileFinder {
         "FileFinder"
     }
 
-    fn render(&self, _: &RenderContext<Self>) -> ElementBox {
+    fn render(&mut self, _: &mut RenderContext<Self>) -> ElementBox {
         let settings = self.settings.borrow();
 
         Align::new(
             ConstrainedBox::new(
                 Container::new(
                     Flex::new(Axis::Vertical)
-                        .with_child(ChildView::new(self.query_buffer.id()).boxed())
-                        .with_child(Expanded::new(1.0, self.render_matches()).boxed())
+                        .with_child(ChildView::new(self.query_editor.id()).boxed())
+                        .with_child(Flexible::new(1.0, self.render_matches()).boxed())
                         .boxed(),
                 )
-                .with_style(&settings.theme.ui.selector.container)
+                .with_style(&settings.theme.selector.container)
                 .boxed(),
             )
             .with_max_width(600.0)
@@ -87,7 +102,7 @@ impl View for FileFinder {
     }
 
     fn on_focus(&mut self, cx: &mut ViewContext<Self>) {
-        cx.focus(&self.query_buffer);
+        cx.focus(&self.query_editor);
     }
 
     fn keymap_context(&self, _: &AppContext) -> keymap::Context {
@@ -102,13 +117,7 @@ impl FileFinder {
         if self.matches.is_empty() {
             let settings = self.settings.borrow();
             return Container::new(
-                Label::new(
-                    "No matches".into(),
-                    settings.ui_font_family,
-                    settings.ui_font_size,
-                )
-                .with_style(&settings.theme.ui.selector.label)
-                .boxed(),
+                Label::new("No matches".into(), settings.theme.selector.label.clone()).boxed(),
             )
             .with_margin_top(6.0)
             .named("empty matches");
@@ -142,9 +151,9 @@ impl FileFinder {
         let selected_index = self.selected_index();
         let settings = self.settings.borrow();
         let style = if index == selected_index {
-            &settings.theme.ui.selector.active_item
+            &settings.theme.selector.active_item
         } else {
-            &settings.theme.ui.selector.item
+            &settings.theme.selector.item
         };
         let (file_name, file_name_positions, full_path, full_path_positions) =
             self.labels_for_match(path_match);
@@ -153,11 +162,10 @@ impl FileFinder {
                 .with_child(
                     Container::new(
                         LineBox::new(
-                            settings.ui_font_family,
-                            settings.ui_font_size,
                             Svg::new("icons/file-16.svg")
                                 .with_color(style.label.text.color)
                                 .boxed(),
+                            style.label.text.clone(),
                         )
                         .boxed(),
                     )
@@ -165,28 +173,18 @@ impl FileFinder {
                     .boxed(),
                 )
                 .with_child(
-                    Expanded::new(
+                    Flexible::new(
                         1.0,
                         Flex::column()
                             .with_child(
-                                Label::new(
-                                    file_name.to_string(),
-                                    settings.ui_font_family,
-                                    settings.ui_font_size,
-                                )
-                                .with_style(&style.label)
-                                .with_highlights(file_name_positions)
-                                .boxed(),
+                                Label::new(file_name.to_string(), style.label.clone())
+                                    .with_highlights(file_name_positions)
+                                    .boxed(),
                             )
                             .with_child(
-                                Label::new(
-                                    full_path,
-                                    settings.ui_font_family,
-                                    settings.ui_font_size,
-                                )
-                                .with_style(&style.label)
-                                .with_highlights(full_path_positions)
-                                .boxed(),
+                                Label::new(full_path, style.label.clone())
+                                    .with_highlights(full_path_positions)
+                                    .boxed(),
                             )
                             .boxed(),
                     )
@@ -196,10 +194,13 @@ impl FileFinder {
         )
         .with_style(&style.container);
 
-        let entry = (path_match.tree_id, path_match.path.clone());
+        let action = Select(Entry {
+            worktree_id: path_match.tree_id,
+            path: path_match.path.clone(),
+        });
         EventHandler::new(container.boxed())
             .on_mouse_down(move |cx| {
-                cx.dispatch_action("file_finder:select", entry.clone());
+                cx.dispatch_action(action.clone());
                 true
             })
             .named("match")
@@ -230,11 +231,11 @@ impl FileFinder {
         (file_name, file_name_positions, full_path, path_positions)
     }
 
-    fn toggle(workspace: &mut Workspace, _: &(), cx: &mut ViewContext<Workspace>) {
+    fn toggle(workspace: &mut Workspace, _: &Toggle, cx: &mut ViewContext<Workspace>) {
         workspace.toggle_modal(cx, |cx, workspace| {
             let handle = cx.handle();
             let finder = cx.add_view(|cx| Self::new(workspace.settings.clone(), handle, cx));
-            cx.subscribe_to_view(&finder, Self::on_event);
+            cx.subscribe(&finder, Self::on_event).detach();
             finder
         });
     }
@@ -263,16 +264,22 @@ impl FileFinder {
         workspace: ViewHandle<Workspace>,
         cx: &mut ViewContext<Self>,
     ) -> Self {
-        cx.observe_view(&workspace, Self::workspace_updated);
+        cx.observe(&workspace, Self::workspace_updated).detach();
 
-        let query_buffer = cx.add_view(|cx| Editor::single_line(settings.clone(), cx));
-        cx.subscribe_to_view(&query_buffer, Self::on_query_editor_event);
+        let query_editor = cx.add_view(|cx| {
+            Editor::single_line(settings.clone(), cx).with_style({
+                let settings = settings.clone();
+                move |_| settings.borrow().theme.selector.input_editor.as_editor()
+            })
+        });
+        cx.subscribe(&query_editor, Self::on_query_editor_event)
+            .detach();
 
         Self {
             handle: cx.handle().downgrade(),
             settings,
             workspace: workspace.downgrade(),
-            query_buffer,
+            query_editor,
             search_count: 0,
             latest_search_id: 0,
             latest_search_did_cancel: false,
@@ -285,7 +292,7 @@ impl FileFinder {
     }
 
     fn workspace_updated(&mut self, _: ViewHandle<Workspace>, cx: &mut ViewContext<Self>) {
-        let query = self.query_buffer.update(cx, |buffer, cx| buffer.text(cx));
+        let query = self.query_editor.update(cx, |buffer, cx| buffer.text(cx));
         if let Some(task) = self.spawn_search(query, cx) {
             task.detach();
         }
@@ -299,7 +306,7 @@ impl FileFinder {
     ) {
         match event {
             editor::Event::Edited => {
-                let query = self.query_buffer.update(cx, |buffer, cx| buffer.text(cx));
+                let query = self.query_editor.update(cx, |buffer, cx| buffer.text(cx));
                 if query.is_empty() {
                     self.latest_search_id = util::post_inc(&mut self.search_count);
                     self.matches.clear();
@@ -328,7 +335,7 @@ impl FileFinder {
         0
     }
 
-    fn select_prev(&mut self, _: &(), cx: &mut ViewContext<Self>) {
+    fn select_prev(&mut self, _: &SelectPrev, cx: &mut ViewContext<Self>) {
         let mut selected_index = self.selected_index();
         if selected_index > 0 {
             selected_index -= 1;
@@ -339,7 +346,7 @@ impl FileFinder {
         cx.notify();
     }
 
-    fn select_next(&mut self, _: &(), cx: &mut ViewContext<Self>) {
+    fn select_next(&mut self, _: &SelectNext, cx: &mut ViewContext<Self>) {
         let mut selected_index = self.selected_index();
         if selected_index + 1 < self.matches.len() {
             selected_index += 1;
@@ -350,14 +357,14 @@ impl FileFinder {
         cx.notify();
     }
 
-    fn confirm(&mut self, _: &(), cx: &mut ViewContext<Self>) {
+    fn confirm(&mut self, _: &Confirm, cx: &mut ViewContext<Self>) {
         if let Some(m) = self.matches.get(self.selected_index()) {
             cx.emit(Event::Selected(m.tree_id, m.path.clone()));
         }
     }
 
-    fn select(&mut self, (tree_id, path): &(usize, Arc<Path>), cx: &mut ViewContext<Self>) {
-        cx.emit(Event::Selected(*tree_id, path.clone()));
+    fn select(&mut self, Select(entry): &Select, cx: &mut ViewContext<Self>) {
+        cx.emit(Event::Selected(entry.worktree_id, entry.path.clone()));
     }
 
     #[must_use]
@@ -417,9 +424,9 @@ impl FileFinder {
 mod tests {
     use super::*;
     use crate::{
-        editor,
+        editor::{self, Insert},
         fs::FakeFs,
-        test::{build_app_state, temp_tree},
+        test::{temp_tree, test_app_state},
         workspace::Workspace,
     };
     use serde_json::json;
@@ -437,7 +444,7 @@ mod tests {
             editor::init(cx);
         });
 
-        let app_state = cx.read(build_app_state);
+        let app_state = cx.update(test_app_state);
         let (window_id, workspace) = cx.add_window(|cx| Workspace::new(&app_state, cx));
         workspace
             .update(&mut cx, |workspace, cx| {
@@ -447,12 +454,7 @@ mod tests {
             .unwrap();
         cx.read(|cx| workspace.read(cx).worktree_scans_complete(cx))
             .await;
-        cx.dispatch_action(
-            window_id,
-            vec![workspace.id()],
-            "file_finder:toggle".into(),
-            (),
-        );
+        cx.dispatch_action(window_id, vec![workspace.id()], Toggle);
 
         let finder = cx.read(|cx| {
             workspace
@@ -463,29 +465,19 @@ mod tests {
                 .downcast::<FileFinder>()
                 .unwrap()
         });
-        let query_buffer = cx.read(|cx| finder.read(cx).query_buffer.clone());
+        let query_buffer = cx.read(|cx| finder.read(cx).query_editor.clone());
 
         let chain = vec![finder.id(), query_buffer.id()];
-        cx.dispatch_action(window_id, chain.clone(), "buffer:insert", "b".to_string());
-        cx.dispatch_action(window_id, chain.clone(), "buffer:insert", "n".to_string());
-        cx.dispatch_action(window_id, chain.clone(), "buffer:insert", "a".to_string());
+        cx.dispatch_action(window_id, chain.clone(), Insert("b".into()));
+        cx.dispatch_action(window_id, chain.clone(), Insert("n".into()));
+        cx.dispatch_action(window_id, chain.clone(), Insert("a".into()));
         finder
             .condition(&cx, |finder, _| finder.matches.len() == 2)
             .await;
 
         let active_pane = cx.read(|cx| workspace.read(cx).active_pane().clone());
-        cx.dispatch_action(
-            window_id,
-            vec![workspace.id(), finder.id()],
-            "menu:select_next",
-            (),
-        );
-        cx.dispatch_action(
-            window_id,
-            vec![workspace.id(), finder.id()],
-            "file_finder:confirm",
-            (),
-        );
+        cx.dispatch_action(window_id, vec![workspace.id(), finder.id()], SelectNext);
+        cx.dispatch_action(window_id, vec![workspace.id(), finder.id()], Confirm);
         active_pane
             .condition(&cx, |pane, _| pane.active_item().is_some())
             .await;
@@ -512,7 +504,7 @@ mod tests {
         )
         .await;
 
-        let mut app_state = cx.read(build_app_state);
+        let mut app_state = cx.update(test_app_state);
         Arc::get_mut(&mut app_state).unwrap().fs = fs;
 
         let (_, workspace) = cx.add_window(|cx| Workspace::new(&app_state, cx));
@@ -574,7 +566,7 @@ mod tests {
         fs::create_dir(&dir_path).unwrap();
         fs::write(&file_path, "").unwrap();
 
-        let app_state = cx.read(build_app_state);
+        let app_state = cx.update(test_app_state);
         let (_, workspace) = cx.add_window(|cx| Workspace::new(&app_state, cx));
         workspace
             .update(&mut cx, |workspace, cx| {
@@ -621,7 +613,7 @@ mod tests {
             "dir2": { "a.txt": "" }
         }));
 
-        let app_state = cx.read(build_app_state);
+        let app_state = cx.update(test_app_state);
         let (_, workspace) = cx.add_window(|cx| Workspace::new(&app_state, cx));
 
         workspace
@@ -648,9 +640,9 @@ mod tests {
         finder.update(&mut cx, |f, cx| {
             assert_eq!(f.matches.len(), 2);
             assert_eq!(f.selected_index(), 0);
-            f.select_next(&(), cx);
+            f.select_next(&SelectNext, cx);
             assert_eq!(f.selected_index(), 1);
-            f.select_prev(&(), cx);
+            f.select_prev(&SelectPrev, cx);
             assert_eq!(f.selected_index(), 0);
         });
     }

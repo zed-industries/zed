@@ -11,6 +11,11 @@ use crate::{
 
 pub struct Scene {
     scale_factor: f32,
+    stacking_contexts: Vec<StackingContext>,
+    active_stacking_context_stack: Vec<usize>,
+}
+
+struct StackingContext {
     layers: Vec<Layer>,
     active_layer_stack: Vec<usize>,
 }
@@ -19,6 +24,7 @@ pub struct Scene {
 pub struct Layer {
     clip_bounds: Option<RectF>,
     quads: Vec<Quad>,
+    underlines: Vec<Quad>,
     shadows: Vec<Shadow>,
     glyphs: Vec<Glyph>,
     icons: Vec<Icon>,
@@ -120,10 +126,11 @@ pub struct PathVertex {
 
 impl Scene {
     pub fn new(scale_factor: f32) -> Self {
+        let stacking_context = StackingContext::new(None);
         Scene {
             scale_factor,
-            layers: vec![Layer::new(None)],
-            active_layer_stack: vec![0],
+            stacking_contexts: vec![stacking_context],
+            active_stacking_context_stack: vec![0],
         }
     }
 
@@ -131,23 +138,36 @@ impl Scene {
         self.scale_factor
     }
 
-    pub fn layers(&self) -> &[Layer] {
-        self.layers.as_slice()
+    pub fn layers(&self) -> impl Iterator<Item = &Layer> {
+        self.stacking_contexts.iter().flat_map(|s| &s.layers)
+    }
+
+    pub fn push_stacking_context(&mut self, clip_bounds: Option<RectF>) {
+        self.active_stacking_context_stack
+            .push(self.stacking_contexts.len());
+        self.stacking_contexts
+            .push(StackingContext::new(clip_bounds))
+    }
+
+    pub fn pop_stacking_context(&mut self) {
+        self.active_stacking_context_stack.pop();
+        assert!(!self.active_stacking_context_stack.is_empty());
     }
 
     pub fn push_layer(&mut self, clip_bounds: Option<RectF>) {
-        let ix = self.layers.len();
-        self.layers.push(Layer::new(clip_bounds));
-        self.active_layer_stack.push(ix);
+        self.active_stacking_context().push_layer(clip_bounds);
     }
 
     pub fn pop_layer(&mut self) {
-        assert!(self.active_layer_stack.len() > 1);
-        self.active_layer_stack.pop();
+        self.active_stacking_context().pop_layer();
     }
 
     pub fn push_quad(&mut self, quad: Quad) {
         self.active_layer().push_quad(quad)
+    }
+
+    pub fn push_underline(&mut self, underline: Quad) {
+        self.active_layer().push_underline(underline)
     }
 
     pub fn push_shadow(&mut self, shadow: Shadow) {
@@ -166,8 +186,51 @@ impl Scene {
         self.active_layer().push_path(path);
     }
 
+    fn active_stacking_context(&mut self) -> &mut StackingContext {
+        let ix = *self.active_stacking_context_stack.last().unwrap();
+        &mut self.stacking_contexts[ix]
+    }
+
+    fn active_layer(&mut self) -> &mut Layer {
+        self.active_stacking_context().active_layer()
+    }
+}
+
+impl StackingContext {
+    fn new(clip_bounds: Option<RectF>) -> Self {
+        Self {
+            layers: vec![Layer::new(clip_bounds)],
+            active_layer_stack: vec![0],
+        }
+    }
+
     fn active_layer(&mut self) -> &mut Layer {
         &mut self.layers[*self.active_layer_stack.last().unwrap()]
+    }
+
+    fn push_layer(&mut self, clip_bounds: Option<RectF>) {
+        let parent_clip_bounds = self.active_layer().clip_bounds();
+        let clip_bounds = clip_bounds
+            .map(|clip_bounds| {
+                clip_bounds
+                    .intersection(parent_clip_bounds.unwrap_or(clip_bounds))
+                    .unwrap_or_else(|| {
+                        if !clip_bounds.is_empty() {
+                            log::warn!("specified clip bounds are disjoint from parent layer");
+                        }
+                        RectF::default()
+                    })
+            })
+            .or(parent_clip_bounds);
+
+        let ix = self.layers.len();
+        self.layers.push(Layer::new(clip_bounds));
+        self.active_layer_stack.push(ix);
+    }
+
+    fn pop_layer(&mut self) {
+        self.active_layer_stack.pop().unwrap();
+        assert!(!self.active_layer_stack.is_empty());
     }
 }
 
@@ -176,6 +239,7 @@ impl Layer {
         Self {
             clip_bounds,
             quads: Vec::new(),
+            underlines: Vec::new(),
             shadows: Vec::new(),
             glyphs: Vec::new(),
             icons: Vec::new(),
@@ -193,6 +257,14 @@ impl Layer {
 
     pub fn quads(&self) -> &[Quad] {
         self.quads.as_slice()
+    }
+
+    fn push_underline(&mut self, underline: Quad) {
+        self.underlines.push(underline);
+    }
+
+    pub fn underlines(&self) -> &[Quad] {
+        self.underlines.as_slice()
     }
 
     fn push_shadow(&mut self, shadow: Shadow) {

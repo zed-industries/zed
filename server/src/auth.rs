@@ -1,7 +1,9 @@
-use super::errors::TideResultExt;
-use crate::{github, rpc, AppState, DbPool, Request, RequestExt as _};
+use super::{
+    db::{self, UserId},
+    errors::TideResultExt,
+};
+use crate::{github, AppState, Request, RequestExt as _};
 use anyhow::{anyhow, Context};
-use async_std::stream::StreamExt;
 use async_trait::async_trait;
 pub use oauth2::basic::BasicClient as Client;
 use oauth2::{
@@ -14,11 +16,10 @@ use scrypt::{
     Scrypt,
 };
 use serde::{Deserialize, Serialize};
-use sqlx::FromRow;
 use std::{borrow::Cow, convert::TryFrom, sync::Arc};
 use surf::Url;
 use tide::Server;
-use zrpc::{auth as zed_auth, proto, Peer};
+use zrpc::auth as zed_auth;
 
 static CURRENT_GITHUB_USER: &'static str = "current_github_user";
 static GITHUB_AUTH_URL: &'static str = "https://github.com/login/oauth/authorize";
@@ -34,9 +35,6 @@ pub struct User {
 
 pub struct VerifyToken;
 
-#[derive(Clone, Copy)]
-pub struct UserId(pub i32);
-
 #[async_trait]
 impl tide::Middleware<Arc<AppState>> for VerifyToken {
     async fn handle(
@@ -51,33 +49,28 @@ impl tide::Middleware<Arc<AppState>> for VerifyToken {
             .as_str()
             .split_whitespace();
 
-        let user_id: i32 = auth_header
-            .next()
-            .ok_or_else(|| anyhow!("missing user id in authorization header"))?
-            .parse()?;
+        let user_id = UserId(
+            auth_header
+                .next()
+                .ok_or_else(|| anyhow!("missing user id in authorization header"))?
+                .parse()?,
+        );
         let access_token = auth_header
             .next()
             .ok_or_else(|| anyhow!("missing access token in authorization header"))?;
 
         let state = request.state().clone();
 
-        let mut password_hashes =
-            sqlx::query_scalar::<_, String>("SELECT hash FROM access_tokens WHERE user_id = $1")
-                .bind(&user_id)
-                .fetch_many(&state.db);
-
         let mut credentials_valid = false;
-        while let Some(password_hash) = password_hashes.next().await {
-            if let either::Either::Right(password_hash) = password_hash? {
-                if verify_access_token(&access_token, &password_hash)? {
-                    credentials_valid = true;
-                    break;
-                }
+        for password_hash in state.db.get_access_token_hashes(user_id).await? {
+            if verify_access_token(&access_token, &password_hash)? {
+                credentials_valid = true;
+                break;
             }
         }
 
         if credentials_valid {
-            request.set_ext(UserId(user_id));
+            request.set_ext(user_id);
             Ok(next.run(request).await)
         } else {
             Err(anyhow!("invalid credentials").into())
@@ -94,66 +87,16 @@ pub trait RequestExt {
 impl RequestExt for Request {
     async fn current_user(&self) -> tide::Result<Option<User>> {
         if let Some(details) = self.session().get::<github::User>(CURRENT_GITHUB_USER) {
-            #[derive(FromRow)]
-            struct UserRow {
-                admin: bool,
-            }
-
-            let user_row: Option<UserRow> =
-                sqlx::query_as("SELECT admin FROM users WHERE github_login = $1")
-                    .bind(&details.login)
-                    .fetch_optional(self.db())
-                    .await?;
-
-            let is_insider = user_row.is_some();
-            let is_admin = user_row.map_or(false, |row| row.admin);
-
+            let user = self.db().get_user_by_github_login(&details.login).await?;
             Ok(Some(User {
                 github_login: details.login,
                 avatar_url: details.avatar_url,
-                is_insider,
-                is_admin,
+                is_insider: user.is_some(),
+                is_admin: user.map_or(false, |user| user.admin),
             }))
         } else {
             Ok(None)
         }
-    }
-}
-
-#[async_trait]
-pub trait PeerExt {
-    async fn sign_out(
-        self: &Arc<Self>,
-        connection_id: zrpc::ConnectionId,
-        state: &AppState,
-    ) -> tide::Result<()>;
-}
-
-#[async_trait]
-impl PeerExt for Peer {
-    async fn sign_out(
-        self: &Arc<Self>,
-        connection_id: zrpc::ConnectionId,
-        state: &AppState,
-    ) -> tide::Result<()> {
-        self.disconnect(connection_id).await;
-        let worktree_ids = state.rpc.write().await.remove_connection(connection_id);
-        for worktree_id in worktree_ids {
-            let state = state.rpc.read().await;
-            if let Some(worktree) = state.worktrees.get(&worktree_id) {
-                rpc::broadcast(connection_id, worktree.connection_ids(), |conn_id| {
-                    self.send(
-                        conn_id,
-                        proto::RemovePeer {
-                            worktree_id,
-                            peer_id: connection_id.0,
-                        },
-                    )
-                })
-                .await?;
-            }
-        }
-        Ok(())
     }
 }
 
@@ -265,9 +208,9 @@ async fn get_auth_callback(mut request: Request) -> tide::Result {
         .await
         .context("failed to fetch user")?;
 
-    let user_id: Option<i32> = sqlx::query_scalar("SELECT id from users where github_login = $1")
-        .bind(&user_details.login)
-        .fetch_optional(request.db())
+    let user = request
+        .db()
+        .get_user_by_github_login(&user_details.login)
         .await?;
 
     request
@@ -276,8 +219,8 @@ async fn get_auth_callback(mut request: Request) -> tide::Result {
 
     // When signing in from the native app, generate a new access token for the current user. Return
     // a redirect so that the user's browser sends this access token to the locally-running app.
-    if let Some((user_id, app_sign_in_params)) = user_id.zip(query.native_app_sign_in_params) {
-        let access_token = create_access_token(request.db(), user_id).await?;
+    if let Some((user, app_sign_in_params)) = user.zip(query.native_app_sign_in_params) {
+        let access_token = create_access_token(request.db(), user.id).await?;
         let native_app_public_key =
             zed_auth::PublicKey::try_from(app_sign_in_params.native_app_public_key.clone())
                 .context("failed to parse app public key")?;
@@ -287,7 +230,7 @@ async fn get_auth_callback(mut request: Request) -> tide::Result {
 
         return Ok(tide::Redirect::new(&format!(
             "http://127.0.0.1:{}?user_id={}&access_token={}",
-            app_sign_in_params.native_app_port, user_id, encrypted_access_token,
+            app_sign_in_params.native_app_port, user.id.0, encrypted_access_token,
         ))
         .into());
     }
@@ -300,14 +243,11 @@ async fn post_sign_out(mut request: Request) -> tide::Result {
     Ok(tide::Redirect::new("/").into())
 }
 
-pub async fn create_access_token(db: &DbPool, user_id: i32) -> tide::Result<String> {
+pub async fn create_access_token(db: &db::Db, user_id: UserId) -> tide::Result<String> {
     let access_token = zed_auth::random_token();
     let access_token_hash =
         hash_access_token(&access_token).context("failed to hash access token")?;
-    sqlx::query("INSERT INTO access_tokens (user_id, hash) values ($1, $2)")
-        .bind(user_id)
-        .bind(access_token_hash)
-        .fetch_optional(db)
+    db.create_access_token_hash(user_id, access_token_hash)
         .await?;
     Ok(access_token)
 }

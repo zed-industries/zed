@@ -122,9 +122,14 @@ impl Deterministic {
         smol::pin!(future);
 
         let unparker = self.parker.lock().unparker();
-        let waker = waker_fn(move || {
-            unparker.unpark();
-        });
+        let woken = Arc::new(AtomicBool::new(false));
+        let waker = {
+            let woken = woken.clone();
+            waker_fn(move || {
+                woken.store(true, SeqCst);
+                unparker.unpark();
+            })
+        };
 
         let mut cx = Context::from_waker(&waker);
         let mut trace = Trace::default();
@@ -166,10 +171,11 @@ impl Deterministic {
                     && state.scheduled_from_background.is_empty()
                     && state.spawned_from_foreground.is_empty()
                 {
-                    if state.forbid_parking {
+                    if state.forbid_parking && !woken.load(SeqCst) {
                         panic!("deterministic executor parked after a call to forbid_parking");
                     }
                     drop(state);
+                    woken.store(false, SeqCst);
                     self.parker.lock().park();
                 }
 
