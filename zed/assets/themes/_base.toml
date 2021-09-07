@@ -1,3 +1,6 @@
+[text]
+base = { family = "Inconsolata", size = 14 }
+
 [workspace]
 background = "$surface.0"
 
@@ -19,10 +22,12 @@ padding = { left = 10, right = 10 }
 [workspace.sidebar.resize_handle]
 margin = { left = 6 }
 
-[workspace.sidebar_icon]
+[workspace.sidebar.icon]
 color = "$text.2.color"
+height = 18
 
-[workspace.active_sidebar_icon]
+[workspace.sidebar.active_icon]
+extends = "$workspace.sidebar.icon"
 color = "$text.0.color"
 
 [chat_panel]

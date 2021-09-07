@@ -71,9 +71,9 @@ impl Sidebar {
             Flex::column()
                 .with_children(self.items.iter().enumerate().map(|(item_index, item)| {
                     let theme = if Some(item_index) == self.active_item_ix {
-                        &settings.theme.workspace.active_sidebar_icon
+                        &settings.theme.workspace.sidebar.active_icon
                     } else {
-                        &settings.theme.workspace.sidebar_icon
+                        &settings.theme.workspace.sidebar.icon
                     };
                     enum SidebarButton {}
                     MouseEventHandler::new::<SidebarButton, _, _, _>(item.view.id(), cx, |_, _| {
@@ -82,7 +82,7 @@ impl Sidebar {
                                 ConstrainedBox::new(
                                     Svg::new(item.icon_path).with_color(theme.color).boxed(),
                                 )
-                                .with_height(line_height)
+                                .with_height(theme.height)
                                 .boxed(),
                             )
                             .boxed(),
