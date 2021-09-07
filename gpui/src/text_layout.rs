@@ -293,6 +293,17 @@ impl Line {
                     } else {
                         run_end = self.layout.len;
                         color = Color::black();
+                        if let Some(underline_origin) = underline_start.take() {
+                            cx.scene.push_underline(scene::Quad {
+                                bounds: RectF::from_points(
+                                    underline_origin,
+                                    glyph_origin + vec2f(0., 1.),
+                                ),
+                                background: Some(color),
+                                border: Default::default(),
+                                corner_radius: 0.,
+                            });
+                        }
                     }
                 }
 
