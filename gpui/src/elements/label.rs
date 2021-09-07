@@ -55,7 +55,7 @@ impl Label {
                 RunStyle {
                     font_id,
                     color: self.style.text.color,
-                    underline: false,
+                    underline: self.style.text.underline,
                 }
             )];
         }
