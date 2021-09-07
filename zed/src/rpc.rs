@@ -139,7 +139,7 @@ impl Client {
 
     pub async fn authenticate_and_connect(
         self: &Arc<Self>,
-        cx: AsyncAppContext,
+        cx: &AsyncAppContext,
     ) -> anyhow::Result<()> {
         if self.state.read().connection_id.is_some() {
             return Ok(());
@@ -176,7 +176,7 @@ impl Client {
         self: &Arc<Self>,
         user_id: u64,
         conn: Conn,
-        cx: AsyncAppContext,
+        cx: &AsyncAppContext,
     ) -> anyhow::Result<()>
     where
         Conn: 'static

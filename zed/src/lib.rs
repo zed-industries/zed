@@ -50,7 +50,7 @@ pub fn init(app_state: &Arc<AppState>, cx: &mut gpui::MutableAppContext) {
         let rpc = app_state.rpc.clone();
         move |_: &Authenticate, cx| {
             let rpc = rpc.clone();
-            cx.spawn(|cx| async move { rpc.authenticate_and_connect(cx).log_err().await })
+            cx.spawn(|cx| async move { rpc.authenticate_and_connect(&cx).log_err().await })
                 .detach();
         }
     });
