@@ -1,5 +1,6 @@
+use crate::theme::Theme;
 use anyhow::{anyhow, Result};
-use gpui::{color::Color, elements::*, Axis, Border};
+use gpui::{elements::*, Axis};
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct PaneGroup {
@@ -44,8 +45,8 @@ impl PaneGroup {
         }
     }
 
-    pub fn render<'a>(&self) -> ElementBox {
-        self.root.render()
+    pub fn render<'a>(&self, theme: &Theme) -> ElementBox {
+        self.root.render(theme)
     }
 }
 
@@ -73,10 +74,10 @@ impl Member {
         Member::Axis(PaneAxis { axis, members })
     }
 
-    pub fn render<'a>(&self) -> ElementBox {
+    pub fn render<'a>(&self, theme: &Theme) -> ElementBox {
         match self {
             Member::Pane(view_id) => ChildView::new(*view_id).boxed(),
-            Member::Axis(axis) => axis.render(),
+            Member::Axis(axis) => axis.render(theme),
         }
     }
 }
@@ -164,13 +165,17 @@ impl PaneAxis {
         }
     }
 
-    fn render<'a>(&self) -> ElementBox {
+    fn render<'a>(&self, theme: &Theme) -> ElementBox {
         let last_member_ix = self.members.len() - 1;
         Flex::new(self.axis)
             .with_children(self.members.iter().enumerate().map(|(ix, member)| {
-                let mut member = member.render();
+                let mut member = member.render(theme);
                 if ix < last_member_ix {
-                    let mut border = Border::new(border_width(), border_color());
+                    let mut border = theme.workspace.pane_divider;
+                    border.left = false;
+                    border.right = false;
+                    border.top = false;
+                    border.bottom = false;
                     match self.axis {
                         Axis::Vertical => border.bottom = true,
                         Axis::Horizontal => border.right = true,
@@ -376,14 +381,4 @@ mod tests {
 
     //     Ok(())
     // }
-}
-
-#[inline(always)]
-fn border_width() -> f32 {
-    2.0
-}
-
-#[inline(always)]
-fn border_color() -> Color {
-    Color::new(0xdb, 0xdb, 0xdc, 0xff)
 }

@@ -972,7 +972,9 @@ impl View for Workspace {
                                 {
                                     content.add_child(Flexible::new(0.8, element).boxed());
                                 }
-                                content.add_child(Expanded::new(1.0, self.center.render()).boxed());
+                                content.add_child(
+                                    Expanded::new(1.0, self.center.render(&settings.theme)).boxed(),
+                                );
                                 if let Some(element) =
                                     self.right_sidebar.render_active_item(&settings, cx)
                                 {

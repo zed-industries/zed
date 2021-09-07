@@ -6,6 +6,7 @@ use gpui::{
     color::Color,
     elements::{ContainerStyle, LabelStyle},
     fonts::{HighlightStyle, TextStyle},
+    Border,
 };
 use serde::Deserialize;
 use std::collections::HashMap;
@@ -36,6 +37,7 @@ pub struct Workspace {
     pub titlebar: ContainerStyle,
     pub tab: Tab,
     pub active_tab: Tab,
+    pub pane_divider: Border,
     pub left_sidebar: Sidebar,
     pub right_sidebar: Sidebar,
 }
