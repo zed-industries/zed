@@ -23,7 +23,8 @@ text = "$text.0"
 padding = { left = 10, right = 10 }
 
 [workspace.sidebar.resize_handle]
-margin = { left = 6 }
+padding = { left = 1 }
+background = "$surface.1"
 
 [workspace.sidebar.icon]
 color = "$text.2.color"

@@ -271,10 +271,10 @@ impl ToJson for Margin {
 
 #[derive(Clone, Debug, Default)]
 pub struct Padding {
-    top: f32,
-    left: f32,
-    bottom: f32,
-    right: f32,
+    pub top: f32,
+    pub left: f32,
+    pub bottom: f32,
+    pub right: f32,
 }
 
 impl<'de> Deserialize<'de> for Padding {

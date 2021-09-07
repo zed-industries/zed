@@ -1,12 +1,15 @@
-use std::ops::DerefMut;
-
+use super::Padding;
 use crate::{
-    geometry::{rect::RectF, vector::Vector2F},
+    geometry::{
+        rect::RectF,
+        vector::{vec2f, Vector2F},
+    },
     platform::CursorStyle,
     CursorStyleHandle, DebugContext, Element, ElementBox, ElementStateHandle, ElementStateId,
     Event, EventContext, LayoutContext, MutableAppContext, PaintContext, SizeConstraint,
 };
 use serde_json::json;
+use std::ops::DerefMut;
 
 pub struct MouseEventHandler {
     state: ElementStateHandle<MouseState>,
@@ -15,6 +18,7 @@ pub struct MouseEventHandler {
     mouse_down_handler: Option<Box<dyn FnMut(&mut EventContext)>>,
     click_handler: Option<Box<dyn FnMut(&mut EventContext)>>,
     drag_handler: Option<Box<dyn FnMut(Vector2F, &mut EventContext)>>,
+    padding: Padding,
 }
 
 #[derive(Default)]
@@ -42,6 +46,7 @@ impl MouseEventHandler {
             mouse_down_handler: None,
             click_handler: None,
             drag_handler: None,
+            padding: Default::default(),
         }
     }
 
@@ -62,6 +67,11 @@ impl MouseEventHandler {
 
     pub fn on_drag(mut self, handler: impl FnMut(Vector2F, &mut EventContext) + 'static) -> Self {
         self.drag_handler = Some(Box::new(handler));
+        self
+    }
+
+    pub fn with_padding(mut self, padding: Padding) -> Self {
+        self.padding = padding;
         self
     }
 }
@@ -103,13 +113,18 @@ impl Element for MouseEventHandler {
 
         let handled_in_child = self.child.dispatch_event(event, cx);
 
+        let hit_bounds = RectF::from_points(
+            bounds.origin() - vec2f(self.padding.left, self.padding.top),
+            bounds.lower_right() + vec2f(self.padding.right, self.padding.bottom),
+        );
+
         self.state.update(cx, |state, cx| match event {
             Event::MouseMoved {
                 position,
                 left_mouse_down,
             } => {
                 if !left_mouse_down {
-                    let mouse_in = bounds.contains_point(*position);
+                    let mouse_in = hit_bounds.contains_point(*position);
                     if state.hovered != mouse_in {
                         state.hovered = mouse_in;
                         if let Some(cursor_style) = cursor_style {
@@ -129,7 +144,7 @@ impl Element for MouseEventHandler {
                 handled_in_child
             }
             Event::LeftMouseDown { position, .. } => {
-                if !handled_in_child && bounds.contains_point(*position) {
+                if !handled_in_child && hit_bounds.contains_point(*position) {
                     state.clicked = true;
                     state.prev_drag_position = Some(*position);
                     cx.notify();
@@ -150,7 +165,7 @@ impl Element for MouseEventHandler {
                     }
                     cx.notify();
                     if let Some(handler) = click_handler {
-                        if bounds.contains_point(*position) {
+                        if hit_bounds.contains_point(*position) {
                             handler(cx);
                         }
                     }

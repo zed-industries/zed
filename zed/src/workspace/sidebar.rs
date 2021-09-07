@@ -158,6 +158,11 @@ impl Sidebar {
                 .with_style(&self.theme(settings).resize_handle)
                 .boxed()
         })
+        .with_padding(Padding {
+            left: 4.,
+            right: 4.,
+            ..Default::default()
+        })
         .with_cursor_style(CursorStyle::ResizeLeftRight)
         .on_drag(move |delta, cx| {
             let prev_width = *width.borrow();
