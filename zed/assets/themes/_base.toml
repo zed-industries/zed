@@ -21,6 +21,7 @@ text = "$text.0"
 
 [workspace.sidebar]
 padding = { left = 10, right = 10 }
+border = { right = true, width = 1, color = "$border.0"}
 
 [workspace.sidebar.resize_handle]
 padding = { left = 1 }
@@ -45,6 +46,7 @@ border = { width = 1, color = "$surface.1", left = true }
 [chat_panel]
 channel_name = { extends = "$text.0", weight = "bold" }
 channel_name_hash = { text = "$text.2", padding.right = 5 }
+border = { left = true, width = 1, color = "$border.0"}
 padding = 10
 
 [chat_panel.message]
@@ -102,30 +104,31 @@ extends = "$chat_panel.sign_in_prompt"
 color = "$text.1.color"
 
 [selector]
-background = "$surface.2"
+background = "$surface.0"
 text = "$text.0"
-padding = 6
+padding = 8
 margin.top = 12
 corner_radius = 6
-shadow = { offset = [0, 0], blur = 12, color = "#00000088" }
+shadow = { offset = [0, 2], blur = 16, color = "$shadow.0" }
 input_editor = "$chat_panel.input_editor"
+border = { width = 1, color = "$border.0"}
 
 [selector.item]
-background = "#424344"
 text = "$text.1"
-highlight_text = { extends = "$text.base", color = "#18a3ff", weight = "bold" }
-border = { color = "#000000", width = 1 }
-padding = 6
+highlight_text = { extends = "$text.base", color = "$syntax.keyword.color", weight = "$syntax.keyword.weight" }
+padding = { left = 16, right = 16, top = 4, bottom = 4 }
+corner_radius = 6
 
 [selector.active_item]
 extends = "$selector.item"
-background = "#094771"
+background = "$state.hover"
+text = "$text.0"
 
 [editor]
 text = "$text.1.color"
 background = "$surface.1"
 gutter_background = "$surface.1"
-active_line_background = "$surface.2"
+active_line_background = "$state.active_line"
 line_number = "$text.2.color"
 line_number_active = "$text.0.color"
 selection = "$selection.host"
