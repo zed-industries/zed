@@ -142,6 +142,7 @@ fn window_options() -> WindowOptions<'static> {
         bounds: RectF::new(vec2f(0., 0.), vec2f(1024., 768.)),
         title: None,
         titlebar_appears_transparent: true,
+        traffic_light_position: Some(vec2f(8., 8.)),
     }
 }
 
@@ -952,7 +953,7 @@ impl View for Workspace {
             Flex::column()
                 .with_child(
                     ConstrainedBox::new(Empty::new().boxed())
-                        .with_height(cx.titlebar_height)
+                        .with_height(32.)
                         .named("titlebar"),
                 )
                 .with_child(

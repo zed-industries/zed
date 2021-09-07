@@ -105,6 +105,7 @@ pub struct WindowOptions<'a> {
     pub bounds: RectF,
     pub title: Option<&'a str>,
     pub titlebar_appears_transparent: bool,
+    pub traffic_light_position: Option<Vector2F>,
 }
 
 pub struct PathPromptOptions {
@@ -155,6 +156,7 @@ impl<'a> Default for WindowOptions<'a> {
             bounds: RectF::new(Default::default(), vec2f(1024.0, 768.0)),
             title: Default::default(),
             titlebar_appears_transparent: Default::default(),
+            traffic_light_position: Default::default(),
         }
     }
 }

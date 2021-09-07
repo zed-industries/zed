@@ -8,8 +8,8 @@ use crate::{
 use block::ConcreteBlock;
 use cocoa::{
     appkit::{
-        NSApplication, NSBackingStoreBuffered, NSScreen, NSView, NSViewHeightSizable,
-        NSViewWidthSizable, NSWindow, NSWindowStyleMask,
+        CGPoint, NSApplication, NSBackingStoreBuffered, NSScreen, NSView, NSViewHeightSizable,
+        NSViewWidthSizable, NSWindow, NSWindowButton, NSWindowStyleMask,
     },
     base::{id, nil},
     foundation::{NSAutoreleasePool, NSInteger, NSSize, NSString},
@@ -65,6 +65,10 @@ unsafe fn build_classes() {
         decl.add_method(
             sel!(sendEvent:),
             send_event as extern "C" fn(&Object, Sel, id),
+        );
+        decl.add_method(
+            sel!(windowDidResize:),
+            window_did_resize as extern "C" fn(&Object, Sel, id),
         );
         decl.add_method(sel!(close), close_window as extern "C" fn(&Object, Sel));
         decl.register()
@@ -139,6 +143,7 @@ struct WindowState {
     command_queue: metal::CommandQueue,
     last_fresh_keydown: Option<(Keystroke, String)>,
     layer: id,
+    traffic_light_position: Option<Vector2F>,
 }
 
 impl Window {
@@ -204,12 +209,14 @@ impl Window {
                 command_queue: device.new_command_queue(),
                 last_fresh_keydown: None,
                 layer,
+                traffic_light_position: options.traffic_light_position,
             })));
 
             (*native_window).set_ivar(
                 WINDOW_STATE_IVAR,
                 Rc::into_raw(window.0.clone()) as *const c_void,
             );
+            native_window.setDelegate_(native_window);
             (*native_view).set_ivar(
                 WINDOW_STATE_IVAR,
                 Rc::into_raw(window.0.clone()) as *const c_void,
@@ -243,6 +250,7 @@ impl Window {
             native_window.center();
             native_window.makeKeyAndOrderFront_(nil);
 
+            window.0.borrow().move_traffic_light();
             pool.drain();
 
             window
@@ -340,6 +348,52 @@ impl platform::WindowContext for Window {
 
     fn titlebar_height(&self) -> f32 {
         self.0.as_ref().borrow().titlebar_height()
+    }
+}
+
+impl WindowState {
+    fn move_traffic_light(&self) {
+        if let Some(traffic_light_position) = self.traffic_light_position {
+            let titlebar_height = self.titlebar_height();
+
+            unsafe {
+                let close_button: id = msg_send![
+                    self.native_window,
+                    standardWindowButton: NSWindowButton::NSWindowCloseButton
+                ];
+                let min_button: id = msg_send![
+                    self.native_window,
+                    standardWindowButton: NSWindowButton::NSWindowMiniaturizeButton
+                ];
+                let zoom_button: id = msg_send![
+                    self.native_window,
+                    standardWindowButton: NSWindowButton::NSWindowZoomButton
+                ];
+
+                let mut close_button_frame: CGRect = msg_send![close_button, frame];
+                let mut min_button_frame: CGRect = msg_send![min_button, frame];
+                let mut zoom_button_frame: CGRect = msg_send![zoom_button, frame];
+                let mut origin = vec2f(
+                    traffic_light_position.x(),
+                    titlebar_height
+                        - traffic_light_position.y()
+                        - close_button_frame.size.height as f32,
+                );
+                let button_spacing =
+                    (min_button_frame.origin.x - close_button_frame.origin.x) as f32;
+
+                close_button_frame.origin = CGPoint::new(origin.x() as f64, origin.y() as f64);
+                let _: () = msg_send![close_button, setFrame: close_button_frame];
+                origin.set_x(origin.x() + button_spacing);
+
+                min_button_frame.origin = CGPoint::new(origin.x() as f64, origin.y() as f64);
+                let _: () = msg_send![min_button, setFrame: min_button_frame];
+                origin.set_x(origin.x() + button_spacing);
+
+                zoom_button_frame.origin = CGPoint::new(origin.x() as f64, origin.y() as f64);
+                let _: () = msg_send![zoom_button, setFrame: zoom_button_frame];
+            }
+        }
     }
 }
 
@@ -460,6 +514,11 @@ extern "C" fn send_event(this: &Object, _: Sel, native_event: id) {
     unsafe {
         let () = msg_send![super(this, class!(NSWindow)), sendEvent: native_event];
     }
+}
+
+extern "C" fn window_did_resize(this: &Object, _: Sel, _: id) {
+    let window_state = unsafe { get_window_state(this) };
+    window_state.as_ref().borrow().move_traffic_light();
 }
 
 extern "C" fn close_window(this: &Object, _: Sel) {
