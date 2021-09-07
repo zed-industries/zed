@@ -14,7 +14,7 @@ use std::collections::HashMap;
 pub use highlight_map::*;
 pub use theme_registry::*;
 
-pub const DEFAULT_THEME_NAME: &'static str = "dark";
+pub const DEFAULT_THEME_NAME: &'static str = "black";
 
 #[derive(Deserialize)]
 pub struct Theme {
