@@ -455,18 +455,18 @@ impl Background {
         T: 'static,
         F: 'static + Unpin + Future<Output = T>,
     {
-        let output = match self {
-            Self::Production { .. } => {
-                smol::block_on(util::timeout(timeout, Pin::new(&mut future))).ok()
+        if !timeout.is_zero() {
+            let output = match self {
+                Self::Production { .. } => {
+                    smol::block_on(util::timeout(timeout, Pin::new(&mut future))).ok()
+                }
+                Self::Deterministic(executor) => executor.block_on(Pin::new(&mut future)),
+            };
+            if let Some(output) = output {
+                return Ok(output);
             }
-            Self::Deterministic(executor) => executor.block_on(Pin::new(&mut future)),
-        };
-
-        if let Some(output) = output {
-            Ok(output)
-        } else {
-            Err(future)
         }
+        Err(future)
     }
 
     pub async fn scoped<'scope, F>(&self, scheduler: F)

@@ -119,6 +119,7 @@ pub struct Buffer {
     history: History,
     file: Option<File>,
     language: Option<Arc<Language>>,
+    sync_parse_timeout: Duration,
     syntax_tree: Mutex<Option<SyntaxTree>>,
     parsing_in_background: bool,
     parse_count: usize,
@@ -583,6 +584,7 @@ impl Buffer {
             syntax_tree: Mutex::new(None),
             parsing_in_background: false,
             parse_count: 0,
+            sync_parse_timeout: Duration::from_millis(1),
             language,
             saved_mtime,
             selections: HashMap::default(),
@@ -828,6 +830,11 @@ impl Buffer {
         self.parsing_in_background
     }
 
+    #[cfg(test)]
+    pub fn set_sync_parse_timeout(&mut self, timeout: Duration) {
+        self.sync_parse_timeout = timeout;
+    }
+
     fn reparse(&mut self, cx: &mut ModelContext<Self>) -> bool {
         if self.parsing_in_background {
             return false;
@@ -846,7 +853,7 @@ impl Buffer {
 
             match cx
                 .background()
-                .block_with_timeout(Duration::from_millis(1), parse_task)
+                .block_with_timeout(self.sync_parse_timeout, parse_task)
             {
                 Ok(new_tree) => {
                     *self.syntax_tree.lock() = Some(SyntaxTree {
@@ -1931,6 +1938,7 @@ impl Clone for Buffer {
             language: self.language.clone(),
             syntax_tree: Mutex::new(self.syntax_tree.lock().clone()),
             parsing_in_background: false,
+            sync_parse_timeout: self.sync_parse_timeout,
             parse_count: self.parse_count,
             deferred_replicas: self.deferred_replicas.clone(),
             replica_id: self.replica_id,
@@ -3853,10 +3861,7 @@ mod tests {
 
         let buffer = cx.add_model(|cx| {
             let text = "fn a() {}".into();
-            let buffer = Buffer::from_history(0, History::new(text), None, rust_lang.cloned(), cx);
-            assert!(buffer.is_parsing());
-            assert!(buffer.syntax_tree().is_none());
-            buffer
+            Buffer::from_history(0, History::new(text), None, rust_lang.cloned(), cx)
         });
 
         // Wait for the initial text to parse
@@ -3871,6 +3876,10 @@ mod tests {
                 "body: (block)))"
             )
         );
+
+        buffer.update(&mut cx, |buffer, _| {
+            buffer.set_sync_parse_timeout(Duration::ZERO)
+        });
 
         // Perform some edits (add parameter and variable reference)
         // Parsing doesn't begin until the transaction is complete
