@@ -86,7 +86,11 @@ impl View for FileFinder {
             ConstrainedBox::new(
                 Container::new(
                     Flex::new(Axis::Vertical)
-                        .with_child(ChildView::new(self.query_editor.id()).boxed())
+                        .with_child(
+                            Container::new(ChildView::new(self.query_editor.id()).boxed())
+                                .with_style(&settings.theme.selector.input_editor.container)
+                                .boxed(),
+                        )
                         .with_child(Flexible::new(1.0, self.render_matches()).boxed())
                         .boxed(),
                 )
@@ -117,9 +121,13 @@ impl FileFinder {
         if self.matches.is_empty() {
             let settings = self.settings.borrow();
             return Container::new(
-                Label::new("No matches".into(), settings.theme.selector.label.clone()).boxed(),
+                Label::new(
+                    "No matches".into(),
+                    settings.theme.selector.empty.label.clone(),
+                )
+                .boxed(),
             )
-            .with_margin_top(6.0)
+            .with_style(&settings.theme.selector.empty.container)
             .named("empty matches");
         }
 

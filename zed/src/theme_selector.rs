@@ -208,9 +208,13 @@ impl ThemeSelector {
         if self.matches.is_empty() {
             let settings = self.settings.borrow();
             return Container::new(
-                Label::new("No matches".into(), settings.theme.selector.label.clone()).boxed(),
+                Label::new(
+                    "No matches".into(),
+                    settings.theme.selector.empty.label.clone(),
+                )
+                .boxed(),
             )
-            .with_margin_top(6.0)
+            .with_style(&settings.theme.selector.empty.container)
             .named("empty matches");
         }
 

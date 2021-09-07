@@ -75,7 +75,6 @@ pub struct ChatPanel {
     pub container: ContainerStyle,
     pub message: ChatMessage,
     pub channel_select: ChannelSelect,
-    pub input_editor_container: ContainerStyle,
     pub input_editor: InputEditorStyle,
     pub sign_in_prompt: TextStyle,
     pub hovered_sign_in_prompt: TextStyle,
@@ -114,9 +113,7 @@ pub struct ChannelName {
 pub struct Selector {
     #[serde(flatten)]
     pub container: ContainerStyle,
-    #[serde(flatten)]
-    pub label: LabelStyle,
-
+    pub empty: ContainedLabel,
     pub input_editor: InputEditorStyle,
     pub item: ContainedLabel,
     pub active_item: ContainedLabel,
@@ -154,9 +151,10 @@ pub struct EditorStyle {
 
 #[derive(Clone, Deserialize)]
 pub struct InputEditorStyle {
+    #[serde(flatten)]
+    pub container: ContainerStyle,
     pub text: HighlightStyle,
     pub placeholder_text: HighlightStyle,
-    pub background: Color,
     pub selection: SelectionStyle,
 }
 
@@ -212,7 +210,10 @@ impl InputEditorStyle {
         EditorStyle {
             text: self.text.clone(),
             placeholder_text: self.placeholder_text.clone(),
-            background: self.background,
+            background: self
+                .container
+                .background_color
+                .unwrap_or(Color::transparent_black()),
             selection: self.selection,
             ..Default::default()
         }

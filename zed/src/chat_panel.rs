@@ -258,7 +258,7 @@ impl ChatPanel {
     fn render_input_box(&self) -> ElementBox {
         let theme = &self.settings.borrow().theme;
         Container::new(ChildView::new(self.input_editor.id()).boxed())
-            .with_style(&theme.chat_panel.input_editor_container)
+            .with_style(&theme.chat_panel.input_editor.container)
             .boxed()
     }
 

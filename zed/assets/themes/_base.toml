@@ -88,15 +88,12 @@ corner_radius = 6
 border = { color = "#000000", width = 1 }
 background = "$surface.0"
 
-[chat_panel.input_editor_container]
+[chat_panel.input_editor]
 background = "$surface.1"
 corner_radius = 6
 padding = 6
-
-[chat_panel.input_editor]
 text = "$text.1.color"
 placeholder_text = "$text.2.color"
-background = "$surface.1"
 selection = "$selection.host"
 
 [chat_panel.sign_in_prompt]
@@ -109,13 +106,16 @@ color = "$text.1.color"
 
 [selector]
 background = "$surface.0"
-text = "$text.0"
 padding = 8
 margin.top = 12
 corner_radius = 6
 shadow = { offset = [0, 2], blur = 16, color = "$shadow.0" }
 input_editor = "$chat_panel.input_editor"
 border = { width = 1, color = "$border.0" }
+
+[selector.empty]
+text = "$text.0"
+padding = { left = 16, right = 16, top = 4, bottom = 4 }
 
 [selector.item]
 text = "$text.1"
