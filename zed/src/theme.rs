@@ -33,6 +33,7 @@ pub struct SyntaxTheme {
 #[derive(Deserialize)]
 pub struct Workspace {
     pub background: Color,
+    pub titlebar: ContainerStyle,
     pub tab: Tab,
     pub active_tab: Tab,
     pub sidebar: Sidebar,

@@ -952,9 +952,13 @@ impl View for Workspace {
         Container::new(
             Flex::column()
                 .with_child(
-                    ConstrainedBox::new(Empty::new().boxed())
-                        .with_height(32.)
-                        .named("titlebar"),
+                    ConstrainedBox::new(
+                        Container::new(Empty::new().boxed())
+                            .with_style(&settings.theme.workspace.titlebar)
+                            .boxed(),
+                    )
+                    .with_height(32.)
+                    .named("titlebar"),
                 )
                 .with_child(
                     Expanded::new(
