@@ -67,6 +67,9 @@ pub struct SidebarIcon {
 pub struct ProjectBrowser {
     #[serde(flatten)]
     pub container: ContainerStyle,
+    pub header: ContainerStyle,
+    pub headline: TextStyle,
+    pub item: TextStyle,
 }
 
 #[derive(Deserialize)]

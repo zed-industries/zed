@@ -31,7 +31,13 @@ color = "$text.2.color"
 color = "$text.0.color"
 
 [project_browser]
+padding = 6
 border = { right = true, width = 1, color = "$border.0"}
+headline = { extends = "$text.0", weight = "bold" }
+item = { extends = "$text.1" }
+
+[project_browser.header]
+margin = { bottom = 4 }
 
 [chat_panel]
 channel_name = { extends = "$text.0", weight = "bold" }
