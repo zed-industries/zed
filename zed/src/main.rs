@@ -15,7 +15,7 @@ use zed::{
     fs::RealFs,
     language, menus, rpc, settings, theme_selector,
     user::UserStore,
-    workspace::{self, OpenParams, OpenPaths},
+    workspace::{self, OpenNew, OpenParams, OpenPaths},
     AppState,
 };
 
@@ -62,11 +62,10 @@ fn main() {
         }
 
         let paths = collect_path_args();
-        if !paths.is_empty() {
-            cx.dispatch_global_action(OpenPaths(OpenParams {
-                paths,
-                app_state: app_state.clone(),
-            }));
+        if paths.is_empty() {
+            cx.dispatch_global_action(OpenNew(app_state));
+        } else {
+            cx.dispatch_global_action(OpenPaths(OpenParams { paths, app_state }));
         }
     });
 }
