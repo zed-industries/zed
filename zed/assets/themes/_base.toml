@@ -19,7 +19,7 @@ extends = "$workspace.tab"
 background = "$surface.1"
 text = "$text.0"
 
-[workspace.sidebar.icons]
+[workspace.sidebar]
 padding = { left = 10, right = 10 }
 
 [workspace.sidebar.resize_handle]
@@ -32,6 +32,14 @@ height = 18
 [workspace.sidebar.active_icon]
 extends = "$workspace.sidebar.icon"
 color = "$text.0.color"
+
+[workspace.left_sidebar]
+extends = "$workspace.sidebar"
+border = { width = 1, color = "$surface.1", right = true }
+
+[workspace.right_sidebar]
+extends = "$workspace.sidebar"
+border = { width = 1, color = "$surface.1", left = true }
 
 [chat_panel]
 channel_name = { extends = "$text.0", weight = "bold" }

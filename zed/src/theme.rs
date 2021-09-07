@@ -36,7 +36,8 @@ pub struct Workspace {
     pub titlebar: ContainerStyle,
     pub tab: Tab,
     pub active_tab: Tab,
-    pub sidebar: Sidebar,
+    pub left_sidebar: Sidebar,
+    pub right_sidebar: Sidebar,
 }
 
 #[derive(Deserialize)]
@@ -52,7 +53,8 @@ pub struct Tab {
 
 #[derive(Deserialize)]
 pub struct Sidebar {
-    pub icons: ContainerStyle,
+    #[serde(flatten)]
+    pub container: ContainerStyle,
     pub icon: SidebarIcon,
     pub active_icon: SidebarIcon,
     pub resize_handle: ContainerStyle,

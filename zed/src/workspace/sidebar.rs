@@ -1,5 +1,5 @@
 use super::Workspace;
-use crate::Settings;
+use crate::{theme, Settings};
 use gpui::{
     action, elements::*, platform::CursorStyle, AnyViewHandle, MutableAppContext, RenderContext,
 };
@@ -59,6 +59,13 @@ impl Sidebar {
             .map(|item| &item.view)
     }
 
+    fn theme<'a>(&self, settings: &'a Settings) -> &'a theme::Sidebar {
+        match self.side {
+            Side::Left => &settings.theme.workspace.left_sidebar,
+            Side::Right => &settings.theme.workspace.right_sidebar,
+        }
+    }
+
     pub fn render(&self, settings: &Settings, cx: &mut RenderContext<Workspace>) -> ElementBox {
         let side = self.side;
         let theme = &settings.theme;
@@ -66,14 +73,15 @@ impl Sidebar {
             theme.workspace.tab.label.text.font_id,
             theme.workspace.tab.label.text.font_size,
         );
+        let theme = self.theme(settings);
 
         Container::new(
             Flex::column()
                 .with_children(self.items.iter().enumerate().map(|(item_index, item)| {
                     let theme = if Some(item_index) == self.active_item_ix {
-                        &settings.theme.workspace.sidebar.active_icon
+                        &theme.active_icon
                     } else {
-                        &settings.theme.workspace.sidebar.icon
+                        &theme.icon
                     };
                     enum SidebarButton {}
                     MouseEventHandler::new::<SidebarButton, _, _, _>(item.view.id(), cx, |_, _| {
@@ -98,7 +106,7 @@ impl Sidebar {
                 }))
                 .boxed(),
         )
-        .with_style(&settings.theme.workspace.sidebar.icons)
+        .with_style(&theme.container)
         .boxed()
     }
 
@@ -147,7 +155,7 @@ impl Sidebar {
         let side = self.side;
         MouseEventHandler::new::<Self, _, _, _>(self.side.id(), &mut cx, |_, _| {
             Container::new(Empty::new().boxed())
-                .with_style(&settings.theme.workspace.sidebar.resize_handle)
+                .with_style(&self.theme(settings).resize_handle)
                 .boxed()
         })
         .with_cursor_style(CursorStyle::ResizeLeftRight)
