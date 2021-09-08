@@ -3,7 +3,7 @@ base = { family = "Inconsolata", size = 15 }
 
 [workspace]
 background = "$surface.0"
-pane_divider = { width = 3, color = "$border.0" }
+pane_divider = { width = 1, color = "$border.0" }
 
 [workspace.titlebar]
 border = { width = 1, bottom = true, color = "$border.0" }
