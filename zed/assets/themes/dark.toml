@@ -34,7 +34,7 @@ hover = "#00000033"
 
 [syntax]
 keyword = { color = "#0086c0", weight = "bold" }
-function = { color = "#dcdcaa", underline = true }
+function = "#dcdcaa"
 string = "#cb8f77"
 type = "#4ec9b0"
 number = "#b5cea8"
