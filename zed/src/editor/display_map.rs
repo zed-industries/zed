@@ -545,8 +545,8 @@ mod tests {
 
         let text = "one two three four five\nsix seven eight";
         let buffer = cx.add_model(|cx| Buffer::new(0, text.to_string(), cx));
-        let settings = watch::channel_with(settings).1;
-        let map = cx.add_model(|cx| DisplayMap::new(buffer.clone(), settings, wrap_width, cx));
+        let (mut settings_tx, settings_rx) = watch::channel_with(settings);
+        let map = cx.add_model(|cx| DisplayMap::new(buffer.clone(), settings_rx, wrap_width, cx));
 
         let snapshot = map.update(&mut cx, |map, cx| map.snapshot(cx));
         assert_eq!(
@@ -602,6 +602,17 @@ mod tests {
             snapshot.chunks_at(1).collect::<String>(),
             "three four \nfive\nsix and \nseven eight"
         );
+
+        // Re-wrap on font size changes
+        settings_tx.borrow_mut().buffer_font_size += 3.;
+
+        map.next_notification(&mut cx).await;
+
+        let snapshot = map.update(&mut cx, |map, cx| map.snapshot(cx));
+        assert_eq!(
+            snapshot.chunks_at(1).collect::<String>(),
+            "three \nfour five\nsix and \nseven \neight"
+        )
     }
 
     #[gpui::test]

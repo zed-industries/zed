@@ -175,6 +175,7 @@ impl WrapMap {
             {
                 Ok(snapshot) => {
                     self.snapshot = snapshot;
+                    cx.notify();
                 }
                 Err(wrap_task) => {
                     self.background_task = Some(cx.spawn(|this, mut cx| async move {
