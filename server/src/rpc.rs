@@ -1714,7 +1714,7 @@ mod tests {
                 )
                 .detach();
             client
-                .add_connection(user_id.to_proto(), client_conn, &cx.to_async())
+                .set_connection(user_id.to_proto(), client_conn, &cx.to_async())
                 .await
                 .unwrap();
             (user_id, client)

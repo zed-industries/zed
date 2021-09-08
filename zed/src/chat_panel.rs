@@ -3,7 +3,7 @@ use std::sync::Arc;
 use crate::{
     channel::{Channel, ChannelEvent, ChannelList, ChannelMessage},
     editor::Editor,
-    rpc::Client,
+    rpc::{self, Client},
     theme,
     util::{ResultExt, TryFutureExt},
     Settings,
@@ -14,10 +14,10 @@ use gpui::{
     keymap::Binding,
     platform::CursorStyle,
     views::{ItemType, Select, SelectStyle},
-    AppContext, Entity, ModelHandle, MutableAppContext, RenderContext, Subscription, View,
+    AppContext, Entity, ModelHandle, MutableAppContext, RenderContext, Subscription, Task, View,
     ViewContext, ViewHandle,
 };
-use postage::watch;
+use postage::{prelude::Stream, watch};
 use time::{OffsetDateTime, UtcOffset};
 
 const MESSAGE_LOADING_THRESHOLD: usize = 50;
@@ -31,6 +31,7 @@ pub struct ChatPanel {
     channel_select: ViewHandle<Select>,
     settings: watch::Receiver<Settings>,
     local_timezone: UtcOffset,
+    _status_observer: Task<()>,
 }
 
 pub enum Event {}
@@ -98,6 +99,14 @@ impl ChatPanel {
                 cx.dispatch_action(LoadMoreMessages);
             }
         });
+        let _status_observer = cx.spawn(|this, mut cx| {
+            let mut status = rpc.status();
+            async move {
+                while let Some(_) = status.recv().await {
+                    this.update(&mut cx, |_, cx| cx.notify());
+                }
+            }
+        });
 
         let mut this = Self {
             rpc,
@@ -108,6 +117,7 @@ impl ChatPanel {
             channel_select,
             settings,
             local_timezone: cx.platform().local_timezone(),
+            _status_observer,
         };
 
         this.init_active_channel(cx);
@@ -153,6 +163,7 @@ impl ChatPanel {
         if let Some(active_channel) = active_channel {
             self.set_active_channel(active_channel, cx);
         } else {
+            self.message_list.reset(0);
             self.active_channel = None;
         }
 
@@ -357,10 +368,6 @@ impl ChatPanel {
             })
         }
     }
-
-    fn is_signed_in(&self) -> bool {
-        self.rpc.user_id().borrow().is_some()
-    }
 }
 
 impl Entity for ChatPanel {
@@ -374,10 +381,9 @@ impl View for ChatPanel {
 
     fn render(&mut self, cx: &mut RenderContext<Self>) -> ElementBox {
         let theme = &self.settings.borrow().theme;
-        let element = if self.is_signed_in() {
-            self.render_channel()
-        } else {
-            self.render_sign_in_prompt(cx)
+        let element = match *self.rpc.status().borrow() {
+            rpc::Status::Connected { .. } => self.render_channel(),
+            _ => self.render_sign_in_prompt(cx),
         };
         ConstrainedBox::new(
             Container::new(element)
@@ -389,7 +395,7 @@ impl View for ChatPanel {
     }
 
     fn on_focus(&mut self, cx: &mut ViewContext<Self>) {
-        if self.is_signed_in() {
+        if matches!(*self.rpc.status().borrow(), rpc::Status::Connected { .. }) {
             cx.focus(&self.input_editor);
         }
     }

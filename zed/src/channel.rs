@@ -90,18 +90,15 @@ impl ChannelList {
         let _task = cx.spawn(|this, mut cx| {
             let rpc = rpc.clone();
             async move {
-                let mut user_id = rpc.user_id();
+                let mut status = rpc.status();
                 loop {
-                    let available_channels = if user_id.recv().await.unwrap().is_some() {
-                        Some(
-                            rpc.request(proto::GetChannels {})
-                                .await
-                                .context("failed to fetch available channels")?
-                                .channels
-                                .into_iter()
-                                .map(Into::into)
-                                .collect(),
-                        )
+                    let status = status.recv().await.unwrap();
+                    let available_channels = if matches!(status, rpc::Status::Connected { .. }) {
+                        let response = rpc
+                            .request(proto::GetChannels {})
+                            .await
+                            .context("failed to fetch available channels")?;
+                        Some(response.channels.into_iter().map(Into::into).collect())
                     } else {
                         None
                     };
@@ -671,7 +668,7 @@ mod tests {
             cx.background().spawn(io).detach();
 
             client
-                .add_connection(user_id, client_conn, &cx.to_async())
+                .set_connection(user_id, client_conn, &cx.to_async())
                 .await
                 .unwrap();
 

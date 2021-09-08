@@ -31,9 +31,20 @@ pub struct Client {
     state: RwLock<ClientState>,
 }
 
+#[derive(Copy, Clone, Debug)]
+pub enum Status {
+    Disconnected,
+    Connecting,
+    ConnectionError,
+    Connected {
+        connection_id: ConnectionId,
+        user_id: u64,
+    },
+    ConnectionLost,
+}
+
 struct ClientState {
-    connection_id: Option<ConnectionId>,
-    user_id: (watch::Sender<Option<u64>>, watch::Receiver<Option<u64>>),
+    status: (watch::Sender<Status>, watch::Receiver<Status>),
     entity_id_extractors: HashMap<TypeId, Box<dyn Send + Sync + Fn(&dyn AnyTypedEnvelope) -> u64>>,
     model_handlers: HashMap<
         (TypeId, u64),
@@ -44,8 +55,7 @@ struct ClientState {
 impl Default for ClientState {
     fn default() -> Self {
         Self {
-            connection_id: Default::default(),
-            user_id: watch::channel(),
+            status: watch::channel_with(Status::Disconnected),
             entity_id_extractors: Default::default(),
             model_handlers: Default::default(),
         }
@@ -80,8 +90,14 @@ impl Client {
         })
     }
 
-    pub fn user_id(&self) -> watch::Receiver<Option<u64>> {
-        self.state.read().user_id.1.clone()
+    pub fn status(&self) -> watch::Receiver<Status> {
+        self.state.read().status.1.clone()
+    }
+
+    async fn set_status(&self, status: Status) -> Result<()> {
+        let mut state = self.state.write();
+        state.status.0.send(status).await?;
+        Ok(())
     }
 
     pub fn subscribe_from_model<T, M, F>(
@@ -141,43 +157,64 @@ impl Client {
         self: &Arc<Self>,
         cx: &AsyncAppContext,
     ) -> anyhow::Result<()> {
-        if self.state.read().connection_id.is_some() {
+        if matches!(
+            *self.status().borrow(),
+            Status::Connecting | Status::Connected { .. }
+        ) {
             return Ok(());
         }
 
         let (user_id, access_token) = Self::login(cx.platform(), &cx.background()).await?;
         let user_id = user_id.parse::<u64>()?;
+
+        self.set_status(Status::Connecting).await?;
+        match self.connect(user_id, &access_token, cx).await {
+            Ok(()) => {
+                log::info!("connected to rpc address {}", *ZED_SERVER_URL);
+                Ok(())
+            }
+            Err(err) => {
+                self.set_status(Status::ConnectionError).await?;
+                Err(err)
+            }
+        }
+    }
+
+    async fn connect(
+        self: &Arc<Self>,
+        user_id: u64,
+        access_token: &str,
+        cx: &AsyncAppContext,
+    ) -> Result<()> {
         let request =
             Request::builder().header("Authorization", format!("{} {}", user_id, access_token));
-
         if let Some(host) = ZED_SERVER_URL.strip_prefix("https://") {
             let stream = smol::net::TcpStream::connect(host).await?;
             let request = request.uri(format!("wss://{}/rpc", host)).body(())?;
             let (stream, _) = async_tungstenite::async_tls::client_async_tls(request, stream)
                 .await
                 .context("websocket handshake")?;
-            self.add_connection(user_id, stream, cx).await?;
+            self.set_connection(user_id, stream, cx).await?;
+            Ok(())
         } else if let Some(host) = ZED_SERVER_URL.strip_prefix("http://") {
             let stream = smol::net::TcpStream::connect(host).await?;
             let request = request.uri(format!("ws://{}/rpc", host)).body(())?;
             let (stream, _) = async_tungstenite::client_async(request, stream)
                 .await
                 .context("websocket handshake")?;
-            self.add_connection(user_id, stream, cx).await?;
+            self.set_connection(user_id, stream, cx).await?;
+            Ok(())
         } else {
-            return Err(anyhow!("invalid server url: {}", *ZED_SERVER_URL))?;
-        };
-
-        log::info!("connected to rpc address {}", *ZED_SERVER_URL);
-        Ok(())
+            return Err(anyhow!("invalid server url: {}", *ZED_SERVER_URL));
+        }
     }
 
-    pub async fn add_connection<Conn>(
+    pub async fn set_connection<Conn>(
         self: &Arc<Self>,
         user_id: u64,
         conn: Conn,
         cx: &AsyncAppContext,
-    ) -> anyhow::Result<()>
+    ) -> Result<()>
     where
         Conn: 'static
             + futures::Sink<WebSocketMessage, Error = WebSocketError>
@@ -218,16 +255,28 @@ impl Client {
                 })
                 .detach();
         }
-        cx.background()
+
+        self.set_status(Status::Connected {
+            connection_id,
+            user_id,
+        })
+        .await?;
+
+        let handle_io = cx.background().spawn(handle_io);
+        let this = self.clone();
+        cx.foreground()
             .spawn(async move {
-                if let Err(error) = handle_io.await {
-                    log::error!("connection error: {:?}", error);
+                match handle_io.await {
+                    Ok(()) => {
+                        let _ = this.set_status(Status::Disconnected).await;
+                    }
+                    Err(err) => {
+                        log::error!("connection error: {:?}", err);
+                        let _ = this.set_status(Status::ConnectionLost).await;
+                    }
                 }
             })
             .detach();
-        let mut state = self.state.write();
-        state.connection_id = Some(connection_id);
-        state.user_id.0.send(Some(user_id)).await?;
         Ok(())
     }
 
@@ -316,14 +365,16 @@ impl Client {
     pub async fn disconnect(&self) -> Result<()> {
         let conn_id = self.connection_id()?;
         self.peer.disconnect(conn_id).await;
+        self.set_status(Status::Disconnected).await?;
         Ok(())
     }
 
     fn connection_id(&self) -> Result<ConnectionId> {
-        self.state
-            .read()
-            .connection_id
-            .ok_or_else(|| anyhow!("not connected"))
+        if let Status::Connected { connection_id, .. } = *self.status().borrow() {
+            Ok(connection_id)
+        } else {
+            Err(anyhow!("not connected"))
+        }
     }
 
     pub async fn send<T: EnvelopedMessage>(&self, message: T) -> Result<()> {

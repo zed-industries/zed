@@ -127,6 +127,7 @@ impl Peer {
         let mut writer = MessageStream::new(tx);
         let mut reader = MessageStream::new(rx);
 
+        let this = self.clone();
         let response_channels = connection.response_channels.clone();
         let handle_io = async move {
             loop {
@@ -147,6 +148,7 @@ impl Peer {
                                     if let Some(envelope) = proto::build_typed_envelope(connection_id, incoming) {
                                         if incoming_tx.send(envelope).await.is_err() {
                                             response_channels.lock().await.clear();
+                                            this.connections.write().await.remove(&connection_id);
                                             return Ok(())
                                         }
                                     } else {
@@ -158,6 +160,7 @@ impl Peer {
                             }
                             Err(error) => {
                                 response_channels.lock().await.clear();
+                                this.connections.write().await.remove(&connection_id);
                                 Err(error).context("received invalid RPC message")?;
                             }
                         },
@@ -165,11 +168,13 @@ impl Peer {
                             Some(outgoing) => {
                                 if let Err(result) = writer.write_message(&outgoing).await {
                                     response_channels.lock().await.clear();
+                                    this.connections.write().await.remove(&connection_id);
                                     Err(result).context("failed to write RPC message")?;
                                 }
                             }
                             None => {
                                 response_channels.lock().await.clear();
+                                this.connections.write().await.remove(&connection_id);
                                 return Ok(())
                             }
                         }
