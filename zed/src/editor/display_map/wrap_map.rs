@@ -80,19 +80,20 @@ impl WrapMap {
         wrap_width: Option<f32>,
         cx: &mut ModelContext<Self>,
     ) -> Self {
-        let _watch_settings = cx.spawn({
+        let _watch_settings = cx.spawn_weak({
             let mut prev_font = (
                 settings.borrow().buffer_font_size,
                 settings.borrow().buffer_font_family,
             );
             let mut settings = settings.clone();
             move |this, mut cx| async move {
-                let _ = settings.recv().await;
                 while let Some(settings) = settings.recv().await {
-                    let font = (settings.buffer_font_size, settings.buffer_font_family);
-                    if font != prev_font {
-                        prev_font = font;
-                        this.update(&mut cx, |this, cx| this.rewrap(cx));
+                    if let Some(this) = this.upgrade(&cx) {
+                        let font = (settings.buffer_font_size, settings.buffer_font_family);
+                        if font != prev_font {
+                            prev_font = font;
+                            this.update(&mut cx, |this, cx| this.rewrap(cx));
+                        }
                     }
                 }
             }
