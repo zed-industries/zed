@@ -5,6 +5,7 @@ mod wrap_map;
 use super::{buffer, Anchor, Bias, Buffer, Point, Settings, ToOffset, ToPoint};
 use fold_map::FoldMap;
 use gpui::{Entity, ModelContext, ModelHandle};
+use postage::watch;
 use std::ops::Range;
 use tab_map::TabMap;
 pub use wrap_map::BufferRows;
@@ -24,12 +25,12 @@ impl Entity for DisplayMap {
 impl DisplayMap {
     pub fn new(
         buffer: ModelHandle<Buffer>,
-        settings: Settings,
+        settings: watch::Receiver<Settings>,
         wrap_width: Option<f32>,
         cx: &mut ModelContext<Self>,
     ) -> Self {
         let (fold_map, snapshot) = FoldMap::new(buffer.clone(), cx);
-        let (tab_map, snapshot) = TabMap::new(snapshot, settings.tab_size);
+        let (tab_map, snapshot) = TabMap::new(snapshot, settings.borrow().tab_size);
         let wrap_map = cx.add_model(|cx| WrapMap::new(snapshot, settings, wrap_width, cx));
         cx.observe(&wrap_map, |_, _, cx| cx.notify()).detach();
         DisplayMap {
@@ -387,6 +388,7 @@ mod tests {
             let text = RandomCharIter::new(&mut rng).take(len).collect::<String>();
             Buffer::new(0, text, cx)
         });
+        let settings = watch::channel_with(settings).1;
 
         let map = cx.add_model(|cx| DisplayMap::new(buffer.clone(), settings, wrap_width, cx));
         let (_observer, notifications) = Observer::new(&map, &mut cx);
@@ -543,6 +545,7 @@ mod tests {
 
         let text = "one two three four five\nsix seven eight";
         let buffer = cx.add_model(|cx| Buffer::new(0, text.to_string(), cx));
+        let settings = watch::channel_with(settings).1;
         let map = cx.add_model(|cx| DisplayMap::new(buffer.clone(), settings, wrap_width, cx));
 
         let snapshot = map.update(&mut cx, |map, cx| map.snapshot(cx));

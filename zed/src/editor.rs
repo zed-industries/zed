@@ -348,7 +348,7 @@ impl Editor {
         cx: &mut ViewContext<Self>,
     ) -> Self {
         let display_map =
-            cx.add_model(|cx| DisplayMap::new(buffer.clone(), settings.borrow().clone(), None, cx));
+            cx.add_model(|cx| DisplayMap::new(buffer.clone(), settings.clone(), None, cx));
         cx.observe(&buffer, Self::on_buffer_changed).detach();
         cx.subscribe(&buffer, Self::on_buffer_event).detach();
         cx.observe(&display_map, Self::on_display_map_changed)

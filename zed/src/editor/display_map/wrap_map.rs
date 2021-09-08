@@ -9,6 +9,7 @@ use gpui::{
     Entity, ModelContext, Task,
 };
 use lazy_static::lazy_static;
+use postage::{prelude::Stream, watch};
 use smol::future::yield_now;
 use std::{collections::VecDeque, ops::Range, time::Duration};
 
@@ -17,7 +18,8 @@ pub struct WrapMap {
     pending_edits: VecDeque<(TabSnapshot, Vec<TabEdit>)>,
     wrap_width: Option<f32>,
     background_task: Option<Task<()>>,
-    settings: Settings,
+    _watch_settings: Task<()>,
+    settings: watch::Receiver<Settings>,
 }
 
 impl Entity for WrapMap {
@@ -74,18 +76,38 @@ pub struct BufferRows<'a> {
 impl WrapMap {
     pub fn new(
         tab_snapshot: TabSnapshot,
-        settings: Settings,
+        settings: watch::Receiver<Settings>,
         wrap_width: Option<f32>,
         cx: &mut ModelContext<Self>,
     ) -> Self {
+        let _watch_settings = cx.spawn({
+            let mut prev_font = (
+                settings.borrow().buffer_font_size,
+                settings.borrow().buffer_font_family,
+            );
+            let mut settings = settings.clone();
+            move |this, mut cx| async move {
+                let _ = settings.recv().await;
+                while let Some(settings) = settings.recv().await {
+                    let font = (settings.buffer_font_size, settings.buffer_font_family);
+                    if font != prev_font {
+                        prev_font = font;
+                        this.update(&mut cx, |this, cx| this.rewrap(cx));
+                    }
+                }
+            }
+        });
+
         let mut this = Self {
-            background_task: None,
             wrap_width: None,
             pending_edits: Default::default(),
             snapshot: Snapshot::new(tab_snapshot),
             settings,
+            background_task: None,
+            _watch_settings,
         };
         this.set_wrap_width(wrap_width, cx);
+
         this
     }
 
@@ -111,17 +133,25 @@ impl WrapMap {
         }
 
         self.wrap_width = wrap_width;
+        self.rewrap(cx);
+        true
+    }
+
+    fn rewrap(&mut self, cx: &mut ModelContext<Self>) {
         self.background_task.take();
 
-        if let Some(wrap_width) = wrap_width {
+        if let Some(wrap_width) = self.wrap_width {
             let mut new_snapshot = self.snapshot.clone();
             let font_cache = cx.font_cache().clone();
             let settings = self.settings.clone();
             let task = cx.background().spawn(async move {
-                let font_id = font_cache
-                    .select_font(settings.buffer_font_family, &Default::default())
-                    .unwrap();
-                let mut line_wrapper = font_cache.line_wrapper(font_id, settings.buffer_font_size);
+                let mut line_wrapper = {
+                    let settings = settings.borrow();
+                    let font_id = font_cache
+                        .select_font(settings.buffer_font_family, &Default::default())
+                        .unwrap();
+                    font_cache.line_wrapper(font_id, settings.buffer_font_size)
+                };
                 let tab_snapshot = new_snapshot.tab_snapshot.clone();
                 let range = TabPoint::zero()..tab_snapshot.max_point();
                 new_snapshot
@@ -166,8 +196,6 @@ impl WrapMap {
                     .push(Transform::isomorphic(summary), &());
             }
         }
-
-        true
     }
 
     fn flush_edits(&mut self, cx: &mut ModelContext<Self>) {
@@ -194,11 +222,14 @@ impl WrapMap {
                 let font_cache = cx.font_cache().clone();
                 let settings = self.settings.clone();
                 let update_task = cx.background().spawn(async move {
-                    let font_id = font_cache
-                        .select_font(settings.buffer_font_family, &Default::default())
-                        .unwrap();
-                    let mut line_wrapper =
-                        font_cache.line_wrapper(font_id, settings.buffer_font_size);
+                    let mut line_wrapper = {
+                        let settings = settings.borrow();
+                        let font_id = font_cache
+                            .select_font(settings.buffer_font_family, &Default::default())
+                            .unwrap();
+                        font_cache.line_wrapper(font_id, settings.buffer_font_size)
+                    };
+
                     for (tab_snapshot, edits) in pending_edits {
                         snapshot
                             .update(tab_snapshot, &edits, wrap_width, &mut line_wrapper)
@@ -942,9 +973,6 @@ mod tests {
             folds_snapshot.text()
         );
         log::info!("Unwrapped text (expanded tabs): {:?}", tabs_snapshot.text());
-        let wrap_map = cx
-            .add_model(|cx| WrapMap::new(tabs_snapshot.clone(), settings.clone(), wrap_width, cx));
-        let (_observer, notifications) = Observer::new(&wrap_map, &mut cx);
 
         let font_id = font_cache
             .select_font(settings.buffer_font_family, &Default::default())
@@ -952,6 +980,11 @@ mod tests {
         let mut line_wrapper = LineWrapper::new(font_id, settings.buffer_font_size, font_system);
         let unwrapped_text = tabs_snapshot.text();
         let expected_text = wrap_text(&unwrapped_text, wrap_width, &mut line_wrapper);
+
+        let settings = watch::channel_with(settings).1;
+        let wrap_map = cx
+            .add_model(|cx| WrapMap::new(tabs_snapshot.clone(), settings.clone(), wrap_width, cx));
+        let (_observer, notifications) = Observer::new(&wrap_map, &mut cx);
 
         if wrap_map.read_with(&cx, |map, _| map.is_rewrapping()) {
             notifications.recv().await.unwrap();
