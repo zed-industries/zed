@@ -3,10 +3,12 @@ use anyhow::{anyhow, Context, Result};
 use async_tungstenite::tungstenite::{
     http::Request, Error as WebSocketError, Message as WebSocketMessage,
 };
+use futures::StreamExt as _;
 use gpui::{AsyncAppContext, Entity, ModelContext, Task};
 use lazy_static::lazy_static;
 use parking_lot::RwLock;
 use postage::{prelude::Stream, watch};
+use smol::Timer;
 use std::{
     any::TypeId,
     collections::HashMap,
@@ -42,6 +44,10 @@ pub enum Status {
         user_id: u64,
     },
     ConnectionLost,
+    Reconnecting,
+    ReconnectionError {
+        next_reconnection: Instant,
+    },
 }
 
 struct ClientState {
@@ -51,6 +57,8 @@ struct ClientState {
         (TypeId, u64),
         Box<dyn Send + Sync + FnMut(Box<dyn AnyTypedEnvelope>, &mut AsyncAppContext)>,
     >,
+    _maintain_connection: Option<Task<()>>,
+    heartbeat_interval: Duration,
 }
 
 impl Default for ClientState {
@@ -59,6 +67,8 @@ impl Default for ClientState {
             status: watch::channel_with(Status::Disconnected),
             entity_id_extractors: Default::default(),
             model_handlers: Default::default(),
+            _maintain_connection: None,
+            heartbeat_interval: Duration::from_secs(5),
         }
     }
 }
@@ -95,9 +105,35 @@ impl Client {
         self.state.read().status.1.clone()
     }
 
-    fn set_status(&self, status: Status) {
+    fn set_status(self: &Arc<Self>, status: Status, cx: &AsyncAppContext) {
         let mut state = self.state.write();
         *state.status.0.borrow_mut() = status;
+        match status {
+            Status::Connected { .. } => {
+                let heartbeat_interval = state.heartbeat_interval;
+                let this = self.clone();
+                let foreground = cx.foreground();
+                state._maintain_connection = Some(cx.foreground().spawn(async move {
+                    let mut next_ping_id = 0;
+                    loop {
+                        foreground.sleep(heartbeat_interval).await;
+                        this.request(proto::Ping { id: next_ping_id })
+                            .await
+                            .unwrap();
+                        next_ping_id += 1;
+                    }
+                }));
+            }
+            Status::ConnectionLost => {
+                state._maintain_connection = Some(cx.foreground().spawn(async move {
+                    // TODO: try to reconnect
+                }));
+            }
+            Status::Disconnected => {
+                state._maintain_connection.take();
+            }
+            _ => {}
+        }
     }
 
     pub fn subscribe_from_model<T, M, F>(
@@ -167,14 +203,14 @@ impl Client {
         let (user_id, access_token) = Self::login(cx.platform(), &cx.background()).await?;
         let user_id = user_id.parse::<u64>()?;
 
-        self.set_status(Status::Connecting);
+        self.set_status(Status::Connecting, cx);
         match self.connect(user_id, &access_token, cx).await {
             Ok(()) => {
                 log::info!("connected to rpc address {}", *ZED_SERVER_URL);
                 Ok(())
             }
             Err(err) => {
-                self.set_status(Status::ConnectionError);
+                self.set_status(Status::ConnectionError, cx);
                 Err(err)
             }
         }
@@ -256,20 +292,24 @@ impl Client {
                 .detach();
         }
 
-        self.set_status(Status::Connected {
-            connection_id,
-            user_id,
-        });
+        self.set_status(
+            Status::Connected {
+                connection_id,
+                user_id,
+            },
+            cx,
+        );
 
         let handle_io = cx.background().spawn(handle_io);
         let this = self.clone();
+        let cx = cx.clone();
         cx.foreground()
             .spawn(async move {
                 match handle_io.await {
-                    Ok(()) => this.set_status(Status::Disconnected),
+                    Ok(()) => this.set_status(Status::Disconnected, &cx),
                     Err(err) => {
                         log::error!("connection error: {:?}", err);
-                        this.set_status(Status::ConnectionLost);
+                        this.set_status(Status::ConnectionLost, &cx);
                     }
                 }
             })
@@ -359,10 +399,10 @@ impl Client {
         })
     }
 
-    pub async fn disconnect(&self) -> Result<()> {
+    pub async fn disconnect(self: &Arc<Self>, cx: &AsyncAppContext) -> Result<()> {
         let conn_id = self.connection_id()?;
         self.peer.disconnect(conn_id).await;
-        self.set_status(Status::Disconnected);
+        self.set_status(Status::Disconnected, cx);
         Ok(())
     }
 
@@ -444,13 +484,40 @@ const LOGIN_RESPONSE: &'static str = "
 </html>
 ";
 
-#[test]
-fn test_encode_and_decode_worktree_url() {
-    let url = encode_worktree_url(5, "deadbeef");
-    assert_eq!(decode_worktree_url(&url), Some((5, "deadbeef".to_string())));
-    assert_eq!(
-        decode_worktree_url(&format!("\n {}\t", url)),
-        Some((5, "deadbeef".to_string()))
-    );
-    assert_eq!(decode_worktree_url("not://the-right-format"), None);
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::test::FakeServer;
+    use gpui::TestAppContext;
+
+    #[gpui::test(iterations = 1000)]
+    async fn test_heartbeat(cx: TestAppContext) {
+        let user_id = 5;
+        let client = Client::new();
+
+        client.state.write().heartbeat_interval = Duration::from_millis(1);
+        let mut server = FakeServer::for_client(user_id, &client, &cx).await;
+
+        let ping = server.receive::<proto::Ping>().await.unwrap();
+        assert_eq!(ping.payload.id, 0);
+        server.respond(ping.receipt(), proto::Pong { id: 0 }).await;
+
+        let ping = server.receive::<proto::Ping>().await.unwrap();
+        assert_eq!(ping.payload.id, 1);
+        server.respond(ping.receipt(), proto::Pong { id: 1 }).await;
+
+        client.disconnect(&cx.to_async()).await.unwrap();
+        assert!(server.receive::<proto::Ping>().await.is_err());
+    }
+
+    #[test]
+    fn test_encode_and_decode_worktree_url() {
+        let url = encode_worktree_url(5, "deadbeef");
+        assert_eq!(decode_worktree_url(&url), Some((5, "deadbeef".to_string())));
+        assert_eq!(
+            decode_worktree_url(&format!("\n {}\t", url)),
+            Some((5, "deadbeef".to_string()))
+        );
+        assert_eq!(decode_worktree_url("not://the-right-format"), None);
+    }
 }

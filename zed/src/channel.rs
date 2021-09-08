@@ -443,9 +443,8 @@ impl<'a> sum_tree::SeekDimension<'a, ChannelMessageSummary> for Count {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::test::FakeServer;
     use gpui::TestAppContext;
-    use postage::mpsc::Receiver;
-    use zrpc::{test::Channel, ConnectionId, Peer, Receipt};
 
     #[gpui::test]
     async fn test_channel_messages(mut cx: TestAppContext) {
@@ -458,7 +457,7 @@ mod tests {
         channel_list.read_with(&cx, |list, _| assert_eq!(list.available_channels(), None));
 
         // Get the available channels.
-        let get_channels = server.receive::<proto::GetChannels>().await;
+        let get_channels = server.receive::<proto::GetChannels>().await.unwrap();
         server
             .respond(
                 get_channels.receipt(),
@@ -489,7 +488,7 @@ mod tests {
             })
             .unwrap();
         channel.read_with(&cx, |channel, _| assert!(channel.messages().is_empty()));
-        let join_channel = server.receive::<proto::JoinChannel>().await;
+        let join_channel = server.receive::<proto::JoinChannel>().await.unwrap();
         server
             .respond(
                 join_channel.receipt(),
@@ -514,7 +513,7 @@ mod tests {
             .await;
 
         // Client requests all users for the received messages
-        let mut get_users = server.receive::<proto::GetUsers>().await;
+        let mut get_users = server.receive::<proto::GetUsers>().await.unwrap();
         get_users.payload.user_ids.sort();
         assert_eq!(get_users.payload.user_ids, vec![5, 6]);
         server
@@ -571,7 +570,7 @@ mod tests {
             .await;
 
         // Client requests user for message since they haven't seen them yet
-        let get_users = server.receive::<proto::GetUsers>().await;
+        let get_users = server.receive::<proto::GetUsers>().await.unwrap();
         assert_eq!(get_users.payload.user_ids, vec![7]);
         server
             .respond(
@@ -607,7 +606,7 @@ mod tests {
         channel.update(&mut cx, |channel, cx| {
             assert!(channel.load_more_messages(cx));
         });
-        let get_messages = server.receive::<proto::GetChannelMessages>().await;
+        let get_messages = server.receive::<proto::GetChannelMessages>().await.unwrap();
         assert_eq!(get_messages.payload.channel_id, 5);
         assert_eq!(get_messages.payload.before_message_id, 10);
         server
@@ -652,54 +651,5 @@ mod tests {
                 ]
             );
         });
-    }
-
-    struct FakeServer {
-        peer: Arc<Peer>,
-        incoming: Receiver<Box<dyn proto::AnyTypedEnvelope>>,
-        connection_id: ConnectionId,
-    }
-
-    impl FakeServer {
-        async fn for_client(user_id: u64, client: &Arc<Client>, cx: &TestAppContext) -> Self {
-            let (client_conn, server_conn) = Channel::bidirectional();
-            let peer = Peer::new();
-            let (connection_id, io, incoming) = peer.add_connection(server_conn).await;
-            cx.background().spawn(io).detach();
-
-            client
-                .set_connection(user_id, client_conn, &cx.to_async())
-                .await
-                .unwrap();
-
-            Self {
-                peer,
-                incoming,
-                connection_id,
-            }
-        }
-
-        async fn send<T: proto::EnvelopedMessage>(&self, message: T) {
-            self.peer.send(self.connection_id, message).await.unwrap();
-        }
-
-        async fn receive<M: proto::EnvelopedMessage>(&mut self) -> TypedEnvelope<M> {
-            *self
-                .incoming
-                .recv()
-                .await
-                .unwrap()
-                .into_any()
-                .downcast::<TypedEnvelope<M>>()
-                .unwrap()
-        }
-
-        async fn respond<T: proto::RequestMessage>(
-            &self,
-            receipt: Receipt<T>,
-            response: T::Response,
-        ) {
-            self.peer.respond(receipt, response).await.unwrap()
-        }
     }
 }

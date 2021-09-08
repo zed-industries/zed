@@ -1469,7 +1469,7 @@ mod tests {
             .await;
 
         // Drop client B's connection and ensure client A observes client B leaving the worktree.
-        client_b.disconnect().await.unwrap();
+        client_b.disconnect(&cx_b.to_async()).await.unwrap();
         worktree_a
             .condition(&cx_a, |tree, _| tree.peers().len() == 0)
             .await;

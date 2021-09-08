@@ -3,8 +3,9 @@ use async_task::Runnable;
 pub use async_task::Task;
 use backtrace::{Backtrace, BacktraceFmt, BytesOrWideString};
 use parking_lot::Mutex;
+use postage::{barrier, prelude::Stream as _};
 use rand::prelude::*;
-use smol::{channel, prelude::*, Executor};
+use smol::{channel, prelude::*, Executor, Timer};
 use std::{
     fmt::{self, Debug},
     marker::PhantomData,
@@ -18,7 +19,7 @@ use std::{
     },
     task::{Context, Poll},
     thread,
-    time::Duration,
+    time::{Duration, Instant},
 };
 use waker_fn::waker_fn;
 
@@ -49,6 +50,8 @@ struct DeterministicState {
     spawned_from_foreground: Vec<(Runnable, Backtrace)>,
     forbid_parking: bool,
     block_on_ticks: RangeInclusive<usize>,
+    now: Instant,
+    pending_sleeps: Vec<(Instant, barrier::Sender)>,
 }
 
 pub struct Deterministic {
@@ -67,6 +70,8 @@ impl Deterministic {
                 spawned_from_foreground: Default::default(),
                 forbid_parking: false,
                 block_on_ticks: 0..=1000,
+                now: Instant::now(),
+                pending_sleeps: Default::default(),
             })),
             parker: Default::default(),
         }
@@ -402,6 +407,35 @@ impl Foreground {
                 let mut state = executor.state.lock();
                 state.forbid_parking = true;
                 state.rng = StdRng::seed_from_u64(state.seed);
+            }
+            _ => panic!("this method can only be called on a deterministic executor"),
+        }
+    }
+
+    pub async fn sleep(&self, duration: Duration) {
+        match self {
+            Self::Deterministic(executor) => {
+                let (tx, mut rx) = barrier::channel();
+                {
+                    let mut state = executor.state.lock();
+                    let wakeup_at = state.now + duration;
+                    state.pending_sleeps.push((wakeup_at, tx));
+                }
+                rx.recv().await;
+            }
+            _ => {
+                Timer::after(duration).await;
+            }
+        }
+    }
+
+    pub fn advance_clock(&self, duration: Duration) {
+        match self {
+            Self::Deterministic(executor) => {
+                let mut state = executor.state.lock();
+                state.now += duration;
+                let now = state.now;
+                state.pending_sleeps.retain(|(wakeup, _)| *wakeup > now);
             }
             _ => panic!("this method can only be called on a deterministic executor"),
         }

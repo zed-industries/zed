@@ -3,14 +3,16 @@ use crate::{
     channel::ChannelList,
     fs::RealFs,
     language::LanguageRegistry,
-    rpc,
+    rpc::{self, Client},
     settings::{self, ThemeRegistry},
     time::ReplicaId,
     user::UserStore,
     AppState,
 };
-use gpui::{Entity, ModelHandle, MutableAppContext};
+use anyhow::{anyhow, Result};
+use gpui::{Entity, ModelHandle, MutableAppContext, TestAppContext};
 use parking_lot::Mutex;
+use postage::{mpsc, prelude::Stream as _};
 use smol::channel;
 use std::{
     marker::PhantomData,
@@ -18,6 +20,7 @@ use std::{
     sync::Arc,
 };
 use tempdir::TempDir;
+use zrpc::{proto, ConnectionId, Peer, Receipt, TypedEnvelope};
 
 #[cfg(feature = "test-support")]
 pub use zrpc::test::Channel;
@@ -193,5 +196,52 @@ impl<T: Entity> Observer<T> {
             Observer(PhantomData)
         });
         (observer, notify_rx)
+    }
+}
+
+pub struct FakeServer {
+    peer: Arc<Peer>,
+    incoming: mpsc::Receiver<Box<dyn proto::AnyTypedEnvelope>>,
+    connection_id: ConnectionId,
+}
+
+impl FakeServer {
+    pub async fn for_client(user_id: u64, client: &Arc<Client>, cx: &TestAppContext) -> Self {
+        let (client_conn, server_conn) = zrpc::test::Channel::bidirectional();
+        let peer = Peer::new();
+        let (connection_id, io, incoming) = peer.add_connection(server_conn).await;
+        cx.background().spawn(io).detach();
+
+        client
+            .set_connection(user_id, client_conn, &cx.to_async())
+            .await
+            .unwrap();
+
+        Self {
+            peer,
+            incoming,
+            connection_id,
+        }
+    }
+
+    pub async fn send<T: proto::EnvelopedMessage>(&self, message: T) {
+        self.peer.send(self.connection_id, message).await.unwrap();
+    }
+
+    pub async fn receive<M: proto::EnvelopedMessage>(&mut self) -> Result<TypedEnvelope<M>> {
+        let message = self
+            .incoming
+            .recv()
+            .await
+            .ok_or_else(|| anyhow!("other half hung up"))?;
+        Ok(*message.into_any().downcast::<TypedEnvelope<M>>().unwrap())
+    }
+
+    pub async fn respond<T: proto::RequestMessage>(
+        &self,
+        receipt: Receipt<T>,
+        response: T::Response,
+    ) {
+        self.peer.respond(receipt, response).await.unwrap()
     }
 }
