@@ -6,7 +6,6 @@ use gpui::{AsyncAppContext, Entity, ModelContext, Task};
 use lazy_static::lazy_static;
 use parking_lot::RwLock;
 use postage::prelude::Stream;
-use postage::sink::Sink;
 use postage::watch;
 use std::any::TypeId;
 use std::collections::HashMap;
@@ -94,10 +93,9 @@ impl Client {
         self.state.read().status.1.clone()
     }
 
-    async fn set_status(&self, status: Status) -> Result<()> {
+    fn set_status(&self, status: Status) {
         let mut state = self.state.write();
-        state.status.0.send(status).await?;
-        Ok(())
+        *state.status.0.borrow_mut() = status;
     }
 
     pub fn subscribe_from_model<T, M, F>(
@@ -167,14 +165,14 @@ impl Client {
         let (user_id, access_token) = Self::login(cx.platform(), &cx.background()).await?;
         let user_id = user_id.parse::<u64>()?;
 
-        self.set_status(Status::Connecting).await?;
+        self.set_status(Status::Connecting);
         match self.connect(user_id, &access_token, cx).await {
             Ok(()) => {
                 log::info!("connected to rpc address {}", *ZED_SERVER_URL);
                 Ok(())
             }
             Err(err) => {
-                self.set_status(Status::ConnectionError).await?;
+                self.set_status(Status::ConnectionError);
                 Err(err)
             }
         }
@@ -259,20 +257,17 @@ impl Client {
         self.set_status(Status::Connected {
             connection_id,
             user_id,
-        })
-        .await?;
+        });
 
         let handle_io = cx.background().spawn(handle_io);
         let this = self.clone();
         cx.foreground()
             .spawn(async move {
                 match handle_io.await {
-                    Ok(()) => {
-                        let _ = this.set_status(Status::Disconnected).await;
-                    }
+                    Ok(()) => this.set_status(Status::Disconnected),
                     Err(err) => {
                         log::error!("connection error: {:?}", err);
-                        let _ = this.set_status(Status::ConnectionLost).await;
+                        this.set_status(Status::ConnectionLost);
                     }
                 }
             })
@@ -365,7 +360,7 @@ impl Client {
     pub async fn disconnect(&self) -> Result<()> {
         let conn_id = self.connection_id()?;
         self.peer.disconnect(conn_id).await;
-        self.set_status(Status::Disconnected).await?;
+        self.set_status(Status::Disconnected);
         Ok(())
     }
 

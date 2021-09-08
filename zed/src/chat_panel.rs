@@ -31,7 +31,7 @@ pub struct ChatPanel {
     channel_select: ViewHandle<Select>,
     settings: watch::Receiver<Settings>,
     local_timezone: UtcOffset,
-    _status_observer: Task<()>,
+    _observe_status: Task<()>,
 }
 
 pub enum Event {}
@@ -99,7 +99,7 @@ impl ChatPanel {
                 cx.dispatch_action(LoadMoreMessages);
             }
         });
-        let _status_observer = cx.spawn(|this, mut cx| {
+        let _observe_status = cx.spawn(|this, mut cx| {
             let mut status = rpc.status();
             async move {
                 while let Some(_) = status.recv().await {
@@ -117,7 +117,7 @@ impl ChatPanel {
             channel_select,
             settings,
             local_timezone: cx.platform().local_timezone(),
-            _status_observer,
+            _observe_status,
         };
 
         this.init_active_channel(cx);
