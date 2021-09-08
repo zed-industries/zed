@@ -9,7 +9,7 @@ extends = "_base"
 0 = "#0F1011"
 
 [text]
-base = { family = "Inconsolata", size = 14 }
+base = { family = "Inconsolata", size = 15 }
 0 = { extends = "$text.base", color = "#ffffff" }
 1 = { extends = "$text.base", color = "#b3b3b3" }
 2 = { extends = "$text.base", color = "#7b7d80" }
@@ -34,7 +34,7 @@ hover = "#00000033"
 
 [syntax]
 keyword = { color = "#0086c0", weight = "bold" }
-function = "#dcdcaa"
+function = { color = "#dcdcaa", underline = true }
 string = "#cb8f77"
 type = "#4ec9b0"
 number = "#b5cea8"

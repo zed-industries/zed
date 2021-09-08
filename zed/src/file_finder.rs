@@ -97,8 +97,8 @@ impl View for FileFinder {
                 .with_style(&settings.theme.selector.container)
                 .boxed(),
             )
-            .with_max_width(600.0)
-            .with_max_height(400.0)
+            .with_max_width(500.0)
+            .with_max_height(420.0)
             .boxed(),
         )
         .top()
@@ -167,19 +167,19 @@ impl FileFinder {
             self.labels_for_match(path_match);
         let container = Container::new(
             Flex::row()
-                .with_child(
-                    Container::new(
-                        LineBox::new(
-                            Svg::new("icons/file-16.svg")
-                                .with_color(style.label.text.color)
-                                .boxed(),
-                            style.label.text.clone(),
-                        )
-                        .boxed(),
-                    )
-                    .with_padding_right(6.0)
-                    .boxed(),
-                )
+                // .with_child(
+                //     Container::new(
+                //         LineBox::new(
+                //             Svg::new("icons/file-16.svg")
+                //                 .with_color(style.label.text.color)
+                //                 .boxed(),
+                //             style.label.text.clone(),
+                //         )
+                //         .boxed(),
+                //     )
+                //     .with_padding_right(6.0)
+                //     .boxed(),
+                // )
                 .with_child(
                     Flexible::new(
                         1.0,

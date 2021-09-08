@@ -216,7 +216,7 @@ impl Pane {
                             Flex::row()
                                 .with_child(
                                     Align::new({
-                                        let diameter = 6.0;
+                                        let diameter = 7.0;
                                         let icon_color = if item.has_conflict(cx) {
                                             Some(style.icon_conflict)
                                         } else if item.is_dirty(cx) {
