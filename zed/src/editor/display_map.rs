@@ -5,6 +5,7 @@ mod wrap_map;
 use super::{buffer, Anchor, Bias, Buffer, Point, Settings, ToOffset, ToPoint};
 use fold_map::FoldMap;
 use gpui::{Entity, ModelContext, ModelHandle};
+use postage::watch;
 use std::ops::Range;
 use tab_map::TabMap;
 pub use wrap_map::BufferRows;
@@ -24,12 +25,12 @@ impl Entity for DisplayMap {
 impl DisplayMap {
     pub fn new(
         buffer: ModelHandle<Buffer>,
-        settings: Settings,
+        settings: watch::Receiver<Settings>,
         wrap_width: Option<f32>,
         cx: &mut ModelContext<Self>,
     ) -> Self {
         let (fold_map, snapshot) = FoldMap::new(buffer.clone(), cx);
-        let (tab_map, snapshot) = TabMap::new(snapshot, settings.tab_size);
+        let (tab_map, snapshot) = TabMap::new(snapshot, settings.borrow().tab_size);
         let wrap_map = cx.add_model(|cx| WrapMap::new(snapshot, settings, wrap_width, cx));
         cx.observe(&wrap_map, |_, _, cx| cx.notify()).detach();
         DisplayMap {
@@ -387,6 +388,7 @@ mod tests {
             let text = RandomCharIter::new(&mut rng).take(len).collect::<String>();
             Buffer::new(0, text, cx)
         });
+        let settings = watch::channel_with(settings).1;
 
         let map = cx.add_model(|cx| DisplayMap::new(buffer.clone(), settings, wrap_width, cx));
         let (_observer, notifications) = Observer::new(&map, &mut cx);
@@ -543,7 +545,8 @@ mod tests {
 
         let text = "one two three four five\nsix seven eight";
         let buffer = cx.add_model(|cx| Buffer::new(0, text.to_string(), cx));
-        let map = cx.add_model(|cx| DisplayMap::new(buffer.clone(), settings, wrap_width, cx));
+        let (mut settings_tx, settings_rx) = watch::channel_with(settings);
+        let map = cx.add_model(|cx| DisplayMap::new(buffer.clone(), settings_rx, wrap_width, cx));
 
         let snapshot = map.update(&mut cx, |map, cx| map.snapshot(cx));
         assert_eq!(
@@ -599,23 +602,28 @@ mod tests {
             snapshot.chunks_at(1).collect::<String>(),
             "three four \nfive\nsix and \nseven eight"
         );
+
+        // Re-wrap on font size changes
+        settings_tx.borrow_mut().buffer_font_size += 3.;
+
+        map.next_notification(&mut cx).await;
+
+        let snapshot = map.update(&mut cx, |map, cx| map.snapshot(cx));
+        assert_eq!(
+            snapshot.chunks_at(1).collect::<String>(),
+            "three \nfour five\nsix and \nseven \neight"
+        )
     }
 
     #[gpui::test]
     fn test_chunks_at(cx: &mut gpui::MutableAppContext) {
         let text = sample_text(6, 6);
         let buffer = cx.add_model(|cx| Buffer::new(0, text, cx));
-        let map = cx.add_model(|cx| {
-            DisplayMap::new(
-                buffer.clone(),
-                Settings {
-                    tab_size: 4,
-                    ..Settings::test(cx)
-                },
-                None,
-                cx,
-            )
+        let settings = watch::channel_with(Settings {
+            tab_size: 4,
+            ..Settings::test(cx)
         });
+        let map = cx.add_model(|cx| DisplayMap::new(buffer.clone(), settings.1, None, cx));
         buffer.update(cx, |buffer, cx| {
             buffer.edit(
                 vec![
@@ -687,17 +695,13 @@ mod tests {
         });
         buffer.condition(&cx, |buf, _| !buf.is_parsing()).await;
 
-        let map = cx.add_model(|cx| {
-            DisplayMap::new(
-                buffer,
-                Settings {
-                    tab_size: 2,
-                    ..Settings::test(cx)
-                },
-                None,
-                cx,
-            )
+        let settings = cx.update(|cx| {
+            watch::channel_with(Settings {
+                tab_size: 2,
+                ..Settings::test(cx)
+            })
         });
+        let map = cx.add_model(|cx| DisplayMap::new(buffer, settings.1, None, cx));
         assert_eq!(
             cx.update(|cx| highlighted_chunks(0..5, &map, &theme, cx)),
             vec![
@@ -778,13 +782,15 @@ mod tests {
         buffer.condition(&cx, |buf, _| !buf.is_parsing()).await;
 
         let font_cache = cx.font_cache();
-        let settings = Settings {
-            tab_size: 4,
-            buffer_font_family: font_cache.load_family(&["Courier"]).unwrap(),
-            buffer_font_size: 16.0,
-            ..cx.read(Settings::test)
-        };
-        let map = cx.add_model(|cx| DisplayMap::new(buffer, settings, Some(40.0), cx));
+        let settings = cx.update(|cx| {
+            watch::channel_with(Settings {
+                tab_size: 4,
+                buffer_font_family: font_cache.load_family(&["Courier"]).unwrap(),
+                buffer_font_size: 16.0,
+                ..Settings::test(cx)
+            })
+        });
+        let map = cx.add_model(|cx| DisplayMap::new(buffer, settings.1, Some(40.0), cx));
         assert_eq!(
             cx.update(|cx| highlighted_chunks(0..5, &map, &theme, cx)),
             [
@@ -819,17 +825,11 @@ mod tests {
         let text = "\n'a', 'α',\t'✋',\t'❎', '🍐'\n";
         let display_text = "\n'a', 'α',   '✋',    '❎', '🍐'\n";
         let buffer = cx.add_model(|cx| Buffer::new(0, text, cx));
-        let map = cx.add_model(|cx| {
-            DisplayMap::new(
-                buffer.clone(),
-                Settings {
-                    tab_size: 4,
-                    ..Settings::test(cx)
-                },
-                None,
-                cx,
-            )
+        let settings = watch::channel_with(Settings {
+            tab_size: 4,
+            ..Settings::test(cx)
         });
+        let map = cx.add_model(|cx| DisplayMap::new(buffer.clone(), settings.1, None, cx));
         let map = map.update(cx, |map, cx| map.snapshot(cx));
 
         assert_eq!(map.text(), display_text);
@@ -863,17 +863,11 @@ mod tests {
     fn test_tabs_with_multibyte_chars(cx: &mut gpui::MutableAppContext) {
         let text = "✅\t\tα\nβ\t\n🏀β\t\tγ";
         let buffer = cx.add_model(|cx| Buffer::new(0, text, cx));
-        let map = cx.add_model(|cx| {
-            DisplayMap::new(
-                buffer.clone(),
-                Settings {
-                    tab_size: 4,
-                    ..Settings::test(cx)
-                },
-                None,
-                cx,
-            )
+        let settings = watch::channel_with(Settings {
+            tab_size: 4,
+            ..Settings::test(cx)
         });
+        let map = cx.add_model(|cx| DisplayMap::new(buffer.clone(), settings.1, None, cx));
         let map = map.update(cx, |map, cx| map.snapshot(cx));
         assert_eq!(map.text(), "✅       α\nβ   \n🏀β      γ");
         assert_eq!(
@@ -930,17 +924,11 @@ mod tests {
     #[gpui::test]
     fn test_max_point(cx: &mut gpui::MutableAppContext) {
         let buffer = cx.add_model(|cx| Buffer::new(0, "aaa\n\t\tbbb", cx));
-        let map = cx.add_model(|cx| {
-            DisplayMap::new(
-                buffer.clone(),
-                Settings {
-                    tab_size: 4,
-                    ..Settings::test(cx)
-                },
-                None,
-                cx,
-            )
+        let settings = watch::channel_with(Settings {
+            tab_size: 4,
+            ..Settings::test(cx)
         });
+        let map = cx.add_model(|cx| DisplayMap::new(buffer.clone(), settings.1, None, cx));
         assert_eq!(
             map.update(cx, |map, cx| map.snapshot(cx)).max_point(),
             DisplayPoint::new(1, 11)

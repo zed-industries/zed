@@ -8,6 +8,7 @@ use gpui::{
         PathBuilder,
     },
     json::{self, ToJson},
+    keymap::Keystroke,
     text_layout::{self, TextLayoutCache},
     AppContext, Axis, Border, Element, Event, EventContext, FontCache, LayoutContext,
     MutableAppContext, PaintContext, Quad, Scene, SizeConstraint, ViewContext, WeakViewHandle,
@@ -127,14 +128,14 @@ impl EditorElement {
         }
     }
 
-    fn key_down(&self, chars: &str, cx: &mut EventContext) -> bool {
+    fn key_down(&self, chars: &str, keystroke: &Keystroke, cx: &mut EventContext) -> bool {
         let view = self.view.upgrade(cx.app).unwrap();
 
         if view.is_focused(cx.app) {
             if chars.is_empty() {
                 false
             } else {
-                if chars.chars().any(|c| c.is_control()) {
+                if chars.chars().any(|c| c.is_control()) || keystroke.cmd || keystroke.ctrl {
                     false
                 } else {
                     cx.dispatch_action(Insert(chars.to_string()));
@@ -629,7 +630,9 @@ impl Element for EditorElement {
                     delta,
                     precise,
                 } => self.scroll(*position, *delta, *precise, layout, paint, cx),
-                Event::KeyDown { chars, .. } => self.key_down(chars, cx),
+                Event::KeyDown {
+                    chars, keystroke, ..
+                } => self.key_down(chars, keystroke, cx),
                 _ => false,
             }
         } else {
