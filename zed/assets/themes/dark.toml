@@ -29,7 +29,7 @@ warn = "#faca50"
 bad = "#b7372e"
 
 [state]
-active_line = "#19222D"
+active_line = "#00000022"
 hover = "#00000033"
 
 [syntax]
