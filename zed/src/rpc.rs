@@ -1,22 +1,24 @@
 use crate::util::ResultExt;
 use anyhow::{anyhow, Context, Result};
-use async_tungstenite::tungstenite::http::Request;
-use async_tungstenite::tungstenite::{Error as WebSocketError, Message as WebSocketMessage};
+use async_tungstenite::tungstenite::{
+    http::Request, Error as WebSocketError, Message as WebSocketMessage,
+};
 use gpui::{AsyncAppContext, Entity, ModelContext, Task};
 use lazy_static::lazy_static;
 use parking_lot::RwLock;
-use postage::prelude::Stream;
-use postage::watch;
-use std::any::TypeId;
-use std::collections::HashMap;
-use std::sync::Weak;
-use std::time::{Duration, Instant};
-use std::{convert::TryFrom, future::Future, sync::Arc};
+use postage::{prelude::Stream, watch};
+use std::{
+    any::TypeId,
+    collections::HashMap,
+    convert::TryFrom,
+    future::Future,
+    sync::{Arc, Weak},
+    time::{Duration, Instant},
+};
 use surf::Url;
-use zrpc::proto::{AnyTypedEnvelope, EntityMessage};
 pub use zrpc::{proto, ConnectionId, PeerId, TypedEnvelope};
 use zrpc::{
-    proto::{EnvelopedMessage, RequestMessage},
+    proto::{AnyTypedEnvelope, EntityMessage, EnvelopedMessage, RequestMessage},
     Peer, Receipt,
 };
 
