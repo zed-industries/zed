@@ -124,17 +124,39 @@ impl Deterministic {
         T: 'static,
         F: Future<Output = T> + 'static,
     {
-        smol::pin!(future);
-
-        let unparker = self.parker.lock().unparker();
         let woken = Arc::new(AtomicBool::new(false));
-        let waker = {
-            let woken = woken.clone();
-            waker_fn(move || {
-                woken.store(true, SeqCst);
-                unparker.unpark();
-            })
-        };
+        let mut future = Box::pin(future);
+        loop {
+            if let Some(result) = self.run_internal(woken.clone(), &mut future) {
+                return result;
+            }
+
+            if !woken.load(SeqCst) && self.state.lock().forbid_parking {
+                panic!("deterministic executor parked after a call to forbid_parking");
+            }
+
+            woken.store(false, SeqCst);
+            self.parker.lock().park();
+        }
+    }
+
+    fn run_until_parked(&self) {
+        let woken = Arc::new(AtomicBool::new(false));
+        let future = std::future::pending::<()>();
+        smol::pin!(future);
+        self.run_internal(woken, future);
+    }
+
+    pub fn run_internal<F, T>(&self, woken: Arc<AtomicBool>, mut future: F) -> Option<T>
+    where
+        T: 'static,
+        F: Future<Output = T> + Unpin,
+    {
+        let unparker = self.parker.lock().unparker();
+        let waker = waker_fn(move || {
+            woken.store(true, SeqCst);
+            unparker.unpark();
+        });
 
         let mut cx = Context::from_waker(&waker);
         let mut trace = Trace::default();
@@ -168,23 +190,17 @@ impl Deterministic {
                 runnable.run();
             } else {
                 drop(state);
-                if let Poll::Ready(result) = future.as_mut().poll(&mut cx) {
-                    return result;
+                if let Poll::Ready(result) = future.poll(&mut cx) {
+                    return Some(result);
                 }
+
                 let state = self.state.lock();
                 if state.scheduled_from_foreground.is_empty()
                     && state.scheduled_from_background.is_empty()
                     && state.spawned_from_foreground.is_empty()
                 {
-                    if state.forbid_parking && !woken.load(SeqCst) {
-                        panic!("deterministic executor parked after a call to forbid_parking");
-                    }
-                    drop(state);
-                    woken.store(false, SeqCst);
-                    self.parker.lock().park();
+                    return None;
                 }
-
-                continue;
             }
         }
     }
@@ -432,10 +448,16 @@ impl Foreground {
     pub fn advance_clock(&self, duration: Duration) {
         match self {
             Self::Deterministic(executor) => {
+                executor.run_until_parked();
+
                 let mut state = executor.state.lock();
                 state.now += duration;
                 let now = state.now;
-                state.pending_sleeps.retain(|(wakeup, _)| *wakeup > now);
+                let mut pending_sleeps = mem::take(&mut state.pending_sleeps);
+                drop(state);
+
+                pending_sleeps.retain(|(wakeup, _)| *wakeup > now);
+                executor.state.lock().pending_sleeps.extend(pending_sleeps);
             }
             _ => panic!("this method can only be called on a deterministic executor"),
         }

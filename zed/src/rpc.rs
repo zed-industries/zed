@@ -3,12 +3,10 @@ use anyhow::{anyhow, Context, Result};
 use async_tungstenite::tungstenite::{
     http::Request, Error as WebSocketError, Message as WebSocketMessage,
 };
-use futures::StreamExt as _;
 use gpui::{AsyncAppContext, Entity, ModelContext, Task};
 use lazy_static::lazy_static;
 use parking_lot::RwLock;
 use postage::{prelude::Stream, watch};
-use smol::Timer;
 use std::{
     any::TypeId,
     collections::HashMap,
@@ -490,18 +488,18 @@ mod tests {
     use crate::test::FakeServer;
     use gpui::TestAppContext;
 
-    #[gpui::test(iterations = 1000)]
+    #[gpui::test(iterations = 10)]
     async fn test_heartbeat(cx: TestAppContext) {
         let user_id = 5;
         let client = Client::new();
-
-        client.state.write().heartbeat_interval = Duration::from_millis(1);
         let mut server = FakeServer::for_client(user_id, &client, &cx).await;
 
+        cx.foreground().advance_clock(Duration::from_secs(10));
         let ping = server.receive::<proto::Ping>().await.unwrap();
         assert_eq!(ping.payload.id, 0);
         server.respond(ping.receipt(), proto::Pong { id: 0 }).await;
 
+        cx.foreground().advance_clock(Duration::from_secs(10));
         let ping = server.receive::<proto::Ping>().await.unwrap();
         assert_eq!(ping.payload.id, 1);
         server.respond(ping.receipt(), proto::Pong { id: 1 }).await;
