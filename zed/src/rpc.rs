@@ -5,6 +5,7 @@ use gpui::{AsyncAppContext, Entity, ModelContext, Task};
 use lazy_static::lazy_static;
 use parking_lot::RwLock;
 use postage::{prelude::Stream, watch};
+use rand::prelude::*;
 use std::{
     any::TypeId,
     collections::HashMap,
@@ -151,11 +152,12 @@ impl Client {
             Status::ConnectionLost => {
                 let this = self.clone();
                 let foreground = cx.foreground();
+                let heartbeat_interval = state.heartbeat_interval;
                 state._maintain_connection = Some(cx.spawn(|cx| async move {
-                    let mut delay_seconds = 5;
+                    let mut rng = StdRng::from_entropy();
+                    let mut delay = Duration::from_millis(100);
                     while let Err(error) = this.authenticate_and_connect(&cx).await {
                         log::error!("failed to connect {}", error);
-                        let delay = Duration::from_secs(delay_seconds);
                         this.set_status(
                             Status::ReconnectionError {
                                 next_reconnection: Instant::now() + delay,
@@ -163,7 +165,9 @@ impl Client {
                             &cx,
                         );
                         foreground.timer(delay).await;
-                        delay_seconds = (delay_seconds * 2).min(300);
+                        delay = delay
+                            .mul_f32(rng.gen_range(1.0..=2.0))
+                            .min(heartbeat_interval);
                     }
                 }));
             }
