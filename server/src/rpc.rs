@@ -1831,6 +1831,44 @@ mod tests {
             })
             .await;
 
+        // Ensure client A and B can communicate normally after reconnection.
+        channel_a
+            .update(&mut cx_a, |channel, cx| {
+                channel.send_message("you online?".to_string(), cx).unwrap()
+            })
+            .await
+            .unwrap();
+        channel_b
+            .condition(&cx_b, |channel, _| {
+                channel_messages(channel)
+                    == [
+                        ("user_b".to_string(), "hello A, it's B.".to_string()),
+                        ("user_a".to_string(), "oh, hi B.".to_string()),
+                        ("user_a".to_string(), "sup".to_string()),
+                        ("user_a".to_string(), "you online?".to_string()),
+                    ]
+            })
+            .await;
+
+        channel_b
+            .update(&mut cx_b, |channel, cx| {
+                channel.send_message("yep".to_string(), cx).unwrap()
+            })
+            .await
+            .unwrap();
+        channel_a
+            .condition(&cx_a, |channel, _| {
+                channel_messages(channel)
+                    == [
+                        ("user_b".to_string(), "hello A, it's B.".to_string()),
+                        ("user_a".to_string(), "oh, hi B.".to_string()),
+                        ("user_a".to_string(), "sup".to_string()),
+                        ("user_a".to_string(), "you online?".to_string()),
+                        ("user_b".to_string(), "yep".to_string()),
+                    ]
+            })
+            .await;
+
         fn channel_messages(channel: &Channel) -> Vec<(String, String)> {
             channel
                 .messages()
