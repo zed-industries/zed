@@ -159,6 +159,7 @@ request_messages!(
     (OpenWorktree, OpenWorktreeResponse),
     (Ping, Ack),
     (SaveBuffer, BufferSaved),
+    (UpdateBuffer, Ack),
     (ShareWorktree, ShareWorktreeResponse),
     (SendChannelMessage, SendChannelMessageResponse),
     (GetChannelMessages, GetChannelMessagesResponse),

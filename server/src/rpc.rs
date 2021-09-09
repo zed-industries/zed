@@ -499,7 +499,9 @@ impl Server {
         request: TypedEnvelope<proto::UpdateBuffer>,
     ) -> tide::Result<()> {
         self.broadcast_in_worktree(request.payload.worktree_id, &request)
-            .await
+            .await?;
+        self.peer.respond(request.receipt(), proto::Ack {}).await?;
+        Ok(())
     }
 
     async fn buffer_saved(
