@@ -1693,20 +1693,46 @@ mod tests {
             cx: &mut TestAppContext,
             name: &str,
         ) -> (UserId, Arc<Client>) {
-            let user_id = self.app_state.db.create_user(name, false).await.unwrap();
-            let client = Client::new();
-            let (client_conn, server_conn) = Conn::in_memory();
-            cx.background()
-                .spawn(
-                    self.server
-                        .handle_connection(server_conn, name.to_string(), user_id),
-                )
-                .detach();
+            let client_user_id = self.app_state.db.create_user(name, false).await.unwrap();
+            let client_name = name.to_string();
+            let mut client = Client::new();
+            let server = self.server.clone();
+            Arc::get_mut(&mut client)
+                .unwrap()
+                .set_login_and_connect_callbacks(
+                    move |cx| {
+                        cx.spawn(|_| async move {
+                            let access_token = "the-token".to_string();
+                            Ok((client_user_id.0 as u64, access_token))
+                        })
+                    },
+                    {
+                        move |user_id, access_token, cx| {
+                            assert_eq!(user_id, client_user_id.0 as u64);
+                            assert_eq!(access_token, "the-token");
+
+                            let server = server.clone();
+                            let client_name = client_name.clone();
+                            cx.spawn(move |cx| async move {
+                                let (client_conn, server_conn) = Conn::in_memory();
+                                cx.background()
+                                    .spawn(server.handle_connection(
+                                        server_conn,
+                                        client_name,
+                                        client_user_id,
+                                    ))
+                                    .detach();
+                                Ok(client_conn)
+                            })
+                        }
+                    },
+                );
+
             client
-                .set_connection(user_id.to_proto(), client_conn, &cx.to_async())
+                .authenticate_and_connect(&cx.to_async())
                 .await
                 .unwrap();
-            (user_id, client)
+            (client_user_id, client)
         }
 
         async fn build_app_state(test_db: &TestDb) -> Arc<AppState> {

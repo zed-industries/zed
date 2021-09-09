@@ -49,7 +49,10 @@ pub enum Status {
         user_id: u64,
     },
     ConnectionLost,
-    Reconnecting,
+    Reauthenticating,
+    Reconnecting {
+        user_id: u64,
+    },
     ReconnectionError {
         next_reconnection: Instant,
     },
@@ -164,9 +167,10 @@ impl Client {
                     }
                 }));
             }
-            _ => {
+            Status::Disconnected => {
                 state._maintain_connection.take();
             }
+            _ => {}
         }
     }
 
@@ -227,14 +231,20 @@ impl Client {
         self: &Arc<Self>,
         cx: &AsyncAppContext,
     ) -> anyhow::Result<()> {
-        if matches!(
-            *self.status().borrow(),
-            Status::Authenticating | Status::Connecting { .. } | Status::Connected { .. }
-        ) {
-            return Ok(());
-        }
+        let was_disconnected = match *self.status().borrow() {
+            Status::Disconnected => true,
+            Status::Connected { .. }
+            | Status::Connecting { .. }
+            | Status::Reconnecting { .. }
+            | Status::Reauthenticating => return Ok(()),
+            _ => false,
+        };
 
-        self.set_status(Status::Authenticating, cx);
+        if was_disconnected {
+            self.set_status(Status::Authenticating, cx);
+        } else {
+            self.set_status(Status::Reauthenticating, cx)
+        }
 
         let (user_id, access_token) = match self.authenticate(&cx).await {
             Ok(result) => result,
@@ -244,27 +254,25 @@ impl Client {
             }
         };
 
-        self.set_status(Status::Connecting { user_id }, cx);
-
-        let conn = match self.connect(user_id, &access_token, cx).await {
-            Ok(conn) => conn,
+        if was_disconnected {
+            self.set_status(Status::Connecting { user_id }, cx);
+        } else {
+            self.set_status(Status::Reconnecting { user_id }, cx);
+        }
+        match self.connect(user_id, &access_token, cx).await {
+            Ok(conn) => {
+                log::info!("connected to rpc address {}", *ZED_SERVER_URL);
+                self.set_connection(user_id, conn, cx).await;
+                Ok(())
+            }
             Err(err) => {
                 self.set_status(Status::ConnectionError, cx);
-                return Err(err);
+                Err(err)
             }
-        };
-
-        self.set_connection(user_id, conn, cx).await?;
-        log::info!("connected to rpc address {}", *ZED_SERVER_URL);
-        Ok(())
+        }
     }
 
-    pub async fn set_connection(
-        self: &Arc<Self>,
-        user_id: u64,
-        conn: Conn,
-        cx: &AsyncAppContext,
-    ) -> Result<()> {
+    async fn set_connection(self: &Arc<Self>, user_id: u64, conn: Conn, cx: &AsyncAppContext) {
         let (connection_id, handle_io, mut incoming) = self.peer.add_connection(conn).await;
         cx.foreground()
             .spawn({
@@ -321,7 +329,6 @@ impl Client {
                 }
             })
             .detach();
-        Ok(())
     }
 
     fn authenticate(self: &Arc<Self>, cx: &AsyncAppContext) -> Task<Result<(u64, String)>> {
@@ -489,35 +496,6 @@ impl Client {
     }
 }
 
-pub trait MessageHandler<'a, M: proto::EnvelopedMessage>: Clone {
-    type Output: 'a + Future<Output = anyhow::Result<()>>;
-
-    fn handle(
-        &self,
-        message: TypedEnvelope<M>,
-        rpc: &'a Client,
-        cx: &'a mut gpui::AsyncAppContext,
-    ) -> Self::Output;
-}
-
-impl<'a, M, F, Fut> MessageHandler<'a, M> for F
-where
-    M: proto::EnvelopedMessage,
-    F: Clone + Fn(TypedEnvelope<M>, &'a Client, &'a mut gpui::AsyncAppContext) -> Fut,
-    Fut: 'a + Future<Output = anyhow::Result<()>>,
-{
-    type Output = Fut;
-
-    fn handle(
-        &self,
-        message: TypedEnvelope<M>,
-        rpc: &'a Client,
-        cx: &'a mut gpui::AsyncAppContext,
-    ) -> Self::Output {
-        (self)(message, rpc, cx)
-    }
-}
-
 const WORKTREE_URL_PREFIX: &'static str = "zed://worktrees/";
 
 pub fn encode_worktree_url(id: u64, access_token: &str) -> String {
@@ -550,6 +528,8 @@ mod tests {
 
     #[gpui::test(iterations = 10)]
     async fn test_heartbeat(cx: TestAppContext) {
+        cx.foreground().forbid_parking();
+
         let user_id = 5;
         let mut client = Client::new();
         let server = FakeServer::for_client(user_id, &mut client, &cx).await;
@@ -566,6 +546,28 @@ mod tests {
 
         client.disconnect(&cx.to_async()).await.unwrap();
         assert!(server.receive::<proto::Ping>().await.is_err());
+    }
+
+    #[gpui::test(iterations = 10)]
+    async fn test_reconnection(cx: TestAppContext) {
+        cx.foreground().forbid_parking();
+
+        let user_id = 5;
+        let mut client = Client::new();
+        let server = FakeServer::for_client(user_id, &mut client, &cx).await;
+        let mut status = client.status();
+        assert!(matches!(
+            status.recv().await,
+            Some(Status::Connected { .. })
+        ));
+
+        server.forbid_connections();
+        server.disconnect().await;
+        while !matches!(status.recv().await, Some(Status::ReconnectionError { .. })) {}
+
+        server.allow_connections();
+        cx.foreground().advance_clock(Duration::from_secs(10));
+        while !matches!(status.recv().await, Some(Status::Connected { .. })) {}
     }
 
     #[test]
