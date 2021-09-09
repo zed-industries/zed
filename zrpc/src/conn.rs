@@ -72,12 +72,12 @@ impl Conn {
         let rx = stream::select(
             rx.map(Ok),
             kill_rx.filter_map(|kill| {
-                if let Some(_) = kill {
+                if kill.is_none() {
+                    future::ready(None)
+                } else {
                     future::ready(Some(Err(
                         Error::new(ErrorKind::Other, "connection killed").into()
                     )))
-                } else {
-                    future::ready(None)
                 }
             }),
         );

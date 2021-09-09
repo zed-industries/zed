@@ -51,7 +51,7 @@ struct DeterministicState {
     forbid_parking: bool,
     block_on_ticks: RangeInclusive<usize>,
     now: Instant,
-    pending_sleeps: Vec<(Instant, barrier::Sender)>,
+    pending_timers: Vec<(Instant, barrier::Sender)>,
 }
 
 pub struct Deterministic {
@@ -71,7 +71,7 @@ impl Deterministic {
                 forbid_parking: false,
                 block_on_ticks: 0..=1000,
                 now: Instant::now(),
-                pending_sleeps: Default::default(),
+                pending_timers: Default::default(),
             })),
             parker: Default::default(),
         }
@@ -428,14 +428,14 @@ impl Foreground {
         }
     }
 
-    pub async fn sleep(&self, duration: Duration) {
+    pub async fn timer(&self, duration: Duration) {
         match self {
             Self::Deterministic(executor) => {
                 let (tx, mut rx) = barrier::channel();
                 {
                     let mut state = executor.state.lock();
                     let wakeup_at = state.now + duration;
-                    state.pending_sleeps.push((wakeup_at, tx));
+                    state.pending_timers.push((wakeup_at, tx));
                 }
                 rx.recv().await;
             }
@@ -453,11 +453,11 @@ impl Foreground {
                 let mut state = executor.state.lock();
                 state.now += duration;
                 let now = state.now;
-                let mut pending_sleeps = mem::take(&mut state.pending_sleeps);
+                let mut pending_timers = mem::take(&mut state.pending_timers);
                 drop(state);
 
-                pending_sleeps.retain(|(wakeup, _)| *wakeup > now);
-                executor.state.lock().pending_sleeps.extend(pending_sleeps);
+                pending_timers.retain(|(wakeup, _)| *wakeup > now);
+                executor.state.lock().pending_timers.extend(pending_timers);
             }
             _ => panic!("this method can only be called on a deterministic executor"),
         }

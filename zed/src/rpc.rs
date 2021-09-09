@@ -140,7 +140,7 @@ impl Client {
                 state._maintain_connection = Some(cx.foreground().spawn(async move {
                     let mut next_ping_id = 0;
                     loop {
-                        foreground.sleep(heartbeat_interval).await;
+                        foreground.timer(heartbeat_interval).await;
                         this.request(proto::Ping { id: next_ping_id })
                             .await
                             .unwrap();
@@ -162,7 +162,7 @@ impl Client {
                             },
                             &cx,
                         );
-                        foreground.sleep(delay).await;
+                        foreground.timer(delay).await;
                         delay_seconds = (delay_seconds * 2).min(300);
                     }
                 }));
@@ -233,11 +233,14 @@ impl Client {
     ) -> anyhow::Result<()> {
         let was_disconnected = match *self.status().borrow() {
             Status::Disconnected => true,
+            Status::ConnectionError | Status::ConnectionLost | Status::ReconnectionError { .. } => {
+                false
+            }
             Status::Connected { .. }
             | Status::Connecting { .. }
             | Status::Reconnecting { .. }
+            | Status::Authenticating
             | Status::Reauthenticating => return Ok(()),
-            _ => false,
         };
 
         if was_disconnected {

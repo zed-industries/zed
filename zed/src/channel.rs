@@ -11,6 +11,7 @@ use gpui::{
 use postage::prelude::Stream;
 use std::{
     collections::{HashMap, HashSet},
+    mem,
     ops::Range,
     sync::Arc,
 };
@@ -71,7 +72,7 @@ pub enum ChannelListEvent {}
 
 #[derive(Clone, Debug, PartialEq)]
 pub enum ChannelEvent {
-    MessagesAdded {
+    MessagesUpdated {
         old_range: Range<usize>,
         new_count: usize,
     },
@@ -93,26 +94,40 @@ impl ChannelList {
                 let mut status = rpc.status();
                 loop {
                     let status = status.recv().await.unwrap();
-                    let available_channels = if matches!(status, rpc::Status::Connected { .. }) {
-                        let response = rpc
-                            .request(proto::GetChannels {})
-                            .await
-                            .context("failed to fetch available channels")?;
-                        Some(response.channels.into_iter().map(Into::into).collect())
-                    } else {
-                        None
-                    };
+                    match status {
+                        rpc::Status::Connected { .. } => {
+                            let response = rpc
+                                .request(proto::GetChannels {})
+                                .await
+                                .context("failed to fetch available channels")?;
+                            this.update(&mut cx, |this, cx| {
+                                this.available_channels =
+                                    Some(response.channels.into_iter().map(Into::into).collect());
 
-                    this.update(&mut cx, |this, cx| {
-                        if available_channels.is_none() {
-                            if this.available_channels.is_none() {
-                                return;
-                            }
-                            this.channels.clear();
+                                let mut to_remove = Vec::new();
+                                for (channel_id, channel) in &this.channels {
+                                    if let Some(channel) = channel.upgrade(cx) {
+                                        channel.update(cx, |channel, cx| channel.rejoin(cx))
+                                    } else {
+                                        to_remove.push(*channel_id);
+                                    }
+                                }
+
+                                for channel_id in to_remove {
+                                    this.channels.remove(&channel_id);
+                                }
+                                cx.notify();
+                            });
                         }
-                        this.available_channels = available_channels;
-                        cx.notify();
-                    });
+                        rpc::Status::Disconnected { .. } => {
+                            this.update(&mut cx, |this, cx| {
+                                this.available_channels = None;
+                                this.channels.clear();
+                                cx.notify();
+                            });
+                        }
+                        _ => {}
+                    }
                 }
             }
             .log_err()
@@ -282,6 +297,43 @@ impl Channel {
         false
     }
 
+    pub fn rejoin(&mut self, cx: &mut ModelContext<Self>) {
+        let user_store = self.user_store.clone();
+        let rpc = self.rpc.clone();
+        let channel_id = self.details.id;
+        cx.spawn(|channel, mut cx| {
+            async move {
+                let response = rpc.request(proto::JoinChannel { channel_id }).await?;
+                let messages = messages_from_proto(response.messages, &user_store).await?;
+                let loaded_all_messages = response.done;
+
+                channel.update(&mut cx, |channel, cx| {
+                    if let Some((first_new_message, last_old_message)) =
+                        messages.first().zip(channel.messages.last())
+                    {
+                        if first_new_message.id > last_old_message.id {
+                            let old_messages = mem::take(&mut channel.messages);
+                            cx.emit(ChannelEvent::MessagesUpdated {
+                                old_range: 0..old_messages.summary().count,
+                                new_count: 0,
+                            });
+                            channel.loaded_all_messages = loaded_all_messages;
+                        }
+                    }
+
+                    channel.insert_messages(messages, cx);
+                    if loaded_all_messages {
+                        channel.loaded_all_messages = loaded_all_messages;
+                    }
+                });
+
+                Ok(())
+            }
+            .log_err()
+        })
+        .detach();
+    }
+
     pub fn message_count(&self) -> usize {
         self.messages.summary().count
     }
@@ -347,7 +399,7 @@ impl Channel {
             drop(old_cursor);
             self.messages = new_messages;
 
-            cx.emit(ChannelEvent::MessagesAdded {
+            cx.emit(ChannelEvent::MessagesUpdated {
                 old_range: start_ix..end_ix,
                 new_count,
             });
@@ -539,7 +591,7 @@ mod tests {
 
         assert_eq!(
             channel.next_event(&cx).await,
-            ChannelEvent::MessagesAdded {
+            ChannelEvent::MessagesUpdated {
                 old_range: 0..0,
                 new_count: 2,
             }
@@ -588,7 +640,7 @@ mod tests {
 
         assert_eq!(
             channel.next_event(&cx).await,
-            ChannelEvent::MessagesAdded {
+            ChannelEvent::MessagesUpdated {
                 old_range: 2..2,
                 new_count: 1,
             }
@@ -635,7 +687,7 @@ mod tests {
 
         assert_eq!(
             channel.next_event(&cx).await,
-            ChannelEvent::MessagesAdded {
+            ChannelEvent::MessagesUpdated {
                 old_range: 0..0,
                 new_count: 2,
             }

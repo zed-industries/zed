@@ -194,7 +194,7 @@ impl ChatPanel {
         cx: &mut ViewContext<Self>,
     ) {
         match event {
-            ChannelEvent::MessagesAdded {
+            ChannelEvent::MessagesUpdated {
                 old_range,
                 new_count,
             } => {
