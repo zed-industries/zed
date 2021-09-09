@@ -10,7 +10,7 @@ use crate::{
     AppState,
 };
 use anyhow::{anyhow, Result};
-use gpui::{Entity, ModelHandle, MutableAppContext, TestAppContext};
+use gpui::{AsyncAppContext, Entity, ModelHandle, MutableAppContext, TestAppContext};
 use parking_lot::Mutex;
 use postage::{mpsc, prelude::Stream as _};
 use smol::channel;
@@ -20,10 +20,7 @@ use std::{
     sync::Arc,
 };
 use tempdir::TempDir;
-use zrpc::{proto, ConnectionId, Peer, Receipt, TypedEnvelope};
-
-#[cfg(feature = "test-support")]
-pub use zrpc::test::Channel;
+use zrpc::{proto, Conn, ConnectionId, Peer, Receipt, TypedEnvelope};
 
 #[cfg(test)]
 #[ctor::ctor]
@@ -201,40 +198,64 @@ impl<T: Entity> Observer<T> {
 
 pub struct FakeServer {
     peer: Arc<Peer>,
-    incoming: mpsc::Receiver<Box<dyn proto::AnyTypedEnvelope>>,
-    connection_id: ConnectionId,
+    incoming: Mutex<Option<mpsc::Receiver<Box<dyn proto::AnyTypedEnvelope>>>>,
+    connection_id: Mutex<Option<ConnectionId>>,
 }
 
 impl FakeServer {
-    pub async fn for_client(user_id: u64, client: &Arc<Client>, cx: &TestAppContext) -> Self {
-        let (client_conn, server_conn) = zrpc::test::Channel::bidirectional();
-        let peer = Peer::new();
-        let (connection_id, io, incoming) = peer.add_connection(server_conn).await;
-        cx.background().spawn(io).detach();
+    pub async fn for_client(user_id: u64, client: &Arc<Client>, cx: &TestAppContext) -> Arc<Self> {
+        let result = Arc::new(Self {
+            peer: Peer::new(),
+            incoming: Default::default(),
+            connection_id: Default::default(),
+        });
 
+        let conn = result.connect(&cx.to_async()).await;
         client
-            .set_connection(user_id, client_conn, &cx.to_async())
+            .set_connection(user_id, conn, &cx.to_async())
             .await
             .unwrap();
+        result
+    }
 
-        Self {
-            peer,
-            incoming,
-            connection_id,
-        }
+    pub async fn disconnect(&self) {
+        self.peer.disconnect(self.connection_id()).await;
+        self.connection_id.lock().take();
+        self.incoming.lock().take();
+    }
+
+    async fn connect(&self, cx: &AsyncAppContext) -> Conn {
+        let (client_conn, server_conn) = Conn::in_memory();
+        let (connection_id, io, incoming) = self.peer.add_connection(server_conn).await;
+        cx.background().spawn(io).detach();
+        *self.incoming.lock() = Some(incoming);
+        *self.connection_id.lock() = Some(connection_id);
+        client_conn
     }
 
     pub async fn send<T: proto::EnvelopedMessage>(&self, message: T) {
-        self.peer.send(self.connection_id, message).await.unwrap();
+        self.peer.send(self.connection_id(), message).await.unwrap();
     }
 
-    pub async fn receive<M: proto::EnvelopedMessage>(&mut self) -> Result<TypedEnvelope<M>> {
+    pub async fn receive<M: proto::EnvelopedMessage>(&self) -> Result<TypedEnvelope<M>> {
         let message = self
             .incoming
+            .lock()
+            .as_mut()
+            .expect("not connected")
             .recv()
             .await
             .ok_or_else(|| anyhow!("other half hung up"))?;
-        Ok(*message.into_any().downcast::<TypedEnvelope<M>>().unwrap())
+        let type_name = message.payload_type_name();
+        Ok(*message
+            .into_any()
+            .downcast::<TypedEnvelope<M>>()
+            .unwrap_or_else(|_| {
+                panic!(
+                    "fake server received unexpected message type: {:?}",
+                    type_name
+                );
+            }))
     }
 
     pub async fn respond<T: proto::RequestMessage>(
@@ -243,5 +264,9 @@ impl FakeServer {
         response: T::Response,
     ) {
         self.peer.respond(receipt, response).await.unwrap()
+    }
+
+    fn connection_id(&self) -> ConnectionId {
+        self.connection_id.lock().expect("not connected")
     }
 }

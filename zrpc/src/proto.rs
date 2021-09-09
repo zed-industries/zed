@@ -247,30 +247,3 @@ impl From<SystemTime> for Timestamp {
         }
     }
 }
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::test;
-
-    #[test]
-    fn test_round_trip_message() {
-        smol::block_on(async {
-            let stream = test::Channel::new();
-            let message1 = Ping { id: 5 }.into_envelope(3, None, None);
-            let message2 = OpenBuffer {
-                worktree_id: 0,
-                path: "some/path".to_string(),
-            }
-            .into_envelope(5, None, None);
-
-            let mut message_stream = MessageStream::new(stream);
-            message_stream.write_message(&message1).await.unwrap();
-            message_stream.write_message(&message2).await.unwrap();
-            let decoded_message1 = message_stream.read_message().await.unwrap();
-            let decoded_message2 = message_stream.read_message().await.unwrap();
-            assert_eq!(decoded_message1, message1);
-            assert_eq!(decoded_message2, message2);
-        });
-    }
-}

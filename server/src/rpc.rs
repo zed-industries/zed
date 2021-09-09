@@ -5,10 +5,7 @@ use super::{
 };
 use anyhow::anyhow;
 use async_std::{sync::RwLock, task};
-use async_tungstenite::{
-    tungstenite::{protocol::Role, Error as WebSocketError, Message as WebSocketMessage},
-    WebSocketStream,
-};
+use async_tungstenite::{tungstenite::protocol::Role, WebSocketStream};
 use futures::{future::BoxFuture, FutureExt};
 use postage::{mpsc, prelude::Sink as _, prelude::Stream as _};
 use sha1::{Digest as _, Sha1};
@@ -30,7 +27,7 @@ use time::OffsetDateTime;
 use zrpc::{
     auth::random_token,
     proto::{self, AnyTypedEnvelope, EnvelopedMessage},
-    ConnectionId, Peer, TypedEnvelope,
+    Conn, ConnectionId, Peer, TypedEnvelope,
 };
 
 type ReplicaId = u16;
@@ -133,19 +130,12 @@ impl Server {
         self
     }
 
-    pub fn handle_connection<Conn>(
+    pub fn handle_connection(
         self: &Arc<Self>,
         connection: Conn,
         addr: String,
         user_id: UserId,
-    ) -> impl Future<Output = ()>
-    where
-        Conn: 'static
-            + futures::Sink<WebSocketMessage, Error = WebSocketError>
-            + futures::Stream<Item = Result<WebSocketMessage, WebSocketError>>
-            + Send
-            + Unpin,
-    {
+    ) -> impl Future<Output = ()> {
         let this = self.clone();
         async move {
             let (connection_id, handle_io, mut incoming_rx) =
@@ -974,8 +964,7 @@ pub fn add_routes(app: &mut tide::Server<Arc<AppState>>, rpc: &Arc<Peer>) {
             let user_id = user_id.ok_or_else(|| anyhow!("user_id is not present on request. ensure auth::VerifyToken middleware is present"))?;
             task::spawn(async move {
                 if let Some(stream) = upgrade_receiver.await {
-                    let stream = WebSocketStream::from_raw_socket(stream, Role::Server, None).await;
-                    server.handle_connection(stream, addr, user_id).await;
+                    server.handle_connection(Conn::new(WebSocketStream::from_raw_socket(stream, Role::Server, None).await), addr, user_id).await;
                 }
             });
 
@@ -1019,7 +1008,7 @@ mod tests {
         fs::{FakeFs, Fs as _},
         language::LanguageRegistry,
         rpc::Client,
-        settings, test,
+        settings,
         user::UserStore,
         worktree::Worktree,
     };
@@ -1706,7 +1695,7 @@ mod tests {
         ) -> (UserId, Arc<Client>) {
             let user_id = self.app_state.db.create_user(name, false).await.unwrap();
             let client = Client::new();
-            let (client_conn, server_conn) = test::Channel::bidirectional();
+            let (client_conn, server_conn) = Conn::in_memory();
             cx.background()
                 .spawn(
                     self.server

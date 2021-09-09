@@ -1,7 +1,6 @@
 pub mod auth;
+mod conn;
 mod peer;
 pub mod proto;
-#[cfg(any(test, feature = "test-support"))]
-pub mod test;
-
+pub use conn::Conn;
 pub use peer::*;

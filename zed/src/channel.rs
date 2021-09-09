@@ -445,12 +445,13 @@ mod tests {
     use super::*;
     use crate::test::FakeServer;
     use gpui::TestAppContext;
+    use std::time::Duration;
 
     #[gpui::test]
     async fn test_channel_messages(mut cx: TestAppContext) {
         let user_id = 5;
         let client = Client::new();
-        let mut server = FakeServer::for_client(user_id, &client, &cx).await;
+        let server = FakeServer::for_client(user_id, &client, &cx).await;
         let user_store = Arc::new(UserStore::new(client.clone()));
 
         let channel_list = cx.add_model(|cx| ChannelList::new(user_store, client.clone(), cx));

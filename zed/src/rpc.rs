@@ -1,8 +1,6 @@
 use crate::util::ResultExt;
 use anyhow::{anyhow, Context, Result};
-use async_tungstenite::tungstenite::{
-    http::Request, Error as WebSocketError, Message as WebSocketMessage,
-};
+use async_tungstenite::tungstenite::http::Request;
 use gpui::{AsyncAppContext, Entity, ModelContext, Task};
 use lazy_static::lazy_static;
 use parking_lot::RwLock;
@@ -19,7 +17,7 @@ use surf::Url;
 pub use zrpc::{proto, ConnectionId, PeerId, TypedEnvelope};
 use zrpc::{
     proto::{AnyTypedEnvelope, EntityMessage, EnvelopedMessage, RequestMessage},
-    Peer, Receipt,
+    Conn, Peer, Receipt,
 };
 
 lazy_static! {
@@ -106,6 +104,7 @@ impl Client {
     fn set_status(self: &Arc<Self>, status: Status, cx: &AsyncAppContext) {
         let mut state = self.state.write();
         *state.status.0.borrow_mut() = status;
+
         match status {
             Status::Connected { .. } => {
                 let heartbeat_interval = state.heartbeat_interval;
@@ -193,75 +192,46 @@ impl Client {
     ) -> anyhow::Result<()> {
         if matches!(
             *self.status().borrow(),
-            Status::Connecting | Status::Connected { .. }
+            Status::Connecting { .. } | Status::Connected { .. }
         ) {
             return Ok(());
         }
 
-        let (user_id, access_token) = Self::login(cx.platform(), &cx.background()).await?;
-        let user_id = user_id.parse::<u64>()?;
-
-        self.set_status(Status::Connecting, cx);
-        match self.connect(user_id, &access_token, cx).await {
-            Ok(()) => {
-                log::info!("connected to rpc address {}", *ZED_SERVER_URL);
-                Ok(())
-            }
+        let (user_id, access_token) = match self.authenticate(&cx).await {
+            Ok(result) => result,
             Err(err) => {
                 self.set_status(Status::ConnectionError, cx);
-                Err(err)
+                return Err(err);
             }
-        }
+        };
+
+        self.set_status(Status::Connecting, cx);
+
+        let conn = match self.connect(user_id, &access_token, cx).await {
+            Ok(conn) => conn,
+            Err(err) => {
+                self.set_status(Status::ConnectionError, cx);
+                return Err(err);
+            }
+        };
+
+        self.set_connection(user_id, conn, cx).await?;
+        log::info!("connected to rpc address {}", *ZED_SERVER_URL);
+        Ok(())
     }
 
-    async fn connect(
-        self: &Arc<Self>,
-        user_id: u64,
-        access_token: &str,
-        cx: &AsyncAppContext,
-    ) -> Result<()> {
-        let request =
-            Request::builder().header("Authorization", format!("{} {}", user_id, access_token));
-        if let Some(host) = ZED_SERVER_URL.strip_prefix("https://") {
-            let stream = smol::net::TcpStream::connect(host).await?;
-            let request = request.uri(format!("wss://{}/rpc", host)).body(())?;
-            let (stream, _) = async_tungstenite::async_tls::client_async_tls(request, stream)
-                .await
-                .context("websocket handshake")?;
-            self.set_connection(user_id, stream, cx).await?;
-            Ok(())
-        } else if let Some(host) = ZED_SERVER_URL.strip_prefix("http://") {
-            let stream = smol::net::TcpStream::connect(host).await?;
-            let request = request.uri(format!("ws://{}/rpc", host)).body(())?;
-            let (stream, _) = async_tungstenite::client_async(request, stream)
-                .await
-                .context("websocket handshake")?;
-            self.set_connection(user_id, stream, cx).await?;
-            Ok(())
-        } else {
-            return Err(anyhow!("invalid server url: {}", *ZED_SERVER_URL));
-        }
-    }
-
-    pub async fn set_connection<Conn>(
+    pub async fn set_connection(
         self: &Arc<Self>,
         user_id: u64,
         conn: Conn,
         cx: &AsyncAppContext,
-    ) -> Result<()>
-    where
-        Conn: 'static
-            + futures::Sink<WebSocketMessage, Error = WebSocketError>
-            + futures::Stream<Item = Result<WebSocketMessage, WebSocketError>>
-            + Unpin
-            + Send,
-    {
+    ) -> Result<()> {
         let (connection_id, handle_io, mut incoming) = self.peer.add_connection(conn).await;
-        {
-            let mut cx = cx.clone();
-            let this = self.clone();
-            cx.foreground()
-                .spawn(async move {
+        cx.foreground()
+            .spawn({
+                let mut cx = cx.clone();
+                let this = self.clone();
+                async move {
                     while let Some(message) = incoming.recv().await {
                         let mut state = this.state.write();
                         if let Some(extract_entity_id) =
@@ -286,9 +256,9 @@ impl Client {
                             log::info!("unhandled message {}", message.payload_type_name());
                         }
                     }
-                })
-                .detach();
-        }
+                }
+            })
+            .detach();
 
         self.set_status(
             Status::Connected {
@@ -315,11 +285,38 @@ impl Client {
         Ok(())
     }
 
-    pub fn login(
-        platform: Arc<dyn gpui::Platform>,
-        executor: &Arc<gpui::executor::Background>,
-    ) -> Task<Result<(String, String)>> {
-        let executor = executor.clone();
+    fn connect(
+        self: &Arc<Self>,
+        user_id: u64,
+        access_token: &str,
+        cx: &AsyncAppContext,
+    ) -> Task<Result<Conn>> {
+        let request =
+            Request::builder().header("Authorization", format!("{} {}", user_id, access_token));
+        cx.background().spawn(async move {
+            if let Some(host) = ZED_SERVER_URL.strip_prefix("https://") {
+                let stream = smol::net::TcpStream::connect(host).await?;
+                let request = request.uri(format!("wss://{}/rpc", host)).body(())?;
+                let (stream, _) = async_tungstenite::async_tls::client_async_tls(request, stream)
+                    .await
+                    .context("websocket handshake")?;
+                Ok(Conn::new(stream))
+            } else if let Some(host) = ZED_SERVER_URL.strip_prefix("http://") {
+                let stream = smol::net::TcpStream::connect(host).await?;
+                let request = request.uri(format!("ws://{}/rpc", host)).body(())?;
+                let (stream, _) = async_tungstenite::client_async(request, stream)
+                    .await
+                    .context("websocket handshake")?;
+                Ok(Conn::new(stream))
+            } else {
+                Err(anyhow!("invalid server url: {}", *ZED_SERVER_URL))
+            }
+        })
+    }
+
+    pub fn authenticate(self: &Arc<Self>, cx: &AsyncAppContext) -> Task<Result<(u64, String)>> {
+        let platform = cx.platform();
+        let executor = cx.background();
         executor.clone().spawn(async move {
             if let Some((user_id, access_token)) = platform
                 .read_credentials(&ZED_SERVER_URL)
@@ -327,7 +324,7 @@ impl Client {
                 .flatten()
             {
                 log::info!("already signed in. user_id: {}", user_id);
-                return Ok((user_id, String::from_utf8(access_token).unwrap()));
+                return Ok((user_id.parse()?, String::from_utf8(access_token).unwrap()));
             }
 
             // Generate a pair of asymmetric encryption keys. The public key will be used by the
@@ -393,7 +390,7 @@ impl Client {
             platform
                 .write_credentials(&ZED_SERVER_URL, &user_id, access_token.as_bytes())
                 .log_err();
-            Ok((user_id.to_string(), access_token))
+            Ok((user_id.parse()?, access_token))
         })
     }
 
@@ -492,7 +489,7 @@ mod tests {
     async fn test_heartbeat(cx: TestAppContext) {
         let user_id = 5;
         let client = Client::new();
-        let mut server = FakeServer::for_client(user_id, &client, &cx).await;
+        let server = FakeServer::for_client(user_id, &client, &cx).await;
 
         cx.foreground().advance_clock(Duration::from_secs(10));
         let ping = server.receive::<proto::Ping>().await.unwrap();
