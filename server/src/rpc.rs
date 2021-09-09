@@ -92,6 +92,7 @@ impl Server {
         };
 
         server
+            .add_handler(Server::ping)
             .add_handler(Server::share_worktree)
             .add_handler(Server::join_worktree)
             .add_handler(Server::update_worktree)
@@ -242,6 +243,18 @@ impl Server {
             }
         }
         worktree_ids
+    }
+
+    async fn ping(self: Arc<Server>, request: TypedEnvelope<proto::Ping>) -> tide::Result<()> {
+        self.peer
+            .respond(
+                request.receipt(),
+                proto::Pong {
+                    id: request.payload.id,
+                },
+            )
+            .await?;
+        Ok(())
     }
 
     async fn share_worktree(
