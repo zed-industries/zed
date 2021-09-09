@@ -653,4 +653,69 @@ mod tests {
             );
         });
     }
+
+    #[gpui::test]
+    async fn test_channel_reconnect(mut cx: TestAppContext) {
+        let user_id = 5;
+        let mut client = Client::new();
+        let server = FakeServer::for_client(user_id, &mut client, &cx).await;
+
+        let user_store = Arc::new(UserStore::new(client.clone()));
+
+        let channel = cx.add_model(|cx| {
+            Channel::new(
+                ChannelDetails {
+                    id: 1,
+                    name: "general".into(),
+                },
+                user_store,
+                client.clone(),
+                cx,
+            )
+        });
+
+        let join_channel = server.receive::<proto::JoinChannel>().await.unwrap();
+        server
+            .respond(
+                join_channel.receipt(),
+                proto::JoinChannelResponse {
+                    messages: vec![
+                        proto::ChannelMessage {
+                            id: 10,
+                            body: "a".into(),
+                            timestamp: 1000,
+                            sender_id: 5,
+                        },
+                        proto::ChannelMessage {
+                            id: 11,
+                            body: "b".into(),
+                            timestamp: 1001,
+                            sender_id: 5,
+                        },
+                    ],
+                    done: false,
+                },
+            )
+            .await;
+
+        let get_users = server.receive::<proto::GetUsers>().await.unwrap();
+        assert_eq!(get_users.payload.user_ids, vec![5]);
+        server
+            .respond(
+                get_users.receipt(),
+                proto::GetUsersResponse {
+                    users: vec![proto::User {
+                        id: 5,
+                        github_login: "nathansobo".into(),
+                        avatar_url: "http://avatar.com/nathansobo".into(),
+                    }],
+                },
+            )
+            .await;
+
+        // Disconnect, wait for the client to reconnect.
+        server.disconnect().await;
+        cx.foreground().advance_clock(Duration::from_secs(10));
+        let get_messages = server.receive::<proto::GetChannelMessages>().await.unwrap();
+    }
 }

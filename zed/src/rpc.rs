@@ -146,14 +146,27 @@ impl Client {
                 }));
             }
             Status::ConnectionLost => {
-                state._maintain_connection = Some(cx.foreground().spawn(async move {
-                    // TODO: try to reconnect
+                let this = self.clone();
+                let foreground = cx.foreground();
+                state._maintain_connection = Some(cx.spawn(|cx| async move {
+                    let mut delay_seconds = 5;
+                    while let Err(error) = this.authenticate_and_connect(&cx).await {
+                        log::error!("failed to connect {}", error);
+                        let delay = Duration::from_secs(delay_seconds);
+                        this.set_status(
+                            Status::ReconnectionError {
+                                next_reconnection: Instant::now() + delay,
+                            },
+                            &cx,
+                        );
+                        foreground.sleep(delay).await;
+                        delay_seconds = (delay_seconds * 2).min(300);
+                    }
                 }));
             }
-            Status::Disconnected => {
+            _ => {
                 state._maintain_connection.take();
             }
-            _ => {}
         }
     }
 
