@@ -258,7 +258,7 @@ impl FakeServer {
         if self.forbid_connections.load(SeqCst) {
             Err(anyhow!("server is forbidding connections"))
         } else {
-            let (client_conn, server_conn) = Conn::in_memory();
+            let (client_conn, server_conn, _) = Conn::in_memory();
             let (connection_id, io, incoming) = self.peer.add_connection(server_conn).await;
             cx.background().spawn(io).detach();
             *self.incoming.lock() = Some(incoming);

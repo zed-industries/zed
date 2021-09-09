@@ -33,22 +33,55 @@ impl Conn {
     }
 
     #[cfg(any(test, feature = "test-support"))]
-    pub fn in_memory() -> (Self, Self) {
-        use futures::SinkExt as _;
-        use futures::StreamExt as _;
+    pub fn in_memory() -> (Self, Self, postage::watch::Sender<Option<()>>) {
+        let (kill_tx, mut kill_rx) = postage::watch::channel_with(None);
+        postage::stream::Stream::try_recv(&mut kill_rx).unwrap();
+
+        let (a_tx, a_rx) = Self::channel(kill_rx.clone());
+        let (b_tx, b_rx) = Self::channel(kill_rx);
+        (
+            Self { tx: a_tx, rx: b_rx },
+            Self { tx: b_tx, rx: a_rx },
+            kill_tx,
+        )
+    }
+
+    #[cfg(any(test, feature = "test-support"))]
+    fn channel(
+        kill_rx: postage::watch::Receiver<Option<()>>,
+    ) -> (
+        Box<dyn Send + Unpin + futures::Sink<WebSocketMessage, Error = WebSocketError>>,
+        Box<dyn Send + Unpin + futures::Stream<Item = Result<WebSocketMessage, WebSocketError>>>,
+    ) {
+        use futures::{future, stream, SinkExt as _, StreamExt as _};
         use std::io::{Error, ErrorKind};
 
-        let (a_tx, a_rx) = futures::channel::mpsc::unbounded::<WebSocketMessage>();
-        let (b_tx, b_rx) = futures::channel::mpsc::unbounded::<WebSocketMessage>();
-        (
-            Self {
-                tx: Box::new(a_tx.sink_map_err(|e| Error::new(ErrorKind::Other, e).into())),
-                rx: Box::new(b_rx.map(Ok)),
-            },
-            Self {
-                tx: Box::new(b_tx.sink_map_err(|e| Error::new(ErrorKind::Other, e).into())),
-                rx: Box::new(a_rx.map(Ok)),
-            },
-        )
+        let (tx, rx) = futures::channel::mpsc::unbounded::<WebSocketMessage>();
+        let tx = tx
+            .sink_map_err(|e| WebSocketError::from(Error::new(ErrorKind::Other, e)))
+            .with({
+                let kill_rx = kill_rx.clone();
+                move |msg| {
+                    if kill_rx.borrow().is_none() {
+                        future::ready(Ok(msg))
+                    } else {
+                        future::ready(Err(Error::new(ErrorKind::Other, "connection killed").into()))
+                    }
+                }
+            });
+        let rx = stream::select(
+            rx.map(Ok),
+            kill_rx.filter_map(|kill| {
+                if let Some(_) = kill {
+                    future::ready(Some(Err(
+                        Error::new(ErrorKind::Other, "connection killed").into()
+                    )))
+                } else {
+                    future::ready(None)
+                }
+            }),
+        );
+
+        (Box::new(tx), Box::new(rx))
     }
 }

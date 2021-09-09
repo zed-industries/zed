@@ -352,12 +352,12 @@ mod tests {
             let client1 = Peer::new();
             let client2 = Peer::new();
 
-            let (client1_to_server_conn, server_to_client_1_conn) = Conn::in_memory();
+            let (client1_to_server_conn, server_to_client_1_conn, _) = Conn::in_memory();
             let (client1_conn_id, io_task1, _) =
                 client1.add_connection(client1_to_server_conn).await;
             let (_, io_task2, incoming1) = server.add_connection(server_to_client_1_conn).await;
 
-            let (client2_to_server_conn, server_to_client_2_conn) = Conn::in_memory();
+            let (client2_to_server_conn, server_to_client_2_conn, _) = Conn::in_memory();
             let (client2_conn_id, io_task3, _) =
                 client2.add_connection(client2_to_server_conn).await;
             let (_, io_task4, incoming2) = server.add_connection(server_to_client_2_conn).await;
@@ -492,7 +492,7 @@ mod tests {
     #[test]
     fn test_disconnect() {
         smol::block_on(async move {
-            let (client_conn, mut server_conn) = Conn::in_memory();
+            let (client_conn, mut server_conn, _) = Conn::in_memory();
 
             let client = Peer::new();
             let (connection_id, io_handler, mut incoming) =
@@ -526,7 +526,7 @@ mod tests {
     #[test]
     fn test_io_error() {
         smol::block_on(async move {
-            let (client_conn, server_conn) = Conn::in_memory();
+            let (client_conn, server_conn, _) = Conn::in_memory();
             drop(server_conn);
 
             let client = Peer::new();
