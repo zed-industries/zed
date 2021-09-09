@@ -93,8 +93,7 @@ impl ChannelList {
             async move {
                 let mut status = rpc.status();
                 loop {
-                    let status = status.recv().await.unwrap();
-                    match status {
+                    match status.recv().await.unwrap() {
                         rpc::Status::Connected { .. } => {
                             let response = rpc
                                 .request(proto::GetChannels {})

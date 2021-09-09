@@ -1582,7 +1582,7 @@ impl File {
                             .await
                         {
                             log::error!("error closing remote buffer: {}", error);
-                        };
+                        }
                     })
                     .detach();
             }
