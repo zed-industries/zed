@@ -120,6 +120,7 @@ macro_rules! entity_messages {
 }
 
 messages!(
+    Ack,
     AddPeer,
     BufferSaved,
     ChannelMessageSent,
@@ -140,7 +141,6 @@ messages!(
     OpenWorktree,
     OpenWorktreeResponse,
     Ping,
-    Pong,
     RemovePeer,
     SaveBuffer,
     SendChannelMessage,
@@ -157,7 +157,7 @@ request_messages!(
     (JoinChannel, JoinChannelResponse),
     (OpenBuffer, OpenBufferResponse),
     (OpenWorktree, OpenWorktreeResponse),
-    (Ping, Pong),
+    (Ping, Ack),
     (SaveBuffer, BufferSaved),
     (ShareWorktree, ShareWorktreeResponse),
     (SendChannelMessage, SendChannelMessageResponse),

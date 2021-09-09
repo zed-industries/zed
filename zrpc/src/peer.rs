@@ -371,18 +371,18 @@ mod tests {
 
             assert_eq!(
                 client1
-                    .request(client1_conn_id, proto::Ping { id: 1 },)
+                    .request(client1_conn_id, proto::Ping {},)
                     .await
                     .unwrap(),
-                proto::Pong { id: 1 }
+                proto::Ack {}
             );
 
             assert_eq!(
                 client2
-                    .request(client2_conn_id, proto::Ping { id: 2 },)
+                    .request(client2_conn_id, proto::Ping {},)
                     .await
                     .unwrap(),
-                proto::Pong { id: 2 }
+                proto::Ack {}
             );
 
             assert_eq!(
@@ -438,13 +438,7 @@ mod tests {
                     let envelope = envelope.into_any();
                     if let Some(envelope) = envelope.downcast_ref::<TypedEnvelope<proto::Ping>>() {
                         let receipt = envelope.receipt();
-                        peer.respond(
-                            receipt,
-                            proto::Pong {
-                                id: envelope.payload.id,
-                            },
-                        )
-                        .await?
+                        peer.respond(receipt, proto::Ack {}).await?
                     } else if let Some(envelope) =
                         envelope.downcast_ref::<TypedEnvelope<proto::OpenBuffer>>()
                     {
@@ -536,7 +530,7 @@ mod tests {
             smol::spawn(async move { incoming.next().await }).detach();
 
             let err = client
-                .request(connection_id, proto::Ping { id: 42 })
+                .request(connection_id, proto::Ping {})
                 .await
                 .unwrap_err();
             assert_eq!(err.to_string(), "connection was closed");

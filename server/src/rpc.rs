@@ -246,14 +246,7 @@ impl Server {
     }
 
     async fn ping(self: Arc<Server>, request: TypedEnvelope<proto::Ping>) -> tide::Result<()> {
-        self.peer
-            .respond(
-                request.receipt(),
-                proto::Pong {
-                    id: request.payload.id,
-                },
-            )
-            .await?;
+        self.peer.respond(request.receipt(), proto::Ack {}).await?;
         Ok(())
     }
 

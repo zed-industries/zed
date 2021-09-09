@@ -6,9 +6,9 @@ message Envelope {
     optional uint32 responding_to = 2;
     optional uint32 original_sender_id = 3;
     oneof payload {
-        Error error = 4;
-        Ping ping = 5;
-        Pong pong = 6;
+        Ack ack = 4;
+        Error error = 5;
+        Ping ping = 6;
         ShareWorktree share_worktree = 7;
         ShareWorktreeResponse share_worktree_response = 8;
         OpenWorktree open_worktree = 9;
@@ -40,13 +40,9 @@ message Envelope {
 
 // Messages
 
-message Ping {
-    int32 id = 1;
-}
+message Ping {}
 
-message Pong {
-    int32 id = 2;
-}
+message Ack {}
 
 message Error {
     string message = 1;

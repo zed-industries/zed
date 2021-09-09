@@ -139,13 +139,9 @@ impl Client {
                 let this = self.clone();
                 let foreground = cx.foreground();
                 state._maintain_connection = Some(cx.foreground().spawn(async move {
-                    let mut next_ping_id = 0;
                     loop {
                         foreground.timer(heartbeat_interval).await;
-                        this.request(proto::Ping { id: next_ping_id })
-                            .await
-                            .unwrap();
-                        next_ping_id += 1;
+                        this.request(proto::Ping {}).await.unwrap();
                     }
                 }));
             }
@@ -543,13 +539,11 @@ mod tests {
 
         cx.foreground().advance_clock(Duration::from_secs(10));
         let ping = server.receive::<proto::Ping>().await.unwrap();
-        assert_eq!(ping.payload.id, 0);
-        server.respond(ping.receipt(), proto::Pong { id: 0 }).await;
+        server.respond(ping.receipt(), proto::Ack {}).await;
 
         cx.foreground().advance_clock(Duration::from_secs(10));
         let ping = server.receive::<proto::Ping>().await.unwrap();
-        assert_eq!(ping.payload.id, 1);
-        server.respond(ping.receipt(), proto::Pong { id: 1 }).await;
+        server.respond(ping.receipt(), proto::Ack {}).await;
 
         client.disconnect(&cx.to_async()).await.unwrap();
         assert!(server.receive::<proto::Ping>().await.is_err());
