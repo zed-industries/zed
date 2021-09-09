@@ -497,7 +497,6 @@ mod tests {
     use super::*;
     use crate::test::FakeServer;
     use gpui::TestAppContext;
-    use std::time::Duration;
 
     #[gpui::test]
     async fn test_channel_messages(mut cx: TestAppContext) {
