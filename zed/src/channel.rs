@@ -450,8 +450,8 @@ mod tests {
     #[gpui::test]
     async fn test_channel_messages(mut cx: TestAppContext) {
         let user_id = 5;
-        let client = Client::new();
-        let server = FakeServer::for_client(user_id, &client, &cx).await;
+        let mut client = Client::new();
+        let server = FakeServer::for_client(user_id, &mut client, &cx).await;
         let user_store = Arc::new(UserStore::new(client.clone()));
 
         let channel_list = cx.add_model(|cx| ChannelList::new(user_store, client.clone(), cx));

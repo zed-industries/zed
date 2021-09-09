@@ -203,16 +203,42 @@ pub struct FakeServer {
 }
 
 impl FakeServer {
-    pub async fn for_client(user_id: u64, client: &Arc<Client>, cx: &TestAppContext) -> Arc<Self> {
+    pub async fn for_client(
+        client_user_id: u64,
+        client: &mut Arc<Client>,
+        cx: &TestAppContext,
+    ) -> Arc<Self> {
         let result = Arc::new(Self {
             peer: Peer::new(),
             incoming: Default::default(),
             connection_id: Default::default(),
         });
 
+        Arc::get_mut(client)
+            .unwrap()
+            .set_login_and_connect_callbacks(
+                move |cx| {
+                    cx.spawn(|_| async move {
+                        let access_token = "the-token".to_string();
+                        Ok((client_user_id, access_token))
+                    })
+                },
+                {
+                    let server = result.clone();
+                    move |user_id, access_token, cx| {
+                        assert_eq!(user_id, client_user_id);
+                        assert_eq!(access_token, "the-token");
+                        cx.spawn({
+                            let server = server.clone();
+                            move |cx| async move { Ok(server.connect(&cx).await) }
+                        })
+                    }
+                },
+            );
+
         let conn = result.connect(&cx.to_async()).await;
         client
-            .set_connection(user_id, conn, &cx.to_async())
+            .set_connection(client_user_id, conn, &cx.to_async())
             .await
             .unwrap();
         result
