@@ -11,6 +11,7 @@ use gpui::{
 use postage::prelude::Stream;
 use std::{
     collections::{HashMap, HashSet},
+    mem,
     ops::Range,
     sync::Arc,
 };
@@ -71,7 +72,7 @@ pub enum ChannelListEvent {}
 
 #[derive(Clone, Debug, PartialEq)]
 pub enum ChannelEvent {
-    MessagesAdded {
+    MessagesUpdated {
         old_range: Range<usize>,
         new_count: usize,
     },
@@ -87,36 +88,47 @@ impl ChannelList {
         rpc: Arc<rpc::Client>,
         cx: &mut ModelContext<Self>,
     ) -> Self {
-        let _task = cx.spawn(|this, mut cx| {
+        let _task = cx.spawn_weak(|this, mut cx| {
             let rpc = rpc.clone();
             async move {
-                let mut user_id = rpc.user_id();
-                loop {
-                    let available_channels = if user_id.recv().await.unwrap().is_some() {
-                        Some(
-                            rpc.request(proto::GetChannels {})
+                let mut status = rpc.status();
+                while let Some((status, this)) = status.recv().await.zip(this.upgrade(&cx)) {
+                    match status {
+                        rpc::Status::Connected { .. } => {
+                            let response = rpc
+                                .request(proto::GetChannels {})
                                 .await
-                                .context("failed to fetch available channels")?
-                                .channels
-                                .into_iter()
-                                .map(Into::into)
-                                .collect(),
-                        )
-                    } else {
-                        None
-                    };
+                                .context("failed to fetch available channels")?;
+                            this.update(&mut cx, |this, cx| {
+                                this.available_channels =
+                                    Some(response.channels.into_iter().map(Into::into).collect());
 
-                    this.update(&mut cx, |this, cx| {
-                        if available_channels.is_none() {
-                            if this.available_channels.is_none() {
-                                return;
-                            }
-                            this.channels.clear();
+                                let mut to_remove = Vec::new();
+                                for (channel_id, channel) in &this.channels {
+                                    if let Some(channel) = channel.upgrade(cx) {
+                                        channel.update(cx, |channel, cx| channel.rejoin(cx))
+                                    } else {
+                                        to_remove.push(*channel_id);
+                                    }
+                                }
+
+                                for channel_id in to_remove {
+                                    this.channels.remove(&channel_id);
+                                }
+                                cx.notify();
+                            });
                         }
-                        this.available_channels = available_channels;
-                        cx.notify();
-                    });
+                        rpc::Status::Disconnected { .. } => {
+                            this.update(&mut cx, |this, cx| {
+                                this.available_channels = None;
+                                this.channels.clear();
+                                cx.notify();
+                            });
+                        }
+                        _ => {}
+                    }
                 }
+                Ok(())
             }
             .log_err()
         });
@@ -285,6 +297,43 @@ impl Channel {
         false
     }
 
+    pub fn rejoin(&mut self, cx: &mut ModelContext<Self>) {
+        let user_store = self.user_store.clone();
+        let rpc = self.rpc.clone();
+        let channel_id = self.details.id;
+        cx.spawn(|channel, mut cx| {
+            async move {
+                let response = rpc.request(proto::JoinChannel { channel_id }).await?;
+                let messages = messages_from_proto(response.messages, &user_store).await?;
+                let loaded_all_messages = response.done;
+
+                channel.update(&mut cx, |channel, cx| {
+                    if let Some((first_new_message, last_old_message)) =
+                        messages.first().zip(channel.messages.last())
+                    {
+                        if first_new_message.id > last_old_message.id {
+                            let old_messages = mem::take(&mut channel.messages);
+                            cx.emit(ChannelEvent::MessagesUpdated {
+                                old_range: 0..old_messages.summary().count,
+                                new_count: 0,
+                            });
+                            channel.loaded_all_messages = loaded_all_messages;
+                        }
+                    }
+
+                    channel.insert_messages(messages, cx);
+                    if loaded_all_messages {
+                        channel.loaded_all_messages = loaded_all_messages;
+                    }
+                });
+
+                Ok(())
+            }
+            .log_err()
+        })
+        .detach();
+    }
+
     pub fn message_count(&self) -> usize {
         self.messages.summary().count
     }
@@ -350,7 +399,7 @@ impl Channel {
             drop(old_cursor);
             self.messages = new_messages;
 
-            cx.emit(ChannelEvent::MessagesAdded {
+            cx.emit(ChannelEvent::MessagesUpdated {
                 old_range: start_ix..end_ix,
                 new_count,
             });
@@ -446,22 +495,21 @@ impl<'a> sum_tree::SeekDimension<'a, ChannelMessageSummary> for Count {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::test::FakeServer;
     use gpui::TestAppContext;
-    use postage::mpsc::Receiver;
-    use zrpc::{test::Channel, ConnectionId, Peer, Receipt};
 
     #[gpui::test]
     async fn test_channel_messages(mut cx: TestAppContext) {
         let user_id = 5;
-        let client = Client::new();
-        let mut server = FakeServer::for_client(user_id, &client, &cx).await;
+        let mut client = Client::new();
+        let server = FakeServer::for_client(user_id, &mut client, &cx).await;
         let user_store = Arc::new(UserStore::new(client.clone()));
 
         let channel_list = cx.add_model(|cx| ChannelList::new(user_store, client.clone(), cx));
         channel_list.read_with(&cx, |list, _| assert_eq!(list.available_channels(), None));
 
         // Get the available channels.
-        let get_channels = server.receive::<proto::GetChannels>().await;
+        let get_channels = server.receive::<proto::GetChannels>().await.unwrap();
         server
             .respond(
                 get_channels.receipt(),
@@ -492,7 +540,7 @@ mod tests {
             })
             .unwrap();
         channel.read_with(&cx, |channel, _| assert!(channel.messages().is_empty()));
-        let join_channel = server.receive::<proto::JoinChannel>().await;
+        let join_channel = server.receive::<proto::JoinChannel>().await.unwrap();
         server
             .respond(
                 join_channel.receipt(),
@@ -517,7 +565,7 @@ mod tests {
             .await;
 
         // Client requests all users for the received messages
-        let mut get_users = server.receive::<proto::GetUsers>().await;
+        let mut get_users = server.receive::<proto::GetUsers>().await.unwrap();
         get_users.payload.user_ids.sort();
         assert_eq!(get_users.payload.user_ids, vec![5, 6]);
         server
@@ -542,7 +590,7 @@ mod tests {
 
         assert_eq!(
             channel.next_event(&cx).await,
-            ChannelEvent::MessagesAdded {
+            ChannelEvent::MessagesUpdated {
                 old_range: 0..0,
                 new_count: 2,
             }
@@ -574,7 +622,7 @@ mod tests {
             .await;
 
         // Client requests user for message since they haven't seen them yet
-        let get_users = server.receive::<proto::GetUsers>().await;
+        let get_users = server.receive::<proto::GetUsers>().await.unwrap();
         assert_eq!(get_users.payload.user_ids, vec![7]);
         server
             .respond(
@@ -591,7 +639,7 @@ mod tests {
 
         assert_eq!(
             channel.next_event(&cx).await,
-            ChannelEvent::MessagesAdded {
+            ChannelEvent::MessagesUpdated {
                 old_range: 2..2,
                 new_count: 1,
             }
@@ -610,7 +658,7 @@ mod tests {
         channel.update(&mut cx, |channel, cx| {
             assert!(channel.load_more_messages(cx));
         });
-        let get_messages = server.receive::<proto::GetChannelMessages>().await;
+        let get_messages = server.receive::<proto::GetChannelMessages>().await.unwrap();
         assert_eq!(get_messages.payload.channel_id, 5);
         assert_eq!(get_messages.payload.before_message_id, 10);
         server
@@ -638,7 +686,7 @@ mod tests {
 
         assert_eq!(
             channel.next_event(&cx).await,
-            ChannelEvent::MessagesAdded {
+            ChannelEvent::MessagesUpdated {
                 old_range: 0..0,
                 new_count: 2,
             }
@@ -655,54 +703,5 @@ mod tests {
                 ]
             );
         });
-    }
-
-    struct FakeServer {
-        peer: Arc<Peer>,
-        incoming: Receiver<Box<dyn proto::AnyTypedEnvelope>>,
-        connection_id: ConnectionId,
-    }
-
-    impl FakeServer {
-        async fn for_client(user_id: u64, client: &Arc<Client>, cx: &TestAppContext) -> Self {
-            let (client_conn, server_conn) = Channel::bidirectional();
-            let peer = Peer::new();
-            let (connection_id, io, incoming) = peer.add_connection(server_conn).await;
-            cx.background().spawn(io).detach();
-
-            client
-                .add_connection(user_id, client_conn, &cx.to_async())
-                .await
-                .unwrap();
-
-            Self {
-                peer,
-                incoming,
-                connection_id,
-            }
-        }
-
-        async fn send<T: proto::EnvelopedMessage>(&self, message: T) {
-            self.peer.send(self.connection_id, message).await.unwrap();
-        }
-
-        async fn receive<M: proto::EnvelopedMessage>(&mut self) -> TypedEnvelope<M> {
-            *self
-                .incoming
-                .recv()
-                .await
-                .unwrap()
-                .into_any()
-                .downcast::<TypedEnvelope<M>>()
-                .unwrap()
-        }
-
-        async fn respond<T: proto::RequestMessage>(
-            &self,
-            receipt: Receipt<T>,
-            response: T::Response,
-        ) {
-            self.peer.respond(receipt, response).await.unwrap()
-        }
     }
 }

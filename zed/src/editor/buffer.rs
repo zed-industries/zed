@@ -2695,14 +2695,7 @@ impl<'a> Into<proto::operation::Edit> for &'a EditOperation {
 impl<'a> Into<proto::Anchor> for &'a Anchor {
     fn into(self) -> proto::Anchor {
         proto::Anchor {
-            version: self
-                .version
-                .iter()
-                .map(|entry| proto::VectorClockEntry {
-                    replica_id: entry.replica_id as u32,
-                    timestamp: entry.value,
-                })
-                .collect(),
+            version: (&self.version).into(),
             offset: self.offset as u64,
             bias: match self.bias {
                 Bias::Left => proto::anchor::Bias::Left as i32,

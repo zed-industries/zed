@@ -1,8 +1,8 @@
-use crate::proto::{self, AnyTypedEnvelope, EnvelopedMessage, MessageStream, RequestMessage};
+use super::proto::{self, AnyTypedEnvelope, EnvelopedMessage, MessageStream, RequestMessage};
+use super::Conn;
 use anyhow::{anyhow, Context, Result};
 use async_lock::{Mutex, RwLock};
-use async_tungstenite::tungstenite::{Error as WebSocketError, Message as WebSocketMessage};
-use futures::{FutureExt, StreamExt};
+use futures::FutureExt as _;
 use postage::{
     mpsc,
     prelude::{Sink as _, Stream as _},
@@ -98,21 +98,14 @@ impl Peer {
         })
     }
 
-    pub async fn add_connection<Conn>(
+    pub async fn add_connection(
         self: &Arc<Self>,
         conn: Conn,
     ) -> (
         ConnectionId,
         impl Future<Output = anyhow::Result<()>> + Send,
         mpsc::Receiver<Box<dyn AnyTypedEnvelope>>,
-    )
-    where
-        Conn: futures::Sink<WebSocketMessage, Error = WebSocketError>
-            + futures::Stream<Item = Result<WebSocketMessage, WebSocketError>>
-            + Send
-            + Unpin,
-    {
-        let (tx, rx) = conn.split();
+    ) {
         let connection_id = ConnectionId(
             self.next_connection_id
                 .fetch_add(1, atomic::Ordering::SeqCst),
@@ -124,9 +117,10 @@ impl Peer {
             next_message_id: Default::default(),
             response_channels: Default::default(),
         };
-        let mut writer = MessageStream::new(tx);
-        let mut reader = MessageStream::new(rx);
+        let mut writer = MessageStream::new(conn.tx);
+        let mut reader = MessageStream::new(conn.rx);
 
+        let this = self.clone();
         let response_channels = connection.response_channels.clone();
         let handle_io = async move {
             loop {
@@ -147,6 +141,7 @@ impl Peer {
                                     if let Some(envelope) = proto::build_typed_envelope(connection_id, incoming) {
                                         if incoming_tx.send(envelope).await.is_err() {
                                             response_channels.lock().await.clear();
+                                            this.connections.write().await.remove(&connection_id);
                                             return Ok(())
                                         }
                                     } else {
@@ -158,6 +153,7 @@ impl Peer {
                             }
                             Err(error) => {
                                 response_channels.lock().await.clear();
+                                this.connections.write().await.remove(&connection_id);
                                 Err(error).context("received invalid RPC message")?;
                             }
                         },
@@ -165,11 +161,13 @@ impl Peer {
                             Some(outgoing) => {
                                 if let Err(result) = writer.write_message(&outgoing).await {
                                     response_channels.lock().await.clear();
+                                    this.connections.write().await.remove(&connection_id);
                                     Err(result).context("failed to write RPC message")?;
                                 }
                             }
                             None => {
                                 response_channels.lock().await.clear();
+                                this.connections.write().await.remove(&connection_id);
                                 return Ok(())
                             }
                         }
@@ -342,7 +340,9 @@ impl Peer {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{test, TypedEnvelope};
+    use crate::TypedEnvelope;
+    use async_tungstenite::tungstenite::Message as WebSocketMessage;
+    use futures::StreamExt as _;
 
     #[test]
     fn test_request_response() {
@@ -352,12 +352,12 @@ mod tests {
             let client1 = Peer::new();
             let client2 = Peer::new();
 
-            let (client1_to_server_conn, server_to_client_1_conn) = test::Channel::bidirectional();
+            let (client1_to_server_conn, server_to_client_1_conn, _) = Conn::in_memory();
             let (client1_conn_id, io_task1, _) =
                 client1.add_connection(client1_to_server_conn).await;
             let (_, io_task2, incoming1) = server.add_connection(server_to_client_1_conn).await;
 
-            let (client2_to_server_conn, server_to_client_2_conn) = test::Channel::bidirectional();
+            let (client2_to_server_conn, server_to_client_2_conn, _) = Conn::in_memory();
             let (client2_conn_id, io_task3, _) =
                 client2.add_connection(client2_to_server_conn).await;
             let (_, io_task4, incoming2) = server.add_connection(server_to_client_2_conn).await;
@@ -371,18 +371,18 @@ mod tests {
 
             assert_eq!(
                 client1
-                    .request(client1_conn_id, proto::Ping { id: 1 },)
+                    .request(client1_conn_id, proto::Ping {},)
                     .await
                     .unwrap(),
-                proto::Pong { id: 1 }
+                proto::Ack {}
             );
 
             assert_eq!(
                 client2
-                    .request(client2_conn_id, proto::Ping { id: 2 },)
+                    .request(client2_conn_id, proto::Ping {},)
                     .await
                     .unwrap(),
-                proto::Pong { id: 2 }
+                proto::Ack {}
             );
 
             assert_eq!(
@@ -438,13 +438,7 @@ mod tests {
                     let envelope = envelope.into_any();
                     if let Some(envelope) = envelope.downcast_ref::<TypedEnvelope<proto::Ping>>() {
                         let receipt = envelope.receipt();
-                        peer.respond(
-                            receipt,
-                            proto::Pong {
-                                id: envelope.payload.id,
-                            },
-                        )
-                        .await?
+                        peer.respond(receipt, proto::Ack {}).await?
                     } else if let Some(envelope) =
                         envelope.downcast_ref::<TypedEnvelope<proto::OpenBuffer>>()
                     {
@@ -492,7 +486,7 @@ mod tests {
     #[test]
     fn test_disconnect() {
         smol::block_on(async move {
-            let (client_conn, mut server_conn) = test::Channel::bidirectional();
+            let (client_conn, mut server_conn, _) = Conn::in_memory();
 
             let client = Peer::new();
             let (connection_id, io_handler, mut incoming) =
@@ -516,18 +510,17 @@ mod tests {
 
             io_ended_rx.recv().await;
             messages_ended_rx.recv().await;
-            assert!(
-                futures::SinkExt::send(&mut server_conn, WebSocketMessage::Binary(vec![]))
-                    .await
-                    .is_err()
-            );
+            assert!(server_conn
+                .send(WebSocketMessage::Binary(vec![]))
+                .await
+                .is_err());
         });
     }
 
     #[test]
     fn test_io_error() {
         smol::block_on(async move {
-            let (client_conn, server_conn) = test::Channel::bidirectional();
+            let (client_conn, server_conn, _) = Conn::in_memory();
             drop(server_conn);
 
             let client = Peer::new();
@@ -537,7 +530,7 @@ mod tests {
             smol::spawn(async move { incoming.next().await }).detach();
 
             let err = client
-                .request(connection_id, proto::Ping { id: 42 })
+                .request(connection_id, proto::Ping {})
                 .await
                 .unwrap_err();
             assert_eq!(err.to_string(), "connection was closed");

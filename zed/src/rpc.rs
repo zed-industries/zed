@@ -1,24 +1,24 @@
 use crate::util::ResultExt;
 use anyhow::{anyhow, Context, Result};
 use async_tungstenite::tungstenite::http::Request;
-use async_tungstenite::tungstenite::{Error as WebSocketError, Message as WebSocketMessage};
 use gpui::{AsyncAppContext, Entity, ModelContext, Task};
 use lazy_static::lazy_static;
 use parking_lot::RwLock;
-use postage::prelude::Stream;
-use postage::sink::Sink;
-use postage::watch;
-use std::any::TypeId;
-use std::collections::HashMap;
-use std::sync::Weak;
-use std::time::{Duration, Instant};
-use std::{convert::TryFrom, future::Future, sync::Arc};
+use postage::{prelude::Stream, watch};
+use rand::prelude::*;
+use std::{
+    any::TypeId,
+    collections::HashMap,
+    convert::TryFrom,
+    future::Future,
+    sync::{Arc, Weak},
+    time::{Duration, Instant},
+};
 use surf::Url;
-use zrpc::proto::{AnyTypedEnvelope, EntityMessage};
 pub use zrpc::{proto, ConnectionId, PeerId, TypedEnvelope};
 use zrpc::{
-    proto::{EnvelopedMessage, RequestMessage},
-    Peer, Receipt,
+    proto::{AnyTypedEnvelope, EntityMessage, EnvelopedMessage, RequestMessage},
+    Conn, Peer, Receipt,
 };
 
 lazy_static! {
@@ -29,25 +29,55 @@ lazy_static! {
 pub struct Client {
     peer: Arc<Peer>,
     state: RwLock<ClientState>,
+    auth_callback: Option<
+        Box<dyn 'static + Send + Sync + Fn(&AsyncAppContext) -> Task<Result<(u64, String)>>>,
+    >,
+    connect_callback: Option<
+        Box<dyn 'static + Send + Sync + Fn(u64, &str, &AsyncAppContext) -> Task<Result<Conn>>>,
+    >,
+}
+
+#[derive(Copy, Clone, Debug)]
+pub enum Status {
+    Disconnected,
+    Authenticating,
+    Connecting {
+        user_id: u64,
+    },
+    ConnectionError,
+    Connected {
+        connection_id: ConnectionId,
+        user_id: u64,
+    },
+    ConnectionLost,
+    Reauthenticating,
+    Reconnecting {
+        user_id: u64,
+    },
+    ReconnectionError {
+        next_reconnection: Instant,
+    },
 }
 
 struct ClientState {
-    connection_id: Option<ConnectionId>,
-    user_id: (watch::Sender<Option<u64>>, watch::Receiver<Option<u64>>),
+    status: (watch::Sender<Status>, watch::Receiver<Status>),
     entity_id_extractors: HashMap<TypeId, Box<dyn Send + Sync + Fn(&dyn AnyTypedEnvelope) -> u64>>,
     model_handlers: HashMap<
         (TypeId, u64),
         Box<dyn Send + Sync + FnMut(Box<dyn AnyTypedEnvelope>, &mut AsyncAppContext)>,
     >,
+    _maintain_connection: Option<Task<()>>,
+    heartbeat_interval: Duration,
 }
 
 impl Default for ClientState {
     fn default() -> Self {
         Self {
-            connection_id: Default::default(),
-            user_id: watch::channel(),
+            status: watch::channel_with(Status::Disconnected),
             entity_id_extractors: Default::default(),
             model_handlers: Default::default(),
+            _maintain_connection: None,
+            heartbeat_interval: Duration::from_secs(5),
         }
     }
 }
@@ -77,11 +107,71 @@ impl Client {
         Arc::new(Self {
             peer: Peer::new(),
             state: Default::default(),
+            auth_callback: None,
+            connect_callback: None,
         })
     }
 
-    pub fn user_id(&self) -> watch::Receiver<Option<u64>> {
-        self.state.read().user_id.1.clone()
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn set_login_and_connect_callbacks<Login, Connect>(
+        &mut self,
+        login: Login,
+        connect: Connect,
+    ) where
+        Login: 'static + Send + Sync + Fn(&AsyncAppContext) -> Task<Result<(u64, String)>>,
+        Connect: 'static + Send + Sync + Fn(u64, &str, &AsyncAppContext) -> Task<Result<Conn>>,
+    {
+        self.auth_callback = Some(Box::new(login));
+        self.connect_callback = Some(Box::new(connect));
+    }
+
+    pub fn status(&self) -> watch::Receiver<Status> {
+        self.state.read().status.1.clone()
+    }
+
+    fn set_status(self: &Arc<Self>, status: Status, cx: &AsyncAppContext) {
+        let mut state = self.state.write();
+        *state.status.0.borrow_mut() = status;
+
+        match status {
+            Status::Connected { .. } => {
+                let heartbeat_interval = state.heartbeat_interval;
+                let this = self.clone();
+                let foreground = cx.foreground();
+                state._maintain_connection = Some(cx.foreground().spawn(async move {
+                    loop {
+                        foreground.timer(heartbeat_interval).await;
+                        this.request(proto::Ping {}).await.unwrap();
+                    }
+                }));
+            }
+            Status::ConnectionLost => {
+                let this = self.clone();
+                let foreground = cx.foreground();
+                let heartbeat_interval = state.heartbeat_interval;
+                state._maintain_connection = Some(cx.spawn(|cx| async move {
+                    let mut rng = StdRng::from_entropy();
+                    let mut delay = Duration::from_millis(100);
+                    while let Err(error) = this.authenticate_and_connect(&cx).await {
+                        log::error!("failed to connect {}", error);
+                        this.set_status(
+                            Status::ReconnectionError {
+                                next_reconnection: Instant::now() + delay,
+                            },
+                            &cx,
+                        );
+                        foreground.timer(delay).await;
+                        delay = delay
+                            .mul_f32(rng.gen_range(1.0..=2.0))
+                            .min(heartbeat_interval);
+                    }
+                }));
+            }
+            Status::Disconnected => {
+                state._maintain_connection.take();
+            }
+            _ => {}
+        }
     }
 
     pub fn subscribe_from_model<T, M, F>(
@@ -141,56 +231,57 @@ impl Client {
         self: &Arc<Self>,
         cx: &AsyncAppContext,
     ) -> anyhow::Result<()> {
-        if self.state.read().connection_id.is_some() {
-            return Ok(());
-        }
-
-        let (user_id, access_token) = Self::login(cx.platform(), &cx.background()).await?;
-        let user_id = user_id.parse::<u64>()?;
-        let request =
-            Request::builder().header("Authorization", format!("{} {}", user_id, access_token));
-
-        if let Some(host) = ZED_SERVER_URL.strip_prefix("https://") {
-            let stream = smol::net::TcpStream::connect(host).await?;
-            let request = request.uri(format!("wss://{}/rpc", host)).body(())?;
-            let (stream, _) = async_tungstenite::async_tls::client_async_tls(request, stream)
-                .await
-                .context("websocket handshake")?;
-            self.add_connection(user_id, stream, cx).await?;
-        } else if let Some(host) = ZED_SERVER_URL.strip_prefix("http://") {
-            let stream = smol::net::TcpStream::connect(host).await?;
-            let request = request.uri(format!("ws://{}/rpc", host)).body(())?;
-            let (stream, _) = async_tungstenite::client_async(request, stream)
-                .await
-                .context("websocket handshake")?;
-            self.add_connection(user_id, stream, cx).await?;
-        } else {
-            return Err(anyhow!("invalid server url: {}", *ZED_SERVER_URL))?;
+        let was_disconnected = match *self.status().borrow() {
+            Status::Disconnected => true,
+            Status::ConnectionError | Status::ConnectionLost | Status::ReconnectionError { .. } => {
+                false
+            }
+            Status::Connected { .. }
+            | Status::Connecting { .. }
+            | Status::Reconnecting { .. }
+            | Status::Authenticating
+            | Status::Reauthenticating => return Ok(()),
         };
 
-        log::info!("connected to rpc address {}", *ZED_SERVER_URL);
-        Ok(())
+        if was_disconnected {
+            self.set_status(Status::Authenticating, cx);
+        } else {
+            self.set_status(Status::Reauthenticating, cx)
+        }
+
+        let (user_id, access_token) = match self.authenticate(&cx).await {
+            Ok(result) => result,
+            Err(err) => {
+                self.set_status(Status::ConnectionError, cx);
+                return Err(err);
+            }
+        };
+
+        if was_disconnected {
+            self.set_status(Status::Connecting { user_id }, cx);
+        } else {
+            self.set_status(Status::Reconnecting { user_id }, cx);
+        }
+        match self.connect(user_id, &access_token, cx).await {
+            Ok(conn) => {
+                log::info!("connected to rpc address {}", *ZED_SERVER_URL);
+                self.set_connection(user_id, conn, cx).await;
+                Ok(())
+            }
+            Err(err) => {
+                self.set_status(Status::ConnectionError, cx);
+                Err(err)
+            }
+        }
     }
 
-    pub async fn add_connection<Conn>(
-        self: &Arc<Self>,
-        user_id: u64,
-        conn: Conn,
-        cx: &AsyncAppContext,
-    ) -> anyhow::Result<()>
-    where
-        Conn: 'static
-            + futures::Sink<WebSocketMessage, Error = WebSocketError>
-            + futures::Stream<Item = Result<WebSocketMessage, WebSocketError>>
-            + Unpin
-            + Send,
-    {
+    async fn set_connection(self: &Arc<Self>, user_id: u64, conn: Conn, cx: &AsyncAppContext) {
         let (connection_id, handle_io, mut incoming) = self.peer.add_connection(conn).await;
-        {
-            let mut cx = cx.clone();
-            let this = self.clone();
-            cx.foreground()
-                .spawn(async move {
+        cx.foreground()
+            .spawn({
+                let mut cx = cx.clone();
+                let this = self.clone();
+                async move {
                     while let Some(message) = incoming.recv().await {
                         let mut state = this.state.write();
                         if let Some(extract_entity_id) =
@@ -215,27 +306,90 @@ impl Client {
                             log::info!("unhandled message {}", message.payload_type_name());
                         }
                     }
-                })
-                .detach();
-        }
-        cx.background()
-            .spawn(async move {
-                if let Err(error) = handle_io.await {
-                    log::error!("connection error: {:?}", error);
                 }
             })
             .detach();
-        let mut state = self.state.write();
-        state.connection_id = Some(connection_id);
-        state.user_id.0.send(Some(user_id)).await?;
-        Ok(())
+
+        self.set_status(
+            Status::Connected {
+                connection_id,
+                user_id,
+            },
+            cx,
+        );
+
+        let handle_io = cx.background().spawn(handle_io);
+        let this = self.clone();
+        let cx = cx.clone();
+        cx.foreground()
+            .spawn(async move {
+                match handle_io.await {
+                    Ok(()) => this.set_status(Status::Disconnected, &cx),
+                    Err(err) => {
+                        log::error!("connection error: {:?}", err);
+                        this.set_status(Status::ConnectionLost, &cx);
+                    }
+                }
+            })
+            .detach();
     }
 
-    pub fn login(
-        platform: Arc<dyn gpui::Platform>,
-        executor: &Arc<gpui::executor::Background>,
-    ) -> Task<Result<(String, String)>> {
-        let executor = executor.clone();
+    fn authenticate(self: &Arc<Self>, cx: &AsyncAppContext) -> Task<Result<(u64, String)>> {
+        if let Some(callback) = self.auth_callback.as_ref() {
+            callback(cx)
+        } else {
+            self.authenticate_with_browser(cx)
+        }
+    }
+
+    fn connect(
+        self: &Arc<Self>,
+        user_id: u64,
+        access_token: &str,
+        cx: &AsyncAppContext,
+    ) -> Task<Result<Conn>> {
+        if let Some(callback) = self.connect_callback.as_ref() {
+            callback(user_id, access_token, cx)
+        } else {
+            self.connect_with_websocket(user_id, access_token, cx)
+        }
+    }
+
+    fn connect_with_websocket(
+        self: &Arc<Self>,
+        user_id: u64,
+        access_token: &str,
+        cx: &AsyncAppContext,
+    ) -> Task<Result<Conn>> {
+        let request =
+            Request::builder().header("Authorization", format!("{} {}", user_id, access_token));
+        cx.background().spawn(async move {
+            if let Some(host) = ZED_SERVER_URL.strip_prefix("https://") {
+                let stream = smol::net::TcpStream::connect(host).await?;
+                let request = request.uri(format!("wss://{}/rpc", host)).body(())?;
+                let (stream, _) = async_tungstenite::async_tls::client_async_tls(request, stream)
+                    .await
+                    .context("websocket handshake")?;
+                Ok(Conn::new(stream))
+            } else if let Some(host) = ZED_SERVER_URL.strip_prefix("http://") {
+                let stream = smol::net::TcpStream::connect(host).await?;
+                let request = request.uri(format!("ws://{}/rpc", host)).body(())?;
+                let (stream, _) = async_tungstenite::client_async(request, stream)
+                    .await
+                    .context("websocket handshake")?;
+                Ok(Conn::new(stream))
+            } else {
+                Err(anyhow!("invalid server url: {}", *ZED_SERVER_URL))
+            }
+        })
+    }
+
+    pub fn authenticate_with_browser(
+        self: &Arc<Self>,
+        cx: &AsyncAppContext,
+    ) -> Task<Result<(u64, String)>> {
+        let platform = cx.platform();
+        let executor = cx.background();
         executor.clone().spawn(async move {
             if let Some((user_id, access_token)) = platform
                 .read_credentials(&ZED_SERVER_URL)
@@ -243,7 +397,7 @@ impl Client {
                 .flatten()
             {
                 log::info!("already signed in. user_id: {}", user_id);
-                return Ok((user_id, String::from_utf8(access_token).unwrap()));
+                return Ok((user_id.parse()?, String::from_utf8(access_token).unwrap()));
             }
 
             // Generate a pair of asymmetric encryption keys. The public key will be used by the
@@ -309,21 +463,23 @@ impl Client {
             platform
                 .write_credentials(&ZED_SERVER_URL, &user_id, access_token.as_bytes())
                 .log_err();
-            Ok((user_id.to_string(), access_token))
+            Ok((user_id.parse()?, access_token))
         })
     }
 
-    pub async fn disconnect(&self) -> Result<()> {
+    pub async fn disconnect(self: &Arc<Self>, cx: &AsyncAppContext) -> Result<()> {
         let conn_id = self.connection_id()?;
         self.peer.disconnect(conn_id).await;
+        self.set_status(Status::Disconnected, cx);
         Ok(())
     }
 
     fn connection_id(&self) -> Result<ConnectionId> {
-        self.state
-            .read()
-            .connection_id
-            .ok_or_else(|| anyhow!("not connected"))
+        if let Status::Connected { connection_id, .. } = *self.status().borrow() {
+            Ok(connection_id)
+        } else {
+            Err(anyhow!("not connected"))
+        }
     }
 
     pub async fn send<T: EnvelopedMessage>(&self, message: T) -> Result<()> {
@@ -340,35 +496,6 @@ impl Client {
         response: T::Response,
     ) -> impl Future<Output = Result<()>> {
         self.peer.respond(receipt, response)
-    }
-}
-
-pub trait MessageHandler<'a, M: proto::EnvelopedMessage>: Clone {
-    type Output: 'a + Future<Output = anyhow::Result<()>>;
-
-    fn handle(
-        &self,
-        message: TypedEnvelope<M>,
-        rpc: &'a Client,
-        cx: &'a mut gpui::AsyncAppContext,
-    ) -> Self::Output;
-}
-
-impl<'a, M, F, Fut> MessageHandler<'a, M> for F
-where
-    M: proto::EnvelopedMessage,
-    F: Clone + Fn(TypedEnvelope<M>, &'a Client, &'a mut gpui::AsyncAppContext) -> Fut,
-    Fut: 'a + Future<Output = anyhow::Result<()>>,
-{
-    type Output = Fut;
-
-    fn handle(
-        &self,
-        message: TypedEnvelope<M>,
-        rpc: &'a Client,
-        cx: &'a mut gpui::AsyncAppContext,
-    ) -> Self::Output {
-        (self)(message, rpc, cx)
     }
 }
 
@@ -396,13 +523,62 @@ const LOGIN_RESPONSE: &'static str = "
 </html>
 ";
 
-#[test]
-fn test_encode_and_decode_worktree_url() {
-    let url = encode_worktree_url(5, "deadbeef");
-    assert_eq!(decode_worktree_url(&url), Some((5, "deadbeef".to_string())));
-    assert_eq!(
-        decode_worktree_url(&format!("\n {}\t", url)),
-        Some((5, "deadbeef".to_string()))
-    );
-    assert_eq!(decode_worktree_url("not://the-right-format"), None);
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::test::FakeServer;
+    use gpui::TestAppContext;
+
+    #[gpui::test(iterations = 10)]
+    async fn test_heartbeat(cx: TestAppContext) {
+        cx.foreground().forbid_parking();
+
+        let user_id = 5;
+        let mut client = Client::new();
+        let server = FakeServer::for_client(user_id, &mut client, &cx).await;
+
+        cx.foreground().advance_clock(Duration::from_secs(10));
+        let ping = server.receive::<proto::Ping>().await.unwrap();
+        server.respond(ping.receipt(), proto::Ack {}).await;
+
+        cx.foreground().advance_clock(Duration::from_secs(10));
+        let ping = server.receive::<proto::Ping>().await.unwrap();
+        server.respond(ping.receipt(), proto::Ack {}).await;
+
+        client.disconnect(&cx.to_async()).await.unwrap();
+        assert!(server.receive::<proto::Ping>().await.is_err());
+    }
+
+    #[gpui::test(iterations = 10)]
+    async fn test_reconnection(cx: TestAppContext) {
+        cx.foreground().forbid_parking();
+
+        let user_id = 5;
+        let mut client = Client::new();
+        let server = FakeServer::for_client(user_id, &mut client, &cx).await;
+        let mut status = client.status();
+        assert!(matches!(
+            status.recv().await,
+            Some(Status::Connected { .. })
+        ));
+
+        server.forbid_connections();
+        server.disconnect().await;
+        while !matches!(status.recv().await, Some(Status::ReconnectionError { .. })) {}
+
+        server.allow_connections();
+        cx.foreground().advance_clock(Duration::from_secs(10));
+        while !matches!(status.recv().await, Some(Status::Connected { .. })) {}
+    }
+
+    #[test]
+    fn test_encode_and_decode_worktree_url() {
+        let url = encode_worktree_url(5, "deadbeef");
+        assert_eq!(decode_worktree_url(&url), Some((5, "deadbeef".to_string())));
+        assert_eq!(
+            decode_worktree_url(&format!("\n {}\t", url)),
+            Some((5, "deadbeef".to_string()))
+        );
+        assert_eq!(decode_worktree_url("not://the-right-format"), None);
+    }
 }
