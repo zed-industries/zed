@@ -88,12 +88,12 @@ impl ChannelList {
         rpc: Arc<rpc::Client>,
         cx: &mut ModelContext<Self>,
     ) -> Self {
-        let _task = cx.spawn(|this, mut cx| {
+        let _task = cx.spawn_weak(|this, mut cx| {
             let rpc = rpc.clone();
             async move {
                 let mut status = rpc.status();
-                loop {
-                    match status.recv().await.unwrap() {
+                while let Some((status, this)) = status.recv().await.zip(this.upgrade(&cx)) {
+                    match status {
                         rpc::Status::Connected { .. } => {
                             let response = rpc
                                 .request(proto::GetChannels {})
@@ -128,6 +128,7 @@ impl ChannelList {
                         _ => {}
                     }
                 }
+                Ok(())
             }
             .log_err()
         });
