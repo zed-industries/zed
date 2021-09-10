@@ -85,7 +85,7 @@ padding.left = 0
 [chat_panel.channel_select.menu]
 padding = 4
 corner_radius = 6
-border = { color = "#000000", width = 1 }
+border = { color = "$border.0", width = 1 }
 background = "$surface.0"
 
 [chat_panel.input_editor]
