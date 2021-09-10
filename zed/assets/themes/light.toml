@@ -19,8 +19,16 @@ base = { family = "Inconsolata", size = 15 }
 0 = "#0000000D"
 
 [selection]
-host = { selection = "#D4D9EE", cursor = "$text.0.color" }
-guests = [{ selection = "#504f31", cursor = "#fcf154" }]
+host = { selection = "#3B57BC33", cursor = "$text.0.color" }
+guests = [
+  { selection = "#FDF35133", cursor = "#FDF351" },
+  { selection = "#4EACAD33", cursor = "#4EACAD" },
+  { selection = "#D0453B33", cursor = "#D0453B" },
+  { selection = "#3B874B33", cursor = "#3B874B" },
+  { selection = "#BD7CB433", cursor = "#BD7CB4" },
+  { selection = "#EE823133", cursor = "#EE8231" },
+  { selection = "#5A2B9233", cursor = "#5A2B92" }
+]
 
 [status]
 good = "#4fac63"
