@@ -949,13 +949,22 @@ impl View for Workspace {
 
     fn render(&mut self, cx: &mut RenderContext<Self>) -> ElementBox {
         let settings = self.settings.borrow();
+        let theme = &settings.theme;
         Container::new(
             Flex::column()
                 .with_child(
                     ConstrainedBox::new(
-                        Container::new(Empty::new().boxed())
-                            .with_style(&settings.theme.workspace.titlebar)
-                            .boxed(),
+                        Container::new(
+                            Align::new(
+                                Label::new(
+                                    "zed".into(), 
+                                    theme.workspace.titlebar.label.clone()
+                                ).boxed()
+                            )
+                            .boxed()
+                        )
+                        .with_style(&theme.workspace.titlebar.container)
+                        .boxed(),
                     )
                     .with_height(32.)
                     .named("titlebar"),
