@@ -87,6 +87,7 @@ padding = 4
 corner_radius = 6
 border = { color = "$border.0", width = 1 }
 background = "$surface.0"
+shadow = { offset = [0, 2], blur = 16, color = "$shadow.0" }
 
 [chat_panel.input_editor]
 background = "$surface.1"
