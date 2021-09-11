@@ -38,6 +38,9 @@ jobs:
   bundle:
     name: Bundle app
     runs-on: self-hosted
+    env:
+      MACOS_CERTIFICATE: ${{ secrets.MACOS_CERTIFICATE }}
+      MACOS_CERTIFICATE_PASSWORD: ${{ secrets.MACOS_CERTIFICATE_PASSWORD }}
     steps:
       - name: Install Rust x86_64-apple-darwin target
         uses: actions-rs/toolchain@v1
