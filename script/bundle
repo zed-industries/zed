@@ -23,12 +23,12 @@ if [[ -z $MACOS_CERTIFICATE || -z $MACOS_CERTIFICATE_PASSWORD ]]; then
 else
     echo "Signing bundle with Apple-issued certificate"
     security create-keychain -p $MACOS_CERTIFICATE_PASSWORD zed.keychain || echo ""
+    security default-keychain -s zed.keychain
     security unlock-keychain -p $MACOS_CERTIFICATE_PASSWORD zed.keychain
-    security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k $MACOS_CERTIFICATE_PASSWORD zed.keychain
     echo $MACOS_CERTIFICATE | base64 --decode > /tmp/zed-certificate.p12
     security import /tmp/zed-certificate.p12 -k zed.keychain -P $MACOS_CERTIFICATE_PASSWORD -T /usr/bin/codesign
     rm /tmp/zed-certificate.p12
-    security default-keychain -s zed.keychain
+    security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k $MACOS_CERTIFICATE_PASSWORD zed.keychain
     /usr/bin/codesign --force -s "Zed Industries, Inc." target/x86_64-apple-darwin/release/bundle/osx/Zed.app -v
 fi
 
