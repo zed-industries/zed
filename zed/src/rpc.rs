@@ -141,7 +141,7 @@ impl Client {
                 state._maintain_connection = Some(cx.foreground().spawn(async move {
                     loop {
                         foreground.timer(heartbeat_interval).await;
-                        this.request(proto::Ping {}).await.unwrap();
+                        let _ = this.request(proto::Ping {}).await;
                     }
                 }));
             }
