@@ -1,13 +1,6 @@
 use super::{ItemViewHandle, SplitDirection};
 use crate::settings::Settings;
-use gpui::{
-    action,
-    color::Color,
-    elements::*,
-    geometry::{rect::RectF, vector::vec2f},
-    keymap::Binding,
-    Border, Entity, MutableAppContext, Quad, RenderContext, View, ViewContext, ViewHandle,
-};
+use gpui::{Border, Entity, MutableAppContext, Quad, RenderContext, View, ViewContext, ViewHandle, action, color::Color, elements::*, geometry::{rect::RectF, vector::vec2f}, keymap::Binding, platform::CursorStyle};
 use postage::watch;
 use std::{cmp, path::Path, sync::Arc};
 
@@ -290,7 +283,7 @@ impl Pane {
                                                         icon.with_color(style.icon_close).boxed()
                                                     }
                                                 },
-                                            )
+                                            ).with_cursor_style(CursorStyle::PointingHand)
                                             .on_click(move |cx| {
                                                 cx.dispatch_action(CloseItem(item_id))
                                             })
