@@ -30,10 +30,16 @@
                 <span class="font-black">ZED</span><span class="font-light" style="padding-left: 1px">INDUSTRIES</span>
             </a>
             <div class="flex-1"></div>
+            <a href="/app" class="text-sm mr-4 hover:underline">
+                The App
+            </a>
             <a href="/team" class="text-sm mr-4 hover:underline">
                 Team
             </a>
             {{#if current_user}}
+            <a href="/another" class="text-sm mr-4 hover:underline">
+                test
+            </a>
             {{#if current_user.is_admin }}
             <a href="/admin" class="text-sm mr-4 hover:underline">
                 Admin
