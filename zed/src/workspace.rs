@@ -31,7 +31,6 @@ pub use pane::*;
 pub use pane_group::*;
 use postage::{prelude::Stream, watch};
 use sidebar::{Side, Sidebar, ToggleSidebarItem};
-use smol::prelude::*;
 use std::{
     collections::{hash_map::Entry, HashMap, HashSet},
     future::Future,
@@ -391,9 +390,14 @@ impl Workspace {
         right_sidebar.add_item("icons/user-16.svg", cx.add_view(|_| ProjectBrowser).into());
 
         let mut current_user = app_state.user_store.current_user().clone();
+        let mut connection_status = app_state.rpc.status().clone();
         let _observe_current_user = cx.spawn_weak(|this, mut cx| async move {
             current_user.recv().await;
-            while current_user.recv().await.is_some() {
+            connection_status.recv().await;
+            let mut stream =
+                Stream::map(current_user, drop).merge(Stream::map(connection_status, drop));
+
+            while stream.recv().await.is_some() {
                 cx.update(|cx| {
                     if let Some(this) = this.upgrade(&cx) {
                         this.update(cx, |_, cx| cx.notify());
@@ -642,7 +646,7 @@ impl Workspace {
                 if let Some(load_result) = watch.borrow().as_ref() {
                     break load_result.clone();
                 }
-                watch.next().await;
+                watch.recv().await;
             };
 
             this.update(&mut cx, |this, cx| {
@@ -954,7 +958,34 @@ impl Workspace {
         &self.active_pane
     }
 
-    fn render_current_user(&self, cx: &mut RenderContext<Self>) -> ElementBox {
+    fn render_connection_status(&self) -> Option<ElementBox> {
+        let theme = &self.settings.borrow().theme;
+        match dbg!(&*self.rpc.status().borrow()) {
+            rpc::Status::ConnectionError
+            | rpc::Status::ConnectionLost
+            | rpc::Status::Reauthenticating
+            | rpc::Status::Reconnecting { .. }
+            | rpc::Status::ReconnectionError { .. } => Some(
+                Container::new(
+                    Align::new(
+                        ConstrainedBox::new(
+                            Svg::new("icons/offline-14.svg")
+                                .with_color(theme.workspace.titlebar.icon_color)
+                                .boxed(),
+                        )
+                        .with_width(theme.workspace.titlebar.offline_icon.width)
+                        .boxed(),
+                    )
+                    .boxed(),
+                )
+                .with_style(theme.workspace.titlebar.offline_icon.container)
+                .boxed(),
+            ),
+            _ => None,
+        }
+    }
+
+    fn render_avatar(&self, cx: &mut RenderContext<Self>) -> ElementBox {
         let theme = &self.settings.borrow().theme;
         let avatar = if let Some(avatar) = self
             .user_store
@@ -969,7 +1000,7 @@ impl Workspace {
         } else {
             MouseEventHandler::new::<Authenticate, _, _, _>(0, cx, |_, _| {
                 Svg::new("icons/signed-out-12.svg")
-                    .with_color(theme.workspace.titlebar.icon_signed_out)
+                    .with_color(theme.workspace.titlebar.icon_color)
                     .boxed()
             })
             .on_click(|cx| cx.dispatch_action(Authenticate))
@@ -1019,11 +1050,18 @@ impl View for Workspace {
                                     .boxed(),
                                 )
                                 .with_child(
-                                    Align::new(self.render_current_user(cx)).right().boxed(),
+                                    Align::new(
+                                        Flex::row()
+                                            .with_children(self.render_connection_status())
+                                            .with_child(self.render_avatar(cx))
+                                            .boxed(),
+                                    )
+                                    .right()
+                                    .boxed(),
                                 )
                                 .boxed(),
                         )
-                        .with_style(&theme.workspace.titlebar.container)
+                        .with_style(theme.workspace.titlebar.container)
                         .boxed(),
                     )
                     .with_height(32.)

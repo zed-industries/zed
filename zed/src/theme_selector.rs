@@ -214,7 +214,7 @@ impl ThemeSelector {
                 )
                 .boxed(),
             )
-            .with_style(&settings.theme.selector.empty.container)
+            .with_style(settings.theme.selector.empty.container)
             .named("empty matches");
         }
 
@@ -259,9 +259,9 @@ impl ThemeSelector {
             .boxed(),
         )
         .with_style(if index == self.selected_index {
-            &theme.selector.active_item.container
+            theme.selector.active_item.container
         } else {
-            &theme.selector.item.container
+            theme.selector.item.container
         });
 
         container.boxed()
@@ -288,7 +288,7 @@ impl View for ThemeSelector {
                         .with_child(Flexible::new(1.0, self.render_matches(cx)).boxed())
                         .boxed(),
                 )
-                .with_style(&settings.theme.selector.container)
+                .with_style(settings.theme.selector.container)
                 .boxed(),
             )
             .with_max_width(600.0)

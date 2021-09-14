@@ -48,8 +48,16 @@ pub struct Titlebar {
     pub container: ContainerStyle,
     pub title: TextStyle,
     pub avatar_width: f32,
-    pub icon_signed_out: Color,
+    pub offline_icon: OfflineIcon,
+    pub icon_color: Color,
     pub avatar: ImageStyle,
+}
+
+#[derive(Clone, Deserialize)]
+pub struct OfflineIcon {
+    #[serde(flatten)]
+    pub container: ContainerStyle,
+    pub width: f32,
 }
 
 #[derive(Clone, Deserialize)]

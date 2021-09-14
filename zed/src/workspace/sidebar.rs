@@ -113,7 +113,7 @@ impl Sidebar {
                     }))
                     .boxed(),
             )
-            .with_style(&theme.container)
+            .with_style(theme.container)
             .boxed(),
         )
         .with_width(theme.width)
@@ -165,7 +165,7 @@ impl Sidebar {
         let side = self.side;
         MouseEventHandler::new::<Self, _, _, _>(self.side.id(), &mut cx, |_, _| {
             Container::new(Empty::new().boxed())
-                .with_style(&self.theme(settings).resize_handle)
+                .with_style(self.theme(settings).resize_handle)
                 .boxed()
         })
         .with_padding(Padding {
