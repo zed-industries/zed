@@ -1,11 +1,8 @@
-use super::{
-    atlas::{self, AtlasAllocator},
-    sprite_cache::SpriteCache,
-};
+use super::{atlas::AtlasAllocator, image_cache::ImageCache, sprite_cache::SpriteCache};
 use crate::{
     color::Color,
     geometry::{
-        rect::{RectF, RectI},
+        rect::RectF,
         vector::{vec2f, vec2i, Vector2F},
     },
     platform,
@@ -22,10 +19,8 @@ const INSTANCE_BUFFER_SIZE: usize = 1024 * 1024; // This is an arbitrary decisio
 
 pub struct Renderer {
     sprite_cache: SpriteCache,
+    image_cache: ImageCache,
     path_atlases: AtlasAllocator,
-    image_atlases: AtlasAllocator,
-    prev_rendered_images: HashMap<usize, (atlas::AllocId, RectI)>,
-    curr_rendered_images: HashMap<usize, (atlas::AllocId, RectI)>,
     quad_pipeline_state: metal::RenderPipelineState,
     shadow_pipeline_state: metal::RenderPipelineState,
     sprite_pipeline_state: metal::RenderPipelineState,
@@ -70,10 +65,9 @@ impl Renderer {
         );
 
         let sprite_cache = SpriteCache::new(device.clone(), vec2i(1024, 768), fonts);
+        let image_cache = ImageCache::new(device.clone(), vec2i(1024, 768));
         let path_atlases =
             AtlasAllocator::new(device.clone(), build_path_atlas_texture_descriptor());
-        let image_atlases =
-            AtlasAllocator::new(device.clone(), build_image_atlas_texture_descriptor());
         let quad_pipeline_state = build_pipeline_state(
             &device,
             &library,
@@ -116,10 +110,8 @@ impl Renderer {
         );
         Self {
             sprite_cache,
+            image_cache,
             path_atlases,
-            image_atlases,
-            prev_rendered_images: Default::default(),
-            curr_rendered_images: Default::default(),
             quad_pipeline_state,
             shadow_pipeline_state,
             sprite_pipeline_state,
@@ -139,11 +131,6 @@ impl Renderer {
     ) {
         let mut offset = 0;
 
-        mem::swap(
-            &mut self.curr_rendered_images,
-            &mut self.prev_rendered_images,
-        );
-
         let path_sprites = self.render_path_atlases(scene, &mut offset, command_buffer);
         self.render_layers(
             scene,
@@ -157,11 +144,7 @@ impl Renderer {
             location: 0,
             length: offset as NSUInteger,
         });
-
-        for (id, _) in self.prev_rendered_images.values() {
-            self.image_atlases.deallocate(*id);
-        }
-        self.prev_rendered_images.clear();
+        self.image_cache.finish_frame();
     }
 
     fn render_path_atlases(
@@ -660,16 +643,7 @@ impl Renderer {
             let target_size = image.bounds.size() * scale_factor;
             let corner_radius = image.corner_radius * scale_factor;
             let border_width = image.border.width * scale_factor;
-            let (alloc_id, atlas_bounds) = self
-                .prev_rendered_images
-                .remove(&image.data.id)
-                .or_else(|| self.curr_rendered_images.get(&image.data.id).copied())
-                .unwrap_or_else(|| {
-                    self.image_atlases
-                        .upload(image.data.size(), image.data.as_bytes())
-                });
-            self.curr_rendered_images
-                .insert(image.data.id, (alloc_id, atlas_bounds));
+            let (alloc_id, atlas_bounds) = self.image_cache.render(&image.data);
             images_by_atlas
                 .entry(alloc_id.atlas_id)
                 .or_insert_with(Vec::new)
@@ -707,7 +681,7 @@ impl Renderer {
                 "instance buffer exhausted"
             );
 
-            let texture = self.image_atlases.texture(atlas_id).unwrap();
+            let texture = self.image_cache.atlas_texture(atlas_id).unwrap();
             command_encoder.set_vertex_buffer(
                 shaders::GPUIImageVertexInputIndex_GPUIImageVertexInputIndexImages as u64,
                 Some(&self.instances),
@@ -855,14 +829,6 @@ fn build_path_atlas_texture_descriptor() -> metal::TextureDescriptor {
     texture_descriptor
         .set_usage(metal::MTLTextureUsage::RenderTarget | metal::MTLTextureUsage::ShaderRead);
     texture_descriptor.set_storage_mode(metal::MTLStorageMode::Private);
-    texture_descriptor
-}
-
-fn build_image_atlas_texture_descriptor() -> metal::TextureDescriptor {
-    let texture_descriptor = metal::TextureDescriptor::new();
-    texture_descriptor.set_width(2048);
-    texture_descriptor.set_height(2048);
-    texture_descriptor.set_pixel_format(MTLPixelFormat::BGRA8Unorm);
     texture_descriptor
 }
 
