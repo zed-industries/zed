@@ -34,46 +34,19 @@ float blur_along_x(float x, float y, float sigma, float corner, float2 halfSize)
 
 struct QuadFragmentInput {
     float4 position [[position]];
-    vector_float2 origin;
-    vector_float2 size;
-    vector_uchar4 background_color;
+    float2 atlas_position; // only used in the image shader
+    float2 origin;
+    float2 size;
+    float4 background_color;
     float border_top;
     float border_right;
     float border_bottom;
     float border_left;
-    vector_uchar4 border_color;
+    float4 border_color;
     float corner_radius;
 };
 
-vertex QuadFragmentInput quad_vertex(
-    uint unit_vertex_id [[vertex_id]],
-    uint quad_id [[instance_id]],
-    constant float2 *unit_vertices [[buffer(GPUIQuadInputIndexVertices)]],
-    constant GPUIQuad *quads [[buffer(GPUIQuadInputIndexQuads)]],
-    constant GPUIUniforms *uniforms [[buffer(GPUIQuadInputIndexUniforms)]]
-) {
-    float2 unit_vertex = unit_vertices[unit_vertex_id];
-    GPUIQuad quad = quads[quad_id];
-    float2 position = unit_vertex * quad.size + quad.origin;
-    float4 device_position = to_device_position(position, uniforms->viewport_size);
-
-    return QuadFragmentInput {
-        device_position,
-        quad.origin,
-        quad.size,
-        quad.background_color,
-        quad.border_top,
-        quad.border_right,
-        quad.border_bottom,
-        quad.border_left,
-        quad.border_color,
-        quad.corner_radius,
-    };
-}
-
-fragment float4 quad_fragment(
-    QuadFragmentInput input [[stage_in]]
-) {
+float4 quad_sdf(QuadFragmentInput input) {
     float2 half_size = input.size / 2.;
     float2 center = input.origin + half_size;
     float2 center_to_point = input.position.xy - center;
@@ -95,18 +68,51 @@ fragment float4 quad_fragment(
 
     float4 color;
     if (border_width == 0.) {
-        color = coloru_to_colorf(input.background_color);
+        color = input.background_color;
     } else {
         float inset_distance = distance + border_width;
         color = mix(
-            coloru_to_colorf(input.border_color),
-            coloru_to_colorf(input.background_color),
+            input.border_color,
+            input.background_color,
             saturate(0.5 - inset_distance)
         );
     }
 
     float4 coverage = float4(1., 1., 1., saturate(0.5 - distance));
     return coverage * color;
+}
+
+vertex QuadFragmentInput quad_vertex(
+    uint unit_vertex_id [[vertex_id]],
+    uint quad_id [[instance_id]],
+    constant float2 *unit_vertices [[buffer(GPUIQuadInputIndexVertices)]],
+    constant GPUIQuad *quads [[buffer(GPUIQuadInputIndexQuads)]],
+    constant GPUIUniforms *uniforms [[buffer(GPUIQuadInputIndexUniforms)]]
+) {
+    float2 unit_vertex = unit_vertices[unit_vertex_id];
+    GPUIQuad quad = quads[quad_id];
+    float2 position = unit_vertex * quad.size + quad.origin;
+    float4 device_position = to_device_position(position, uniforms->viewport_size);
+
+    return QuadFragmentInput {
+        device_position,
+        float2(0., 0.),
+        quad.origin,
+        quad.size,
+        coloru_to_colorf(quad.background_color),
+        quad.border_top,
+        quad.border_right,
+        quad.border_bottom,
+        quad.border_left,
+        coloru_to_colorf(quad.border_color),
+        quad.corner_radius,
+    };
+}
+
+fragment float4 quad_fragment(
+    QuadFragmentInput input [[stage_in]]
+) {
+    return quad_sdf(input);
 }
 
 struct ShadowFragmentInput {
@@ -217,12 +223,7 @@ fragment float4 sprite_fragment(
     return color;
 }
 
-struct ImageFragmentInput {
-    float4 position [[position]];
-    float2 atlas_position;
-};
-
-vertex ImageFragmentInput image_vertex(
+vertex QuadFragmentInput image_vertex(
     uint unit_vertex_id [[vertex_id]],
     uint image_id [[instance_id]],
     constant float2 *unit_vertices [[buffer(GPUIImageVertexInputIndexVertices)]],
@@ -236,18 +237,28 @@ vertex ImageFragmentInput image_vertex(
     float4 device_position = to_device_position(position, *viewport_size);
     float2 atlas_position = (unit_vertex * image.source_size + image.atlas_origin) / *atlas_size;
 
-    return ImageFragmentInput {
+    return QuadFragmentInput {
         device_position,
         atlas_position,
+        image.origin,
+        image.target_size,
+        float4(0.),
+        image.border_top,
+        image.border_right,
+        image.border_bottom,
+        image.border_left,
+        coloru_to_colorf(image.border_color),
+        image.corner_radius,
     };
 }
 
 fragment float4 image_fragment(
-    ImageFragmentInput input [[stage_in]],
+    QuadFragmentInput input [[stage_in]],
     texture2d<float> atlas [[ texture(GPUIImageFragmentInputIndexAtlas) ]]
 ) {
     constexpr sampler atlas_sampler(mag_filter::linear, min_filter::linear);
-    return atlas.sample(atlas_sampler, input.atlas_position);
+    input.background_color = atlas.sample(atlas_sampler, input.atlas_position);
+    return quad_sdf(input);
 }
 
 struct PathAtlasVertexOutput {

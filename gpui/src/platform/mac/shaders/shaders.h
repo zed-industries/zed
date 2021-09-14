@@ -97,4 +97,10 @@ typedef struct
     vector_float2 target_size;
     vector_float2 source_size;
     vector_float2 atlas_origin;
+    float border_top;
+    float border_right;
+    float border_bottom;
+    float border_left;
+    vector_uchar4 border_color;
+    float corner_radius;
 } GPUIImage;

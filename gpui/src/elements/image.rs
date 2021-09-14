@@ -1,16 +1,34 @@
 use crate::{
     geometry::{rect::RectF, vector::Vector2F},
     json::{json, ToJson},
-    scene, DebugContext, Element, Event, EventContext, ImageData, LayoutContext, PaintContext,
-    SizeConstraint,
+    scene, Border, DebugContext, Element, Event, EventContext, ImageData, LayoutContext,
+    PaintContext, SizeConstraint,
 };
 use std::sync::Arc;
 
-pub struct Image(Arc<ImageData>);
+pub struct Image {
+    data: Arc<ImageData>,
+    border: Border,
+    corner_radius: f32,
+}
 
 impl Image {
     pub fn new(data: Arc<ImageData>) -> Self {
-        Self(data)
+        Self {
+            data,
+            border: Default::default(),
+            corner_radius: Default::default(),
+        }
+    }
+
+    pub fn with_corner_radius(mut self, corner_radius: f32) -> Self {
+        self.corner_radius = corner_radius;
+        self
+    }
+
+    pub fn with_border(mut self, border: Border) -> Self {
+        self.border = border;
+        self
     }
 }
 
@@ -35,7 +53,9 @@ impl Element for Image {
     ) -> Self::PaintState {
         cx.scene.push_image(scene::Image {
             bounds,
-            data: self.0.clone(),
+            border: self.border,
+            corner_radius: self.corner_radius,
+            data: self.data.clone(),
         });
     }
 

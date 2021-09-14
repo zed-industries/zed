@@ -657,6 +657,8 @@ impl Renderer {
         for image in images {
             let origin = image.bounds.origin() * scale_factor;
             let target_size = image.bounds.size() * scale_factor;
+            let corner_radius = image.corner_radius * scale_factor;
+            let border_width = image.border.width * scale_factor;
             let (alloc_id, atlas_bounds) = self
                 .prev_rendered_images
                 .remove(&image.data.id)
@@ -675,6 +677,12 @@ impl Renderer {
                     target_size: target_size.to_float2(),
                     source_size: atlas_bounds.size().to_float2(),
                     atlas_origin: atlas_bounds.origin().to_float2(),
+                    border_top: border_width * (image.border.top as usize as f32),
+                    border_right: border_width * (image.border.right as usize as f32),
+                    border_bottom: border_width * (image.border.bottom as usize as f32),
+                    border_left: border_width * (image.border.left as usize as f32),
+                    border_color: image.border.color.to_uchar4(),
+                    corner_radius,
                 });
         }
 

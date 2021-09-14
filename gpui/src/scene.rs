@@ -128,6 +128,8 @@ pub struct PathVertex {
 
 pub struct Image {
     pub bounds: RectF,
+    pub border: Border,
+    pub corner_radius: f32,
     pub data: Arc<ImageData>,
 }
 
