@@ -66,7 +66,7 @@ impl Db {
 
     pub async fn get_all_signups(&self) -> Result<Vec<Signup>> {
         test_support!(self, {
-            let query = "SELECT * FROM users ORDER BY github_login ASC";
+            let query = "SELECT * FROM signups ORDER BY github_login ASC";
             sqlx::query_as(query).fetch_all(&self.pool).await
         })
     }
