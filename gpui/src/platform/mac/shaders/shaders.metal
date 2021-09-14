@@ -70,9 +70,10 @@ float4 quad_sdf(QuadFragmentInput input) {
     if (border_width == 0.) {
         color = input.background_color;
     } else {
+        float4 border_color = float4(mix(float3(input.background_color), float3(input.border_color), input.border_color.a), 1.);
         float inset_distance = distance + border_width;
         color = mix(
-            input.border_color,
+            border_color,
             input.background_color,
             saturate(0.5 - inset_distance)
         );
