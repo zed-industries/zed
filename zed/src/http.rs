@@ -2,8 +2,8 @@ pub use anyhow::{anyhow, Result};
 use futures::future::BoxFuture;
 use std::sync::Arc;
 pub use surf::{
-    http::{Method, Request, Response as ServerResponse},
-    Response, Url,
+    http::{Method, Response as ServerResponse},
+    Request, Response, Url,
 };
 
 pub trait HttpClient: Send + Sync {

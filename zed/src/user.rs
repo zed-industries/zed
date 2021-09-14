@@ -128,7 +128,9 @@ impl User {
 
 async fn fetch_avatar(http: &dyn HttpClient, url: &str) -> Result<Arc<ImageData>> {
     let url = Url::parse(url).with_context(|| format!("failed to parse avatar url {:?}", url))?;
-    let request = Request::new(Method::Get, url);
+    let mut request = Request::new(Method::Get, url);
+    request.middleware(surf::middleware::Redirect::default());
+
     let mut response = http
         .send(request)
         .await

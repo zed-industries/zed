@@ -558,8 +558,8 @@ impl Server {
             .into_iter()
             .map(|user| proto::User {
                 id: user.id.to_proto(),
+                avatar_url: format!("https://github.com/{}.png?size=128", user.github_login),
                 github_login: user.github_login,
-                avatar_url: String::new(),
             })
             .collect();
         self.peer
