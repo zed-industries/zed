@@ -1025,6 +1025,7 @@ mod tests {
         language::LanguageRegistry,
         rpc::{self, Client},
         settings,
+        test::FakeHttpClient,
         user::UserStore,
         worktree::Worktree,
     };
@@ -1486,6 +1487,7 @@ mod tests {
 
         // Connect to a server as 2 clients.
         let mut server = TestServer::start().await;
+        let mut http = FakeHttpClient::new(|_| async move { Ok(Response::new(404)) });
         let (user_id_a, client_a) = server.create_client(&mut cx_a, "user_a").await;
         let (user_id_b, client_b) = server.create_client(&mut cx_b, "user_b").await;
 

@@ -1,22 +1,24 @@
 use crate::{
+    http::{HttpClient, Method, Request, Url},
     rpc::{Client, Status},
     util::TryFutureExt,
 };
-use anyhow::{anyhow, Result};
-use gpui::{elements::Image, executor, ImageData, Task};
+use anyhow::{anyhow, Context, Result};
+use futures::future;
+use gpui::{executor, ImageData, Task};
 use parking_lot::Mutex;
-use postage::{prelude::Stream, sink::Sink, watch};
-use std::{collections::HashMap, sync::Arc};
-use surf::{
-    http::{Method, Request},
-    HttpClient, Url,
+use postage::{oneshot, prelude::Stream, sink::Sink, watch};
+use std::{
+    collections::HashMap,
+    sync::{Arc, Weak},
 };
 use zrpc::proto;
 
+#[derive(Debug)]
 pub struct User {
-    id: u64,
-    github_login: String,
-    avatar: Option<ImageData>,
+    pub id: u64,
+    pub github_login: String,
+    pub avatar: Option<Arc<ImageData>>,
 }
 
 pub struct UserStore {
@@ -24,7 +26,7 @@ pub struct UserStore {
     current_user: watch::Receiver<Option<Arc<User>>>,
     rpc: Arc<Client>,
     http: Arc<dyn HttpClient>,
-    _maintain_current_user: Option<Task<()>>,
+    _maintain_current_user: Task<()>,
 }
 
 impl UserStore {
@@ -34,18 +36,18 @@ impl UserStore {
         executor: &executor::Background,
     ) -> Arc<Self> {
         let (mut current_user_tx, current_user_rx) = watch::channel();
-
-        let mut this = Arc::new(Self {
+        let (mut this_tx, mut this_rx) = oneshot::channel::<Weak<Self>>();
+        let this = Arc::new(Self {
             users: Default::default(),
             current_user: current_user_rx,
             rpc: rpc.clone(),
             http,
-            _maintain_current_user: None,
-        });
-
-        let task = {
-            let this = Arc::downgrade(&this);
-            executor.spawn(async move {
+            _maintain_current_user: executor.spawn(async move {
+                let this = if let Some(this) = this_rx.recv().await {
+                    this
+                } else {
+                    return;
+                };
                 let mut status = rpc.status();
                 while let Some(status) = status.recv().await {
                     match status {
@@ -63,10 +65,12 @@ impl UserStore {
                         _ => {}
                     }
                 }
-            })
-        };
-        Arc::get_mut(&mut this).unwrap()._maintain_current_user = Some(task);
-
+            }),
+        });
+        let weak = Arc::downgrade(&this);
+        executor
+            .spawn(async move { this_tx.send(weak).await })
+            .detach();
         this
     }
 
@@ -78,8 +82,15 @@ impl UserStore {
 
         if !user_ids.is_empty() {
             let response = self.rpc.request(proto::GetUsers { user_ids }).await?;
+            let new_users = future::join_all(
+                response
+                    .users
+                    .into_iter()
+                    .map(|user| User::new(user, self.http.as_ref())),
+            )
+            .await;
             let mut users = self.users.lock();
-            for user in response.users {
+            for user in new_users {
                 users.insert(user.id, Arc::new(user));
             }
         }
@@ -92,20 +103,12 @@ impl UserStore {
             return Ok(user);
         }
 
-        let response = self
-            .rpc
-            .request(proto::GetUsers {
-                user_ids: vec![user_id],
-            })
-            .await?;
-
-        if let Some(user) = response.users.into_iter().next() {
-            let user = Arc::new(user);
-            self.users.lock().insert(user_id, user.clone());
-            Ok(user)
-        } else {
-            Err(anyhow!("server responded with no users"))
-        }
+        self.load_users(vec![user_id]).await?;
+        self.users
+            .lock()
+            .get(&user_id)
+            .cloned()
+            .ok_or_else(|| anyhow!("server responded with no users"))
     }
 
     pub fn current_user(&self) -> &watch::Receiver<Option<Arc<User>>> {
@@ -115,20 +118,25 @@ impl UserStore {
 
 impl User {
     async fn new(message: proto::User, http: &dyn HttpClient) -> Self {
-        let avatar = fetch_avatar(http, &message.avatar_url).await.log_err();
         User {
             id: message.id,
             github_login: message.github_login,
-            avatar,
+            avatar: fetch_avatar(http, &message.avatar_url).log_err().await,
         }
     }
 }
 
 async fn fetch_avatar(http: &dyn HttpClient, url: &str) -> Result<Arc<ImageData>> {
-    let url = Url::parse(url)?;
+    let url = Url::parse(url).with_context(|| format!("failed to parse avatar url {:?}", url))?;
     let request = Request::new(Method::Get, url);
-    let response = http.send(request).await?;
-    let bytes = response.body_bytes().await?;
+    let mut response = http
+        .send(request)
+        .await
+        .map_err(|e| anyhow!("failed to send user avatar request: {}", e))?;
+    let bytes = response
+        .body_bytes()
+        .await
+        .map_err(|e| anyhow!("failed to read user avatar response body: {}", e))?;
     let format = image::guess_format(&bytes)?;
     let image = image::load_from_memory_with_format(&bytes, format)?.into_bgra8();
     Ok(ImageData::new(image))

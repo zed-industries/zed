@@ -2,6 +2,7 @@ use crate::{
     assets::Assets,
     channel::ChannelList,
     fs::RealFs,
+    http::{HttpClient, Request, Response, ServerResponse},
     language::LanguageRegistry,
     rpc::{self, Client},
     settings::{self, ThemeRegistry},
@@ -10,11 +11,13 @@ use crate::{
     AppState,
 };
 use anyhow::{anyhow, Result};
+use futures::{future::BoxFuture, Future};
 use gpui::{AsyncAppContext, Entity, ModelHandle, MutableAppContext, TestAppContext};
 use parking_lot::Mutex;
 use postage::{mpsc, prelude::Stream as _};
 use smol::channel;
 use std::{
+    fmt,
     marker::PhantomData,
     path::{Path, PathBuf},
     sync::{
@@ -164,7 +167,8 @@ pub fn test_app_state(cx: &mut MutableAppContext) -> Arc<AppState> {
     let languages = Arc::new(LanguageRegistry::new());
     let themes = ThemeRegistry::new(Assets, cx.font_cache().clone());
     let rpc = rpc::Client::new();
-    let user_store = UserStore::new(rpc.clone(), cx.background());
+    let http = FakeHttpClient::new(|_| async move { Ok(ServerResponse::new(404)) });
+    let user_store = UserStore::new(rpc.clone(), http, cx.background());
     Arc::new(AppState {
         settings_tx: Arc::new(Mutex::new(settings_tx)),
         settings,
@@ -311,5 +315,35 @@ impl FakeServer {
 
     fn connection_id(&self) -> ConnectionId {
         self.connection_id.lock().expect("not connected")
+    }
+}
+
+pub struct FakeHttpClient {
+    handler:
+        Box<dyn 'static + Send + Sync + Fn(Request) -> BoxFuture<'static, Result<ServerResponse>>>,
+}
+
+impl FakeHttpClient {
+    pub fn new<Fut, F>(handler: F) -> Arc<dyn HttpClient>
+    where
+        Fut: 'static + Send + Future<Output = Result<ServerResponse>>,
+        F: 'static + Send + Sync + Fn(Request) -> Fut,
+    {
+        Arc::new(Self {
+            handler: Box::new(move |req| Box::pin(handler(req))),
+        })
+    }
+}
+
+impl fmt::Debug for FakeHttpClient {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("FakeHttpClient").finish()
+    }
+}
+
+impl HttpClient for FakeHttpClient {
+    fn send<'a>(&'a self, req: Request) -> BoxFuture<'a, Result<Response>> {
+        let future = (self.handler)(req);
+        Box::pin(async move { future.await.map(Into::into) })
     }
 }

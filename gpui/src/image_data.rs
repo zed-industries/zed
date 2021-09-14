@@ -1,8 +1,11 @@
 use crate::geometry::vector::{vec2i, Vector2I};
 use image::{Bgra, ImageBuffer};
-use std::sync::{
-    atomic::{AtomicUsize, Ordering::SeqCst},
-    Arc,
+use std::{
+    fmt,
+    sync::{
+        atomic::{AtomicUsize, Ordering::SeqCst},
+        Arc,
+    },
 };
 
 pub struct ImageData {
@@ -27,5 +30,14 @@ impl ImageData {
     pub fn size(&self) -> Vector2I {
         let (width, height) = self.data.dimensions();
         vec2i(width as i32, height as i32)
+    }
+}
+
+impl fmt::Debug for ImageData {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("ImageData")
+            .field("id", &self.id)
+            .field("size", &self.data.dimensions())
+            .finish()
     }
 }

@@ -956,8 +956,14 @@ impl Workspace {
 
     fn render_current_user(&self, cx: &mut RenderContext<Self>) -> ElementBox {
         let theme = &self.settings.borrow().theme;
-        let avatar = if let Some(current_user) = self.user_store.current_user().borrow().as_ref() {
-            todo!()
+        let avatar = if let Some(avatar) = self
+            .user_store
+            .current_user()
+            .borrow()
+            .as_ref()
+            .and_then(|user| user.avatar.clone())
+        {
+            Image::new(avatar).boxed()
         } else {
             Svg::new("icons/signed-out-12.svg")
                 .with_color(theme.workspace.titlebar.icon_signed_out)

@@ -5,6 +5,7 @@ pub mod editor;
 pub mod file_finder;
 pub mod fs;
 mod fuzzy;
+pub mod http;
 pub mod language;
 pub mod menus;
 pub mod project_browser;
