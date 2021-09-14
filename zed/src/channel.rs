@@ -443,7 +443,7 @@ impl ChannelMessage {
         message: proto::ChannelMessage,
         user_store: &UserStore,
     ) -> Result<Self> {
-        let sender = user_store.get_user(message.sender_id).await?;
+        let sender = user_store.fetch_user(message.sender_id).await?;
         Ok(ChannelMessage {
             id: message.id,
             body: message.body,

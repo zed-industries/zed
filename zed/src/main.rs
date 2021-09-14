@@ -43,8 +43,9 @@ fn main() {
             settings_tx: Arc::new(Mutex::new(settings_tx)),
             settings,
             themes,
-            channel_list: cx.add_model(|cx| ChannelList::new(user_store, rpc.clone(), cx)),
+            channel_list: cx.add_model(|cx| ChannelList::new(user_store.clone(), rpc.clone(), cx)),
             rpc,
+            user_store,
             fs: Arc::new(RealFs),
         });
 

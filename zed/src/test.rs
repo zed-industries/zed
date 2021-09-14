@@ -170,8 +170,9 @@ pub fn test_app_state(cx: &mut MutableAppContext) -> Arc<AppState> {
         settings,
         themes,
         languages: languages.clone(),
-        channel_list: cx.add_model(|cx| ChannelList::new(user_store, rpc.clone(), cx)),
+        channel_list: cx.add_model(|cx| ChannelList::new(user_store.clone(), rpc.clone(), cx)),
         rpc,
+        user_store,
         fs: Arc::new(RealFs),
     })
 }

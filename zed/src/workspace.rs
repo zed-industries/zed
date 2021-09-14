@@ -10,6 +10,7 @@ use crate::{
     project_browser::ProjectBrowser,
     rpc,
     settings::Settings,
+    user,
     worktree::{File, Worktree},
     AppState,
 };
@@ -341,6 +342,7 @@ pub struct Workspace {
     pub settings: watch::Receiver<Settings>,
     languages: Arc<LanguageRegistry>,
     rpc: Arc<rpc::Client>,
+    user_store: Arc<user::UserStore>,
     fs: Arc<dyn Fs>,
     modal: Option<AnyViewHandle>,
     center: PaneGroup,
@@ -395,6 +397,7 @@ impl Workspace {
             settings: app_state.settings.clone(),
             languages: app_state.languages.clone(),
             rpc: app_state.rpc.clone(),
+            user_store: app_state.user_store.clone(),
             fs: app_state.fs.clone(),
             left_sidebar,
             right_sidebar,

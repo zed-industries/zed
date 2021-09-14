@@ -36,7 +36,7 @@ impl UserStore {
         Ok(())
     }
 
-    pub async fn get_user(&self, user_id: u64) -> Result<Arc<User>> {
+    pub async fn fetch_user(&self, user_id: u64) -> Result<Arc<User>> {
         if let Some(user) = self.users.lock().get(&user_id).cloned() {
             return Ok(user);
         }
