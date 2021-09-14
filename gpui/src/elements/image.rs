@@ -6,6 +6,8 @@ use crate::{
 };
 use std::sync::Arc;
 
+use super::constrain_size_preserving_aspect_ratio;
+
 pub struct Image {
     data: Arc<ImageData>,
     border: Border,
@@ -41,7 +43,9 @@ impl Element for Image {
         constraint: SizeConstraint,
         _: &mut LayoutContext,
     ) -> (Vector2F, Self::LayoutState) {
-        (constraint.max, ())
+        let size =
+            constrain_size_preserving_aspect_ratio(constraint.max, self.data.size().to_f32());
+        (size, ())
     }
 
     fn paint(
