@@ -12,7 +12,7 @@ use crate::{
     settings::Settings,
     user,
     worktree::{File, Worktree},
-    AppState,
+    AppState, Authenticate,
 };
 use anyhow::{anyhow, Result};
 use gpui::{
@@ -21,7 +21,7 @@ use gpui::{
     geometry::{rect::RectF, vector::vec2f},
     json::to_string_pretty,
     keymap::Binding,
-    platform::WindowOptions,
+    platform::{CursorStyle, WindowOptions},
     AnyViewHandle, AppContext, ClipboardItem, Entity, ModelHandle, MutableAppContext,
     PathPromptOptions, PromptLevel, RenderContext, Task, View, ViewContext, ViewHandle,
     WeakModelHandle,
@@ -967,9 +967,14 @@ impl Workspace {
                 .with_style(theme.workspace.titlebar.avatar)
                 .boxed()
         } else {
-            Svg::new("icons/signed-out-12.svg")
-                .with_color(theme.workspace.titlebar.icon_signed_out)
-                .boxed()
+            MouseEventHandler::new::<Authenticate, _, _, _>(0, cx, |_, _| {
+                Svg::new("icons/signed-out-12.svg")
+                    .with_color(theme.workspace.titlebar.icon_signed_out)
+                    .boxed()
+            })
+            .on_click(|cx| cx.dispatch_action(Authenticate))
+            .with_cursor_style(CursorStyle::PointingHand)
+            .boxed()
         };
 
         ConstrainedBox::new(
