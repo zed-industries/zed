@@ -21,7 +21,7 @@ use gpui::{
     json::to_string_pretty,
     keymap::Binding,
     platform::WindowOptions,
-    AnyViewHandle, AppContext, ClipboardItem, Entity, ImageData, ModelHandle, MutableAppContext,
+    AnyViewHandle, AppContext, ClipboardItem, Entity, ModelHandle, MutableAppContext,
     PathPromptOptions, PromptLevel, RenderContext, Task, View, ViewContext, ViewHandle,
     WeakModelHandle,
 };
@@ -354,19 +354,10 @@ pub struct Workspace {
         (usize, Arc<Path>),
         postage::watch::Receiver<Option<Result<Box<dyn ItemHandle>, Arc<anyhow::Error>>>>,
     >,
-    image: Arc<ImageData>,
 }
 
 impl Workspace {
     pub fn new(app_state: &AppState, cx: &mut ViewContext<Self>) -> Self {
-        let image_bytes = crate::assets::Assets::get("images/as-cii.jpeg").unwrap();
-        let image = image::io::Reader::new(std::io::Cursor::new(&*image_bytes.data))
-            .with_guessed_format()
-            .unwrap()
-            .decode()
-            .unwrap()
-            .into_bgra8();
-
         let pane = cx.add_view(|_| Pane::new(app_state.settings.clone()));
         let pane_id = pane.id();
         cx.subscribe(&pane, move |me, _, event, cx| {
@@ -410,7 +401,6 @@ impl Workspace {
             worktrees: Default::default(),
             items: Default::default(),
             loading_items: Default::default(),
-            image: ImageData::new(image),
         }
     }
 
@@ -946,6 +936,24 @@ impl Workspace {
     pub fn active_pane(&self) -> &ViewHandle<Pane> {
         &self.active_pane
     }
+
+    fn render_account_status(&self, cx: &mut RenderContext<Self>) -> ElementBox {
+        let theme = &self.settings.borrow().theme;
+        ConstrainedBox::new(
+            Align::new(
+                ConstrainedBox::new(
+                    Svg::new("icons/signed-out-12.svg")
+                        .with_color(theme.workspace.titlebar.icon_signed_out)
+                        .boxed(),
+                )
+                .with_width(theme.workspace.titlebar.icon_width)
+                .boxed(),
+            )
+            .boxed(),
+        )
+        .with_width(theme.workspace.right_sidebar.width)
+        .boxed()
+    }
 }
 
 impl Entity for Workspace {
@@ -964,16 +972,25 @@ impl View for Workspace {
             Flex::column()
                 .with_child(
                     ConstrainedBox::new(
-                        Image::new(self.image.clone()).boxed()
-                        // Container::new(
-                        //     Align::new(
-                        //         Label::new("zed".into(), theme.workspace.titlebar.label.clone())
-                        //             .boxed(),
-                        //     )
-                        //     .boxed(),
-                        // )
-                        // .with_style(&theme.workspace.titlebar.container)
-                        // .boxed(),
+                        Container::new(
+                            Stack::new()
+                                .with_child(
+                                    Align::new(
+                                        Label::new(
+                                            "zed".into(),
+                                            theme.workspace.titlebar.title.clone(),
+                                        )
+                                        .boxed(),
+                                    )
+                                    .boxed(),
+                                )
+                                .with_child(
+                                    Align::new(self.render_account_status(cx)).right().boxed(),
+                                )
+                                .boxed(),
+                        )
+                        .with_style(&theme.workspace.titlebar.container)
+                        .boxed(),
                     )
                     .with_height(32.)
                     .named("titlebar"),

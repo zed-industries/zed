@@ -7,7 +7,9 @@ pane_divider = { width = 1, color = "$border.0" }
 
 [workspace.titlebar]
 border = { width = 1, bottom = true, color = "$border.0" }
-text = { extends = "$text.0" }
+title = "$text.0"
+icon_width = 16
+icon_signed_out = "$text.2.color"
 
 [workspace.tab]
 text = "$text.2"
@@ -26,7 +28,7 @@ background = "$surface.1"
 text = "$text.0"
 
 [workspace.sidebar]
-padding = { left = 12, right = 12 }
+width = 36
 border = { right = true, width = 1, color = "$border.0" }
 
 [workspace.sidebar.resize_handle]
@@ -35,7 +37,7 @@ background = "$border.0"
 
 [workspace.sidebar.icon]
 color = "$text.2.color"
-height = 18
+height = 16
 
 [workspace.sidebar.active_icon]
 extends = "$workspace.sidebar.icon"

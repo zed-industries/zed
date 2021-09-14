@@ -75,38 +75,48 @@ impl Sidebar {
         );
         let theme = self.theme(settings);
 
-        Container::new(
-            Flex::column()
-                .with_children(self.items.iter().enumerate().map(|(item_index, item)| {
-                    let theme = if Some(item_index) == self.active_item_ix {
-                        &theme.active_icon
-                    } else {
-                        &theme.icon
-                    };
-                    enum SidebarButton {}
-                    MouseEventHandler::new::<SidebarButton, _, _, _>(item.view.id(), cx, |_, _| {
-                        ConstrainedBox::new(
-                            Align::new(
+        ConstrainedBox::new(
+            Container::new(
+                Flex::column()
+                    .with_children(self.items.iter().enumerate().map(|(item_index, item)| {
+                        let theme = if Some(item_index) == self.active_item_ix {
+                            &theme.active_icon
+                        } else {
+                            &theme.icon
+                        };
+                        enum SidebarButton {}
+                        MouseEventHandler::new::<SidebarButton, _, _, _>(
+                            item.view.id(),
+                            cx,
+                            |_, _| {
                                 ConstrainedBox::new(
-                                    Svg::new(item.icon_path).with_color(theme.color).boxed(),
+                                    Align::new(
+                                        ConstrainedBox::new(
+                                            Svg::new(item.icon_path)
+                                                .with_color(theme.color)
+                                                .boxed(),
+                                        )
+                                        .with_height(theme.height)
+                                        .boxed(),
+                                    )
+                                    .boxed(),
                                 )
-                                .with_height(theme.height)
-                                .boxed(),
-                            )
-                            .boxed(),
+                                .with_height(line_height + 16.0)
+                                .boxed()
+                            },
                         )
-                        .with_height(line_height + 16.0)
+                        .with_cursor_style(CursorStyle::PointingHand)
+                        .on_mouse_down(move |cx| {
+                            cx.dispatch_action(ToggleSidebarItem(ToggleArg { side, item_index }))
+                        })
                         .boxed()
-                    })
-                    .with_cursor_style(CursorStyle::PointingHand)
-                    .on_mouse_down(move |cx| {
-                        cx.dispatch_action(ToggleSidebarItem(ToggleArg { side, item_index }))
-                    })
-                    .boxed()
-                }))
-                .boxed(),
+                    }))
+                    .boxed(),
+            )
+            .with_style(&theme.container)
+            .boxed(),
         )
-        .with_style(&theme.container)
+        .with_width(theme.width)
         .boxed()
     }
 

@@ -34,12 +34,21 @@ pub struct SyntaxTheme {
 #[derive(Deserialize)]
 pub struct Workspace {
     pub background: Color,
-    pub titlebar: ContainedLabel,
+    pub titlebar: Titlebar,
     pub tab: Tab,
     pub active_tab: Tab,
     pub pane_divider: Border,
     pub left_sidebar: Sidebar,
     pub right_sidebar: Sidebar,
+}
+
+#[derive(Clone, Deserialize)]
+pub struct Titlebar {
+    #[serde(flatten)]
+    pub container: ContainerStyle,
+    pub title: TextStyle,
+    pub icon_width: f32,
+    pub icon_signed_out: Color,
 }
 
 #[derive(Clone, Deserialize)]
@@ -60,6 +69,7 @@ pub struct Tab {
 pub struct Sidebar {
     #[serde(flatten)]
     pub container: ContainerStyle,
+    pub width: f32,
     pub icon: SidebarIcon,
     pub active_icon: SidebarIcon,
     pub resize_handle: ContainerStyle,
