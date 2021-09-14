@@ -598,11 +598,6 @@ impl Renderer {
             mem::size_of::<shaders::vector_float2>() as u64,
             [drawable_size.to_float2()].as_ptr() as *const c_void,
         );
-        command_encoder.set_vertex_bytes(
-            shaders::GPUISpriteVertexInputIndex_GPUISpriteVertexInputIndexAtlasSize as u64,
-            mem::size_of::<shaders::vector_float2>() as u64,
-            [self.sprite_cache.atlas_size().to_float2()].as_ptr() as *const c_void,
-        );
 
         for (atlas_id, sprites) in sprites_by_atlas {
             align_offset(offset);
@@ -612,13 +607,19 @@ impl Renderer {
                 "instance buffer exhausted"
             );
 
+            let texture = self.sprite_cache.atlas_texture(atlas_id).unwrap();
             command_encoder.set_vertex_buffer(
                 shaders::GPUISpriteVertexInputIndex_GPUISpriteVertexInputIndexSprites as u64,
                 Some(&self.instances),
                 *offset as u64,
             );
+            command_encoder.set_vertex_bytes(
+                shaders::GPUISpriteVertexInputIndex_GPUISpriteVertexInputIndexAtlasSize as u64,
+                mem::size_of::<shaders::vector_float2>() as u64,
+                [vec2i(texture.width() as i32, texture.height() as i32).to_float2()].as_ptr()
+                    as *const c_void,
+            );
 
-            let texture = self.sprite_cache.atlas_texture(atlas_id).unwrap();
             command_encoder.set_fragment_texture(
                 shaders::GPUISpriteFragmentInputIndex_GPUISpriteFragmentInputIndexAtlas as u64,
                 Some(texture),
