@@ -2282,6 +2282,16 @@ impl<'a, T: View> ViewContext<'a, T> {
         let handle = self.handle();
         self.app.spawn(|cx| f(handle, cx))
     }
+
+    pub fn spawn_weak<F, Fut, S>(&self, f: F) -> Task<S>
+    where
+        F: FnOnce(WeakViewHandle<T>, AsyncAppContext) -> Fut,
+        Fut: 'static + Future<Output = S>,
+        S: 'static,
+    {
+        let handle = self.handle().downgrade();
+        self.app.spawn(|cx| f(handle, cx))
+    }
 }
 
 pub struct RenderContext<'a, T: View> {

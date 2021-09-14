@@ -39,7 +39,7 @@ pub struct Client {
 
 #[derive(Copy, Clone, Debug)]
 pub enum Status {
-    Disconnected,
+    SignedOut,
     Authenticating,
     Connecting {
         user_id: u64,
@@ -73,7 +73,7 @@ struct ClientState {
 impl Default for ClientState {
     fn default() -> Self {
         Self {
-            status: watch::channel_with(Status::Disconnected),
+            status: watch::channel_with(Status::SignedOut),
             entity_id_extractors: Default::default(),
             model_handlers: Default::default(),
             _maintain_connection: None,
@@ -167,7 +167,7 @@ impl Client {
                     }
                 }));
             }
-            Status::Disconnected => {
+            Status::SignedOut => {
                 state._maintain_connection.take();
             }
             _ => {}
@@ -232,7 +232,7 @@ impl Client {
         cx: &AsyncAppContext,
     ) -> anyhow::Result<()> {
         let was_disconnected = match *self.status().borrow() {
-            Status::Disconnected => true,
+            Status::SignedOut => true,
             Status::ConnectionError | Status::ConnectionLost | Status::ReconnectionError { .. } => {
                 false
             }
@@ -324,7 +324,7 @@ impl Client {
         cx.foreground()
             .spawn(async move {
                 match handle_io.await {
-                    Ok(()) => this.set_status(Status::Disconnected, &cx),
+                    Ok(()) => this.set_status(Status::SignedOut, &cx),
                     Err(err) => {
                         log::error!("connection error: {:?}", err);
                         this.set_status(Status::ConnectionLost, &cx);
@@ -470,7 +470,7 @@ impl Client {
     pub async fn disconnect(self: &Arc<Self>, cx: &AsyncAppContext) -> Result<()> {
         let conn_id = self.connection_id()?;
         self.peer.disconnect(conn_id).await;
-        self.set_status(Status::Disconnected, cx);
+        self.set_status(Status::SignedOut, cx);
         Ok(())
     }
 

@@ -29,7 +29,7 @@ use gpui::{
 use log::error;
 pub use pane::*;
 pub use pane_group::*;
-use postage::watch;
+use postage::{prelude::Stream, watch};
 use sidebar::{Side, Sidebar, ToggleSidebarItem};
 use smol::prelude::*;
 use std::{
@@ -356,6 +356,7 @@ pub struct Workspace {
         (usize, Arc<Path>),
         postage::watch::Receiver<Option<Result<Box<dyn ItemHandle>, Arc<anyhow::Error>>>>,
     >,
+    _observe_current_user: Task<()>,
 }
 
 impl Workspace {
@@ -389,6 +390,18 @@ impl Workspace {
         );
         right_sidebar.add_item("icons/user-16.svg", cx.add_view(|_| ProjectBrowser).into());
 
+        let mut current_user = app_state.user_store.current_user().clone();
+        let _observe_current_user = cx.spawn_weak(|this, mut cx| async move {
+            current_user.recv().await;
+            while current_user.recv().await.is_some() {
+                cx.update(|cx| {
+                    if let Some(this) = this.upgrade(&cx) {
+                        this.update(cx, |_, cx| cx.notify());
+                    }
+                })
+            }
+        });
+
         Workspace {
             modal: None,
             center: PaneGroup::new(pane.id()),
@@ -404,6 +417,7 @@ impl Workspace {
             worktrees: Default::default(),
             items: Default::default(),
             loading_items: Default::default(),
+            _observe_current_user,
         }
     }
 
@@ -940,17 +954,21 @@ impl Workspace {
         &self.active_pane
     }
 
-    fn render_account_status(&self, cx: &mut RenderContext<Self>) -> ElementBox {
+    fn render_current_user(&self, cx: &mut RenderContext<Self>) -> ElementBox {
         let theme = &self.settings.borrow().theme;
+        let avatar = if let Some(current_user) = self.user_store.current_user().borrow().as_ref() {
+            todo!()
+        } else {
+            Svg::new("icons/signed-out-12.svg")
+                .with_color(theme.workspace.titlebar.icon_signed_out)
+                .boxed()
+        };
+
         ConstrainedBox::new(
             Align::new(
-                ConstrainedBox::new(
-                    Svg::new("icons/signed-out-12.svg")
-                        .with_color(theme.workspace.titlebar.icon_signed_out)
-                        .boxed(),
-                )
-                .with_width(theme.workspace.titlebar.icon_width)
-                .boxed(),
+                ConstrainedBox::new(avatar)
+                    .with_width(theme.workspace.titlebar.icon_width)
+                    .boxed(),
             )
             .boxed(),
         )
@@ -988,7 +1006,7 @@ impl View for Workspace {
                                     .boxed(),
                                 )
                                 .with_child(
-                                    Align::new(self.render_account_status(cx)).right().boxed(),
+                                    Align::new(self.render_current_user(cx)).right().boxed(),
                                 )
                                 .boxed(),
                         )

@@ -164,7 +164,7 @@ pub fn test_app_state(cx: &mut MutableAppContext) -> Arc<AppState> {
     let languages = Arc::new(LanguageRegistry::new());
     let themes = ThemeRegistry::new(Assets, cx.font_cache().clone());
     let rpc = rpc::Client::new();
-    let user_store = Arc::new(UserStore::new(rpc.clone()));
+    let user_store = UserStore::new(rpc.clone(), cx.background());
     Arc::new(AppState {
         settings_tx: Arc::new(Mutex::new(settings_tx)),
         settings,

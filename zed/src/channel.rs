@@ -118,7 +118,7 @@ impl ChannelList {
                                 cx.notify();
                             });
                         }
-                        rpc::Status::Disconnected { .. } => {
+                        rpc::Status::SignedOut { .. } => {
                             this.update(&mut cx, |this, cx| {
                                 this.available_channels = None;
                                 this.channels.clear();
@@ -503,7 +503,7 @@ mod tests {
         let user_id = 5;
         let mut client = Client::new();
         let server = FakeServer::for_client(user_id, &mut client, &cx).await;
-        let user_store = Arc::new(UserStore::new(client.clone()));
+        let user_store = UserStore::new(client.clone(), cx.background().as_ref());
 
         let channel_list = cx.add_model(|cx| ChannelList::new(user_store, client.clone(), cx));
         channel_list.read_with(&cx, |list, _| assert_eq!(list.available_channels(), None));

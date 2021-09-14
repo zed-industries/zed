@@ -1512,7 +1512,7 @@ mod tests {
         .await
         .unwrap();
 
-        let user_store_a = Arc::new(UserStore::new(client_a.clone()));
+        let user_store_a = UserStore::new(client_a.clone(), cx_a.background().as_ref());
         let channels_a = cx_a.add_model(|cx| ChannelList::new(user_store_a, client_a, cx));
         channels_a
             .condition(&mut cx_a, |list, _| list.available_channels().is_some())
@@ -1537,7 +1537,7 @@ mod tests {
             })
             .await;
 
-        let user_store_b = Arc::new(UserStore::new(client_b.clone()));
+        let user_store_b = UserStore::new(client_b.clone(), cx_b.background().as_ref());
         let channels_b = cx_b.add_model(|cx| ChannelList::new(user_store_b, client_b, cx));
         channels_b
             .condition(&mut cx_b, |list, _| list.available_channels().is_some())
@@ -1637,7 +1637,7 @@ mod tests {
             .await
             .unwrap();
 
-        let user_store_a = Arc::new(UserStore::new(client_a.clone()));
+        let user_store_a = UserStore::new(client_a.clone(), cx_a.background().as_ref());
         let channels_a = cx_a.add_model(|cx| ChannelList::new(user_store_a, client_a, cx));
         channels_a
             .condition(&mut cx_a, |list, _| list.available_channels().is_some())
@@ -1713,7 +1713,7 @@ mod tests {
         .await
         .unwrap();
 
-        let user_store_a = Arc::new(UserStore::new(client_a.clone()));
+        let user_store_a = UserStore::new(client_a.clone(), cx_a.background().as_ref());
         let channels_a = cx_a.add_model(|cx| ChannelList::new(user_store_a, client_a, cx));
         channels_a
             .condition(&mut cx_a, |list, _| list.available_channels().is_some())
@@ -1739,7 +1739,7 @@ mod tests {
             })
             .await;
 
-        let user_store_b = Arc::new(UserStore::new(client_b.clone()));
+        let user_store_b = UserStore::new(client_b.clone(), cx_b.background().as_ref());
         let channels_b = cx_b.add_model(|cx| ChannelList::new(user_store_b, client_b, cx));
         channels_b
             .condition(&mut cx_b, |list, _| list.available_channels().is_some())

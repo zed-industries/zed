@@ -37,7 +37,7 @@ fn main() {
 
     app.run(move |cx| {
         let rpc = rpc::Client::new();
-        let user_store = Arc::new(UserStore::new(rpc.clone()));
+        let user_store = UserStore::new(rpc.clone(), cx.background());
         let app_state = Arc::new(AppState {
             languages: languages.clone(),
             settings_tx: Arc::new(Mutex::new(settings_tx)),
