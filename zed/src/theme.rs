@@ -4,7 +4,7 @@ mod theme_registry;
 use anyhow::Result;
 use gpui::{
     color::Color,
-    elements::{ContainerStyle, LabelStyle},
+    elements::{ContainerStyle, ImageStyle, LabelStyle},
     fonts::{HighlightStyle, TextStyle},
     Border,
 };
@@ -47,8 +47,9 @@ pub struct Titlebar {
     #[serde(flatten)]
     pub container: ContainerStyle,
     pub title: TextStyle,
-    pub icon_width: f32,
+    pub avatar_width: f32,
     pub icon_signed_out: Color,
+    pub avatar: ImageStyle,
 }
 
 #[derive(Clone, Deserialize)]

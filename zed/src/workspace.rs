@@ -963,7 +963,9 @@ impl Workspace {
             .as_ref()
             .and_then(|user| user.avatar.clone())
         {
-            Image::new(avatar).boxed()
+            Image::new(avatar)
+                .with_style(theme.workspace.titlebar.avatar)
+                .boxed()
         } else {
             Svg::new("icons/signed-out-12.svg")
                 .with_color(theme.workspace.titlebar.icon_signed_out)
@@ -973,7 +975,7 @@ impl Workspace {
         ConstrainedBox::new(
             Align::new(
                 ConstrainedBox::new(avatar)
-                    .with_width(theme.workspace.titlebar.icon_width)
+                    .with_width(theme.workspace.titlebar.avatar_width)
                     .boxed(),
             )
             .boxed(),

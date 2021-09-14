@@ -1,16 +1,23 @@
+use super::constrain_size_preserving_aspect_ratio;
 use crate::{
     geometry::{rect::RectF, vector::Vector2F},
     json::{json, ToJson},
     scene, Border, DebugContext, Element, Event, EventContext, ImageData, LayoutContext,
     PaintContext, SizeConstraint,
 };
+use serde::Deserialize;
 use std::sync::Arc;
-
-use super::constrain_size_preserving_aspect_ratio;
 
 pub struct Image {
     data: Arc<ImageData>,
+    style: ImageStyle,
+}
+
+#[derive(Copy, Clone, Default, Deserialize)]
+pub struct ImageStyle {
+    #[serde(default)]
     border: Border,
+    #[serde(default)]
     corner_radius: f32,
 }
 
@@ -18,18 +25,12 @@ impl Image {
     pub fn new(data: Arc<ImageData>) -> Self {
         Self {
             data,
-            border: Default::default(),
-            corner_radius: Default::default(),
+            style: Default::default(),
         }
     }
 
-    pub fn with_corner_radius(mut self, corner_radius: f32) -> Self {
-        self.corner_radius = corner_radius;
-        self
-    }
-
-    pub fn with_border(mut self, border: Border) -> Self {
-        self.border = border;
+    pub fn with_style(mut self, style: ImageStyle) -> Self {
+        self.style = style;
         self
     }
 }
@@ -57,8 +58,8 @@ impl Element for Image {
     ) -> Self::PaintState {
         cx.scene.push_image(scene::Image {
             bounds,
-            border: self.border,
-            corner_radius: self.corner_radius,
+            border: self.style.border,
+            corner_radius: self.style.corner_radius,
             data: self.data.clone(),
         });
     }
