@@ -1,4 +1,7 @@
-use crate::geometry::vector::{vec2i, Vector2I};
+use crate::geometry::{
+    rect::RectI,
+    vector::{vec2i, Vector2I},
+};
 use etagere::BucketedAtlasAllocator;
 use foreign_types::ForeignType;
 use metal::{self, Device, TextureDescriptor};
@@ -9,6 +12,12 @@ pub struct AtlasAllocator {
     texture_descriptor: TextureDescriptor,
     atlases: Vec<Atlas>,
     free_atlases: Vec<Atlas>,
+}
+
+#[derive(Copy, Clone)]
+pub struct AllocId {
+    pub atlas_id: usize,
+    alloc_id: etagere::AllocId,
 }
 
 impl AtlasAllocator {
@@ -31,20 +40,40 @@ impl AtlasAllocator {
         )
     }
 
-    pub fn allocate(&mut self, requested_size: Vector2I) -> anyhow::Result<(usize, Vector2I)> {
-        let origin = self
+    pub fn allocate(&mut self, requested_size: Vector2I) -> (AllocId, Vector2I) {
+        let (alloc_id, origin) = self
             .atlases
             .last_mut()
             .unwrap()
             .allocate(requested_size)
             .unwrap_or_else(|| {
                 let mut atlas = self.new_atlas(requested_size);
-                let origin = atlas.allocate(requested_size).unwrap();
+                let (id, origin) = atlas.allocate(requested_size).unwrap();
                 self.atlases.push(atlas);
-                origin
+                (id, origin)
             });
 
-        Ok((self.atlases.len() - 1, origin))
+        let id = AllocId {
+            atlas_id: self.atlases.len() - 1,
+            alloc_id,
+        };
+        (id, origin)
+    }
+
+    pub fn upload(&mut self, size: Vector2I, bytes: &[u8]) -> (AllocId, RectI) {
+        let (alloc_id, origin) = self.allocate(size);
+        let bounds = RectI::new(origin, size);
+        self.atlases[alloc_id.atlas_id].upload(bounds, bytes);
+        (alloc_id, bounds)
+    }
+
+    pub fn deallocate(&mut self, id: AllocId) {
+        if let Some(atlas) = self.atlases.get_mut(id.atlas_id) {
+            atlas.deallocate(id.alloc_id);
+            if atlas.is_empty() {
+                self.free_atlases.push(self.atlases.remove(id.atlas_id));
+            }
+        }
     }
 
     pub fn clear(&mut self) {
@@ -102,13 +131,44 @@ impl Atlas {
         vec2i(size.width, size.height)
     }
 
-    fn allocate(&mut self, size: Vector2I) -> Option<Vector2I> {
-        let origin = self
+    fn allocate(&mut self, size: Vector2I) -> Option<(etagere::AllocId, Vector2I)> {
+        let alloc = self
             .allocator
-            .allocate(etagere::Size::new(size.x(), size.y()))?
-            .rectangle
-            .min;
-        Some(vec2i(origin.x, origin.y))
+            .allocate(etagere::Size::new(size.x(), size.y()))?;
+        let origin = alloc.rectangle.min;
+        Some((alloc.id, vec2i(origin.x, origin.y)))
+    }
+
+    fn upload(&mut self, bounds: RectI, bytes: &[u8]) {
+        let region = metal::MTLRegion::new_2d(
+            bounds.origin().x() as u64,
+            bounds.origin().y() as u64,
+            bounds.size().x() as u64,
+            bounds.size().y() as u64,
+        );
+        self.texture.replace_region(
+            region,
+            0,
+            bytes.as_ptr() as *const _,
+            (bounds.size().x() * self.bytes_per_pixel() as i32) as u64,
+        );
+    }
+
+    fn bytes_per_pixel(&self) -> u8 {
+        use metal::MTLPixelFormat::*;
+        match self.texture.pixel_format() {
+            A8Unorm | R8Unorm => 1,
+            RGBA8Unorm | BGRA8Unorm => 4,
+            _ => unimplemented!(),
+        }
+    }
+
+    fn deallocate(&mut self, id: etagere::AllocId) {
+        self.allocator.deallocate(id);
+    }
+
+    fn is_empty(&self) -> bool {
+        self.allocator.is_empty()
     }
 
     fn clear(&mut self) {

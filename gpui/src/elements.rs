@@ -6,6 +6,7 @@ mod empty;
 mod event_handler;
 mod flex;
 mod hook;
+mod image;
 mod label;
 mod line_box;
 mod list;
@@ -16,25 +17,12 @@ mod svg;
 mod text;
 mod uniform_list;
 
+pub use self::{
+    align::*, canvas::*, constrained_box::*, container::*, empty::*, event_handler::*, flex::*,
+    hook::*, image::*, label::*, line_box::*, list::*, mouse_event_handler::*, overlay::*,
+    stack::*, svg::*, text::*, uniform_list::*,
+};
 pub use crate::presenter::ChildView;
-pub use align::*;
-pub use canvas::*;
-pub use constrained_box::*;
-pub use container::*;
-pub use empty::*;
-pub use event_handler::*;
-pub use flex::*;
-pub use hook::*;
-pub use label::*;
-pub use line_box::*;
-pub use list::*;
-pub use mouse_event_handler::*;
-pub use overlay::*;
-pub use stack::*;
-pub use svg::*;
-pub use text::*;
-pub use uniform_list::*;
-
 use crate::{
     geometry::{rect::RectF, vector::Vector2F},
     json, DebugContext, Event, EventContext, LayoutContext, PaintContext, SizeConstraint,

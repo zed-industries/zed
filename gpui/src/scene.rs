@@ -1,12 +1,13 @@
 use serde::Deserialize;
 use serde_json::json;
-use std::borrow::Cow;
+use std::{borrow::Cow, sync::Arc};
 
 use crate::{
     color::Color,
     fonts::{FontId, GlyphId},
     geometry::{rect::RectF, vector::Vector2F},
     json::ToJson,
+    ImageData,
 };
 
 pub struct Scene {
@@ -25,6 +26,7 @@ pub struct Layer {
     clip_bounds: Option<RectF>,
     quads: Vec<Quad>,
     underlines: Vec<Quad>,
+    images: Vec<Image>,
     shadows: Vec<Shadow>,
     glyphs: Vec<Glyph>,
     icons: Vec<Icon>,
@@ -124,6 +126,11 @@ pub struct PathVertex {
     pub st_position: Vector2F,
 }
 
+pub struct Image {
+    pub bounds: RectF,
+    pub data: Arc<ImageData>,
+}
+
 impl Scene {
     pub fn new(scale_factor: f32) -> Self {
         let stacking_context = StackingContext::new(None);
@@ -164,6 +171,10 @@ impl Scene {
 
     pub fn push_quad(&mut self, quad: Quad) {
         self.active_layer().push_quad(quad)
+    }
+
+    pub fn push_image(&mut self, image: Image) {
+        self.active_layer().push_image(image)
     }
 
     pub fn push_underline(&mut self, underline: Quad) {
@@ -240,6 +251,7 @@ impl Layer {
             clip_bounds,
             quads: Vec::new(),
             underlines: Vec::new(),
+            images: Vec::new(),
             shadows: Vec::new(),
             glyphs: Vec::new(),
             icons: Vec::new(),
@@ -265,6 +277,14 @@ impl Layer {
 
     pub fn underlines(&self) -> &[Quad] {
         self.underlines.as_slice()
+    }
+
+    fn push_image(&mut self, image: Image) {
+        self.images.push(image);
+    }
+
+    pub fn images(&self) -> &[Image] {
+        self.images.as_slice()
     }
 
     fn push_shadow(&mut self, shadow: Shadow) {

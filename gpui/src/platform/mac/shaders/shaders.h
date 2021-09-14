@@ -1,16 +1,19 @@
 #include <simd/simd.h>
 
-typedef struct {
+typedef struct
+{
     vector_float2 viewport_size;
 } GPUIUniforms;
 
-typedef enum {
+typedef enum
+{
     GPUIQuadInputIndexVertices = 0,
     GPUIQuadInputIndexQuads = 1,
     GPUIQuadInputIndexUniforms = 2,
 } GPUIQuadInputIndex;
 
-typedef struct {
+typedef struct
+{
     vector_float2 origin;
     vector_float2 size;
     vector_uchar4 background_color;
@@ -22,13 +25,15 @@ typedef struct {
     float corner_radius;
 } GPUIQuad;
 
-typedef enum {
+typedef enum
+{
     GPUIShadowInputIndexVertices = 0,
     GPUIShadowInputIndexShadows = 1,
     GPUIShadowInputIndexUniforms = 2,
 } GPUIShadowInputIndex;
 
-typedef struct {
+typedef struct
+{
     vector_float2 origin;
     vector_float2 size;
     float corner_radius;
@@ -36,18 +41,21 @@ typedef struct {
     vector_uchar4 color;
 } GPUIShadow;
 
-typedef enum {
+typedef enum
+{
     GPUISpriteVertexInputIndexVertices = 0,
     GPUISpriteVertexInputIndexSprites = 1,
     GPUISpriteVertexInputIndexViewportSize = 2,
     GPUISpriteVertexInputIndexAtlasSize = 3,
 } GPUISpriteVertexInputIndex;
 
-typedef enum {
+typedef enum
+{
     GPUISpriteFragmentInputIndexAtlas = 0,
 } GPUISpriteFragmentInputIndex;
 
-typedef struct {
+typedef struct
+{
     vector_float2 origin;
     vector_float2 target_size;
     vector_float2 source_size;
@@ -56,14 +64,37 @@ typedef struct {
     uint8_t compute_winding;
 } GPUISprite;
 
-typedef enum {
+typedef enum
+{
     GPUIPathAtlasVertexInputIndexVertices = 0,
     GPUIPathAtlasVertexInputIndexAtlasSize = 1,
 } GPUIPathAtlasVertexInputIndex;
 
-typedef struct {
+typedef struct
+{
     vector_float2 xy_position;
     vector_float2 st_position;
     vector_float2 clip_rect_origin;
     vector_float2 clip_rect_size;
 } GPUIPathVertex;
+
+typedef enum
+{
+    GPUIImageVertexInputIndexVertices = 0,
+    GPUIImageVertexInputIndexImages = 1,
+    GPUIImageVertexInputIndexViewportSize = 2,
+    GPUIImageVertexInputIndexAtlasSize = 3,
+} GPUIImageVertexInputIndex;
+
+typedef enum
+{
+    GPUIImageFragmentInputIndexAtlas = 0,
+} GPUIImageFragmentInputIndex;
+
+typedef struct
+{
+    vector_float2 origin;
+    vector_float2 target_size;
+    vector_float2 source_size;
+    vector_float2 atlas_origin;
+} GPUIImage;

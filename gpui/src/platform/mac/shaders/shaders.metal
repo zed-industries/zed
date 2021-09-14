@@ -217,6 +217,39 @@ fragment float4 sprite_fragment(
     return color;
 }
 
+struct ImageFragmentInput {
+    float4 position [[position]];
+    float2 atlas_position;
+};
+
+vertex ImageFragmentInput image_vertex(
+    uint unit_vertex_id [[vertex_id]],
+    uint image_id [[instance_id]],
+    constant float2 *unit_vertices [[buffer(GPUIImageVertexInputIndexVertices)]],
+    constant GPUIImage *images [[buffer(GPUIImageVertexInputIndexImages)]],
+    constant float2 *viewport_size [[buffer(GPUIImageVertexInputIndexViewportSize)]],
+    constant float2 *atlas_size [[buffer(GPUIImageVertexInputIndexAtlasSize)]]
+) {
+    float2 unit_vertex = unit_vertices[unit_vertex_id];
+    GPUIImage image = images[image_id];
+    float2 position = unit_vertex * image.target_size + image.origin;
+    float4 device_position = to_device_position(position, *viewport_size);
+    float2 atlas_position = (unit_vertex * image.source_size + image.atlas_origin) / *atlas_size;
+
+    return ImageFragmentInput {
+        device_position,
+        atlas_position,
+    };
+}
+
+fragment float4 image_fragment(
+    ImageFragmentInput input [[stage_in]],
+    texture2d<float> atlas [[ texture(GPUIImageFragmentInputIndexAtlas) ]]
+) {
+    constexpr sampler atlas_sampler(mag_filter::linear, min_filter::linear);
+    return atlas.sample(atlas_sampler, input.atlas_position);
+}
+
 struct PathAtlasVertexOutput {
     float4 position [[position]];
     float2 st_position;
