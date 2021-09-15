@@ -321,7 +321,6 @@ impl Client {
                     return Err(err);
                 }
             };
-            self.state.write().credentials = Some(credentials.clone());
             credentials
         };
 
@@ -334,6 +333,7 @@ impl Client {
         match self.establish_connection(&credentials, cx).await {
             Ok(conn) => {
                 log::info!("connected to rpc address {}", *ZED_SERVER_URL);
+                self.state.write().credentials = Some(credentials.clone());
                 if !read_from_keychain {
                     write_credentials_to_keychain(&credentials, cx).log_err();
                 }
