@@ -1023,7 +1023,7 @@ mod tests {
         editor::{Editor, Insert},
         fs::{FakeFs, Fs as _},
         language::LanguageRegistry,
-        rpc::{self, Client},
+        rpc::{self, Client, Credentials},
         settings,
         test::FakeHttpClient,
         user::UserStore,
@@ -1922,39 +1922,40 @@ mod tests {
             let forbid_connections = self.forbid_connections.clone();
             Arc::get_mut(&mut client)
                 .unwrap()
-                .set_login_and_connect_callbacks(
-                    move |cx| {
-                        cx.spawn(|_| async move {
-                            let access_token = "the-token".to_string();
-                            Ok((client_user_id.0 as u64, access_token))
+                .override_authenticate(move |cx| {
+                    cx.spawn(|_| async move {
+                        let access_token = "the-token".to_string();
+                        Ok(Credentials {
+                            user_id: client_user_id.0 as u64,
+                            access_token,
                         })
-                    },
-                    move |user_id, access_token, cx| {
-                        assert_eq!(user_id, client_user_id.0 as u64);
-                        assert_eq!(access_token, "the-token");
+                    })
+                })
+                .override_establish_connection(move |credentials, cx| {
+                    assert_eq!(credentials.user_id, client_user_id.0 as u64);
+                    assert_eq!(credentials.access_token, "the-token");
 
-                        let server = server.clone();
-                        let connection_killers = connection_killers.clone();
-                        let forbid_connections = forbid_connections.clone();
-                        let client_name = client_name.clone();
-                        cx.spawn(move |cx| async move {
-                            if forbid_connections.load(SeqCst) {
-                                Err(anyhow!("server is forbidding connections"))
-                            } else {
-                                let (client_conn, server_conn, kill_conn) = Conn::in_memory();
-                                connection_killers.lock().insert(client_user_id, kill_conn);
-                                cx.background()
-                                    .spawn(server.handle_connection(
-                                        server_conn,
-                                        client_name,
-                                        client_user_id,
-                                    ))
-                                    .detach();
-                                Ok(client_conn)
-                            }
-                        })
-                    },
-                );
+                    let server = server.clone();
+                    let connection_killers = connection_killers.clone();
+                    let forbid_connections = forbid_connections.clone();
+                    let client_name = client_name.clone();
+                    cx.spawn(move |cx| async move {
+                        if forbid_connections.load(SeqCst) {
+                            Err(anyhow!("server is forbidding connections"))
+                        } else {
+                            let (client_conn, server_conn, kill_conn) = Conn::in_memory();
+                            connection_killers.lock().insert(client_user_id, kill_conn);
+                            cx.background()
+                                .spawn(server.handle_connection(
+                                    server_conn,
+                                    client_name,
+                                    client_user_id,
+                                ))
+                                .detach();
+                            Ok(client_conn)
+                        }
+                    })
+                });
 
             client
                 .authenticate_and_connect(&cx.to_async())

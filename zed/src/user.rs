@@ -51,8 +51,8 @@ impl UserStore {
                 let mut status = rpc.status();
                 while let Some(status) = status.recv().await {
                     match status {
-                        Status::Connected { user_id, .. } => {
-                            if let Some(this) = this.upgrade() {
+                        Status::Connected { .. } => {
+                            if let Some((this, user_id)) = this.upgrade().zip(rpc.user_id()) {
                                 current_user_tx
                                     .send(this.fetch_user(user_id).log_err().await)
                                     .await

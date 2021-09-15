@@ -4,7 +4,7 @@ use crate::{
     fs::RealFs,
     http::{HttpClient, Request, Response, ServerResponse},
     language::LanguageRegistry,
-    rpc::{self, Client},
+    rpc::{self, Client, Credentials},
     settings::{self, ThemeRegistry},
     time::ReplicaId,
     user::UserStore,
@@ -226,25 +226,26 @@ impl FakeServer {
 
         Arc::get_mut(client)
             .unwrap()
-            .set_login_and_connect_callbacks(
-                move |cx| {
-                    cx.spawn(|_| async move {
-                        let access_token = "the-token".to_string();
-                        Ok((client_user_id, access_token))
+            .override_authenticate(move |cx| {
+                cx.spawn(|_| async move {
+                    let access_token = "the-token".to_string();
+                    Ok(Credentials {
+                        user_id: client_user_id,
+                        access_token,
                     })
-                },
-                {
-                    let server = result.clone();
-                    move |user_id, access_token, cx| {
-                        assert_eq!(user_id, client_user_id);
-                        assert_eq!(access_token, "the-token");
-                        cx.spawn({
-                            let server = server.clone();
-                            move |cx| async move { server.connect(&cx).await }
-                        })
-                    }
-                },
-            );
+                })
+            })
+            .override_establish_connection({
+                let server = result.clone();
+                move |credentials, cx| {
+                    assert_eq!(credentials.user_id, client_user_id);
+                    assert_eq!(credentials.access_token, "the-token");
+                    cx.spawn({
+                        let server = server.clone();
+                        move |cx| async move { server.connect(&cx).await }
+                    })
+                }
+            });
 
         client
             .authenticate_and_connect(&cx.to_async())
