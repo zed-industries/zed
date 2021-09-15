@@ -90,6 +90,7 @@ fn init_logger() {
             .expect("could not open logfile");
         simplelog::WriteLogger::init(level, simplelog::Config::default(), log_file)
             .expect("could not initialize logger");
+        log_panics::init();
     }
 }
 
