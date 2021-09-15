@@ -2,14 +2,19 @@ module.exports = {
     theme: {
         fontFamily: {
             display: [
-                "Visby CF", "ui-sans-serif", "system-ui", "-apple-system", "BlinkMacSystemFont", "Segoe UI", "Roboto",
-                "Helvetica Neue", "Arial", "Noto Sans", "sans-serif", "Apple Color Emoji", "Segoe UI Emoji", "Segoe UI Symbol",
+                "Spectral", "Constantia", "Lucida Bright", "Lucidabright", "Lucida Serif", "Lucida", "DejaVu Serif", "Bitstream Vera Serif", 
+                "Liberation Serif", "Georgia", "serif", "Apple Color Emoji", "Segoe UI Emoji", "Segoe UI Symbol",
                 "Noto Color Emoji"
             ],
             body: [
-                "Open Sans", "ui-sans-serif", "system-ui", "-apple-system", "BlinkMacSystemFont", "Segoe UI", "Roboto",
-                "Helvetica Neue", "Arial", "Noto Sans", "sans-serif", "Apple Color Emoji", "Segoe UI Emoji", "Segoe UI Symbol",
+                "Spectral", "Constantia", "Lucida Bright", "Lucidabright", "Lucida Serif", "Lucida", "DejaVu Serif", "Bitstream Vera Serif", 
+                "Liberation Serif", "Georgia", "serif", "Apple Color Emoji", "Segoe UI Emoji", "Segoe UI Symbol",
                 "Noto Color Emoji"
+            ],
+            mono: [
+                "Inconsolata", "Andale Mono WT", "Andale Mono", "Lucida Console", "Lucida Sans Typewriter", "DejaVu Sans Mono", 
+                "Bitstream Vera Sans Mono", "Liberation Mono", "Nimbus Mono L", "Courier New", "Apple Color Emoji", "Segoe UI Emoji", 
+                "Segoe UI Symbol", "Noto Color Emoji"
             ],
         },
         extend: {

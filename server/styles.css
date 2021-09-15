@@ -1,6 +1,6 @@
 /* This file is compiled to /assets/styles/tailwind.css via script/tailwind */
 
-@import url('https://fonts.googleapis.com/css2?family=Open+Sans:ital,wght@0,400;0,700;1,400;1,700&display=swap');
+@import url('https://fonts.googleapis.com/css2?family=Inconsolata:wght@400;700&family=Spectral:ital,wght@0,200;0,400;1,800&display=swap');
 
 @font-face {
     font-family: 'Visby CF';
