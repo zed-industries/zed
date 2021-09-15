@@ -87,8 +87,8 @@
             <div class="flex-1"></div>
         
             <div class="relative">
-                <img id="avatar" src="{{current_user.avatar_url}}"
-                    class="w-8 rounded-full border-gray-400 border cursor-pointer" />
+                <!-- TODO: Dropdown is linked to #avatar, just using it for now. Come back and clean up later -->
+                <p id="avatar" class="text-xl lowercase underline hover:no-underline mt-2">{{current_user.github_login}}</p>
                 <form id="sign_out" action="/sign_out" method="post"
                     class="hidden absolute mt-1 right-0 bg-black rounded border border-gray-400 text-center text-sm p-2 px-4 whitespace-nowrap">
                     <button class="hover:underline">Sign out</button>
