@@ -1,4 +1,5 @@
 mod highlight_map;
+mod resolve_tree;
 mod theme_registry;
 
 use anyhow::Result;
