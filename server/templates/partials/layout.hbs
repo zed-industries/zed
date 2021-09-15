@@ -27,18 +27,28 @@
     <div class="text-lg text-gray-50">
         <div class="container mx-auto flex flex-row items-center py-4 px-8 md:px-12 font-display">
             <a href="/" class="font-display">
-                <span class="font-black">ZED</span><span class="font-light" style="padding-left: 1px">INDUSTRIES</span>
+                <span class="font-black">Zed</span>
             </a>
             <div class="flex-1"></div>
             <a href="/app" class="text-sm mr-4 hover:underline">
-                The App
+                About
+            </a>
+            <a href="/team" class="text-sm mr-4 hover:underline">
+                Tech
             </a>
             <a href="/team" class="text-sm mr-4 hover:underline">
                 Team
             </a>
+            <a href="/team" class="text-sm mr-4 hover:underline">
+                Community
+            </a>
             {{#if current_user}}
+            <p>Insider Zone</p>
             <a href="/another" class="text-sm mr-4 hover:underline">
-                test
+                Updates
+            </a>
+            <a href="/another" class="text-sm mr-4 hover:underline">
+                Release Notes
             </a>
             {{#if current_user.is_admin }}
             <a href="/admin" class="text-sm mr-4 hover:underline">
