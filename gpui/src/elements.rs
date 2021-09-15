@@ -6,6 +6,7 @@ mod empty;
 mod event_handler;
 mod flex;
 mod hook;
+mod image;
 mod label;
 mod line_box;
 mod list;
@@ -16,27 +17,17 @@ mod svg;
 mod text;
 mod uniform_list;
 
+pub use self::{
+    align::*, canvas::*, constrained_box::*, container::*, empty::*, event_handler::*, flex::*,
+    hook::*, image::*, label::*, line_box::*, list::*, mouse_event_handler::*, overlay::*,
+    stack::*, svg::*, text::*, uniform_list::*,
+};
 pub use crate::presenter::ChildView;
-pub use align::*;
-pub use canvas::*;
-pub use constrained_box::*;
-pub use container::*;
-pub use empty::*;
-pub use event_handler::*;
-pub use flex::*;
-pub use hook::*;
-pub use label::*;
-pub use line_box::*;
-pub use list::*;
-pub use mouse_event_handler::*;
-pub use overlay::*;
-pub use stack::*;
-pub use svg::*;
-pub use text::*;
-pub use uniform_list::*;
-
 use crate::{
-    geometry::{rect::RectF, vector::Vector2F},
+    geometry::{
+        rect::RectF,
+        vector::{vec2f, Vector2F},
+    },
     json, DebugContext, Event, EventContext, LayoutContext, PaintContext, SizeConstraint,
 };
 use core::panic;
@@ -371,3 +362,13 @@ pub trait ParentElement<'a>: Extend<ElementBox> + Sized {
 }
 
 impl<'a, T> ParentElement<'a> for T where T: Extend<ElementBox> {}
+
+fn constrain_size_preserving_aspect_ratio(max_size: Vector2F, size: Vector2F) -> Vector2F {
+    if max_size.x().is_infinite() && max_size.y().is_infinite() {
+        size
+    } else if max_size.x().is_infinite() || max_size.x() / max_size.y() > size.x() / size.y() {
+        vec2f(size.x() * max_size.y() / size.y(), max_size.y())
+    } else {
+        vec2f(max_size.x(), size.y() * max_size.x() / size.x())
+    }
+}

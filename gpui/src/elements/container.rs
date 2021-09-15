@@ -13,7 +13,7 @@ use crate::{
     Element, ElementBox, Event, EventContext, LayoutContext, PaintContext, SizeConstraint,
 };
 
-#[derive(Clone, Debug, Default, Deserialize)]
+#[derive(Clone, Copy, Debug, Default, Deserialize)]
 pub struct ContainerStyle {
     #[serde(default)]
     pub margin: Margin,
@@ -42,8 +42,8 @@ impl Container {
         }
     }
 
-    pub fn with_style(mut self, style: &ContainerStyle) -> Self {
-        self.style = style.clone();
+    pub fn with_style(mut self, style: ContainerStyle) -> Self {
+        self.style = style;
         self
     }
 
@@ -242,7 +242,7 @@ impl ToJson for ContainerStyle {
     }
 }
 
-#[derive(Clone, Debug, Default)]
+#[derive(Clone, Copy, Debug, Default)]
 pub struct Margin {
     pub top: f32,
     pub left: f32,
@@ -269,7 +269,7 @@ impl ToJson for Margin {
     }
 }
 
-#[derive(Clone, Debug, Default)]
+#[derive(Clone, Copy, Debug, Default)]
 pub struct Padding {
     pub top: f32,
     pub left: f32,
@@ -367,7 +367,7 @@ impl ToJson for Padding {
     }
 }
 
-#[derive(Clone, Debug, Default, Deserialize)]
+#[derive(Clone, Copy, Debug, Default, Deserialize)]
 pub struct Shadow {
     #[serde(default, deserialize_with = "deserialize_vec2f")]
     offset: Vector2F,

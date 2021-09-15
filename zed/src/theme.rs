@@ -4,7 +4,7 @@ mod theme_registry;
 use anyhow::Result;
 use gpui::{
     color::Color,
-    elements::{ContainerStyle, LabelStyle},
+    elements::{ContainerStyle, ImageStyle, LabelStyle},
     fonts::{HighlightStyle, TextStyle},
     Border,
 };
@@ -34,12 +34,30 @@ pub struct SyntaxTheme {
 #[derive(Deserialize)]
 pub struct Workspace {
     pub background: Color,
-    pub titlebar: ContainedLabel,
+    pub titlebar: Titlebar,
     pub tab: Tab,
     pub active_tab: Tab,
     pub pane_divider: Border,
     pub left_sidebar: Sidebar,
     pub right_sidebar: Sidebar,
+}
+
+#[derive(Clone, Deserialize)]
+pub struct Titlebar {
+    #[serde(flatten)]
+    pub container: ContainerStyle,
+    pub title: TextStyle,
+    pub avatar_width: f32,
+    pub offline_icon: OfflineIcon,
+    pub icon_color: Color,
+    pub avatar: ImageStyle,
+}
+
+#[derive(Clone, Deserialize)]
+pub struct OfflineIcon {
+    #[serde(flatten)]
+    pub container: ContainerStyle,
+    pub width: f32,
 }
 
 #[derive(Clone, Deserialize)]
@@ -60,6 +78,7 @@ pub struct Tab {
 pub struct Sidebar {
     #[serde(flatten)]
     pub container: ContainerStyle,
+    pub width: f32,
     pub icon: SidebarIcon,
     pub active_icon: SidebarIcon,
     pub resize_handle: ContainerStyle,

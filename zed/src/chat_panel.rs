@@ -209,7 +209,7 @@ impl ChatPanel {
         Flex::column()
             .with_child(
                 Container::new(ChildView::new(self.channel_select.id()).boxed())
-                    .with_style(&theme.chat_panel.channel_select.container)
+                    .with_style(theme.chat_panel.channel_select.container)
                     .boxed(),
             )
             .with_child(self.render_active_channel_messages())
@@ -243,7 +243,7 @@ impl ChatPanel {
                                 )
                                 .boxed(),
                             )
-                            .with_style(&theme.sender.container)
+                            .with_style(theme.sender.container)
                             .boxed(),
                         )
                         .with_child(
@@ -254,7 +254,7 @@ impl ChatPanel {
                                 )
                                 .boxed(),
                             )
-                            .with_style(&theme.timestamp.container)
+                            .with_style(theme.timestamp.container)
                             .boxed(),
                         )
                         .boxed(),
@@ -262,14 +262,14 @@ impl ChatPanel {
                 .with_child(Text::new(message.body.clone(), theme.body.clone()).boxed())
                 .boxed(),
         )
-        .with_style(&theme.container)
+        .with_style(theme.container)
         .boxed()
     }
 
     fn render_input_box(&self) -> ElementBox {
         let theme = &self.settings.borrow().theme;
         Container::new(ChildView::new(self.input_editor.id()).boxed())
-            .with_style(&theme.chat_panel.input_editor.container)
+            .with_style(theme.chat_panel.input_editor.container)
             .boxed()
     }
 
@@ -293,13 +293,13 @@ impl ChatPanel {
             Flex::row()
                 .with_child(
                     Container::new(Label::new("#".to_string(), theme.hash.text.clone()).boxed())
-                        .with_style(&theme.hash.container)
+                        .with_style(theme.hash.container)
                         .boxed(),
                 )
                 .with_child(Label::new(channel.name.clone(), theme.name.clone()).boxed())
                 .boxed(),
         )
-        .with_style(&theme.container)
+        .with_style(theme.container)
         .boxed()
     }
 
@@ -387,7 +387,7 @@ impl View for ChatPanel {
         };
         ConstrainedBox::new(
             Container::new(element)
-                .with_style(&theme.chat_panel.container)
+                .with_style(theme.chat_panel.container)
                 .boxed(),
         )
         .with_min_width(150.)

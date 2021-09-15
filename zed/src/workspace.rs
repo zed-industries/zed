@@ -10,8 +10,9 @@ use crate::{
     project_browser::ProjectBrowser,
     rpc,
     settings::Settings,
+    user,
     worktree::{File, Worktree},
-    AppState,
+    AppState, Authenticate,
 };
 use anyhow::{anyhow, Result};
 use gpui::{
@@ -20,7 +21,7 @@ use gpui::{
     geometry::{rect::RectF, vector::vec2f},
     json::to_string_pretty,
     keymap::Binding,
-    platform::WindowOptions,
+    platform::{CursorStyle, WindowOptions},
     AnyViewHandle, AppContext, ClipboardItem, Entity, ModelHandle, MutableAppContext,
     PathPromptOptions, PromptLevel, RenderContext, Task, View, ViewContext, ViewHandle,
     WeakModelHandle,
@@ -28,9 +29,8 @@ use gpui::{
 use log::error;
 pub use pane::*;
 pub use pane_group::*;
-use postage::watch;
+use postage::{prelude::Stream, watch};
 use sidebar::{Side, Sidebar, ToggleSidebarItem};
-use smol::prelude::*;
 use std::{
     collections::{hash_map::Entry, HashMap, HashSet},
     future::Future,
@@ -341,6 +341,7 @@ pub struct Workspace {
     pub settings: watch::Receiver<Settings>,
     languages: Arc<LanguageRegistry>,
     rpc: Arc<rpc::Client>,
+    user_store: Arc<user::UserStore>,
     fs: Arc<dyn Fs>,
     modal: Option<AnyViewHandle>,
     center: PaneGroup,
@@ -354,6 +355,7 @@ pub struct Workspace {
         (usize, Arc<Path>),
         postage::watch::Receiver<Option<Result<Box<dyn ItemHandle>, Arc<anyhow::Error>>>>,
     >,
+    _observe_current_user: Task<()>,
 }
 
 impl Workspace {
@@ -387,6 +389,23 @@ impl Workspace {
         );
         right_sidebar.add_item("icons/user-16.svg", cx.add_view(|_| ProjectBrowser).into());
 
+        let mut current_user = app_state.user_store.current_user().clone();
+        let mut connection_status = app_state.rpc.status().clone();
+        let _observe_current_user = cx.spawn_weak(|this, mut cx| async move {
+            current_user.recv().await;
+            connection_status.recv().await;
+            let mut stream =
+                Stream::map(current_user, drop).merge(Stream::map(connection_status, drop));
+
+            while stream.recv().await.is_some() {
+                cx.update(|cx| {
+                    if let Some(this) = this.upgrade(&cx) {
+                        this.update(cx, |_, cx| cx.notify());
+                    }
+                })
+            }
+        });
+
         Workspace {
             modal: None,
             center: PaneGroup::new(pane.id()),
@@ -395,12 +414,14 @@ impl Workspace {
             settings: app_state.settings.clone(),
             languages: app_state.languages.clone(),
             rpc: app_state.rpc.clone(),
+            user_store: app_state.user_store.clone(),
             fs: app_state.fs.clone(),
             left_sidebar,
             right_sidebar,
             worktrees: Default::default(),
             items: Default::default(),
             loading_items: Default::default(),
+            _observe_current_user,
         }
     }
 
@@ -625,7 +646,7 @@ impl Workspace {
                 if let Some(load_result) = watch.borrow().as_ref() {
                     break load_result.clone();
                 }
-                watch.next().await;
+                watch.recv().await;
             };
 
             this.update(&mut cx, |this, cx| {
@@ -936,6 +957,68 @@ impl Workspace {
     pub fn active_pane(&self) -> &ViewHandle<Pane> {
         &self.active_pane
     }
+
+    fn render_connection_status(&self) -> Option<ElementBox> {
+        let theme = &self.settings.borrow().theme;
+        match &*self.rpc.status().borrow() {
+            rpc::Status::ConnectionError
+            | rpc::Status::ConnectionLost
+            | rpc::Status::Reauthenticating
+            | rpc::Status::Reconnecting { .. }
+            | rpc::Status::ReconnectionError { .. } => Some(
+                Container::new(
+                    Align::new(
+                        ConstrainedBox::new(
+                            Svg::new("icons/offline-14.svg")
+                                .with_color(theme.workspace.titlebar.icon_color)
+                                .boxed(),
+                        )
+                        .with_width(theme.workspace.titlebar.offline_icon.width)
+                        .boxed(),
+                    )
+                    .boxed(),
+                )
+                .with_style(theme.workspace.titlebar.offline_icon.container)
+                .boxed(),
+            ),
+            _ => None,
+        }
+    }
+
+    fn render_avatar(&self, cx: &mut RenderContext<Self>) -> ElementBox {
+        let theme = &self.settings.borrow().theme;
+        let avatar = if let Some(avatar) = self
+            .user_store
+            .current_user()
+            .borrow()
+            .as_ref()
+            .and_then(|user| user.avatar.clone())
+        {
+            Image::new(avatar)
+                .with_style(theme.workspace.titlebar.avatar)
+                .boxed()
+        } else {
+            MouseEventHandler::new::<Authenticate, _, _, _>(0, cx, |_, _| {
+                Svg::new("icons/signed-out-12.svg")
+                    .with_color(theme.workspace.titlebar.icon_color)
+                    .boxed()
+            })
+            .on_click(|cx| cx.dispatch_action(Authenticate))
+            .with_cursor_style(CursorStyle::PointingHand)
+            .boxed()
+        };
+
+        ConstrainedBox::new(
+            Align::new(
+                ConstrainedBox::new(avatar)
+                    .with_width(theme.workspace.titlebar.avatar_width)
+                    .boxed(),
+            )
+            .boxed(),
+        )
+        .with_width(theme.workspace.right_sidebar.width)
+        .boxed()
+    }
 }
 
 impl Entity for Workspace {
@@ -955,15 +1038,30 @@ impl View for Workspace {
                 .with_child(
                     ConstrainedBox::new(
                         Container::new(
-                            Align::new(
-                                Label::new(
-                                    "zed".into(), 
-                                    theme.workspace.titlebar.label.clone()
-                                ).boxed()
-                            )
-                            .boxed()
+                            Stack::new()
+                                .with_child(
+                                    Align::new(
+                                        Label::new(
+                                            "zed".into(),
+                                            theme.workspace.titlebar.title.clone(),
+                                        )
+                                        .boxed(),
+                                    )
+                                    .boxed(),
+                                )
+                                .with_child(
+                                    Align::new(
+                                        Flex::row()
+                                            .with_children(self.render_connection_status())
+                                            .with_child(self.render_avatar(cx))
+                                            .boxed(),
+                                    )
+                                    .right()
+                                    .boxed(),
+                                )
+                                .boxed(),
                         )
-                        .with_style(&theme.workspace.titlebar.container)
+                        .with_style(theme.workspace.titlebar.container)
                         .boxed(),
                     )
                     .with_height(32.)

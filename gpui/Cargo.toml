@@ -11,6 +11,7 @@ backtrace = "0.3"
 ctor = "0.1"
 etagere = "0.2"
 gpui_macros = { path = "../gpui_macros" }
+image = "0.23"
 lazy_static = "1.4.0"
 log = "0.4"
 num_cpus = "1.13"

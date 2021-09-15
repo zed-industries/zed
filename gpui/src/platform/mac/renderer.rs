@@ -1,4 +1,4 @@
-use super::{atlas::AtlasAllocator, sprite_cache::SpriteCache};
+use super::{atlas::AtlasAllocator, image_cache::ImageCache, sprite_cache::SpriteCache};
 use crate::{
     color::Color,
     geometry::{
@@ -6,8 +6,7 @@ use crate::{
         vector::{vec2f, vec2i, Vector2F},
     },
     platform,
-    scene::{Glyph, Icon, Layer, Quad, Shadow},
-    Scene,
+    scene::{Glyph, Icon, Image, Layer, Quad, Scene, Shadow},
 };
 use cocoa::foundation::NSUInteger;
 use metal::{MTLPixelFormat, MTLResourceOptions, NSRange};
@@ -20,10 +19,12 @@ const INSTANCE_BUFFER_SIZE: usize = 1024 * 1024; // This is an arbitrary decisio
 
 pub struct Renderer {
     sprite_cache: SpriteCache,
+    image_cache: ImageCache,
     path_atlases: AtlasAllocator,
     quad_pipeline_state: metal::RenderPipelineState,
     shadow_pipeline_state: metal::RenderPipelineState,
     sprite_pipeline_state: metal::RenderPipelineState,
+    image_pipeline_state: metal::RenderPipelineState,
     path_atlas_pipeline_state: metal::RenderPipelineState,
     unit_vertices: metal::Buffer,
     instances: metal::Buffer,
@@ -64,7 +65,9 @@ impl Renderer {
         );
 
         let sprite_cache = SpriteCache::new(device.clone(), vec2i(1024, 768), fonts);
-        let path_atlases = build_path_atlas_allocator(MTLPixelFormat::R8Unorm, &device);
+        let image_cache = ImageCache::new(device.clone(), vec2i(1024, 768));
+        let path_atlases =
+            AtlasAllocator::new(device.clone(), build_path_atlas_texture_descriptor());
         let quad_pipeline_state = build_pipeline_state(
             &device,
             &library,
@@ -89,6 +92,14 @@ impl Renderer {
             "sprite_fragment",
             pixel_format,
         );
+        let image_pipeline_state = build_pipeline_state(
+            &device,
+            &library,
+            "image",
+            "image_vertex",
+            "image_fragment",
+            pixel_format,
+        );
         let path_atlas_pipeline_state = build_path_atlas_pipeline_state(
             &device,
             &library,
@@ -99,10 +110,12 @@ impl Renderer {
         );
         Self {
             sprite_cache,
+            image_cache,
             path_atlases,
             quad_pipeline_state,
             shadow_pipeline_state,
             sprite_pipeline_state,
+            image_pipeline_state,
             path_atlas_pipeline_state,
             unit_vertices,
             instances,
@@ -117,6 +130,7 @@ impl Renderer {
         output: &metal::TextureRef,
     ) {
         let mut offset = 0;
+
         let path_sprites = self.render_path_atlases(scene, &mut offset, command_buffer);
         self.render_layers(
             scene,
@@ -130,6 +144,7 @@ impl Renderer {
             location: 0,
             length: offset as NSUInteger,
         });
+        self.image_cache.finish_frame();
     }
 
     fn render_path_atlases(
@@ -146,11 +161,11 @@ impl Renderer {
             for path in layer.paths() {
                 let origin = path.bounds.origin() * scene.scale_factor();
                 let size = (path.bounds.size() * scene.scale_factor()).ceil();
-                let (atlas_id, atlas_origin) = self.path_atlases.allocate(size.to_i32()).unwrap();
+                let (alloc_id, atlas_origin) = self.path_atlases.allocate(size.to_i32());
                 let atlas_origin = atlas_origin.to_f32();
                 sprites.push(PathSprite {
                     layer_id,
-                    atlas_id,
+                    atlas_id: alloc_id.atlas_id,
                     shader_data: shaders::GPUISprite {
                         origin: origin.floor().to_float2(),
                         target_size: size.to_float2(),
@@ -162,7 +177,7 @@ impl Renderer {
                 });
 
                 if let Some(current_atlas_id) = current_atlas_id {
-                    if atlas_id != current_atlas_id {
+                    if alloc_id.atlas_id != current_atlas_id {
                         self.render_paths_to_atlas(
                             offset,
                             &vertices,
@@ -173,7 +188,7 @@ impl Renderer {
                     }
                 }
 
-                current_atlas_id = Some(atlas_id);
+                current_atlas_id = Some(alloc_id.atlas_id);
 
                 for vertex in &path.vertices {
                     let xy_position =
@@ -311,6 +326,13 @@ impl Renderer {
             self.render_sprites(
                 layer.glyphs(),
                 layer.icons(),
+                scale_factor,
+                offset,
+                drawable_size,
+                command_encoder,
+            );
+            self.render_images(
+                layer.images(),
                 scale_factor,
                 offset,
                 drawable_size,
@@ -559,11 +581,6 @@ impl Renderer {
             mem::size_of::<shaders::vector_float2>() as u64,
             [drawable_size.to_float2()].as_ptr() as *const c_void,
         );
-        command_encoder.set_vertex_bytes(
-            shaders::GPUISpriteVertexInputIndex_GPUISpriteVertexInputIndexAtlasSize as u64,
-            mem::size_of::<shaders::vector_float2>() as u64,
-            [self.sprite_cache.atlas_size().to_float2()].as_ptr() as *const c_void,
-        );
 
         for (atlas_id, sprites) in sprites_by_atlas {
             align_offset(offset);
@@ -573,13 +590,19 @@ impl Renderer {
                 "instance buffer exhausted"
             );
 
+            let texture = self.sprite_cache.atlas_texture(atlas_id).unwrap();
             command_encoder.set_vertex_buffer(
                 shaders::GPUISpriteVertexInputIndex_GPUISpriteVertexInputIndexSprites as u64,
                 Some(&self.instances),
                 *offset as u64,
             );
+            command_encoder.set_vertex_bytes(
+                shaders::GPUISpriteVertexInputIndex_GPUISpriteVertexInputIndexAtlasSize as u64,
+                mem::size_of::<shaders::vector_float2>() as u64,
+                [vec2i(texture.width() as i32, texture.height() as i32).to_float2()].as_ptr()
+                    as *const c_void,
+            );
 
-            let texture = self.sprite_cache.atlas_texture(atlas_id).unwrap();
             command_encoder.set_fragment_texture(
                 shaders::GPUISpriteFragmentInputIndex_GPUISpriteFragmentInputIndexAtlas as u64,
                 Some(texture),
@@ -597,6 +620,96 @@ impl Renderer {
                 0,
                 6,
                 sprites.len() as u64,
+            );
+            *offset = next_offset;
+        }
+    }
+
+    fn render_images(
+        &mut self,
+        images: &[Image],
+        scale_factor: f32,
+        offset: &mut usize,
+        drawable_size: Vector2F,
+        command_encoder: &metal::RenderCommandEncoderRef,
+    ) {
+        if images.is_empty() {
+            return;
+        }
+
+        let mut images_by_atlas = HashMap::new();
+        for image in images {
+            let origin = image.bounds.origin() * scale_factor;
+            let target_size = image.bounds.size() * scale_factor;
+            let corner_radius = image.corner_radius * scale_factor;
+            let border_width = image.border.width * scale_factor;
+            let (alloc_id, atlas_bounds) = self.image_cache.render(&image.data);
+            images_by_atlas
+                .entry(alloc_id.atlas_id)
+                .or_insert_with(Vec::new)
+                .push(shaders::GPUIImage {
+                    origin: origin.to_float2(),
+                    target_size: target_size.to_float2(),
+                    source_size: atlas_bounds.size().to_float2(),
+                    atlas_origin: atlas_bounds.origin().to_float2(),
+                    border_top: border_width * (image.border.top as usize as f32),
+                    border_right: border_width * (image.border.right as usize as f32),
+                    border_bottom: border_width * (image.border.bottom as usize as f32),
+                    border_left: border_width * (image.border.left as usize as f32),
+                    border_color: image.border.color.to_uchar4(),
+                    corner_radius,
+                });
+        }
+
+        command_encoder.set_render_pipeline_state(&self.image_pipeline_state);
+        command_encoder.set_vertex_buffer(
+            shaders::GPUIImageVertexInputIndex_GPUIImageVertexInputIndexVertices as u64,
+            Some(&self.unit_vertices),
+            0,
+        );
+        command_encoder.set_vertex_bytes(
+            shaders::GPUIImageVertexInputIndex_GPUIImageVertexInputIndexViewportSize as u64,
+            mem::size_of::<shaders::vector_float2>() as u64,
+            [drawable_size.to_float2()].as_ptr() as *const c_void,
+        );
+
+        for (atlas_id, images) in images_by_atlas {
+            align_offset(offset);
+            let next_offset = *offset + images.len() * mem::size_of::<shaders::GPUIImage>();
+            assert!(
+                next_offset <= INSTANCE_BUFFER_SIZE,
+                "instance buffer exhausted"
+            );
+
+            let texture = self.image_cache.atlas_texture(atlas_id).unwrap();
+            command_encoder.set_vertex_buffer(
+                shaders::GPUIImageVertexInputIndex_GPUIImageVertexInputIndexImages as u64,
+                Some(&self.instances),
+                *offset as u64,
+            );
+            command_encoder.set_vertex_bytes(
+                shaders::GPUIImageVertexInputIndex_GPUIImageVertexInputIndexAtlasSize as u64,
+                mem::size_of::<shaders::vector_float2>() as u64,
+                [vec2i(texture.width() as i32, texture.height() as i32).to_float2()].as_ptr()
+                    as *const c_void,
+            );
+            command_encoder.set_fragment_texture(
+                shaders::GPUIImageFragmentInputIndex_GPUIImageFragmentInputIndexAtlas as u64,
+                Some(texture),
+            );
+
+            unsafe {
+                let buffer_contents = (self.instances.contents() as *mut u8)
+                    .offset(*offset as isize)
+                    as *mut shaders::GPUIImage;
+                std::ptr::copy_nonoverlapping(images.as_ptr(), buffer_contents, images.len());
+            }
+
+            command_encoder.draw_primitives_instanced(
+                metal::MTLPrimitiveType::Triangle,
+                0,
+                6,
+                images.len() as u64,
             );
             *offset = next_offset;
         }
@@ -708,19 +821,15 @@ impl Renderer {
     }
 }
 
-fn build_path_atlas_allocator(
-    pixel_format: MTLPixelFormat,
-    device: &metal::Device,
-) -> AtlasAllocator {
+fn build_path_atlas_texture_descriptor() -> metal::TextureDescriptor {
     let texture_descriptor = metal::TextureDescriptor::new();
     texture_descriptor.set_width(2048);
     texture_descriptor.set_height(2048);
-    texture_descriptor.set_pixel_format(pixel_format);
+    texture_descriptor.set_pixel_format(MTLPixelFormat::R8Unorm);
     texture_descriptor
         .set_usage(metal::MTLTextureUsage::RenderTarget | metal::MTLTextureUsage::ShaderRead);
     texture_descriptor.set_storage_mode(metal::MTLStorageMode::Private);
-    let path_atlases = AtlasAllocator::new(device.clone(), texture_descriptor);
-    path_atlases
+    texture_descriptor
 }
 
 fn align_offset(offset: &mut usize) {
@@ -803,9 +912,10 @@ mod shaders {
     #![allow(non_camel_case_types)]
     #![allow(non_snake_case)]
 
-    use pathfinder_geometry::vector::Vector2I;
-
-    use crate::{color::Color, geometry::vector::Vector2F};
+    use crate::{
+        color::Color,
+        geometry::vector::{Vector2F, Vector2I},
+    };
     use std::mem;
 
     include!(concat!(env!("OUT_DIR"), "/shaders.rs"));

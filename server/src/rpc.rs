@@ -27,7 +27,7 @@ use time::OffsetDateTime;
 use zrpc::{
     auth::random_token,
     proto::{self, AnyTypedEnvelope, EnvelopedMessage},
-    Conn, ConnectionId, Peer, TypedEnvelope,
+    Connection, ConnectionId, Peer, TypedEnvelope,
 };
 
 type ReplicaId = u16;
@@ -48,13 +48,13 @@ pub struct Server {
 
 #[derive(Default)]
 struct ServerState {
-    connections: HashMap<ConnectionId, Connection>,
+    connections: HashMap<ConnectionId, ConnectionState>,
     pub worktrees: HashMap<u64, Worktree>,
     channels: HashMap<ChannelId, Channel>,
     next_worktree_id: u64,
 }
 
-struct Connection {
+struct ConnectionState {
     user_id: UserId,
     worktrees: HashSet<u64>,
     channels: HashSet<ChannelId>,
@@ -133,7 +133,7 @@ impl Server {
 
     pub fn handle_connection(
         self: &Arc<Self>,
-        connection: Conn,
+        connection: Connection,
         addr: String,
         user_id: UserId,
     ) -> impl Future<Output = ()> {
@@ -211,7 +211,7 @@ impl Server {
     async fn add_connection(&self, connection_id: ConnectionId, user_id: UserId) {
         self.state.write().await.connections.insert(
             connection_id,
-            Connection {
+            ConnectionState {
                 user_id,
                 worktrees: Default::default(),
                 channels: Default::default(),
@@ -558,8 +558,8 @@ impl Server {
             .into_iter()
             .map(|user| proto::User {
                 id: user.id.to_proto(),
+                avatar_url: format!("https://github.com/{}.png?size=128", user.github_login),
                 github_login: user.github_login,
-                avatar_url: String::new(),
             })
             .collect();
         self.peer
@@ -972,7 +972,7 @@ pub fn add_routes(app: &mut tide::Server<Arc<AppState>>, rpc: &Arc<Peer>) {
             let user_id = user_id.ok_or_else(|| anyhow!("user_id is not present on request. ensure auth::VerifyToken middleware is present"))?;
             task::spawn(async move {
                 if let Some(stream) = upgrade_receiver.await {
-                    server.handle_connection(Conn::new(WebSocketStream::from_raw_socket(stream, Role::Server, None).await), addr, user_id).await;
+                    server.handle_connection(Connection::new(WebSocketStream::from_raw_socket(stream, Role::Server, None).await), addr, user_id).await;
                 }
             });
 
@@ -1023,8 +1023,9 @@ mod tests {
         editor::{Editor, Insert},
         fs::{FakeFs, Fs as _},
         language::LanguageRegistry,
-        rpc::{self, Client},
+        rpc::{self, Client, Credentials, EstablishConnectionError},
         settings,
+        test::FakeHttpClient,
         user::UserStore,
         worktree::Worktree,
     };
@@ -1483,6 +1484,7 @@ mod tests {
     #[gpui::test]
     async fn test_basic_chat(mut cx_a: TestAppContext, mut cx_b: TestAppContext) {
         cx_a.foreground().forbid_parking();
+        let http = FakeHttpClient::new(|_| async move { Ok(surf::http::Response::new(404)) });
 
         // Connect to a server as 2 clients.
         let mut server = TestServer::start().await;
@@ -1512,7 +1514,8 @@ mod tests {
         .await
         .unwrap();
 
-        let user_store_a = Arc::new(UserStore::new(client_a.clone()));
+        let user_store_a =
+            UserStore::new(client_a.clone(), http.clone(), cx_a.background().as_ref());
         let channels_a = cx_a.add_model(|cx| ChannelList::new(user_store_a, client_a, cx));
         channels_a
             .condition(&mut cx_a, |list, _| list.available_channels().is_some())
@@ -1537,7 +1540,8 @@ mod tests {
             })
             .await;
 
-        let user_store_b = Arc::new(UserStore::new(client_b.clone()));
+        let user_store_b =
+            UserStore::new(client_b.clone(), http.clone(), cx_b.background().as_ref());
         let channels_b = cx_b.add_model(|cx| ChannelList::new(user_store_b, client_b, cx));
         channels_b
             .condition(&mut cx_b, |list, _| list.available_channels().is_some())
@@ -1625,6 +1629,7 @@ mod tests {
     #[gpui::test]
     async fn test_chat_message_validation(mut cx_a: TestAppContext) {
         cx_a.foreground().forbid_parking();
+        let http = FakeHttpClient::new(|_| async move { Ok(surf::http::Response::new(404)) });
 
         let mut server = TestServer::start().await;
         let (user_id_a, client_a) = server.create_client(&mut cx_a, "user_a").await;
@@ -1637,7 +1642,7 @@ mod tests {
             .await
             .unwrap();
 
-        let user_store_a = Arc::new(UserStore::new(client_a.clone()));
+        let user_store_a = UserStore::new(client_a.clone(), http, cx_a.background().as_ref());
         let channels_a = cx_a.add_model(|cx| ChannelList::new(user_store_a, client_a, cx));
         channels_a
             .condition(&mut cx_a, |list, _| list.available_channels().is_some())
@@ -1683,6 +1688,7 @@ mod tests {
     #[gpui::test]
     async fn test_chat_reconnection(mut cx_a: TestAppContext, mut cx_b: TestAppContext) {
         cx_a.foreground().forbid_parking();
+        let http = FakeHttpClient::new(|_| async move { Ok(surf::http::Response::new(404)) });
 
         // Connect to a server as 2 clients.
         let mut server = TestServer::start().await;
@@ -1713,7 +1719,8 @@ mod tests {
         .await
         .unwrap();
 
-        let user_store_a = Arc::new(UserStore::new(client_a.clone()));
+        let user_store_a =
+            UserStore::new(client_a.clone(), http.clone(), cx_a.background().as_ref());
         let channels_a = cx_a.add_model(|cx| ChannelList::new(user_store_a, client_a, cx));
         channels_a
             .condition(&mut cx_a, |list, _| list.available_channels().is_some())
@@ -1739,7 +1746,8 @@ mod tests {
             })
             .await;
 
-        let user_store_b = Arc::new(UserStore::new(client_b.clone()));
+        let user_store_b =
+            UserStore::new(client_b.clone(), http.clone(), cx_b.background().as_ref());
         let channels_b = cx_b.add_model(|cx| ChannelList::new(user_store_b, client_b, cx));
         channels_b
             .condition(&mut cx_b, |list, _| list.available_channels().is_some())
@@ -1914,39 +1922,42 @@ mod tests {
             let forbid_connections = self.forbid_connections.clone();
             Arc::get_mut(&mut client)
                 .unwrap()
-                .set_login_and_connect_callbacks(
-                    move |cx| {
-                        cx.spawn(|_| async move {
-                            let access_token = "the-token".to_string();
-                            Ok((client_user_id.0 as u64, access_token))
+                .override_authenticate(move |cx| {
+                    cx.spawn(|_| async move {
+                        let access_token = "the-token".to_string();
+                        Ok(Credentials {
+                            user_id: client_user_id.0 as u64,
+                            access_token,
                         })
-                    },
-                    move |user_id, access_token, cx| {
-                        assert_eq!(user_id, client_user_id.0 as u64);
-                        assert_eq!(access_token, "the-token");
+                    })
+                })
+                .override_establish_connection(move |credentials, cx| {
+                    assert_eq!(credentials.user_id, client_user_id.0 as u64);
+                    assert_eq!(credentials.access_token, "the-token");
 
-                        let server = server.clone();
-                        let connection_killers = connection_killers.clone();
-                        let forbid_connections = forbid_connections.clone();
-                        let client_name = client_name.clone();
-                        cx.spawn(move |cx| async move {
-                            if forbid_connections.load(SeqCst) {
-                                Err(anyhow!("server is forbidding connections"))
-                            } else {
-                                let (client_conn, server_conn, kill_conn) = Conn::in_memory();
-                                connection_killers.lock().insert(client_user_id, kill_conn);
-                                cx.background()
-                                    .spawn(server.handle_connection(
-                                        server_conn,
-                                        client_name,
-                                        client_user_id,
-                                    ))
-                                    .detach();
-                                Ok(client_conn)
-                            }
-                        })
-                    },
-                );
+                    let server = server.clone();
+                    let connection_killers = connection_killers.clone();
+                    let forbid_connections = forbid_connections.clone();
+                    let client_name = client_name.clone();
+                    cx.spawn(move |cx| async move {
+                        if forbid_connections.load(SeqCst) {
+                            Err(EstablishConnectionError::other(anyhow!(
+                                "server is forbidding connections"
+                            )))
+                        } else {
+                            let (client_conn, server_conn, kill_conn) = Connection::in_memory();
+                            connection_killers.lock().insert(client_user_id, kill_conn);
+                            cx.background()
+                                .spawn(server.handle_connection(
+                                    server_conn,
+                                    client_name,
+                                    client_user_id,
+                                ))
+                                .detach();
+                            Ok(client_conn)
+                        }
+                    })
+                });
 
             client
                 .authenticate_and_connect(&cx.to_async())

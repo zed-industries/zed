@@ -551,6 +551,25 @@ impl platform::Platform for MacPlatform {
         }
     }
 
+    fn delete_credentials(&self, url: &str) -> Result<()> {
+        let url = CFString::from(url);
+
+        unsafe {
+            use security::*;
+
+            let mut query_attrs = CFMutableDictionary::with_capacity(2);
+            query_attrs.set(kSecClass as *const _, kSecClassInternetPassword as *const _);
+            query_attrs.set(kSecAttrServer as *const _, url.as_CFTypeRef());
+
+            let status = SecItemDelete(query_attrs.as_concrete_TypeRef());
+
+            if status != errSecSuccess {
+                return Err(anyhow!("delete password failed: {}", status));
+            }
+        }
+        Ok(())
+    }
+
     fn set_cursor_style(&self, style: CursorStyle) {
         unsafe {
             let cursor: id = match style {
@@ -676,6 +695,7 @@ mod security {
 
         pub fn SecItemAdd(attributes: CFDictionaryRef, result: *mut CFTypeRef) -> OSStatus;
         pub fn SecItemUpdate(query: CFDictionaryRef, attributes: CFDictionaryRef) -> OSStatus;
+        pub fn SecItemDelete(query: CFDictionaryRef) -> OSStatus;
         pub fn SecItemCopyMatching(query: CFDictionaryRef, result: *mut CFTypeRef) -> OSStatus;
     }
 

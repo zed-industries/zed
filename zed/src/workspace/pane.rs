@@ -1,6 +1,14 @@
 use super::{ItemViewHandle, SplitDirection};
 use crate::settings::Settings;
-use gpui::{Border, Entity, MutableAppContext, Quad, RenderContext, View, ViewContext, ViewHandle, action, color::Color, elements::*, geometry::{rect::RectF, vector::vec2f}, keymap::Binding, platform::CursorStyle};
+use gpui::{
+    action,
+    color::Color,
+    elements::*,
+    geometry::{rect::RectF, vector::vec2f},
+    keymap::Binding,
+    platform::CursorStyle,
+    Border, Entity, MutableAppContext, Quad, RenderContext, View, ViewContext, ViewHandle,
+};
 use postage::watch;
 use std::{cmp, path::Path, sync::Arc};
 
@@ -256,7 +264,7 @@ impl Pane {
                                         )
                                         .boxed(),
                                     )
-                                    .with_style(&ContainerStyle {
+                                    .with_style(ContainerStyle {
                                         margin: Margin {
                                             left: style.spacing,
                                             right: style.spacing,
@@ -283,7 +291,8 @@ impl Pane {
                                                         icon.with_color(style.icon_close).boxed()
                                                     }
                                                 },
-                                            ).with_cursor_style(CursorStyle::PointingHand)
+                                            )
+                                            .with_cursor_style(CursorStyle::PointingHand)
                                             .on_click(move |cx| {
                                                 cx.dispatch_action(CloseItem(item_id))
                                             })
@@ -298,7 +307,7 @@ impl Pane {
                                 )
                                 .boxed(),
                         )
-                        .with_style(&style.container)
+                        .with_style(style.container)
                         .boxed(),
                     )
                     .on_mouse_down(move |cx| {

@@ -1,12 +1,9 @@
+use super::atlas::AtlasAllocator;
 use crate::{
     fonts::{FontId, GlyphId},
-    geometry::{
-        rect::RectI,
-        vector::{vec2f, vec2i, Vector2F, Vector2I},
-    },
+    geometry::vector::{vec2f, Vector2F, Vector2I},
     platform,
 };
-use etagere::BucketedAtlasAllocator;
 use metal::{MTLPixelFormat, TextureDescriptor};
 use ordered_float::OrderedFloat;
 use std::{borrow::Cow, collections::HashMap, sync::Arc};
@@ -42,10 +39,8 @@ pub struct IconSprite {
 }
 
 pub struct SpriteCache {
-    device: metal::Device,
-    atlas_size: Vector2I,
     fonts: Arc<dyn platform::FontSystem>,
-    atlases: Vec<Atlas>,
+    atlases: AtlasAllocator,
     glyphs: HashMap<GlyphDescriptor, Option<GlyphSprite>>,
     icons: HashMap<IconDescriptor, IconSprite>,
 }
@@ -56,19 +51,16 @@ impl SpriteCache {
         size: Vector2I,
         fonts: Arc<dyn platform::FontSystem>,
     ) -> Self {
-        let atlases = vec![Atlas::new(&device, size)];
+        let descriptor = TextureDescriptor::new();
+        descriptor.set_pixel_format(MTLPixelFormat::A8Unorm);
+        descriptor.set_width(size.x() as u64);
+        descriptor.set_height(size.y() as u64);
         Self {
-            device,
-            atlas_size: size,
             fonts,
-            atlases,
+            atlases: AtlasAllocator::new(device, descriptor),
             glyphs: Default::default(),
             icons: Default::default(),
         }
-    }
-
-    pub fn atlas_size(&self) -> Vector2I {
-        self.atlas_size
     }
 
     pub fn render_glyph(
@@ -84,8 +76,6 @@ impl SpriteCache {
         let target_position = target_position * scale_factor;
         let fonts = &self.fonts;
         let atlases = &mut self.atlases;
-        let atlas_size = self.atlas_size;
-        let device = &self.device;
         let subpixel_variant = (
             (target_position.x().fract() * SUBPIXEL_VARIANTS as f32).round() as u8
                 % SUBPIXEL_VARIANTS,
@@ -111,22 +101,10 @@ impl SpriteCache {
                     subpixel_shift,
                     scale_factor,
                 )?;
-                assert!(glyph_bounds.width() < atlas_size.x());
-                assert!(glyph_bounds.height() < atlas_size.y());
 
-                let atlas_bounds = atlases
-                    .last_mut()
-                    .unwrap()
-                    .try_insert(glyph_bounds.size(), &mask)
-                    .unwrap_or_else(|| {
-                        let mut atlas = Atlas::new(device, atlas_size);
-                        let bounds = atlas.try_insert(glyph_bounds.size(), &mask).unwrap();
-                        atlases.push(atlas);
-                        bounds
-                    });
-
+                let (alloc_id, atlas_bounds) = atlases.upload(glyph_bounds.size(), &mask);
                 Some(GlyphSprite {
-                    atlas_id: atlases.len() - 1,
+                    atlas_id: alloc_id.atlas_id,
                     atlas_origin: atlas_bounds.origin(),
                     offset: glyph_bounds.origin(),
                     size: glyph_bounds.size(),
@@ -142,10 +120,6 @@ impl SpriteCache {
         svg: usvg::Tree,
     ) -> IconSprite {
         let atlases = &mut self.atlases;
-        let atlas_size = self.atlas_size;
-        let device = &self.device;
-        assert!(size.x() < atlas_size.x());
-        assert!(size.y() < atlas_size.y());
         self.icons
             .entry(IconDescriptor {
                 path,
@@ -161,19 +135,9 @@ impl SpriteCache {
                     .map(|a| a.alpha())
                     .collect::<Vec<_>>();
 
-                let atlas_bounds = atlases
-                    .last_mut()
-                    .unwrap()
-                    .try_insert(size, &mask)
-                    .unwrap_or_else(|| {
-                        let mut atlas = Atlas::new(device, atlas_size);
-                        let bounds = atlas.try_insert(size, &mask).unwrap();
-                        atlases.push(atlas);
-                        bounds
-                    });
-
+                let (alloc_id, atlas_bounds) = atlases.upload(size, &mask);
                 IconSprite {
-                    atlas_id: atlases.len() - 1,
+                    atlas_id: alloc_id.atlas_id,
                     atlas_origin: atlas_bounds.origin(),
                     size,
                 }
@@ -182,45 +146,6 @@ impl SpriteCache {
     }
 
     pub fn atlas_texture(&self, atlas_id: usize) -> Option<&metal::TextureRef> {
-        self.atlases.get(atlas_id).map(|a| a.texture.as_ref())
-    }
-}
-
-struct Atlas {
-    allocator: BucketedAtlasAllocator,
-    texture: metal::Texture,
-}
-
-impl Atlas {
-    fn new(device: &metal::DeviceRef, size: Vector2I) -> Self {
-        let descriptor = TextureDescriptor::new();
-        descriptor.set_pixel_format(MTLPixelFormat::A8Unorm);
-        descriptor.set_width(size.x() as u64);
-        descriptor.set_height(size.y() as u64);
-
-        Self {
-            allocator: BucketedAtlasAllocator::new(etagere::Size::new(size.x(), size.y())),
-            texture: device.new_texture(&descriptor),
-        }
-    }
-
-    fn try_insert(&mut self, size: Vector2I, mask: &[u8]) -> Option<RectI> {
-        let allocation = self
-            .allocator
-            .allocate(etagere::size2(size.x() + 1, size.y() + 1))?;
-
-        let bounds = allocation.rectangle;
-        let region = metal::MTLRegion::new_2d(
-            bounds.min.x as u64,
-            bounds.min.y as u64,
-            size.x() as u64,
-            size.y() as u64,
-        );
-        self.texture
-            .replace_region(region, 0, mask.as_ptr() as *const _, size.x() as u64);
-        Some(RectI::from_points(
-            vec2i(bounds.min.x, bounds.min.y),
-            vec2i(bounds.max.x, bounds.max.y),
-        ))
+        self.atlases.texture(atlas_id)
     }
 }

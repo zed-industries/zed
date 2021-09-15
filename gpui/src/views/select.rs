@@ -111,7 +111,7 @@ impl View for Select {
                     mouse_state.hovered,
                     cx,
                 ))
-                .with_style(&style.header)
+                .with_style(style.header)
                 .boxed()
             })
             .on_click(move |cx| cx.dispatch_action(ToggleSelect))
@@ -158,7 +158,7 @@ impl View for Select {
                         .with_max_height(200.)
                         .boxed(),
                     )
-                    .with_style(&style.menu)
+                    .with_style(style.menu)
                     .boxed(),
                 )
                 .boxed(),

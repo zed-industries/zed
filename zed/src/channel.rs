@@ -46,7 +46,7 @@ pub struct Channel {
     _subscription: rpc::Subscription,
 }
 
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug)]
 pub struct ChannelMessage {
     pub id: u64,
     pub body: String,
@@ -118,7 +118,7 @@ impl ChannelList {
                                 cx.notify();
                             });
                         }
-                        rpc::Status::Disconnected { .. } => {
+                        rpc::Status::SignedOut { .. } => {
                             this.update(&mut cx, |this, cx| {
                                 this.available_channels = None;
                                 this.channels.clear();
@@ -443,7 +443,7 @@ impl ChannelMessage {
         message: proto::ChannelMessage,
         user_store: &UserStore,
     ) -> Result<Self> {
-        let sender = user_store.get_user(message.sender_id).await?;
+        let sender = user_store.fetch_user(message.sender_id).await?;
         Ok(ChannelMessage {
             id: message.id,
             body: message.body,
@@ -495,15 +495,17 @@ impl<'a> sum_tree::SeekDimension<'a, ChannelMessageSummary> for Count {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::test::FakeServer;
+    use crate::test::{FakeHttpClient, FakeServer};
     use gpui::TestAppContext;
+    use surf::http::Response;
 
     #[gpui::test]
     async fn test_channel_messages(mut cx: TestAppContext) {
         let user_id = 5;
         let mut client = Client::new();
+        let http_client = FakeHttpClient::new(|_| async move { Ok(Response::new(404)) });
         let server = FakeServer::for_client(user_id, &mut client, &cx).await;
-        let user_store = Arc::new(UserStore::new(client.clone()));
+        let user_store = UserStore::new(client.clone(), http_client, cx.background().as_ref());
 
         let channel_list = cx.add_model(|cx| ChannelList::new(user_store, client.clone(), cx));
         channel_list.read_with(&cx, |list, _| assert_eq!(list.available_channels(), None));

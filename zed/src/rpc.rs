@@ -1,6 +1,10 @@
 use crate::util::ResultExt;
 use anyhow::{anyhow, Context, Result};
-use async_tungstenite::tungstenite::http::Request;
+use async_recursion::async_recursion;
+use async_tungstenite::tungstenite::{
+    error::Error as WebsocketError,
+    http::{Request, StatusCode},
+};
 use gpui::{AsyncAppContext, Entity, ModelContext, Task};
 use lazy_static::lazy_static;
 use parking_lot::RwLock;
@@ -15,10 +19,11 @@ use std::{
     time::{Duration, Instant},
 };
 use surf::Url;
+use thiserror::Error;
 pub use zrpc::{proto, ConnectionId, PeerId, TypedEnvelope};
 use zrpc::{
     proto::{AnyTypedEnvelope, EntityMessage, EnvelopedMessage, RequestMessage},
-    Conn, Peer, Receipt,
+    Connection, Peer, Receipt,
 };
 
 lazy_static! {
@@ -29,37 +34,65 @@ lazy_static! {
 pub struct Client {
     peer: Arc<Peer>,
     state: RwLock<ClientState>,
-    auth_callback: Option<
-        Box<dyn 'static + Send + Sync + Fn(&AsyncAppContext) -> Task<Result<(u64, String)>>>,
+    authenticate:
+        Option<Box<dyn 'static + Send + Sync + Fn(&AsyncAppContext) -> Task<Result<Credentials>>>>,
+    establish_connection: Option<
+        Box<
+            dyn 'static
+                + Send
+                + Sync
+                + Fn(
+                    &Credentials,
+                    &AsyncAppContext,
+                ) -> Task<Result<Connection, EstablishConnectionError>>,
+        >,
     >,
-    connect_callback: Option<
-        Box<dyn 'static + Send + Sync + Fn(u64, &str, &AsyncAppContext) -> Task<Result<Conn>>>,
-    >,
+}
+
+#[derive(Error, Debug)]
+pub enum EstablishConnectionError {
+    #[error("unauthorized")]
+    Unauthorized,
+    #[error("{0}")]
+    Other(#[from] anyhow::Error),
+    #[error("{0}")]
+    Io(#[from] std::io::Error),
+    #[error("{0}")]
+    Http(#[from] async_tungstenite::tungstenite::http::Error),
+}
+
+impl From<WebsocketError> for EstablishConnectionError {
+    fn from(error: WebsocketError) -> Self {
+        if let WebsocketError::Http(response) = &error {
+            if response.status() == StatusCode::UNAUTHORIZED {
+                return EstablishConnectionError::Unauthorized;
+            }
+        }
+        EstablishConnectionError::Other(error.into())
+    }
+}
+
+impl EstablishConnectionError {
+    pub fn other(error: impl Into<anyhow::Error> + Send + Sync) -> Self {
+        Self::Other(error.into())
+    }
 }
 
 #[derive(Copy, Clone, Debug)]
 pub enum Status {
-    Disconnected,
+    SignedOut,
     Authenticating,
-    Connecting {
-        user_id: u64,
-    },
+    Connecting,
     ConnectionError,
-    Connected {
-        connection_id: ConnectionId,
-        user_id: u64,
-    },
+    Connected { connection_id: ConnectionId },
     ConnectionLost,
     Reauthenticating,
-    Reconnecting {
-        user_id: u64,
-    },
-    ReconnectionError {
-        next_reconnection: Instant,
-    },
+    Reconnecting,
+    ReconnectionError { next_reconnection: Instant },
 }
 
 struct ClientState {
+    credentials: Option<Credentials>,
     status: (watch::Sender<Status>, watch::Receiver<Status>),
     entity_id_extractors: HashMap<TypeId, Box<dyn Send + Sync + Fn(&dyn AnyTypedEnvelope) -> u64>>,
     model_handlers: HashMap<
@@ -70,10 +103,17 @@ struct ClientState {
     heartbeat_interval: Duration,
 }
 
+#[derive(Clone)]
+pub struct Credentials {
+    pub user_id: u64,
+    pub access_token: String,
+}
+
 impl Default for ClientState {
     fn default() -> Self {
         Self {
-            status: watch::channel_with(Status::Disconnected),
+            credentials: None,
+            status: watch::channel_with(Status::SignedOut),
             entity_id_extractors: Default::default(),
             model_handlers: Default::default(),
             _maintain_connection: None,
@@ -107,22 +147,38 @@ impl Client {
         Arc::new(Self {
             peer: Peer::new(),
             state: Default::default(),
-            auth_callback: None,
-            connect_callback: None,
+            authenticate: None,
+            establish_connection: None,
         })
     }
 
     #[cfg(any(test, feature = "test-support"))]
-    pub fn set_login_and_connect_callbacks<Login, Connect>(
-        &mut self,
-        login: Login,
-        connect: Connect,
-    ) where
-        Login: 'static + Send + Sync + Fn(&AsyncAppContext) -> Task<Result<(u64, String)>>,
-        Connect: 'static + Send + Sync + Fn(u64, &str, &AsyncAppContext) -> Task<Result<Conn>>,
+    pub fn override_authenticate<F>(&mut self, authenticate: F) -> &mut Self
+    where
+        F: 'static + Send + Sync + Fn(&AsyncAppContext) -> Task<Result<Credentials>>,
     {
-        self.auth_callback = Some(Box::new(login));
-        self.connect_callback = Some(Box::new(connect));
+        self.authenticate = Some(Box::new(authenticate));
+        self
+    }
+
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn override_establish_connection<F>(&mut self, connect: F) -> &mut Self
+    where
+        F: 'static
+            + Send
+            + Sync
+            + Fn(&Credentials, &AsyncAppContext) -> Task<Result<Connection, EstablishConnectionError>>,
+    {
+        self.establish_connection = Some(Box::new(connect));
+        self
+    }
+
+    pub fn user_id(&self) -> Option<u64> {
+        self.state
+            .read()
+            .credentials
+            .as_ref()
+            .map(|credentials| credentials.user_id)
     }
 
     pub fn status(&self) -> watch::Receiver<Status> {
@@ -167,7 +223,7 @@ impl Client {
                     }
                 }));
             }
-            Status::Disconnected => {
+            Status::SignedOut => {
                 state._maintain_connection.take();
             }
             _ => {}
@@ -227,12 +283,13 @@ impl Client {
         }
     }
 
+    #[async_recursion(?Send)]
     pub async fn authenticate_and_connect(
         self: &Arc<Self>,
         cx: &AsyncAppContext,
     ) -> anyhow::Result<()> {
         let was_disconnected = match *self.status().borrow() {
-            Status::Disconnected => true,
+            Status::SignedOut => true,
             Status::ConnectionError | Status::ConnectionLost | Status::ReconnectionError { .. } => {
                 false
             }
@@ -249,33 +306,60 @@ impl Client {
             self.set_status(Status::Reauthenticating, cx)
         }
 
-        let (user_id, access_token) = match self.authenticate(&cx).await {
-            Ok(result) => result,
-            Err(err) => {
-                self.set_status(Status::ConnectionError, cx);
-                return Err(err);
-            }
+        let mut read_from_keychain = false;
+        let credentials = self.state.read().credentials.clone();
+        let credentials = if let Some(credentials) = credentials {
+            credentials
+        } else if let Some(credentials) = read_credentials_from_keychain(cx) {
+            read_from_keychain = true;
+            credentials
+        } else {
+            let credentials = match self.authenticate(&cx).await {
+                Ok(credentials) => credentials,
+                Err(err) => {
+                    self.set_status(Status::ConnectionError, cx);
+                    return Err(err);
+                }
+            };
+            self.state.write().credentials = Some(credentials.clone());
+            credentials
         };
 
         if was_disconnected {
-            self.set_status(Status::Connecting { user_id }, cx);
+            self.set_status(Status::Connecting, cx);
         } else {
-            self.set_status(Status::Reconnecting { user_id }, cx);
+            self.set_status(Status::Reconnecting, cx);
         }
-        match self.connect(user_id, &access_token, cx).await {
+
+        match self.establish_connection(&credentials, cx).await {
             Ok(conn) => {
                 log::info!("connected to rpc address {}", *ZED_SERVER_URL);
-                self.set_connection(user_id, conn, cx).await;
+                if !read_from_keychain {
+                    write_credentials_to_keychain(&credentials, cx).log_err();
+                }
+                self.set_connection(conn, cx).await;
                 Ok(())
             }
             Err(err) => {
-                self.set_status(Status::ConnectionError, cx);
-                Err(err)
+                if matches!(err, EstablishConnectionError::Unauthorized) {
+                    self.state.write().credentials.take();
+                    cx.platform().delete_credentials(&ZED_SERVER_URL).log_err();
+                    if read_from_keychain {
+                        self.set_status(Status::SignedOut, cx);
+                        self.authenticate_and_connect(cx).await
+                    } else {
+                        self.set_status(Status::ConnectionError, cx);
+                        Err(err)?
+                    }
+                } else {
+                    self.set_status(Status::ConnectionError, cx);
+                    Err(err)?
+                }
             }
         }
     }
 
-    async fn set_connection(self: &Arc<Self>, user_id: u64, conn: Conn, cx: &AsyncAppContext) {
+    async fn set_connection(self: &Arc<Self>, conn: Connection, cx: &AsyncAppContext) {
         let (connection_id, handle_io, mut incoming) = self.peer.add_connection(conn).await;
         cx.foreground()
             .spawn({
@@ -310,13 +394,7 @@ impl Client {
             })
             .detach();
 
-        self.set_status(
-            Status::Connected {
-                connection_id,
-                user_id,
-            },
-            cx,
-        );
+        self.set_status(Status::Connected { connection_id }, cx);
 
         let handle_io = cx.background().spawn(handle_io);
         let this = self.clone();
@@ -324,7 +402,7 @@ impl Client {
         cx.foreground()
             .spawn(async move {
                 match handle_io.await {
-                    Ok(()) => this.set_status(Status::Disconnected, &cx),
+                    Ok(()) => this.set_status(Status::SignedOut, &cx),
                     Err(err) => {
                         log::error!("connection error: {:?}", err);
                         this.set_status(Status::ConnectionLost, &cx);
@@ -334,52 +412,49 @@ impl Client {
             .detach();
     }
 
-    fn authenticate(self: &Arc<Self>, cx: &AsyncAppContext) -> Task<Result<(u64, String)>> {
-        if let Some(callback) = self.auth_callback.as_ref() {
+    fn authenticate(self: &Arc<Self>, cx: &AsyncAppContext) -> Task<Result<Credentials>> {
+        if let Some(callback) = self.authenticate.as_ref() {
             callback(cx)
         } else {
             self.authenticate_with_browser(cx)
         }
     }
 
-    fn connect(
+    fn establish_connection(
         self: &Arc<Self>,
-        user_id: u64,
-        access_token: &str,
+        credentials: &Credentials,
         cx: &AsyncAppContext,
-    ) -> Task<Result<Conn>> {
-        if let Some(callback) = self.connect_callback.as_ref() {
-            callback(user_id, access_token, cx)
+    ) -> Task<Result<Connection, EstablishConnectionError>> {
+        if let Some(callback) = self.establish_connection.as_ref() {
+            callback(credentials, cx)
         } else {
-            self.connect_with_websocket(user_id, access_token, cx)
+            self.establish_websocket_connection(credentials, cx)
         }
     }
 
-    fn connect_with_websocket(
+    fn establish_websocket_connection(
         self: &Arc<Self>,
-        user_id: u64,
-        access_token: &str,
+        credentials: &Credentials,
         cx: &AsyncAppContext,
-    ) -> Task<Result<Conn>> {
-        let request =
-            Request::builder().header("Authorization", format!("{} {}", user_id, access_token));
+    ) -> Task<Result<Connection, EstablishConnectionError>> {
+        let request = Request::builder().header(
+            "Authorization",
+            format!("{} {}", credentials.user_id, credentials.access_token),
+        );
         cx.background().spawn(async move {
             if let Some(host) = ZED_SERVER_URL.strip_prefix("https://") {
                 let stream = smol::net::TcpStream::connect(host).await?;
                 let request = request.uri(format!("wss://{}/rpc", host)).body(())?;
-                let (stream, _) = async_tungstenite::async_tls::client_async_tls(request, stream)
-                    .await
-                    .context("websocket handshake")?;
-                Ok(Conn::new(stream))
+                let (stream, _) =
+                    async_tungstenite::async_tls::client_async_tls(request, stream).await?;
+                Ok(Connection::new(stream))
             } else if let Some(host) = ZED_SERVER_URL.strip_prefix("http://") {
                 let stream = smol::net::TcpStream::connect(host).await?;
                 let request = request.uri(format!("ws://{}/rpc", host)).body(())?;
-                let (stream, _) = async_tungstenite::client_async(request, stream)
-                    .await
-                    .context("websocket handshake")?;
-                Ok(Conn::new(stream))
+                let (stream, _) = async_tungstenite::client_async(request, stream).await?;
+                Ok(Connection::new(stream))
             } else {
-                Err(anyhow!("invalid server url: {}", *ZED_SERVER_URL))
+                Err(anyhow!("invalid server url: {}", *ZED_SERVER_URL))?
             }
         })
     }
@@ -387,19 +462,10 @@ impl Client {
     pub fn authenticate_with_browser(
         self: &Arc<Self>,
         cx: &AsyncAppContext,
-    ) -> Task<Result<(u64, String)>> {
+    ) -> Task<Result<Credentials>> {
         let platform = cx.platform();
         let executor = cx.background();
         executor.clone().spawn(async move {
-            if let Some((user_id, access_token)) = platform
-                .read_credentials(&ZED_SERVER_URL)
-                .log_err()
-                .flatten()
-            {
-                log::info!("already signed in. user_id: {}", user_id);
-                return Ok((user_id.parse()?, String::from_utf8(access_token).unwrap()));
-            }
-
             // Generate a pair of asymmetric encryption keys. The public key will be used by the
             // zed server to encrypt the user's access token, so that it can'be intercepted by
             // any other app running on the user's device.
@@ -460,17 +526,18 @@ impl Client {
                 .decrypt_string(&access_token)
                 .context("failed to decrypt access token")?;
             platform.activate(true);
-            platform
-                .write_credentials(&ZED_SERVER_URL, &user_id, access_token.as_bytes())
-                .log_err();
-            Ok((user_id.parse()?, access_token))
+
+            Ok(Credentials {
+                user_id: user_id.parse()?,
+                access_token,
+            })
         })
     }
 
     pub async fn disconnect(self: &Arc<Self>, cx: &AsyncAppContext) -> Result<()> {
         let conn_id = self.connection_id()?;
         self.peer.disconnect(conn_id).await;
-        self.set_status(Status::Disconnected, cx);
+        self.set_status(Status::SignedOut, cx);
         Ok(())
     }
 
@@ -497,6 +564,26 @@ impl Client {
     ) -> impl Future<Output = Result<()>> {
         self.peer.respond(receipt, response)
     }
+}
+
+fn read_credentials_from_keychain(cx: &AsyncAppContext) -> Option<Credentials> {
+    let (user_id, access_token) = cx
+        .platform()
+        .read_credentials(&ZED_SERVER_URL)
+        .log_err()
+        .flatten()?;
+    Some(Credentials {
+        user_id: user_id.parse().ok()?,
+        access_token: String::from_utf8(access_token).ok()?,
+    })
+}
+
+fn write_credentials_to_keychain(credentials: &Credentials, cx: &AsyncAppContext) -> Result<()> {
+    cx.platform().write_credentials(
+        &ZED_SERVER_URL,
+        &credentials.user_id.to_string(),
+        credentials.access_token.as_bytes(),
+    )
 }
 
 const WORKTREE_URL_PREFIX: &'static str = "zed://worktrees/";
@@ -561,6 +648,7 @@ mod tests {
             status.recv().await,
             Some(Status::Connected { .. })
         ));
+        assert_eq!(server.auth_count(), 1);
 
         server.forbid_connections();
         server.disconnect().await;
@@ -569,6 +657,20 @@ mod tests {
         server.allow_connections();
         cx.foreground().advance_clock(Duration::from_secs(10));
         while !matches!(status.recv().await, Some(Status::Connected { .. })) {}
+        assert_eq!(server.auth_count(), 1); // Client reused the cached credentials when reconnecting
+
+        server.forbid_connections();
+        server.disconnect().await;
+        while !matches!(status.recv().await, Some(Status::ReconnectionError { .. })) {}
+
+        // Clear cached credentials after authentication fails
+        server.roll_access_token();
+        server.allow_connections();
+        cx.foreground().advance_clock(Duration::from_secs(10));
+        assert_eq!(server.auth_count(), 1);
+        cx.foreground().advance_clock(Duration::from_secs(10));
+        while !matches!(status.recv().await, Some(Status::Connected { .. })) {}
+        assert_eq!(server.auth_count(), 2); // Client re-authenticated due to an invalid token
     }
 
     #[test]

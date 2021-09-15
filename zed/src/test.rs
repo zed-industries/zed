@@ -2,28 +2,31 @@ use crate::{
     assets::Assets,
     channel::ChannelList,
     fs::RealFs,
+    http::{HttpClient, Request, Response, ServerResponse},
     language::LanguageRegistry,
-    rpc::{self, Client},
+    rpc::{self, Client, Credentials, EstablishConnectionError},
     settings::{self, ThemeRegistry},
     time::ReplicaId,
     user::UserStore,
     AppState,
 };
 use anyhow::{anyhow, Result};
+use futures::{future::BoxFuture, Future};
 use gpui::{AsyncAppContext, Entity, ModelHandle, MutableAppContext, TestAppContext};
 use parking_lot::Mutex;
 use postage::{mpsc, prelude::Stream as _};
 use smol::channel;
 use std::{
+    fmt,
     marker::PhantomData,
     path::{Path, PathBuf},
     sync::{
-        atomic::{AtomicBool, Ordering::SeqCst},
+        atomic::{AtomicBool, AtomicUsize, Ordering::SeqCst},
         Arc,
     },
 };
 use tempdir::TempDir;
-use zrpc::{proto, Conn, ConnectionId, Peer, Receipt, TypedEnvelope};
+use zrpc::{proto, Connection, ConnectionId, Peer, Receipt, TypedEnvelope};
 
 #[cfg(test)]
 #[ctor::ctor]
@@ -164,14 +167,16 @@ pub fn test_app_state(cx: &mut MutableAppContext) -> Arc<AppState> {
     let languages = Arc::new(LanguageRegistry::new());
     let themes = ThemeRegistry::new(Assets, cx.font_cache().clone());
     let rpc = rpc::Client::new();
-    let user_store = Arc::new(UserStore::new(rpc.clone()));
+    let http = FakeHttpClient::new(|_| async move { Ok(ServerResponse::new(404)) });
+    let user_store = UserStore::new(rpc.clone(), http, cx.background());
     Arc::new(AppState {
         settings_tx: Arc::new(Mutex::new(settings_tx)),
         settings,
         themes,
         languages: languages.clone(),
-        channel_list: cx.add_model(|cx| ChannelList::new(user_store, rpc.clone(), cx)),
+        channel_list: cx.add_model(|cx| ChannelList::new(user_store.clone(), rpc.clone(), cx)),
         rpc,
+        user_store,
         fs: Arc::new(RealFs),
     })
 }
@@ -204,6 +209,9 @@ pub struct FakeServer {
     incoming: Mutex<Option<mpsc::Receiver<Box<dyn proto::AnyTypedEnvelope>>>>,
     connection_id: Mutex<Option<ConnectionId>>,
     forbid_connections: AtomicBool,
+    auth_count: AtomicUsize,
+    access_token: AtomicUsize,
+    user_id: u64,
 }
 
 impl FakeServer {
@@ -212,40 +220,47 @@ impl FakeServer {
         client: &mut Arc<Client>,
         cx: &TestAppContext,
     ) -> Arc<Self> {
-        let result = Arc::new(Self {
+        let server = Arc::new(Self {
             peer: Peer::new(),
             incoming: Default::default(),
             connection_id: Default::default(),
             forbid_connections: Default::default(),
+            auth_count: Default::default(),
+            access_token: Default::default(),
+            user_id: client_user_id,
         });
 
         Arc::get_mut(client)
             .unwrap()
-            .set_login_and_connect_callbacks(
+            .override_authenticate({
+                let server = server.clone();
                 move |cx| {
-                    cx.spawn(|_| async move {
-                        let access_token = "the-token".to_string();
-                        Ok((client_user_id, access_token))
-                    })
-                },
-                {
-                    let server = result.clone();
-                    move |user_id, access_token, cx| {
-                        assert_eq!(user_id, client_user_id);
-                        assert_eq!(access_token, "the-token");
-                        cx.spawn({
-                            let server = server.clone();
-                            move |cx| async move { server.connect(&cx).await }
+                    server.auth_count.fetch_add(1, SeqCst);
+                    let access_token = server.access_token.load(SeqCst).to_string();
+                    cx.spawn(move |_| async move {
+                        Ok(Credentials {
+                            user_id: client_user_id,
+                            access_token,
                         })
-                    }
-                },
-            );
+                    })
+                }
+            })
+            .override_establish_connection({
+                let server = server.clone();
+                move |credentials, cx| {
+                    let credentials = credentials.clone();
+                    cx.spawn({
+                        let server = server.clone();
+                        move |cx| async move { server.establish_connection(&credentials, &cx).await }
+                    })
+                }
+            });
 
         client
             .authenticate_and_connect(&cx.to_async())
             .await
             .unwrap();
-        result
+        server
     }
 
     pub async fn disconnect(&self) {
@@ -254,17 +269,37 @@ impl FakeServer {
         self.incoming.lock().take();
     }
 
-    async fn connect(&self, cx: &AsyncAppContext) -> Result<Conn> {
+    async fn establish_connection(
+        &self,
+        credentials: &Credentials,
+        cx: &AsyncAppContext,
+    ) -> Result<Connection, EstablishConnectionError> {
+        assert_eq!(credentials.user_id, self.user_id);
+
         if self.forbid_connections.load(SeqCst) {
-            Err(anyhow!("server is forbidding connections"))
-        } else {
-            let (client_conn, server_conn, _) = Conn::in_memory();
-            let (connection_id, io, incoming) = self.peer.add_connection(server_conn).await;
-            cx.background().spawn(io).detach();
-            *self.incoming.lock() = Some(incoming);
-            *self.connection_id.lock() = Some(connection_id);
-            Ok(client_conn)
+            Err(EstablishConnectionError::Other(anyhow!(
+                "server is forbidding connections"
+            )))?
         }
+
+        if credentials.access_token != self.access_token.load(SeqCst).to_string() {
+            Err(EstablishConnectionError::Unauthorized)?
+        }
+
+        let (client_conn, server_conn, _) = Connection::in_memory();
+        let (connection_id, io, incoming) = self.peer.add_connection(server_conn).await;
+        cx.background().spawn(io).detach();
+        *self.incoming.lock() = Some(incoming);
+        *self.connection_id.lock() = Some(connection_id);
+        Ok(client_conn)
+    }
+
+    pub fn auth_count(&self) -> usize {
+        self.auth_count.load(SeqCst)
+    }
+
+    pub fn roll_access_token(&self) {
+        self.access_token.fetch_add(1, SeqCst);
     }
 
     pub fn forbid_connections(&self) {
@@ -310,5 +345,35 @@ impl FakeServer {
 
     fn connection_id(&self) -> ConnectionId {
         self.connection_id.lock().expect("not connected")
+    }
+}
+
+pub struct FakeHttpClient {
+    handler:
+        Box<dyn 'static + Send + Sync + Fn(Request) -> BoxFuture<'static, Result<ServerResponse>>>,
+}
+
+impl FakeHttpClient {
+    pub fn new<Fut, F>(handler: F) -> Arc<dyn HttpClient>
+    where
+        Fut: 'static + Send + Future<Output = Result<ServerResponse>>,
+        F: 'static + Send + Sync + Fn(Request) -> Fut,
+    {
+        Arc::new(Self {
+            handler: Box::new(move |req| Box::pin(handler(req))),
+        })
+    }
+}
+
+impl fmt::Debug for FakeHttpClient {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("FakeHttpClient").finish()
+    }
+}
+
+impl HttpClient for FakeHttpClient {
+    fn send<'a>(&'a self, req: Request) -> BoxFuture<'a, Result<Response>> {
+        let future = (self.handler)(req);
+        Box::pin(async move { future.await.map(Into::into) })
     }
 }
