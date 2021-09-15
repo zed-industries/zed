@@ -581,6 +581,7 @@ mod tests {
             status.recv().await,
             Some(Status::Connected { .. })
         ));
+        assert_eq!(server.auth_count(), 1);
 
         server.forbid_connections();
         server.disconnect().await;
@@ -589,6 +590,7 @@ mod tests {
         server.allow_connections();
         cx.foreground().advance_clock(Duration::from_secs(10));
         while !matches!(status.recv().await, Some(Status::Connected { .. })) {}
+        assert_eq!(server.auth_count(), 1); // Client reused the cached credentials when reconnecting
     }
 
     #[test]
