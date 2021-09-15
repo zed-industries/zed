@@ -18,6 +18,7 @@ test-support = ["tempdir", "zrpc/test-support"]
 
 [dependencies]
 anyhow = "1.0.38"
+async-recursion = "0.3"
 async-trait = "0.1"
 arrayvec = "0.7.1"
 async-tungstenite = { version = "0.14", features = ["async-tls"] }

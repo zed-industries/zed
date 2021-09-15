@@ -1,5 +1,6 @@
 use crate::util::ResultExt;
 use anyhow::{anyhow, Context, Result};
+use async_recursion::async_recursion;
 use async_tungstenite::tungstenite::{
     error::Error as WebsocketError,
     http::{Request, StatusCode},
@@ -282,6 +283,7 @@ impl Client {
         }
     }
 
+    #[async_recursion(?Send)]
     pub async fn authenticate_and_connect(
         self: &Arc<Self>,
         cx: &AsyncAppContext,
@@ -304,8 +306,12 @@ impl Client {
             self.set_status(Status::Reauthenticating, cx)
         }
 
+        let mut read_from_keychain = false;
         let credentials = self.state.read().credentials.clone();
         let credentials = if let Some(credentials) = credentials {
+            credentials
+        } else if let Some(credentials) = read_credentials_from_keychain(cx) {
+            read_from_keychain = true;
             credentials
         } else {
             let credentials = match self.authenticate(&cx).await {
@@ -328,16 +334,27 @@ impl Client {
         match self.establish_connection(&credentials, cx).await {
             Ok(conn) => {
                 log::info!("connected to rpc address {}", *ZED_SERVER_URL);
+                if !read_from_keychain {
+                    write_credentials_to_keychain(&credentials, cx).log_err();
+                }
                 self.set_connection(conn, cx).await;
                 Ok(())
             }
             Err(err) => {
                 if matches!(err, EstablishConnectionError::Unauthorized) {
                     self.state.write().credentials.take();
-                    cx.platform().delete_credentials(&ZED_SERVER_URL).ok();
+                    cx.platform().delete_credentials(&ZED_SERVER_URL).log_err();
+                    if read_from_keychain {
+                        self.set_status(Status::SignedOut, cx);
+                        self.authenticate_and_connect(cx).await
+                    } else {
+                        self.set_status(Status::ConnectionError, cx);
+                        Err(err)?
+                    }
+                } else {
+                    self.set_status(Status::ConnectionError, cx);
+                    Err(err)?
                 }
-                self.set_status(Status::ConnectionError, cx);
-                Err(err)?
             }
         }
     }
@@ -449,18 +466,6 @@ impl Client {
         let platform = cx.platform();
         let executor = cx.background();
         executor.clone().spawn(async move {
-            if let Some((user_id, access_token)) = platform
-                .read_credentials(&ZED_SERVER_URL)
-                .log_err()
-                .flatten()
-            {
-                log::info!("already signed in. user_id: {}", user_id);
-                return Ok(Credentials {
-                    user_id: user_id.parse()?,
-                    access_token: String::from_utf8(access_token).unwrap(),
-                });
-            }
-
             // Generate a pair of asymmetric encryption keys. The public key will be used by the
             // zed server to encrypt the user's access token, so that it can'be intercepted by
             // any other app running on the user's device.
@@ -521,9 +526,6 @@ impl Client {
                 .decrypt_string(&access_token)
                 .context("failed to decrypt access token")?;
             platform.activate(true);
-            platform
-                .write_credentials(&ZED_SERVER_URL, &user_id, access_token.as_bytes())
-                .log_err();
 
             Ok(Credentials {
                 user_id: user_id.parse()?,
@@ -562,6 +564,26 @@ impl Client {
     ) -> impl Future<Output = Result<()>> {
         self.peer.respond(receipt, response)
     }
+}
+
+fn read_credentials_from_keychain(cx: &AsyncAppContext) -> Option<Credentials> {
+    let (user_id, access_token) = cx
+        .platform()
+        .read_credentials(&ZED_SERVER_URL)
+        .log_err()
+        .flatten()?;
+    Some(Credentials {
+        user_id: user_id.parse().ok()?,
+        access_token: String::from_utf8(access_token).ok()?,
+    })
+}
+
+fn write_credentials_to_keychain(credentials: &Credentials, cx: &AsyncAppContext) -> Result<()> {
+    cx.platform().write_credentials(
+        &ZED_SERVER_URL,
+        &credentials.user_id.to_string(),
+        credentials.access_token.as_bytes(),
+    )
 }
 
 const WORKTREE_URL_PREFIX: &'static str = "zed://worktrees/";
