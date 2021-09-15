@@ -1,33 +1,4 @@
 {{#> layout }}
-{{#if releases}}
-
-<div class="bg-white">
-    <div class="container mx-auto py-12 px-8 md:px-12">
-        {{#each releases}}
-        <div class="md:flex md:flex-row mb-32 md:mb-12">
-            <div class="font-display mb-8 md:mb-0 md:text-right w-48">
-                <div class="text-2xl font-bold whitespace-nowrap">
-                    VERSION {{name}}
-                </div>
-                <a class="text-md underline text-yellow-600 hover:text-yellow-700"
-                    href="/releases/{{tag_name}}/{{assets.0.name}}">
-                    DOWNLOAD
-                </a>
-            </div>
-            <div
-                class="prose prose-lg xl:prose-xl border-t md:border-t-0 pt-8 md:border-l border-gray-400 md:ml-8 md:pl-8 md:pt-0 xl:ml-16 xl:pl-16 max-w-5xl font-body">
-                {{{body}}}
-            </div>
-        </div>
-        {{/each}}
-    </div>
-</div>
-
-{{else}}
-
-<div class="bg-dotgrid-sm md:bg-dotgrid-md lg:bg-dotgrid-lg">
-    <img src="/static/svg/hero.svg" class="container mx-auto px-8 md:px-12 py-16 md:py-24 lg:py-32" />
-</div>
 
 <div class="container mx-auto py-24 lg:py-32 px-8 md:px-12 lg:flex lg:flex-row lg:items-center">
     <div class="prose prose-xl md:prose-2xl text-gray-50 prose-gray-50 w-full lg:w-1/2">
@@ -59,5 +30,4 @@
     </form>
 </div>
 
-{{/if}}
 {{/layout}}
