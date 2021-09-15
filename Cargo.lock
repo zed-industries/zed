@@ -5917,6 +5917,7 @@ dependencies = [
  "http-auth-basic",
  "ignore",
  "image 0.23.14",
+ "indexmap",
  "lazy_static",
  "libc",
  "log",

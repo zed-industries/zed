@@ -1,5 +1,5 @@
 mod highlight_map;
-mod resolve_tree;
+mod resolution;
 mod theme_registry;
 
 use anyhow::Result;
