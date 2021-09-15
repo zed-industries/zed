@@ -1,33 +1,18 @@
 {{#> layout }}
 
-<div class="container mx-auto py-24 lg:py-32 px-8 md:px-12 lg:flex lg:flex-row lg:items-center">
-    <div class="prose prose-xl md:prose-2xl text-gray-50 prose-gray-50 w-full lg:w-1/2">
-        <h1>Meet Zed, a lightning fast code editor written natively in Rust.</h1>
-        <p>
-            Level up your development process with
-            <ul>
-                <li>a lightning fast code editor</li>
-                <li>real time collaboration on any work tree</li>
-                <li>powerful code annotation tools</li>
-                <li>the ability to rewind time to any point</li>
-            </ul>
-        </p>
-        <p>Early access to Zed will open up mid-2022 for small teams and individuals. Be the first in line.</p>
-        <p>Read our story.</p>
-    </div>
-
-    <form class="my-16 lg:my-0 lg:ml-16 flex-1 text-xl md:text-2xl" action="/signups" method="post">
-        <input name="github_login" placeholder="@github_handle"
-            class="w-3/5 xl:w-1/2 p-3 mb-8 block bg-gray-50 placeholder-gray-500">
-        <input name="email_address" placeholder="email@addre.ss"
-            class="w-4/5 xl:w-3/4 p-3 my-8 block bg-gray-50 placeholder-gray-500">
-        <textarea name="about" class="block w-full xl:w-full h-48 p-3 my-8 bg-gray-50 placeholder-gray-500 my-6"
-            placeholder="Please tell us a bit about you and why you're interested in Zed. What code editor do you use today? What do you love and hate about it?"></textarea>
-        <button
-            class="p-4 rounded-md text-gray-50 bg-gray-500 inline-block cursor-pointer hover:bg-gray-400 font-display">
-            ENGAGE
-        </button>
-    </form>
+<div class="container mx-auto max-w-screen-md p-10 pt-20">
+    <h1 class="text-white text-4xl font-extralight mb-10">Meet Zed&mdash;A lightning fast code editor written natively in Rust.</h1>
+    <p class="text-xl leading-7">
+        Level up your development process with:
+        <ul class="mt-2 ml-5 list-disc text-xl leading-7">
+            <li>a lightning fast code editor</li>
+            <li>real time collaboration on any work tree</li>
+            <li>powerful code annotation tools</li>
+            <li>the ability to rewind time to any point</li>
+        </ul>
+    </p>
+    <p class="text-xl mt-10 leading-8">Early access to Zed will open up mid-2022 for small teams and individuals. Be the first in line.</p>
+    <p class="text-xl mt-10 leading-7">Read our story.</p>
 </div>
 
 {{/layout}}

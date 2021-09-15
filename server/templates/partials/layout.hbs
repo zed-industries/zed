@@ -1,4 +1,4 @@
-<html class="w-full">
+<html>
 
 <head>
     <link rel="icon" href="/static/images/favicon.png">
@@ -22,9 +22,9 @@
     </script>
 </head>
 
-<body class="box-border font-body bg-black w-full">
-    <main class="flex text-gray-50 w-full h-screen m-px border border-white">
-        <nav class="flex-initial flex flex-col w-1/5 p-10 border-r border-white"">
+<body class="box-border font-body bg-black flex w-full h-full overflow-hidden p-10">
+    <main class="flex-1 flex text-gray-50 border border-white">
+        <nav class="flex-initial flex flex-col w-1/5 p-10 border-r border-white">
             <a href="/" class="font-display">
                 <svg width="57" height="16" fill="none" xmlns="http://www.w3.org/2000/svg">
                     <mask id="path-2-inside-1" fill="white">
@@ -48,16 +48,16 @@
                 </svg>
             </a>
             <div class="font-mono flex flex-col mt-10">
-                <a href="/app" class="text-xl lowercase underline hover:no-underline mt-2">
-                    About
+                <a href="/story" class="text-xl lowercase underline hover:no-underline mt-2">
+                    Our Story
                 </a>
-                <a href="/team" class="text-xl lowercase underline hover:no-underline mt-2">
-                    Tech
+                <a href="/tech" class="text-xl lowercase underline hover:no-underline mt-2">
+                    The Tech
                 </a>
                 <a href="/team" class="text-xl lowercase underline hover:no-underline mt-2">
                     Team
                 </a>
-                <a href="/team" class="text-xl lowercase underline hover:no-underline mt-2">
+                <a href="/community" class="text-xl lowercase underline hover:no-underline mt-2">
                     Community
                 </a>
             </div>
@@ -67,10 +67,10 @@
             {{#if current_user}}
             <div class="font-mono flex flex-col mt-10">
                 <p class="text-xs tracking-widest uppercase">Insider Zone</p>
-                <a href="/another" class="text-xl lowercase underline hover:no-underline mt-2">
+                <a href="/updates" class="text-xl lowercase underline hover:no-underline mt-2">
                     Updates
                 </a>
-                <a href="/another" class="text-xl lowercase underline hover:no-underline mt-2">
+                <a href="/releases" class="text-xl lowercase underline hover:no-underline mt-2">
                     Releases
                 </a>
             </div>
@@ -104,7 +104,7 @@
             {{/if}}
         </nav>
 
-        <div class="flex-1">
+        <div class="flex-1 max-w-screen-xl border-r border-white">
             {{> @partial-block}}
         </div>
     </main>
