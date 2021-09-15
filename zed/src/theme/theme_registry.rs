@@ -327,6 +327,24 @@ impl KeyPathReferenceSet {
                 );
             }
         }
+
+        // If an existing reference's target path is a prefix of the new reference's target path,
+        // then insert this new reference before that existing reference.
+        for prefix in new_reference.target.prefixes() {
+            for id in Self::reference_ids_for_key_path(
+                prefix,
+                &self.references,
+                &self.reference_ids_by_target,
+                KeyPathReference::target,
+                PartialEq::eq,
+            ) {
+                Self::add_dependency(
+                    (new_id, id),
+                    &mut self.dependencies,
+                    &mut self.dependency_counts,
+                );
+            }
+        }
     }
 
     // Find all existing references that satisfy a given predicate with respect
@@ -616,6 +634,38 @@ mod tests {
                 "dull": "#dddddd"
               }
             })
+        );
+    }
+
+    #[gpui::test]
+    fn test_nested_extension(cx: &mut MutableAppContext) {
+        let assets = TestAssets(&[(
+            "themes/theme.toml",
+            r##"
+                [a]
+                text = { extends = "$text.0" }
+
+                [b]
+                extends = "$a"
+                text = { extends = "$text.1" }
+
+                [text]
+                0 = { color = "red" }
+                1 = { color = "blue" }
+            "##,
+        )]);
+
+        let registry = ThemeRegistry::new(assets, cx.font_cache().clone());
+        let theme_data = registry.load("theme", true).unwrap();
+        assert_eq!(
+            theme_data
+                .get("b")
+                .unwrap()
+                .get("text")
+                .unwrap()
+                .get("color")
+                .unwrap(),
+            "blue"
         );
     }
 

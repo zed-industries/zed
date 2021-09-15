@@ -95,6 +95,7 @@ pub struct ChatPanel {
     #[serde(flatten)]
     pub container: ContainerStyle,
     pub message: ChatMessage,
+    pub pending_message: ChatMessage,
     pub channel_select: ChannelSelect,
     pub input_editor: InputEditorStyle,
     pub sign_in_prompt: TextStyle,

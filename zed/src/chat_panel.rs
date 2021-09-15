@@ -230,7 +230,12 @@ impl ChatPanel {
     fn render_message(&self, message: &ChannelMessage) -> ElementBox {
         let now = OffsetDateTime::now_utc();
         let settings = self.settings.borrow();
-        let theme = &settings.theme.chat_panel.message;
+        let theme = if message.is_pending() {
+            &settings.theme.chat_panel.pending_message
+        } else {
+            &settings.theme.chat_panel.message
+        };
+
         Container::new(
             Flex::column()
                 .with_child(

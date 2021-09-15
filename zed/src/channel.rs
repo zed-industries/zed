@@ -1,7 +1,7 @@
 use crate::{
     rpc::{self, Client},
     user::{User, UserStore},
-    util::TryFutureExt,
+    util::{post_inc, TryFutureExt},
 };
 use anyhow::{anyhow, Context, Result};
 use gpui::{
@@ -39,8 +39,7 @@ pub struct Channel {
     details: ChannelDetails,
     messages: SumTree<ChannelMessage>,
     loaded_all_messages: bool,
-    pending_messages: Vec<PendingChannelMessage>,
-    next_local_message_id: u64,
+    next_pending_message_id: usize,
     user_store: Arc<UserStore>,
     rpc: Arc<Client>,
     _subscription: rpc::Subscription,
@@ -48,20 +47,21 @@ pub struct Channel {
 
 #[derive(Clone, Debug)]
 pub struct ChannelMessage {
-    pub id: u64,
+    pub id: ChannelMessageId,
     pub body: String,
     pub timestamp: OffsetDateTime,
     pub sender: Arc<User>,
 }
 
-pub struct PendingChannelMessage {
-    pub body: String,
-    local_id: u64,
+#[derive(Copy, Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
+pub enum ChannelMessageId {
+    Saved(u64),
+    Pending(usize),
 }
 
 #[derive(Clone, Debug, Default)]
 pub struct ChannelMessageSummary {
-    max_id: u64,
+    max_id: ChannelMessageId,
     count: usize,
 }
 
@@ -216,9 +216,8 @@ impl Channel {
             user_store,
             rpc,
             messages: Default::default(),
-            pending_messages: Default::default(),
             loaded_all_messages: false,
-            next_local_message_id: 0,
+            next_pending_message_id: 0,
             _subscription,
         }
     }
@@ -236,13 +235,27 @@ impl Channel {
             Err(anyhow!("message body can't be empty"))?;
         }
 
+        let current_user = self
+            .user_store
+            .current_user()
+            .borrow()
+            .clone()
+            .ok_or_else(|| anyhow!("current_user is not present"))?;
+
         let channel_id = self.details.id;
-        let local_id = self.next_local_message_id;
-        self.next_local_message_id += 1;
-        self.pending_messages.push(PendingChannelMessage {
-            local_id,
-            body: body.clone(),
-        });
+        let pending_id = ChannelMessageId::Pending(post_inc(&mut self.next_pending_message_id));
+        self.insert_messages(
+            SumTree::from_item(
+                ChannelMessage {
+                    id: pending_id,
+                    body: body.clone(),
+                    sender: current_user,
+                    timestamp: OffsetDateTime::now_utc(),
+                },
+                &(),
+            ),
+            cx,
+        );
         let user_store = self.user_store.clone();
         let rpc = self.rpc.clone();
         Ok(cx.spawn(|this, mut cx| async move {
@@ -254,13 +267,8 @@ impl Channel {
             )
             .await?;
             this.update(&mut cx, |this, cx| {
-                if let Ok(i) = this
-                    .pending_messages
-                    .binary_search_by_key(&local_id, |msg| msg.local_id)
-                {
-                    this.pending_messages.remove(i);
-                    this.insert_messages(SumTree::from_item(message, &()), cx);
-                }
+                this.remove_message(pending_id, cx);
+                this.insert_messages(SumTree::from_item(message, &()), cx);
                 Ok(())
             })
         }))
@@ -271,7 +279,12 @@ impl Channel {
             let rpc = self.rpc.clone();
             let user_store = self.user_store.clone();
             let channel_id = self.details.id;
-            if let Some(before_message_id) = self.messages.first().map(|message| message.id) {
+            if let Some(before_message_id) =
+                self.messages.first().and_then(|message| match message.id {
+                    ChannelMessageId::Saved(id) => Some(id),
+                    ChannelMessageId::Pending(_) => None,
+                })
+            {
                 cx.spawn(|this, mut cx| {
                     async move {
                         let response = rpc
@@ -354,10 +367,6 @@ impl Channel {
         cursor.take(range.len())
     }
 
-    pub fn pending_messages(&self) -> &[PendingChannelMessage] {
-        &self.pending_messages
-    }
-
     fn handle_message_sent(
         &mut self,
         message: TypedEnvelope<ChannelMessageSent>,
@@ -384,9 +393,30 @@ impl Channel {
         Ok(())
     }
 
+    fn remove_message(&mut self, message_id: ChannelMessageId, cx: &mut ModelContext<Self>) {
+        let mut old_cursor = self.messages.cursor::<ChannelMessageId, Count>();
+        let mut new_messages = old_cursor.slice(&message_id, Bias::Left, &());
+        let start_ix = old_cursor.sum_start().0;
+        let removed_messages = old_cursor.slice(&message_id, Bias::Right, &());
+        let removed_count = removed_messages.summary().count;
+        new_messages.push_tree(old_cursor.suffix(&()), &());
+
+        drop(old_cursor);
+        self.messages = new_messages;
+
+        if removed_count > 0 {
+            let end_ix = start_ix + removed_count;
+            cx.emit(ChannelEvent::MessagesUpdated {
+                old_range: start_ix..end_ix,
+                new_count: 0,
+            });
+            cx.notify();
+        }
+    }
+
     fn insert_messages(&mut self, messages: SumTree<ChannelMessage>, cx: &mut ModelContext<Self>) {
         if let Some((first_message, last_message)) = messages.first().zip(messages.last()) {
-            let mut old_cursor = self.messages.cursor::<u64, Count>();
+            let mut old_cursor = self.messages.cursor::<ChannelMessageId, Count>();
             let mut new_messages = old_cursor.slice(&first_message.id, Bias::Left, &());
             let start_ix = old_cursor.sum_start().0;
             let removed_messages = old_cursor.slice(&last_message.id, Bias::Right, &());
@@ -445,11 +475,15 @@ impl ChannelMessage {
     ) -> Result<Self> {
         let sender = user_store.fetch_user(message.sender_id).await?;
         Ok(ChannelMessage {
-            id: message.id,
+            id: ChannelMessageId::Saved(message.id),
             body: message.body,
             timestamp: OffsetDateTime::from_unix_timestamp(message.timestamp as i64)?,
             sender,
         })
+    }
+
+    pub fn is_pending(&self) -> bool {
+        matches!(self.id, ChannelMessageId::Pending(_))
     }
 }
 
@@ -464,6 +498,12 @@ impl sum_tree::Item for ChannelMessage {
     }
 }
 
+impl Default for ChannelMessageId {
+    fn default() -> Self {
+        Self::Saved(0)
+    }
+}
+
 impl sum_tree::Summary for ChannelMessageSummary {
     type Context = ();
 
@@ -473,7 +513,7 @@ impl sum_tree::Summary for ChannelMessageSummary {
     }
 }
 
-impl<'a> sum_tree::Dimension<'a, ChannelMessageSummary> for u64 {
+impl<'a> sum_tree::Dimension<'a, ChannelMessageSummary> for ChannelMessageId {
     fn add_summary(&mut self, summary: &'a ChannelMessageSummary, _: &()) {
         debug_assert!(summary.max_id > *self);
         *self = summary.max_id;
