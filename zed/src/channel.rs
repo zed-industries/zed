@@ -510,6 +510,21 @@ mod tests {
         let channel_list = cx.add_model(|cx| ChannelList::new(user_store, client.clone(), cx));
         channel_list.read_with(&cx, |list, _| assert_eq!(list.available_channels(), None));
 
+        let get_users = server.receive::<proto::GetUsers>().await.unwrap();
+        assert_eq!(get_users.payload.user_ids, vec![5]);
+        server
+            .respond(
+                get_users.receipt(),
+                proto::GetUsersResponse {
+                    users: vec![proto::User {
+                        id: 5,
+                        github_login: "nathansobo".into(),
+                        avatar_url: "http://avatar.com/nathansobo".into(),
+                    }],
+                },
+            )
+            .await;
+
         // Get the available channels.
         let get_channels = server.receive::<proto::GetChannels>().await.unwrap();
         server
@@ -569,23 +584,16 @@ mod tests {
         // Client requests all users for the received messages
         let mut get_users = server.receive::<proto::GetUsers>().await.unwrap();
         get_users.payload.user_ids.sort();
-        assert_eq!(get_users.payload.user_ids, vec![5, 6]);
+        assert_eq!(get_users.payload.user_ids, vec![6]);
         server
             .respond(
                 get_users.receipt(),
                 proto::GetUsersResponse {
-                    users: vec![
-                        proto::User {
-                            id: 5,
-                            github_login: "nathansobo".into(),
-                            avatar_url: "http://avatar.com/nathansobo".into(),
-                        },
-                        proto::User {
-                            id: 6,
-                            github_login: "maxbrunsfeld".into(),
-                            avatar_url: "http://avatar.com/maxbrunsfeld".into(),
-                        },
-                    ],
+                    users: vec![proto::User {
+                        id: 6,
+                        github_login: "maxbrunsfeld".into(),
+                        avatar_url: "http://avatar.com/maxbrunsfeld".into(),
+                    }],
                 },
             )
             .await;
