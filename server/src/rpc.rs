@@ -1484,10 +1484,10 @@ mod tests {
     #[gpui::test]
     async fn test_basic_chat(mut cx_a: TestAppContext, mut cx_b: TestAppContext) {
         cx_a.foreground().forbid_parking();
+        let http = FakeHttpClient::new(|_| async move { Ok(surf::http::Response::new(404)) });
 
         // Connect to a server as 2 clients.
         let mut server = TestServer::start().await;
-        let mut http = FakeHttpClient::new(|_| async move { Ok(Response::new(404)) });
         let (user_id_a, client_a) = server.create_client(&mut cx_a, "user_a").await;
         let (user_id_b, client_b) = server.create_client(&mut cx_b, "user_b").await;
 
@@ -1514,7 +1514,8 @@ mod tests {
         .await
         .unwrap();
 
-        let user_store_a = UserStore::new(client_a.clone(), cx_a.background().as_ref());
+        let user_store_a =
+            UserStore::new(client_a.clone(), http.clone(), cx_a.background().as_ref());
         let channels_a = cx_a.add_model(|cx| ChannelList::new(user_store_a, client_a, cx));
         channels_a
             .condition(&mut cx_a, |list, _| list.available_channels().is_some())
@@ -1539,7 +1540,8 @@ mod tests {
             })
             .await;
 
-        let user_store_b = UserStore::new(client_b.clone(), cx_b.background().as_ref());
+        let user_store_b =
+            UserStore::new(client_b.clone(), http.clone(), cx_b.background().as_ref());
         let channels_b = cx_b.add_model(|cx| ChannelList::new(user_store_b, client_b, cx));
         channels_b
             .condition(&mut cx_b, |list, _| list.available_channels().is_some())
@@ -1627,6 +1629,7 @@ mod tests {
     #[gpui::test]
     async fn test_chat_message_validation(mut cx_a: TestAppContext) {
         cx_a.foreground().forbid_parking();
+        let http = FakeHttpClient::new(|_| async move { Ok(surf::http::Response::new(404)) });
 
         let mut server = TestServer::start().await;
         let (user_id_a, client_a) = server.create_client(&mut cx_a, "user_a").await;
@@ -1639,7 +1642,7 @@ mod tests {
             .await
             .unwrap();
 
-        let user_store_a = UserStore::new(client_a.clone(), cx_a.background().as_ref());
+        let user_store_a = UserStore::new(client_a.clone(), http, cx_a.background().as_ref());
         let channels_a = cx_a.add_model(|cx| ChannelList::new(user_store_a, client_a, cx));
         channels_a
             .condition(&mut cx_a, |list, _| list.available_channels().is_some())
@@ -1685,6 +1688,7 @@ mod tests {
     #[gpui::test]
     async fn test_chat_reconnection(mut cx_a: TestAppContext, mut cx_b: TestAppContext) {
         cx_a.foreground().forbid_parking();
+        let http = FakeHttpClient::new(|_| async move { Ok(surf::http::Response::new(404)) });
 
         // Connect to a server as 2 clients.
         let mut server = TestServer::start().await;
@@ -1715,7 +1719,8 @@ mod tests {
         .await
         .unwrap();
 
-        let user_store_a = UserStore::new(client_a.clone(), cx_a.background().as_ref());
+        let user_store_a =
+            UserStore::new(client_a.clone(), http.clone(), cx_a.background().as_ref());
         let channels_a = cx_a.add_model(|cx| ChannelList::new(user_store_a, client_a, cx));
         channels_a
             .condition(&mut cx_a, |list, _| list.available_channels().is_some())
@@ -1741,7 +1746,8 @@ mod tests {
             })
             .await;
 
-        let user_store_b = UserStore::new(client_b.clone(), cx_b.background().as_ref());
+        let user_store_b =
+            UserStore::new(client_b.clone(), http.clone(), cx_b.background().as_ref());
         let channels_b = cx_b.add_model(|cx| ChannelList::new(user_store_b, client_b, cx));
         channels_b
             .condition(&mut cx_b, |list, _| list.available_channels().is_some())
