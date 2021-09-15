@@ -133,14 +133,18 @@ impl Db {
             let query = "
                 SELECT users.*
                 FROM
-                    users, channel_memberships
+                    users LEFT JOIN channel_memberships
+                ON
+                    channel_memberships.user_id = users.id
                 WHERE
-                    users.id = ANY ($1) AND
-                    channel_memberships.user_id = users.id AND
-                    channel_memberships.channel_id IN (
-                        SELECT channel_id
-                        FROM channel_memberships
-                        WHERE channel_memberships.user_id = $2
+                    users.id = $2 OR
+                    (
+                        users.id = ANY ($1) AND
+                        channel_memberships.channel_id IN (
+                            SELECT channel_id
+                            FROM channel_memberships
+                            WHERE channel_memberships.user_id = $2
+                        )
                     )
             ";
 
@@ -455,7 +459,7 @@ macro_rules! id_type {
 }
 
 id_type!(UserId);
-#[derive(Debug, FromRow, Serialize)]
+#[derive(Debug, FromRow, Serialize, PartialEq)]
 pub struct User {
     pub id: UserId,
     pub github_login: String,
@@ -561,6 +565,23 @@ pub mod tests {
                 Postgres::drop_database(&self.url).await.unwrap();
             });
         }
+    }
+
+    #[gpui::test]
+    async fn test_get_users_by_ids() {
+        let test_db = TestDb::new();
+        let db = test_db.db();
+        let user_id = db.create_user("user", false).await.unwrap();
+        assert_eq!(
+            db.get_users_by_ids(user_id, Some(user_id).iter().copied())
+                .await
+                .unwrap(),
+            vec![User {
+                id: user_id,
+                github_login: "user".to_string(),
+                admin: false,
+            }]
+        )
     }
 
     #[gpui::test]

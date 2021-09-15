@@ -389,7 +389,7 @@ impl Workspace {
         );
         right_sidebar.add_item("icons/user-16.svg", cx.add_view(|_| ProjectBrowser).into());
 
-        let mut current_user = app_state.user_store.current_user().clone();
+        let mut current_user = app_state.user_store.watch_current_user().clone();
         let mut connection_status = app_state.rpc.status().clone();
         let _observe_current_user = cx.spawn_weak(|this, mut cx| async move {
             current_user.recv().await;
@@ -990,8 +990,6 @@ impl Workspace {
         let avatar = if let Some(avatar) = self
             .user_store
             .current_user()
-            .borrow()
-            .as_ref()
             .and_then(|user| user.avatar.clone())
         {
             Image::new(avatar)

@@ -238,8 +238,6 @@ impl Channel {
         let current_user = self
             .user_store
             .current_user()
-            .borrow()
-            .clone()
             .ok_or_else(|| anyhow!("current_user is not present"))?;
 
         let channel_id = self.details.id;

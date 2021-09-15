@@ -111,8 +111,12 @@ impl UserStore {
             .ok_or_else(|| anyhow!("server responded with no users"))
     }
 
-    pub fn current_user(&self) -> &watch::Receiver<Option<Arc<User>>> {
-        &self.current_user
+    pub fn current_user(&self) -> Option<Arc<User>> {
+        self.current_user.borrow().clone()
+    }
+
+    pub fn watch_current_user(&self) -> watch::Receiver<Option<Arc<User>>> {
+        self.current_user.clone()
     }
 }
 
