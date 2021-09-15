@@ -4,7 +4,7 @@ use crate::{
     fs::RealFs,
     http::{HttpClient, Request, Response, ServerResponse},
     language::LanguageRegistry,
-    rpc::{self, Client, Credentials},
+    rpc::{self, Client, Credentials, EstablishConnectionError},
     settings::{self, ThemeRegistry},
     time::ReplicaId,
     user::UserStore,
@@ -26,7 +26,7 @@ use std::{
     },
 };
 use tempdir::TempDir;
-use zrpc::{proto, Conn, ConnectionId, Peer, Receipt, TypedEnvelope};
+use zrpc::{proto, Connection, ConnectionId, Peer, Receipt, TypedEnvelope};
 
 #[cfg(test)]
 #[ctor::ctor]
@@ -210,6 +210,8 @@ pub struct FakeServer {
     connection_id: Mutex<Option<ConnectionId>>,
     forbid_connections: AtomicBool,
     auth_count: AtomicUsize,
+    access_token: AtomicUsize,
+    user_id: u64,
 }
 
 impl FakeServer {
@@ -224,6 +226,8 @@ impl FakeServer {
             connection_id: Default::default(),
             forbid_connections: Default::default(),
             auth_count: Default::default(),
+            access_token: Default::default(),
+            user_id: client_user_id,
         });
 
         Arc::get_mut(client)
@@ -232,8 +236,8 @@ impl FakeServer {
                 let server = server.clone();
                 move |cx| {
                     server.auth_count.fetch_add(1, SeqCst);
+                    let access_token = server.access_token.load(SeqCst).to_string();
                     cx.spawn(move |_| async move {
-                        let access_token = "the-token".to_string();
                         Ok(Credentials {
                             user_id: client_user_id,
                             access_token,
@@ -244,11 +248,10 @@ impl FakeServer {
             .override_establish_connection({
                 let server = server.clone();
                 move |credentials, cx| {
-                    assert_eq!(credentials.user_id, client_user_id);
-                    assert_eq!(credentials.access_token, "the-token");
+                    let credentials = credentials.clone();
                     cx.spawn({
                         let server = server.clone();
-                        move |cx| async move { server.connect(&cx).await }
+                        move |cx| async move { server.establish_connection(&credentials, &cx).await }
                     })
                 }
             });
@@ -266,21 +269,37 @@ impl FakeServer {
         self.incoming.lock().take();
     }
 
-    async fn connect(&self, cx: &AsyncAppContext) -> Result<Conn> {
+    async fn establish_connection(
+        &self,
+        credentials: &Credentials,
+        cx: &AsyncAppContext,
+    ) -> Result<Connection, EstablishConnectionError> {
+        assert_eq!(credentials.user_id, self.user_id);
+
         if self.forbid_connections.load(SeqCst) {
-            Err(anyhow!("server is forbidding connections"))
-        } else {
-            let (client_conn, server_conn, _) = Conn::in_memory();
-            let (connection_id, io, incoming) = self.peer.add_connection(server_conn).await;
-            cx.background().spawn(io).detach();
-            *self.incoming.lock() = Some(incoming);
-            *self.connection_id.lock() = Some(connection_id);
-            Ok(client_conn)
+            Err(EstablishConnectionError::Other(anyhow!(
+                "server is forbidding connections"
+            )))?
         }
+
+        if credentials.access_token != self.access_token.load(SeqCst).to_string() {
+            Err(EstablishConnectionError::InvalidAccessToken)?
+        }
+
+        let (client_conn, server_conn, _) = Connection::in_memory();
+        let (connection_id, io, incoming) = self.peer.add_connection(server_conn).await;
+        cx.background().spawn(io).detach();
+        *self.incoming.lock() = Some(incoming);
+        *self.connection_id.lock() = Some(connection_id);
+        Ok(client_conn)
     }
 
     pub fn auth_count(&self) -> usize {
         self.auth_count.load(SeqCst)
+    }
+
+    pub fn roll_access_token(&self) {
+        self.access_token.fetch_add(1, SeqCst);
     }
 
     pub fn forbid_connections(&self) {

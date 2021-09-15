@@ -1,5 +1,5 @@
 use super::proto::{self, AnyTypedEnvelope, EnvelopedMessage, MessageStream, RequestMessage};
-use super::Conn;
+use super::Connection;
 use anyhow::{anyhow, Context, Result};
 use async_lock::{Mutex, RwLock};
 use futures::FutureExt as _;
@@ -79,12 +79,12 @@ impl<T: RequestMessage> TypedEnvelope<T> {
 }
 
 pub struct Peer {
-    connections: RwLock<HashMap<ConnectionId, Connection>>,
+    connections: RwLock<HashMap<ConnectionId, ConnectionState>>,
     next_connection_id: AtomicU32,
 }
 
 #[derive(Clone)]
-struct Connection {
+struct ConnectionState {
     outgoing_tx: mpsc::Sender<proto::Envelope>,
     next_message_id: Arc<AtomicU32>,
     response_channels: Arc<Mutex<HashMap<u32, mpsc::Sender<proto::Envelope>>>>,
@@ -100,7 +100,7 @@ impl Peer {
 
     pub async fn add_connection(
         self: &Arc<Self>,
-        conn: Conn,
+        connection: Connection,
     ) -> (
         ConnectionId,
         impl Future<Output = anyhow::Result<()>> + Send,
@@ -112,16 +112,16 @@ impl Peer {
         );
         let (mut incoming_tx, incoming_rx) = mpsc::channel(64);
         let (outgoing_tx, mut outgoing_rx) = mpsc::channel(64);
-        let connection = Connection {
+        let connection_state = ConnectionState {
             outgoing_tx,
             next_message_id: Default::default(),
             response_channels: Default::default(),
         };
-        let mut writer = MessageStream::new(conn.tx);
-        let mut reader = MessageStream::new(conn.rx);
+        let mut writer = MessageStream::new(connection.tx);
+        let mut reader = MessageStream::new(connection.rx);
 
         let this = self.clone();
-        let response_channels = connection.response_channels.clone();
+        let response_channels = connection_state.response_channels.clone();
         let handle_io = async move {
             loop {
                 let read_message = reader.read_message().fuse();
@@ -179,7 +179,7 @@ impl Peer {
         self.connections
             .write()
             .await
-            .insert(connection_id, connection);
+            .insert(connection_id, connection_state);
 
         (connection_id, handle_io, incoming_rx)
     }
@@ -218,7 +218,7 @@ impl Peer {
         let this = self.clone();
         let (tx, mut rx) = mpsc::channel(1);
         async move {
-            let mut connection = this.connection(receiver_id).await?;
+            let mut connection = this.connection_state(receiver_id).await?;
             let message_id = connection
                 .next_message_id
                 .fetch_add(1, atomic::Ordering::SeqCst);
@@ -252,7 +252,7 @@ impl Peer {
     ) -> impl Future<Output = Result<()>> {
         let this = self.clone();
         async move {
-            let mut connection = this.connection(receiver_id).await?;
+            let mut connection = this.connection_state(receiver_id).await?;
             let message_id = connection
                 .next_message_id
                 .fetch_add(1, atomic::Ordering::SeqCst);
@@ -272,7 +272,7 @@ impl Peer {
     ) -> impl Future<Output = Result<()>> {
         let this = self.clone();
         async move {
-            let mut connection = this.connection(receiver_id).await?;
+            let mut connection = this.connection_state(receiver_id).await?;
             let message_id = connection
                 .next_message_id
                 .fetch_add(1, atomic::Ordering::SeqCst);
@@ -291,7 +291,7 @@ impl Peer {
     ) -> impl Future<Output = Result<()>> {
         let this = self.clone();
         async move {
-            let mut connection = this.connection(receipt.sender_id).await?;
+            let mut connection = this.connection_state(receipt.sender_id).await?;
             let message_id = connection
                 .next_message_id
                 .fetch_add(1, atomic::Ordering::SeqCst);
@@ -310,7 +310,7 @@ impl Peer {
     ) -> impl Future<Output = Result<()>> {
         let this = self.clone();
         async move {
-            let mut connection = this.connection(receipt.sender_id).await?;
+            let mut connection = this.connection_state(receipt.sender_id).await?;
             let message_id = connection
                 .next_message_id
                 .fetch_add(1, atomic::Ordering::SeqCst);
@@ -322,10 +322,10 @@ impl Peer {
         }
     }
 
-    fn connection(
+    fn connection_state(
         self: &Arc<Self>,
         connection_id: ConnectionId,
-    ) -> impl Future<Output = Result<Connection>> {
+    ) -> impl Future<Output = Result<ConnectionState>> {
         let this = self.clone();
         async move {
             let connections = this.connections.read().await;
@@ -352,12 +352,12 @@ mod tests {
             let client1 = Peer::new();
             let client2 = Peer::new();
 
-            let (client1_to_server_conn, server_to_client_1_conn, _) = Conn::in_memory();
+            let (client1_to_server_conn, server_to_client_1_conn, _) = Connection::in_memory();
             let (client1_conn_id, io_task1, _) =
                 client1.add_connection(client1_to_server_conn).await;
             let (_, io_task2, incoming1) = server.add_connection(server_to_client_1_conn).await;
 
-            let (client2_to_server_conn, server_to_client_2_conn, _) = Conn::in_memory();
+            let (client2_to_server_conn, server_to_client_2_conn, _) = Connection::in_memory();
             let (client2_conn_id, io_task3, _) =
                 client2.add_connection(client2_to_server_conn).await;
             let (_, io_task4, incoming2) = server.add_connection(server_to_client_2_conn).await;
@@ -486,7 +486,7 @@ mod tests {
     #[test]
     fn test_disconnect() {
         smol::block_on(async move {
-            let (client_conn, mut server_conn, _) = Conn::in_memory();
+            let (client_conn, mut server_conn, _) = Connection::in_memory();
 
             let client = Peer::new();
             let (connection_id, io_handler, mut incoming) =
@@ -520,7 +520,7 @@ mod tests {
     #[test]
     fn test_io_error() {
         smol::block_on(async move {
-            let (client_conn, server_conn, _) = Conn::in_memory();
+            let (client_conn, server_conn, _) = Connection::in_memory();
             drop(server_conn);
 
             let client = Peer::new();

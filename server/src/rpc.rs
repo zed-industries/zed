@@ -27,7 +27,7 @@ use time::OffsetDateTime;
 use zrpc::{
     auth::random_token,
     proto::{self, AnyTypedEnvelope, EnvelopedMessage},
-    Conn, ConnectionId, Peer, TypedEnvelope,
+    Connection, ConnectionId, Peer, TypedEnvelope,
 };
 
 type ReplicaId = u16;
@@ -48,13 +48,13 @@ pub struct Server {
 
 #[derive(Default)]
 struct ServerState {
-    connections: HashMap<ConnectionId, Connection>,
+    connections: HashMap<ConnectionId, ConnectionState>,
     pub worktrees: HashMap<u64, Worktree>,
     channels: HashMap<ChannelId, Channel>,
     next_worktree_id: u64,
 }
 
-struct Connection {
+struct ConnectionState {
     user_id: UserId,
     worktrees: HashSet<u64>,
     channels: HashSet<ChannelId>,
@@ -133,7 +133,7 @@ impl Server {
 
     pub fn handle_connection(
         self: &Arc<Self>,
-        connection: Conn,
+        connection: Connection,
         addr: String,
         user_id: UserId,
     ) -> impl Future<Output = ()> {
@@ -211,7 +211,7 @@ impl Server {
     async fn add_connection(&self, connection_id: ConnectionId, user_id: UserId) {
         self.state.write().await.connections.insert(
             connection_id,
-            Connection {
+            ConnectionState {
                 user_id,
                 worktrees: Default::default(),
                 channels: Default::default(),
@@ -972,7 +972,7 @@ pub fn add_routes(app: &mut tide::Server<Arc<AppState>>, rpc: &Arc<Peer>) {
             let user_id = user_id.ok_or_else(|| anyhow!("user_id is not present on request. ensure auth::VerifyToken middleware is present"))?;
             task::spawn(async move {
                 if let Some(stream) = upgrade_receiver.await {
-                    server.handle_connection(Conn::new(WebSocketStream::from_raw_socket(stream, Role::Server, None).await), addr, user_id).await;
+                    server.handle_connection(Connection::new(WebSocketStream::from_raw_socket(stream, Role::Server, None).await), addr, user_id).await;
                 }
             });
 
@@ -1023,7 +1023,7 @@ mod tests {
         editor::{Editor, Insert},
         fs::{FakeFs, Fs as _},
         language::LanguageRegistry,
-        rpc::{self, Client, Credentials},
+        rpc::{self, Client, Credentials, EstablishConnectionError},
         settings,
         test::FakeHttpClient,
         user::UserStore,
@@ -1941,9 +1941,11 @@ mod tests {
                     let client_name = client_name.clone();
                     cx.spawn(move |cx| async move {
                         if forbid_connections.load(SeqCst) {
-                            Err(anyhow!("server is forbidding connections"))
+                            Err(EstablishConnectionError::other(anyhow!(
+                                "server is forbidding connections"
+                            )))
                         } else {
-                            let (client_conn, server_conn, kill_conn) = Conn::in_memory();
+                            let (client_conn, server_conn, kill_conn) = Connection::in_memory();
                             connection_killers.lock().insert(client_user_id, kill_conn);
                             cx.background()
                                 .spawn(server.handle_connection(

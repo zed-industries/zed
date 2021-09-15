@@ -15,10 +15,11 @@ use std::{
     time::{Duration, Instant},
 };
 use surf::Url;
+use thiserror::Error;
 pub use zrpc::{proto, ConnectionId, PeerId, TypedEnvelope};
 use zrpc::{
     proto::{AnyTypedEnvelope, EntityMessage, EnvelopedMessage, RequestMessage},
-    Conn, Peer, Receipt,
+    Connection, Peer, Receipt,
 };
 
 lazy_static! {
@@ -32,8 +33,30 @@ pub struct Client {
     authenticate:
         Option<Box<dyn 'static + Send + Sync + Fn(&AsyncAppContext) -> Task<Result<Credentials>>>>,
     establish_connection: Option<
-        Box<dyn 'static + Send + Sync + Fn(&Credentials, &AsyncAppContext) -> Task<Result<Conn>>>,
+        Box<
+            dyn 'static
+                + Send
+                + Sync
+                + Fn(
+                    &Credentials,
+                    &AsyncAppContext,
+                ) -> Task<Result<Connection, EstablishConnectionError>>,
+        >,
     >,
+}
+
+#[derive(Error, Debug)]
+pub enum EstablishConnectionError {
+    #[error("invalid access token")]
+    InvalidAccessToken,
+    #[error("{0}")]
+    Other(anyhow::Error),
+}
+
+impl EstablishConnectionError {
+    pub fn other(error: impl Into<anyhow::Error> + Send + Sync) -> Self {
+        Self::Other(error.into())
+    }
 }
 
 #[derive(Copy, Clone, Debug)]
@@ -122,7 +145,10 @@ impl Client {
     #[cfg(any(test, feature = "test-support"))]
     pub fn override_establish_connection<F>(&mut self, connect: F) -> &mut Self
     where
-        F: 'static + Send + Sync + Fn(&Credentials, &AsyncAppContext) -> Task<Result<Conn>>,
+        F: 'static
+            + Send
+            + Sync
+            + Fn(&Credentials, &AsyncAppContext) -> Task<Result<Connection, EstablishConnectionError>>,
     {
         self.establish_connection = Some(Box::new(connect));
         self
@@ -288,13 +314,18 @@ impl Client {
                 Ok(())
             }
             Err(err) => {
+                eprintln!("error in authenticate and connect {}", err);
+                if matches!(err, EstablishConnectionError::InvalidAccessToken) {
+                    eprintln!("nuking credentials");
+                    self.state.write().credentials.take();
+                }
                 self.set_status(Status::ConnectionError, cx);
-                Err(err)
+                Err(err)?
             }
         }
     }
 
-    async fn set_connection(self: &Arc<Self>, conn: Conn, cx: &AsyncAppContext) {
+    async fn set_connection(self: &Arc<Self>, conn: Connection, cx: &AsyncAppContext) {
         let (connection_id, handle_io, mut incoming) = self.peer.add_connection(conn).await;
         cx.foreground()
             .spawn({
@@ -359,7 +390,7 @@ impl Client {
         self: &Arc<Self>,
         credentials: &Credentials,
         cx: &AsyncAppContext,
-    ) -> Task<Result<Conn>> {
+    ) -> Task<Result<Connection, EstablishConnectionError>> {
         if let Some(callback) = self.establish_connection.as_ref() {
             callback(credentials, cx)
         } else {
@@ -371,28 +402,43 @@ impl Client {
         self: &Arc<Self>,
         credentials: &Credentials,
         cx: &AsyncAppContext,
-    ) -> Task<Result<Conn>> {
+    ) -> Task<Result<Connection, EstablishConnectionError>> {
         let request = Request::builder().header(
             "Authorization",
             format!("{} {}", credentials.user_id, credentials.access_token),
         );
         cx.background().spawn(async move {
             if let Some(host) = ZED_SERVER_URL.strip_prefix("https://") {
-                let stream = smol::net::TcpStream::connect(host).await?;
-                let request = request.uri(format!("wss://{}/rpc", host)).body(())?;
+                let stream = smol::net::TcpStream::connect(host)
+                    .await
+                    .map_err(EstablishConnectionError::other)?;
+                let request = request
+                    .uri(format!("wss://{}/rpc", host))
+                    .body(())
+                    .map_err(EstablishConnectionError::other)?;
                 let (stream, _) = async_tungstenite::async_tls::client_async_tls(request, stream)
                     .await
-                    .context("websocket handshake")?;
-                Ok(Conn::new(stream))
+                    .context("websocket handshake")
+                    .map_err(EstablishConnectionError::other)?;
+                Ok(Connection::new(stream))
             } else if let Some(host) = ZED_SERVER_URL.strip_prefix("http://") {
-                let stream = smol::net::TcpStream::connect(host).await?;
-                let request = request.uri(format!("ws://{}/rpc", host)).body(())?;
+                let stream = smol::net::TcpStream::connect(host)
+                    .await
+                    .map_err(EstablishConnectionError::other)?;
+                let request = request
+                    .uri(format!("ws://{}/rpc", host))
+                    .body(())
+                    .map_err(EstablishConnectionError::other)?;
                 let (stream, _) = async_tungstenite::client_async(request, stream)
                     .await
-                    .context("websocket handshake")?;
-                Ok(Conn::new(stream))
+                    .context("websocket handshake")
+                    .map_err(EstablishConnectionError::other)?;
+                Ok(Connection::new(stream))
             } else {
-                Err(anyhow!("invalid server url: {}", *ZED_SERVER_URL))
+                Err(EstablishConnectionError::other(anyhow!(
+                    "invalid server url: {}",
+                    *ZED_SERVER_URL
+                )))
             }
         })
     }
@@ -591,6 +637,19 @@ mod tests {
         cx.foreground().advance_clock(Duration::from_secs(10));
         while !matches!(status.recv().await, Some(Status::Connected { .. })) {}
         assert_eq!(server.auth_count(), 1); // Client reused the cached credentials when reconnecting
+
+        server.forbid_connections();
+        server.disconnect().await;
+        while !matches!(status.recv().await, Some(Status::ReconnectionError { .. })) {}
+
+        // Clear cached credentials after authentication fails
+        server.roll_access_token();
+        server.allow_connections();
+        cx.foreground().advance_clock(Duration::from_secs(10));
+        assert_eq!(server.auth_count(), 1);
+        cx.foreground().advance_clock(Duration::from_secs(10));
+        while !matches!(status.recv().await, Some(Status::Connected { .. })) {}
+        assert_eq!(server.auth_count(), 2); // Client re-authenticated due to an invalid token
     }
 
     #[test]
