@@ -17,7 +17,7 @@ use scrypt::{
 };
 use serde::{Deserialize, Serialize};
 use std::{borrow::Cow, convert::TryFrom, sync::Arc};
-use surf::Url;
+use surf::{StatusCode, Url};
 use tide::Server;
 use zrpc::auth as zed_auth;
 
@@ -73,7 +73,9 @@ impl tide::Middleware<Arc<AppState>> for VerifyToken {
             request.set_ext(user_id);
             Ok(next.run(request).await)
         } else {
-            Err(anyhow!("invalid credentials").into())
+            let mut response = tide::Response::new(StatusCode::Unauthorized);
+            response.set_body("invalid credentials");
+            Ok(response)
         }
     }
 }

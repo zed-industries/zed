@@ -48,6 +48,7 @@ pub trait Platform: Send + Sync {
 
     fn write_credentials(&self, url: &str, username: &str, password: &[u8]) -> Result<()>;
     fn read_credentials(&self, url: &str) -> Result<Option<(String, Vec<u8>)>>;
+    fn delete_credentials(&self, url: &str) -> Result<()>;
 
     fn set_cursor_style(&self, style: CursorStyle);
 

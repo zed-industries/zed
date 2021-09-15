@@ -960,7 +960,7 @@ impl Workspace {
 
     fn render_connection_status(&self) -> Option<ElementBox> {
         let theme = &self.settings.borrow().theme;
-        match dbg!(&*self.rpc.status().borrow()) {
+        match &*self.rpc.status().borrow() {
             rpc::Status::ConnectionError
             | rpc::Status::ConnectionLost
             | rpc::Status::Reauthenticating

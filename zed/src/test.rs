@@ -283,7 +283,7 @@ impl FakeServer {
         }
 
         if credentials.access_token != self.access_token.load(SeqCst).to_string() {
-            Err(EstablishConnectionError::InvalidAccessToken)?
+            Err(EstablishConnectionError::Unauthorized)?
         }
 
         let (client_conn, server_conn, _) = Connection::in_memory();

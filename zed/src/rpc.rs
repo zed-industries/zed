@@ -1,6 +1,9 @@
 use crate::util::ResultExt;
 use anyhow::{anyhow, Context, Result};
-use async_tungstenite::tungstenite::http::Request;
+use async_tungstenite::tungstenite::{
+    error::Error as WebsocketError,
+    http::{Request, StatusCode},
+};
 use gpui::{AsyncAppContext, Entity, ModelContext, Task};
 use lazy_static::lazy_static;
 use parking_lot::RwLock;
@@ -47,10 +50,25 @@ pub struct Client {
 
 #[derive(Error, Debug)]
 pub enum EstablishConnectionError {
-    #[error("invalid access token")]
-    InvalidAccessToken,
+    #[error("unauthorized")]
+    Unauthorized,
     #[error("{0}")]
-    Other(anyhow::Error),
+    Other(#[from] anyhow::Error),
+    #[error("{0}")]
+    Io(#[from] std::io::Error),
+    #[error("{0}")]
+    Http(#[from] async_tungstenite::tungstenite::http::Error),
+}
+
+impl From<WebsocketError> for EstablishConnectionError {
+    fn from(error: WebsocketError) -> Self {
+        if let WebsocketError::Http(response) = &error {
+            if response.status() == StatusCode::UNAUTHORIZED {
+                return EstablishConnectionError::Unauthorized;
+            }
+        }
+        EstablishConnectionError::Other(error.into())
+    }
 }
 
 impl EstablishConnectionError {
@@ -314,10 +332,9 @@ impl Client {
                 Ok(())
             }
             Err(err) => {
-                eprintln!("error in authenticate and connect {}", err);
-                if matches!(err, EstablishConnectionError::InvalidAccessToken) {
-                    eprintln!("nuking credentials");
+                if matches!(err, EstablishConnectionError::Unauthorized) {
                     self.state.write().credentials.take();
+                    cx.platform().delete_credentials(&ZED_SERVER_URL).ok();
                 }
                 self.set_status(Status::ConnectionError, cx);
                 Err(err)?
@@ -409,36 +426,18 @@ impl Client {
         );
         cx.background().spawn(async move {
             if let Some(host) = ZED_SERVER_URL.strip_prefix("https://") {
-                let stream = smol::net::TcpStream::connect(host)
-                    .await
-                    .map_err(EstablishConnectionError::other)?;
-                let request = request
-                    .uri(format!("wss://{}/rpc", host))
-                    .body(())
-                    .map_err(EstablishConnectionError::other)?;
-                let (stream, _) = async_tungstenite::async_tls::client_async_tls(request, stream)
-                    .await
-                    .context("websocket handshake")
-                    .map_err(EstablishConnectionError::other)?;
+                let stream = smol::net::TcpStream::connect(host).await?;
+                let request = request.uri(format!("wss://{}/rpc", host)).body(())?;
+                let (stream, _) =
+                    async_tungstenite::async_tls::client_async_tls(request, stream).await?;
                 Ok(Connection::new(stream))
             } else if let Some(host) = ZED_SERVER_URL.strip_prefix("http://") {
-                let stream = smol::net::TcpStream::connect(host)
-                    .await
-                    .map_err(EstablishConnectionError::other)?;
-                let request = request
-                    .uri(format!("ws://{}/rpc", host))
-                    .body(())
-                    .map_err(EstablishConnectionError::other)?;
-                let (stream, _) = async_tungstenite::client_async(request, stream)
-                    .await
-                    .context("websocket handshake")
-                    .map_err(EstablishConnectionError::other)?;
+                let stream = smol::net::TcpStream::connect(host).await?;
+                let request = request.uri(format!("ws://{}/rpc", host)).body(())?;
+                let (stream, _) = async_tungstenite::client_async(request, stream).await?;
                 Ok(Connection::new(stream))
             } else {
-                Err(EstablishConnectionError::other(anyhow!(
-                    "invalid server url: {}",
-                    *ZED_SERVER_URL
-                )))
+                Err(anyhow!("invalid server url: {}", *ZED_SERVER_URL))?
             }
         })
     }
