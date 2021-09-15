@@ -381,9 +381,10 @@ impl View for ChatPanel {
 
     fn render(&mut self, cx: &mut RenderContext<Self>) -> ElementBox {
         let theme = &self.settings.borrow().theme;
-        let element = match *self.rpc.status().borrow() {
-            rpc::Status::Connected { .. } => self.render_channel(),
-            _ => self.render_sign_in_prompt(cx),
+        let element = if self.rpc.user_id().is_some() {
+            self.render_channel()
+        } else {
+            self.render_sign_in_prompt(cx)
         };
         ConstrainedBox::new(
             Container::new(element)
