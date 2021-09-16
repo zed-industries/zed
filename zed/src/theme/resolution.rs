@@ -291,6 +291,8 @@ impl Tree {
                             if let Some(base) = root.get(base)? {
                                 if base.is_resolved() {
                                     resolved_base = Some(base);
+                                } else {
+                                    made_progress |= base.resolve_subtree(root, unresolved)?;
                                 }
                             }
                         }
@@ -409,19 +411,21 @@ mod test {
         assert_eq!(
             resolve_references(json).unwrap(),
             serde_json::json!({
-            "e": {
-              "f": "1",
-              "x": "1"
-            },
-            "a": {
-              "x": "1"
-            },
-            "b": {
-              "c": {
-                "x": "1"
-              },
-              "d": "1"
-            }})
+                "a": {
+                    "x": "1"
+                },
+                "b": {
+                    "c": {
+                        "x": "1"
+                    },
+                    "d": "1"
+                },
+                "e": {
+                    "extends": "$a",
+                    "f": "1",
+                    "x": "1"
+                },
+            })
         )
     }
 

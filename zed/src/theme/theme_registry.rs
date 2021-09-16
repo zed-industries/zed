@@ -183,11 +183,6 @@ mod tests {
         let registry = ThemeRegistry::new(assets, cx.font_cache().clone());
         let theme_data = registry.load("light", true).unwrap();
 
-        println!(
-            "{}",
-            serde_json::to_string_pretty(theme_data.as_ref()).unwrap()
-        );
-
         assert_eq!(
             theme_data.as_ref(),
             &serde_json::json!({
