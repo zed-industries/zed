@@ -164,7 +164,8 @@ pub struct InputEditorStyle {
     #[serde(flatten)]
     pub container: ContainerStyle,
     pub text: HighlightStyle,
-    pub placeholder_text: HighlightStyle,
+    #[serde(default)]
+    pub placeholder_text: Option<HighlightStyle>,
     pub selection: SelectionStyle,
 }
 

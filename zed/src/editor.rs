@@ -282,7 +282,7 @@ pub enum EditorMode {
 pub struct EditorStyle {
     pub text: HighlightStyle,
     #[serde(default)]
-    pub placeholder_text: HighlightStyle,
+    pub placeholder_text: Option<HighlightStyle>,
     pub background: Color,
     pub selection: SelectionStyle,
     pub gutter_background: Color,
@@ -2468,7 +2468,7 @@ impl Snapshot {
                 .skip(rows.start as usize)
                 .take(rows.len());
             let font_id = font_cache
-                .select_font(self.font_family, &style.placeholder_text.font_properties)?;
+                .select_font(self.font_family, &style.placeholder_text().font_properties)?;
             return Ok(placeholder_lines
                 .into_iter()
                 .map(|line| {
@@ -2479,7 +2479,7 @@ impl Snapshot {
                             line.len(),
                             RunStyle {
                                 font_id,
-                                color: style.placeholder_text.color,
+                                color: style.placeholder_text().color,
                                 underline: false,
                             },
                         )],
@@ -2596,6 +2596,12 @@ impl Snapshot {
     }
 }
 
+impl EditorStyle {
+    fn placeholder_text(&self) -> &HighlightStyle {
+        self.placeholder_text.as_ref().unwrap_or(&self.text)
+    }
+}
+
 impl Default for EditorStyle {
     fn default() -> Self {
         Self {
@@ -2604,11 +2610,7 @@ impl Default for EditorStyle {
                 font_properties: Default::default(),
                 underline: false,
             },
-            placeholder_text: HighlightStyle {
-                color: Color::from_u32(0x00ff00ff),
-                font_properties: Default::default(),
-                underline: false,
-            },
+            placeholder_text: None,
             background: Default::default(),
             gutter_background: Default::default(),
             active_line_background: Default::default(),
