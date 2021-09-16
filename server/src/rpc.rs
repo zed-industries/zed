@@ -1072,9 +1072,10 @@ mod tests {
         )
         .await;
         let worktree_a = Worktree::open_local(
+            client_a.clone(),
             "/a".as_ref(),
-            lang_registry.clone(),
             fs,
+            lang_registry.clone(),
             &mut cx_a.to_async(),
         )
         .await
@@ -1083,9 +1084,7 @@ mod tests {
             .read_with(&cx_a, |tree, _| tree.as_local().unwrap().scan_complete())
             .await;
         let (worktree_id, worktree_token) = worktree_a
-            .update(&mut cx_a, |tree, cx| {
-                tree.as_local_mut().unwrap().share(client_a.clone(), cx)
-            })
+            .update(&mut cx_a, |tree, cx| tree.as_local_mut().unwrap().share(cx))
             .await
             .unwrap();
 
@@ -1181,9 +1180,10 @@ mod tests {
         .await;
 
         let worktree_a = Worktree::open_local(
+            client_a.clone(),
             "/a".as_ref(),
-            lang_registry.clone(),
             fs.clone(),
+            lang_registry.clone(),
             &mut cx_a.to_async(),
         )
         .await
@@ -1192,9 +1192,7 @@ mod tests {
             .read_with(&cx_a, |tree, _| tree.as_local().unwrap().scan_complete())
             .await;
         let (worktree_id, worktree_token) = worktree_a
-            .update(&mut cx_a, |tree, cx| {
-                tree.as_local_mut().unwrap().share(client_a.clone(), cx)
-            })
+            .update(&mut cx_a, |tree, cx| tree.as_local_mut().unwrap().share(cx))
             .await
             .unwrap();
 
@@ -1314,9 +1312,10 @@ mod tests {
             .await
             .unwrap();
         let worktree_a = Worktree::open_local(
+            client_a.clone(),
             "/".as_ref(),
-            lang_registry.clone(),
             fs,
+            lang_registry.clone(),
             &mut cx_a.to_async(),
         )
         .await
@@ -1325,9 +1324,7 @@ mod tests {
             .read_with(&cx_a, |tree, _| tree.as_local().unwrap().scan_complete())
             .await;
         let (worktree_id, worktree_token) = worktree_a
-            .update(&mut cx_a, |tree, cx| {
-                tree.as_local_mut().unwrap().share(client_a.clone(), cx)
-            })
+            .update(&mut cx_a, |tree, cx| tree.as_local_mut().unwrap().share(cx))
             .await
             .unwrap();
 
@@ -1395,9 +1392,10 @@ mod tests {
             .await
             .unwrap();
         let worktree_a = Worktree::open_local(
+            client_a.clone(),
             "/".as_ref(),
-            lang_registry.clone(),
             fs,
+            lang_registry.clone(),
             &mut cx_a.to_async(),
         )
         .await
@@ -1406,9 +1404,7 @@ mod tests {
             .read_with(&cx_a, |tree, _| tree.as_local().unwrap().scan_complete())
             .await;
         let (worktree_id, worktree_token) = worktree_a
-            .update(&mut cx_a, |tree, cx| {
-                tree.as_local_mut().unwrap().share(client_a.clone(), cx)
-            })
+            .update(&mut cx_a, |tree, cx| tree.as_local_mut().unwrap().share(cx))
             .await
             .unwrap();
 
@@ -1460,9 +1456,10 @@ mod tests {
         )
         .await;
         let worktree_a = Worktree::open_local(
+            client_a.clone(),
             "/a".as_ref(),
-            lang_registry.clone(),
             fs,
+            lang_registry.clone(),
             &mut cx_a.to_async(),
         )
         .await
@@ -1471,9 +1468,7 @@ mod tests {
             .read_with(&cx_a, |tree, _| tree.as_local().unwrap().scan_complete())
             .await;
         let (worktree_id, worktree_token) = worktree_a
-            .update(&mut cx_a, |tree, cx| {
-                tree.as_local_mut().unwrap().share(client_a.clone(), cx)
-            })
+            .update(&mut cx_a, |tree, cx| tree.as_local_mut().unwrap().share(cx))
             .await
             .unwrap();
 

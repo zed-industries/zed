@@ -546,10 +546,11 @@ impl Workspace {
         cx: &mut ViewContext<Self>,
     ) -> Task<Result<ModelHandle<Worktree>>> {
         let languages = self.languages.clone();
+        let rpc = self.rpc.clone();
         let fs = self.fs.clone();
         let path = Arc::from(path);
         cx.spawn(|this, mut cx| async move {
-            let worktree = Worktree::open_local(path, languages, fs, &mut cx).await?;
+            let worktree = Worktree::open_local(rpc, path, fs, languages, &mut cx).await?;
             this.update(&mut cx, |this, cx| {
                 cx.observe(&worktree, |_, _, cx| cx.notify()).detach();
                 this.worktrees.insert(worktree.clone());
@@ -826,7 +827,7 @@ impl Workspace {
                 let worktree = this.worktrees.iter().next()?;
                 worktree.update(cx, |worktree, cx| {
                     let worktree = worktree.as_local_mut()?;
-                    Some(worktree.share(rpc, cx))
+                    Some(worktree.share(cx))
                 })
             });
 

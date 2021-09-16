@@ -69,7 +69,7 @@ impl Entity for Worktree {
             Self::Local(tree) => tree
                 .share
                 .as_ref()
-                .map(|share| (share.rpc.clone(), share.remote_id)),
+                .map(|share| (tree.rpc.clone(), share.remote_id)),
             Self::Remote(tree) => Some((tree.rpc.clone(), tree.remote_id)),
         };
 
@@ -86,12 +86,14 @@ impl Entity for Worktree {
 
 impl Worktree {
     pub async fn open_local(
+        rpc: Arc<rpc::Client>,
         path: impl Into<Arc<Path>>,
-        languages: Arc<LanguageRegistry>,
         fs: Arc<dyn Fs>,
+        languages: Arc<LanguageRegistry>,
         cx: &mut AsyncAppContext,
     ) -> Result<ModelHandle<Self>> {
-        let (tree, scan_states_tx) = LocalWorktree::new(path, languages, fs.clone(), cx).await?;
+        let (tree, scan_states_tx) =
+            LocalWorktree::new(rpc, path, fs.clone(), languages, cx).await?;
         tree.update(cx, |tree, cx| {
             let tree = tree.as_local_mut().unwrap();
             let abs_path = tree.snapshot.abs_path.clone();
@@ -658,14 +660,16 @@ pub struct LocalWorktree {
     peers: HashMap<PeerId, ReplicaId>,
     languages: Arc<LanguageRegistry>,
     queued_operations: Vec<(u64, Operation)>,
+    rpc: Arc<rpc::Client>,
     fs: Arc<dyn Fs>,
 }
 
 impl LocalWorktree {
     async fn new(
+        rpc: Arc<rpc::Client>,
         path: impl Into<Arc<Path>>,
-        languages: Arc<LanguageRegistry>,
         fs: Arc<dyn Fs>,
+        languages: Arc<LanguageRegistry>,
         cx: &mut AsyncAppContext,
     ) -> Result<(ModelHandle<Worktree>, Sender<ScanState>)> {
         let abs_path = path.into();
@@ -716,6 +720,7 @@ impl LocalWorktree {
                 queued_operations: Default::default(),
                 peers: Default::default(),
                 languages,
+                rpc,
                 fs,
             };
 
@@ -976,11 +981,11 @@ impl LocalWorktree {
 
     pub fn share(
         &mut self,
-        rpc: Arc<rpc::Client>,
         cx: &mut ModelContext<Worktree>,
     ) -> Task<anyhow::Result<(u64, String)>> {
         let snapshot = self.snapshot();
         let share_request = self.share_request(cx);
+        let rpc = self.rpc.clone();
         cx.spawn(|this, mut cx| async move {
             let share_request = share_request.await;
             let share_response = rpc.request(share_request).await?;
@@ -1018,7 +1023,6 @@ impl LocalWorktree {
 
                 let worktree = worktree.as_local_mut().unwrap();
                 worktree.share = Some(ShareState {
-                    rpc,
                     remote_id: share_response.worktree_id,
                     snapshots_tx: snapshots_to_send_tx,
                     _subscriptions,
@@ -1078,7 +1082,6 @@ impl fmt::Debug for LocalWorktree {
 }
 
 struct ShareState {
-    rpc: Arc<rpc::Client>,
     remote_id: u64,
     snapshots_tx: Sender<Snapshot>,
     _subscriptions: Vec<rpc::Subscription>,
@@ -1551,7 +1554,7 @@ impl File {
                 Worktree::Local(worktree) => worktree
                     .share
                     .as_ref()
-                    .map(|share| (share.rpc.clone(), share.remote_id)),
+                    .map(|share| (worktree.rpc.clone(), share.remote_id)),
                 Worktree::Remote(worktree) => Some((worktree.rpc.clone(), worktree.remote_id)),
             } {
                 cx.spawn(|worktree, mut cx| async move {
@@ -1635,14 +1638,12 @@ impl File {
     ) -> Task<Result<(time::Global, SystemTime)>> {
         self.worktree.update(cx, |worktree, cx| match worktree {
             Worktree::Local(worktree) => {
-                let rpc = worktree
-                    .share
-                    .as_ref()
-                    .map(|share| (share.rpc.clone(), share.remote_id));
+                let rpc = worktree.rpc.clone();
+                let worktree_id = worktree.share.as_ref().map(|share| share.remote_id);
                 let save = worktree.save(self.path.clone(), text, cx);
                 cx.background().spawn(async move {
                     let entry = save.await?;
-                    if let Some((rpc, worktree_id)) = rpc {
+                    if let Some(worktree_id) = worktree_id {
                         rpc.send(proto::BufferSaved {
                             worktree_id,
                             buffer_id,
@@ -2561,9 +2562,10 @@ mod tests {
         .unwrap();
 
         let tree = Worktree::open_local(
+            rpc::Client::new(),
             root_link_path,
-            Default::default(),
             Arc::new(RealFs),
+            Default::default(),
             &mut cx.to_async(),
         )
         .await
@@ -2617,9 +2619,10 @@ mod tests {
             }
         }));
         let tree = Worktree::open_local(
+            rpc::Client::new(),
             dir.path(),
-            Default::default(),
             Arc::new(RealFs),
+            Default::default(),
             &mut cx.to_async(),
         )
         .await
@@ -2661,9 +2664,10 @@ mod tests {
             "file1": "the old contents",
         }));
         let tree = Worktree::open_local(
+            rpc::Client::new(),
             dir.path(),
-            Arc::new(LanguageRegistry::new()),
             Arc::new(RealFs),
+            Default::default(),
             &mut cx.to_async(),
         )
         .await
@@ -2690,9 +2694,10 @@ mod tests {
         let file_path = dir.path().join("file1");
 
         let tree = Worktree::open_local(
+            rpc::Client::new(),
             file_path.clone(),
-            Arc::new(LanguageRegistry::new()),
             Arc::new(RealFs),
+            Default::default(),
             &mut cx.to_async(),
         )
         .await
@@ -2732,9 +2737,10 @@ mod tests {
         }));
 
         let tree = Worktree::open_local(
+            rpc::Client::new(),
             dir.path(),
-            Default::default(),
             Arc::new(RealFs),
+            Default::default(),
             &mut cx.to_async(),
         )
         .await
@@ -2886,9 +2892,10 @@ mod tests {
         }));
 
         let tree = Worktree::open_local(
+            rpc::Client::new(),
             dir.path(),
-            Default::default(),
             Arc::new(RealFs),
+            Default::default(),
             &mut cx.to_async(),
         )
         .await

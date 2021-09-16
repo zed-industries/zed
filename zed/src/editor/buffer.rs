@@ -2913,6 +2913,7 @@ mod tests {
     use crate::{
         fs::RealFs,
         language::LanguageRegistry,
+        rpc,
         test::temp_tree,
         util::RandomCharIter,
         worktree::{Worktree, WorktreeHandle as _},
@@ -3379,9 +3380,10 @@ mod tests {
             "file3": "ghi",
         }));
         let tree = Worktree::open_local(
+            rpc::Client::new(),
             dir.path(),
-            Default::default(),
             Arc::new(RealFs),
+            Default::default(),
             &mut cx.to_async(),
         )
         .await
@@ -3501,9 +3503,10 @@ mod tests {
         let initial_contents = "aaa\nbbbbb\nc\n";
         let dir = temp_tree(json!({ "the-file": initial_contents }));
         let tree = Worktree::open_local(
+            rpc::Client::new(),
             dir.path(),
-            Default::default(),
             Arc::new(RealFs),
+            Default::default(),
             &mut cx.to_async(),
         )
         .await
