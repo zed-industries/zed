@@ -30,10 +30,21 @@ enum Node {
         resolved: bool,
         parent: Option<Weak<RefCell<Node>>>,
     },
-    String(String),
-    Number(serde_json::Number),
-    Bool(bool),
-    Null,
+    String {
+        value: String,
+        parent: Option<Weak<RefCell<Node>>>,
+    },
+    Number {
+        value: serde_json::Number,
+        parent: Option<Weak<RefCell<Node>>>,
+    },
+    Bool {
+        value: bool,
+        parent: Option<Weak<RefCell<Node>>>,
+    },
+    Null {
+        parent: Option<Weak<RefCell<Node>>>,
+    },
 }
 
 #[derive(Clone)]
@@ -53,12 +64,21 @@ impl Tree {
                         parent: None,
                     }))
                 } else {
-                    Ok(Self::new(Node::String(value)))
+                    Ok(Self::new(Node::String {
+                        value,
+                        parent: None,
+                    }))
                 }
             }
-            Value::Number(value) => Ok(Self::new(Node::Number(value))),
-            Value::Bool(value) => Ok(Self::new(Node::Bool(value))),
-            Value::Null => Ok(Self::new(Node::Null)),
+            Value::Number(value) => Ok(Self::new(Node::Number {
+                value,
+                parent: None,
+            })),
+            Value::Bool(value) => Ok(Self::new(Node::Bool {
+                value,
+                parent: None,
+            })),
+            Value::Null => Ok(Self::new(Node::Null { parent: None })),
             Value::Object(object) => {
                 let tree = Self::new(Node::Object {
                     base: Default::default(),
@@ -75,7 +95,10 @@ impl Tree {
                             if let Value::String(value) = value {
                                 base = value.strip_prefix("$").map(str::to_string);
                                 resolved = false;
-                                Self::new(Node::String(value))
+                                Self::new(Node::String {
+                                    value,
+                                    parent: None,
+                                })
                             } else {
                                 unreachable!()
                             }
@@ -133,10 +156,10 @@ impl Tree {
     fn to_json(&self) -> Result<Value> {
         match &*self.0.borrow() {
             Node::Reference { .. } => Err(anyhow!("unresolved tree")),
-            Node::String(value) => Ok(Value::String(value.clone())),
-            Node::Number(value) => Ok(Value::Number(value.clone())),
-            Node::Bool(value) => Ok(Value::Bool(*value)),
-            Node::Null => Ok(Value::Null),
+            Node::String { value, .. } => Ok(Value::String(value.clone())),
+            Node::Number { value, .. } => Ok(Value::Number(value.clone())),
+            Node::Bool { value, .. } => Ok(Value::Bool(*value)),
+            Node::Null { .. } => Ok(Value::Null),
             Node::Object { children, .. } => {
                 let mut json_children = serde_json::Map::new();
                 for (key, value) in children {
@@ -158,8 +181,11 @@ impl Tree {
         match &*self.0.borrow() {
             Node::Reference { parent, .. }
             | Node::Object { parent, .. }
-            | Node::Array { parent, .. } => parent.as_ref().and_then(|p| p.upgrade()).map(Tree),
-            _ => None,
+            | Node::Array { parent, .. }
+            | Node::String { parent, .. }
+            | Node::Number { parent, .. }
+            | Node::Bool { parent, .. }
+            | Node::Null { parent } => parent.as_ref().and_then(|p| p.upgrade()).map(Tree),
         }
     }
 
@@ -182,10 +208,10 @@ impl Tree {
                 }
                 Node::Reference { .. } => return Ok(None),
                 Node::Array { .. }
-                | Node::String(_)
-                | Node::Number(_)
-                | Node::Bool(_)
-                | Node::Null => {
+                | Node::String { .. }
+                | Node::Number { .. }
+                | Node::Bool { .. }
+                | Node::Null { .. } => {
                     return Err(anyhow!(
                         "key \"{}\" in path \"{}\" is not an object",
                         component,
@@ -202,7 +228,9 @@ impl Tree {
         match &*self.0.borrow() {
             Node::Reference { .. } => false,
             Node::Object { resolved, .. } | Node::Array { resolved, .. } => *resolved,
-            Node::String(_) | Node::Number(_) | Node::Bool(_) | Node::Null => true,
+            Node::String { .. } | Node::Number { .. } | Node::Bool { .. } | Node::Null { .. } => {
+                true
+            }
         }
     }
 
@@ -247,14 +275,13 @@ impl Tree {
     }
 
     fn resolve_subtree(&self, root: &Tree, unresolved: &mut Vec<Tree>) -> Result<bool> {
-        let mut made_progress = false;
-        let borrow = self.0.borrow();
-        match &*borrow {
+        let node = self.0.borrow();
+        match &*node {
             Node::Reference { path, parent } => {
                 if let Some(subtree) = root.get(&path)? {
                     if subtree.is_resolved() {
                         let parent = parent.clone();
-                        drop(borrow);
+                        drop(node);
                         let mut new_node = subtree.0.borrow().clone();
                         new_node.set_parent(parent);
                         *self.0.borrow_mut() = new_node;
@@ -277,6 +304,7 @@ impl Tree {
                 if *resolved {
                     Ok(false)
                 } else {
+                    let mut made_progress = false;
                     let mut children_resolved = true;
                     for child in children.values() {
                         made_progress |= child.resolve_subtree(root, unresolved)?;
@@ -291,16 +319,15 @@ impl Tree {
                             if let Some(base) = root.get(base)? {
                                 if base.is_resolved() {
                                     resolved_base = Some(base);
-                                } else {
-                                    made_progress |= base.resolve_subtree(root, unresolved)?;
                                 }
                             }
                         }
 
-                        drop(borrow);
+                        drop(node);
 
                         if let Some(base) = resolved_base.as_ref() {
                             self.extend_from(&base);
+                            made_progress = true;
                         }
 
                         if let Node::Object { resolved, .. } = &mut *self.0.borrow_mut() {
@@ -325,6 +352,7 @@ impl Tree {
                 if *resolved {
                     Ok(false)
                 } else {
+                    let mut made_progress = false;
                     let mut children_resolved = true;
                     for child in children.iter() {
                         made_progress |= child.resolve_subtree(root, unresolved)?;
@@ -332,7 +360,7 @@ impl Tree {
                     }
 
                     if children_resolved {
-                        drop(borrow);
+                        drop(node);
 
                         if let Node::Array { resolved, .. } = &mut *self.0.borrow_mut() {
                             *resolved = true;
@@ -342,8 +370,8 @@ impl Tree {
                     Ok(made_progress)
                 }
             }
-            Node::String(_) | Node::Number(_) | Node::Bool(_) | Node::Null => {
-                return Ok(false);
+            Node::String { .. } | Node::Number { .. } | Node::Bool { .. } | Node::Null { .. } => {
+                Ok(false)
             }
         }
     }
@@ -382,8 +410,11 @@ impl Node {
         match self {
             Node::Reference { parent, .. }
             | Node::Object { parent, .. }
-            | Node::Array { parent, .. } => *parent = new_parent,
-            _ => {}
+            | Node::Array { parent, .. }
+            | Node::String { parent, .. }
+            | Node::Number { parent, .. }
+            | Node::Bool { parent, .. }
+            | Node::Null { parent } => *parent = new_parent,
         }
     }
 }
