@@ -1,30 +1,21 @@
 {{#> layout }}
 
 
-<div class="container mx-auto max-w-screen-md p-10 pt-20">
-    <h1 class="text-white text-4xl font-extralight mb-10">Updates</h1>
+<div class="max-w-screen-lg mx-auto text-main font-extralight p-20">
     {{#if releases}}
-    <div class="container mx-auto py-12 px-8 md:px-12">
-        {{#each releases}}
-        <div class="md:flex md:flex-row mb-32 md:mb-12">
-            <div class="font-display mb-8 md:mb-0 md:text-right w-48">
-                <div class="text-2xl font-bold whitespace-nowrap">
-                    VERSION {{name}}
-                </div>
-                <a class="text-md underline text-yellow-600 hover:text-yellow-700"
-                    href="/releases/{{tag_name}}/{{assets.0.name}}">
-                    DOWNLOAD
-                </a>
-            </div>
-            <div
-                class="prose prose-lg xl:prose-xl border-t md:border-t-0 pt-8 md:border-l border-gray-400 md:ml-8 md:pl-8 md:pt-0 xl:ml-16 xl:pl-16 max-w-5xl font-body">
-                {{{body}}}
-            </div>
+    <h1 class="text-white text-4xl font-display font-extralight mb-10">Updates</h1>
+    {{#each releases}}
+    <article id="{{name}}" class="mb-20">
+        <h2 class="text-white font-display font-extralight">Zed {{name}}</h2>
+        <a class="underline mt-5 leading-7" href="/releases/{{tag_name}}/{{assets.0.name}}">Download</a>
+        <div class="mt-5">
+            {{{body}}}
         </div>
-        {{/each}}
-    </div>
+    </article>
+    {{/each}}
     {{else}}
 
+    <h1>Hey!</h1>
     <p>You can't access this without <a href=" /sign_in">logging in</a>.</p>
 
     {{/if}}

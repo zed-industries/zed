@@ -22,9 +22,9 @@
     </script>
 </head>
 
-<body class="box-border font-body text-main font-light bg-black flex w-full h-full overflow-hidden">
-    <main class="container mx-auto max-w-screen-2xl flex text-gray-50">
-        <nav class="flex-initial flex flex-col w-1/5 p-10 pt-20 font-extralight border-r border-white">
+<body class="box-border font-body text-main font-light bg-black">
+    <main class="container mx-auto max-w-screen-2xl min-h-full grid grid-cols-4 gap-x-px bg-white text-gray-50">
+        <nav class="flex flex-col p-10 pt-20 bg-black font-extralight">
             <a href="/" class="font-display">
                 <svg width="32" height="32" viewBox="0 0 32 32" fill="none" xmlns="http://www.w3.org/2000/svg">
                 <mask id="path-2-inside-1" fill="white">
@@ -64,21 +64,19 @@
 
             <!-- AND If user is an admin -->
             {{#if current_user.is_admin }}
-            <div class="font-mono flex flex-col mt-10">
-                <a href="/admin" class="text-base lowercase no-underline hover:underline mt-2">
-                    Admin
-                </a>
-            </div>
+                <div class="font-mono flex flex-col mt-10">
+                    <p class="text-xs tracking-widest uppercase">Admin Zone</p>
+                    <a href="/admin" class="inline-block text-base lowercase no-underline hover:underline mt-2">
+                        Admin
+                    </a>
+                </div>
             {{/if}}
-
-            <div class="flex-1"></div>
-        
-            <div class="relative">
+       
+            <div class="mt-10">
                 <!-- TODO: Dropdown is linked to #avatar, just using it for now. Come back and clean up later -->
-                <p id="avatar" class="text-base lowercase no-underline hover:underline mt-2">@{{current_user.github_login}}</p>
-                <form id="sign_out" action="/sign_out" method="post"
-                    class="hidden absolute mt-1 -top-10 left-0 bg-black border border-white text-center text-sm p-2 px-4 whitespace-nowrap">
-                    <button class="hover:underline">Sign out</button>
+                <p id="avatar" class="text-base lowercase no-underline hover:underline">@{{current_user.github_login}}</p>
+                <form id="sign_out" action="/sign_out" method="post">
+                    <button class="text-base text-gray-400 lowercase no-underline hover:underline mt-2">Sign out</button>
                 </form>
             </div>
 
@@ -91,7 +89,7 @@
             {{/if}}
         </nav>
 
-        <div class="flex-1 max-w-screen-xl overflow-y-auto">
+        <div class="bg-black col-span-3">
             {{> @partial-block}}
         </div>
     </main>
