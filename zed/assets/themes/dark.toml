@@ -9,7 +9,6 @@ extends = "_base"
 0 = "#1B222B"
 
 [text]
-base = { family = "Inconsolata", size = 15 }
 0 = { extends = "$text.base", color = "#FFFFFF" }
 1 = { extends = "$text.base", color = "#CDD1E2" }
 2 = { extends = "$text.base", color = "#9BA8BE" }
