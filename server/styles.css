@@ -27,4 +27,12 @@
 .underline, .hover\:underline:hover {
         text-underline-offset: 4px;
     }
+    
+    /* This fixes scrollbar jump */
+    @media screen and (min-width: 960px) {
+        html {
+            margin-left: calc(100vw - 100%);
+            margin-right: 0;
+        }
+    }
 }
