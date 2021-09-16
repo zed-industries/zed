@@ -54,10 +54,15 @@ impl ChatPanel {
         cx: &mut ViewContext<Self>,
     ) -> Self {
         let input_editor = cx.add_view(|cx| {
-            Editor::auto_height(4, settings.clone(), cx).with_style({
-                let settings = settings.clone();
-                move |_| settings.borrow().theme.chat_panel.input_editor.as_editor()
-            })
+            Editor::auto_height(
+                4,
+                settings.clone(),
+                {
+                    let settings = settings.clone();
+                    move |_| settings.borrow().theme.chat_panel.input_editor.as_editor()
+                },
+                cx,
+            )
         });
         let channel_select = cx.add_view(|cx| {
             let channel_list = channel_list.clone();

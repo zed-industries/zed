@@ -1121,7 +1121,9 @@ mod tests {
             .unwrap();
 
         // Create a selection set as client B and see that selection set as client A.
-        let editor_b = cx_b.add_view(window_b, |cx| Editor::for_buffer(buffer_b, settings, cx));
+        let editor_b = cx_b.add_view(window_b, |cx| {
+            Editor::for_buffer(buffer_b, settings, |_| Default::default(), cx)
+        });
         buffer_a
             .condition(&cx_a, |buffer, _| buffer.selection_sets().count() == 1)
             .await;

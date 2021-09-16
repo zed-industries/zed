@@ -310,7 +310,7 @@ pub struct Editor {
     scroll_position: Vector2F,
     scroll_top_anchor: Anchor,
     autoscroll_requested: bool,
-    build_style: Option<Rc<RefCell<dyn FnMut(&mut MutableAppContext) -> EditorStyle>>>,
+    build_style: Rc<RefCell<dyn FnMut(&mut MutableAppContext) -> EditorStyle>>,
     settings: watch::Receiver<Settings>,
     focused: bool,
     cursors_visible: bool,
@@ -344,9 +344,13 @@ struct ClipboardSelection {
 }
 
 impl Editor {
-    pub fn single_line(settings: watch::Receiver<Settings>, cx: &mut ViewContext<Self>) -> Self {
+    pub fn single_line(
+        settings: watch::Receiver<Settings>,
+        build_style: impl 'static + FnMut(&mut MutableAppContext) -> EditorStyle,
+        cx: &mut ViewContext<Self>,
+    ) -> Self {
         let buffer = cx.add_model(|cx| Buffer::new(0, String::new(), cx));
-        let mut view = Self::for_buffer(buffer, settings, cx);
+        let mut view = Self::for_buffer(buffer, settings, build_style, cx);
         view.mode = EditorMode::SingleLine;
         view
     }
@@ -354,10 +358,11 @@ impl Editor {
     pub fn auto_height(
         max_lines: usize,
         settings: watch::Receiver<Settings>,
+        build_style: impl 'static + FnMut(&mut MutableAppContext) -> EditorStyle,
         cx: &mut ViewContext<Self>,
     ) -> Self {
         let buffer = cx.add_model(|cx| Buffer::new(0, String::new(), cx));
-        let mut view = Self::for_buffer(buffer, settings, cx);
+        let mut view = Self::for_buffer(buffer, settings, build_style, cx);
         view.mode = EditorMode::AutoHeight { max_lines };
         view
     }
@@ -365,6 +370,16 @@ impl Editor {
     pub fn for_buffer(
         buffer: ModelHandle<Buffer>,
         settings: watch::Receiver<Settings>,
+        build_style: impl 'static + FnMut(&mut MutableAppContext) -> EditorStyle,
+        cx: &mut ViewContext<Self>,
+    ) -> Self {
+        Self::new(buffer, settings, Rc::new(RefCell::new(build_style)), cx)
+    }
+
+    fn new(
+        buffer: ModelHandle<Buffer>,
+        settings: watch::Receiver<Settings>,
+        build_style: Rc<RefCell<dyn FnMut(&mut MutableAppContext) -> EditorStyle>>,
         cx: &mut ViewContext<Self>,
     ) -> Self {
         let display_map =
@@ -396,7 +411,7 @@ impl Editor {
             next_selection_id,
             add_selections_state: None,
             select_larger_syntax_node_stack: Vec::new(),
-            build_style: None,
+            build_style,
             scroll_position: Vector2F::zero(),
             scroll_top_anchor: Anchor::min(),
             autoscroll_requested: false,
@@ -408,14 +423,6 @@ impl Editor {
             mode: EditorMode::Full,
             placeholder_text: None,
         }
-    }
-
-    pub fn with_style(
-        mut self,
-        f: impl 'static + FnMut(&mut MutableAppContext) -> EditorStyle,
-    ) -> Self {
-        self.build_style = Some(Rc::new(RefCell::new(f)));
-        self
     }
 
     pub fn replica_id(&self, cx: &AppContext) -> ReplicaId {
@@ -2648,10 +2655,7 @@ impl Entity for Editor {
 
 impl View for Editor {
     fn render(&mut self, cx: &mut RenderContext<Self>) -> ElementBox {
-        let style = self
-            .build_style
-            .as_ref()
-            .map_or(Default::default(), |build| (build.borrow_mut())(cx));
+        let style = self.build_style.borrow_mut()(cx);
         EditorElement::new(self.handle.clone(), style).boxed()
     }
 
@@ -2703,8 +2707,12 @@ impl workspace::Item for Buffer {
         settings: watch::Receiver<Settings>,
         cx: &mut ViewContext<Self::View>,
     ) -> Self::View {
-        Editor::for_buffer(handle, settings.clone(), cx)
-            .with_style(move |_| settings.borrow().theme.editor.clone())
+        Editor::for_buffer(
+            handle,
+            settings.clone(),
+            move |_| settings.borrow().theme.editor.clone(),
+            cx,
+        )
     }
 }
 
@@ -2741,10 +2749,14 @@ impl workspace::ItemView for Editor {
     where
         Self: Sized,
     {
-        let mut clone = Editor::for_buffer(self.buffer.clone(), self.settings.clone(), cx);
+        let mut clone = Editor::new(
+            self.buffer.clone(),
+            self.settings.clone(),
+            self.build_style.clone(),
+            cx,
+        );
         clone.scroll_position = self.scroll_position;
         clone.scroll_top_anchor = self.scroll_top_anchor.clone();
-        clone.build_style = self.build_style.clone();
         Some(clone)
     }
 
@@ -2787,7 +2799,7 @@ mod tests {
         let buffer = cx.add_model(|cx| Buffer::new(0, "aaaaaa\nbbbbbb\ncccccc\ndddddd\n", cx));
         let settings = settings::test(&cx).1;
         let (_, editor) = cx.add_window(Default::default(), |cx| {
-            Editor::for_buffer(buffer, settings, cx)
+            Editor::for_buffer(buffer, settings, |_| Default::default(), cx)
         });
 
         editor.update(cx, |view, cx| {
@@ -2855,7 +2867,7 @@ mod tests {
         let buffer = cx.add_model(|cx| Buffer::new(0, "aaaaaa\nbbbbbb\ncccccc\ndddddd\n", cx));
         let settings = settings::test(&cx).1;
         let (_, view) = cx.add_window(Default::default(), |cx| {
-            Editor::for_buffer(buffer, settings, cx)
+            Editor::for_buffer(buffer, settings, |_| Default::default(), cx)
         });
 
         view.update(cx, |view, cx| {
@@ -2889,7 +2901,7 @@ mod tests {
         let buffer = cx.add_model(|cx| Buffer::new(0, "aaaaaa\nbbbbbb\ncccccc\ndddddd\n", cx));
         let settings = settings::test(&cx).1;
         let (_, view) = cx.add_window(Default::default(), |cx| {
-            Editor::for_buffer(buffer, settings, cx)
+            Editor::for_buffer(buffer, settings, |_| Default::default(), cx)
         });
 
         view.update(cx, |view, cx| {
@@ -2935,7 +2947,7 @@ mod tests {
 
         let settings = settings::test(&cx).1;
         let (_, editor) = cx.add_window(Default::default(), |cx| {
-            Editor::for_buffer(buffer.clone(), settings.clone(), cx)
+            Editor::for_buffer(buffer.clone(), settings.clone(), |_| Default::default(), cx)
         });
 
         let layouts = editor.update(cx, |editor, cx| {
@@ -2981,7 +2993,7 @@ mod tests {
         });
         let settings = settings::test(&cx).1;
         let (_, view) = cx.add_window(Default::default(), |cx| {
-            Editor::for_buffer(buffer.clone(), settings, cx)
+            Editor::for_buffer(buffer.clone(), settings, |_| Default::default(), cx)
         });
 
         view.update(cx, |view, cx| {
@@ -3049,7 +3061,7 @@ mod tests {
         let buffer = cx.add_model(|cx| Buffer::new(0, sample_text(6, 6), cx));
         let settings = settings::test(&cx).1;
         let (_, view) = cx.add_window(Default::default(), |cx| {
-            Editor::for_buffer(buffer.clone(), settings, cx)
+            Editor::for_buffer(buffer.clone(), settings, |_| Default::default(), cx)
         });
 
         buffer.update(cx, |buffer, cx| {
@@ -3126,7 +3138,7 @@ mod tests {
         let buffer = cx.add_model(|cx| Buffer::new(0, "ⓐⓑⓒⓓⓔ\nabcde\nαβγδε\n", cx));
         let settings = settings::test(&cx).1;
         let (_, view) = cx.add_window(Default::default(), |cx| {
-            Editor::for_buffer(buffer.clone(), settings, cx)
+            Editor::for_buffer(buffer.clone(), settings, |_| Default::default(), cx)
         });
 
         assert_eq!('ⓐ'.len_utf8(), 3);
@@ -3184,7 +3196,7 @@ mod tests {
         let buffer = cx.add_model(|cx| Buffer::new(0, "ⓐⓑⓒⓓⓔ\nabcd\nαβγ\nabcd\nⓐⓑⓒⓓⓔ\n", cx));
         let settings = settings::test(&cx).1;
         let (_, view) = cx.add_window(Default::default(), |cx| {
-            Editor::for_buffer(buffer.clone(), settings, cx)
+            Editor::for_buffer(buffer.clone(), settings, |_| Default::default(), cx)
         });
         view.update(cx, |view, cx| {
             view.select_display_ranges(&[empty_range(0, "ⓐⓑⓒⓓⓔ".len())], cx)
@@ -3215,7 +3227,7 @@ mod tests {
         let buffer = cx.add_model(|cx| Buffer::new(0, "abc\n  def", cx));
         let settings = settings::test(&cx).1;
         let (_, view) = cx.add_window(Default::default(), |cx| {
-            Editor::for_buffer(buffer, settings, cx)
+            Editor::for_buffer(buffer, settings, |_| Default::default(), cx)
         });
         view.update(cx, |view, cx| {
             view.select_display_ranges(
@@ -3360,7 +3372,7 @@ mod tests {
             cx.add_model(|cx| Buffer::new(0, "use std::str::{foo, bar}\n\n  {baz.qux()}", cx));
         let settings = settings::test(&cx).1;
         let (_, view) = cx.add_window(Default::default(), |cx| {
-            Editor::for_buffer(buffer, settings, cx)
+            Editor::for_buffer(buffer, settings, |_| Default::default(), cx)
         });
         view.update(cx, |view, cx| {
             view.select_display_ranges(
@@ -3554,7 +3566,7 @@ mod tests {
             cx.add_model(|cx| Buffer::new(0, "use one::{\n    two::three::four::five\n};", cx));
         let settings = settings::test(&cx).1;
         let (_, view) = cx.add_window(Default::default(), |cx| {
-            Editor::for_buffer(buffer, settings, cx)
+            Editor::for_buffer(buffer, settings, |_| Default::default(), cx)
         });
 
         view.update(cx, |view, cx| {
@@ -3616,7 +3628,7 @@ mod tests {
         });
         let settings = settings::test(&cx).1;
         let (_, view) = cx.add_window(Default::default(), |cx| {
-            Editor::for_buffer(buffer.clone(), settings, cx)
+            Editor::for_buffer(buffer.clone(), settings, |_| Default::default(), cx)
         });
 
         view.update(cx, |view, cx| {
@@ -3652,7 +3664,7 @@ mod tests {
         });
         let settings = settings::test(&cx).1;
         let (_, view) = cx.add_window(Default::default(), |cx| {
-            Editor::for_buffer(buffer.clone(), settings, cx)
+            Editor::for_buffer(buffer.clone(), settings, |_| Default::default(), cx)
         });
 
         view.update(cx, |view, cx| {
@@ -3682,7 +3694,7 @@ mod tests {
         let settings = settings::test(&cx).1;
         let buffer = cx.add_model(|cx| Buffer::new(0, "abc\ndef\nghi\n", cx));
         let (_, view) = cx.add_window(Default::default(), |cx| {
-            Editor::for_buffer(buffer, settings, cx)
+            Editor::for_buffer(buffer, settings, |_| Default::default(), cx)
         });
         view.update(cx, |view, cx| {
             view.select_display_ranges(
@@ -3708,7 +3720,7 @@ mod tests {
         let settings = settings::test(&cx).1;
         let buffer = cx.add_model(|cx| Buffer::new(0, "abc\ndef\nghi\n", cx));
         let (_, view) = cx.add_window(Default::default(), |cx| {
-            Editor::for_buffer(buffer, settings, cx)
+            Editor::for_buffer(buffer, settings, |_| Default::default(), cx)
         });
         view.update(cx, |view, cx| {
             view.select_display_ranges(&[DisplayPoint::new(2, 0)..DisplayPoint::new(0, 1)], cx)
@@ -3727,7 +3739,7 @@ mod tests {
         let settings = settings::test(&cx).1;
         let buffer = cx.add_model(|cx| Buffer::new(0, "abc\ndef\nghi\n", cx));
         let (_, view) = cx.add_window(Default::default(), |cx| {
-            Editor::for_buffer(buffer, settings, cx)
+            Editor::for_buffer(buffer, settings, |_| Default::default(), cx)
         });
         view.update(cx, |view, cx| {
             view.select_display_ranges(
@@ -3756,7 +3768,7 @@ mod tests {
         let settings = settings::test(&cx).1;
         let buffer = cx.add_model(|cx| Buffer::new(0, "abc\ndef\nghi\n", cx));
         let (_, view) = cx.add_window(Default::default(), |cx| {
-            Editor::for_buffer(buffer, settings, cx)
+            Editor::for_buffer(buffer, settings, |_| Default::default(), cx)
         });
         view.update(cx, |view, cx| {
             view.select_display_ranges(
@@ -3784,7 +3796,7 @@ mod tests {
         let settings = settings::test(&cx).1;
         let buffer = cx.add_model(|cx| Buffer::new(0, sample_text(10, 5), cx));
         let (_, view) = cx.add_window(Default::default(), |cx| {
-            Editor::for_buffer(buffer, settings, cx)
+            Editor::for_buffer(buffer, settings, |_| Default::default(), cx)
         });
         view.update(cx, |view, cx| {
             view.fold_ranges(
@@ -3884,7 +3896,7 @@ mod tests {
         let settings = settings::test(&cx).1;
         let view = cx
             .add_window(Default::default(), |cx| {
-                Editor::for_buffer(buffer.clone(), settings, cx)
+                Editor::for_buffer(buffer.clone(), settings, |_| Default::default(), cx)
             })
             .1;
 
@@ -4018,7 +4030,7 @@ mod tests {
         let buffer = cx.add_model(|cx| Buffer::new(0, "abc\nde\nfgh", cx));
         let settings = settings::test(&cx).1;
         let (_, view) = cx.add_window(Default::default(), |cx| {
-            Editor::for_buffer(buffer, settings, cx)
+            Editor::for_buffer(buffer, settings, |_| Default::default(), cx)
         });
         view.update(cx, |view, cx| {
             view.select_all(&SelectAll, cx);
@@ -4034,7 +4046,7 @@ mod tests {
         let settings = settings::test(&cx).1;
         let buffer = cx.add_model(|cx| Buffer::new(0, sample_text(6, 5), cx));
         let (_, view) = cx.add_window(Default::default(), |cx| {
-            Editor::for_buffer(buffer, settings, cx)
+            Editor::for_buffer(buffer, settings, |_| Default::default(), cx)
         });
         view.update(cx, |view, cx| {
             view.select_display_ranges(
@@ -4082,7 +4094,7 @@ mod tests {
         let settings = settings::test(&cx).1;
         let buffer = cx.add_model(|cx| Buffer::new(0, sample_text(9, 5), cx));
         let (_, view) = cx.add_window(Default::default(), |cx| {
-            Editor::for_buffer(buffer, settings, cx)
+            Editor::for_buffer(buffer, settings, |_| Default::default(), cx)
         });
         view.update(cx, |view, cx| {
             view.fold_ranges(
@@ -4152,7 +4164,7 @@ mod tests {
         let settings = settings::test(&cx).1;
         let buffer = cx.add_model(|cx| Buffer::new(0, "abc\ndefghi\n\njk\nlmno\n", cx));
         let (_, view) = cx.add_window(Default::default(), |cx| {
-            Editor::for_buffer(buffer, settings, cx)
+            Editor::for_buffer(buffer, settings, |_| Default::default(), cx)
         });
 
         view.update(cx, |view, cx| {
@@ -4339,7 +4351,9 @@ mod tests {
             let history = History::new(text.into());
             Buffer::from_history(0, history, None, lang.cloned(), cx)
         });
-        let (_, view) = cx.add_window(|cx| Editor::for_buffer(buffer, settings.clone(), cx));
+        let (_, view) = cx.add_window(|cx| {
+            Editor::for_buffer(buffer, settings.clone(), |_| Default::default(), cx)
+        });
         view.condition(&cx, |view, cx| !view.buffer.read(cx).is_parsing())
             .await;
 
