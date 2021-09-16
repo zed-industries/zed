@@ -117,7 +117,7 @@ impl Worktree {
         cx: &mut AsyncAppContext,
     ) -> Result<ModelHandle<Self>> {
         let response = rpc
-            .request(proto::OpenWorktree {
+            .request(proto::JoinWorktree {
                 worktree_id: id,
                 access_token,
             })
@@ -127,18 +127,18 @@ impl Worktree {
     }
 
     async fn remote(
-        open_response: proto::OpenWorktreeResponse,
+        join_response: proto::JoinWorktreeResponse,
         rpc: Arc<rpc::Client>,
         languages: Arc<LanguageRegistry>,
         cx: &mut AsyncAppContext,
     ) -> Result<ModelHandle<Self>> {
-        let worktree = open_response
+        let worktree = join_response
             .worktree
             .ok_or_else(|| anyhow!("empty worktree"))?;
 
-        let remote_id = open_response.worktree_id;
-        let replica_id = open_response.replica_id as ReplicaId;
-        let peers = open_response.peers;
+        let remote_id = join_response.worktree_id;
+        let replica_id = join_response.replica_id as ReplicaId;
+        let peers = join_response.peers;
         let root_char_bag: CharBag = worktree
             .root_name
             .chars()
@@ -2780,7 +2780,7 @@ mod tests {
             })
             .await;
         let remote = Worktree::remote(
-            proto::OpenWorktreeResponse {
+            proto::JoinWorktreeResponse {
                 worktree_id,
                 worktree: share_request.worktree,
                 replica_id: 1,

@@ -11,8 +11,8 @@ message Envelope {
         Ping ping = 6;
         ShareWorktree share_worktree = 7;
         ShareWorktreeResponse share_worktree_response = 8;
-        OpenWorktree open_worktree = 9;
-        OpenWorktreeResponse open_worktree_response = 10;
+        JoinWorktree join_worktree = 9;
+        JoinWorktreeResponse join_worktree_response = 10;
         UpdateWorktree update_worktree = 11;
         CloseWorktree close_worktree = 12;
         OpenBuffer open_buffer = 13;
@@ -57,12 +57,12 @@ message ShareWorktreeResponse {
     string access_token = 2;
 }
 
-message OpenWorktree {
+message JoinWorktree {
     uint64 worktree_id = 1;
     string access_token = 2;
 }
 
-message OpenWorktreeResponse {
+message JoinWorktreeResponse {
     uint64 worktree_id = 1;
     Worktree worktree = 2;
     uint32 replica_id = 3;

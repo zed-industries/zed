@@ -293,7 +293,7 @@ impl Server {
 
     async fn join_worktree(
         self: Arc<Server>,
-        request: TypedEnvelope<proto::OpenWorktree>,
+        request: TypedEnvelope<proto::JoinWorktree>,
     ) -> tide::Result<()> {
         let worktree_id = request.payload.worktree_id;
         let access_token = &request.payload.access_token;
@@ -334,7 +334,7 @@ impl Server {
             self.peer
                 .respond(
                     request.receipt(),
-                    proto::OpenWorktreeResponse {
+                    proto::JoinWorktreeResponse {
                         worktree_id,
                         worktree: Some(proto::Worktree {
                             root_name: worktree.root_name.clone(),
@@ -349,7 +349,7 @@ impl Server {
             self.peer
                 .respond(
                     request.receipt(),
-                    proto::OpenWorktreeResponse {
+                    proto::JoinWorktreeResponse {
                         worktree_id,
                         worktree: None,
                         replica_id: 0,
