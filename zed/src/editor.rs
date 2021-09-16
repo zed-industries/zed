@@ -17,10 +17,9 @@ pub use display_map::DisplayPoint;
 use display_map::*;
 pub use element::*;
 use gpui::{
-    action, color::Color, font_cache::FamilyId, fonts::TextStyle, geometry::vector::Vector2F,
+    action, color::Color, fonts::TextStyle, geometry::vector::Vector2F,
     keymap::Binding, text_layout, AppContext, ClipboardItem, Element, ElementBox, Entity,
-    ModelHandle, MutableAppContext, RenderContext, Task, View, ViewContext,
-    WeakViewHandle,
+    ModelHandle, MutableAppContext, RenderContext, Task, View, ViewContext, WeakViewHandle,
 };
 use postage::watch;
 use serde::{Deserialize, Serialize};
@@ -318,8 +317,6 @@ pub struct Snapshot {
     pub display_snapshot: DisplayMapSnapshot,
     pub placeholder_text: Option<Arc<str>>,
     pub theme: Arc<Theme>,
-    pub font_family: FamilyId,
-    pub font_size: f32,
     is_focused: bool,
     scroll_position: Vector2F,
     scroll_top_anchor: Anchor,
@@ -436,8 +433,6 @@ impl Editor {
             scroll_top_anchor: self.scroll_top_anchor.clone(),
             theme: settings.theme.clone(),
             placeholder_text: self.placeholder_text.clone(),
-            font_family: settings.buffer_font_family,
-            font_size: settings.buffer_font_size,
             is_focused: self
                 .handle
                 .upgrade(cx)
