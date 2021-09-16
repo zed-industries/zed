@@ -1,5 +1,6 @@
 use crate::{
     color::Color,
+    font_cache::FamilyId,
     json::{json, ToJson},
     text_layout::RunStyle,
     FontCache,
@@ -22,6 +23,7 @@ pub type GlyphId = u32;
 pub struct TextStyle {
     pub color: Color,
     pub font_family_name: Arc<str>,
+    pub font_family_id: FamilyId,
     pub font_id: FontId,
     pub font_size: f32,
     pub font_properties: Properties,
@@ -85,11 +87,12 @@ impl TextStyle {
         font_cache: &FontCache,
     ) -> anyhow::Result<Self> {
         let font_family_name = font_family_name.into();
-        let family_id = font_cache.load_family(&[&font_family_name])?;
-        let font_id = font_cache.select_font(family_id, &font_properties)?;
+        let font_family_id = font_cache.load_family(&[&font_family_name])?;
+        let font_id = font_cache.select_font(font_family_id, &font_properties)?;
         Ok(Self {
             color,
             font_family_name,
+            font_family_id,
             font_id,
             font_size,
             font_properties,

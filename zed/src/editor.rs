@@ -2597,15 +2597,18 @@ impl Snapshot {
 }
 
 impl EditorStyle {
-    #[cfg(any(test, feature ="test-support"))]
+    #[cfg(any(test, feature = "test-support"))]
     pub fn test(font_cache: &FontCache) -> Self {
-        let font_family_name = "Monaco";
+        let font_family_name = Arc::from("Monaco");
         let font_properties = Default::default();
-        let family_id = font_cache.load_family(&[font_family_name]).unwrap();
-        let font_id = font_cache.select_font(family_id, &font_properties).unwrap();
+        let font_family_id = font_cache.load_family(&[&font_family_name]).unwrap();
+        let font_id = font_cache
+            .select_font(font_family_id, &font_properties)
+            .unwrap();
         Self {
             text: TextStyle {
-                font_family_name: font_family_name.into(),
+                font_family_name,
+                font_family_id,
                 font_id,
                 font_size: 14.,
                 color: Color::from_u32(0xff0000ff),
@@ -2718,7 +2721,29 @@ impl workspace::Item for Buffer {
         Editor::for_buffer(
             handle,
             settings.clone(),
-            move |_| settings.borrow().theme.editor.clone(),
+            move |cx| {
+                let settings = settings.borrow();
+                let font_cache = cx.font_cache();
+                let font_family_id = settings.buffer_font_family;
+                let font_family_name = cx.font_cache().family_name(font_family_id).unwrap();
+                let font_properties = Default::default();
+                let font_id = font_cache
+                    .select_font(font_family_id, &font_properties)
+                    .unwrap();
+                let font_size = settings.buffer_font_size;
+
+                let mut theme = settings.theme.editor.clone();
+                theme.text = TextStyle {
+                    color: theme.text.color,
+                    font_family_name,
+                    font_family_id,
+                    font_id,
+                    font_size,
+                    font_properties,
+                    underline: false,
+                };
+                theme
+            },
             cx,
         )
     }

@@ -17,7 +17,7 @@ use std::{
 pub struct FamilyId(usize);
 
 struct Family {
-    name: String,
+    name: Arc<str>,
     font_ids: Vec<FontId>,
 }
 
@@ -49,7 +49,7 @@ impl FontCache {
         }))
     }
 
-    pub fn family_name(&self, family_id: FamilyId) -> Result<String> {
+    pub fn family_name(&self, family_id: FamilyId) -> Result<Arc<str>> {
         self.0
             .read()
             .families
@@ -62,7 +62,7 @@ impl FontCache {
         for name in names {
             let state = self.0.upgradable_read();
 
-            if let Some(ix) = state.families.iter().position(|f| f.name == *name) {
+            if let Some(ix) = state.families.iter().position(|f| f.name.as_ref() == *name) {
                 return Ok(FamilyId(ix));
             }
 
@@ -81,7 +81,7 @@ impl FontCache {
                 }
 
                 state.families.push(Family {
-                    name: String::from(*name),
+                    name: Arc::from(*name),
                     font_ids,
                 });
                 return Ok(family_id);
