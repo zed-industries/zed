@@ -6,6 +6,9 @@ name = "zed-server"
 version = "0.1.0"
 
 [[bin]]
+name = "zed-server"
+
+[[bin]]
 name = "seed"
 required-features = ["seed-support"]
 
@@ -47,7 +50,7 @@ default-features = false
 
 [dependencies.sqlx]
 version = "0.5.2"
-features = ["runtime-async-std-rustls", "postgres", "time"]
+features = ["runtime-async-std-rustls", "postgres", "time", "uuid"]
 
 [dev-dependencies]
 gpui = { path = "../gpui" }

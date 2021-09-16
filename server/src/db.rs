@@ -1,7 +1,7 @@
 use anyhow::Context;
 use async_std::task::{block_on, yield_now};
 use serde::Serialize;
-use sqlx::{FromRow, Result};
+use sqlx::{types::Uuid, FromRow, Result};
 use time::OffsetDateTime;
 
 pub use async_sqlx_session::PostgresSessionStore as SessionStore;
@@ -402,11 +402,13 @@ impl Db {
         sender_id: UserId,
         body: &str,
         timestamp: OffsetDateTime,
+        nonce: u128,
     ) -> Result<MessageId> {
         test_support!(self, {
             let query = "
-                INSERT INTO channel_messages (channel_id, sender_id, body, sent_at)
-                VALUES ($1, $2, $3, $4)
+                INSERT INTO channel_messages (channel_id, sender_id, body, sent_at, nonce)
+                VALUES ($1, $2, $3, $4, $5)
+                ON CONFLICT (nonce) DO UPDATE SET nonce = excluded.nonce
                 RETURNING id
             ";
             sqlx::query_scalar(query)
@@ -414,6 +416,7 @@ impl Db {
                 .bind(sender_id.0)
                 .bind(body)
                 .bind(timestamp)
+                .bind(Uuid::from_u128(nonce))
                 .fetch_one(&self.pool)
                 .await
                 .map(MessageId)
@@ -430,7 +433,7 @@ impl Db {
             let query = r#"
                 SELECT * FROM (
                     SELECT
-                        id, sender_id, body, sent_at AT TIME ZONE 'UTC' as sent_at
+                        id, sender_id, body, sent_at AT TIME ZONE 'UTC' as sent_at, nonce
                     FROM
                         channel_messages
                     WHERE
@@ -514,6 +517,7 @@ pub struct ChannelMessage {
     pub sender_id: UserId,
     pub body: String,
     pub sent_at: OffsetDateTime,
+    pub nonce: Uuid,
 }
 
 #[cfg(test)]
@@ -677,7 +681,7 @@ pub mod tests {
         let org = db.create_org("org", "org").await.unwrap();
         let channel = db.create_org_channel(org, "channel").await.unwrap();
         for i in 0..10 {
-            db.create_channel_message(channel, user, &i.to_string(), OffsetDateTime::now_utc())
+            db.create_channel_message(channel, user, &i.to_string(), OffsetDateTime::now_utc(), i)
                 .await
                 .unwrap();
         }
@@ -696,5 +700,35 @@ pub mod tests {
             prev_messages.iter().map(|m| &m.body).collect::<Vec<_>>(),
             ["1", "2", "3", "4"]
         );
+    }
+
+    #[gpui::test]
+    async fn test_channel_message_nonces() {
+        let test_db = TestDb::new();
+        let db = test_db.db();
+        let user = db.create_user("user", false).await.unwrap();
+        let org = db.create_org("org", "org").await.unwrap();
+        let channel = db.create_org_channel(org, "channel").await.unwrap();
+
+        let msg1_id = db
+            .create_channel_message(channel, user, "1", OffsetDateTime::now_utc(), 1)
+            .await
+            .unwrap();
+        let msg2_id = db
+            .create_channel_message(channel, user, "2", OffsetDateTime::now_utc(), 2)
+            .await
+            .unwrap();
+        let msg3_id = db
+            .create_channel_message(channel, user, "3", OffsetDateTime::now_utc(), 1)
+            .await
+            .unwrap();
+        let msg4_id = db
+            .create_channel_message(channel, user, "4", OffsetDateTime::now_utc(), 2)
+            .await
+            .unwrap();
+
+        assert_ne!(msg1_id, msg2_id);
+        assert_eq!(msg1_id, msg3_id);
+        assert_eq!(msg2_id, msg4_id);
     }
 }

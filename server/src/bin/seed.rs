@@ -73,7 +73,7 @@ async fn main() {
         for timestamp in timestamps {
             let sender_id = *zed_user_ids.choose(&mut rng).unwrap();
             let body = lipsum::lipsum_words(rng.gen_range(1..=50));
-            db.create_channel_message(channel_id, sender_id, &body, timestamp)
+            db.create_channel_message(channel_id, sender_id, &body, timestamp, rng.gen())
                 .await
                 .expect("failed to insert message");
         }

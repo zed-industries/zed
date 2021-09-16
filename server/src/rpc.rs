@@ -602,6 +602,7 @@ impl Server {
                 body: msg.body,
                 timestamp: msg.sent_at.unix_timestamp() as u64,
                 sender_id: msg.sender_id.to_proto(),
+                nonce: Some(msg.nonce.as_u128().into()),
             })
             .collect::<Vec<_>>();
         self.peer
@@ -687,10 +688,24 @@ impl Server {
         }
 
         let timestamp = OffsetDateTime::now_utc();
+        let nonce = if let Some(nonce) = request.payload.nonce {
+            nonce
+        } else {
+            self.peer
+                .respond_with_error(
+                    receipt,
+                    proto::Error {
+                        message: "nonce can't be blank".to_string(),
+                    },
+                )
+                .await?;
+            return Ok(());
+        };
+
         let message_id = self
             .app_state
             .db
-            .create_channel_message(channel_id, user_id, &body, timestamp)
+            .create_channel_message(channel_id, user_id, &body, timestamp, nonce.clone().into())
             .await?
             .to_proto();
         let message = proto::ChannelMessage {
@@ -698,6 +713,7 @@ impl Server {
             id: message_id,
             body,
             timestamp: timestamp.unix_timestamp() as u64,
+            nonce: Some(nonce),
         };
         broadcast(request.sender_id, connection_ids, |conn_id| {
             self.peer.send(
@@ -754,6 +770,7 @@ impl Server {
                 body: msg.body,
                 timestamp: msg.sent_at.unix_timestamp() as u64,
                 sender_id: msg.sender_id.to_proto(),
+                nonce: Some(msg.nonce.as_u128().into()),
             })
             .collect::<Vec<_>>();
         self.peer
@@ -1513,6 +1530,7 @@ mod tests {
             current_user_id(&user_store_b),
             "hello A, it's B.",
             OffsetDateTime::now_utc(),
+            1,
         )
         .await
         .unwrap();
@@ -1707,6 +1725,7 @@ mod tests {
             current_user_id(&user_store_b),
             "hello A, it's B.",
             OffsetDateTime::now_utc(),
+            2,
         )
         .await
         .unwrap();
@@ -1787,6 +1806,24 @@ mod tests {
             )
         });
 
+        // Send a message from client B while it is disconnected.
+        channel_b
+            .update(&mut cx_b, |channel, cx| {
+                let task = channel
+                    .send_message("can you see this?".to_string(), cx)
+                    .unwrap();
+                assert_eq!(
+                    channel_messages(channel),
+                    &[
+                        ("user_b".to_string(), "hello A, it's B.".to_string(), false),
+                        ("user_b".to_string(), "can you see this?".to_string(), true)
+                    ]
+                );
+                task
+            })
+            .await
+            .unwrap_err();
+
         // Send a message from client A while B is disconnected.
         channel_a
             .update(&mut cx_a, |channel, cx| {
@@ -1812,7 +1849,8 @@ mod tests {
         server.allow_connections();
         cx_b.foreground().advance_clock(Duration::from_secs(10));
 
-        // Verify that B sees the new messages upon reconnection.
+        // Verify that B sees the new messages upon reconnection, as well as the message client B
+        // sent while offline.
         channel_b
             .condition(&cx_b, |channel, _| {
                 channel_messages(channel)
@@ -1820,6 +1858,7 @@ mod tests {
                         ("user_b".to_string(), "hello A, it's B.".to_string(), false),
                         ("user_a".to_string(), "oh, hi B.".to_string(), false),
                         ("user_a".to_string(), "sup".to_string(), false),
+                        ("user_b".to_string(), "can you see this?".to_string(), false),
                     ]
             })
             .await;
@@ -1838,6 +1877,7 @@ mod tests {
                         ("user_b".to_string(), "hello A, it's B.".to_string(), false),
                         ("user_a".to_string(), "oh, hi B.".to_string(), false),
                         ("user_a".to_string(), "sup".to_string(), false),
+                        ("user_b".to_string(), "can you see this?".to_string(), false),
                         ("user_a".to_string(), "you online?".to_string(), false),
                     ]
             })
@@ -1856,6 +1896,7 @@ mod tests {
                         ("user_b".to_string(), "hello A, it's B.".to_string(), false),
                         ("user_a".to_string(), "oh, hi B.".to_string(), false),
                         ("user_a".to_string(), "sup".to_string(), false),
+                        ("user_b".to_string(), "can you see this?".to_string(), false),
                         ("user_a".to_string(), "you online?".to_string(), false),
                         ("user_b".to_string(), "yep".to_string(), false),
                     ]

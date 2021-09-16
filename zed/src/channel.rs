@@ -9,6 +9,7 @@ use gpui::{
     Entity, ModelContext, ModelHandle, MutableAppContext, Task, WeakModelHandle,
 };
 use postage::prelude::Stream;
+use rand::prelude::*;
 use std::{
     collections::{HashMap, HashSet},
     mem,
@@ -42,6 +43,7 @@ pub struct Channel {
     next_pending_message_id: usize,
     user_store: Arc<UserStore>,
     rpc: Arc<Client>,
+    rng: StdRng,
     _subscription: rpc::Subscription,
 }
 
@@ -51,6 +53,7 @@ pub struct ChannelMessage {
     pub body: String,
     pub timestamp: OffsetDateTime,
     pub sender: Arc<User>,
+    pub nonce: u128,
 }
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
@@ -218,6 +221,7 @@ impl Channel {
             messages: Default::default(),
             loaded_all_messages: false,
             next_pending_message_id: 0,
+            rng: StdRng::from_entropy(),
             _subscription,
         }
     }
@@ -242,6 +246,7 @@ impl Channel {
 
         let channel_id = self.details.id;
         let pending_id = ChannelMessageId::Pending(post_inc(&mut self.next_pending_message_id));
+        let nonce = self.rng.gen();
         self.insert_messages(
             SumTree::from_item(
                 ChannelMessage {
@@ -249,6 +254,7 @@ impl Channel {
                     body: body.clone(),
                     sender: current_user,
                     timestamp: OffsetDateTime::now_utc(),
+                    nonce,
                 },
                 &(),
             ),
@@ -257,7 +263,11 @@ impl Channel {
         let user_store = self.user_store.clone();
         let rpc = self.rpc.clone();
         Ok(cx.spawn(|this, mut cx| async move {
-            let request = rpc.request(proto::SendChannelMessage { channel_id, body });
+            let request = rpc.request(proto::SendChannelMessage {
+                channel_id,
+                body,
+                nonce: Some(nonce.into()),
+            });
             let response = request.await?;
             let message = ChannelMessage::from_proto(
                 response.message.ok_or_else(|| anyhow!("invalid message"))?,
@@ -265,7 +275,6 @@ impl Channel {
             )
             .await?;
             this.update(&mut cx, |this, cx| {
-                this.remove_message(pending_id, cx);
                 this.insert_messages(SumTree::from_item(message, &()), cx);
                 Ok(())
             })
@@ -312,31 +321,50 @@ impl Channel {
         let user_store = self.user_store.clone();
         let rpc = self.rpc.clone();
         let channel_id = self.details.id;
-        cx.spawn(|channel, mut cx| {
+        cx.spawn(|this, mut cx| {
             async move {
                 let response = rpc.request(proto::JoinChannel { channel_id }).await?;
                 let messages = messages_from_proto(response.messages, &user_store).await?;
                 let loaded_all_messages = response.done;
 
-                channel.update(&mut cx, |channel, cx| {
+                let pending_messages = this.update(&mut cx, |this, cx| {
                     if let Some((first_new_message, last_old_message)) =
-                        messages.first().zip(channel.messages.last())
+                        messages.first().zip(this.messages.last())
                     {
                         if first_new_message.id > last_old_message.id {
-                            let old_messages = mem::take(&mut channel.messages);
+                            let old_messages = mem::take(&mut this.messages);
                             cx.emit(ChannelEvent::MessagesUpdated {
                                 old_range: 0..old_messages.summary().count,
                                 new_count: 0,
                             });
-                            channel.loaded_all_messages = loaded_all_messages;
+                            this.loaded_all_messages = loaded_all_messages;
                         }
                     }
 
-                    channel.insert_messages(messages, cx);
+                    this.insert_messages(messages, cx);
                     if loaded_all_messages {
-                        channel.loaded_all_messages = loaded_all_messages;
+                        this.loaded_all_messages = loaded_all_messages;
                     }
+
+                    this.pending_messages().cloned().collect::<Vec<_>>()
                 });
+
+                for pending_message in pending_messages {
+                    let request = rpc.request(proto::SendChannelMessage {
+                        channel_id,
+                        body: pending_message.body,
+                        nonce: Some(pending_message.nonce.into()),
+                    });
+                    let response = request.await?;
+                    let message = ChannelMessage::from_proto(
+                        response.message.ok_or_else(|| anyhow!("invalid message"))?,
+                        &user_store,
+                    )
+                    .await?;
+                    this.update(&mut cx, |this, cx| {
+                        this.insert_messages(SumTree::from_item(message, &()), cx);
+                    });
+                }
 
                 Ok(())
             }
@@ -365,6 +393,12 @@ impl Channel {
         cursor.take(range.len())
     }
 
+    pub fn pending_messages(&self) -> impl Iterator<Item = &ChannelMessage> {
+        let mut cursor = self.messages.cursor::<ChannelMessageId, ()>();
+        cursor.seek(&ChannelMessageId::Pending(0), Bias::Left, &());
+        cursor
+    }
+
     fn handle_message_sent(
         &mut self,
         message: TypedEnvelope<ChannelMessageSent>,
@@ -391,29 +425,13 @@ impl Channel {
         Ok(())
     }
 
-    fn remove_message(&mut self, message_id: ChannelMessageId, cx: &mut ModelContext<Self>) {
-        let mut old_cursor = self.messages.cursor::<ChannelMessageId, Count>();
-        let mut new_messages = old_cursor.slice(&message_id, Bias::Left, &());
-        let start_ix = old_cursor.sum_start().0;
-        let removed_messages = old_cursor.slice(&message_id, Bias::Right, &());
-        let removed_count = removed_messages.summary().count;
-        new_messages.push_tree(old_cursor.suffix(&()), &());
-
-        drop(old_cursor);
-        self.messages = new_messages;
-
-        if removed_count > 0 {
-            let end_ix = start_ix + removed_count;
-            cx.emit(ChannelEvent::MessagesUpdated {
-                old_range: start_ix..end_ix,
-                new_count: 0,
-            });
-            cx.notify();
-        }
-    }
-
     fn insert_messages(&mut self, messages: SumTree<ChannelMessage>, cx: &mut ModelContext<Self>) {
         if let Some((first_message, last_message)) = messages.first().zip(messages.last()) {
+            let nonces = messages
+                .cursor::<(), ()>()
+                .map(|m| m.nonce)
+                .collect::<HashSet<_>>();
+
             let mut old_cursor = self.messages.cursor::<ChannelMessageId, Count>();
             let mut new_messages = old_cursor.slice(&first_message.id, Bias::Left, &());
             let start_ix = old_cursor.sum_start().0;
@@ -423,10 +441,40 @@ impl Channel {
             let end_ix = start_ix + removed_count;
 
             new_messages.push_tree(messages, &());
-            new_messages.push_tree(old_cursor.suffix(&()), &());
+
+            let mut ranges = Vec::<Range<usize>>::new();
+            if new_messages.last().unwrap().is_pending() {
+                new_messages.push_tree(old_cursor.suffix(&()), &());
+            } else {
+                new_messages.push_tree(
+                    old_cursor.slice(&ChannelMessageId::Pending(0), Bias::Left, &()),
+                    &(),
+                );
+
+                while let Some(message) = old_cursor.item() {
+                    let message_ix = old_cursor.sum_start().0;
+                    if nonces.contains(&message.nonce) {
+                        if ranges.last().map_or(false, |r| r.end == message_ix) {
+                            ranges.last_mut().unwrap().end += 1;
+                        } else {
+                            ranges.push(message_ix..message_ix + 1);
+                        }
+                    } else {
+                        new_messages.push(message.clone(), &());
+                    }
+                    old_cursor.next(&());
+                }
+            }
+
             drop(old_cursor);
             self.messages = new_messages;
 
+            for range in ranges.into_iter().rev() {
+                cx.emit(ChannelEvent::MessagesUpdated {
+                    old_range: range,
+                    new_count: 0,
+                });
+            }
             cx.emit(ChannelEvent::MessagesUpdated {
                 old_range: start_ix..end_ix,
                 new_count,
@@ -477,6 +525,10 @@ impl ChannelMessage {
             body: message.body,
             timestamp: OffsetDateTime::from_unix_timestamp(message.timestamp as i64)?,
             sender,
+            nonce: message
+                .nonce
+                .ok_or_else(|| anyhow!("nonce is required"))?
+                .into(),
         })
     }
 
@@ -606,12 +658,14 @@ mod tests {
                             body: "a".into(),
                             timestamp: 1000,
                             sender_id: 5,
+                            nonce: Some(1.into()),
                         },
                         proto::ChannelMessage {
                             id: 11,
                             body: "b".into(),
                             timestamp: 1001,
                             sender_id: 6,
+                            nonce: Some(2.into()),
                         },
                     ],
                     done: false,
@@ -665,6 +719,7 @@ mod tests {
                     body: "c".into(),
                     timestamp: 1002,
                     sender_id: 7,
+                    nonce: Some(3.into()),
                 }),
             })
             .await;
@@ -720,12 +775,14 @@ mod tests {
                             body: "y".into(),
                             timestamp: 998,
                             sender_id: 5,
+                            nonce: Some(4.into()),
                         },
                         proto::ChannelMessage {
                             id: 9,
                             body: "z".into(),
                             timestamp: 999,
                             sender_id: 6,
+                            nonce: Some(5.into()),
                         },
                     ],
                 },

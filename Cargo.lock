@@ -836,7 +836,7 @@ dependencies = [
  "target_build_utils",
  "term",
  "toml 0.4.10",
- "uuid",
+ "uuid 0.5.1",
  "walkdir",
 ]
 
@@ -884,7 +884,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "8e7fb075b9b54e939006aa12e1f6cd2d3194041ff4ebe7f2efcbedf18f25b667"
 dependencies = [
  "byteorder",
- "uuid",
+ "uuid 0.5.1",
 ]
 
 [[package]]
@@ -2963,7 +2963,7 @@ dependencies = [
  "byteorder",
  "cfb",
  "encoding",
- "uuid",
+ "uuid 0.5.1",
 ]
 
 [[package]]
@@ -4784,6 +4784,7 @@ dependencies = [
  "thiserror",
  "time 0.2.25",
  "url",
+ "uuid 0.8.2",
  "webpki",
  "webpki-roots",
  "whoami",
@@ -5605,6 +5606,12 @@ checksum = "bcc7e3b898aa6f6c08e5295b6c89258d1331e9ac578cc992fb818759951bdc22"
 dependencies = [
  "sha1 0.2.0",
 ]
+
+[[package]]
+name = "uuid"
+version = "0.8.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "bc5cf98d8186244414c848017f0e2676b3fcb46807f6668a97dfe67359a3c4b7"
 
 [[package]]
 name = "value-bag"
