@@ -126,6 +126,16 @@ impl TextStyle {
     }
 }
 
+impl From<TextStyle> for HighlightStyle {
+    fn from(other: TextStyle) -> Self {
+        Self {
+            color: other.color,
+            font_properties: other.font_properties,
+            underline: other.underline,
+        }
+    }
+}
+
 impl HighlightStyle {
     fn from_json(json: HighlightStyleJson) -> Self {
         let font_properties = properties_from_json(json.weight, json.italic);

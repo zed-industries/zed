@@ -163,9 +163,9 @@ pub struct ContainedLabel {
 pub struct InputEditorStyle {
     #[serde(flatten)]
     pub container: ContainerStyle,
-    pub text: HighlightStyle,
+    pub text: TextStyle,
     #[serde(default)]
-    pub placeholder_text: Option<HighlightStyle>,
+    pub placeholder_text: Option<TextStyle>,
     pub selection: SelectionStyle,
 }
 
@@ -196,7 +196,11 @@ impl InputEditorStyle {
                 .background_color
                 .unwrap_or(Color::transparent_black()),
             selection: self.selection,
-            ..Default::default()
+            gutter_background: Default::default(),
+            active_line_background: Default::default(),
+            line_number: Default::default(),
+            line_number_active: Default::default(),
+            guest_selections: Default::default(),
         }
     }
 }

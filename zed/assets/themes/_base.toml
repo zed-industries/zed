@@ -107,8 +107,8 @@ shadow = { offset = [0, 2], blur = 16, color = "$shadow.0" }
 background = "$surface.1"
 corner_radius = 6
 padding = { left = 8, right = 8, top = 7, bottom = 7 }
-text = "$text.0.color"
-placeholder_text = "$text.2.color"
+text = "$text.0"
+placeholder_text = "$text.2"
 selection = "$selection.host"
 border = { width = 1, color = "$border.0" }
 
@@ -132,8 +132,8 @@ border = { width = 1, color = "$border.0" }
 background = "$surface.1"
 corner_radius = 6
 padding = { left = 16, right = 16, top = 7, bottom = 7 }
-text = "$text.0.color"
-placeholder_text = "$text.2.color"
+text = "$text.0"
+placeholder_text = "$text.2"
 selection = "$selection.host"
 border = { width = 1, color = "$border.0" }
 
@@ -153,7 +153,7 @@ background = "$state.hover"
 text = "$text.0"
 
 [editor]
-text = "$text.1.color"
+text = "$text.1"
 background = "$surface.1"
 gutter_background = "$surface.1"
 active_line_background = "$state.active_line"
