@@ -603,7 +603,7 @@ mod tests {
                 offset_in_item: 0.,
             },
             40.,
-            vec2f(0., 54.),
+            vec2f(0., -54.),
             true,
             &mut presenter.build_event_context(cx),
         );
