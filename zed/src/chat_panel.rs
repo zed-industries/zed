@@ -230,7 +230,12 @@ impl ChatPanel {
     fn render_message(&self, message: &ChannelMessage) -> ElementBox {
         let now = OffsetDateTime::now_utc();
         let settings = self.settings.borrow();
-        let theme = &settings.theme.chat_panel.message;
+        let theme = if message.is_pending() {
+            &settings.theme.chat_panel.pending_message
+        } else {
+            &settings.theme.chat_panel.message
+        };
+
         Container::new(
             Flex::column()
                 .with_child(
@@ -381,9 +386,10 @@ impl View for ChatPanel {
 
     fn render(&mut self, cx: &mut RenderContext<Self>) -> ElementBox {
         let theme = &self.settings.borrow().theme;
-        let element = match *self.rpc.status().borrow() {
-            rpc::Status::Connected { .. } => self.render_channel(),
-            _ => self.render_sign_in_prompt(cx),
+        let element = if self.rpc.user_id().is_some() {
+            self.render_channel()
+        } else {
+            self.render_sign_in_prompt(cx)
         };
         ConstrainedBox::new(
             Container::new(element)

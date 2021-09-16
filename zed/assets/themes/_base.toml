@@ -67,6 +67,12 @@ sender = { extends = "$text.0", weight = "bold", margin.right = 8 }
 timestamp = "$text.2"
 padding.bottom = 6
 
+[chat_panel.pending_message]
+extends = "$chat_panel.message"
+body = { color = "$text.3.color" }
+sender = { color = "$text.3.color" }
+timestamp = { color = "$text.3.color" }
+
 [chat_panel.channel_select.item]
 padding = 4
 name = "$text.1"

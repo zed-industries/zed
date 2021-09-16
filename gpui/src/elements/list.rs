@@ -603,7 +603,7 @@ mod tests {
                 offset_in_item: 0.,
             },
             40.,
-            vec2f(0., 54.),
+            vec2f(0., -54.),
             true,
             &mut presenter.build_event_context(cx),
         );
@@ -654,7 +654,7 @@ mod tests {
         assert_eq!(state.0.borrow().scroll_top(&logical_scroll_top), 114.);
     }
 
-    #[crate::test(self, iterations = 10000, seed = 0)]
+    #[crate::test(self, iterations = 10, seed = 0)]
     fn test_random(cx: &mut crate::MutableAppContext, mut rng: StdRng) {
         let operations = env::var("OPERATIONS")
             .map(|i| i.parse().expect("invalid `OPERATIONS` variable"))
