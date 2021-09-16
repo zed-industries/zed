@@ -22,42 +22,29 @@
     </script>
 </head>
 
-<body class="box-border font-body bg-black flex w-full h-full overflow-hidden p-10">
-    <main class="flex-1 flex text-gray-50 border border-white">
-        <nav class="flex-initial flex flex-col w-1/5 p-10 border-r border-white">
+<body class="box-border font-body text-main font-light bg-black flex w-full h-full overflow-hidden">
+    <main class="container mx-auto max-w-screen-2xl flex text-gray-50">
+        <nav class="flex-initial flex flex-col w-1/5 p-10 pt-20 font-extralight border-r border-white">
             <a href="/" class="font-display">
-                <svg width="57" height="16" fill="none" xmlns="http://www.w3.org/2000/svg">
-                    <mask id="path-2-inside-1" fill="white">
-                        <path fill-rule="evenodd" clip-rule="evenodd"
-                            d="M8 0C3.58172 0 0 3.58172 0 8C0 12.4183 3.58172 16 8 16C12.4183 16 16 12.4183 16 8C16 3.58172 12.4183 0 8 0ZM8 2C4.68629 2 2 4.68629 2 8C2 11.3137 4.68629 14 8 14C11.3137 14 14 11.3137 14 8C14 4.68629 11.3137 2 8 2Z" />
-                    </mask>
-                    <path
-                        d="M2 8C2 4.68629 4.68629 2 8 2V-2C2.47715 -2 -2 2.47715 -2 8H2ZM8 14C4.68629 14 2 11.3137 2 8H-2C-2 13.5228 2.47715 18 8 18V14ZM14 8C14 11.3137 11.3137 14 8 14V18C13.5228 18 18 13.5228 18 8H14ZM8 2C11.3137 2 14 4.68629 14 8H18C18 2.47715 13.5228 -2 8 -2V2ZM4 8C4 5.79086 5.79086 4 8 4V0C3.58172 0 0 3.58172 0 8H4ZM8 12C5.79086 12 4 10.2091 4 8H0C0 12.4183 3.58172 16 8 16V12ZM12 8C12 10.2091 10.2091 12 8 12V16C12.4183 16 16 12.4183 16 8H12ZM8 4C10.2091 4 12 5.79086 12 8H16C16 3.58172 12.4183 0 8 0V4Z"
-                        fill="white" mask="url(#path-2-inside-1)" />
-                    <path fill-rule="evenodd" clip-rule="evenodd"
-                        d="M5 5L11.75 5L7.4375 9.5H9.5L11 11H4.25L8.5625 6.5H6.5L5 5Z" fill="white" />
-                    <path
-                        d="M22.92 12.8L29.78 4.1H23.2V1.96H33.06V3.58L26.28 12.3H32.5C32.7267 12.3 32.8867 12.2867 32.98 12.26C33.0733 12.2333 33.16 12.18 33.24 12.1H33.44V12.3V14.42H22.92V12.8Z"
-                        fill="white" />
-                    <path
-                        d="M39.9122 14.64C39.1122 14.64 38.3655 14.5333 37.6722 14.32C36.9788 14.1067 36.3722 13.8 35.8522 13.4C35.3455 12.9867 34.9522 12.48 34.6722 11.88C34.3922 11.2667 34.2522 10.58 34.2522 9.82C34.2522 9.04667 34.3855 8.35333 34.6522 7.74C34.9322 7.12667 35.3122 6.60667 35.7922 6.18C36.2722 5.75333 36.8322 5.42667 37.4722 5.2C38.1255 4.96 38.8388 4.84 39.6122 4.84C40.2922 4.84 40.9255 4.94667 41.5122 5.16C42.0988 5.36 42.6122 5.66 43.0522 6.06C43.4922 6.46 43.8388 6.95333 44.0922 7.54C44.3455 8.11333 44.4722 8.77333 44.4722 9.52C44.4722 9.66667 44.4655 9.84 44.4522 10.04C44.4522 10.2267 44.4455 10.3867 44.4322 10.52H36.7322C36.7855 10.88 36.9055 11.1933 37.0922 11.46C37.2788 11.7267 37.5188 11.9467 37.8122 12.12C38.1055 12.2933 38.4388 12.4267 38.8122 12.52C39.1988 12.6 39.5988 12.64 40.0122 12.64C40.3588 12.64 40.6988 12.62 41.0322 12.58C41.3788 12.5267 41.6988 12.44 41.9922 12.32C42.2988 12.2 42.5655 12.04 42.7922 11.84L44.1322 13.12C43.7988 13.4667 43.4055 13.7533 42.9522 13.98C42.5122 14.2067 42.0322 14.3733 41.5122 14.48C40.9922 14.5867 40.4588 14.64 39.9122 14.64ZM36.7722 8.6H41.9922C41.9788 8.30667 41.9055 8.05333 41.7722 7.84C41.6522 7.61333 41.4788 7.42667 41.2522 7.28C41.0388 7.13333 40.7788 7.02667 40.4722 6.96C40.1788 6.88 39.8522 6.84 39.4922 6.84C39.1188 6.84 38.7788 6.87333 38.4722 6.94C38.1655 7.00667 37.8922 7.11333 37.6522 7.26C37.4255 7.40667 37.2322 7.59333 37.0722 7.82C36.9255 8.03333 36.8255 8.29333 36.7722 8.6Z"
-                        fill="white" />
-                    <path
-                        d="M50.3844 14.64C49.731 14.64 49.1177 14.54 48.5444 14.34C47.971 14.1267 47.471 13.8133 47.0444 13.4C46.6177 12.9867 46.2777 12.4733 46.0244 11.86C45.7844 11.2467 45.6644 10.5333 45.6644 9.72C45.6644 8.90667 45.7844 8.19333 46.0244 7.58C46.2777 6.96667 46.6177 6.46 47.0444 6.06C47.4844 5.64667 47.991 5.34 48.5644 5.14C49.1377 4.94 49.7577 4.84 50.4244 4.84C50.8644 4.84 51.2644 4.88 51.6244 4.96C51.9977 5.02667 52.3244 5.14 52.6044 5.3C52.8977 5.46 53.131 5.66667 53.3044 5.92V1H55.8844H56.0844V1.18C56.0044 1.26 55.951 1.34667 55.9244 1.44C55.911 1.53333 55.9044 1.69333 55.9044 1.92L55.8844 13.2C55.8844 13.4 55.8977 13.6067 55.9244 13.82C55.951 14.02 56.0177 14.22 56.1244 14.42H53.5244C53.471 14.2867 53.4244 14.1733 53.3844 14.08C53.3577 13.9867 53.3377 13.8933 53.3244 13.8C53.3244 13.7067 53.3244 13.5933 53.3244 13.46C53.1377 13.7267 52.891 13.9533 52.5844 14.14C52.291 14.3133 51.951 14.44 51.5644 14.52C51.191 14.6133 50.7977 14.6533 50.3844 14.64ZM50.8444 12.58C51.2444 12.58 51.5977 12.5267 51.9044 12.42C52.211 12.3133 52.4644 12.1467 52.6644 11.92C52.8777 11.68 53.031 11.38 53.1244 11.02C53.231 10.66 53.2844 10.2267 53.2844 9.72C53.2844 9.05333 53.191 8.50667 53.0044 8.08C52.8177 7.65333 52.531 7.34 52.1444 7.14C51.771 6.94 51.311 6.84 50.7644 6.84C50.3644 6.84 50.0044 6.90667 49.6844 7.04C49.3644 7.17333 49.0977 7.36667 48.8844 7.62C48.671 7.86 48.5044 8.16 48.3844 8.52C48.2777 8.86667 48.2244 9.26667 48.2244 9.72C48.2244 10.3333 48.3377 10.8533 48.5644 11.28C48.8044 11.7067 49.1177 12.0333 49.5044 12.26C49.9044 12.4733 50.351 12.58 50.8444 12.58Z"
-                        fill="white" />
+                <svg width="32" height="32" viewBox="0 0 32 32" fill="none" xmlns="http://www.w3.org/2000/svg">
+                <mask id="path-2-inside-1" fill="white">
+                <path fill-rule="evenodd" clip-rule="evenodd" d="M16 0C7.16344 0 0 7.16344 0 16C0 24.8366 7.16344 32 16 32C24.8366 32 32 24.8366 32 16C32 7.16344 24.8366 0 16 0ZM16 4C9.37258 4 4 9.37258 4 16C4 22.6274 9.37258 28 16 28C22.6274 28 28 22.6274 28 16C28 9.37258 22.6274 4 16 4Z"/>
+                </mask>
+                <path d="M4 16C4 9.37258 9.37258 4 16 4V-4C4.95431 -4 -4 4.95431 -4 16H4ZM16 28C9.37258 28 4 22.6274 4 16H-4C-4 27.0457 4.9543 36 16 36V28ZM28 16C28 22.6274 22.6274 28 16 28V36C27.0457 36 36 27.0457 36 16H28ZM16 4C22.6274 4 28 9.37258 28 16H36C36 4.9543 27.0457 -4 16 -4V4ZM8 16C8 11.5817 11.5817 8 16 8V0C7.16344 0 0 7.16344 0 16H8ZM16 24C11.5817 24 8 20.4183 8 16H0C0 24.8366 7.16344 32 16 32V24ZM24 16C24 20.4183 20.4183 24 16 24V32C24.8366 32 32 24.8366 32 16H24ZM16 8C20.4183 8 24 11.5817 24 16H32C32 7.16344 24.8366 0 16 0V8Z" fill="white" mask="url(#path-2-inside-1)"/>
+                <path fill-rule="evenodd" clip-rule="evenodd" d="M10 10L23.5 10L14.875 19H19L22 22H8.5L17.125 13H13L10 10Z" fill="white"/>
                 </svg>
             </a>
             <div class="font-mono flex flex-col mt-10">
-                <a href="/story" class="text-xl lowercase underline hover:no-underline mt-2">
+                <a href="/story" class="text-base lowercase no-underline hover:underline mt-2">
                     Our Story
                 </a>
-                <a href="/tech" class="text-xl lowercase underline hover:no-underline mt-2">
+                <a href="/tech" class="text-base lowercase no-underline hover:underline mt-2">
                     The Tech
                 </a>
-                <a href="/team" class="text-xl lowercase underline hover:no-underline mt-2">
+                <a href="/team" class="text-base lowercase no-underline hover:underline mt-2">
                     Team
                 </a>
-                <a href="/community" class="text-xl lowercase underline hover:no-underline mt-2">
+                <a href="/community" class="text-base lowercase no-underline hover:underline mt-2">
                     Community
                 </a>
             </div>
@@ -67,10 +54,10 @@
             {{#if current_user}}
             <div class="font-mono flex flex-col mt-10">
                 <p class="text-xs tracking-widest uppercase">Insider Zone</p>
-                <a href="/updates" class="text-xl lowercase underline hover:no-underline mt-2">
+                <a href="/updates" class="text-base lowercase no-underline hover:underline mt-2">
                     Updates
                 </a>
-                <a href="/releases" class="text-xl lowercase underline hover:no-underline mt-2">
+                <a href="/releases" class="text-base lowercase no-underline hover:underline mt-2">
                     Releases
                 </a>
             </div>
@@ -78,7 +65,7 @@
             <!-- AND If user is an admin -->
             {{#if current_user.is_admin }}
             <div class="font-mono flex flex-col mt-10">
-                <a href="/admin" class="text-xl lowercase underline hover:no-underline mt-2">
+                <a href="/admin" class="text-base lowercase no-underline hover:underline mt-2">
                     Admin
                 </a>
             </div>
@@ -88,9 +75,9 @@
         
             <div class="relative">
                 <!-- TODO: Dropdown is linked to #avatar, just using it for now. Come back and clean up later -->
-                <p id="avatar" class="text-xl lowercase underline hover:no-underline mt-2">{{current_user.github_login}}</p>
+                <p id="avatar" class="text-base lowercase no-underline hover:underline mt-2">@{{current_user.github_login}}</p>
                 <form id="sign_out" action="/sign_out" method="post"
-                    class="hidden absolute mt-1 right-0 bg-black rounded border border-gray-400 text-center text-sm p-2 px-4 whitespace-nowrap">
+                    class="hidden absolute mt-1 -top-10 left-0 bg-black border border-white text-center text-sm p-2 px-4 whitespace-nowrap">
                     <button class="hover:underline">Sign out</button>
                 </form>
             </div>
@@ -104,7 +91,7 @@
             {{/if}}
         </nav>
 
-        <div class="flex-1 max-w-screen-xl border-r border-white">
+        <div class="flex-1 max-w-screen-xl overflow-y-auto">
             {{> @partial-block}}
         </div>
     </main>

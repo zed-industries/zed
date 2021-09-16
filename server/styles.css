@@ -1,6 +1,7 @@
 /* This file is compiled to /assets/styles/tailwind.css via script/tailwind */
 
-@import url('https://fonts.googleapis.com/css2?family=Inconsolata:wght@400;700&family=Spectral:ital,wght@0,200;0,300;1,800&display=swap');
+@import url('https://fonts.googleapis.com/css2?family=Spectral:ital,wght@0,200;0,300;1,200;1,300&display=swap');
+@import url('https://fonts.googleapis.com/css2?family=JetBrains+Mono:ital,wght@0,100;0,300;1,100;1,300&display=swap');
 
 @tailwind base;
 @tailwind components;
@@ -22,5 +23,8 @@
     h3 {
         @apply text-2xl;
         @apply tracking-tighter;
+    }
+.underline, .hover\:underline:hover {
+        text-underline-offset: 4px;
     }
 }
