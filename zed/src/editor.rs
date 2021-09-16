@@ -4,7 +4,7 @@ mod element;
 pub mod movement;
 
 use crate::{
-    settings::{HighlightId, Settings},
+    settings::Settings,
     theme::Theme,
     time::ReplicaId,
     util::{post_inc, Bias},
@@ -17,15 +17,10 @@ pub use display_map::DisplayPoint;
 use display_map::*;
 pub use element::*;
 use gpui::{
-    action,
-    color::Color,
-    font_cache::FamilyId,
-    fonts::{Properties as FontProperties, TextStyle},
-    geometry::vector::Vector2F,
-    keymap::Binding,
-    text_layout::{self, RunStyle},
-    AppContext, ClipboardItem, Element, ElementBox, Entity, FontCache, ModelHandle,
-    MutableAppContext, RenderContext, Task, TextLayoutCache, View, ViewContext, WeakViewHandle,
+    action, color::Color, font_cache::FamilyId, fonts::TextStyle, geometry::vector::Vector2F,
+    keymap::Binding, text_layout, AppContext, ClipboardItem, Element, ElementBox, Entity,
+    ModelHandle, MutableAppContext, RenderContext, Task, View, ViewContext,
+    WeakViewHandle,
 };
 use postage::watch;
 use serde::{Deserialize, Serialize};
@@ -34,8 +29,6 @@ use smol::Timer;
 use std::{
     cell::RefCell,
     cmp::{self, Ordering},
-    collections::BTreeMap,
-    fmt::Write,
     iter::FromIterator,
     mem,
     ops::{Range, RangeInclusive},
@@ -2328,6 +2321,38 @@ impl Editor {
 }
 
 impl Snapshot {
+    pub fn is_empty(&self) -> bool {
+        self.display_snapshot.is_empty()
+    }
+
+    pub fn is_focused(&self) -> bool {
+        self.is_focused
+    }
+
+    pub fn placeholder_text(&self) -> Option<&Arc<str>> {
+        self.placeholder_text.as_ref()
+    }
+
+    pub fn buffer_row_count(&self) -> u32 {
+        self.display_snapshot.buffer_row_count()
+    }
+
+    pub fn buffer_rows(&self, start_row: u32) -> BufferRows {
+        self.display_snapshot.buffer_rows(start_row)
+    }
+
+    pub fn highlighted_chunks_for_rows(
+        &mut self,
+        display_rows: Range<u32>,
+    ) -> display_map::HighlightedChunks {
+        self.display_snapshot
+            .highlighted_chunks_for_rows(display_rows)
+    }
+
+    pub fn theme(&self) -> &Arc<Theme> {
+        &self.theme
+    }
+
     pub fn scroll_position(&self) -> Vector2F {
         compute_scroll_position(
             &self.display_snapshot,
@@ -2348,243 +2373,8 @@ impl Snapshot {
         self.display_snapshot.line_len(display_row)
     }
 
-    pub fn font_ascent(&self, font_cache: &FontCache) -> f32 {
-        let font_id = font_cache.default_font(self.font_family);
-        let ascent = font_cache.metric(font_id, |m| m.ascent);
-        font_cache.scale_metric(ascent, font_id, self.font_size)
-    }
-
-    pub fn font_descent(&self, font_cache: &FontCache) -> f32 {
-        let font_id = font_cache.default_font(self.font_family);
-        let descent = font_cache.metric(font_id, |m| m.descent);
-        font_cache.scale_metric(descent, font_id, self.font_size)
-    }
-
-    pub fn line_height(&self, font_cache: &FontCache) -> f32 {
-        let font_id = font_cache.default_font(self.font_family);
-        font_cache.line_height(font_id, self.font_size).ceil()
-    }
-
-    pub fn em_width(&self, font_cache: &FontCache) -> f32 {
-        let font_id = font_cache.default_font(self.font_family);
-        font_cache.em_width(font_id, self.font_size)
-    }
-
-    // TODO: Can we make this not return a result?
-    pub fn max_line_number_width(
-        &self,
-        font_cache: &FontCache,
-        layout_cache: &TextLayoutCache,
-    ) -> Result<f32> {
-        let font_size = self.font_size;
-        let font_id = font_cache.select_font(self.font_family, &FontProperties::new())?;
-        let digit_count = (self.display_snapshot.buffer_row_count() as f32)
-            .log10()
-            .floor() as usize
-            + 1;
-
-        Ok(layout_cache
-            .layout_str(
-                "1".repeat(digit_count).as_str(),
-                font_size,
-                &[(
-                    digit_count,
-                    RunStyle {
-                        font_id,
-                        color: Color::black(),
-                        underline: false,
-                    },
-                )],
-            )
-            .width())
-    }
-
-    pub fn layout_line_numbers(
-        &self,
-        rows: Range<u32>,
-        active_rows: &BTreeMap<u32, bool>,
-        font_cache: &FontCache,
-        layout_cache: &TextLayoutCache,
-        theme: &Theme,
-    ) -> Result<Vec<Option<text_layout::Line>>> {
-        let font_id = font_cache.select_font(self.font_family, &FontProperties::new())?;
-
-        let mut layouts = Vec::with_capacity(rows.len());
-        let mut line_number = String::new();
-        for (ix, (buffer_row, soft_wrapped)) in self
-            .display_snapshot
-            .buffer_rows(rows.start)
-            .take((rows.end - rows.start) as usize)
-            .enumerate()
-        {
-            let display_row = rows.start + ix as u32;
-            let color = if active_rows.contains_key(&display_row) {
-                theme.editor.line_number_active
-            } else {
-                theme.editor.line_number
-            };
-            if soft_wrapped {
-                layouts.push(None);
-            } else {
-                line_number.clear();
-                write!(&mut line_number, "{}", buffer_row + 1).unwrap();
-                layouts.push(Some(layout_cache.layout_str(
-                    &line_number,
-                    self.font_size,
-                    &[(
-                        line_number.len(),
-                        RunStyle {
-                            font_id,
-                            color,
-                            underline: false,
-                        },
-                    )],
-                )));
-            }
-        }
-
-        Ok(layouts)
-    }
-
-    pub fn layout_lines(
-        &mut self,
-        mut rows: Range<u32>,
-        style: &EditorStyle,
-        font_cache: &FontCache,
-        layout_cache: &TextLayoutCache,
-    ) -> Result<Vec<text_layout::Line>> {
-        rows.end = cmp::min(rows.end, self.display_snapshot.max_point().row() + 1);
-        if rows.start >= rows.end {
-            return Ok(Vec::new());
-        }
-
-        // When the editor is empty and unfocused, then show the placeholder.
-        if self.display_snapshot.is_empty() && !self.is_focused {
-            let placeholder_lines = self
-                .placeholder_text
-                .as_ref()
-                .map_or("", AsRef::as_ref)
-                .split('\n')
-                .skip(rows.start as usize)
-                .take(rows.len());
-            let font_id = font_cache
-                .select_font(self.font_family, &style.placeholder_text().font_properties)?;
-            return Ok(placeholder_lines
-                .into_iter()
-                .map(|line| {
-                    layout_cache.layout_str(
-                        line,
-                        self.font_size,
-                        &[(
-                            line.len(),
-                            RunStyle {
-                                font_id,
-                                color: style.placeholder_text().color,
-                                underline: false,
-                            },
-                        )],
-                    )
-                })
-                .collect());
-        }
-
-        let mut prev_font_properties = FontProperties::new();
-        let mut prev_font_id = font_cache
-            .select_font(self.font_family, &prev_font_properties)
-            .unwrap();
-
-        let mut layouts = Vec::with_capacity(rows.len());
-        let mut line = String::new();
-        let mut styles = Vec::new();
-        let mut row = rows.start;
-        let mut line_exceeded_max_len = false;
-        let chunks = self
-            .display_snapshot
-            .highlighted_chunks_for_rows(rows.clone());
-
-        'outer: for (chunk, style_ix) in chunks.chain(Some(("\n", HighlightId::default()))) {
-            for (ix, mut line_chunk) in chunk.split('\n').enumerate() {
-                if ix > 0 {
-                    layouts.push(layout_cache.layout_str(&line, self.font_size, &styles));
-                    line.clear();
-                    styles.clear();
-                    row += 1;
-                    line_exceeded_max_len = false;
-                    if row == rows.end {
-                        break 'outer;
-                    }
-                }
-
-                if !line_chunk.is_empty() && !line_exceeded_max_len {
-                    let style = self
-                        .theme
-                        .syntax
-                        .highlight_style(style_ix)
-                        .unwrap_or(style.text.clone().into());
-                    // Avoid a lookup if the font properties match the previous ones.
-                    let font_id = if style.font_properties == prev_font_properties {
-                        prev_font_id
-                    } else {
-                        font_cache.select_font(self.font_family, &style.font_properties)?
-                    };
-
-                    if line.len() + line_chunk.len() > MAX_LINE_LEN {
-                        let mut chunk_len = MAX_LINE_LEN - line.len();
-                        while !line_chunk.is_char_boundary(chunk_len) {
-                            chunk_len -= 1;
-                        }
-                        line_chunk = &line_chunk[..chunk_len];
-                        line_exceeded_max_len = true;
-                    }
-
-                    line.push_str(line_chunk);
-                    styles.push((
-                        line_chunk.len(),
-                        RunStyle {
-                            font_id,
-                            color: style.color,
-                            underline: style.underline,
-                        },
-                    ));
-                    prev_font_id = font_id;
-                    prev_font_properties = style.font_properties;
-                }
-            }
-        }
-
-        Ok(layouts)
-    }
-
-    pub fn layout_line(
-        &self,
-        row: u32,
-        font_cache: &FontCache,
-        layout_cache: &TextLayoutCache,
-    ) -> Result<text_layout::Line> {
-        let font_id = font_cache.select_font(self.font_family, &FontProperties::new())?;
-
-        let mut line = self.display_snapshot.line(row);
-
-        if line.len() > MAX_LINE_LEN {
-            let mut len = MAX_LINE_LEN;
-            while !line.is_char_boundary(len) {
-                len -= 1;
-            }
-            line.truncate(len);
-        }
-
-        Ok(layout_cache.layout_str(
-            &line,
-            self.font_size,
-            &[(
-                self.display_snapshot.line_len(row) as usize,
-                RunStyle {
-                    font_id,
-                    color: Color::black(),
-                    underline: false,
-                },
-            )],
-        ))
+    pub fn line(&self, display_row: u32) -> String {
+        self.display_snapshot.line(display_row)
     }
 
     pub fn prev_row_boundary(&self, point: DisplayPoint) -> (DisplayPoint, Point) {
@@ -2598,7 +2388,7 @@ impl Snapshot {
 
 impl EditorStyle {
     #[cfg(any(test, feature = "test-support"))]
-    pub fn test(font_cache: &FontCache) -> Self {
+    pub fn test(font_cache: &gpui::FontCache) -> Self {
         let font_family_name = Arc::from("Monaco");
         let font_properties = Default::default();
         let font_family_id = font_cache.load_family(&[&font_family_name]).unwrap();
@@ -2964,33 +2754,6 @@ mod tests {
                 [DisplayPoint::new(1, 1)..DisplayPoint::new(1, 1)]
             );
         });
-    }
-
-    #[gpui::test]
-    fn test_layout_line_numbers(cx: &mut gpui::MutableAppContext) {
-        let layout_cache = TextLayoutCache::new(cx.platform().fonts());
-        let font_cache = cx.font_cache().clone();
-
-        let buffer = cx.add_model(|cx| Buffer::new(0, sample_text(6, 6), cx));
-
-        let settings = settings::test(&cx).1;
-        let (_, editor) = cx.add_window(Default::default(), |cx| {
-            build_editor(buffer, settings.clone(), cx)
-        });
-
-        let layouts = editor.update(cx, |editor, cx| {
-            editor
-                .snapshot(cx)
-                .layout_line_numbers(
-                    0..6,
-                    &Default::default(),
-                    &font_cache,
-                    &layout_cache,
-                    &settings.borrow().theme,
-                )
-                .unwrap()
-        });
-        assert_eq!(layouts.len(), 6);
     }
 
     #[gpui::test]

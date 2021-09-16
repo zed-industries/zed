@@ -141,8 +141,8 @@ impl FontCache {
 
     pub fn bounding_box(&self, font_id: FontId, font_size: f32) -> Vector2F {
         let bounding_box = self.metric(font_id, |m| m.bounding_box);
-        let width = self.scale_metric(bounding_box.width(), font_id, font_size);
-        let height = self.scale_metric(bounding_box.height(), font_id, font_size);
+        let width = bounding_box.width() * self.em_scale(font_id, font_size);
+        let height = bounding_box.height() * self.em_scale(font_id, font_size);
         vec2f(width, height)
     }
 
@@ -154,28 +154,28 @@ impl FontCache {
             glyph_id = state.fonts.glyph_for_char(font_id, 'm').unwrap();
             bounds = state.fonts.typographic_bounds(font_id, glyph_id).unwrap();
         }
-        self.scale_metric(bounds.width(), font_id, font_size)
+        bounds.width() * self.em_scale(font_id, font_size)
     }
 
     pub fn line_height(&self, font_id: FontId, font_size: f32) -> f32 {
         let height = self.metric(font_id, |m| m.bounding_box.height());
-        self.scale_metric(height, font_id, font_size)
+        (height * self.em_scale(font_id, font_size)).ceil()
     }
 
     pub fn cap_height(&self, font_id: FontId, font_size: f32) -> f32 {
-        self.scale_metric(self.metric(font_id, |m| m.cap_height), font_id, font_size)
+        self.metric(font_id, |m| m.cap_height) * self.em_scale(font_id, font_size)
     }
 
     pub fn ascent(&self, font_id: FontId, font_size: f32) -> f32 {
-        self.scale_metric(self.metric(font_id, |m| m.ascent), font_id, font_size)
+        self.metric(font_id, |m| m.ascent) * self.em_scale(font_id, font_size)
     }
 
     pub fn descent(&self, font_id: FontId, font_size: f32) -> f32 {
-        self.scale_metric(self.metric(font_id, |m| -m.descent), font_id, font_size)
+        self.metric(font_id, |m| -m.descent) * self.em_scale(font_id, font_size)
     }
 
-    pub fn scale_metric(&self, metric: f32, font_id: FontId, font_size: f32) -> f32 {
-        metric * font_size / self.metric(font_id, |m| m.units_per_em as f32)
+    pub fn em_scale(&self, font_id: FontId, font_size: f32) -> f32 {
+        font_size / self.metric(font_id, |m| m.units_per_em as f32)
     }
 
     pub fn line_wrapper(self: &Arc<Self>, font_id: FontId, font_size: f32) -> LineWrapperHandle {

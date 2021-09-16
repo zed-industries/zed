@@ -127,6 +127,22 @@ impl TextStyle {
             }
         })
     }
+
+    pub fn line_height(&self, font_cache: &FontCache) -> f32 {
+        font_cache.line_height(self.font_id, self.font_size)
+    }
+
+    pub fn em_width(&self, font_cache: &FontCache) -> f32 {
+        font_cache.em_width(self.font_id, self.font_size)
+    }
+
+    pub fn descent(&self, font_cache: &FontCache) -> f32 {
+        font_cache.metric(self.font_id, |m| m.descent) * self.em_scale(font_cache)
+    }
+
+    fn em_scale(&self, font_cache: &FontCache) -> f32 {
+        font_cache.em_scale(self.font_id, self.font_size)
+    }
 }
 
 impl From<TextStyle> for HighlightStyle {

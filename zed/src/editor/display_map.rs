@@ -8,8 +8,8 @@ use gpui::{Entity, ModelContext, ModelHandle};
 use postage::watch;
 use std::ops::Range;
 use tab_map::TabMap;
-pub use wrap_map::BufferRows;
 use wrap_map::WrapMap;
+pub use wrap_map::{BufferRows, HighlightedChunks};
 
 pub struct DisplayMap {
     buffer: ModelHandle<Buffer>,
