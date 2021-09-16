@@ -1,5 +1,7 @@
-use super::{DisplayPoint, Editor, EditorMode, Insert, Scroll, Select, SelectPhase, Snapshot};
-use crate::{theme::EditorStyle, time::ReplicaId};
+use super::{
+    DisplayPoint, Editor, EditorMode, EditorStyle, Insert, Scroll, Select, SelectPhase, Snapshot,
+};
+use crate::time::ReplicaId;
 use gpui::{
     color::Color,
     geometry::{

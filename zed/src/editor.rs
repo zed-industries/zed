@@ -5,7 +5,7 @@ pub mod movement;
 
 use crate::{
     settings::{HighlightId, Settings},
-    theme::{EditorStyle, Theme},
+    theme::Theme,
     time::ReplicaId,
     util::{post_inc, Bias},
     workspace,
@@ -20,7 +20,7 @@ use gpui::{
     action,
     color::Color,
     font_cache::FamilyId,
-    fonts::Properties as FontProperties,
+    fonts::{HighlightStyle, Properties as FontProperties},
     geometry::vector::Vector2F,
     keymap::Binding,
     text_layout::{self, RunStyle},
@@ -276,6 +276,26 @@ pub enum EditorMode {
     SingleLine,
     AutoHeight { max_lines: usize },
     Full,
+}
+
+#[derive(Clone, Deserialize)]
+pub struct EditorStyle {
+    pub text: HighlightStyle,
+    #[serde(default)]
+    pub placeholder_text: HighlightStyle,
+    pub background: Color,
+    pub selection: SelectionStyle,
+    pub gutter_background: Color,
+    pub active_line_background: Color,
+    pub line_number: Color,
+    pub line_number_active: Color,
+    pub guest_selections: Vec<SelectionStyle>,
+}
+
+#[derive(Clone, Copy, Default, Deserialize)]
+pub struct SelectionStyle {
+    pub cursor: Color,
+    pub selection: Color,
 }
 
 pub struct Editor {
@@ -2566,6 +2586,30 @@ impl Snapshot {
 
     pub fn next_row_boundary(&self, point: DisplayPoint) -> (DisplayPoint, Point) {
         self.display_snapshot.next_row_boundary(point)
+    }
+}
+
+impl Default for EditorStyle {
+    fn default() -> Self {
+        Self {
+            text: HighlightStyle {
+                color: Color::from_u32(0xff0000ff),
+                font_properties: Default::default(),
+                underline: false,
+            },
+            placeholder_text: HighlightStyle {
+                color: Color::from_u32(0x00ff00ff),
+                font_properties: Default::default(),
+                underline: false,
+            },
+            background: Default::default(),
+            gutter_background: Default::default(),
+            active_line_background: Default::default(),
+            line_number: Default::default(),
+            line_number_active: Default::default(),
+            selection: Default::default(),
+            guest_selections: Default::default(),
+        }
     }
 }
 

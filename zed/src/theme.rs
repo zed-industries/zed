@@ -2,6 +2,7 @@ mod highlight_map;
 mod resolution;
 mod theme_registry;
 
+use crate::editor::{EditorStyle, SelectionStyle};
 use anyhow::Result;
 use gpui::{
     color::Color,
@@ -159,32 +160,12 @@ pub struct ContainedLabel {
 }
 
 #[derive(Clone, Deserialize)]
-pub struct EditorStyle {
-    pub text: HighlightStyle,
-    #[serde(default)]
-    pub placeholder_text: HighlightStyle,
-    pub background: Color,
-    pub selection: SelectionStyle,
-    pub gutter_background: Color,
-    pub active_line_background: Color,
-    pub line_number: Color,
-    pub line_number_active: Color,
-    pub guest_selections: Vec<SelectionStyle>,
-}
-
-#[derive(Clone, Deserialize)]
 pub struct InputEditorStyle {
     #[serde(flatten)]
     pub container: ContainerStyle,
     pub text: HighlightStyle,
     pub placeholder_text: HighlightStyle,
     pub selection: SelectionStyle,
-}
-
-#[derive(Clone, Copy, Default, Deserialize)]
-pub struct SelectionStyle {
-    pub cursor: Color,
-    pub selection: Color,
 }
 
 impl SyntaxTheme {
@@ -201,30 +182,6 @@ impl SyntaxTheme {
     #[cfg(test)]
     pub fn highlight_name(&self, id: HighlightId) -> Option<&str> {
         self.highlights.get(id.0 as usize).map(|e| e.0.as_str())
-    }
-}
-
-impl Default for EditorStyle {
-    fn default() -> Self {
-        Self {
-            text: HighlightStyle {
-                color: Color::from_u32(0xff0000ff),
-                font_properties: Default::default(),
-                underline: false,
-            },
-            placeholder_text: HighlightStyle {
-                color: Color::from_u32(0x00ff00ff),
-                font_properties: Default::default(),
-                underline: false,
-            },
-            background: Default::default(),
-            gutter_background: Default::default(),
-            active_line_background: Default::default(),
-            line_number: Default::default(),
-            line_number_active: Default::default(),
-            selection: Default::default(),
-            guest_selections: Default::default(),
-        }
     }
 }
 
