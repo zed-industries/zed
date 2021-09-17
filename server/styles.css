@@ -24,6 +24,9 @@
         @apply text-2xl;
         @apply tracking-tighter;
     }
+    h4 {
+        @apply text-xl;
+    }
 .underline, .hover\:underline:hover {
         text-underline-offset: 4px;
     }

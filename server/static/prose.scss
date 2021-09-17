@@ -18,12 +18,28 @@ article.prose,
     margin: 3rem 0 1rem 0;
   }
 
-  p,
-  li {
-    // max-width: 90%;
+  h1 {
+    font-size: 2.25rem;
+    line-height: 2.5rem;
+  }
+
+  h2 {
+    font-size: 1.875rem;
+    line-height: 2.25rem;
+  }
+
+  h3 {
+    font-size: 1.6rem;
+    line-height: 2rem;
+  }
+
+  h4 {
+    font-size: 1.4rem;
+    line-height: 1.75rem;
   }
 
   p,
+  li,
   a {
     color: #ddd;
     font-size: 1.3rem;
@@ -47,7 +63,8 @@ article.prose,
     margin-bottom: 1.5rem;
   }
 
-  img, pre {
+  img,
+  pre {
     margin: 1.5rem 0;
   }
 
@@ -58,15 +75,14 @@ article.prose,
   ul li {
     list-style-type: disc;
     list-style-position: outside;
-    font-size: 1.3rem;
     &:not(:last-of-type) {
       margin-bottom: 0.2rem;
     }
   }
 
   pre {
-    background-color: rgba(255, 255, 255, 0.15);
     padding: 0.8rem;
+    background-color: rgba(255, 255, 255, 0.1);
   }
 
   code {
@@ -76,11 +92,167 @@ article.prose,
       "Courier New", "Apple Color Emoji", "Segoe UI Emoji", "Segoe UI Symbol",
       "Noto Color Emoji", monospace;
     font-size: 0.96rem;
+    letter-spacing: 0rem;
   }
 
-  p code,
-  li code {
+  :not(pre) > code {
+    padding: 0.2rem 0.4rem;
     background-color: rgba(255, 255, 255, 0.15);
-    padding: 0.2rem  0.4rem;
   }
 }
+
+/* Code Highlighting Styles
+/* Based on PrismJS 1.25.0
+https://prismjs.com/download.html#themes=prism-twilight&languages=markup+css+clike+javascript+bash+c+cpp+rust+scss */
+
+code[class*="language-"],
+pre[class*="language-"] {
+  color: #ddd;
+  text-align: left;
+  white-space: pre;
+  word-spacing: normal;
+  word-break: normal;
+  word-wrap: normal;
+
+  -moz-tab-size: 4;
+  -o-tab-size: 4;
+  tab-size: 4;
+
+  -webkit-hyphens: none;
+  -moz-hyphens: none;
+  -ms-hyphens: none;
+  hyphens: none;
+}
+
+pre[class*="language-"],
+:not(pre) > code[class*="language-"] {
+  background-color: rgba(255, 255, 255, 0.15);
+}
+
+/* Code blocks */
+pre[class*="language-"] {
+  // Language specific code block styles
+}
+
+pre[class*="language-"]::-moz-selection {
+  /* Firefox */
+  background: #3b57bc33;
+}
+
+pre[class*="language-"]::selection {
+  /* Safari */
+  background: #3b57bc33;
+}
+
+/* Text Selection colour */
+pre[class*="language-"]::-moz-selection,
+pre[class*="language-"] ::-moz-selection,
+code[class*="language-"]::-moz-selection,
+code[class*="language-"] ::-moz-selection {
+  text-shadow: none;
+  background: #3b57bc33;
+}
+
+pre[class*="language-"]::selection,
+pre[class*="language-"] ::selection,
+code[class*="language-"]::selection,
+code[class*="language-"] ::selection {
+  text-shadow: none;
+  background: #3b57bc33;
+}
+
+.token.comment,
+.token.prolog,
+.token.doctype,
+.token.cdata {
+  color: #9cdcfe;
+}
+
+.token.punctuation {
+  opacity: 0.7;
+}
+
+.token.namespace {
+  opacity: 0.7;
+}
+
+.token.tag,
+.token.boolean,
+.token.number,
+.token.deleted {
+  color: #b5cea8;
+}
+
+.token.keyword,
+.token.property,
+.token.selector,
+.token.constant,
+.token.symbol,
+.token.builtin {
+  color: #0086c0; /* #F9EE98 */
+}
+
+.token.attr-name,
+.token.attr-value,
+.token.string,
+.token.char,
+.token.operator,
+.token.entity,
+.token.url,
+.language-css .token.string,
+.style .token.string,
+.token.variable,
+.token.inserted {
+  color: #4e94ce;
+}
+
+.token.atrule {
+  color: #4ec9b0;
+}
+
+.token.regex,
+.token.important {
+  color: #dcdcaa;
+}
+
+.token.important,
+.token.bold {
+  font-weight: bold;
+}
+.token.italic {
+  font-style: italic;
+}
+
+.token.entity {
+  cursor: help;
+}
+
+/* Markup */
+.language-markup .token.tag,
+.language-markup .token.attr-name,
+.language-markup .token.punctuation {
+  color: #4e94ce;
+}
+
+/* Make the tokens sit above the line highlight so the colours don't look faded. */
+.token {
+  position: relative;
+  z-index: 1;
+}
+
+// TODO: Style line highlights
+
+// .line-highlight.line-highlight {
+// 	background: hsla(0, 0%, 33%, 0.25); /* #545454 */
+// 	background: linear-gradient(to right, hsla(0, 0%, 33%, .1) 70%, hsla(0, 0%, 33%, 0)); /* #545454 */
+// 	border-bottom: 1px dashed hsl(0, 0%, 33%); /* #545454 */
+// 	border-top: 1px dashed hsl(0, 0%, 33%); /* #545454 */
+// 	margin-top: 0.75em; /* Same as .prism’s padding-top */
+// 	z-index: 0;
+// }
+
+// .line-highlight.line-highlight:before,
+// .line-highlight.line-highlight[data-end]:after {
+// 	background-color: hsl(215, 15%, 59%); /* #8794A6 */
+// 	color: hsl(24, 20%, 95%); /* #F5F2F0 */
+// }
