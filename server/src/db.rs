@@ -84,27 +84,12 @@ impl Db {
 
     // users
 
-    #[allow(unused)] // Help rust-analyzer
-    #[cfg(any(test, feature = "seed-support"))]
-    pub async fn get_user(&self, github_login: &str) -> Result<Option<UserId>> {
-        test_support!(self, {
-            let query = "
-                SELECT id
-                FROM users
-                WHERE github_login = $1
-            ";
-            sqlx::query_scalar(query)
-                .bind(github_login)
-                .fetch_optional(&self.pool)
-                .await
-        })
-    }
-
     pub async fn create_user(&self, github_login: &str, admin: bool) -> Result<UserId> {
         test_support!(self, {
             let query = "
                 INSERT INTO users (github_login, admin)
                 VALUES ($1, $2)
+                ON CONFLICT (github_login) DO UPDATE SET github_login = excluded.github_login
                 RETURNING id
             ";
             sqlx::query_scalar(query)

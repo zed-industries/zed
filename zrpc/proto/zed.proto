@@ -38,6 +38,8 @@ message Envelope {
         OpenWorktree open_worktree = 33;
         OpenWorktreeResponse open_worktree_response = 34;
         UnshareWorktree unshare_worktree = 35;
+        GetCollaborators get_collaborators = 36;
+        GetCollaboratorsResponse get_collaborators_response = 37;
     }
 }
 
@@ -184,6 +186,12 @@ message GetChannelMessagesResponse {
     bool done = 2;
 }
 
+message GetCollaborators {}
+
+message GetCollaboratorsResponse {
+    repeated Collaborator collaborators = 1;
+}
+
 // Entities
 
 message Peer {
@@ -325,4 +333,15 @@ message ChannelMessage {
     uint64 timestamp = 3;
     uint64 sender_id = 4;
     Nonce nonce = 5;
+}
+
+message Collaborator {
+    uint64 user_id = 1;
+    repeated CollaboratorWorktree worktrees = 2;
+    bool is_online = 3;
+}
+
+message CollaboratorWorktree {
+    bool is_shared = 1;
+    repeated uint64 participants = 2;
 }
