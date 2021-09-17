@@ -1,7 +1,37 @@
 {{#> layout }}
 
-<div class="container mx-auto max-w-screen-md p-10 pt-20">
-    <h1 class="text-white text-4xl font-display font-extralight mb-10">Community</h1>
+<div class="max-w-screen-lg font-thin mx-auto p-20">
+    <h1 class="font-display font-extralight mb-10">We’re building a community of passionate developers &amp; advocates.</h1>
+    <p class="mt-5 leading-7">Be the first to join a community of builders that want to make the future.</p>
+    <form action="" class="mt-10">
+        <ul>
+            <li class="mt-5 text-lg flex flex-row">
+                <input class="w-8 mr-5" type="checkbox" id="form-releases" name="releases" checked>
+                <div class="flex-1">
+                    <label for="releases">I want to try Zed when it is available</label>
+                    <p class="text-sm text-gray-400 mt-1 leading-6">Get updates on beta releases, and when Zed launches.</p>
+                </div>
+            </li>
+            <li class="mt-5 text-lg flex flex-row">
+                <input class="w-8 mr-5" type="checkbox" id="form-follow" name="follow">
+                <div class="flex-1">
+                    <label for="follow">I’m interested in following Zed's development</label>
+                    <p class="text-sm text-gray-400 mt-1 leading-6">Receive occasional email updates on the development of Zed and it's tech</p>
+                </div>
+            </li>
+            <li class="mt-5 text-lg flex flex-row">
+                <input class="w-8 mr-5" type="checkbox" id="form-community" name="community">
+                <div class="flex-1">
+                   <label for="community">I want to join the Zed Universe community</label>
+                    <p class="text-sm text-gray-400 mt-1 leading-6">Join the waitlist for our alpha tester community to get early access to releases and contribute to Zed's development through testing &amp; feedback.</p>
+                </div>
+            </li>
+        </ul>
+        <input class="block border bg-transparent border-white mt-10 p-5 text-lg w-2/3" type="text" id="form-email" name="email" required minlength="4" placeholder="Your email">
+        <button href="/story" class="block underline mt-10 text-lg">Join the waitlist.</button>
+    </form>
+
+    <p class="text-sm text-gray-500 mt-20 leading-7">We'll never spam your email &mdash; You can expect an email every 1 to 3 months from us if you sign up for updates, and occasional emails about public testing releases.</p>
 </div>
 
 {{/layout}}

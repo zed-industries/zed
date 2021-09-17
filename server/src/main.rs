@@ -10,7 +10,6 @@ mod home;
 mod rpc;
 mod team;
 mod story;
-mod tech;
 mod updates;
 mod releases;
 mod community;
@@ -182,7 +181,6 @@ pub async fn run_server(
     releases::add_routes(&mut web);
     updates::add_routes(&mut web);
     community::add_routes(&mut web);
-    tech::add_routes(&mut web);
     admin::add_routes(&mut web);
     auth::add_routes(&mut web);
     assets::add_routes(&mut web);
