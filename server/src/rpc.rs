@@ -1,6 +1,6 @@
 use super::{
     auth,
-    db::{ChannelId, MessageId, User, UserId},
+    db::{ChannelId, MessageId, UserId},
     AppState,
 };
 use anyhow::anyhow;
@@ -280,11 +280,20 @@ impl Server {
         request: TypedEnvelope<proto::OpenWorktree>,
     ) -> tide::Result<()> {
         let receipt = request.receipt();
+        let user_id = self
+            .state
+            .read()
+            .await
+            .user_id_for_connection(request.sender_id)?;
 
         let mut collaborator_user_ids = Vec::new();
         for github_login in request.payload.collaborator_logins {
             match self.app_state.db.create_user(&github_login, false).await {
-                Ok(user_id) => collaborator_user_ids.push(user_id),
+                Ok(collaborator_user_id) => {
+                    if collaborator_user_id != user_id {
+                        collaborator_user_ids.push(collaborator_user_id);
+                    }
+                }
                 Err(err) => {
                     let message = err.to_string();
                     self.peer
@@ -717,6 +726,7 @@ impl Server {
                             is_online: true,
                         });
                 host.worktrees.push(proto::CollaboratorWorktree {
+                    root_name: worktree.root_name.clone(),
                     is_shared: worktree.share().is_ok(),
                     participants,
                 });

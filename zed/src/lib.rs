@@ -8,6 +8,8 @@ mod fuzzy;
 pub mod http;
 pub mod language;
 pub mod menus;
+pub mod people_panel;
+pub mod presence;
 pub mod project_browser;
 pub mod rpc;
 pub mod settings;
@@ -26,6 +28,7 @@ use channel::ChannelList;
 use gpui::{action, keymap::Binding, ModelHandle};
 use parking_lot::Mutex;
 use postage::watch;
+use presence::Presence;
 use std::sync::Arc;
 
 pub use settings::Settings;
@@ -46,6 +49,7 @@ pub struct AppState {
     pub user_store: Arc<user::UserStore>,
     pub fs: Arc<dyn fs::Fs>,
     pub channel_list: ModelHandle<ChannelList>,
+    pub presence: ModelHandle<Presence>,
 }
 
 pub fn init(app_state: &Arc<AppState>, cx: &mut gpui::MutableAppContext) {
