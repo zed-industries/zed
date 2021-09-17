@@ -38,8 +38,7 @@ message Envelope {
         OpenWorktree open_worktree = 33;
         OpenWorktreeResponse open_worktree_response = 34;
         UnshareWorktree unshare_worktree = 35;
-        GetCollaborators get_collaborators = 36;
-        GetCollaboratorsResponse get_collaborators_response = 37;
+        UpdateCollaborators update_collaborators = 36;
     }
 }
 
@@ -186,9 +185,7 @@ message GetChannelMessagesResponse {
     bool done = 2;
 }
 
-message GetCollaborators {}
-
-message GetCollaboratorsResponse {
+message UpdateCollaborators {
     repeated Collaborator collaborators = 1;
 }
 
@@ -337,11 +334,10 @@ message ChannelMessage {
 
 message Collaborator {
     uint64 user_id = 1;
-    repeated CollaboratorWorktree worktrees = 2;
-    bool is_online = 3;
+    repeated WorktreeMetadata worktrees = 2;
 }
 
-message CollaboratorWorktree {
+message WorktreeMetadata {
     string root_name = 1;
     bool is_shared = 2;
     repeated uint64 participants = 3;

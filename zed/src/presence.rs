@@ -20,11 +20,11 @@ pub struct Presence {
 #[derive(Debug)]
 struct Collaborator {
     user: Arc<User>,
-    worktrees: Vec<CollaboratorWorktree>,
+    worktrees: Vec<WorktreeMetadata>,
 }
 
 #[derive(Debug)]
-struct CollaboratorWorktree {
+struct WorktreeMetadata {
     root_name: String,
     is_shared: bool,
     participants: Vec<Arc<User>>,
@@ -118,7 +118,7 @@ impl Collaborator {
             for participant_id in worktree.participants {
                 participants.push(user_store.fetch_user(participant_id).await?);
             }
-            worktrees.push(CollaboratorWorktree {
+            worktrees.push(WorktreeMetadata {
                 root_name: worktree.root_name,
                 is_shared: worktree.is_shared,
                 participants,

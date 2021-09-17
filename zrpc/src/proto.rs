@@ -131,8 +131,7 @@ messages!(
     GetChannelMessagesResponse,
     GetChannels,
     GetChannelsResponse,
-    GetCollaborators,
-    GetCollaboratorsResponse,
+    UpdateCollaborators,
     GetUsers,
     GetUsersResponse,
     JoinChannel,
@@ -170,7 +169,6 @@ request_messages!(
     (UnshareWorktree, Ack),
     (SendChannelMessage, SendChannelMessageResponse),
     (GetChannelMessages, GetChannelMessagesResponse),
-    (GetCollaborators, GetCollaboratorsResponse),
 );
 
 entity_messages!(
