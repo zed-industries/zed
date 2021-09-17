@@ -1,5 +1,8 @@
-use super::{DisplayPoint, Editor, EditorMode, Insert, Scroll, Select, SelectPhase, Snapshot};
-use crate::{theme::EditorStyle, time::ReplicaId};
+use super::{
+    DisplayPoint, Editor, EditorMode, EditorStyle, Insert, Scroll, Select, SelectPhase, Snapshot,
+    MAX_LINE_LEN,
+};
+use crate::{theme::HighlightId, time::ReplicaId};
 use gpui::{
     color::Color,
     geometry::{
@@ -9,7 +12,7 @@ use gpui::{
     },
     json::{self, ToJson},
     keymap::Keystroke,
-    text_layout::{self, TextLayoutCache},
+    text_layout::{self, RunStyle, TextLayoutCache},
     AppContext, Axis, Border, Element, Event, EventContext, FontCache, LayoutContext,
     MutableAppContext, PaintContext, Quad, Scene, SizeConstraint, ViewContext, WeakViewHandle,
 };
@@ -18,6 +21,7 @@ use smallvec::SmallVec;
 use std::{
     cmp::{self, Ordering},
     collections::{BTreeMap, HashMap},
+    fmt::Write,
     ops::Range,
 };
 
@@ -374,6 +378,176 @@ impl EditorElement {
 
         cx.scene.pop_layer();
     }
+
+    fn max_line_number_width(&self, snapshot: &Snapshot, cx: &LayoutContext) -> f32 {
+        let digit_count = (snapshot.buffer_row_count() as f32).log10().floor() as usize + 1;
+
+        cx.text_layout_cache
+            .layout_str(
+                "1".repeat(digit_count).as_str(),
+                self.style.text.font_size,
+                &[(
+                    digit_count,
+                    RunStyle {
+                        font_id: self.style.text.font_id,
+                        color: Color::black(),
+                        underline: false,
+                    },
+                )],
+            )
+            .width()
+    }
+
+    fn layout_line_numbers(
+        &self,
+        rows: Range<u32>,
+        active_rows: &BTreeMap<u32, bool>,
+        snapshot: &Snapshot,
+        cx: &LayoutContext,
+    ) -> Vec<Option<text_layout::Line>> {
+        let mut layouts = Vec::with_capacity(rows.len());
+        let mut line_number = String::new();
+        for (ix, (buffer_row, soft_wrapped)) in snapshot
+            .buffer_rows(rows.start)
+            .take((rows.end - rows.start) as usize)
+            .enumerate()
+        {
+            let display_row = rows.start + ix as u32;
+            let color = if active_rows.contains_key(&display_row) {
+                self.style.line_number_active
+            } else {
+                self.style.line_number
+            };
+            if soft_wrapped {
+                layouts.push(None);
+            } else {
+                line_number.clear();
+                write!(&mut line_number, "{}", buffer_row + 1).unwrap();
+                layouts.push(Some(cx.text_layout_cache.layout_str(
+                    &line_number,
+                    self.style.text.font_size,
+                    &[(
+                        line_number.len(),
+                        RunStyle {
+                            font_id: self.style.text.font_id,
+                            color,
+                            underline: false,
+                        },
+                    )],
+                )));
+            }
+        }
+
+        layouts
+    }
+
+    fn layout_lines(
+        &mut self,
+        mut rows: Range<u32>,
+        snapshot: &mut Snapshot,
+        cx: &LayoutContext,
+    ) -> Vec<text_layout::Line> {
+        rows.end = cmp::min(rows.end, snapshot.max_point().row() + 1);
+        if rows.start >= rows.end {
+            return Vec::new();
+        }
+
+        // When the editor is empty and unfocused, then show the placeholder.
+        if snapshot.is_empty() && !snapshot.is_focused() {
+            let placeholder_style = self.style.placeholder_text();
+            let placeholder_text = snapshot.placeholder_text();
+            let placeholder_lines = placeholder_text
+                .as_ref()
+                .map_or("", AsRef::as_ref)
+                .split('\n')
+                .skip(rows.start as usize)
+                .take(rows.len());
+            return placeholder_lines
+                .map(|line| {
+                    cx.text_layout_cache.layout_str(
+                        line,
+                        placeholder_style.font_size,
+                        &[(
+                            line.len(),
+                            RunStyle {
+                                font_id: placeholder_style.font_id,
+                                color: placeholder_style.color,
+                                underline: false,
+                            },
+                        )],
+                    )
+                })
+                .collect();
+        }
+
+        let mut prev_font_properties = self.style.text.font_properties.clone();
+        let mut prev_font_id = self.style.text.font_id;
+
+        let theme = snapshot.theme().clone();
+        let mut layouts = Vec::with_capacity(rows.len());
+        let mut line = String::new();
+        let mut styles = Vec::new();
+        let mut row = rows.start;
+        let mut line_exceeded_max_len = false;
+        let chunks = snapshot.highlighted_chunks_for_rows(rows.clone());
+
+        'outer: for (chunk, style_ix) in chunks.chain(Some(("\n", HighlightId::default()))) {
+            for (ix, mut line_chunk) in chunk.split('\n').enumerate() {
+                if ix > 0 {
+                    layouts.push(cx.text_layout_cache.layout_str(
+                        &line,
+                        self.style.text.font_size,
+                        &styles,
+                    ));
+                    line.clear();
+                    styles.clear();
+                    row += 1;
+                    line_exceeded_max_len = false;
+                    if row == rows.end {
+                        break 'outer;
+                    }
+                }
+
+                if !line_chunk.is_empty() && !line_exceeded_max_len {
+                    let style = theme
+                        .syntax
+                        .highlight_style(style_ix)
+                        .unwrap_or(self.style.text.clone().into());
+                    // Avoid a lookup if the font properties match the previous ones.
+                    let font_id = if style.font_properties == prev_font_properties {
+                        prev_font_id
+                    } else {
+                        cx.font_cache
+                            .select_font(self.style.text.font_family_id, &style.font_properties)
+                            .unwrap_or(self.style.text.font_id)
+                    };
+
+                    if line.len() + line_chunk.len() > MAX_LINE_LEN {
+                        let mut chunk_len = MAX_LINE_LEN - line.len();
+                        while !line_chunk.is_char_boundary(chunk_len) {
+                            chunk_len -= 1;
+                        }
+                        line_chunk = &line_chunk[..chunk_len];
+                        line_exceeded_max_len = true;
+                    }
+
+                    line.push_str(line_chunk);
+                    styles.push((
+                        line_chunk.len(),
+                        RunStyle {
+                            font_id,
+                            color: style.color,
+                            underline: style.underline,
+                        },
+                    ));
+                    prev_font_id = font_id;
+                    prev_font_properties = style.font_properties;
+                }
+            }
+        }
+
+        layouts
+    }
 }
 
 impl Element for EditorElement {
@@ -390,30 +564,22 @@ impl Element for EditorElement {
             unimplemented!("we don't yet handle an infinite width constraint on buffer elements");
         }
 
-        let font_cache = &cx.font_cache;
-        let layout_cache = &cx.text_layout_cache;
         let snapshot = self.snapshot(cx.app);
-        let line_height = snapshot.line_height(font_cache);
+        let line_height = self.style.text.line_height(cx.font_cache);
 
         let gutter_padding;
         let gutter_width;
         if snapshot.mode == EditorMode::Full {
-            gutter_padding = snapshot.em_width(cx.font_cache);
-            match snapshot.max_line_number_width(cx.font_cache, cx.text_layout_cache) {
-                Err(error) => {
-                    log::error!("error computing max line number width: {}", error);
-                    return (size, None);
-                }
-                Ok(width) => gutter_width = width + gutter_padding * 2.0,
-            }
+            gutter_padding = self.style.text.em_width(cx.font_cache);
+            gutter_width = self.max_line_number_width(&snapshot, cx) + gutter_padding * 2.0;
         } else {
             gutter_padding = 0.0;
             gutter_width = 0.0
         };
 
         let text_width = size.x() - gutter_width;
-        let text_offset = vec2f(-snapshot.font_descent(cx.font_cache), 0.);
-        let em_width = snapshot.em_width(font_cache);
+        let text_offset = vec2f(-self.style.text.descent(cx.font_cache), 0.);
+        let em_width = self.style.text.em_width(cx.font_cache);
         let overscroll = vec2f(em_width, 0.);
         let wrap_width = text_width - text_offset.x() - overscroll.x() - em_width;
         let snapshot = self.update_view(cx.app, |view, cx| {
@@ -488,51 +654,18 @@ impl Element for EditorElement {
         });
 
         let line_number_layouts = if snapshot.mode == EditorMode::Full {
-            let settings = self
-                .view
-                .upgrade(cx.app)
-                .unwrap()
-                .read(cx.app)
-                .settings
-                .borrow();
-            match snapshot.layout_line_numbers(
-                start_row..end_row,
-                &active_rows,
-                cx.font_cache,
-                cx.text_layout_cache,
-                &settings.theme,
-            ) {
-                Err(error) => {
-                    log::error!("error laying out line numbers: {}", error);
-                    return (size, None);
-                }
-                Ok(layouts) => layouts,
-            }
+            self.layout_line_numbers(start_row..end_row, &active_rows, &snapshot, cx)
         } else {
             Vec::new()
         };
 
         let mut max_visible_line_width = 0.0;
-        let line_layouts = match snapshot.layout_lines(
-            start_row..end_row,
-            &self.style,
-            font_cache,
-            layout_cache,
-        ) {
-            Err(error) => {
-                log::error!("error laying out lines: {}", error);
-                return (size, None);
+        let line_layouts = self.layout_lines(start_row..end_row, &mut snapshot, cx);
+        for line in &line_layouts {
+            if line.width() > max_visible_line_width {
+                max_visible_line_width = line.width();
             }
-            Ok(layouts) => {
-                for line in &layouts {
-                    if line.width() > max_visible_line_width {
-                        max_visible_line_width = line.width();
-                    }
-                }
-
-                layouts
-            }
-        };
+        }
 
         let mut layout = LayoutState {
             size,
@@ -542,6 +675,7 @@ impl Element for EditorElement {
             overscroll,
             text_offset,
             snapshot,
+            style: self.style.clone(),
             active_rows,
             line_layouts,
             line_number_layouts,
@@ -551,15 +685,18 @@ impl Element for EditorElement {
             max_visible_line_width,
         };
 
+        let scroll_max = layout.scroll_max(cx.font_cache, cx.text_layout_cache).x();
+        let scroll_width = layout.scroll_width(cx.text_layout_cache);
+        let max_glyph_width = self.style.text.em_width(&cx.font_cache);
         self.update_view(cx.app, |view, cx| {
-            let clamped = view.clamp_scroll_left(layout.scroll_max(font_cache, layout_cache).x());
+            let clamped = view.clamp_scroll_left(scroll_max);
             let autoscrolled;
             if autoscroll_horizontally {
                 autoscrolled = view.autoscroll_horizontally(
                     start_row,
                     layout.text_size.x(),
-                    layout.scroll_width(font_cache, layout_cache),
-                    layout.snapshot.em_width(font_cache),
+                    scroll_width,
+                    max_glyph_width,
                     &layout.line_layouts,
                     cx,
                 );
@@ -659,6 +796,7 @@ pub struct LayoutState {
     gutter_size: Vector2F,
     gutter_padding: f32,
     text_size: Vector2F,
+    style: EditorStyle,
     snapshot: Snapshot,
     active_rows: BTreeMap<u32, bool>,
     line_layouts: Vec<text_layout::Line>,
@@ -672,25 +810,51 @@ pub struct LayoutState {
 }
 
 impl LayoutState {
-    fn scroll_width(&self, font_cache: &FontCache, layout_cache: &TextLayoutCache) -> f32 {
+    fn scroll_width(&self, layout_cache: &TextLayoutCache) -> f32 {
         let row = self.snapshot.longest_row();
-        let longest_line_width = self
-            .snapshot
-            .layout_line(row, font_cache, layout_cache)
-            .unwrap()
-            .width();
+        let longest_line_width = self.layout_line(row, &self.snapshot, layout_cache).width();
         longest_line_width.max(self.max_visible_line_width) + self.overscroll.x()
     }
 
     fn scroll_max(&self, font_cache: &FontCache, layout_cache: &TextLayoutCache) -> Vector2F {
         let text_width = self.text_size.x();
-        let scroll_width = self.scroll_width(font_cache, layout_cache);
-        let em_width = self.snapshot.em_width(font_cache);
+        let scroll_width = self.scroll_width(layout_cache);
+        let em_width = self.style.text.em_width(font_cache);
         let max_row = self.snapshot.max_point().row();
 
         vec2f(
             ((scroll_width - text_width) / em_width).max(0.0),
             max_row.saturating_sub(1) as f32,
+        )
+    }
+
+    pub fn layout_line(
+        &self,
+        row: u32,
+        snapshot: &Snapshot,
+        layout_cache: &TextLayoutCache,
+    ) -> text_layout::Line {
+        let mut line = snapshot.line(row);
+
+        if line.len() > MAX_LINE_LEN {
+            let mut len = MAX_LINE_LEN;
+            while !line.is_char_boundary(len) {
+                len -= 1;
+            }
+            line.truncate(len);
+        }
+
+        layout_cache.layout_str(
+            &line,
+            self.style.text.font_size,
+            &[(
+                snapshot.line_len(row) as usize,
+                RunStyle {
+                    font_id: self.style.text.font_id,
+                    color: Color::black(),
+                    underline: false,
+                },
+            )],
         )
     }
 }
@@ -863,4 +1027,43 @@ fn scale_vertical_mouse_autoscroll_delta(delta: f32) -> f32 {
 
 fn scale_horizontal_mouse_autoscroll_delta(delta: f32) -> f32 {
     delta.powf(1.2) / 300.0
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::{
+        editor::{Buffer, Editor, EditorStyle},
+        settings,
+        test::sample_text,
+    };
+
+    #[gpui::test]
+    fn test_layout_line_numbers(cx: &mut gpui::MutableAppContext) {
+        let font_cache = cx.font_cache().clone();
+        let settings = settings::test(&cx).1;
+        let style = EditorStyle::test(&font_cache);
+
+        let buffer = cx.add_model(|cx| Buffer::new(0, sample_text(6, 6), cx));
+        let (window_id, editor) = cx.add_window(Default::default(), |cx| {
+            Editor::for_buffer(
+                buffer,
+                settings.clone(),
+                {
+                    let style = style.clone();
+                    move |_| style.clone()
+                },
+                cx,
+            )
+        });
+        let element = EditorElement::new(editor.downgrade(), style);
+
+        let layouts = editor.update(cx, |editor, cx| {
+            let snapshot = editor.snapshot(cx);
+            let mut presenter = cx.build_presenter(window_id, 30.);
+            let mut layout_cx = presenter.build_layout_context(false, cx);
+            element.layout_line_numbers(0..6, &Default::default(), &snapshot, &mut layout_cx)
+        });
+        assert_eq!(layouts.len(), 6);
+    }
 }

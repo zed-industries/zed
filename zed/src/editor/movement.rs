@@ -180,16 +180,21 @@ fn char_kind(c: char) -> CharKind {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{
-        editor::{display_map::DisplayMap, Buffer},
-        test::test_app_state,
-    };
+    use crate::editor::{display_map::DisplayMap, Buffer};
 
     #[gpui::test]
     fn test_prev_next_word_boundary_multibyte(cx: &mut gpui::MutableAppContext) {
-        let settings = test_app_state(cx).settings.clone();
+        let tab_size = 4;
+        let family_id = cx.font_cache().load_family(&["Helvetica"]).unwrap();
+        let font_id = cx
+            .font_cache()
+            .select_font(family_id, &Default::default())
+            .unwrap();
+        let font_size = 14.0;
+
         let buffer = cx.add_model(|cx| Buffer::new(0, "a bcΔ defγ", cx));
-        let display_map = cx.add_model(|cx| DisplayMap::new(buffer, settings, None, cx));
+        let display_map =
+            cx.add_model(|cx| DisplayMap::new(buffer, tab_size, font_id, font_size, None, cx));
         let snapshot = display_map.update(cx, |map, cx| map.snapshot(cx));
         assert_eq!(
             prev_word_boundary(&snapshot, DisplayPoint::new(0, 12)).unwrap(),

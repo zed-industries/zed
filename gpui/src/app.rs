@@ -2335,6 +2335,16 @@ impl<V: View> ReadModel for RenderContext<'_, V> {
     }
 }
 
+impl<V: View> UpdateModel for RenderContext<'_, V> {
+    fn update_model<T, F, S>(&mut self, handle: &ModelHandle<T>, update: F) -> S
+    where
+        T: Entity,
+        F: FnOnce(&mut T, &mut ModelContext<T>) -> S,
+    {
+        self.app.update_model(handle, update)
+    }
+}
+
 impl<M> AsRef<AppContext> for ViewContext<'_, M> {
     fn as_ref(&self) -> &AppContext {
         &self.app.cx

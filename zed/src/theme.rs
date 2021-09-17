@@ -2,6 +2,7 @@ mod highlight_map;
 mod resolution;
 mod theme_registry;
 
+use crate::editor::{EditorStyle, SelectionStyle};
 use anyhow::Result;
 use gpui::{
     color::Color,
@@ -159,32 +160,13 @@ pub struct ContainedLabel {
 }
 
 #[derive(Clone, Deserialize)]
-pub struct EditorStyle {
-    pub text: HighlightStyle,
-    #[serde(default)]
-    pub placeholder_text: HighlightStyle,
-    pub background: Color,
-    pub selection: SelectionStyle,
-    pub gutter_background: Color,
-    pub active_line_background: Color,
-    pub line_number: Color,
-    pub line_number_active: Color,
-    pub guest_selections: Vec<SelectionStyle>,
-}
-
-#[derive(Clone, Deserialize)]
 pub struct InputEditorStyle {
     #[serde(flatten)]
     pub container: ContainerStyle,
-    pub text: HighlightStyle,
-    pub placeholder_text: HighlightStyle,
+    pub text: TextStyle,
+    #[serde(default)]
+    pub placeholder_text: Option<TextStyle>,
     pub selection: SelectionStyle,
-}
-
-#[derive(Clone, Copy, Default, Deserialize)]
-pub struct SelectionStyle {
-    pub cursor: Color,
-    pub selection: Color,
 }
 
 impl SyntaxTheme {
@@ -204,30 +186,6 @@ impl SyntaxTheme {
     }
 }
 
-impl Default for EditorStyle {
-    fn default() -> Self {
-        Self {
-            text: HighlightStyle {
-                color: Color::from_u32(0xff0000ff),
-                font_properties: Default::default(),
-                underline: false,
-            },
-            placeholder_text: HighlightStyle {
-                color: Color::from_u32(0x00ff00ff),
-                font_properties: Default::default(),
-                underline: false,
-            },
-            background: Default::default(),
-            gutter_background: Default::default(),
-            active_line_background: Default::default(),
-            line_number: Default::default(),
-            line_number_active: Default::default(),
-            selection: Default::default(),
-            guest_selections: Default::default(),
-        }
-    }
-}
-
 impl InputEditorStyle {
     pub fn as_editor(&self) -> EditorStyle {
         EditorStyle {
@@ -238,7 +196,11 @@ impl InputEditorStyle {
                 .background_color
                 .unwrap_or(Color::transparent_black()),
             selection: self.selection,
-            ..Default::default()
+            gutter_background: Default::default(),
+            active_line_background: Default::default(),
+            line_number: Default::default(),
+            line_number_active: Default::default(),
+            guest_selections: Default::default(),
         }
     }
 }

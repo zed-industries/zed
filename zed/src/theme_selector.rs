@@ -58,10 +58,14 @@ impl ThemeSelector {
         cx: &mut ViewContext<Self>,
     ) -> Self {
         let query_editor = cx.add_view(|cx| {
-            Editor::single_line(settings.clone(), cx).with_style({
-                let settings = settings.clone();
-                move |_| settings.borrow().theme.selector.input_editor.as_editor()
-            })
+            Editor::single_line(
+                settings.clone(),
+                {
+                    let settings = settings.clone();
+                    move |_| settings.borrow().theme.selector.input_editor.as_editor()
+                },
+                cx,
+            )
         });
 
         cx.subscribe(&query_editor, Self::on_query_editor_event)
