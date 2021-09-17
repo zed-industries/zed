@@ -269,6 +269,7 @@ impl EditorElement {
         let view = self.view(cx.app);
         let settings = self.view(cx.app).settings.borrow();
         let theme = &settings.theme.editor;
+        let local_replica_id = view.replica_id(cx);
         let scroll_position = layout.snapshot.scroll_position();
         let start_row = scroll_position.y() as u32;
         let scroll_top = scroll_position.y() * layout.line_height;
@@ -338,7 +339,7 @@ impl EditorElement {
                     selection.paint(bounds, cx.scene);
                 }
 
-                if view.cursors_visible() {
+                if view.show_local_cursors() || *replica_id != local_replica_id {
                     let cursor_position = selection.end;
                     if (start_row..end_row).contains(&cursor_position.row()) {
                         let cursor_row_layout =

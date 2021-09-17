@@ -305,7 +305,7 @@ pub struct Editor {
     build_style: Rc<RefCell<dyn FnMut(&mut MutableAppContext) -> EditorStyle>>,
     settings: watch::Receiver<Settings>,
     focused: bool,
-    cursors_visible: bool,
+    show_local_cursors: bool,
     blink_epoch: usize,
     blinking_paused: bool,
     mode: EditorMode,
@@ -416,7 +416,7 @@ impl Editor {
             autoscroll_requested: false,
             settings,
             focused: false,
-            cursors_visible: false,
+            show_local_cursors: false,
             blink_epoch: 0,
             blinking_paused: false,
             mode: EditorMode::Full,
@@ -2253,7 +2253,7 @@ impl Editor {
     }
 
     fn pause_cursor_blinking(&mut self, cx: &mut ViewContext<Self>) {
-        self.cursors_visible = true;
+        self.show_local_cursors = true;
         cx.notify();
 
         let epoch = self.next_blink_epoch();
@@ -2278,7 +2278,7 @@ impl Editor {
 
     fn blink_cursors(&mut self, epoch: usize, cx: &mut ViewContext<Self>) {
         if epoch == self.blink_epoch && self.focused && !self.blinking_paused {
-            self.cursors_visible = !self.cursors_visible;
+            self.show_local_cursors = !self.show_local_cursors;
             cx.notify();
 
             let epoch = self.next_blink_epoch();
@@ -2295,8 +2295,8 @@ impl Editor {
         }
     }
 
-    pub fn cursors_visible(&self) -> bool {
-        self.cursors_visible
+    pub fn show_local_cursors(&self) -> bool {
+        self.show_local_cursors
     }
 
     fn on_buffer_changed(&mut self, _: ModelHandle<Buffer>, cx: &mut ViewContext<Self>) {
@@ -2483,7 +2483,7 @@ impl View for Editor {
 
     fn on_blur(&mut self, cx: &mut ViewContext<Self>) {
         self.focused = false;
-        self.cursors_visible = false;
+        self.show_local_cursors = false;
         self.buffer.update(cx, |buffer, cx| {
             buffer.set_active_selection_set(None, cx).unwrap();
         });
