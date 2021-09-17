@@ -18,31 +18,13 @@ module.exports = {
             ],
         },
         extend: {
-            typography: (theme) => ({
-                DEFAULT: {
-                    css: {
-                        h1: {
-                            fontFamily: theme("fontFamily.display").join(", ")
-                        },
-                        h2: {
-                            fontFamily: theme("fontFamily.display").join(", ")
-                        },
-                        h3: {
-                            fontFamily: theme("fontFamily.display").join(", ")
-                        },
-                        h4: {
-                            fontFamily: theme("fontFamily.display").join(", ")
-                        }
-                    }
-                }
-            })
-        }
+            
+        },
     },
+
     variants: {
     },
-    plugins: [
-        require('@tailwindcss/typography'),
-    ],
+    
     purge: [
         "../server/templates/**/*.hbs"
     ]

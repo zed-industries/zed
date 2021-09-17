@@ -1,0 +1,86 @@
+// Style prose by hand
+// add .prose to any <article> to activate prose styles
+// or .type-prose to any element
+
+article.prose,
+.type-prose {
+  font-family: "Spectral", "Constantia", "Lucida Bright", "Lucidabright",
+    "Lucida Serif", "Lucida", "DejaVu Serif", "Bitstream Vera Serif",
+    "Liberation Serif", "Georgia", "serif", "Apple Color Emoji",
+    "Segoe UI Emoji", "Segoe UI Symbol", "Noto Color Emoji", serif;
+  margin-bottom: 2.5rem;
+  letter-spacing: -0.05rem;
+
+  h1,
+  h2,
+  h3,
+  h4 {
+    margin: 3rem 0 1rem 0;
+  }
+
+  p,
+  li {
+    // max-width: 90%;
+  }
+
+  p,
+  a {
+    color: #ddd;
+    font-size: 1.3rem;
+    line-height: 2.1rem;
+  }
+
+  a:not(img) {
+    text-decoration: underline;
+    text-underline-offset: 4px;
+  }
+
+  strong {
+    font-weight: 600;
+  }
+
+  i {
+    font-style: italic;
+  }
+
+  p:not(:last-of-type) {
+    margin-bottom: 1.5rem;
+  }
+
+  img, pre {
+    margin: 1.5rem 0;
+  }
+
+  ul {
+    margin-left: 1.5rem;
+  }
+
+  ul li {
+    list-style-type: disc;
+    list-style-position: outside;
+    font-size: 1.3rem;
+    &:not(:last-of-type) {
+      margin-bottom: 0.2rem;
+    }
+  }
+
+  pre {
+    background-color: rgba(255, 255, 255, 0.15);
+    padding: 0.8rem;
+  }
+
+  code {
+    font-family: "JetBrains Mono", "Andale Mono WT", "Andale Mono",
+      "Lucida Console", "Lucida Sans Typewriter", "DejaVu Sans Mono",
+      "Bitstream Vera Sans Mono", "Liberation Mono", "Nimbus Mono L",
+      "Courier New", "Apple Color Emoji", "Segoe UI Emoji", "Segoe UI Symbol",
+      "Noto Color Emoji", monospace;
+    font-size: 0.96rem;
+  }
+
+  p code,
+  li code {
+    background-color: rgba(255, 255, 255, 0.15);
+    padding: 0.2rem  0.4rem;
+  }
+}
