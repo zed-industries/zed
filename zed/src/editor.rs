@@ -17,9 +17,9 @@ pub use display_map::DisplayPoint;
 use display_map::*;
 pub use element::*;
 use gpui::{
-    action, color::Color, fonts::TextStyle, geometry::vector::Vector2F,
-    keymap::Binding, text_layout, AppContext, ClipboardItem, Element, ElementBox, Entity,
-    ModelHandle, MutableAppContext, RenderContext, Task, View, ViewContext, WeakViewHandle,
+    action, color::Color, fonts::TextStyle, geometry::vector::Vector2F, keymap::Binding,
+    text_layout, AppContext, ClipboardItem, Element, ElementBox, Entity, ModelHandle,
+    MutableAppContext, RenderContext, Task, View, ViewContext, WeakViewHandle,
 };
 use postage::watch;
 use serde::{Deserialize, Serialize};
@@ -372,8 +372,17 @@ impl Editor {
         build_style: Rc<RefCell<dyn FnMut(&mut MutableAppContext) -> EditorStyle>>,
         cx: &mut ViewContext<Self>,
     ) -> Self {
-        let display_map =
-            cx.add_model(|cx| DisplayMap::new(buffer.clone(), settings.clone(), None, cx));
+        let style = build_style.borrow_mut()(cx);
+        let display_map = cx.add_model(|cx| {
+            DisplayMap::new(
+                buffer.clone(),
+                settings.borrow().tab_size,
+                style.text.font_id,
+                style.text.font_size,
+                None,
+                cx,
+            )
+        });
         cx.observe(&buffer, Self::on_buffer_changed).detach();
         cx.subscribe(&buffer, Self::on_buffer_event).detach();
         cx.observe(&display_map, Self::on_display_map_changed)
@@ -2452,6 +2461,9 @@ impl Entity for Editor {
 impl View for Editor {
     fn render(&mut self, cx: &mut RenderContext<Self>) -> ElementBox {
         let style = self.build_style.borrow_mut()(cx);
+        self.display_map.update(cx, |map, cx| {
+            map.set_font(style.text.font_id, style.text.font_size, cx)
+        });
         EditorElement::new(self.handle.clone(), style).boxed()
     }
 
@@ -4257,12 +4269,33 @@ mod tests {
         settings: watch::Receiver<Settings>,
         cx: &mut ViewContext<Editor>,
     ) -> Editor {
-        Editor::for_buffer(
-            buffer,
-            settings,
-            move |cx| EditorStyle::test(cx.font_cache()),
-            cx,
-        )
+        let style = {
+            let font_cache = cx.font_cache();
+            let settings = settings.borrow();
+            EditorStyle {
+                text: TextStyle {
+                    color: Default::default(),
+                    font_family_name: font_cache.family_name(settings.buffer_font_family).unwrap(),
+                    font_family_id: settings.buffer_font_family,
+                    font_id: font_cache
+                        .select_font(settings.buffer_font_family, &Default::default())
+                        .unwrap(),
+                    font_size: settings.buffer_font_size,
+                    font_properties: Default::default(),
+                    underline: false,
+                },
+                placeholder_text: None,
+                background: Default::default(),
+                selection: Default::default(),
+                gutter_background: Default::default(),
+                active_line_background: Default::default(),
+                line_number: Default::default(),
+                line_number_active: Default::default(),
+                guest_selections: Default::default(),
+            }
+        };
+
+        Editor::for_buffer(buffer, settings, move |_| style.clone(), cx)
     }
 }
 
