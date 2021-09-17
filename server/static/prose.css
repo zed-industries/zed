@@ -1,7 +1,10 @@
+article.prose {
+  margin-bottom: 2.5rem;
+}
+
 article.prose,
 .type-prose {
   font-family: "Spectral", "Constantia", "Lucida Bright", "Lucidabright", "Lucida Serif", "Lucida", "DejaVu Serif", "Bitstream Vera Serif", "Liberation Serif", "Georgia", "serif", "Apple Color Emoji", "Segoe UI Emoji", "Segoe UI Symbol", "Noto Color Emoji", serif;
-  margin-bottom: 2.5rem;
   letter-spacing: -0.05rem;
 }
 

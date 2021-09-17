@@ -2,8 +2,11 @@
 
 
 <div class="max-w-screen-lg mx-auto text-main font-extralight p-20">
+    {{#if current_user}}
+    
     {{#if releases}}
     <h1 class="font-display font-extralight mb-10">Updates</h1>
+    
     {{#each releases}}
     <article id="{{name}}" class="prose">
         <h2 class="font-display font-extralight">{{name}}&mdash;<a class="underline mt-5 leading-7" href="/releases/{{tag_name}}/{{assets.0.name}}">Download</a></h2>
@@ -15,11 +18,13 @@
         </div>
     </article>
     {{/each}}
+    {{/if}}
+
     {{else}}
 
-    <h1>Hey!</h1>
-    <p>You can't access this without <a href=" /sign_in">logging in</a>.</p>
-
+    <h1 class="font-display font-extralight mb-10">Hold it!</h1>
+    <p class="mt-5 leading-7">You can't access this without <a href=" /sign_in" class="underline mt-5 leading-7">logging in</a>.</p>
+    <p class="mt-5 leading-7">Try <a href="/community" class="underline mt-5 leading-7">joining our community</a> to get access to updates & releases.</p>
     {{/if}}
 </div>
 

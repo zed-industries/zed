@@ -1,31 +1,34 @@
 {{#> layout }}
 
-<div class="container mx-auto max-w-screen-md p-10 pt-20">
-    <h1 class="text-white text-4xl font-extralight mb-10">Releases</h1>
+<div class="max-w-screen-lg mx-auto text-main font-extralight p-20">
+    {{#if current_user}}
+
+    <h1 class="font-display font-extralight mb-10">Releases</h1>
+    <p class="mt-5 leading-7">Currently Zed we are only shipping OS X builds of Zed.</p>
+    <p class="mt-5 leading-7">We are frequently shipping new versions, check back reguarly to get the most recent version. If you run into an issue you think we might not know about use the "new issue" links by the appropriate version to let us know about it.</p>
     {{#if releases}}
-    <div class="container mx-auto py-12 px-8 md:px-12">
+    
+    <ul class="mt-10 leading-7">
         {{#each releases}}
-        <div class="md:flex md:flex-row mb-32 md:mb-12">
-            <div class="font-display mb-8 md:mb-0 md:text-right w-48">
-                <div class="text-2xl font-bold whitespace-nowrap">
-                    VERSION {{name}}
-                </div>
-                <a class="text-md underline text-yellow-600 hover:text-yellow-700"
-                    href="/releases/{{tag_name}}/{{assets.0.name}}">
-                    DOWNLOAD
-                </a>
-            </div>
-            <div
-                class="prose prose-lg xl:prose-xl border-t md:border-t-0 pt-8 md:border-l border-gray-400 md:ml-8 md:pl-8 md:pt-0 xl:ml-16 xl:pl-16 max-w-5xl font-body">
-                {{{body}}}
-            </div>
-        </div>
+        <li id="release-{{name}}" class="mb-5">
+            <a class="text-lg" href="/releases/{{tag_name}}/{{assets.0.name}}">Zed {{name}}</a></h2>
+            <p class="text-gray-400">
+                <a href="https://github.com/zed-industries/zed/releases/tag/{{tag_name}}">Release Notes</a>
+                 · 
+                <a href="https://github.com/zed-industries/zed/issues/new?labels=defect&title={{name}}+New+issue">New issue</a>
+            </p>
+        </li>
         {{/each}}
-    </div>
+    </ul>
+
+    {{/if}}
+
     {{else}}
 
-    <p>You can't access this without <a href=" /sign_in">logging in</a>.</p>
-
+    <h1 class="font-display font-extralight mb-10">Hold it!</h1>
+    <p class="mt-5 leading-7">You can't access this without <a href=" /sign_in" class="underline mt-5 leading-7">logging in</a>.</p>
+    <p class="mt-5 leading-7">Try <a href="/community" class="underline mt-5 leading-7">joining our community</a> to get access to updates & releases.</p>
+    
     {{/if}}
 </div>
 
