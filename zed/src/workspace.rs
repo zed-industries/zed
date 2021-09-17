@@ -11,10 +11,11 @@ use crate::{
     rpc,
     settings::Settings,
     user,
+    util::TryFutureExt as _,
     worktree::{File, Worktree},
     AppState, Authenticate,
 };
-use anyhow::{anyhow, Result};
+use anyhow::Result;
 use gpui::{
     action,
     elements::*,
@@ -52,12 +53,10 @@ pub fn init(cx: &mut MutableAppContext) {
         open_paths(action, cx).detach()
     });
     cx.add_global_action(open_new);
-    cx.add_global_action(join_worktree);
     cx.add_action(Workspace::save_active_item);
     cx.add_action(Workspace::debug_elements);
     cx.add_action(Workspace::open_new_file);
     cx.add_action(Workspace::share_worktree);
-    cx.add_action(Workspace::join_worktree);
     cx.add_action(Workspace::toggle_sidebar_item);
     cx.add_bindings(vec![
         Binding::new("cmd-s", Save, None),
@@ -125,14 +124,6 @@ fn open_new(action: &OpenNew, cx: &mut MutableAppContext) {
     cx.add_window(window_options(), |cx| {
         let mut view = Workspace::new(action.0.as_ref(), cx);
         view.open_new_file(&action, cx);
-        view
-    });
-}
-
-fn join_worktree(action: &JoinWorktree, cx: &mut MutableAppContext) {
-    cx.add_window(window_options(), |cx| {
-        let mut view = Workspace::new(action.0.as_ref(), cx);
-        view.join_worktree(action, cx);
         view
     });
 }
@@ -818,67 +809,46 @@ impl Workspace {
 
     fn share_worktree(&mut self, _: &ShareWorktree, cx: &mut ViewContext<Self>) {
         let rpc = self.rpc.clone();
-        let platform = cx.platform();
+        cx.spawn(|this, mut cx| {
+            async move {
+                rpc.authenticate_and_connect(&cx).await?;
 
-        let task = cx.spawn(|this, mut cx| async move {
-            rpc.authenticate_and_connect(&cx).await?;
+                let share_task = this.update(&mut cx, |this, cx| {
+                    let worktree = this.worktrees.iter().next()?;
+                    worktree.update(cx, |worktree, cx| {
+                        let worktree = worktree.as_local_mut()?;
+                        Some(worktree.share(cx))
+                    })
+                });
 
-            let share_task = this.update(&mut cx, |this, cx| {
-                let worktree = this.worktrees.iter().next()?;
-                worktree.update(cx, |worktree, cx| {
-                    let worktree = worktree.as_local_mut()?;
-                    Some(worktree.share(cx))
-                })
-            });
+                if let Some(share_task) = share_task {
+                    share_task.await?;
+                }
 
-            if let Some(share_task) = share_task {
-                let (worktree_id, access_token) = share_task.await?;
-                let worktree_url = rpc::encode_worktree_url(worktree_id, &access_token);
-                log::info!("wrote worktree url to clipboard: {}", worktree_url);
-                platform.write_to_clipboard(ClipboardItem::new(worktree_url));
+                Ok(())
             }
-            surf::Result::Ok(())
-        });
-
-        cx.spawn(|_, _| async move {
-            if let Err(e) = task.await {
-                log::error!("sharing failed: {:?}", e);
-            }
+            .log_err()
         })
         .detach();
     }
 
-    fn join_worktree(&mut self, _: &JoinWorktree, cx: &mut ViewContext<Self>) {
+    fn join_worktree(&mut self, id: u64, cx: &mut ViewContext<Self>) {
         let rpc = self.rpc.clone();
         let languages = self.languages.clone();
 
-        let task = cx.spawn(|this, mut cx| async move {
-            rpc.authenticate_and_connect(&cx).await?;
+        cx.spawn(|this, mut cx| {
+            async move {
+                rpc.authenticate_and_connect(&cx).await?;
+                let worktree = Worktree::open_remote(rpc.clone(), id, languages, &mut cx).await?;
+                this.update(&mut cx, |workspace, cx| {
+                    cx.observe(&worktree, |_, _, cx| cx.notify()).detach();
+                    workspace.worktrees.insert(worktree);
+                    cx.notify();
+                });
 
-            let worktree_url = cx
-                .platform()
-                .read_from_clipboard()
-                .ok_or_else(|| anyhow!("failed to read url from clipboard"))?;
-            let (worktree_id, access_token) = rpc::decode_worktree_url(worktree_url.text())
-                .ok_or_else(|| anyhow!("failed to decode worktree url"))?;
-            log::info!("read worktree url from clipboard: {}", worktree_url.text());
-
-            let worktree =
-                Worktree::open_remote(rpc.clone(), worktree_id, access_token, languages, &mut cx)
-                    .await?;
-            this.update(&mut cx, |workspace, cx| {
-                cx.observe(&worktree, |_, _, cx| cx.notify()).detach();
-                workspace.worktrees.insert(worktree);
-                cx.notify();
-            });
-
-            surf::Result::Ok(())
-        });
-
-        cx.spawn(|_, _| async move {
-            if let Err(e) = task.await {
-                log::error!("joining failed: {}", e);
+                Ok(())
             }
+            .log_err()
         })
         .detach();
     }

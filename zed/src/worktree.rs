@@ -7,7 +7,7 @@ use crate::{
     fuzzy,
     fuzzy::CharBag,
     language::LanguageRegistry,
-    rpc::{self, proto},
+    rpc::{self, proto, Status},
     time::{self, ReplicaId},
     util::{Bias, TryFutureExt},
 };
@@ -27,6 +27,7 @@ use postage::{
     prelude::{Sink as _, Stream as _},
     watch,
 };
+use serde::Deserialize;
 use smol::channel::{self, Sender};
 use std::{
     cmp::{self, Ordering},
@@ -67,9 +68,9 @@ impl Entity for Worktree {
     fn release(&mut self, cx: &mut MutableAppContext) {
         let rpc = match self {
             Self::Local(tree) => tree
-                .share
-                .as_ref()
-                .map(|share| (tree.rpc.clone(), share.remote_id)),
+                .remote_id
+                .borrow()
+                .map(|remote_id| (tree.rpc.clone(), remote_id)),
             Self::Remote(tree) => Some((tree.rpc.clone(), tree.remote_id)),
         };
 
@@ -112,17 +113,10 @@ impl Worktree {
     pub async fn open_remote(
         rpc: Arc<rpc::Client>,
         id: u64,
-        access_token: String,
         languages: Arc<LanguageRegistry>,
         cx: &mut AsyncAppContext,
     ) -> Result<ModelHandle<Self>> {
-        let response = rpc
-            .request(proto::JoinWorktree {
-                worktree_id: id,
-                access_token,
-            })
-            .await?;
-
+        let response = rpc.request(proto::JoinWorktree { worktree_id: id }).await?;
         Worktree::remote(response, rpc, languages, cx).await
     }
 
@@ -136,7 +130,7 @@ impl Worktree {
             .worktree
             .ok_or_else(|| anyhow!("empty worktree"))?;
 
-        let remote_id = join_response.worktree_id;
+        let remote_id = worktree.id;
         let replica_id = join_response.replica_id as ReplicaId;
         let peers = join_response.peers;
         let root_char_bag: CharBag = worktree
@@ -650,10 +644,13 @@ impl Deref for Worktree {
 
 pub struct LocalWorktree {
     snapshot: Snapshot,
+    config: WorktreeConfig,
     background_snapshot: Arc<Mutex<Snapshot>>,
     last_scan_state_rx: watch::Receiver<ScanState>,
     _background_scanner_task: Option<Task<()>>,
+    _maintain_remote_id_task: Task<Option<()>>,
     poll_task: Option<Task<()>>,
+    remote_id: watch::Receiver<Option<u64>>,
     share: Option<ShareState>,
     open_buffers: HashMap<usize, WeakModelHandle<Buffer>>,
     shared_buffers: HashMap<PeerId, HashMap<u64, ModelHandle<Buffer>>>,
@@ -662,6 +659,11 @@ pub struct LocalWorktree {
     queued_operations: Vec<(u64, Operation)>,
     rpc: Arc<rpc::Client>,
     fs: Arc<dyn Fs>,
+}
+
+#[derive(Default, Deserialize)]
+struct WorktreeConfig {
+    collaborators: Vec<String>,
 }
 
 impl LocalWorktree {
@@ -684,6 +686,13 @@ impl LocalWorktree {
         let root_char_bag = root_name.chars().map(|c| c.to_ascii_lowercase()).collect();
         let metadata = fs.metadata(&abs_path).await?;
 
+        let mut config = WorktreeConfig::default();
+        if let Ok(zed_toml) = fs.load(&abs_path.join(".zed.toml")).await {
+            if let Ok(parsed) = toml::from_str(&zed_toml) {
+                config = parsed;
+            }
+        }
+
         let (scan_states_tx, scan_states_rx) = smol::channel::unbounded();
         let (mut last_scan_state_tx, last_scan_state_rx) = watch::channel_with(ScanState::Scanning);
         let tree = cx.add_model(move |cx: &mut ModelContext<Worktree>| {
@@ -691,7 +700,7 @@ impl LocalWorktree {
                 id: cx.model_id(),
                 scan_id: 0,
                 abs_path,
-                root_name,
+                root_name: root_name.clone(),
                 root_char_bag,
                 ignores: Default::default(),
                 entries_by_path: Default::default(),
@@ -708,11 +717,48 @@ impl LocalWorktree {
                 ));
             }
 
+            let (mut remote_id_tx, remote_id_rx) = watch::channel();
+            let _maintain_remote_id_task = cx.spawn_weak({
+                let rpc = rpc.clone();
+                move |this, cx| {
+                    async move {
+                        let mut status = rpc.status();
+                        while let Some(status) = status.recv().await {
+                            if let Some(this) = this.upgrade(&cx) {
+                                let remote_id = if let Status::Connected { .. } = status {
+                                    let collaborator_logins = this.read_with(&cx, |this, _| {
+                                        this.as_local().unwrap().config.collaborators.clone()
+                                    });
+                                    let response = rpc
+                                        .request(proto::OpenWorktree {
+                                            root_name: root_name.clone(),
+                                            collaborator_logins,
+                                        })
+                                        .await?;
+
+                                    Some(response.worktree_id)
+                                } else {
+                                    None
+                                };
+                                if remote_id_tx.send(remote_id).await.is_err() {
+                                    break;
+                                }
+                            }
+                        }
+                        Ok(())
+                    }
+                    .log_err()
+                }
+            });
+
             let tree = Self {
                 snapshot: snapshot.clone(),
+                config,
+                remote_id: remote_id_rx,
                 background_snapshot: Arc::new(Mutex::new(snapshot)),
                 last_scan_state_rx,
                 _background_scanner_task: None,
+                _maintain_remote_id_task,
                 share: None,
                 poll_task: None,
                 open_buffers: Default::default(),
@@ -733,13 +779,10 @@ impl LocalWorktree {
                             let tree = this.as_local_mut().unwrap();
                             if !tree.is_scanning() {
                                 if let Some(share) = tree.share.as_ref() {
-                                    Some((tree.snapshot(), share.snapshots_tx.clone()))
-                                } else {
-                                    None
+                                    return Some((tree.snapshot(), share.snapshots_tx.clone()));
                                 }
-                            } else {
-                                None
                             }
+                            None
                         });
 
                         if let Some((snapshot, snapshots_to_send_tx)) = to_send {
@@ -894,6 +937,18 @@ impl LocalWorktree {
         }
     }
 
+    pub fn next_remote_id(&self) -> impl Future<Output = Option<u64>> {
+        let mut remote_id = self.remote_id.clone();
+        async move {
+            while let Some(remote_id) = remote_id.recv().await {
+                if remote_id.is_some() {
+                    return remote_id;
+                }
+            }
+            None
+        }
+    }
+
     fn is_scanning(&self) -> bool {
         if let ScanState::Scanning = *self.last_scan_state_rx.borrow() {
             true
@@ -979,17 +1034,19 @@ impl LocalWorktree {
         })
     }
 
-    pub fn share(
-        &mut self,
-        cx: &mut ModelContext<Worktree>,
-    ) -> Task<anyhow::Result<(u64, String)>> {
+    pub fn share(&mut self, cx: &mut ModelContext<Worktree>) -> Task<anyhow::Result<u64>> {
         let snapshot = self.snapshot();
         let share_request = self.share_request(cx);
         let rpc = self.rpc.clone();
         cx.spawn(|this, mut cx| async move {
-            let share_request = share_request.await;
+            let share_request = if let Some(request) = share_request.await {
+                request
+            } else {
+                return Err(anyhow!("failed to open worktree on the server"));
+            };
+
+            let remote_id = share_request.worktree.as_ref().unwrap().id;
             let share_response = rpc.request(share_request).await?;
-            let remote_id = share_response.worktree_id;
 
             log::info!("sharing worktree {:?}", share_response);
             let (snapshots_to_send_tx, snapshots_to_send_rx) =
@@ -1023,28 +1080,34 @@ impl LocalWorktree {
 
                 let worktree = worktree.as_local_mut().unwrap();
                 worktree.share = Some(ShareState {
-                    remote_id: share_response.worktree_id,
                     snapshots_tx: snapshots_to_send_tx,
                     _subscriptions,
                 });
             });
 
-            Ok((remote_id, share_response.access_token))
+            Ok(remote_id)
         })
     }
 
-    fn share_request(&self, cx: &mut ModelContext<Worktree>) -> Task<proto::ShareWorktree> {
+    fn share_request(&self, cx: &mut ModelContext<Worktree>) -> Task<Option<proto::ShareWorktree>> {
+        let remote_id = self.next_remote_id();
         let snapshot = self.snapshot();
         let root_name = self.root_name.clone();
         cx.background().spawn(async move {
-            let entries = snapshot
-                .entries_by_path
-                .cursor::<(), ()>()
-                .map(Into::into)
-                .collect();
-            proto::ShareWorktree {
-                worktree: Some(proto::Worktree { root_name, entries }),
-            }
+            remote_id.await.map(|id| {
+                let entries = snapshot
+                    .entries_by_path
+                    .cursor::<(), ()>()
+                    .map(Into::into)
+                    .collect();
+                proto::ShareWorktree {
+                    worktree: Some(proto::Worktree {
+                        id,
+                        root_name,
+                        entries,
+                    }),
+                }
+            })
         })
     }
 }
@@ -1082,7 +1145,6 @@ impl fmt::Debug for LocalWorktree {
 }
 
 struct ShareState {
-    remote_id: u64,
     snapshots_tx: Sender<Snapshot>,
     _subscriptions: Vec<rpc::Subscription>,
 }
@@ -1552,9 +1614,9 @@ impl File {
         self.worktree.update(cx, |worktree, cx| {
             if let Some((rpc, remote_id)) = match worktree {
                 Worktree::Local(worktree) => worktree
-                    .share
-                    .as_ref()
-                    .map(|share| (worktree.rpc.clone(), share.remote_id)),
+                    .remote_id
+                    .borrow()
+                    .map(|id| (worktree.rpc.clone(), id)),
                 Worktree::Remote(worktree) => Some((worktree.rpc.clone(), worktree.remote_id)),
             } {
                 cx.spawn(|worktree, mut cx| async move {
@@ -1639,7 +1701,7 @@ impl File {
         self.worktree.update(cx, |worktree, cx| match worktree {
             Worktree::Local(worktree) => {
                 let rpc = worktree.rpc.clone();
-                let worktree_id = worktree.share.as_ref().map(|share| share.remote_id);
+                let worktree_id = *worktree.remote_id.borrow();
                 let save = worktree.save(self.path.clone(), text, cx);
                 cx.background().spawn(async move {
                     let entry = save.await?;
@@ -2528,6 +2590,7 @@ impl<'a> TryFrom<(&'a CharBag, proto::Entry)> for Entry {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::fs::FakeFs;
     use crate::test::*;
     use anyhow::Result;
     use fs::RealFs;
@@ -2778,10 +2841,10 @@ mod tests {
             .update(&mut cx, |tree, cx| {
                 tree.as_local().unwrap().share_request(cx)
             })
-            .await;
+            .await
+            .unwrap();
         let remote = Worktree::remote(
             proto::JoinWorktreeResponse {
-                worktree_id,
                 worktree: share_request.worktree,
                 replica_id: 1,
                 peers: Vec::new(),
@@ -2923,6 +2986,65 @@ mod tests {
             assert_eq!(ignored.is_ignored, true);
             assert_eq!(dot_git.is_ignored, true);
         });
+    }
+
+    #[gpui::test]
+    async fn test_open_and_share_worktree(mut cx: gpui::TestAppContext) {
+        let user_id = 100;
+        let mut client = rpc::Client::new();
+        let server = FakeServer::for_client(user_id, &mut client, &cx).await;
+
+        let fs = Arc::new(FakeFs::new());
+        fs.insert_tree(
+            "/path",
+            json!({
+                "to": {
+                    "the-dir": {
+                        ".zed.toml": r#"collaborators = ["friend-1", "friend-2"]"#,
+                        "a.txt": "a-contents",
+                    },
+                },
+            }),
+        )
+        .await;
+
+        let worktree = Worktree::open_local(
+            client.clone(),
+            "/path/to/the-dir".as_ref(),
+            fs,
+            Default::default(),
+            &mut cx.to_async(),
+        )
+        .await
+        .unwrap();
+
+        {
+            let cx = cx.to_async();
+            client.authenticate_and_connect(&cx).await.unwrap();
+        }
+
+        let open_worktree = server.receive::<proto::OpenWorktree>().await.unwrap();
+        assert_eq!(
+            open_worktree.payload,
+            proto::OpenWorktree {
+                root_name: "the-dir".to_string(),
+                collaborator_logins: vec!["friend-1".to_string(), "friend-2".to_string()],
+            }
+        );
+
+        server
+            .respond(
+                open_worktree.receipt(),
+                proto::OpenWorktreeResponse { worktree_id: 5 },
+            )
+            .await;
+        let remote_id = worktree
+            .update(&mut cx, |tree, _| tree.as_local().unwrap().next_remote_id())
+            .await;
+        assert_eq!(remote_id, Some(5));
+
+        cx.update(move |_| drop(worktree));
+        server.receive::<proto::CloseWorktree>().await.unwrap();
     }
 
     #[gpui::test(iterations = 100)]
