@@ -20,10 +20,10 @@
     });
 </script>
 
-<div class="bg-white">
-    <div class="container py-4 px-8 md:px-12 mx-auto">
-        <h1 class="text-xl font-bold border-b border-gray-300 mb-4">Users</h1>
-        <table class="table" id="users">
+<div class="max-w-screen-lg mx-auto text-main text-white font-extralight p-20">
+        <h1 class="font-display font-extralight mb-10">Admin</h1>
+        <h2 class="text-xl font-bold border-b border-gray-300 mb-4">Users</h1>
+        <table class="table text-white" id="users">
             <tr>
                 <th class="text-left pr-2">GitHub Login</th>
                 <th class="text-left pr-2">Admin</th>
@@ -47,7 +47,7 @@
             {{#each users}}
             <tr>
                 <form action="/users/{{id}}/delete" method="post">
-                    <td class="py-1">
+                    <td class="py-1 text-white">
                         {{github_login}}
                     </td>
                     <td>
@@ -61,8 +61,8 @@
             {{/each}}
         </table>
 
-        <h1 class="text-xl font-bold border-b border-gray-300 mb-4 mt-8">Signups</h1>
-        <table class="table">
+        <h2 class="text-xl font-bold border-b border-gray-300 mb-4 mt-8">Signups</h1>
+        <table class="table text-white">
             {{#each signups}}
             <tr>
                 <form action="/signups/{{id}}/delete" method="post">
@@ -76,6 +76,5 @@
             </tr>
             {{/each}}
         </table>
-    </div>
 </div>
 {{/layout}}
