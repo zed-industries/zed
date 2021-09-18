@@ -4,6 +4,7 @@ mod element;
 pub mod movement;
 
 use crate::{
+    language::Language,
     settings::Settings,
     theme::Theme,
     time::ReplicaId,
@@ -447,6 +448,10 @@ impl Editor {
                 .upgrade(cx)
                 .map_or(false, |handle| handle.is_focused(cx)),
         }
+    }
+
+    pub fn language<'a>(&self, cx: &'a AppContext) -> Option<&'a Arc<Language>> {
+        self.buffer.read(cx).language()
     }
 
     pub fn set_placeholder_text(
