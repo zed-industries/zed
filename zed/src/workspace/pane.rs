@@ -292,6 +292,7 @@ impl Pane {
                                                     }
                                                 },
                                             )
+                                            .with_padding(Padding::uniform(4.))
                                             .with_cursor_style(CursorStyle::PointingHand)
                                             .on_click(move |cx| {
                                                 cx.dispatch_action(CloseItem(item_id))

@@ -116,7 +116,8 @@ impl Element for MouseEventHandler {
         let hit_bounds = RectF::from_points(
             bounds.origin() - vec2f(self.padding.left, self.padding.top),
             bounds.lower_right() + vec2f(self.padding.right, self.padding.bottom),
-        );
+        )
+        .round_out();
 
         self.state.update(cx, |state, cx| match event {
             Event::MouseMoved {

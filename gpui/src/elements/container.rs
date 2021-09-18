@@ -348,6 +348,17 @@ enum Spacing {
     },
 }
 
+impl Padding {
+    pub fn uniform(padding: f32) -> Self {
+        Self {
+            top: padding,
+            left: padding,
+            bottom: padding,
+            right: padding,
+        }
+    }
+}
+
 impl ToJson for Padding {
     fn to_json(&self) -> serde_json::Value {
         let mut value = json!({});
