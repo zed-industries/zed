@@ -1,17 +1,18 @@
-use gpui::{
-    elements::*, Element, ElementBox, Entity, ModelHandle, RenderContext, View, ViewContext,
-};
-use postage::watch;
-
 use crate::{
     theme::Theme,
     user::{Collaborator, UserStore},
     Settings,
 };
+use gpui::{
+    elements::*, Element, ElementBox, Entity, ModelHandle, RenderContext, Subscription, View,
+    ViewContext,
+};
+use postage::watch;
 
 pub struct PeoplePanel {
     collaborators: ListState,
     user_store: ModelHandle<UserStore>,
+    _maintain_collaborators: Subscription,
 }
 
 impl PeoplePanel {
@@ -20,7 +21,6 @@ impl PeoplePanel {
         settings: watch::Receiver<Settings>,
         cx: &mut ViewContext<Self>,
     ) -> Self {
-        cx.observe(&user_store, Self::update_collaborators);
         Self {
             collaborators: ListState::new(
                 user_store.read(cx).collaborators().len(),
@@ -35,6 +35,7 @@ impl PeoplePanel {
                     }
                 },
             ),
+            _maintain_collaborators: cx.observe(&user_store, Self::update_collaborators),
             user_store,
         }
     }
@@ -108,7 +109,7 @@ impl View for PeoplePanel {
         "PeoplePanel"
     }
 
-    fn render(&mut self, cx: &mut RenderContext<Self>) -> ElementBox {
+    fn render(&mut self, _: &mut RenderContext<Self>) -> ElementBox {
         List::new(self.collaborators.clone()).boxed()
     }
 }
