@@ -37,7 +37,7 @@
 
   .underline,
   .hover\:underline:hover {
-    text-underline-offset: 4px;
+    text-underline-offset: 6px;
   }
 
   @media screen and (min-width: 1024px) {
