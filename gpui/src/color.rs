@@ -29,6 +29,10 @@ impl Color {
         Self(ColorU::white())
     }
 
+    pub fn red() -> Self {
+        Self(ColorU::from_u32(0xff0000ff))
+    }
+
     pub fn new(r: u8, g: u8, b: u8, a: u8) -> Self {
         Self(ColorU::new(r, g, b, a))
     }

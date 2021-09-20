@@ -7,11 +7,18 @@ pane_divider = { width = 1, color = "$border.0" }
 
 [workspace.titlebar]
 border = { width = 1, bottom = true, color = "$border.0" }
-text = { extends = "$text.0" }
+title = "$text.0"
+avatar_width = 20
+icon_color = "$text.2.color"
+avatar = { corner_radius = 10, border = { width = 1, color = "#00000088" } }
+
+[workspace.titlebar.offline_icon]
+padding = { right = 4 }
+width = 16
 
 [workspace.tab]
 text = "$text.2"
-padding = { left = 10, right = 10 }
+padding = { left = 12, right = 12 }
 icon_width = 8
 spacing = 10
 icon_close = "$text.2.color"
@@ -26,7 +33,7 @@ background = "$surface.1"
 text = "$text.0"
 
 [workspace.sidebar]
-padding = { left = 12, right = 12 }
+width = 32
 border = { right = true, width = 1, color = "$border.0" }
 
 [workspace.sidebar.resize_handle]
@@ -59,6 +66,12 @@ body = "$text.1"
 sender = { extends = "$text.0", weight = "bold", margin.right = 8 }
 timestamp = "$text.2"
 padding.bottom = 6
+
+[chat_panel.pending_message]
+extends = "$chat_panel.message"
+body = { color = "$text.3.color" }
+sender = { color = "$text.3.color" }
+timestamp = { color = "$text.3.color" }
 
 [chat_panel.channel_select.item]
 padding = 4
@@ -94,8 +107,8 @@ shadow = { offset = [0, 2], blur = 16, color = "$shadow.0" }
 background = "$surface.1"
 corner_radius = 6
 padding = { left = 8, right = 8, top = 7, bottom = 7 }
-text = "$text.0.color"
-placeholder_text = "$text.2.color"
+text = "$text.0"
+placeholder_text = "$text.2"
 selection = "$selection.host"
 border = { width = 1, color = "$border.0" }
 
@@ -119,8 +132,8 @@ border = { width = 1, color = "$border.0" }
 background = "$surface.1"
 corner_radius = 6
 padding = { left = 16, right = 16, top = 7, bottom = 7 }
-text = "$text.0.color"
-placeholder_text = "$text.2.color"
+text = "$text.0"
+placeholder_text = "$text.2"
 selection = "$selection.host"
 border = { width = 1, color = "$border.0" }
 
@@ -140,7 +153,7 @@ background = "$state.hover"
 text = "$text.0"
 
 [editor]
-text = "$text.1.color"
+text = "$text.1"
 background = "$surface.1"
 gutter_background = "$surface.1"
 active_line_background = "$state.active_line"

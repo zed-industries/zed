@@ -27,7 +27,7 @@ use time::OffsetDateTime;
 use zrpc::{
     auth::random_token,
     proto::{self, AnyTypedEnvelope, EnvelopedMessage},
-    Conn, ConnectionId, Peer, TypedEnvelope,
+    Connection, ConnectionId, Peer, TypedEnvelope,
 };
 
 type ReplicaId = u16;
@@ -48,13 +48,13 @@ pub struct Server {
 
 #[derive(Default)]
 struct ServerState {
-    connections: HashMap<ConnectionId, Connection>,
+    connections: HashMap<ConnectionId, ConnectionState>,
     pub worktrees: HashMap<u64, Worktree>,
     channels: HashMap<ChannelId, Channel>,
     next_worktree_id: u64,
 }
 
-struct Connection {
+struct ConnectionState {
     user_id: UserId,
     worktrees: HashSet<u64>,
     channels: HashSet<ChannelId>,
@@ -133,7 +133,7 @@ impl Server {
 
     pub fn handle_connection(
         self: &Arc<Self>,
-        connection: Conn,
+        connection: Connection,
         addr: String,
         user_id: UserId,
     ) -> impl Future<Output = ()> {
@@ -211,7 +211,7 @@ impl Server {
     async fn add_connection(&self, connection_id: ConnectionId, user_id: UserId) {
         self.state.write().await.connections.insert(
             connection_id,
-            Connection {
+            ConnectionState {
                 user_id,
                 worktrees: Default::default(),
                 channels: Default::default(),
@@ -558,8 +558,8 @@ impl Server {
             .into_iter()
             .map(|user| proto::User {
                 id: user.id.to_proto(),
+                avatar_url: format!("https://github.com/{}.png?size=128", user.github_login),
                 github_login: user.github_login,
-                avatar_url: String::new(),
             })
             .collect();
         self.peer
@@ -602,6 +602,7 @@ impl Server {
                 body: msg.body,
                 timestamp: msg.sent_at.unix_timestamp() as u64,
                 sender_id: msg.sender_id.to_proto(),
+                nonce: Some(msg.nonce.as_u128().into()),
             })
             .collect::<Vec<_>>();
         self.peer
@@ -687,10 +688,24 @@ impl Server {
         }
 
         let timestamp = OffsetDateTime::now_utc();
+        let nonce = if let Some(nonce) = request.payload.nonce {
+            nonce
+        } else {
+            self.peer
+                .respond_with_error(
+                    receipt,
+                    proto::Error {
+                        message: "nonce can't be blank".to_string(),
+                    },
+                )
+                .await?;
+            return Ok(());
+        };
+
         let message_id = self
             .app_state
             .db
-            .create_channel_message(channel_id, user_id, &body, timestamp)
+            .create_channel_message(channel_id, user_id, &body, timestamp, nonce.clone().into())
             .await?
             .to_proto();
         let message = proto::ChannelMessage {
@@ -698,6 +713,7 @@ impl Server {
             id: message_id,
             body,
             timestamp: timestamp.unix_timestamp() as u64,
+            nonce: Some(nonce),
         };
         broadcast(request.sender_id, connection_ids, |conn_id| {
             self.peer.send(
@@ -754,6 +770,7 @@ impl Server {
                 body: msg.body,
                 timestamp: msg.sent_at.unix_timestamp() as u64,
                 sender_id: msg.sender_id.to_proto(),
+                nonce: Some(msg.nonce.as_u128().into()),
             })
             .collect::<Vec<_>>();
         self.peer
@@ -972,7 +989,7 @@ pub fn add_routes(app: &mut tide::Server<Arc<AppState>>, rpc: &Arc<Peer>) {
             let user_id = user_id.ok_or_else(|| anyhow!("user_id is not present on request. ensure auth::VerifyToken middleware is present"))?;
             task::spawn(async move {
                 if let Some(stream) = upgrade_receiver.await {
-                    server.handle_connection(Conn::new(WebSocketStream::from_raw_socket(stream, Role::Server, None).await), addr, user_id).await;
+                    server.handle_connection(Connection::new(WebSocketStream::from_raw_socket(stream, Role::Server, None).await), addr, user_id).await;
                 }
             });
 
@@ -1020,11 +1037,12 @@ mod tests {
     };
     use zed::{
         channel::{Channel, ChannelDetails, ChannelList},
-        editor::{Editor, Insert},
+        editor::{Editor, EditorStyle, Insert},
         fs::{FakeFs, Fs as _},
         language::LanguageRegistry,
-        rpc::{self, Client},
+        rpc::{self, Client, Credentials, EstablishConnectionError},
         settings,
+        test::FakeHttpClient,
         user::UserStore,
         worktree::Worktree,
     };
@@ -1038,8 +1056,8 @@ mod tests {
 
         // Connect to a server as 2 clients.
         let mut server = TestServer::start().await;
-        let (_, client_a) = server.create_client(&mut cx_a, "user_a").await;
-        let (_, client_b) = server.create_client(&mut cx_b, "user_b").await;
+        let (client_a, _) = server.create_client(&mut cx_a, "user_a").await;
+        let (client_b, _) = server.create_client(&mut cx_b, "user_b").await;
 
         cx_a.foreground().forbid_parking();
 
@@ -1103,7 +1121,14 @@ mod tests {
             .unwrap();
 
         // Create a selection set as client B and see that selection set as client A.
-        let editor_b = cx_b.add_view(window_b, |cx| Editor::for_buffer(buffer_b, settings, cx));
+        let editor_b = cx_b.add_view(window_b, |cx| {
+            Editor::for_buffer(
+                buffer_b,
+                settings,
+                |cx| EditorStyle::test(cx.font_cache()),
+                cx,
+            )
+        });
         buffer_a
             .condition(&cx_a, |buffer, _| buffer.selection_sets().count() == 1)
             .await;
@@ -1123,7 +1148,7 @@ mod tests {
             .await;
 
         // Close the buffer as client A, see that the buffer is closed.
-        drop(buffer_a);
+        cx_a.update(move |_| drop(buffer_a));
         worktree_a
             .condition(&cx_a, |tree, cx| !tree.has_open_buffer("b.txt", cx))
             .await;
@@ -1146,9 +1171,9 @@ mod tests {
 
         // Connect to a server as 3 clients.
         let mut server = TestServer::start().await;
-        let (_, client_a) = server.create_client(&mut cx_a, "user_a").await;
-        let (_, client_b) = server.create_client(&mut cx_b, "user_b").await;
-        let (_, client_c) = server.create_client(&mut cx_c, "user_c").await;
+        let (client_a, _) = server.create_client(&mut cx_a, "user_a").await;
+        let (client_b, _) = server.create_client(&mut cx_b, "user_b").await;
+        let (client_c, _) = server.create_client(&mut cx_c, "user_c").await;
 
         let fs = Arc::new(FakeFs::new());
 
@@ -1287,8 +1312,8 @@ mod tests {
 
         // Connect to a server as 2 clients.
         let mut server = TestServer::start().await;
-        let (_, client_a) = server.create_client(&mut cx_a, "user_a").await;
-        let (_, client_b) = server.create_client(&mut cx_b, "user_b").await;
+        let (client_a, _) = server.create_client(&mut cx_a, "user_a").await;
+        let (client_b, _) = server.create_client(&mut cx_b, "user_b").await;
 
         // Share a local worktree as client A
         let fs = Arc::new(FakeFs::new());
@@ -1368,8 +1393,8 @@ mod tests {
 
         // Connect to a server as 2 clients.
         let mut server = TestServer::start().await;
-        let (_, client_a) = server.create_client(&mut cx_a, "user_a").await;
-        let (_, client_b) = server.create_client(&mut cx_b, "user_b").await;
+        let (client_a, _) = server.create_client(&mut cx_a, "user_a").await;
+        let (client_b, _) = server.create_client(&mut cx_b, "user_b").await;
 
         // Share a local worktree as client A
         let fs = Arc::new(FakeFs::new());
@@ -1428,8 +1453,8 @@ mod tests {
 
         // Connect to a server as 2 clients.
         let mut server = TestServer::start().await;
-        let (_, client_a) = server.create_client(&mut cx_a, "user_a").await;
-        let (_, client_b) = server.create_client(&mut cx_a, "user_b").await;
+        let (client_a, _) = server.create_client(&mut cx_a, "user_a").await;
+        let (client_b, _) = server.create_client(&mut cx_a, "user_b").await;
 
         // Share a local worktree as client A
         let fs = Arc::new(FakeFs::new());
@@ -1486,33 +1511,37 @@ mod tests {
 
         // Connect to a server as 2 clients.
         let mut server = TestServer::start().await;
-        let (user_id_a, client_a) = server.create_client(&mut cx_a, "user_a").await;
-        let (user_id_b, client_b) = server.create_client(&mut cx_b, "user_b").await;
+        let (client_a, user_store_a) = server.create_client(&mut cx_a, "user_a").await;
+        let (client_b, user_store_b) = server.create_client(&mut cx_b, "user_b").await;
 
         // Create an org that includes these 2 users.
         let db = &server.app_state.db;
         let org_id = db.create_org("Test Org", "test-org").await.unwrap();
-        db.add_org_member(org_id, user_id_a, false).await.unwrap();
-        db.add_org_member(org_id, user_id_b, false).await.unwrap();
+        db.add_org_member(org_id, current_user_id(&user_store_a), false)
+            .await
+            .unwrap();
+        db.add_org_member(org_id, current_user_id(&user_store_b), false)
+            .await
+            .unwrap();
 
         // Create a channel that includes all the users.
         let channel_id = db.create_org_channel(org_id, "test-channel").await.unwrap();
-        db.add_channel_member(channel_id, user_id_a, false)
+        db.add_channel_member(channel_id, current_user_id(&user_store_a), false)
             .await
             .unwrap();
-        db.add_channel_member(channel_id, user_id_b, false)
+        db.add_channel_member(channel_id, current_user_id(&user_store_b), false)
             .await
             .unwrap();
         db.create_channel_message(
             channel_id,
-            user_id_b,
+            current_user_id(&user_store_b),
             "hello A, it's B.",
             OffsetDateTime::now_utc(),
+            1,
         )
         .await
         .unwrap();
 
-        let user_store_a = Arc::new(UserStore::new(client_a.clone()));
         let channels_a = cx_a.add_model(|cx| ChannelList::new(user_store_a, client_a, cx));
         channels_a
             .condition(&mut cx_a, |list, _| list.available_channels().is_some())
@@ -1533,11 +1562,10 @@ mod tests {
         channel_a
             .condition(&cx_a, |channel, _| {
                 channel_messages(channel)
-                    == [("user_b".to_string(), "hello A, it's B.".to_string())]
+                    == [("user_b".to_string(), "hello A, it's B.".to_string(), false)]
             })
             .await;
 
-        let user_store_b = Arc::new(UserStore::new(client_b.clone()));
         let channels_b = cx_b.add_model(|cx| ChannelList::new(user_store_b, client_b, cx));
         channels_b
             .condition(&mut cx_b, |list, _| list.available_channels().is_some())
@@ -1559,7 +1587,7 @@ mod tests {
         channel_b
             .condition(&cx_b, |channel, _| {
                 channel_messages(channel)
-                    == [("user_b".to_string(), "hello A, it's B.".to_string())]
+                    == [("user_b".to_string(), "hello A, it's B.".to_string(), false)]
             })
             .await;
 
@@ -1571,28 +1599,25 @@ mod tests {
                     .detach();
                 let task = channel.send_message("sup".to_string(), cx).unwrap();
                 assert_eq!(
-                    channel
-                        .pending_messages()
-                        .iter()
-                        .map(|m| &m.body)
-                        .collect::<Vec<_>>(),
-                    &["oh, hi B.", "sup"]
+                    channel_messages(channel),
+                    &[
+                        ("user_b".to_string(), "hello A, it's B.".to_string(), false),
+                        ("user_a".to_string(), "oh, hi B.".to_string(), true),
+                        ("user_a".to_string(), "sup".to_string(), true)
+                    ]
                 );
                 task
             })
             .await
             .unwrap();
 
-        channel_a
-            .condition(&cx_a, |channel, _| channel.pending_messages().is_empty())
-            .await;
         channel_b
             .condition(&cx_b, |channel, _| {
                 channel_messages(channel)
                     == [
-                        ("user_b".to_string(), "hello A, it's B.".to_string()),
-                        ("user_a".to_string(), "oh, hi B.".to_string()),
-                        ("user_a".to_string(), "sup".to_string()),
+                        ("user_b".to_string(), "hello A, it's B.".to_string(), false),
+                        ("user_a".to_string(), "oh, hi B.".to_string(), false),
+                        ("user_a".to_string(), "sup".to_string(), false),
                     ]
             })
             .await;
@@ -1612,14 +1637,6 @@ mod tests {
         server
             .condition(|state| !state.channels.contains_key(&channel_id))
             .await;
-
-        fn channel_messages(channel: &Channel) -> Vec<(String, String)> {
-            channel
-                .messages()
-                .cursor::<(), ()>()
-                .map(|m| (m.sender.github_login.clone(), m.body.clone()))
-                .collect()
-        }
     }
 
     #[gpui::test]
@@ -1627,17 +1644,18 @@ mod tests {
         cx_a.foreground().forbid_parking();
 
         let mut server = TestServer::start().await;
-        let (user_id_a, client_a) = server.create_client(&mut cx_a, "user_a").await;
+        let (client_a, user_store_a) = server.create_client(&mut cx_a, "user_a").await;
 
         let db = &server.app_state.db;
         let org_id = db.create_org("Test Org", "test-org").await.unwrap();
         let channel_id = db.create_org_channel(org_id, "test-channel").await.unwrap();
-        db.add_org_member(org_id, user_id_a, false).await.unwrap();
-        db.add_channel_member(channel_id, user_id_a, false)
+        db.add_org_member(org_id, current_user_id(&user_store_a), false)
+            .await
+            .unwrap();
+        db.add_channel_member(channel_id, current_user_id(&user_store_a), false)
             .await
             .unwrap();
 
-        let user_store_a = Arc::new(UserStore::new(client_a.clone()));
         let channels_a = cx_a.add_model(|cx| ChannelList::new(user_store_a, client_a, cx));
         channels_a
             .condition(&mut cx_a, |list, _| list.available_channels().is_some())
@@ -1683,37 +1701,44 @@ mod tests {
     #[gpui::test]
     async fn test_chat_reconnection(mut cx_a: TestAppContext, mut cx_b: TestAppContext) {
         cx_a.foreground().forbid_parking();
+        let http = FakeHttpClient::new(|_| async move { Ok(surf::http::Response::new(404)) });
 
         // Connect to a server as 2 clients.
         let mut server = TestServer::start().await;
-        let (user_id_a, client_a) = server.create_client(&mut cx_a, "user_a").await;
-        let (user_id_b, client_b) = server.create_client(&mut cx_b, "user_b").await;
+        let (client_a, user_store_a) = server.create_client(&mut cx_a, "user_a").await;
+        let (client_b, user_store_b) = server.create_client(&mut cx_b, "user_b").await;
         let mut status_b = client_b.status();
 
         // Create an org that includes these 2 users.
         let db = &server.app_state.db;
         let org_id = db.create_org("Test Org", "test-org").await.unwrap();
-        db.add_org_member(org_id, user_id_a, false).await.unwrap();
-        db.add_org_member(org_id, user_id_b, false).await.unwrap();
+        db.add_org_member(org_id, current_user_id(&user_store_a), false)
+            .await
+            .unwrap();
+        db.add_org_member(org_id, current_user_id(&user_store_b), false)
+            .await
+            .unwrap();
 
         // Create a channel that includes all the users.
         let channel_id = db.create_org_channel(org_id, "test-channel").await.unwrap();
-        db.add_channel_member(channel_id, user_id_a, false)
+        db.add_channel_member(channel_id, current_user_id(&user_store_a), false)
             .await
             .unwrap();
-        db.add_channel_member(channel_id, user_id_b, false)
+        db.add_channel_member(channel_id, current_user_id(&user_store_b), false)
             .await
             .unwrap();
         db.create_channel_message(
             channel_id,
-            user_id_b,
+            current_user_id(&user_store_b),
             "hello A, it's B.",
             OffsetDateTime::now_utc(),
+            2,
         )
         .await
         .unwrap();
 
-        let user_store_a = Arc::new(UserStore::new(client_a.clone()));
+        let user_store_a =
+            UserStore::new(client_a.clone(), http.clone(), cx_a.background().as_ref());
         let channels_a = cx_a.add_model(|cx| ChannelList::new(user_store_a, client_a, cx));
         channels_a
             .condition(&mut cx_a, |list, _| list.available_channels().is_some())
@@ -1735,12 +1760,11 @@ mod tests {
         channel_a
             .condition(&cx_a, |channel, _| {
                 channel_messages(channel)
-                    == [("user_b".to_string(), "hello A, it's B.".to_string())]
+                    == [("user_b".to_string(), "hello A, it's B.".to_string(), false)]
             })
             .await;
 
-        let user_store_b = Arc::new(UserStore::new(client_b.clone()));
-        let channels_b = cx_b.add_model(|cx| ChannelList::new(user_store_b, client_b, cx));
+        let channels_b = cx_b.add_model(|cx| ChannelList::new(user_store_b.clone(), client_b, cx));
         channels_b
             .condition(&mut cx_b, |list, _| list.available_channels().is_some())
             .await;
@@ -1761,13 +1785,13 @@ mod tests {
         channel_b
             .condition(&cx_b, |channel, _| {
                 channel_messages(channel)
-                    == [("user_b".to_string(), "hello A, it's B.".to_string())]
+                    == [("user_b".to_string(), "hello A, it's B.".to_string(), false)]
             })
             .await;
 
         // Disconnect client B, ensuring we can still access its cached channel data.
         server.forbid_connections();
-        server.disconnect_client(user_id_b);
+        server.disconnect_client(current_user_id(&user_store_b));
         while !matches!(
             status_b.recv().await,
             Some(rpc::Status::ReconnectionError { .. })
@@ -1785,9 +1809,27 @@ mod tests {
         channel_b.read_with(&cx_b, |channel, _| {
             assert_eq!(
                 channel_messages(channel),
-                [("user_b".to_string(), "hello A, it's B.".to_string())]
+                [("user_b".to_string(), "hello A, it's B.".to_string(), false)]
             )
         });
+
+        // Send a message from client B while it is disconnected.
+        channel_b
+            .update(&mut cx_b, |channel, cx| {
+                let task = channel
+                    .send_message("can you see this?".to_string(), cx)
+                    .unwrap();
+                assert_eq!(
+                    channel_messages(channel),
+                    &[
+                        ("user_b".to_string(), "hello A, it's B.".to_string(), false),
+                        ("user_b".to_string(), "can you see this?".to_string(), true)
+                    ]
+                );
+                task
+            })
+            .await
+            .unwrap_err();
 
         // Send a message from client A while B is disconnected.
         channel_a
@@ -1798,12 +1840,12 @@ mod tests {
                     .detach();
                 let task = channel.send_message("sup".to_string(), cx).unwrap();
                 assert_eq!(
-                    channel
-                        .pending_messages()
-                        .iter()
-                        .map(|m| &m.body)
-                        .collect::<Vec<_>>(),
-                    &["oh, hi B.", "sup"]
+                    channel_messages(channel),
+                    &[
+                        ("user_b".to_string(), "hello A, it's B.".to_string(), false),
+                        ("user_a".to_string(), "oh, hi B.".to_string(), true),
+                        ("user_a".to_string(), "sup".to_string(), true)
+                    ]
                 );
                 task
             })
@@ -1814,14 +1856,16 @@ mod tests {
         server.allow_connections();
         cx_b.foreground().advance_clock(Duration::from_secs(10));
 
-        // Verify that B sees the new messages upon reconnection.
+        // Verify that B sees the new messages upon reconnection, as well as the message client B
+        // sent while offline.
         channel_b
             .condition(&cx_b, |channel, _| {
                 channel_messages(channel)
                     == [
-                        ("user_b".to_string(), "hello A, it's B.".to_string()),
-                        ("user_a".to_string(), "oh, hi B.".to_string()),
-                        ("user_a".to_string(), "sup".to_string()),
+                        ("user_b".to_string(), "hello A, it's B.".to_string(), false),
+                        ("user_a".to_string(), "oh, hi B.".to_string(), false),
+                        ("user_a".to_string(), "sup".to_string(), false),
+                        ("user_b".to_string(), "can you see this?".to_string(), false),
                     ]
             })
             .await;
@@ -1837,10 +1881,11 @@ mod tests {
             .condition(&cx_b, |channel, _| {
                 channel_messages(channel)
                     == [
-                        ("user_b".to_string(), "hello A, it's B.".to_string()),
-                        ("user_a".to_string(), "oh, hi B.".to_string()),
-                        ("user_a".to_string(), "sup".to_string()),
-                        ("user_a".to_string(), "you online?".to_string()),
+                        ("user_b".to_string(), "hello A, it's B.".to_string(), false),
+                        ("user_a".to_string(), "oh, hi B.".to_string(), false),
+                        ("user_a".to_string(), "sup".to_string(), false),
+                        ("user_b".to_string(), "can you see this?".to_string(), false),
+                        ("user_a".to_string(), "you online?".to_string(), false),
                     ]
             })
             .await;
@@ -1855,22 +1900,15 @@ mod tests {
             .condition(&cx_a, |channel, _| {
                 channel_messages(channel)
                     == [
-                        ("user_b".to_string(), "hello A, it's B.".to_string()),
-                        ("user_a".to_string(), "oh, hi B.".to_string()),
-                        ("user_a".to_string(), "sup".to_string()),
-                        ("user_a".to_string(), "you online?".to_string()),
-                        ("user_b".to_string(), "yep".to_string()),
+                        ("user_b".to_string(), "hello A, it's B.".to_string(), false),
+                        ("user_a".to_string(), "oh, hi B.".to_string(), false),
+                        ("user_a".to_string(), "sup".to_string(), false),
+                        ("user_b".to_string(), "can you see this?".to_string(), false),
+                        ("user_a".to_string(), "you online?".to_string(), false),
+                        ("user_b".to_string(), "yep".to_string(), false),
                     ]
             })
             .await;
-
-        fn channel_messages(channel: &Channel) -> Vec<(String, String)> {
-            channel
-                .messages()
-                .cursor::<(), ()>()
-                .map(|m| (m.sender.github_login.clone(), m.body.clone()))
-                .collect()
-        }
     }
 
     struct TestServer {
@@ -1905,8 +1943,8 @@ mod tests {
             &mut self,
             cx: &mut TestAppContext,
             name: &str,
-        ) -> (UserId, Arc<Client>) {
-            let client_user_id = self.app_state.db.create_user(name, false).await.unwrap();
+        ) -> (Arc<Client>, Arc<UserStore>) {
+            let user_id = self.app_state.db.create_user(name, false).await.unwrap();
             let client_name = name.to_string();
             let mut client = Client::new();
             let server = self.server.clone();
@@ -1914,45 +1952,50 @@ mod tests {
             let forbid_connections = self.forbid_connections.clone();
             Arc::get_mut(&mut client)
                 .unwrap()
-                .set_login_and_connect_callbacks(
-                    move |cx| {
-                        cx.spawn(|_| async move {
-                            let access_token = "the-token".to_string();
-                            Ok((client_user_id.0 as u64, access_token))
+                .override_authenticate(move |cx| {
+                    cx.spawn(|_| async move {
+                        let access_token = "the-token".to_string();
+                        Ok(Credentials {
+                            user_id: user_id.0 as u64,
+                            access_token,
                         })
-                    },
-                    move |user_id, access_token, cx| {
-                        assert_eq!(user_id, client_user_id.0 as u64);
-                        assert_eq!(access_token, "the-token");
+                    })
+                })
+                .override_establish_connection(move |credentials, cx| {
+                    assert_eq!(credentials.user_id, user_id.0 as u64);
+                    assert_eq!(credentials.access_token, "the-token");
 
-                        let server = server.clone();
-                        let connection_killers = connection_killers.clone();
-                        let forbid_connections = forbid_connections.clone();
-                        let client_name = client_name.clone();
-                        cx.spawn(move |cx| async move {
-                            if forbid_connections.load(SeqCst) {
-                                Err(anyhow!("server is forbidding connections"))
-                            } else {
-                                let (client_conn, server_conn, kill_conn) = Conn::in_memory();
-                                connection_killers.lock().insert(client_user_id, kill_conn);
-                                cx.background()
-                                    .spawn(server.handle_connection(
-                                        server_conn,
-                                        client_name,
-                                        client_user_id,
-                                    ))
-                                    .detach();
-                                Ok(client_conn)
-                            }
-                        })
-                    },
-                );
+                    let server = server.clone();
+                    let connection_killers = connection_killers.clone();
+                    let forbid_connections = forbid_connections.clone();
+                    let client_name = client_name.clone();
+                    cx.spawn(move |cx| async move {
+                        if forbid_connections.load(SeqCst) {
+                            Err(EstablishConnectionError::other(anyhow!(
+                                "server is forbidding connections"
+                            )))
+                        } else {
+                            let (client_conn, server_conn, kill_conn) = Connection::in_memory();
+                            connection_killers.lock().insert(user_id, kill_conn);
+                            cx.background()
+                                .spawn(server.handle_connection(server_conn, client_name, user_id))
+                                .detach();
+                            Ok(client_conn)
+                        }
+                    })
+                });
 
+            let http = FakeHttpClient::new(|_| async move { Ok(surf::http::Response::new(404)) });
             client
                 .authenticate_and_connect(&cx.to_async())
                 .await
                 .unwrap();
-            (client_user_id, client)
+
+            let user_store = UserStore::new(client.clone(), http, &cx.background());
+            let mut authed_user = user_store.watch_current_user();
+            while authed_user.recv().await.unwrap().is_none() {}
+
+            (client, user_store)
         }
 
         fn disconnect_client(&self, user_id: UserId) {
@@ -2006,6 +2049,24 @@ mod tests {
         fn drop(&mut self) {
             task::block_on(self.peer.reset());
         }
+    }
+
+    fn current_user_id(user_store: &Arc<UserStore>) -> UserId {
+        UserId::from_proto(user_store.current_user().unwrap().id)
+    }
+
+    fn channel_messages(channel: &Channel) -> Vec<(String, String, bool)> {
+        channel
+            .messages()
+            .cursor::<(), ()>()
+            .map(|m| {
+                (
+                    m.sender.github_login.clone(),
+                    m.body.clone(),
+                    m.is_pending(),
+                )
+            })
+            .collect()
     }
 
     struct EmptyView;

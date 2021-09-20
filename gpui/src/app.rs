@@ -2282,6 +2282,16 @@ impl<'a, T: View> ViewContext<'a, T> {
         let handle = self.handle();
         self.app.spawn(|cx| f(handle, cx))
     }
+
+    pub fn spawn_weak<F, Fut, S>(&self, f: F) -> Task<S>
+    where
+        F: FnOnce(WeakViewHandle<T>, AsyncAppContext) -> Fut,
+        Fut: 'static + Future<Output = S>,
+        S: 'static,
+    {
+        let handle = self.handle().downgrade();
+        self.app.spawn(|cx| f(handle, cx))
+    }
 }
 
 pub struct RenderContext<'a, T: View> {
@@ -2322,6 +2332,16 @@ impl<V: View> DerefMut for RenderContext<'_, V> {
 impl<V: View> ReadModel for RenderContext<'_, V> {
     fn read_model<T: Entity>(&self, handle: &ModelHandle<T>) -> &T {
         self.app.read_model(handle)
+    }
+}
+
+impl<V: View> UpdateModel for RenderContext<'_, V> {
+    fn update_model<T, F, S>(&mut self, handle: &ModelHandle<T>, update: F) -> S
+    where
+        T: Entity,
+        F: FnOnce(&mut T, &mut ModelContext<T>) -> S,
+    {
+        self.app.update_model(handle, update)
     }
 }
 

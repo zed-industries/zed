@@ -2,7 +2,7 @@ use async_tungstenite::tungstenite::{Error as WebSocketError, Message as WebSock
 use futures::{channel::mpsc, SinkExt as _, Stream, StreamExt as _};
 use std::{io, task::Poll};
 
-pub struct Conn {
+pub struct Connection {
     pub(crate) tx:
         Box<dyn 'static + Send + Unpin + futures::Sink<WebSocketMessage, Error = WebSocketError>>,
     pub(crate) rx: Box<
@@ -13,7 +13,7 @@ pub struct Conn {
     >,
 }
 
-impl Conn {
+impl Connection {
     pub fn new<S>(stream: S) -> Self
     where
         S: 'static

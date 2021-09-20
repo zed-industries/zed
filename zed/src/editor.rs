@@ -4,8 +4,9 @@ mod element;
 pub mod movement;
 
 use crate::{
-    settings::{HighlightId, Settings},
-    theme::{EditorStyle, Theme},
+    language::Language,
+    settings::Settings,
+    theme::Theme,
     time::ReplicaId,
     util::{post_inc, Bias},
     workspace,
@@ -17,15 +18,9 @@ pub use display_map::DisplayPoint;
 use display_map::*;
 pub use element::*;
 use gpui::{
-    action,
-    color::Color,
-    font_cache::FamilyId,
-    fonts::Properties as FontProperties,
-    geometry::vector::Vector2F,
-    keymap::Binding,
-    text_layout::{self, RunStyle},
-    AppContext, ClipboardItem, Element, ElementBox, Entity, FontCache, ModelHandle,
-    MutableAppContext, RenderContext, Task, TextLayoutCache, View, ViewContext, WeakViewHandle,
+    action, color::Color, fonts::TextStyle, geometry::vector::Vector2F, keymap::Binding,
+    text_layout, AppContext, ClipboardItem, Element, ElementBox, Entity, ModelHandle,
+    MutableAppContext, RenderContext, Task, View, ViewContext, WeakViewHandle,
 };
 use postage::watch;
 use serde::{Deserialize, Serialize};
@@ -34,8 +29,6 @@ use smol::Timer;
 use std::{
     cell::RefCell,
     cmp::{self, Ordering},
-    collections::BTreeMap,
-    fmt::Write,
     iter::FromIterator,
     mem,
     ops::{Range, RangeInclusive},
@@ -278,6 +271,26 @@ pub enum EditorMode {
     Full,
 }
 
+#[derive(Clone, Deserialize)]
+pub struct EditorStyle {
+    pub text: TextStyle,
+    #[serde(default)]
+    pub placeholder_text: Option<TextStyle>,
+    pub background: Color,
+    pub selection: SelectionStyle,
+    pub gutter_background: Color,
+    pub active_line_background: Color,
+    pub line_number: Color,
+    pub line_number_active: Color,
+    pub guest_selections: Vec<SelectionStyle>,
+}
+
+#[derive(Clone, Copy, Default, Deserialize)]
+pub struct SelectionStyle {
+    pub cursor: Color,
+    pub selection: Color,
+}
+
 pub struct Editor {
     handle: WeakViewHandle<Self>,
     buffer: ModelHandle<Buffer>,
@@ -290,10 +303,10 @@ pub struct Editor {
     scroll_position: Vector2F,
     scroll_top_anchor: Anchor,
     autoscroll_requested: bool,
-    build_style: Option<Rc<RefCell<dyn FnMut(&mut MutableAppContext) -> EditorStyle>>>,
+    build_style: Rc<RefCell<dyn FnMut(&mut MutableAppContext) -> EditorStyle>>,
     settings: watch::Receiver<Settings>,
     focused: bool,
-    cursors_visible: bool,
+    show_local_cursors: bool,
     blink_epoch: usize,
     blinking_paused: bool,
     mode: EditorMode,
@@ -305,8 +318,6 @@ pub struct Snapshot {
     pub display_snapshot: DisplayMapSnapshot,
     pub placeholder_text: Option<Arc<str>>,
     pub theme: Arc<Theme>,
-    pub font_family: FamilyId,
-    pub font_size: f32,
     is_focused: bool,
     scroll_position: Vector2F,
     scroll_top_anchor: Anchor,
@@ -324,9 +335,13 @@ struct ClipboardSelection {
 }
 
 impl Editor {
-    pub fn single_line(settings: watch::Receiver<Settings>, cx: &mut ViewContext<Self>) -> Self {
+    pub fn single_line(
+        settings: watch::Receiver<Settings>,
+        build_style: impl 'static + FnMut(&mut MutableAppContext) -> EditorStyle,
+        cx: &mut ViewContext<Self>,
+    ) -> Self {
         let buffer = cx.add_model(|cx| Buffer::new(0, String::new(), cx));
-        let mut view = Self::for_buffer(buffer, settings, cx);
+        let mut view = Self::for_buffer(buffer, settings, build_style, cx);
         view.mode = EditorMode::SingleLine;
         view
     }
@@ -334,10 +349,11 @@ impl Editor {
     pub fn auto_height(
         max_lines: usize,
         settings: watch::Receiver<Settings>,
+        build_style: impl 'static + FnMut(&mut MutableAppContext) -> EditorStyle,
         cx: &mut ViewContext<Self>,
     ) -> Self {
         let buffer = cx.add_model(|cx| Buffer::new(0, String::new(), cx));
-        let mut view = Self::for_buffer(buffer, settings, cx);
+        let mut view = Self::for_buffer(buffer, settings, build_style, cx);
         view.mode = EditorMode::AutoHeight { max_lines };
         view
     }
@@ -345,10 +361,29 @@ impl Editor {
     pub fn for_buffer(
         buffer: ModelHandle<Buffer>,
         settings: watch::Receiver<Settings>,
+        build_style: impl 'static + FnMut(&mut MutableAppContext) -> EditorStyle,
         cx: &mut ViewContext<Self>,
     ) -> Self {
-        let display_map =
-            cx.add_model(|cx| DisplayMap::new(buffer.clone(), settings.clone(), None, cx));
+        Self::new(buffer, settings, Rc::new(RefCell::new(build_style)), cx)
+    }
+
+    fn new(
+        buffer: ModelHandle<Buffer>,
+        settings: watch::Receiver<Settings>,
+        build_style: Rc<RefCell<dyn FnMut(&mut MutableAppContext) -> EditorStyle>>,
+        cx: &mut ViewContext<Self>,
+    ) -> Self {
+        let style = build_style.borrow_mut()(cx);
+        let display_map = cx.add_model(|cx| {
+            DisplayMap::new(
+                buffer.clone(),
+                settings.borrow().tab_size,
+                style.text.font_id,
+                style.text.font_size,
+                None,
+                cx,
+            )
+        });
         cx.observe(&buffer, Self::on_buffer_changed).detach();
         cx.subscribe(&buffer, Self::on_buffer_event).detach();
         cx.observe(&display_map, Self::on_display_map_changed)
@@ -376,26 +411,18 @@ impl Editor {
             next_selection_id,
             add_selections_state: None,
             select_larger_syntax_node_stack: Vec::new(),
-            build_style: None,
+            build_style,
             scroll_position: Vector2F::zero(),
             scroll_top_anchor: Anchor::min(),
             autoscroll_requested: false,
             settings,
             focused: false,
-            cursors_visible: false,
+            show_local_cursors: false,
             blink_epoch: 0,
             blinking_paused: false,
             mode: EditorMode::Full,
             placeholder_text: None,
         }
-    }
-
-    pub fn with_style(
-        mut self,
-        f: impl 'static + FnMut(&mut MutableAppContext) -> EditorStyle,
-    ) -> Self {
-        self.build_style = Some(Rc::new(RefCell::new(f)));
-        self
     }
 
     pub fn replica_id(&self, cx: &AppContext) -> ReplicaId {
@@ -416,13 +443,15 @@ impl Editor {
             scroll_top_anchor: self.scroll_top_anchor.clone(),
             theme: settings.theme.clone(),
             placeholder_text: self.placeholder_text.clone(),
-            font_family: settings.buffer_font_family,
-            font_size: settings.buffer_font_size,
             is_focused: self
                 .handle
                 .upgrade(cx)
                 .map_or(false, |handle| handle.is_focused(cx)),
         }
+    }
+
+    pub fn language<'a>(&self, cx: &'a AppContext) -> Option<&'a Arc<Language>> {
+        self.buffer.read(cx).language()
     }
 
     pub fn set_placeholder_text(
@@ -2229,7 +2258,7 @@ impl Editor {
     }
 
     fn pause_cursor_blinking(&mut self, cx: &mut ViewContext<Self>) {
-        self.cursors_visible = true;
+        self.show_local_cursors = true;
         cx.notify();
 
         let epoch = self.next_blink_epoch();
@@ -2254,7 +2283,7 @@ impl Editor {
 
     fn blink_cursors(&mut self, epoch: usize, cx: &mut ViewContext<Self>) {
         if epoch == self.blink_epoch && self.focused && !self.blinking_paused {
-            self.cursors_visible = !self.cursors_visible;
+            self.show_local_cursors = !self.show_local_cursors;
             cx.notify();
 
             let epoch = self.next_blink_epoch();
@@ -2271,8 +2300,8 @@ impl Editor {
         }
     }
 
-    pub fn cursors_visible(&self) -> bool {
-        self.cursors_visible
+    pub fn show_local_cursors(&self) -> bool {
+        self.show_local_cursors
     }
 
     fn on_buffer_changed(&mut self, _: ModelHandle<Buffer>, cx: &mut ViewContext<Self>) {
@@ -2301,6 +2330,38 @@ impl Editor {
 }
 
 impl Snapshot {
+    pub fn is_empty(&self) -> bool {
+        self.display_snapshot.is_empty()
+    }
+
+    pub fn is_focused(&self) -> bool {
+        self.is_focused
+    }
+
+    pub fn placeholder_text(&self) -> Option<&Arc<str>> {
+        self.placeholder_text.as_ref()
+    }
+
+    pub fn buffer_row_count(&self) -> u32 {
+        self.display_snapshot.buffer_row_count()
+    }
+
+    pub fn buffer_rows(&self, start_row: u32) -> BufferRows {
+        self.display_snapshot.buffer_rows(start_row)
+    }
+
+    pub fn highlighted_chunks_for_rows(
+        &mut self,
+        display_rows: Range<u32>,
+    ) -> display_map::HighlightedChunks {
+        self.display_snapshot
+            .highlighted_chunks_for_rows(display_rows)
+    }
+
+    pub fn theme(&self) -> &Arc<Theme> {
+        &self.theme
+    }
+
     pub fn scroll_position(&self) -> Vector2F {
         compute_scroll_position(
             &self.display_snapshot,
@@ -2321,243 +2382,8 @@ impl Snapshot {
         self.display_snapshot.line_len(display_row)
     }
 
-    pub fn font_ascent(&self, font_cache: &FontCache) -> f32 {
-        let font_id = font_cache.default_font(self.font_family);
-        let ascent = font_cache.metric(font_id, |m| m.ascent);
-        font_cache.scale_metric(ascent, font_id, self.font_size)
-    }
-
-    pub fn font_descent(&self, font_cache: &FontCache) -> f32 {
-        let font_id = font_cache.default_font(self.font_family);
-        let descent = font_cache.metric(font_id, |m| m.descent);
-        font_cache.scale_metric(descent, font_id, self.font_size)
-    }
-
-    pub fn line_height(&self, font_cache: &FontCache) -> f32 {
-        let font_id = font_cache.default_font(self.font_family);
-        font_cache.line_height(font_id, self.font_size).ceil()
-    }
-
-    pub fn em_width(&self, font_cache: &FontCache) -> f32 {
-        let font_id = font_cache.default_font(self.font_family);
-        font_cache.em_width(font_id, self.font_size)
-    }
-
-    // TODO: Can we make this not return a result?
-    pub fn max_line_number_width(
-        &self,
-        font_cache: &FontCache,
-        layout_cache: &TextLayoutCache,
-    ) -> Result<f32> {
-        let font_size = self.font_size;
-        let font_id = font_cache.select_font(self.font_family, &FontProperties::new())?;
-        let digit_count = (self.display_snapshot.buffer_row_count() as f32)
-            .log10()
-            .floor() as usize
-            + 1;
-
-        Ok(layout_cache
-            .layout_str(
-                "1".repeat(digit_count).as_str(),
-                font_size,
-                &[(
-                    digit_count,
-                    RunStyle {
-                        font_id,
-                        color: Color::black(),
-                        underline: false,
-                    },
-                )],
-            )
-            .width())
-    }
-
-    pub fn layout_line_numbers(
-        &self,
-        rows: Range<u32>,
-        active_rows: &BTreeMap<u32, bool>,
-        font_cache: &FontCache,
-        layout_cache: &TextLayoutCache,
-        theme: &Theme,
-    ) -> Result<Vec<Option<text_layout::Line>>> {
-        let font_id = font_cache.select_font(self.font_family, &FontProperties::new())?;
-
-        let mut layouts = Vec::with_capacity(rows.len());
-        let mut line_number = String::new();
-        for (ix, (buffer_row, soft_wrapped)) in self
-            .display_snapshot
-            .buffer_rows(rows.start)
-            .take((rows.end - rows.start) as usize)
-            .enumerate()
-        {
-            let display_row = rows.start + ix as u32;
-            let color = if active_rows.contains_key(&display_row) {
-                theme.editor.line_number_active
-            } else {
-                theme.editor.line_number
-            };
-            if soft_wrapped {
-                layouts.push(None);
-            } else {
-                line_number.clear();
-                write!(&mut line_number, "{}", buffer_row + 1).unwrap();
-                layouts.push(Some(layout_cache.layout_str(
-                    &line_number,
-                    self.font_size,
-                    &[(
-                        line_number.len(),
-                        RunStyle {
-                            font_id,
-                            color,
-                            underline: false,
-                        },
-                    )],
-                )));
-            }
-        }
-
-        Ok(layouts)
-    }
-
-    pub fn layout_lines(
-        &mut self,
-        mut rows: Range<u32>,
-        style: &EditorStyle,
-        font_cache: &FontCache,
-        layout_cache: &TextLayoutCache,
-    ) -> Result<Vec<text_layout::Line>> {
-        rows.end = cmp::min(rows.end, self.display_snapshot.max_point().row() + 1);
-        if rows.start >= rows.end {
-            return Ok(Vec::new());
-        }
-
-        // When the editor is empty and unfocused, then show the placeholder.
-        if self.display_snapshot.is_empty() && !self.is_focused {
-            let placeholder_lines = self
-                .placeholder_text
-                .as_ref()
-                .map_or("", AsRef::as_ref)
-                .split('\n')
-                .skip(rows.start as usize)
-                .take(rows.len());
-            let font_id = font_cache
-                .select_font(self.font_family, &style.placeholder_text.font_properties)?;
-            return Ok(placeholder_lines
-                .into_iter()
-                .map(|line| {
-                    layout_cache.layout_str(
-                        line,
-                        self.font_size,
-                        &[(
-                            line.len(),
-                            RunStyle {
-                                font_id,
-                                color: style.placeholder_text.color,
-                                underline: false,
-                            },
-                        )],
-                    )
-                })
-                .collect());
-        }
-
-        let mut prev_font_properties = FontProperties::new();
-        let mut prev_font_id = font_cache
-            .select_font(self.font_family, &prev_font_properties)
-            .unwrap();
-
-        let mut layouts = Vec::with_capacity(rows.len());
-        let mut line = String::new();
-        let mut styles = Vec::new();
-        let mut row = rows.start;
-        let mut line_exceeded_max_len = false;
-        let chunks = self
-            .display_snapshot
-            .highlighted_chunks_for_rows(rows.clone());
-
-        'outer: for (chunk, style_ix) in chunks.chain(Some(("\n", HighlightId::default()))) {
-            for (ix, mut line_chunk) in chunk.split('\n').enumerate() {
-                if ix > 0 {
-                    layouts.push(layout_cache.layout_str(&line, self.font_size, &styles));
-                    line.clear();
-                    styles.clear();
-                    row += 1;
-                    line_exceeded_max_len = false;
-                    if row == rows.end {
-                        break 'outer;
-                    }
-                }
-
-                if !line_chunk.is_empty() && !line_exceeded_max_len {
-                    let style = self
-                        .theme
-                        .syntax
-                        .highlight_style(style_ix)
-                        .unwrap_or(style.text.clone());
-                    // Avoid a lookup if the font properties match the previous ones.
-                    let font_id = if style.font_properties == prev_font_properties {
-                        prev_font_id
-                    } else {
-                        font_cache.select_font(self.font_family, &style.font_properties)?
-                    };
-
-                    if line.len() + line_chunk.len() > MAX_LINE_LEN {
-                        let mut chunk_len = MAX_LINE_LEN - line.len();
-                        while !line_chunk.is_char_boundary(chunk_len) {
-                            chunk_len -= 1;
-                        }
-                        line_chunk = &line_chunk[..chunk_len];
-                        line_exceeded_max_len = true;
-                    }
-
-                    line.push_str(line_chunk);
-                    styles.push((
-                        line_chunk.len(),
-                        RunStyle {
-                            font_id,
-                            color: style.color,
-                            underline: style.underline,
-                        },
-                    ));
-                    prev_font_id = font_id;
-                    prev_font_properties = style.font_properties;
-                }
-            }
-        }
-
-        Ok(layouts)
-    }
-
-    pub fn layout_line(
-        &self,
-        row: u32,
-        font_cache: &FontCache,
-        layout_cache: &TextLayoutCache,
-    ) -> Result<text_layout::Line> {
-        let font_id = font_cache.select_font(self.font_family, &FontProperties::new())?;
-
-        let mut line = self.display_snapshot.line(row);
-
-        if line.len() > MAX_LINE_LEN {
-            let mut len = MAX_LINE_LEN;
-            while !line.is_char_boundary(len) {
-                len -= 1;
-            }
-            line.truncate(len);
-        }
-
-        Ok(layout_cache.layout_str(
-            &line,
-            self.font_size,
-            &[(
-                self.display_snapshot.line_len(row) as usize,
-                RunStyle {
-                    font_id,
-                    color: Color::black(),
-                    underline: false,
-                },
-            )],
-        ))
+    pub fn line(&self, display_row: u32) -> String {
+        self.display_snapshot.line(display_row)
     }
 
     pub fn prev_row_boundary(&self, point: DisplayPoint) -> (DisplayPoint, Point) {
@@ -2566,6 +2392,41 @@ impl Snapshot {
 
     pub fn next_row_boundary(&self, point: DisplayPoint) -> (DisplayPoint, Point) {
         self.display_snapshot.next_row_boundary(point)
+    }
+}
+
+impl EditorStyle {
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn test(font_cache: &gpui::FontCache) -> Self {
+        let font_family_name = Arc::from("Monaco");
+        let font_properties = Default::default();
+        let font_family_id = font_cache.load_family(&[&font_family_name]).unwrap();
+        let font_id = font_cache
+            .select_font(font_family_id, &font_properties)
+            .unwrap();
+        Self {
+            text: TextStyle {
+                font_family_name,
+                font_family_id,
+                font_id,
+                font_size: 14.,
+                color: Color::from_u32(0xff0000ff),
+                font_properties,
+                underline: false,
+            },
+            placeholder_text: None,
+            background: Default::default(),
+            gutter_background: Default::default(),
+            active_line_background: Default::default(),
+            line_number: Default::default(),
+            line_number_active: Default::default(),
+            selection: Default::default(),
+            guest_selections: Default::default(),
+        }
+    }
+
+    fn placeholder_text(&self) -> &TextStyle {
+        self.placeholder_text.as_ref().unwrap_or(&self.text)
     }
 }
 
@@ -2604,10 +2465,10 @@ impl Entity for Editor {
 
 impl View for Editor {
     fn render(&mut self, cx: &mut RenderContext<Self>) -> ElementBox {
-        let style = self
-            .build_style
-            .as_ref()
-            .map_or(Default::default(), |build| (build.borrow_mut())(cx));
+        let style = self.build_style.borrow_mut()(cx);
+        self.display_map.update(cx, |map, cx| {
+            map.set_font(style.text.font_id, style.text.font_size, cx)
+        });
         EditorElement::new(self.handle.clone(), style).boxed()
     }
 
@@ -2627,7 +2488,7 @@ impl View for Editor {
 
     fn on_blur(&mut self, cx: &mut ViewContext<Self>) {
         self.focused = false;
-        self.cursors_visible = false;
+        self.show_local_cursors = false;
         self.buffer.update(cx, |buffer, cx| {
             buffer.set_active_selection_set(None, cx).unwrap();
         });
@@ -2659,8 +2520,34 @@ impl workspace::Item for Buffer {
         settings: watch::Receiver<Settings>,
         cx: &mut ViewContext<Self::View>,
     ) -> Self::View {
-        Editor::for_buffer(handle, settings.clone(), cx)
-            .with_style(move |_| settings.borrow().theme.editor.clone())
+        Editor::for_buffer(
+            handle,
+            settings.clone(),
+            move |cx| {
+                let settings = settings.borrow();
+                let font_cache = cx.font_cache();
+                let font_family_id = settings.buffer_font_family;
+                let font_family_name = cx.font_cache().family_name(font_family_id).unwrap();
+                let font_properties = Default::default();
+                let font_id = font_cache
+                    .select_font(font_family_id, &font_properties)
+                    .unwrap();
+                let font_size = settings.buffer_font_size;
+
+                let mut theme = settings.theme.editor.clone();
+                theme.text = TextStyle {
+                    color: theme.text.color,
+                    font_family_name,
+                    font_family_id,
+                    font_id,
+                    font_size,
+                    font_properties,
+                    underline: false,
+                };
+                theme
+            },
+            cx,
+        )
     }
 }
 
@@ -2697,10 +2584,14 @@ impl workspace::ItemView for Editor {
     where
         Self: Sized,
     {
-        let mut clone = Editor::for_buffer(self.buffer.clone(), self.settings.clone(), cx);
+        let mut clone = Editor::new(
+            self.buffer.clone(),
+            self.settings.clone(),
+            self.build_style.clone(),
+            cx,
+        );
         clone.scroll_position = self.scroll_position;
         clone.scroll_top_anchor = self.scroll_top_anchor.clone();
-        clone.build_style = self.build_style.clone();
         Some(clone)
     }
 
@@ -2742,9 +2633,8 @@ mod tests {
     fn test_selection_with_mouse(cx: &mut gpui::MutableAppContext) {
         let buffer = cx.add_model(|cx| Buffer::new(0, "aaaaaa\nbbbbbb\ncccccc\ndddddd\n", cx));
         let settings = settings::test(&cx).1;
-        let (_, editor) = cx.add_window(Default::default(), |cx| {
-            Editor::for_buffer(buffer, settings, cx)
-        });
+        let (_, editor) =
+            cx.add_window(Default::default(), |cx| build_editor(buffer, settings, cx));
 
         editor.update(cx, |view, cx| {
             view.begin_selection(DisplayPoint::new(2, 2), false, cx);
@@ -2810,9 +2700,7 @@ mod tests {
     fn test_canceling_pending_selection(cx: &mut gpui::MutableAppContext) {
         let buffer = cx.add_model(|cx| Buffer::new(0, "aaaaaa\nbbbbbb\ncccccc\ndddddd\n", cx));
         let settings = settings::test(&cx).1;
-        let (_, view) = cx.add_window(Default::default(), |cx| {
-            Editor::for_buffer(buffer, settings, cx)
-        });
+        let (_, view) = cx.add_window(Default::default(), |cx| build_editor(buffer, settings, cx));
 
         view.update(cx, |view, cx| {
             view.begin_selection(DisplayPoint::new(2, 2), false, cx);
@@ -2844,9 +2732,7 @@ mod tests {
     fn test_cancel(cx: &mut gpui::MutableAppContext) {
         let buffer = cx.add_model(|cx| Buffer::new(0, "aaaaaa\nbbbbbb\ncccccc\ndddddd\n", cx));
         let settings = settings::test(&cx).1;
-        let (_, view) = cx.add_window(Default::default(), |cx| {
-            Editor::for_buffer(buffer, settings, cx)
-        });
+        let (_, view) = cx.add_window(Default::default(), |cx| build_editor(buffer, settings, cx));
 
         view.update(cx, |view, cx| {
             view.begin_selection(DisplayPoint::new(3, 4), false, cx);
@@ -2883,33 +2769,6 @@ mod tests {
     }
 
     #[gpui::test]
-    fn test_layout_line_numbers(cx: &mut gpui::MutableAppContext) {
-        let layout_cache = TextLayoutCache::new(cx.platform().fonts());
-        let font_cache = cx.font_cache().clone();
-
-        let buffer = cx.add_model(|cx| Buffer::new(0, sample_text(6, 6), cx));
-
-        let settings = settings::test(&cx).1;
-        let (_, editor) = cx.add_window(Default::default(), |cx| {
-            Editor::for_buffer(buffer.clone(), settings.clone(), cx)
-        });
-
-        let layouts = editor.update(cx, |editor, cx| {
-            editor
-                .snapshot(cx)
-                .layout_line_numbers(
-                    0..6,
-                    &Default::default(),
-                    &font_cache,
-                    &layout_cache,
-                    &settings.borrow().theme,
-                )
-                .unwrap()
-        });
-        assert_eq!(layouts.len(), 6);
-    }
-
-    #[gpui::test]
     fn test_fold(cx: &mut gpui::MutableAppContext) {
         let buffer = cx.add_model(|cx| {
             Buffer::new(
@@ -2937,7 +2796,7 @@ mod tests {
         });
         let settings = settings::test(&cx).1;
         let (_, view) = cx.add_window(Default::default(), |cx| {
-            Editor::for_buffer(buffer.clone(), settings, cx)
+            build_editor(buffer.clone(), settings, cx)
         });
 
         view.update(cx, |view, cx| {
@@ -3005,7 +2864,7 @@ mod tests {
         let buffer = cx.add_model(|cx| Buffer::new(0, sample_text(6, 6), cx));
         let settings = settings::test(&cx).1;
         let (_, view) = cx.add_window(Default::default(), |cx| {
-            Editor::for_buffer(buffer.clone(), settings, cx)
+            build_editor(buffer.clone(), settings, cx)
         });
 
         buffer.update(cx, |buffer, cx| {
@@ -3082,7 +2941,7 @@ mod tests {
         let buffer = cx.add_model(|cx| Buffer::new(0, "ⓐⓑⓒⓓⓔ\nabcde\nαβγδε\n", cx));
         let settings = settings::test(&cx).1;
         let (_, view) = cx.add_window(Default::default(), |cx| {
-            Editor::for_buffer(buffer.clone(), settings, cx)
+            build_editor(buffer.clone(), settings, cx)
         });
 
         assert_eq!('ⓐ'.len_utf8(), 3);
@@ -3140,7 +2999,7 @@ mod tests {
         let buffer = cx.add_model(|cx| Buffer::new(0, "ⓐⓑⓒⓓⓔ\nabcd\nαβγ\nabcd\nⓐⓑⓒⓓⓔ\n", cx));
         let settings = settings::test(&cx).1;
         let (_, view) = cx.add_window(Default::default(), |cx| {
-            Editor::for_buffer(buffer.clone(), settings, cx)
+            build_editor(buffer.clone(), settings, cx)
         });
         view.update(cx, |view, cx| {
             view.select_display_ranges(&[empty_range(0, "ⓐⓑⓒⓓⓔ".len())], cx)
@@ -3170,9 +3029,7 @@ mod tests {
     fn test_beginning_end_of_line(cx: &mut gpui::MutableAppContext) {
         let buffer = cx.add_model(|cx| Buffer::new(0, "abc\n  def", cx));
         let settings = settings::test(&cx).1;
-        let (_, view) = cx.add_window(Default::default(), |cx| {
-            Editor::for_buffer(buffer, settings, cx)
-        });
+        let (_, view) = cx.add_window(Default::default(), |cx| build_editor(buffer, settings, cx));
         view.update(cx, |view, cx| {
             view.select_display_ranges(
                 &[
@@ -3315,9 +3172,7 @@ mod tests {
         let buffer =
             cx.add_model(|cx| Buffer::new(0, "use std::str::{foo, bar}\n\n  {baz.qux()}", cx));
         let settings = settings::test(&cx).1;
-        let (_, view) = cx.add_window(Default::default(), |cx| {
-            Editor::for_buffer(buffer, settings, cx)
-        });
+        let (_, view) = cx.add_window(Default::default(), |cx| build_editor(buffer, settings, cx));
         view.update(cx, |view, cx| {
             view.select_display_ranges(
                 &[
@@ -3509,9 +3364,7 @@ mod tests {
         let buffer =
             cx.add_model(|cx| Buffer::new(0, "use one::{\n    two::three::four::five\n};", cx));
         let settings = settings::test(&cx).1;
-        let (_, view) = cx.add_window(Default::default(), |cx| {
-            Editor::for_buffer(buffer, settings, cx)
-        });
+        let (_, view) = cx.add_window(Default::default(), |cx| build_editor(buffer, settings, cx));
 
         view.update(cx, |view, cx| {
             view.set_wrap_width(130., cx);
@@ -3572,7 +3425,7 @@ mod tests {
         });
         let settings = settings::test(&cx).1;
         let (_, view) = cx.add_window(Default::default(), |cx| {
-            Editor::for_buffer(buffer.clone(), settings, cx)
+            build_editor(buffer.clone(), settings, cx)
         });
 
         view.update(cx, |view, cx| {
@@ -3608,7 +3461,7 @@ mod tests {
         });
         let settings = settings::test(&cx).1;
         let (_, view) = cx.add_window(Default::default(), |cx| {
-            Editor::for_buffer(buffer.clone(), settings, cx)
+            build_editor(buffer.clone(), settings, cx)
         });
 
         view.update(cx, |view, cx| {
@@ -3637,9 +3490,7 @@ mod tests {
     fn test_delete_line(cx: &mut gpui::MutableAppContext) {
         let settings = settings::test(&cx).1;
         let buffer = cx.add_model(|cx| Buffer::new(0, "abc\ndef\nghi\n", cx));
-        let (_, view) = cx.add_window(Default::default(), |cx| {
-            Editor::for_buffer(buffer, settings, cx)
-        });
+        let (_, view) = cx.add_window(Default::default(), |cx| build_editor(buffer, settings, cx));
         view.update(cx, |view, cx| {
             view.select_display_ranges(
                 &[
@@ -3663,9 +3514,7 @@ mod tests {
 
         let settings = settings::test(&cx).1;
         let buffer = cx.add_model(|cx| Buffer::new(0, "abc\ndef\nghi\n", cx));
-        let (_, view) = cx.add_window(Default::default(), |cx| {
-            Editor::for_buffer(buffer, settings, cx)
-        });
+        let (_, view) = cx.add_window(Default::default(), |cx| build_editor(buffer, settings, cx));
         view.update(cx, |view, cx| {
             view.select_display_ranges(&[DisplayPoint::new(2, 0)..DisplayPoint::new(0, 1)], cx)
                 .unwrap();
@@ -3682,9 +3531,7 @@ mod tests {
     fn test_duplicate_line(cx: &mut gpui::MutableAppContext) {
         let settings = settings::test(&cx).1;
         let buffer = cx.add_model(|cx| Buffer::new(0, "abc\ndef\nghi\n", cx));
-        let (_, view) = cx.add_window(Default::default(), |cx| {
-            Editor::for_buffer(buffer, settings, cx)
-        });
+        let (_, view) = cx.add_window(Default::default(), |cx| build_editor(buffer, settings, cx));
         view.update(cx, |view, cx| {
             view.select_display_ranges(
                 &[
@@ -3711,9 +3558,7 @@ mod tests {
 
         let settings = settings::test(&cx).1;
         let buffer = cx.add_model(|cx| Buffer::new(0, "abc\ndef\nghi\n", cx));
-        let (_, view) = cx.add_window(Default::default(), |cx| {
-            Editor::for_buffer(buffer, settings, cx)
-        });
+        let (_, view) = cx.add_window(Default::default(), |cx| build_editor(buffer, settings, cx));
         view.update(cx, |view, cx| {
             view.select_display_ranges(
                 &[
@@ -3739,9 +3584,7 @@ mod tests {
     fn test_move_line_up_down(cx: &mut gpui::MutableAppContext) {
         let settings = settings::test(&cx).1;
         let buffer = cx.add_model(|cx| Buffer::new(0, sample_text(10, 5), cx));
-        let (_, view) = cx.add_window(Default::default(), |cx| {
-            Editor::for_buffer(buffer, settings, cx)
-        });
+        let (_, view) = cx.add_window(Default::default(), |cx| build_editor(buffer, settings, cx));
         view.update(cx, |view, cx| {
             view.fold_ranges(
                 vec![
@@ -3840,7 +3683,7 @@ mod tests {
         let settings = settings::test(&cx).1;
         let view = cx
             .add_window(Default::default(), |cx| {
-                Editor::for_buffer(buffer.clone(), settings, cx)
+                build_editor(buffer.clone(), settings, cx)
             })
             .1;
 
@@ -3973,9 +3816,7 @@ mod tests {
     fn test_select_all(cx: &mut gpui::MutableAppContext) {
         let buffer = cx.add_model(|cx| Buffer::new(0, "abc\nde\nfgh", cx));
         let settings = settings::test(&cx).1;
-        let (_, view) = cx.add_window(Default::default(), |cx| {
-            Editor::for_buffer(buffer, settings, cx)
-        });
+        let (_, view) = cx.add_window(Default::default(), |cx| build_editor(buffer, settings, cx));
         view.update(cx, |view, cx| {
             view.select_all(&SelectAll, cx);
             assert_eq!(
@@ -3989,9 +3830,7 @@ mod tests {
     fn test_select_line(cx: &mut gpui::MutableAppContext) {
         let settings = settings::test(&cx).1;
         let buffer = cx.add_model(|cx| Buffer::new(0, sample_text(6, 5), cx));
-        let (_, view) = cx.add_window(Default::default(), |cx| {
-            Editor::for_buffer(buffer, settings, cx)
-        });
+        let (_, view) = cx.add_window(Default::default(), |cx| build_editor(buffer, settings, cx));
         view.update(cx, |view, cx| {
             view.select_display_ranges(
                 &[
@@ -4037,9 +3876,7 @@ mod tests {
     fn test_split_selection_into_lines(cx: &mut gpui::MutableAppContext) {
         let settings = settings::test(&cx).1;
         let buffer = cx.add_model(|cx| Buffer::new(0, sample_text(9, 5), cx));
-        let (_, view) = cx.add_window(Default::default(), |cx| {
-            Editor::for_buffer(buffer, settings, cx)
-        });
+        let (_, view) = cx.add_window(Default::default(), |cx| build_editor(buffer, settings, cx));
         view.update(cx, |view, cx| {
             view.fold_ranges(
                 vec![
@@ -4107,9 +3944,7 @@ mod tests {
     fn test_add_selection_above_below(cx: &mut gpui::MutableAppContext) {
         let settings = settings::test(&cx).1;
         let buffer = cx.add_model(|cx| Buffer::new(0, "abc\ndefghi\n\njk\nlmno\n", cx));
-        let (_, view) = cx.add_window(Default::default(), |cx| {
-            Editor::for_buffer(buffer, settings, cx)
-        });
+        let (_, view) = cx.add_window(Default::default(), |cx| build_editor(buffer, settings, cx));
 
         view.update(cx, |view, cx| {
             view.select_display_ranges(&[DisplayPoint::new(1, 3)..DisplayPoint::new(1, 3)], cx)
@@ -4295,7 +4130,7 @@ mod tests {
             let history = History::new(text.into());
             Buffer::from_history(0, history, None, lang.cloned(), cx)
         });
-        let (_, view) = cx.add_window(|cx| Editor::for_buffer(buffer, settings.clone(), cx));
+        let (_, view) = cx.add_window(|cx| build_editor(buffer, settings.clone(), cx));
         view.condition(&cx, |view, cx| !view.buffer.read(cx).is_parsing())
             .await;
 
@@ -4432,6 +4267,40 @@ mod tests {
     fn empty_range(row: usize, column: usize) -> Range<DisplayPoint> {
         let point = DisplayPoint::new(row as u32, column as u32);
         point..point
+    }
+
+    fn build_editor(
+        buffer: ModelHandle<Buffer>,
+        settings: watch::Receiver<Settings>,
+        cx: &mut ViewContext<Editor>,
+    ) -> Editor {
+        let style = {
+            let font_cache = cx.font_cache();
+            let settings = settings.borrow();
+            EditorStyle {
+                text: TextStyle {
+                    color: Default::default(),
+                    font_family_name: font_cache.family_name(settings.buffer_font_family).unwrap(),
+                    font_family_id: settings.buffer_font_family,
+                    font_id: font_cache
+                        .select_font(settings.buffer_font_family, &Default::default())
+                        .unwrap(),
+                    font_size: settings.buffer_font_size,
+                    font_properties: Default::default(),
+                    underline: false,
+                },
+                placeholder_text: None,
+                background: Default::default(),
+                selection: Default::default(),
+                gutter_background: Default::default(),
+                active_line_background: Default::default(),
+                line_number: Default::default(),
+                line_number_active: Default::default(),
+                guest_selections: Default::default(),
+            }
+        };
+
+        Editor::for_buffer(buffer, settings, move |_| style.clone(), cx)
     }
 }
 

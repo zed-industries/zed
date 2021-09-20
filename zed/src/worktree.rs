@@ -268,6 +268,13 @@ impl Worktree {
         }
     }
 
+    pub fn languages(&self) -> &Arc<LanguageRegistry> {
+        match self {
+            Worktree::Local(worktree) => &worktree.languages,
+            Worktree::Remote(worktree) => &worktree.languages,
+        }
+    }
+
     pub fn snapshot(&self) -> Snapshot {
         match self {
             Worktree::Local(worktree) => worktree.snapshot(),

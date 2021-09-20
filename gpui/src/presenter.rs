@@ -286,6 +286,14 @@ impl<'a> PaintContext<'a> {
     }
 }
 
+impl<'a> Deref for PaintContext<'a> {
+    type Target = AppContext;
+
+    fn deref(&self) -> &Self::Target {
+        self.app
+    }
+}
+
 pub struct EventContext<'a> {
     rendered_views: &'a mut HashMap<usize, ElementBox>,
     dispatched_actions: Vec<DispatchDirective>,

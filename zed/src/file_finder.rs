@@ -88,13 +88,13 @@ impl View for FileFinder {
                     Flex::new(Axis::Vertical)
                         .with_child(
                             Container::new(ChildView::new(self.query_editor.id()).boxed())
-                                .with_style(&settings.theme.selector.input_editor.container)
+                                .with_style(settings.theme.selector.input_editor.container)
                                 .boxed(),
                         )
                         .with_child(Flexible::new(1.0, self.render_matches()).boxed())
                         .boxed(),
                 )
-                .with_style(&settings.theme.selector.container)
+                .with_style(settings.theme.selector.container)
                 .boxed(),
             )
             .with_max_width(500.0)
@@ -127,7 +127,7 @@ impl FileFinder {
                 )
                 .boxed(),
             )
-            .with_style(&settings.theme.selector.empty.container)
+            .with_style(settings.theme.selector.empty.container)
             .named("empty matches");
         }
 
@@ -200,7 +200,7 @@ impl FileFinder {
                 )
                 .boxed(),
         )
-        .with_style(&style.container);
+        .with_style(style.container);
 
         let action = Select(Entry {
             worktree_id: path_match.tree_id,
@@ -275,10 +275,14 @@ impl FileFinder {
         cx.observe(&workspace, Self::workspace_updated).detach();
 
         let query_editor = cx.add_view(|cx| {
-            Editor::single_line(settings.clone(), cx).with_style({
-                let settings = settings.clone();
-                move |_| settings.borrow().theme.selector.input_editor.as_editor()
-            })
+            Editor::single_line(
+                settings.clone(),
+                {
+                    let settings = settings.clone();
+                    move |_| settings.borrow().theme.selector.input_editor.as_editor()
+                },
+                cx,
+            )
         });
         cx.subscribe(&query_editor, Self::on_query_editor_event)
             .detach();

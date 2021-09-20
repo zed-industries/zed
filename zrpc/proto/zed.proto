@@ -151,6 +151,7 @@ message GetUsersResponse {
 message SendChannelMessage {
     uint64 channel_id = 1;
     string body = 2;
+    Nonce nonce = 3;
 }
 
 message SendChannelMessageResponse {
@@ -296,6 +297,11 @@ message Range {
     uint64 end = 2;
 }
 
+message Nonce {
+    uint64 upper_half = 1;
+    uint64 lower_half = 2;
+}
+
 message Channel {
     uint64 id = 1;
     string name = 2;
@@ -306,4 +312,5 @@ message ChannelMessage {
     string body = 2;
     uint64 timestamp = 3;
     uint64 sender_id = 4;
+    Nonce nonce = 5;
 }

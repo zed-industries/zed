@@ -2,14 +2,13 @@ mod fold_map;
 mod tab_map;
 mod wrap_map;
 
-use super::{buffer, Anchor, Bias, Buffer, Point, Settings, ToOffset, ToPoint};
+use super::{buffer, Anchor, Bias, Buffer, Point, ToOffset, ToPoint};
 use fold_map::FoldMap;
-use gpui::{Entity, ModelContext, ModelHandle};
-use postage::watch;
+use gpui::{fonts::FontId, Entity, ModelContext, ModelHandle};
 use std::ops::Range;
 use tab_map::TabMap;
-pub use wrap_map::BufferRows;
 use wrap_map::WrapMap;
+pub use wrap_map::{BufferRows, HighlightedChunks};
 
 pub struct DisplayMap {
     buffer: ModelHandle<Buffer>,
@@ -25,13 +24,16 @@ impl Entity for DisplayMap {
 impl DisplayMap {
     pub fn new(
         buffer: ModelHandle<Buffer>,
-        settings: watch::Receiver<Settings>,
+        tab_size: usize,
+        font_id: FontId,
+        font_size: f32,
         wrap_width: Option<f32>,
         cx: &mut ModelContext<Self>,
     ) -> Self {
         let (fold_map, snapshot) = FoldMap::new(buffer.clone(), cx);
-        let (tab_map, snapshot) = TabMap::new(snapshot, settings.borrow().tab_size);
-        let wrap_map = cx.add_model(|cx| WrapMap::new(snapshot, settings, wrap_width, cx));
+        let (tab_map, snapshot) = TabMap::new(snapshot, tab_size);
+        let wrap_map =
+            cx.add_model(|cx| WrapMap::new(snapshot, font_id, font_size, wrap_width, cx));
         cx.observe(&wrap_map, |_, _, cx| cx.notify()).detach();
         DisplayMap {
             buffer,
@@ -83,6 +85,11 @@ impl DisplayMap {
         let (snapshot, edits) = self.tab_map.sync(snapshot, edits);
         self.wrap_map
             .update(cx, |map, cx| map.sync(snapshot, edits, cx));
+    }
+
+    pub fn set_font(&self, font_id: FontId, font_size: f32, cx: &mut ModelContext<Self>) {
+        self.wrap_map
+            .update(cx, |map, cx| map.set_font(font_id, font_size, cx));
     }
 
     pub fn set_wrap_width(&self, width: Option<f32>, cx: &mut ModelContext<Self>) -> bool {
@@ -367,12 +374,12 @@ mod tests {
             .unwrap_or(10);
 
         let font_cache = cx.font_cache().clone();
-        let settings = Settings {
-            tab_size: rng.gen_range(1..=4),
-            buffer_font_family: font_cache.load_family(&["Helvetica"]).unwrap(),
-            buffer_font_size: 14.0,
-            ..cx.read(Settings::test)
-        };
+        let tab_size = rng.gen_range(1..=4);
+        let family_id = font_cache.load_family(&["Helvetica"]).unwrap();
+        let font_id = font_cache
+            .select_font(family_id, &Default::default())
+            .unwrap();
+        let font_size = 14.0;
         let max_wrap_width = 300.0;
         let mut wrap_width = if rng.gen_bool(0.1) {
             None
@@ -380,7 +387,7 @@ mod tests {
             Some(rng.gen_range(0.0..=max_wrap_width))
         };
 
-        log::info!("tab size: {}", settings.tab_size);
+        log::info!("tab size: {}", tab_size);
         log::info!("wrap width: {:?}", wrap_width);
 
         let buffer = cx.add_model(|cx| {
@@ -388,9 +395,10 @@ mod tests {
             let text = RandomCharIter::new(&mut rng).take(len).collect::<String>();
             Buffer::new(0, text, cx)
         });
-        let settings = watch::channel_with(settings).1;
 
-        let map = cx.add_model(|cx| DisplayMap::new(buffer.clone(), settings, wrap_width, cx));
+        let map = cx.add_model(|cx| {
+            DisplayMap::new(buffer.clone(), tab_size, font_id, font_size, wrap_width, cx)
+        });
         let (_observer, notifications) = Observer::new(&map, &mut cx);
         let mut fold_count = 0;
 
@@ -529,26 +537,27 @@ mod tests {
     }
 
     #[gpui::test]
-    async fn test_soft_wraps(mut cx: gpui::TestAppContext) {
+    fn test_soft_wraps(cx: &mut MutableAppContext) {
         cx.foreground().set_block_on_ticks(usize::MAX..=usize::MAX);
         cx.foreground().forbid_parking();
 
         let font_cache = cx.font_cache();
 
-        let settings = Settings {
-            buffer_font_family: font_cache.load_family(&["Helvetica"]).unwrap(),
-            buffer_font_size: 12.0,
-            tab_size: 4,
-            ..cx.read(Settings::test)
-        };
+        let tab_size = 4;
+        let family_id = font_cache.load_family(&["Helvetica"]).unwrap();
+        let font_id = font_cache
+            .select_font(family_id, &Default::default())
+            .unwrap();
+        let font_size = 12.0;
         let wrap_width = Some(64.);
 
         let text = "one two three four five\nsix seven eight";
         let buffer = cx.add_model(|cx| Buffer::new(0, text.to_string(), cx));
-        let (mut settings_tx, settings_rx) = watch::channel_with(settings);
-        let map = cx.add_model(|cx| DisplayMap::new(buffer.clone(), settings_rx, wrap_width, cx));
+        let map = cx.add_model(|cx| {
+            DisplayMap::new(buffer.clone(), tab_size, font_id, font_size, wrap_width, cx)
+        });
 
-        let snapshot = map.update(&mut cx, |map, cx| map.snapshot(cx));
+        let snapshot = map.update(cx, |map, cx| map.snapshot(cx));
         assert_eq!(
             snapshot.chunks_at(0).collect::<String>(),
             "one two \nthree four \nfive\nsix seven \neight"
@@ -592,23 +601,21 @@ mod tests {
             (DisplayPoint::new(2, 4), SelectionGoal::Column(10))
         );
 
-        buffer.update(&mut cx, |buffer, cx| {
+        buffer.update(cx, |buffer, cx| {
             let ix = buffer.text().find("seven").unwrap();
             buffer.edit(vec![ix..ix], "and ", cx);
         });
 
-        let snapshot = map.update(&mut cx, |map, cx| map.snapshot(cx));
+        let snapshot = map.update(cx, |map, cx| map.snapshot(cx));
         assert_eq!(
             snapshot.chunks_at(1).collect::<String>(),
             "three four \nfive\nsix and \nseven eight"
         );
 
         // Re-wrap on font size changes
-        settings_tx.borrow_mut().buffer_font_size += 3.;
+        map.update(cx, |map, cx| map.set_font(font_id, font_size + 3., cx));
 
-        map.next_notification(&mut cx).await;
-
-        let snapshot = map.update(&mut cx, |map, cx| map.snapshot(cx));
+        let snapshot = map.update(cx, |map, cx| map.snapshot(cx));
         assert_eq!(
             snapshot.chunks_at(1).collect::<String>(),
             "three \nfour five\nsix and \nseven \neight"
@@ -619,11 +626,16 @@ mod tests {
     fn test_chunks_at(cx: &mut gpui::MutableAppContext) {
         let text = sample_text(6, 6);
         let buffer = cx.add_model(|cx| Buffer::new(0, text, cx));
-        let settings = watch::channel_with(Settings {
-            tab_size: 4,
-            ..Settings::test(cx)
+        let tab_size = 4;
+        let family_id = cx.font_cache().load_family(&["Helvetica"]).unwrap();
+        let font_id = cx
+            .font_cache()
+            .select_font(family_id, &Default::default())
+            .unwrap();
+        let font_size = 14.0;
+        let map = cx.add_model(|cx| {
+            DisplayMap::new(buffer.clone(), tab_size, font_id, font_size, None, cx)
         });
-        let map = cx.add_model(|cx| DisplayMap::new(buffer.clone(), settings.1, None, cx));
         buffer.update(cx, |buffer, cx| {
             buffer.edit(
                 vec![
@@ -695,13 +707,16 @@ mod tests {
         });
         buffer.condition(&cx, |buf, _| !buf.is_parsing()).await;
 
-        let settings = cx.update(|cx| {
-            watch::channel_with(Settings {
-                tab_size: 2,
-                ..Settings::test(cx)
-            })
-        });
-        let map = cx.add_model(|cx| DisplayMap::new(buffer, settings.1, None, cx));
+        let tab_size = 2;
+        let font_cache = cx.font_cache();
+        let family_id = font_cache.load_family(&["Helvetica"]).unwrap();
+        let font_id = font_cache
+            .select_font(family_id, &Default::default())
+            .unwrap();
+        let font_size = 14.0;
+
+        let map =
+            cx.add_model(|cx| DisplayMap::new(buffer, tab_size, font_id, font_size, None, cx));
         assert_eq!(
             cx.update(|cx| highlighted_chunks(0..5, &map, &theme, cx)),
             vec![
@@ -782,15 +797,16 @@ mod tests {
         buffer.condition(&cx, |buf, _| !buf.is_parsing()).await;
 
         let font_cache = cx.font_cache();
-        let settings = cx.update(|cx| {
-            watch::channel_with(Settings {
-                tab_size: 4,
-                buffer_font_family: font_cache.load_family(&["Courier"]).unwrap(),
-                buffer_font_size: 16.0,
-                ..Settings::test(cx)
-            })
-        });
-        let map = cx.add_model(|cx| DisplayMap::new(buffer, settings.1, Some(40.0), cx));
+
+        let tab_size = 4;
+        let family_id = font_cache.load_family(&["Courier"]).unwrap();
+        let font_id = font_cache
+            .select_font(family_id, &Default::default())
+            .unwrap();
+        let font_size = 16.0;
+
+        let map = cx
+            .add_model(|cx| DisplayMap::new(buffer, tab_size, font_id, font_size, Some(40.0), cx));
         assert_eq!(
             cx.update(|cx| highlighted_chunks(0..5, &map, &theme, cx)),
             [
@@ -825,11 +841,17 @@ mod tests {
         let text = "\n'a', 'α',\t'✋',\t'❎', '🍐'\n";
         let display_text = "\n'a', 'α',   '✋',    '❎', '🍐'\n";
         let buffer = cx.add_model(|cx| Buffer::new(0, text, cx));
-        let settings = watch::channel_with(Settings {
-            tab_size: 4,
-            ..Settings::test(cx)
+
+        let tab_size = 4;
+        let font_cache = cx.font_cache();
+        let family_id = font_cache.load_family(&["Helvetica"]).unwrap();
+        let font_id = font_cache
+            .select_font(family_id, &Default::default())
+            .unwrap();
+        let font_size = 14.0;
+        let map = cx.add_model(|cx| {
+            DisplayMap::new(buffer.clone(), tab_size, font_id, font_size, None, cx)
         });
-        let map = cx.add_model(|cx| DisplayMap::new(buffer.clone(), settings.1, None, cx));
         let map = map.update(cx, |map, cx| map.snapshot(cx));
 
         assert_eq!(map.text(), display_text);
@@ -863,11 +885,17 @@ mod tests {
     fn test_tabs_with_multibyte_chars(cx: &mut gpui::MutableAppContext) {
         let text = "✅\t\tα\nβ\t\n🏀β\t\tγ";
         let buffer = cx.add_model(|cx| Buffer::new(0, text, cx));
-        let settings = watch::channel_with(Settings {
-            tab_size: 4,
-            ..Settings::test(cx)
+        let tab_size = 4;
+        let font_cache = cx.font_cache();
+        let family_id = font_cache.load_family(&["Helvetica"]).unwrap();
+        let font_id = font_cache
+            .select_font(family_id, &Default::default())
+            .unwrap();
+        let font_size = 14.0;
+
+        let map = cx.add_model(|cx| {
+            DisplayMap::new(buffer.clone(), tab_size, font_id, font_size, None, cx)
         });
-        let map = cx.add_model(|cx| DisplayMap::new(buffer.clone(), settings.1, None, cx));
         let map = map.update(cx, |map, cx| map.snapshot(cx));
         assert_eq!(map.text(), "✅       α\nβ   \n🏀β      γ");
         assert_eq!(
@@ -924,11 +952,16 @@ mod tests {
     #[gpui::test]
     fn test_max_point(cx: &mut gpui::MutableAppContext) {
         let buffer = cx.add_model(|cx| Buffer::new(0, "aaa\n\t\tbbb", cx));
-        let settings = watch::channel_with(Settings {
-            tab_size: 4,
-            ..Settings::test(cx)
+        let tab_size = 4;
+        let font_cache = cx.font_cache();
+        let family_id = font_cache.load_family(&["Helvetica"]).unwrap();
+        let font_id = font_cache
+            .select_font(family_id, &Default::default())
+            .unwrap();
+        let font_size = 14.0;
+        let map = cx.add_model(|cx| {
+            DisplayMap::new(buffer.clone(), tab_size, font_id, font_size, None, cx)
         });
-        let map = cx.add_model(|cx| DisplayMap::new(buffer.clone(), settings.1, None, cx));
         assert_eq!(
             map.update(cx, |map, cx| map.snapshot(cx)).max_point(),
             DisplayPoint::new(1, 11)

@@ -137,6 +137,10 @@ impl super::Platform for Platform {
         Ok(None)
     }
 
+    fn delete_credentials(&self, _: &str) -> Result<()> {
+        Ok(())
+    }
+
     fn set_cursor_style(&self, style: CursorStyle) {
         *self.cursor.lock() = style;
     }

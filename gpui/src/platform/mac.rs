@@ -3,6 +3,7 @@ mod dispatcher;
 mod event;
 mod fonts;
 mod geometry;
+mod image_cache;
 mod platform;
 mod renderer;
 mod sprite_cache;

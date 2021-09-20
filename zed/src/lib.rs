@@ -5,6 +5,7 @@ pub mod editor;
 pub mod file_finder;
 pub mod fs;
 mod fuzzy;
+pub mod http;
 pub mod language;
 pub mod menus;
 pub mod project_browser;
@@ -42,6 +43,7 @@ pub struct AppState {
     pub languages: Arc<language::LanguageRegistry>,
     pub themes: Arc<settings::ThemeRegistry>,
     pub rpc: Arc<rpc::Client>,
+    pub user_store: Arc<user::UserStore>,
     pub fs: Arc<dyn fs::Fs>,
     pub channel_list: ModelHandle<ChannelList>,
 }

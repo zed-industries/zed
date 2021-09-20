@@ -41,25 +41,15 @@ impl Element for Svg {
     ) -> (Vector2F, Self::LayoutState) {
         match cx.asset_cache.svg(&self.path) {
             Ok(tree) => {
-                let size = if constraint.max.x().is_infinite() && constraint.max.y().is_infinite() {
-                    let rect = from_usvg_rect(tree.svg_node().view_box.rect);
-                    rect.size()
-                } else {
-                    let max_size = constraint.max;
-                    let svg_size = from_usvg_rect(tree.svg_node().view_box.rect).size();
-
-                    if max_size.x().is_infinite()
-                        || max_size.x() / max_size.y() > svg_size.x() / svg_size.y()
-                    {
-                        vec2f(svg_size.x() * max_size.y() / svg_size.y(), max_size.y())
-                    } else {
-                        vec2f(max_size.x(), svg_size.y() * max_size.x() / svg_size.x())
-                    }
-                };
+                let size = constrain_size_preserving_aspect_ratio(
+                    constraint.max,
+                    from_usvg_rect(tree.svg_node().view_box.rect).size(),
+                );
                 (size, Some(tree))
             }
-            Err(error) => {
-                log::error!("{}", error);
+            Err(_error) => {
+                #[cfg(not(any(test, feature = "test-support")))]
+                log::error!("{}", _error);
                 (constraint.min, None)
             }
         }
@@ -110,6 +100,8 @@ impl Element for Svg {
 }
 
 use crate::json::ToJson;
+
+use super::constrain_size_preserving_aspect_ratio;
 
 fn from_usvg_rect(rect: usvg::Rect) -> RectF {
     RectF::new(

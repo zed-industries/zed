@@ -714,9 +714,16 @@ impl Buffer {
         path: impl Into<Arc<Path>>,
         cx: &mut ModelContext<Self>,
     ) -> Task<Result<()>> {
+        let path = path.into();
         let handle = cx.handle();
         let text = self.visible_text.clone();
         let version = self.version.clone();
+
+        if let Some(language) = worktree.read(cx).languages().select_language(&path).cloned() {
+            self.language = Some(language);
+            self.reparse(cx);    
+        }
+
         let save_as = worktree.update(cx, |worktree, cx| {
             worktree
                 .as_local_mut()
@@ -792,6 +799,10 @@ impl Buffer {
             cx.emit(Event::Dirtied);
         }
         cx.emit(Event::FileHandleChanged);
+    }
+
+    pub fn language(&self) -> Option<&Arc<Language>> {
+        self.language.as_ref()
     }
 
     pub fn parse_count(&self) -> usize {
@@ -871,7 +882,11 @@ impl Buffer {
                     cx.spawn(move |this, mut cx| async move {
                         let new_tree = parse_task.await;
                         this.update(&mut cx, move |this, cx| {
-                            let parse_again = this.version > parsed_version;
+                            let language_changed =
+                                this.language.as_ref().map_or(true, |curr_language| {
+                                    !Arc::ptr_eq(curr_language, &language)
+                                });
+                            let parse_again = this.version > parsed_version || language_changed;
                             *this.syntax_tree.lock() = Some(SyntaxTree {
                                 tree: new_tree,
                                 dirty: false,

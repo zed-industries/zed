@@ -58,10 +58,14 @@ impl ThemeSelector {
         cx: &mut ViewContext<Self>,
     ) -> Self {
         let query_editor = cx.add_view(|cx| {
-            Editor::single_line(settings.clone(), cx).with_style({
-                let settings = settings.clone();
-                move |_| settings.borrow().theme.selector.input_editor.as_editor()
-            })
+            Editor::single_line(
+                settings.clone(),
+                {
+                    let settings = settings.clone();
+                    move |_| settings.borrow().theme.selector.input_editor.as_editor()
+                },
+                cx,
+            )
         });
 
         cx.subscribe(&query_editor, Self::on_query_editor_event)
@@ -214,7 +218,7 @@ impl ThemeSelector {
                 )
                 .boxed(),
             )
-            .with_style(&settings.theme.selector.empty.container)
+            .with_style(settings.theme.selector.empty.container)
             .named("empty matches");
         }
 
@@ -259,9 +263,9 @@ impl ThemeSelector {
             .boxed(),
         )
         .with_style(if index == self.selected_index {
-            &theme.selector.active_item.container
+            theme.selector.active_item.container
         } else {
-            &theme.selector.item.container
+            theme.selector.item.container
         });
 
         container.boxed()
@@ -288,7 +292,7 @@ impl View for ThemeSelector {
                         .with_child(Flexible::new(1.0, self.render_matches(cx)).boxed())
                         .boxed(),
                 )
-                .with_style(&settings.theme.selector.container)
+                .with_style(settings.theme.selector.container)
                 .boxed(),
             )
             .with_max_width(600.0)

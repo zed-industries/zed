@@ -33,7 +33,7 @@ jobs:
           clean: false
 
       - name: Run tests
-        run: cargo test --no-fail-fast
+        run: cargo test --workspace --no-fail-fast
 
   bundle:
     name: Bundle app
