@@ -9,9 +9,16 @@
 
 @layer base {
   html {
-    font-size: 125%;
+    font-size: 100%;
     text-rendering: geometricPrecision;
   }
+
+  @media screen and (min-width: 1024px) {
+    html {
+      font-size: 125%;
+    }
+  }
+
   h1 {
     @apply text-4xl;
     @apply tracking-tighter;
@@ -33,7 +40,7 @@
     text-underline-offset: 4px;
   }
 
-  @media screen and (min-width: 1124px) {
+  @media screen and (min-width: 1024px) {
     .text-columns-2 {
         column-count: 2;
         column-gap: 3rem;
