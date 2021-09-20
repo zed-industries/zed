@@ -61,6 +61,12 @@ async fn post_signup(mut request: Request) -> tide::Result {
         github_login: String,
         email_address: String,
         about: String,
+        #[serde(default)]
+        wants_releases: bool,
+        #[serde(default)]
+        wants_updates: bool,
+        #[serde(default)]
+        wants_community: bool,
     }
 
     let mut form: Form = request.body_form().await?;
@@ -75,7 +81,14 @@ async fn post_signup(mut request: Request) -> tide::Result {
     // Save signup in the database
     request
         .db()
-        .create_signup(&form.github_login, &form.email_address, &form.about)
+        .create_signup(
+            &form.github_login,
+            &form.email_address,
+            &form.about,
+            form.wants_releases,
+            form.wants_updates,
+            form.wants_community,
+        )
         .await?;
 
     let layout_data = request.layout_data().await?;

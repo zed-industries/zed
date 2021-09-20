@@ -47,17 +47,30 @@ impl Db {
         github_login: &str,
         email_address: &str,
         about: &str,
+        wants_releases: bool,
+        wants_updates: bool,
+        wants_community: bool,
     ) -> Result<SignupId> {
         test_support!(self, {
             let query = "
-                INSERT INTO signups (github_login, email_address, about)
-                VALUES ($1, $2, $3)
+                INSERT INTO signups (
+                    github_login,
+                    email_address,
+                    about,
+                    wants_releases,
+                    wants_updates,
+                    wants_community
+                )
+                VALUES ($1, $2, $3, $4, $5, $6)
                 RETURNING id
             ";
             sqlx::query_scalar(query)
                 .bind(github_login)
                 .bind(email_address)
                 .bind(about)
+                .bind(wants_releases)
+                .bind(wants_updates)
+                .bind(wants_community)
                 .fetch_one(&self.pool)
                 .await
                 .map(SignupId)
@@ -501,6 +514,9 @@ pub struct Signup {
     pub github_login: String,
     pub email_address: String,
     pub about: String,
+    pub wants_releases: Option<bool>,
+    pub wants_updates: Option<bool>,
+    pub wants_community: Option<bool>,
 }
 
 id_type!(ChannelId);
