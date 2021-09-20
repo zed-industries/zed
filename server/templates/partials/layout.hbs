@@ -1,33 +1,20 @@
 <html>
 
 <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=0.86, maximum-scale=5.0, minimum-scale=0.86">
     <link rel="icon" href="/static/images/favicon.png">
     <link rel="stylesheet" href="/static/styles.css">
     <link rel="stylesheet" href="/static/prose.css">
 
     <title>Zed – a lightning fast, collaborative code editor written natively in Rust</title>
 
-    <script>
-        {{!-- window.addEventListener("DOMContentLoaded", function () {
-            let avatar = document.getElementById("avatar");
-            let sign_out = document.getElementById("sign_out");
-            if (avatar && sign_out) {
-                avatar.addEventListener("click", function (event) {
-                    sign_out.classList.toggle("hidden");
-                    event.stopPropagation();
-                });
-                document.addEventListener("click", function (event) {
-                    sign_out.classList.add("hidden");
-                });
-            }
-        }); --}}
-    </script>
 </head>
 
 <body class="box-border font-light bg-black font-body text-main">
-    <main class="container flex flex-col mx-auto bg-white lg:flex-none lg:grid lg:min-h-full lg:grid-cols-4 max-w-screen-2xl gap-x-px text-gray-50">
-        <nav class="p-10 bg-black font-extralight lg:hidden">
-            <a href="/" class="font-display">
+    <main class="container flex flex-col mx-auto lg:bg-white lg:flex-none lg:grid lg:min-h-full lg:grid-cols-4 max-w-screen-2xl lg:gap-x-px text-gray-50">
+        <nav class="p-10 pb-0 bg-black font-extralight lg:hidden">
+            <a href="/">
                 <svg width="32" height="32" viewBox="0 0 32 32" fill="none" xmlns="http://www.w3.org/2000/svg">
                 <mask id="path-2-inside-1" fill="white">
                 <path fill-rule="evenodd" clip-rule="evenodd" d="M16 0C7.16344 0 0 7.16344 0 16C0 24.8366 7.16344 32 16 32C24.8366 32 32 24.8366 32 16C32 7.16344 24.8366 0 16 0ZM16 4C9.37258 4 4 9.37258 4 16C4 22.6274 9.37258 28 16 28C22.6274 28 28 22.6274 28 16C28 9.37258 22.6274 4 16 4Z"/>
@@ -37,45 +24,45 @@
                 </svg>
             </a>
             
-            <div class="flex flex-row flex-wrap mt-5">
-                <a href="/team" class="mr-2 text-base leading-7 no-underline lowercase hover:underline">
-                    The Team
+            <div class="flex flex-row flex-wrap mt-10">
+                <a href="/team" class="mr-2 text-lg leading-loose no-underline lowercase hover:underline">
+                    Team
                 </a>
-                <p class="mr-2 text-base">·</p>
-                <a href="/story" class="relative mr-2 text-base leading-7 no-underline lowercase nav-active hover:underline">
+                <p class="pt-1 mr-2 text-lg text-gray-500">·</p>
+                <a href="/story" class="relative mr-2 text-lg leading-loose no-underline lowercase nav-active hover:underline">
                     Our Story
                 </a>
-                <p class="mr-2 text-base">·</p>
-                <a href="/community" class="mr-2 text-base leading-7 no-underline lowercase hover:underline">
+                <p class="pt-1 mr-2 text-lg text-gray-500">·</p>
+                <a href="/community" class="mr-2 text-lg leading-loose no-underline lowercase hover:underline">
                     Community
                 </a>
-                <p class="mr-2 text-base">·</p>
+                <p class="pt-1 mr-2 text-lg text-gray-500">·</p>
                 {{#if current_user}}
-                <a href="/updates" class="mr-2 text-base leading-7 no-underline lowercase hover:underline">
+                <a href="/updates" class="mr-2 text-lg leading-loose no-underline lowercase hover:underline">
                     Updates
                 </a>
-                <p class="mr-2 text-base">·</p>
-                <a href="/releases" class="mr-2 text-base leading-7 no-underline lowercase hover:underline">
+                <p class="pt-1 mr-2 text-lg text-gray-500">·</p>
+                <a href="/releases" class="mr-2 text-lg leading-loose no-underline lowercase hover:underline">
                     Releases
                 </a>
 
                 {{#if current_user.is_admin }}
-                    <p class="mr-2 text-base">·</p>
-                    <a href="/admin" class="inline-block mr-2 text-base leading-7 no-underline lowercase hover:underline">
+                    <p class="pt-1 mr-2 text-lg text-gray-500">·</p>
+                    <a href="/admin" class="inline-block mr-2 text-lg leading-loose no-underline lowercase hover:underline">
                         Manage Users
                     </a>
                 {{/if}}
 
-                <p class="mr-2 text-base">·</p>
-                <form id="sign_out" action="/sign_out" method="post" class="inline m-0 mr-2">
-                    <button class="text-base leading-7 no-underline lowercase hover:underline">Log out</button>
+                <p class="pt-1 mr-2 text-lg text-gray-500">·</p>
+                <form id="sign_out" action="/sign_out" method="post" class="inline m-0 mr-2 font-extralight">
+                    <button class="text-lg leading-loose no-underline lowercase font-extralight hover:underline">Log out</button>
                 </form>
 
                 {{else}}
 
                 <!-- Otherwise let user log in -->
                 <a href=" /sign_in"
-                    class="mr-2 text-base leading-7 no-underline lowercase hover:underline">
+                    class="mr-2 text-lg leading-loose no-underline lowercase hover:underline">
                     Log in
                 </a>
                 {{/if}}
@@ -140,8 +127,7 @@
             {{/if}}
        
             <div class="mt-10">
-                <!-- TODO: Dropdown is linked to #avatar, just using it for now. Come back and clean up later -->
-                <p id="avatar" class="text-base no-underline lowercase hover:underline">@{{current_user.github_login}}</p>
+                <p class="text-base no-underline lowercase hover:underline">@{{current_user.github_login}}</p>
                 <form id="sign_out" action="/sign_out" method="post">
                     <button class="mt-2 text-xs no-underline lowercase opacity-50 hover:underline">Sign out</button>
                 </form>
