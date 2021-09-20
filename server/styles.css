@@ -47,6 +47,13 @@
     }
     
 }
+  .site-nav a:not(.active) .nav-active-arrow {
+    display: none;
+  }
+
+  .site-nav a.active .nav-active-arrow {
+    display: flex;
+  }
 
   .text-columns-2 {
     -webkit-column-break-inside: avoid;
