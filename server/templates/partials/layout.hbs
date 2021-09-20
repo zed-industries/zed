@@ -55,7 +55,7 @@
             <!-- If user is at least an insider -->
             {{#if current_user}}
             <div class="font-mono flex flex-col mt-10">
-                <p class="text-xs opacity-25 tracking-widest uppercase">Insider Zone</p>
+                <p class="text-xs opacity-50 tracking-widest uppercase">Insiders</p>
                 <a href="/updates" class="text-base lowercase no-underline hover:underline mt-2">
                     Updates
                 </a>
@@ -67,9 +67,9 @@
             <!-- AND If user is an admin -->
             {{#if current_user.is_admin }}
                 <div class="font-mono flex flex-col mt-10">
-                    <p class="text-xs opacity-25 uppercase">Admin Zone</p>
+                    <p class="text-xs opacity-50 tracking-widest uppercase">Admin</p>
                     <a href="/admin" class="inline-block text-base lowercase no-underline hover:underline mt-2">
-                        Admin
+                        Users &amp Signups
                     </a>
                 </div>
             {{/if}}
@@ -78,7 +78,7 @@
                 <!-- TODO: Dropdown is linked to #avatar, just using it for now. Come back and clean up later -->
                 <p id="avatar" class="text-base lowercase no-underline hover:underline">@{{current_user.github_login}}</p>
                 <form id="sign_out" action="/sign_out" method="post">
-                    <button class="text-base opacity-25 lowercase no-underline hover:underline mt-2">Sign out</button>
+                    <button class="text-xs opacity-50 lowercase no-underline hover:underline mt-2">Sign out</button>
                 </form>
             </div>
 

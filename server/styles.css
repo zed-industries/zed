@@ -1,41 +1,61 @@
 /* This file is compiled to /assets/styles/tailwind.css via script/tailwind */
 
-@import url('https://fonts.googleapis.com/css2?family=Spectral:ital,wght@0,200;0,300;1,200;1,300&display=swap');
-@import url('https://fonts.googleapis.com/css2?family=JetBrains+Mono:ital,wght@0,100;0,300;0,600;1,100;1,300;1,600&display=swap');
+@import url("https://fonts.googleapis.com/css2?family=Spectral:ital,wght@0,200;0,300;1,200;1,300&display=swap");
+@import url("https://fonts.googleapis.com/css2?family=JetBrains+Mono:ital,wght@0,100;0,300;0,600;1,100;1,300;1,600&display=swap");
 
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
 
 @layer base {
-    html {
-        font-size: 125%;
-        text-rendering: geometricPrecision;
-    }
-    h1 {
-        @apply text-4xl;
-        @apply tracking-tighter;
-    }
-    h2 {
-        @apply text-3xl;
-        @apply tracking-tighter;
-    }
-    h3 {
-        @apply text-2xl;
-        @apply tracking-tighter;
-    }
-    h4 {
-        @apply text-xl;
-    }
-.underline, .hover\:underline:hover {
-        text-underline-offset: 4px;
+  html {
+    font-size: 125%;
+    text-rendering: geometricPrecision;
+  }
+  h1 {
+    @apply text-4xl;
+    @apply tracking-tighter;
+  }
+  h2 {
+    @apply text-3xl;
+    @apply tracking-tighter;
+  }
+  h3 {
+    @apply text-2xl;
+    @apply tracking-tighter;
+  }
+  h4 {
+    @apply text-xl;
+  }
+
+  .underline,
+  .hover\:underline:hover {
+    text-underline-offset: 4px;
+  }
+
+  @media screen and (min-width: 1124px) {
+    .text-columns-2 {
+        column-count: 2;
+        column-gap: 3rem;
     }
     
-    /* This fixes scrollbar jump */
-    @media screen and (min-width: 960px) {
-        html {
-            margin-left: calc(100vw - 100%);
-            margin-right: 0;
-        }
+}
+
+  .text-columns-2 {
+    -webkit-column-break-inside: avoid;
+    page-break-inside: avoid;
+    break-inside: avoid;
+  }
+
+  .text-columns-2 p {
+    break-inside: avoid;
+  }
+
+  /* This fixes scrollbar jump */
+  @media screen and (min-width: 960px) {
+    html {
+      margin-left: calc(100vw - 100%);
+      margin-right: 0;
     }
+  }
 }
