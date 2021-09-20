@@ -68,31 +68,31 @@ impl Presence {
             let rpc = self.rpc.clone();
             let user_store = self.user_store.clone();
             async move {
-                let response = rpc.request(proto::GetCollaborators {}).await?;
-                let mut user_ids = HashSet::new();
-                for collaborator in &response.collaborators {
-                    user_ids.insert(collaborator.user_id);
-                    user_ids.extend(
-                        collaborator
-                            .worktrees
-                            .iter()
-                            .flat_map(|w| &w.participants)
-                            .copied(),
-                    );
-                }
-                user_store
-                    .load_users(user_ids.into_iter().collect())
-                    .await?;
+                //     let response = rpc.request(proto::GetCollaborators {}).await?;
+                //     let mut user_ids = HashSet::new();
+                //     for collaborator in &response.collaborators {
+                //         user_ids.insert(collaborator.user_id);
+                //         user_ids.extend(
+                //             collaborator
+                //                 .worktrees
+                //                 .iter()
+                //                 .flat_map(|w| &w.participants)
+                //                 .copied(),
+                //         );
+                //     }
+                //     user_store
+                //         .load_users(user_ids.into_iter().collect())
+                //         .await?;
 
-                let mut collaborators = Vec::new();
-                for collaborator in response.collaborators {
-                    collaborators.push(Collaborator::from_proto(collaborator, &user_store).await?);
-                }
+                //     let mut collaborators = Vec::new();
+                //     for collaborator in response.collaborators {
+                //         collaborators.push(Collaborator::from_proto(collaborator, &user_store).await?);
+                //     }
 
-                this.update(&mut cx, |this, cx| {
-                    this.collaborators = collaborators;
-                    cx.notify();
-                });
+                //     this.update(&mut cx, |this, cx| {
+                //         this.collaborators = collaborators;
+                //         cx.notify();
+                //     });
 
                 Ok(())
             }

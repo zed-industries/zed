@@ -243,6 +243,7 @@ impl Server {
             }
         }
 
+        drop(state);
         for worktree_id in worktree_ids {
             self.close_worktree(worktree_id, connection_id).await?;
         }
@@ -455,6 +456,7 @@ impl Server {
             }
         }
 
+        drop(state);
         broadcast(request.sender_id, connection_ids, |conn_id| {
             self.peer.send(
                 conn_id,
@@ -485,7 +487,7 @@ impl Server {
     async fn close_worktree(
         self: &Arc<Server>,
         worktree_id: u64,
-        conn_id: ConnectionId,
+        sender_conn_id: ConnectionId,
     ) -> tide::Result<()> {
         let connection_ids;
         let mut user_ids;
@@ -494,17 +496,17 @@ impl Server {
         let mut is_guest = false;
         {
             let mut state = self.state.write().await;
-            let worktree = state.write_worktree(worktree_id, conn_id)?;
+            let worktree = state.write_worktree(worktree_id, sender_conn_id)?;
             let host_connection_id = worktree.host_connection_id;
             connection_ids = worktree.connection_ids();
             user_ids = worktree.collaborator_user_ids.clone();
 
-            if worktree.host_connection_id == conn_id {
+            if worktree.host_connection_id == sender_conn_id {
                 is_host = true;
                 state.remove_worktree(worktree_id);
             } else {
                 let share = worktree.share_mut()?;
-                if let Some(replica_id) = share.guest_connection_ids.remove(&conn_id) {
+                if let Some(replica_id) = share.guest_connection_ids.remove(&sender_conn_id) {
                     is_guest = true;
                     share.active_replica_ids.remove(&replica_id);
                 }
@@ -514,18 +516,18 @@ impl Server {
         }
 
         if is_host {
-            broadcast(conn_id, connection_ids, |conn_id| {
+            broadcast(sender_conn_id, connection_ids, |conn_id| {
                 self.peer
                     .send(conn_id, proto::UnshareWorktree { worktree_id })
             })
             .await?;
         } else if is_guest {
-            broadcast(conn_id, connection_ids, |conn_id| {
+            broadcast(sender_conn_id, connection_ids, |conn_id| {
                 self.peer.send(
                     conn_id,
                     proto::RemovePeer {
                         worktree_id,
-                        peer_id: conn_id.0,
+                        peer_id: sender_conn_id.0,
                     },
                 )
             })
