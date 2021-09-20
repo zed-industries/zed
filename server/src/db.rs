@@ -108,8 +108,11 @@ impl Db {
         })
     }
 
-    pub async fn get_users_by_ids(&self, ids: impl Iterator<Item = UserId>) -> Result<Vec<User>> {
-        let ids = ids.map(|id| id.0).collect::<Vec<_>>();
+    pub async fn get_users_by_ids(
+        &self,
+        ids: impl IntoIterator<Item = UserId>,
+    ) -> Result<Vec<User>> {
+        let ids = ids.into_iter().map(|id| id.0).collect::<Vec<_>>();
         test_support!(self, {
             let query = "
                 SELECT users.*
@@ -547,7 +550,7 @@ pub mod tests {
         let friend3 = db.create_user("friend-3", false).await.unwrap();
 
         assert_eq!(
-            db.get_users_by_ids([user, friend1, friend2, friend3].iter().copied())
+            db.get_users_by_ids([user, friend1, friend2, friend3])
                 .await
                 .unwrap(),
             vec![

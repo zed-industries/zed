@@ -18,7 +18,7 @@ use scrypt::{
 use serde::{Deserialize, Serialize};
 use std::{borrow::Cow, convert::TryFrom, sync::Arc};
 use surf::{StatusCode, Url};
-use tide::Server;
+use tide::{log, Server};
 use zrpc::auth as zed_auth;
 
 static CURRENT_GITHUB_USER: &'static str = "current_github_user";
@@ -121,6 +121,7 @@ pub fn add_routes(app: &mut Server<Arc<AppState>>) {
 struct NativeAppSignInParams {
     native_app_port: String,
     native_app_public_key: String,
+    impersonate: Option<String>,
 }
 
 async fn get_sign_in(mut request: Request) -> tide::Result {
@@ -142,11 +143,15 @@ async fn get_sign_in(mut request: Request) -> tide::Result {
 
     let app_sign_in_params: Option<NativeAppSignInParams> = request.query().ok();
     if let Some(query) = app_sign_in_params {
-        redirect_url
-            .query_pairs_mut()
+        let mut redirect_query = redirect_url.query_pairs_mut();
+        redirect_query
             .clear()
             .append_pair("native_app_port", &query.native_app_port)
             .append_pair("native_app_public_key", &query.native_app_public_key);
+
+        if let Some(impersonate) = &query.impersonate {
+            redirect_query.append_pair("impersonate", impersonate);
+        }
     }
 
     let (auth_url, csrf_token) = request
@@ -222,7 +227,20 @@ async fn get_auth_callback(mut request: Request) -> tide::Result {
     // When signing in from the native app, generate a new access token for the current user. Return
     // a redirect so that the user's browser sends this access token to the locally-running app.
     if let Some((user, app_sign_in_params)) = user.zip(query.native_app_sign_in_params) {
-        let access_token = create_access_token(request.db(), user.id).await?;
+        let mut user_id = user.id;
+        if let Some(impersonated_login) = app_sign_in_params.impersonate {
+            log::info!("attempting to impersonate user @{}", impersonated_login);
+            if let Some(user) = request.db().get_users_by_ids([user_id]).await?.first() {
+                if user.admin {
+                    user_id = request.db().create_user(&impersonated_login, false).await?;
+                    log::info!("impersonating user {}", user_id.0);
+                } else {
+                    log::info!("refusing to impersonate user");
+                }
+            }
+        }
+
+        let access_token = create_access_token(request.db(), user_id).await?;
         let native_app_public_key =
             zed_auth::PublicKey::try_from(app_sign_in_params.native_app_public_key.clone())
                 .context("failed to parse app public key")?;
@@ -232,7 +250,7 @@ async fn get_auth_callback(mut request: Request) -> tide::Result {
 
         return Ok(tide::Redirect::new(&format!(
             "http://127.0.0.1:{}?user_id={}&access_token={}",
-            app_sign_in_params.native_app_port, user.id.0, encrypted_access_token,
+            app_sign_in_params.native_app_port, user_id.0, encrypted_access_token,
         ))
         .into());
     }
