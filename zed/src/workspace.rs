@@ -381,8 +381,10 @@ impl Workspace {
         );
         right_sidebar.add_item(
             "icons/user-16.svg",
-            cx.add_view(|cx| PeoplePanel::new(app_state.user_store.clone(), cx))
-                .into(),
+            cx.add_view(|cx| {
+                PeoplePanel::new(app_state.user_store.clone(), app_state.settings.clone(), cx)
+            })
+            .into(),
         );
 
         let mut current_user = app_state.user_store.read(cx).watch_current_user().clone();

@@ -23,6 +23,7 @@ pub struct Theme {
     pub name: String,
     pub workspace: Workspace,
     pub chat_panel: ChatPanel,
+    pub people_panel: PeoplePanel,
     pub selector: Selector,
     pub editor: EditorStyle,
     pub syntax: SyntaxTheme,
@@ -101,6 +102,16 @@ pub struct ChatPanel {
     pub input_editor: InputEditorStyle,
     pub sign_in_prompt: TextStyle,
     pub hovered_sign_in_prompt: TextStyle,
+}
+
+#[derive(Deserialize)]
+pub struct PeoplePanel {
+    #[serde(flatten)]
+    pub container: ContainerStyle,
+    pub collaborator_username: TextStyle,
+    pub worktree_name: ContainedText,
+    pub worktree_host_avatar: ImageStyle,
+    pub worktree_guest_avatar: ImageStyle,
 }
 
 #[derive(Deserialize)]
