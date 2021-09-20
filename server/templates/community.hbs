@@ -1,35 +1,35 @@
 {{#> layout }}
 
-<div class="max-w-screen-lg p-20 mx-auto font-thin">
+<div class="max-w-screen-lg p-10 mx-auto font-thin text-main lg:p-20">
     <h1 class="mb-10 font-display font-extralight">We’re building a community of passionate developers &amp; advocates.</h1>
     <p class="mt-5 leading-7">Be the first to join a community of builders that want to make the future.</p>
     <form action="/signups" method="post" class="mt-10">
+        <input class="block w-full p-5 mt-10 font-thin bg-transparent border border-white" type="text" id="form-email" name="email_address" required minlength="4" placeholder="Your email">
+        <input class="block w-full p-5 mt-5 font-thin bg-transparent border border-white" type="text" id="form-gh" name="github_login" placeholder="Github Username">
+        <textarea class="block w-full h-40 p-5 mt-5 font-thin leading-relaxed bg-transparent border border-white" type="text" name="about" placeholder="Tell us about yourself, and your interest Zed. What do you love or hate about your current code editor?"></textarea>
         <ul>
-            <li class="flex flex-row mt-5 text-lg">
-                <input class="w-8 mr-5" value=true name="wants_releases" type="checkbox" id="form-releases" checked>
+            <li class="flex flex-row mt-10 text-lg">
+                <input class="w-8 mt-2 mr-5" value=true name="wants_releases" type="checkbox" id="form-releases" checked>
                 <div class="flex-1">
                     <label for="wants_releases">I want to try Zed when it is available</label>
                     <p class="mt-1 text-sm leading-6 text-gray-400">Get updates on beta releases, and when Zed launches.</p>
                 </div>
             </li>
             <li class="flex flex-row mt-5 text-lg">
-                <input class="w-8 mr-5" value=true name="wants_updates" type="checkbox" id="form-follow">
+                <input class="w-8 mt-2 mr-5" value=true name="wants_updates" type="checkbox" id="form-follow">
                 <div class="flex-1">
                     <label for="wants_updates">I’m interested in following Zed's development</label>
                     <p class="mt-1 text-sm leading-6 text-gray-400">Receive occasional email updates on the development of Zed and it's tech</p>
                 </div>
             </li>
             <li class="flex flex-row mt-5 text-lg">
-                <input class="w-8 mr-5" value=true name="wants_community" type="checkbox" id="form-community" name="community">
+                <input class="w-8 mt-2 mr-5" value=true name="wants_community" type="checkbox" id="form-community" name="community">
                 <div class="flex-1">
                    <label for="wants_community">I want to join the Zed Universe community</label>
                     <p class="mt-1 text-sm leading-6 text-gray-400">Join the waitlist for our alpha tester community to get early access to releases and contribute to Zed's development through testing &amp; feedback.</p>
                 </div>
             </li>
         </ul>
-        <input class="block w-2/3 p-5 mt-10 text-lg bg-transparent border border-white" type="text" id="form-email" name="email_address" required minlength="4" placeholder="Your email">
-        <input class="block w-2/3 p-5 mt-10 text-lg bg-transparent border border-white" type="text" id="form-gh" name="github_login" placeholder="Github Username">
-        <input class="block w-2/3 p-5 mt-10 text-lg bg-transparent border border-white" type="text" name="about">
 
         <button href="/story" class="block mt-10 text-lg underline">Join the waitlist.</button>
     </form>
