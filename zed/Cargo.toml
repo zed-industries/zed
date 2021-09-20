@@ -14,7 +14,7 @@ name = "Zed"
 path = "src/main.rs"
 
 [features]
-test-support = ["tempdir", "zrpc/test-support"]
+test-support = ["tempdir", "zrpc/test-support", "gpui/test-support"]
 
 [dependencies]
 anyhow = "1.0.38"
@@ -69,6 +69,7 @@ serde_json = { version = "1.0.64", features = ["preserve_order"] }
 tempdir = { version = "0.3.7" }
 unindent = "0.1.7"
 zrpc = { path = "../zrpc", features = ["test-support"] }
+gpui = { path = "../gpui", features = ["test-support"] }
 
 [package.metadata.bundle]
 icon = ["app-icon@2x.png", "app-icon.png"]

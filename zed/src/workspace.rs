@@ -1476,7 +1476,7 @@ mod tests {
         });
         cx.simulate_new_path_selection(|parent_dir| {
             assert_eq!(parent_dir, dir.path());
-            Some(parent_dir.join("the-new-name"))
+            Some(parent_dir.join("the-new-name.rs"))
         });
         cx.read(|cx| {
             assert!(editor.is_dirty(cx));
@@ -1489,8 +1489,10 @@ mod tests {
             .await;
         cx.read(|cx| {
             assert!(!editor.is_dirty(cx));
-            assert_eq!(editor.title(cx), "the-new-name");
+            assert_eq!(editor.title(cx), "the-new-name.rs");
         });
+        // The language is assigned based on the path
+        editor.read_with(&cx, |editor, cx| assert!(editor.language(cx).is_some()));
 
         // Edit the file and save it again. This time, there is no filename prompt.
         editor.update(&mut cx, |editor, cx| {
@@ -1504,7 +1506,7 @@ mod tests {
         editor
             .condition(&cx, |editor, cx| !editor.is_dirty(cx))
             .await;
-        cx.read(|cx| assert_eq!(editor.title(cx), "the-new-name"));
+        cx.read(|cx| assert_eq!(editor.title(cx), "the-new-name.rs"));
 
         // Open the same newly-created file in another pane item. The new editor should reuse
         // the same buffer.
@@ -1512,7 +1514,7 @@ mod tests {
             workspace.open_new_file(&OpenNew(app_state.clone()), cx);
             workspace.split_pane(workspace.active_pane().clone(), SplitDirection::Right, cx);
             assert!(workspace
-                .open_entry((tree.id(), Path::new("the-new-name").into()), cx)
+                .open_entry((tree.id(), Path::new("the-new-name.rs").into()), cx)
                 .is_none());
         });
         let editor2 = workspace.update(&mut cx, |workspace, cx| {

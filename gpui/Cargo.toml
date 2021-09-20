@@ -4,6 +4,9 @@ edition = "2018"
 name = "gpui"
 version = "0.1.0"
 
+[features]
+test-support = []
+
 [dependencies]
 arrayvec = "0.7.1"
 async-task = "4.0.3"
