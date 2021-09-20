@@ -801,6 +801,10 @@ impl Buffer {
         cx.emit(Event::FileHandleChanged);
     }
 
+    pub fn language(&self) -> Option<&Arc<Language>> {
+        self.language.as_ref()
+    }
+
     pub fn parse_count(&self) -> usize {
         self.parse_count
     }
