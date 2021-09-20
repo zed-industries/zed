@@ -230,7 +230,11 @@ impl Client {
         }
     }
 
-    pub fn subscribe<T, M, F>(self: &Arc<Self>, cx: ModelContext<M>, mut handler: F) -> Subscription
+    pub fn subscribe<T, M, F>(
+        self: &Arc<Self>,
+        cx: &mut ModelContext<M>,
+        mut handler: F,
+    ) -> Subscription
     where
         T: EnvelopedMessage,
         M: Entity,

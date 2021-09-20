@@ -267,13 +267,12 @@ impl Server {
             .await
             .user_id_for_connection(request.sender_id)?;
 
-        let mut collaborator_user_ids = Vec::new();
+        let mut collaborator_user_ids = HashSet::new();
+        collaborator_user_ids.insert(host_user_id);
         for github_login in request.payload.collaborator_logins {
             match self.app_state.db.create_user(&github_login, false).await {
                 Ok(collaborator_user_id) => {
-                    if collaborator_user_id != host_user_id {
-                        collaborator_user_ids.push(collaborator_user_id);
-                    }
+                    collaborator_user_ids.insert(collaborator_user_id);
                 }
                 Err(err) => {
                     let message = err.to_string();
@@ -285,24 +284,19 @@ impl Server {
             }
         }
 
-        let worktree_id;
-        let mut user_ids;
-        {
-            let mut state = self.state.write().await;
-            worktree_id = state.add_worktree(Worktree {
-                host_connection_id: request.sender_id,
-                collaborator_user_ids: collaborator_user_ids.clone(),
-                root_name: request.payload.root_name,
-                share: None,
-            });
-            user_ids = collaborator_user_ids;
-            user_ids.push(host_user_id);
-        }
+        let collaborator_user_ids = collaborator_user_ids.into_iter().collect::<Vec<_>>();
+        let worktree_id = self.state.write().await.add_worktree(Worktree {
+            host_connection_id: request.sender_id,
+            collaborator_user_ids: collaborator_user_ids.clone(),
+            root_name: request.payload.root_name,
+            share: None,
+        });
 
         self.peer
             .respond(receipt, proto::OpenWorktreeResponse { worktree_id })
             .await?;
-        self.update_collaborators_for_users(&user_ids).await?;
+        self.update_collaborators_for_users(&collaborator_user_ids)
+            .await?;
 
         Ok(())
     }
@@ -311,11 +305,6 @@ impl Server {
         self: Arc<Server>,
         mut request: TypedEnvelope<proto::ShareWorktree>,
     ) -> tide::Result<()> {
-        let host_user_id = self
-            .state
-            .read()
-            .await
-            .user_id_for_connection(request.sender_id)?;
         let worktree = request
             .payload
             .worktree
@@ -333,15 +322,14 @@ impl Server {
                 active_replica_ids: Default::default(),
                 entries,
             });
-
-            let mut user_ids = worktree.collaborator_user_ids.clone();
-            user_ids.push(host_user_id);
+            let collaborator_user_ids = worktree.collaborator_user_ids.clone();
 
             drop(state);
             self.peer
                 .respond(request.receipt(), proto::ShareWorktreeResponse {})
                 .await?;
-            self.update_collaborators_for_users(&user_ids).await?;
+            self.update_collaborators_for_users(&collaborator_user_ids)
+                .await?;
         } else {
             self.peer
                 .respond_with_error(
@@ -360,14 +348,9 @@ impl Server {
         request: TypedEnvelope<proto::UnshareWorktree>,
     ) -> tide::Result<()> {
         let worktree_id = request.payload.worktree_id;
-        let host_user_id = self
-            .state
-            .read()
-            .await
-            .user_id_for_connection(request.sender_id)?;
 
         let connection_ids;
-        let mut user_ids;
+        let collaborator_user_ids;
         {
             let mut state = self.state.write().await;
             let worktree = state.write_worktree(worktree_id, request.sender_id)?;
@@ -376,8 +359,8 @@ impl Server {
             }
 
             connection_ids = worktree.connection_ids();
-            user_ids = worktree.collaborator_user_ids.clone();
-            user_ids.push(host_user_id);
+            collaborator_user_ids = worktree.collaborator_user_ids.clone();
+
             worktree.share.take();
             for connection_id in &connection_ids {
                 if let Some(connection) = state.connections.get_mut(connection_id) {
@@ -391,7 +374,8 @@ impl Server {
                 .send(conn_id, proto::UnshareWorktree { worktree_id })
         })
         .await?;
-        self.update_collaborators_for_users(&user_ids).await?;
+        self.update_collaborators_for_users(&collaborator_user_ids)
+            .await?;
 
         Ok(())
     }
@@ -409,7 +393,7 @@ impl Server {
 
         let response;
         let connection_ids;
-        let mut user_ids;
+        let collaborator_user_ids;
         let mut state = self.state.write().await;
         match state.join_worktree(request.sender_id, user_id, worktree_id) {
             Ok((peer_replica_id, worktree)) => {
@@ -437,11 +421,8 @@ impl Server {
                     replica_id: peer_replica_id as u32,
                     peers,
                 };
-
-                let host_connection_id = worktree.host_connection_id;
                 connection_ids = worktree.connection_ids();
-                user_ids = worktree.collaborator_user_ids.clone();
-                user_ids.push(state.user_id_for_connection(host_connection_id)?);
+                collaborator_user_ids = worktree.collaborator_user_ids.clone();
             }
             Err(error) => {
                 self.peer
@@ -471,7 +452,8 @@ impl Server {
         })
         .await?;
         self.peer.respond(request.receipt(), response).await?;
-        self.update_collaborators_for_users(&user_ids).await?;
+        self.update_collaborators_for_users(&collaborator_user_ids)
+            .await?;
 
         Ok(())
     }
@@ -490,16 +472,14 @@ impl Server {
         sender_conn_id: ConnectionId,
     ) -> tide::Result<()> {
         let connection_ids;
-        let mut user_ids;
-
+        let collaborator_user_ids;
         let mut is_host = false;
         let mut is_guest = false;
         {
             let mut state = self.state.write().await;
             let worktree = state.write_worktree(worktree_id, sender_conn_id)?;
-            let host_connection_id = worktree.host_connection_id;
             connection_ids = worktree.connection_ids();
-            user_ids = worktree.collaborator_user_ids.clone();
+            collaborator_user_ids = worktree.collaborator_user_ids.clone();
 
             if worktree.host_connection_id == sender_conn_id {
                 is_host = true;
@@ -511,8 +491,6 @@ impl Server {
                     share.active_replica_ids.remove(&replica_id);
                 }
             }
-
-            user_ids.push(state.user_id_for_connection(host_connection_id)?);
         }
 
         if is_host {
@@ -533,7 +511,8 @@ impl Server {
             })
             .await?
         }
-        self.update_collaborators_for_users(&user_ids).await?;
+        self.update_collaborators_for_users(&collaborator_user_ids)
+            .await?;
         Ok(())
     }
 

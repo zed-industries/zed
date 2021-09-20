@@ -1,14 +1,17 @@
 use crate::{
     http::{HttpClient, Method, Request, Url},
-    rpc::{Client, Status},
+    rpc::{self, Client, Status},
     util::TryFutureExt,
 };
 use anyhow::{anyhow, Context, Result};
 use futures::future;
-use gpui::{Entity, ImageData, ModelContext, Task};
+use gpui::{AsyncAppContext, Entity, ImageData, ModelContext, ModelHandle, Task};
 use postage::{prelude::Stream, sink::Sink, watch};
-use std::{collections::HashMap, sync::Arc};
-use zrpc::proto;
+use std::{
+    collections::{HashMap, HashSet},
+    sync::Arc,
+};
+use zrpc::{proto, TypedEnvelope};
 
 #[derive(Debug)]
 pub struct User {
@@ -17,11 +20,26 @@ pub struct User {
     pub avatar: Option<Arc<ImageData>>,
 }
 
+#[derive(Debug)]
+struct Collaborator {
+    pub user: Arc<User>,
+    pub worktrees: Vec<WorktreeMetadata>,
+}
+
+#[derive(Debug)]
+struct WorktreeMetadata {
+    pub root_name: String,
+    pub is_shared: bool,
+    pub participants: Vec<Arc<User>>,
+}
+
 pub struct UserStore {
     users: HashMap<u64, Arc<User>>,
     current_user: watch::Receiver<Option<Arc<User>>>,
+    collaborators: Vec<Collaborator>,
     rpc: Arc<Client>,
     http: Arc<dyn HttpClient>,
+    _maintain_collaborators: rpc::Subscription,
     _maintain_current_user: Task<()>,
 }
 
@@ -37,8 +55,10 @@ impl UserStore {
         Self {
             users: Default::default(),
             current_user: current_user_rx,
+            collaborators: Default::default(),
             rpc: rpc.clone(),
             http,
+            _maintain_collaborators: rpc.subscribe(cx, Self::update_collaborators),
             _maintain_current_user: cx.spawn_weak(|this, mut cx| async move {
                 let mut status = rpc.status();
                 while let Some(status) = status.recv().await {
@@ -60,6 +80,45 @@ impl UserStore {
                 }
             }),
         }
+    }
+
+    fn update_collaborators(
+        &mut self,
+        message: TypedEnvelope<proto::UpdateCollaborators>,
+        _: Arc<Client>,
+        cx: &mut ModelContext<Self>,
+    ) -> Result<()> {
+        let mut user_ids = HashSet::new();
+        for collaborator in &message.payload.collaborators {
+            user_ids.insert(collaborator.user_id);
+            user_ids.extend(
+                collaborator
+                    .worktrees
+                    .iter()
+                    .flat_map(|w| &w.participants)
+                    .copied(),
+            );
+        }
+
+        let load_users = self.load_users(user_ids.into_iter().collect(), cx);
+        cx.spawn(|this, mut cx| async move {
+            load_users.await?;
+
+            let mut collaborators = Vec::new();
+            for collaborator in message.payload.collaborators {
+                collaborators.push(Collaborator::from_proto(collaborator, &this, &mut cx).await?);
+            }
+
+            this.update(&mut cx, |this, cx| {
+                this.collaborators = collaborators;
+                cx.notify();
+            });
+
+            Result::<_, anyhow::Error>::Ok(())
+        })
+        .detach();
+
+        Ok(())
     }
 
     pub fn load_users(
@@ -131,6 +190,39 @@ impl User {
             github_login: message.github_login,
             avatar: fetch_avatar(http, &message.avatar_url).log_err().await,
         }
+    }
+}
+
+impl Collaborator {
+    async fn from_proto(
+        collaborator: proto::Collaborator,
+        user_store: &ModelHandle<UserStore>,
+        cx: &mut AsyncAppContext,
+    ) -> Result<Self> {
+        let user = user_store
+            .update(cx, |user_store, cx| {
+                user_store.fetch_user(collaborator.user_id, cx)
+            })
+            .await?;
+        let mut worktrees = Vec::new();
+        for worktree in collaborator.worktrees {
+            let mut participants = Vec::new();
+            for participant_id in worktree.participants {
+                participants.push(
+                    user_store
+                        .update(cx, |user_store, cx| {
+                            user_store.fetch_user(participant_id, cx)
+                        })
+                        .await?,
+                );
+            }
+            worktrees.push(WorktreeMetadata {
+                root_name: worktree.root_name,
+                is_shared: worktree.is_shared,
+                participants,
+            });
+        }
+        Ok(Self { user, worktrees })
     }
 }
 

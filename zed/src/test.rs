@@ -4,7 +4,6 @@ use crate::{
     fs::RealFs,
     http::{HttpClient, Request, Response, ServerResponse},
     language::LanguageRegistry,
-    presence::Presence,
     rpc::{self, Client, Credentials, EstablishConnectionError},
     settings::{self, ThemeRegistry},
     time::ReplicaId,
