@@ -18,7 +18,7 @@ width = 16
 
 [workspace.tab]
 text = "$text.2"
-padding = { left = 10, right = 10 }
+padding = { left = 12, right = 12 }
 icon_width = 8
 spacing = 10
 icon_close = "$text.2.color"
