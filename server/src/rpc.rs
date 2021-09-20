@@ -1289,7 +1289,7 @@ mod tests {
         github, AppState, Config,
     };
     use async_std::{sync::RwLockReadGuard, task};
-    use gpui::TestAppContext;
+    use gpui::{ModelHandle, TestAppContext};
     use parking_lot::Mutex;
     use postage::{mpsc, watch};
     use serde_json::json;
@@ -1780,24 +1780,24 @@ mod tests {
         // Create an org that includes these 2 users.
         let db = &server.app_state.db;
         let org_id = db.create_org("Test Org", "test-org").await.unwrap();
-        db.add_org_member(org_id, current_user_id(&user_store_a), false)
+        db.add_org_member(org_id, current_user_id(&user_store_a, &cx_a), false)
             .await
             .unwrap();
-        db.add_org_member(org_id, current_user_id(&user_store_b), false)
+        db.add_org_member(org_id, current_user_id(&user_store_b, &cx_b), false)
             .await
             .unwrap();
 
         // Create a channel that includes all the users.
         let channel_id = db.create_org_channel(org_id, "test-channel").await.unwrap();
-        db.add_channel_member(channel_id, current_user_id(&user_store_a), false)
+        db.add_channel_member(channel_id, current_user_id(&user_store_a, &cx_a), false)
             .await
             .unwrap();
-        db.add_channel_member(channel_id, current_user_id(&user_store_b), false)
+        db.add_channel_member(channel_id, current_user_id(&user_store_b, &cx_b), false)
             .await
             .unwrap();
         db.create_channel_message(
             channel_id,
-            current_user_id(&user_store_b),
+            current_user_id(&user_store_b, &cx_b),
             "hello A, it's B.",
             OffsetDateTime::now_utc(),
             1,
@@ -1912,10 +1912,10 @@ mod tests {
         let db = &server.app_state.db;
         let org_id = db.create_org("Test Org", "test-org").await.unwrap();
         let channel_id = db.create_org_channel(org_id, "test-channel").await.unwrap();
-        db.add_org_member(org_id, current_user_id(&user_store_a), false)
+        db.add_org_member(org_id, current_user_id(&user_store_a, &cx_a), false)
             .await
             .unwrap();
-        db.add_channel_member(channel_id, current_user_id(&user_store_a), false)
+        db.add_channel_member(channel_id, current_user_id(&user_store_a, &cx_a), false)
             .await
             .unwrap();
 
@@ -1964,7 +1964,6 @@ mod tests {
     #[gpui::test]
     async fn test_chat_reconnection(mut cx_a: TestAppContext, mut cx_b: TestAppContext) {
         cx_a.foreground().forbid_parking();
-        let http = FakeHttpClient::new(|_| async move { Ok(surf::http::Response::new(404)) });
 
         // Connect to a server as 2 clients.
         let mut server = TestServer::start().await;
@@ -1975,24 +1974,24 @@ mod tests {
         // Create an org that includes these 2 users.
         let db = &server.app_state.db;
         let org_id = db.create_org("Test Org", "test-org").await.unwrap();
-        db.add_org_member(org_id, current_user_id(&user_store_a), false)
+        db.add_org_member(org_id, current_user_id(&user_store_a, &cx_a), false)
             .await
             .unwrap();
-        db.add_org_member(org_id, current_user_id(&user_store_b), false)
+        db.add_org_member(org_id, current_user_id(&user_store_b, &cx_b), false)
             .await
             .unwrap();
 
         // Create a channel that includes all the users.
         let channel_id = db.create_org_channel(org_id, "test-channel").await.unwrap();
-        db.add_channel_member(channel_id, current_user_id(&user_store_a), false)
+        db.add_channel_member(channel_id, current_user_id(&user_store_a, &cx_a), false)
             .await
             .unwrap();
-        db.add_channel_member(channel_id, current_user_id(&user_store_b), false)
+        db.add_channel_member(channel_id, current_user_id(&user_store_b, &cx_b), false)
             .await
             .unwrap();
         db.create_channel_message(
             channel_id,
-            current_user_id(&user_store_b),
+            current_user_id(&user_store_b, &cx_b),
             "hello A, it's B.",
             OffsetDateTime::now_utc(),
             2,
@@ -2000,8 +1999,6 @@ mod tests {
         .await
         .unwrap();
 
-        let user_store_a =
-            UserStore::new(client_a.clone(), http.clone(), cx_a.background().as_ref());
         let channels_a = cx_a.add_model(|cx| ChannelList::new(user_store_a, client_a, cx));
         channels_a
             .condition(&mut cx_a, |list, _| list.available_channels().is_some())
@@ -2054,7 +2051,7 @@ mod tests {
 
         // Disconnect client B, ensuring we can still access its cached channel data.
         server.forbid_connections();
-        server.disconnect_client(current_user_id(&user_store_b));
+        server.disconnect_client(current_user_id(&user_store_b, &cx_b));
         while !matches!(
             status_b.recv().await,
             Some(rpc::Status::ReconnectionError { .. })
@@ -2206,7 +2203,7 @@ mod tests {
             &mut self,
             cx: &mut TestAppContext,
             name: &str,
-        ) -> (Arc<Client>, Arc<UserStore>) {
+        ) -> (Arc<Client>, ModelHandle<UserStore>) {
             let user_id = self.app_state.db.create_user(name, false).await.unwrap();
             let client_name = name.to_string();
             let mut client = Client::new();
@@ -2254,8 +2251,9 @@ mod tests {
                 .await
                 .unwrap();
 
-            let user_store = UserStore::new(client.clone(), http, &cx.background());
-            let mut authed_user = user_store.watch_current_user();
+            let user_store = cx.add_model(|cx| UserStore::new(client.clone(), http, cx));
+            let mut authed_user =
+                user_store.read_with(cx, |user_store, _| user_store.watch_current_user());
             while authed_user.recv().await.unwrap().is_none() {}
 
             (client, user_store)
@@ -2314,8 +2312,10 @@ mod tests {
         }
     }
 
-    fn current_user_id(user_store: &Arc<UserStore>) -> UserId {
-        UserId::from_proto(user_store.current_user().unwrap().id)
+    fn current_user_id(user_store: &ModelHandle<UserStore>, cx: &TestAppContext) -> UserId {
+        UserId::from_proto(
+            user_store.read_with(cx, |user_store, _| user_store.current_user().unwrap().id),
+        )
     }
 
     fn channel_messages(channel: &Channel) -> Vec<(String, String, bool)> {

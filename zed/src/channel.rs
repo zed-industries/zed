@@ -6,7 +6,7 @@ use crate::{
 use anyhow::{anyhow, Context, Result};
 use gpui::{
     sum_tree::{self, Bias, SumTree},
-    Entity, ModelContext, ModelHandle, MutableAppContext, Task, WeakModelHandle,
+    AsyncAppContext, Entity, ModelContext, ModelHandle, MutableAppContext, Task, WeakModelHandle,
 };
 use postage::prelude::Stream;
 use rand::prelude::*;
@@ -26,7 +26,7 @@ pub struct ChannelList {
     available_channels: Option<Vec<ChannelDetails>>,
     channels: HashMap<u64, WeakModelHandle<Channel>>,
     rpc: Arc<Client>,
-    user_store: Arc<UserStore>,
+    user_store: ModelHandle<UserStore>,
     _task: Task<Option<()>>,
 }
 
@@ -41,7 +41,7 @@ pub struct Channel {
     messages: SumTree<ChannelMessage>,
     loaded_all_messages: bool,
     next_pending_message_id: usize,
-    user_store: Arc<UserStore>,
+    user_store: ModelHandle<UserStore>,
     rpc: Arc<Client>,
     rng: StdRng,
     _subscription: rpc::Subscription,
@@ -87,7 +87,7 @@ impl Entity for ChannelList {
 
 impl ChannelList {
     pub fn new(
-        user_store: Arc<UserStore>,
+        user_store: ModelHandle<UserStore>,
         rpc: Arc<rpc::Client>,
         cx: &mut ModelContext<Self>,
     ) -> Self {
@@ -186,7 +186,7 @@ impl Entity for Channel {
 impl Channel {
     pub fn new(
         details: ChannelDetails,
-        user_store: Arc<UserStore>,
+        user_store: ModelHandle<UserStore>,
         rpc: Arc<Client>,
         cx: &mut ModelContext<Self>,
     ) -> Self {
@@ -199,7 +199,8 @@ impl Channel {
             cx.spawn(|channel, mut cx| {
                 async move {
                     let response = rpc.request(proto::JoinChannel { channel_id }).await?;
-                    let messages = messages_from_proto(response.messages, &user_store).await?;
+                    let messages =
+                        messages_from_proto(response.messages, &user_store, &mut cx).await?;
                     let loaded_all_messages = response.done;
 
                     channel.update(&mut cx, |channel, cx| {
@@ -241,6 +242,7 @@ impl Channel {
 
         let current_user = self
             .user_store
+            .read(cx)
             .current_user()
             .ok_or_else(|| anyhow!("current_user is not present"))?;
 
@@ -272,6 +274,7 @@ impl Channel {
             let message = ChannelMessage::from_proto(
                 response.message.ok_or_else(|| anyhow!("invalid message"))?,
                 &user_store,
+                &mut cx,
             )
             .await?;
             this.update(&mut cx, |this, cx| {
@@ -301,7 +304,8 @@ impl Channel {
                             })
                             .await?;
                         let loaded_all_messages = response.done;
-                        let messages = messages_from_proto(response.messages, &user_store).await?;
+                        let messages =
+                            messages_from_proto(response.messages, &user_store, &mut cx).await?;
                         this.update(&mut cx, |this, cx| {
                             this.loaded_all_messages = loaded_all_messages;
                             this.insert_messages(messages, cx);
@@ -324,7 +328,7 @@ impl Channel {
         cx.spawn(|this, mut cx| {
             async move {
                 let response = rpc.request(proto::JoinChannel { channel_id }).await?;
-                let messages = messages_from_proto(response.messages, &user_store).await?;
+                let messages = messages_from_proto(response.messages, &user_store, &mut cx).await?;
                 let loaded_all_messages = response.done;
 
                 let pending_messages = this.update(&mut cx, |this, cx| {
@@ -359,6 +363,7 @@ impl Channel {
                     let message = ChannelMessage::from_proto(
                         response.message.ok_or_else(|| anyhow!("invalid message"))?,
                         &user_store,
+                        &mut cx,
                     )
                     .await?;
                     this.update(&mut cx, |this, cx| {
@@ -413,7 +418,7 @@ impl Channel {
 
         cx.spawn(|this, mut cx| {
             async move {
-                let message = ChannelMessage::from_proto(message, &user_store).await?;
+                let message = ChannelMessage::from_proto(message, &user_store, &mut cx).await?;
                 this.update(&mut cx, |this, cx| {
                     this.insert_messages(SumTree::from_item(message, &()), cx)
                 });
@@ -486,7 +491,8 @@ impl Channel {
 
 async fn messages_from_proto(
     proto_messages: Vec<proto::ChannelMessage>,
-    user_store: &UserStore,
+    user_store: &ModelHandle<UserStore>,
+    cx: &mut AsyncAppContext,
 ) -> Result<SumTree<ChannelMessage>> {
     let unique_user_ids = proto_messages
         .iter()
@@ -494,11 +500,15 @@ async fn messages_from_proto(
         .collect::<HashSet<_>>()
         .into_iter()
         .collect();
-    user_store.load_users(unique_user_ids).await?;
+    user_store
+        .update(cx, |user_store, cx| {
+            user_store.load_users(unique_user_ids, cx)
+        })
+        .await?;
 
     let mut messages = Vec::with_capacity(proto_messages.len());
     for message in proto_messages {
-        messages.push(ChannelMessage::from_proto(message, &user_store).await?);
+        messages.push(ChannelMessage::from_proto(message, user_store, cx).await?);
     }
     let mut result = SumTree::new();
     result.extend(messages, &());
@@ -517,9 +527,14 @@ impl From<proto::Channel> for ChannelDetails {
 impl ChannelMessage {
     pub async fn from_proto(
         message: proto::ChannelMessage,
-        user_store: &UserStore,
+        user_store: &ModelHandle<UserStore>,
+        cx: &mut AsyncAppContext,
     ) -> Result<Self> {
-        let sender = user_store.fetch_user(message.sender_id).await?;
+        let sender = user_store
+            .update(cx, |user_store, cx| {
+                user_store.fetch_user(message.sender_id, cx)
+            })
+            .await?;
         Ok(ChannelMessage {
             id: ChannelMessageId::Saved(message.id),
             body: message.body,
@@ -595,7 +610,7 @@ mod tests {
         let mut client = Client::new();
         let http_client = FakeHttpClient::new(|_| async move { Ok(Response::new(404)) });
         let server = FakeServer::for_client(user_id, &mut client, &cx).await;
-        let user_store = UserStore::new(client.clone(), http_client, cx.background().as_ref());
+        let user_store = cx.add_model(|cx| UserStore::new(client.clone(), http_client, cx));
 
         let channel_list = cx.add_model(|cx| ChannelList::new(user_store, client.clone(), cx));
         channel_list.read_with(&cx, |list, _| assert_eq!(list.available_channels(), None));

@@ -1,16 +1,17 @@
-use crate::presence::Presence;
 use gpui::{
     elements::Empty, Element, ElementBox, Entity, ModelHandle, RenderContext, View, ViewContext,
 };
 
+use crate::user::UserStore;
+
 pub struct PeoplePanel {
-    presence: ModelHandle<Presence>,
+    user_store: ModelHandle<UserStore>,
 }
 
 impl PeoplePanel {
-    pub fn new(presence: ModelHandle<Presence>, cx: &mut ViewContext<Self>) -> Self {
-        cx.observe(&presence, |_, _, cx| cx.notify());
-        Self { presence }
+    pub fn new(user_store: ModelHandle<UserStore>, cx: &mut ViewContext<Self>) -> Self {
+        cx.observe(&user_store, |_, _, cx| cx.notify());
+        Self { user_store }
     }
 }
 

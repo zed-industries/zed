@@ -169,14 +169,13 @@ pub fn test_app_state(cx: &mut MutableAppContext) -> Arc<AppState> {
     let themes = ThemeRegistry::new(Assets, cx.font_cache().clone());
     let rpc = rpc::Client::new();
     let http = FakeHttpClient::new(|_| async move { Ok(ServerResponse::new(404)) });
-    let user_store = UserStore::new(rpc.clone(), http, cx.background());
+    let user_store = cx.add_model(|cx| UserStore::new(rpc.clone(), http, cx));
     Arc::new(AppState {
         settings_tx: Arc::new(Mutex::new(settings_tx)),
         settings,
         themes,
         languages: languages.clone(),
         channel_list: cx.add_model(|cx| ChannelList::new(user_store.clone(), rpc.clone(), cx)),
-        presence: cx.add_model(|cx| Presence::new(user_store.clone(), rpc.clone(), cx)),
         rpc,
         user_store,
         fs: Arc::new(RealFs),

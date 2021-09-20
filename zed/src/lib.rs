@@ -28,7 +28,6 @@ use channel::ChannelList;
 use gpui::{action, keymap::Binding, ModelHandle};
 use parking_lot::Mutex;
 use postage::watch;
-use presence::Presence;
 use std::sync::Arc;
 
 pub use settings::Settings;
@@ -46,10 +45,9 @@ pub struct AppState {
     pub languages: Arc<language::LanguageRegistry>,
     pub themes: Arc<settings::ThemeRegistry>,
     pub rpc: Arc<rpc::Client>,
-    pub user_store: Arc<user::UserStore>,
+    pub user_store: ModelHandle<user::UserStore>,
     pub fs: Arc<dyn fs::Fs>,
     pub channel_list: ModelHandle<ChannelList>,
-    pub presence: ModelHandle<Presence>,
 }
 
 pub fn init(app_state: &Arc<AppState>, cx: &mut gpui::MutableAppContext) {

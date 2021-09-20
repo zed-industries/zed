@@ -333,7 +333,7 @@ pub struct Workspace {
     pub settings: watch::Receiver<Settings>,
     languages: Arc<LanguageRegistry>,
     rpc: Arc<rpc::Client>,
-    user_store: Arc<user::UserStore>,
+    user_store: ModelHandle<user::UserStore>,
     fs: Arc<dyn Fs>,
     modal: Option<AnyViewHandle>,
     center: PaneGroup,
@@ -381,11 +381,11 @@ impl Workspace {
         );
         right_sidebar.add_item(
             "icons/user-16.svg",
-            cx.add_view(|cx| PeoplePanel::new(app_state.presence.clone(), cx))
+            cx.add_view(|cx| PeoplePanel::new(app_state.user_store.clone(), cx))
                 .into(),
         );
 
-        let mut current_user = app_state.user_store.watch_current_user().clone();
+        let mut current_user = app_state.user_store.read(cx).watch_current_user().clone();
         let mut connection_status = app_state.rpc.status().clone();
         let _observe_current_user = cx.spawn_weak(|this, mut cx| async move {
             current_user.recv().await;
@@ -965,6 +965,7 @@ impl Workspace {
         let theme = &self.settings.borrow().theme;
         let avatar = if let Some(avatar) = self
             .user_store
+            .read(cx)
             .current_user()
             .and_then(|user| user.avatar.clone())
         {

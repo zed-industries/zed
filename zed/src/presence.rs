@@ -106,24 +106,25 @@ impl Entity for Presence {
     type Event = Event;
 }
 
-impl Collaborator {
-    async fn from_proto(
-        collaborator: proto::Collaborator,
-        user_store: &Arc<UserStore>,
-    ) -> Result<Self> {
-        let user = user_store.fetch_user(collaborator.user_id).await?;
-        let mut worktrees = Vec::new();
-        for worktree in collaborator.worktrees {
-            let mut participants = Vec::new();
-            for participant_id in worktree.participants {
-                participants.push(user_store.fetch_user(participant_id).await?);
-            }
-            worktrees.push(WorktreeMetadata {
-                root_name: worktree.root_name,
-                is_shared: worktree.is_shared,
-                participants,
-            });
-        }
-        Ok(Self { user, worktrees })
-    }
-}
+// impl Collaborator {
+//     async fn from_proto(
+//         collaborator: proto::Collaborator,
+//         user_store: &Arc<UserStore>,
+//         cx: &mut AsyncAppContext,
+//     ) -> Result<Self> {
+//         let user = user_store.fetch_user(collaborator.user_id).await?;
+//         let mut worktrees = Vec::new();
+//         for worktree in collaborator.worktrees {
+//             let mut participants = Vec::new();
+//             for participant_id in worktree.participants {
+//                 participants.push(user_store.fetch_user(participant_id).await?);
+//             }
+//             worktrees.push(WorktreeMetadata {
+//                 root_name: worktree.root_name,
+//                 is_shared: worktree.is_shared,
+//                 participants,
+//             });
+//         }
+//         Ok(Self { user, worktrees })
+//     }
+// }
