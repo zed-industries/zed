@@ -1,6 +1,6 @@
 use crate::{
     http::{HttpClient, Method, Request, Url},
-    rpc::{self, Client, Status},
+    rpc::{Client, Status},
     util::TryFutureExt,
 };
 use anyhow::{anyhow, Context, Result};
@@ -21,13 +21,13 @@ pub struct User {
 }
 
 #[derive(Debug)]
-struct Collaborator {
+pub struct Collaborator {
     pub user: Arc<User>,
     pub worktrees: Vec<WorktreeMetadata>,
 }
 
 #[derive(Debug)]
-struct WorktreeMetadata {
+pub struct WorktreeMetadata {
     pub root_name: String,
     pub is_shared: bool,
     pub participants: Vec<Arc<User>>,
@@ -39,7 +39,7 @@ pub struct UserStore {
     collaborators: Vec<Collaborator>,
     rpc: Arc<Client>,
     http: Arc<dyn HttpClient>,
-    _maintain_collaborators: rpc::Subscription,
+    _maintain_collaborators: Task<()>,
     _maintain_current_user: Task<()>,
 }
 
@@ -52,13 +52,31 @@ impl Entity for UserStore {
 impl UserStore {
     pub fn new(rpc: Arc<Client>, http: Arc<dyn HttpClient>, cx: &mut ModelContext<Self>) -> Self {
         let (mut current_user_tx, current_user_rx) = watch::channel();
+        let (mut update_collaborators_tx, mut update_collaborators_rx) =
+            watch::channel::<Option<proto::UpdateCollaborators>>();
+        let update_collaborators_subscription = rpc.subscribe(
+            cx,
+            move |_: &mut Self, msg: TypedEnvelope<proto::UpdateCollaborators>, _, _| {
+                let _ = update_collaborators_tx.blocking_send(Some(msg.payload));
+                Ok(())
+            },
+        );
         Self {
             users: Default::default(),
             current_user: current_user_rx,
             collaborators: Default::default(),
             rpc: rpc.clone(),
             http,
-            _maintain_collaborators: rpc.subscribe(cx, Self::update_collaborators),
+            _maintain_collaborators: cx.spawn_weak(|this, mut cx| async move {
+                let _subscription = update_collaborators_subscription;
+                while let Some(message) = update_collaborators_rx.recv().await {
+                    if let Some((message, this)) = message.zip(this.upgrade(&cx)) {
+                        this.update(&mut cx, |this, cx| this.update_collaborators(message, cx))
+                            .log_err()
+                            .await;
+                    }
+                }
+            }),
             _maintain_current_user: cx.spawn_weak(|this, mut cx| async move {
                 let mut status = rpc.status();
                 while let Some(status) = status.recv().await {
@@ -84,12 +102,11 @@ impl UserStore {
 
     fn update_collaborators(
         &mut self,
-        message: TypedEnvelope<proto::UpdateCollaborators>,
-        _: Arc<Client>,
+        message: proto::UpdateCollaborators,
         cx: &mut ModelContext<Self>,
-    ) -> Result<()> {
+    ) -> Task<Result<()>> {
         let mut user_ids = HashSet::new();
-        for collaborator in &message.payload.collaborators {
+        for collaborator in &message.collaborators {
             user_ids.insert(collaborator.user_id);
             user_ids.extend(
                 collaborator
@@ -105,7 +122,7 @@ impl UserStore {
             load_users.await?;
 
             let mut collaborators = Vec::new();
-            for collaborator in message.payload.collaborators {
+            for collaborator in message.collaborators {
                 collaborators.push(Collaborator::from_proto(collaborator, &this, &mut cx).await?);
             }
 
@@ -114,11 +131,12 @@ impl UserStore {
                 cx.notify();
             });
 
-            Result::<_, anyhow::Error>::Ok(())
+            Ok(())
         })
-        .detach();
+    }
 
-        Ok(())
+    pub fn collaborators(&self) -> &[Collaborator] {
+        &self.collaborators
     }
 
     pub fn load_users(

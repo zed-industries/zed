@@ -149,6 +149,9 @@ impl Server {
             let (connection_id, handle_io, mut incoming_rx) =
                 this.peer.add_connection(connection).await;
             this.add_connection(connection_id, user_id).await;
+            if let Err(err) = this.update_collaborators_for_users(&[user_id]).await {
+                log::error!("error updating collaborators for {:?}: {}", user_id, err);
+            }
 
             let handle_io = handle_io.fuse();
             futures::pin_mut!(handle_io);
@@ -668,17 +671,12 @@ impl Server {
         self: Arc<Server>,
         request: TypedEnvelope<proto::GetUsers>,
     ) -> tide::Result<()> {
-        let user_id = self
-            .state
-            .read()
-            .await
-            .user_id_for_connection(request.sender_id)?;
         let receipt = request.receipt();
         let user_ids = request.payload.user_ids.into_iter().map(UserId::from_proto);
         let users = self
             .app_state
             .db
-            .get_users_by_ids(user_id, user_ids)
+            .get_users_by_ids(user_ids)
             .await?
             .into_iter()
             .map(|user| proto::User {
@@ -2148,6 +2146,123 @@ mod tests {
                     ]
             })
             .await;
+    }
+
+    #[gpui::test]
+    async fn test_collaborators(
+        mut cx_a: TestAppContext,
+        mut cx_b: TestAppContext,
+        mut cx_c: TestAppContext,
+    ) {
+        cx_a.foreground().forbid_parking();
+        let lang_registry = Arc::new(LanguageRegistry::new());
+
+        // Connect to a server as 3 clients.
+        let mut server = TestServer::start().await;
+        let (client_a, user_store_a) = server.create_client(&mut cx_a, "user_a").await;
+        let (client_b, user_store_b) = server.create_client(&mut cx_b, "user_b").await;
+        let (_client_c, user_store_c) = server.create_client(&mut cx_c, "user_c").await;
+
+        let fs = Arc::new(FakeFs::new());
+
+        // Share a worktree as client A.
+        fs.insert_tree(
+            "/a",
+            json!({
+                ".zed.toml": r#"collaborators = ["user_b", "user_c"]"#,
+            }),
+        )
+        .await;
+
+        let worktree_a = Worktree::open_local(
+            client_a.clone(),
+            "/a".as_ref(),
+            fs.clone(),
+            lang_registry.clone(),
+            &mut cx_a.to_async(),
+        )
+        .await
+        .unwrap();
+
+        user_store_a
+            .condition(&cx_a, |user_store, _| {
+                collaborators(user_store) == vec![("user_a", vec![("a", vec![])])]
+            })
+            .await;
+        user_store_b
+            .condition(&cx_b, |user_store, _| {
+                collaborators(user_store) == vec![("user_a", vec![("a", vec![])])]
+            })
+            .await;
+        user_store_c
+            .condition(&cx_c, |user_store, _| {
+                collaborators(user_store) == vec![("user_a", vec![("a", vec![])])]
+            })
+            .await;
+
+        let worktree_id = worktree_a
+            .update(&mut cx_a, |tree, cx| tree.as_local_mut().unwrap().share(cx))
+            .await
+            .unwrap();
+
+        let _worktree_b = Worktree::open_remote(
+            client_b.clone(),
+            worktree_id,
+            lang_registry.clone(),
+            &mut cx_b.to_async(),
+        )
+        .await
+        .unwrap();
+
+        user_store_a
+            .condition(&cx_a, |user_store, _| {
+                collaborators(user_store) == vec![("user_a", vec![("a", vec!["user_b"])])]
+            })
+            .await;
+        user_store_b
+            .condition(&cx_b, |user_store, _| {
+                collaborators(user_store) == vec![("user_a", vec![("a", vec!["user_b"])])]
+            })
+            .await;
+        user_store_c
+            .condition(&cx_c, |user_store, _| {
+                collaborators(user_store) == vec![("user_a", vec![("a", vec!["user_b"])])]
+            })
+            .await;
+
+        cx_a.update(move |_| drop(worktree_a));
+        user_store_a
+            .condition(&cx_a, |user_store, _| collaborators(user_store) == vec![])
+            .await;
+        user_store_b
+            .condition(&cx_b, |user_store, _| collaborators(user_store) == vec![])
+            .await;
+        user_store_c
+            .condition(&cx_c, |user_store, _| collaborators(user_store) == vec![])
+            .await;
+
+        fn collaborators(user_store: &UserStore) -> Vec<(&str, Vec<(&str, Vec<&str>)>)> {
+            user_store
+                .collaborators()
+                .iter()
+                .map(|collaborator| {
+                    let worktrees = collaborator
+                        .worktrees
+                        .iter()
+                        .map(|w| {
+                            (
+                                w.root_name.as_str(),
+                                w.participants
+                                    .iter()
+                                    .map(|p| p.github_login.as_str())
+                                    .collect(),
+                            )
+                        })
+                        .collect();
+                    (collaborator.user.github_login.as_str(), worktrees)
+                })
+                .collect()
+        }
     }
 
     struct TestServer {
