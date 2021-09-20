@@ -1466,6 +1466,7 @@ mod tests {
         editor.update(&mut cx, |editor, cx| {
             assert!(!editor.is_dirty(cx.as_ref()));
             assert_eq!(editor.title(cx.as_ref()), "untitled");
+            assert!(editor.language(cx).is_none());
             editor.insert(&Insert("hi".into()), cx);
             assert!(editor.is_dirty(cx.as_ref()));
         });
@@ -1492,7 +1493,9 @@ mod tests {
             assert_eq!(editor.title(cx), "the-new-name.rs");
         });
         // The language is assigned based on the path
-        editor.read_with(&cx, |editor, cx| assert!(editor.language(cx).is_some()));
+        editor.read_with(&cx, |editor, cx| {
+            assert_eq!(editor.language(cx).unwrap().name(), "Rust")
+        });
 
         // Edit the file and save it again. This time, there is no filename prompt.
         editor.update(&mut cx, |editor, cx| {
@@ -1528,6 +1531,47 @@ mod tests {
         cx.read(|cx| {
             assert_eq!(editor2.read(cx).buffer(), editor.read(cx).buffer());
         })
+    }
+
+    #[gpui::test]
+    async fn test_setting_language_when_saving_as_single_file_worktree(
+        mut cx: gpui::TestAppContext,
+    ) {
+        let dir = TempDir::new("test-new-file").unwrap();
+        let app_state = cx.update(test_app_state);
+        let (_, workspace) = cx.add_window(|cx| Workspace::new(&app_state, cx));
+
+        // Create a new untitled buffer
+        let editor = workspace.update(&mut cx, |workspace, cx| {
+            workspace.open_new_file(&OpenNew(app_state.clone()), cx);
+            workspace
+                .active_item(cx)
+                .unwrap()
+                .to_any()
+                .downcast::<Editor>()
+                .unwrap()
+        });
+
+        editor.update(&mut cx, |editor, cx| {
+            assert!(editor.language(cx).is_none());
+            editor.insert(&Insert("hi".into()), cx);
+            assert!(editor.is_dirty(cx.as_ref()));
+        });
+
+        // Save the buffer. This prompts for a filename.
+        workspace.update(&mut cx, |workspace, cx| {
+            workspace.save_active_item(&Save, cx)
+        });
+        cx.simulate_new_path_selection(|_| Some(dir.path().join("the-new-name.rs")));
+
+        editor
+            .condition(&cx, |editor, cx| !editor.is_dirty(cx))
+            .await;
+
+        // The language is assigned based on the path
+        editor.read_with(&cx, |editor, cx| {
+            assert_eq!(editor.language(cx).unwrap().name(), "Rust")
+        });
     }
 
     #[gpui::test]

@@ -719,11 +719,6 @@ impl Buffer {
         let text = self.visible_text.clone();
         let version = self.version.clone();
 
-        if let Some(language) = worktree.read(cx).languages().select_language(&path).cloned() {
-            self.language = Some(language);
-            self.reparse(cx);    
-        }
-
         let save_as = worktree.update(cx, |worktree, cx| {
             worktree
                 .as_local_mut()
@@ -734,6 +729,11 @@ impl Buffer {
         cx.spawn(|this, mut cx| async move {
             save_as.await.map(|new_file| {
                 this.update(&mut cx, |this, cx| {
+                    if let Some(language) = new_file.select_language(cx) {
+                        this.language = Some(language);
+                        this.reparse(cx);
+                    }
+
                     let mtime = new_file.mtime;
                     this.file = Some(new_file);
                     this.did_save(version, mtime, cx);
