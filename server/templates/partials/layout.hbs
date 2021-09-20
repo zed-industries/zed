@@ -24,9 +24,9 @@
     </script>
 </head>
 
-<body class="box-border font-body text-main font-light bg-black">
-    <main class="container mx-auto max-w-screen-2xl min-h-full grid grid-cols-4 gap-x-px bg-white text-gray-50">
-        <nav class="flex flex-col p-10 pt-20 bg-black font-extralight">
+<body class="box-border font-light bg-black font-body text-main">
+    <main class="container flex flex-col mx-auto bg-white lg:flex-none lg:grid lg:min-h-full lg:grid-cols-4 max-w-screen-2xl gap-x-px text-gray-50">
+        <nav class="p-10 bg-black font-extralight lg:hidden">
             <a href="/" class="font-display">
                 <svg width="32" height="32" viewBox="0 0 32 32" fill="none" xmlns="http://www.w3.org/2000/svg">
                 <mask id="path-2-inside-1" fill="white">
@@ -36,17 +36,82 @@
                 <path fill-rule="evenodd" clip-rule="evenodd" d="M10 10L23.5 10L14.875 19H19L22 22H8.5L17.125 13H13L10 10Z" fill="white"/>
                 </svg>
             </a>
-            <div class="font-mono flex flex-col mt-10">
-                <a href="/team" class="text-base lowercase no-underline hover:underline mt-2">
+            
+            <div class="flex flex-row mt-5">
+                <a href="/team" class="mr-2 text-base no-underline lowercase hover:underline">
                     The Team
                 </a>
-                <a href="/story" class="nav-active relative text-base lowercase no-underline hover:underline mt-2">
-                    <span class="nav-active-arrow absolute -left-7 h-full flex justify-center align-middle items-center">
+                <p class="mr-2 text-base">·</p>
+                <a href="/story" class="relative mr-2 text-base no-underline lowercase nav-active hover:underline">
+                    Our Story
+                </a>
+                <p class="mr-2 text-base">·</p>
+                <a href="/community" class="mr-2 text-base no-underline lowercase hover:underline">
+                    Community
+                </a>
+                <p class="mr-2 text-base">·</p>
+                {{#if current_user}}
+                <form id="sign_out" action="/sign_out" method="post" class="inline m-0 mr-2">
+                    <button class="text-base no-underline lowercase hover:underline">Sign out</button>
+                </form>
+
+                {{else}}
+
+                <!-- Otherwise let user log in -->
+                <a href=" /sign_in"
+                    class="mr-2 text-base no-underline lowercase hover:underline">
+                    Log in
+                </a>
+                {{/if}}
+            </div>
+
+            <!-- If user is logged in AND -->
+            <!-- If user is at least an insider -->
+            {{#if current_user}}
+            <p class="mt-2">
+                insider:
+                <a href="/updates" class="mt-2 text-base no-underline lowercase hover:underline">
+                    Updates
+                </a> ·
+                <a href="/releases" class="mt-2 text-base no-underline lowercase hover:underline">
+                    Releases
+                </a>
+            </p>
+
+            <!-- AND If user is an admin -->
+            {{#if current_user.is_admin }}
+            <p class="mt-2">
+                admin:
+                <a href="/admin" class="inline-block mt-2 text-base no-underline lowercase hover:underline">
+                    Manage Users
+                </a>
+            </p>
+            {{/if}}
+
+            {{/if}}
+        </nav>
+
+        <nav class="hidden p-10 pt-20 bg-black lg:flex lg:flex-col font-extralight">
+            <a href="/" class="font-display">
+                <svg width="32" height="32" viewBox="0 0 32 32" fill="none" xmlns="http://www.w3.org/2000/svg">
+                <mask id="path-2-inside-1" fill="white">
+                <path fill-rule="evenodd" clip-rule="evenodd" d="M16 0C7.16344 0 0 7.16344 0 16C0 24.8366 7.16344 32 16 32C24.8366 32 32 24.8366 32 16C32 7.16344 24.8366 0 16 0ZM16 4C9.37258 4 4 9.37258 4 16C4 22.6274 9.37258 28 16 28C22.6274 28 28 22.6274 28 16C28 9.37258 22.6274 4 16 4Z"/>
+                </mask>
+                <path d="M4 16C4 9.37258 9.37258 4 16 4V-4C4.95431 -4 -4 4.95431 -4 16H4ZM16 28C9.37258 28 4 22.6274 4 16H-4C-4 27.0457 4.9543 36 16 36V28ZM28 16C28 22.6274 22.6274 28 16 28V36C27.0457 36 36 27.0457 36 16H28ZM16 4C22.6274 4 28 9.37258 28 16H36C36 4.9543 27.0457 -4 16 -4V4ZM8 16C8 11.5817 11.5817 8 16 8V0C7.16344 0 0 7.16344 0 16H8ZM16 24C11.5817 24 8 20.4183 8 16H0C0 24.8366 7.16344 32 16 32V24ZM24 16C24 20.4183 20.4183 24 16 24V32C24.8366 32 32 24.8366 32 16H24ZM16 8C20.4183 8 24 11.5817 24 16H32C32 7.16344 24.8366 0 16 0V8Z" fill="white" mask="url(#path-2-inside-1)"/>
+                <path fill-rule="evenodd" clip-rule="evenodd" d="M10 10L23.5 10L14.875 19H19L22 22H8.5L17.125 13H13L10 10Z" fill="white"/>
+                </svg>
+            </a>
+            <div class="flex flex-col mt-10 font-mono">
+                <a href="/team" class="mt-2 text-base no-underline lowercase hover:underline">
+                    The Team
+                </a>
+                <a href="/story" class="relative mt-2 text-base no-underline lowercase nav-active hover:underline">
+                    <span class="absolute flex items-center justify-center h-full align-middle nav-active-arrow -left-7">
                         <svg width="16" height="16" viewBox="0 0 16 16" fill="none" xmlns="http://www.w3.org/2000/svg"><path d="M10.1594 12.1606C10.0309 12.0567 9.96803 11.8899 9.96803 11.7204C9.96803 11.5509 10.0321 11.3846 10.1603 11.2564L12.7596 8.65813H1.6562C1.29392 8.65813 1 8.36284 1 7.97732C1 7.63829 1.29392 7.34573 1.6562 7.34573H12.7596L10.1613 4.74747C9.90501 4.49114 9.90501 4.07596 10.1613 3.81949C10.4177 3.56303 10.8328 3.56317 11.0893 3.81949L14.8078 7.53794C15.0641 7.79427 15.0641 8.20945 14.8078 8.46592L11.0893 12.1844C10.832 12.4395 10.4164 12.4395 10.1594 12.1606Z" fill="white"/></svg>
                     </span>
                     Our Story
                 </a>
-                <a href="/community" class="text-base lowercase no-underline hover:underline mt-2">
+                <a href="/community" class="mt-2 text-base no-underline lowercase hover:underline">
                     Community
                 </a>
             </div>
@@ -54,21 +119,21 @@
             <!-- If user is logged in AND -->
             <!-- If user is at least an insider -->
             {{#if current_user}}
-            <div class="font-mono flex flex-col mt-10">
-                <p class="text-xs opacity-50 tracking-widest uppercase">Insiders</p>
-                <a href="/updates" class="text-base lowercase no-underline hover:underline mt-2">
+            <div class="flex flex-col mt-10 font-mono">
+                <p class="text-xs tracking-widest uppercase opacity-50">Insiders</p>
+                <a href="/updates" class="mt-2 text-base no-underline lowercase hover:underline">
                     Updates
                 </a>
-                <a href="/releases" class="text-base lowercase no-underline hover:underline mt-2">
+                <a href="/releases" class="mt-2 text-base no-underline lowercase hover:underline">
                     Releases
                 </a>
             </div>
 
             <!-- AND If user is an admin -->
             {{#if current_user.is_admin }}
-                <div class="font-mono flex flex-col mt-10">
-                    <p class="text-xs opacity-50 tracking-widest uppercase">Admin</p>
-                    <a href="/admin" class="inline-block text-base lowercase no-underline hover:underline mt-2">
+                <div class="flex flex-col mt-10 font-mono">
+                    <p class="text-xs tracking-widest uppercase opacity-50">Admin</p>
+                    <a href="/admin" class="inline-block mt-2 text-base no-underline lowercase hover:underline">
                         Users &amp Signups
                     </a>
                 </div>
@@ -76,22 +141,22 @@
        
             <div class="mt-10">
                 <!-- TODO: Dropdown is linked to #avatar, just using it for now. Come back and clean up later -->
-                <p id="avatar" class="text-base lowercase no-underline hover:underline">@{{current_user.github_login}}</p>
+                <p id="avatar" class="text-base no-underline lowercase hover:underline">@{{current_user.github_login}}</p>
                 <form id="sign_out" action="/sign_out" method="post">
-                    <button class="text-xs opacity-50 lowercase no-underline hover:underline mt-2">Sign out</button>
+                    <button class="mt-2 text-xs no-underline lowercase opacity-50 hover:underline">Sign out</button>
                 </form>
             </div>
 
             {{else}}
             <!-- Otherwise let user log in -->
             <a href=" /sign_in"
-                class="text-base lowercase no-underline hover:underline mt-10 text-gray-400">
+                class="mt-10 text-base text-gray-400 no-underline lowercase hover:underline">
                 Log in
             </a>
             {{/if}}
         </nav>
 
-        <div class="bg-black col-span-3">
+        <div class="col-span-3 bg-black">
             {{> @partial-block}}
         </div>
     </main>
