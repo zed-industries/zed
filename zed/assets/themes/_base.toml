@@ -120,6 +120,14 @@ underline = true
 extends = "$chat_panel.sign_in_prompt"
 color = "$text.1.color"
 
+[people_panel]
+host_username = "$text.0"
+worktree_host_avatar = { corner_radius = 10 }
+worktree_guest_avatar = { corner_radius = 8 }
+
+[people_panel.worktree_name]
+extends = "$text.0"
+
 [selector]
 background = "$surface.0"
 padding = 8

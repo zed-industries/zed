@@ -61,7 +61,7 @@ impl PeoplePanel {
                     .with_child(
                         Label::new(
                             collaborator.user.github_login.clone(),
-                            theme.people_panel.collaborator_username.clone(),
+                            theme.people_panel.host_username.clone(),
                         )
                         .boxed(),
                     )

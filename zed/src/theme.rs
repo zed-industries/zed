@@ -108,7 +108,7 @@ pub struct ChatPanel {
 pub struct PeoplePanel {
     #[serde(flatten)]
     pub container: ContainerStyle,
-    pub collaborator_username: TextStyle,
+    pub host_username: TextStyle,
     pub worktree_name: ContainedText,
     pub worktree_host_avatar: ImageStyle,
     pub worktree_guest_avatar: ImageStyle,
