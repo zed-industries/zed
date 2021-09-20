@@ -13,7 +13,7 @@
 
 <body class="box-border font-light bg-black font-body text-main">
     <main class="container flex flex-col mx-auto lg:bg-white lg:flex-none lg:grid lg:min-h-full lg:grid-cols-4 max-w-screen-2xl lg:gap-x-px text-gray-50">
-        <nav class="p-10 pb-0 bg-black font-extralight lg:hidden">
+        <nav id="nav" class="p-10 pb-0 bg-black font-extralight lg:hidden">
             <a href="/">
                 <svg width="32" height="32" viewBox="0 0 32 32" fill="none" xmlns="http://www.w3.org/2000/svg">
                 <mask id="path-2-inside-1" fill="white">
@@ -148,5 +148,17 @@
     </main>
     <script src="/static/prism.js"></script>
 </body>
+
+<script>
+    const nav = document.getElementById('nav');
+    const links = nav.getElementsByTagName('a');
+    const currentPath = window.location.pathname;
+    for (const link of links) {
+        if (link.getAttribute('href') === currentPath) {
+            link.classList.add('active');
+            console.log('activating', link)
+        }
+    }
+</script>
 
 </html>
