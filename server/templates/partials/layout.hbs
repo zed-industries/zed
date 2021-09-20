@@ -8,7 +8,7 @@
     <title>Zed – a lightning fast, collaborative code editor written natively in Rust</title>
 
     <script>
-        window.addEventListener("DOMContentLoaded", function () {
+        {{!-- window.addEventListener("DOMContentLoaded", function () {
             let avatar = document.getElementById("avatar");
             let sign_out = document.getElementById("sign_out");
             if (avatar && sign_out) {
@@ -20,7 +20,7 @@
                     sign_out.classList.add("hidden");
                 });
             }
-        });
+        }); --}}
     </script>
 </head>
 
@@ -37,29 +37,45 @@
                 </svg>
             </a>
             
-            <div class="flex flex-row mt-5">
-                <a href="/team" class="mr-2 text-base no-underline lowercase hover:underline">
+            <div class="flex flex-row flex-wrap mt-5">
+                <a href="/team" class="mr-2 text-base leading-7 no-underline lowercase hover:underline">
                     The Team
                 </a>
                 <p class="mr-2 text-base">·</p>
-                <a href="/story" class="relative mr-2 text-base no-underline lowercase nav-active hover:underline">
+                <a href="/story" class="relative mr-2 text-base leading-7 no-underline lowercase nav-active hover:underline">
                     Our Story
                 </a>
                 <p class="mr-2 text-base">·</p>
-                <a href="/community" class="mr-2 text-base no-underline lowercase hover:underline">
+                <a href="/community" class="mr-2 text-base leading-7 no-underline lowercase hover:underline">
                     Community
                 </a>
                 <p class="mr-2 text-base">·</p>
                 {{#if current_user}}
+                <a href="/updates" class="mr-2 text-base leading-7 no-underline lowercase hover:underline">
+                    Updates
+                </a>
+                <p class="mr-2 text-base">·</p>
+                <a href="/releases" class="mr-2 text-base leading-7 no-underline lowercase hover:underline">
+                    Releases
+                </a>
+
+                {{#if current_user.is_admin }}
+                    <p class="mr-2 text-base">·</p>
+                    <a href="/admin" class="inline-block mr-2 text-base leading-7 no-underline lowercase hover:underline">
+                        Manage Users
+                    </a>
+                {{/if}}
+
+                <p class="mr-2 text-base">·</p>
                 <form id="sign_out" action="/sign_out" method="post" class="inline m-0 mr-2">
-                    <button class="text-base no-underline lowercase hover:underline">Sign out</button>
+                    <button class="text-base leading-7 no-underline lowercase hover:underline">Log out</button>
                 </form>
 
                 {{else}}
 
                 <!-- Otherwise let user log in -->
                 <a href=" /sign_in"
-                    class="mr-2 text-base no-underline lowercase hover:underline">
+                    class="mr-2 text-base leading-7 no-underline lowercase hover:underline">
                     Log in
                 </a>
                 {{/if}}
@@ -68,25 +84,9 @@
             <!-- If user is logged in AND -->
             <!-- If user is at least an insider -->
             {{#if current_user}}
-            <p class="mt-2">
-                insider:
-                <a href="/updates" class="mt-2 text-base no-underline lowercase hover:underline">
-                    Updates
-                </a> ·
-                <a href="/releases" class="mt-2 text-base no-underline lowercase hover:underline">
-                    Releases
-                </a>
-            </p>
 
             <!-- AND If user is an admin -->
-            {{#if current_user.is_admin }}
-            <p class="mt-2">
-                admin:
-                <a href="/admin" class="inline-block mt-2 text-base no-underline lowercase hover:underline">
-                    Manage Users
-                </a>
-            </p>
-            {{/if}}
+            
 
             {{/if}}
         </nav>
