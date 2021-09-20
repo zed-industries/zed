@@ -1,18 +1,13 @@
 {{#> layout }}
-<div class="bg-white py-8">
-    <div class="container mx-auto my-16 px-8 md:px-12 text-2xl md:text-4xl">
-        Sorry, we encountered a {{status}} error: {{reason}}.
-    </div>
-</div>
 
 <div class="max-w-screen-lg mx-auto text-main font-extralight p-20">
     <article class="max-w-xl">
-        <h1 class="text-white text-4xl font-display font-extralight mb-10">Sorry, we encountered a {{status}} error:</h1>
-        <p class="leading-7">
-            {{reason}}
+        <h1 class="text-white text-4xl font-display font-extralight mb-5">Sorry!</h1>
+        <p class="leading-7 mb-5">
+            Looks like we encountered a {{status}} error: {{reason}}
         </p>
         <p class="leading-7">
-            Try refreshing or going <a href="/">home</a>.
+            Try refreshing or going <a class="underline hover:no-underline" href="/">home</a>.
         </p>
     </article>
 </div>
