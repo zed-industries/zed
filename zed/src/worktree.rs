@@ -211,11 +211,11 @@ impl Worktree {
                 }
 
                 let _subscriptions = vec![
-                    rpc.subscribe_from_model(remote_id, cx, Self::handle_add_peer),
-                    rpc.subscribe_from_model(remote_id, cx, Self::handle_remove_peer),
-                    rpc.subscribe_from_model(remote_id, cx, Self::handle_update),
-                    rpc.subscribe_from_model(remote_id, cx, Self::handle_update_buffer),
-                    rpc.subscribe_from_model(remote_id, cx, Self::handle_buffer_saved),
+                    rpc.subscribe_to_entity(remote_id, cx, Self::handle_add_peer),
+                    rpc.subscribe_to_entity(remote_id, cx, Self::handle_remove_peer),
+                    rpc.subscribe_to_entity(remote_id, cx, Self::handle_update),
+                    rpc.subscribe_to_entity(remote_id, cx, Self::handle_update_buffer),
+                    rpc.subscribe_to_entity(remote_id, cx, Self::handle_buffer_saved),
                 ];
 
                 Worktree::Remote(RemoteWorktree {
@@ -1070,12 +1070,12 @@ impl LocalWorktree {
 
             this.update(&mut cx, |worktree, cx| {
                 let _subscriptions = vec![
-                    rpc.subscribe_from_model(remote_id, cx, Worktree::handle_add_peer),
-                    rpc.subscribe_from_model(remote_id, cx, Worktree::handle_remove_peer),
-                    rpc.subscribe_from_model(remote_id, cx, Worktree::handle_open_buffer),
-                    rpc.subscribe_from_model(remote_id, cx, Worktree::handle_close_buffer),
-                    rpc.subscribe_from_model(remote_id, cx, Worktree::handle_update_buffer),
-                    rpc.subscribe_from_model(remote_id, cx, Worktree::handle_save_buffer),
+                    rpc.subscribe_to_entity(remote_id, cx, Worktree::handle_add_peer),
+                    rpc.subscribe_to_entity(remote_id, cx, Worktree::handle_remove_peer),
+                    rpc.subscribe_to_entity(remote_id, cx, Worktree::handle_open_buffer),
+                    rpc.subscribe_to_entity(remote_id, cx, Worktree::handle_close_buffer),
+                    rpc.subscribe_to_entity(remote_id, cx, Worktree::handle_update_buffer),
+                    rpc.subscribe_to_entity(remote_id, cx, Worktree::handle_save_buffer),
                 ];
 
                 let worktree = worktree.as_local_mut().unwrap();
