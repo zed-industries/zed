@@ -1,16 +1,15 @@
 {{#> layout }}
 
 
-<div class="max-w-screen-lg mx-auto text-main font-extralight p-20">
+<div class="max-w-screen-lg p-10 mx-auto font-thin text-main lg:p-20">
     {{#if current_user}}
     
     {{#if releases}}
-    {{!-- <h1 class="font-display font-extralight mb-10">Updates</h1> --}}
     
     {{#each releases}}
     <article id="{{name}}" class="mb-20">
-        <h1 class="font-display font-extralight mb-2">{{name}}</h1>
-        <a class="underline text-sm opacity-50 hover:opacity-80" href="/releases/{{tag_name}}/{{assets.0.name}}">Download</a>
+        <h1 class="mb-2 font-display font-extralight">{{name}}</h1>
+        <a class="text-sm underline opacity-50 hover:opacity-80" href="/releases/{{tag_name}}/{{assets.0.name}}">Download</a>
         <div class="mt-10 type-prose">
             {{{body}}}
         </div>
@@ -23,9 +22,9 @@
 
     {{else}}
 
-    <h1 class="font-display font-extralight mb-10">Hold it!</h1>
-    <p class="mt-5 leading-7">You can't access this without <a href=" /sign_in" class="underline mt-5 leading-7">logging in</a>.</p>
-    <p class="mt-5 leading-7">Try <a href="/community" class="underline mt-5 leading-7">joining our community</a> to get access to updates & releases.</p>
+    <h1 class="mb-10 font-display font-extralight">Hold it!</h1>
+    <p class="mt-5 leading-7">You can't access this without <a href=" /sign_in" class="mt-5 leading-7 underline">logging in</a>.</p>
+    <p class="mt-5 leading-7">Try <a href="/community" class="mt-5 leading-7 underline">joining our community</a> to get access to updates & releases.</p>
     {{/if}}
 </div>
 
