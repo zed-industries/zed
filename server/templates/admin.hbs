@@ -20,26 +20,26 @@
     });
 </script>
 
-<div class="max-w-screen-lg mx-auto text-main text-white font-extralight p-20">
-        <h1 class="font-display font-extralight mb-10">Admin</h1>
-        <h2 class="text-xl font-bold border-b border-gray-300 mb-4">Users</h1>
+<div class="max-w-screen-lg p-20 mx-auto text-white text-main font-extralight">
+        <h1 class="mb-10 font-display font-extralight">Admin</h1>
+        <h2 class="mb-4 text-xl font-bold border-b border-gray-300">Users</h1>
         <table class="table text-white" id="users">
             <tr>
-                <th class="text-left pr-2">GitHub Login</th>
-                <th class="text-left pr-2">Admin</th>
+                <th class="pr-2 text-left">GitHub Login</th>
+                <th class="pr-2 text-left">Admin</th>
                 <th></th>
             </tr>
             <form action="/users" method="post" class="m-0 mb-4">
                 <tr>
                     <td>
-                        <input name="github_login" type="text" class="border border-gray-300 p-1 mr-2 w-48"
+                        <input name="github_login" type="text" class="w-48 p-1 mr-2 border border-gray-300"
                             placeholder="@github_handle">
                     </td>
                     <td>
                         <input type="checkbox" id="admin" name="admin" value="true">
                     </td>
                     <td class="text-right">
-                        <button class="p-1 w-20 text-white rounded-md bg-gray-600 hover:bg-black">Add</button>
+                        <button class="w-20 p-1 text-white bg-gray-600 rounded-md hover:bg-black">Add</button>
                     </td>
                 </tr>
             </form>
@@ -54,14 +54,14 @@
                         <input action="/users/{{id}}" type="checkbox" {{#if admin}}checked{{/if}}>
                     </td>
                     <td class="text-right">
-                        <button class="p-1 w-20 rounded-md bg-gray-600 hover:bg-black text-white">Remove</button>
+                        <button class="w-20 p-1 text-white bg-gray-600 rounded-md hover:bg-black">Remove</button>
                     </td>
                 </form>
             </tr>
             {{/each}}
         </table>
 
-        <h2 class="text-xl font-bold border-b border-gray-300 mb-4 mt-8">Signups</h1>
+        <h2 class="mt-8 mb-4 text-xl font-bold border-b border-gray-300">Signups</h1>
         <table class="table text-white">
             {{#each signups}}
             <tr>
@@ -69,8 +69,13 @@
                     <td class="align-top">{{github_login}}</td>
                     <td class="pl-4 align-top">{{email_address}}</td>
                     <td class="pl-4 align-top">{{about}}</td>
+                    <td class="pl-4 align-top">
+                         {{#if wants_releases}}releases{{/if}}
+                         {{#if wants_updates}}updates{{/if}}
+                         {{#if wants_community}}community{{/if}}
+                     </td>
                     <td class="text-right">
-                        <button class="p-1 w-20 rounded-md bg-gray-600 hover:bg-black text-white">Remove</button>
+                        <button class="w-20 p-1 text-white bg-gray-600 rounded-md hover:bg-black">Remove</button>
                     </td>
                 </form>
             </tr>
