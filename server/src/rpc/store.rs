@@ -52,7 +52,12 @@ pub struct JoinedWorktree<'a> {
     pub worktree: &'a Worktree,
 }
 
-pub struct WorktreeMetadata {
+pub struct UnsharedWorktree {
+    pub connection_ids: Vec<ConnectionId>,
+    pub collaborator_ids: Vec<UserId>,
+}
+
+pub struct LeftWorktree {
     pub connection_ids: Vec<ConnectionId>,
     pub collaborator_ids: Vec<UserId>,
 }
@@ -291,7 +296,7 @@ impl Store {
         &mut self,
         worktree_id: u64,
         acting_connection_id: ConnectionId,
-    ) -> tide::Result<WorktreeMetadata> {
+    ) -> tide::Result<UnsharedWorktree> {
         let worktree = if let Some(worktree) = self.worktrees.get_mut(&worktree_id) {
             worktree
         } else {
@@ -310,7 +315,7 @@ impl Store {
                     connection.worktrees.remove(&worktree_id);
                 }
             }
-            Ok(WorktreeMetadata {
+            Ok(UnsharedWorktree {
                 connection_ids,
                 collaborator_ids: worktree.collaborator_user_ids.clone(),
             })
@@ -360,12 +365,12 @@ impl Store {
         &mut self,
         connection_id: ConnectionId,
         worktree_id: u64,
-    ) -> Option<WorktreeMetadata> {
+    ) -> Option<LeftWorktree> {
         let worktree = self.worktrees.get_mut(&worktree_id)?;
         let share = worktree.share.as_mut()?;
         let replica_id = share.guest_connection_ids.remove(&connection_id)?;
         share.active_replica_ids.remove(&replica_id);
-        Some(WorktreeMetadata {
+        Some(LeftWorktree {
             connection_ids: worktree.connection_ids(),
             collaborator_ids: worktree.collaborator_user_ids.clone(),
         })
