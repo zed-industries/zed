@@ -19,13 +19,13 @@ pub struct Image {
 #[derive(Copy, Clone, Default, Deserialize)]
 pub struct ImageStyle {
     #[serde(default)]
-    border: Border,
+    pub border: Border,
     #[serde(default)]
-    corner_radius: f32,
+    pub corner_radius: f32,
     #[serde(default)]
-    height: Option<f32>,
+    pub height: Option<f32>,
     #[serde(default)]
-    width: Option<f32>,
+    pub width: Option<f32>,
 }
 
 impl Image {

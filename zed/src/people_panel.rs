@@ -74,6 +74,16 @@ impl PeoplePanel {
         let cap_height = theme.unshared_worktree.text.cap_height(font_cache);
         let baseline_offset = theme.unshared_worktree.text.baseline_offset(font_cache);
         let tree_branch = theme.tree_branch;
+        let host_avatar_height = theme
+            .host_avatar
+            .width
+            .or(theme.host_avatar.height)
+            .unwrap_or(0.);
+        let guest_avatar_height = theme
+            .guest_avatar
+            .width
+            .or(theme.guest_avatar.height)
+            .unwrap_or(0.);
 
         Flex::column()
             .with_child(
@@ -86,15 +96,23 @@ impl PeoplePanel {
                             .map(|avatar| Image::new(avatar).with_style(theme.host_avatar).boxed()),
                     )
                     .with_child(
-                        Container::new(
-                            Label::new(
-                                collaborator.user.github_login.clone(),
-                                theme.host_username.text.clone(),
+                        ConstrainedBox::new(
+                            Align::new(
+                                Container::new(
+                                    Label::new(
+                                        collaborator.user.github_login.clone(),
+                                        theme.host_username.text.clone(),
+                                    )
+                                    .boxed(),
+                                )
+                                .with_style(theme.host_username.container)
+                                .boxed()
                             )
-                            .boxed(),
+                            .left()
+                            .boxed()
                         )
-                        .with_style(theme.host_username.container)
-                        .boxed(),
+                        .with_height(host_avatar_height)
+                        .boxed()
                     )
                     .boxed(),
             )
@@ -171,33 +189,41 @@ impl PeoplePanel {
                                                     &theme.unshared_worktree
                                                 };
 
-                                            Flex::row()
-                                                .with_child(
-                                                    Container::new(
-                                                        Label::new(
-                                                            worktree.root_name.clone(),
-                                                            style.text.clone(),
-                                                        )
-                                                        .boxed(),
-                                                    )
-                                                    .with_style(style.container)
-                                                    .boxed(),
-                                                )
-                                                .with_children(worktree.guests.iter().filter_map(
-                                                    |participant| {
-                                                        participant.avatar.clone().map(|avatar| {
-                                                            Container::new(
-                                                                Image::new(avatar)
-                                                                    .with_style(theme.guest_avatar)
+                                                Container::new(
+                                                    Flex::row()
+                                                        .with_child(
+                                                            ConstrainedBox::new(
+                                                                Align::new(
+                                                                    Label::new(
+                                                                        worktree.root_name.clone(),
+                                                                        style.text.clone(),
+                                                                    )
                                                                     .boxed(),
+                                                                )
+                                                                .left()
+                                                                .boxed()
                                                             )
-                                                            .with_margin_left(
-                                                                theme.guest_avatar_spacing,
-                                                            )
+                                                            .with_height(guest_avatar_height)
                                                             .boxed()
-                                                        })
-                                                    },
-                                                ))
+                                                        )
+                                                        .with_children(worktree.guests.iter().filter_map(
+                                                            |participant| {
+                                                                participant.avatar.clone().map(|avatar| {
+                                                                    Container::new(
+                                                                        Image::new(avatar)
+                                                                            .with_style(theme.guest_avatar)
+                                                                            .boxed(),
+                                                                    )
+                                                                    .with_margin_left(
+                                                                        theme.guest_avatar_spacing,
+                                                                    )
+                                                                    .boxed()
+                                                                })
+                                                            },
+                                                        ))
+                                                        .boxed()
+                                                )
+                                                .with_style(style.container)
                                                 .boxed()
                                         },
                                     );
