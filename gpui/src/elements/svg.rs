@@ -47,8 +47,9 @@ impl Element for Svg {
                 );
                 (size, Some(tree))
             }
-            Err(error) => {
-                log::error!("{}", error);
+            Err(_error) => {
+                #[cfg(not(any(test, feature = "test-support")))]
+                log::error!("{}", _error);
                 (constraint.min, None)
             }
         }

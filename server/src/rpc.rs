@@ -965,7 +965,7 @@ mod tests {
     };
     use zed::{
         channel::{Channel, ChannelDetails, ChannelList},
-        editor::{Editor, Insert},
+        editor::{Editor, EditorStyle, Insert},
         fs::{FakeFs, Fs as _},
         language::LanguageRegistry,
         rpc::{self, Client, Credentials, EstablishConnectionError},
@@ -1048,7 +1048,14 @@ mod tests {
             .unwrap();
 
         // Create a selection set as client B and see that selection set as client A.
-        let editor_b = cx_b.add_view(window_b, |cx| Editor::for_buffer(buffer_b, settings, cx));
+        let editor_b = cx_b.add_view(window_b, |cx| {
+            Editor::for_buffer(
+                buffer_b,
+                settings,
+                |cx| EditorStyle::test(cx.font_cache()),
+                cx,
+            )
+        });
         buffer_a
             .condition(&cx_a, |buffer, _| buffer.selection_sets().count() == 1)
             .await;

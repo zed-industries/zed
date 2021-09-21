@@ -6,7 +6,7 @@ use crate::{
     fs::{self, Fs},
     fuzzy,
     fuzzy::CharBag,
-    language::LanguageRegistry,
+    language::{Language, LanguageRegistry},
     rpc::{self, proto, Status},
     time::{self, ReplicaId},
     util::{Bias, TryFutureExt},
@@ -832,7 +832,6 @@ impl LocalWorktree {
             }
         });
 
-        let languages = self.languages.clone();
         let path = Arc::from(path);
         cx.spawn(|this, mut cx| async move {
             if let Some(existing_buffer) = existing_buffer {
@@ -841,8 +840,8 @@ impl LocalWorktree {
                 let (file, contents) = this
                     .update(&mut cx, |this, cx| this.as_local().unwrap().load(&path, cx))
                     .await?;
-                let language = languages.select_language(&path).cloned();
                 let buffer = cx.add_model(|cx| {
+                    let language = file.select_language(cx);
                     Buffer::from_history(0, History::new(contents.into()), Some(file), language, cx)
                 });
                 this.update(&mut cx, |this, _| {
@@ -1192,7 +1191,6 @@ impl RemoteWorktree {
         });
 
         let rpc = self.rpc.clone();
-        let languages = self.languages.clone();
         let replica_id = self.replica_id;
         let remote_worktree_id = self.remote_id;
         let path = path.to_string_lossy().to_string();
@@ -1204,7 +1202,7 @@ impl RemoteWorktree {
                     .read_with(&cx, |tree, _| tree.entry_for_path(&path).cloned())
                     .ok_or_else(|| anyhow!("file does not exist"))?;
                 let file = File::new(entry.id, handle, entry.path, entry.mtime);
-                let language = languages.select_language(&path).cloned();
+                let language = cx.read(|cx| file.select_language(cx));
                 let response = rpc
                     .request(proto::OpenBuffer {
                         worktree_id: remote_worktree_id as u64,
@@ -1679,6 +1677,18 @@ impl File {
 
     pub fn abs_path(&self, cx: &AppContext) -> PathBuf {
         self.worktree.read(cx).abs_path.join(&self.path)
+    }
+
+    pub fn select_language(&self, cx: &AppContext) -> Option<Arc<Language>> {
+        let worktree = self.worktree.read(cx);
+        let mut full_path = PathBuf::new();
+        full_path.push(worktree.root_name());
+        full_path.push(&self.path);
+        let languages = match self.worktree.read(cx) {
+            Worktree::Local(worktree) => &worktree.languages,
+            Worktree::Remote(worktree) => &worktree.languages,
+        };
+        languages.select_language(&full_path).cloned()
     }
 
     /// Returns the last component of this handle's absolute path. If this handle refers to the root

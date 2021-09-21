@@ -185,13 +185,13 @@ impl Pane {
             theme.workspace.tab.label.text.font_size,
         );
 
-        let mut row = Flex::row();
-        for (ix, item) in self.items.iter().enumerate() {
-            let is_active = ix == self.active_item;
+        enum Tabs {}
+        let tabs = MouseEventHandler::new::<Tabs, _, _, _>(0, cx, |mouse_state, cx| {
+            let mut row = Flex::row();
+            for (ix, item) in self.items.iter().enumerate() {
+                let is_active = ix == self.active_item;
 
-            enum Tab {}
-            row.add_child(
-                MouseEventHandler::new::<Tab, _, _, _>(item.id(), cx, |mouse_state, cx| {
+                row.add_child({
                     let mut title = item.title(cx);
                     if title.len() > MAX_TAB_TITLE_LEN {
                         let mut truncated_len = MAX_TAB_TITLE_LEN;
@@ -276,7 +276,7 @@ impl Pane {
                                 )
                                 .with_child(
                                     Align::new(
-                                        ConstrainedBox::new(if is_active || mouse_state.hovered {
+                                        ConstrainedBox::new(if mouse_state.hovered {
                                             let item_id = item.id();
                                             enum TabCloseButton {}
                                             let icon = Svg::new("icons/x.svg");
@@ -292,6 +292,7 @@ impl Pane {
                                                     }
                                                 },
                                             )
+                                            .with_padding(Padding::uniform(4.))
                                             .with_cursor_style(CursorStyle::PointingHand)
                                             .on_click(move |cx| {
                                                 cx.dispatch_action(CloseItem(item_id))
@@ -316,36 +317,37 @@ impl Pane {
                     })
                     .boxed()
                 })
-                .boxed(),
-            )
-        }
+            }
 
-        // Ensure there's always a minimum amount of space after the last tab,
-        // so that the tab's border doesn't abut the window's border.
-        let mut border = Border::bottom(1.0, Color::default());
-        border.color = theme.workspace.tab.container.border.color;
+            // Ensure there's always a minimum amount of space after the last tab,
+            // so that the tab's border doesn't abut the window's border.
+            let mut border = Border::bottom(1.0, Color::default());
+            border.color = theme.workspace.tab.container.border.color;
 
-        row.add_child(
-            ConstrainedBox::new(
-                Container::new(Empty::new().boxed())
-                    .with_border(border)
-                    .boxed(),
-            )
-            .with_min_width(20.)
-            .named("fixed-filler"),
-        );
+            row.add_child(
+                ConstrainedBox::new(
+                    Container::new(Empty::new().boxed())
+                        .with_border(border)
+                        .boxed(),
+                )
+                .with_min_width(20.)
+                .named("fixed-filler"),
+            );
 
-        row.add_child(
-            Expanded::new(
-                0.0,
-                Container::new(Empty::new().boxed())
-                    .with_border(border)
-                    .boxed(),
-            )
-            .named("filler"),
-        );
+            row.add_child(
+                Expanded::new(
+                    0.0,
+                    Container::new(Empty::new().boxed())
+                        .with_border(border)
+                        .boxed(),
+                )
+                .named("filler"),
+            );
 
-        ConstrainedBox::new(row.boxed())
+            row.boxed()
+        });
+
+        ConstrainedBox::new(tabs.boxed())
             .with_height(line_height + 16.)
             .named("tabs")
     }

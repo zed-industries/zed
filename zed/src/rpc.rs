@@ -417,11 +417,11 @@ impl Client {
                         if let Some(extract_entity_id) =
                             state.entity_id_extractors.get(&message.payload_type_id())
                         {
+                            let payload_type_id = message.payload_type_id();
                             let entity_id = (extract_entity_id)(message.as_ref());
-                            if let Some(handler) = state
-                                .model_handlers
-                                .get_mut(&(message.payload_type_id(), entity_id))
-                            {
+                            let handler_key = (payload_type_id, entity_id);
+                            if let Some(mut handler) = state.model_handlers.remove(&handler_key) {
+                                drop(state); // Avoid deadlocks if the handler interacts with rpc::Client
                                 let start_time = Instant::now();
                                 log::info!("RPC client message {}", message.payload_type_name());
                                 (handler)(message, &mut cx);
@@ -429,6 +429,10 @@ impl Client {
                                     "RPC message handled. duration:{:?}",
                                     start_time.elapsed()
                                 );
+                                this.state
+                                    .write()
+                                    .model_handlers
+                                    .insert(handler_key, handler);
                             } else {
                                 log::info!("unhandled message {}", message.payload_type_name());
                             }

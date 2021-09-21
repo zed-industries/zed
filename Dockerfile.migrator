@@ -1,12 +1,12 @@
 # syntax = docker/dockerfile:1.2
 
-FROM rust as builder
+FROM rust:1.55-bullseye as builder
 WORKDIR app
 RUN --mount=type=cache,target=/usr/local/cargo/registry \
     --mount=type=cache,target=./target \
     cargo install sqlx-cli --root=/app --target-dir=/app/target --version 0.5.7
 
-FROM debian:buster-slim as runtime
+FROM debian:bullseye-slim as runtime
 RUN apt-get update; \
     apt-get install -y --no-install-recommends libssl1.1
 WORKDIR app
