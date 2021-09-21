@@ -109,10 +109,17 @@ pub struct ChatPanel {
 pub struct PeoplePanel {
     #[serde(flatten)]
     pub container: ContainerStyle,
-    pub host_username: TextStyle,
+    pub host_username: ContainedText,
     pub worktree_name: ContainedText,
     pub worktree_host_avatar: ImageStyle,
     pub worktree_guest_avatar: ImageStyle,
+    pub tree_branch: TreeBranch,
+}
+
+#[derive(Copy, Clone, Deserialize)]
+pub struct TreeBranch {
+    pub width: f32,
+    pub color: Color,
 }
 
 #[derive(Deserialize)]

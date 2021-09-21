@@ -4,7 +4,9 @@ use crate::{
     Settings,
 };
 use gpui::{
-    elements::*, Element, ElementBox, Entity, ModelHandle, RenderContext, Subscription, View,
+    elements::*,
+    geometry::{rect::RectF, vector::vec2f},
+    Element, ElementBox, Entity, FontCache, ModelHandle, RenderContext, Subscription, View,
     ViewContext,
 };
 use postage::watch;
@@ -12,6 +14,7 @@ use postage::watch;
 pub struct PeoplePanel {
     collaborators: ListState,
     user_store: ModelHandle<UserStore>,
+    settings: watch::Receiver<Settings>,
     _maintain_collaborators: Subscription,
 }
 
@@ -28,15 +31,19 @@ impl PeoplePanel {
                 1000.,
                 {
                     let user_store = user_store.clone();
+                    let settings = settings.clone();
                     move |ix, cx| {
-                        let user_store = user_store.read(cx);
-                        let settings = settings.borrow();
-                        Self::render_collaborator(&user_store.collaborators()[ix], &settings.theme)
+                        Self::render_collaborator(
+                            &user_store.read(cx).collaborators()[ix],
+                            &settings.borrow().theme,
+                            cx.font_cache(),
+                        )
                     }
                 },
             ),
             _maintain_collaborators: cx.observe(&user_store, Self::update_collaborators),
             user_store,
+            settings,
         }
     }
 
@@ -46,54 +53,117 @@ impl PeoplePanel {
         cx.notify();
     }
 
-    fn render_collaborator(collaborator: &Collaborator, theme: &Theme) -> ElementBox {
+    fn render_collaborator(
+        collaborator: &Collaborator,
+        theme: &Theme,
+        font_cache: &FontCache,
+    ) -> ElementBox {
+        let theme = &theme.people_panel;
+        let worktree_count = collaborator.worktrees.len();
+        let line_height = theme.worktree_name.text.line_height(font_cache);
+        let cap_height = theme.worktree_name.text.cap_height(font_cache);
+        let baseline_offset = theme.worktree_name.text.baseline_offset(font_cache);
+        let tree_branch = theme.tree_branch;
+
         Flex::column()
             .with_child(
                 Flex::row()
                     .with_children(collaborator.user.avatar.clone().map(|avatar| {
                         ConstrainedBox::new(
                             Image::new(avatar)
-                                .with_style(theme.people_panel.worktree_host_avatar)
+                                .with_style(theme.worktree_host_avatar)
                                 .boxed(),
                         )
                         .with_width(20.)
                         .boxed()
                     }))
                     .with_child(
-                        Label::new(
-                            collaborator.user.github_login.clone(),
-                            theme.people_panel.host_username.clone(),
+                        Container::new(
+                            Label::new(
+                                collaborator.user.github_login.clone(),
+                                theme.host_username.text.clone(),
+                            )
+                            .boxed(),
                         )
+                        .with_style(theme.host_username.container)
                         .boxed(),
                     )
                     .boxed(),
             )
-            .with_children(collaborator.worktrees.iter().map(|worktree| {
-                Flex::row()
-                    .with_child(
-                        Container::new(
-                            Label::new(
-                                worktree.root_name.clone(),
-                                theme.people_panel.worktree_name.text.clone(),
-                            )
-                            .boxed(),
-                        )
-                        .with_style(theme.people_panel.worktree_name.container)
-                        .boxed(),
-                    )
-                    .with_children(worktree.participants.iter().filter_map(|participant| {
-                        participant.avatar.clone().map(|avatar| {
-                            ConstrainedBox::new(
-                                Image::new(avatar)
-                                    .with_style(theme.people_panel.worktree_guest_avatar)
+            .with_children(
+                collaborator
+                    .worktrees
+                    .iter()
+                    .enumerate()
+                    .map(|(ix, worktree)| {
+                        Flex::row()
+                            .with_child(
+                                ConstrainedBox::new(
+                                    Canvas::new(move |bounds, _, cx| {
+                                        let start_x = bounds.min_x() + (bounds.width() / 2.)
+                                            - (tree_branch.width / 2.);
+                                        let end_x = bounds.max_x();
+                                        let start_y = bounds.min_y();
+                                        let end_y =
+                                            bounds.min_y() + baseline_offset - (cap_height / 2.);
+
+                                        cx.scene.push_quad(gpui::Quad {
+                                            bounds: RectF::from_points(
+                                                vec2f(start_x, start_y),
+                                                vec2f(
+                                                    start_x + tree_branch.width,
+                                                    if ix + 1 == worktree_count {
+                                                        end_y
+                                                    } else {
+                                                        bounds.max_y()
+                                                    },
+                                                ),
+                                            ),
+                                            background: Some(tree_branch.color),
+                                            border: gpui::Border::default(),
+                                            corner_radius: 0.,
+                                        });
+                                        cx.scene.push_quad(gpui::Quad {
+                                            bounds: RectF::from_points(
+                                                vec2f(start_x, end_y),
+                                                vec2f(end_x, end_y + tree_branch.width),
+                                            ),
+                                            background: Some(tree_branch.color),
+                                            border: gpui::Border::default(),
+                                            corner_radius: 0.,
+                                        });
+                                    })
                                     .boxed(),
+                                )
+                                .with_width(20.)
+                                .with_height(line_height)
+                                .boxed(),
                             )
-                            .with_width(16.)
+                            .with_child(
+                                Container::new(
+                                    Label::new(
+                                        worktree.root_name.clone(),
+                                        theme.worktree_name.text.clone(),
+                                    )
+                                    .boxed(),
+                                )
+                                .with_style(theme.worktree_name.container)
+                                .boxed(),
+                            )
+                            .with_children(worktree.participants.iter().filter_map(|participant| {
+                                participant.avatar.clone().map(|avatar| {
+                                    ConstrainedBox::new(
+                                        Image::new(avatar)
+                                            .with_style(theme.worktree_guest_avatar)
+                                            .boxed(),
+                                    )
+                                    .with_width(16.)
+                                    .boxed()
+                                })
+                            }))
                             .boxed()
-                        })
-                    }))
-                    .boxed()
-            }))
+                    }),
+            )
             .boxed()
     }
 }
@@ -110,6 +180,9 @@ impl View for PeoplePanel {
     }
 
     fn render(&mut self, _: &mut RenderContext<Self>) -> ElementBox {
-        List::new(self.collaborators.clone()).boxed()
+        let theme = &self.settings.borrow().theme.people_panel;
+        Container::new(List::new(self.collaborators.clone()).boxed())
+            .with_style(theme.container)
+            .boxed()
     }
 }

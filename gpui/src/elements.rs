@@ -8,7 +8,6 @@ mod flex;
 mod hook;
 mod image;
 mod label;
-mod line_box;
 mod list;
 mod mouse_event_handler;
 mod overlay;
@@ -19,8 +18,8 @@ mod uniform_list;
 
 pub use self::{
     align::*, canvas::*, constrained_box::*, container::*, empty::*, event_handler::*, flex::*,
-    hook::*, image::*, label::*, line_box::*, list::*, mouse_event_handler::*, overlay::*,
-    stack::*, svg::*, text::*, uniform_list::*,
+    hook::*, image::*, label::*, list::*, mouse_event_handler::*, overlay::*, stack::*, svg::*,
+    text::*, uniform_list::*,
 };
 pub use crate::presenter::ChildView;
 use crate::{

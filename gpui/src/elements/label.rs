@@ -137,8 +137,7 @@ impl Element for Label {
         let size = vec2f(
             line.width().max(constraint.min.x()).min(constraint.max.x()),
             cx.font_cache
-                .line_height(self.style.text.font_id, self.style.text.font_size)
-                .ceil(),
+                .line_height(self.style.text.font_id, self.style.text.font_size),
         );
 
         (size, line)

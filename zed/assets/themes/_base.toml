@@ -56,10 +56,13 @@ border = { width = 1, color = "$border.0", right = true }
 extends = "$workspace.sidebar"
 border = { width = 1, color = "$border.0", left = true }
 
+[panel]
+padding = 12
+
 [chat_panel]
+extends = "$panel"
 channel_name = { extends = "$text.0", weight = "bold" }
 channel_name_hash = { text = "$text.2", padding.right = 8 }
-padding = 12
 
 [chat_panel.message]
 body = "$text.1"
@@ -121,12 +124,18 @@ extends = "$chat_panel.sign_in_prompt"
 color = "$text.1.color"
 
 [people_panel]
-host_username = "$text.0"
+extends = "$panel"
+host_username = { extends = "$text.0", padding.left = 5 }
 worktree_host_avatar = { corner_radius = 10 }
 worktree_guest_avatar = { corner_radius = 8 }
 
 [people_panel.worktree_name]
 extends = "$text.0"
+padding = { left = 5 }
+
+[people_panel.tree_branch]
+width = 1
+color = "$surface.2"
 
 [selector]
 background = "$surface.0"
