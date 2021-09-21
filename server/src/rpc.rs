@@ -295,12 +295,12 @@ impl Server {
             .map(|entry| (entry.id, entry))
             .collect();
 
-        if let Some(collaborator_user_ids) =
+        let collaborator_user_ids =
             self.store
                 .write()
                 .await
-                .share_worktree(worktree.id, request.sender_id, entries)
-        {
+                .share_worktree(worktree.id, request.sender_id, entries);
+        if let Some(collaborator_user_ids) = collaborator_user_ids {
             self.peer
                 .respond(request.receipt(), proto::ShareWorktreeResponse {})
                 .await?;
