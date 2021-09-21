@@ -39,6 +39,7 @@ message Envelope {
         OpenWorktreeResponse open_worktree_response = 34;
         UnshareWorktree unshare_worktree = 35;
         UpdateCollaborators update_collaborators = 36;
+        LeaveWorktree leave_worktree = 37;
     }
 }
 
@@ -72,6 +73,10 @@ message UnshareWorktree {
 }
 
 message JoinWorktree {
+    uint64 worktree_id = 1;
+}
+
+message LeaveWorktree {
     uint64 worktree_id = 1;
 }
 

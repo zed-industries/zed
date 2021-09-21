@@ -139,6 +139,7 @@ messages!(
     JoinWorktree,
     JoinWorktreeResponse,
     LeaveChannel,
+    LeaveWorktree,
     OpenBuffer,
     OpenBufferResponse,
     OpenWorktree,

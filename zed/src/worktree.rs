@@ -66,21 +66,28 @@ impl Entity for Worktree {
     type Event = ();
 
     fn release(&mut self, cx: &mut MutableAppContext) {
-        let rpc = match self {
-            Self::Local(tree) => tree
-                .remote_id
-                .borrow()
-                .map(|remote_id| (tree.rpc.clone(), remote_id)),
-            Self::Remote(tree) => Some((tree.rpc.clone(), tree.remote_id)),
-        };
-
-        if let Some((rpc, worktree_id)) = rpc {
-            cx.spawn(|_| async move {
-                if let Err(err) = rpc.send(proto::CloseWorktree { worktree_id }).await {
-                    log::error!("error closing worktree {}: {}", worktree_id, err);
+        match self {
+            Self::Local(tree) => {
+                if let Some(worktree_id) = *tree.remote_id.borrow() {
+                    let rpc = tree.rpc.clone();
+                    cx.spawn(|_| async move {
+                        if let Err(err) = rpc.send(proto::CloseWorktree { worktree_id }).await {
+                            log::error!("error closing worktree: {}", err);
+                        }
+                    })
+                    .detach();
                 }
-            })
-            .detach();
+            }
+            Self::Remote(tree) => {
+                let rpc = tree.rpc.clone();
+                let worktree_id = tree.remote_id;
+                cx.spawn(|_| async move {
+                    if let Err(err) = rpc.send(proto::LeaveWorktree { worktree_id }).await {
+                        log::error!("error closing worktree: {}", err);
+                    }
+                })
+                .detach();
+            }
         }
     }
 }
