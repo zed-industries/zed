@@ -30,7 +30,9 @@ use zrpc::{
 lazy_static! {
     static ref ZED_SERVER_URL: String =
         std::env::var("ZED_SERVER_URL").unwrap_or("https://zed.dev:443".to_string());
-    static ref IMPERSONATE_LOGIN: Option<String> = std::env::var("ZED_IMPERSONATE").ok();
+    static ref IMPERSONATE_LOGIN: Option<String> = std::env::var("ZED_IMPERSONATE")
+        .ok()
+        .and_then(|s| if s.is_empty() { None } else { Some(s) });
 }
 
 pub struct Client {
