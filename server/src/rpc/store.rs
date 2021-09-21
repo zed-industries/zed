@@ -47,6 +47,16 @@ pub struct RemovedConnectionState {
     pub collaborator_ids: HashSet<UserId>,
 }
 
+pub struct JoinedWorktree<'a> {
+    pub replica_id: ReplicaId,
+    pub worktree: &'a Worktree,
+}
+
+pub struct WorktreeMetadata {
+    pub connection_ids: Vec<ConnectionId>,
+    pub collaborator_ids: Vec<UserId>,
+}
+
 impl Store {
     pub fn add_connection(&mut self, connection_id: ConnectionId, user_id: UserId) {
         self.connections.insert(
@@ -110,6 +120,7 @@ impl Store {
         Ok(result)
     }
 
+    #[cfg(test)]
     pub fn channel(&self, id: ChannelId) -> Option<&Channel> {
         self.channels.get(&id)
     }
@@ -280,7 +291,7 @@ impl Store {
         &mut self,
         worktree_id: u64,
         acting_connection_id: ConnectionId,
-    ) -> tide::Result<(Vec<ConnectionId>, Vec<UserId>)> {
+    ) -> tide::Result<WorktreeMetadata> {
         let worktree = if let Some(worktree) = self.worktrees.get_mut(&worktree_id) {
             worktree
         } else {
@@ -299,7 +310,10 @@ impl Store {
                     connection.worktrees.remove(&worktree_id);
                 }
             }
-            Ok((connection_ids, worktree.collaborator_user_ids.clone()))
+            Ok(WorktreeMetadata {
+                connection_ids,
+                collaborator_ids: worktree.collaborator_user_ids.clone(),
+            })
         } else {
             Err(anyhow!("worktree is not shared"))?
         }
@@ -310,7 +324,7 @@ impl Store {
         connection_id: ConnectionId,
         user_id: UserId,
         worktree_id: u64,
-    ) -> tide::Result<(ReplicaId, &Worktree)> {
+    ) -> tide::Result<JoinedWorktree> {
         let connection = self
             .connections
             .get_mut(&connection_id)
@@ -336,22 +350,25 @@ impl Store {
         }
         share.active_replica_ids.insert(replica_id);
         share.guest_connection_ids.insert(connection_id, replica_id);
-        return Ok((replica_id, worktree));
+        Ok(JoinedWorktree {
+            replica_id,
+            worktree,
+        })
     }
 
     pub fn leave_worktree(
         &mut self,
         connection_id: ConnectionId,
         worktree_id: u64,
-    ) -> Option<(Vec<ConnectionId>, Vec<UserId>)> {
+    ) -> Option<WorktreeMetadata> {
         let worktree = self.worktrees.get_mut(&worktree_id)?;
         let share = worktree.share.as_mut()?;
         let replica_id = share.guest_connection_ids.remove(&connection_id)?;
         share.active_replica_ids.remove(&replica_id);
-        Some((
-            worktree.connection_ids(),
-            worktree.collaborator_user_ids.clone(),
-        ))
+        Some(WorktreeMetadata {
+            connection_ids: worktree.connection_ids(),
+            collaborator_ids: worktree.collaborator_user_ids.clone(),
+        })
     }
 
     pub fn update_worktree(

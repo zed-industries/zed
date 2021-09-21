@@ -19,7 +19,7 @@ use std::{
     sync::Arc,
     time::Instant,
 };
-use store::{Store, Worktree};
+use store::{JoinedWorktree, Store, Worktree};
 use surf::StatusCode;
 use tide::log;
 use tide::{
@@ -324,18 +324,18 @@ impl Server {
         request: TypedEnvelope<proto::UnshareWorktree>,
     ) -> tide::Result<()> {
         let worktree_id = request.payload.worktree_id;
-        let (connection_ids, collaborator_user_ids) = self
+        let worktree = self
             .store
             .write()
             .await
             .unshare_worktree(worktree_id, request.sender_id)?;
 
-        broadcast(request.sender_id, connection_ids, |conn_id| {
+        broadcast(request.sender_id, worktree.connection_ids, |conn_id| {
             self.peer
                 .send(conn_id, proto::UnshareWorktree { worktree_id })
         })
         .await?;
-        self.update_collaborators_for_users(&collaborator_user_ids)
+        self.update_collaborators_for_users(&worktree.collaborator_ids)
             .await?;
 
         Ok(())
@@ -357,7 +357,10 @@ impl Server {
         let collaborator_user_ids;
         let mut state = self.store.write().await;
         match state.join_worktree(request.sender_id, user_id, worktree_id) {
-            Ok((peer_replica_id, worktree)) => {
+            Ok(JoinedWorktree {
+                replica_id,
+                worktree,
+            }) => {
                 let share = worktree.share()?;
                 let peer_count = share.guest_connection_ids.len();
                 let mut peers = Vec::with_capacity(peer_count);
@@ -379,7 +382,7 @@ impl Server {
                         root_name: worktree.root_name.clone(),
                         entries: share.entries.values().cloned().collect(),
                     }),
-                    replica_id: peer_replica_id as u32,
+                    replica_id: replica_id as u32,
                     peers,
                 };
                 connection_ids = worktree.connection_ids();
@@ -426,13 +429,13 @@ impl Server {
         let sender_id = request.sender_id;
         let worktree_id = request.payload.worktree_id;
 
-        if let Some((connection_ids, collaborator_ids)) = self
+        if let Some(worktree) = self
             .store
             .write()
             .await
             .leave_worktree(sender_id, worktree_id)
         {
-            broadcast(sender_id, connection_ids, |conn_id| {
+            broadcast(sender_id, worktree.connection_ids, |conn_id| {
                 self.peer.send(
                     conn_id,
                     proto::RemovePeer {
@@ -442,7 +445,7 @@ impl Server {
                 )
             })
             .await?;
-            self.update_collaborators_for_users(&collaborator_ids)
+            self.update_collaborators_for_users(&worktree.collaborator_ids)
                 .await?;
         }
         Ok(())
