@@ -96,21 +96,15 @@ impl PeoplePanel {
                             .map(|avatar| Image::new(avatar).with_style(theme.host_avatar).boxed()),
                     )
                     .with_child(
-                        ConstrainedBox::new(
-                            Align::new(
-                                Container::new(
-                                    Label::new(
-                                        collaborator.user.github_login.clone(),
-                                        theme.host_username.text.clone(),
-                                    )
-                                    .boxed(),
-                                )
-                                .with_style(theme.host_username.container)
-                                .boxed()
-                            )
-                            .left()
-                            .boxed()
+                        Label::new(
+                            collaborator.user.github_login.clone(),
+                            theme.host_username.text.clone(),
                         )
+                        .contained()
+                        .with_style(theme.host_username.container)
+                        .aligned()
+                        .left()
+                        .constrained()
                         .with_height(host_avatar_height)
                         .boxed()
                     )
@@ -192,32 +186,26 @@ impl PeoplePanel {
                                                 Container::new(
                                                     Flex::row()
                                                         .with_child(
-                                                            ConstrainedBox::new(
-                                                                Align::new(
-                                                                    Label::new(
-                                                                        worktree.root_name.clone(),
-                                                                        style.text.clone(),
-                                                                    )
-                                                                    .boxed(),
-                                                                )
-                                                                .left()
-                                                                .boxed()
+                                                            Label::new(
+                                                                worktree.root_name.clone(),
+                                                                style.text.clone(),
                                                             )
+                                                            .aligned()
+                                                            .left()
+                                                            .constrained()
                                                             .with_height(guest_avatar_height)
                                                             .boxed()
                                                         )
                                                         .with_children(worktree.guests.iter().filter_map(
                                                             |participant| {
                                                                 participant.avatar.clone().map(|avatar| {
-                                                                    Container::new(
-                                                                        Image::new(avatar)
-                                                                            .with_style(theme.guest_avatar)
-                                                                            .boxed(),
-                                                                    )
-                                                                    .with_margin_left(
-                                                                        theme.guest_avatar_spacing,
-                                                                    )
-                                                                    .boxed()
+                                                                    Image::new(avatar)
+                                                                        .with_style(theme.guest_avatar)
+                                                                        .contained()
+                                                                        .with_margin_left(
+                                                                            theme.guest_avatar_spacing,
+                                                                        )
+                                                                        .boxed()
                                                                 })
                                                             },
                                                         ))
@@ -236,7 +224,7 @@ impl PeoplePanel {
                                         });
                                 }
 
-                                Expanded::new(1.0, worktree_row.boxed()).boxed()
+                                worktree_row.expanded(1.0).boxed()
                             })
                             .boxed()
                     }),

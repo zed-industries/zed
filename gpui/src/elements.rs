@@ -108,6 +108,34 @@ pub trait Element {
             element: Rc::new(RefCell::new(Lifecycle::Init { element: self })),
         })
     }
+
+    fn constrained(self) -> ConstrainedBox
+    where
+        Self: 'static + Sized,
+    {
+        ConstrainedBox::new(self.boxed())
+    }
+
+    fn aligned(self) -> Align
+    where
+        Self: 'static + Sized,
+    {
+        Align::new(self.boxed())
+    }
+
+    fn contained(self) -> Container
+    where
+        Self: 'static + Sized,
+    {
+        Container::new(self.boxed())
+    }
+
+    fn expanded(self, flex: f32) -> Expanded
+    where
+        Self: 'static + Sized,
+    {
+        Expanded::new(flex, self.boxed())
+    }
 }
 
 pub enum Lifecycle<T: Element> {
