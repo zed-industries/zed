@@ -1,5 +1,4 @@
 use crate::db::{ChannelId, UserId};
-use crate::errors::TideResultExt;
 use anyhow::anyhow;
 use std::collections::{hash_map, HashMap, HashSet};
 use zrpc::{proto, ConnectionId};
@@ -190,23 +189,20 @@ impl Store {
                 }
             }
 
-            if let Ok(host_user_id) = self
-                .user_id_for_connection(worktree.host_connection_id)
-                .context("stale worktree host connection")
-            {
-                let host =
-                    collaborators
-                        .entry(host_user_id)
-                        .or_insert_with(|| proto::Collaborator {
-                            user_id: host_user_id.to_proto(),
-                            worktrees: Vec::new(),
-                        });
-                host.worktrees.push(proto::WorktreeMetadata {
-                    id: *worktree_id,
-                    root_name: worktree.root_name.clone(),
-                    is_shared: worktree.share().is_ok(),
-                    guests: guests.into_iter().collect(),
-                });
+            if let Ok(host_user_id) = self.user_id_for_connection(worktree.host_connection_id) {
+                collaborators
+                    .entry(host_user_id)
+                    .or_insert_with(|| proto::Collaborator {
+                        user_id: host_user_id.to_proto(),
+                        worktrees: Vec::new(),
+                    })
+                    .worktrees
+                    .push(proto::WorktreeMetadata {
+                        id: *worktree_id,
+                        root_name: worktree.root_name.clone(),
+                        is_shared: worktree.share.is_some(),
+                        guests: guests.into_iter().collect(),
+                    });
             }
         }
 
