@@ -5,12 +5,11 @@ use super::{
     db::{ChannelId, MessageId, UserId},
     AppState,
 };
-use crate::errors::TideResultExt;
 use anyhow::anyhow;
 use async_std::{sync::RwLock, task};
 use async_tungstenite::{tungstenite::protocol::Role, WebSocketStream};
 use futures::{future::BoxFuture, FutureExt};
-use postage::{broadcast, mpsc, prelude::Sink as _, prelude::Stream as _};
+use postage::{mpsc, prelude::Sink as _, prelude::Stream as _};
 use sha1::{Digest as _, Sha1};
 use std::{
     any::TypeId,
@@ -20,7 +19,7 @@ use std::{
     sync::Arc,
     time::Instant,
 };
-use store::{ReplicaId, Store, Worktree};
+use store::{Store, Worktree};
 use surf::StatusCode;
 use tide::log;
 use tide::{
@@ -71,6 +70,7 @@ impl Server {
             .add_handler(Server::share_worktree)
             .add_handler(Server::unshare_worktree)
             .add_handler(Server::join_worktree)
+            .add_handler(Server::leave_worktree)
             .add_handler(Server::update_worktree)
             .add_handler(Server::open_buffer)
             .add_handler(Server::close_buffer)
@@ -199,7 +199,7 @@ impl Server {
         }
 
         self.update_collaborators_for_users(removed_connection.collaborator_ids.iter())
-            .await;
+            .await?;
 
         Ok(())
     }
@@ -420,22 +420,24 @@ impl Server {
     }
 
     async fn leave_worktree(
-        self: &Arc<Server>,
-        worktree_id: u64,
-        sender_conn_id: ConnectionId,
+        self: Arc<Server>,
+        request: TypedEnvelope<proto::LeaveWorktree>,
     ) -> tide::Result<()> {
+        let sender_id = request.sender_id;
+        let worktree_id = request.payload.worktree_id;
+
         if let Some((connection_ids, collaborator_ids)) = self
             .store
             .write()
             .await
-            .leave_worktree(sender_conn_id, worktree_id)
+            .leave_worktree(sender_id, worktree_id)
         {
-            broadcast(sender_conn_id, connection_ids, |conn_id| {
+            broadcast(sender_id, connection_ids, |conn_id| {
                 self.peer.send(
                     conn_id,
                     proto::RemovePeer {
                         worktree_id,
-                        peer_id: sender_conn_id.0,
+                        peer_id: sender_id.0,
                     },
                 )
             })
@@ -1550,19 +1552,23 @@ mod tests {
             .await;
 
         assert_eq!(
-            server.state().await.channels[&channel_id]
+            server
+                .state()
+                .await
+                .channel(channel_id)
+                .unwrap()
                 .connection_ids
                 .len(),
             2
         );
         cx_b.update(|_| drop(channel_b));
         server
-            .condition(|state| state.channels[&channel_id].connection_ids.len() == 1)
+            .condition(|state| state.channel(channel_id).unwrap().connection_ids.len() == 1)
             .await;
 
         cx_a.update(|_| drop(channel_a));
         server
-            .condition(|state| !state.channels.contains_key(&channel_id))
+            .condition(|state| state.channel(channel_id).is_none())
             .await;
     }
 

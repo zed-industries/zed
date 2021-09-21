@@ -1,4 +1,4 @@
-use crate::db::{ChannelId, MessageId, UserId};
+use crate::db::{ChannelId, UserId};
 use crate::errors::TideResultExt;
 use anyhow::anyhow;
 use std::collections::{hash_map, HashMap, HashSet};
@@ -27,15 +27,15 @@ pub struct Worktree {
     pub share: Option<WorktreeShare>,
 }
 
-struct WorktreeShare {
+pub struct WorktreeShare {
     pub guest_connection_ids: HashMap<ConnectionId, ReplicaId>,
     pub active_replica_ids: HashSet<ReplicaId>,
     pub entries: HashMap<u64, proto::Entry>,
 }
 
 #[derive(Default)]
-struct Channel {
-    connection_ids: HashSet<ConnectionId>,
+pub struct Channel {
+    pub connection_ids: HashSet<ConnectionId>,
 }
 
 pub type ReplicaId = u16;
@@ -73,7 +73,7 @@ impl Store {
             return Err(anyhow!("no such connection"))?;
         };
 
-        for channel_id in connection.channels {
+        for channel_id in &connection.channels {
             if let Some(channel) = self.channels.get_mut(&channel_id) {
                 channel.connection_ids.remove(&connection_id);
             }
@@ -89,12 +89,12 @@ impl Store {
         }
 
         let mut result = RemovedConnectionState::default();
-        for worktree_id in connection.worktrees {
+        for worktree_id in connection.worktrees.clone() {
             if let Ok(worktree) = self.remove_worktree(worktree_id, connection_id) {
-                result.hosted_worktrees.insert(worktree_id, worktree);
                 result
                     .collaborator_ids
                     .extend(worktree.collaborator_user_ids.iter().copied());
+                result.hosted_worktrees.insert(worktree_id, worktree);
             } else {
                 if let Some(worktree) = self.worktrees.get(&worktree_id) {
                     result
@@ -108,6 +108,10 @@ impl Store {
         }
 
         Ok(result)
+    }
+
+    pub fn channel(&self, id: ChannelId) -> Option<&Channel> {
+        self.channels.get(&id)
     }
 
     pub fn join_channel(&mut self, connection_id: ConnectionId, channel_id: ChannelId) {
@@ -230,7 +234,7 @@ impl Store {
             connection.worktrees.remove(&worktree_id);
         }
 
-        if let Some(share) = worktree.share {
+        if let Some(share) = &worktree.share {
             for connection_id in share.guest_connection_ids.keys() {
                 if let Some(connection) = self.connections.get_mut(connection_id) {
                     connection.worktrees.remove(&worktree_id);
@@ -238,7 +242,7 @@ impl Store {
             }
         }
 
-        for collaborator_user_id in worktree.collaborator_user_ids {
+        for collaborator_user_id in &worktree.collaborator_user_ids {
             if let Some(visible_worktrees) = self
                 .visible_worktrees_by_user_id
                 .get_mut(&collaborator_user_id)
@@ -289,7 +293,7 @@ impl Store {
 
         let connection_ids = worktree.connection_ids();
 
-        if let Some(share) = worktree.share.take() {
+        if let Some(_) = worktree.share.take() {
             for connection_id in &connection_ids {
                 if let Some(connection) = self.connections.get_mut(connection_id) {
                     connection.worktrees.remove(&worktree_id);
