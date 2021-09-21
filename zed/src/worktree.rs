@@ -2806,8 +2806,11 @@ mod tests {
             }
         }));
 
+        let user_id = 5;
+        let mut client = rpc::Client::new();
+        let server = FakeServer::for_client(user_id, &mut client, &cx).await;
         let tree = Worktree::open_local(
-            rpc::Client::new(),
+            client,
             dir.path(),
             Arc::new(RealFs),
             Default::default(),
@@ -2844,15 +2847,20 @@ mod tests {
         // Create a remote copy of this worktree.
         let initial_snapshot = tree.read_with(&cx, |tree, _| tree.snapshot());
         let worktree_id = 1;
-        let share_request = tree
-            .update(&mut cx, |tree, cx| {
-                tree.as_local().unwrap().share_request(cx)
-            })
-            .await
-            .unwrap();
+        let share_request = tree.update(&mut cx, |tree, cx| {
+            tree.as_local().unwrap().share_request(cx)
+        });
+        let open_worktree = server.receive::<proto::OpenWorktree>().await.unwrap();
+        server
+            .respond(
+                open_worktree.receipt(),
+                proto::OpenWorktreeResponse { worktree_id: 1 },
+            )
+            .await;
+
         let remote = Worktree::remote(
             proto::JoinWorktreeResponse {
-                worktree: share_request.worktree,
+                worktree: share_request.await.unwrap().worktree,
                 replica_id: 1,
                 peers: Vec::new(),
             },
