@@ -28,6 +28,7 @@ pub struct Collaborator {
 
 #[derive(Debug)]
 pub struct WorktreeMetadata {
+    pub id: u64,
     pub root_name: String,
     pub is_shared: bool,
     pub guests: Vec<Arc<User>>,
@@ -36,7 +37,7 @@ pub struct WorktreeMetadata {
 pub struct UserStore {
     users: HashMap<u64, Arc<User>>,
     current_user: watch::Receiver<Option<Arc<User>>>,
-    collaborators: Vec<Collaborator>,
+    collaborators: Arc<[Collaborator]>,
     rpc: Arc<Client>,
     http: Arc<dyn HttpClient>,
     _maintain_collaborators: Task<()>,
@@ -64,7 +65,7 @@ impl UserStore {
         Self {
             users: Default::default(),
             current_user: current_user_rx,
-            collaborators: Default::default(),
+            collaborators: Arc::from([]),
             rpc: rpc.clone(),
             http,
             _maintain_collaborators: cx.spawn_weak(|this, mut cx| async move {
@@ -127,7 +128,7 @@ impl UserStore {
             }
 
             this.update(&mut cx, |this, cx| {
-                this.collaborators = collaborators;
+                this.collaborators = collaborators.into();
                 cx.notify();
             });
 
@@ -135,7 +136,7 @@ impl UserStore {
         })
     }
 
-    pub fn collaborators(&self) -> &[Collaborator] {
+    pub fn collaborators(&self) -> &Arc<[Collaborator]> {
         &self.collaborators
     }
 
@@ -235,6 +236,7 @@ impl Collaborator {
                 );
             }
             worktrees.push(WorktreeMetadata {
+                id: worktree.id,
                 root_name: worktree.root_name,
                 is_shared: worktree.is_shared,
                 guests,

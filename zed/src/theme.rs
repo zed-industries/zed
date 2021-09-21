@@ -109,10 +109,11 @@ pub struct ChatPanel {
 pub struct PeoplePanel {
     #[serde(flatten)]
     pub container: ContainerStyle,
+    pub host_avatar: ImageStyle,
     pub host_username: ContainedText,
-    pub worktree_name: ContainedText,
-    pub worktree_host_avatar: ImageStyle,
-    pub worktree_guest_avatar: ImageStyle,
+    pub worktree: ContainedText,
+    pub hovered_worktree: ContainedText,
+    pub guest_avatar: ImageStyle,
     pub tree_branch: TreeBranch,
 }
 
@@ -161,7 +162,7 @@ pub struct Selector {
     pub active_item: ContainedLabel,
 }
 
-#[derive(Deserialize)]
+#[derive(Debug, Deserialize)]
 pub struct ContainedText {
     #[serde(flatten)]
     pub container: ContainerStyle,

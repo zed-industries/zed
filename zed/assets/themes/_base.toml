@@ -125,13 +125,19 @@ color = "$text.1.color"
 
 [people_panel]
 extends = "$panel"
+host_avatar = { corner_radius = 10, width = 20 }
 host_username = { extends = "$text.0", padding.left = 5 }
-worktree_host_avatar = { corner_radius = 10, width = 20 }
-worktree_guest_avatar = { corner_radius = 8, width = 16 }
+guest_avatar = { corner_radius = 8, width = 16 }
 
-[people_panel.worktree_name]
-extends = "$text.0"
+[people_panel.worktree]
+extends = "$text.1"
 padding = { left = 5 }
+
+[people_panel.hovered_worktree]
+extends = "$text.0"
+padding = { left = 8 }
+# extends = "$people_panel.worktree"
+# color = "$text.0.color"
 
 [people_panel.tree_branch]
 width = 1

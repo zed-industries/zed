@@ -7,7 +7,7 @@ use crate::{
     editor::Buffer,
     fs::Fs,
     language::LanguageRegistry,
-    people_panel::PeoplePanel,
+    people_panel::{JoinWorktree, PeoplePanel},
     project_browser::ProjectBrowser,
     rpc,
     settings::Settings,
@@ -44,7 +44,6 @@ action!(Open, Arc<AppState>);
 action!(OpenPaths, OpenParams);
 action!(OpenNew, Arc<AppState>);
 action!(ShareWorktree);
-action!(JoinWorktree, Arc<AppState>);
 action!(Save);
 action!(DebugElements);
 
@@ -59,6 +58,7 @@ pub fn init(cx: &mut MutableAppContext) {
     cx.add_action(Workspace::open_new_file);
     cx.add_action(Workspace::share_worktree);
     cx.add_action(Workspace::toggle_sidebar_item);
+    cx.add_action(Workspace::join_worktree);
     cx.add_bindings(vec![
         Binding::new("cmd-s", Save, None),
         Binding::new("cmd-alt-i", DebugElements, None),
@@ -839,14 +839,16 @@ impl Workspace {
         .detach();
     }
 
-    fn join_worktree(&mut self, id: u64, cx: &mut ViewContext<Self>) {
+    fn join_worktree(&mut self, action: &JoinWorktree, cx: &mut ViewContext<Self>) {
         let rpc = self.rpc.clone();
         let languages = self.languages.clone();
+        let worktree_id = action.0;
 
         cx.spawn(|this, mut cx| {
             async move {
                 rpc.authenticate_and_connect(&cx).await?;
-                let worktree = Worktree::open_remote(rpc.clone(), id, languages, &mut cx).await?;
+                let worktree =
+                    Worktree::open_remote(rpc.clone(), worktree_id, languages, &mut cx).await?;
                 this.update(&mut cx, |workspace, cx| {
                     cx.observe(&worktree, |_, _, cx| cx.notify()).detach();
                     workspace.worktrees.insert(worktree);

@@ -27,11 +27,6 @@ pub fn menus(state: &Arc<AppState>) -> Vec<Menu<'static>> {
                     action: Box::new(workspace::ShareWorktree),
                 },
                 MenuItem::Action {
-                    name: "Join",
-                    keystroke: None,
-                    action: Box::new(workspace::JoinWorktree(state.clone())),
-                },
-                MenuItem::Action {
                     name: "Quit",
                     keystroke: Some("cmd-q"),
                     action: Box::new(super::Quit),

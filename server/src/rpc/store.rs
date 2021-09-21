@@ -202,6 +202,7 @@ impl Store {
                             worktrees: Vec::new(),
                         });
                 host.worktrees.push(proto::WorktreeMetadata {
+                    id: *worktree_id,
                     root_name: worktree.root_name.clone(),
                     is_shared: worktree.share().is_ok(),
                     guests: guests.into_iter().collect(),
