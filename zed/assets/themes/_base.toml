@@ -128,16 +128,27 @@ extends = "$panel"
 host_avatar = { corner_radius = 10, width = 20 }
 host_username = { extends = "$text.0", padding.left = 5 }
 guest_avatar = { corner_radius = 8, width = 16 }
+guest_avatar_spacing = 8
 
-[people_panel.worktree]
+[people_panel.unshared_worktree]
 extends = "$text.1"
 padding = { left = 5 }
 
-[people_panel.hovered_worktree]
-extends = "$text.0"
-padding = { left = 8 }
-# extends = "$people_panel.worktree"
-# color = "$text.0.color"
+[people_panel.own_worktree]
+extends = "$people_panel.unshared_worktree"
+color = "$syntax.variant"
+
+[people_panel.joined_worktree]
+extends = "$people_panel.own_worktree"
+
+[people_panel.shared_worktree]
+extends = "$people_panel.unshared_worktree"
+color = "$text.0.color"
+
+[people_panel.hovered_shared_worktree]
+extends = "$people_panel.shared_worktree"
+background = "$state.hover"
+corner_radius = 6
 
 [people_panel.tree_branch]
 width = 1

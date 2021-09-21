@@ -37,8 +37,15 @@ impl PeoplePanel {
                     let user_store = user_store.clone();
                     let settings = settings.clone();
                     move |ix, cx| {
-                        let collaborators = user_store.read(cx).collaborators().clone();
-                        Self::render_collaborator(&collaborators[ix], &settings.borrow().theme, cx)
+                        let user_store = user_store.read(cx);
+                        let collaborators = user_store.collaborators().clone();
+                        let current_user_id = user_store.current_user().map(|user| user.id);
+                        Self::render_collaborator(
+                            &collaborators[ix],
+                            current_user_id,
+                            &settings.borrow().theme,
+                            cx,
+                        )
                     }
                 },
             ),
@@ -56,15 +63,16 @@ impl PeoplePanel {
 
     fn render_collaborator(
         collaborator: &Collaborator,
+        current_user_id: Option<u64>,
         theme: &Theme,
         cx: &mut LayoutContext,
     ) -> ElementBox {
         let theme = &theme.people_panel;
         let worktree_count = collaborator.worktrees.len();
         let font_cache = cx.font_cache();
-        let line_height = theme.worktree.text.line_height(font_cache);
-        let cap_height = theme.worktree.text.cap_height(font_cache);
-        let baseline_offset = theme.worktree.text.baseline_offset(font_cache);
+        let line_height = theme.unshared_worktree.text.line_height(font_cache);
+        let cap_height = theme.unshared_worktree.text.cap_height(font_cache);
+        let baseline_offset = theme.unshared_worktree.text.baseline_offset(font_cache);
         let tree_branch = theme.tree_branch;
 
         Flex::column()
@@ -140,36 +148,70 @@ impl PeoplePanel {
                                 .with_height(line_height)
                                 .boxed(),
                             )
-                            .with_child(
-                                MouseEventHandler::new::<PeoplePanel, _, _, _>(
-                                    worktree_id as usize,
-                                    cx,
-                                    |mouse_state, _| {
-                                        let style = if mouse_state.hovered {
-                                            &theme.hovered_worktree
-                                        } else {
-                                            &theme.worktree
-                                        };
-                                        Container::new(
-                                            Label::new(
-                                                worktree.root_name.clone(),
-                                                style.text.clone(),
-                                            )
-                                            .boxed(),
-                                        )
-                                        .with_style(style.container)
-                                        .boxed()
-                                    },
-                                )
-                                .with_cursor_style(CursorStyle::PointingHand)
-                                .on_click(move |cx| cx.dispatch_action(JoinWorktree(worktree_id)))
-                                .boxed(),
-                            )
-                            .with_children(worktree.guests.iter().filter_map(|participant| {
-                                participant.avatar.clone().map(|avatar| {
-                                    Image::new(avatar).with_style(theme.guest_avatar).boxed()
-                                })
-                            }))
+                            .with_child({
+                                let mut worktree_row =
+                                    MouseEventHandler::new::<PeoplePanel, _, _, _>(
+                                        worktree_id as usize,
+                                        cx,
+                                        |mouse_state, _| {
+                                            let style =
+                                                if Some(collaborator.user.id) == current_user_id {
+                                                    &theme.own_worktree
+                                                } else if worktree.is_shared {
+                                                    if worktree.guests.iter().any(|guest| {
+                                                        Some(guest.id) == current_user_id
+                                                    }) {
+                                                        &theme.joined_worktree
+                                                    } else if mouse_state.hovered {
+                                                        &theme.hovered_shared_worktree
+                                                    } else {
+                                                        &theme.shared_worktree
+                                                    }
+                                                } else {
+                                                    &theme.unshared_worktree
+                                                };
+
+                                            Flex::row()
+                                                .with_child(
+                                                    Container::new(
+                                                        Label::new(
+                                                            worktree.root_name.clone(),
+                                                            style.text.clone(),
+                                                        )
+                                                        .boxed(),
+                                                    )
+                                                    .with_style(style.container)
+                                                    .boxed(),
+                                                )
+                                                .with_children(worktree.guests.iter().filter_map(
+                                                    |participant| {
+                                                        participant.avatar.clone().map(|avatar| {
+                                                            Container::new(
+                                                                Image::new(avatar)
+                                                                    .with_style(theme.guest_avatar)
+                                                                    .boxed(),
+                                                            )
+                                                            .with_margin_left(
+                                                                theme.guest_avatar_spacing,
+                                                            )
+                                                            .boxed()
+                                                        })
+                                                    },
+                                                ))
+                                                .boxed()
+                                        },
+                                    );
+
+                                if worktree.is_shared {
+                                    worktree_row = worktree_row
+                                        .with_cursor_style(CursorStyle::PointingHand)
+                                        .on_click(move |cx| {
+                                            cx.dispatch_action(JoinWorktree(worktree_id))
+                                        });
+                                }
+
+                                Expanded::new(1.0, worktree_row.boxed()).boxed()
+                            })
                             .boxed()
                     }),
             )
