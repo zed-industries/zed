@@ -134,21 +134,18 @@ guest_avatar_spacing = 8
 extends = "$text.1"
 padding = { left = 5 }
 
-[people_panel.own_worktree]
-extends = "$people_panel.unshared_worktree"
-color = "$syntax.variant"
-
-[people_panel.joined_worktree]
-extends = "$people_panel.own_worktree"
+[people_panel.hovered_unshared_worktree]
+extends = "$people_panel.shared_worktree"
+background = "$state.hover"
+corner_radius = 6
 
 [people_panel.shared_worktree]
 extends = "$people_panel.unshared_worktree"
 color = "$text.0.color"
 
 [people_panel.hovered_shared_worktree]
-extends = "$people_panel.shared_worktree"
-background = "$state.hover"
-corner_radius = 6
+extends = "$people_panel.hovered_unshared_worktree"
+color = "$text.0.color"
 
 [people_panel.tree_branch]
 width = 1

@@ -2320,6 +2320,7 @@ impl Editor {
             buffer::Event::Saved => cx.emit(Event::Saved),
             buffer::Event::FileHandleChanged => cx.emit(Event::FileHandleChanged),
             buffer::Event::Reloaded => cx.emit(Event::FileHandleChanged),
+            buffer::Event::Closed => cx.emit(Event::Closed),
             buffer::Event::Reparsed => {}
         }
     }
@@ -2449,6 +2450,7 @@ pub enum Event {
     Dirtied,
     Saved,
     FileHandleChanged,
+    Closed,
 }
 
 impl Entity for Editor {
@@ -2554,6 +2556,10 @@ impl workspace::Item for Buffer {
 impl workspace::ItemView for Editor {
     fn should_activate_item_on_event(event: &Self::Event) -> bool {
         matches!(event, Event::Activate)
+    }
+
+    fn should_close_item_on_event(event: &Self::Event) -> bool {
+        matches!(event, Event::Closed)
     }
 
     fn should_update_tab_on_event(event: &Self::Event) -> bool {

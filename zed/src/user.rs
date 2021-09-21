@@ -128,6 +128,7 @@ impl UserStore {
             }
 
             this.update(&mut cx, |this, cx| {
+                collaborators.sort_by(|a, b| a.user.github_login.cmp(&b.user.github_login));
                 this.collaborators = collaborators.into();
                 cx.notify();
             });

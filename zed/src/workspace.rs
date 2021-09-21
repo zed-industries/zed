@@ -7,7 +7,7 @@ use crate::{
     editor::Buffer,
     fs::Fs,
     language::LanguageRegistry,
-    people_panel::{JoinWorktree, PeoplePanel},
+    people_panel::{JoinWorktree, LeaveWorktree, PeoplePanel, ShareWorktree, UnshareWorktree},
     project_browser::ProjectBrowser,
     rpc,
     settings::Settings,
@@ -43,7 +43,6 @@ use std::{
 action!(Open, Arc<AppState>);
 action!(OpenPaths, OpenParams);
 action!(OpenNew, Arc<AppState>);
-action!(ShareWorktree);
 action!(Save);
 action!(DebugElements);
 
@@ -56,9 +55,11 @@ pub fn init(cx: &mut MutableAppContext) {
     cx.add_action(Workspace::save_active_item);
     cx.add_action(Workspace::debug_elements);
     cx.add_action(Workspace::open_new_file);
-    cx.add_action(Workspace::share_worktree);
     cx.add_action(Workspace::toggle_sidebar_item);
+    cx.add_action(Workspace::share_worktree);
+    cx.add_action(Workspace::unshare_worktree);
     cx.add_action(Workspace::join_worktree);
+    cx.add_action(Workspace::leave_worktree);
     cx.add_bindings(vec![
         Binding::new("cmd-s", Save, None),
         Binding::new("cmd-alt-i", DebugElements, None),
@@ -175,6 +176,9 @@ pub trait ItemView: View {
     fn should_activate_item_on_event(_: &Self::Event) -> bool {
         false
     }
+    fn should_close_item_on_event(_: &Self::Event) -> bool {
+        false
+    }
     fn should_update_tab_on_event(_: &Self::Event) -> bool {
         false
     }
@@ -273,6 +277,10 @@ impl<T: ItemView> ItemViewHandle for ViewHandle<T> {
     fn set_parent_pane(&self, pane: &ViewHandle<Pane>, cx: &mut MutableAppContext) {
         pane.update(cx, |_, cx| {
             cx.subscribe(self, |pane, item, event, cx| {
+                if T::should_close_item_on_event(event) {
+                    pane.close_item(item.id(), cx);
+                    return;
+                }
                 if T::should_activate_item_on_event(event) {
                     if let Some(ix) = pane.item_index(&item) {
                         pane.activate_item(ix, cx);
@@ -814,21 +822,33 @@ impl Workspace {
         };
     }
 
-    fn share_worktree(&mut self, _: &ShareWorktree, cx: &mut ViewContext<Self>) {
+    fn share_worktree(&mut self, action: &ShareWorktree, cx: &mut ViewContext<Self>) {
         let rpc = self.rpc.clone();
+        let remote_id = action.0;
         cx.spawn(|this, mut cx| {
             async move {
                 rpc.authenticate_and_connect(&cx).await?;
 
-                let share_task = this.update(&mut cx, |this, cx| {
-                    let worktree = this.worktrees.iter().next()?;
-                    worktree.update(cx, |worktree, cx| {
-                        let worktree = worktree.as_local_mut()?;
-                        Some(worktree.share(cx))
-                    })
+                let task = this.update(&mut cx, |this, cx| {
+                    for worktree in &this.worktrees {
+                        let task = worktree.update(cx, |worktree, cx| {
+                            worktree.as_local_mut().and_then(|worktree| {
+                                if worktree.remote_id() == Some(remote_id) {
+                                    Some(worktree.share(cx))
+                                } else {
+                                    None
+                                }
+                            })
+                        });
+
+                        if task.is_some() {
+                            return task;
+                        }
+                    }
+                    None
                 });
 
-                if let Some(share_task) = share_task {
+                if let Some(share_task) = task {
                     share_task.await?;
                 }
 
@@ -837,6 +857,23 @@ impl Workspace {
             .log_err()
         })
         .detach();
+    }
+
+    fn unshare_worktree(&mut self, action: &UnshareWorktree, cx: &mut ViewContext<Self>) {
+        let remote_id = action.0;
+        for worktree in &self.worktrees {
+            if worktree.update(cx, |worktree, cx| {
+                if let Some(worktree) = worktree.as_local_mut() {
+                    if worktree.remote_id() == Some(remote_id) {
+                        worktree.unshare(cx);
+                        return true;
+                    }
+                }
+                false
+            }) {
+                break;
+            }
+        }
     }
 
     fn join_worktree(&mut self, action: &JoinWorktree, cx: &mut ViewContext<Self>) {
@@ -853,6 +890,31 @@ impl Workspace {
                     cx.observe(&worktree, |_, _, cx| cx.notify()).detach();
                     workspace.worktrees.insert(worktree);
                     cx.notify();
+                });
+
+                Ok(())
+            }
+            .log_err()
+        })
+        .detach();
+    }
+
+    fn leave_worktree(&mut self, action: &LeaveWorktree, cx: &mut ViewContext<Self>) {
+        let remote_id = action.0;
+        cx.spawn(|this, mut cx| {
+            async move {
+                this.update(&mut cx, |this, cx| {
+                    this.worktrees.retain(|worktree| {
+                        worktree.update(cx, |worktree, cx| {
+                            if let Some(worktree) = worktree.as_remote_mut() {
+                                if worktree.remote_id() == remote_id {
+                                    worktree.close_all_buffers(cx);
+                                    return false;
+                                }
+                            }
+                            true
+                        })
+                    })
                 });
 
                 Ok(())

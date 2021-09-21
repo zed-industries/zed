@@ -14,6 +14,9 @@ use gpui::{
 use postage::watch;
 
 action!(JoinWorktree, u64);
+action!(LeaveWorktree, u64);
+action!(ShareWorktree, u64);
+action!(UnshareWorktree, u64);
 
 pub struct PeoplePanel {
     collaborators: ListState,
@@ -106,7 +109,7 @@ impl PeoplePanel {
                         .left()
                         .constrained()
                         .with_height(host_avatar_height)
-                        .boxed()
+                        .boxed(),
                     )
                     .boxed(),
             )
@@ -161,70 +164,78 @@ impl PeoplePanel {
                                 .boxed(),
                             )
                             .with_child({
-                                let mut worktree_row =
-                                    MouseEventHandler::new::<PeoplePanel, _, _, _>(
-                                        worktree_id as usize,
-                                        cx,
-                                        |mouse_state, _| {
-                                            let style =
-                                                if Some(collaborator.user.id) == current_user_id {
-                                                    &theme.own_worktree
-                                                } else if worktree.is_shared {
-                                                    if worktree.guests.iter().any(|guest| {
-                                                        Some(guest.id) == current_user_id
-                                                    }) {
-                                                        &theme.joined_worktree
-                                                    } else if mouse_state.hovered {
-                                                        &theme.hovered_shared_worktree
-                                                    } else {
-                                                        &theme.shared_worktree
-                                                    }
-                                                } else {
-                                                    &theme.unshared_worktree
-                                                };
+                                let is_host = Some(collaborator.user.id) == current_user_id;
+                                let is_guest = !is_host
+                                    && worktree
+                                        .guests
+                                        .iter()
+                                        .any(|guest| Some(guest.id) == current_user_id);
+                                let is_shared = worktree.is_shared;
 
-                                                Container::new(
-                                                    Flex::row()
-                                                        .with_child(
-                                                            Label::new(
-                                                                worktree.root_name.clone(),
-                                                                style.text.clone(),
-                                                            )
-                                                            .aligned()
-                                                            .left()
-                                                            .constrained()
-                                                            .with_height(guest_avatar_height)
-                                                            .boxed()
-                                                        )
-                                                        .with_children(worktree.guests.iter().filter_map(
-                                                            |participant| {
-                                                                participant.avatar.clone().map(|avatar| {
-                                                                    Image::new(avatar)
-                                                                        .with_style(theme.guest_avatar)
-                                                                        .contained()
-                                                                        .with_margin_left(
-                                                                            theme.guest_avatar_spacing,
-                                                                        )
-                                                                        .boxed()
-                                                                })
-                                                            },
-                                                        ))
-                                                        .boxed()
+                                MouseEventHandler::new::<PeoplePanel, _, _, _>(
+                                    worktree_id as usize,
+                                    cx,
+                                    |mouse_state, _| {
+                                        let style = match (worktree.is_shared, mouse_state.hovered)
+                                        {
+                                            (false, false) => &theme.unshared_worktree,
+                                            (false, true) => &theme.hovered_unshared_worktree,
+                                            (true, false) => &theme.shared_worktree,
+                                            (true, true) => &theme.hovered_shared_worktree,
+                                        };
+
+                                        Container::new(
+                                            Flex::row()
+                                                .with_child(
+                                                    Label::new(
+                                                        worktree.root_name.clone(),
+                                                        style.text.clone(),
+                                                    )
+                                                    .aligned()
+                                                    .left()
+                                                    .constrained()
+                                                    .with_height(guest_avatar_height)
+                                                    .boxed(),
                                                 )
-                                                .with_style(style.container)
-                                                .boxed()
-                                        },
-                                    );
-
-                                if worktree.is_shared {
-                                    worktree_row = worktree_row
-                                        .with_cursor_style(CursorStyle::PointingHand)
-                                        .on_click(move |cx| {
+                                                .with_children(worktree.guests.iter().filter_map(
+                                                    |participant| {
+                                                        participant.avatar.clone().map(|avatar| {
+                                                            Image::new(avatar)
+                                                                .with_style(theme.guest_avatar)
+                                                                .contained()
+                                                                .with_margin_left(
+                                                                    theme.guest_avatar_spacing,
+                                                                )
+                                                                .boxed()
+                                                        })
+                                                    },
+                                                ))
+                                                .boxed(),
+                                        )
+                                        .with_style(style.container)
+                                        .boxed()
+                                    },
+                                )
+                                .with_cursor_style(if is_host || is_shared {
+                                    CursorStyle::PointingHand
+                                } else {
+                                    CursorStyle::Arrow
+                                })
+                                .on_click(move |cx| {
+                                    if is_shared {
+                                        if is_host {
+                                            cx.dispatch_action(UnshareWorktree(worktree_id));
+                                        } else if is_guest {
+                                            cx.dispatch_action(LeaveWorktree(worktree_id));
+                                        } else {
                                             cx.dispatch_action(JoinWorktree(worktree_id))
-                                        });
-                                }
-
-                                worktree_row.expanded(1.0).boxed()
+                                        }
+                                    } else if is_host {
+                                        cx.dispatch_action(ShareWorktree(worktree_id));
+                                    }
+                                })
+                                .expanded(1.0)
+                                .boxed()
                             })
                             .boxed()
                     }),

@@ -943,6 +943,10 @@ impl LocalWorktree {
         }
     }
 
+    pub fn remote_id(&self) -> Option<u64> {
+        *self.remote_id.borrow()
+    }
+
     pub fn next_remote_id(&self) -> impl Future<Output = Option<u64>> {
         let mut remote_id = self.remote_id.clone();
         async move {
@@ -1095,6 +1099,23 @@ impl LocalWorktree {
         })
     }
 
+    pub fn unshare(&mut self, cx: &mut ModelContext<Worktree>) {
+        self.share.take();
+        let rpc = self.rpc.clone();
+        let remote_id = self.remote_id();
+        cx.foreground()
+            .spawn(
+                async move {
+                    if let Some(worktree_id) = remote_id {
+                        rpc.send(proto::UnshareWorktree { worktree_id }).await?;
+                    }
+                    Ok(())
+                }
+                .log_err(),
+            )
+            .detach()
+    }
+
     fn share_request(&self, cx: &mut ModelContext<Worktree>) -> Task<Option<proto::ShareWorktree>> {
         let remote_id = self.next_remote_id();
         let snapshot = self.snapshot();
@@ -1227,6 +1248,20 @@ impl RemoteWorktree {
                 Ok(buffer)
             }
         })
+    }
+
+    pub fn remote_id(&self) -> u64 {
+        self.remote_id
+    }
+
+    pub fn close_all_buffers(&mut self, cx: &mut MutableAppContext) {
+        for (_, buffer) in self.open_buffers.drain() {
+            if let RemoteBuffer::Loaded(buffer) = buffer {
+                if let Some(buffer) = buffer.upgrade(cx) {
+                    buffer.update(cx, |buffer, cx| buffer.close(cx))
+                }
+            }
+        }
     }
 
     fn snapshot(&self) -> Snapshot {

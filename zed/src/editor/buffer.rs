@@ -801,6 +801,10 @@ impl Buffer {
         cx.emit(Event::FileHandleChanged);
     }
 
+    pub fn close(&mut self, cx: &mut ModelContext<Self>) {
+        cx.emit(Event::Closed);
+    }
+
     pub fn language(&self) -> Option<&Arc<Language>> {
         self.language.as_ref()
     }
@@ -2264,6 +2268,7 @@ pub enum Event {
     FileHandleChanged,
     Reloaded,
     Reparsed,
+    Closed,
 }
 
 impl Entity for Buffer {
