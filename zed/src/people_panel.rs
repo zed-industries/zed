@@ -69,13 +69,9 @@ impl PeoplePanel {
             .with_child(
                 Flex::row()
                     .with_children(collaborator.user.avatar.clone().map(|avatar| {
-                        ConstrainedBox::new(
-                            Image::new(avatar)
-                                .with_style(theme.worktree_host_avatar)
-                                .boxed(),
-                        )
-                        .with_width(20.)
-                        .boxed()
+                        Image::new(avatar)
+                            .with_style(theme.worktree_host_avatar)
+                            .boxed()
                     }))
                     .with_child(
                         Container::new(
@@ -152,13 +148,9 @@ impl PeoplePanel {
                             )
                             .with_children(worktree.participants.iter().filter_map(|participant| {
                                 participant.avatar.clone().map(|avatar| {
-                                    ConstrainedBox::new(
-                                        Image::new(avatar)
-                                            .with_style(theme.worktree_guest_avatar)
-                                            .boxed(),
-                                    )
-                                    .with_width(16.)
-                                    .boxed()
+                                    Image::new(avatar)
+                                        .with_style(theme.worktree_guest_avatar)
+                                        .boxed()
                                 })
                             }))
                             .boxed()

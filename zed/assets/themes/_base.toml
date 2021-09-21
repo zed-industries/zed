@@ -126,8 +126,8 @@ color = "$text.1.color"
 [people_panel]
 extends = "$panel"
 host_username = { extends = "$text.0", padding.left = 5 }
-worktree_host_avatar = { corner_radius = 10 }
-worktree_guest_avatar = { corner_radius = 8 }
+worktree_host_avatar = { corner_radius = 10, width = 20 }
+worktree_guest_avatar = { corner_radius = 8, width = 16 }
 
 [people_panel.worktree_name]
 extends = "$text.0"

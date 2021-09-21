@@ -432,6 +432,13 @@ impl SizeConstraint {
             Axis::Vertical => self.min.y(),
         }
     }
+
+    pub fn constrain(&self, size: Vector2F) -> Vector2F {
+        vec2f(
+            size.x().min(self.max.x()).max(self.min.x()),
+            size.y().min(self.max.y()).max(self.min.y()),
+        )
+    }
 }
 
 impl ToJson for SizeConstraint {
