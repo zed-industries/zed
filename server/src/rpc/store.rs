@@ -204,7 +204,7 @@ impl Store {
                 host.worktrees.push(proto::WorktreeMetadata {
                     root_name: worktree.root_name.clone(),
                     is_shared: worktree.share().is_ok(),
-                    participants: guests.into_iter().collect(),
+                    guests: guests.into_iter().collect(),
                 });
             }
         }

@@ -345,5 +345,5 @@ message Collaborator {
 message WorktreeMetadata {
     string root_name = 1;
     bool is_shared = 2;
-    repeated uint64 participants = 3;
+    repeated uint64 guests = 3;
 }

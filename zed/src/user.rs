@@ -30,7 +30,7 @@ pub struct Collaborator {
 pub struct WorktreeMetadata {
     pub root_name: String,
     pub is_shared: bool,
-    pub participants: Vec<Arc<User>>,
+    pub guests: Vec<Arc<User>>,
 }
 
 pub struct UserStore {
@@ -112,7 +112,7 @@ impl UserStore {
                 collaborator
                     .worktrees
                     .iter()
-                    .flat_map(|w| &w.participants)
+                    .flat_map(|w| &w.guests)
                     .copied(),
             );
         }
@@ -224,9 +224,9 @@ impl Collaborator {
             .await?;
         let mut worktrees = Vec::new();
         for worktree in collaborator.worktrees {
-            let mut participants = Vec::new();
-            for participant_id in worktree.participants {
-                participants.push(
+            let mut guests = Vec::new();
+            for participant_id in worktree.guests {
+                guests.push(
                     user_store
                         .update(cx, |user_store, cx| {
                             user_store.fetch_user(participant_id, cx)
@@ -237,7 +237,7 @@ impl Collaborator {
             worktrees.push(WorktreeMetadata {
                 root_name: worktree.root_name,
                 is_shared: worktree.is_shared,
-                participants,
+                guests,
             });
         }
         Ok(Self { user, worktrees })

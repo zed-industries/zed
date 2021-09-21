@@ -1947,10 +1947,7 @@ mod tests {
                         .map(|w| {
                             (
                                 w.root_name.as_str(),
-                                w.participants
-                                    .iter()
-                                    .map(|p| p.github_login.as_str())
-                                    .collect(),
+                                w.guests.iter().map(|p| p.github_login.as_str()).collect(),
                             )
                         })
                         .collect();

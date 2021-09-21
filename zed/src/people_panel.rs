@@ -146,7 +146,7 @@ impl PeoplePanel {
                                 .with_style(theme.worktree_name.container)
                                 .boxed(),
                             )
-                            .with_children(worktree.participants.iter().filter_map(|participant| {
+                            .with_children(worktree.guests.iter().filter_map(|participant| {
                                 participant.avatar.clone().map(|avatar| {
                                     Image::new(avatar)
                                         .with_style(theme.worktree_guest_avatar)
