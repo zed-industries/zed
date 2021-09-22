@@ -13,7 +13,7 @@ use crate::{
     settings::Settings,
     user,
     util::TryFutureExt as _,
-    worktree::{File, Worktree},
+    worktree::{self, File, Worktree},
     AppState, Authenticate,
 };
 use anyhow::Result;
@@ -886,9 +886,27 @@ impl Workspace {
                 rpc.authenticate_and_connect(&cx).await?;
                 let worktree =
                     Worktree::open_remote(rpc.clone(), worktree_id, languages, &mut cx).await?;
-                this.update(&mut cx, |workspace, cx| {
+                this.update(&mut cx, |this, cx| {
                     cx.observe(&worktree, |_, _, cx| cx.notify()).detach();
-                    workspace.worktrees.insert(worktree);
+                    cx.subscribe(&worktree, move |this, _, event, cx| match event {
+                        worktree::Event::Closed => {
+                            this.worktrees.retain(|worktree| {
+                                worktree.update(cx, |worktree, cx| {
+                                    if let Some(worktree) = worktree.as_remote_mut() {
+                                        if worktree.remote_id() == worktree_id {
+                                            worktree.close_all_buffers(cx);
+                                            return false;
+                                        }
+                                    }
+                                    true
+                                })
+                            });
+
+                            cx.notify();
+                        }
+                    })
+                    .detach();
+                    this.worktrees.insert(worktree);
                     cx.notify();
                 });
 

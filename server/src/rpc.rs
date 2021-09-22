@@ -968,10 +968,12 @@ mod tests {
         editor::{Editor, EditorStyle, Insert},
         fs::{FakeFs, Fs as _},
         language::LanguageRegistry,
+        people_panel::JoinWorktree,
         rpc::{self, Client, Credentials, EstablishConnectionError},
         settings,
         test::FakeHttpClient,
         user::UserStore,
+        workspace::Workspace,
         worktree::Worktree,
     };
     use zrpc::Peer;
@@ -1085,6 +1087,94 @@ mod tests {
         worktree_a
             .condition(&cx_a, |tree, _| tree.peers().is_empty())
             .await;
+    }
+
+    #[gpui::test]
+    async fn test_unshare_worktree(mut cx_a: TestAppContext, mut cx_b: TestAppContext) {
+        cx_b.update(zed::workspace::init);
+        let lang_registry = Arc::new(LanguageRegistry::new());
+
+        // Connect to a server as 2 clients.
+        let mut server = TestServer::start().await;
+        let (client_a, _) = server.create_client(&mut cx_a, "user_a").await;
+        let (client_b, user_store_b) = server.create_client(&mut cx_b, "user_b").await;
+        let app_state_b = zed::AppState {
+            rpc: client_b,
+            user_store: user_store_b,
+            ..Arc::try_unwrap(cx_b.update(zed::test::test_app_state))
+                .ok()
+                .unwrap()
+        };
+
+        cx_a.foreground().forbid_parking();
+
+        // Share a local worktree as client A
+        let fs = Arc::new(FakeFs::new());
+        fs.insert_tree(
+            "/a",
+            json!({
+                ".zed.toml": r#"collaborators = ["user_b"]"#,
+                "a.txt": "a-contents",
+                "b.txt": "b-contents",
+            }),
+        )
+        .await;
+        let worktree_a = Worktree::open_local(
+            client_a.clone(),
+            "/a".as_ref(),
+            fs,
+            lang_registry.clone(),
+            &mut cx_a.to_async(),
+        )
+        .await
+        .unwrap();
+        worktree_a
+            .read_with(&cx_a, |tree, _| tree.as_local().unwrap().scan_complete())
+            .await;
+
+        let remote_worktree_id = worktree_a
+            .update(&mut cx_a, |tree, cx| tree.as_local_mut().unwrap().share(cx))
+            .await
+            .unwrap();
+
+        let (window_b, workspace_b) = cx_b.add_window(|cx| Workspace::new(&app_state_b, cx));
+        cx_b.update(|cx| {
+            cx.dispatch_action(
+                window_b,
+                vec![workspace_b.id()],
+                &JoinWorktree(remote_worktree_id),
+            );
+        });
+        workspace_b
+            .condition(&cx_b, |workspace, _| workspace.worktrees().len() == 1)
+            .await;
+
+        let local_worktree_id_b = workspace_b.read_with(&cx_b, |workspace, cx| {
+            let active_pane = workspace.active_pane().read(cx);
+            assert!(active_pane.active_item().is_none());
+            workspace.worktrees().iter().next().unwrap().id()
+        });
+        workspace_b
+            .update(&mut cx_b, |worktree, cx| {
+                worktree.open_entry((local_worktree_id_b, Path::new("a.txt").into()), cx)
+            })
+            .unwrap()
+            .await;
+        workspace_b.read_with(&cx_b, |workspace, cx| {
+            let active_pane = workspace.active_pane().read(cx);
+            assert!(active_pane.active_item().is_some());
+        });
+
+        worktree_a.update(&mut cx_a, |tree, cx| {
+            tree.as_local_mut().unwrap().unshare(cx);
+        });
+        workspace_b
+            .condition(&cx_b, |workspace, _| workspace.worktrees().len() == 0)
+            .await;
+        workspace_b.read_with(&cx_b, |workspace, cx| {
+            let active_pane = workspace.active_pane().read(cx);
+            assert!(active_pane.active_item().is_none());
+        });
     }
 
     #[gpui::test]

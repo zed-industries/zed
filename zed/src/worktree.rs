@@ -62,8 +62,12 @@ pub enum Worktree {
     Remote(RemoteWorktree),
 }
 
+pub enum Event {
+    Closed,
+}
+
 impl Entity for Worktree {
-    type Event = ();
+    type Event = Event;
 
     fn release(&mut self, cx: &mut MutableAppContext) {
         match self {
@@ -223,6 +227,7 @@ impl Worktree {
                     rpc.subscribe_to_entity(remote_id, cx, Self::handle_update),
                     rpc.subscribe_to_entity(remote_id, cx, Self::handle_update_buffer),
                     rpc.subscribe_to_entity(remote_id, cx, Self::handle_buffer_saved),
+                    rpc.subscribe_to_entity(remote_id, cx, Self::handle_unshare),
                 ];
 
                 Worktree::Remote(RemoteWorktree {
@@ -519,6 +524,16 @@ impl Worktree {
                 Result::<_, anyhow::Error>::Ok(())
             })?;
         }
+        Ok(())
+    }
+
+    pub fn handle_unshare(
+        &mut self,
+        _: TypedEnvelope<proto::UnshareWorktree>,
+        _: Arc<rpc::Client>,
+        cx: &mut ModelContext<Self>,
+    ) -> Result<()> {
+        cx.emit(Event::Closed);
         Ok(())
     }
 
