@@ -1196,12 +1196,11 @@ impl RemoteWorktree {
         path: &Path,
         cx: &mut ModelContext<Worktree>,
     ) -> Task<Result<ModelHandle<Buffer>>> {
-        let handle = cx.handle();
         let mut existing_buffer = None;
         self.open_buffers.retain(|_buffer_id, buffer| {
             if let Some(buffer) = buffer.upgrade(cx.as_ref()) {
                 if let Some(file) = buffer.read(cx.as_ref()).file() {
-                    if file.worktree_id() == handle.id() && file.path.as_ref() == path {
+                    if file.worktree_id() == cx.model_id() && file.path.as_ref() == path {
                         existing_buffer = Some(buffer);
                     }
                 }
@@ -1215,21 +1214,27 @@ impl RemoteWorktree {
         let replica_id = self.replica_id;
         let remote_worktree_id = self.remote_id;
         let path = path.to_string_lossy().to_string();
-        cx.spawn(|this, mut cx| async move {
+        cx.spawn_weak(|this, mut cx| async move {
             if let Some(existing_buffer) = existing_buffer {
                 Ok(existing_buffer)
             } else {
                 let entry = this
+                    .upgrade(&cx)
+                    .ok_or_else(|| anyhow!("worktree was closed"))?
                     .read_with(&cx, |tree, _| tree.entry_for_path(&path).cloned())
                     .ok_or_else(|| anyhow!("file does not exist"))?;
-                let file = File::new(entry.id, handle, entry.path, entry.mtime);
-                let language = cx.read(|cx| file.select_language(cx));
                 let response = rpc
                     .request(proto::OpenBuffer {
                         worktree_id: remote_worktree_id as u64,
                         path,
                     })
                     .await?;
+
+                let this = this
+                    .upgrade(&cx)
+                    .ok_or_else(|| anyhow!("worktree was closed"))?;
+                let file = File::new(entry.id, this.clone(), entry.path, entry.mtime);
+                let language = cx.read(|cx| file.select_language(cx));
                 let remote_buffer = response.buffer.ok_or_else(|| anyhow!("empty buffer"))?;
                 let buffer_id = remote_buffer.id as usize;
                 let buffer = cx.add_model(|cx| {

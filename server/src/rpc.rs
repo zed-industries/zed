@@ -1379,6 +1379,69 @@ mod tests {
     }
 
     #[gpui::test]
+    async fn test_leaving_worktree_while_opening_buffer(
+        mut cx_a: TestAppContext,
+        mut cx_b: TestAppContext,
+    ) {
+        cx_a.foreground().forbid_parking();
+        let lang_registry = Arc::new(LanguageRegistry::new());
+
+        // Connect to a server as 2 clients.
+        let mut server = TestServer::start().await;
+        let (client_a, _) = server.create_client(&mut cx_a, "user_a").await;
+        let (client_b, _) = server.create_client(&mut cx_b, "user_b").await;
+
+        // Share a local worktree as client A
+        let fs = Arc::new(FakeFs::new());
+        fs.insert_tree(
+            "/dir",
+            json!({
+                ".zed.toml": r#"collaborators = ["user_b"]"#,
+                "a.txt": "a-contents",
+            }),
+        )
+        .await;
+        let worktree_a = Worktree::open_local(
+            client_a.clone(),
+            "/dir".as_ref(),
+            fs,
+            lang_registry.clone(),
+            &mut cx_a.to_async(),
+        )
+        .await
+        .unwrap();
+        worktree_a
+            .read_with(&cx_a, |tree, _| tree.as_local().unwrap().scan_complete())
+            .await;
+        let worktree_id = worktree_a
+            .update(&mut cx_a, |tree, cx| tree.as_local_mut().unwrap().share(cx))
+            .await
+            .unwrap();
+
+        // Join that worktree as client B, and see that a guest has joined as client A.
+        let worktree_b = Worktree::open_remote(
+            client_b.clone(),
+            worktree_id,
+            lang_registry.clone(),
+            &mut cx_b.to_async(),
+        )
+        .await
+        .unwrap();
+        worktree_a
+            .condition(&cx_a, |tree, _| tree.peers().len() == 1)
+            .await;
+
+        let buffer_b = cx_b
+            .background()
+            .spawn(worktree_b.update(&mut cx_b, |worktree, cx| worktree.open_buffer("a.txt", cx)));
+        cx_b.update(|_| drop(worktree_b));
+        drop(buffer_b);
+        worktree_a
+            .condition(&cx_a, |tree, _| tree.peers().len() == 0)
+            .await;
+    }
+
+    #[gpui::test]
     async fn test_peer_disconnection(mut cx_a: TestAppContext, cx_b: TestAppContext) {
         cx_a.foreground().forbid_parking();
         let lang_registry = Arc::new(LanguageRegistry::new());
