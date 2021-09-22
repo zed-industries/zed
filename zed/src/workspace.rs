@@ -376,6 +376,13 @@ impl Workspace {
 
         let mut right_sidebar = Sidebar::new(Side::Right);
         right_sidebar.add_item(
+            "icons/user-16.svg",
+            cx.add_view(|cx| {
+                PeoplePanel::new(app_state.user_store.clone(), app_state.settings.clone(), cx)
+            })
+            .into(),
+        );
+        right_sidebar.add_item(
             "icons/comment-16.svg",
             cx.add_view(|cx| {
                 ChatPanel::new(
@@ -384,13 +391,6 @@ impl Workspace {
                     app_state.settings.clone(),
                     cx,
                 )
-            })
-            .into(),
-        );
-        right_sidebar.add_item(
-            "icons/user-16.svg",
-            cx.add_view(|cx| {
-                PeoplePanel::new(app_state.user_store.clone(), app_state.settings.clone(), cx)
             })
             .into(),
         );
