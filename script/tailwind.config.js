@@ -1,4 +1,14 @@
+const colors = require('tailwindcss/colors')
+
 module.exports = {
+    mode: 'jit',
+    corePlugins: {
+        float: false,
+        tableLayout: false,
+        sepia: false,
+        saturate: false,
+    },
+
     theme: {
         fontFamily: {
             display: [
@@ -17,15 +27,21 @@ module.exports = {
                 "Segoe UI Symbol", "Noto Color Emoji"
             ],
         },
-        extend: {
-            
-        },
+        colors: {
+            transparent: 'transparent',
+            current: 'currentColor',
+            black: colors.black,
+            white: colors.white,
+            gray: colors.trueGray,
+          },
+        extend: {},
     },
 
     variants: {
     },
-    
+    darkMode: false,    
     purge: [
-        "../server/templates/**/*.hbs"
+        "../server/templates/**/*.hbs",
+        "../server/templates/*.hbs"
     ]
 }
