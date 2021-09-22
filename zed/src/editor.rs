@@ -29,7 +29,6 @@ use smol::Timer;
 use std::{
     cell::RefCell,
     cmp::{self, Ordering},
-    iter::FromIterator,
     mem,
     ops::{Range, RangeInclusive},
     path::Path,
@@ -1219,23 +1218,27 @@ impl Editor {
             let clipboard_text = item.text();
             if let Some(mut clipboard_selections) = item.metadata::<Vec<ClipboardSelection>>() {
                 let selections = self.selections(cx.as_ref()).to_vec();
+                let all_selections_were_entire_line =
+                    clipboard_selections.iter().all(|s| s.is_entire_line);
                 if clipboard_selections.len() != selections.len() {
-                    let merged_selection = ClipboardSelection {
-                        len: clipboard_selections.iter().map(|s| s.len).sum(),
-                        is_entire_line: clipboard_selections.iter().all(|s| s.is_entire_line),
-                    };
                     clipboard_selections.clear();
-                    clipboard_selections.push(merged_selection);
                 }
 
                 self.start_transaction(cx);
+                let mut start_offset = 0;
                 let mut new_selections = Vec::with_capacity(selections.len());
-                let mut clipboard_chars = clipboard_text.chars().cycle();
-                for (selection, clipboard_selection) in
-                    selections.iter().zip(clipboard_selections.iter().cycle())
-                {
-                    let to_insert =
-                        String::from_iter(clipboard_chars.by_ref().take(clipboard_selection.len));
+                for (i, selection) in selections.iter().enumerate() {
+                    let to_insert;
+                    let entire_line;
+                    if let Some(clipboard_selection) = clipboard_selections.get(i) {
+                        let end_offset = start_offset + clipboard_selection.len;
+                        to_insert = &clipboard_text[start_offset..end_offset];
+                        entire_line = clipboard_selection.is_entire_line;
+                        start_offset = end_offset
+                    } else {
+                        to_insert = clipboard_text.as_str();
+                        entire_line = all_selections_were_entire_line;
+                    }
 
                     self.buffer.update(cx, |buffer, cx| {
                         let selection_start = selection.start.to_point(&*buffer);
@@ -1246,7 +1249,7 @@ impl Editor {
                         // selection was copied. If this selection is also currently empty,
                         // then paste the line before the current line of the buffer.
                         let new_selection_start = selection.end.bias_right(buffer);
-                        if selection_start == selection_end && clipboard_selection.is_entire_line {
+                        if selection_start == selection_end && entire_line {
                             let line_start = Point::new(selection_start.row, 0);
                             buffer.edit(Some(line_start..line_start), to_insert, cx);
                         } else {
@@ -3685,7 +3688,7 @@ mod tests {
 
     #[gpui::test]
     fn test_clipboard(cx: &mut gpui::MutableAppContext) {
-        let buffer = cx.add_model(|cx| Buffer::new(0, "one two three four five six ", cx));
+        let buffer = cx.add_model(|cx| Buffer::new(0, "one✅ two three four five six ", cx));
         let settings = settings::test(&cx).1;
         let view = cx
             .add_window(Default::default(), |cx| {
@@ -3695,7 +3698,7 @@ mod tests {
 
         // Cut with three selections. Clipboard text is divided into three slices.
         view.update(cx, |view, cx| {
-            view.select_ranges(vec![0..4, 8..14, 19..24], false, cx);
+            view.select_ranges(vec![0..7, 11..17, 22..27], false, cx);
             view.cut(&Cut, cx);
             assert_eq!(view.display_text(cx), "two four six ");
         });
@@ -3704,13 +3707,13 @@ mod tests {
         view.update(cx, |view, cx| {
             view.select_ranges(vec![4..4, 9..9, 13..13], false, cx);
             view.paste(&Paste, cx);
-            assert_eq!(view.display_text(cx), "two one four three six five ");
+            assert_eq!(view.display_text(cx), "two one✅ four three six five ");
             assert_eq!(
                 view.selection_ranges(cx),
                 &[
-                    DisplayPoint::new(0, 8)..DisplayPoint::new(0, 8),
-                    DisplayPoint::new(0, 19)..DisplayPoint::new(0, 19),
-                    DisplayPoint::new(0, 28)..DisplayPoint::new(0, 28)
+                    DisplayPoint::new(0, 11)..DisplayPoint::new(0, 11),
+                    DisplayPoint::new(0, 22)..DisplayPoint::new(0, 22),
+                    DisplayPoint::new(0, 31)..DisplayPoint::new(0, 31)
                 ]
             );
         });
@@ -3719,13 +3722,13 @@ mod tests {
         // match the number of slices in the clipboard, the entire clipboard text
         // is pasted at each cursor.
         view.update(cx, |view, cx| {
-            view.select_ranges(vec![0..0, 28..28], false, cx);
+            view.select_ranges(vec![0..0, 31..31], false, cx);
             view.insert(&Insert("( ".into()), cx);
             view.paste(&Paste, cx);
             view.insert(&Insert(") ".into()), cx);
             assert_eq!(
                 view.display_text(cx),
-                "( one three five ) two one four three six five ( one three five ) "
+                "( one✅ three five ) two one✅ four three six five ( one✅ three five ) "
             );
         });
 
@@ -3734,7 +3737,7 @@ mod tests {
             view.insert(&Insert("123\n4567\n89\n".into()), cx);
             assert_eq!(
                 view.display_text(cx),
-                "123\n4567\n89\n( one three five ) two one four three six five ( one three five ) "
+                "123\n4567\n89\n( one✅ three five ) two one✅ four three six five ( one✅ three five ) "
             );
         });
 
@@ -3752,7 +3755,7 @@ mod tests {
             view.cut(&Cut, cx);
             assert_eq!(
                 view.display_text(cx),
-                "13\n9\n( one three five ) two one four three six five ( one three five ) "
+                "13\n9\n( one✅ three five ) two one✅ four three six five ( one✅ three five ) "
             );
         });
 
@@ -3771,7 +3774,7 @@ mod tests {
             view.paste(&Paste, cx);
             assert_eq!(
                 view.display_text(cx),
-                "123\n4567\n9\n( 8ne three five ) two one four three six five ( one three five ) "
+                "123\n4567\n9\n( 8ne✅ three five ) two one✅ four three six five ( one✅ three five ) "
             );
             assert_eq!(
                 view.selection_ranges(cx),
@@ -3805,7 +3808,7 @@ mod tests {
             view.paste(&Paste, cx);
             assert_eq!(
                 view.display_text(cx),
-                "123\n123\n123\n67\n123\n9\n( 8ne three five ) two one four three six five ( one three five ) "
+                "123\n123\n123\n67\n123\n9\n( 8ne✅ three five ) two one✅ four three six five ( one✅ three five ) "
             );
             assert_eq!(
                 view.selection_ranges(cx),
