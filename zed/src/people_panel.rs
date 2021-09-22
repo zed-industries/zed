@@ -73,31 +73,32 @@ impl PeoplePanel {
         let theme = &theme.people_panel;
         let worktree_count = collaborator.worktrees.len();
         let font_cache = cx.font_cache();
-        let line_height = theme.unshared_worktree.text.line_height(font_cache);
-        let cap_height = theme.unshared_worktree.text.cap_height(font_cache);
-        let baseline_offset = theme.unshared_worktree.text.baseline_offset(font_cache);
-        let tree_branch = theme.tree_branch;
+        let line_height = theme.unshared_worktree.name.text.line_height(font_cache);
+        let cap_height = theme.unshared_worktree.name.text.cap_height(font_cache);
+        let baseline_offset = theme
+            .unshared_worktree
+            .name
+            .text
+            .baseline_offset(font_cache)
+            + (theme.unshared_worktree.height - line_height) / 2.;
+        let tree_branch_width = theme.tree_branch_width;
+        let tree_branch_color = theme.tree_branch_color;
         let host_avatar_height = theme
             .host_avatar
             .width
             .or(theme.host_avatar.height)
             .unwrap_or(0.);
-        let guest_avatar_height = theme
-            .guest_avatar
-            .width
-            .or(theme.guest_avatar.height)
-            .unwrap_or(0.);
 
         Flex::column()
             .with_child(
                 Flex::row()
-                    .with_children(
-                        collaborator
-                            .user
-                            .avatar
-                            .clone()
-                            .map(|avatar| Image::new(avatar).with_style(theme.host_avatar).boxed()),
-                    )
+                    .with_children(collaborator.user.avatar.clone().map(|avatar| {
+                        Image::new(avatar)
+                            .with_style(theme.host_avatar)
+                            .aligned()
+                            .left()
+                            .boxed()
+                    }))
                     .with_child(
                         Label::new(
                             collaborator.user.github_login.clone(),
@@ -107,10 +108,10 @@ impl PeoplePanel {
                         .with_style(theme.host_username.container)
                         .aligned()
                         .left()
-                        .constrained()
-                        .with_height(host_avatar_height)
                         .boxed(),
                     )
+                    .constrained()
+                    .with_height(theme.host_row_height)
                     .boxed(),
             )
             .with_children(
@@ -120,47 +121,45 @@ impl PeoplePanel {
                     .enumerate()
                     .map(|(ix, worktree)| {
                         let worktree_id = worktree.id;
+
                         Flex::row()
                             .with_child(
-                                ConstrainedBox::new(
-                                    Canvas::new(move |bounds, _, cx| {
-                                        let start_x = bounds.min_x() + (bounds.width() / 2.)
-                                            - (tree_branch.width / 2.);
-                                        let end_x = bounds.max_x();
-                                        let start_y = bounds.min_y();
-                                        let end_y =
-                                            bounds.min_y() + baseline_offset - (cap_height / 2.);
+                                Canvas::new(move |bounds, _, cx| {
+                                    let start_x = bounds.min_x() + (bounds.width() / 2.)
+                                        - (tree_branch_width / 2.);
+                                    let end_x = bounds.max_x();
+                                    let start_y = bounds.min_y();
+                                    let end_y =
+                                        bounds.min_y() + baseline_offset - (cap_height / 2.);
 
-                                        cx.scene.push_quad(gpui::Quad {
-                                            bounds: RectF::from_points(
-                                                vec2f(start_x, start_y),
-                                                vec2f(
-                                                    start_x + tree_branch.width,
-                                                    if ix + 1 == worktree_count {
-                                                        end_y
-                                                    } else {
-                                                        bounds.max_y()
-                                                    },
-                                                ),
+                                    cx.scene.push_quad(gpui::Quad {
+                                        bounds: RectF::from_points(
+                                            vec2f(start_x, start_y),
+                                            vec2f(
+                                                start_x + tree_branch_width,
+                                                if ix + 1 == worktree_count {
+                                                    end_y
+                                                } else {
+                                                    bounds.max_y()
+                                                },
                                             ),
-                                            background: Some(tree_branch.color),
-                                            border: gpui::Border::default(),
-                                            corner_radius: 0.,
-                                        });
-                                        cx.scene.push_quad(gpui::Quad {
-                                            bounds: RectF::from_points(
-                                                vec2f(start_x, end_y),
-                                                vec2f(end_x, end_y + tree_branch.width),
-                                            ),
-                                            background: Some(tree_branch.color),
-                                            border: gpui::Border::default(),
-                                            corner_radius: 0.,
-                                        });
-                                    })
-                                    .boxed(),
-                                )
-                                .with_width(20.)
-                                .with_height(line_height)
+                                        ),
+                                        background: Some(tree_branch_color),
+                                        border: gpui::Border::default(),
+                                        corner_radius: 0.,
+                                    });
+                                    cx.scene.push_quad(gpui::Quad {
+                                        bounds: RectF::from_points(
+                                            vec2f(start_x, end_y),
+                                            vec2f(end_x, end_y + tree_branch_width),
+                                        ),
+                                        background: Some(tree_branch_color),
+                                        border: gpui::Border::default(),
+                                        corner_radius: 0.,
+                                    });
+                                })
+                                .constrained()
+                                .with_width(host_avatar_height)
                                 .boxed(),
                             )
                             .with_child({
@@ -184,36 +183,38 @@ impl PeoplePanel {
                                             (true, true) => &theme.hovered_shared_worktree,
                                         };
 
-                                        Container::new(
-                                            Flex::row()
-                                                .with_child(
-                                                    Label::new(
-                                                        worktree.root_name.clone(),
-                                                        style.text.clone(),
-                                                    )
-                                                    .aligned()
-                                                    .left()
-                                                    .constrained()
-                                                    .with_height(guest_avatar_height)
-                                                    .boxed(),
+                                        Flex::row()
+                                            .with_child(
+                                                Label::new(
+                                                    worktree.root_name.clone(),
+                                                    style.name.text.clone(),
                                                 )
-                                                .with_children(worktree.guests.iter().filter_map(
-                                                    |participant| {
-                                                        participant.avatar.clone().map(|avatar| {
-                                                            Image::new(avatar)
-                                                                .with_style(theme.guest_avatar)
-                                                                .contained()
-                                                                .with_margin_left(
-                                                                    theme.guest_avatar_spacing,
-                                                                )
-                                                                .boxed()
-                                                        })
-                                                    },
-                                                ))
+                                                .aligned()
+                                                .left()
+                                                .contained()
+                                                .with_style(style.name.container)
                                                 .boxed(),
-                                        )
-                                        .with_style(style.container)
-                                        .boxed()
+                                            )
+                                            .with_children(worktree.guests.iter().filter_map(
+                                                |participant| {
+                                                    participant.avatar.clone().map(|avatar| {
+                                                        Image::new(avatar)
+                                                            .with_style(style.guest_avatar)
+                                                            .aligned()
+                                                            .left()
+                                                            .contained()
+                                                            .with_margin_right(
+                                                                style.guest_avatar_spacing,
+                                                            )
+                                                            .boxed()
+                                                    })
+                                                },
+                                            ))
+                                            .contained()
+                                            .with_style(style.container)
+                                            .constrained()
+                                            .with_height(style.height)
+                                            .boxed()
                                     },
                                 )
                                 .with_cursor_style(if is_host || is_shared {
@@ -237,6 +238,8 @@ impl PeoplePanel {
                                 .expanded(1.0)
                                 .boxed()
                             })
+                            .constrained()
+                            .with_height(theme.unshared_worktree.height)
                             .boxed()
                     }),
             )

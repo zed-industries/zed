@@ -57,6 +57,11 @@ impl Container {
         self
     }
 
+    pub fn with_margin_right(mut self, margin: f32) -> Self {
+        self.style.margin.right = margin;
+        self
+    }
+
     pub fn with_horizontal_padding(mut self, padding: f32) -> Self {
         self.style.padding.left = padding;
         self.style.padding.right = padding;
