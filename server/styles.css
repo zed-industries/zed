@@ -9,7 +9,7 @@
 
 @layer base {
   html {
-    font-size: 100%;
+    font-size: 110%;
     text-rendering: geometricPrecision;
   }
 
