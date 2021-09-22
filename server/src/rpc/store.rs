@@ -305,16 +305,20 @@ impl Store {
         }
 
         let connection_ids = worktree.connection_ids();
-
-        if let Some(_) = worktree.share.take() {
-            for connection_id in &connection_ids {
-                if let Some(connection) = self.connections.get_mut(connection_id) {
+        let collaborator_ids = worktree.collaborator_user_ids.clone();
+        if let Some(share) = worktree.share.take() {
+            for connection_id in share.guest_connection_ids.into_keys() {
+                if let Some(connection) = self.connections.get_mut(&connection_id) {
                     connection.worktrees.remove(&worktree_id);
                 }
             }
+
+            #[cfg(test)]
+            self.check_invariants();
+
             Ok(UnsharedWorktree {
                 connection_ids,
-                collaborator_ids: worktree.collaborator_user_ids.clone(),
+                collaborator_ids,
             })
         } else {
             Err(anyhow!("worktree is not shared"))?
@@ -352,9 +356,13 @@ impl Store {
         }
         share.active_replica_ids.insert(replica_id);
         share.guest_connection_ids.insert(connection_id, replica_id);
+
+        #[cfg(test)]
+        self.check_invariants();
+
         Ok(JoinedWorktree {
             replica_id,
-            worktree,
+            worktree: &self.worktrees[&worktree_id],
         })
     }
 
@@ -367,9 +375,19 @@ impl Store {
         let share = worktree.share.as_mut()?;
         let replica_id = share.guest_connection_ids.remove(&connection_id)?;
         share.active_replica_ids.remove(&replica_id);
+
+        let connection = self.connections.get_mut(&connection_id)?;
+        connection.worktrees.remove(&worktree_id);
+
+        let connection_ids = worktree.connection_ids();
+        let collaborator_ids = worktree.collaborator_user_ids.clone();
+
+        #[cfg(test)]
+        self.check_invariants();
+
         Some(LeftWorktree {
-            connection_ids: worktree.connection_ids(),
-            collaborator_ids: worktree.collaborator_user_ids.clone(),
+            connection_ids,
+            collaborator_ids,
         })
     }
 
