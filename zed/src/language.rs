@@ -35,6 +35,10 @@ pub struct LanguageRegistry {
 }
 
 impl Language {
+    pub fn name(&self) -> &str {
+        self.config.name.as_str()
+    }
+
     pub fn highlight_map(&self) -> HighlightMap {
         self.highlight_map.lock().clone()
     }
@@ -133,27 +137,26 @@ mod tests {
 
         // matching file extension
         assert_eq!(
-            registry.select_language("zed/lib.rs").map(get_name),
+            registry.select_language("zed/lib.rs").map(|l| l.name()),
             Some("Rust")
         );
         assert_eq!(
-            registry.select_language("zed/lib.mk").map(get_name),
+            registry.select_language("zed/lib.mk").map(|l| l.name()),
             Some("Make")
         );
 
         // matching filename
         assert_eq!(
-            registry.select_language("zed/Makefile").map(get_name),
+            registry.select_language("zed/Makefile").map(|l| l.name()),
             Some("Make")
         );
 
         // matching suffix that is not the full file extension or filename
-        assert_eq!(registry.select_language("zed/cars").map(get_name), None);
-        assert_eq!(registry.select_language("zed/a.cars").map(get_name), None);
-        assert_eq!(registry.select_language("zed/sumk").map(get_name), None);
-
-        fn get_name(language: &Arc<Language>) -> &str {
-            language.config.name.as_str()
-        }
+        assert_eq!(registry.select_language("zed/cars").map(|l| l.name()), None);
+        assert_eq!(
+            registry.select_language("zed/a.cars").map(|l| l.name()),
+            None
+        );
+        assert_eq!(registry.select_language("zed/sumk").map(|l| l.name()), None);
     }
 }

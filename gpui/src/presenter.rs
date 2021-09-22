@@ -195,6 +195,7 @@ impl Presenter {
             text_layout_cache: &self.text_layout_cache,
             view_stack: Default::default(),
             invalidated_views: Default::default(),
+            notify_count: 0,
             app: cx,
         }
     }
@@ -300,6 +301,7 @@ pub struct EventContext<'a> {
     pub font_cache: &'a FontCache,
     pub text_layout_cache: &'a TextLayoutCache,
     pub app: &'a mut MutableAppContext,
+    pub notify_count: usize,
     view_stack: Vec<usize>,
     invalidated_views: HashSet<usize>,
 }
@@ -325,9 +327,14 @@ impl<'a> EventContext<'a> {
     }
 
     pub fn notify(&mut self) {
+        self.notify_count += 1;
         if let Some(view_id) = self.view_stack.last() {
             self.invalidated_views.insert(*view_id);
         }
+    }
+
+    pub fn notify_count(&self) -> usize {
+        self.notify_count
     }
 }
 
@@ -431,6 +438,13 @@ impl SizeConstraint {
             Axis::Horizontal => self.min.x(),
             Axis::Vertical => self.min.y(),
         }
+    }
+
+    pub fn constrain(&self, size: Vector2F) -> Vector2F {
+        vec2f(
+            size.x().min(self.max.x()).max(self.min.x()),
+            size.y().min(self.max.y()).max(self.min.y()),
+        )
     }
 }
 

@@ -132,12 +132,24 @@ impl TextStyle {
         font_cache.line_height(self.font_id, self.font_size)
     }
 
+    pub fn cap_height(&self, font_cache: &FontCache) -> f32 {
+        font_cache.cap_height(self.font_id, self.font_size)
+    }
+
+    pub fn x_height(&self, font_cache: &FontCache) -> f32 {
+        font_cache.x_height(self.font_id, self.font_size)
+    }
+
     pub fn em_width(&self, font_cache: &FontCache) -> f32 {
         font_cache.em_width(self.font_id, self.font_size)
     }
 
     pub fn descent(&self, font_cache: &FontCache) -> f32 {
         font_cache.metric(self.font_id, |m| m.descent) * self.em_scale(font_cache)
+    }
+
+    pub fn baseline_offset(&self, font_cache: &FontCache) -> f32 {
+        font_cache.baseline_offset(self.font_id, self.font_size)
     }
 
     fn em_scale(&self, font_cache: &FontCache) -> f32 {

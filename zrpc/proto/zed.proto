@@ -11,8 +11,8 @@ message Envelope {
         Ping ping = 6;
         ShareWorktree share_worktree = 7;
         ShareWorktreeResponse share_worktree_response = 8;
-        OpenWorktree open_worktree = 9;
-        OpenWorktreeResponse open_worktree_response = 10;
+        JoinWorktree join_worktree = 9;
+        JoinWorktreeResponse join_worktree_response = 10;
         UpdateWorktree update_worktree = 11;
         CloseWorktree close_worktree = 12;
         OpenBuffer open_buffer = 13;
@@ -35,6 +35,11 @@ message Envelope {
         ChannelMessageSent channel_message_sent = 30;
         GetChannelMessages get_channel_messages = 31;
         GetChannelMessagesResponse get_channel_messages_response = 32;
+        OpenWorktree open_worktree = 33;
+        OpenWorktreeResponse open_worktree_response = 34;
+        UnshareWorktree unshare_worktree = 35;
+        UpdateCollaborators update_collaborators = 36;
+        LeaveWorktree leave_worktree = 37;
     }
 }
 
@@ -48,22 +53,34 @@ message Error {
     string message = 1;
 }
 
-message ShareWorktree {
-    Worktree worktree = 1;
-}
-
-message ShareWorktreeResponse {
-    uint64 worktree_id = 1;
-    string access_token = 2;
-}
-
 message OpenWorktree {
-    uint64 worktree_id = 1;
-    string access_token = 2;
+    string root_name = 1;
+    repeated string collaborator_logins = 2;
 }
 
 message OpenWorktreeResponse {
     uint64 worktree_id = 1;
+}
+
+message ShareWorktree {
+    Worktree worktree = 1;
+}
+
+message ShareWorktreeResponse {}
+
+message UnshareWorktree {
+    uint64 worktree_id = 1;
+}
+
+message JoinWorktree {
+    uint64 worktree_id = 1;
+}
+
+message LeaveWorktree {
+    uint64 worktree_id = 1;
+}
+
+message JoinWorktreeResponse {
     Worktree worktree = 2;
     uint32 replica_id = 3;
     repeated Peer peers = 4;
@@ -173,6 +190,10 @@ message GetChannelMessagesResponse {
     bool done = 2;
 }
 
+message UpdateCollaborators {
+    repeated Collaborator collaborators = 1;
+}
+
 // Entities
 
 message Peer {
@@ -187,8 +208,9 @@ message User {
 }
 
 message Worktree {
-    string root_name = 1;
-    repeated Entry entries = 2;
+    uint64 id = 1;
+    string root_name = 2;
+    repeated Entry entries = 3;
 }
 
 message Entry {
@@ -313,4 +335,16 @@ message ChannelMessage {
     uint64 timestamp = 3;
     uint64 sender_id = 4;
     Nonce nonce = 5;
+}
+
+message Collaborator {
+    uint64 user_id = 1;
+    repeated WorktreeMetadata worktrees = 2;
+}
+
+message WorktreeMetadata {
+    uint64 id = 1;
+    string root_name = 2;
+    bool is_shared = 3;
+    repeated uint64 guests = 4;
 }

@@ -166,6 +166,10 @@ impl FontCache {
         self.metric(font_id, |m| m.cap_height) * self.em_scale(font_id, font_size)
     }
 
+    pub fn x_height(&self, font_id: FontId, font_size: f32) -> f32 {
+        self.metric(font_id, |m| m.x_height) * self.em_scale(font_id, font_size)
+    }
+
     pub fn ascent(&self, font_id: FontId, font_size: f32) -> f32 {
         self.metric(font_id, |m| m.ascent) * self.em_scale(font_id, font_size)
     }
@@ -176,6 +180,14 @@ impl FontCache {
 
     pub fn em_scale(&self, font_id: FontId, font_size: f32) -> f32 {
         font_size / self.metric(font_id, |m| m.units_per_em as f32)
+    }
+
+    pub fn baseline_offset(&self, font_id: FontId, font_size: f32) -> f32 {
+        let line_height = self.line_height(font_id, font_size);
+        let ascent = self.ascent(font_id, font_size);
+        let descent = self.descent(font_id, font_size);
+        let padding_top = (line_height - ascent - descent) / 2.;
+        padding_top + ascent
     }
 
     pub fn line_wrapper(self: &Arc<Self>, font_id: FontId, font_size: f32) -> LineWrapperHandle {

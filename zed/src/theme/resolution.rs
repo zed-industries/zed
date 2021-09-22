@@ -237,9 +237,12 @@ impl Tree {
     fn update_resolved(&self) {
         match &mut *self.0.borrow_mut() {
             Node::Object {
-                resolved, children, ..
+                resolved,
+                base,
+                children,
+                ..
             } => {
-                *resolved = children.values().all(|c| c.is_resolved());
+                *resolved = base.is_none() && children.values().all(|c| c.is_resolved());
             }
             Node::Array {
                 resolved, children, ..
@@ -261,6 +264,9 @@ impl Tree {
                 if tree.is_resolved() {
                     while let Some(parent) = tree.parent() {
                         parent.update_resolved();
+                        if !parent.is_resolved() {
+                            break;
+                        }
                         tree = parent;
                     }
                 }
@@ -330,9 +336,10 @@ impl Tree {
                             made_progress = true;
                         }
 
-                        if let Node::Object { resolved, .. } = &mut *self.0.borrow_mut() {
+                        if let Node::Object { resolved, base, .. } = &mut *self.0.borrow_mut() {
                             if has_base {
                                 if resolved_base.is_some() {
+                                    base.take();
                                     *resolved = true;
                                 } else {
                                     unresolved.push(self.clone());
@@ -341,6 +348,8 @@ impl Tree {
                                 *resolved = true;
                             }
                         }
+                    } else if base.is_some() {
+                        unresolved.push(self.clone());
                     }
 
                     Ok(made_progress)
@@ -427,6 +436,7 @@ mod test {
     fn test_references() {
         let json = serde_json::json!({
             "a": {
+                "extends": "$g",
                 "x": "$b.d"
             },
             "b": {
@@ -436,6 +446,9 @@ mod test {
             "e": {
                 "extends": "$a",
                 "f": "1"
+            },
+            "g": {
+                "h": 2
             }
         });
 
@@ -443,19 +456,27 @@ mod test {
             resolve_references(json).unwrap(),
             serde_json::json!({
                 "a": {
-                    "x": "1"
+                    "extends": "$g",
+                    "x": "1",
+                    "h": 2
                 },
                 "b": {
                     "c": {
-                        "x": "1"
+                        "extends": "$g",
+                        "x": "1",
+                        "h": 2
                     },
                     "d": "1"
                 },
                 "e": {
                     "extends": "$a",
                     "f": "1",
-                    "x": "1"
+                    "x": "1",
+                    "h": 2
                 },
+                "g": {
+                    "h": 2
+                }
             })
         )
     }

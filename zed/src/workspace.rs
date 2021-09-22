@@ -7,14 +7,16 @@ use crate::{
     editor::Buffer,
     fs::Fs,
     language::LanguageRegistry,
+    people_panel::{JoinWorktree, LeaveWorktree, PeoplePanel, ShareWorktree, UnshareWorktree},
     project_browser::ProjectBrowser,
     rpc,
     settings::Settings,
     user,
-    worktree::{File, Worktree},
+    util::TryFutureExt as _,
+    worktree::{self, File, Worktree},
     AppState, Authenticate,
 };
-use anyhow::{anyhow, Result};
+use anyhow::Result;
 use gpui::{
     action,
     elements::*,
@@ -41,8 +43,6 @@ use std::{
 action!(Open, Arc<AppState>);
 action!(OpenPaths, OpenParams);
 action!(OpenNew, Arc<AppState>);
-action!(ShareWorktree);
-action!(JoinWorktree, Arc<AppState>);
 action!(Save);
 action!(DebugElements);
 
@@ -52,13 +52,14 @@ pub fn init(cx: &mut MutableAppContext) {
         open_paths(action, cx).detach()
     });
     cx.add_global_action(open_new);
-    cx.add_global_action(join_worktree);
     cx.add_action(Workspace::save_active_item);
     cx.add_action(Workspace::debug_elements);
     cx.add_action(Workspace::open_new_file);
-    cx.add_action(Workspace::share_worktree);
-    cx.add_action(Workspace::join_worktree);
     cx.add_action(Workspace::toggle_sidebar_item);
+    cx.add_action(Workspace::share_worktree);
+    cx.add_action(Workspace::unshare_worktree);
+    cx.add_action(Workspace::join_worktree);
+    cx.add_action(Workspace::leave_worktree);
     cx.add_bindings(vec![
         Binding::new("cmd-s", Save, None),
         Binding::new("cmd-alt-i", DebugElements, None),
@@ -129,14 +130,6 @@ fn open_new(action: &OpenNew, cx: &mut MutableAppContext) {
     });
 }
 
-fn join_worktree(action: &JoinWorktree, cx: &mut MutableAppContext) {
-    cx.add_window(window_options(), |cx| {
-        let mut view = Workspace::new(action.0.as_ref(), cx);
-        view.join_worktree(action, cx);
-        view
-    });
-}
-
 fn window_options() -> WindowOptions<'static> {
     WindowOptions {
         bounds: RectF::new(vec2f(0., 0.), vec2f(1024., 768.)),
@@ -181,6 +174,9 @@ pub trait ItemView: View {
         cx: &mut ViewContext<Self>,
     ) -> Task<anyhow::Result<()>>;
     fn should_activate_item_on_event(_: &Self::Event) -> bool {
+        false
+    }
+    fn should_close_item_on_event(_: &Self::Event) -> bool {
         false
     }
     fn should_update_tab_on_event(_: &Self::Event) -> bool {
@@ -281,6 +277,10 @@ impl<T: ItemView> ItemViewHandle for ViewHandle<T> {
     fn set_parent_pane(&self, pane: &ViewHandle<Pane>, cx: &mut MutableAppContext) {
         pane.update(cx, |_, cx| {
             cx.subscribe(self, |pane, item, event, cx| {
+                if T::should_close_item_on_event(event) {
+                    pane.close_item(item.id(), cx);
+                    return;
+                }
                 if T::should_activate_item_on_event(event) {
                     if let Some(ix) = pane.item_index(&item) {
                         pane.activate_item(ix, cx);
@@ -341,7 +341,7 @@ pub struct Workspace {
     pub settings: watch::Receiver<Settings>,
     languages: Arc<LanguageRegistry>,
     rpc: Arc<rpc::Client>,
-    user_store: Arc<user::UserStore>,
+    user_store: ModelHandle<user::UserStore>,
     fs: Arc<dyn Fs>,
     modal: Option<AnyViewHandle>,
     center: PaneGroup,
@@ -376,6 +376,13 @@ impl Workspace {
 
         let mut right_sidebar = Sidebar::new(Side::Right);
         right_sidebar.add_item(
+            "icons/user-16.svg",
+            cx.add_view(|cx| {
+                PeoplePanel::new(app_state.user_store.clone(), app_state.settings.clone(), cx)
+            })
+            .into(),
+        );
+        right_sidebar.add_item(
             "icons/comment-16.svg",
             cx.add_view(|cx| {
                 ChatPanel::new(
@@ -387,9 +394,8 @@ impl Workspace {
             })
             .into(),
         );
-        right_sidebar.add_item("icons/user-16.svg", cx.add_view(|_| ProjectBrowser).into());
 
-        let mut current_user = app_state.user_store.watch_current_user().clone();
+        let mut current_user = app_state.user_store.read(cx).watch_current_user().clone();
         let mut connection_status = app_state.rpc.status().clone();
         let _observe_current_user = cx.spawn_weak(|this, mut cx| async move {
             current_user.recv().await;
@@ -546,10 +552,11 @@ impl Workspace {
         cx: &mut ViewContext<Self>,
     ) -> Task<Result<ModelHandle<Worktree>>> {
         let languages = self.languages.clone();
+        let rpc = self.rpc.clone();
         let fs = self.fs.clone();
         let path = Arc::from(path);
         cx.spawn(|this, mut cx| async move {
-            let worktree = Worktree::open_local(path, languages, fs, &mut cx).await?;
+            let worktree = Worktree::open_local(rpc, path, fs, languages, &mut cx).await?;
             this.update(&mut cx, |this, cx| {
                 cx.observe(&worktree, |_, _, cx| cx.notify()).detach();
                 this.worktrees.insert(worktree.clone());
@@ -815,69 +822,122 @@ impl Workspace {
         };
     }
 
-    fn share_worktree(&mut self, _: &ShareWorktree, cx: &mut ViewContext<Self>) {
+    fn share_worktree(&mut self, action: &ShareWorktree, cx: &mut ViewContext<Self>) {
         let rpc = self.rpc.clone();
-        let platform = cx.platform();
+        let remote_id = action.0;
+        cx.spawn(|this, mut cx| {
+            async move {
+                rpc.authenticate_and_connect(&cx).await?;
 
-        let task = cx.spawn(|this, mut cx| async move {
-            rpc.authenticate_and_connect(&cx).await?;
+                let task = this.update(&mut cx, |this, cx| {
+                    for worktree in &this.worktrees {
+                        let task = worktree.update(cx, |worktree, cx| {
+                            worktree.as_local_mut().and_then(|worktree| {
+                                if worktree.remote_id() == Some(remote_id) {
+                                    Some(worktree.share(cx))
+                                } else {
+                                    None
+                                }
+                            })
+                        });
 
-            let share_task = this.update(&mut cx, |this, cx| {
-                let worktree = this.worktrees.iter().next()?;
-                worktree.update(cx, |worktree, cx| {
-                    let worktree = worktree.as_local_mut()?;
-                    Some(worktree.share(rpc, cx))
-                })
-            });
+                        if task.is_some() {
+                            return task;
+                        }
+                    }
+                    None
+                });
 
-            if let Some(share_task) = share_task {
-                let (worktree_id, access_token) = share_task.await?;
-                let worktree_url = rpc::encode_worktree_url(worktree_id, &access_token);
-                log::info!("wrote worktree url to clipboard: {}", worktree_url);
-                platform.write_to_clipboard(ClipboardItem::new(worktree_url));
+                if let Some(share_task) = task {
+                    share_task.await?;
+                }
+
+                Ok(())
             }
-            surf::Result::Ok(())
-        });
-
-        cx.spawn(|_, _| async move {
-            if let Err(e) = task.await {
-                log::error!("sharing failed: {:?}", e);
-            }
+            .log_err()
         })
         .detach();
     }
 
-    fn join_worktree(&mut self, _: &JoinWorktree, cx: &mut ViewContext<Self>) {
+    fn unshare_worktree(&mut self, action: &UnshareWorktree, cx: &mut ViewContext<Self>) {
+        let remote_id = action.0;
+        for worktree in &self.worktrees {
+            if worktree.update(cx, |worktree, cx| {
+                if let Some(worktree) = worktree.as_local_mut() {
+                    if worktree.remote_id() == Some(remote_id) {
+                        worktree.unshare(cx);
+                        return true;
+                    }
+                }
+                false
+            }) {
+                break;
+            }
+        }
+    }
+
+    fn join_worktree(&mut self, action: &JoinWorktree, cx: &mut ViewContext<Self>) {
         let rpc = self.rpc.clone();
         let languages = self.languages.clone();
+        let worktree_id = action.0;
 
-        let task = cx.spawn(|this, mut cx| async move {
-            rpc.authenticate_and_connect(&cx).await?;
+        cx.spawn(|this, mut cx| {
+            async move {
+                rpc.authenticate_and_connect(&cx).await?;
+                let worktree =
+                    Worktree::open_remote(rpc.clone(), worktree_id, languages, &mut cx).await?;
+                this.update(&mut cx, |this, cx| {
+                    cx.observe(&worktree, |_, _, cx| cx.notify()).detach();
+                    cx.subscribe(&worktree, move |this, _, event, cx| match event {
+                        worktree::Event::Closed => {
+                            this.worktrees.retain(|worktree| {
+                                worktree.update(cx, |worktree, cx| {
+                                    if let Some(worktree) = worktree.as_remote_mut() {
+                                        if worktree.remote_id() == worktree_id {
+                                            worktree.close_all_buffers(cx);
+                                            return false;
+                                        }
+                                    }
+                                    true
+                                })
+                            });
 
-            let worktree_url = cx
-                .platform()
-                .read_from_clipboard()
-                .ok_or_else(|| anyhow!("failed to read url from clipboard"))?;
-            let (worktree_id, access_token) = rpc::decode_worktree_url(worktree_url.text())
-                .ok_or_else(|| anyhow!("failed to decode worktree url"))?;
-            log::info!("read worktree url from clipboard: {}", worktree_url.text());
+                            cx.notify();
+                        }
+                    })
+                    .detach();
+                    this.worktrees.insert(worktree);
+                    cx.notify();
+                });
 
-            let worktree =
-                Worktree::open_remote(rpc.clone(), worktree_id, access_token, languages, &mut cx)
-                    .await?;
-            this.update(&mut cx, |workspace, cx| {
-                cx.observe(&worktree, |_, _, cx| cx.notify()).detach();
-                workspace.worktrees.insert(worktree);
-                cx.notify();
-            });
-
-            surf::Result::Ok(())
-        });
-
-        cx.spawn(|_, _| async move {
-            if let Err(e) = task.await {
-                log::error!("joining failed: {}", e);
+                Ok(())
             }
+            .log_err()
+        })
+        .detach();
+    }
+
+    fn leave_worktree(&mut self, action: &LeaveWorktree, cx: &mut ViewContext<Self>) {
+        let remote_id = action.0;
+        cx.spawn(|this, mut cx| {
+            async move {
+                this.update(&mut cx, |this, cx| {
+                    this.worktrees.retain(|worktree| {
+                        worktree.update(cx, |worktree, cx| {
+                            if let Some(worktree) = worktree.as_remote_mut() {
+                                if worktree.remote_id() == remote_id {
+                                    worktree.close_all_buffers(cx);
+                                    return false;
+                                }
+                            }
+                            true
+                        })
+                    })
+                });
+
+                Ok(())
+            }
+            .log_err()
         })
         .detach();
     }
@@ -989,6 +1049,7 @@ impl Workspace {
         let theme = &self.settings.borrow().theme;
         let avatar = if let Some(avatar) = self
             .user_store
+            .read(cx)
             .current_user()
             .and_then(|user| user.avatar.clone())
         {
@@ -1466,6 +1527,7 @@ mod tests {
         editor.update(&mut cx, |editor, cx| {
             assert!(!editor.is_dirty(cx.as_ref()));
             assert_eq!(editor.title(cx.as_ref()), "untitled");
+            assert!(editor.language(cx).is_none());
             editor.insert(&Insert("hi".into()), cx);
             assert!(editor.is_dirty(cx.as_ref()));
         });
@@ -1492,7 +1554,9 @@ mod tests {
             assert_eq!(editor.title(cx), "the-new-name.rs");
         });
         // The language is assigned based on the path
-        editor.read_with(&cx, |editor, cx| assert!(editor.language(cx).is_some()));
+        editor.read_with(&cx, |editor, cx| {
+            assert_eq!(editor.language(cx).unwrap().name(), "Rust")
+        });
 
         // Edit the file and save it again. This time, there is no filename prompt.
         editor.update(&mut cx, |editor, cx| {
@@ -1528,6 +1592,47 @@ mod tests {
         cx.read(|cx| {
             assert_eq!(editor2.read(cx).buffer(), editor.read(cx).buffer());
         })
+    }
+
+    #[gpui::test]
+    async fn test_setting_language_when_saving_as_single_file_worktree(
+        mut cx: gpui::TestAppContext,
+    ) {
+        let dir = TempDir::new("test-new-file").unwrap();
+        let app_state = cx.update(test_app_state);
+        let (_, workspace) = cx.add_window(|cx| Workspace::new(&app_state, cx));
+
+        // Create a new untitled buffer
+        let editor = workspace.update(&mut cx, |workspace, cx| {
+            workspace.open_new_file(&OpenNew(app_state.clone()), cx);
+            workspace
+                .active_item(cx)
+                .unwrap()
+                .to_any()
+                .downcast::<Editor>()
+                .unwrap()
+        });
+
+        editor.update(&mut cx, |editor, cx| {
+            assert!(editor.language(cx).is_none());
+            editor.insert(&Insert("hi".into()), cx);
+            assert!(editor.is_dirty(cx.as_ref()));
+        });
+
+        // Save the buffer. This prompts for a filename.
+        workspace.update(&mut cx, |workspace, cx| {
+            workspace.save_active_item(&Save, cx)
+        });
+        cx.simulate_new_path_selection(|_| Some(dir.path().join("the-new-name.rs")));
+
+        editor
+            .condition(&cx, |editor, cx| !editor.is_dirty(cx))
+            .await;
+
+        // The language is assigned based on the path
+        editor.read_with(&cx, |editor, cx| {
+            assert_eq!(editor.language(cx).unwrap().name(), "Rust")
+        });
     }
 
     #[gpui::test]

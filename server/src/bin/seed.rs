@@ -27,8 +27,12 @@ async fn main() {
     let zed_users = ["nathansobo", "maxbrunsfeld", "as-cii", "iamnbutler"];
     let mut zed_user_ids = Vec::<UserId>::new();
     for zed_user in zed_users {
-        if let Some(user_id) = db.get_user(zed_user).await.expect("failed to fetch user") {
-            zed_user_ids.push(user_id);
+        if let Some(user) = db
+            .get_user_by_github_login(zed_user)
+            .await
+            .expect("failed to fetch user")
+        {
+            zed_user_ids.push(user.id);
         } else {
             zed_user_ids.push(
                 db.create_user(zed_user, true)

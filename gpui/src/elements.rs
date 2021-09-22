@@ -8,7 +8,6 @@ mod flex;
 mod hook;
 mod image;
 mod label;
-mod line_box;
 mod list;
 mod mouse_event_handler;
 mod overlay;
@@ -19,8 +18,8 @@ mod uniform_list;
 
 pub use self::{
     align::*, canvas::*, constrained_box::*, container::*, empty::*, event_handler::*, flex::*,
-    hook::*, image::*, label::*, line_box::*, list::*, mouse_event_handler::*, overlay::*,
-    stack::*, svg::*, text::*, uniform_list::*,
+    hook::*, image::*, label::*, list::*, mouse_event_handler::*, overlay::*, stack::*, svg::*,
+    text::*, uniform_list::*,
 };
 pub use crate::presenter::ChildView;
 use crate::{
@@ -108,6 +107,34 @@ pub trait Element {
             name: Some(name.into()),
             element: Rc::new(RefCell::new(Lifecycle::Init { element: self })),
         })
+    }
+
+    fn constrained(self) -> ConstrainedBox
+    where
+        Self: 'static + Sized,
+    {
+        ConstrainedBox::new(self.boxed())
+    }
+
+    fn aligned(self) -> Align
+    where
+        Self: 'static + Sized,
+    {
+        Align::new(self.boxed())
+    }
+
+    fn contained(self) -> Container
+    where
+        Self: 'static + Sized,
+    {
+        Container::new(self.boxed())
+    }
+
+    fn expanded(self, flex: f32) -> Expanded
+    where
+        Self: 'static + Sized,
+    {
+        Expanded::new(flex, self.boxed())
     }
 }
 

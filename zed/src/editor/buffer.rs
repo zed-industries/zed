@@ -719,11 +719,6 @@ impl Buffer {
         let text = self.visible_text.clone();
         let version = self.version.clone();
 
-        if let Some(language) = worktree.read(cx).languages().select_language(&path).cloned() {
-            self.language = Some(language);
-            self.reparse(cx);    
-        }
-
         let save_as = worktree.update(cx, |worktree, cx| {
             worktree
                 .as_local_mut()
@@ -734,6 +729,11 @@ impl Buffer {
         cx.spawn(|this, mut cx| async move {
             save_as.await.map(|new_file| {
                 this.update(&mut cx, |this, cx| {
+                    if let Some(language) = new_file.select_language(cx) {
+                        this.language = Some(language);
+                        this.reparse(cx);
+                    }
+
                     let mtime = new_file.mtime;
                     this.file = Some(new_file);
                     this.did_save(version, mtime, cx);
@@ -799,6 +799,10 @@ impl Buffer {
             cx.emit(Event::Dirtied);
         }
         cx.emit(Event::FileHandleChanged);
+    }
+
+    pub fn close(&mut self, cx: &mut ModelContext<Self>) {
+        cx.emit(Event::Closed);
     }
 
     pub fn language(&self) -> Option<&Arc<Language>> {
@@ -2264,6 +2268,7 @@ pub enum Event {
     FileHandleChanged,
     Reloaded,
     Reparsed,
+    Closed,
 }
 
 impl Entity for Buffer {
@@ -2928,6 +2933,7 @@ mod tests {
     use crate::{
         fs::RealFs,
         language::LanguageRegistry,
+        rpc,
         test::temp_tree,
         util::RandomCharIter,
         worktree::{Worktree, WorktreeHandle as _},
@@ -3394,9 +3400,10 @@ mod tests {
             "file3": "ghi",
         }));
         let tree = Worktree::open_local(
+            rpc::Client::new(),
             dir.path(),
-            Default::default(),
             Arc::new(RealFs),
+            Default::default(),
             &mut cx.to_async(),
         )
         .await
@@ -3516,9 +3523,10 @@ mod tests {
         let initial_contents = "aaa\nbbbbb\nc\n";
         let dir = temp_tree(json!({ "the-file": initial_contents }));
         let tree = Worktree::open_local(
+            rpc::Client::new(),
             dir.path(),
-            Default::default(),
             Arc::new(RealFs),
+            Default::default(),
             &mut cx.to_async(),
         )
         .await
