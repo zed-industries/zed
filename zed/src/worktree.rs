@@ -42,7 +42,7 @@ use std::{
         atomic::{AtomicUsize, Ordering::SeqCst},
         Arc,
     },
-    time::{Duration, SystemTime},
+    time::{Duration, Instant, SystemTime},
 };
 use zrpc::{PeerId, TypedEnvelope};
 
@@ -1072,9 +1072,14 @@ impl LocalWorktree {
             };
 
             let remote_id = share_request.worktree.as_ref().unwrap().id;
+            let t0 = Instant::now();
             let share_response = rpc.request(share_request).await?;
 
-            log::info!("sharing worktree {:?}", share_response);
+            log::info!(
+                "sharing worktree {:?} - took {:?}",
+                share_response,
+                t0.elapsed()
+            );
             let (snapshots_to_send_tx, snapshots_to_send_rx) =
                 smol::channel::unbounded::<Snapshot>();
 
@@ -1137,7 +1142,8 @@ impl LocalWorktree {
         let snapshot = self.snapshot();
         let root_name = self.root_name.clone();
         cx.background().spawn(async move {
-            remote_id.await.map(|id| {
+            let t0 = Instant::now();
+            let result = remote_id.await.map(|id| {
                 let entries = snapshot
                     .entries_by_path
                     .cursor::<(), ()>()
@@ -1151,7 +1157,9 @@ impl LocalWorktree {
                         entries,
                     }),
                 }
-            })
+            });
+            eprintln!("computing share request: {:?}", t0.elapsed());
+            result
         })
     }
 }
