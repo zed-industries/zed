@@ -8,6 +8,7 @@ mod fuzzy;
 pub mod http;
 pub mod language;
 pub mod menus;
+pub mod people_panel;
 pub mod project_browser;
 pub mod rpc;
 pub mod settings;
@@ -43,7 +44,7 @@ pub struct AppState {
     pub languages: Arc<language::LanguageRegistry>,
     pub themes: Arc<settings::ThemeRegistry>,
     pub rpc: Arc<rpc::Client>,
-    pub user_store: Arc<user::UserStore>,
+    pub user_store: ModelHandle<user::UserStore>,
     pub fs: Arc<dyn fs::Fs>,
     pub channel_list: ModelHandle<ChannelList>,
 }

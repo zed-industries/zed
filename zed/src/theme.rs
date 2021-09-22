@@ -24,6 +24,7 @@ pub struct Theme {
     pub name: String,
     pub workspace: Workspace,
     pub chat_panel: ChatPanel,
+    pub people_panel: PeoplePanel,
     pub selector: Selector,
     pub editor: EditorStyle,
     pub syntax: SyntaxTheme,
@@ -105,6 +106,31 @@ pub struct ChatPanel {
 }
 
 #[derive(Deserialize)]
+pub struct PeoplePanel {
+    #[serde(flatten)]
+    pub container: ContainerStyle,
+    pub host_row_height: f32,
+    pub host_avatar: ImageStyle,
+    pub host_username: ContainedText,
+    pub tree_branch_width: f32,
+    pub tree_branch_color: Color,
+    pub shared_worktree: WorktreeRow,
+    pub hovered_shared_worktree: WorktreeRow,
+    pub unshared_worktree: WorktreeRow,
+    pub hovered_unshared_worktree: WorktreeRow,
+}
+
+#[derive(Deserialize)]
+pub struct WorktreeRow {
+    #[serde(flatten)]
+    pub container: ContainerStyle,
+    pub height: f32,
+    pub name: ContainedText,
+    pub guest_avatar: ImageStyle,
+    pub guest_avatar_spacing: f32,
+}
+
+#[derive(Deserialize)]
 pub struct ChatMessage {
     #[serde(flatten)]
     pub container: ContainerStyle,
@@ -143,7 +169,7 @@ pub struct Selector {
     pub active_item: ContainedLabel,
 }
 
-#[derive(Deserialize)]
+#[derive(Debug, Deserialize)]
 pub struct ContainedText {
     #[serde(flatten)]
     pub container: ContainerStyle,

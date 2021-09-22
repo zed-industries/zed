@@ -1,6 +1,9 @@
 use super::constrain_size_preserving_aspect_ratio;
 use crate::{
-    geometry::{rect::RectF, vector::Vector2F},
+    geometry::{
+        rect::RectF,
+        vector::{vec2f, Vector2F},
+    },
     json::{json, ToJson},
     scene, Border, DebugContext, Element, Event, EventContext, ImageData, LayoutContext,
     PaintContext, SizeConstraint,
@@ -16,9 +19,13 @@ pub struct Image {
 #[derive(Copy, Clone, Default, Deserialize)]
 pub struct ImageStyle {
     #[serde(default)]
-    border: Border,
+    pub border: Border,
     #[serde(default)]
-    corner_radius: f32,
+    pub corner_radius: f32,
+    #[serde(default)]
+    pub height: Option<f32>,
+    #[serde(default)]
+    pub width: Option<f32>,
 }
 
 impl Image {
@@ -44,8 +51,14 @@ impl Element for Image {
         constraint: SizeConstraint,
         _: &mut LayoutContext,
     ) -> (Vector2F, Self::LayoutState) {
-        let size =
-            constrain_size_preserving_aspect_ratio(constraint.max, self.data.size().to_f32());
+        let desired_size = vec2f(
+            self.style.width.unwrap_or(constraint.max.x()),
+            self.style.height.unwrap_or(constraint.max.y()),
+        );
+        let size = constrain_size_preserving_aspect_ratio(
+            constraint.constrain(desired_size),
+            self.data.size().to_f32(),
+        );
         (size, ())
     }
 

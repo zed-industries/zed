@@ -1,3 +1,5 @@
+mod store;
+
 use super::{
     auth,
     db::{ChannelId, MessageId, UserId},
@@ -11,12 +13,13 @@ use postage::{mpsc, prelude::Sink as _, prelude::Stream as _};
 use sha1::{Digest as _, Sha1};
 use std::{
     any::TypeId,
-    collections::{hash_map, HashMap, HashSet},
+    collections::{HashMap, HashSet},
     future::Future,
     mem,
     sync::Arc,
     time::Instant,
 };
+use store::{JoinedWorktree, Store, Worktree};
 use surf::StatusCode;
 use tide::log;
 use tide::{
@@ -25,12 +28,9 @@ use tide::{
 };
 use time::OffsetDateTime;
 use zrpc::{
-    auth::random_token,
     proto::{self, AnyTypedEnvelope, EnvelopedMessage},
     Connection, ConnectionId, Peer, TypedEnvelope,
 };
-
-type ReplicaId = u16;
 
 type MessageHandler = Box<
     dyn Send
@@ -40,38 +40,10 @@ type MessageHandler = Box<
 
 pub struct Server {
     peer: Arc<Peer>,
-    state: RwLock<ServerState>,
+    store: RwLock<Store>,
     app_state: Arc<AppState>,
     handlers: HashMap<TypeId, MessageHandler>,
     notifications: Option<mpsc::Sender<()>>,
-}
-
-#[derive(Default)]
-struct ServerState {
-    connections: HashMap<ConnectionId, ConnectionState>,
-    pub worktrees: HashMap<u64, Worktree>,
-    channels: HashMap<ChannelId, Channel>,
-    next_worktree_id: u64,
-}
-
-struct ConnectionState {
-    user_id: UserId,
-    worktrees: HashSet<u64>,
-    channels: HashSet<ChannelId>,
-}
-
-struct Worktree {
-    host_connection_id: Option<ConnectionId>,
-    guest_connection_ids: HashMap<ConnectionId, ReplicaId>,
-    active_replica_ids: HashSet<ReplicaId>,
-    access_token: String,
-    root_name: String,
-    entries: HashMap<u64, proto::Entry>,
-}
-
-#[derive(Default)]
-struct Channel {
-    connection_ids: HashSet<ConnectionId>,
 }
 
 const MESSAGE_COUNT_PER_PAGE: usize = 100;
@@ -86,17 +58,20 @@ impl Server {
         let mut server = Self {
             peer,
             app_state,
-            state: Default::default(),
+            store: Default::default(),
             handlers: Default::default(),
             notifications,
         };
 
         server
             .add_handler(Server::ping)
-            .add_handler(Server::share_worktree)
-            .add_handler(Server::join_worktree)
-            .add_handler(Server::update_worktree)
+            .add_handler(Server::open_worktree)
             .add_handler(Server::close_worktree)
+            .add_handler(Server::share_worktree)
+            .add_handler(Server::unshare_worktree)
+            .add_handler(Server::join_worktree)
+            .add_handler(Server::leave_worktree)
+            .add_handler(Server::update_worktree)
             .add_handler(Server::open_buffer)
             .add_handler(Server::close_buffer)
             .add_handler(Server::update_buffer)
@@ -137,11 +112,16 @@ impl Server {
         addr: String,
         user_id: UserId,
     ) -> impl Future<Output = ()> {
-        let this = self.clone();
+        let mut this = self.clone();
         async move {
             let (connection_id, handle_io, mut incoming_rx) =
                 this.peer.add_connection(connection).await;
-            this.add_connection(connection_id, user_id).await;
+            this.state_mut()
+                .await
+                .add_connection(connection_id, user_id);
+            if let Err(err) = this.update_collaborators_for_users(&[user_id]).await {
+                log::error!("error updating collaborators for {:?}: {}", user_id, err);
+            }
 
             let handle_io = handle_io.fuse();
             futures::pin_mut!(handle_io);
@@ -186,63 +166,41 @@ impl Server {
         }
     }
 
-    async fn sign_out(self: &Arc<Self>, connection_id: zrpc::ConnectionId) -> tide::Result<()> {
+    async fn sign_out(self: &mut Arc<Self>, connection_id: ConnectionId) -> tide::Result<()> {
         self.peer.disconnect(connection_id).await;
-        let worktree_ids = self.remove_connection(connection_id).await;
-        for worktree_id in worktree_ids {
-            let state = self.state.read().await;
-            if let Some(worktree) = state.worktrees.get(&worktree_id) {
-                broadcast(connection_id, worktree.connection_ids(), |conn_id| {
-                    self.peer.send(
-                        conn_id,
-                        proto::RemovePeer {
-                            worktree_id,
-                            peer_id: connection_id.0,
-                        },
-                    )
-                })
+        let removed_connection = self.state_mut().await.remove_connection(connection_id)?;
+
+        for (worktree_id, worktree) in removed_connection.hosted_worktrees {
+            if let Some(share) = worktree.share {
+                broadcast(
+                    connection_id,
+                    share.guest_connection_ids.keys().copied().collect(),
+                    |conn_id| {
+                        self.peer
+                            .send(conn_id, proto::UnshareWorktree { worktree_id })
+                    },
+                )
                 .await?;
             }
         }
-        Ok(())
-    }
 
-    // Add a new connection associated with a given user.
-    async fn add_connection(&self, connection_id: ConnectionId, user_id: UserId) {
-        self.state.write().await.connections.insert(
-            connection_id,
-            ConnectionState {
-                user_id,
-                worktrees: Default::default(),
-                channels: Default::default(),
-            },
-        );
-    }
-
-    // Remove the given connection and its association with any worktrees.
-    async fn remove_connection(&self, connection_id: ConnectionId) -> Vec<u64> {
-        let mut worktree_ids = Vec::new();
-        let mut state = self.state.write().await;
-        if let Some(connection) = state.connections.remove(&connection_id) {
-            for channel_id in connection.channels {
-                if let Some(channel) = state.channels.get_mut(&channel_id) {
-                    channel.connection_ids.remove(&connection_id);
-                }
-            }
-            for worktree_id in connection.worktrees {
-                if let Some(worktree) = state.worktrees.get_mut(&worktree_id) {
-                    if worktree.host_connection_id == Some(connection_id) {
-                        worktree_ids.push(worktree_id);
-                    } else if let Some(replica_id) =
-                        worktree.guest_connection_ids.remove(&connection_id)
-                    {
-                        worktree.active_replica_ids.remove(&replica_id);
-                        worktree_ids.push(worktree_id);
-                    }
-                }
-            }
+        for (worktree_id, peer_ids) in removed_connection.guest_worktree_ids {
+            broadcast(connection_id, peer_ids, |conn_id| {
+                self.peer.send(
+                    conn_id,
+                    proto::RemovePeer {
+                        worktree_id,
+                        peer_id: connection_id.0,
+                    },
+                )
+            })
+            .await?;
         }
-        worktree_ids
+
+        self.update_collaborators_for_users(removed_connection.collaborator_ids.iter())
+            .await?;
+
+        Ok(())
     }
 
     async fn ping(self: Arc<Server>, request: TypedEnvelope<proto::Ping>) -> tide::Result<()> {
@@ -250,14 +208,80 @@ impl Server {
         Ok(())
     }
 
+    async fn open_worktree(
+        mut self: Arc<Server>,
+        request: TypedEnvelope<proto::OpenWorktree>,
+    ) -> tide::Result<()> {
+        let receipt = request.receipt();
+        let host_user_id = self
+            .state()
+            .await
+            .user_id_for_connection(request.sender_id)?;
+
+        let mut collaborator_user_ids = HashSet::new();
+        collaborator_user_ids.insert(host_user_id);
+        for github_login in request.payload.collaborator_logins {
+            match self.app_state.db.create_user(&github_login, false).await {
+                Ok(collaborator_user_id) => {
+                    collaborator_user_ids.insert(collaborator_user_id);
+                }
+                Err(err) => {
+                    let message = err.to_string();
+                    self.peer
+                        .respond_with_error(receipt, proto::Error { message })
+                        .await?;
+                    return Ok(());
+                }
+            }
+        }
+
+        let collaborator_user_ids = collaborator_user_ids.into_iter().collect::<Vec<_>>();
+        let worktree_id = self.state_mut().await.add_worktree(Worktree {
+            host_connection_id: request.sender_id,
+            collaborator_user_ids: collaborator_user_ids.clone(),
+            root_name: request.payload.root_name,
+            share: None,
+        });
+
+        self.peer
+            .respond(receipt, proto::OpenWorktreeResponse { worktree_id })
+            .await?;
+        self.update_collaborators_for_users(&collaborator_user_ids)
+            .await?;
+
+        Ok(())
+    }
+
+    async fn close_worktree(
+        mut self: Arc<Server>,
+        request: TypedEnvelope<proto::CloseWorktree>,
+    ) -> tide::Result<()> {
+        let worktree_id = request.payload.worktree_id;
+        let worktree = self
+            .state_mut()
+            .await
+            .remove_worktree(worktree_id, request.sender_id)?;
+
+        if let Some(share) = worktree.share {
+            broadcast(
+                request.sender_id,
+                share.guest_connection_ids.keys().copied().collect(),
+                |conn_id| {
+                    self.peer
+                        .send(conn_id, proto::UnshareWorktree { worktree_id })
+                },
+            )
+            .await?;
+        }
+        self.update_collaborators_for_users(&worktree.collaborator_user_ids)
+            .await?;
+        Ok(())
+    }
+
     async fn share_worktree(
-        self: Arc<Server>,
+        mut self: Arc<Server>,
         mut request: TypedEnvelope<proto::ShareWorktree>,
     ) -> tide::Result<()> {
-        let mut state = self.state.write().await;
-        let worktree_id = state.next_worktree_id;
-        state.next_worktree_id += 1;
-        let access_token = random_token();
         let worktree = request
             .payload
             .worktree
@@ -267,148 +291,169 @@ impl Server {
             .into_iter()
             .map(|entry| (entry.id, entry))
             .collect();
-        state.worktrees.insert(
-            worktree_id,
-            Worktree {
-                host_connection_id: Some(request.sender_id),
-                guest_connection_ids: Default::default(),
-                active_replica_ids: Default::default(),
-                access_token: access_token.clone(),
-                root_name: mem::take(&mut worktree.root_name),
-                entries,
-            },
-        );
 
-        self.peer
-            .respond(
-                request.receipt(),
-                proto::ShareWorktreeResponse {
-                    worktree_id,
-                    access_token,
-                },
-            )
+        let collaborator_user_ids =
+            self.state_mut()
+                .await
+                .share_worktree(worktree.id, request.sender_id, entries);
+        if let Some(collaborator_user_ids) = collaborator_user_ids {
+            self.peer
+                .respond(request.receipt(), proto::ShareWorktreeResponse {})
+                .await?;
+            self.update_collaborators_for_users(&collaborator_user_ids)
+                .await?;
+        } else {
+            self.peer
+                .respond_with_error(
+                    request.receipt(),
+                    proto::Error {
+                        message: "no such worktree".to_string(),
+                    },
+                )
+                .await?;
+        }
+        Ok(())
+    }
+
+    async fn unshare_worktree(
+        mut self: Arc<Server>,
+        request: TypedEnvelope<proto::UnshareWorktree>,
+    ) -> tide::Result<()> {
+        let worktree_id = request.payload.worktree_id;
+        let worktree = self
+            .state_mut()
+            .await
+            .unshare_worktree(worktree_id, request.sender_id)?;
+
+        broadcast(request.sender_id, worktree.connection_ids, |conn_id| {
+            self.peer
+                .send(conn_id, proto::UnshareWorktree { worktree_id })
+        })
+        .await?;
+        self.update_collaborators_for_users(&worktree.collaborator_ids)
             .await?;
+
         Ok(())
     }
 
     async fn join_worktree(
-        self: Arc<Server>,
-        request: TypedEnvelope<proto::OpenWorktree>,
+        mut self: Arc<Server>,
+        request: TypedEnvelope<proto::JoinWorktree>,
     ) -> tide::Result<()> {
         let worktree_id = request.payload.worktree_id;
-        let access_token = &request.payload.access_token;
+        let user_id = self
+            .state()
+            .await
+            .user_id_for_connection(request.sender_id)?;
 
-        let mut state = self.state.write().await;
-        if let Some((peer_replica_id, worktree)) =
-            state.join_worktree(request.sender_id, worktree_id, access_token)
-        {
-            let mut peers = Vec::new();
-            if let Some(host_connection_id) = worktree.host_connection_id {
+        let mut state = self.state_mut().await;
+        match state.join_worktree(request.sender_id, user_id, worktree_id) {
+            Ok(JoinedWorktree {
+                replica_id,
+                worktree,
+            }) => {
+                let share = worktree.share()?;
+                let peer_count = share.guest_connection_ids.len();
+                let mut peers = Vec::with_capacity(peer_count);
                 peers.push(proto::Peer {
-                    peer_id: host_connection_id.0,
+                    peer_id: worktree.host_connection_id.0,
                     replica_id: 0,
                 });
-            }
-            for (peer_conn_id, peer_replica_id) in &worktree.guest_connection_ids {
-                if *peer_conn_id != request.sender_id {
-                    peers.push(proto::Peer {
-                        peer_id: peer_conn_id.0,
-                        replica_id: *peer_replica_id as u32,
-                    });
+                for (peer_conn_id, peer_replica_id) in &share.guest_connection_ids {
+                    if *peer_conn_id != request.sender_id {
+                        peers.push(proto::Peer {
+                            peer_id: peer_conn_id.0,
+                            replica_id: *peer_replica_id as u32,
+                        });
+                    }
                 }
-            }
+                let response = proto::JoinWorktreeResponse {
+                    worktree: Some(proto::Worktree {
+                        id: worktree_id,
+                        root_name: worktree.root_name.clone(),
+                        entries: share.entries.values().cloned().collect(),
+                    }),
+                    replica_id: replica_id as u32,
+                    peers,
+                };
+                let connection_ids = worktree.connection_ids();
+                let collaborator_user_ids = worktree.collaborator_user_ids.clone();
+                drop(state);
 
-            broadcast(request.sender_id, worktree.connection_ids(), |conn_id| {
+                broadcast(request.sender_id, connection_ids, |conn_id| {
+                    self.peer.send(
+                        conn_id,
+                        proto::AddPeer {
+                            worktree_id,
+                            peer: Some(proto::Peer {
+                                peer_id: request.sender_id.0,
+                                replica_id: response.replica_id,
+                            }),
+                        },
+                    )
+                })
+                .await?;
+                self.peer.respond(request.receipt(), response).await?;
+                self.update_collaborators_for_users(&collaborator_user_ids)
+                    .await?;
+            }
+            Err(error) => {
+                drop(state);
+                self.peer
+                    .respond_with_error(
+                        request.receipt(),
+                        proto::Error {
+                            message: error.to_string(),
+                        },
+                    )
+                    .await?;
+            }
+        }
+
+        Ok(())
+    }
+
+    async fn leave_worktree(
+        mut self: Arc<Server>,
+        request: TypedEnvelope<proto::LeaveWorktree>,
+    ) -> tide::Result<()> {
+        let sender_id = request.sender_id;
+        let worktree_id = request.payload.worktree_id;
+        let worktree = self
+            .state_mut()
+            .await
+            .leave_worktree(sender_id, worktree_id);
+        if let Some(worktree) = worktree {
+            broadcast(sender_id, worktree.connection_ids, |conn_id| {
                 self.peer.send(
                     conn_id,
-                    proto::AddPeer {
+                    proto::RemovePeer {
                         worktree_id,
-                        peer: Some(proto::Peer {
-                            peer_id: request.sender_id.0,
-                            replica_id: peer_replica_id as u32,
-                        }),
+                        peer_id: sender_id.0,
                     },
                 )
             })
             .await?;
-            self.peer
-                .respond(
-                    request.receipt(),
-                    proto::OpenWorktreeResponse {
-                        worktree_id,
-                        worktree: Some(proto::Worktree {
-                            root_name: worktree.root_name.clone(),
-                            entries: worktree.entries.values().cloned().collect(),
-                        }),
-                        replica_id: peer_replica_id as u32,
-                        peers,
-                    },
-                )
-                .await?;
-        } else {
-            self.peer
-                .respond(
-                    request.receipt(),
-                    proto::OpenWorktreeResponse {
-                        worktree_id,
-                        worktree: None,
-                        replica_id: 0,
-                        peers: Vec::new(),
-                    },
-                )
+            self.update_collaborators_for_users(&worktree.collaborator_ids)
                 .await?;
         }
-
         Ok(())
     }
 
     async fn update_worktree(
-        self: Arc<Server>,
+        mut self: Arc<Server>,
         request: TypedEnvelope<proto::UpdateWorktree>,
     ) -> tide::Result<()> {
-        {
-            let mut state = self.state.write().await;
-            let worktree = state.write_worktree(request.payload.worktree_id, request.sender_id)?;
-            for entry_id in &request.payload.removed_entries {
-                worktree.entries.remove(&entry_id);
-            }
+        let connection_ids = self.state_mut().await.update_worktree(
+            request.sender_id,
+            request.payload.worktree_id,
+            &request.payload.removed_entries,
+            &request.payload.updated_entries,
+        )?;
 
-            for entry in &request.payload.updated_entries {
-                worktree.entries.insert(entry.id, entry.clone());
-            }
-        }
-
-        self.broadcast_in_worktree(request.payload.worktree_id, &request)
-            .await?;
-        Ok(())
-    }
-
-    async fn close_worktree(
-        self: Arc<Server>,
-        request: TypedEnvelope<proto::CloseWorktree>,
-    ) -> tide::Result<()> {
-        let connection_ids;
-        {
-            let mut state = self.state.write().await;
-            let worktree = state.write_worktree(request.payload.worktree_id, request.sender_id)?;
-            connection_ids = worktree.connection_ids();
-            if worktree.host_connection_id == Some(request.sender_id) {
-                worktree.host_connection_id = None;
-            } else if let Some(replica_id) =
-                worktree.guest_connection_ids.remove(&request.sender_id)
-            {
-                worktree.active_replica_ids.remove(&replica_id);
-            }
-        }
-
-        broadcast(request.sender_id, connection_ids, |conn_id| {
-            self.peer.send(
-                conn_id,
-                proto::RemovePeer {
-                    worktree_id: request.payload.worktree_id,
-                    peer_id: request.sender_id.0,
-                },
-            )
+        broadcast(request.sender_id, connection_ids, |connection_id| {
+            self.peer
+                .forward_send(request.sender_id, connection_id, request.payload.clone())
         })
         .await?;
 
@@ -420,14 +465,10 @@ impl Server {
         request: TypedEnvelope<proto::OpenBuffer>,
     ) -> tide::Result<()> {
         let receipt = request.receipt();
-        let worktree_id = request.payload.worktree_id;
         let host_connection_id = self
-            .state
-            .read()
+            .state()
             .await
-            .read_worktree(worktree_id, request.sender_id)?
-            .host_connection_id()?;
-
+            .worktree_host_connection_id(request.sender_id, request.payload.worktree_id)?;
         let response = self
             .peer
             .forward_request(request.sender_id, host_connection_id, request.payload)
@@ -441,16 +482,12 @@ impl Server {
         request: TypedEnvelope<proto::CloseBuffer>,
     ) -> tide::Result<()> {
         let host_connection_id = self
-            .state
-            .read()
+            .state()
             .await
-            .read_worktree(request.payload.worktree_id, request.sender_id)?
-            .host_connection_id()?;
-
+            .worktree_host_connection_id(request.sender_id, request.payload.worktree_id)?;
         self.peer
             .forward_send(request.sender_id, host_connection_id, request.payload)
             .await?;
-
         Ok(())
     }
 
@@ -461,14 +498,11 @@ impl Server {
         let host;
         let guests;
         {
-            let state = self.state.read().await;
-            let worktree = state.read_worktree(request.payload.worktree_id, request.sender_id)?;
-            host = worktree.host_connection_id()?;
-            guests = worktree
-                .guest_connection_ids
-                .keys()
-                .copied()
-                .collect::<Vec<_>>();
+            let state = self.state().await;
+            host = state
+                .worktree_host_connection_id(request.sender_id, request.payload.worktree_id)?;
+            guests = state
+                .worktree_guest_connection_ids(request.sender_id, request.payload.worktree_id)?;
         }
 
         let sender = request.sender_id;
@@ -498,8 +532,17 @@ impl Server {
         self: Arc<Server>,
         request: TypedEnvelope<proto::UpdateBuffer>,
     ) -> tide::Result<()> {
-        self.broadcast_in_worktree(request.payload.worktree_id, &request)
-            .await?;
+        broadcast(
+            request.sender_id,
+            self.state()
+                .await
+                .worktree_connection_ids(request.sender_id, request.payload.worktree_id)?,
+            |connection_id| {
+                self.peer
+                    .forward_send(request.sender_id, connection_id, request.payload.clone())
+            },
+        )
+        .await?;
         self.peer.respond(request.receipt(), proto::Ack {}).await?;
         Ok(())
     }
@@ -508,8 +551,19 @@ impl Server {
         self: Arc<Server>,
         request: TypedEnvelope<proto::BufferSaved>,
     ) -> tide::Result<()> {
-        self.broadcast_in_worktree(request.payload.worktree_id, &request)
-            .await
+        broadcast(
+            request.sender_id,
+            self.store
+                .read()
+                .await
+                .worktree_connection_ids(request.sender_id, request.payload.worktree_id)?,
+            |connection_id| {
+                self.peer
+                    .forward_send(request.sender_id, connection_id, request.payload.clone())
+            },
+        )
+        .await?;
+        Ok(())
     }
 
     async fn get_channels(
@@ -517,8 +571,7 @@ impl Server {
         request: TypedEnvelope<proto::GetChannels>,
     ) -> tide::Result<()> {
         let user_id = self
-            .state
-            .read()
+            .state()
             .await
             .user_id_for_connection(request.sender_id)?;
         let channels = self.app_state.db.get_accessible_channels(user_id).await?;
@@ -543,17 +596,12 @@ impl Server {
         self: Arc<Server>,
         request: TypedEnvelope<proto::GetUsers>,
     ) -> tide::Result<()> {
-        let user_id = self
-            .state
-            .read()
-            .await
-            .user_id_for_connection(request.sender_id)?;
         let receipt = request.receipt();
         let user_ids = request.payload.user_ids.into_iter().map(UserId::from_proto);
         let users = self
             .app_state
             .db
-            .get_users_by_ids(user_id, user_ids)
+            .get_users_by_ids(user_ids)
             .await?
             .into_iter()
             .map(|user| proto::User {
@@ -568,13 +616,37 @@ impl Server {
         Ok(())
     }
 
+    async fn update_collaborators_for_users<'a>(
+        self: &Arc<Server>,
+        user_ids: impl IntoIterator<Item = &'a UserId>,
+    ) -> tide::Result<()> {
+        let mut send_futures = Vec::new();
+
+        let state = self.state().await;
+        for user_id in user_ids {
+            let collaborators = state.collaborators_for_user(*user_id);
+            for connection_id in state.connection_ids_for_user(*user_id) {
+                send_futures.push(self.peer.send(
+                    connection_id,
+                    proto::UpdateCollaborators {
+                        collaborators: collaborators.clone(),
+                    },
+                ));
+            }
+        }
+
+        drop(state);
+        futures::future::try_join_all(send_futures).await?;
+
+        Ok(())
+    }
+
     async fn join_channel(
-        self: Arc<Self>,
+        mut self: Arc<Self>,
         request: TypedEnvelope<proto::JoinChannel>,
     ) -> tide::Result<()> {
         let user_id = self
-            .state
-            .read()
+            .state()
             .await
             .user_id_for_connection(request.sender_id)?;
         let channel_id = ChannelId::from_proto(request.payload.channel_id);
@@ -587,8 +659,7 @@ impl Server {
             Err(anyhow!("access denied"))?;
         }
 
-        self.state
-            .write()
+        self.state_mut()
             .await
             .join_channel(request.sender_id, channel_id);
         let messages = self
@@ -618,12 +689,11 @@ impl Server {
     }
 
     async fn leave_channel(
-        self: Arc<Self>,
+        mut self: Arc<Self>,
         request: TypedEnvelope<proto::LeaveChannel>,
     ) -> tide::Result<()> {
         let user_id = self
-            .state
-            .read()
+            .state()
             .await
             .user_id_for_connection(request.sender_id)?;
         let channel_id = ChannelId::from_proto(request.payload.channel_id);
@@ -636,8 +706,7 @@ impl Server {
             Err(anyhow!("access denied"))?;
         }
 
-        self.state
-            .write()
+        self.state_mut()
             .await
             .leave_channel(request.sender_id, channel_id);
 
@@ -653,10 +722,10 @@ impl Server {
         let user_id;
         let connection_ids;
         {
-            let state = self.state.read().await;
+            let state = self.state().await;
             user_id = state.user_id_for_connection(request.sender_id)?;
-            if let Some(channel) = state.channels.get(&channel_id) {
-                connection_ids = channel.connection_ids();
+            if let Some(ids) = state.channel_connection_ids(channel_id) {
+                connection_ids = ids;
             } else {
                 return Ok(());
             }
@@ -741,8 +810,7 @@ impl Server {
         request: TypedEnvelope<proto::GetChannelMessages>,
     ) -> tide::Result<()> {
         let user_id = self
-            .state
-            .read()
+            .state()
             .await
             .user_id_for_connection(request.sender_id)?;
         let channel_id = ChannelId::from_proto(request.payload.channel_id);
@@ -785,25 +853,16 @@ impl Server {
         Ok(())
     }
 
-    async fn broadcast_in_worktree<T: proto::EnvelopedMessage>(
-        &self,
-        worktree_id: u64,
-        message: &TypedEnvelope<T>,
-    ) -> tide::Result<()> {
-        let connection_ids = self
-            .state
-            .read()
-            .await
-            .read_worktree(worktree_id, message.sender_id)?
-            .connection_ids();
+    fn state<'a>(
+        self: &'a Arc<Self>,
+    ) -> impl Future<Output = async_std::sync::RwLockReadGuard<'a, Store>> {
+        self.store.read()
+    }
 
-        broadcast(message.sender_id, connection_ids, |conn_id| {
-            self.peer
-                .forward_send(message.sender_id, conn_id, message.payload.clone())
-        })
-        .await?;
-
-        Ok(())
+    fn state_mut<'a>(
+        self: &'a mut Arc<Self>,
+    ) -> impl Future<Output = async_std::sync::RwLockWriteGuard<'a, Store>> {
+        self.store.write()
     }
 }
 
@@ -822,137 +881,6 @@ where
         .map(|id| f(id));
     futures::future::try_join_all(futures).await?;
     Ok(())
-}
-
-impl ServerState {
-    fn join_channel(&mut self, connection_id: ConnectionId, channel_id: ChannelId) {
-        if let Some(connection) = self.connections.get_mut(&connection_id) {
-            connection.channels.insert(channel_id);
-            self.channels
-                .entry(channel_id)
-                .or_default()
-                .connection_ids
-                .insert(connection_id);
-        }
-    }
-
-    fn leave_channel(&mut self, connection_id: ConnectionId, channel_id: ChannelId) {
-        if let Some(connection) = self.connections.get_mut(&connection_id) {
-            connection.channels.remove(&channel_id);
-            if let hash_map::Entry::Occupied(mut entry) = self.channels.entry(channel_id) {
-                entry.get_mut().connection_ids.remove(&connection_id);
-                if entry.get_mut().connection_ids.is_empty() {
-                    entry.remove();
-                }
-            }
-        }
-    }
-
-    fn user_id_for_connection(&self, connection_id: ConnectionId) -> tide::Result<UserId> {
-        Ok(self
-            .connections
-            .get(&connection_id)
-            .ok_or_else(|| anyhow!("unknown connection"))?
-            .user_id)
-    }
-
-    // Add the given connection as a guest of the given worktree
-    fn join_worktree(
-        &mut self,
-        connection_id: ConnectionId,
-        worktree_id: u64,
-        access_token: &str,
-    ) -> Option<(ReplicaId, &Worktree)> {
-        if let Some(worktree) = self.worktrees.get_mut(&worktree_id) {
-            if access_token == worktree.access_token {
-                if let Some(connection) = self.connections.get_mut(&connection_id) {
-                    connection.worktrees.insert(worktree_id);
-                }
-
-                let mut replica_id = 1;
-                while worktree.active_replica_ids.contains(&replica_id) {
-                    replica_id += 1;
-                }
-                worktree.active_replica_ids.insert(replica_id);
-                worktree
-                    .guest_connection_ids
-                    .insert(connection_id, replica_id);
-                Some((replica_id, worktree))
-            } else {
-                None
-            }
-        } else {
-            None
-        }
-    }
-
-    fn read_worktree(
-        &self,
-        worktree_id: u64,
-        connection_id: ConnectionId,
-    ) -> tide::Result<&Worktree> {
-        let worktree = self
-            .worktrees
-            .get(&worktree_id)
-            .ok_or_else(|| anyhow!("worktree not found"))?;
-
-        if worktree.host_connection_id == Some(connection_id)
-            || worktree.guest_connection_ids.contains_key(&connection_id)
-        {
-            Ok(worktree)
-        } else {
-            Err(anyhow!(
-                "{} is not a member of worktree {}",
-                connection_id,
-                worktree_id
-            ))?
-        }
-    }
-
-    fn write_worktree(
-        &mut self,
-        worktree_id: u64,
-        connection_id: ConnectionId,
-    ) -> tide::Result<&mut Worktree> {
-        let worktree = self
-            .worktrees
-            .get_mut(&worktree_id)
-            .ok_or_else(|| anyhow!("worktree not found"))?;
-
-        if worktree.host_connection_id == Some(connection_id)
-            || worktree.guest_connection_ids.contains_key(&connection_id)
-        {
-            Ok(worktree)
-        } else {
-            Err(anyhow!(
-                "{} is not a member of worktree {}",
-                connection_id,
-                worktree_id
-            ))?
-        }
-    }
-}
-
-impl Worktree {
-    pub fn connection_ids(&self) -> Vec<ConnectionId> {
-        self.guest_connection_ids
-            .keys()
-            .copied()
-            .chain(self.host_connection_id)
-            .collect()
-    }
-
-    fn host_connection_id(&self) -> tide::Result<ConnectionId> {
-        Ok(self
-            .host_connection_id
-            .ok_or_else(|| anyhow!("host disconnected from worktree"))?)
-    }
-}
-
-impl Channel {
-    fn connection_ids(&self) -> Vec<ConnectionId> {
-        self.connection_ids.iter().copied().collect()
-    }
 }
 
 pub fn add_routes(app: &mut tide::Server<Arc<AppState>>, rpc: &Arc<Peer>) {
@@ -1022,7 +950,7 @@ mod tests {
         github, AppState, Config,
     };
     use async_std::{sync::RwLockReadGuard, task};
-    use gpui::TestAppContext;
+    use gpui::{ModelHandle, TestAppContext};
     use parking_lot::Mutex;
     use postage::{mpsc, watch};
     use serde_json::json;
@@ -1040,10 +968,12 @@ mod tests {
         editor::{Editor, EditorStyle, Insert},
         fs::{FakeFs, Fs as _},
         language::LanguageRegistry,
+        people_panel::JoinWorktree,
         rpc::{self, Client, Credentials, EstablishConnectionError},
         settings,
         test::FakeHttpClient,
         user::UserStore,
+        workspace::Workspace,
         worktree::Worktree,
     };
     use zrpc::Peer;
@@ -1066,15 +996,17 @@ mod tests {
         fs.insert_tree(
             "/a",
             json!({
+                ".zed.toml": r#"collaborators = ["user_b"]"#,
                 "a.txt": "a-contents",
                 "b.txt": "b-contents",
             }),
         )
         .await;
         let worktree_a = Worktree::open_local(
+            client_a.clone(),
             "/a".as_ref(),
-            lang_registry.clone(),
             fs,
+            lang_registry.clone(),
             &mut cx_a.to_async(),
         )
         .await
@@ -1082,10 +1014,8 @@ mod tests {
         worktree_a
             .read_with(&cx_a, |tree, _| tree.as_local().unwrap().scan_complete())
             .await;
-        let (worktree_id, worktree_token) = worktree_a
-            .update(&mut cx_a, |tree, cx| {
-                tree.as_local_mut().unwrap().share(client_a.clone(), cx)
-            })
+        let worktree_id = worktree_a
+            .update(&mut cx_a, |tree, cx| tree.as_local_mut().unwrap().share(cx))
             .await
             .unwrap();
 
@@ -1093,7 +1023,6 @@ mod tests {
         let worktree_b = Worktree::open_remote(
             client_b.clone(),
             worktree_id,
-            worktree_token,
             lang_registry.clone(),
             &mut cx_b.to_async(),
         )
@@ -1161,6 +1090,94 @@ mod tests {
     }
 
     #[gpui::test]
+    async fn test_unshare_worktree(mut cx_a: TestAppContext, mut cx_b: TestAppContext) {
+        cx_b.update(zed::workspace::init);
+        let lang_registry = Arc::new(LanguageRegistry::new());
+
+        // Connect to a server as 2 clients.
+        let mut server = TestServer::start().await;
+        let (client_a, _) = server.create_client(&mut cx_a, "user_a").await;
+        let (client_b, user_store_b) = server.create_client(&mut cx_b, "user_b").await;
+        let app_state_b = zed::AppState {
+            rpc: client_b,
+            user_store: user_store_b,
+            ..Arc::try_unwrap(cx_b.update(zed::test::test_app_state))
+                .ok()
+                .unwrap()
+        };
+
+        cx_a.foreground().forbid_parking();
+
+        // Share a local worktree as client A
+        let fs = Arc::new(FakeFs::new());
+        fs.insert_tree(
+            "/a",
+            json!({
+                ".zed.toml": r#"collaborators = ["user_b"]"#,
+                "a.txt": "a-contents",
+                "b.txt": "b-contents",
+            }),
+        )
+        .await;
+        let worktree_a = Worktree::open_local(
+            client_a.clone(),
+            "/a".as_ref(),
+            fs,
+            lang_registry.clone(),
+            &mut cx_a.to_async(),
+        )
+        .await
+        .unwrap();
+        worktree_a
+            .read_with(&cx_a, |tree, _| tree.as_local().unwrap().scan_complete())
+            .await;
+
+        let remote_worktree_id = worktree_a
+            .update(&mut cx_a, |tree, cx| tree.as_local_mut().unwrap().share(cx))
+            .await
+            .unwrap();
+
+        let (window_b, workspace_b) = cx_b.add_window(|cx| Workspace::new(&app_state_b, cx));
+        cx_b.update(|cx| {
+            cx.dispatch_action(
+                window_b,
+                vec![workspace_b.id()],
+                &JoinWorktree(remote_worktree_id),
+            );
+        });
+        workspace_b
+            .condition(&cx_b, |workspace, _| workspace.worktrees().len() == 1)
+            .await;
+
+        let local_worktree_id_b = workspace_b.read_with(&cx_b, |workspace, cx| {
+            let active_pane = workspace.active_pane().read(cx);
+            assert!(active_pane.active_item().is_none());
+            workspace.worktrees().iter().next().unwrap().id()
+        });
+        workspace_b
+            .update(&mut cx_b, |worktree, cx| {
+                worktree.open_entry((local_worktree_id_b, Path::new("a.txt").into()), cx)
+            })
+            .unwrap()
+            .await;
+        workspace_b.read_with(&cx_b, |workspace, cx| {
+            let active_pane = workspace.active_pane().read(cx);
+            assert!(active_pane.active_item().is_some());
+        });
+
+        worktree_a.update(&mut cx_a, |tree, cx| {
+            tree.as_local_mut().unwrap().unshare(cx);
+        });
+        workspace_b
+            .condition(&cx_b, |workspace, _| workspace.worktrees().len() == 0)
+            .await;
+        workspace_b.read_with(&cx_b, |workspace, cx| {
+            let active_pane = workspace.active_pane().read(cx);
+            assert!(active_pane.active_item().is_none());
+        });
+    }
+
+    #[gpui::test]
     async fn test_propagate_saves_and_fs_changes_in_shared_worktree(
         mut cx_a: TestAppContext,
         mut cx_b: TestAppContext,
@@ -1181,6 +1198,7 @@ mod tests {
         fs.insert_tree(
             "/a",
             json!({
+                ".zed.toml": r#"collaborators = ["user_b", "user_c"]"#,
                 "file1": "",
                 "file2": ""
             }),
@@ -1188,9 +1206,10 @@ mod tests {
         .await;
 
         let worktree_a = Worktree::open_local(
+            client_a.clone(),
             "/a".as_ref(),
-            lang_registry.clone(),
             fs.clone(),
+            lang_registry.clone(),
             &mut cx_a.to_async(),
         )
         .await
@@ -1198,10 +1217,8 @@ mod tests {
         worktree_a
             .read_with(&cx_a, |tree, _| tree.as_local().unwrap().scan_complete())
             .await;
-        let (worktree_id, worktree_token) = worktree_a
-            .update(&mut cx_a, |tree, cx| {
-                tree.as_local_mut().unwrap().share(client_a.clone(), cx)
-            })
+        let worktree_id = worktree_a
+            .update(&mut cx_a, |tree, cx| tree.as_local_mut().unwrap().share(cx))
             .await
             .unwrap();
 
@@ -1209,7 +1226,6 @@ mod tests {
         let worktree_b = Worktree::open_remote(
             client_b.clone(),
             worktree_id,
-            worktree_token.clone(),
             lang_registry.clone(),
             &mut cx_b.to_async(),
         )
@@ -1218,7 +1234,6 @@ mod tests {
         let worktree_c = Worktree::open_remote(
             client_c.clone(),
             worktree_id,
-            worktree_token,
             lang_registry.clone(),
             &mut cx_c.to_async(),
         )
@@ -1282,17 +1297,17 @@ mod tests {
             .unwrap();
 
         worktree_b
-            .condition(&cx_b, |tree, _| tree.file_count() == 3)
+            .condition(&cx_b, |tree, _| tree.file_count() == 4)
             .await;
         worktree_c
-            .condition(&cx_c, |tree, _| tree.file_count() == 3)
+            .condition(&cx_c, |tree, _| tree.file_count() == 4)
             .await;
         worktree_b.read_with(&cx_b, |tree, _| {
             assert_eq!(
                 tree.paths()
                     .map(|p| p.to_string_lossy())
                     .collect::<Vec<_>>(),
-                &["file1", "file3", "file4"]
+                &[".zed.toml", "file1", "file3", "file4"]
             )
         });
         worktree_c.read_with(&cx_c, |tree, _| {
@@ -1300,7 +1315,7 @@ mod tests {
                 tree.paths()
                     .map(|p| p.to_string_lossy())
                     .collect::<Vec<_>>(),
-                &["file1", "file3", "file4"]
+                &[".zed.toml", "file1", "file3", "file4"]
             )
         });
     }
@@ -1317,13 +1332,20 @@ mod tests {
 
         // Share a local worktree as client A
         let fs = Arc::new(FakeFs::new());
-        fs.save(Path::new("/a.txt"), &"a-contents".into())
-            .await
-            .unwrap();
+        fs.insert_tree(
+            "/dir",
+            json!({
+                ".zed.toml": r#"collaborators = ["user_b", "user_c"]"#,
+                "a.txt": "a-contents",
+            }),
+        )
+        .await;
+
         let worktree_a = Worktree::open_local(
-            "/".as_ref(),
-            lang_registry.clone(),
+            client_a.clone(),
+            "/dir".as_ref(),
             fs,
+            lang_registry.clone(),
             &mut cx_a.to_async(),
         )
         .await
@@ -1331,10 +1353,8 @@ mod tests {
         worktree_a
             .read_with(&cx_a, |tree, _| tree.as_local().unwrap().scan_complete())
             .await;
-        let (worktree_id, worktree_token) = worktree_a
-            .update(&mut cx_a, |tree, cx| {
-                tree.as_local_mut().unwrap().share(client_a.clone(), cx)
-            })
+        let worktree_id = worktree_a
+            .update(&mut cx_a, |tree, cx| tree.as_local_mut().unwrap().share(cx))
             .await
             .unwrap();
 
@@ -1342,7 +1362,6 @@ mod tests {
         let worktree_b = Worktree::open_remote(
             client_b.clone(),
             worktree_id,
-            worktree_token,
             lang_registry.clone(),
             &mut cx_b.to_async(),
         )
@@ -1398,13 +1417,19 @@ mod tests {
 
         // Share a local worktree as client A
         let fs = Arc::new(FakeFs::new());
-        fs.save(Path::new("/a.txt"), &"a-contents".into())
-            .await
-            .unwrap();
+        fs.insert_tree(
+            "/dir",
+            json!({
+                ".zed.toml": r#"collaborators = ["user_b"]"#,
+                "a.txt": "a-contents",
+            }),
+        )
+        .await;
         let worktree_a = Worktree::open_local(
-            "/".as_ref(),
-            lang_registry.clone(),
+            client_a.clone(),
+            "/dir".as_ref(),
             fs,
+            lang_registry.clone(),
             &mut cx_a.to_async(),
         )
         .await
@@ -1412,10 +1437,8 @@ mod tests {
         worktree_a
             .read_with(&cx_a, |tree, _| tree.as_local().unwrap().scan_complete())
             .await;
-        let (worktree_id, worktree_token) = worktree_a
-            .update(&mut cx_a, |tree, cx| {
-                tree.as_local_mut().unwrap().share(client_a.clone(), cx)
-            })
+        let worktree_id = worktree_a
+            .update(&mut cx_a, |tree, cx| tree.as_local_mut().unwrap().share(cx))
             .await
             .unwrap();
 
@@ -1423,7 +1446,6 @@ mod tests {
         let worktree_b = Worktree::open_remote(
             client_b.clone(),
             worktree_id,
-            worktree_token,
             lang_registry.clone(),
             &mut cx_b.to_async(),
         )
@@ -1447,6 +1469,69 @@ mod tests {
     }
 
     #[gpui::test]
+    async fn test_leaving_worktree_while_opening_buffer(
+        mut cx_a: TestAppContext,
+        mut cx_b: TestAppContext,
+    ) {
+        cx_a.foreground().forbid_parking();
+        let lang_registry = Arc::new(LanguageRegistry::new());
+
+        // Connect to a server as 2 clients.
+        let mut server = TestServer::start().await;
+        let (client_a, _) = server.create_client(&mut cx_a, "user_a").await;
+        let (client_b, _) = server.create_client(&mut cx_b, "user_b").await;
+
+        // Share a local worktree as client A
+        let fs = Arc::new(FakeFs::new());
+        fs.insert_tree(
+            "/dir",
+            json!({
+                ".zed.toml": r#"collaborators = ["user_b"]"#,
+                "a.txt": "a-contents",
+            }),
+        )
+        .await;
+        let worktree_a = Worktree::open_local(
+            client_a.clone(),
+            "/dir".as_ref(),
+            fs,
+            lang_registry.clone(),
+            &mut cx_a.to_async(),
+        )
+        .await
+        .unwrap();
+        worktree_a
+            .read_with(&cx_a, |tree, _| tree.as_local().unwrap().scan_complete())
+            .await;
+        let worktree_id = worktree_a
+            .update(&mut cx_a, |tree, cx| tree.as_local_mut().unwrap().share(cx))
+            .await
+            .unwrap();
+
+        // Join that worktree as client B, and see that a guest has joined as client A.
+        let worktree_b = Worktree::open_remote(
+            client_b.clone(),
+            worktree_id,
+            lang_registry.clone(),
+            &mut cx_b.to_async(),
+        )
+        .await
+        .unwrap();
+        worktree_a
+            .condition(&cx_a, |tree, _| tree.peers().len() == 1)
+            .await;
+
+        let buffer_b = cx_b
+            .background()
+            .spawn(worktree_b.update(&mut cx_b, |worktree, cx| worktree.open_buffer("a.txt", cx)));
+        cx_b.update(|_| drop(worktree_b));
+        drop(buffer_b);
+        worktree_a
+            .condition(&cx_a, |tree, _| tree.peers().len() == 0)
+            .await;
+    }
+
+    #[gpui::test]
     async fn test_peer_disconnection(mut cx_a: TestAppContext, cx_b: TestAppContext) {
         cx_a.foreground().forbid_parking();
         let lang_registry = Arc::new(LanguageRegistry::new());
@@ -1461,15 +1546,17 @@ mod tests {
         fs.insert_tree(
             "/a",
             json!({
+                ".zed.toml": r#"collaborators = ["user_b"]"#,
                 "a.txt": "a-contents",
                 "b.txt": "b-contents",
             }),
         )
         .await;
         let worktree_a = Worktree::open_local(
+            client_a.clone(),
             "/a".as_ref(),
-            lang_registry.clone(),
             fs,
+            lang_registry.clone(),
             &mut cx_a.to_async(),
         )
         .await
@@ -1477,10 +1564,8 @@ mod tests {
         worktree_a
             .read_with(&cx_a, |tree, _| tree.as_local().unwrap().scan_complete())
             .await;
-        let (worktree_id, worktree_token) = worktree_a
-            .update(&mut cx_a, |tree, cx| {
-                tree.as_local_mut().unwrap().share(client_a.clone(), cx)
-            })
+        let worktree_id = worktree_a
+            .update(&mut cx_a, |tree, cx| tree.as_local_mut().unwrap().share(cx))
             .await
             .unwrap();
 
@@ -1488,7 +1573,6 @@ mod tests {
         let _worktree_b = Worktree::open_remote(
             client_b.clone(),
             worktree_id,
-            worktree_token,
             lang_registry.clone(),
             &mut cx_b.to_async(),
         )
@@ -1517,24 +1601,24 @@ mod tests {
         // Create an org that includes these 2 users.
         let db = &server.app_state.db;
         let org_id = db.create_org("Test Org", "test-org").await.unwrap();
-        db.add_org_member(org_id, current_user_id(&user_store_a), false)
+        db.add_org_member(org_id, current_user_id(&user_store_a, &cx_a), false)
             .await
             .unwrap();
-        db.add_org_member(org_id, current_user_id(&user_store_b), false)
+        db.add_org_member(org_id, current_user_id(&user_store_b, &cx_b), false)
             .await
             .unwrap();
 
         // Create a channel that includes all the users.
         let channel_id = db.create_org_channel(org_id, "test-channel").await.unwrap();
-        db.add_channel_member(channel_id, current_user_id(&user_store_a), false)
+        db.add_channel_member(channel_id, current_user_id(&user_store_a, &cx_a), false)
             .await
             .unwrap();
-        db.add_channel_member(channel_id, current_user_id(&user_store_b), false)
+        db.add_channel_member(channel_id, current_user_id(&user_store_b, &cx_b), false)
             .await
             .unwrap();
         db.create_channel_message(
             channel_id,
-            current_user_id(&user_store_b),
+            current_user_id(&user_store_b, &cx_b),
             "hello A, it's B.",
             OffsetDateTime::now_utc(),
             1,
@@ -1623,19 +1707,23 @@ mod tests {
             .await;
 
         assert_eq!(
-            server.state().await.channels[&channel_id]
+            server
+                .state()
+                .await
+                .channel(channel_id)
+                .unwrap()
                 .connection_ids
                 .len(),
             2
         );
         cx_b.update(|_| drop(channel_b));
         server
-            .condition(|state| state.channels[&channel_id].connection_ids.len() == 1)
+            .condition(|state| state.channel(channel_id).unwrap().connection_ids.len() == 1)
             .await;
 
         cx_a.update(|_| drop(channel_a));
         server
-            .condition(|state| !state.channels.contains_key(&channel_id))
+            .condition(|state| state.channel(channel_id).is_none())
             .await;
     }
 
@@ -1649,10 +1737,10 @@ mod tests {
         let db = &server.app_state.db;
         let org_id = db.create_org("Test Org", "test-org").await.unwrap();
         let channel_id = db.create_org_channel(org_id, "test-channel").await.unwrap();
-        db.add_org_member(org_id, current_user_id(&user_store_a), false)
+        db.add_org_member(org_id, current_user_id(&user_store_a, &cx_a), false)
             .await
             .unwrap();
-        db.add_channel_member(channel_id, current_user_id(&user_store_a), false)
+        db.add_channel_member(channel_id, current_user_id(&user_store_a, &cx_a), false)
             .await
             .unwrap();
 
@@ -1701,7 +1789,6 @@ mod tests {
     #[gpui::test]
     async fn test_chat_reconnection(mut cx_a: TestAppContext, mut cx_b: TestAppContext) {
         cx_a.foreground().forbid_parking();
-        let http = FakeHttpClient::new(|_| async move { Ok(surf::http::Response::new(404)) });
 
         // Connect to a server as 2 clients.
         let mut server = TestServer::start().await;
@@ -1712,24 +1799,24 @@ mod tests {
         // Create an org that includes these 2 users.
         let db = &server.app_state.db;
         let org_id = db.create_org("Test Org", "test-org").await.unwrap();
-        db.add_org_member(org_id, current_user_id(&user_store_a), false)
+        db.add_org_member(org_id, current_user_id(&user_store_a, &cx_a), false)
             .await
             .unwrap();
-        db.add_org_member(org_id, current_user_id(&user_store_b), false)
+        db.add_org_member(org_id, current_user_id(&user_store_b, &cx_b), false)
             .await
             .unwrap();
 
         // Create a channel that includes all the users.
         let channel_id = db.create_org_channel(org_id, "test-channel").await.unwrap();
-        db.add_channel_member(channel_id, current_user_id(&user_store_a), false)
+        db.add_channel_member(channel_id, current_user_id(&user_store_a, &cx_a), false)
             .await
             .unwrap();
-        db.add_channel_member(channel_id, current_user_id(&user_store_b), false)
+        db.add_channel_member(channel_id, current_user_id(&user_store_b, &cx_b), false)
             .await
             .unwrap();
         db.create_channel_message(
             channel_id,
-            current_user_id(&user_store_b),
+            current_user_id(&user_store_b, &cx_b),
             "hello A, it's B.",
             OffsetDateTime::now_utc(),
             2,
@@ -1737,8 +1824,6 @@ mod tests {
         .await
         .unwrap();
 
-        let user_store_a =
-            UserStore::new(client_a.clone(), http.clone(), cx_a.background().as_ref());
         let channels_a = cx_a.add_model(|cx| ChannelList::new(user_store_a, client_a, cx));
         channels_a
             .condition(&mut cx_a, |list, _| list.available_channels().is_some())
@@ -1791,7 +1876,7 @@ mod tests {
 
         // Disconnect client B, ensuring we can still access its cached channel data.
         server.forbid_connections();
-        server.disconnect_client(current_user_id(&user_store_b));
+        server.disconnect_client(current_user_id(&user_store_b, &cx_b));
         while !matches!(
             status_b.recv().await,
             Some(rpc::Status::ReconnectionError { .. })
@@ -1911,6 +1996,120 @@ mod tests {
             .await;
     }
 
+    #[gpui::test]
+    async fn test_collaborators(
+        mut cx_a: TestAppContext,
+        mut cx_b: TestAppContext,
+        mut cx_c: TestAppContext,
+    ) {
+        cx_a.foreground().forbid_parking();
+        let lang_registry = Arc::new(LanguageRegistry::new());
+
+        // Connect to a server as 3 clients.
+        let mut server = TestServer::start().await;
+        let (client_a, user_store_a) = server.create_client(&mut cx_a, "user_a").await;
+        let (client_b, user_store_b) = server.create_client(&mut cx_b, "user_b").await;
+        let (_client_c, user_store_c) = server.create_client(&mut cx_c, "user_c").await;
+
+        let fs = Arc::new(FakeFs::new());
+
+        // Share a worktree as client A.
+        fs.insert_tree(
+            "/a",
+            json!({
+                ".zed.toml": r#"collaborators = ["user_b", "user_c"]"#,
+            }),
+        )
+        .await;
+
+        let worktree_a = Worktree::open_local(
+            client_a.clone(),
+            "/a".as_ref(),
+            fs.clone(),
+            lang_registry.clone(),
+            &mut cx_a.to_async(),
+        )
+        .await
+        .unwrap();
+
+        user_store_a
+            .condition(&cx_a, |user_store, _| {
+                collaborators(user_store) == vec![("user_a", vec![("a", vec![])])]
+            })
+            .await;
+        user_store_b
+            .condition(&cx_b, |user_store, _| {
+                collaborators(user_store) == vec![("user_a", vec![("a", vec![])])]
+            })
+            .await;
+        user_store_c
+            .condition(&cx_c, |user_store, _| {
+                collaborators(user_store) == vec![("user_a", vec![("a", vec![])])]
+            })
+            .await;
+
+        let worktree_id = worktree_a
+            .update(&mut cx_a, |tree, cx| tree.as_local_mut().unwrap().share(cx))
+            .await
+            .unwrap();
+
+        let _worktree_b = Worktree::open_remote(
+            client_b.clone(),
+            worktree_id,
+            lang_registry.clone(),
+            &mut cx_b.to_async(),
+        )
+        .await
+        .unwrap();
+
+        user_store_a
+            .condition(&cx_a, |user_store, _| {
+                collaborators(user_store) == vec![("user_a", vec![("a", vec!["user_b"])])]
+            })
+            .await;
+        user_store_b
+            .condition(&cx_b, |user_store, _| {
+                collaborators(user_store) == vec![("user_a", vec![("a", vec!["user_b"])])]
+            })
+            .await;
+        user_store_c
+            .condition(&cx_c, |user_store, _| {
+                collaborators(user_store) == vec![("user_a", vec![("a", vec!["user_b"])])]
+            })
+            .await;
+
+        cx_a.update(move |_| drop(worktree_a));
+        user_store_a
+            .condition(&cx_a, |user_store, _| collaborators(user_store) == vec![])
+            .await;
+        user_store_b
+            .condition(&cx_b, |user_store, _| collaborators(user_store) == vec![])
+            .await;
+        user_store_c
+            .condition(&cx_c, |user_store, _| collaborators(user_store) == vec![])
+            .await;
+
+        fn collaborators(user_store: &UserStore) -> Vec<(&str, Vec<(&str, Vec<&str>)>)> {
+            user_store
+                .collaborators()
+                .iter()
+                .map(|collaborator| {
+                    let worktrees = collaborator
+                        .worktrees
+                        .iter()
+                        .map(|w| {
+                            (
+                                w.root_name.as_str(),
+                                w.guests.iter().map(|p| p.github_login.as_str()).collect(),
+                            )
+                        })
+                        .collect();
+                    (collaborator.user.github_login.as_str(), worktrees)
+                })
+                .collect()
+        }
+    }
+
     struct TestServer {
         peer: Arc<Peer>,
         app_state: Arc<AppState>,
@@ -1943,7 +2142,7 @@ mod tests {
             &mut self,
             cx: &mut TestAppContext,
             name: &str,
-        ) -> (Arc<Client>, Arc<UserStore>) {
+        ) -> (Arc<Client>, ModelHandle<UserStore>) {
             let user_id = self.app_state.db.create_user(name, false).await.unwrap();
             let client_name = name.to_string();
             let mut client = Client::new();
@@ -1991,8 +2190,9 @@ mod tests {
                 .await
                 .unwrap();
 
-            let user_store = UserStore::new(client.clone(), http, &cx.background());
-            let mut authed_user = user_store.watch_current_user();
+            let user_store = cx.add_model(|cx| UserStore::new(client.clone(), http, cx));
+            let mut authed_user =
+                user_store.read_with(cx, |user_store, _| user_store.watch_current_user());
             while authed_user.recv().await.unwrap().is_none() {}
 
             (client, user_store)
@@ -2027,16 +2227,16 @@ mod tests {
             })
         }
 
-        async fn state<'a>(&'a self) -> RwLockReadGuard<'a, ServerState> {
-            self.server.state.read().await
+        async fn state<'a>(&'a self) -> RwLockReadGuard<'a, Store> {
+            self.server.store.read().await
         }
 
         async fn condition<F>(&mut self, mut predicate: F)
         where
-            F: FnMut(&ServerState) -> bool,
+            F: FnMut(&Store) -> bool,
         {
             async_std::future::timeout(Duration::from_millis(500), async {
-                while !(predicate)(&*self.server.state.read().await) {
+                while !(predicate)(&*self.server.store.read().await) {
                     self.notifications.recv().await;
                 }
             })
@@ -2051,8 +2251,10 @@ mod tests {
         }
     }
 
-    fn current_user_id(user_store: &Arc<UserStore>) -> UserId {
-        UserId::from_proto(user_store.current_user().unwrap().id)
+    fn current_user_id(user_store: &ModelHandle<UserStore>, cx: &TestAppContext) -> UserId {
+        UserId::from_proto(
+            user_store.read_with(cx, |user_store, _| user_store.current_user().unwrap().id),
+        )
     }
 
     fn channel_messages(channel: &Channel) -> Vec<(String, String, bool)> {

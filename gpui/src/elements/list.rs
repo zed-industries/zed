@@ -12,6 +12,7 @@ use std::{cell::RefCell, collections::VecDeque, ops::Range, rc::Rc};
 
 pub struct List {
     state: ListState,
+    invalidated_elements: Vec<ElementRc>,
 }
 
 #[derive(Clone)]
@@ -79,7 +80,10 @@ struct Height(f32);
 
 impl List {
     pub fn new(state: ListState) -> Self {
-        Self { state }
+        Self {
+            state,
+            invalidated_elements: Default::default(),
+        }
     }
 }
 
@@ -258,9 +262,34 @@ impl Element for List {
         let mut handled = false;
 
         let mut state = self.state.0.borrow_mut();
-        for (mut element, _) in state.visible_elements(bounds, scroll_top) {
-            handled = element.dispatch_event(event, cx) || handled;
+        let mut item_origin = bounds.origin() - vec2f(0., scroll_top.offset_in_item);
+        let mut cursor = state.items.cursor::<Count, ()>();
+        let mut new_items = cursor.slice(&Count(scroll_top.item_ix), Bias::Right, &());
+        while let Some(item) = cursor.item() {
+            if item_origin.y() > bounds.max_y() {
+                break;
+            }
+
+            if let ListItem::Rendered(element) = item {
+                let prev_notify_count = cx.notify_count();
+                let mut element = element.clone();
+                handled = element.dispatch_event(event, cx) || handled;
+                item_origin.set_y(item_origin.y() + element.size().y());
+                if cx.notify_count() > prev_notify_count {
+                    new_items.push(ListItem::Unrendered, &());
+                    self.invalidated_elements.push(element);
+                } else {
+                    new_items.push(item.clone(), &());
+                }
+                cursor.next(&());
+            } else {
+                unreachable!();
+            }
         }
+
+        new_items.push_tree(cursor.suffix(&()), &());
+        drop(cursor);
+        state.items = new_items;
 
         match event {
             Event::ScrollWheel {

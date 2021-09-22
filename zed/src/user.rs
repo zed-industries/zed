@@ -5,14 +5,13 @@ use crate::{
 };
 use anyhow::{anyhow, Context, Result};
 use futures::future;
-use gpui::{executor, ImageData, Task};
-use parking_lot::Mutex;
-use postage::{oneshot, prelude::Stream, sink::Sink, watch};
+use gpui::{AsyncAppContext, Entity, ImageData, ModelContext, ModelHandle, Task};
+use postage::{prelude::Stream, sink::Sink, watch};
 use std::{
-    collections::HashMap,
-    sync::{Arc, Weak},
+    collections::{HashMap, HashSet},
+    sync::Arc,
 };
-use zrpc::proto;
+use zrpc::{proto, TypedEnvelope};
 
 #[derive(Debug)]
 pub struct User {
@@ -21,42 +20,75 @@ pub struct User {
     pub avatar: Option<Arc<ImageData>>,
 }
 
+#[derive(Debug)]
+pub struct Collaborator {
+    pub user: Arc<User>,
+    pub worktrees: Vec<WorktreeMetadata>,
+}
+
+#[derive(Debug)]
+pub struct WorktreeMetadata {
+    pub id: u64,
+    pub root_name: String,
+    pub is_shared: bool,
+    pub guests: Vec<Arc<User>>,
+}
+
 pub struct UserStore {
-    users: Mutex<HashMap<u64, Arc<User>>>,
+    users: HashMap<u64, Arc<User>>,
     current_user: watch::Receiver<Option<Arc<User>>>,
+    collaborators: Arc<[Collaborator]>,
     rpc: Arc<Client>,
     http: Arc<dyn HttpClient>,
+    _maintain_collaborators: Task<()>,
     _maintain_current_user: Task<()>,
 }
 
+pub enum Event {}
+
+impl Entity for UserStore {
+    type Event = Event;
+}
+
 impl UserStore {
-    pub fn new(
-        rpc: Arc<Client>,
-        http: Arc<dyn HttpClient>,
-        executor: &executor::Background,
-    ) -> Arc<Self> {
+    pub fn new(rpc: Arc<Client>, http: Arc<dyn HttpClient>, cx: &mut ModelContext<Self>) -> Self {
         let (mut current_user_tx, current_user_rx) = watch::channel();
-        let (mut this_tx, mut this_rx) = oneshot::channel::<Weak<Self>>();
-        let this = Arc::new(Self {
+        let (mut update_collaborators_tx, mut update_collaborators_rx) =
+            watch::channel::<Option<proto::UpdateCollaborators>>();
+        let update_collaborators_subscription = rpc.subscribe(
+            cx,
+            move |_: &mut Self, msg: TypedEnvelope<proto::UpdateCollaborators>, _, _| {
+                let _ = update_collaborators_tx.blocking_send(Some(msg.payload));
+                Ok(())
+            },
+        );
+        Self {
             users: Default::default(),
             current_user: current_user_rx,
+            collaborators: Arc::from([]),
             rpc: rpc.clone(),
             http,
-            _maintain_current_user: executor.spawn(async move {
-                let this = if let Some(this) = this_rx.recv().await {
-                    this
-                } else {
-                    return;
-                };
+            _maintain_collaborators: cx.spawn_weak(|this, mut cx| async move {
+                let _subscription = update_collaborators_subscription;
+                while let Some(message) = update_collaborators_rx.recv().await {
+                    if let Some((message, this)) = message.zip(this.upgrade(&cx)) {
+                        this.update(&mut cx, |this, cx| this.update_collaborators(message, cx))
+                            .log_err()
+                            .await;
+                    }
+                }
+            }),
+            _maintain_current_user: cx.spawn_weak(|this, mut cx| async move {
                 let mut status = rpc.status();
                 while let Some(status) = status.recv().await {
                     match status {
                         Status::Connected { .. } => {
-                            if let Some((this, user_id)) = this.upgrade().zip(rpc.user_id()) {
-                                current_user_tx
-                                    .send(this.fetch_user(user_id).log_err().await)
-                                    .await
-                                    .ok();
+                            if let Some((this, user_id)) = this.upgrade(&cx).zip(rpc.user_id()) {
+                                let user = this
+                                    .update(&mut cx, |this, cx| this.fetch_user(user_id, cx))
+                                    .log_err()
+                                    .await;
+                                current_user_tx.send(user).await.ok();
                             }
                         }
                         Status::SignedOut => {
@@ -66,49 +98,100 @@ impl UserStore {
                     }
                 }
             }),
-        });
-        let weak = Arc::downgrade(&this);
-        executor
-            .spawn(async move { this_tx.send(weak).await })
-            .detach();
-        this
+        }
     }
 
-    pub async fn load_users(&self, mut user_ids: Vec<u64>) -> Result<()> {
-        {
-            let users = self.users.lock();
-            user_ids.retain(|id| !users.contains_key(id));
+    fn update_collaborators(
+        &mut self,
+        message: proto::UpdateCollaborators,
+        cx: &mut ModelContext<Self>,
+    ) -> Task<Result<()>> {
+        let mut user_ids = HashSet::new();
+        for collaborator in &message.collaborators {
+            user_ids.insert(collaborator.user_id);
+            user_ids.extend(
+                collaborator
+                    .worktrees
+                    .iter()
+                    .flat_map(|w| &w.guests)
+                    .copied(),
+            );
         }
 
-        if !user_ids.is_empty() {
-            let response = self.rpc.request(proto::GetUsers { user_ids }).await?;
-            let new_users = future::join_all(
-                response
-                    .users
-                    .into_iter()
-                    .map(|user| User::new(user, self.http.as_ref())),
-            )
-            .await;
-            let mut users = self.users.lock();
-            for user in new_users {
-                users.insert(user.id, Arc::new(user));
+        let load_users = self.load_users(user_ids.into_iter().collect(), cx);
+        cx.spawn(|this, mut cx| async move {
+            load_users.await?;
+
+            let mut collaborators = Vec::new();
+            for collaborator in message.collaborators {
+                collaborators.push(Collaborator::from_proto(collaborator, &this, &mut cx).await?);
             }
-        }
 
-        Ok(())
+            this.update(&mut cx, |this, cx| {
+                collaborators.sort_by(|a, b| a.user.github_login.cmp(&b.user.github_login));
+                this.collaborators = collaborators.into();
+                cx.notify();
+            });
+
+            Ok(())
+        })
     }
 
-    pub async fn fetch_user(&self, user_id: u64) -> Result<Arc<User>> {
-        if let Some(user) = self.users.lock().get(&user_id).cloned() {
-            return Ok(user);
+    pub fn collaborators(&self) -> &Arc<[Collaborator]> {
+        &self.collaborators
+    }
+
+    pub fn load_users(
+        &mut self,
+        mut user_ids: Vec<u64>,
+        cx: &mut ModelContext<Self>,
+    ) -> Task<Result<()>> {
+        let rpc = self.rpc.clone();
+        let http = self.http.clone();
+        user_ids.retain(|id| !self.users.contains_key(id));
+        cx.spawn_weak(|this, mut cx| async move {
+            if !user_ids.is_empty() {
+                let response = rpc.request(proto::GetUsers { user_ids }).await?;
+                let new_users = future::join_all(
+                    response
+                        .users
+                        .into_iter()
+                        .map(|user| User::new(user, http.as_ref())),
+                )
+                .await;
+
+                if let Some(this) = this.upgrade(&cx) {
+                    this.update(&mut cx, |this, _| {
+                        for user in new_users {
+                            this.users.insert(user.id, Arc::new(user));
+                        }
+                    });
+                }
+            }
+
+            Ok(())
+        })
+    }
+
+    pub fn fetch_user(
+        &mut self,
+        user_id: u64,
+        cx: &mut ModelContext<Self>,
+    ) -> Task<Result<Arc<User>>> {
+        if let Some(user) = self.users.get(&user_id).cloned() {
+            return cx.spawn_weak(|_, _| async move { Ok(user) });
         }
 
-        self.load_users(vec![user_id]).await?;
-        self.users
-            .lock()
-            .get(&user_id)
-            .cloned()
-            .ok_or_else(|| anyhow!("server responded with no users"))
+        let load_users = self.load_users(vec![user_id], cx);
+        cx.spawn(|this, mut cx| async move {
+            load_users.await?;
+            this.update(&mut cx, |this, _| {
+                this.users
+                    .get(&user_id)
+                    .cloned()
+                    .ok_or_else(|| anyhow!("server responded with no users"))
+            })
+        })
     }
 
     pub fn current_user(&self) -> Option<Arc<User>> {
@@ -127,6 +210,40 @@ impl User {
             github_login: message.github_login,
             avatar: fetch_avatar(http, &message.avatar_url).log_err().await,
         }
+    }
+}
+
+impl Collaborator {
+    async fn from_proto(
+        collaborator: proto::Collaborator,
+        user_store: &ModelHandle<UserStore>,
+        cx: &mut AsyncAppContext,
+    ) -> Result<Self> {
+        let user = user_store
+            .update(cx, |user_store, cx| {
+                user_store.fetch_user(collaborator.user_id, cx)
+            })
+            .await?;
+        let mut worktrees = Vec::new();
+        for worktree in collaborator.worktrees {
+            let mut guests = Vec::new();
+            for participant_id in worktree.guests {
+                guests.push(
+                    user_store
+                        .update(cx, |user_store, cx| {
+                            user_store.fetch_user(participant_id, cx)
+                        })
+                        .await?,
+                );
+            }
+            worktrees.push(WorktreeMetadata {
+                id: worktree.id,
+                root_name: worktree.root_name,
+                is_shared: worktree.is_shared,
+                guests,
+            });
+        }
+        Ok(Self { user, worktrees })
     }
 }
 

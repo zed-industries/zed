@@ -56,10 +56,13 @@ border = { width = 1, color = "$border.0", right = true }
 extends = "$workspace.sidebar"
 border = { width = 1, color = "$border.0", left = true }
 
+[panel]
+padding = 12
+
 [chat_panel]
+extends = "$panel"
 channel_name = { extends = "$text.0", weight = "bold" }
 channel_name_hash = { text = "$text.2", padding.right = 8 }
-padding = 12
 
 [chat_panel.message]
 body = "$text.1"
@@ -119,6 +122,41 @@ underline = true
 [chat_panel.hovered_sign_in_prompt]
 extends = "$chat_panel.sign_in_prompt"
 color = "$text.1.color"
+
+[people_panel]
+extends = "$panel"
+host_row_height = 28
+host_avatar = { corner_radius = 10, width = 20 }
+host_username = { extends = "$text.0", padding.left = 8 }
+tree_branch_width = 1
+tree_branch_color = "$surface.2"
+
+[people_panel.worktree]
+height = 24
+padding = { left = 8 }
+guest_avatar = { corner_radius = 8, width = 16 }
+guest_avatar_spacing = 4
+
+[people_panel.worktree.name]
+extends = "$text.1"
+margin = { right = 6 }
+
+[people_panel.unshared_worktree]
+extends = "$people_panel.worktree"
+
+[people_panel.hovered_unshared_worktree]
+extends = "$people_panel.unshared_worktree"
+background = "$state.hover"
+corner_radius = 6
+
+[people_panel.shared_worktree]
+extends = "$people_panel.worktree"
+name.color = "$text.0.color"
+
+[people_panel.hovered_shared_worktree]
+extends = "$people_panel.shared_worktree"
+background = "$state.hover"
+corner_radius = 6
 
 [selector]
 background = "$surface.0"

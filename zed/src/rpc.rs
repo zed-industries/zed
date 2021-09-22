@@ -14,6 +14,7 @@ use std::{
     any::TypeId,
     collections::HashMap,
     convert::TryFrom,
+    fmt::Write as _,
     future::Future,
     sync::{Arc, Weak},
     time::{Duration, Instant},
@@ -29,6 +30,9 @@ use zrpc::{
 lazy_static! {
     static ref ZED_SERVER_URL: String =
         std::env::var("ZED_SERVER_URL").unwrap_or("https://zed.dev:443".to_string());
+    static ref IMPERSONATE_LOGIN: Option<String> = std::env::var("ZED_IMPERSONATE")
+        .ok()
+        .and_then(|s| if s.is_empty() { None } else { Some(s) });
 }
 
 pub struct Client {
@@ -230,7 +234,51 @@ impl Client {
         }
     }
 
-    pub fn subscribe_from_model<T, M, F>(
+    pub fn subscribe<T, M, F>(
+        self: &Arc<Self>,
+        cx: &mut ModelContext<M>,
+        mut handler: F,
+    ) -> Subscription
+    where
+        T: EnvelopedMessage,
+        M: Entity,
+        F: 'static
+            + Send
+            + Sync
+            + FnMut(&mut M, TypedEnvelope<T>, Arc<Self>, &mut ModelContext<M>) -> Result<()>,
+    {
+        let subscription_id = (TypeId::of::<T>(), Default::default());
+        let client = self.clone();
+        let mut state = self.state.write();
+        let model = cx.handle().downgrade();
+        let prev_extractor = state
+            .entity_id_extractors
+            .insert(subscription_id.0, Box::new(|_| Default::default()));
+        if prev_extractor.is_some() {
+            panic!("registered a handler for the same entity twice")
+        }
+
+        state.model_handlers.insert(
+            subscription_id,
+            Box::new(move |envelope, cx| {
+                if let Some(model) = model.upgrade(cx) {
+                    let envelope = envelope.into_any().downcast::<TypedEnvelope<T>>().unwrap();
+                    model.update(cx, |model, cx| {
+                        if let Err(error) = handler(model, *envelope, client.clone(), cx) {
+                            log::error!("error handling message: {}", error)
+                        }
+                    });
+                }
+            }),
+        );
+
+        Subscription {
+            client: Arc::downgrade(self),
+            id: subscription_id,
+        }
+    }
+
+    pub fn subscribe_to_entity<T, M, F>(
         self: &Arc<Self>,
         remote_id: u64,
         cx: &mut ModelContext<M>,
@@ -306,12 +354,12 @@ impl Client {
             self.set_status(Status::Reauthenticating, cx)
         }
 
-        let mut read_from_keychain = false;
+        let mut used_keychain = false;
         let credentials = self.state.read().credentials.clone();
         let credentials = if let Some(credentials) = credentials {
             credentials
         } else if let Some(credentials) = read_credentials_from_keychain(cx) {
-            read_from_keychain = true;
+            used_keychain = true;
             credentials
         } else {
             let credentials = match self.authenticate(&cx).await {
@@ -334,7 +382,7 @@ impl Client {
             Ok(conn) => {
                 log::info!("connected to rpc address {}", *ZED_SERVER_URL);
                 self.state.write().credentials = Some(credentials.clone());
-                if !read_from_keychain {
+                if !used_keychain && IMPERSONATE_LOGIN.is_none() {
                     write_credentials_to_keychain(&credentials, cx).log_err();
                 }
                 self.set_connection(conn, cx).await;
@@ -343,8 +391,8 @@ impl Client {
             Err(err) => {
                 if matches!(err, EstablishConnectionError::Unauthorized) {
                     self.state.write().credentials.take();
-                    cx.platform().delete_credentials(&ZED_SERVER_URL).log_err();
-                    if read_from_keychain {
+                    if used_keychain {
+                        cx.platform().delete_credentials(&ZED_SERVER_URL).log_err();
                         self.set_status(Status::SignedOut, cx);
                         self.authenticate_and_connect(cx).await
                     } else {
@@ -484,10 +532,17 @@ impl Client {
 
             // Open the Zed sign-in page in the user's browser, with query parameters that indicate
             // that the user is signing in from a Zed app running on the same device.
-            platform.open_url(&format!(
+            let mut url = format!(
                 "{}/sign_in?native_app_port={}&native_app_public_key={}",
                 *ZED_SERVER_URL, port, public_key_string
-            ));
+            );
+
+            if let Some(impersonate_login) = IMPERSONATE_LOGIN.as_ref() {
+                log::info!("impersonating user @{}", impersonate_login);
+                write!(&mut url, "&impersonate={}", impersonate_login).unwrap();
+            }
+
+            platform.open_url(&url);
 
             // Receive the HTTP request from the user's browser. Retrieve the user id and encrypted
             // access token from the query params.
@@ -571,6 +626,10 @@ impl Client {
 }
 
 fn read_credentials_from_keychain(cx: &AsyncAppContext) -> Option<Credentials> {
+    if IMPERSONATE_LOGIN.is_some() {
+        return None;
+    }
+
     let (user_id, access_token) = cx
         .platform()
         .read_credentials(&ZED_SERVER_URL)
