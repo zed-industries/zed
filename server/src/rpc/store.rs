@@ -81,7 +81,7 @@ impl Store {
         &mut self,
         connection_id: ConnectionId,
     ) -> tide::Result<RemovedConnectionState> {
-        let connection = if let Some(connection) = self.connections.get(&connection_id) {
+        let connection = if let Some(connection) = self.connections.remove(&connection_id) {
             connection
         } else {
             return Err(anyhow!("no such connection"))?;
@@ -109,17 +109,16 @@ impl Store {
                     .collaborator_ids
                     .extend(worktree.collaborator_user_ids.iter().copied());
                 result.hosted_worktrees.insert(worktree_id, worktree);
-            } else {
-                if let Some(worktree) = self.worktrees.get(&worktree_id) {
-                    result
-                        .guest_worktree_ids
-                        .insert(worktree_id, worktree.connection_ids());
-                    result
-                        .collaborator_ids
-                        .extend(worktree.collaborator_user_ids.iter().copied());
-                }
+            } else if let Some(worktree) = self.leave_worktree(connection_id, worktree_id) {
+                result
+                    .guest_worktree_ids
+                    .insert(worktree_id, worktree.connection_ids);
+                result.collaborator_ids.extend(worktree.collaborator_ids);
             }
         }
+
+        #[cfg(test)]
+        self.check_invariants();
 
         Ok(result)
     }
@@ -376,8 +375,9 @@ impl Store {
         let replica_id = share.guest_connection_ids.remove(&connection_id)?;
         share.active_replica_ids.remove(&replica_id);
 
-        let connection = self.connections.get_mut(&connection_id)?;
-        connection.worktrees.remove(&worktree_id);
+        if let Some(connection) = self.connections.get_mut(&connection_id) {
+            connection.worktrees.remove(&worktree_id);
+        }
 
         let connection_ids = worktree.connection_ids();
         let collaborator_ids = worktree.collaborator_user_ids.clone();
