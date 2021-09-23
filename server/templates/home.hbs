@@ -1,26 +1,68 @@
 {{#> layout }}
 
-<div class="max-w-screen-lg p-10 mx-auto font-thin text-main lg:p-20">
+<div class="max-w-screen-lg p-10 mx-auto font-extralight text-main lg:p-20">
     <article class="max-w-xl">
-        <h1 class="mb-10 text-4xl leading-tight text-white font-display font-extralight">Introducing Zed&mdash;A lightning fast code editor written in Rust.</h1>
-        <p class= leading-relaxed">
-            Level up your development process with:
-            <ul class="mt-4 ml-8 leading-loose list-disc">
-                <li>a <a href="/tech#rust>" class="underline">lightning fast</a> code editor</li>
-                <li>real time collaboration, even on local projects</li>
-                <li>powerful code annotation tools</li>
-                <li>the ability to rewind time to any point</li>
-            </ul>
+        <h1 class="mb-10 text-4xl leading-tight text-white font-display font-extralight">Introducing Zed&mdash;A lightning-fast, collaborative code editor written in Rust.</h1>
+        <p class="mt-5 leading-relaxed">
+            Zed is about seamless real-time collaboration, fine grain version control of code + conversations, and breaking past the boundaries of software responsiveness.
         </p>
+        <p class="mt-5 leading-relaxed">
+            We think there is a better way to write code, and are using Zed as we build Zed to prove it.
+        </p>
+
         <p class="mt-5 leading-relaxed">Early access to Zed will open up mid-2022 for small teams and individuals in our <a class="underline hover:no-underline" href="/community">community</a>.</p>
+        
         <p class="mt-10 leading-relaxed">
             <span class="inline-block pr-5"><a href="/story" class="inline-block underline hover:no-underline">Read our story</a>.</span>
-            <span class="inline-block pr-5 opacity-50"><a href="/community" class="inline-block no-underline hover:underline">Join the waitlist</a>.</span>
+            <span class="inline-block pr-5 opacity-60"><a href="/community" class="inline-block no-underline hover:underline">Join the waitlist</a>.</span>
         </p>
-    </article>
-    <article class="max-w-xl mt-32">
-        <h2 class="mb-10 text-3xl leading-tight text-white font-display font-extralight">What we are building.</h1>
-        <p class="mt-5 leading-relaxed"></p>
+
+        <p class="mt-10 mb-10 leading-7">&mdash;&mdash;&mdash;</p>
+
+        <h2 class="mt-16 mb-5 leading-tight text-white font-display font-extralight">We believe that...</h2>
+
+        <p class="font-semibold">Collaboration produces better code.</p>
+        <p class="mt-2">Write &amp; discuss code with native real-time collaboration.</p>
+
+        <p class="mt-8 font-semibold">Software should be hyper responsive.</p>
+        <p class="mt-2">Your display should bottleneck long before your software. A slow editor creates anxiety while a fast one makes writing code a joy.</p>
+
+        <p class="mt-8 font-semibold">The keystroke is the fundamental unit of change.</p>
+        <p class="mt-2">The refresh rate of your display should bottleneck long before your editor.</p>
+
+        <p class="mt-8 font-semibold">Conversation happens where code does.</p>
+        <p class="mt-2">The refresh rate of your display should bottleneck long before your editor.</p>
+
+        <p class="mt-10 mb-10 leading-7">&mdash;&mdash;&mdash;</p>
+
+        <h2 class="mt-16 mb-5 leading-tight text-white font-display font-extralight">Under the hood</h2>
+
+        <h3 class="mt-5 mb-4 leading-tight text-white font-display font-extralight">Rust</h3>
+        <p class="mt-5 leading-relaxed">With performance and reliability being our priority, writing Zed in <span class="font-semibold">Rust</span> was an obvious choice.</p>
+        
+        <p class="mt-5 leading-relaxed">In the past to write software with this performant you would need to use C++. Rust, for the first time, enables us to write software at that level as a very small team.</p>
+
+        <h3 class="mt-10 mb-4 leading-tight text-white font-display font-extralight">GPUI</h3>
+        <p class="mt-5 leading-relaxed">While Rust enables us to build performant, reliable software, it's constraints make rending custom UIs a challenge. To attack this, we created <code>gpui</code>, a rust library that rethinks the entire rendering stack that goes all the way to the graphics hardware.</p>
+            
+        <p class="mt-5 leading-relaxed">We started <code>gpui</code>  as an extension of that desire to write apps that are fast and fluid, yet easy to develop itteratively. <code>gpui</code> rethinks the way we draw UI in response to the constraints of Rust. By controlling the entire stack we remove layers of extra code that would reduce performance.</p>
+
+        <p class="mt-5 leading-relaxed">Without building <code>gpui</code> the most viable way to build a cross-platform app would have been Electron. It's well documented performance limitations and single threaded nature made it a deal-breaker for us. Taking full advantage of local hardware was important to use to ensure that we can squeeze out the best performance.</p>
+
+        <p class="mt-5 leading-relaxed">We’re building <code>gpui</code> and Zed in parallel, and may consider opening <code>gpui</code> up for usage outside of it in the future.</p>
+
+        <h3 class="mt-10 mb-4 leading-tight text-white font-display font-extralight">CRDT</h3>
+        <p class="mt-5 leading-relaxed">Like <code>gpui</code> enables performant UI, <code>crdt</code> is the key to making code collaborative as it is being written.</p>
+        
+        <p class="mt-5 leading-relaxed">A <code>crdt</code> allows us to version control the codebase on the keystroke level&mdash;Every keystroke can be revisited, commented on or undone. Entire sessions can be replayed and scrubbed in a session, from the point of view of any player.</p>
+
+        <p class="mt-5 leading-relaxed">This level of granularity in our version control allows us to explore ideas like time traveling the codebase.</p>
+        
+        <p class="mt-5 leading-relaxed">Often the best way to understand code is to experience it's creation chronologically. Imagine if you could jump to the point a piece of code was created and watch it be written in real time.</p>
+
+        <p class="mt-10 mb-10 leading-7">&mdash;&mdash;&mdash;</p>
+
+        <p class="mt-5 leading-relaxed">Excited about what we are doing? <a class="underline hover:no-underline" href="/community">Sign up for updates</a> to follow along in our development process.</p>
     </article>
 </div>
 
