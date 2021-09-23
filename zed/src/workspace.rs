@@ -1041,6 +1041,16 @@ impl Workspace {
                 .with_style(theme.workspace.titlebar.offline_icon.container)
                 .boxed(),
             ),
+            rpc::Status::UpgradeRequired => Some(
+                Label::new(
+                    "Please update Zed to collaborate".to_string(),
+                    theme.workspace.titlebar.outdated_warning.text.clone(),
+                )
+                .contained()
+                .with_style(theme.workspace.titlebar.outdated_warning.container)
+                .aligned()
+                .boxed(),
+            ),
             _ => None,
         }
     }
