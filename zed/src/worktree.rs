@@ -161,6 +161,7 @@ impl Worktree {
                             entries_by_id_edits.push(Edit::Insert(PathEntry {
                                 id: entry.id,
                                 path: entry.path.clone(),
+                                is_ignored: entry.is_ignored,
                                 scan_id: 0,
                             }));
                             entries_by_path_edits.push(Edit::Insert(entry));
@@ -1083,7 +1084,7 @@ impl LocalWorktree {
                     async move {
                         let mut prev_snapshot = snapshot;
                         while let Ok(snapshot) = snapshots_to_send_rx.recv().await {
-                            let message = snapshot.build_update(&prev_snapshot, remote_id);
+                            let message = snapshot.build_update(&prev_snapshot, remote_id, false);
                             match rpc.send(message).await {
                                 Ok(()) => prev_snapshot = snapshot,
                                 Err(err) => log::error!("error sending snapshot diff {}", err),
@@ -1140,6 +1141,7 @@ impl LocalWorktree {
                 let entries = snapshot
                     .entries_by_path
                     .cursor::<(), ()>()
+                    .filter(|e| !e.is_ignored)
                     .map(Into::into)
                     .collect();
                 proto::ShareWorktree {
@@ -1373,11 +1375,24 @@ impl Snapshot {
         self.id
     }
 
-    pub fn build_update(&self, other: &Self, worktree_id: u64) -> proto::UpdateWorktree {
+    pub fn build_update(
+        &self,
+        other: &Self,
+        worktree_id: u64,
+        include_ignored: bool,
+    ) -> proto::UpdateWorktree {
         let mut updated_entries = Vec::new();
         let mut removed_entries = Vec::new();
-        let mut self_entries = self.entries_by_id.cursor::<(), ()>().peekable();
-        let mut other_entries = other.entries_by_id.cursor::<(), ()>().peekable();
+        let mut self_entries = self
+            .entries_by_id
+            .cursor::<(), ()>()
+            .filter(|e| include_ignored || !e.is_ignored)
+            .peekable();
+        let mut other_entries = other
+            .entries_by_id
+            .cursor::<(), ()>()
+            .filter(|e| include_ignored || !e.is_ignored)
+            .peekable();
         loop {
             match (self_entries.peek(), other_entries.peek()) {
                 (Some(self_entry), Some(other_entry)) => match self_entry.id.cmp(&other_entry.id) {
@@ -1443,6 +1458,7 @@ impl Snapshot {
             entries_by_id_edits.push(Edit::Insert(PathEntry {
                 id: entry.id,
                 path: entry.path.clone(),
+                is_ignored: entry.is_ignored,
                 scan_id,
             }));
             entries_by_path_edits.push(Edit::Insert(entry));
@@ -1526,6 +1542,7 @@ impl Snapshot {
             PathEntry {
                 id: entry.id,
                 path: entry.path.clone(),
+                is_ignored: entry.is_ignored,
                 scan_id: self.scan_id,
             },
             &(),
@@ -1561,6 +1578,7 @@ impl Snapshot {
             entries_by_id_edits.push(Edit::Insert(PathEntry {
                 id: entry.id,
                 path: entry.path.clone(),
+                is_ignored: entry.is_ignored,
                 scan_id: self.scan_id,
             }));
             entries_by_path_edits.push(Edit::Insert(entry));
@@ -1933,6 +1951,7 @@ impl sum_tree::Summary for EntrySummary {
 struct PathEntry {
     id: usize,
     path: Arc<Path>,
+    is_ignored: bool,
     scan_id: usize,
 }
 
@@ -2412,7 +2431,8 @@ impl BackgroundScanner {
             ignore_stack = ignore_stack.append(job.path.clone(), ignore.clone());
         }
 
-        let mut edits = Vec::new();
+        let mut entries_by_id_edits = Vec::new();
+        let mut entries_by_path_edits = Vec::new();
         for mut entry in snapshot.child_entries(&job.path).cloned() {
             let was_ignored = entry.is_ignored;
             entry.is_ignored = ignore_stack.is_path_ignored(&entry.path, entry.is_dir());
@@ -2433,10 +2453,17 @@ impl BackgroundScanner {
             }
 
             if entry.is_ignored != was_ignored {
-                edits.push(Edit::Insert(entry));
+                let mut path_entry = snapshot.entries_by_id.get(&entry.id, &()).unwrap().clone();
+                path_entry.scan_id = snapshot.scan_id;
+                path_entry.is_ignored = entry.is_ignored;
+                entries_by_id_edits.push(Edit::Insert(path_entry));
+                entries_by_path_edits.push(Edit::Insert(entry));
             }
         }
-        self.snapshot.lock().entries_by_path.edit(edits, &());
+
+        let mut snapshot = self.snapshot.lock();
+        snapshot.entries_by_path.edit(entries_by_path_edits, &());
+        snapshot.entries_by_id.edit(entries_by_id_edits, &());
     }
 }
 
@@ -3000,10 +3027,10 @@ mod tests {
         // Update the remote worktree. Check that it becomes consistent with the
         // local worktree.
         remote.update(&mut cx, |remote, cx| {
-            let update_message = tree
-                .read(cx)
-                .snapshot()
-                .build_update(&initial_snapshot, worktree_id);
+            let update_message =
+                tree.read(cx)
+                    .snapshot()
+                    .build_update(&initial_snapshot, worktree_id, true);
             remote
                 .as_remote_mut()
                 .unwrap()
@@ -3175,6 +3202,7 @@ mod tests {
         scanner.snapshot().check_invariants();
 
         let mut events = Vec::new();
+        let mut snapshots = Vec::new();
         let mut mutations_len = operations;
         while mutations_len > 1 {
             if !events.is_empty() && rng.gen_bool(0.4) {
@@ -3186,6 +3214,10 @@ mod tests {
             } else {
                 events.extend(randomly_mutate_tree(root_dir.path(), 0.6, &mut rng).unwrap());
                 mutations_len -= 1;
+            }
+
+            if rng.gen_bool(0.2) {
+                snapshots.push(scanner.snapshot());
             }
         }
         log::info!("Quiescing: {:#?}", events);
@@ -3200,7 +3232,40 @@ mod tests {
             scanner.executor.clone(),
         );
         smol::block_on(new_scanner.scan_dirs()).unwrap();
-        assert_eq!(scanner.snapshot().to_vec(), new_scanner.snapshot().to_vec());
+        assert_eq!(
+            scanner.snapshot().to_vec(true),
+            new_scanner.snapshot().to_vec(true)
+        );
+
+        for mut prev_snapshot in snapshots {
+            let include_ignored = rng.gen::<bool>();
+            if !include_ignored {
+                let mut entries_by_path_edits = Vec::new();
+                let mut entries_by_id_edits = Vec::new();
+                for entry in prev_snapshot
+                    .entries_by_id
+                    .cursor::<(), ()>()
+                    .filter(|e| e.is_ignored)
+                {
+                    entries_by_path_edits.push(Edit::Remove(PathKey(entry.path.clone())));
+                    entries_by_id_edits.push(Edit::Remove(entry.id));
+                }
+
+                prev_snapshot
+                    .entries_by_path
+                    .edit(entries_by_path_edits, &());
+                prev_snapshot.entries_by_id.edit(entries_by_id_edits, &());
+            }
+
+            let update = scanner
+                .snapshot()
+                .build_update(&prev_snapshot, 0, include_ignored);
+            prev_snapshot.apply_update(update).unwrap();
+            assert_eq!(
+                prev_snapshot.to_vec(true),
+                scanner.snapshot().to_vec(include_ignored)
+            );
+        }
     }
 
     fn randomly_mutate_tree(
@@ -3390,10 +3455,12 @@ mod tests {
             }
         }
 
-        fn to_vec(&self) -> Vec<(&Path, u64, bool)> {
+        fn to_vec(&self, include_ignored: bool) -> Vec<(&Path, u64, bool)> {
             let mut paths = Vec::new();
             for entry in self.entries_by_path.cursor::<(), ()>() {
-                paths.push((entry.path.as_ref(), entry.inode, entry.is_ignored));
+                if include_ignored || !entry.is_ignored {
+                    paths.push((entry.path.as_ref(), entry.inode, entry.is_ignored));
+                }
             }
             paths.sort_by(|a, b| a.0.cmp(&b.0));
             paths
