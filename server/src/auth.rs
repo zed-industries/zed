@@ -263,11 +263,13 @@ async fn post_sign_out(mut request: Request) -> tide::Result {
     Ok(tide::Redirect::new("/").into())
 }
 
+const MAX_ACCESS_TOKENS_TO_STORE: usize = 8;
+
 pub async fn create_access_token(db: &db::Db, user_id: UserId) -> tide::Result<String> {
     let access_token = zed_auth::random_token();
     let access_token_hash =
         hash_access_token(&access_token).context("failed to hash access token")?;
-    db.create_access_token_hash(user_id, access_token_hash)
+    db.create_access_token_hash(user_id, &access_token_hash, MAX_ACCESS_TOKENS_TO_STORE)
         .await?;
     Ok(access_token)
 }
