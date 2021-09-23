@@ -1,6 +1,6 @@
 {
-    "name": "",
-    "short_name": "",
+    "name": "Zed – a lightning fast, collaborative code editor written natively in Rust",
+    "short_name": "Zed",
     "icons": [
         {
             "src": "/static/android-chrome-192x192.png",
