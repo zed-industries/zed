@@ -438,29 +438,37 @@ mod tests {
     use crate::{
         editor::{self, Insert},
         fs::FakeFs,
-        test::{temp_tree, test_app_state},
+        test::test_app_state,
         workspace::Workspace,
     };
     use serde_json::json;
-    use std::fs;
-    use tempdir::TempDir;
+    use std::path::PathBuf;
 
     #[gpui::test]
     async fn test_matching_paths(mut cx: gpui::TestAppContext) {
-        let tmp_dir = TempDir::new("example").unwrap();
-        fs::create_dir(tmp_dir.path().join("a")).unwrap();
-        fs::write(tmp_dir.path().join("a/banana"), "banana").unwrap();
-        fs::write(tmp_dir.path().join("a/bandana"), "bandana").unwrap();
+        let app_state = cx.update(test_app_state);
+        app_state
+            .fs
+            .as_fake()
+            .insert_tree(
+                "/root",
+                json!({
+                    "a": {
+                        "banana": "",
+                        "bandana": "",
+                    }
+                }),
+            )
+            .await;
         cx.update(|cx| {
             super::init(cx);
             editor::init(cx);
         });
 
-        let app_state = cx.update(test_app_state);
         let (window_id, workspace) = cx.add_window(|cx| Workspace::new(&app_state, cx));
         workspace
             .update(&mut cx, |workspace, cx| {
-                workspace.add_worktree(tmp_dir.path(), cx)
+                workspace.add_worktree(Path::new("/root"), cx)
             })
             .await
             .unwrap();
@@ -572,17 +580,17 @@ mod tests {
 
     #[gpui::test]
     async fn test_single_file_worktrees(mut cx: gpui::TestAppContext) {
-        let temp_dir = TempDir::new("test-single-file-worktrees").unwrap();
-        let dir_path = temp_dir.path().join("the-parent-dir");
-        let file_path = dir_path.join("the-file");
-        fs::create_dir(&dir_path).unwrap();
-        fs::write(&file_path, "").unwrap();
-
         let app_state = cx.update(test_app_state);
+        app_state
+            .fs
+            .as_fake()
+            .insert_tree("/root", json!({ "the-parent-dir": { "the-file": "" } }))
+            .await;
+
         let (_, workspace) = cx.add_window(|cx| Workspace::new(&app_state, cx));
         workspace
             .update(&mut cx, |workspace, cx| {
-                workspace.add_worktree(&file_path, cx)
+                workspace.add_worktree(Path::new("/root/the-parent-dir/the-file"), cx)
             })
             .await
             .unwrap();
@@ -620,18 +628,25 @@ mod tests {
 
     #[gpui::test(retries = 5)]
     async fn test_multiple_matches_with_same_relative_path(mut cx: gpui::TestAppContext) {
-        let tmp_dir = temp_tree(json!({
-            "dir1": { "a.txt": "" },
-            "dir2": { "a.txt": "" }
-        }));
-
         let app_state = cx.update(test_app_state);
+        app_state
+            .fs
+            .as_fake()
+            .insert_tree(
+                "/root",
+                json!({
+                    "dir1": { "a.txt": "" },
+                    "dir2": { "a.txt": "" }
+                }),
+            )
+            .await;
+
         let (_, workspace) = cx.add_window(|cx| Workspace::new(&app_state, cx));
 
         workspace
             .update(&mut cx, |workspace, cx| {
                 workspace.open_paths(
-                    &[tmp_dir.path().join("dir1"), tmp_dir.path().join("dir2")],
+                    &[PathBuf::from("/root/dir1"), PathBuf::from("/root/dir2")],
                     cx,
                 )
             })
