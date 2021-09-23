@@ -8,6 +8,7 @@ use crate::{
     fs::Fs,
     language::LanguageRegistry,
     people_panel::{JoinWorktree, LeaveWorktree, PeoplePanel, ShareWorktree, UnshareWorktree},
+    project::Project,
     project_browser::ProjectBrowser,
     rpc,
     settings::Settings,
@@ -34,7 +35,7 @@ pub use pane_group::*;
 use postage::{prelude::Stream, watch};
 use sidebar::{Side, Sidebar, ToggleSidebarItem};
 use std::{
-    collections::{hash_map::Entry, HashMap, HashSet},
+    collections::{hash_map::Entry, HashMap},
     future::Future,
     path::{Path, PathBuf},
     sync::Arc,
@@ -349,7 +350,7 @@ pub struct Workspace {
     right_sidebar: Sidebar,
     panes: Vec<ViewHandle<Pane>>,
     active_pane: ViewHandle<Pane>,
-    worktrees: HashSet<ModelHandle<Worktree>>,
+    project: ModelHandle<Project>,
     items: Vec<Box<dyn WeakItemHandle>>,
     loading_items: HashMap<
         (usize, Arc<Path>),
@@ -360,6 +361,8 @@ pub struct Workspace {
 
 impl Workspace {
     pub fn new(app_state: &AppState, cx: &mut ViewContext<Self>) -> Self {
+        let project = cx.add_model(|_| Project::new());
+
         let pane = cx.add_view(|_| Pane::new(app_state.settings.clone()));
         let pane_id = pane.id();
         cx.subscribe(&pane, move |me, _, event, cx| {
@@ -424,15 +427,15 @@ impl Workspace {
             fs: app_state.fs.clone(),
             left_sidebar,
             right_sidebar,
-            worktrees: Default::default(),
+            project,
             items: Default::default(),
             loading_items: Default::default(),
             _observe_current_user,
         }
     }
 
-    pub fn worktrees(&self) -> &HashSet<ModelHandle<Worktree>> {
-        &self.worktrees
+    pub fn worktrees<'a>(&self, cx: &'a AppContext) -> &'a [ModelHandle<Worktree>] {
+        &self.project.read(cx).worktrees()
     }
 
     pub fn contains_paths(&self, paths: &[PathBuf], cx: &AppContext) -> bool {
@@ -440,7 +443,7 @@ impl Workspace {
     }
 
     pub fn contains_path(&self, path: &Path, cx: &AppContext) -> bool {
-        for worktree in &self.worktrees {
+        for worktree in self.worktrees(cx) {
             let worktree = worktree.read(cx).as_local();
             if worktree.map_or(false, |w| w.contains_abs_path(path)) {
                 return true;
@@ -451,7 +454,7 @@ impl Workspace {
 
     pub fn worktree_scans_complete(&self, cx: &AppContext) -> impl Future<Output = ()> + 'static {
         let futures = self
-            .worktrees
+            .worktrees(cx)
             .iter()
             .filter_map(|worktree| worktree.read(cx).as_local())
             .map(|worktree| worktree.scan_complete())
@@ -511,7 +514,7 @@ impl Workspace {
         cx.spawn(|this, mut cx| async move {
             let mut entry_id = None;
             this.read_with(&cx, |this, cx| {
-                for tree in this.worktrees.iter() {
+                for tree in this.worktrees(cx) {
                     if let Some(relative_path) = tree
                         .read(cx)
                         .as_local()
@@ -559,7 +562,9 @@ impl Workspace {
             let worktree = Worktree::open_local(rpc, path, fs, languages, &mut cx).await?;
             this.update(&mut cx, |this, cx| {
                 cx.observe(&worktree, |_, _, cx| cx.notify()).detach();
-                this.worktrees.insert(worktree.clone());
+                this.project.update(cx, |project, _| {
+                    project.add_worktree(worktree.clone());
+                });
                 cx.notify();
             });
             Ok(worktree)
@@ -616,7 +621,7 @@ impl Workspace {
 
         let (worktree_id, path) = entry.clone();
 
-        let worktree = match self.worktrees.get(&worktree_id).cloned() {
+        let worktree = match self.project.read(cx).worktree_for_id(worktree_id) {
             Some(worktree) => worktree,
             None => {
                 log::error!("worktree {} does not exist", worktree_id);
@@ -731,7 +736,7 @@ impl Workspace {
         if let Some(item) = self.active_item(cx) {
             let handle = cx.handle();
             if item.entry_id(cx.as_ref()).is_none() {
-                let worktree = self.worktrees.iter().next();
+                let worktree = self.worktrees(cx).first();
                 let start_abs_path = worktree
                     .and_then(|w| w.read(cx).as_local())
                     .map_or(Path::new(""), |w| w.abs_path())
@@ -830,22 +835,8 @@ impl Workspace {
                 rpc.authenticate_and_connect(&cx).await?;
 
                 let task = this.update(&mut cx, |this, cx| {
-                    for worktree in &this.worktrees {
-                        let task = worktree.update(cx, |worktree, cx| {
-                            worktree.as_local_mut().and_then(|worktree| {
-                                if worktree.remote_id() == Some(remote_id) {
-                                    Some(worktree.share(cx))
-                                } else {
-                                    None
-                                }
-                            })
-                        });
-
-                        if task.is_some() {
-                            return task;
-                        }
-                    }
-                    None
+                    this.project
+                        .update(cx, |project, cx| project.share_worktree(remote_id, cx))
                 });
 
                 if let Some(share_task) = task {
@@ -861,19 +852,8 @@ impl Workspace {
 
     fn unshare_worktree(&mut self, action: &UnshareWorktree, cx: &mut ViewContext<Self>) {
         let remote_id = action.0;
-        for worktree in &self.worktrees {
-            if worktree.update(cx, |worktree, cx| {
-                if let Some(worktree) = worktree.as_local_mut() {
-                    if worktree.remote_id() == Some(remote_id) {
-                        worktree.unshare(cx);
-                        return true;
-                    }
-                }
-                false
-            }) {
-                break;
-            }
-        }
+        self.project
+            .update(cx, |project, cx| project.unshare_worktree(remote_id, cx));
     }
 
     fn join_worktree(&mut self, action: &JoinWorktree, cx: &mut ViewContext<Self>) {
@@ -890,23 +870,15 @@ impl Workspace {
                     cx.observe(&worktree, |_, _, cx| cx.notify()).detach();
                     cx.subscribe(&worktree, move |this, _, event, cx| match event {
                         worktree::Event::Closed => {
-                            this.worktrees.retain(|worktree| {
-                                worktree.update(cx, |worktree, cx| {
-                                    if let Some(worktree) = worktree.as_remote_mut() {
-                                        if worktree.remote_id() == worktree_id {
-                                            worktree.close_all_buffers(cx);
-                                            return false;
-                                        }
-                                    }
-                                    true
-                                })
+                            this.project.update(cx, |project, cx| {
+                                project.close_remote_worktree(worktree_id, cx);
                             });
-
                             cx.notify();
                         }
                     })
                     .detach();
-                    this.worktrees.insert(worktree);
+                    this.project
+                        .update(cx, |project, _| project.add_worktree(worktree));
                     cx.notify();
                 });
 
@@ -919,27 +891,9 @@ impl Workspace {
 
     fn leave_worktree(&mut self, action: &LeaveWorktree, cx: &mut ViewContext<Self>) {
         let remote_id = action.0;
-        cx.spawn(|this, mut cx| {
-            async move {
-                this.update(&mut cx, |this, cx| {
-                    this.worktrees.retain(|worktree| {
-                        worktree.update(cx, |worktree, cx| {
-                            if let Some(worktree) = worktree.as_remote_mut() {
-                                if worktree.remote_id() == remote_id {
-                                    worktree.close_all_buffers(cx);
-                                    return false;
-                                }
-                            }
-                            true
-                        })
-                    })
-                });
-
-                Ok(())
-            }
-            .log_err()
-        })
-        .detach();
+        self.project.update(cx, |project, cx| {
+            project.close_remote_worktree(remote_id, cx);
+        });
     }
 
     fn add_pane(&mut self, cx: &mut ViewContext<Self>) -> ViewHandle<Pane> {
@@ -1186,7 +1140,7 @@ pub trait WorkspaceHandle {
 impl WorkspaceHandle for ViewHandle<Workspace> {
     fn file_entries(&self, cx: &AppContext) -> Vec<(usize, Arc<Path>)> {
         self.read(cx)
-            .worktrees()
+            .worktrees(cx)
             .iter()
             .flat_map(|tree| {
                 let tree_id = tree.id();
@@ -1254,8 +1208,8 @@ mod tests {
         .await;
         assert_eq!(cx.window_ids().len(), 1);
         let workspace_1 = cx.root_view::<Workspace>(cx.window_ids()[0]).unwrap();
-        workspace_1.read_with(&cx, |workspace, _| {
-            assert_eq!(workspace.worktrees().len(), 2)
+        workspace_1.read_with(&cx, |workspace, cx| {
+            assert_eq!(workspace.worktrees(cx).len(), 2)
         });
 
         cx.update(|cx| {
@@ -1433,7 +1387,7 @@ mod tests {
         cx.read(|cx| {
             let worktree_roots = workspace
                 .read(cx)
-                .worktrees()
+                .worktrees(cx)
                 .iter()
                 .map(|w| w.read(cx).as_local().unwrap().abs_path())
                 .collect::<HashSet<_>>();
@@ -1526,7 +1480,7 @@ mod tests {
         let tree = cx.read(|cx| {
             workspace
                 .read(cx)
-                .worktrees()
+                .worktrees(cx)
                 .iter()
                 .next()
                 .unwrap()

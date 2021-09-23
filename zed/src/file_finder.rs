@@ -385,7 +385,7 @@ impl FileFinder {
             .workspace
             .upgrade(&cx)?
             .read(cx)
-            .worktrees()
+            .worktrees(cx)
             .iter()
             .map(|tree| tree.read(cx).snapshot())
             .collect::<Vec<_>>();

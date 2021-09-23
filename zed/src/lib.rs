@@ -9,6 +9,7 @@ pub mod http;
 pub mod language;
 pub mod menus;
 pub mod people_panel;
+pub mod project;
 pub mod project_browser;
 pub mod rpc;
 pub mod settings;
