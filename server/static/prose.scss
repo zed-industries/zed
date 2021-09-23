@@ -83,11 +83,6 @@ article.prose,
     }
   }
 
-  pre {
-    padding: 0.8rem;
-    background-color: rgba(255, 255, 255, 0.1);
-  }
-
   code {
     font-family: "JetBrains Mono", "Andale Mono WT", "Andale Mono",
       "Lucida Console", "Lucida Sans Typewriter", "DejaVu Sans Mono",
@@ -100,7 +95,16 @@ article.prose,
 
   :not(pre) > code {
     padding: 0.2rem 0.4rem;
-    background-color: rgba(255, 255, 255, 0.15);
+  }
+
+  pre {
+    padding: 0.8rem;
+  }
+
+  pre,
+  :not(pre) > code {
+    border-radius: 4px;
+    background-color: rgba(255, 255, 255, 0.1);
   }
 }
 
@@ -125,11 +129,6 @@ pre[class*="language-"] {
   -moz-hyphens: none;
   -ms-hyphens: none;
   hyphens: none;
-}
-
-pre[class*="language-"],
-:not(pre) > code[class*="language-"] {
-  background-color: rgba(255, 255, 255, 0.15);
 }
 
 /* Code blocks */

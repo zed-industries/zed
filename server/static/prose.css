@@ -98,12 +98,6 @@ article.prose ul li:not(:last-of-type),
   margin-bottom: 0.2rem;
 }
 
-article.prose pre,
-.type-prose pre {
-  padding: 0.8rem;
-  background-color: rgba(255, 255, 255, 0.1);
-}
-
 article.prose code,
 .type-prose code {
   font-family: "JetBrains Mono", "Andale Mono WT", "Andale Mono", "Lucida Console", "Lucida Sans Typewriter", "DejaVu Sans Mono", "Bitstream Vera Sans Mono", "Liberation Mono", "Nimbus Mono L", "Courier New", "Apple Color Emoji", "Segoe UI Emoji", "Segoe UI Symbol", "Noto Color Emoji", monospace;
@@ -114,7 +108,19 @@ article.prose code,
 article.prose :not(pre) > code,
 .type-prose :not(pre) > code {
   padding: 0.2rem 0.4rem;
-  background-color: rgba(255, 255, 255, 0.15);
+}
+
+article.prose pre,
+.type-prose pre {
+  padding: 0.8rem;
+}
+
+article.prose pre,
+article.prose :not(pre) > code,
+.type-prose pre,
+.type-prose :not(pre) > code {
+  border-radius: 4px;
+  background-color: rgba(255, 255, 255, 0.1);
 }
 
 /* Code Highlighting Styles
@@ -134,11 +140,6 @@ pre[class*="language-"] {
   -webkit-hyphens: none;
   -ms-hyphens: none;
   hyphens: none;
-}
-
-pre[class*="language-"],
-:not(pre) > code[class*="language-"] {
-  background-color: rgba(255, 255, 255, 0.15);
 }
 
 /* Code blocks */
