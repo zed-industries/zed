@@ -503,7 +503,7 @@ impl Client {
                 "Authorization",
                 format!("{} {}", credentials.user_id, credentials.access_token),
             )
-            .header("X-ZRPC-VERSION", zrpc::VERSION);
+            .header("X-Zed-Protocol-Version", zrpc::PROTOCOL_VERSION);
         cx.background().spawn(async move {
             if let Some(host) = ZED_SERVER_URL.strip_prefix("https://") {
                 let stream = smol::net::TcpStream::connect(host).await?;
