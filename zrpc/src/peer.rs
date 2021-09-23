@@ -115,7 +115,7 @@ impl Peer {
         let connection_state = ConnectionState {
             outgoing_tx,
             next_message_id: Default::default(),
-            response_channels: Default::default(),
+            response_channels: Arc::new(Mutex::new(Some(Default::default()))),
         };
         let mut writer = MessageStream::new(connection.tx);
         let mut reader = MessageStream::new(connection.rx);
