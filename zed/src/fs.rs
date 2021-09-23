@@ -29,6 +29,8 @@ pub trait Fs: Send + Sync {
         latency: Duration,
     ) -> Pin<Box<dyn Send + Stream<Item = Vec<fsevent::Event>>>>;
     fn is_fake(&self) -> bool;
+    #[cfg(any(test, feature = "test-support"))]
+    fn as_fake(&self) -> &FakeFs;
 }
 
 #[derive(Clone, Debug)]
@@ -124,6 +126,11 @@ impl Fs for RealFs {
 
     fn is_fake(&self) -> bool {
         false
+    }
+
+    #[cfg(any(test, feature = "test-support"))]
+    fn as_fake(&self) -> &FakeFs {
+        panic!("called `RealFs::as_fake`")
     }
 }
 
@@ -412,5 +419,10 @@ impl Fs for FakeFs {
 
     fn is_fake(&self) -> bool {
         true
+    }
+
+    #[cfg(any(test, feature = "test-support"))]
+    fn as_fake(&self) -> &FakeFs {
+        self
     }
 }

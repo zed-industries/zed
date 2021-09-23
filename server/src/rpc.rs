@@ -894,8 +894,11 @@ pub fn add_routes(app: &mut tide::Server<Arc<AppState>>, rpc: &Arc<Peer>) {
             let connection_upgrade = header_contains_ignore_case(&request, CONNECTION, "upgrade");
             let upgrade_to_websocket = header_contains_ignore_case(&request, UPGRADE, "websocket");
             let upgrade_requested = connection_upgrade && upgrade_to_websocket;
+            let client_protocol_version: Option<u32> = request
+                .header("X-Zed-Protocol-Version")
+                .and_then(|v| v.as_str().parse().ok());
 
-            if !upgrade_requested {
+            if !upgrade_requested || client_protocol_version != Some(zrpc::PROTOCOL_VERSION) {
                 return Ok(Response::new(StatusCode::UpgradeRequired));
             }
 
