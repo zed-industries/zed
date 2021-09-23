@@ -18,7 +18,7 @@ use scrypt::{
 use serde::{Deserialize, Serialize};
 use std::{borrow::Cow, convert::TryFrom, sync::Arc};
 use surf::{StatusCode, Url};
-use tide::{log, Server};
+use tide::{log, Error, Server};
 use zrpc::auth as zed_auth;
 
 static CURRENT_GITHUB_USER: &'static str = "current_github_user";
@@ -33,51 +33,48 @@ pub struct User {
     pub is_admin: bool,
 }
 
-pub struct VerifyToken;
+pub async fn process_auth_header(request: &Request) -> tide::Result<UserId> {
+    let mut auth_header = request
+        .header("Authorization")
+        .ok_or_else(|| {
+            Error::new(
+                StatusCode::BadRequest,
+                anyhow!("missing authorization header"),
+            )
+        })?
+        .last()
+        .as_str()
+        .split_whitespace();
+    let user_id = UserId(auth_header.next().unwrap_or("").parse().map_err(|_| {
+        Error::new(
+            StatusCode::BadRequest,
+            anyhow!("missing user id in authorization header"),
+        )
+    })?);
+    let access_token = auth_header.next().ok_or_else(|| {
+        Error::new(
+            StatusCode::BadRequest,
+            anyhow!("missing access token in authorization header"),
+        )
+    })?;
 
-#[async_trait]
-impl tide::Middleware<Arc<AppState>> for VerifyToken {
-    async fn handle(
-        &self,
-        mut request: Request,
-        next: tide::Next<'_, Arc<AppState>>,
-    ) -> tide::Result {
-        let mut auth_header = request
-            .header("Authorization")
-            .ok_or_else(|| anyhow!("no authorization header"))?
-            .last()
-            .as_str()
-            .split_whitespace();
-
-        let user_id = UserId(
-            auth_header
-                .next()
-                .ok_or_else(|| anyhow!("missing user id in authorization header"))?
-                .parse()?,
-        );
-        let access_token = auth_header
-            .next()
-            .ok_or_else(|| anyhow!("missing access token in authorization header"))?;
-
-        let state = request.state().clone();
-
-        let mut credentials_valid = false;
-        for password_hash in state.db.get_access_token_hashes(user_id).await? {
-            if verify_access_token(&access_token, &password_hash)? {
-                credentials_valid = true;
-                break;
-            }
-        }
-
-        if credentials_valid {
-            request.set_ext(user_id);
-            Ok(next.run(request).await)
-        } else {
-            let mut response = tide::Response::new(StatusCode::Unauthorized);
-            response.set_body("invalid credentials");
-            Ok(response)
+    let state = request.state().clone();
+    let mut credentials_valid = false;
+    for password_hash in state.db.get_access_token_hashes(user_id).await? {
+        if verify_access_token(&access_token, &password_hash)? {
+            credentials_valid = true;
+            break;
         }
     }
+
+    if !credentials_valid {
+        Err(Error::new(
+            StatusCode::Unauthorized,
+            anyhow!("invalid credentials"),
+        ))?;
+    }
+
+    Ok(user_id)
 }
 
 #[async_trait]
