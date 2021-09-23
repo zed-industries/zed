@@ -1493,8 +1493,26 @@ impl Editor {
         cx: &mut ViewContext<Self>,
     ) {
         self.start_transaction(cx);
-        self.select_to_previous_word_boundary(&SelectToPreviousWordBoundary, cx);
-        self.backspace(&Backspace, cx);
+        let display_map = self.display_map.update(cx, |map, cx| map.snapshot(cx));
+        let mut selections = self.selections(cx.as_ref()).to_vec();
+        {
+            let buffer = self.buffer.read(cx);
+            for selection in &mut selections {
+                let range = selection.point_range(buffer);
+                if range.start == range.end {
+                    let head = selection.head().to_display_point(&display_map, Bias::Left);
+                    let cursor = display_map.anchor_before(
+                        movement::prev_word_boundary(&display_map, head).unwrap(),
+                        Bias::Right,
+                    );
+                    selection.set_head(&buffer, cursor);
+                    selection.goal = SelectionGoal::None;
+                }
+            }
+        }
+
+        self.update_selections(selections, true, cx);
+        self.insert(&Insert(String::new()), cx);
         self.end_transaction(cx);
     }
 
@@ -1545,8 +1563,26 @@ impl Editor {
         cx: &mut ViewContext<Self>,
     ) {
         self.start_transaction(cx);
-        self.select_to_next_word_boundary(&SelectToNextWordBoundary, cx);
-        self.delete(&Delete, cx);
+        let display_map = self.display_map.update(cx, |map, cx| map.snapshot(cx));
+        let mut selections = self.selections(cx.as_ref()).to_vec();
+        {
+            let buffer = self.buffer.read(cx);
+            for selection in &mut selections {
+                let range = selection.point_range(buffer);
+                if range.start == range.end {
+                    let head = selection.head().to_display_point(&display_map, Bias::Left);
+                    let cursor = display_map.anchor_before(
+                        movement::next_word_boundary(&display_map, head).unwrap(),
+                        Bias::Right,
+                    );
+                    selection.set_head(&buffer, cursor);
+                    selection.goal = SelectionGoal::None;
+                }
+            }
+        }
+
+        self.update_selections(selections, true, cx);
+        self.insert(&Insert(String::new()), cx);
         self.end_transaction(cx);
     }
 
@@ -3231,19 +3267,8 @@ mod tests {
             assert_eq!(
                 view.selection_ranges(cx),
                 &[
-                    DisplayPoint::new(0, 3)..DisplayPoint::new(0, 3),
-                    DisplayPoint::new(1, 0)..DisplayPoint::new(1, 0),
-                ]
-            );
-        });
-
-        view.update(cx, |view, cx| {
-            view.move_to_previous_word_boundary(&MoveToPreviousWordBoundary, cx);
-            assert_eq!(
-                view.selection_ranges(cx),
-                &[
                     DisplayPoint::new(0, 0)..DisplayPoint::new(0, 0),
-                    DisplayPoint::new(0, 24)..DisplayPoint::new(0, 24),
+                    DisplayPoint::new(1, 0)..DisplayPoint::new(1, 0),
                 ]
             );
         });
@@ -3275,7 +3300,7 @@ mod tests {
             assert_eq!(
                 view.selection_ranges(cx),
                 &[
-                    DisplayPoint::new(0, 4)..DisplayPoint::new(0, 4),
+                    DisplayPoint::new(0, 7)..DisplayPoint::new(0, 7),
                     DisplayPoint::new(1, 0)..DisplayPoint::new(1, 0),
                 ]
             );
@@ -3286,19 +3311,8 @@ mod tests {
             assert_eq!(
                 view.selection_ranges(cx),
                 &[
-                    DisplayPoint::new(0, 7)..DisplayPoint::new(0, 7),
-                    DisplayPoint::new(2, 0)..DisplayPoint::new(2, 0),
-                ]
-            );
-        });
-
-        view.update(cx, |view, cx| {
-            view.move_to_next_word_boundary(&MoveToNextWordBoundary, cx);
-            assert_eq!(
-                view.selection_ranges(cx),
-                &[
                     DisplayPoint::new(0, 9)..DisplayPoint::new(0, 9),
-                    DisplayPoint::new(2, 2)..DisplayPoint::new(2, 2),
+                    DisplayPoint::new(2, 3)..DisplayPoint::new(2, 3),
                 ]
             );
         });
@@ -3310,7 +3324,7 @@ mod tests {
                 view.selection_ranges(cx),
                 &[
                     DisplayPoint::new(0, 10)..DisplayPoint::new(0, 9),
-                    DisplayPoint::new(2, 3)..DisplayPoint::new(2, 2),
+                    DisplayPoint::new(2, 4)..DisplayPoint::new(2, 3),
                 ]
             );
         });
@@ -3321,7 +3335,7 @@ mod tests {
                 view.selection_ranges(cx),
                 &[
                     DisplayPoint::new(0, 10)..DisplayPoint::new(0, 7),
-                    DisplayPoint::new(2, 3)..DisplayPoint::new(2, 0),
+                    DisplayPoint::new(2, 4)..DisplayPoint::new(2, 2),
                 ]
             );
         });
@@ -3332,37 +3346,7 @@ mod tests {
                 view.selection_ranges(cx),
                 &[
                     DisplayPoint::new(0, 10)..DisplayPoint::new(0, 9),
-                    DisplayPoint::new(2, 3)..DisplayPoint::new(2, 2),
-                ]
-            );
-        });
-
-        view.update(cx, |view, cx| {
-            view.delete_to_next_word_boundary(&DeleteToNextWordBoundary, cx);
-            assert_eq!(
-                view.display_text(cx),
-                "use std::s::{foo, bar}\n\n  {az.qux()}"
-            );
-            assert_eq!(
-                view.selection_ranges(cx),
-                &[
-                    DisplayPoint::new(0, 10)..DisplayPoint::new(0, 10),
-                    DisplayPoint::new(2, 3)..DisplayPoint::new(2, 3),
-                ]
-            );
-        });
-
-        view.update(cx, |view, cx| {
-            view.delete_to_previous_word_boundary(&DeleteToPreviousWordBoundary, cx);
-            assert_eq!(
-                view.display_text(cx),
-                "use std::::{foo, bar}\n\n  az.qux()}"
-            );
-            assert_eq!(
-                view.selection_ranges(cx),
-                &[
-                    DisplayPoint::new(0, 9)..DisplayPoint::new(0, 9),
-                    DisplayPoint::new(2, 2)..DisplayPoint::new(2, 2),
+                    DisplayPoint::new(2, 4)..DisplayPoint::new(2, 3),
                 ]
             );
         });
@@ -3418,9 +3402,50 @@ mod tests {
             view.move_to_previous_word_boundary(&MoveToPreviousWordBoundary, cx);
             assert_eq!(
                 view.selection_ranges(cx),
-                &[DisplayPoint::new(1, 15)..DisplayPoint::new(1, 15)]
+                &[DisplayPoint::new(1, 14)..DisplayPoint::new(1, 14)]
             );
         });
+    }
+
+    #[gpui::test]
+    fn test_delete_to_word_boundary(cx: &mut gpui::MutableAppContext) {
+        let buffer = cx.add_model(|cx| Buffer::new(0, "one two three four", cx));
+        let settings = settings::test(&cx).1;
+        let (_, view) = cx.add_window(Default::default(), |cx| {
+            build_editor(buffer.clone(), settings, cx)
+        });
+
+        view.update(cx, |view, cx| {
+            view.select_display_ranges(
+                &[
+                    // an empty selection - the preceding word fragment is deleted
+                    DisplayPoint::new(0, 2)..DisplayPoint::new(0, 2),
+                    // characters selected - they are deleted
+                    DisplayPoint::new(0, 9)..DisplayPoint::new(0, 12),
+                ],
+                cx,
+            )
+            .unwrap();
+            view.delete_to_previous_word_boundary(&DeleteToPreviousWordBoundary, cx);
+        });
+
+        assert_eq!(buffer.read(cx).text(), "e two te four");
+
+        view.update(cx, |view, cx| {
+            view.select_display_ranges(
+                &[
+                    // an empty selection - the following word fragment is deleted
+                    DisplayPoint::new(0, 3)..DisplayPoint::new(0, 3),
+                    // characters selected - they are deleted
+                    DisplayPoint::new(0, 9)..DisplayPoint::new(0, 10),
+                ],
+                cx,
+            )
+            .unwrap();
+            view.delete_to_next_word_boundary(&DeleteToNextWordBoundary, cx);
+        });
+
+        assert_eq!(buffer.read(cx).text(), "e t te our");
     }
 
     #[gpui::test]
