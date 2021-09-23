@@ -68,6 +68,13 @@
   .alternate-bg:nth-of-type(even) {
     background-color: rgba(255,255,255,0.06);
   }
+
+  :not(.type-prose) code {
+    background-color: rgba(255,255,255,0.15);
+    padding: 0px 4px;
+    border-radius: 2px;
+    color: #eee;
+  }
   
   /* This fixes scrollbar jump */
   @media screen and (min-width: 960px) {
