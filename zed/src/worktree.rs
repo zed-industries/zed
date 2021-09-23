@@ -2412,7 +2412,8 @@ impl BackgroundScanner {
             ignore_stack = ignore_stack.append(job.path.clone(), ignore.clone());
         }
 
-        let mut edits = Vec::new();
+        let mut entries_by_id_edits = Vec::new();
+        let mut entries_by_path_edits = Vec::new();
         for mut entry in snapshot.child_entries(&job.path).cloned() {
             let was_ignored = entry.is_ignored;
             entry.is_ignored = ignore_stack.is_path_ignored(&entry.path, entry.is_dir());
@@ -2433,10 +2434,16 @@ impl BackgroundScanner {
             }
 
             if entry.is_ignored != was_ignored {
-                edits.push(Edit::Insert(entry));
+                let mut path_entry = snapshot.entries_by_id.get(&entry.id, &()).unwrap().clone();
+                path_entry.scan_id = snapshot.scan_id;
+                entries_by_id_edits.push(Edit::Insert(path_entry));
+                entries_by_path_edits.push(Edit::Insert(entry));
             }
         }
-        self.snapshot.lock().entries_by_path.edit(edits, &());
+
+        let mut snapshot = self.snapshot.lock();
+        snapshot.entries_by_path.edit(entries_by_path_edits, &());
+        snapshot.entries_by_id.edit(entries_by_id_edits, &());
     }
 }
 
