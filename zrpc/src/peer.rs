@@ -520,8 +520,7 @@ mod tests {
     #[test]
     fn test_io_error() {
         smol::block_on(async move {
-            let (client_conn, server_conn, _) = Connection::in_memory();
-            drop(server_conn);
+            let (client_conn, mut server_conn, _) = Connection::in_memory();
 
             let client = Peer::new();
             let (connection_id, io_handler, mut incoming) =
@@ -529,11 +528,14 @@ mod tests {
             smol::spawn(io_handler).detach();
             smol::spawn(async move { incoming.next().await }).detach();
 
-            let err = client
-                .request(connection_id, proto::Ping {})
-                .await
-                .unwrap_err();
-            assert_eq!(err.to_string(), "connection was closed");
+            let response = smol::spawn(client.request(connection_id, proto::Ping {}));
+            let _request = server_conn.rx.next().await.unwrap().unwrap();
+
+            drop(server_conn);
+            assert_eq!(
+                response.await.unwrap_err().to_string(),
+                "connection was closed"
+            );
         });
     }
 }
