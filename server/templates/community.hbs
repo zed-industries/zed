@@ -8,8 +8,14 @@
     <form action="/signups" method="post" class="mt-10">
         <ul>
             <li class="flex flex-row mt-5 text-lg">
-                <span class="w-6 mt-2 mr-5 checkbox__input">
-                    <input class="absolute" type="checkbox" value=true name="wants_releases">
+                <span class="relative w-6 mt-2 mr-5 checkbox__input">
+                    <span class="absolute z-0 block checkbox__brackets">
+                        <svg width="32" height="32" viewBox="0 0 32 32" fill="none" xmlns="http://www.w3.org/2000/svg" focusable="false">
+                        <path d="M8 0H0V32H8V31H1V1H8V0Z" fill="white"/>
+                        <path d="M24 31H31V1H24V0H32V32H24V31Z" fill="white"/>
+                        </svg>
+                    </span>
+                    <input class="absolute z-10" type="checkbox" value=true name="wants_releases">
                     <span class="flex items-center justify-center checkbox__control">
                         <svg width="12" height="11" viewBox="0 0 12 11" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true" focusable="false">
                             <path d="M1 6.38905L4.33333 9.72239L11 0.833496" fill='none' stroke='currentColor' stroke-width="1" stroke-linecap="round"/>
@@ -27,8 +33,15 @@
                 </div>
             </li>
             <li class="flex flex-row mt-5 text-lg">
-                <span class="w-6 mt-2 mr-5 checkbox__input">
-                    <input class="absolute" type="checkbox" value=true name="wants_updates">
+                <span class="relative w-6 mt-2 mr-5 checkbox__input">
+                    <span class="absolute z-0 block checkbox__brackets">
+                        <svg width="32" height="32" viewBox="0 0 32 32" fill="none" xmlns="http://www.w3.org/2000/svg" focusable="false">
+                        <path d="M8 0H0V32H8V31H1V1H8V0Z" fill="white"/>
+                        <path d="M24 31H31V1H24V0H32V32H24V31Z" fill="white"/>
+                        </svg>
+                    </span>
+
+                    <input class="absolute z-10" type="checkbox" value=true name="wants_updates">
                     <span class="flex items-center justify-center checkbox__control">
                         <svg width="12" height="11" viewBox="0 0 12 11" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true" focusable="false">
                             <path d="M1 6.38905L4.33333 9.72239L11 0.833496" fill='none' stroke='currentColor' stroke-width="1" stroke-linecap="round"/>
@@ -46,8 +59,16 @@
                 </div>
             </li>
             <li class="flex flex-row mt-5 text-lg">
-                <span class="w-6 mt-2 mr-5 checkbox__input">
-                    <input class="absolute" type="checkbox" value=true name="wants_community">
+                <span class="relative w-6 mt-2 mr-5 checkbox__input">
+                    <span class="absolute z-0 block checkbox__brackets">
+                        <svg width="32" height="32" viewBox="0 0 32 32" fill="none" xmlns="http://www.w3.org/2000/svg" focusable="false">
+                        <path d="M8 0H0V32H8V31H1V1H8V0Z" fill="white"/>
+                        <path d="M24 31H31V1H24V0H32V32H24V31Z" fill="white"/>
+                        </svg>
+                    </span>
+
+                    <input class="absolute z-10" type="checkbox" value=true name="wants_community">
+                    
                     <span class="flex items-center justify-center checkbox__control">
                         <svg width="12" height="11" viewBox="0 0 12 11" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true" focusable="false">
                             <path d="M1 6.38905L4.33333 9.72239L11 0.833496" fill='none' stroke='currentColor' stroke-width="1" stroke-linecap="round"/>

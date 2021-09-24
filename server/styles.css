@@ -100,7 +100,6 @@
   .checkbox__control {
     width: 1.5rem;
     height: 1.5rem;
-    border: 1px solid white;
   }
 
   .checkbox__control svg {
@@ -108,14 +107,11 @@
     transform-origin: center center;
   }
   
-  .checkbox__input {
-
+  .checkbox__brackets {
+    left: -1px;
+    top: -1px;
   }
-
-  .checkbox__input * {
-
-  }
-
+  
   .checkbox__input input {
     opacity: 0;
     width: 1.5rem;
