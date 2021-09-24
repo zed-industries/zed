@@ -34,7 +34,7 @@
 
 <body class="box-border font-light bg-black font-body text-main">
     <main class="container flex flex-col mx-auto lg:bg-white lg:flex-none lg:grid lg:min-h-full lg:grid-cols-4 max-w-screen-2xl lg:gap-x-px text-gray-50">
-        <nav class="p-5 pt-10 pb-0 bg-black font-extralight lg:hidden">
+        <nav id="mobile-nav" class="p-5 pt-10 pb-5 bg-black font-extralight lg:hidden site-mobile-nav">
             <div class="flex flex-row justify-between">
                 <a href="/" class="block hover:opacity-80">
                     <svg width="32" height="32" viewBox="0 0 32 32" fill="none" xmlns="http://www.w3.org/2000/svg">
@@ -69,16 +69,16 @@
                 </a>
                 
                 <a href="/community" class="mr-2 text-lg leading-relaxed">
-                    Waitlist <span class="pt-1 mr-1 text-lg text-gray-500">·</span>
+                    Waitlist
                 </a>
                 {{#if current_user}}
                 <a href="/releases" class="mr-2 text-lg leading-relaxed">
-                    Releases <span class="pt-1 mr-1 text-lg text-gray-500">·</span>
+                    <span class="pt-1 mr-1 text-lg text-gray-500">·</span> Releases
                 </a>
 
                 {{#if current_user.is_admin }}
                     <a href="/admin" class="inline-block mr-2 text-lg leading-relaxed">
-                        Manage Users <span class="pt-1 mr-1 text-lg text-gray-500">·</span>
+                        <span class="pt-1 mr-1 text-lg text-gray-500">·</span> Manage Users
                     </a>
                 {{/if}}
                 {{/if}}
@@ -164,7 +164,7 @@
             {{/if}}
         </nav>
 
-        <div class="col-span-3 bg-black">
+        <div class="col-span-3 pb-20 bg-black">
             {{> @partial-block}}
         </div>
     </main>
@@ -178,6 +178,14 @@
     for (const link of links) {
         if (link.getAttribute('href') === currentPath) {
             link.classList.add('active');
+        }
+    }
+    const mnav = document.getElementById('mobile-nav');
+    const mlinks = mnav.getElementsByTagName('a');
+    const mcurrentPath = window.location.pathname;
+    for (const mlink of mlinks) {
+        if (mlink.getAttribute('href') === mcurrentPath) {
+            mlink.classList.add('active');
         }
     }
 </script>

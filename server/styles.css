@@ -55,6 +55,10 @@
     display: flex;
   }
 
+  .site-mobile-nav a.active {
+    font-weight: bold;
+  }
+
   .text-columns-2 {
     -webkit-column-break-inside: avoid;
     page-break-inside: avoid;
@@ -98,8 +102,8 @@
   }
   
   .checkbox__control {
-    width: 1.5rem;
-    height: 1.5rem;
+    width: 30px;
+    height: 30px;
   }
 
   .checkbox__control svg {
@@ -114,8 +118,8 @@
   
   .checkbox__input input {
     opacity: 0;
-    width: 1.5rem;
-    height: 1.5rem;
+    width: 30px;
+    height: 30px;
   }
 
   .checkbox__input input:focus + .checkbox__control {
