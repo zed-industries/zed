@@ -43,44 +43,39 @@
             </a>
             
             <div class="flex flex-row flex-wrap mt-10">
-                <a href="/team" class="mr-2 text-lg leading-loose no-underline lowercase hover:underline">
-                    Team
+                <a href="/" class="mr-2 text-lg leading-loose">
+                    Meet Zed <span class="pt-1 mr-1 text-lg text-gray-500">·</span>
                 </a>
-                <p class="pt-1 mr-2 text-lg text-gray-500">·</p>
-                <a href="/story" class="relative mr-2 text-lg leading-loose no-underline lowercase nav-active hover:underline">
-                    Our Story
+                <a href="/team" class="mr-2 text-lg leading-loose">
+                    The Team <span class="pt-1 mr-1 text-lg text-gray-500">·</span>
                 </a>
-                <p class="pt-1 mr-2 text-lg text-gray-500">·</p>
-                <a href="/community" class="mr-2 text-lg leading-loose no-underline lowercase hover:underline">
-                    Community
+                
+                <a href="/community" class="mr-2 text-lg leading-loose">
+                    Waitlist <span class="pt-1 mr-1 text-lg text-gray-500">·</span>
                 </a>
-                <p class="pt-1 mr-2 text-lg text-gray-500">·</p>
                 {{#if current_user}}
-                <a href="/updates" class="mr-2 text-lg leading-loose no-underline lowercase hover:underline">
-                    Updates
+                <a href="/updates" class="mr-2 text-lg leading-loose">
+                    Updates <span class="pt-1 mr-1 text-lg text-gray-500">·</span>
                 </a>
-                <p class="pt-1 mr-2 text-lg text-gray-500">·</p>
-                <a href="/releases" class="mr-2 text-lg leading-loose no-underline lowercase hover:underline">
-                    Releases
+                <a href="/releases" class="mr-2 text-lg leading-loose">
+                    Releases <span class="pt-1 mr-1 text-lg text-gray-500">·</span>
                 </a>
 
                 {{#if current_user.is_admin }}
-                    <p class="pt-1 mr-2 text-lg text-gray-500">·</p>
-                    <a href="/admin" class="inline-block mr-2 text-lg leading-loose no-underline lowercase hover:underline">
-                        Manage Users
+                    <a href="/admin" class="inline-block mr-2 text-lg leading-loose">
+                        Manage Users <span class="pt-1 mr-1 text-lg text-gray-500">·</span>
                     </a>
                 {{/if}}
 
-                <p class="pt-1 mr-2 text-lg text-gray-500">·</p>
-                <form id="sign_out" action="/sign_out" method="post" class="inline m-0 mr-2 font-extralight">
-                    <button class="text-lg leading-loose no-underline lowercase font-extralight hover:underline">Log out</button>
+                <form id="sign_out" action="/sign_out" method="post" class="inline m-0 mr-2 font-extralight text-gray-50">
+                    <button class="text-lg leading-loose no-underline font-extralight text-gray-50 hover:underline">Log Out</button>
                 </form>
 
                 {{else}}
 
                 <!-- Otherwise let user log in -->
                 <a href=" /sign_in"
-                    class="mr-2 text-lg leading-loose no-underline lowercase hover:underline">
+                    class="mr-2 text-lg leading-loose">
                     Log in
                 </a>
                 {{/if}}
@@ -104,23 +99,23 @@
                 </svg>
             </a>
             <div class="flex flex-col mt-10 font-mono">
+                <a href="/" class="relative mt-2 text-base no-underline lowercase hover:underline">
+                    <span class="absolute items-center justify-center hidden h-full align-middle nav-active-arrow -left-7">
+                        <svg width="16" height="16" viewBox="0 0 16 16" fill="none" xmlns="http://www.w3.org/2000/svg"><path d="M10.1594 12.1606C10.0309 12.0567 9.96803 11.8899 9.96803 11.7204C9.96803 11.5509 10.0321 11.3846 10.1603 11.2564L12.7596 8.65813H1.6562C1.29392 8.65813 1 8.36284 1 7.97732C1 7.63829 1.29392 7.34573 1.6562 7.34573H12.7596L10.1613 4.74747C9.90501 4.49114 9.90501 4.07596 10.1613 3.81949C10.4177 3.56303 10.8328 3.56317 11.0893 3.81949L14.8078 7.53794C15.0641 7.79427 15.0641 8.20945 14.8078 8.46592L11.0893 12.1844C10.832 12.4395 10.4164 12.4395 10.1594 12.1606Z" fill="white"/></svg>
+                    </span>
+                    Meet Zed
+                </a>
                 <a href="/team" class="relative mt-2 text-base no-underline lowercase hover:underline">
                     <span class="absolute items-center justify-center hidden h-full align-middle nav-active-arrow -left-7">
                         <svg width="16" height="16" viewBox="0 0 16 16" fill="none" xmlns="http://www.w3.org/2000/svg"><path d="M10.1594 12.1606C10.0309 12.0567 9.96803 11.8899 9.96803 11.7204C9.96803 11.5509 10.0321 11.3846 10.1603 11.2564L12.7596 8.65813H1.6562C1.29392 8.65813 1 8.36284 1 7.97732C1 7.63829 1.29392 7.34573 1.6562 7.34573H12.7596L10.1613 4.74747C9.90501 4.49114 9.90501 4.07596 10.1613 3.81949C10.4177 3.56303 10.8328 3.56317 11.0893 3.81949L14.8078 7.53794C15.0641 7.79427 15.0641 8.20945 14.8078 8.46592L11.0893 12.1844C10.832 12.4395 10.4164 12.4395 10.1594 12.1606Z" fill="white"/></svg>
                     </span>
                     The Team
                 </a>
-                <a href="/story" class="relative mt-2 text-base no-underline lowercase hover:underline">
-                    <span class="absolute items-center justify-center hidden h-full align-middle nav-active-arrow -left-7">
-                        <svg width="16" height="16" viewBox="0 0 16 16" fill="none" xmlns="http://www.w3.org/2000/svg"><path d="M10.1594 12.1606C10.0309 12.0567 9.96803 11.8899 9.96803 11.7204C9.96803 11.5509 10.0321 11.3846 10.1603 11.2564L12.7596 8.65813H1.6562C1.29392 8.65813 1 8.36284 1 7.97732C1 7.63829 1.29392 7.34573 1.6562 7.34573H12.7596L10.1613 4.74747C9.90501 4.49114 9.90501 4.07596 10.1613 3.81949C10.4177 3.56303 10.8328 3.56317 11.0893 3.81949L14.8078 7.53794C15.0641 7.79427 15.0641 8.20945 14.8078 8.46592L11.0893 12.1844C10.832 12.4395 10.4164 12.4395 10.1594 12.1606Z" fill="white"/></svg>
-                    </span>
-                    Our Story
-                </a>
                 <a href="/community" class="relative mt-2 text-base no-underline lowercase hover:underline">
                     <span class="absolute items-center justify-center hidden h-full align-middle nav-active-arrow -left-7">
                         <svg width="16" height="16" viewBox="0 0 16 16" fill="none" xmlns="http://www.w3.org/2000/svg"><path d="M10.1594 12.1606C10.0309 12.0567 9.96803 11.8899 9.96803 11.7204C9.96803 11.5509 10.0321 11.3846 10.1603 11.2564L12.7596 8.65813H1.6562C1.29392 8.65813 1 8.36284 1 7.97732C1 7.63829 1.29392 7.34573 1.6562 7.34573H12.7596L10.1613 4.74747C9.90501 4.49114 9.90501 4.07596 10.1613 3.81949C10.4177 3.56303 10.8328 3.56317 11.0893 3.81949L14.8078 7.53794C15.0641 7.79427 15.0641 8.20945 14.8078 8.46592L11.0893 12.1844C10.832 12.4395 10.4164 12.4395 10.1594 12.1606Z" fill="white"/></svg>
                     </span>
-                    Community
+                    Waitlist
                 </a>
             </div>
             
@@ -157,7 +152,7 @@
             {{/if}}
        
             <div class="mt-10">
-                <p class="text-base no-underline lowercase hover:underline">@{{current_user.github_login}}</p>
+                <p class="text-base no-underline">@{{current_user.github_login}}</p>
                 <form id="sign_out" action="/sign_out" method="post">
                     <button class="mt-2 text-xs no-underline lowercase opacity-50 hover:underline">Sign out</button>
                 </form>
@@ -186,7 +181,6 @@
     for (const link of links) {
         if (link.getAttribute('href') === currentPath) {
             link.classList.add('active');
-            console.log('activating', link)
         }
     }
 </script>
