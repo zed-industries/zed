@@ -6,15 +6,13 @@ use crate::{
     chat_panel::ChatPanel,
     editor::Buffer,
     fs::Fs,
-    language::LanguageRegistry,
     people_panel::{JoinWorktree, LeaveWorktree, PeoplePanel, ShareWorktree, UnshareWorktree},
     project::Project,
-    project_browser::ProjectBrowser,
+    project_panel::ProjectPanel,
     rpc,
     settings::Settings,
     user,
-    util::TryFutureExt as _,
-    worktree::{self, File, Worktree},
+    worktree::{File, Worktree},
     AppState, Authenticate,
 };
 use anyhow::Result;
@@ -340,7 +338,6 @@ impl Clone for Box<dyn ItemHandle> {
 
 pub struct Workspace {
     pub settings: watch::Receiver<Settings>,
-    languages: Arc<LanguageRegistry>,
     rpc: Arc<rpc::Client>,
     user_store: ModelHandle<user::UserStore>,
     fs: Arc<dyn Fs>,
@@ -361,7 +358,8 @@ pub struct Workspace {
 
 impl Workspace {
     pub fn new(app_state: &AppState, cx: &mut ViewContext<Self>) -> Self {
-        let project = cx.add_model(|_| Project::new());
+        let project = cx.add_model(|_| Project::new(app_state));
+        cx.observe(&project, |_, _, cx| cx.notify()).detach();
 
         let pane = cx.add_view(|_| Pane::new(app_state.settings.clone()));
         let pane_id = pane.id();
@@ -374,7 +372,8 @@ impl Workspace {
         let mut left_sidebar = Sidebar::new(Side::Left);
         left_sidebar.add_item(
             "icons/folder-tree-16.svg",
-            cx.add_view(|_| ProjectBrowser).into(),
+            cx.add_view(|cx| ProjectPanel::new(project.clone(), app_state.settings.clone(), cx))
+                .into(),
         );
 
         let mut right_sidebar = Sidebar::new(Side::Right);
@@ -421,7 +420,6 @@ impl Workspace {
             panes: vec![pane.clone()],
             active_pane: pane.clone(),
             settings: app_state.settings.clone(),
-            languages: app_state.languages.clone(),
             rpc: app_state.rpc.clone(),
             user_store: app_state.user_store.clone(),
             fs: app_state.fs.clone(),
@@ -554,21 +552,8 @@ impl Workspace {
         path: &Path,
         cx: &mut ViewContext<Self>,
     ) -> Task<Result<ModelHandle<Worktree>>> {
-        let languages = self.languages.clone();
-        let rpc = self.rpc.clone();
-        let fs = self.fs.clone();
-        let path = Arc::from(path);
-        cx.spawn(|this, mut cx| async move {
-            let worktree = Worktree::open_local(rpc, path, fs, languages, &mut cx).await?;
-            this.update(&mut cx, |this, cx| {
-                cx.observe(&worktree, |_, _, cx| cx.notify()).detach();
-                this.project.update(cx, |project, _| {
-                    project.add_worktree(worktree.clone());
-                });
-                cx.notify();
-            });
-            Ok(worktree)
-        })
+        self.project
+            .update(cx, |project, cx| project.add_local_worktree(path, cx))
     }
 
     pub fn toggle_modal<V, F>(&mut self, cx: &mut ViewContext<Self>, add_view: F)
@@ -828,72 +813,23 @@ impl Workspace {
     }
 
     fn share_worktree(&mut self, action: &ShareWorktree, cx: &mut ViewContext<Self>) {
-        let rpc = self.rpc.clone();
-        let remote_id = action.0;
-        cx.spawn(|this, mut cx| {
-            async move {
-                rpc.authenticate_and_connect(&cx).await?;
-
-                let task = this.update(&mut cx, |this, cx| {
-                    this.project
-                        .update(cx, |project, cx| project.share_worktree(remote_id, cx))
-                });
-
-                if let Some(share_task) = task {
-                    share_task.await?;
-                }
-
-                Ok(())
-            }
-            .log_err()
-        })
-        .detach();
+        self.project
+            .update(cx, |p, cx| p.share_worktree(action.0, cx));
     }
 
     fn unshare_worktree(&mut self, action: &UnshareWorktree, cx: &mut ViewContext<Self>) {
-        let remote_id = action.0;
         self.project
-            .update(cx, |project, cx| project.unshare_worktree(remote_id, cx));
+            .update(cx, |p, cx| p.unshare_worktree(action.0, cx));
     }
 
     fn join_worktree(&mut self, action: &JoinWorktree, cx: &mut ViewContext<Self>) {
-        let rpc = self.rpc.clone();
-        let languages = self.languages.clone();
-        let worktree_id = action.0;
-
-        cx.spawn(|this, mut cx| {
-            async move {
-                rpc.authenticate_and_connect(&cx).await?;
-                let worktree =
-                    Worktree::open_remote(rpc.clone(), worktree_id, languages, &mut cx).await?;
-                this.update(&mut cx, |this, cx| {
-                    cx.observe(&worktree, |_, _, cx| cx.notify()).detach();
-                    cx.subscribe(&worktree, move |this, _, event, cx| match event {
-                        worktree::Event::Closed => {
-                            this.project.update(cx, |project, cx| {
-                                project.close_remote_worktree(worktree_id, cx);
-                            });
-                            cx.notify();
-                        }
-                    })
-                    .detach();
-                    this.project
-                        .update(cx, |project, _| project.add_worktree(worktree));
-                    cx.notify();
-                });
-
-                Ok(())
-            }
-            .log_err()
-        })
-        .detach();
+        self.project
+            .update(cx, |p, cx| p.add_remote_worktree(action.0, cx).detach());
     }
 
     fn leave_worktree(&mut self, action: &LeaveWorktree, cx: &mut ViewContext<Self>) {
-        let remote_id = action.0;
-        self.project.update(cx, |project, cx| {
-            project.close_remote_worktree(remote_id, cx);
-        });
+        self.project
+            .update(cx, |p, cx| p.close_remote_worktree(action.0, cx));
     }
 
     fn add_pane(&mut self, cx: &mut ViewContext<Self>) -> ViewHandle<Pane> {

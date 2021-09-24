@@ -159,6 +159,10 @@ extends = "$people_panel.shared_worktree"
 background = "$state.hover"
 corner_radius = 6
 
+[project_panel]
+extends = "$panel"
+entry = "$text.0"
+
 [selector]
 background = "$surface.0"
 padding = 8

@@ -25,6 +25,7 @@ pub struct Theme {
     pub workspace: Workspace,
     pub chat_panel: ChatPanel,
     pub people_panel: PeoplePanel,
+    pub project_panel: ProjectPanel,
     pub selector: Selector,
     pub editor: EditorStyle,
     pub syntax: SyntaxTheme,
@@ -104,6 +105,13 @@ pub struct ChatPanel {
     pub input_editor: InputEditorStyle,
     pub sign_in_prompt: TextStyle,
     pub hovered_sign_in_prompt: TextStyle,
+}
+
+#[derive(Deserialize)]
+pub struct ProjectPanel {
+    #[serde(flatten)]
+    pub container: ContainerStyle,
+    pub entry: TextStyle,
 }
 
 #[derive(Deserialize)]

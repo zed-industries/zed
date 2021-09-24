@@ -1474,12 +1474,24 @@ impl Snapshot {
         self.entries_by_path.summary().file_count
     }
 
+    pub fn visible_entry_count(&self) -> usize {
+        self.entries_by_path.summary().visible_count
+    }
+
     pub fn visible_file_count(&self) -> usize {
         self.entries_by_path.summary().visible_file_count
     }
 
-    pub fn files(&self, start: usize) -> FileIter {
-        FileIter::all(self, start)
+    pub fn files(&self, start: usize) -> EntryIter {
+        EntryIter::files(self, start)
+    }
+
+    pub fn visible_entries(&self, start: usize) -> EntryIter {
+        EntryIter::visible(self, start)
+    }
+
+    pub fn visible_files(&self, start: usize) -> EntryIter {
+        EntryIter::visible_files(self, start)
     }
 
     pub fn paths(&self) -> impl Iterator<Item = &Arc<Path>> {
@@ -1488,10 +1500,6 @@ impl Snapshot {
             .cursor::<(), ()>()
             .filter(move |entry| entry.path.as_ref() != empty_path)
             .map(|entry| &entry.path)
-    }
-
-    pub fn visible_files(&self, start: usize) -> FileIter {
-        FileIter::visible(self, start)
     }
 
     fn child_entries<'a>(&'a self, path: &'a Path) -> ChildEntriesIter<'a> {
@@ -1891,22 +1899,31 @@ impl sum_tree::Item for Entry {
 
     fn summary(&self) -> Self::Summary {
         let file_count;
+        let visible_count;
         let visible_file_count;
         if self.is_file() {
             file_count = 1;
             if self.is_ignored {
+                visible_count = 0;
                 visible_file_count = 0;
             } else {
+                visible_count = 1;
                 visible_file_count = 1;
             }
         } else {
             file_count = 0;
             visible_file_count = 0;
+            if self.is_ignored {
+                visible_count = 0;
+            } else {
+                visible_count = 1;
+            }
         }
 
         EntrySummary {
             max_path: self.path.clone(),
             file_count,
+            visible_count,
             visible_file_count,
         }
     }
@@ -1925,6 +1942,7 @@ pub struct EntrySummary {
     max_path: Arc<Path>,
     file_count: usize,
     visible_file_count: usize,
+    visible_count: usize,
 }
 
 impl Default for EntrySummary {
@@ -1932,6 +1950,7 @@ impl Default for EntrySummary {
         Self {
             max_path: Arc::from(Path::new("")),
             file_count: 0,
+            visible_count: 0,
             visible_file_count: 0,
         }
     }
@@ -1943,6 +1962,7 @@ impl sum_tree::Summary for EntrySummary {
     fn add_summary(&mut self, rhs: &Self, _: &()) {
         self.max_path = rhs.max_path.clone();
         self.file_count += rhs.file_count;
+        self.visible_count += rhs.visible_count;
         self.visible_file_count += rhs.visible_file_count;
     }
 }
@@ -2051,6 +2071,15 @@ pub struct FileCount(usize);
 impl<'a> sum_tree::Dimension<'a, EntrySummary> for FileCount {
     fn add_summary(&mut self, summary: &'a EntrySummary, _: &()) {
         self.0 += summary.file_count;
+    }
+}
+
+#[derive(Copy, Clone, Default, Debug, Eq, PartialEq, Ord, PartialOrd)]
+pub struct VisibleCount(usize);
+
+impl<'a> sum_tree::Dimension<'a, EntrySummary> for VisibleCount {
+    fn add_summary(&mut self, summary: &'a EntrySummary, _: &()) {
+        self.0 += summary.visible_count;
     }
 }
 
@@ -2555,31 +2584,42 @@ impl WorktreeHandle for ModelHandle<Worktree> {
     }
 }
 
-pub enum FileIter<'a> {
-    All(Cursor<'a, Entry, FileCount, ()>),
-    Visible(Cursor<'a, Entry, VisibleFileCount, ()>),
+pub enum EntryIter<'a> {
+    Files(Cursor<'a, Entry, FileCount, ()>),
+    Visible(Cursor<'a, Entry, VisibleCount, ()>),
+    VisibleFiles(Cursor<'a, Entry, VisibleFileCount, ()>),
 }
 
-impl<'a> FileIter<'a> {
-    fn all(snapshot: &'a Snapshot, start: usize) -> Self {
+impl<'a> EntryIter<'a> {
+    fn files(snapshot: &'a Snapshot, start: usize) -> Self {
         let mut cursor = snapshot.entries_by_path.cursor();
         cursor.seek(&FileCount(start), Bias::Right, &());
-        Self::All(cursor)
+        Self::Files(cursor)
     }
 
     fn visible(snapshot: &'a Snapshot, start: usize) -> Self {
         let mut cursor = snapshot.entries_by_path.cursor();
-        cursor.seek(&VisibleFileCount(start), Bias::Right, &());
+        cursor.seek(&VisibleCount(start), Bias::Right, &());
         Self::Visible(cursor)
+    }
+
+    fn visible_files(snapshot: &'a Snapshot, start: usize) -> Self {
+        let mut cursor = snapshot.entries_by_path.cursor();
+        cursor.seek(&VisibleFileCount(start), Bias::Right, &());
+        Self::VisibleFiles(cursor)
     }
 
     fn next_internal(&mut self) {
         match self {
-            Self::All(cursor) => {
+            Self::Files(cursor) => {
                 let ix = *cursor.seek_start();
                 cursor.seek_forward(&FileCount(ix.0 + 1), Bias::Right, &());
             }
             Self::Visible(cursor) => {
+                let ix = *cursor.seek_start();
+                cursor.seek_forward(&VisibleCount(ix.0 + 1), Bias::Right, &());
+            }
+            Self::VisibleFiles(cursor) => {
                 let ix = *cursor.seek_start();
                 cursor.seek_forward(&VisibleFileCount(ix.0 + 1), Bias::Right, &());
             }
@@ -2588,13 +2628,14 @@ impl<'a> FileIter<'a> {
 
     fn item(&self) -> Option<&'a Entry> {
         match self {
-            Self::All(cursor) => cursor.item(),
+            Self::Files(cursor) => cursor.item(),
             Self::Visible(cursor) => cursor.item(),
+            Self::VisibleFiles(cursor) => cursor.item(),
         }
     }
 }
 
-impl<'a> Iterator for FileIter<'a> {
+impl<'a> Iterator for EntryIter<'a> {
     type Item = &'a Entry;
 
     fn next(&mut self) -> Option<Self::Item> {
