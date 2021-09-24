@@ -9,8 +9,6 @@ mod github;
 mod home;
 mod rpc;
 mod team;
-mod story;
-mod updates;
 mod releases;
 mod community;
 
@@ -177,9 +175,7 @@ pub async fn run_server(
     web.with(errors::Middleware);
     home::add_routes(&mut web);
     team::add_routes(&mut web);
-    story::add_routes(&mut web);
     releases::add_routes(&mut web);
-    updates::add_routes(&mut web);
     community::add_routes(&mut web);
     admin::add_routes(&mut web);
     auth::add_routes(&mut web);
