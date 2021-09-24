@@ -5,7 +5,7 @@ use crate::{
         vector::{vec2f, Vector2F},
     },
     json::{self, json},
-    ElementBox, MutableAppContext,
+    ElementBox,
 };
 use json::ToJson;
 use parking_lot::Mutex;
@@ -38,7 +38,7 @@ pub struct LayoutState {
 
 pub struct UniformList<F>
 where
-    F: Fn(Range<usize>, &mut Vec<ElementBox>, &mut MutableAppContext),
+    F: Fn(Range<usize>, &mut Vec<ElementBox>, &mut LayoutContext),
 {
     state: UniformListState,
     item_count: usize,
@@ -47,7 +47,7 @@ where
 
 impl<F> UniformList<F>
 where
-    F: Fn(Range<usize>, &mut Vec<ElementBox>, &mut MutableAppContext),
+    F: Fn(Range<usize>, &mut Vec<ElementBox>, &mut LayoutContext),
 {
     pub fn new(state: UniformListState, item_count: usize, append_items: F) -> Self {
         Self {
@@ -102,7 +102,7 @@ where
 
 impl<F> Element for UniformList<F>
 where
-    F: Fn(Range<usize>, &mut Vec<ElementBox>, &mut MutableAppContext),
+    F: Fn(Range<usize>, &mut Vec<ElementBox>, &mut LayoutContext),
 {
     type LayoutState = LayoutState;
     type PaintState = ();
@@ -124,7 +124,7 @@ where
         let mut scroll_max = 0.;
 
         let mut items = Vec::new();
-        (self.append_items)(0..1, &mut items, cx.app);
+        (self.append_items)(0..1, &mut items, cx);
         if let Some(first_item) = items.first_mut() {
             let mut item_size = first_item.layout(item_constraint, cx);
             item_size.set_x(size.x());
@@ -146,7 +146,7 @@ where
                 self.item_count,
                 start + (size.y() / item_height).ceil() as usize + 1,
             );
-            (self.append_items)(start..end, &mut items, cx.app);
+            (self.append_items)(start..end, &mut items, cx);
             for item in &mut items {
                 item.layout(item_constraint, cx);
             }

@@ -1482,16 +1482,16 @@ impl Snapshot {
         self.entries_by_path.summary().visible_file_count
     }
 
-    pub fn files(&self, start: usize) -> EntryIter {
-        EntryIter::files(self, start)
+    pub fn files(&self, start: usize) -> EntryIter<FileCount> {
+        EntryIter::new(self, start)
     }
 
-    pub fn visible_entries(&self, start: usize) -> EntryIter {
-        EntryIter::visible(self, start)
+    pub fn visible_entries(&self, start: usize) -> EntryIter<VisibleCountAndPath> {
+        EntryIter::new(self, start)
     }
 
-    pub fn visible_files(&self, start: usize) -> EntryIter {
-        EntryIter::visible_files(self, start)
+    pub fn visible_files(&self, start: usize) -> EntryIter<VisibleFileCount> {
+        EntryIter::new(self, start)
     }
 
     pub fn paths(&self) -> impl Iterator<Item = &Arc<Path>> {
@@ -1514,7 +1514,7 @@ impl Snapshot {
         &self.root_name
     }
 
-    fn entry_for_path(&self, path: impl AsRef<Path>) -> Option<&Entry> {
+    pub fn entry_for_path(&self, path: impl AsRef<Path>) -> Option<&Entry> {
         let mut cursor = self.entries_by_path.cursor::<_, ()>();
         if cursor.seek(&PathSearch::Exact(path.as_ref()), Bias::Left, &()) {
             cursor.item()
@@ -2065,8 +2065,17 @@ impl<'a: 'b, 'b> sum_tree::Dimension<'a, EntrySummary> for PathSearch<'b> {
     }
 }
 
-#[derive(Copy, Clone, Default, Debug, Eq, PartialEq, Ord, PartialOrd)]
+#[derive(Clone, Default, Debug, Eq, PartialEq, Ord, PartialOrd)]
 pub struct FileCount(usize);
+
+#[derive(Clone, Default, Debug, Eq, PartialEq, Ord, PartialOrd)]
+pub struct VisibleFileCount(usize);
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct VisibleCountAndPath<'a> {
+    count: Option<usize>,
+    path: PathSearch<'a>,
+}
 
 impl<'a> sum_tree::Dimension<'a, EntrySummary> for FileCount {
     fn add_summary(&mut self, summary: &'a EntrySummary, _: &()) {
@@ -2074,21 +2083,90 @@ impl<'a> sum_tree::Dimension<'a, EntrySummary> for FileCount {
     }
 }
 
-#[derive(Copy, Clone, Default, Debug, Eq, PartialEq, Ord, PartialOrd)]
-pub struct VisibleCount(usize);
-
-impl<'a> sum_tree::Dimension<'a, EntrySummary> for VisibleCount {
-    fn add_summary(&mut self, summary: &'a EntrySummary, _: &()) {
-        self.0 += summary.visible_count;
-    }
-}
-
-#[derive(Copy, Clone, Default, Debug, Eq, PartialEq, Ord, PartialOrd)]
-pub struct VisibleFileCount(usize);
-
 impl<'a> sum_tree::Dimension<'a, EntrySummary> for VisibleFileCount {
     fn add_summary(&mut self, summary: &'a EntrySummary, _: &()) {
         self.0 += summary.visible_file_count;
+    }
+}
+
+impl<'a> sum_tree::Dimension<'a, EntrySummary> for VisibleCountAndPath<'a> {
+    fn add_summary(&mut self, summary: &'a EntrySummary, _: &()) {
+        if let Some(count) = self.count.as_mut() {
+            *count += summary.visible_count;
+        } else {
+            unreachable!()
+        }
+        self.path = PathSearch::Exact(summary.max_path.as_ref());
+    }
+}
+
+impl<'a> Ord for VisibleCountAndPath<'a> {
+    fn cmp(&self, other: &Self) -> cmp::Ordering {
+        if let Some(count) = self.count {
+            count.cmp(&other.count.unwrap())
+        } else {
+            self.path.cmp(&other.path)
+        }
+    }
+}
+
+impl<'a> PartialOrd for VisibleCountAndPath<'a> {
+    fn partial_cmp(&self, other: &Self) -> Option<cmp::Ordering> {
+        Some(self.cmp(other))
+    }
+}
+
+impl From<usize> for FileCount {
+    fn from(count: usize) -> Self {
+        Self(count)
+    }
+}
+
+impl From<usize> for VisibleFileCount {
+    fn from(count: usize) -> Self {
+        Self(count)
+    }
+}
+
+impl<'a> From<usize> for VisibleCountAndPath<'a> {
+    fn from(count: usize) -> Self {
+        Self {
+            count: Some(count),
+            path: PathSearch::default(),
+        }
+    }
+}
+
+impl Deref for FileCount {
+    type Target = usize;
+
+    fn deref(&self) -> &usize {
+        &self.0
+    }
+}
+
+impl Deref for VisibleFileCount {
+    type Target = usize;
+
+    fn deref(&self) -> &usize {
+        &self.0
+    }
+}
+
+impl<'a> Deref for VisibleCountAndPath<'a> {
+    type Target = usize;
+
+    fn deref(&self) -> &usize {
+        self.count.as_ref().unwrap()
+    }
+}
+
+impl<'a> Default for VisibleCountAndPath<'a> {
+    fn default() -> Self {
+        Self {
+            count: Some(0),
+            path: Default::default(),
+        }
     }
 }
 
@@ -2584,63 +2662,66 @@ impl WorktreeHandle for ModelHandle<Worktree> {
     }
 }
 
-pub enum EntryIter<'a> {
-    Files(Cursor<'a, Entry, FileCount, ()>),
-    Visible(Cursor<'a, Entry, VisibleCount, ()>),
-    VisibleFiles(Cursor<'a, Entry, VisibleFileCount, ()>),
+pub struct EntryIter<'a, Dim> {
+    cursor: Cursor<'a, Entry, Dim, ()>,
 }
 
-impl<'a> EntryIter<'a> {
-    fn files(snapshot: &'a Snapshot, start: usize) -> Self {
+impl<'a, Dim> EntryIter<'a, Dim>
+where
+    Dim: sum_tree::SeekDimension<'a, EntrySummary> + From<usize> + Deref<Target = usize>,
+{
+    fn new(snapshot: &'a Snapshot, start: usize) -> Self {
         let mut cursor = snapshot.entries_by_path.cursor();
-        cursor.seek(&FileCount(start), Bias::Right, &());
-        Self::Files(cursor)
+        cursor.seek(&Dim::from(start), Bias::Right, &());
+        Self { cursor }
     }
 
-    fn visible(snapshot: &'a Snapshot, start: usize) -> Self {
-        let mut cursor = snapshot.entries_by_path.cursor();
-        cursor.seek(&VisibleCount(start), Bias::Right, &());
-        Self::Visible(cursor)
+    pub fn ix(&self) -> usize {
+        *self.cursor.seek_start().deref()
     }
 
-    fn visible_files(snapshot: &'a Snapshot, start: usize) -> Self {
-        let mut cursor = snapshot.entries_by_path.cursor();
-        cursor.seek(&VisibleFileCount(start), Bias::Right, &());
-        Self::VisibleFiles(cursor)
+    pub fn advance_to_ix(&mut self, ix: usize) {
+        self.cursor.seek_forward(&Dim::from(ix), Bias::Right, &());
     }
 
-    fn next_internal(&mut self) {
-        match self {
-            Self::Files(cursor) => {
-                let ix = *cursor.seek_start();
-                cursor.seek_forward(&FileCount(ix.0 + 1), Bias::Right, &());
-            }
-            Self::Visible(cursor) => {
-                let ix = *cursor.seek_start();
-                cursor.seek_forward(&VisibleCount(ix.0 + 1), Bias::Right, &());
-            }
-            Self::VisibleFiles(cursor) => {
-                let ix = *cursor.seek_start();
-                cursor.seek_forward(&VisibleFileCount(ix.0 + 1), Bias::Right, &());
-            }
-        }
+    pub fn advance(&mut self) {
+        self.advance_to_ix(self.ix() + 1);
     }
 
-    fn item(&self) -> Option<&'a Entry> {
-        match self {
-            Self::Files(cursor) => cursor.item(),
-            Self::Visible(cursor) => cursor.item(),
-            Self::VisibleFiles(cursor) => cursor.item(),
-        }
+    pub fn item(&self) -> Option<&'a Entry> {
+        self.cursor.item()
     }
 }
 
-impl<'a> Iterator for EntryIter<'a> {
+impl<'a> EntryIter<'a, VisibleCountAndPath<'a>> {
+    pub fn advance_sibling(&mut self) -> bool {
+        let start_count = self.cursor.seek_start().count.unwrap();
+        while let Some(item) = self.cursor.item() {
+            self.cursor.seek_forward(
+                &VisibleCountAndPath {
+                    count: None,
+                    path: PathSearch::Successor(item.path.as_ref()),
+                },
+                Bias::Right,
+                &(),
+            );
+            if self.cursor.seek_start().count.unwrap() > start_count {
+                return true;
+            }
+        }
+        false
+    }
+}
+
+impl<'a, Dim> Iterator for EntryIter<'a, Dim>
+where
+    Dim: sum_tree::SeekDimension<'a, EntrySummary> + From<usize> + Deref<Target = usize>,
+{
     type Item = &'a Entry;
 
     fn next(&mut self) -> Option<Self::Item> {
         if let Some(entry) = self.item() {
-            self.next_internal();
+            self.advance();
             Some(entry)
         } else {
             None

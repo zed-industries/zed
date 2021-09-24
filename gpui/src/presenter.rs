@@ -7,7 +7,7 @@ use crate::{
     platform::Event,
     text_layout::TextLayoutCache,
     Action, AnyAction, AssetCache, ElementBox, Entity, FontSystem, ModelHandle, ReadModel,
-    ReadView, Scene, View, ViewHandle,
+    ReadView, Scene, UpdateView, View, ViewHandle,
 };
 use pathfinder_geometry::vector::{vec2f, Vector2F};
 use serde_json::json;
@@ -261,6 +261,16 @@ impl<'a> DerefMut for LayoutContext<'a> {
 impl<'a> ReadView for LayoutContext<'a> {
     fn read_view<T: View>(&self, handle: &ViewHandle<T>) -> &T {
         self.app.read_view(handle)
+    }
+}
+
+impl<'a> UpdateView for LayoutContext<'a> {
+    fn update_view<T, F, S>(&mut self, handle: &ViewHandle<T>, update: F) -> S
+    where
+        T: View,
+        F: FnOnce(&mut T, &mut crate::ViewContext<T>) -> S,
+    {
+        self.app.update_view(handle, update)
     }
 }
 
