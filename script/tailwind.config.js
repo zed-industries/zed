@@ -1,7 +1,6 @@
 const colors = require('tailwindcss/colors')
 
 module.exports = {
-    mode: 'jit',
     corePlugins: {
         float: false,
         tableLayout: false,
