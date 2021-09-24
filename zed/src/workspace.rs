@@ -1041,6 +1041,16 @@ impl Workspace {
                 .with_style(theme.workspace.titlebar.offline_icon.container)
                 .boxed(),
             ),
+            rpc::Status::UpgradeRequired => Some(
+                Label::new(
+                    "Please update Zed to collaborate".to_string(),
+                    theme.workspace.titlebar.outdated_warning.text.clone(),
+                )
+                .contained()
+                .with_style(theme.workspace.titlebar.outdated_warning.container)
+                .aligned()
+                .boxed(),
+            ),
             _ => None,
         }
     }
@@ -1195,11 +1205,9 @@ mod tests {
         editor::{Editor, Insert},
         fs::FakeFs,
         test::{temp_tree, test_app_state},
-        worktree::WorktreeHandle,
     };
     use serde_json::json;
-    use std::{collections::HashSet, fs};
-    use tempdir::TempDir;
+    use std::collections::HashSet;
 
     #[gpui::test]
     async fn test_open_paths_action(mut cx: gpui::TestAppContext) {
@@ -1268,20 +1276,26 @@ mod tests {
 
     #[gpui::test]
     async fn test_open_entry(mut cx: gpui::TestAppContext) {
-        let dir = temp_tree(json!({
-            "a": {
-                "file1": "contents 1",
-                "file2": "contents 2",
-                "file3": "contents 3",
-            },
-        }));
-
         let app_state = cx.update(test_app_state);
+        app_state
+            .fs
+            .as_fake()
+            .insert_tree(
+                "/root",
+                json!({
+                    "a": {
+                        "file1": "contents 1",
+                        "file2": "contents 2",
+                        "file3": "contents 3",
+                    },
+                }),
+            )
+            .await;
 
         let (_, workspace) = cx.add_window(|cx| Workspace::new(&app_state, cx));
         workspace
             .update(&mut cx, |workspace, cx| {
-                workspace.add_worktree(dir.path(), cx)
+                workspace.add_worktree(Path::new("/root"), cx)
             })
             .await
             .unwrap();
@@ -1445,28 +1459,30 @@ mod tests {
 
     #[gpui::test]
     async fn test_save_conflicting_item(mut cx: gpui::TestAppContext) {
-        let dir = temp_tree(json!({
-            "a.txt": "",
-        }));
-
         let app_state = cx.update(test_app_state);
+        app_state
+            .fs
+            .as_fake()
+            .insert_tree(
+                "/root",
+                json!({
+                    "a.txt": "",
+                }),
+            )
+            .await;
+
         let (window_id, workspace) = cx.add_window(|cx| Workspace::new(&app_state, cx));
         workspace
             .update(&mut cx, |workspace, cx| {
-                workspace.add_worktree(dir.path(), cx)
+                workspace.add_worktree(Path::new("/root"), cx)
             })
             .await
             .unwrap();
-        let tree = cx.read(|cx| {
-            let mut trees = workspace.read(cx).worktrees().iter();
-            trees.next().unwrap().clone()
-        });
-        tree.flush_fs_events(&cx).await;
 
         // Open a file within an existing worktree.
         cx.update(|cx| {
             workspace.update(cx, |view, cx| {
-                view.open_paths(&[dir.path().join("a.txt")], cx)
+                view.open_paths(&[PathBuf::from("/root/a.txt")], cx)
             })
         })
         .await;
@@ -1477,7 +1493,12 @@ mod tests {
         });
 
         cx.update(|cx| editor.update(cx, |editor, cx| editor.insert(&Insert("x".into()), cx)));
-        fs::write(dir.path().join("a.txt"), "changed").unwrap();
+        app_state
+            .fs
+            .as_fake()
+            .insert_file("/root/a.txt", "changed".to_string())
+            .await
+            .unwrap();
         editor
             .condition(&cx, |editor, cx| editor.has_conflict(cx))
             .await;
@@ -1493,12 +1514,12 @@ mod tests {
 
     #[gpui::test]
     async fn test_open_and_save_new_file(mut cx: gpui::TestAppContext) {
-        let dir = TempDir::new("test-new-file").unwrap();
         let app_state = cx.update(test_app_state);
+        app_state.fs.as_fake().insert_dir("/root").await.unwrap();
         let (_, workspace) = cx.add_window(|cx| Workspace::new(&app_state, cx));
         workspace
             .update(&mut cx, |workspace, cx| {
-                workspace.add_worktree(dir.path(), cx)
+                workspace.add_worktree(Path::new("/root"), cx)
             })
             .await
             .unwrap();
@@ -1511,7 +1532,6 @@ mod tests {
                 .unwrap()
                 .clone()
         });
-        tree.flush_fs_events(&cx).await;
 
         // Create a new untitled buffer
         let editor = workspace.update(&mut cx, |workspace, cx| {
@@ -1537,7 +1557,7 @@ mod tests {
             workspace.save_active_item(&Save, cx)
         });
         cx.simulate_new_path_selection(|parent_dir| {
-            assert_eq!(parent_dir, dir.path());
+            assert_eq!(parent_dir, Path::new("/root"));
             Some(parent_dir.join("the-new-name.rs"))
         });
         cx.read(|cx| {
@@ -1598,8 +1618,8 @@ mod tests {
     async fn test_setting_language_when_saving_as_single_file_worktree(
         mut cx: gpui::TestAppContext,
     ) {
-        let dir = TempDir::new("test-new-file").unwrap();
         let app_state = cx.update(test_app_state);
+        app_state.fs.as_fake().insert_dir("/root").await.unwrap();
         let (_, workspace) = cx.add_window(|cx| Workspace::new(&app_state, cx));
 
         // Create a new untitled buffer
@@ -1623,7 +1643,7 @@ mod tests {
         workspace.update(&mut cx, |workspace, cx| {
             workspace.save_active_item(&Save, cx)
         });
-        cx.simulate_new_path_selection(|_| Some(dir.path().join("the-new-name.rs")));
+        cx.simulate_new_path_selection(|_| Some(PathBuf::from("/root/the-new-name.rs")));
 
         editor
             .condition(&cx, |editor, cx| !editor.is_dirty(cx))
@@ -1640,7 +1660,7 @@ mod tests {
         cx.update(init);
 
         let app_state = cx.update(test_app_state);
-        cx.dispatch_global_action(OpenNew(app_state));
+        cx.dispatch_global_action(OpenNew(app_state.clone()));
         let window_id = *cx.window_ids().first().unwrap();
         let workspace = cx.root_view::<Workspace>(window_id).unwrap();
         let editor = workspace.update(&mut cx, |workspace, cx| {
@@ -1660,10 +1680,8 @@ mod tests {
             workspace.save_active_item(&Save, cx)
         });
 
-        let dir = TempDir::new("test-new-empty-workspace").unwrap();
-        cx.simulate_new_path_selection(|_| {
-            Some(dir.path().canonicalize().unwrap().join("the-new-name"))
-        });
+        app_state.fs.as_fake().insert_dir("/root").await.unwrap();
+        cx.simulate_new_path_selection(|_| Some(PathBuf::from("/root/the-new-name")));
 
         editor
             .condition(&cx, |editor, cx| editor.title(cx) == "the-new-name")
@@ -1676,20 +1694,26 @@ mod tests {
     #[gpui::test]
     async fn test_pane_actions(mut cx: gpui::TestAppContext) {
         cx.update(|cx| pane::init(cx));
-
-        let dir = temp_tree(json!({
-            "a": {
-                "file1": "contents 1",
-                "file2": "contents 2",
-                "file3": "contents 3",
-            },
-        }));
-
         let app_state = cx.update(test_app_state);
+        app_state
+            .fs
+            .as_fake()
+            .insert_tree(
+                "/root",
+                json!({
+                    "a": {
+                        "file1": "contents 1",
+                        "file2": "contents 2",
+                        "file3": "contents 3",
+                    },
+                }),
+            )
+            .await;
+
         let (window_id, workspace) = cx.add_window(|cx| Workspace::new(&app_state, cx));
         workspace
             .update(&mut cx, |workspace, cx| {
-                workspace.add_worktree(dir.path(), cx)
+                workspace.add_worktree(Path::new("/root"), cx)
             })
             .await
             .unwrap();

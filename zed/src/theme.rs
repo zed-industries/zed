@@ -54,6 +54,7 @@ pub struct Titlebar {
     pub offline_icon: OfflineIcon,
     pub icon_color: Color,
     pub avatar: ImageStyle,
+    pub outdated_warning: ContainedText,
 }
 
 #[derive(Clone, Deserialize)]
@@ -169,7 +170,7 @@ pub struct Selector {
     pub active_item: ContainedLabel,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Clone, Debug, Deserialize)]
 pub struct ContainedText {
     #[serde(flatten)]
     pub container: ContainerStyle,

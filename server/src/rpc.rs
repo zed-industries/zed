@@ -1,7 +1,7 @@
 mod store;
 
 use super::{
-    auth,
+    auth::process_auth_header,
     db::{ChannelId, MessageId, UserId},
     AppState,
 };
@@ -885,8 +885,7 @@ where
 
 pub fn add_routes(app: &mut tide::Server<Arc<AppState>>, rpc: &Arc<Peer>) {
     let server = Server::new(app.state().clone(), rpc.clone(), None);
-    app.at("/rpc").with(auth::VerifyToken).get(move |request: Request<Arc<AppState>>| {
-        let user_id = request.ext::<UserId>().copied();
+    app.at("/rpc").get(move |request: Request<Arc<AppState>>| {
         let server = server.clone();
         async move {
             const WEBSOCKET_GUID: &str = "258EAFA5-E914-47DA-95CA-C5AB0DC85B11";
@@ -894,8 +893,11 @@ pub fn add_routes(app: &mut tide::Server<Arc<AppState>>, rpc: &Arc<Peer>) {
             let connection_upgrade = header_contains_ignore_case(&request, CONNECTION, "upgrade");
             let upgrade_to_websocket = header_contains_ignore_case(&request, UPGRADE, "websocket");
             let upgrade_requested = connection_upgrade && upgrade_to_websocket;
+            let client_protocol_version: Option<u32> = request
+                .header("X-Zed-Protocol-Version")
+                .and_then(|v| v.as_str().parse().ok());
 
-            if !upgrade_requested {
+            if !upgrade_requested || client_protocol_version != Some(zrpc::PROTOCOL_VERSION) {
                 return Ok(Response::new(StatusCode::UpgradeRequired));
             }
 
@@ -903,6 +905,8 @@ pub fn add_routes(app: &mut tide::Server<Arc<AppState>>, rpc: &Arc<Peer>) {
                 Some(h) => h.as_str(),
                 None => return Err(anyhow!("expected sec-websocket-key"))?,
             };
+
+            let user_id = process_auth_header(&request).await?;
 
             let mut response = Response::new(StatusCode::SwitchingProtocols);
             response.insert_header(UPGRADE, "websocket");
@@ -914,10 +918,17 @@ pub fn add_routes(app: &mut tide::Server<Arc<AppState>>, rpc: &Arc<Peer>) {
             let http_res: &mut tide::http::Response = response.as_mut();
             let upgrade_receiver = http_res.recv_upgrade().await;
             let addr = request.remote().unwrap_or("unknown").to_string();
-            let user_id = user_id.ok_or_else(|| anyhow!("user_id is not present on request. ensure auth::VerifyToken middleware is present"))?;
             task::spawn(async move {
                 if let Some(stream) = upgrade_receiver.await {
-                    server.handle_connection(Connection::new(WebSocketStream::from_raw_socket(stream, Role::Server, None).await), addr, user_id).await;
+                    server
+                        .handle_connection(
+                            Connection::new(
+                                WebSocketStream::from_raw_socket(stream, Role::Server, None).await,
+                            ),
+                            addr,
+                            user_id,
+                        )
+                        .await;
                 }
             });
 

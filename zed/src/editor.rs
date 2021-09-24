@@ -29,7 +29,6 @@ use smol::Timer;
 use std::{
     cell::RefCell,
     cmp::{self, Ordering},
-    iter::FromIterator,
     mem,
     ops::{Range, RangeInclusive},
     path::Path,
@@ -299,7 +298,7 @@ pub struct Editor {
     pending_selection: Option<Selection>,
     next_selection_id: usize,
     add_selections_state: Option<AddSelectionsState>,
-    select_larger_syntax_node_stack: Vec<Vec<Selection>>,
+    select_larger_syntax_node_stack: Vec<Arc<[Selection]>>,
     scroll_position: Vector2F,
     scroll_top_anchor: Anchor,
     autoscroll_requested: bool,
@@ -511,15 +510,14 @@ impl Editor {
             return false;
         }
 
-        let first_cursor_top = self
-            .selections(cx)
+        let selections = self.selections(cx);
+        let first_cursor_top = selections
             .first()
             .unwrap()
             .head()
             .to_display_point(&display_map, Bias::Left)
             .row() as f32;
-        let last_cursor_bottom = self
-            .selections(cx)
+        let last_cursor_bottom = selections
             .last()
             .unwrap()
             .head()
@@ -561,12 +559,13 @@ impl Editor {
         scroll_width: f32,
         max_glyph_width: f32,
         layouts: &[text_layout::Line],
-        cx: &mut MutableAppContext,
+        cx: &mut ViewContext<Self>,
     ) -> bool {
+        let selections = self.selections(cx);
         let display_map = self.display_map.update(cx, |map, cx| map.snapshot(cx));
         let mut target_left = std::f32::INFINITY;
         let mut target_right = 0.0_f32;
-        for selection in self.selections(cx) {
+        for selection in selections.iter() {
             let head = selection.head().to_display_point(&display_map, Bias::Left);
             let start_column = head.column().saturating_sub(3);
             let end_column = cmp::min(display_map.line_len(head.row()), head.column() + 3);
@@ -655,12 +654,10 @@ impl Editor {
 
     fn end_selection(&mut self, cx: &mut ViewContext<Self>) {
         if let Some(selection) = self.pending_selection.take() {
-            let mut selections = self.selections(cx.as_ref()).to_vec();
+            let mut selections = self.selections(cx).to_vec();
             let ix = self.selection_insertion_index(&selections, &selection.start, cx.as_ref());
             selections.insert(ix, selection);
             self.update_selections(selections, false, cx);
-        } else {
-            log::error!("end_selection dispatched with no pending selection");
         }
     }
 
@@ -669,12 +666,13 @@ impl Editor {
     }
 
     pub fn cancel(&mut self, _: &Cancel, cx: &mut ViewContext<Self>) {
-        let selections = self.selections(cx.as_ref());
         if let Some(pending_selection) = self.pending_selection.take() {
+            let selections = self.selections(cx);
             if selections.is_empty() {
                 self.update_selections(vec![pending_selection], true, cx);
             }
         } else {
+            let selections = self.selections(cx);
             let mut oldest_selection = selections.iter().min_by_key(|s| s.id).unwrap().clone();
             if selections.len() == 1 {
                 oldest_selection.start = oldest_selection.head().clone();
@@ -743,8 +741,9 @@ impl Editor {
     pub fn insert(&mut self, action: &Insert, cx: &mut ViewContext<Self>) {
         let mut old_selections = SmallVec::<[_; 32]>::new();
         {
+            let selections = self.selections(cx);
             let buffer = self.buffer.read(cx);
-            for selection in self.selections(cx.as_ref()) {
+            for selection in selections.iter() {
                 let start = selection.start.to_offset(buffer);
                 let end = selection.end.to_offset(buffer);
                 old_selections.push((selection.id, start..end));
@@ -790,7 +789,7 @@ impl Editor {
 
     pub fn backspace(&mut self, _: &Backspace, cx: &mut ViewContext<Self>) {
         self.start_transaction(cx);
-        let mut selections = self.selections(cx.as_ref()).to_vec();
+        let mut selections = self.selections(cx).to_vec();
         let display_map = self.display_map.update(cx, |map, cx| map.snapshot(cx));
         {
             let buffer = self.buffer.read(cx);
@@ -814,7 +813,7 @@ impl Editor {
     pub fn delete(&mut self, _: &Delete, cx: &mut ViewContext<Self>) {
         self.start_transaction(cx);
         let display_map = self.display_map.update(cx, |map, cx| map.snapshot(cx));
-        let mut selections = self.selections(cx.as_ref()).to_vec();
+        let mut selections = self.selections(cx).to_vec();
         {
             let buffer = self.buffer.read(cx);
             for selection in &mut selections {
@@ -837,14 +836,14 @@ impl Editor {
     pub fn delete_line(&mut self, _: &DeleteLine, cx: &mut ViewContext<Self>) {
         self.start_transaction(cx);
 
+        let selections = self.selections(cx);
         let display_map = self.display_map.update(cx, |map, cx| map.snapshot(cx));
-        let app = cx.as_ref();
-        let buffer = self.buffer.read(app);
+        let buffer = self.buffer.read(cx);
 
         let mut new_cursors = Vec::new();
         let mut edit_ranges = Vec::new();
 
-        let mut selections = self.selections(app).iter().peekable();
+        let mut selections = selections.iter().peekable();
         while let Some(selection) = selections.next() {
             let mut rows = selection.spanned_rows(false, &display_map).buffer_rows;
             let goal_display_column = selection
@@ -914,7 +913,7 @@ impl Editor {
     pub fn duplicate_line(&mut self, _: &DuplicateLine, cx: &mut ViewContext<Self>) {
         self.start_transaction(cx);
 
-        let mut selections = self.selections(cx.as_ref()).to_vec();
+        let mut selections = self.selections(cx).to_vec();
         {
             // Temporarily bias selections right to allow newly duplicate lines to push them down
             // when the selections are at the beginning of a line.
@@ -974,8 +973,8 @@ impl Editor {
     pub fn move_line_up(&mut self, _: &MoveLineUp, cx: &mut ViewContext<Self>) {
         self.start_transaction(cx);
 
+        let selections = self.selections(cx);
         let display_map = self.display_map.update(cx, |map, cx| map.snapshot(cx));
-        let app = cx.as_ref();
         let buffer = self.buffer.read(cx);
 
         let mut edits = Vec::new();
@@ -983,7 +982,7 @@ impl Editor {
         let mut old_folds = Vec::new();
         let mut new_folds = Vec::new();
 
-        let mut selections = self.selections(app).iter().peekable();
+        let mut selections = selections.iter().peekable();
         let mut contiguous_selections = Vec::new();
         while let Some(selection) = selections.next() {
             // Accumulate contiguous regions of rows that we want to move.
@@ -1064,8 +1063,8 @@ impl Editor {
     pub fn move_line_down(&mut self, _: &MoveLineDown, cx: &mut ViewContext<Self>) {
         self.start_transaction(cx);
 
+        let selections = self.selections(cx);
         let display_map = self.display_map.update(cx, |map, cx| map.snapshot(cx));
-        let app = cx.as_ref();
         let buffer = self.buffer.read(cx);
 
         let mut edits = Vec::new();
@@ -1073,7 +1072,7 @@ impl Editor {
         let mut old_folds = Vec::new();
         let mut new_folds = Vec::new();
 
-        let mut selections = self.selections(app).iter().peekable();
+        let mut selections = selections.iter().peekable();
         let mut contiguous_selections = Vec::new();
         while let Some(selection) = selections.next() {
             // Accumulate contiguous regions of rows that we want to move.
@@ -1151,7 +1150,7 @@ impl Editor {
     pub fn cut(&mut self, _: &Cut, cx: &mut ViewContext<Self>) {
         self.start_transaction(cx);
         let mut text = String::new();
-        let mut selections = self.selections(cx.as_ref()).to_vec();
+        let mut selections = self.selections(cx).to_vec();
         let mut clipboard_selections = Vec::with_capacity(selections.len());
         {
             let buffer = self.buffer.read(cx);
@@ -1186,12 +1185,12 @@ impl Editor {
     }
 
     pub fn copy(&mut self, _: &Copy, cx: &mut ViewContext<Self>) {
+        let selections = self.selections(cx);
         let buffer = self.buffer.read(cx);
         let max_point = buffer.max_point();
         let mut text = String::new();
-        let selections = self.selections(cx.as_ref());
         let mut clipboard_selections = Vec::with_capacity(selections.len());
-        for selection in selections {
+        for selection in selections.iter() {
             let mut start = selection.start.to_point(buffer);
             let mut end = selection.end.to_point(buffer);
             let is_entire_line = start == end;
@@ -1218,24 +1217,28 @@ impl Editor {
         if let Some(item) = cx.as_mut().read_from_clipboard() {
             let clipboard_text = item.text();
             if let Some(mut clipboard_selections) = item.metadata::<Vec<ClipboardSelection>>() {
-                let selections = self.selections(cx.as_ref()).to_vec();
+                let selections = self.selections(cx);
+                let all_selections_were_entire_line =
+                    clipboard_selections.iter().all(|s| s.is_entire_line);
                 if clipboard_selections.len() != selections.len() {
-                    let merged_selection = ClipboardSelection {
-                        len: clipboard_selections.iter().map(|s| s.len).sum(),
-                        is_entire_line: clipboard_selections.iter().all(|s| s.is_entire_line),
-                    };
                     clipboard_selections.clear();
-                    clipboard_selections.push(merged_selection);
                 }
 
                 self.start_transaction(cx);
+                let mut start_offset = 0;
                 let mut new_selections = Vec::with_capacity(selections.len());
-                let mut clipboard_chars = clipboard_text.chars().cycle();
-                for (selection, clipboard_selection) in
-                    selections.iter().zip(clipboard_selections.iter().cycle())
-                {
-                    let to_insert =
-                        String::from_iter(clipboard_chars.by_ref().take(clipboard_selection.len));
+                for (i, selection) in selections.iter().enumerate() {
+                    let to_insert;
+                    let entire_line;
+                    if let Some(clipboard_selection) = clipboard_selections.get(i) {
+                        let end_offset = start_offset + clipboard_selection.len;
+                        to_insert = &clipboard_text[start_offset..end_offset];
+                        entire_line = clipboard_selection.is_entire_line;
+                        start_offset = end_offset
+                    } else {
+                        to_insert = clipboard_text.as_str();
+                        entire_line = all_selections_were_entire_line;
+                    }
 
                     self.buffer.update(cx, |buffer, cx| {
                         let selection_start = selection.start.to_point(&*buffer);
@@ -1246,7 +1249,7 @@ impl Editor {
                         // selection was copied. If this selection is also currently empty,
                         // then paste the line before the current line of the buffer.
                         let new_selection_start = selection.end.bias_right(buffer);
-                        if selection_start == selection_end && clipboard_selection.is_entire_line {
+                        if selection_start == selection_end && entire_line {
                             let line_start = Point::new(selection_start.row, 0);
                             buffer.edit(Some(line_start..line_start), to_insert, cx);
                         } else {
@@ -1281,8 +1284,7 @@ impl Editor {
 
     pub fn move_left(&mut self, _: &MoveLeft, cx: &mut ViewContext<Self>) {
         let display_map = self.display_map.update(cx, |map, cx| map.snapshot(cx));
-        let app = cx.as_ref();
-        let mut selections = self.selections(app).to_vec();
+        let mut selections = self.selections(cx).to_vec();
         {
             for selection in &mut selections {
                 let start = selection.start.to_display_point(&display_map, Bias::Left);
@@ -1305,7 +1307,7 @@ impl Editor {
 
     pub fn select_left(&mut self, _: &SelectLeft, cx: &mut ViewContext<Self>) {
         let display_map = self.display_map.update(cx, |map, cx| map.snapshot(cx));
-        let mut selections = self.selections(cx.as_ref()).to_vec();
+        let mut selections = self.selections(cx).to_vec();
         {
             let buffer = self.buffer.read(cx);
             for selection in &mut selections {
@@ -1321,7 +1323,7 @@ impl Editor {
 
     pub fn move_right(&mut self, _: &MoveRight, cx: &mut ViewContext<Self>) {
         let display_map = self.display_map.update(cx, |map, cx| map.snapshot(cx));
-        let mut selections = self.selections(cx.as_ref()).to_vec();
+        let mut selections = self.selections(cx).to_vec();
         {
             for selection in &mut selections {
                 let start = selection.start.to_display_point(&display_map, Bias::Left);
@@ -1344,7 +1346,7 @@ impl Editor {
 
     pub fn select_right(&mut self, _: &SelectRight, cx: &mut ViewContext<Self>) {
         let display_map = self.display_map.update(cx, |map, cx| map.snapshot(cx));
-        let mut selections = self.selections(cx.as_ref()).to_vec();
+        let mut selections = self.selections(cx).to_vec();
         {
             let app = cx.as_ref();
             let buffer = self.buffer.read(app);
@@ -1364,7 +1366,7 @@ impl Editor {
         if matches!(self.mode, EditorMode::SingleLine) {
             cx.propagate_action();
         } else {
-            let mut selections = self.selections(cx.as_ref()).to_vec();
+            let mut selections = self.selections(cx).to_vec();
             {
                 for selection in &mut selections {
                     let start = selection.start.to_display_point(&display_map, Bias::Left);
@@ -1387,7 +1389,7 @@ impl Editor {
 
     pub fn select_up(&mut self, _: &SelectUp, cx: &mut ViewContext<Self>) {
         let display_map = self.display_map.update(cx, |map, cx| map.snapshot(cx));
-        let mut selections = self.selections(cx.as_ref()).to_vec();
+        let mut selections = self.selections(cx).to_vec();
         {
             let app = cx.as_ref();
             let buffer = self.buffer.read(app);
@@ -1406,7 +1408,7 @@ impl Editor {
             cx.propagate_action();
         } else {
             let display_map = self.display_map.update(cx, |map, cx| map.snapshot(cx));
-            let mut selections = self.selections(cx.as_ref()).to_vec();
+            let mut selections = self.selections(cx).to_vec();
             {
                 for selection in &mut selections {
                     let start = selection.start.to_display_point(&display_map, Bias::Left);
@@ -1490,8 +1492,26 @@ impl Editor {
         cx: &mut ViewContext<Self>,
     ) {
         self.start_transaction(cx);
-        self.select_to_previous_word_boundary(&SelectToPreviousWordBoundary, cx);
-        self.backspace(&Backspace, cx);
+        let display_map = self.display_map.update(cx, |map, cx| map.snapshot(cx));
+        let mut selections = self.selections(cx).to_vec();
+        {
+            let buffer = self.buffer.read(cx);
+            for selection in &mut selections {
+                let range = selection.point_range(buffer);
+                if range.start == range.end {
+                    let head = selection.head().to_display_point(&display_map, Bias::Left);
+                    let cursor = display_map.anchor_before(
+                        movement::prev_word_boundary(&display_map, head).unwrap(),
+                        Bias::Right,
+                    );
+                    selection.set_head(&buffer, cursor);
+                    selection.goal = SelectionGoal::None;
+                }
+            }
+        }
+
+        self.update_selections(selections, true, cx);
+        self.insert(&Insert(String::new()), cx);
         self.end_transaction(cx);
     }
 
@@ -1542,8 +1562,26 @@ impl Editor {
         cx: &mut ViewContext<Self>,
     ) {
         self.start_transaction(cx);
-        self.select_to_next_word_boundary(&SelectToNextWordBoundary, cx);
-        self.delete(&Delete, cx);
+        let display_map = self.display_map.update(cx, |map, cx| map.snapshot(cx));
+        let mut selections = self.selections(cx).to_vec();
+        {
+            let buffer = self.buffer.read(cx);
+            for selection in &mut selections {
+                let range = selection.point_range(buffer);
+                if range.start == range.end {
+                    let head = selection.head().to_display_point(&display_map, Bias::Left);
+                    let cursor = display_map.anchor_before(
+                        movement::next_word_boundary(&display_map, head).unwrap(),
+                        Bias::Right,
+                    );
+                    selection.set_head(&buffer, cursor);
+                    selection.goal = SelectionGoal::None;
+                }
+            }
+        }
+
+        self.update_selections(selections, true, cx);
+        self.insert(&Insert(String::new()), cx);
         self.end_transaction(cx);
     }
 
@@ -1661,7 +1699,7 @@ impl Editor {
     }
 
     pub fn select_to_beginning(&mut self, _: &SelectToBeginning, cx: &mut ViewContext<Self>) {
-        let mut selection = self.selections(cx.as_ref()).last().unwrap().clone();
+        let mut selection = self.selections(cx).last().unwrap().clone();
         selection.set_head(self.buffer.read(cx), Anchor::min());
         self.update_selections(vec![selection], true, cx);
     }
@@ -1680,7 +1718,7 @@ impl Editor {
     }
 
     pub fn select_to_end(&mut self, _: &SelectToEnd, cx: &mut ViewContext<Self>) {
-        let mut selection = self.selections(cx.as_ref()).last().unwrap().clone();
+        let mut selection = self.selections(cx).last().unwrap().clone();
         selection.set_head(self.buffer.read(cx), Anchor::max());
         self.update_selections(vec![selection], true, cx);
     }
@@ -1698,8 +1736,8 @@ impl Editor {
 
     pub fn select_line(&mut self, _: &SelectLine, cx: &mut ViewContext<Self>) {
         let display_map = self.display_map.update(cx, |map, cx| map.snapshot(cx));
-        let buffer = self.buffer.read(cx);
         let mut selections = self.selections(cx).to_vec();
+        let buffer = self.buffer.read(cx);
         let max_point = buffer.max_point();
         for selection in &mut selections {
             let rows = selection.spanned_rows(true, &display_map).buffer_rows;
@@ -1715,12 +1753,12 @@ impl Editor {
         _: &SplitSelectionIntoLines,
         cx: &mut ViewContext<Self>,
     ) {
-        let app = cx.as_ref();
-        let buffer = self.buffer.read(app);
+        let selections = self.selections(cx);
+        let buffer = self.buffer.read(cx);
 
         let mut to_unfold = Vec::new();
         let mut new_selections = Vec::new();
-        for selection in self.selections(app) {
+        for selection in selections.iter() {
             let range = selection.point_range(buffer).sorted();
             if range.start.row != range.end.row {
                 new_selections.push(Selection {
@@ -1860,14 +1898,14 @@ impl Editor {
         _: &SelectLargerSyntaxNode,
         cx: &mut ViewContext<Self>,
     ) {
+        let old_selections = self.selections(cx);
         let display_map = self.display_map.update(cx, |map, cx| map.snapshot(cx));
         let buffer = self.buffer.read(cx);
 
         let mut stack = mem::take(&mut self.select_larger_syntax_node_stack);
         let mut selected_larger_node = false;
-        let old_selections = self.selections(cx).to_vec();
         let mut new_selection_ranges = Vec::new();
-        for selection in &old_selections {
+        for selection in old_selections.iter() {
             let old_range = selection.start.to_offset(buffer)..selection.end.to_offset(buffer);
             let mut new_range = old_range.clone();
             while let Some(containing_range) = buffer.range_for_syntax_ancestor(new_range.clone()) {
@@ -1908,7 +1946,7 @@ impl Editor {
     ) {
         let mut stack = mem::take(&mut self.select_larger_syntax_node_stack);
         if let Some(selections) = stack.pop() {
-            self.update_selections(selections, true, cx);
+            self.update_selections(selections.to_vec(), true, cx);
         }
         self.select_larger_syntax_node_stack = stack;
     }
@@ -1918,8 +1956,8 @@ impl Editor {
         _: &MoveToEnclosingBracket,
         cx: &mut ViewContext<Self>,
     ) {
+        let mut selections = self.selections(cx).to_vec();
         let buffer = self.buffer.read(cx.as_ref());
-        let mut selections = self.selections(cx.as_ref()).to_vec();
         for selection in &mut selections {
             let selection_range = selection.offset_range(buffer);
             if let Some((open_range, close_range)) =
@@ -2033,12 +2071,14 @@ impl Editor {
         }
     }
 
-    fn selections<'a>(&self, cx: &'a AppContext) -> &'a [Selection] {
+    fn selections(&mut self, cx: &mut ViewContext<Self>) -> Arc<[Selection]> {
+        self.end_selection(cx);
         let buffer = self.buffer.read(cx);
-        &buffer
+        buffer
             .selection_set(self.selection_set_id)
             .unwrap()
             .selections
+            .clone()
     }
 
     fn update_selections(
@@ -2112,8 +2152,9 @@ impl Editor {
     pub fn fold(&mut self, _: &Fold, cx: &mut ViewContext<Self>) {
         let mut fold_ranges = Vec::new();
 
+        let selections = self.selections(cx);
         let display_map = self.display_map.update(cx, |map, cx| map.snapshot(cx));
-        for selection in self.selections(cx) {
+        for selection in selections.iter() {
             let range = selection.display_range(&display_map).sorted();
             let buffer_start_row = range.start.to_buffer_point(&display_map, Bias::Left).row;
 
@@ -2134,10 +2175,10 @@ impl Editor {
     }
 
     pub fn unfold(&mut self, _: &Unfold, cx: &mut ViewContext<Self>) {
+        let selections = self.selections(cx);
         let display_map = self.display_map.update(cx, |map, cx| map.snapshot(cx));
         let buffer = self.buffer.read(cx);
-        let ranges = self
-            .selections(cx)
+        let ranges = selections
             .iter()
             .map(|s| {
                 let range = s.display_range(&display_map).sorted();
@@ -2195,9 +2236,9 @@ impl Editor {
     }
 
     pub fn fold_selected_ranges(&mut self, _: &FoldSelectedRanges, cx: &mut ViewContext<Self>) {
+        let selections = self.selections(cx);
         let buffer = self.buffer.read(cx);
-        let ranges = self
-            .selections(cx.as_ref())
+        let ranges = selections
             .iter()
             .map(|s| s.point_range(buffer).sorted())
             .collect();
@@ -3228,19 +3269,8 @@ mod tests {
             assert_eq!(
                 view.selection_ranges(cx),
                 &[
-                    DisplayPoint::new(0, 3)..DisplayPoint::new(0, 3),
-                    DisplayPoint::new(1, 0)..DisplayPoint::new(1, 0),
-                ]
-            );
-        });
-
-        view.update(cx, |view, cx| {
-            view.move_to_previous_word_boundary(&MoveToPreviousWordBoundary, cx);
-            assert_eq!(
-                view.selection_ranges(cx),
-                &[
                     DisplayPoint::new(0, 0)..DisplayPoint::new(0, 0),
-                    DisplayPoint::new(0, 24)..DisplayPoint::new(0, 24),
+                    DisplayPoint::new(1, 0)..DisplayPoint::new(1, 0),
                 ]
             );
         });
@@ -3272,7 +3302,7 @@ mod tests {
             assert_eq!(
                 view.selection_ranges(cx),
                 &[
-                    DisplayPoint::new(0, 4)..DisplayPoint::new(0, 4),
+                    DisplayPoint::new(0, 7)..DisplayPoint::new(0, 7),
                     DisplayPoint::new(1, 0)..DisplayPoint::new(1, 0),
                 ]
             );
@@ -3283,19 +3313,8 @@ mod tests {
             assert_eq!(
                 view.selection_ranges(cx),
                 &[
-                    DisplayPoint::new(0, 7)..DisplayPoint::new(0, 7),
-                    DisplayPoint::new(2, 0)..DisplayPoint::new(2, 0),
-                ]
-            );
-        });
-
-        view.update(cx, |view, cx| {
-            view.move_to_next_word_boundary(&MoveToNextWordBoundary, cx);
-            assert_eq!(
-                view.selection_ranges(cx),
-                &[
                     DisplayPoint::new(0, 9)..DisplayPoint::new(0, 9),
-                    DisplayPoint::new(2, 2)..DisplayPoint::new(2, 2),
+                    DisplayPoint::new(2, 3)..DisplayPoint::new(2, 3),
                 ]
             );
         });
@@ -3307,7 +3326,7 @@ mod tests {
                 view.selection_ranges(cx),
                 &[
                     DisplayPoint::new(0, 10)..DisplayPoint::new(0, 9),
-                    DisplayPoint::new(2, 3)..DisplayPoint::new(2, 2),
+                    DisplayPoint::new(2, 4)..DisplayPoint::new(2, 3),
                 ]
             );
         });
@@ -3318,7 +3337,7 @@ mod tests {
                 view.selection_ranges(cx),
                 &[
                     DisplayPoint::new(0, 10)..DisplayPoint::new(0, 7),
-                    DisplayPoint::new(2, 3)..DisplayPoint::new(2, 0),
+                    DisplayPoint::new(2, 4)..DisplayPoint::new(2, 2),
                 ]
             );
         });
@@ -3329,37 +3348,7 @@ mod tests {
                 view.selection_ranges(cx),
                 &[
                     DisplayPoint::new(0, 10)..DisplayPoint::new(0, 9),
-                    DisplayPoint::new(2, 3)..DisplayPoint::new(2, 2),
-                ]
-            );
-        });
-
-        view.update(cx, |view, cx| {
-            view.delete_to_next_word_boundary(&DeleteToNextWordBoundary, cx);
-            assert_eq!(
-                view.display_text(cx),
-                "use std::s::{foo, bar}\n\n  {az.qux()}"
-            );
-            assert_eq!(
-                view.selection_ranges(cx),
-                &[
-                    DisplayPoint::new(0, 10)..DisplayPoint::new(0, 10),
-                    DisplayPoint::new(2, 3)..DisplayPoint::new(2, 3),
-                ]
-            );
-        });
-
-        view.update(cx, |view, cx| {
-            view.delete_to_previous_word_boundary(&DeleteToPreviousWordBoundary, cx);
-            assert_eq!(
-                view.display_text(cx),
-                "use std::::{foo, bar}\n\n  az.qux()}"
-            );
-            assert_eq!(
-                view.selection_ranges(cx),
-                &[
-                    DisplayPoint::new(0, 9)..DisplayPoint::new(0, 9),
-                    DisplayPoint::new(2, 2)..DisplayPoint::new(2, 2),
+                    DisplayPoint::new(2, 4)..DisplayPoint::new(2, 3),
                 ]
             );
         });
@@ -3415,9 +3404,50 @@ mod tests {
             view.move_to_previous_word_boundary(&MoveToPreviousWordBoundary, cx);
             assert_eq!(
                 view.selection_ranges(cx),
-                &[DisplayPoint::new(1, 15)..DisplayPoint::new(1, 15)]
+                &[DisplayPoint::new(1, 14)..DisplayPoint::new(1, 14)]
             );
         });
+    }
+
+    #[gpui::test]
+    fn test_delete_to_word_boundary(cx: &mut gpui::MutableAppContext) {
+        let buffer = cx.add_model(|cx| Buffer::new(0, "one two three four", cx));
+        let settings = settings::test(&cx).1;
+        let (_, view) = cx.add_window(Default::default(), |cx| {
+            build_editor(buffer.clone(), settings, cx)
+        });
+
+        view.update(cx, |view, cx| {
+            view.select_display_ranges(
+                &[
+                    // an empty selection - the preceding word fragment is deleted
+                    DisplayPoint::new(0, 2)..DisplayPoint::new(0, 2),
+                    // characters selected - they are deleted
+                    DisplayPoint::new(0, 9)..DisplayPoint::new(0, 12),
+                ],
+                cx,
+            )
+            .unwrap();
+            view.delete_to_previous_word_boundary(&DeleteToPreviousWordBoundary, cx);
+        });
+
+        assert_eq!(buffer.read(cx).text(), "e two te four");
+
+        view.update(cx, |view, cx| {
+            view.select_display_ranges(
+                &[
+                    // an empty selection - the following word fragment is deleted
+                    DisplayPoint::new(0, 3)..DisplayPoint::new(0, 3),
+                    // characters selected - they are deleted
+                    DisplayPoint::new(0, 9)..DisplayPoint::new(0, 10),
+                ],
+                cx,
+            )
+            .unwrap();
+            view.delete_to_next_word_boundary(&DeleteToNextWordBoundary, cx);
+        });
+
+        assert_eq!(buffer.read(cx).text(), "e t te our");
     }
 
     #[gpui::test]
@@ -3685,7 +3715,7 @@ mod tests {
 
     #[gpui::test]
     fn test_clipboard(cx: &mut gpui::MutableAppContext) {
-        let buffer = cx.add_model(|cx| Buffer::new(0, "one two three four five six ", cx));
+        let buffer = cx.add_model(|cx| Buffer::new(0, "one✅ two three four five six ", cx));
         let settings = settings::test(&cx).1;
         let view = cx
             .add_window(Default::default(), |cx| {
@@ -3695,7 +3725,7 @@ mod tests {
 
         // Cut with three selections. Clipboard text is divided into three slices.
         view.update(cx, |view, cx| {
-            view.select_ranges(vec![0..4, 8..14, 19..24], false, cx);
+            view.select_ranges(vec![0..7, 11..17, 22..27], false, cx);
             view.cut(&Cut, cx);
             assert_eq!(view.display_text(cx), "two four six ");
         });
@@ -3704,13 +3734,13 @@ mod tests {
         view.update(cx, |view, cx| {
             view.select_ranges(vec![4..4, 9..9, 13..13], false, cx);
             view.paste(&Paste, cx);
-            assert_eq!(view.display_text(cx), "two one four three six five ");
+            assert_eq!(view.display_text(cx), "two one✅ four three six five ");
             assert_eq!(
                 view.selection_ranges(cx),
                 &[
-                    DisplayPoint::new(0, 8)..DisplayPoint::new(0, 8),
-                    DisplayPoint::new(0, 19)..DisplayPoint::new(0, 19),
-                    DisplayPoint::new(0, 28)..DisplayPoint::new(0, 28)
+                    DisplayPoint::new(0, 11)..DisplayPoint::new(0, 11),
+                    DisplayPoint::new(0, 22)..DisplayPoint::new(0, 22),
+                    DisplayPoint::new(0, 31)..DisplayPoint::new(0, 31)
                 ]
             );
         });
@@ -3719,13 +3749,13 @@ mod tests {
         // match the number of slices in the clipboard, the entire clipboard text
         // is pasted at each cursor.
         view.update(cx, |view, cx| {
-            view.select_ranges(vec![0..0, 28..28], false, cx);
+            view.select_ranges(vec![0..0, 31..31], false, cx);
             view.insert(&Insert("( ".into()), cx);
             view.paste(&Paste, cx);
             view.insert(&Insert(") ".into()), cx);
             assert_eq!(
                 view.display_text(cx),
-                "( one three five ) two one four three six five ( one three five ) "
+                "( one✅ three five ) two one✅ four three six five ( one✅ three five ) "
             );
         });
 
@@ -3734,7 +3764,7 @@ mod tests {
             view.insert(&Insert("123\n4567\n89\n".into()), cx);
             assert_eq!(
                 view.display_text(cx),
-                "123\n4567\n89\n( one three five ) two one four three six five ( one three five ) "
+                "123\n4567\n89\n( one✅ three five ) two one✅ four three six five ( one✅ three five ) "
             );
         });
 
@@ -3752,7 +3782,7 @@ mod tests {
             view.cut(&Cut, cx);
             assert_eq!(
                 view.display_text(cx),
-                "13\n9\n( one three five ) two one four three six five ( one three five ) "
+                "13\n9\n( one✅ three five ) two one✅ four three six five ( one✅ three five ) "
             );
         });
 
@@ -3771,7 +3801,7 @@ mod tests {
             view.paste(&Paste, cx);
             assert_eq!(
                 view.display_text(cx),
-                "123\n4567\n9\n( 8ne three five ) two one four three six five ( one three five ) "
+                "123\n4567\n9\n( 8ne✅ three five ) two one✅ four three six five ( one✅ three five ) "
             );
             assert_eq!(
                 view.selection_ranges(cx),
@@ -3805,7 +3835,7 @@ mod tests {
             view.paste(&Paste, cx);
             assert_eq!(
                 view.display_text(cx),
-                "123\n123\n123\n67\n123\n9\n( 8ne three five ) two one four three six five ( one three five ) "
+                "123\n123\n123\n67\n123\n9\n( 8ne✅ three five ) two one✅ four three six five ( one✅ three five ) "
             );
             assert_eq!(
                 view.selection_ranges(cx),

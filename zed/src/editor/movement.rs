@@ -101,7 +101,10 @@ pub fn line_end(map: &DisplayMapSnapshot, point: DisplayPoint) -> Result<Display
     Ok(map.clip_point(line_end, Bias::Left))
 }
 
-pub fn prev_word_boundary(map: &DisplayMapSnapshot, point: DisplayPoint) -> Result<DisplayPoint> {
+pub fn prev_word_boundary(
+    map: &DisplayMapSnapshot,
+    mut point: DisplayPoint,
+) -> Result<DisplayPoint> {
     let mut line_start = 0;
     if point.row() > 0 {
         if let Some(indent) = map.soft_wrap_indent(point.row() - 1) {
@@ -111,39 +114,52 @@ pub fn prev_word_boundary(map: &DisplayMapSnapshot, point: DisplayPoint) -> Resu
 
     if point.column() == line_start {
         if point.row() == 0 {
-            Ok(DisplayPoint::new(0, 0))
+            return Ok(DisplayPoint::new(0, 0));
         } else {
             let row = point.row() - 1;
-            Ok(map.clip_point(DisplayPoint::new(row, map.line_len(row)), Bias::Left))
+            point = map.clip_point(DisplayPoint::new(row, map.line_len(row)), Bias::Left);
         }
-    } else {
-        let mut boundary = DisplayPoint::new(point.row(), 0);
-        let mut column = 0;
-        let mut prev_c = None;
-        for c in map.chars_at(DisplayPoint::new(point.row(), 0)) {
-            if column >= point.column() {
-                break;
-            }
-
-            if prev_c.is_none() || char_kind(prev_c.unwrap()) != char_kind(c) {
-                *boundary.column_mut() = column;
-            }
-
-            prev_c = Some(c);
-            column += c.len_utf8() as u32;
-        }
-        Ok(boundary)
     }
+
+    let mut boundary = DisplayPoint::new(point.row(), 0);
+    let mut column = 0;
+    let mut prev_char_kind = CharKind::Newline;
+    for c in map.chars_at(DisplayPoint::new(point.row(), 0)) {
+        if column >= point.column() {
+            break;
+        }
+
+        let char_kind = char_kind(c);
+        if char_kind != prev_char_kind
+            && char_kind != CharKind::Whitespace
+            && char_kind != CharKind::Newline
+        {
+            *boundary.column_mut() = column;
+        }
+
+        prev_char_kind = char_kind;
+        column += c.len_utf8() as u32;
+    }
+    Ok(boundary)
 }
 
 pub fn next_word_boundary(
     map: &DisplayMapSnapshot,
     mut point: DisplayPoint,
 ) -> Result<DisplayPoint> {
-    let mut prev_c = None;
+    let mut prev_char_kind = None;
     for c in map.chars_at(point) {
-        if prev_c.is_some() && (c == '\n' || char_kind(prev_c.unwrap()) != char_kind(c)) {
-            break;
+        let char_kind = char_kind(c);
+        if let Some(prev_char_kind) = prev_char_kind {
+            if c == '\n' {
+                break;
+            }
+            if prev_char_kind != char_kind
+                && prev_char_kind != CharKind::Whitespace
+                && prev_char_kind != CharKind::Newline
+            {
+                break;
+            }
         }
 
         if c == '\n' {
@@ -152,7 +168,7 @@ pub fn next_word_boundary(
         } else {
             *point.column_mut() += c.len_utf8() as u32;
         }
-        prev_c = Some(c);
+        prev_char_kind = Some(char_kind);
     }
     Ok(point)
 }
@@ -192,7 +208,7 @@ mod tests {
             .unwrap();
         let font_size = 14.0;
 
-        let buffer = cx.add_model(|cx| Buffer::new(0, "a bcΔ defγ", cx));
+        let buffer = cx.add_model(|cx| Buffer::new(0, "a bcΔ defγ hi—jk", cx));
         let display_map =
             cx.add_model(|cx| DisplayMap::new(buffer, tab_size, font_id, font_size, None, cx));
         let snapshot = display_map.update(cx, |map, cx| map.snapshot(cx));
@@ -202,7 +218,7 @@ mod tests {
         );
         assert_eq!(
             prev_word_boundary(&snapshot, DisplayPoint::new(0, 7)).unwrap(),
-            DisplayPoint::new(0, 6)
+            DisplayPoint::new(0, 2)
         );
         assert_eq!(
             prev_word_boundary(&snapshot, DisplayPoint::new(0, 6)).unwrap(),
@@ -210,7 +226,7 @@ mod tests {
         );
         assert_eq!(
             prev_word_boundary(&snapshot, DisplayPoint::new(0, 2)).unwrap(),
-            DisplayPoint::new(0, 1)
+            DisplayPoint::new(0, 0)
         );
         assert_eq!(
             prev_word_boundary(&snapshot, DisplayPoint::new(0, 1)).unwrap(),
@@ -223,7 +239,7 @@ mod tests {
         );
         assert_eq!(
             next_word_boundary(&snapshot, DisplayPoint::new(0, 1)).unwrap(),
-            DisplayPoint::new(0, 2)
+            DisplayPoint::new(0, 6)
         );
         assert_eq!(
             next_word_boundary(&snapshot, DisplayPoint::new(0, 2)).unwrap(),
@@ -231,7 +247,7 @@ mod tests {
         );
         assert_eq!(
             next_word_boundary(&snapshot, DisplayPoint::new(0, 6)).unwrap(),
-            DisplayPoint::new(0, 7)
+            DisplayPoint::new(0, 12)
         );
         assert_eq!(
             next_word_boundary(&snapshot, DisplayPoint::new(0, 7)).unwrap(),

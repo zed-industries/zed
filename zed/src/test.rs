@@ -1,7 +1,7 @@
 use crate::{
     assets::Assets,
     channel::ChannelList,
-    fs::RealFs,
+    fs::FakeFs,
     http::{HttpClient, Request, Response, ServerResponse},
     language::LanguageRegistry,
     rpc::{self, Client, Credentials, EstablishConnectionError},
@@ -177,7 +177,7 @@ pub fn test_app_state(cx: &mut MutableAppContext) -> Arc<AppState> {
         channel_list: cx.add_model(|cx| ChannelList::new(user_store.clone(), rpc.clone(), cx)),
         rpc,
         user_store,
-        fs: Arc::new(RealFs),
+        fs: Arc::new(FakeFs::new()),
     })
 }
 
