@@ -5,7 +5,7 @@
 
     <h1 class="mb-10 font-display font-extralight">Releases</h1>
     <p class="mt-5 leading-7">Zed is currently only available on OS X.</p>
-    <p class="mt-5 leading-7">We are frequently shipping new versions, check back reguarly to get the most recent version. If you run into an issue you think we might not know about use the "new issue" links by the appropriate version to let us know about it.</p>
+    <p class="mt-5 leading-7">We are frequently shipping new versions, check back regularly to get the most recent version.</p>
     {{#if releases}}
     
     <ul class="mt-10 leading-7">
@@ -14,8 +14,6 @@
             <a class="text-lg leading-7 underline hover:text-gray-300" href="/releases/{{tag_name}}/{{assets.0.name}}">Zed {{name}}</a></h2>
             <p class="mt-2 text-gray-400">
                 <a class="hover:text-white" href="https://github.com/zed-industries/zed/releases/tag/{{tag_name}}">Release Notes</a>
-                 · 
-                <a class="hover:text-white" href="https://github.com/zed-industries/zed/issues/new?labels=defect&title={{name}}+New+issue">New issue</a>
             </p>
         </li>
         {{/each}}
