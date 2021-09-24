@@ -1,17 +1,17 @@
 {{#> layout }}
 
-<div class="max-w-screen-lg p-10 mx-auto font-thin text-main lg:p-20">
+<div class="max-w-screen-lg p-10 mx-auto font-extralight text-main lg:p-20">
     {{#if current_user}}
 
     <h1 class="mb-10 font-display font-extralight">Releases</h1>
-    <p class="mt-5 leading-7">Zed is currently only available on OS X.</p>
-    <p class="mt-5 leading-7">We are frequently shipping new versions, check back regularly to get the most recent version.</p>
+    <p class="mt-5 leading-relaxed">Zed is currently only available on OS X.</p>
+    <p class="mt-5 leading-relaxed">We are frequently shipping new versions, check back regularly to get the most recent version.</p>
     {{#if releases}}
     
-    <ul class="mt-10 leading-7">
+    <ul class="mt-10 leading-relaxed">
         {{#each releases}}
         <li id="release-{{name}}" class="mb-5">
-            <a class="text-lg leading-7 underline hover:text-gray-300" href="/releases/{{tag_name}}/{{assets.0.name}}">Zed {{name}}</a></h2>
+            <a class="text-lg leading-relaxed underline hover:text-gray-300" href="/releases/{{tag_name}}/{{assets.0.name}}">Zed {{name}}</a></h2>
             <p class="mt-2 text-gray-400">
                 <a class="hover:text-white" href="https://github.com/zed-industries/zed/releases/tag/{{tag_name}}">Release Notes</a>
             </p>
@@ -24,8 +24,8 @@
     {{else}}
 
     <h1 class="mb-10 font-display font-extralight">Hold it!</h1>
-    <p class="mt-5 leading-7">You can't access this without <a href=" /sign_in" class="mt-5 leading-7 underline hover:text-white">logging in</a>.</p>
-    <p class="mt-5 leading-7">Try <a href="/community" class="mt-5 leading-7 underline hover:text-white">joining our community</a> to get access to updates & releases.</p>
+    <p class="mt-5 leading-relaxed">You can't access this without <a href=" /sign_in" class="mt-5 leading-relaxed underline hover:text-white">logging in</a>.</p>
+    <p class="mt-5 leading-relaxed">Try <a href="/community" class="mt-5 leading-relaxed underline hover:text-white">joining our community</a> to get access to updates & releases.</p>
     
     {{/if}}
 </div>

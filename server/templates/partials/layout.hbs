@@ -43,39 +43,39 @@
             </a>
             
             <div class="flex flex-row flex-wrap mt-10">
-                <a href="/" class="mr-2 text-lg leading-loose">
+                <a href="/" class="mr-2 text-lg leading-relaxed">
                     Meet Zed <span class="pt-1 mr-1 text-lg text-gray-500">·</span>
                 </a>
-                <a href="/team" class="mr-2 text-lg leading-loose">
+                <a href="/team" class="mr-2 text-lg leading-relaxed">
                     The Team <span class="pt-1 mr-1 text-lg text-gray-500">·</span>
                 </a>
                 
-                <a href="/community" class="mr-2 text-lg leading-loose">
+                <a href="/community" class="mr-2 text-lg leading-relaxed">
                     Waitlist <span class="pt-1 mr-1 text-lg text-gray-500">·</span>
                 </a>
                 {{#if current_user}}
-                <a href="/updates" class="mr-2 text-lg leading-loose">
+                <a href="/updates" class="mr-2 text-lg leading-relaxed">
                     Updates <span class="pt-1 mr-1 text-lg text-gray-500">·</span>
                 </a>
-                <a href="/releases" class="mr-2 text-lg leading-loose">
+                <a href="/releases" class="mr-2 text-lg leading-relaxed">
                     Releases <span class="pt-1 mr-1 text-lg text-gray-500">·</span>
                 </a>
 
                 {{#if current_user.is_admin }}
-                    <a href="/admin" class="inline-block mr-2 text-lg leading-loose">
+                    <a href="/admin" class="inline-block mr-2 text-lg leading-relaxed">
                         Manage Users <span class="pt-1 mr-1 text-lg text-gray-500">·</span>
                     </a>
                 {{/if}}
 
                 <form id="sign_out" action="/sign_out" method="post" class="inline m-0 mr-2 font-extralight text-gray-50">
-                    <button class="text-lg leading-loose no-underline font-extralight text-gray-50 hover:underline">Log Out</button>
+                    <button class="text-lg leading-relaxed no-underline font-extralight text-gray-50 hover:underline">Log Out</button>
                 </form>
 
                 {{else}}
 
                 <!-- Otherwise let user log in -->
                 <a href=" /sign_in"
-                    class="mr-2 text-lg leading-loose">
+                    class="mr-2 text-lg leading-relaxed">
                     Log in
                 </a>
                 {{/if}}
