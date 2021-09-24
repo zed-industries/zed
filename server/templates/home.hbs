@@ -1,7 +1,7 @@
 {{#> layout }}
 
 <div class="max-w-screen-lg p-5 mx-auto text-gray-200 font-extralight text-main lg:p-20">
-    <article class="max-w-xl">
+    <article class="">
         <h1 class="mb-10 text-4xl leading-tight text-white font-display font-extralight">Introducing Zed&mdash;A lightning-fast, collaborative code editor written in Rust.</h1>
         <p class="mt-5 leading-relaxed">
             We think there’s a better way to write code, and it starts with the following assumptions:
@@ -10,7 +10,7 @@
         <h3 class="mt-10 leading-tight text-white font-display font-extralight">Mission-critical tools should be hyper-responsive.</h3>
 
         <p class="mt-3 leading-relaxed">
-            When you move the cursor or type a character, you should see pixels on the next refresh of your display–every time. Even sub-perceptual pauses add up over the course of a day to create unnecessary stress.
+            When you move the cursor or type a character, you should see pixels on the next refresh of your display&mdash;every time. Even sub-perceptual pauses add up over the course of a day to create unnecessary stress.
         </p>
 
         <p class="mt-5 leading-relaxed">
@@ -52,21 +52,21 @@
         <h2 class="mt-16 mb-5 leading-tight text-white font-display font-extralight">Under the hood</h2>
 
         <article class="leading-relaxed">
-            <h3 class="mt-10 leading-tight text-white font-display font-extralight">Rust</h3>
+            <h3 class="mt-10 leading-tight text-white font-display font-extralight">Building in Rust</h3>
             <p class="mt-3">Rust offers expressivity and developer productivity rivaling languages that depend on a VM, while simultaneously offering the control required to fully utilize the underlying hardware.</p>
                 
             <p class="mt-5">Rust’s unique ownership model is a challenge at the beginning, but once you internalize it, you can write extremely efficient multi-core code without fear of invoking undefined behavior.</p>
             
             <p class="mt-5">It also makes it straightforward to call directly into the C-based APIs of the operating system. Rust makes it possible for a small team to build a complex product quickly, and Zed wouldn’t have been possible without it.</p>
             
-            <p class="mt-5">In the past to write software with this performant you would need to use C++. Rust, for the first time, enables us to write software at that level as a very small team.</p>
+            <p class="mt-5">In the past, to write software with this performant you would need to use C++. Rust, for the first time, enables us to write software at that level as a very small team.</p>
         </article>
 
         <article class="leading-relaxed">
-            <h3 class="mt-10 mb-4 leading-tight text-white font-display font-extralight">GPUI</h3>
-            <p class="mt-3">We originally planned to use Electron as a convenient means of delivering a cross-platform GUI for Zed while building the core of the application in Rust. But at every turn, we found that web technology was the bottleneck in achieving amazing performance.</p>
+            <h3 class="mt-10 mb-4 leading-tight text-white font-display font-extralight">A new GPU-powered UI framework</h3>
+            <p class="mt-3">We originally planned to use Electron as a convenient means of delivering a cross-platform GUI for Zed, while building the core of the application in Rust. But at every turn, we found that web technology was the bottleneck in achieving amazing performance. Finally, we decided to take full control and simply build a GPU-powered UI framework that met our needs.</p>
                 
-            <p class="mt-5">Finally, we decided to take full control and simply build a GPU-powered UI framework that met our needs. We call it GPUI.</p>
+            <p class="mt-5"></p>We call it GPUI.</p>
             
             <p class="mt-5">We took a lot of inspiration from Mozilla’s Webrender project. The key insight was that modern graphics hardware can render complex 3D graphics at high frame rates, so why not use it to render relatively simple 2D user interfaces with an immediate mode architecture? </p>
             
@@ -97,7 +97,7 @@
 
         <p class="mt-10 mb-10 leading-relaxed">&mdash;&mdash;&mdash;</p>
 
-        <p class="mt-5 leading-relaxed">Excited about what we are doing? <a class="underline hover:no-underline" href="/community">Sign up for updates</a> to follow along in our development process.</p>
+        <p class="mt-5 leading-relaxed">Excited about what we are building? <a class="underline hover:no-underline" href="/community">Sign up for updates</a> to follow along in our development process.</p>
     </article>
 </div>
 
