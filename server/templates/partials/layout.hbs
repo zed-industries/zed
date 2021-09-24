@@ -34,13 +34,31 @@
 
 <body class="box-border font-light bg-black font-body text-main">
     <main class="container flex flex-col mx-auto lg:bg-white lg:flex-none lg:grid lg:min-h-full lg:grid-cols-4 max-w-screen-2xl lg:gap-x-px text-gray-50">
-        <nav class="p-10 pb-0 bg-black font-extralight lg:hidden">
-            <a href="/" class="block hover:opacity-80">
-                <svg width="32" height="32" viewBox="0 0 32 32" fill="none" xmlns="http://www.w3.org/2000/svg">
-                <path fill-rule="evenodd" clip-rule="evenodd" d="M16 0C7.16344 0 0 7.16344 0 16C0 24.8366 7.16344 32 16 32C24.8366 32 32 24.8366 32 16C32 7.16344 24.8366 0 16 0ZM16 4C9.37258 4 4 9.37258 4 16C4 22.6274 9.37258 28 16 28C22.6274 28 28 22.6274 28 16C28 9.37258 22.6274 4 16 4Z" fill="white"/>
-                <path fill-rule="evenodd" clip-rule="evenodd" d="M10 10L23.5 10L14.875 19H19L22 22H8.5L17.125 13H13L10 10Z" fill="white"/>
-                </svg>
-            </a>
+        <nav class="p-5 pt-10 pb-0 bg-black font-extralight lg:hidden">
+            <div class="flex flex-row justify-between">
+                <a href="/" class="block hover:opacity-80">
+                    <svg width="32" height="32" viewBox="0 0 32 32" fill="none" xmlns="http://www.w3.org/2000/svg">
+                    <path fill-rule="evenodd" clip-rule="evenodd" d="M16 0C7.16344 0 0 7.16344 0 16C0 24.8366 7.16344 32 16 32C24.8366 32 32 24.8366 32 16C32 7.16344 24.8366 0 16 0ZM16 4C9.37258 4 4 9.37258 4 16C4 22.6274 9.37258 28 16 28C22.6274 28 28 22.6274 28 16C28 9.37258 22.6274 4 16 4Z" fill="white"/>
+                    <path fill-rule="evenodd" clip-rule="evenodd" d="M10 10L23.5 10L14.875 19H19L22 22H8.5L17.125 13H13L10 10Z" fill="white"/>
+                    </svg>
+                </a>
+                <div class="flex flex-row">
+                    {{#if current_user}}
+
+                    <form id="sign_out" action="/sign_out" method="post" class="inline m-0 text-gray-500 font-extralight">
+                        <button class="text-lg leading-relaxed √ no-underline font-extralight hover:underline">Log Out</button>
+                    </form>
+
+                    {{else}}
+
+                    <!-- Otherwise let user log in -->
+                    <a href=" /sign_in"
+                        class="text-lg leading-relaxed text-gray-500">
+                        Log in
+                    </a>
+                    {{/if}}
+                </div>
+            </div>
             
             <div class="flex flex-row flex-wrap mt-10">
                 <a href="/" class="mr-2 text-lg leading-relaxed">
@@ -66,18 +84,6 @@
                         Manage Users <span class="pt-1 mr-1 text-lg text-gray-500">·</span>
                     </a>
                 {{/if}}
-
-                <form id="sign_out" action="/sign_out" method="post" class="inline m-0 mr-2 font-extralight text-gray-50">
-                    <button class="text-lg leading-relaxed no-underline font-extralight text-gray-50 hover:underline">Log Out</button>
-                </form>
-
-                {{else}}
-
-                <!-- Otherwise let user log in -->
-                <a href=" /sign_in"
-                    class="mr-2 text-lg leading-relaxed">
-                    Log in
-                </a>
                 {{/if}}
             </div>
 

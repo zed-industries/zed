@@ -1,6 +1,6 @@
 {{#> layout }}
 
-<div class="max-w-screen-lg p-10 mx-auto text-gray-200 font-extralight text-main lg:p-20">
+<div class="max-w-screen-lg p-5 mx-auto text-gray-200 font-extralight text-main lg:p-20">
     <article class="max-w-xl">
         <h1 class="mb-10 text-4xl leading-tight text-white font-display font-extralight">Introducing Zed&mdash;A lightning-fast, collaborative code editor written in Rust.</h1>
         <p class="mt-5 leading-relaxed">
@@ -51,28 +51,49 @@
 
         <h2 class="mt-16 mb-5 leading-tight text-white font-display font-extralight">Under the hood</h2>
 
-        <h3 class="mt-5 mb-4 leading-tight text-white font-display font-extralight">Rust</h3>
-        <p class="mt-5 leading-relaxed">With performance and reliability being our priority, writing Zed in <span class="font-semibold">Rust</span> was an obvious choice.</p>
-        
-        <p class="mt-5 leading-relaxed">In the past to write software with this performant you would need to use C++. Rust, for the first time, enables us to write software at that level as a very small team.</p>
-
-        <h3 class="mt-10 mb-4 leading-tight text-white font-display font-extralight">GPUI</h3>
-        <p class="mt-5 leading-relaxed">While Rust enables us to build performant, reliable software, it's constraints make rending custom UIs a challenge. To attack this, we created <code>gpui</code>, a rust library that rethinks the entire rendering stack that goes all the way to the graphics hardware.</p>
+        <article class="leading-relaxed">
+            <h3 class="mt-10 leading-tight text-white font-display font-extralight">Rust</h3>
+            <p class="mt-3">Rust offers expressivity and developer productivity rivaling languages that depend on a VM, while simultaneously offering the control required to fully utilize the underlying hardware.</p>
+                
+            <p class="mt-5">Rust’s unique ownership model is a challenge at the beginning, but once you internalize it, you can write extremely efficient multi-core code without fear of invoking undefined behavior.</p>
             
-        <p class="mt-5 leading-relaxed">We started <code>gpui</code>  as an extension of that desire to write apps that are fast and fluid, yet easy to develop itteratively. <code>gpui</code> rethinks the way we draw UI in response to the constraints of Rust. By controlling the entire stack we remove layers of extra code that would reduce performance.</p>
+            <p class="mt-5">It also makes it straightforward to call directly into the C-based APIs of the operating system. Rust makes it possible for a small team to build a complex product quickly, and Zed wouldn’t have been possible without it.</p>
+            
+            <p class="mt-5">In the past to write software with this performant you would need to use C++. Rust, for the first time, enables us to write software at that level as a very small team.</p>
+        </article>
 
-        <p class="mt-5 leading-relaxed">Without building <code>gpui</code> the most viable way to build a cross-platform app would have been Electron. It's well documented performance limitations and single threaded nature made it a deal-breaker for us. Taking full advantage of local hardware was important to use to ensure that we can squeeze out the best performance.</p>
+        <article class="leading-relaxed">
+            <h3 class="mt-10 mb-4 leading-tight text-white font-display font-extralight">GPUI</h3>
+            <p class="mt-3">We originally planned to use Electron as a convenient means of delivering a cross-platform GUI for Zed while building the core of the application in Rust. But at every turn, we found that web technology was the bottleneck in achieving amazing performance.</p>
+                
+            <p class="mt-5">Finally, we decided to take full control and simply build a GPU-powered UI framework that met our needs. We call it GPUI.</p>
+            
+            <p class="mt-5">We took a lot of inspiration from Mozilla’s Webrender project. The key insight was that modern graphics hardware can render complex 3D graphics at high frame rates, so why not use it to render relatively simple 2D user interfaces with an immediate mode architecture? </p>
+            
+            <p class="mt-5">Rust’s ownership model required us to rethink much of what we learned in other UI programming paradigms, but the result is a framework that’s productive to use and remarkably easy to reason about.</p>
+                
+            <p class="mt-5">It’s liberating to control every pixel, and it’s a rush to push those pixels at lightning speed.</p>
+        </article>
 
-        <p class="mt-5 leading-relaxed">We’re building <code>gpui</code> and Zed in parallel, and may consider opening <code>gpui</code> up for usage outside of it in the future.</p>
+        <article class="leading-relaxed">
+            <h3 class="mt-10 mb-4 leading-tight text-white font-display font-extralight">Conflict-free replicated data types</h3>
+            
+            <p class="mt-3">Real-time collaborative editing presents the illusion that multiple people are editing the same buffer. In reality, each collaborator maintains their own personal replica of the buffer to which they can apply local edits immediately without network latency.</p>
+            
+            <p class="mt-5">After being applied locally, edits are transmitted to collaborators over the network, whose copies may have also changed in the meantime. This means that as participants edit together, their replicas continuously diverge and reconverge. Turns out this is a tricky problem.</p>
+                
+            <p class="mt-5">To solve it, we’re using conflict-free replicated data types, which have emerged in the last decade as a general framework for achieving eventual consistency in a variety of circumstances.</p>
+                
+            <p class="mt-5">Making Zed’s buffers CRDTs allows for collaborative editing, but it also helps us reason about concurrent change so that we can push work into background threads and keep the UI thread responsive.</p>
+        </article>
 
-        <h3 class="mt-10 mb-4 leading-tight text-white font-display font-extralight">CRDT</h3>
-        <p class="mt-5 leading-relaxed">Like <code>gpui</code> enables performant UI, <code>crdt</code> is the key to making code collaborative as it is being written.</p>
-        
-        <p class="mt-5 leading-relaxed">A <code>crdt</code> allows us to version control the codebase on the keystroke level&mdash;Every keystroke can be revisited, commented on or undone. Entire sessions can be replayed and scrubbed in a session, from the point of view of any player.</p>
-
-        <p class="mt-5 leading-relaxed">This level of granularity in our version control allows us to explore ideas like time traveling the codebase.</p>
-        
-        <p class="mt-5 leading-relaxed">Often the best way to understand code is to experience it's creation chronologically. Imagine if you could jump to the point a piece of code was created and watch it be written in real time.</p>
+        <article class="leading-relaxed">
+            <h3 class="mt-10 mb-4 leading-tight text-white font-display font-extralight">Tree-sitter</h3>
+            
+            <p class="mt-3">We plan to integrate with the Language Server Protocol to support advanced IDE features, but we also think it’s important for a code editor to have a rich, native understanding of syntax.</p>
+                
+            <p class="mt-5">That’s why we built Tree-sitter, a fast, general, incremental parsing library that can provide Zed with syntax trees for over 50 languages. Tree-sitter already powers production functionality on GitHub, and we’ll use it to deliver syntactically-precise syntax highlighting, tree-based selection and cursor navigation, robust auto-indent support, symbolic navigation, and more.</p>
+        </article>
 
         <p class="mt-10 mb-10 leading-relaxed">&mdash;&mdash;&mdash;</p>
 
