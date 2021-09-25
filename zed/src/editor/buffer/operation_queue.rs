@@ -43,7 +43,7 @@ impl OperationQueue {
         clone
     }
 
-    pub fn cursor(&self) -> Cursor<Operation, (), ()> {
+    pub fn cursor(&self) -> Cursor<Operation, ()> {
         self.0.cursor()
     }
 }
