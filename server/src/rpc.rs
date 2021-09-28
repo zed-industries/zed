@@ -2271,7 +2271,7 @@ mod tests {
     fn channel_messages(channel: &Channel) -> Vec<(String, String, bool)> {
         channel
             .messages()
-            .cursor::<(), ()>()
+            .cursor::<()>()
             .map(|m| {
                 (
                     m.sender.github_login.clone(),

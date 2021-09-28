@@ -1140,7 +1140,7 @@ impl LocalWorktree {
             remote_id.await.map(|id| {
                 let entries = snapshot
                     .entries_by_path
-                    .cursor::<(), ()>()
+                    .cursor::<()>()
                     .filter(|e| !e.is_ignored)
                     .map(Into::into)
                     .collect();
@@ -1385,12 +1385,12 @@ impl Snapshot {
         let mut removed_entries = Vec::new();
         let mut self_entries = self
             .entries_by_id
-            .cursor::<(), ()>()
+            .cursor::<()>()
             .filter(|e| include_ignored || !e.is_ignored)
             .peekable();
         let mut other_entries = other
             .entries_by_id
-            .cursor::<(), ()>()
+            .cursor::<()>()
             .filter(|e| include_ignored || !e.is_ignored)
             .peekable();
         loop {
@@ -1485,7 +1485,7 @@ impl Snapshot {
     pub fn paths(&self) -> impl Iterator<Item = &Arc<Path>> {
         let empty_path = Path::new("");
         self.entries_by_path
-            .cursor::<(), ()>()
+            .cursor::<()>()
             .filter(move |entry| entry.path.as_ref() != empty_path)
             .map(|entry| &entry.path)
     }
@@ -1507,7 +1507,7 @@ impl Snapshot {
     }
 
     fn entry_for_path(&self, path: impl AsRef<Path>) -> Option<&Entry> {
-        let mut cursor = self.entries_by_path.cursor::<_, ()>();
+        let mut cursor = self.entries_by_path.cursor::<PathSearch>();
         if cursor.seek(&PathSearch::Exact(path.as_ref()), Bias::Left, &()) {
             cursor.item()
         } else {
@@ -1600,7 +1600,7 @@ impl Snapshot {
         let mut new_entries;
         let removed_entry_ids;
         {
-            let mut cursor = self.entries_by_path.cursor::<_, ()>();
+            let mut cursor = self.entries_by_path.cursor::<PathSearch>();
             new_entries = cursor.slice(&PathSearch::Exact(path), Bias::Left, &());
             removed_entry_ids = cursor.slice(&PathSearch::Successor(path), Bias::Left, &());
             new_entries.push_tree(cursor.suffix(&()), &());
@@ -1608,7 +1608,7 @@ impl Snapshot {
         self.entries_by_path = new_entries;
 
         let mut entries_by_id_edits = Vec::new();
-        for entry in removed_entry_ids.cursor::<(), ()>() {
+        for entry in removed_entry_ids.cursor::<()>() {
             let removed_entry_id = self
                 .removed_entry_ids
                 .entry(entry.inode)
@@ -1655,7 +1655,7 @@ impl Snapshot {
 
 impl fmt::Debug for Snapshot {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        for entry in self.entries_by_path.cursor::<(), ()>() {
+        for entry in self.entries_by_path.cursor::<()>() {
             for _ in entry.path.ancestors().skip(1) {
                 write!(f, " ")?;
             }
@@ -2556,8 +2556,8 @@ impl WorktreeHandle for ModelHandle<Worktree> {
 }
 
 pub enum FileIter<'a> {
-    All(Cursor<'a, Entry, FileCount, ()>),
-    Visible(Cursor<'a, Entry, VisibleFileCount, ()>),
+    All(Cursor<'a, Entry, FileCount>),
+    Visible(Cursor<'a, Entry, VisibleFileCount>),
 }
 
 impl<'a> FileIter<'a> {
@@ -2576,12 +2576,12 @@ impl<'a> FileIter<'a> {
     fn next_internal(&mut self) {
         match self {
             Self::All(cursor) => {
-                let ix = *cursor.seek_start();
-                cursor.seek_forward(&FileCount(ix.0 + 1), Bias::Right, &());
+                let ix = cursor.start().0;
+                cursor.seek_forward(&FileCount(ix + 1), Bias::Right, &());
             }
             Self::Visible(cursor) => {
-                let ix = *cursor.seek_start();
-                cursor.seek_forward(&VisibleFileCount(ix.0 + 1), Bias::Right, &());
+                let ix = cursor.start().0;
+                cursor.seek_forward(&VisibleFileCount(ix + 1), Bias::Right, &());
             }
         }
     }
@@ -2609,7 +2609,7 @@ impl<'a> Iterator for FileIter<'a> {
 
 struct ChildEntriesIter<'a> {
     parent_path: &'a Path,
-    cursor: Cursor<'a, Entry, PathSearch<'a>, ()>,
+    cursor: Cursor<'a, Entry, PathSearch<'a>>,
 }
 
 impl<'a> ChildEntriesIter<'a> {
@@ -3244,7 +3244,7 @@ mod tests {
                 let mut entries_by_id_edits = Vec::new();
                 for entry in prev_snapshot
                     .entries_by_id
-                    .cursor::<(), ()>()
+                    .cursor::<()>()
                     .filter(|e| e.is_ignored)
                 {
                     entries_by_path_edits.push(Edit::Remove(PathKey(entry.path.clone())));
@@ -3419,7 +3419,7 @@ mod tests {
         fn check_invariants(&self) {
             let mut files = self.files(0);
             let mut visible_files = self.visible_files(0);
-            for entry in self.entries_by_path.cursor::<(), ()>() {
+            for entry in self.entries_by_path.cursor::<()>() {
                 if entry.is_file() {
                     assert_eq!(files.next().unwrap().inode, entry.inode);
                     if !entry.is_ignored {
@@ -3442,7 +3442,7 @@ mod tests {
 
             let dfs_paths = self
                 .entries_by_path
-                .cursor::<(), ()>()
+                .cursor::<()>()
                 .map(|e| e.path.as_ref())
                 .collect::<Vec<_>>();
             assert_eq!(bfs_paths, dfs_paths);
@@ -3457,7 +3457,7 @@ mod tests {
 
         fn to_vec(&self, include_ignored: bool) -> Vec<(&Path, u64, bool)> {
             let mut paths = Vec::new();
-            for entry in self.entries_by_path.cursor::<(), ()>() {
+            for entry in self.entries_by_path.cursor::<()>() {
                 if include_ignored || !entry.is_ignored {
                     paths.push((entry.path.as_ref(), entry.inode, entry.is_ignored));
                 }
