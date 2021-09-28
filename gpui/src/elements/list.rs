@@ -128,7 +128,7 @@ impl Element for List {
             });
 
         // Render items after the scroll top, including those in the trailing overdraw.
-        let mut cursor = old_items.cursor::<Count, ()>();
+        let mut cursor = old_items.cursor::<Count>();
         cursor.seek(&Count(scroll_top.item_ix), Bias::Right, &());
         for (ix, item) in cursor.by_ref().enumerate() {
             if rendered_height - scroll_top.offset_in_item >= size.y() + state.overdraw {
@@ -149,8 +149,7 @@ impl Element for List {
             while rendered_height < size.y() {
                 cursor.prev(&());
                 if let Some(item) = cursor.item() {
-                    let element =
-                        state.render_item(cursor.seek_start().0, item, item_constraint, cx);
+                    let element = state.render_item(cursor.start().0, item, item_constraint, cx);
                     rendered_height += element.size().y();
                     rendered_items.push_front(ListItem::Rendered(element));
                 } else {
@@ -159,7 +158,7 @@ impl Element for List {
             }
 
             scroll_top = ListOffset {
-                item_ix: cursor.seek_start().0,
+                item_ix: cursor.start().0,
                 offset_in_item: rendered_height - size.y(),
             };
 
@@ -170,7 +169,7 @@ impl Element for List {
                 }
                 Orientation::Bottom => {
                     scroll_top = ListOffset {
-                        item_ix: cursor.seek_start().0,
+                        item_ix: cursor.start().0,
                         offset_in_item: rendered_height - size.y(),
                     };
                     state.logical_scroll_top = None;
@@ -183,7 +182,7 @@ impl Element for List {
         while leading_overdraw < state.overdraw {
             cursor.prev(&());
             if let Some(item) = cursor.item() {
-                let element = state.render_item(cursor.seek_start().0, item, item_constraint, cx);
+                let element = state.render_item(cursor.start().0, item, item_constraint, cx);
                 leading_overdraw += element.size().y();
                 rendered_items.push_front(ListItem::Rendered(element));
             } else {
@@ -191,10 +190,9 @@ impl Element for List {
             }
         }
 
-        let new_rendered_range =
-            cursor.seek_start().0..(cursor.seek_start().0 + rendered_items.len());
+        let new_rendered_range = cursor.start().0..(cursor.start().0 + rendered_items.len());
 
-        let mut cursor = old_items.cursor::<Count, ()>();
+        let mut cursor = old_items.cursor::<Count>();
 
         if state.rendered_range.start < new_rendered_range.start {
             new_items.push_tree(
@@ -202,7 +200,7 @@ impl Element for List {
                 &(),
             );
             let remove_to = state.rendered_range.end.min(new_rendered_range.start);
-            while cursor.seek_start().0 < remove_to {
+            while cursor.start().0 < remove_to {
                 new_items.push(cursor.item().unwrap().remove(), &());
                 cursor.next(&());
             }
@@ -221,7 +219,7 @@ impl Element for List {
                 &(),
             );
         }
-        while cursor.seek_start().0 < state.rendered_range.end {
+        while cursor.start().0 < state.rendered_range.end {
             new_items.push(cursor.item().unwrap().remove(), &());
             cursor.next(&());
         }
@@ -263,7 +261,7 @@ impl Element for List {
 
         let mut state = self.state.0.borrow_mut();
         let mut item_origin = bounds.origin() - vec2f(0., scroll_top.offset_in_item);
-        let mut cursor = state.items.cursor::<Count, ()>();
+        let mut cursor = state.items.cursor::<Count>();
         let mut new_items = cursor.slice(&Count(scroll_top.item_ix), Bias::Right, &());
         while let Some(item) = cursor.item() {
             if item_origin.y() > bounds.max_y() {
@@ -390,7 +388,7 @@ impl ListState {
                 new_end + state.rendered_range.end.saturating_sub(old_range.end);
         }
 
-        let mut old_heights = state.items.cursor::<Count, ()>();
+        let mut old_heights = state.items.cursor::<Count>();
         let mut new_heights = old_heights.slice(&Count(old_range.start), Bias::Right, &());
         old_heights.seek_forward(&Count(old_range.end), Bias::Right, &());
 
@@ -426,12 +424,11 @@ impl StateInner {
     }
 
     fn visible_range(&self, height: f32, scroll_top: &ListOffset) -> Range<usize> {
-        let mut cursor = self.items.cursor::<Count, Height>();
+        let mut cursor = self.items.cursor::<ListItemSummary>();
         cursor.seek(&Count(scroll_top.item_ix), Bias::Right, &());
-        let start_y = cursor.sum_start().0 + scroll_top.offset_in_item;
-        let mut cursor = cursor.swap_dimensions();
+        let start_y = cursor.start().height + scroll_top.offset_in_item;
         cursor.seek_forward(&Height(start_y + height), Bias::Left, &());
-        scroll_top.item_ix..cursor.sum_start().0 + 1
+        scroll_top.item_ix..cursor.start().count + 1
     }
 
     fn visible_elements<'a>(
@@ -440,7 +437,7 @@ impl StateInner {
         scroll_top: &ListOffset,
     ) -> impl Iterator<Item = (ElementRc, Vector2F)> + 'a {
         let mut item_origin = bounds.origin() - vec2f(0., scroll_top.offset_in_item);
-        let mut cursor = self.items.cursor::<Count, ()>();
+        let mut cursor = self.items.cursor::<Count>();
         cursor.seek(&Count(scroll_top.item_ix), Bias::Right, &());
         std::iter::from_fn(move || {
             while let Some(item) = cursor.item() {
@@ -482,10 +479,10 @@ impl StateInner {
         if self.orientation == Orientation::Bottom && new_scroll_top == scroll_max {
             self.logical_scroll_top = None;
         } else {
-            let mut cursor = self.items.cursor::<Height, Count>();
+            let mut cursor = self.items.cursor::<ListItemSummary>();
             cursor.seek(&Height(new_scroll_top), Bias::Right, &());
-            let item_ix = cursor.sum_start().0;
-            let offset_in_item = new_scroll_top - cursor.seek_start().0;
+            let item_ix = cursor.start().count;
+            let offset_in_item = new_scroll_top - cursor.start().height;
             self.logical_scroll_top = Some(ListOffset {
                 item_ix,
                 offset_in_item,
@@ -502,9 +499,9 @@ impl StateInner {
     }
 
     fn scroll_top(&self, logical_scroll_top: &ListOffset) -> f32 {
-        let mut cursor = self.items.cursor::<Count, Height>();
+        let mut cursor = self.items.cursor::<ListItemSummary>();
         cursor.seek(&Count(logical_scroll_top.item_ix), Bias::Right, &());
-        cursor.sum_start().0 + logical_scroll_top.offset_in_item
+        cursor.start().height + logical_scroll_top.offset_in_item
     }
 }
 
@@ -556,12 +553,6 @@ impl sum_tree::Summary for ListItemSummary {
     }
 }
 
-impl<'a> sum_tree::Dimension<'a, ListItemSummary> for ListItemSummary {
-    fn add_summary(&mut self, summary: &'a ListItemSummary, _: &()) {
-        sum_tree::Summary::add_summary(self, summary, &());
-    }
-}
-
 impl<'a> sum_tree::Dimension<'a, ListItemSummary> for Count {
     fn add_summary(&mut self, summary: &'a ListItemSummary, _: &()) {
         self.0 += summary.count;
@@ -586,9 +577,15 @@ impl<'a> sum_tree::Dimension<'a, ListItemSummary> for Height {
     }
 }
 
-impl<'a> sum_tree::SeekDimension<'a, ListItemSummary> for Height {
-    fn cmp(&self, other: &Self, _: &()) -> std::cmp::Ordering {
-        self.0.partial_cmp(&other.0).unwrap()
+impl<'a> sum_tree::SeekTarget<'a, ListItemSummary, ListItemSummary> for Count {
+    fn cmp(&self, other: &ListItemSummary, _: &()) -> std::cmp::Ordering {
+        self.0.partial_cmp(&other.count).unwrap()
+    }
+}
+
+impl<'a> sum_tree::SeekTarget<'a, ListItemSummary, ListItemSummary> for Height {
+    fn cmp(&self, other: &ListItemSummary, _: &()) -> std::cmp::Ordering {
+        self.0.partial_cmp(&other.height).unwrap()
     }
 }
 
@@ -760,7 +757,7 @@ mod tests {
                     log::info!("splice({:?}, {:?})", start_ix..end_ix, new_elements);
                     state.splice(start_ix..end_ix, new_elements.len());
                     elements.splice(start_ix..end_ix, new_elements);
-                    for (ix, item) in state.0.borrow().items.cursor::<(), ()>().enumerate() {
+                    for (ix, item) in state.0.borrow().items.cursor::<()>().enumerate() {
                         if let ListItem::Rendered(element) = item {
                             let (expected_id, _) = elements[ix];
                             element.with_metadata(|metadata: Option<&usize>| {
@@ -797,7 +794,7 @@ mod tests {
             let mut first_rendered_element_top = None;
             let mut last_rendered_element_bottom = None;
             assert_eq!(state.items.summary().count, elements.borrow().len());
-            for (ix, item) in state.items.cursor::<(), ()>().enumerate() {
+            for (ix, item) in state.items.cursor::<()>().enumerate() {
                 match item {
                     ListItem::Unrendered => {
                         let item_bottom = item_top;

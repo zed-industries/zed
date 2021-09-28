@@ -1081,7 +1081,7 @@ impl WorkspaceHandle for ViewHandle<Workspace> {
             .flat_map(|tree| {
                 let tree_id = tree.id();
                 tree.read(cx)
-                    .files(0)
+                    .files(true, 0)
                     .map(move |f| (tree_id, f.path.clone()))
             })
             .collect::<Vec<_>>()

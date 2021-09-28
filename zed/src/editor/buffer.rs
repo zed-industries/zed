@@ -1455,21 +1455,21 @@ impl Buffer {
         let cx = Some(version.clone());
         let mut new_ropes =
             RopeBuilder::new(self.visible_text.cursor(0), self.deleted_text.cursor(0));
-        let mut old_fragments = self.fragments.cursor::<VersionedOffset, VersionedOffset>();
+        let mut old_fragments = self.fragments.cursor::<VersionedOffset>();
         let mut new_fragments =
             old_fragments.slice(&VersionedOffset::Offset(ranges[0].start), Bias::Left, &cx);
         new_ropes.push_tree(new_fragments.summary().text);
 
-        let mut fragment_start = old_fragments.sum_start().offset();
+        let mut fragment_start = old_fragments.start().offset();
         for range in ranges {
-            let fragment_end = old_fragments.sum_end(&cx).offset();
+            let fragment_end = old_fragments.end(&cx).offset();
 
             // If the current fragment ends before this range, then jump ahead to the first fragment
             // that extends past the start of this range, reusing any intervening fragments.
             if fragment_end < range.start {
                 // If the current fragment has been partially consumed, then consume the rest of it
                 // and advance to the next fragment before slicing.
-                if fragment_start > old_fragments.sum_start().offset() {
+                if fragment_start > old_fragments.start().offset() {
                     if fragment_end > fragment_start {
                         let mut suffix = old_fragments.item().unwrap().clone();
                         suffix.len = fragment_end - fragment_start;
@@ -1483,18 +1483,18 @@ impl Buffer {
                     old_fragments.slice(&VersionedOffset::Offset(range.start), Bias::Left, &cx);
                 new_ropes.push_tree(slice.summary().text);
                 new_fragments.push_tree(slice, &None);
-                fragment_start = old_fragments.sum_start().offset();
+                fragment_start = old_fragments.start().offset();
             }
 
             // If we are at the end of a non-concurrent fragment, advance to the next one.
-            let fragment_end = old_fragments.sum_end(&cx).offset();
+            let fragment_end = old_fragments.end(&cx).offset();
             if fragment_end == range.start && fragment_end > fragment_start {
                 let mut fragment = old_fragments.item().unwrap().clone();
                 fragment.len = fragment_end - fragment_start;
                 new_ropes.push_fragment(&fragment, fragment.visible);
                 new_fragments.push(fragment, &None);
                 old_fragments.next(&cx);
-                fragment_start = old_fragments.sum_start().offset();
+                fragment_start = old_fragments.start().offset();
             }
 
             // Skip over insertions that are concurrent to this edit, but have a lower lamport
@@ -1541,7 +1541,7 @@ impl Buffer {
             // portions as deleted.
             while fragment_start < range.end {
                 let fragment = old_fragments.item().unwrap();
-                let fragment_end = old_fragments.sum_end(&cx).offset();
+                let fragment_end = old_fragments.end(&cx).offset();
                 let mut intersection = fragment.clone();
                 let intersection_end = cmp::min(range.end, fragment_end);
                 if fragment.was_visible(version, &self.undo_map) {
@@ -1562,8 +1562,8 @@ impl Buffer {
 
         // If the current fragment has been partially consumed, then consume the rest of it
         // and advance to the next fragment before slicing.
-        if fragment_start > old_fragments.sum_start().offset() {
-            let fragment_end = old_fragments.sum_end(&cx).offset();
+        if fragment_start > old_fragments.start().offset() {
+            let fragment_end = old_fragments.end(&cx).offset();
             if fragment_end > fragment_start {
                 let mut suffix = old_fragments.item().unwrap().clone();
                 suffix.len = fragment_end - fragment_start;
@@ -1679,7 +1679,7 @@ impl Buffer {
         }
         let cx = Some(cx);
 
-        let mut old_fragments = self.fragments.cursor::<VersionedOffset, VersionedOffset>();
+        let mut old_fragments = self.fragments.cursor::<VersionedOffset>();
         let mut new_fragments = old_fragments.slice(
             &VersionedOffset::Offset(undo.ranges[0].start),
             Bias::Right,
@@ -1690,7 +1690,7 @@ impl Buffer {
         new_ropes.push_tree(new_fragments.summary().text);
 
         for range in &undo.ranges {
-            let mut end_offset = old_fragments.sum_end(&cx).offset();
+            let mut end_offset = old_fragments.end(&cx).offset();
 
             if end_offset < range.start {
                 let preceding_fragments =
@@ -1714,7 +1714,7 @@ impl Buffer {
                     new_fragments.push(fragment, &None);
 
                     old_fragments.next(&cx);
-                    if end_offset == old_fragments.sum_end(&cx).offset() {
+                    if end_offset == old_fragments.end(&cx).offset() {
                         let unseen_fragments = old_fragments.slice(
                             &VersionedOffset::Offset(end_offset),
                             Bias::Right,
@@ -1723,7 +1723,7 @@ impl Buffer {
                         new_ropes.push_tree(unseen_fragments.summary().text);
                         new_fragments.push_tree(unseen_fragments, &None);
                     }
-                    end_offset = old_fragments.sum_end(&cx).offset();
+                    end_offset = old_fragments.end(&cx).offset();
                 } else {
                     break;
                 }
@@ -1799,20 +1799,20 @@ impl Buffer {
 
         let mut new_ropes =
             RopeBuilder::new(self.visible_text.cursor(0), self.deleted_text.cursor(0));
-        let mut old_fragments = self.fragments.cursor::<usize, FragmentTextSummary>();
+        let mut old_fragments = self.fragments.cursor::<(usize, FragmentTextSummary)>();
         let mut new_fragments = old_fragments.slice(&ranges[0].start, Bias::Right, &None);
         new_ropes.push_tree(new_fragments.summary().text);
 
-        let mut fragment_start = old_fragments.sum_start().visible;
+        let mut fragment_start = old_fragments.start().1.visible;
         for range in ranges {
-            let fragment_end = old_fragments.sum_end(&None).visible;
+            let fragment_end = old_fragments.end(&None).1.visible;
 
             // If the current fragment ends before this range, then jump ahead to the first fragment
             // that extends past the start of this range, reusing any intervening fragments.
             if fragment_end < range.start {
                 // If the current fragment has been partially consumed, then consume the rest of it
                 // and advance to the next fragment before slicing.
-                if fragment_start > old_fragments.sum_start().visible {
+                if fragment_start > old_fragments.start().1.visible {
                     if fragment_end > fragment_start {
                         let mut suffix = old_fragments.item().unwrap().clone();
                         suffix.len = fragment_end - fragment_start;
@@ -1825,10 +1825,10 @@ impl Buffer {
                 let slice = old_fragments.slice(&range.start, Bias::Right, &None);
                 new_ropes.push_tree(slice.summary().text);
                 new_fragments.push_tree(slice, &None);
-                fragment_start = old_fragments.sum_start().visible;
+                fragment_start = old_fragments.start().1.visible;
             }
 
-            let full_range_start = range.start + old_fragments.sum_start().deleted;
+            let full_range_start = range.start + old_fragments.start().1.deleted;
 
             // Preserve any portion of the current fragment that precedes this range.
             if fragment_start < range.start {
@@ -1858,7 +1858,7 @@ impl Buffer {
             // portions as deleted.
             while fragment_start < range.end {
                 let fragment = old_fragments.item().unwrap();
-                let fragment_end = old_fragments.sum_end(&None).visible;
+                let fragment_end = old_fragments.end(&None).1.visible;
                 let mut intersection = fragment.clone();
                 let intersection_end = cmp::min(range.end, fragment_end);
                 if fragment.visible {
@@ -1876,14 +1876,14 @@ impl Buffer {
                 }
             }
 
-            let full_range_end = range.end + old_fragments.sum_start().deleted;
+            let full_range_end = range.end + old_fragments.start().1.deleted;
             edit.ranges.push(full_range_start..full_range_end);
         }
 
         // If the current fragment has been partially consumed, then consume the rest of it
         // and advance to the next fragment before slicing.
-        if fragment_start > old_fragments.sum_start().visible {
-            let fragment_end = old_fragments.sum_end(&None).visible;
+        if fragment_start > old_fragments.start().1.visible {
+            let fragment_end = old_fragments.end(&None).1.visible;
             if fragment_end > fragment_start {
                 let mut suffix = old_fragments.item().unwrap().clone();
                 suffix.len = fragment_end - fragment_start;
@@ -2156,14 +2156,14 @@ impl<'a> Content<'a> {
 
     fn summary_for_anchor(&self, anchor: &Anchor) -> TextSummary {
         let cx = Some(anchor.version.clone());
-        let mut cursor = self.fragments.cursor::<VersionedOffset, usize>();
+        let mut cursor = self.fragments.cursor::<(VersionedOffset, usize)>();
         cursor.seek(&VersionedOffset::Offset(anchor.offset), anchor.bias, &cx);
         let overshoot = if cursor.item().map_or(false, |fragment| fragment.visible) {
-            anchor.offset - cursor.seek_start().offset()
+            anchor.offset - cursor.start().0.offset()
         } else {
             0
         };
-        self.text_summary_for_range(0..*cursor.sum_start() + overshoot)
+        self.text_summary_for_range(0..cursor.start().1 + overshoot)
     }
 
     fn text_summary_for_range(&self, range: Range<usize>) -> TextSummary {
@@ -2174,10 +2174,10 @@ impl<'a> Content<'a> {
         let offset = position.to_offset(self);
         let max_offset = self.len();
         assert!(offset <= max_offset, "offset is out of range");
-        let mut cursor = self.fragments.cursor::<usize, FragmentTextSummary>();
+        let mut cursor = self.fragments.cursor::<(usize, FragmentTextSummary)>();
         cursor.seek(&offset, bias, &None);
         Anchor {
-            offset: offset + cursor.sum_start().deleted,
+            offset: offset + cursor.start().1.deleted,
             bias,
             version: self.version.clone(),
         }
@@ -2187,14 +2187,14 @@ impl<'a> Content<'a> {
         let cx = Some(anchor.version.clone());
         let mut cursor = self
             .fragments
-            .cursor::<VersionedOffset, FragmentTextSummary>();
+            .cursor::<(VersionedOffset, FragmentTextSummary)>();
         cursor.seek(&VersionedOffset::Offset(anchor.offset), anchor.bias, &cx);
         let overshoot = if cursor.item().is_some() {
-            anchor.offset - cursor.seek_start().offset()
+            anchor.offset - cursor.start().0.offset()
         } else {
             0
         };
-        let summary = cursor.sum_start();
+        let summary = cursor.start().1;
         summary.visible + summary.deleted + overshoot
     }
 
@@ -2589,7 +2589,7 @@ impl<'a> sum_tree::Dimension<'a, FragmentSummary> for VersionedOffset {
     }
 }
 
-impl<'a> sum_tree::SeekDimension<'a, FragmentSummary> for VersionedOffset {
+impl<'a> sum_tree::SeekTarget<'a, FragmentSummary, Self> for VersionedOffset {
     fn cmp(&self, other: &Self, _: &Option<time::Global>) -> cmp::Ordering {
         match (self, other) {
             (Self::Offset(a), Self::Offset(b)) => Ord::cmp(a, b),

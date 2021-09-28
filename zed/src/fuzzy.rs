@@ -278,8 +278,10 @@ pub async fn match_paths(
 
                             let start = max(tree_start, segment_start) - tree_start;
                             let end = min(tree_end, segment_end) - tree_start;
-                            if include_ignored {
-                                let paths = snapshot.files(start).take(end - start).map(|entry| {
+                            let paths = snapshot
+                                .files(include_ignored, start)
+                                .take(end - start)
+                                .map(|entry| {
                                     if let EntryKind::File(char_bag) = entry.kind {
                                         PathMatchCandidate {
                                             path: &entry.path,
@@ -289,36 +291,14 @@ pub async fn match_paths(
                                         unreachable!()
                                     }
                                 });
-                                matcher.match_paths(
-                                    snapshot.id(),
-                                    path_prefix,
-                                    paths,
-                                    results,
-                                    &cancel_flag,
-                                );
-                            } else {
-                                let paths =
-                                    snapshot
-                                        .visible_files(start)
-                                        .take(end - start)
-                                        .map(|entry| {
-                                            if let EntryKind::File(char_bag) = entry.kind {
-                                                PathMatchCandidate {
-                                                    path: &entry.path,
-                                                    char_bag,
-                                                }
-                                            } else {
-                                                unreachable!()
-                                            }
-                                        });
-                                matcher.match_paths(
-                                    snapshot.id(),
-                                    path_prefix,
-                                    paths,
-                                    results,
-                                    &cancel_flag,
-                                );
-                            };
+
+                            matcher.match_paths(
+                                snapshot.id(),
+                                path_prefix,
+                                paths,
+                                results,
+                                &cancel_flag,
+                            );
                         }
                         if tree_end >= segment_end {
                             break;

@@ -17,7 +17,7 @@ use futures::{Stream, StreamExt};
 pub use fuzzy::{match_paths, PathMatch};
 use gpui::{
     executor,
-    sum_tree::{self, Cursor, Edit, SumTree},
+    sum_tree::{self, Edit, SeekTarget, SumTree},
     AppContext, AsyncAppContext, Entity, ModelContext, ModelHandle, MutableAppContext, Task,
     UpgradeModelHandle, WeakModelHandle,
 };
@@ -1140,7 +1140,7 @@ impl LocalWorktree {
             remote_id.await.map(|id| {
                 let entries = snapshot
                     .entries_by_path
-                    .cursor::<(), ()>()
+                    .cursor::<()>()
                     .filter(|e| !e.is_ignored)
                     .map(Into::into)
                     .collect();
@@ -1385,36 +1385,38 @@ impl Snapshot {
         let mut removed_entries = Vec::new();
         let mut self_entries = self
             .entries_by_id
-            .cursor::<(), ()>()
+            .cursor::<()>()
             .filter(|e| include_ignored || !e.is_ignored)
             .peekable();
         let mut other_entries = other
             .entries_by_id
-            .cursor::<(), ()>()
+            .cursor::<()>()
             .filter(|e| include_ignored || !e.is_ignored)
             .peekable();
         loop {
             match (self_entries.peek(), other_entries.peek()) {
-                (Some(self_entry), Some(other_entry)) => match self_entry.id.cmp(&other_entry.id) {
-                    Ordering::Less => {
-                        let entry = self.entry_for_id(self_entry.id).unwrap().into();
-                        updated_entries.push(entry);
-                        self_entries.next();
-                    }
-                    Ordering::Equal => {
-                        if self_entry.scan_id != other_entry.scan_id {
+                (Some(self_entry), Some(other_entry)) => {
+                    match Ord::cmp(&self_entry.id, &other_entry.id) {
+                        Ordering::Less => {
                             let entry = self.entry_for_id(self_entry.id).unwrap().into();
                             updated_entries.push(entry);
+                            self_entries.next();
                         }
+                        Ordering::Equal => {
+                            if self_entry.scan_id != other_entry.scan_id {
+                                let entry = self.entry_for_id(self_entry.id).unwrap().into();
+                                updated_entries.push(entry);
+                            }
 
-                        self_entries.next();
-                        other_entries.next();
+                            self_entries.next();
+                            other_entries.next();
+                        }
+                        Ordering::Greater => {
+                            removed_entries.push(other_entry.id as u64);
+                            other_entries.next();
+                        }
                     }
-                    Ordering::Greater => {
-                        removed_entries.push(other_entry.id as u64);
-                        other_entries.next();
-                    }
-                },
+                }
                 (Some(self_entry), None) => {
                     let entry = self.entry_for_id(self_entry.id).unwrap().into();
                     updated_entries.push(entry);
@@ -1474,36 +1476,76 @@ impl Snapshot {
         self.entries_by_path.summary().file_count
     }
 
-    pub fn visible_entry_count(&self) -> usize {
-        self.entries_by_path.summary().visible_count
-    }
-
     pub fn visible_file_count(&self) -> usize {
         self.entries_by_path.summary().visible_file_count
     }
 
-    pub fn files(&self, start: usize) -> EntryIter<FileCount> {
-        EntryIter::new(self, start)
+    fn traverse_from_offset(
+        &self,
+        include_dirs: bool,
+        include_ignored: bool,
+        start_offset: usize,
+    ) -> Traversal {
+        let mut cursor = self.entries_by_path.cursor();
+        cursor.seek(
+            &TraversalTarget::Count {
+                count: start_offset,
+                include_dirs,
+                include_ignored,
+            },
+            Bias::Right,
+            &(),
+        );
+        Traversal {
+            cursor,
+            include_dirs,
+            include_ignored,
+        }
     }
 
-    pub fn visible_entries(&self, start: usize) -> EntryIter<VisibleCountAndPath> {
-        EntryIter::new(self, start)
+    fn traverse_from_path(
+        &self,
+        include_dirs: bool,
+        include_ignored: bool,
+        path: &Path,
+    ) -> Traversal {
+        let mut cursor = self.entries_by_path.cursor();
+        cursor.seek(&TraversalTarget::Path(path), Bias::Left, &());
+        Traversal {
+            cursor,
+            include_dirs,
+            include_ignored,
+        }
     }
 
-    pub fn visible_files(&self, start: usize) -> EntryIter<VisibleFileCount> {
-        EntryIter::new(self, start)
+    pub fn files(&self, include_ignored: bool, start: usize) -> Traversal {
+        self.traverse_from_offset(false, include_ignored, start)
+    }
+
+    pub fn entries(&self, include_ignored: bool) -> Traversal {
+        self.traverse_from_offset(true, include_ignored, 0)
     }
 
     pub fn paths(&self) -> impl Iterator<Item = &Arc<Path>> {
         let empty_path = Path::new("");
         self.entries_by_path
-            .cursor::<(), ()>()
+            .cursor::<()>()
             .filter(move |entry| entry.path.as_ref() != empty_path)
             .map(|entry| &entry.path)
     }
 
-    fn child_entries<'a>(&'a self, path: &'a Path) -> ChildEntriesIter<'a> {
-        ChildEntriesIter::new(path, self)
+    fn child_entries<'a>(&'a self, parent_path: &'a Path) -> ChildEntriesIter<'a> {
+        let mut cursor = self.entries_by_path.cursor();
+        cursor.seek(&TraversalTarget::Path(parent_path), Bias::Right, &());
+        let traversal = Traversal {
+            cursor,
+            include_dirs: true,
+            include_ignored: true,
+        };
+        ChildEntriesIter {
+            traversal,
+            parent_path,
+        }
     }
 
     pub fn root_entry(&self) -> Option<&Entry> {
@@ -1515,12 +1557,16 @@ impl Snapshot {
     }
 
     pub fn entry_for_path(&self, path: impl AsRef<Path>) -> Option<&Entry> {
-        let mut cursor = self.entries_by_path.cursor::<_, ()>();
-        if cursor.seek(&PathSearch::Exact(path.as_ref()), Bias::Left, &()) {
-            cursor.item()
-        } else {
-            None
-        }
+        let path = path.as_ref();
+        self.traverse_from_path(true, true, path)
+            .entry()
+            .and_then(|entry| {
+                if entry.path.as_ref() == path {
+                    Some(entry)
+                } else {
+                    None
+                }
+            })
     }
 
     fn entry_for_id(&self, id: usize) -> Option<&Entry> {
@@ -1598,25 +1644,27 @@ impl Snapshot {
 
     fn reuse_entry_id(&mut self, entry: &mut Entry) {
         if let Some(removed_entry_id) = self.removed_entry_ids.remove(&entry.inode) {
+            log::info!("reusing removed entry id {}", removed_entry_id);
             entry.id = removed_entry_id;
         } else if let Some(existing_entry) = self.entry_for_path(&entry.path) {
+            log::info!("reusing removed entry id {}", existing_entry.id);
             entry.id = existing_entry.id;
         }
     }
 
     fn remove_path(&mut self, path: &Path) {
         let mut new_entries;
-        let removed_entry_ids;
+        let removed_entries;
         {
-            let mut cursor = self.entries_by_path.cursor::<_, ()>();
-            new_entries = cursor.slice(&PathSearch::Exact(path), Bias::Left, &());
-            removed_entry_ids = cursor.slice(&PathSearch::Successor(path), Bias::Left, &());
+            let mut cursor = self.entries_by_path.cursor::<TraversalProgress>();
+            new_entries = cursor.slice(&TraversalTarget::Path(path), Bias::Left, &());
+            removed_entries = cursor.slice(&TraversalTarget::PathSuccessor(path), Bias::Left, &());
             new_entries.push_tree(cursor.suffix(&()), &());
         }
         self.entries_by_path = new_entries;
 
         let mut entries_by_id_edits = Vec::new();
-        for entry in removed_entry_ids.cursor::<(), ()>() {
+        for entry in removed_entries.cursor::<()>() {
             let removed_entry_id = self
                 .removed_entry_ids
                 .entry(entry.inode)
@@ -1663,7 +1711,7 @@ impl Snapshot {
 
 impl fmt::Debug for Snapshot {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        for entry in self.entries_by_path.cursor::<(), ()>() {
+        for entry in self.entries_by_path.cursor::<()>() {
             for _ in entry.path.ancestors().skip(1) {
                 write!(f, " ")?;
             }
@@ -1898,32 +1946,22 @@ impl sum_tree::Item for Entry {
     type Summary = EntrySummary;
 
     fn summary(&self) -> Self::Summary {
+        let visible_count = if self.is_ignored { 0 } else { 1 };
         let file_count;
-        let visible_count;
         let visible_file_count;
         if self.is_file() {
             file_count = 1;
-            if self.is_ignored {
-                visible_count = 0;
-                visible_file_count = 0;
-            } else {
-                visible_count = 1;
-                visible_file_count = 1;
-            }
+            visible_file_count = visible_count;
         } else {
             file_count = 0;
             visible_file_count = 0;
-            if self.is_ignored {
-                visible_count = 0;
-            } else {
-                visible_count = 1;
-            }
         }
 
         EntrySummary {
             max_path: self.path.clone(),
-            file_count,
+            count: 1,
             visible_count,
+            file_count,
             visible_file_count,
         }
     }
@@ -1940,17 +1978,19 @@ impl sum_tree::KeyedItem for Entry {
 #[derive(Clone, Debug)]
 pub struct EntrySummary {
     max_path: Arc<Path>,
+    count: usize,
+    visible_count: usize,
     file_count: usize,
     visible_file_count: usize,
-    visible_count: usize,
 }
 
 impl Default for EntrySummary {
     fn default() -> Self {
         Self {
             max_path: Arc::from(Path::new("")),
-            file_count: 0,
+            count: 0,
             visible_count: 0,
+            file_count: 0,
             visible_file_count: 0,
         }
     }
@@ -1961,8 +2001,8 @@ impl sum_tree::Summary for EntrySummary {
 
     fn add_summary(&mut self, rhs: &Self, _: &()) {
         self.max_path = rhs.max_path.clone();
-        self.file_count += rhs.file_count;
         self.visible_count += rhs.visible_count;
+        self.file_count += rhs.file_count;
         self.visible_file_count += rhs.visible_file_count;
     }
 }
@@ -2022,151 +2062,6 @@ impl Default for PathKey {
 impl<'a> sum_tree::Dimension<'a, EntrySummary> for PathKey {
     fn add_summary(&mut self, summary: &'a EntrySummary, _: &()) {
         self.0 = summary.max_path.clone();
-    }
-}
-
-#[derive(Copy, Clone, Debug, PartialEq, Eq)]
-enum PathSearch<'a> {
-    Exact(&'a Path),
-    Successor(&'a Path),
-}
-
-impl<'a> Ord for PathSearch<'a> {
-    fn cmp(&self, other: &Self) -> cmp::Ordering {
-        match (self, other) {
-            (Self::Exact(a), Self::Exact(b)) => a.cmp(b),
-            (Self::Successor(a), Self::Exact(b)) => {
-                if b.starts_with(a) {
-                    cmp::Ordering::Greater
-                } else {
-                    a.cmp(b)
-                }
-            }
-            _ => unreachable!("not sure we need the other two cases"),
-        }
-    }
-}
-
-impl<'a> PartialOrd for PathSearch<'a> {
-    fn partial_cmp(&self, other: &Self) -> Option<cmp::Ordering> {
-        Some(self.cmp(other))
-    }
-}
-
-impl<'a> Default for PathSearch<'a> {
-    fn default() -> Self {
-        Self::Exact(Path::new("").into())
-    }
-}
-
-impl<'a: 'b, 'b> sum_tree::Dimension<'a, EntrySummary> for PathSearch<'b> {
-    fn add_summary(&mut self, summary: &'a EntrySummary, _: &()) {
-        *self = Self::Exact(summary.max_path.as_ref());
-    }
-}
-
-#[derive(Clone, Default, Debug, Eq, PartialEq, Ord, PartialOrd)]
-pub struct FileCount(usize);
-
-#[derive(Clone, Default, Debug, Eq, PartialEq, Ord, PartialOrd)]
-pub struct VisibleFileCount(usize);
-
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct VisibleCountAndPath<'a> {
-    count: Option<usize>,
-    path: PathSearch<'a>,
-}
-
-impl<'a> sum_tree::Dimension<'a, EntrySummary> for FileCount {
-    fn add_summary(&mut self, summary: &'a EntrySummary, _: &()) {
-        self.0 += summary.file_count;
-    }
-}
-
-impl<'a> sum_tree::Dimension<'a, EntrySummary> for VisibleFileCount {
-    fn add_summary(&mut self, summary: &'a EntrySummary, _: &()) {
-        self.0 += summary.visible_file_count;
-    }
-}
-
-impl<'a> sum_tree::Dimension<'a, EntrySummary> for VisibleCountAndPath<'a> {
-    fn add_summary(&mut self, summary: &'a EntrySummary, _: &()) {
-        if let Some(count) = self.count.as_mut() {
-            *count += summary.visible_count;
-        } else {
-            unreachable!()
-        }
-        self.path = PathSearch::Exact(summary.max_path.as_ref());
-    }
-}
-
-impl<'a> Ord for VisibleCountAndPath<'a> {
-    fn cmp(&self, other: &Self) -> cmp::Ordering {
-        if let Some(count) = self.count {
-            count.cmp(&other.count.unwrap())
-        } else {
-            self.path.cmp(&other.path)
-        }
-    }
-}
-
-impl<'a> PartialOrd for VisibleCountAndPath<'a> {
-    fn partial_cmp(&self, other: &Self) -> Option<cmp::Ordering> {
-        Some(self.cmp(other))
-    }
-}
-
-impl From<usize> for FileCount {
-    fn from(count: usize) -> Self {
-        Self(count)
-    }
-}
-
-impl From<usize> for VisibleFileCount {
-    fn from(count: usize) -> Self {
-        Self(count)
-    }
-}
-
-impl<'a> From<usize> for VisibleCountAndPath<'a> {
-    fn from(count: usize) -> Self {
-        Self {
-            count: Some(count),
-            path: PathSearch::default(),
-        }
-    }
-}
-
-impl Deref for FileCount {
-    type Target = usize;
-
-    fn deref(&self) -> &usize {
-        &self.0
-    }
-}
-
-impl Deref for VisibleFileCount {
-    type Target = usize;
-
-    fn deref(&self) -> &usize {
-        &self.0
-    }
-}
-
-impl<'a> Deref for VisibleCountAndPath<'a> {
-    type Target = usize;
-
-    fn deref(&self) -> &usize {
-        self.count.as_ref().unwrap()
-    }
-}
-
-impl<'a> Default for VisibleCountAndPath<'a> {
-    fn default() -> Self {
-        Self {
-            count: Some(0),
-            path: Default::default(),
-        }
     }
 }
 
@@ -2662,104 +2557,163 @@ impl WorktreeHandle for ModelHandle<Worktree> {
     }
 }
 
-pub struct EntryIter<'a, Dim> {
-    cursor: Cursor<'a, Entry, Dim, ()>,
+#[derive(Clone, Debug)]
+struct TraversalProgress<'a> {
+    max_path: &'a Path,
+    count: usize,
+    visible_count: usize,
+    file_count: usize,
+    visible_file_count: usize,
 }
 
-impl<'a, Dim> EntryIter<'a, Dim>
-where
-    Dim: sum_tree::SeekDimension<'a, EntrySummary> + From<usize> + Deref<Target = usize>,
-{
-    fn new(snapshot: &'a Snapshot, start: usize) -> Self {
-        let mut cursor = snapshot.entries_by_path.cursor();
-        cursor.seek(&Dim::from(start), Bias::Right, &());
-        Self { cursor }
-    }
-
-    pub fn ix(&self) -> usize {
-        *self.cursor.seek_start().deref()
-    }
-
-    pub fn advance_to_ix(&mut self, ix: usize) {
-        self.cursor.seek_forward(&Dim::from(ix), Bias::Right, &());
-    }
-
-    pub fn advance(&mut self) {
-        self.advance_to_ix(self.ix() + 1);
-    }
-
-    pub fn item(&self) -> Option<&'a Entry> {
-        self.cursor.item()
+impl<'a> TraversalProgress<'a> {
+    fn count(&self, include_dirs: bool, include_ignored: bool) -> usize {
+        match (include_ignored, include_dirs) {
+            (true, true) => self.count,
+            (true, false) => self.file_count,
+            (false, true) => self.visible_count,
+            (false, false) => self.visible_file_count,
+        }
     }
 }
 
-impl<'a> EntryIter<'a, VisibleCountAndPath<'a>> {
-    pub fn advance_sibling(&mut self) -> bool {
-        let start_count = self.cursor.seek_start().count.unwrap();
-        while let Some(item) = self.cursor.item() {
+impl<'a> sum_tree::Dimension<'a, EntrySummary> for TraversalProgress<'a> {
+    fn add_summary(&mut self, summary: &'a EntrySummary, _: &()) {
+        self.max_path = summary.max_path.as_ref();
+        self.count += summary.count;
+        self.visible_count += summary.visible_count;
+        self.file_count += summary.file_count;
+        self.visible_file_count += summary.visible_file_count;
+    }
+}
+
+impl<'a> Default for TraversalProgress<'a> {
+    fn default() -> Self {
+        Self {
+            max_path: Path::new(""),
+            count: 0,
+            visible_count: 0,
+            file_count: 0,
+            visible_file_count: 0,
+        }
+    }
+}
+
+pub struct Traversal<'a> {
+    cursor: sum_tree::Cursor<'a, Entry, TraversalProgress<'a>>,
+    include_ignored: bool,
+    include_dirs: bool,
+}
+
+impl<'a> Traversal<'a> {
+    pub fn advance(&mut self) -> bool {
+        self.advance_to_offset(self.offset() + 1)
+    }
+
+    pub fn advance_to_offset(&mut self, offset: usize) -> bool {
+        self.cursor.seek_forward(
+            &TraversalTarget::Count {
+                count: offset,
+                include_dirs: self.include_dirs,
+                include_ignored: self.include_ignored,
+            },
+            Bias::Right,
+            &(),
+        )
+    }
+
+    pub fn advance_to_sibling(&mut self) -> bool {
+        while let Some(entry) = self.cursor.item() {
             self.cursor.seek_forward(
-                &VisibleCountAndPath {
-                    count: None,
-                    path: PathSearch::Successor(item.path.as_ref()),
-                },
-                Bias::Right,
+                &TraversalTarget::PathSuccessor(&entry.path),
+                Bias::Left,
                 &(),
             );
-            if self.cursor.seek_start().count.unwrap() > start_count {
-                return true;
+            if let Some(entry) = self.cursor.item() {
+                if (self.include_dirs || !entry.is_dir())
+                    && (self.include_ignored || !entry.is_ignored)
+                {
+                    return true;
+                }
             }
         }
         false
     }
+
+    pub fn entry(&self) -> Option<&'a Entry> {
+        self.cursor.item()
+    }
+
+    pub fn offset(&self) -> usize {
+        self.cursor
+            .start()
+            .count(self.include_dirs, self.include_ignored)
+    }
 }
 
-impl<'a, Dim> Iterator for EntryIter<'a, Dim>
-where
-    Dim: sum_tree::SeekDimension<'a, EntrySummary> + From<usize> + Deref<Target = usize>,
-{
+impl<'a> Iterator for Traversal<'a> {
     type Item = &'a Entry;
 
     fn next(&mut self) -> Option<Self::Item> {
-        if let Some(entry) = self.item() {
+        if let Some(item) = self.entry() {
             self.advance();
-            Some(entry)
+            Some(item)
         } else {
             None
+        }
+    }
+}
+
+#[derive(Debug)]
+enum TraversalTarget<'a> {
+    Path(&'a Path),
+    PathSuccessor(&'a Path),
+    Count {
+        count: usize,
+        include_ignored: bool,
+        include_dirs: bool,
+    },
+}
+
+impl<'a, 'b> SeekTarget<'a, EntrySummary, TraversalProgress<'a>> for TraversalTarget<'b> {
+    fn cmp(&self, cursor_location: &TraversalProgress<'a>, _: &()) -> Ordering {
+        match self {
+            TraversalTarget::Path(path) => path.cmp(&cursor_location.max_path),
+            TraversalTarget::PathSuccessor(path) => {
+                if !cursor_location.max_path.starts_with(path) {
+                    Ordering::Equal
+                } else {
+                    Ordering::Greater
+                }
+            }
+            TraversalTarget::Count {
+                count,
+                include_dirs,
+                include_ignored,
+            } => Ord::cmp(
+                count,
+                &cursor_location.count(*include_dirs, *include_ignored),
+            ),
         }
     }
 }
 
 struct ChildEntriesIter<'a> {
     parent_path: &'a Path,
-    cursor: Cursor<'a, Entry, PathSearch<'a>, ()>,
-}
-
-impl<'a> ChildEntriesIter<'a> {
-    fn new(parent_path: &'a Path, snapshot: &'a Snapshot) -> Self {
-        let mut cursor = snapshot.entries_by_path.cursor();
-        cursor.seek(&PathSearch::Exact(parent_path), Bias::Right, &());
-        Self {
-            parent_path,
-            cursor,
-        }
-    }
+    traversal: Traversal<'a>,
 }
 
 impl<'a> Iterator for ChildEntriesIter<'a> {
     type Item = &'a Entry;
 
     fn next(&mut self) -> Option<Self::Item> {
-        if let Some(item) = self.cursor.item() {
-            if item.path.starts_with(self.parent_path) {
-                self.cursor
-                    .seek_forward(&PathSearch::Successor(&item.path), Bias::Left, &());
-                Some(item)
-            } else {
-                None
+        if let Some(item) = self.traversal.entry() {
+            if item.path.starts_with(&self.parent_path) {
+                self.traversal.advance_to_sibling();
+                return Some(item);
             }
-        } else {
-            None
         }
+        None
     }
 }
 
@@ -3366,7 +3320,7 @@ mod tests {
                 let mut entries_by_id_edits = Vec::new();
                 for entry in prev_snapshot
                     .entries_by_id
-                    .cursor::<(), ()>()
+                    .cursor::<()>()
                     .filter(|e| e.is_ignored)
                 {
                     entries_by_path_edits.push(Edit::Remove(PathKey(entry.path.clone())));
@@ -3539,9 +3493,9 @@ mod tests {
 
     impl Snapshot {
         fn check_invariants(&self) {
-            let mut files = self.files(0);
-            let mut visible_files = self.visible_files(0);
-            for entry in self.entries_by_path.cursor::<(), ()>() {
+            let mut files = self.files(true, 0);
+            let mut visible_files = self.files(false, 0);
+            for entry in self.entries_by_path.cursor::<()>() {
                 if entry.is_file() {
                     assert_eq!(files.next().unwrap().inode, entry.inode);
                     if !entry.is_ignored {
@@ -3564,7 +3518,7 @@ mod tests {
 
             let dfs_paths = self
                 .entries_by_path
-                .cursor::<(), ()>()
+                .cursor::<()>()
                 .map(|e| e.path.as_ref())
                 .collect::<Vec<_>>();
             assert_eq!(bfs_paths, dfs_paths);
@@ -3579,7 +3533,7 @@ mod tests {
 
         fn to_vec(&self, include_ignored: bool) -> Vec<(&Path, u64, bool)> {
             let mut paths = Vec::new();
-            for entry in self.entries_by_path.cursor::<(), ()>() {
+            for entry in self.entries_by_path.cursor::<()>() {
                 if include_ignored || !entry.is_ignored {
                     paths.push((entry.path.as_ref(), entry.inode, entry.is_ignored));
                 }

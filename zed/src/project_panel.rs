@@ -94,11 +94,11 @@ impl ProjectPanel {
 
             let expanded_dir_ids = &self.expanded_dir_ids[worktree_ix];
             let mut visible_worktree_entries = Vec::new();
-            let mut entry_iter = snapshot.visible_entries(0);
-            while let Some(item) = entry_iter.item() {
-                visible_worktree_entries.push(entry_iter.ix());
+            let mut entry_iter = snapshot.entries(false);
+            while let Some(item) = entry_iter.entry() {
+                visible_worktree_entries.push(entry_iter.offset());
                 if expanded_dir_ids.binary_search(&item.id).is_err() {
-                    if entry_iter.advance_sibling() {
+                    if entry_iter.advance_to_sibling() {
                         continue;
                     }
                 }
@@ -128,13 +128,13 @@ impl ProjectPanel {
 
             let expanded_entry_ids = &self.expanded_dir_ids[worktree_ix];
             let snapshot = worktrees[worktree_ix].read(cx).snapshot();
-            let mut cursor = snapshot.visible_entries(0);
+            let mut cursor = snapshot.entries(false);
             for ix in visible_worktree_entries[(range.start - total_ix)..]
                 .iter()
                 .copied()
             {
-                cursor.advance_to_ix(ix);
-                if let Some(entry) = cursor.item() {
+                cursor.advance_to_offset(ix);
+                if let Some(entry) = cursor.entry() {
                     let details = EntryDetails {
                         filename: entry.path.file_name().map_or_else(
                             || snapshot.root_name().to_string(),
