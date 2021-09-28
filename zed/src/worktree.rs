@@ -2622,7 +2622,7 @@ impl<'a> Traversal<'a> {
         )
     }
 
-    pub fn advance_sibling(&mut self) -> bool {
+    pub fn advance_to_sibling(&mut self) -> bool {
         while let Some(entry) = self.cursor.item() {
             self.cursor.seek_forward(
                 &TraversalTarget::PathSuccessor(&entry.path),
@@ -2703,7 +2703,7 @@ impl<'a> Iterator for ChildEntriesIter<'a> {
     fn next(&mut self) -> Option<Self::Item> {
         if let Some(item) = self.traversal.entry() {
             if item.path.starts_with(&self.parent_path) {
-                self.traversal.advance_sibling();
+                self.traversal.advance_to_sibling();
                 return Some(item);
             }
         }
