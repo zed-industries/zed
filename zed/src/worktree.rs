@@ -1510,7 +1510,7 @@ impl Snapshot {
         path: &Path,
     ) -> Traversal {
         let mut cursor = self.entries_by_path.cursor();
-        cursor.seek(&TraversalTarget::Path { path }, Bias::Right, &());
+        cursor.seek(&TraversalTarget::Path { path }, Bias::Left, &());
         Traversal {
             cursor,
             include_dirs,
@@ -1647,12 +1647,12 @@ impl Snapshot {
 
     fn remove_path(&mut self, path: &Path) {
         let mut new_entries;
-        let removed_entry_ids;
+        let removed_entries;
         {
             let mut cursor = self.entries_by_path.cursor::<TraversalProgress>();
             new_entries = cursor.slice(&TraversalTarget::Path { path }, Bias::Left, &());
             let count = cursor.start().count;
-            removed_entry_ids = cursor.slice(
+            removed_entries = cursor.slice(
                 &TraversalTarget::PathSuccessor {
                     path,
                     count,
@@ -1667,7 +1667,7 @@ impl Snapshot {
         self.entries_by_path = new_entries;
 
         let mut entries_by_id_edits = Vec::new();
-        for entry in removed_entry_ids.cursor::<()>() {
+        for entry in removed_entries.cursor::<()>() {
             let removed_entry_id = self
                 .removed_entry_ids
                 .entry(entry.inode)
@@ -2004,6 +2004,7 @@ impl sum_tree::Summary for EntrySummary {
 
     fn add_summary(&mut self, rhs: &Self, _: &()) {
         self.max_path = rhs.max_path.clone();
+        self.visible_count += rhs.visible_count;
         self.file_count += rhs.file_count;
         self.visible_file_count += rhs.visible_file_count;
     }
