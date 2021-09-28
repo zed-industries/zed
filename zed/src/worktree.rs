@@ -1510,7 +1510,7 @@ impl Snapshot {
         path: &Path,
     ) -> Traversal {
         let mut cursor = self.entries_by_path.cursor();
-        cursor.seek(&TraversalTarget::Path { path }, Bias::Left, &());
+        cursor.seek(&TraversalTarget::Path(path), Bias::Left, &());
         Traversal {
             cursor,
             include_dirs,
@@ -1534,22 +1534,18 @@ impl Snapshot {
             .map(|entry| &entry.path)
     }
 
-    fn child_entries<'a>(&'a self, path: &'a Path) -> ChildEntriesIter<'a> {
+    fn child_entries<'a>(&'a self, parent_path: &'a Path) -> ChildEntriesIter<'a> {
         let mut cursor = self.entries_by_path.cursor();
-        cursor.seek(&TraversalTarget::Path { path }, Bias::Right, &());
-        let mut traversal = Traversal {
+        cursor.seek(&TraversalTarget::Path(parent_path), Bias::Right, &());
+        let traversal = Traversal {
             cursor,
             include_dirs: true,
             include_ignored: true,
         };
-        traversal.advance();
-        let mut done = false;
-        if let Some(item) = traversal.cursor.item() {
-            if !item.path.starts_with(path) {
-                done = true;
-            }
+        ChildEntriesIter {
+            traversal,
+            parent_path,
         }
-        ChildEntriesIter { traversal, done }
     }
 
     pub fn root_entry(&self) -> Option<&Entry> {
@@ -1561,7 +1557,16 @@ impl Snapshot {
     }
 
     fn entry_for_path(&self, path: impl AsRef<Path>) -> Option<&Entry> {
-        self.traverse_from_path(true, true, path.as_ref()).entry()
+        let path = path.as_ref();
+        self.traverse_from_path(true, true, path)
+            .entry()
+            .and_then(|entry| {
+                if entry.path.as_ref() == path {
+                    Some(entry)
+                } else {
+                    None
+                }
+            })
     }
 
     fn entry_for_id(&self, id: usize) -> Option<&Entry> {
@@ -1639,8 +1644,10 @@ impl Snapshot {
 
     fn reuse_entry_id(&mut self, entry: &mut Entry) {
         if let Some(removed_entry_id) = self.removed_entry_ids.remove(&entry.inode) {
+            log::info!("reusing removed entry id {}", removed_entry_id);
             entry.id = removed_entry_id;
         } else if let Some(existing_entry) = self.entry_for_path(&entry.path) {
+            log::info!("reusing removed entry id {}", existing_entry.id);
             entry.id = existing_entry.id;
         }
     }
@@ -1650,18 +1657,8 @@ impl Snapshot {
         let removed_entries;
         {
             let mut cursor = self.entries_by_path.cursor::<TraversalProgress>();
-            new_entries = cursor.slice(&TraversalTarget::Path { path }, Bias::Left, &());
-            let count = cursor.start().count;
-            removed_entries = cursor.slice(
-                &TraversalTarget::PathSuccessor {
-                    path,
-                    count,
-                    include_ignored: true,
-                    include_dirs: true,
-                },
-                Bias::Left,
-                &(),
-            );
+            new_entries = cursor.slice(&TraversalTarget::Path(path), Bias::Left, &());
+            removed_entries = cursor.slice(&TraversalTarget::PathSuccessor(path), Bias::Left, &());
             new_entries.push_tree(cursor.suffix(&()), &());
         }
         self.entries_by_path = new_entries;
@@ -2626,26 +2623,21 @@ impl<'a> Traversal<'a> {
     }
 
     pub fn advance_sibling(&mut self) -> bool {
-        let count = self
-            .cursor
-            .start()
-            .count(self.include_dirs, self.include_ignored);
-        let prev_path = self.cursor.start().max_path.as_ref();
-        self.cursor.seek_forward(
-            &TraversalTarget::PathSuccessor {
-                count,
-                path: prev_path,
-                include_dirs: self.include_dirs,
-                include_ignored: self.include_ignored,
-            },
-            Bias::Right,
-            &(),
-        );
-        if let Some(item) = self.entry() {
-            item.path.components().count() == prev_path.components().count()
-        } else {
-            false
+        while let Some(entry) = self.cursor.item() {
+            self.cursor.seek_forward(
+                &TraversalTarget::PathSuccessor(&entry.path),
+                Bias::Left,
+                &(),
+            );
+            if let Some(entry) = self.cursor.item() {
+                if (self.include_dirs || !entry.is_dir())
+                    && (self.include_ignored || !entry.is_ignored)
+                {
+                    return true;
+                }
+            }
         }
+        false
     }
 
     pub fn entry(&self) -> Option<&'a Entry> {
@@ -2668,15 +2660,8 @@ impl<'a> Iterator for Traversal<'a> {
 
 #[derive(Debug)]
 enum TraversalTarget<'a> {
-    Path {
-        path: &'a Path,
-    },
-    PathSuccessor {
-        path: &'a Path,
-        count: usize,
-        include_ignored: bool,
-        include_dirs: bool,
-    },
+    Path(&'a Path),
+    PathSuccessor(&'a Path),
     Count {
         count: usize,
         include_ignored: bool,
@@ -2687,16 +2672,9 @@ enum TraversalTarget<'a> {
 impl<'a, 'b> SeekTarget<'a, EntrySummary, TraversalProgress<'a>> for TraversalTarget<'b> {
     fn cmp(&self, cursor_location: &TraversalProgress<'a>, _: &()) -> Ordering {
         match self {
-            TraversalTarget::Path { path } => path.cmp(&cursor_location.max_path),
-            TraversalTarget::PathSuccessor {
-                path,
-                count,
-                include_dirs,
-                include_ignored,
-            } => {
-                if !cursor_location.max_path.starts_with(path)
-                    && cursor_location.count(*include_dirs, *include_ignored) > *count
-                {
+            TraversalTarget::Path(path) => path.cmp(&cursor_location.max_path),
+            TraversalTarget::PathSuccessor(path) => {
+                if !cursor_location.max_path.starts_with(path) {
                     Ordering::Equal
                 } else {
                     Ordering::Greater
@@ -2715,23 +2693,21 @@ impl<'a, 'b> SeekTarget<'a, EntrySummary, TraversalProgress<'a>> for TraversalTa
 }
 
 struct ChildEntriesIter<'a> {
+    parent_path: &'a Path,
     traversal: Traversal<'a>,
-    done: bool,
 }
 
 impl<'a> Iterator for ChildEntriesIter<'a> {
     type Item = &'a Entry;
 
     fn next(&mut self) -> Option<Self::Item> {
-        if self.done {
-            return None;
-        }
         if let Some(item) = self.traversal.entry() {
-            self.done = !self.traversal.advance_sibling();
-            Some(item)
-        } else {
-            None
+            if item.path.starts_with(&self.parent_path) {
+                self.traversal.advance_sibling();
+                return Some(item);
+            }
         }
+        None
     }
 }
 
