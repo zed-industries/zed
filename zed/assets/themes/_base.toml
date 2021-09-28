@@ -162,6 +162,8 @@ corner_radius = 6
 [project_panel]
 extends = "$panel"
 entry = "$text.0"
+padding.left = "$panel.padding"
+padding.right = "$panel.padding"
 
 [selector]
 background = "$surface.0"
