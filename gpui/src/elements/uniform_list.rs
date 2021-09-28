@@ -137,7 +137,7 @@ where
                 size.set_y(size.y().min(scroll_height).max(constraint.min.y()));
             }
 
-            scroll_max = item_height * self.item_count as f32 - size.y();
+            scroll_max = (item_height * self.item_count as f32 - size.y()).max(0.);
             self.autoscroll(scroll_max, size.y(), item_height);
 
             items.clear();

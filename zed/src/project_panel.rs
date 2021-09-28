@@ -193,7 +193,10 @@ impl View for ProjectPanel {
         let handle = self.handle.clone();
         UniformList::new(
             self.list.clone(),
-            self.visible_entries.len(),
+            self.visible_entries
+                .iter()
+                .map(|worktree_entries| worktree_entries.len())
+                .sum(),
             move |range, items, cx| {
                 let theme = &settings.borrow().theme.project_panel;
                 let this = handle.upgrade(cx).unwrap();
