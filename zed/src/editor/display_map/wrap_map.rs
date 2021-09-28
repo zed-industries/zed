@@ -51,7 +51,7 @@ pub struct Chunks<'a> {
     input_chunks: tab_map::Chunks<'a>,
     input_chunk: &'a str,
     output_position: WrapPoint,
-    transforms: Cursor<'a, Transform, WrapPoint, TabPoint>,
+    transforms: Cursor<'a, Transform, (WrapPoint, TabPoint)>,
 }
 
 pub struct HighlightedChunks<'a> {
@@ -60,7 +60,7 @@ pub struct HighlightedChunks<'a> {
     style_id: HighlightId,
     output_position: WrapPoint,
     max_output_row: u32,
-    transforms: Cursor<'a, Transform, WrapPoint, TabPoint>,
+    transforms: Cursor<'a, Transform, (WrapPoint, TabPoint)>,
 }
 
 pub struct BufferRows<'a> {
@@ -69,7 +69,7 @@ pub struct BufferRows<'a> {
     output_row: u32,
     soft_wrapped: bool,
     max_output_row: u32,
-    transforms: Cursor<'a, Transform, WrapPoint, TabPoint>,
+    transforms: Cursor<'a, Transform, (WrapPoint, TabPoint)>,
 }
 
 impl WrapMap {
@@ -272,7 +272,7 @@ impl Snapshot {
         if edits.is_empty() {
             new_transforms = self.transforms.clone();
         } else {
-            let mut old_cursor = self.transforms.cursor::<TabPoint, ()>();
+            let mut old_cursor = self.transforms.cursor::<TabPoint>();
             let mut edits = edits.into_iter().peekable();
             new_transforms =
                 old_cursor.slice(&edits.peek().unwrap().old_lines.start, Bias::Right, &());
@@ -293,11 +293,11 @@ impl Snapshot {
 
                 old_cursor.seek_forward(&edit.old_lines.end, Bias::Right, &());
                 if let Some(next_edit) = edits.peek() {
-                    if next_edit.old_lines.start > old_cursor.seek_end(&()) {
-                        if old_cursor.seek_end(&()) > edit.old_lines.end {
-                            let summary = self.tab_snapshot.text_summary_for_range(
-                                edit.old_lines.end..old_cursor.seek_end(&()),
-                            );
+                    if next_edit.old_lines.start > old_cursor.end(&()) {
+                        if old_cursor.end(&()) > edit.old_lines.end {
+                            let summary = self
+                                .tab_snapshot
+                                .text_summary_for_range(edit.old_lines.end..old_cursor.end(&()));
                             new_transforms.push_or_extend(Transform::isomorphic(summary));
                         }
                         old_cursor.next(&());
@@ -307,10 +307,10 @@ impl Snapshot {
                         );
                     }
                 } else {
-                    if old_cursor.seek_end(&()) > edit.old_lines.end {
+                    if old_cursor.end(&()) > edit.old_lines.end {
                         let summary = self
                             .tab_snapshot
-                            .text_summary_for_range(edit.old_lines.end..old_cursor.seek_end(&()));
+                            .text_summary_for_range(edit.old_lines.end..old_cursor.end(&()));
                         new_transforms.push_or_extend(Transform::isomorphic(summary));
                     }
                     old_cursor.next(&());
@@ -364,7 +364,7 @@ impl Snapshot {
             new_transforms = self.transforms.clone();
         } else {
             let mut row_edits = row_edits.into_iter().peekable();
-            let mut old_cursor = self.transforms.cursor::<TabPoint, ()>();
+            let mut old_cursor = self.transforms.cursor::<TabPoint>();
 
             new_transforms = old_cursor.slice(
                 &TabPoint::new(row_edits.peek().unwrap().old_rows.start, 0),
@@ -427,10 +427,10 @@ impl Snapshot {
 
                 old_cursor.seek_forward(&TabPoint::new(edit.old_rows.end, 0), Bias::Right, &());
                 if let Some(next_edit) = row_edits.peek() {
-                    if next_edit.old_rows.start > old_cursor.seek_end(&()).row() {
-                        if old_cursor.seek_end(&()) > TabPoint::new(edit.old_rows.end, 0) {
+                    if next_edit.old_rows.start > old_cursor.end(&()).row() {
+                        if old_cursor.end(&()) > TabPoint::new(edit.old_rows.end, 0) {
                             let summary = self.tab_snapshot.text_summary_for_range(
-                                TabPoint::new(edit.old_rows.end, 0)..old_cursor.seek_end(&()),
+                                TabPoint::new(edit.old_rows.end, 0)..old_cursor.end(&()),
                             );
                             new_transforms.push_or_extend(Transform::isomorphic(summary));
                         }
@@ -445,9 +445,9 @@ impl Snapshot {
                         );
                     }
                 } else {
-                    if old_cursor.seek_end(&()) > TabPoint::new(edit.old_rows.end, 0) {
+                    if old_cursor.end(&()) > TabPoint::new(edit.old_rows.end, 0) {
                         let summary = self.tab_snapshot.text_summary_for_range(
-                            TabPoint::new(edit.old_rows.end, 0)..old_cursor.seek_end(&()),
+                            TabPoint::new(edit.old_rows.end, 0)..old_cursor.end(&()),
                         );
                         new_transforms.push_or_extend(Transform::isomorphic(summary));
                     }
@@ -465,11 +465,11 @@ impl Snapshot {
 
     pub fn chunks_at(&self, wrap_row: u32) -> Chunks {
         let point = WrapPoint::new(wrap_row, 0);
-        let mut transforms = self.transforms.cursor::<WrapPoint, TabPoint>();
+        let mut transforms = self.transforms.cursor::<(WrapPoint, TabPoint)>();
         transforms.seek(&point, Bias::Right, &());
-        let mut input_position = TabPoint(transforms.sum_start().0);
+        let mut input_position = TabPoint(transforms.start().1 .0);
         if transforms.item().map_or(false, |t| t.is_isomorphic()) {
-            input_position.0 += point.0 - transforms.seek_start().0;
+            input_position.0 += point.0 - transforms.start().0 .0;
         }
         let input_chunks = self.tab_snapshot.chunks_at(input_position);
         Chunks {
@@ -483,11 +483,11 @@ impl Snapshot {
     pub fn highlighted_chunks_for_rows(&mut self, rows: Range<u32>) -> HighlightedChunks {
         let output_start = WrapPoint::new(rows.start, 0);
         let output_end = WrapPoint::new(rows.end, 0);
-        let mut transforms = self.transforms.cursor::<WrapPoint, TabPoint>();
+        let mut transforms = self.transforms.cursor::<(WrapPoint, TabPoint)>();
         transforms.seek(&output_start, Bias::Right, &());
-        let mut input_start = TabPoint(transforms.sum_start().0);
+        let mut input_start = TabPoint(transforms.start().1 .0);
         if transforms.item().map_or(false, |t| t.is_isomorphic()) {
-            input_start.0 += output_start.0 - transforms.seek_start().0;
+            input_start.0 += output_start.0 - transforms.start().0 .0;
         }
         let input_end = self
             .to_tab_point(output_end)
@@ -520,7 +520,7 @@ impl Snapshot {
     }
 
     pub fn soft_wrap_indent(&self, row: u32) -> Option<u32> {
-        let mut cursor = self.transforms.cursor::<_, ()>();
+        let mut cursor = self.transforms.cursor::<WrapPoint>();
         cursor.seek(&WrapPoint::new(row + 1, 0), Bias::Right, &());
         cursor.item().and_then(|transform| {
             if transform.is_isomorphic() {
@@ -536,11 +536,11 @@ impl Snapshot {
     }
 
     pub fn buffer_rows(&self, start_row: u32) -> BufferRows {
-        let mut transforms = self.transforms.cursor::<WrapPoint, TabPoint>();
+        let mut transforms = self.transforms.cursor::<(WrapPoint, TabPoint)>();
         transforms.seek(&WrapPoint::new(start_row, 0), Bias::Left, &());
-        let mut input_row = transforms.sum_start().row();
+        let mut input_row = transforms.start().1.row();
         if transforms.item().map_or(false, |t| t.is_isomorphic()) {
-            input_row += start_row - transforms.seek_start().row();
+            input_row += start_row - transforms.start().0.row();
         }
         let soft_wrapped = transforms.item().map_or(false, |t| !t.is_isomorphic());
         let mut input_buffer_rows = self.tab_snapshot.buffer_rows(input_row);
@@ -556,27 +556,27 @@ impl Snapshot {
     }
 
     pub fn to_tab_point(&self, point: WrapPoint) -> TabPoint {
-        let mut cursor = self.transforms.cursor::<WrapPoint, TabPoint>();
+        let mut cursor = self.transforms.cursor::<(WrapPoint, TabPoint)>();
         cursor.seek(&point, Bias::Right, &());
-        let mut tab_point = cursor.sum_start().0;
+        let mut tab_point = cursor.start().1 .0;
         if cursor.item().map_or(false, |t| t.is_isomorphic()) {
-            tab_point += point.0 - cursor.seek_start().0;
+            tab_point += point.0 - cursor.start().0 .0;
         }
         TabPoint(tab_point)
     }
 
     pub fn to_wrap_point(&self, point: TabPoint) -> WrapPoint {
-        let mut cursor = self.transforms.cursor::<TabPoint, WrapPoint>();
+        let mut cursor = self.transforms.cursor::<(TabPoint, WrapPoint)>();
         cursor.seek(&point, Bias::Right, &());
-        WrapPoint(cursor.sum_start().0 + (point.0 - cursor.seek_start().0))
+        WrapPoint(cursor.start().1 .0 + (point.0 - cursor.start().0 .0))
     }
 
     pub fn clip_point(&self, mut point: WrapPoint, bias: Bias) -> WrapPoint {
         if bias == Bias::Left {
-            let mut cursor = self.transforms.cursor::<WrapPoint, ()>();
+            let mut cursor = self.transforms.cursor::<WrapPoint>();
             cursor.seek(&point, Bias::Right, &());
             if cursor.item().map_or(false, |t| !t.is_isomorphic()) {
-                point = *cursor.seek_start();
+                point = *cursor.start();
                 *point.column_mut() -= 1;
             }
         }
@@ -593,7 +593,7 @@ impl Snapshot {
             );
 
             {
-                let mut transforms = self.transforms.cursor::<(), ()>().peekable();
+                let mut transforms = self.transforms.cursor::<()>().peekable();
                 while let Some(transform) = transforms.next() {
                     if let Some(next_transform) = transforms.peek() {
                         assert!(transform.is_isomorphic() != next_transform.is_isomorphic());
@@ -638,7 +638,7 @@ impl<'a> Iterator for Chunks<'a> {
     fn next(&mut self) -> Option<Self::Item> {
         let transform = self.transforms.item()?;
         if let Some(display_text) = transform.display_text {
-            if self.output_position > *self.transforms.seek_start() {
+            if self.output_position > self.transforms.start().0 {
                 self.output_position.0.column += transform.summary.output.lines.column;
                 self.transforms.next(&());
                 return Some(&display_text[1..]);
@@ -654,7 +654,7 @@ impl<'a> Iterator for Chunks<'a> {
         }
 
         let mut input_len = 0;
-        let transform_end = self.transforms.seek_end(&());
+        let transform_end = self.transforms.end(&()).0;
         for c in self.input_chunk.chars() {
             let char_len = c.len_utf8();
             input_len += char_len;
@@ -691,7 +691,7 @@ impl<'a> Iterator for HighlightedChunks<'a> {
             let mut end_ix = display_text.len();
             let mut summary = transform.summary.output.lines;
 
-            if self.output_position > *self.transforms.seek_start() {
+            if self.output_position > self.transforms.start().0 {
                 // Exclude newline starting prior to the desired row.
                 start_ix = 1;
                 summary.row = 0;
@@ -713,7 +713,7 @@ impl<'a> Iterator for HighlightedChunks<'a> {
         }
 
         let mut input_len = 0;
-        let transform_end = self.transforms.seek_end(&());
+        let transform_end = self.transforms.end(&()).0;
         for c in self.input_chunk.chars() {
             let char_len = c.len_utf8();
             input_len += char_len;

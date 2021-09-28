@@ -68,7 +68,7 @@ pub struct ChannelMessageSummary {
     count: usize,
 }
 
-#[derive(Copy, Clone, Debug, Default)]
+#[derive(Copy, Clone, Debug, Default, PartialEq, Eq, PartialOrd, Ord)]
 struct Count(usize);
 
 pub enum ChannelListEvent {}
@@ -387,19 +387,19 @@ impl Channel {
     }
 
     pub fn message(&self, ix: usize) -> &ChannelMessage {
-        let mut cursor = self.messages.cursor::<Count, ()>();
+        let mut cursor = self.messages.cursor::<Count>();
         cursor.seek(&Count(ix), Bias::Right, &());
         cursor.item().unwrap()
     }
 
     pub fn messages_in_range(&self, range: Range<usize>) -> impl Iterator<Item = &ChannelMessage> {
-        let mut cursor = self.messages.cursor::<Count, ()>();
+        let mut cursor = self.messages.cursor::<Count>();
         cursor.seek(&Count(range.start), Bias::Right, &());
         cursor.take(range.len())
     }
 
     pub fn pending_messages(&self) -> impl Iterator<Item = &ChannelMessage> {
-        let mut cursor = self.messages.cursor::<ChannelMessageId, ()>();
+        let mut cursor = self.messages.cursor::<ChannelMessageId>();
         cursor.seek(&ChannelMessageId::Pending(0), Bias::Left, &());
         cursor
     }
@@ -433,13 +433,13 @@ impl Channel {
     fn insert_messages(&mut self, messages: SumTree<ChannelMessage>, cx: &mut ModelContext<Self>) {
         if let Some((first_message, last_message)) = messages.first().zip(messages.last()) {
             let nonces = messages
-                .cursor::<(), ()>()
+                .cursor::<()>()
                 .map(|m| m.nonce)
                 .collect::<HashSet<_>>();
 
-            let mut old_cursor = self.messages.cursor::<ChannelMessageId, Count>();
+            let mut old_cursor = self.messages.cursor::<(ChannelMessageId, Count)>();
             let mut new_messages = old_cursor.slice(&first_message.id, Bias::Left, &());
-            let start_ix = old_cursor.sum_start().0;
+            let start_ix = old_cursor.start().1 .0;
             let removed_messages = old_cursor.slice(&last_message.id, Bias::Right, &());
             let removed_count = removed_messages.summary().count;
             let new_count = messages.summary().count;
@@ -457,7 +457,7 @@ impl Channel {
                 );
 
                 while let Some(message) = old_cursor.item() {
-                    let message_ix = old_cursor.sum_start().0;
+                    let message_ix = old_cursor.start().1 .0;
                     if nonces.contains(&message.nonce) {
                         if ranges.last().map_or(false, |r| r.end == message_ix) {
                             ranges.last_mut().unwrap().end += 1;
@@ -588,12 +588,6 @@ impl<'a> sum_tree::Dimension<'a, ChannelMessageSummary> for ChannelMessageId {
 impl<'a> sum_tree::Dimension<'a, ChannelMessageSummary> for Count {
     fn add_summary(&mut self, summary: &'a ChannelMessageSummary, _: &()) {
         self.0 += summary.count;
-    }
-}
-
-impl<'a> sum_tree::SeekDimension<'a, ChannelMessageSummary> for Count {
-    fn cmp(&self, other: &Self, _: &()) -> std::cmp::Ordering {
-        Ord::cmp(&self.0, &other.0)
     }
 }
 
