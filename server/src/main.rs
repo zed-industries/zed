@@ -9,6 +9,8 @@ mod github;
 mod home;
 mod rpc;
 mod team;
+mod releases;
+mod community;
 
 use self::errors::TideResultExt as _;
 use anyhow::Result;
@@ -173,6 +175,8 @@ pub async fn run_server(
     web.with(errors::Middleware);
     home::add_routes(&mut web);
     team::add_routes(&mut web);
+    releases::add_routes(&mut web);
+    community::add_routes(&mut web);
     admin::add_routes(&mut web);
     auth::add_routes(&mut web);
     assets::add_routes(&mut web);
