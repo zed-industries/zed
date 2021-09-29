@@ -28,8 +28,8 @@ struct EntryDetails {
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub struct ProjectEntry {
-    worktree_ix: usize,
-    entry_id: usize,
+    pub worktree_ix: usize,
+    pub entry_id: usize,
 }
 
 action!(ToggleExpanded, ProjectEntry);

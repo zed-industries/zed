@@ -8,7 +8,7 @@ use crate::{
     fs::Fs,
     people_panel::{JoinWorktree, LeaveWorktree, PeoplePanel, ShareWorktree, UnshareWorktree},
     project::Project,
-    project_panel::ProjectPanel,
+    project_panel::{self, ProjectPanel},
     rpc,
     settings::Settings,
     user,
@@ -54,6 +54,14 @@ pub fn init(cx: &mut MutableAppContext) {
     cx.add_action(Workspace::save_active_item);
     cx.add_action(Workspace::debug_elements);
     cx.add_action(Workspace::open_new_file);
+    cx.add_action(|this: &mut Workspace, action: &project_panel::Open, cx| {
+        if let Some(worktree) = this.worktrees(cx).get(action.0.worktree_ix) {
+            if let Some(entry) = worktree.read(cx).entry_for_id(action.0.entry_id) {
+                this.open_entry((worktree.id(), entry.path.clone()), cx)
+                    .map(|task| task.detach());
+            }
+        }
+    });
     cx.add_action(Workspace::toggle_sidebar_item);
     cx.add_action(Workspace::share_worktree);
     cx.add_action(Workspace::unshare_worktree);

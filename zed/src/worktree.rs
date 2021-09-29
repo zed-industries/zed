@@ -1582,7 +1582,7 @@ impl Snapshot {
             })
     }
 
-    fn entry_for_id(&self, id: usize) -> Option<&Entry> {
+    pub fn entry_for_id(&self, id: usize) -> Option<&Entry> {
         let entry = self.entries_by_id.get(&id, &())?;
         self.entry_for_path(&entry.path)
     }
