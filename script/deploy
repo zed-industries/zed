@@ -5,13 +5,33 @@
 # - Log in to the DigitalOcean docker registry
 #   doctl registry login
 #
-# - Set the default K8s context to production
+# - Target the `zed-1` kubernetes cluster
 #   doctl kubernetes cluster kubeconfig save zed-1
 
-set -e
+set -eu
 
-IMAGE_ID=registry.digitalocean.com/zed/zed-server
+if [[ $# < 1 ]]; then
+  echo "Usage: $0 [production|staging|...]"
+  exit 1
+fi
 
-docker build . --tag $IMAGE_ID
-docker push $IMAGE_ID
-kubectl rollout restart deployment zed
+export ZED_KUBE_NAMESPACE=$1
+ENV_FILE="server/k8s/environments/${ZED_KUBE_NAMESPACE}.sh"
+if [[ ! -f $ENV_FILE ]]; then
+  echo "Invalid environment name '${ZED_KUBE_NAMESPACE}'"
+  exit 1
+fi
+
+if [[ -n $(git status --short) ]]; then
+  echo "Cannot deploy with uncommited changes"
+  exit 1
+fi
+
+git_sha=$(git rev-parse HEAD)
+export ZED_IMAGE_ID=registry.digitalocean.com/zed/zed-server:${ZED_KUBE_NAMESPACE}-${git_sha}
+export $(cat $ENV_FILE)
+
+docker build . --tag $ZED_IMAGE_ID
+docker push $ZED_IMAGE_ID
+
+envsubst < server/k8s/manifest.template.yml | kubectl apply -f -
