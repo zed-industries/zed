@@ -12,17 +12,21 @@ use std::{path::Path, sync::Arc};
 
 pub struct Project {
     worktrees: Vec<ModelHandle<Worktree>>,
+    active_entry: Option<(usize, usize)>,
     languages: Arc<LanguageRegistry>,
     rpc: Arc<Client>,
     fs: Arc<dyn Fs>,
 }
 
-pub enum Event {}
+pub enum Event {
+    ActiveEntryChanged(Option<(usize, usize)>),
+}
 
 impl Project {
     pub fn new(app_state: &AppState) -> Self {
         Self {
             worktrees: Default::default(),
+            active_entry: None,
             languages: app_state.languages.clone(),
             rpc: app_state.rpc.clone(),
             fs: app_state.fs.clone(),
@@ -87,6 +91,26 @@ impl Project {
         cx.observe(&worktree, |_, _, cx| cx.notify()).detach();
         self.worktrees.push(worktree);
         cx.notify();
+    }
+
+    pub fn set_active_entry(
+        &mut self,
+        entry: Option<(usize, Arc<Path>)>,
+        cx: &mut ModelContext<Self>,
+    ) {
+        let new_active_entry = entry.and_then(|(worktree_id, path)| {
+            let worktree = self.worktree_for_id(worktree_id)?;
+            let entry = worktree.read(cx).entry_for_path(path)?;
+            Some((worktree_id, entry.id))
+        });
+        if new_active_entry != self.active_entry {
+            self.active_entry = new_active_entry;
+            cx.emit(Event::ActiveEntryChanged(new_active_entry));
+        }
+    }
+
+    pub fn active_entry(&self) -> Option<(usize, usize)> {
+        self.active_entry
     }
 
     pub fn share_worktree(&self, remote_id: u64, cx: &mut ModelContext<Self>) {

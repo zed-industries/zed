@@ -1,4 +1,7 @@
-use crate::{project::Project, theme, Settings};
+use crate::{
+    project::{self, Project},
+    theme, Settings,
+};
 use gpui::{
     action,
     elements::{Label, MouseEventHandler, UniformList, UniformListState},
@@ -24,6 +27,7 @@ struct EntryDetails {
     depth: usize,
     is_dir: bool,
     is_expanded: bool,
+    is_active: bool,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -48,8 +52,16 @@ impl ProjectPanel {
         cx: &mut ViewContext<Self>,
     ) -> Self {
         cx.observe(&project, |this, _, cx| {
-            this.update_visible_entries(cx);
+            this.update_visible_entries(false, cx);
             cx.notify();
+        })
+        .detach();
+        cx.subscribe(&project, |this, _, event, cx| {
+            if let project::Event::ActiveEntryChanged(Some((worktree_id, entry_id))) = event {
+                this.expand_active_entry(*worktree_id, *entry_id, cx);
+                this.update_visible_entries(true, cx);
+                cx.notify();
+            }
         })
         .detach();
 
@@ -61,7 +73,7 @@ impl ProjectPanel {
             expanded_dir_ids: Default::default(),
             handle: cx.handle().downgrade(),
         };
-        this.update_visible_entries(cx);
+        this.update_visible_entries(false, cx);
         this
     }
 
@@ -79,12 +91,15 @@ impl ProjectPanel {
                 expanded_dir_ids.insert(ix, entry_id);
             }
         }
-        self.update_visible_entries(cx);
+        self.update_visible_entries(false, cx);
     }
 
-    fn update_visible_entries(&mut self, cx: &mut ViewContext<Self>) {
-        let worktrees = self.project.read(cx).worktrees();
+    fn update_visible_entries(&mut self, scroll_to_active_entry: bool, cx: &mut ViewContext<Self>) {
+        let project = self.project.read(cx);
+        let worktrees = project.worktrees();
         self.visible_entries.clear();
+
+        let mut entry_ix = 0;
         for (worktree_ix, worktree) in worktrees.iter().enumerate() {
             let snapshot = worktree.read(cx).snapshot();
 
@@ -98,6 +113,13 @@ impl ProjectPanel {
             let mut entry_iter = snapshot.entries(false);
             while let Some(item) = entry_iter.entry() {
                 visible_worktree_entries.push(entry_iter.offset());
+                if scroll_to_active_entry
+                    && project.active_entry() == Some((worktree.id(), item.id))
+                {
+                    self.list.scroll_to(entry_ix);
+                }
+
+                entry_ix += 1;
                 if expanded_dir_ids.binary_search(&item.id).is_err() {
                     if entry_iter.advance_to_sibling() {
                         continue;
@@ -109,6 +131,40 @@ impl ProjectPanel {
         }
     }
 
+    fn expand_active_entry(
+        &mut self,
+        worktree_id: usize,
+        entry_id: usize,
+        cx: &mut ViewContext<Self>,
+    ) {
+        let project = self.project.read(cx);
+        if let Some(worktree) = project.worktree_for_id(worktree_id) {
+            let worktree_ix = project
+                .worktrees()
+                .iter()
+                .position(|w| w.id() == worktree_id)
+                .unwrap();
+            let expanded_dir_ids = &mut self.expanded_dir_ids[worktree_ix];
+            let worktree = worktree.read(cx);
+
+            if let Some(mut entry) = worktree.entry_for_id(entry_id) {
+                loop {
+                    if let Err(ix) = expanded_dir_ids.binary_search(&entry.id) {
+                        expanded_dir_ids.insert(ix, entry.id);
+                    }
+
+                    if let Some(parent_entry) =
+                        entry.path.parent().and_then(|p| worktree.entry_for_path(p))
+                    {
+                        entry = parent_entry;
+                    } else {
+                        break;
+                    }
+                }
+            }
+        }
+    }
+
     fn append_visible_entries<C: ReadModel, T>(
         &self,
         range: Range<usize>,
@@ -116,7 +172,9 @@ impl ProjectPanel {
         cx: &mut C,
         mut render_item: impl FnMut(ProjectEntry, EntryDetails, &mut C) -> T,
     ) {
-        let worktrees = self.project.read(cx).worktrees().to_vec();
+        let project = self.project.read(cx);
+        let active_entry = project.active_entry();
+        let worktrees = project.worktrees().to_vec();
         let mut total_ix = 0;
         for (worktree_ix, visible_worktree_entries) in self.visible_entries.iter().enumerate() {
             if total_ix >= range.end {
@@ -128,7 +186,8 @@ impl ProjectPanel {
             }
 
             let expanded_entry_ids = &self.expanded_dir_ids[worktree_ix];
-            let snapshot = worktrees[worktree_ix].read(cx).snapshot();
+            let worktree = &worktrees[worktree_ix];
+            let snapshot = worktree.read(cx).snapshot();
             let mut cursor = snapshot.entries(false);
             for ix in visible_worktree_entries[(range.start - total_ix)..]
                 .iter()
@@ -144,6 +203,7 @@ impl ProjectPanel {
                         depth: entry.path.components().count(),
                         is_dir: entry.is_dir(),
                         is_expanded: expanded_entry_ids.binary_search(&entry.id).is_ok(),
+                        is_active: active_entry == Some((worktree.id(), entry.id)),
                     };
                     let entry = ProjectEntry {
                         worktree_ix,
@@ -167,7 +227,9 @@ impl ProjectPanel {
             (entry.worktree_ix, entry.entry_id),
             cx,
             |state, _| {
-                let style = if state.hovered {
+                let style = if details.is_active {
+                    &theme.active_entry
+                } else if state.hovered {
                     &theme.hovered_entry
                 } else {
                     &theme.entry
@@ -285,30 +347,35 @@ mod tests {
                     depth: 0,
                     is_dir: true,
                     is_expanded: true,
+                    is_active: false,
                 },
                 EntryDetails {
                     filename: ".dockerignore".to_string(),
                     depth: 1,
                     is_dir: false,
                     is_expanded: false,
+                    is_active: false,
                 },
                 EntryDetails {
                     filename: "a".to_string(),
                     depth: 1,
                     is_dir: true,
                     is_expanded: false,
+                    is_active: false,
                 },
                 EntryDetails {
                     filename: "b".to_string(),
                     depth: 1,
                     is_dir: true,
                     is_expanded: false,
+                    is_active: false,
                 },
                 EntryDetails {
                     filename: "c".to_string(),
                     depth: 1,
                     is_dir: true,
                     is_expanded: false,
+                    is_active: false,
                 },
             ]
         );
@@ -322,42 +389,49 @@ mod tests {
                     depth: 0,
                     is_dir: true,
                     is_expanded: true,
+                    is_active: false,
                 },
                 EntryDetails {
                     filename: ".dockerignore".to_string(),
                     depth: 1,
                     is_dir: false,
                     is_expanded: false,
+                    is_active: false,
                 },
                 EntryDetails {
                     filename: "a".to_string(),
                     depth: 1,
                     is_dir: true,
                     is_expanded: false,
+                    is_active: false,
                 },
                 EntryDetails {
                     filename: "b".to_string(),
                     depth: 1,
                     is_dir: true,
                     is_expanded: true,
+                    is_active: false,
                 },
                 EntryDetails {
                     filename: "3".to_string(),
                     depth: 2,
                     is_dir: true,
                     is_expanded: false,
+                    is_active: false,
                 },
                 EntryDetails {
                     filename: "4".to_string(),
                     depth: 2,
                     is_dir: true,
                     is_expanded: false,
+                    is_active: false,
                 },
                 EntryDetails {
                     filename: "c".to_string(),
                     depth: 1,
                     is_dir: true,
                     is_expanded: false,
+                    is_active: false,
                 },
             ]
         );

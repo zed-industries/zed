@@ -172,6 +172,10 @@ padding = { top = 3, bottom = 3 }
 extends = "$project_panel.entry"
 background = "$state.hover"
 
+[project_panel.active_entry]
+extends = "$project_panel.entry"
+background = "#ff0000"
+
 [selector]
 background = "$surface.0"
 padding = 8

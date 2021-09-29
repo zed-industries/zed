@@ -371,6 +371,12 @@ impl Workspace {
 
         let pane = cx.add_view(|_| Pane::new(app_state.settings.clone()));
         let pane_id = pane.id();
+        cx.observe(&pane, move |me, _, cx| {
+            let active_entry = me.active_entry(cx);
+            me.project
+                .update(cx, |project, cx| project.set_active_entry(active_entry, cx));
+        })
+        .detach();
         cx.subscribe(&pane, move |me, _, event, cx| {
             me.handle_pane_event(pane_id, event, cx)
         })
@@ -725,6 +731,10 @@ impl Workspace {
         self.active_pane().read(cx).active_item()
     }
 
+    fn active_entry(&self, cx: &ViewContext<Self>) -> Option<(usize, Arc<Path>)> {
+        self.active_item(cx).and_then(|item| item.entry_id(cx))
+    }
+
     pub fn save_active_item(&mut self, _: &Save, cx: &mut ViewContext<Self>) {
         if let Some(item) = self.active_item(cx) {
             let handle = cx.handle();
@@ -843,6 +853,12 @@ impl Workspace {
     fn add_pane(&mut self, cx: &mut ViewContext<Self>) -> ViewHandle<Pane> {
         let pane = cx.add_view(|_| Pane::new(self.settings.clone()));
         let pane_id = pane.id();
+        cx.observe(&pane, move |me, _, cx| {
+            let active_entry = me.active_entry(cx);
+            me.project
+                .update(cx, |project, cx| project.set_active_entry(active_entry, cx));
+        })
+        .detach();
         cx.subscribe(&pane, move |me, _, event, cx| {
             me.handle_pane_event(pane_id, event, cx)
         })
