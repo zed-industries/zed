@@ -161,9 +161,16 @@ corner_radius = 6
 
 [project_panel]
 extends = "$panel"
-entry = "$text.0"
-padding.left = "$panel.padding"
-padding.right = "$panel.padding"
+padding = 0
+entry_base_padding = "$panel.padding"
+
+[project_panel.entry]
+extends = "$text.0"
+padding = { top = 3, bottom = 3 }
+
+[project_panel.hovered_entry]
+extends = "$project_panel.entry"
+background = "$state.hover"
 
 [selector]
 background = "$surface.0"

@@ -111,7 +111,9 @@ pub struct ChatPanel {
 pub struct ProjectPanel {
     #[serde(flatten)]
     pub container: ContainerStyle,
-    pub entry: TextStyle,
+    pub entry_base_padding: f32,
+    pub entry: ContainedText,
+    pub hovered_entry: ContainedText,
 }
 
 #[derive(Deserialize)]

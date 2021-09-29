@@ -84,6 +84,11 @@ impl Container {
         self
     }
 
+    pub fn with_padding_left(mut self, padding: f32) -> Self {
+        self.style.padding.left = padding;
+        self
+    }
+
     pub fn with_padding_right(mut self, padding: f32) -> Self {
         self.style.padding.right = padding;
         self

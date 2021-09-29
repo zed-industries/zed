@@ -1592,7 +1592,6 @@ impl Snapshot {
     }
 
     fn insert_entry(&mut self, mut entry: Entry, fs: &dyn Fs) -> Entry {
-        println!("insert entry {:?}", entry.path);
         if !entry.is_dir() && entry.path.file_name() == Some(&GITIGNORE) {
             let abs_path = self.abs_path.join(&entry.path);
             match build_gitignore(&abs_path, fs) {
@@ -1665,10 +1664,8 @@ impl Snapshot {
 
     fn reuse_entry_id(&mut self, entry: &mut Entry) {
         if let Some(removed_entry_id) = self.removed_entry_ids.remove(&entry.inode) {
-            log::info!("reusing removed entry id {}", removed_entry_id);
             entry.id = removed_entry_id;
         } else if let Some(existing_entry) = self.entry_for_path(&entry.path) {
-            log::info!("reusing removed entry id {}", existing_entry.id);
             entry.id = existing_entry.id;
         }
     }
@@ -2234,7 +2231,11 @@ impl BackgroundScanner {
                         new_ignore = Some(ignore);
                     }
                     Err(error) => {
-                        log::error!("error loading .gitignore file {:?} - {:?}", child_name, error);
+                        log::error!(
+                            "error loading .gitignore file {:?} - {:?}",
+                            child_name,
+                            error
+                        );
                     }
                 }
 

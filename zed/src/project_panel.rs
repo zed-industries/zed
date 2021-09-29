@@ -2,6 +2,7 @@ use crate::{project::Project, theme, Settings};
 use gpui::{
     action,
     elements::{Label, MouseEventHandler, UniformList, UniformListState},
+    platform::CursorStyle,
     Element, ElementBox, Entity, ModelHandle, MutableAppContext, ReadModel, View, ViewContext,
     WeakViewHandle,
 };
@@ -165,10 +166,16 @@ impl ProjectPanel {
         MouseEventHandler::new::<Self, _, _, _>(
             (entry.worktree_ix, entry.entry_id),
             cx,
-            |state, cx| {
-                Label::new(details.filename, theme.entry.clone())
+            |state, _| {
+                let style = if state.hovered {
+                    &theme.hovered_entry
+                } else {
+                    &theme.entry
+                };
+                Label::new(details.filename, style.text.clone())
                     .contained()
-                    .with_margin_left(details.depth as f32 * 20.)
+                    .with_style(style.container)
+                    .with_padding_left(theme.entry_base_padding + details.depth as f32 * 20.)
                     .boxed()
             },
         )
@@ -179,6 +186,7 @@ impl ProjectPanel {
                 cx.dispatch_action(Open(entry))
             }
         })
+        .with_cursor_style(CursorStyle::PointingHand)
         .boxed()
     }
 }
