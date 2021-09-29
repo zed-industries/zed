@@ -1644,10 +1644,8 @@ impl Snapshot {
 
     fn reuse_entry_id(&mut self, entry: &mut Entry) {
         if let Some(removed_entry_id) = self.removed_entry_ids.remove(&entry.inode) {
-            log::info!("reusing removed entry id {}", removed_entry_id);
             entry.id = removed_entry_id;
         } else if let Some(existing_entry) = self.entry_for_path(&entry.path) {
-            log::info!("reusing removed entry id {}", existing_entry.id);
             entry.id = existing_entry.id;
         }
     }
