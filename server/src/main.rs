@@ -1,16 +1,16 @@
 mod admin;
 mod assets;
 mod auth;
+mod community;
 mod db;
 mod env;
 mod errors;
 mod expiring;
 mod github;
 mod home;
+mod releases;
 mod rpc;
 mod team;
-mod releases;
-mod community;
 
 use self::errors::TideResultExt as _;
 use anyhow::Result;
@@ -179,11 +179,16 @@ pub async fn run_server(
     community::add_routes(&mut web);
     admin::add_routes(&mut web);
     auth::add_routes(&mut web);
-    assets::add_routes(&mut web);
+
+    let mut assets = tide::new();
+    assets.with(CompressMiddleware::new());
+    assets::add_routes(&mut assets);
 
     let mut app = tide::with_state(state.clone());
     rpc::add_routes(&mut app, &rpc);
+
     app.at("/").nest(web);
+    app.at("/static").nest(assets);
 
     app.listen(listener).await?;
 
