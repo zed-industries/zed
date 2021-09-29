@@ -1,8 +1,5 @@
-use crate::{
-    auth::RequestExt as _, github::Release, AppState, LayoutData, Request, RequestExt as _,
-};
-use comrak::ComrakOptions;
-use serde::{Deserialize, Serialize};
+use crate::{AppState, Request, RequestExt as _};
+use serde::Deserialize;
 use std::sync::Arc;
 use tide::{http::mime, log, Server};
 
@@ -13,42 +10,7 @@ pub fn add_routes(app: &mut Server<Arc<AppState>>) {
 }
 
 async fn get_home(mut request: Request) -> tide::Result {
-    #[derive(Serialize)]
-    struct HomeData {
-        #[serde(flatten)]
-        layout: Arc<LayoutData>,
-        releases: Option<Vec<Release>>,
-    }
-
-    let mut data = HomeData {
-        layout: request.layout_data().await?,
-        releases: None,
-    };
-
-    if let Some(user) = request.current_user().await? {
-        if user.is_insider {
-            data.releases = Some(
-                request
-                    .state()
-                    .repo_client
-                    .releases()
-                    .await?
-                    .into_iter()
-                    .filter_map(|mut release| {
-                        if release.draft {
-                            None
-                        } else {
-                            let mut options = ComrakOptions::default();
-                            options.render.unsafe_ = true; // Allow raw HTML in the markup. We control these release notes anyway.
-                            release.body = comrak::markdown_to_html(&release.body, &options);
-                            Some(release)
-                        }
-                    })
-                    .collect(),
-            );
-        }
-    }
-
+    let data = request.layout_data().await?;
     Ok(tide::Response::builder(200)
         .body(request.state().render_template("home.hbs", &data)?)
         .content_type(mime::HTML)
