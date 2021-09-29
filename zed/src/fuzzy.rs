@@ -278,21 +278,19 @@ pub async fn match_paths(
 
                             let start = max(tree_start, segment_start) - tree_start;
                             let end = min(tree_end, segment_end) - tree_start;
-                            let entries = if include_ignored {
-                                snapshot.files(start).take(end - start)
-                            } else {
-                                snapshot.visible_files(start).take(end - start)
-                            };
-                            let paths = entries.map(|entry| {
-                                if let EntryKind::File(char_bag) = entry.kind {
-                                    PathMatchCandidate {
-                                        path: &entry.path,
-                                        char_bag,
+                            let paths = snapshot
+                                .files(include_ignored, start)
+                                .take(end - start)
+                                .map(|entry| {
+                                    if let EntryKind::File(char_bag) = entry.kind {
+                                        PathMatchCandidate {
+                                            path: &entry.path,
+                                            char_bag,
+                                        }
+                                    } else {
+                                        unreachable!()
                                     }
-                                } else {
-                                    unreachable!()
-                                }
-                            });
+                                });
 
                             matcher.match_paths(
                                 snapshot.id(),
