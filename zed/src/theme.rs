@@ -116,6 +116,7 @@ pub struct ProjectPanel {
     pub entry: ProjectPanelEntry,
     pub hovered_entry: ProjectPanelEntry,
     pub selected_entry: ProjectPanelEntry,
+    pub hovered_selected_entry: ProjectPanelEntry,
 }
 
 #[derive(Debug, Deserialize)]

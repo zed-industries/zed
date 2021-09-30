@@ -469,12 +469,11 @@ impl ProjectPanel {
             (entry.worktree_id, entry.entry_id),
             cx,
             |state, _| {
-                let style = if details.is_selected {
-                    &theme.selected_entry
-                } else if state.hovered {
-                    &theme.hovered_entry
-                } else {
-                    &theme.entry
+                let style = match (details.is_selected, state.hovered) {
+                    (false, false) => &theme.entry,
+                    (false, true) => &theme.hovered_entry,
+                    (true, false) => &theme.selected_entry,
+                    (true, true) => &theme.hovered_selected_entry,
                 };
                 Flex::row()
                     .with_child(

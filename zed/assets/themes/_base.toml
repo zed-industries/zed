@@ -179,7 +179,11 @@ background = "$state.hover"
 
 [project_panel.selected_entry]
 extends = "$project_panel.entry"
-background = "#ff0000"
+text = { extends = "$text.0" }
+
+[project_panel.hovered_selected_entry]
+extends = "$project_panel.hovered_entry"
+text = { extends = "$text.0" }
 
 [selector]
 background = "$surface.0"
