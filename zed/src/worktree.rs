@@ -11,7 +11,7 @@ use crate::{
     time::{self, ReplicaId},
     util::{Bias, TryFutureExt},
 };
-use ::ignore::gitignore::Gitignore;
+use ::ignore::gitignore::{Gitignore, GitignoreBuilder};
 use anyhow::{anyhow, Result};
 use futures::{Stream, StreamExt};
 pub use fuzzy::{match_paths, PathMatch};
@@ -732,12 +732,15 @@ impl LocalWorktree {
                 next_entry_id: Arc::new(next_entry_id),
             };
             if let Some(metadata) = metadata {
-                snapshot.insert_entry(Entry::new(
-                    path.into(),
-                    &metadata,
-                    &snapshot.next_entry_id,
-                    snapshot.root_char_bag,
-                ));
+                snapshot.insert_entry(
+                    Entry::new(
+                        path.into(),
+                        &metadata,
+                        &snapshot.next_entry_id,
+                        snapshot.root_char_bag,
+                    ),
+                    fs.as_ref(),
+                );
             }
 
             let (mut remote_id_tx, remote_id_rx) = watch::channel();
@@ -1156,6 +1159,16 @@ impl LocalWorktree {
     }
 }
 
+fn build_gitignore(abs_path: &Path, fs: &dyn Fs) -> Result<Gitignore> {
+    let contents = smol::block_on(fs.load(&abs_path))?;
+    let parent = abs_path.parent().unwrap_or(Path::new("/"));
+    let mut builder = GitignoreBuilder::new(parent);
+    for line in contents.lines() {
+        builder.add_line(Some(abs_path.into()), line)?;
+    }
+    Ok(builder.build()?)
+}
+
 pub fn refresh_buffer(abs_path: PathBuf, fs: &Arc<dyn Fs>, cx: &mut ModelContext<Buffer>) {
     let fs = fs.clone();
     cx.spawn(|buffer, mut cx| async move {
@@ -1556,7 +1569,7 @@ impl Snapshot {
         &self.root_name
     }
 
-    fn entry_for_path(&self, path: impl AsRef<Path>) -> Option<&Entry> {
+    pub fn entry_for_path(&self, path: impl AsRef<Path>) -> Option<&Entry> {
         let path = path.as_ref();
         self.traverse_from_path(true, true, path)
             .entry()
@@ -1569,7 +1582,7 @@ impl Snapshot {
             })
     }
 
-    fn entry_for_id(&self, id: usize) -> Option<&Entry> {
+    pub fn entry_for_id(&self, id: usize) -> Option<&Entry> {
         let entry = self.entries_by_id.get(&id, &())?;
         self.entry_for_path(&entry.path)
     }
@@ -1578,16 +1591,23 @@ impl Snapshot {
         self.entry_for_path(path.as_ref()).map(|e| e.inode)
     }
 
-    fn insert_entry(&mut self, mut entry: Entry) -> Entry {
+    fn insert_entry(&mut self, mut entry: Entry, fs: &dyn Fs) -> Entry {
         if !entry.is_dir() && entry.path.file_name() == Some(&GITIGNORE) {
-            let (ignore, err) = Gitignore::new(self.abs_path.join(&entry.path));
-            if let Some(err) = err {
-                log::error!("error in ignore file {:?} - {:?}", &entry.path, err);
+            let abs_path = self.abs_path.join(&entry.path);
+            match build_gitignore(&abs_path, fs) {
+                Ok(ignore) => {
+                    let ignore_dir_path = entry.path.parent().unwrap();
+                    self.ignores
+                        .insert(ignore_dir_path.into(), (Arc::new(ignore), self.scan_id));
+                }
+                Err(error) => {
+                    log::error!(
+                        "error loading .gitignore file {:?} - {:?}",
+                        &entry.path,
+                        error
+                    );
+                }
             }
-
-            let ignore_dir_path = entry.path.parent().unwrap();
-            self.ignores
-                .insert(ignore_dir_path.into(), (Arc::new(ignore), self.scan_id));
         }
 
         self.reuse_entry_id(&mut entry);
@@ -2204,13 +2224,20 @@ impl BackgroundScanner {
 
             // If we find a .gitignore, add it to the stack of ignores used to determine which paths are ignored
             if child_name == *GITIGNORE {
-                let (ignore, err) = Gitignore::new(&child_abs_path);
-                if let Some(err) = err {
-                    log::error!("error in ignore file {:?} - {:?}", child_name, err);
+                match build_gitignore(&child_abs_path, self.fs.as_ref()) {
+                    Ok(ignore) => {
+                        let ignore = Arc::new(ignore);
+                        ignore_stack = ignore_stack.append(job.path.clone(), ignore.clone());
+                        new_ignore = Some(ignore);
+                    }
+                    Err(error) => {
+                        log::error!(
+                            "error loading .gitignore file {:?} - {:?}",
+                            child_name,
+                            error
+                        );
+                    }
                 }
-                let ignore = Arc::new(ignore);
-                ignore_stack = ignore_stack.append(job.path.clone(), ignore.clone());
-                new_ignore = Some(ignore);
 
                 // Update ignore status of any child entries we've already processed to reflect the
                 // ignore file in the current directory. Because `.gitignore` starts with a `.`,
@@ -2319,7 +2346,7 @@ impl BackgroundScanner {
                         snapshot.root_char_bag,
                     );
                     fs_entry.is_ignored = ignore_stack.is_all();
-                    snapshot.insert_entry(fs_entry);
+                    snapshot.insert_entry(fs_entry, self.fs.as_ref());
                     if metadata.is_dir {
                         scan_queue_tx
                             .send(ScanJob {
@@ -2488,7 +2515,7 @@ async fn refresh_entry(
         &next_entry_id,
         root_char_bag,
     );
-    Ok(snapshot.lock().insert_entry(entry))
+    Ok(snapshot.lock().insert_entry(entry, fs))
 }
 
 fn char_bag_for_path(root_char_bag: CharBag, path: &Path) -> CharBag {
@@ -2605,13 +2632,13 @@ pub struct Traversal<'a> {
 
 impl<'a> Traversal<'a> {
     pub fn advance(&mut self) -> bool {
+        self.advance_to_offset(self.offset() + 1)
+    }
+
+    pub fn advance_to_offset(&mut self, offset: usize) -> bool {
         self.cursor.seek_forward(
             &TraversalTarget::Count {
-                count: self
-                    .cursor
-                    .start()
-                    .count(self.include_dirs, self.include_ignored)
-                    + 1,
+                count: offset,
                 include_dirs: self.include_dirs,
                 include_ignored: self.include_ignored,
             },
@@ -2640,6 +2667,12 @@ impl<'a> Traversal<'a> {
 
     pub fn entry(&self) -> Option<&'a Entry> {
         self.cursor.item()
+    }
+
+    pub fn offset(&self) -> usize {
+        self.cursor
+            .start()
+            .count(self.include_dirs, self.include_ignored)
     }
 }
 
@@ -2765,6 +2798,48 @@ mod tests {
     use serde_json::json;
     use std::time::UNIX_EPOCH;
     use std::{env, fmt::Write, os::unix, time::SystemTime};
+
+    #[gpui::test]
+    async fn test_traversal(cx: gpui::TestAppContext) {
+        let fs = FakeFs::new();
+        fs.insert_tree(
+            "/root",
+            json!({
+               ".gitignore": "a/b\n",
+               "a": {
+                   "b": "",
+                   "c": "",
+               }
+            }),
+        )
+        .await;
+
+        let tree = Worktree::open_local(
+            rpc::Client::new(),
+            Arc::from(Path::new("/root")),
+            Arc::new(fs),
+            Default::default(),
+            &mut cx.to_async(),
+        )
+        .await
+        .unwrap();
+        cx.read(|cx| tree.read(cx).as_local().unwrap().scan_complete())
+            .await;
+
+        tree.read_with(&cx, |tree, _| {
+            assert_eq!(
+                tree.entries(false)
+                    .map(|entry| entry.path.as_ref())
+                    .collect::<Vec<_>>(),
+                vec![
+                    Path::new(""),
+                    Path::new(".gitignore"),
+                    Path::new("a"),
+                    Path::new("a/c"),
+                ]
+            );
+        })
+    }
 
     #[gpui::test]
     async fn test_populate_and_search(cx: gpui::TestAppContext) {
@@ -3252,14 +3327,17 @@ mod tests {
             root_char_bag: Default::default(),
             next_entry_id: next_entry_id.clone(),
         };
-        initial_snapshot.insert_entry(Entry::new(
-            Path::new("").into(),
-            &smol::block_on(fs.metadata(root_dir.path()))
-                .unwrap()
-                .unwrap(),
-            &next_entry_id,
-            Default::default(),
-        ));
+        initial_snapshot.insert_entry(
+            Entry::new(
+                Path::new("").into(),
+                &smol::block_on(fs.metadata(root_dir.path()))
+                    .unwrap()
+                    .unwrap(),
+                &next_entry_id,
+                Default::default(),
+            ),
+            fs.as_ref(),
+        );
         let mut scanner = BackgroundScanner::new(
             Arc::new(Mutex::new(initial_snapshot.clone())),
             notify_tx,

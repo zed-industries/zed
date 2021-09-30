@@ -126,7 +126,7 @@ impl View for Select {
                             UniformList::new(
                                 self.list_state.clone(),
                                 self.item_count,
-                                move |mut range, items, mut cx| {
+                                move |mut range, items, cx| {
                                     let handle = handle.upgrade(cx).unwrap();
                                     let this = handle.read(cx);
                                     let selected_item_ix = this.selected_item_ix;
@@ -134,9 +134,9 @@ impl View for Select {
                                     items.extend(range.map(|ix| {
                                         MouseEventHandler::new::<Item, _, _, _>(
                                             (handle.id(), ix),
-                                            &mut cx,
+                                            cx,
                                             |mouse_state, cx| {
-                                                (handle.read(*cx).render_item)(
+                                                (handle.read(cx).render_item)(
                                                     ix,
                                                     if ix == selected_item_ix {
                                                         ItemType::Selected

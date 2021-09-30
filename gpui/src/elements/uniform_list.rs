@@ -5,7 +5,7 @@ use crate::{
         vector::{vec2f, Vector2F},
     },
     json::{self, json},
-    ElementBox, MutableAppContext,
+    ElementBox,
 };
 use json::ToJson;
 use parking_lot::Mutex;
@@ -38,23 +38,37 @@ pub struct LayoutState {
 
 pub struct UniformList<F>
 where
-    F: Fn(Range<usize>, &mut Vec<ElementBox>, &mut MutableAppContext),
+    F: Fn(Range<usize>, &mut Vec<ElementBox>, &mut LayoutContext),
 {
     state: UniformListState,
     item_count: usize,
     append_items: F,
+    padding_top: f32,
+    padding_bottom: f32,
 }
 
 impl<F> UniformList<F>
 where
-    F: Fn(Range<usize>, &mut Vec<ElementBox>, &mut MutableAppContext),
+    F: Fn(Range<usize>, &mut Vec<ElementBox>, &mut LayoutContext),
 {
     pub fn new(state: UniformListState, item_count: usize, append_items: F) -> Self {
         Self {
             state,
             item_count,
             append_items,
+            padding_top: 0.,
+            padding_bottom: 0.,
         }
+    }
+
+    pub fn with_padding_top(mut self, padding: f32) -> Self {
+        self.padding_top = padding;
+        self
+    }
+
+    pub fn with_padding_bottom(mut self, padding: f32) -> Self {
+        self.padding_bottom = padding;
+        self
     }
 
     fn scroll(
@@ -84,7 +98,7 @@ where
         }
 
         if let Some(item_ix) = state.scroll_to.take() {
-            let item_top = item_ix as f32 * item_height;
+            let item_top = self.padding_top + item_ix as f32 * item_height;
             let item_bottom = item_top + item_height;
 
             if item_top < state.scroll_top {
@@ -102,7 +116,7 @@ where
 
 impl<F> Element for UniformList<F>
 where
-    F: Fn(Range<usize>, &mut Vec<ElementBox>, &mut MutableAppContext),
+    F: Fn(Range<usize>, &mut Vec<ElementBox>, &mut LayoutContext),
 {
     type LayoutState = LayoutState;
     type PaintState = ();
@@ -124,7 +138,7 @@ where
         let mut scroll_max = 0.;
 
         let mut items = Vec::new();
-        (self.append_items)(0..1, &mut items, cx.app);
+        (self.append_items)(0..1, &mut items, cx);
         if let Some(first_item) = items.first_mut() {
             let mut item_size = first_item.layout(item_constraint, cx);
             item_size.set_x(size.x());
@@ -137,16 +151,21 @@ where
                 size.set_y(size.y().min(scroll_height).max(constraint.min.y()));
             }
 
-            scroll_max = item_height * self.item_count as f32 - size.y();
+            let scroll_height =
+                item_height * self.item_count as f32 + self.padding_top + self.padding_bottom;
+            scroll_max = (scroll_height - size.y()).max(0.);
             self.autoscroll(scroll_max, size.y(), item_height);
 
             items.clear();
-            let start = cmp::min((self.scroll_top() / item_height) as usize, self.item_count);
+            let start = cmp::min(
+                ((self.scroll_top() - self.padding_top) / item_height) as usize,
+                self.item_count,
+            );
             let end = cmp::min(
                 self.item_count,
                 start + (size.y() / item_height).ceil() as usize + 1,
             );
-            (self.append_items)(start..end, &mut items, cx.app);
+            (self.append_items)(start..end, &mut items, cx);
             for item in &mut items {
                 item.layout(item_constraint, cx);
             }
@@ -173,8 +192,11 @@ where
     ) -> Self::PaintState {
         cx.scene.push_layer(Some(bounds));
 
-        let mut item_origin =
-            bounds.origin() - vec2f(0.0, self.state.scroll_top() % layout.item_height);
+        let mut item_origin = bounds.origin()
+            - vec2f(
+                0.,
+                (self.state.scroll_top() - self.padding_top) % layout.item_height,
+            );
 
         for item in &mut layout.items {
             item.paint(item_origin, visible_bounds, cx);

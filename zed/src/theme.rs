@@ -25,6 +25,7 @@ pub struct Theme {
     pub workspace: Workspace,
     pub chat_panel: ChatPanel,
     pub people_panel: PeoplePanel,
+    pub project_panel: ProjectPanel,
     pub selector: Selector,
     pub editor: EditorStyle,
     pub syntax: SyntaxTheme,
@@ -66,6 +67,7 @@ pub struct OfflineIcon {
 
 #[derive(Clone, Deserialize)]
 pub struct Tab {
+    pub height: f32,
     #[serde(flatten)]
     pub container: ContainerStyle,
     #[serde(flatten)]
@@ -83,14 +85,15 @@ pub struct Sidebar {
     #[serde(flatten)]
     pub container: ContainerStyle,
     pub width: f32,
-    pub icon: SidebarIcon,
-    pub active_icon: SidebarIcon,
+    pub item: SidebarItem,
+    pub active_item: SidebarItem,
     pub resize_handle: ContainerStyle,
 }
 
 #[derive(Deserialize)]
-pub struct SidebarIcon {
-    pub color: Color,
+pub struct SidebarItem {
+    pub icon_color: Color,
+    pub icon_size: f32,
     pub height: f32,
 }
 
@@ -104,6 +107,27 @@ pub struct ChatPanel {
     pub input_editor: InputEditorStyle,
     pub sign_in_prompt: TextStyle,
     pub hovered_sign_in_prompt: TextStyle,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct ProjectPanel {
+    #[serde(flatten)]
+    pub container: ContainerStyle,
+    pub entry: ProjectPanelEntry,
+    pub hovered_entry: ProjectPanelEntry,
+    pub selected_entry: ProjectPanelEntry,
+    pub hovered_selected_entry: ProjectPanelEntry,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct ProjectPanelEntry {
+    pub height: f32,
+    #[serde(flatten)]
+    pub container: ContainerStyle,
+    pub text: TextStyle,
+    pub icon_color: Color,
+    pub icon_size: f32,
+    pub icon_spacing: f32,
 }
 
 #[derive(Deserialize)]

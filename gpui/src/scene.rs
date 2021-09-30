@@ -69,6 +69,7 @@ pub struct Icon {
 pub struct Border {
     pub width: f32,
     pub color: Color,
+    pub overlay: bool,
     pub top: bool,
     pub right: bool,
     pub bottom: bool,
@@ -85,6 +86,8 @@ impl<'de> Deserialize<'de> for Border {
             pub width: f32,
             pub color: Color,
             #[serde(default)]
+            pub overlay: bool,
+            #[serde(default)]
             pub top: bool,
             #[serde(default)]
             pub right: bool,
@@ -98,6 +101,7 @@ impl<'de> Deserialize<'de> for Border {
         let mut border = Border {
             width: data.width,
             color: data.color,
+            overlay: data.overlay,
             top: data.top,
             bottom: data.bottom,
             left: data.left,
@@ -329,6 +333,7 @@ impl Border {
         Self {
             width,
             color,
+            overlay: false,
             top: false,
             left: false,
             bottom: false,
@@ -340,6 +345,7 @@ impl Border {
         Self {
             width,
             color,
+            overlay: false,
             top: true,
             left: true,
             bottom: true,

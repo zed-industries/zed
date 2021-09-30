@@ -1157,13 +1157,13 @@ mod tests {
             );
         });
         workspace_b
-            .condition(&cx_b, |workspace, _| workspace.worktrees().len() == 1)
+            .condition(&cx_b, |workspace, cx| workspace.worktrees(cx).len() == 1)
             .await;
 
         let local_worktree_id_b = workspace_b.read_with(&cx_b, |workspace, cx| {
             let active_pane = workspace.active_pane().read(cx);
             assert!(active_pane.active_item().is_none());
-            workspace.worktrees().iter().next().unwrap().id()
+            workspace.worktrees(cx).first().unwrap().id()
         });
         workspace_b
             .update(&mut cx_b, |worktree, cx| {
@@ -1180,7 +1180,7 @@ mod tests {
             tree.as_local_mut().unwrap().unshare(cx);
         });
         workspace_b
-            .condition(&cx_b, |workspace, _| workspace.worktrees().len() == 0)
+            .condition(&cx_b, |workspace, cx| workspace.worktrees(cx).len() == 0)
             .await;
         workspace_b.read_with(&cx_b, |workspace, cx| {
             let active_pane = workspace.active_pane().read(cx);

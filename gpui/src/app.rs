@@ -312,6 +312,7 @@ impl App {
         let mut state = self.0.borrow_mut();
         state.pending_flushes += 1;
         let result = callback(&mut *state);
+        state.pending_notifications.clear();
         state.flush_effects();
         result
     }
@@ -668,6 +669,7 @@ pub struct MutableAppContext {
     debug_elements_callbacks: HashMap<usize, Box<dyn Fn(&AppContext) -> crate::json::Value>>,
     foreground: Rc<executor::Foreground>,
     pending_effects: VecDeque<Effect>,
+    pending_notifications: HashSet<usize>,
     pending_flushes: usize,
     flushing_effects: bool,
     next_cursor_style_handle_id: Arc<AtomicUsize>,
@@ -708,6 +710,7 @@ impl MutableAppContext {
             debug_elements_callbacks: HashMap::new(),
             foreground,
             pending_effects: VecDeque::new(),
+            pending_notifications: HashSet::new(),
             pending_flushes: 0,
             flushing_effects: false,
             next_cursor_style_handle_id: Default::default(),
@@ -1015,10 +1018,18 @@ impl MutableAppContext {
             observations: Some(Arc::downgrade(&self.observations)),
         }
     }
+    pub(crate) fn notify_model(&mut self, model_id: usize) {
+        if self.pending_notifications.insert(model_id) {
+            self.pending_effects
+                .push_back(Effect::ModelNotification { model_id });
+        }
+    }
 
     pub(crate) fn notify_view(&mut self, window_id: usize, view_id: usize) {
-        self.pending_effects
-            .push_back(Effect::ViewNotification { window_id, view_id });
+        if self.pending_notifications.insert(view_id) {
+            self.pending_effects
+                .push_back(Effect::ViewNotification { window_id, view_id });
+        }
     }
 
     pub fn dispatch_action<A: Action>(
@@ -1400,6 +1411,7 @@ impl MutableAppContext {
                             refreshing = true;
                         }
                     }
+                    self.pending_notifications.clear();
                     self.remove_dropped_entities();
                 } else {
                     self.remove_dropped_entities();
@@ -1411,6 +1423,7 @@ impl MutableAppContext {
 
                     if self.pending_effects.is_empty() {
                         self.flushing_effects = false;
+                        self.pending_notifications.clear();
                         break;
                     } else {
                         refreshing = false;
@@ -1983,11 +1996,7 @@ impl<'a, T: Entity> ModelContext<'a, T> {
     }
 
     pub fn notify(&mut self) {
-        self.app
-            .pending_effects
-            .push_back(Effect::ModelNotification {
-                model_id: self.model_id,
-            });
+        self.app.notify_model(self.model_id);
     }
 
     pub fn subscribe<S: Entity, F>(
@@ -2889,6 +2898,11 @@ impl AnyViewHandle {
 
     pub fn is<T: 'static>(&self) -> bool {
         TypeId::of::<T>() == self.view_type
+    }
+
+    pub fn is_focused(&self, cx: &AppContext) -> bool {
+        cx.focused_view_id(self.window_id)
+            .map_or(false, |focused_id| focused_id == self.view_id)
     }
 
     pub fn downcast<T: View>(self) -> Option<ViewHandle<T>> {

@@ -13,7 +13,7 @@ use zed::{
     channel::ChannelList,
     chat_panel, editor, file_finder,
     fs::RealFs,
-    http, language, menus, rpc, settings, theme_selector,
+    http, language, menus, project_panel, rpc, settings, theme_selector,
     user::UserStore,
     workspace::{self, OpenNew, OpenParams, OpenPaths},
     AppState,
@@ -55,6 +55,7 @@ fn main() {
         editor::init(cx);
         file_finder::init(cx);
         chat_panel::init(cx);
+        project_panel::init(cx);
         theme_selector::init(&app_state, cx);
 
         cx.set_menus(menus::menus(&app_state.clone()));
