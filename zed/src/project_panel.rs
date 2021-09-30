@@ -1,13 +1,17 @@
 use crate::{
     project::{self, Project},
-    theme, Settings,
+    theme, worktree, Settings,
 };
 use gpui::{
     action,
     elements::{Label, MouseEventHandler, UniformList, UniformListState},
+    keymap::{
+        self,
+        menu::{SelectNext, SelectPrev},
+    },
     platform::CursorStyle,
-    Element, ElementBox, Entity, ModelHandle, MutableAppContext, ReadModel, View, ViewContext,
-    WeakViewHandle,
+    AppContext, Element, ElementBox, Entity, ModelHandle, MutableAppContext, ReadModel, View,
+    ViewContext, WeakViewHandle,
 };
 use postage::watch;
 use std::{
@@ -21,8 +25,16 @@ pub struct ProjectPanel {
     list: UniformListState,
     visible_entries: Vec<Vec<usize>>,
     expanded_dir_ids: HashMap<usize, Vec<usize>>,
+    active_entry: Option<ActiveEntry>,
     settings: watch::Receiver<Settings>,
     handle: WeakViewHandle<Self>,
+}
+
+#[derive(Copy, Clone)]
+struct ActiveEntry {
+    worktree_id: usize,
+    entry_id: usize,
+    index: usize,
 }
 
 #[derive(Debug, PartialEq, Eq)]
@@ -45,6 +57,8 @@ action!(Open, ProjectEntry);
 
 pub fn init(cx: &mut MutableAppContext) {
     cx.add_action(ProjectPanel::toggle_expanded);
+    cx.add_action(ProjectPanel::select_prev);
+    cx.add_action(ProjectPanel::select_next);
 }
 
 pub enum Event {}
@@ -56,21 +70,21 @@ impl ProjectPanel {
         cx: &mut ViewContext<Self>,
     ) -> Self {
         cx.observe(&project, |this, _, cx| {
-            this.update_visible_entries(false, cx);
+            this.update_visible_entries(None, cx);
             cx.notify();
         })
         .detach();
         cx.subscribe(&project, |this, _, event, cx| match event {
             project::Event::ActiveEntryChanged(entry) => {
-                if let Some((worktree_id, entry_id)) = entry {
-                    this.expand_active_entry(*worktree_id, *entry_id, cx);
-                    this.update_visible_entries(true, cx);
+                if let Some((worktree_id, entry_id)) = *entry {
+                    this.expand_active_entry(worktree_id, entry_id, cx);
+                    this.update_visible_entries(Some((worktree_id, entry_id)), cx);
                     cx.notify();
                 }
             }
             project::Event::WorktreeRemoved(id) => {
                 this.expanded_dir_ids.remove(id);
-                this.update_visible_entries(true, cx);
+                this.update_visible_entries(None, cx);
                 cx.notify();
             }
         })
@@ -82,9 +96,10 @@ impl ProjectPanel {
             list: Default::default(),
             visible_entries: Default::default(),
             expanded_dir_ids: Default::default(),
+            active_entry: None,
             handle: cx.handle().downgrade(),
         };
-        this.update_visible_entries(false, cx);
+        this.update_visible_entries(None, cx);
         this
     }
 
@@ -103,13 +118,101 @@ impl ProjectPanel {
                     expanded_dir_ids.insert(ix, entry_id);
                 }
             }
-            self.update_visible_entries(false, cx);
+            self.update_visible_entries(Some((worktree_id, entry_id)), cx);
+            cx.focus_self();
         }
     }
 
-    fn update_visible_entries(&mut self, scroll_to_active_entry: bool, cx: &mut ViewContext<Self>) {
+    fn select_prev(&mut self, _: &SelectPrev, cx: &mut ViewContext<Self>) {
+        if let Some(active_entry) = self.active_entry {
+            if active_entry.index > 0 {
+                let (worktree_id, entry) = self
+                    .visible_entry_for_index(active_entry.index - 1, cx)
+                    .unwrap();
+                self.active_entry = Some(ActiveEntry {
+                    worktree_id,
+                    entry_id: entry.id,
+                    index: active_entry.index - 1,
+                });
+                self.autoscroll();
+                cx.notify();
+            }
+        } else {
+            self.select_first(cx);
+        }
+    }
+
+    fn select_next(&mut self, _: &SelectNext, cx: &mut ViewContext<Self>) {
+        if let Some(active_entry) = self.active_entry {
+            if let Some((worktree_id, entry)) =
+                self.visible_entry_for_index(active_entry.index + 1, cx)
+            {
+                self.active_entry = Some(ActiveEntry {
+                    worktree_id,
+                    entry_id: entry.id,
+                    index: active_entry.index + 1,
+                });
+                self.autoscroll();
+                cx.notify();
+            }
+        } else {
+            self.select_first(cx);
+        }
+    }
+
+    fn select_first(&mut self, cx: &mut ViewContext<Self>) {
+        if let Some(worktree) = self.project.read(cx).worktrees().first() {
+            let worktree_id = worktree.id();
+            let worktree = worktree.read(cx);
+            if let Some(root_entry) = worktree.root_entry() {
+                self.active_entry = Some(ActiveEntry {
+                    worktree_id,
+                    entry_id: root_entry.id,
+                    index: 0,
+                });
+                self.autoscroll();
+                cx.notify();
+            }
+        }
+    }
+
+    fn autoscroll(&mut self) {
+        if let Some(active_entry) = self.active_entry {
+            self.list.scroll_to(active_entry.index);
+        }
+    }
+
+    fn visible_entry_for_index<'a>(
+        &self,
+        target_ix: usize,
+        cx: &'a AppContext,
+    ) -> Option<(usize, &'a worktree::Entry)> {
         let project = self.project.read(cx);
-        let worktrees = project.worktrees();
+        let mut offset = None;
+        let mut ix = 0;
+        for (worktree_ix, visible_entries) in self.visible_entries.iter().enumerate() {
+            if target_ix < ix + visible_entries.len() {
+                let worktree = &project.worktrees()[worktree_ix];
+                offset = Some((worktree, visible_entries[target_ix - ix]));
+                break;
+            } else {
+                ix += visible_entries.len();
+            }
+        }
+
+        offset.and_then(|(worktree, offset)| {
+            let mut entries = worktree.read(cx).entries(false);
+            entries.advance_to_offset(offset);
+            Some((worktree.id(), entries.entry()?))
+        })
+    }
+
+    fn update_visible_entries(
+        &mut self,
+        new_active_entry: Option<(usize, usize)>,
+        cx: &mut ViewContext<Self>,
+    ) {
+        let worktrees = self.project.read(cx).worktrees();
         self.visible_entries.clear();
 
         let mut entry_ix = 0;
@@ -134,10 +237,22 @@ impl ProjectPanel {
             let mut entry_iter = snapshot.entries(false);
             while let Some(item) = entry_iter.entry() {
                 visible_worktree_entries.push(entry_iter.offset());
-                if scroll_to_active_entry
-                    && project.active_entry() == Some((worktree.id(), item.id))
-                {
-                    self.list.scroll_to(entry_ix);
+                if let Some(new_active_entry) = new_active_entry {
+                    if new_active_entry == (worktree.id(), item.id) {
+                        self.active_entry = Some(ActiveEntry {
+                            worktree_id,
+                            entry_id: item.id,
+                            index: entry_ix,
+                        });
+                    }
+                } else if self.active_entry.map_or(false, |e| {
+                    e.worktree_id == worktree_id && e.entry_id == item.id
+                }) {
+                    self.active_entry = Some(ActiveEntry {
+                        worktree_id,
+                        entry_id: item.id,
+                        index: entry_ix,
+                    });
                 }
 
                 entry_ix += 1;
@@ -150,6 +265,8 @@ impl ProjectPanel {
             }
             self.visible_entries.push(visible_worktree_entries);
         }
+
+        self.autoscroll();
     }
 
     fn expand_active_entry(
@@ -190,7 +307,6 @@ impl ProjectPanel {
         mut callback: impl FnMut(ProjectEntry, EntryDetails, &mut C),
     ) {
         let project = self.project.read(cx);
-        let active_entry = project.active_entry();
         let worktrees = project.worktrees().to_vec();
         let mut ix = 0;
         for (worktree_ix, visible_worktree_entries) in self.visible_entries.iter().enumerate() {
@@ -225,7 +341,9 @@ impl ProjectPanel {
                         depth: entry.path.components().count(),
                         is_dir: entry.is_dir(),
                         is_expanded: expanded_entry_ids.binary_search(&entry.id).is_ok(),
-                        is_active: active_entry == Some((worktree.id(), entry.id)),
+                        is_active: self.active_entry.map_or(false, |e| {
+                            e.worktree_id == worktree.id() && e.entry_id == entry.id
+                        }),
                     };
                     let entry = ProjectEntry {
                         worktree_ix,
@@ -302,6 +420,12 @@ impl View for ProjectPanel {
         .contained()
         .with_style(self.settings.borrow().theme.project_panel.container)
         .boxed()
+    }
+
+    fn keymap_context(&self, _: &AppContext) -> keymap::Context {
+        let mut cx = Self::default_keymap_context();
+        cx.set.insert("menu".into());
+        cx
     }
 }
 
