@@ -16,14 +16,14 @@ futures = "0.3"
 log = "0.4"
 parking_lot = "0.11.1"
 postage = { version = "0.4.1", features = ["futures-traits"] }
-prost = "0.7"
+prost = "0.8"
 rand = "0.8"
 rsa = "0.4"
 serde = { version = "1", features = ["derive"] }
 zstd = "0.9"
 
 [build-dependencies]
-prost-build = { git = "https://github.com/tokio-rs/prost", rev = "6cf97ea422b09d98de34643c4dda2d4f8b7e23e6" }
+prost-build = "0.8"
 
 [dev-dependencies]
 smol = "1.2.5"
