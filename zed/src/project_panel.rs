@@ -97,6 +97,7 @@ impl ProjectPanel {
                 project::Event::ActiveEntryChanged(Some((worktree_id, entry_id))) => {
                     this.expand_entry(*worktree_id, *entry_id, cx);
                     this.update_visible_entries(Some((*worktree_id, *entry_id)), cx);
+                    this.autoscroll();
                     cx.notify();
                 }
                 project::Event::WorktreeRemoved(id) => {
@@ -373,8 +374,6 @@ impl ProjectPanel {
             }
             self.visible_entries.push(visible_worktree_entries);
         }
-
-        self.autoscroll();
     }
 
     fn expand_entry(&mut self, worktree_id: usize, entry_id: usize, cx: &mut ViewContext<Self>) {
