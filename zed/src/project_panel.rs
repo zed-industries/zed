@@ -10,13 +10,16 @@ use gpui::{
     WeakViewHandle,
 };
 use postage::watch;
-use std::ops::Range;
+use std::{
+    collections::{hash_map, HashMap},
+    ops::Range,
+};
 
 pub struct ProjectPanel {
     project: ModelHandle<Project>,
     list: UniformListState,
     visible_entries: Vec<Vec<usize>>,
-    expanded_dir_ids: Vec<Vec<usize>>,
+    expanded_dir_ids: HashMap<usize, Vec<usize>>,
     settings: watch::Receiver<Settings>,
     handle: WeakViewHandle<Self>,
 }
@@ -56,9 +59,16 @@ impl ProjectPanel {
             cx.notify();
         })
         .detach();
-        cx.subscribe(&project, |this, _, event, cx| {
-            if let project::Event::ActiveEntryChanged(Some((worktree_id, entry_id))) = event {
-                this.expand_active_entry(*worktree_id, *entry_id, cx);
+        cx.subscribe(&project, |this, _, event, cx| match event {
+            project::Event::ActiveEntryChanged(entry) => {
+                if let Some((worktree_id, entry_id)) = entry {
+                    this.expand_active_entry(*worktree_id, *entry_id, cx);
+                    this.update_visible_entries(true, cx);
+                    cx.notify();
+                }
+            }
+            project::Event::WorktreeRemoved(id) => {
+                this.expanded_dir_ids.remove(id);
                 this.update_visible_entries(true, cx);
                 cx.notify();
             }
@@ -82,16 +92,18 @@ impl ProjectPanel {
             worktree_ix,
             entry_id,
         } = action.0;
-        let expanded_dir_ids = &mut self.expanded_dir_ids[worktree_ix];
-        match expanded_dir_ids.binary_search(&entry_id) {
-            Ok(ix) => {
-                expanded_dir_ids.remove(ix);
+        let worktree_id = self.project.read(cx).worktrees()[worktree_ix].id();
+        if let Some(expanded_dir_ids) = self.expanded_dir_ids.get_mut(&worktree_id) {
+            match expanded_dir_ids.binary_search(&entry_id) {
+                Ok(ix) => {
+                    expanded_dir_ids.remove(ix);
+                }
+                Err(ix) => {
+                    expanded_dir_ids.insert(ix, entry_id);
+                }
             }
-            Err(ix) => {
-                expanded_dir_ids.insert(ix, entry_id);
-            }
+            self.update_visible_entries(false, cx);
         }
-        self.update_visible_entries(false, cx);
     }
 
     fn update_visible_entries(&mut self, scroll_to_active_entry: bool, cx: &mut ViewContext<Self>) {
@@ -100,15 +112,23 @@ impl ProjectPanel {
         self.visible_entries.clear();
 
         let mut entry_ix = 0;
-        for (worktree_ix, worktree) in worktrees.iter().enumerate() {
+        for worktree in worktrees {
             let snapshot = worktree.read(cx).snapshot();
+            let worktree_id = worktree.id();
 
-            if self.expanded_dir_ids.len() <= worktree_ix {
-                self.expanded_dir_ids
-                    .push(vec![snapshot.root_entry().unwrap().id])
-            }
+            let expanded_dir_ids = match self.expanded_dir_ids.entry(worktree_id) {
+                hash_map::Entry::Occupied(e) => e.into_mut(),
+                hash_map::Entry::Vacant(e) => {
+                    // The first time a worktree's root entry becomes available,
+                    // mark that root entry as expanded.
+                    if let Some(entry) = snapshot.root_entry() {
+                        e.insert(vec![entry.id]).as_slice()
+                    } else {
+                        &[]
+                    }
+                }
+            };
 
-            let expanded_dir_ids = &self.expanded_dir_ids[worktree_ix];
             let mut visible_worktree_entries = Vec::new();
             let mut entry_iter = snapshot.entries(false);
             while let Some(item) = entry_iter.entry() {
@@ -138,13 +158,10 @@ impl ProjectPanel {
         cx: &mut ViewContext<Self>,
     ) {
         let project = self.project.read(cx);
-        if let Some(worktree) = project.worktree_for_id(worktree_id) {
-            let worktree_ix = project
-                .worktrees()
-                .iter()
-                .position(|w| w.id() == worktree_id)
-                .unwrap();
-            let expanded_dir_ids = &mut self.expanded_dir_ids[worktree_ix];
+        if let Some((worktree, expanded_dir_ids)) = project
+            .worktree_for_id(worktree_id)
+            .zip(self.expanded_dir_ids.get_mut(&worktree_id))
+        {
             let worktree = worktree.read(cx);
 
             if let Some(mut entry) = worktree.entry_for_id(entry_id) {
@@ -165,31 +182,36 @@ impl ProjectPanel {
         }
     }
 
-    fn append_visible_entries<C: ReadModel, T>(
+    fn for_each_visible_entry<C: ReadModel>(
         &self,
         range: Range<usize>,
-        items: &mut Vec<T>,
         cx: &mut C,
-        mut render_item: impl FnMut(ProjectEntry, EntryDetails, &mut C) -> T,
+        mut callback: impl FnMut(ProjectEntry, EntryDetails, &mut C),
     ) {
         let project = self.project.read(cx);
         let active_entry = project.active_entry();
         let worktrees = project.worktrees().to_vec();
-        let mut total_ix = 0;
+        let mut ix = 0;
         for (worktree_ix, visible_worktree_entries) in self.visible_entries.iter().enumerate() {
-            if total_ix >= range.end {
-                break;
+            if ix >= range.end {
+                return;
             }
-            if total_ix + visible_worktree_entries.len() <= range.start {
-                total_ix += visible_worktree_entries.len();
+            if ix + visible_worktree_entries.len() <= range.start {
+                ix += visible_worktree_entries.len();
                 continue;
             }
 
-            let expanded_entry_ids = &self.expanded_dir_ids[worktree_ix];
+            let end_ix = range.end.min(ix + visible_worktree_entries.len());
             let worktree = &worktrees[worktree_ix];
+            let expanded_entry_ids = self
+                .expanded_dir_ids
+                .get(&worktree.id())
+                .map(Vec::as_slice)
+                .unwrap_or(&[]);
             let snapshot = worktree.read(cx).snapshot();
             let mut cursor = snapshot.entries(false);
-            for ix in visible_worktree_entries[(range.start - total_ix)..]
+
+            for ix in visible_worktree_entries[(range.start - ix)..(end_ix - ix)]
                 .iter()
                 .copied()
             {
@@ -209,10 +231,10 @@ impl ProjectPanel {
                         worktree_ix,
                         entry_id: entry.id,
                     };
-                    items.push(render_item(entry, details, cx));
+                    callback(entry, details, cx);
                 }
-                total_ix += 1;
             }
+            ix = end_ix;
         }
     }
 
@@ -271,9 +293,11 @@ impl View for ProjectPanel {
                 let theme = &settings.borrow().theme.project_panel;
                 let this = handle.upgrade(cx).unwrap();
                 this.update(cx.app, |this, cx| {
-                    this.append_visible_entries(range, items, cx, |entry, details, cx| {
-                        Self::render_entry(entry, details, theme, cx)
+                    let prev_len = items.len();
+                    this.for_each_visible_entry(range.clone(), cx, |entry, details, cx| {
+                        items.push(Self::render_entry(entry, details, theme, cx));
                     });
+                    let count = items.len() - prev_len;
                 })
             },
         )
@@ -470,20 +494,15 @@ mod tests {
             let mut result = Vec::new();
             let mut project_entries = HashSet::new();
             panel.update(cx, |panel, cx| {
-                panel.append_visible_entries(
-                    range,
-                    &mut result,
-                    cx,
-                    |project_entry, details, _| {
-                        assert!(
-                            project_entries.insert(project_entry),
-                            "duplicate project entry {:?} {:?}",
-                            project_entry,
-                            details
-                        );
+                panel.for_each_visible_entry(range, cx, |project_entry, details, _| {
+                    assert!(
+                        project_entries.insert(project_entry),
+                        "duplicate project entry {:?} {:?}",
+                        project_entry,
                         details
-                    },
-                );
+                    );
+                    result.push(details);
+                });
             });
 
             result

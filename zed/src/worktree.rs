@@ -2826,9 +2826,7 @@ mod tests {
         cx.read(|cx| tree.read(cx).as_local().unwrap().scan_complete())
             .await;
 
-        tree.read_with(&cx, |tree, cx| {
-            dbg!(tree.entries_by_path.items(&()));
-
+        tree.read_with(&cx, |tree, _| {
             assert_eq!(
                 tree.entries(false)
                     .map(|entry| entry.path.as_ref())

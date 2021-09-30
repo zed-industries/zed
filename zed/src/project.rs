@@ -20,6 +20,7 @@ pub struct Project {
 
 pub enum Event {
     ActiveEntryChanged(Option<(usize, usize)>),
+    WorktreeRemoved(usize),
 }
 
 impl Project {
@@ -166,7 +167,7 @@ impl Project {
 
     pub fn close_remote_worktree(&mut self, id: u64, cx: &mut ModelContext<Self>) {
         self.worktrees.retain(|worktree| {
-            worktree.update(cx, |worktree, cx| {
+            let keep = worktree.update(cx, |worktree, cx| {
                 if let Some(worktree) = worktree.as_remote_mut() {
                     if worktree.remote_id() == id {
                         worktree.close_all_buffers(cx);
@@ -174,7 +175,11 @@ impl Project {
                     }
                 }
                 true
-            })
+            });
+            if !keep {
+                cx.emit(Event::WorktreeRemoved(worktree.id()));
+            }
+            keep
         });
     }
 }
