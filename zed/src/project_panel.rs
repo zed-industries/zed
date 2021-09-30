@@ -26,13 +26,13 @@ pub struct ProjectPanel {
     list: UniformListState,
     visible_entries: Vec<Vec<usize>>,
     expanded_dir_ids: HashMap<usize, Vec<usize>>,
-    active_entry: Option<ActiveEntry>,
+    selected_entry: Option<SelectedEntry>,
     settings: watch::Receiver<Settings>,
     handle: WeakViewHandle<Self>,
 }
 
 #[derive(Copy, Clone)]
-struct ActiveEntry {
+struct SelectedEntry {
     worktree_id: usize,
     entry_id: usize,
     index: usize,
@@ -59,8 +59,8 @@ action!(ToggleExpanded, ProjectEntry);
 action!(Open, ProjectEntry);
 
 pub fn init(cx: &mut MutableAppContext) {
-    cx.add_action(ProjectPanel::expand_active_entry);
-    cx.add_action(ProjectPanel::collapse_active_entry);
+    cx.add_action(ProjectPanel::expand_selected_entry);
+    cx.add_action(ProjectPanel::collapse_selected_entry);
     cx.add_action(ProjectPanel::toggle_expanded);
     cx.add_action(ProjectPanel::select_prev);
     cx.add_action(ProjectPanel::select_next);
@@ -105,26 +105,26 @@ impl ProjectPanel {
             list: Default::default(),
             visible_entries: Default::default(),
             expanded_dir_ids: Default::default(),
-            active_entry: None,
+            selected_entry: None,
             handle: cx.handle().downgrade(),
         };
         this.update_visible_entries(None, cx);
         this
     }
 
-    fn expand_active_entry(&mut self, _: &ExpandActiveEntry, cx: &mut ViewContext<Self>) {
-        if let Some(active_entry) = self.active_entry {
+    fn expand_selected_entry(&mut self, _: &ExpandActiveEntry, cx: &mut ViewContext<Self>) {
+        if let Some(selected_entry) = self.selected_entry {
             let project = self.project.read(cx);
-            if let Some(worktree) = project.worktree_for_id(active_entry.worktree_id) {
-                if let Some(entry) = worktree.read(cx).entry_for_id(active_entry.entry_id) {
+            if let Some(worktree) = project.worktree_for_id(selected_entry.worktree_id) {
+                if let Some(entry) = worktree.read(cx).entry_for_id(selected_entry.entry_id) {
                     if entry.is_dir() {
                         if let Some(expanded_dir_ids) =
-                            self.expanded_dir_ids.get_mut(&active_entry.worktree_id)
+                            self.expanded_dir_ids.get_mut(&selected_entry.worktree_id)
                         {
-                            match expanded_dir_ids.binary_search(&active_entry.entry_id) {
+                            match expanded_dir_ids.binary_search(&selected_entry.entry_id) {
                                 Ok(_) => self.select_next(&SelectNext, cx),
                                 Err(ix) => {
-                                    expanded_dir_ids.insert(ix, active_entry.entry_id);
+                                    expanded_dir_ids.insert(ix, selected_entry.entry_id);
                                     self.update_visible_entries(None, cx);
                                     cx.notify();
                                 }
@@ -137,21 +137,21 @@ impl ProjectPanel {
         }
     }
 
-    fn collapse_active_entry(&mut self, _: &CollapseActiveEntry, cx: &mut ViewContext<Self>) {
-        if let Some(active_entry) = self.active_entry {
+    fn collapse_selected_entry(&mut self, _: &CollapseActiveEntry, cx: &mut ViewContext<Self>) {
+        if let Some(selected_entry) = self.selected_entry {
             let project = self.project.read(cx);
-            if let Some(worktree) = project.worktree_for_id(active_entry.worktree_id) {
+            if let Some(worktree) = project.worktree_for_id(selected_entry.worktree_id) {
                 let worktree = worktree.read(cx);
-                if let Some(mut entry) = worktree.entry_for_id(active_entry.entry_id) {
+                if let Some(mut entry) = worktree.entry_for_id(selected_entry.entry_id) {
                     if let Some(expanded_dir_ids) =
-                        self.expanded_dir_ids.get_mut(&active_entry.worktree_id)
+                        self.expanded_dir_ids.get_mut(&selected_entry.worktree_id)
                     {
                         loop {
                             match expanded_dir_ids.binary_search(&entry.id) {
                                 Ok(ix) => {
                                     expanded_dir_ids.remove(ix);
                                     self.update_visible_entries(
-                                        Some((active_entry.worktree_id, entry.id)),
+                                        Some((selected_entry.worktree_id, entry.id)),
                                         cx,
                                     );
                                     cx.notify();
@@ -195,15 +195,15 @@ impl ProjectPanel {
     }
 
     fn select_prev(&mut self, _: &SelectPrev, cx: &mut ViewContext<Self>) {
-        if let Some(active_entry) = self.active_entry {
-            if active_entry.index > 0 {
+        if let Some(selected_entry) = self.selected_entry {
+            if selected_entry.index > 0 {
                 let (worktree_id, entry) = self
-                    .visible_entry_for_index(active_entry.index - 1, cx)
+                    .visible_entry_for_index(selected_entry.index - 1, cx)
                     .unwrap();
-                self.active_entry = Some(ActiveEntry {
+                self.selected_entry = Some(SelectedEntry {
                     worktree_id,
                     entry_id: entry.id,
-                    index: active_entry.index - 1,
+                    index: selected_entry.index - 1,
                 });
                 self.autoscroll();
                 cx.notify();
@@ -214,14 +214,14 @@ impl ProjectPanel {
     }
 
     fn select_next(&mut self, _: &SelectNext, cx: &mut ViewContext<Self>) {
-        if let Some(active_entry) = self.active_entry {
+        if let Some(selected_entry) = self.selected_entry {
             if let Some((worktree_id, entry)) =
-                self.visible_entry_for_index(active_entry.index + 1, cx)
+                self.visible_entry_for_index(selected_entry.index + 1, cx)
             {
-                self.active_entry = Some(ActiveEntry {
+                self.selected_entry = Some(SelectedEntry {
                     worktree_id,
                     entry_id: entry.id,
-                    index: active_entry.index + 1,
+                    index: selected_entry.index + 1,
                 });
                 self.autoscroll();
                 cx.notify();
@@ -236,7 +236,7 @@ impl ProjectPanel {
             let worktree_id = worktree.id();
             let worktree = worktree.read(cx);
             if let Some(root_entry) = worktree.root_entry() {
-                self.active_entry = Some(ActiveEntry {
+                self.selected_entry = Some(SelectedEntry {
                     worktree_id,
                     entry_id: root_entry.id,
                     index: 0,
@@ -248,8 +248,8 @@ impl ProjectPanel {
     }
 
     fn autoscroll(&mut self) {
-        if let Some(active_entry) = self.active_entry {
-            self.list.scroll_to(active_entry.index);
+        if let Some(selected_entry) = self.selected_entry {
+            self.list.scroll_to(selected_entry.index);
         }
     }
 
@@ -280,7 +280,7 @@ impl ProjectPanel {
 
     fn update_visible_entries(
         &mut self,
-        new_active_entry: Option<(usize, usize)>,
+        new_selected_entry: Option<(usize, usize)>,
         cx: &mut ViewContext<Self>,
     ) {
         let worktrees = self.project.read(cx).worktrees();
@@ -308,18 +308,18 @@ impl ProjectPanel {
             let mut entry_iter = snapshot.entries(false);
             while let Some(item) = entry_iter.entry() {
                 visible_worktree_entries.push(entry_iter.offset());
-                if let Some(new_active_entry) = new_active_entry {
-                    if new_active_entry == (worktree.id(), item.id) {
-                        self.active_entry = Some(ActiveEntry {
+                if let Some(new_selected_entry) = new_selected_entry {
+                    if new_selected_entry == (worktree.id(), item.id) {
+                        self.selected_entry = Some(SelectedEntry {
                             worktree_id,
                             entry_id: item.id,
                             index: entry_ix,
                         });
                     }
-                } else if self.active_entry.map_or(false, |e| {
+                } else if self.selected_entry.map_or(false, |e| {
                     e.worktree_id == worktree_id && e.entry_id == item.id
                 }) {
-                    self.active_entry = Some(ActiveEntry {
+                    self.selected_entry = Some(SelectedEntry {
                         worktree_id,
                         entry_id: item.id,
                         index: entry_ix,
@@ -407,7 +407,7 @@ impl ProjectPanel {
                         depth: entry.path.components().count(),
                         is_dir: entry.is_dir(),
                         is_expanded: expanded_entry_ids.binary_search(&entry.id).is_ok(),
-                        is_active: self.active_entry.map_or(false, |e| {
+                        is_active: self.selected_entry.map_or(false, |e| {
                             e.worktree_id == worktree.id() && e.entry_id == entry.id
                         }),
                     };
@@ -434,7 +434,7 @@ impl ProjectPanel {
             cx,
             |state, _| {
                 let style = if details.is_active {
-                    &theme.active_entry
+                    &theme.selected_entry
                 } else if state.hovered {
                     &theme.hovered_entry
                 } else {

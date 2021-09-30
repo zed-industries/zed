@@ -172,7 +172,7 @@ padding = { top = 3, bottom = 3 }
 extends = "$project_panel.entry"
 background = "$state.hover"
 
-[project_panel.active_entry]
+[project_panel.selected_entry]
 extends = "$project_panel.entry"
 background = "#ff0000"
 
