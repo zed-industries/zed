@@ -69,8 +69,8 @@ pub fn init(cx: &mut MutableAppContext) {
     cx.add_action(ProjectPanel::select_next);
     cx.add_action(ProjectPanel::open_entry);
     cx.add_bindings([
-        Binding::new("right", ExpandSelectedEntry, None),
-        Binding::new("left", CollapseSelectedEntry, None),
+        Binding::new("right", ExpandSelectedEntry, Some("ProjectPanel")),
+        Binding::new("left", CollapseSelectedEntry, Some("ProjectPanel")),
     ]);
 }
 
