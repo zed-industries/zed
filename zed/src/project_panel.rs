@@ -12,6 +12,7 @@ use gpui::{
 use postage::watch;
 use std::{
     collections::{hash_map, HashMap},
+    ffi::OsStr,
     ops::Range,
 };
 
@@ -209,19 +210,18 @@ impl ProjectPanel {
                 .map(Vec::as_slice)
                 .unwrap_or(&[]);
             let snapshot = worktree.read(cx).snapshot();
+            let root_name = OsStr::new(snapshot.root_name());
             let mut cursor = snapshot.entries(false);
 
-            for ix in visible_worktree_entries[(range.start - ix)..(end_ix - ix)]
+            for ix in visible_worktree_entries[range.start.saturating_sub(ix)..end_ix - ix]
                 .iter()
                 .copied()
             {
                 cursor.advance_to_offset(ix);
                 if let Some(entry) = cursor.entry() {
+                    let filename = entry.path.file_name().unwrap_or(root_name);
                     let details = EntryDetails {
-                        filename: entry.path.file_name().map_or_else(
-                            || snapshot.root_name().to_string(),
-                            |name| name.to_string_lossy().to_string(),
-                        ),
+                        filename: filename.to_string_lossy().to_string(),
                         depth: entry.path.components().count(),
                         is_dir: entry.is_dir(),
                         is_expanded: expanded_entry_ids.binary_search(&entry.id).is_ok(),
@@ -293,11 +293,9 @@ impl View for ProjectPanel {
                 let theme = &settings.borrow().theme.project_panel;
                 let this = handle.upgrade(cx).unwrap();
                 this.update(cx.app, |this, cx| {
-                    let prev_len = items.len();
                     this.for_each_visible_entry(range.clone(), cx, |entry, details, cx| {
                         items.push(Self::render_entry(entry, details, theme, cx));
                     });
-                    let count = items.len() - prev_len;
                 })
             },
         )
@@ -350,15 +348,34 @@ mod tests {
             }),
         )
         .await;
+        fs.insert_tree(
+            "/root2",
+            json!({
+                "d": {
+                    "9": ""
+                },
+                "e": {}
+            }),
+        )
+        .await;
 
         let project = cx.add_model(|_| Project::new(&app_state));
-        let worktree = project
+        let root1 = project
             .update(&mut cx, |project, cx| {
                 project.add_local_worktree("/root1".as_ref(), cx)
             })
             .await
             .unwrap();
-        worktree
+        root1
+            .read_with(&cx, |t, _| t.as_local().unwrap().scan_complete())
+            .await;
+        let root2 = project
+            .update(&mut cx, |project, cx| {
+                project.add_local_worktree("/root2".as_ref(), cx)
+            })
+            .await
+            .unwrap();
+        root2
             .read_with(&cx, |t, _| t.as_local().unwrap().scan_complete())
             .await;
 
@@ -401,7 +418,28 @@ mod tests {
                     is_expanded: false,
                     is_active: false,
                 },
-            ]
+                EntryDetails {
+                    filename: "root2".to_string(),
+                    depth: 0,
+                    is_dir: true,
+                    is_expanded: true,
+                    is_active: false
+                },
+                EntryDetails {
+                    filename: "d".to_string(),
+                    depth: 1,
+                    is_dir: true,
+                    is_expanded: false,
+                    is_active: false
+                },
+                EntryDetails {
+                    filename: "e".to_string(),
+                    depth: 1,
+                    is_dir: true,
+                    is_expanded: false,
+                    is_active: false
+                }
+            ],
         );
 
         toggle_expand_dir(&panel, "root1/b", &mut cx);
@@ -457,6 +495,54 @@ mod tests {
                     is_expanded: false,
                     is_active: false,
                 },
+                EntryDetails {
+                    filename: "root2".to_string(),
+                    depth: 0,
+                    is_dir: true,
+                    is_expanded: true,
+                    is_active: false
+                },
+                EntryDetails {
+                    filename: "d".to_string(),
+                    depth: 1,
+                    is_dir: true,
+                    is_expanded: false,
+                    is_active: false
+                },
+                EntryDetails {
+                    filename: "e".to_string(),
+                    depth: 1,
+                    is_dir: true,
+                    is_expanded: false,
+                    is_active: false
+                }
+            ]
+        );
+
+        assert_eq!(
+            visible_entry_details(&panel, 5..8, &mut cx),
+            [
+                EntryDetails {
+                    filename: "4".to_string(),
+                    depth: 2,
+                    is_dir: true,
+                    is_expanded: false,
+                    is_active: false
+                },
+                EntryDetails {
+                    filename: "c".to_string(),
+                    depth: 1,
+                    is_dir: true,
+                    is_expanded: false,
+                    is_active: false
+                },
+                EntryDetails {
+                    filename: "root2".to_string(),
+                    depth: 0,
+                    is_dir: true,
+                    is_expanded: true,
+                    is_active: false
+                }
             ]
         );
 
