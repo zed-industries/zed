@@ -2900,6 +2900,11 @@ impl AnyViewHandle {
         TypeId::of::<T>() == self.view_type
     }
 
+    pub fn is_focused(&self, cx: &AppContext) -> bool {
+        cx.focused_view_id(self.window_id)
+            .map_or(false, |focused_id| focused_id == self.view_id)
+    }
+
     pub fn downcast<T: View>(self) -> Option<ViewHandle<T>> {
         if self.is::<T>() {
             let result = Some(ViewHandle {

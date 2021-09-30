@@ -12,6 +12,7 @@ use crate::{
     rpc,
     settings::Settings,
     user,
+    workspace::sidebar::{Side, Sidebar, SidebarItemId, ToggleSidebarItem, ToggleSidebarItemFocus},
     worktree::{File, Worktree},
     AppState, Authenticate,
 };
@@ -31,7 +32,6 @@ use log::error;
 pub use pane::*;
 pub use pane_group::*;
 use postage::{prelude::Stream, watch};
-use sidebar::{Side, Sidebar, ToggleSidebarItem};
 use std::{
     collections::{hash_map::Entry, HashMap},
     future::Future,
@@ -55,6 +55,7 @@ pub fn init(cx: &mut MutableAppContext) {
     cx.add_action(Workspace::debug_elements);
     cx.add_action(Workspace::open_new_file);
     cx.add_action(Workspace::toggle_sidebar_item);
+    cx.add_action(Workspace::toggle_sidebar_item_focus);
     cx.add_action(Workspace::share_worktree);
     cx.add_action(Workspace::unshare_worktree);
     cx.add_action(Workspace::join_worktree);
@@ -62,6 +63,22 @@ pub fn init(cx: &mut MutableAppContext) {
     cx.add_bindings(vec![
         Binding::new("cmd-s", Save, None),
         Binding::new("cmd-alt-i", DebugElements, None),
+        Binding::new(
+            "cmd-shift-!",
+            ToggleSidebarItem(SidebarItemId {
+                side: Side::Left,
+                item_index: 0,
+            }),
+            None,
+        ),
+        Binding::new(
+            "cmd-1",
+            ToggleSidebarItemFocus(SidebarItemId {
+                side: Side::Left,
+                item_index: 0,
+            }),
+            None,
+        ),
     ]);
     pane::init(cx);
 }
@@ -801,6 +818,26 @@ impl Workspace {
             cx.focus(active_item);
         } else {
             cx.focus_self();
+        }
+        cx.notify();
+    }
+
+    pub fn toggle_sidebar_item_focus(
+        &mut self,
+        action: &ToggleSidebarItemFocus,
+        cx: &mut ViewContext<Self>,
+    ) {
+        let sidebar = match action.0.side {
+            Side::Left => &mut self.left_sidebar,
+            Side::Right => &mut self.right_sidebar,
+        };
+        sidebar.activate_item(action.0.item_index);
+        if let Some(active_item) = sidebar.active_item() {
+            if active_item.is_focused(cx) {
+                cx.focus_self();
+            } else {
+                cx.focus(active_item);
+            }
         }
         cx.notify();
     }

@@ -23,10 +23,11 @@ struct Item {
     view: AnyViewHandle,
 }
 
-action!(ToggleSidebarItem, ToggleArg);
+action!(ToggleSidebarItem, SidebarItemId);
+action!(ToggleSidebarItemFocus, SidebarItemId);
 
 #[derive(Clone)]
-pub struct ToggleArg {
+pub struct SidebarItemId {
     pub side: Side,
     pub item_index: usize,
 }
@@ -43,6 +44,10 @@ impl Sidebar {
 
     pub fn add_item(&mut self, icon_path: &'static str, view: AnyViewHandle) {
         self.items.push(Item { icon_path, view });
+    }
+
+    pub fn activate_item(&mut self, item_ix: usize) {
+        self.active_item_ix = Some(item_ix);
     }
 
     pub fn toggle_item(&mut self, item_ix: usize) {
@@ -102,7 +107,10 @@ impl Sidebar {
                         )
                         .with_cursor_style(CursorStyle::PointingHand)
                         .on_mouse_down(move |cx| {
-                            cx.dispatch_action(ToggleSidebarItem(ToggleArg { side, item_index }))
+                            cx.dispatch_action(ToggleSidebarItem(SidebarItemId {
+                                side,
+                                item_index,
+                            }))
                         })
                         .boxed()
                     }))
