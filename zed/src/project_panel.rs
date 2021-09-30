@@ -1,6 +1,8 @@
 use crate::{
     project::{self, Project},
-    theme, worktree, Settings,
+    theme,
+    worktree::{self, Worktree},
+    Settings,
 };
 use gpui::{
     action,
@@ -26,13 +28,13 @@ pub struct ProjectPanel {
     list: UniformListState,
     visible_entries: Vec<Vec<usize>>,
     expanded_dir_ids: HashMap<usize, Vec<usize>>,
-    selected_entry: Option<SelectedEntry>,
+    selection: Option<Selection>,
     settings: watch::Receiver<Settings>,
     handle: WeakViewHandle<Self>,
 }
 
 #[derive(Copy, Clone)]
-struct SelectedEntry {
+struct Selection {
     worktree_id: usize,
     entry_id: usize,
     index: usize,
@@ -44,7 +46,7 @@ struct EntryDetails {
     depth: usize,
     is_dir: bool,
     is_expanded: bool,
-    is_active: bool,
+    is_selected: bool,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -53,8 +55,8 @@ pub struct ProjectEntry {
     pub entry_id: usize,
 }
 
-action!(ExpandActiveEntry);
-action!(CollapseActiveEntry);
+action!(ExpandSelectedEntry);
+action!(CollapseSelectedEntry);
 action!(ToggleExpanded, ProjectEntry);
 action!(Open, ProjectEntry);
 
@@ -65,8 +67,8 @@ pub fn init(cx: &mut MutableAppContext) {
     cx.add_action(ProjectPanel::select_prev);
     cx.add_action(ProjectPanel::select_next);
     cx.add_bindings([
-        Binding::new("right", ExpandActiveEntry, None),
-        Binding::new("left", CollapseActiveEntry, None),
+        Binding::new("right", ExpandSelectedEntry, None),
+        Binding::new("left", CollapseSelectedEntry, None),
     ]);
 }
 
@@ -84,18 +86,17 @@ impl ProjectPanel {
         })
         .detach();
         cx.subscribe(&project, |this, _, event, cx| match event {
-            project::Event::ActiveEntryChanged(entry) => {
-                if let Some((worktree_id, entry_id)) = *entry {
-                    this.expand_entry(worktree_id, entry_id, cx);
-                    this.update_visible_entries(Some((worktree_id, entry_id)), cx);
-                    cx.notify();
-                }
+            project::Event::ActiveEntryChanged(Some((worktree_id, entry_id))) => {
+                this.expand_entry(*worktree_id, *entry_id, cx);
+                this.update_visible_entries(Some((*worktree_id, *entry_id)), cx);
+                cx.notify();
             }
             project::Event::WorktreeRemoved(id) => {
                 this.expanded_dir_ids.remove(id);
                 this.update_visible_entries(None, cx);
                 cx.notify();
             }
+            _ => {}
         })
         .detach();
 
@@ -105,68 +106,60 @@ impl ProjectPanel {
             list: Default::default(),
             visible_entries: Default::default(),
             expanded_dir_ids: Default::default(),
-            selected_entry: None,
+            selection: None,
             handle: cx.handle().downgrade(),
         };
         this.update_visible_entries(None, cx);
         this
     }
 
-    fn expand_selected_entry(&mut self, _: &ExpandActiveEntry, cx: &mut ViewContext<Self>) {
-        if let Some(selected_entry) = self.selected_entry {
-            let project = self.project.read(cx);
-            if let Some(worktree) = project.worktree_for_id(selected_entry.worktree_id) {
-                if let Some(entry) = worktree.read(cx).entry_for_id(selected_entry.entry_id) {
-                    if entry.is_dir() {
-                        if let Some(expanded_dir_ids) =
-                            self.expanded_dir_ids.get_mut(&selected_entry.worktree_id)
-                        {
-                            match expanded_dir_ids.binary_search(&selected_entry.entry_id) {
-                                Ok(_) => self.select_next(&SelectNext, cx),
-                                Err(ix) => {
-                                    expanded_dir_ids.insert(ix, selected_entry.entry_id);
-                                    self.update_visible_entries(None, cx);
-                                    cx.notify();
-                                }
-                            }
-                        }
-                    } else {
+    fn expand_selected_entry(&mut self, _: &ExpandSelectedEntry, cx: &mut ViewContext<Self>) {
+        if let Some((worktree, entry)) = self.selected_entry(cx) {
+            let expanded_dir_ids =
+                if let Some(expanded_dir_ids) = self.expanded_dir_ids.get_mut(&worktree.id()) {
+                    expanded_dir_ids
+                } else {
+                    return;
+                };
+
+            if entry.is_dir() {
+                match expanded_dir_ids.binary_search(&entry.id) {
+                    Ok(_) => self.select_next(&SelectNext, cx),
+                    Err(ix) => {
+                        expanded_dir_ids.insert(ix, entry.id);
+                        self.update_visible_entries(None, cx);
+                        cx.notify();
                     }
                 }
+            } else {
             }
         }
     }
 
-    fn collapse_selected_entry(&mut self, _: &CollapseActiveEntry, cx: &mut ViewContext<Self>) {
-        if let Some(selected_entry) = self.selected_entry {
-            let project = self.project.read(cx);
-            if let Some(worktree) = project.worktree_for_id(selected_entry.worktree_id) {
-                let worktree = worktree.read(cx);
-                if let Some(mut entry) = worktree.entry_for_id(selected_entry.entry_id) {
-                    if let Some(expanded_dir_ids) =
-                        self.expanded_dir_ids.get_mut(&selected_entry.worktree_id)
-                    {
-                        loop {
-                            match expanded_dir_ids.binary_search(&entry.id) {
-                                Ok(ix) => {
-                                    expanded_dir_ids.remove(ix);
-                                    self.update_visible_entries(
-                                        Some((selected_entry.worktree_id, entry.id)),
-                                        cx,
-                                    );
-                                    cx.notify();
-                                    break;
-                                }
-                                Err(_) => {
-                                    if let Some(parent_entry) =
-                                        entry.path.parent().and_then(|p| worktree.entry_for_path(p))
-                                    {
-                                        entry = parent_entry;
-                                    } else {
-                                        break;
-                                    }
-                                }
-                            }
+    fn collapse_selected_entry(&mut self, _: &CollapseSelectedEntry, cx: &mut ViewContext<Self>) {
+        if let Some((worktree, mut entry)) = self.selected_entry(cx) {
+            let expanded_dir_ids =
+                if let Some(expanded_dir_ids) = self.expanded_dir_ids.get_mut(&worktree.id()) {
+                    expanded_dir_ids
+                } else {
+                    return;
+                };
+
+            loop {
+                match expanded_dir_ids.binary_search(&entry.id) {
+                    Ok(ix) => {
+                        expanded_dir_ids.remove(ix);
+                        self.update_visible_entries(Some((worktree.id(), entry.id)), cx);
+                        cx.notify();
+                        break;
+                    }
+                    Err(_) => {
+                        if let Some(parent_entry) =
+                            entry.path.parent().and_then(|p| worktree.entry_for_path(p))
+                        {
+                            entry = parent_entry;
+                        } else {
+                            break;
                         }
                     }
                 }
@@ -195,33 +188,29 @@ impl ProjectPanel {
     }
 
     fn select_prev(&mut self, _: &SelectPrev, cx: &mut ViewContext<Self>) {
-        if let Some(selected_entry) = self.selected_entry {
-            if selected_entry.index > 0 {
-                let (worktree_id, entry) = self
-                    .visible_entry_for_index(selected_entry.index - 1, cx)
-                    .unwrap();
-                self.selected_entry = Some(SelectedEntry {
-                    worktree_id,
-                    entry_id: entry.id,
-                    index: selected_entry.index - 1,
-                });
-                self.autoscroll();
-                cx.notify();
-            }
+        if let Some(selection) = self.selection {
+            let prev_ix = selection.index.saturating_sub(1);
+            let (worktree, entry) = self.visible_entry_for_index(prev_ix, cx).unwrap();
+            self.selection = Some(Selection {
+                worktree_id: worktree.id(),
+                entry_id: entry.id,
+                index: prev_ix,
+            });
+            self.autoscroll();
+            cx.notify();
         } else {
             self.select_first(cx);
         }
     }
 
     fn select_next(&mut self, _: &SelectNext, cx: &mut ViewContext<Self>) {
-        if let Some(selected_entry) = self.selected_entry {
-            if let Some((worktree_id, entry)) =
-                self.visible_entry_for_index(selected_entry.index + 1, cx)
-            {
-                self.selected_entry = Some(SelectedEntry {
-                    worktree_id,
+        if let Some(selection) = self.selection {
+            let next_ix = selection.index + 1;
+            if let Some((worktree, entry)) = self.visible_entry_for_index(next_ix, cx) {
+                self.selection = Some(Selection {
+                    worktree_id: worktree.id(),
                     entry_id: entry.id,
-                    index: selected_entry.index + 1,
+                    index: next_ix,
                 });
                 self.autoscroll();
                 cx.notify();
@@ -236,7 +225,7 @@ impl ProjectPanel {
             let worktree_id = worktree.id();
             let worktree = worktree.read(cx);
             if let Some(root_entry) = worktree.root_entry() {
-                self.selected_entry = Some(SelectedEntry {
+                self.selection = Some(Selection {
                     worktree_id,
                     entry_id: root_entry.id,
                     index: 0,
@@ -248,8 +237,8 @@ impl ProjectPanel {
     }
 
     fn autoscroll(&mut self) {
-        if let Some(selected_entry) = self.selected_entry {
-            self.list.scroll_to(selected_entry.index);
+        if let Some(selection) = self.selection {
+            self.list.scroll_to(selection.index);
         }
     }
 
@@ -257,13 +246,13 @@ impl ProjectPanel {
         &self,
         target_ix: usize,
         cx: &'a AppContext,
-    ) -> Option<(usize, &'a worktree::Entry)> {
+    ) -> Option<(&'a Worktree, &'a worktree::Entry)> {
         let project = self.project.read(cx);
         let mut offset = None;
         let mut ix = 0;
         for (worktree_ix, visible_entries) in self.visible_entries.iter().enumerate() {
             if target_ix < ix + visible_entries.len() {
-                let worktree = &project.worktrees()[worktree_ix];
+                let worktree = project.worktrees()[worktree_ix].read(cx);
                 offset = Some((worktree, visible_entries[target_ix - ix]));
                 break;
             } else {
@@ -272,10 +261,20 @@ impl ProjectPanel {
         }
 
         offset.and_then(|(worktree, offset)| {
-            let mut entries = worktree.read(cx).entries(false);
+            let mut entries = worktree.entries(false);
             entries.advance_to_offset(offset);
-            Some((worktree.id(), entries.entry()?))
+            Some((worktree, entries.entry()?))
         })
+    }
+
+    fn selected_entry<'a>(
+        &self,
+        cx: &'a AppContext,
+    ) -> Option<(&'a Worktree, &'a worktree::Entry)> {
+        let selection = self.selection?;
+        let project = self.project.read(cx);
+        let worktree = project.worktree_for_id(selection.worktree_id)?.read(cx);
+        Some((worktree, worktree.entry_for_id(selection.entry_id)?))
     }
 
     fn update_visible_entries(
@@ -310,16 +309,16 @@ impl ProjectPanel {
                 visible_worktree_entries.push(entry_iter.offset());
                 if let Some(new_selected_entry) = new_selected_entry {
                     if new_selected_entry == (worktree.id(), item.id) {
-                        self.selected_entry = Some(SelectedEntry {
+                        self.selection = Some(Selection {
                             worktree_id,
                             entry_id: item.id,
                             index: entry_ix,
                         });
                     }
-                } else if self.selected_entry.map_or(false, |e| {
+                } else if self.selection.map_or(false, |e| {
                     e.worktree_id == worktree_id && e.entry_id == item.id
                 }) {
-                    self.selected_entry = Some(SelectedEntry {
+                    self.selection = Some(Selection {
                         worktree_id,
                         entry_id: item.id,
                         index: entry_ix,
@@ -407,7 +406,7 @@ impl ProjectPanel {
                         depth: entry.path.components().count(),
                         is_dir: entry.is_dir(),
                         is_expanded: expanded_entry_ids.binary_search(&entry.id).is_ok(),
-                        is_active: self.selected_entry.map_or(false, |e| {
+                        is_selected: self.selection.map_or(false, |e| {
                             e.worktree_id == worktree.id() && e.entry_id == entry.id
                         }),
                     };
@@ -433,7 +432,7 @@ impl ProjectPanel {
             (entry.worktree_ix, entry.entry_id),
             cx,
             |state, _| {
-                let style = if details.is_active {
+                let style = if details.is_selected {
                     &theme.selected_entry
                 } else if state.hovered {
                     &theme.hovered_entry
@@ -578,56 +577,56 @@ mod tests {
                     depth: 0,
                     is_dir: true,
                     is_expanded: true,
-                    is_active: false,
+                    is_selected: false,
                 },
                 EntryDetails {
                     filename: ".dockerignore".to_string(),
                     depth: 1,
                     is_dir: false,
                     is_expanded: false,
-                    is_active: false,
+                    is_selected: false,
                 },
                 EntryDetails {
                     filename: "a".to_string(),
                     depth: 1,
                     is_dir: true,
                     is_expanded: false,
-                    is_active: false,
+                    is_selected: false,
                 },
                 EntryDetails {
                     filename: "b".to_string(),
                     depth: 1,
                     is_dir: true,
                     is_expanded: false,
-                    is_active: false,
+                    is_selected: false,
                 },
                 EntryDetails {
                     filename: "c".to_string(),
                     depth: 1,
                     is_dir: true,
                     is_expanded: false,
-                    is_active: false,
+                    is_selected: false,
                 },
                 EntryDetails {
                     filename: "root2".to_string(),
                     depth: 0,
                     is_dir: true,
                     is_expanded: true,
-                    is_active: false
+                    is_selected: false
                 },
                 EntryDetails {
                     filename: "d".to_string(),
                     depth: 1,
                     is_dir: true,
                     is_expanded: false,
-                    is_active: false
+                    is_selected: false
                 },
                 EntryDetails {
                     filename: "e".to_string(),
                     depth: 1,
                     is_dir: true,
                     is_expanded: false,
-                    is_active: false
+                    is_selected: false
                 }
             ],
         );
@@ -641,70 +640,70 @@ mod tests {
                     depth: 0,
                     is_dir: true,
                     is_expanded: true,
-                    is_active: false,
+                    is_selected: false,
                 },
                 EntryDetails {
                     filename: ".dockerignore".to_string(),
                     depth: 1,
                     is_dir: false,
                     is_expanded: false,
-                    is_active: false,
+                    is_selected: false,
                 },
                 EntryDetails {
                     filename: "a".to_string(),
                     depth: 1,
                     is_dir: true,
                     is_expanded: false,
-                    is_active: false,
+                    is_selected: false,
                 },
                 EntryDetails {
                     filename: "b".to_string(),
                     depth: 1,
                     is_dir: true,
                     is_expanded: true,
-                    is_active: false,
+                    is_selected: false,
                 },
                 EntryDetails {
                     filename: "3".to_string(),
                     depth: 2,
                     is_dir: true,
                     is_expanded: false,
-                    is_active: false,
+                    is_selected: false,
                 },
                 EntryDetails {
                     filename: "4".to_string(),
                     depth: 2,
                     is_dir: true,
                     is_expanded: false,
-                    is_active: false,
+                    is_selected: false,
                 },
                 EntryDetails {
                     filename: "c".to_string(),
                     depth: 1,
                     is_dir: true,
                     is_expanded: false,
-                    is_active: false,
+                    is_selected: false,
                 },
                 EntryDetails {
                     filename: "root2".to_string(),
                     depth: 0,
                     is_dir: true,
                     is_expanded: true,
-                    is_active: false
+                    is_selected: false
                 },
                 EntryDetails {
                     filename: "d".to_string(),
                     depth: 1,
                     is_dir: true,
                     is_expanded: false,
-                    is_active: false
+                    is_selected: false
                 },
                 EntryDetails {
                     filename: "e".to_string(),
                     depth: 1,
                     is_dir: true,
                     is_expanded: false,
-                    is_active: false
+                    is_selected: false
                 }
             ]
         );
@@ -717,21 +716,21 @@ mod tests {
                     depth: 2,
                     is_dir: true,
                     is_expanded: false,
-                    is_active: false
+                    is_selected: false
                 },
                 EntryDetails {
                     filename: "c".to_string(),
                     depth: 1,
                     is_dir: true,
                     is_expanded: false,
-                    is_active: false
+                    is_selected: false
                 },
                 EntryDetails {
                     filename: "root2".to_string(),
                     depth: 0,
                     is_dir: true,
                     is_expanded: true,
-                    is_active: false
+                    is_selected: false
                 }
             ]
         );
