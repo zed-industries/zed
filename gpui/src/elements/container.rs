@@ -167,7 +167,10 @@ impl Element for Container {
         constraint: SizeConstraint,
         cx: &mut LayoutContext,
     ) -> (Vector2F, Self::LayoutState) {
-        let size_buffer = self.margin_size() + self.padding_size() + self.border_size();
+        let mut size_buffer = self.margin_size() + self.padding_size();
+        if !self.style.border.overlay {
+            size_buffer += self.border_size();
+        }
         let child_constraint = SizeConstraint {
             min: (constraint.min - size_buffer).max(Vector2F::zero()),
             max: (constraint.max - size_buffer).max(Vector2F::zero()),
@@ -196,20 +199,43 @@ impl Element for Container {
                 color: shadow.color,
             });
         }
-        cx.scene.push_quad(Quad {
-            bounds: quad_bounds,
-            background: self.style.background_color,
-            border: self.style.border,
-            corner_radius: self.style.corner_radius,
-        });
 
-        let child_origin = quad_bounds.origin()
-            + vec2f(self.style.padding.left, self.style.padding.top)
-            + vec2f(
-                self.style.border.left_width(),
-                self.style.border.top_width(),
-            );
-        self.child.paint(child_origin, visible_bounds, cx);
+        let child_origin =
+            quad_bounds.origin() + vec2f(self.style.padding.left, self.style.padding.top);
+
+        if self.style.border.overlay {
+            cx.scene.push_quad(Quad {
+                bounds: quad_bounds,
+                background: self.style.background_color,
+                border: Default::default(),
+                corner_radius: self.style.corner_radius,
+            });
+
+            self.child.paint(child_origin, visible_bounds, cx);
+
+            cx.scene.push_layer(None);
+            cx.scene.push_quad(Quad {
+                bounds: quad_bounds,
+                background: Default::default(),
+                border: self.style.border,
+                corner_radius: self.style.corner_radius,
+            });
+            cx.scene.pop_layer();
+        } else {
+            cx.scene.push_quad(Quad {
+                bounds: quad_bounds,
+                background: self.style.background_color,
+                border: self.style.border,
+                corner_radius: self.style.corner_radius,
+            });
+
+            let child_origin = child_origin
+                + vec2f(
+                    self.style.border.left_width(),
+                    self.style.border.top_width(),
+                );
+            self.child.paint(child_origin, visible_bounds, cx);
+        }
     }
 
     fn dispatch_event(
