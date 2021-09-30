@@ -737,7 +737,7 @@ mod tests {
                     depth: 1,
                     is_dir: true,
                     is_expanded: true,
-                    is_selected: false,
+                    is_selected: true,
                 },
                 EntryDetails {
                     filename: "3".to_string(),
