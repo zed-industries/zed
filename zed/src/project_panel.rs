@@ -8,6 +8,7 @@ use gpui::{
     keymap::{
         self,
         menu::{SelectNext, SelectPrev},
+        Binding,
     },
     platform::CursorStyle,
     AppContext, Element, ElementBox, Entity, ModelHandle, MutableAppContext, ReadModel, View,
@@ -52,13 +53,21 @@ pub struct ProjectEntry {
     pub entry_id: usize,
 }
 
+action!(ExpandActiveEntry);
+action!(CollapseActiveEntry);
 action!(ToggleExpanded, ProjectEntry);
 action!(Open, ProjectEntry);
 
 pub fn init(cx: &mut MutableAppContext) {
+    cx.add_action(ProjectPanel::expand_active_entry);
+    cx.add_action(ProjectPanel::collapse_active_entry);
     cx.add_action(ProjectPanel::toggle_expanded);
     cx.add_action(ProjectPanel::select_prev);
     cx.add_action(ProjectPanel::select_next);
+    cx.add_bindings([
+        Binding::new("right", ExpandActiveEntry, None),
+        Binding::new("left", CollapseActiveEntry, None),
+    ]);
 }
 
 pub enum Event {}
@@ -77,7 +86,7 @@ impl ProjectPanel {
         cx.subscribe(&project, |this, _, event, cx| match event {
             project::Event::ActiveEntryChanged(entry) => {
                 if let Some((worktree_id, entry_id)) = *entry {
-                    this.expand_active_entry(worktree_id, entry_id, cx);
+                    this.expand_entry(worktree_id, entry_id, cx);
                     this.update_visible_entries(Some((worktree_id, entry_id)), cx);
                     cx.notify();
                 }
@@ -101,6 +110,68 @@ impl ProjectPanel {
         };
         this.update_visible_entries(None, cx);
         this
+    }
+
+    fn expand_active_entry(&mut self, _: &ExpandActiveEntry, cx: &mut ViewContext<Self>) {
+        if let Some(active_entry) = self.active_entry {
+            let project = self.project.read(cx);
+            if let Some(worktree) = project.worktree_for_id(active_entry.worktree_id) {
+                if let Some(entry) = worktree.read(cx).entry_for_id(active_entry.entry_id) {
+                    if entry.is_dir() {
+                        if let Some(expanded_dir_ids) =
+                            self.expanded_dir_ids.get_mut(&active_entry.worktree_id)
+                        {
+                            match expanded_dir_ids.binary_search(&active_entry.entry_id) {
+                                Ok(_) => self.select_next(&SelectNext, cx),
+                                Err(ix) => {
+                                    expanded_dir_ids.insert(ix, active_entry.entry_id);
+                                    self.update_visible_entries(None, cx);
+                                    cx.notify();
+                                }
+                            }
+                        }
+                    } else {
+                    }
+                }
+            }
+        }
+    }
+
+    fn collapse_active_entry(&mut self, _: &CollapseActiveEntry, cx: &mut ViewContext<Self>) {
+        if let Some(active_entry) = self.active_entry {
+            let project = self.project.read(cx);
+            if let Some(worktree) = project.worktree_for_id(active_entry.worktree_id) {
+                let worktree = worktree.read(cx);
+                if let Some(mut entry) = worktree.entry_for_id(active_entry.entry_id) {
+                    if let Some(expanded_dir_ids) =
+                        self.expanded_dir_ids.get_mut(&active_entry.worktree_id)
+                    {
+                        loop {
+                            match expanded_dir_ids.binary_search(&entry.id) {
+                                Ok(ix) => {
+                                    expanded_dir_ids.remove(ix);
+                                    self.update_visible_entries(
+                                        Some((active_entry.worktree_id, entry.id)),
+                                        cx,
+                                    );
+                                    cx.notify();
+                                    break;
+                                }
+                                Err(_) => {
+                                    if let Some(parent_entry) =
+                                        entry.path.parent().and_then(|p| worktree.entry_for_path(p))
+                                    {
+                                        entry = parent_entry;
+                                    } else {
+                                        break;
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
     }
 
     fn toggle_expanded(&mut self, action: &ToggleExpanded, cx: &mut ViewContext<Self>) {
@@ -269,12 +340,7 @@ impl ProjectPanel {
         self.autoscroll();
     }
 
-    fn expand_active_entry(
-        &mut self,
-        worktree_id: usize,
-        entry_id: usize,
-        cx: &mut ViewContext<Self>,
-    ) {
+    fn expand_entry(&mut self, worktree_id: usize, entry_id: usize, cx: &mut ViewContext<Self>) {
         let project = self.project.read(cx);
         if let Some((worktree, expanded_dir_ids)) = project
             .worktree_for_id(worktree_id)
