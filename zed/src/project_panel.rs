@@ -7,7 +7,10 @@ use crate::{
 };
 use gpui::{
     action,
-    elements::{Label, MouseEventHandler, UniformList, UniformListState},
+    elements::{
+        Align, ConstrainedBox, Empty, Flex, Label, MouseEventHandler, ParentElement, Svg,
+        UniformList, UniformListState,
+    },
     keymap::{
         self,
         menu::{SelectNext, SelectPrev},
@@ -474,7 +477,38 @@ impl ProjectPanel {
                 } else {
                     &theme.entry
                 };
-                Label::new(details.filename, style.text.clone())
+                Flex::row()
+                    .with_child(
+                        ConstrainedBox::new(
+                            Align::new(
+                                ConstrainedBox::new(if is_dir {
+                                    if details.is_expanded {
+                                        Svg::new("icons/disclosure-open.svg")
+                                            .with_color(style.icon_color)
+                                            .boxed()
+                                    } else {
+                                        Svg::new("icons/disclosure-closed.svg")
+                                            .with_color(style.icon_color)
+                                            .boxed()
+                                    }
+                                } else {
+                                    Empty::new().boxed()
+                                })
+                                .with_max_width(style.icon_size)
+                                .with_max_height(style.icon_size)
+                                .boxed(),
+                            )
+                            .boxed(),
+                        )
+                        .with_width(style.icon_size)
+                        .boxed(),
+                    )
+                    .with_child(
+                        Label::new(details.filename, style.text.clone())
+                            .contained()
+                            .with_margin_left(style.icon_spacing)
+                            .boxed(),
+                    )
                     .contained()
                     .with_style(style.container)
                     .with_padding_left(theme.entry_base_padding + details.depth as f32 * 20.)

@@ -112,9 +112,19 @@ pub struct ProjectPanel {
     #[serde(flatten)]
     pub container: ContainerStyle,
     pub entry_base_padding: f32,
-    pub entry: ContainedText,
-    pub hovered_entry: ContainedText,
-    pub selected_entry: ContainedText,
+    pub entry: ProjectPanelEntry,
+    pub hovered_entry: ProjectPanelEntry,
+    pub selected_entry: ProjectPanelEntry,
+}
+
+#[derive(Deserialize)]
+pub struct ProjectPanelEntry {
+    #[serde(flatten)]
+    pub container: ContainerStyle,
+    pub text: TextStyle,
+    pub icon_color: Color,
+    pub icon_size: f32,
+    pub icon_spacing: f32,
 }
 
 #[derive(Deserialize)]

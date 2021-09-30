@@ -165,8 +165,11 @@ padding = 0
 entry_base_padding = "$panel.padding"
 
 [project_panel.entry]
-extends = "$text.0"
+text = "$text.1"
 padding = { top = 3, bottom = 3 }
+icon_color = "$text.3.color"
+icon_size = 8
+icon_spacing = 8
 
 [project_panel.hovered_entry]
 extends = "$project_panel.entry"
