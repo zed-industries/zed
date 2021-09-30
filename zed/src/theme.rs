@@ -67,6 +67,7 @@ pub struct OfflineIcon {
 
 #[derive(Clone, Deserialize)]
 pub struct Tab {
+    pub height: f32,
     #[serde(flatten)]
     pub container: ContainerStyle,
     #[serde(flatten)]
@@ -84,14 +85,15 @@ pub struct Sidebar {
     #[serde(flatten)]
     pub container: ContainerStyle,
     pub width: f32,
-    pub icon: SidebarIcon,
-    pub active_icon: SidebarIcon,
+    pub item: SidebarItem,
+    pub active_item: SidebarItem,
     pub resize_handle: ContainerStyle,
 }
 
 #[derive(Deserialize)]
-pub struct SidebarIcon {
-    pub color: Color,
+pub struct SidebarItem {
+    pub icon_color: Color,
+    pub icon_size: f32,
     pub height: f32,
 }
 
@@ -107,18 +109,18 @@ pub struct ChatPanel {
     pub hovered_sign_in_prompt: TextStyle,
 }
 
-#[derive(Deserialize)]
+#[derive(Debug, Deserialize)]
 pub struct ProjectPanel {
     #[serde(flatten)]
     pub container: ContainerStyle,
-    pub entry_base_padding: f32,
     pub entry: ProjectPanelEntry,
     pub hovered_entry: ProjectPanelEntry,
     pub selected_entry: ProjectPanelEntry,
 }
 
-#[derive(Deserialize)]
+#[derive(Debug, Deserialize)]
 pub struct ProjectPanelEntry {
+    pub height: f32,
     #[serde(flatten)]
     pub container: ContainerStyle,
     pub text: TextStyle,

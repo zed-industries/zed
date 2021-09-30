@@ -2,12 +2,11 @@ use super::{ItemViewHandle, SplitDirection};
 use crate::settings::Settings;
 use gpui::{
     action,
-    color::Color,
     elements::*,
     geometry::{rect::RectF, vector::vec2f},
     keymap::Binding,
     platform::CursorStyle,
-    Border, Entity, MutableAppContext, Quad, RenderContext, View, ViewContext, ViewHandle,
+    Entity, MutableAppContext, Quad, RenderContext, View, ViewContext, ViewHandle,
 };
 use postage::watch;
 use std::{cmp, path::Path, sync::Arc};
@@ -180,10 +179,6 @@ impl Pane {
     fn render_tabs(&self, cx: &mut RenderContext<Self>) -> ElementBox {
         let settings = self.settings.borrow();
         let theme = &settings.theme;
-        let line_height = cx.font_cache().line_height(
-            theme.workspace.tab.label.text.font_id,
-            theme.workspace.tab.label.text.font_size,
-        );
 
         enum Tabs {}
         let tabs = MouseEventHandler::new::<Tabs, _, _, _>(0, cx, |mouse_state, cx| {
@@ -202,12 +197,11 @@ impl Pane {
                         title.push('…');
                     }
 
-                    let mut style = theme.workspace.tab.clone();
-                    if is_active {
-                        style = theme.workspace.active_tab.clone();
-                        style.container.border.bottom = false;
-                        style.container.padding.bottom += style.container.border.width;
-                    }
+                    let mut style = if is_active {
+                        theme.workspace.active_tab.clone()
+                    } else {
+                        theme.workspace.tab.clone()
+                    };
                     if ix == 0 {
                         style.container.border.left = false;
                     }
@@ -319,26 +313,11 @@ impl Pane {
                 })
             }
 
-            // Ensure there's always a minimum amount of space after the last tab,
-            // so that the tab's border doesn't abut the window's border.
-            let mut border = Border::bottom(1.0, Color::default());
-            border.color = theme.workspace.tab.container.border.color;
-
-            row.add_child(
-                ConstrainedBox::new(
-                    Container::new(Empty::new().boxed())
-                        .with_border(border)
-                        .boxed(),
-                )
-                .with_min_width(20.)
-                .named("fixed-filler"),
-            );
-
             row.add_child(
                 Expanded::new(
                     0.0,
                     Container::new(Empty::new().boxed())
-                        .with_border(border)
+                        .with_border(theme.workspace.tab.container.border)
                         .boxed(),
                 )
                 .named("filler"),
@@ -348,7 +327,7 @@ impl Pane {
         });
 
         ConstrainedBox::new(tabs.boxed())
-            .with_height(line_height + 16.)
+            .with_height(theme.workspace.tab.height)
             .named("tabs")
     }
 }

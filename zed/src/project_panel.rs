@@ -507,11 +507,15 @@ impl ProjectPanel {
                         Label::new(details.filename, style.text.clone())
                             .contained()
                             .with_margin_left(style.icon_spacing)
+                            .aligned()
+                            .left()
                             .boxed(),
                     )
+                    .constrained()
+                    .with_height(theme.entry.height)
                     .contained()
                     .with_style(style.container)
-                    .with_padding_left(theme.entry_base_padding + details.depth as f32 * 20.)
+                    .with_padding_left(theme.container.padding.left + details.depth as f32 * 20.)
                     .boxed()
             },
         )
@@ -534,6 +538,8 @@ impl View for ProjectPanel {
 
     fn render(&mut self, _: &mut gpui::RenderContext<'_, Self>) -> gpui::ElementBox {
         let settings = self.settings.clone();
+        let mut container_style = settings.borrow().theme.project_panel.container;
+        let padding = std::mem::take(&mut container_style.padding);
         let handle = self.handle.clone();
         UniformList::new(
             self.list.clone(),
@@ -551,8 +557,10 @@ impl View for ProjectPanel {
                 })
             },
         )
+        .with_padding_top(padding.top)
+        .with_padding_bottom(padding.bottom)
         .contained()
-        .with_style(self.settings.borrow().theme.project_panel.container)
+        .with_style(container_style)
         .boxed()
     }
 

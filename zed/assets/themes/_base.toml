@@ -18,6 +18,7 @@ padding = { right = 4 }
 width = 16
 
 [workspace.tab]
+height = 34
 text = "$text.2"
 padding = { left = 12, right = 12 }
 icon_width = 8
@@ -26,10 +27,11 @@ icon_close = "$text.2.color"
 icon_close_active = "$text.0.color"
 icon_dirty = "$status.info"
 icon_conflict = "$status.warn"
-border = { left = true, bottom = true, width = 1, color = "$border.0" }
+border = { left = true, bottom = true, width = 1, color = "$border.0", overlay = true }
 
 [workspace.active_tab]
 extends = "$workspace.tab"
+border.bottom = false
 background = "$surface.1"
 text = "$text.0"
 
@@ -41,13 +43,14 @@ border = { right = true, width = 1, color = "$border.0" }
 padding = { left = 1 }
 background = "$border.0"
 
-[workspace.sidebar.icon]
-color = "$text.2.color"
-height = 18
+[workspace.sidebar.item]
+icon_color = "$text.2.color"
+icon_size = 18
+height = "$workspace.tab.height"
 
-[workspace.sidebar.active_icon]
-extends = "$workspace.sidebar.icon"
-color = "$text.0.color"
+[workspace.sidebar.active_item]
+extends = "$workspace.sidebar.item"
+icon_color = "$text.0.color"
 
 [workspace.left_sidebar]
 extends = "$workspace.sidebar"
@@ -58,7 +61,7 @@ extends = "$workspace.sidebar"
 border = { width = 1, color = "$border.0", left = true }
 
 [panel]
-padding = 12
+padding = { top = 12, left = 12, bottom = 12, right = 12 }
 
 [chat_panel]
 extends = "$panel"
@@ -161,12 +164,11 @@ corner_radius = 6
 
 [project_panel]
 extends = "$panel"
-padding = 0
-entry_base_padding = "$panel.padding"
+padding.top = 6    # ($workspace.tab.height - $project_panel.entry.height) / 2
 
 [project_panel.entry]
 text = "$text.1"
-padding = { top = 3, bottom = 3 }
+height = 22
 icon_color = "$text.3.color"
 icon_size = 8
 icon_spacing = 8

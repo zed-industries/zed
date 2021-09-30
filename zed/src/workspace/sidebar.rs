@@ -68,11 +68,6 @@ impl Sidebar {
 
     pub fn render(&self, settings: &Settings, cx: &mut RenderContext<Workspace>) -> ElementBox {
         let side = self.side;
-        let theme = &settings.theme;
-        let line_height = cx.font_cache().line_height(
-            theme.workspace.tab.label.text.font_id,
-            theme.workspace.tab.label.text.font_size,
-        );
         let theme = self.theme(settings);
 
         ConstrainedBox::new(
@@ -80,9 +75,9 @@ impl Sidebar {
                 Flex::column()
                     .with_children(self.items.iter().enumerate().map(|(item_index, item)| {
                         let theme = if Some(item_index) == self.active_item_ix {
-                            &theme.active_icon
+                            &theme.active_item
                         } else {
-                            &theme.icon
+                            &theme.item
                         };
                         enum SidebarButton {}
                         MouseEventHandler::new::<SidebarButton, _, _, _>(
@@ -93,15 +88,15 @@ impl Sidebar {
                                     Align::new(
                                         ConstrainedBox::new(
                                             Svg::new(item.icon_path)
-                                                .with_color(theme.color)
+                                                .with_color(theme.icon_color)
                                                 .boxed(),
                                         )
-                                        .with_height(theme.height)
+                                        .with_height(theme.icon_size)
                                         .boxed(),
                                     )
                                     .boxed(),
                                 )
-                                .with_height(line_height + 16.0)
+                                .with_height(theme.height)
                                 .boxed()
                             },
                         )
