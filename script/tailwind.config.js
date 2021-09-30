@@ -1,44 +1,46 @@
+const colors = require('tailwindcss/colors')
+
 module.exports = {
+    corePlugins: {
+        float: false,
+        tableLayout: false,
+        sepia: false,
+        saturate: false,
+    },
+
     theme: {
         fontFamily: {
             display: [
-                "Visby CF", "ui-sans-serif", "system-ui", "-apple-system", "BlinkMacSystemFont", "Segoe UI", "Roboto",
-                "Helvetica Neue", "Arial", "Noto Sans", "sans-serif", "Apple Color Emoji", "Segoe UI Emoji", "Segoe UI Symbol",
+                "Spectral", "Constantia", "Lucida Bright", "Lucidabright", "Lucida Serif", "Lucida", "DejaVu Serif", "Bitstream Vera Serif", 
+                "Liberation Serif", "Georgia", "serif", "Apple Color Emoji", "Segoe UI Emoji", "Segoe UI Symbol",
                 "Noto Color Emoji"
             ],
             body: [
-                "Open Sans", "ui-sans-serif", "system-ui", "-apple-system", "BlinkMacSystemFont", "Segoe UI", "Roboto",
-                "Helvetica Neue", "Arial", "Noto Sans", "sans-serif", "Apple Color Emoji", "Segoe UI Emoji", "Segoe UI Symbol",
-                "Noto Color Emoji"
+                "JetBrains Mono", "Andale Mono WT", "Andale Mono", "Lucida Console", "Lucida Sans Typewriter", "DejaVu Sans Mono", 
+                "Bitstream Vera Sans Mono", "Liberation Mono", "Nimbus Mono L", "Courier New", "Apple Color Emoji", "Segoe UI Emoji", 
+                "Segoe UI Symbol", "Noto Color Emoji"
+            ],
+            mono: [
+                "JetBrains Mono", "Andale Mono WT", "Andale Mono", "Lucida Console", "Lucida Sans Typewriter", "DejaVu Sans Mono", 
+                "Bitstream Vera Sans Mono", "Liberation Mono", "Nimbus Mono L", "Courier New", "Apple Color Emoji", "Segoe UI Emoji", 
+                "Segoe UI Symbol", "Noto Color Emoji"
             ],
         },
-        extend: {
-            typography: (theme) => ({
-                DEFAULT: {
-                    css: {
-                        h1: {
-                            fontFamily: theme("fontFamily.display").join(", ")
-                        },
-                        h2: {
-                            fontFamily: theme("fontFamily.display").join(", ")
-                        },
-                        h3: {
-                            fontFamily: theme("fontFamily.display").join(", ")
-                        },
-                        h4: {
-                            fontFamily: theme("fontFamily.display").join(", ")
-                        }
-                    }
-                }
-            })
-        }
+        colors: {
+            transparent: 'transparent',
+            current: 'currentColor',
+            black: colors.black,
+            white: colors.white,
+            gray: colors.trueGray,
+          },
+        extend: {},
     },
+
     variants: {
     },
-    plugins: [
-        require('@tailwindcss/typography'),
-    ],
+    darkMode: false,    
     purge: [
-        "../server/templates/**/*.hbs"
+        "../server/templates/**/*.hbs",
+        "../server/templates/*.hbs"
     ]
 }
