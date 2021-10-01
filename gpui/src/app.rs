@@ -1,6 +1,6 @@
 use crate::{
     elements::ElementBox,
-    executor,
+    executor::{self, Task},
     keymap::{self, Keystroke},
     platform::{self, CursorStyle, Platform, PromptLevel, WindowOptions},
     presenter::Presenter,
@@ -8,7 +8,6 @@ use crate::{
     AssetCache, AssetSource, ClipboardItem, FontCache, PathPromptOptions, TextLayoutCache,
 };
 use anyhow::{anyhow, Result};
-use async_task::Task;
 use keymap::MatchResult;
 use parking_lot::Mutex;
 use platform::Event;
