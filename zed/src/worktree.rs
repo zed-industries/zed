@@ -5,7 +5,7 @@ use crate::{
     editor::{self, Buffer, History, Operation, Rope},
     fs::{self, Fs},
     fuzzy::CharBag,
-    language::{Language, LanguageRegistry},
+    language::LanguageRegistry,
     rpc::{self, proto, Status},
     time::{self, ReplicaId},
     util::{Bias, TryFutureExt},
@@ -285,6 +285,13 @@ impl Worktree {
         match self {
             Worktree::Local(_) => 0,
             Worktree::Remote(worktree) => worktree.replica_id,
+        }
+    }
+
+    pub fn languages(&self) -> &Arc<LanguageRegistry> {
+        match self {
+            Worktree::Local(worktree) => &worktree.languages,
+            Worktree::Remote(worktree) => &worktree.languages,
         }
     }
 
@@ -856,8 +863,12 @@ impl LocalWorktree {
                 let (file, contents) = this
                     .update(&mut cx, |this, cx| this.as_local().unwrap().load(&path, cx))
                     .await?;
+                let language = this.read_with(&cx, |this, cx| {
+                    this.languages()
+                        .select_language(file.full_path(cx))
+                        .cloned()
+                });
                 let buffer = cx.add_model(|cx| {
-                    let language = file.select_language(cx);
                     Buffer::from_history(0, History::new(contents.into()), Some(file), language, cx)
                 });
                 this.update(&mut cx, |this, _| {
@@ -1261,7 +1272,11 @@ impl RemoteWorktree {
                     .upgrade(&cx)
                     .ok_or_else(|| anyhow!("worktree was closed"))?;
                 let file = File::new(entry.id, this.clone(), entry.path, entry.mtime);
-                let language = cx.read(|cx| file.select_language(cx));
+                let language = this.read_with(&cx, |this, cx| {
+                    this.languages()
+                        .select_language(file.full_path(cx))
+                        .cloned()
+                });
                 let remote_buffer = response.buffer.ok_or_else(|| anyhow!("empty buffer"))?;
                 let buffer_id = remote_buffer.id as usize;
                 let buffer = cx.add_model(|cx| {
@@ -1819,20 +1834,12 @@ impl File {
         self.path.clone()
     }
 
-    pub fn abs_path(&self, cx: &AppContext) -> PathBuf {
-        self.worktree.read(cx).abs_path.join(&self.path)
-    }
-
-    pub fn select_language(&self, cx: &AppContext) -> Option<Arc<Language>> {
+    pub fn full_path(&self, cx: &AppContext) -> PathBuf {
         let worktree = self.worktree.read(cx);
         let mut full_path = PathBuf::new();
         full_path.push(worktree.root_name());
         full_path.push(&self.path);
-        let languages = match self.worktree.read(cx) {
-            Worktree::Local(worktree) => &worktree.languages,
-            Worktree::Remote(worktree) => &worktree.languages,
-        };
-        languages.select_language(&full_path).cloned()
+        full_path
     }
 
     /// Returns the last component of this handle's absolute path. If this handle refers to the root

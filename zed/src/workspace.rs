@@ -185,7 +185,7 @@ pub trait ItemView: View {
     fn save(&mut self, cx: &mut ViewContext<Self>) -> Result<Task<Result<()>>>;
     fn save_as(
         &mut self,
-        worktree: &ModelHandle<Worktree>,
+        worktree: ModelHandle<Worktree>,
         path: &Path,
         cx: &mut ViewContext<Self>,
     ) -> Task<anyhow::Result<()>>;
@@ -229,7 +229,7 @@ pub trait ItemViewHandle {
     fn save(&self, cx: &mut MutableAppContext) -> Result<Task<Result<()>>>;
     fn save_as(
         &self,
-        worktree: &ModelHandle<Worktree>,
+        worktree: ModelHandle<Worktree>,
         path: &Path,
         cx: &mut MutableAppContext,
     ) -> Task<anyhow::Result<()>>;
@@ -317,7 +317,7 @@ impl<T: ItemView> ItemViewHandle for ViewHandle<T> {
 
     fn save_as(
         &self,
-        worktree: &ModelHandle<Worktree>,
+        worktree: ModelHandle<Worktree>,
         path: &Path,
         cx: &mut MutableAppContext,
     ) -> Task<anyhow::Result<()>> {
@@ -768,7 +768,7 @@ impl Workspace {
                                 Ok((worktree, path)) => {
                                     handle
                                         .update(&mut cx, |_, cx| {
-                                            item.save_as(&worktree, &path, cx.as_mut())
+                                            item.save_as(worktree, &path, cx.as_mut())
                                         })
                                         .await
                                 }

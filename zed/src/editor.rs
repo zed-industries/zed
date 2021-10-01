@@ -2652,7 +2652,7 @@ impl workspace::ItemView for Editor {
 
     fn save_as(
         &mut self,
-        worktree: &ModelHandle<Worktree>,
+        worktree: ModelHandle<Worktree>,
         path: &Path,
         cx: &mut ViewContext<Self>,
     ) -> Task<Result<()>> {
@@ -2670,9 +2670,16 @@ impl workspace::ItemView for Editor {
 
             cx.spawn(|buffer, mut cx| async move {
                 save_as.await.map(|new_file| {
+                    let language = worktree.read_with(&cx, |worktree, cx| {
+                        worktree
+                            .languages()
+                            .select_language(new_file.full_path(cx))
+                            .cloned()
+                    });
+
                     buffer.update(&mut cx, |buffer, cx| {
-                        buffer.set_language(new_file.select_language(cx), cx);
                         buffer.did_save(version, new_file.mtime, Some(new_file), cx);
+                        buffer.set_language(language, cx);
                     });
                 })
             })
