@@ -710,6 +710,11 @@ impl Buffer {
         &self.visible_text
     }
 
+    pub fn set_language(&mut self, language: Option<Arc<Language>>, cx: &mut ModelContext<Self>) {
+        self.language = language;
+        self.reparse(cx);
+    }
+
     pub fn did_save(
         &mut self,
         version: time::Global,
@@ -720,10 +725,6 @@ impl Buffer {
         self.saved_mtime = mtime;
         self.saved_version = version;
         if let Some(new_file) = new_file {
-            if let Some(language) = new_file.select_language(cx) {
-                self.language = Some(language);
-                self.reparse(cx);
-            }
             self.file = Some(new_file);
         }
         cx.emit(Event::Saved);
