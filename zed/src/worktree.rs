@@ -2796,7 +2796,7 @@ mod tests {
     use rand::prelude::*;
     use serde_json::json;
     use std::time::UNIX_EPOCH;
-    use std::{env, fmt::Write, os::unix, time::SystemTime};
+    use std::{env, fmt::Write, time::SystemTime};
 
     #[gpui::test]
     async fn test_traversal(cx: gpui::TestAppContext) {

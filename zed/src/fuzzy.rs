@@ -1,13 +1,10 @@
 mod char_bag;
 
-use crate::{
-    util,
-    worktree::{EntryKind, Snapshot},
-};
+use crate::util;
 use gpui::executor;
 use std::{
     borrow::Cow,
-    cmp::{max, min, Ordering},
+    cmp::Ordering,
     path::Path,
     sync::atomic::{self, AtomicBool},
     sync::Arc,
