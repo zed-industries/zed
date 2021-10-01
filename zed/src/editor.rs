@@ -2656,8 +2656,26 @@ impl workspace::ItemView for Editor {
         path: &Path,
         cx: &mut ViewContext<Self>,
     ) -> Task<Result<()>> {
-        self.buffer
-            .update(cx, |b, cx| b.save_as(worktree, path, cx))
+        self.buffer.update(cx, |buffer, cx| {
+            let handle = cx.handle();
+            let text = buffer.as_rope().clone();
+            let version = buffer.version();
+
+            let save_as = worktree.update(cx, |worktree, cx| {
+                worktree
+                    .as_local_mut()
+                    .unwrap()
+                    .save_buffer_as(handle, path, text, cx)
+            });
+
+            cx.spawn(|buffer, mut cx| async move {
+                save_as.await.map(|new_file| {
+                    buffer.update(&mut cx, |buffer, cx| {
+                        buffer.did_save(version, new_file.mtime, Some(new_file), cx);
+                    });
+                })
+            })
+        })
     }
 
     fn is_dirty(&self, cx: &AppContext) -> bool {

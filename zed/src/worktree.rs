@@ -518,7 +518,7 @@ impl Worktree {
                     .mtime
                     .ok_or_else(|| anyhow!("missing mtime"))?
                     .into();
-                buffer.did_save(version, mtime, cx);
+                buffer.did_save(version, mtime, None, cx);
                 Result::<_, anyhow::Error>::Ok(())
             })?;
         }

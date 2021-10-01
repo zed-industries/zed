@@ -9,14 +9,11 @@ use crate::{
     settings::{HighlightId, HighlightMap},
     time::{self, ReplicaId},
     util::Bias,
-    worktree::{File, Worktree},
+    worktree::File,
 };
 pub use anchor::*;
 use anyhow::{anyhow, Result};
-use sum_tree::{self, FilterCursor, SumTree};
-use gpui::{
-    AppContext, Entity, ModelContext, ModelHandle, Task,
-};
+use gpui::{AppContext, Entity, ModelContext, Task};
 use lazy_static::lazy_static;
 use operation_queue::OperationQueue;
 use parking_lot::Mutex;
@@ -37,6 +34,7 @@ use std::{
     sync::Arc,
     time::{Duration, Instant, SystemTime, UNIX_EPOCH},
 };
+use sum_tree::{self, FilterCursor, SumTree};
 use tree_sitter::{InputEdit, Parser, QueryCursor};
 use zrpc::proto;
 
@@ -702,54 +700,32 @@ impl Buffer {
         Ok(cx.spawn(|this, mut cx| async move {
             let (version, mtime) = save.await?;
             this.update(&mut cx, |this, cx| {
-                this.did_save(version.clone(), mtime, cx);
+                this.did_save(version.clone(), mtime, None, cx);
             });
             Ok((version, mtime))
         }))
     }
 
-    pub fn save_as(
-        &mut self,
-        worktree: &ModelHandle<Worktree>,
-        path: impl Into<Arc<Path>>,
-        cx: &mut ModelContext<Self>,
-    ) -> Task<Result<()>> {
-        let path = path.into();
-        let handle = cx.handle();
-        let text = self.visible_text.clone();
-        let version = self.version.clone();
-
-        let save_as = worktree.update(cx, |worktree, cx| {
-            worktree
-                .as_local_mut()
-                .unwrap()
-                .save_buffer_as(handle, path, text, cx)
-        });
-
-        cx.spawn(|this, mut cx| async move {
-            save_as.await.map(|new_file| {
-                this.update(&mut cx, |this, cx| {
-                    if let Some(language) = new_file.select_language(cx) {
-                        this.language = Some(language);
-                        this.reparse(cx);
-                    }
-
-                    let mtime = new_file.mtime;
-                    this.file = Some(new_file);
-                    this.did_save(version, mtime, cx);
-                });
-            })
-        })
+    pub fn as_rope(&self) -> &Rope {
+        &self.visible_text
     }
 
     pub fn did_save(
         &mut self,
         version: time::Global,
         mtime: SystemTime,
+        new_file: Option<File>,
         cx: &mut ModelContext<Self>,
     ) {
         self.saved_mtime = mtime;
         self.saved_version = version;
+        if let Some(new_file) = new_file {
+            if let Some(language) = new_file.select_language(cx) {
+                self.language = Some(language);
+                self.reparse(cx);
+            }
+            self.file = Some(new_file);
+        }
         cx.emit(Event::Saved);
     }
 
@@ -3438,7 +3414,7 @@ mod tests {
             assert!(buffer.is_dirty());
             assert_eq!(*events.borrow(), &[Event::Edited, Event::Dirtied]);
             events.borrow_mut().clear();
-            buffer.did_save(buffer.version(), buffer.file().unwrap().mtime, cx);
+            buffer.did_save(buffer.version(), buffer.file().unwrap().mtime, None, cx);
         });
 
         // after saving, the buffer is not dirty, and emits a saved event.
