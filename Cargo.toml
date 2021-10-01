@@ -1,5 +1,5 @@
 [workspace]
-members = ["fsevent", "gpui", "gpui_macros", "server", "sum_tree", "zed", "zrpc"]
+members = ["fsevent", "fuzzy", "gpui", "gpui_macros", "server", "sum_tree", "zed", "zrpc"]
 default-members = ["zed"]
 
 [patch.crates-io]

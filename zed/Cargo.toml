@@ -28,6 +28,7 @@ dirs = "3.0"
 easy-parallel = "3.1.0"
 fsevent = { path = "../fsevent" }
 futures = "0.3"
+fuzzy = { path = "../fuzzy" }
 gpui = { path = "../gpui" }
 http-auth-basic = "0.1.3"
 ignore = "0.4"

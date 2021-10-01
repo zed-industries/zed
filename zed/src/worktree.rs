@@ -4,7 +4,6 @@ use self::ignore::IgnoreStack;
 use crate::{
     editor::{self, Buffer, History, Operation, Rope},
     fs::{self, Fs},
-    fuzzy,
     fuzzy::CharBag,
     language::{Language, LanguageRegistry},
     rpc::{self, proto, Status},
@@ -14,7 +13,6 @@ use crate::{
 use ::ignore::gitignore::{Gitignore, GitignoreBuilder};
 use anyhow::{anyhow, Result};
 use futures::{Stream, StreamExt};
-pub use fuzzy::PathMatch;
 use gpui::{
     executor, AppContext, AsyncAppContext, Entity, ModelContext, ModelHandle, MutableAppContext,
     Task, UpgradeModelHandle, WeakModelHandle,

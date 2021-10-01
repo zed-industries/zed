@@ -1,17 +1,16 @@
 use crate::{
     fs::Fs,
-    fuzzy::{CharBag, Matcher, PathMatchCandidate},
+    fuzzy::{self, PathMatch},
     language::LanguageRegistry,
     rpc::Client,
-    util::{self, TryFutureExt as _},
-    worktree::{self, EntryKind, PathMatch, Snapshot, Worktree},
+    util::TryFutureExt as _,
+    worktree::{self, Worktree},
     AppState,
 };
 use anyhow::Result;
 use futures::Future;
 use gpui::{AppContext, Entity, ModelContext, ModelHandle, Task};
 use std::{
-    cmp,
     path::Path,
     sync::{atomic::AtomicBool, Arc},
 };
@@ -191,7 +190,7 @@ impl Project {
 
     pub fn match_paths<'a>(
         &self,
-        query: &str,
+        query: &'a str,
         include_ignored: bool,
         smart_case: bool,
         max_results: usize,
@@ -203,111 +202,19 @@ impl Project {
             .iter()
             .map(|worktree| worktree.read(cx).snapshot())
             .collect::<Vec<_>>();
-
-        let path_count: usize = if include_ignored {
-            snapshots.iter().map(Snapshot::file_count).sum()
-        } else {
-            snapshots.iter().map(Snapshot::visible_file_count).sum()
-        };
-
-        let lowercase_query = query.to_lowercase().chars().collect::<Vec<_>>();
-        let query = query.chars().collect::<Vec<_>>();
-        let query_char_bag = CharBag::from(&lowercase_query[..]);
-
         let background = cx.background().clone();
 
         async move {
-            if path_count == 0 {
-                return Vec::new();
-            }
-
-            let num_cpus = background.num_cpus().min(path_count);
-            let segment_size = (path_count + num_cpus - 1) / num_cpus;
-            let mut segment_results = (0..num_cpus)
-                .map(|_| Vec::with_capacity(max_results))
-                .collect::<Vec<_>>();
-
-            let lowercase_query = &lowercase_query;
-            let query = &query;
-            let snapshots = snapshots.as_slice();
-
-            background
-                .scoped(|scope| {
-                    for (segment_idx, results) in segment_results.iter_mut().enumerate() {
-                        scope.spawn(async move {
-                            let segment_start = segment_idx * segment_size;
-                            let segment_end = segment_start + segment_size;
-                            let mut matcher = Matcher::new(
-                                query,
-                                lowercase_query,
-                                query_char_bag,
-                                smart_case,
-                                max_results,
-                            );
-
-                            let mut tree_start = 0;
-                            for snapshot in snapshots {
-                                let tree_end = if include_ignored {
-                                    tree_start + snapshot.file_count()
-                                } else {
-                                    tree_start + snapshot.visible_file_count()
-                                };
-
-                                if tree_start < segment_end && segment_start < tree_end {
-                                    let path_prefix: Arc<str> =
-                                        if snapshot.root_entry().map_or(false, |e| e.is_file()) {
-                                            snapshot.root_name().into()
-                                        } else if snapshots.len() > 1 {
-                                            format!("{}/", snapshot.root_name()).into()
-                                        } else {
-                                            "".into()
-                                        };
-
-                                    let start = cmp::max(tree_start, segment_start) - tree_start;
-                                    let end = cmp::min(tree_end, segment_end) - tree_start;
-                                    let paths = snapshot
-                                        .files(include_ignored, start)
-                                        .take(end - start)
-                                        .map(|entry| {
-                                            if let EntryKind::File(char_bag) = entry.kind {
-                                                PathMatchCandidate {
-                                                    path: &entry.path,
-                                                    char_bag,
-                                                }
-                                            } else {
-                                                unreachable!()
-                                            }
-                                        });
-
-                                    matcher.match_paths(
-                                        snapshot.id(),
-                                        path_prefix,
-                                        paths,
-                                        results,
-                                        &cancel_flag,
-                                    );
-                                }
-                                if tree_end >= segment_end {
-                                    break;
-                                }
-                                tree_start = tree_end;
-                            }
-                        })
-                    }
-                })
-                .await;
-
-            let mut results = Vec::new();
-            for segment_result in segment_results {
-                if results.is_empty() {
-                    results = segment_result;
-                } else {
-                    util::extend_sorted(&mut results, segment_result, max_results, |a, b| {
-                        b.cmp(&a)
-                    });
-                }
-            }
-            results
+            fuzzy::match_paths(
+                snapshots.as_slice(),
+                query,
+                include_ignored,
+                smart_case,
+                max_results,
+                cancel_flag,
+                background,
+            )
+            .await
         }
     }
 }

@@ -2041,6 +2041,10 @@ dependencies = [
 ]
 
 [[package]]
+name = "fuzzy"
+version = "0.1.0"
+
+[[package]]
 name = "generator"
 version = "0.6.23"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -5912,6 +5916,7 @@ dependencies = [
  "env_logger",
  "fsevent",
  "futures",
+ "fuzzy",
  "gpui",
  "http-auth-basic",
  "ignore",

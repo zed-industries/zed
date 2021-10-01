@@ -1,10 +1,10 @@
 use crate::{
     editor::{self, Editor},
+    fuzzy::PathMatch,
     project::Project,
     settings::Settings,
     util,
     workspace::Workspace,
-    worktree::PathMatch,
 };
 use gpui::{
     action,
