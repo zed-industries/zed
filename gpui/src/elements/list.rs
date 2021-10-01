@@ -4,11 +4,11 @@ use crate::{
         vector::{vec2f, Vector2F},
     },
     json::json,
-    sum_tree::{self, Bias, SumTree},
     DebugContext, Element, ElementBox, ElementRc, Event, EventContext, LayoutContext, PaintContext,
     SizeConstraint,
 };
 use std::{cell::RefCell, collections::VecDeque, ops::Range, rc::Rc};
+use sum_tree::{self, Bias, SumTree};
 
 pub struct List {
     state: ListState,

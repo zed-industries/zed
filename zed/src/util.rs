@@ -1,11 +1,11 @@
-use futures::{Future};
-pub use gpui::sum_tree::Bias;
+use futures::Future;
 use rand::prelude::*;
 use std::{
     cmp::Ordering,
     pin::Pin,
     task::{Context, Poll},
 };
+pub use sum_tree::Bias;
 
 pub fn post_inc(value: &mut usize) -> usize {
     let prev = *value;

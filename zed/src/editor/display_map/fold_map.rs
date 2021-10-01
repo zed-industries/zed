@@ -3,10 +3,7 @@ use super::{
     Anchor, Buffer, Point, ToOffset,
 };
 use crate::{editor::buffer, settings::HighlightId, time, util::Bias};
-use gpui::{
-    sum_tree::{self, Cursor, FilterCursor, SumTree},
-    AppContext, ModelHandle,
-};
+use gpui::{AppContext, ModelHandle};
 use parking_lot::Mutex;
 use std::{
     cmp::{self, Ordering},
@@ -14,6 +11,7 @@ use std::{
     ops::Range,
     sync::atomic::{AtomicUsize, Ordering::SeqCst},
 };
+use sum_tree::{self, Cursor, FilterCursor, SumTree};
 
 #[derive(Copy, Clone, Debug, Default, Eq, Ord, PartialOrd, PartialEq)]
 pub struct FoldPoint(pub super::Point);

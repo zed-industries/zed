@@ -2175,7 +2175,6 @@ name = "gpui"
 version = "0.1.0"
 dependencies = [
  "anyhow",
- "arrayvec 0.7.1",
  "async-task",
  "backtrace",
  "bindgen",
@@ -2212,6 +2211,7 @@ dependencies = [
  "simplelog",
  "smallvec",
  "smol",
+ "sum_tree",
  "time 0.3.2",
  "tiny-skia",
  "tree-sitter",
@@ -4941,6 +4941,14 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "1e81da0851ada1f3e9d4312c704aa4f8806f0f9d69faaf8df2f3464b4a9437c2"
 
 [[package]]
+name = "sum_tree"
+version = "0.1.0"
+dependencies = [
+ "arrayvec 0.7.1",
+ "rand 0.8.3",
+]
+
+[[package]]
 name = "surf"
 version = "2.2.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -5927,6 +5935,7 @@ dependencies = [
  "simplelog",
  "smallvec",
  "smol",
+ "sum_tree",
  "surf",
  "tempdir",
  "thiserror",

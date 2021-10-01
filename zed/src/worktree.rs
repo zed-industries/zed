@@ -15,9 +15,9 @@ use ::ignore::gitignore::{Gitignore, GitignoreBuilder};
 use anyhow::{anyhow, Result};
 use futures::{Stream, StreamExt};
 pub use fuzzy::{match_paths, PathMatch};
+use sum_tree::{self, Edit, SeekTarget, SumTree};
 use gpui::{
     executor,
-    sum_tree::{self, Edit, SeekTarget, SumTree},
     AppContext, AsyncAppContext, Entity, ModelContext, ModelHandle, MutableAppContext, Task,
     UpgradeModelHandle, WeakModelHandle,
 };

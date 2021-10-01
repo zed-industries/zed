@@ -1,7 +1,7 @@
 use super::Operation;
 use crate::time;
-use gpui::sum_tree::{Cursor, Dimension, Edit, Item, KeyedItem, SumTree, Summary};
 use std::{fmt::Debug, ops::Add};
+use sum_tree::{Cursor, Dimension, Edit, Item, KeyedItem, SumTree, Summary};
 
 #[derive(Clone, Debug)]
 pub struct OperationQueue(SumTree<Operation>);

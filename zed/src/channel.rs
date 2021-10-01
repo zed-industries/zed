@@ -5,7 +5,6 @@ use crate::{
 };
 use anyhow::{anyhow, Context, Result};
 use gpui::{
-    sum_tree::{self, Bias, SumTree},
     AsyncAppContext, Entity, ModelContext, ModelHandle, MutableAppContext, Task, WeakModelHandle,
 };
 use postage::prelude::Stream;
@@ -16,6 +15,7 @@ use std::{
     ops::Range,
     sync::Arc,
 };
+use sum_tree::{self, Bias, SumTree};
 use time::OffsetDateTime;
 use zrpc::{
     proto::{self, ChannelMessageSent},

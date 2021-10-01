@@ -3,15 +3,11 @@ use super::{
     tab_map::{self, Edit as TabEdit, Snapshot as TabSnapshot, TabPoint, TextSummary},
 };
 use crate::{editor::Point, settings::HighlightId, util::Bias};
-use gpui::{
-    fonts::FontId,
-    sum_tree::{self, Cursor, SumTree},
-    text_layout::LineWrapper,
-    Entity, ModelContext, Task,
-};
+use gpui::{fonts::FontId, text_layout::LineWrapper, Entity, ModelContext, Task};
 use lazy_static::lazy_static;
 use smol::future::yield_now;
 use std::{collections::VecDeque, ops::Range, time::Duration};
+use sum_tree::{self, Cursor, SumTree};
 
 pub struct WrapMap {
     snapshot: Snapshot,

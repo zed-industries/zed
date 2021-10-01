@@ -1,7 +1,6 @@
 mod app;
 pub use app::*;
 mod assets;
-pub mod sum_tree;
 #[cfg(test)]
 mod test;
 pub use assets::*;

@@ -1,9 +1,9 @@
 use super::Point;
 use crate::util::Bias;
 use arrayvec::ArrayString;
-use gpui::sum_tree::{self, SumTree};
 use smallvec::SmallVec;
 use std::{cmp, ops::Range, str};
+use sum_tree::{self, SumTree};
 
 #[cfg(test)]
 const CHUNK_BASE: usize = 6;

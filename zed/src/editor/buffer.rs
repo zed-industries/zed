@@ -13,8 +13,8 @@ use crate::{
 };
 pub use anchor::*;
 use anyhow::{anyhow, Result};
+use sum_tree::{self, FilterCursor, SumTree};
 use gpui::{
-    sum_tree::{self, FilterCursor, SumTree},
     AppContext, Entity, ModelContext, ModelHandle, Task,
 };
 use lazy_static::lazy_static;
